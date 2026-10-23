@@ -4,7 +4,12 @@ import { describeFailure } from './securityCopy.ts'
 /** An explicit server rejection; network errors remain distinguishable. `details` carries the rest of the error body. */
 export class ApiError extends Error {
   readonly details: Readonly<Partial<ApiFailure>>
-  constructor(readonly status: number, readonly code: string, message: string, details: Partial<ApiFailure> = {}) {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+    details: Partial<ApiFailure> = {},
+  ) {
     super(message)
     this.name = 'ApiError'
     this.details = details
@@ -12,7 +17,10 @@ export class ApiError extends Error {
 }
 
 export class ApiTimeoutError extends Error {
-  constructor() { super('请求超时；执行端可能仍在处理，请同步状态后确认结果。'); this.name = 'ApiTimeoutError' }
+  constructor() {
+    super('请求超时；执行端可能仍在处理，请同步状态后确认结果。')
+    this.name = 'ApiTimeoutError'
+  }
 }
 
 /**
@@ -21,12 +29,20 @@ export class ApiTimeoutError extends Error {
  * `handled`: the message is already on screen (e.g. in the confirmation dialog).
  */
 export class ClientError extends Error {
-  constructor(message: string, readonly reason: string, readonly options: { definitive?: boolean; handled?: boolean } = {}) {
+  constructor(
+    message: string,
+    readonly reason: string,
+    readonly options: { definitive?: boolean; handled?: boolean } = {},
+  ) {
     super(message)
     this.name = 'ClientError'
   }
-  get definitive(): boolean { return this.options.definitive ?? true }
-  get handled(): boolean { return this.options.handled ?? false }
+  get definitive(): boolean {
+    return this.options.definitive ?? true
+  }
+  get handled(): boolean {
+    return this.options.handled ?? false
+  }
 }
 
 /**
@@ -41,7 +57,10 @@ export interface AuthHooks {
 const authHooks: AuthHooks = {}
 export function setAuthHooks(hooks: AuthHooks): () => void {
   Object.assign(authHooks, hooks)
-  return () => { if (authHooks.renew === hooks.renew) delete authHooks.renew; if (authHooks.unauthorized === hooks.unauthorized) delete authHooks.unauthorized }
+  return () => {
+    if (authHooks.renew === hooks.renew) delete authHooks.renew
+    if (authHooks.unauthorized === hooks.unauthorized) delete authHooks.unauthorized
+  }
 }
 
 export interface ApiOptions {
@@ -60,14 +79,26 @@ export interface ApiOptions {
 }
 
 const MAX_AUTOMATIC_WAIT_SECONDS = 5
-const pause = (ms: number) => new Promise<void>(resolve => { setTimeout(resolve, ms) })
+const pause = (ms: number) =>
+  new Promise<void>(resolve => {
+    setTimeout(resolve, ms)
+  })
 
 async function failureOf(response: Response): Promise<ApiError> {
   let failure: Partial<ApiFailure> = {}
-  try { failure = await response.json() as Partial<ApiFailure> } catch { /* Non-JSON proxy failures use the HTTP status below. */ }
+  try {
+    failure = (await response.json()) as Partial<ApiFailure>
+  } catch {
+    /* Non-JSON proxy failures use the HTTP status below. */
+  }
   const code = typeof failure.error === 'string' ? failure.error : 'request-failed'
   const { error: _code, message: _message, ...details } = failure
-  return new ApiError(response.status, code, describeFailure(response.status, code, typeof failure.message === 'string' ? failure.message : '', details), details)
+  return new ApiError(
+    response.status,
+    code,
+    describeFailure(response.status, code, typeof failure.message === 'string' ? failure.message : '', details),
+    details,
+  )
 }
 
 /** Cookie-authenticated API (the desktop shell adds its own header). Credentials never enter a URL or browser storage. */
@@ -91,8 +122,10 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
       signal: controller.signal,
     })
     if (!response.ok) failure = await failureOf(response)
-    else if (response.status === 204 || options.discardBody) { void response.body?.cancel().catch(() => {}); return undefined as T }
-    else return await response.json() as T
+    else if (response.status === 204 || options.discardBody) {
+      void response.body?.cancel().catch(() => {})
+      return undefined as T
+    } else return (await response.json()) as T
   } catch (error) {
     if (controller.signal.reason instanceof ApiTimeoutError) throw controller.signal.reason
     throw error
@@ -107,7 +140,14 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
   if (failure.status === 401 && failure.code !== 'renewal-required') authHooks.unauthorized?.(failure)
   // A refused request was not executed, so one automatic retry after a short wait is safe.
   const wait = failure.details.retryAfter
-  if (failure.status === 429 && failure.code === 'rate-limited' && typeof wait === 'number' && wait <= MAX_AUTOMATIC_WAIT_SECONDS && !options.signal?.aborted && !options.rateRetried) {
+  if (
+    failure.status === 429
+    && failure.code === 'rate-limited'
+    && typeof wait === 'number'
+    && wait <= MAX_AUTOMATIC_WAIT_SECONDS
+    && !options.signal?.aborted
+    && !options.rateRetried
+  ) {
     await pause(Math.max(0, wait) * 1000)
     return api<T>(path, { ...options, rateRetried: true })
   }
@@ -115,7 +155,9 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
 }
 
 export function errorMessage(error: unknown): string {
-  return error instanceof ApiError || error instanceof ApiTimeoutError || error instanceof ClientError ? error.message : '连接暂时不可用，请检查网络后重试。'
+  return error instanceof ApiError || error instanceof ApiTimeoutError || error instanceof ClientError
+    ? error.message
+    : '连接暂时不可用，请检查网络后重试。'
 }
 
 /** Inline text for a failure, or '' when the message is already shown elsewhere (the confirmation dialog). */
@@ -147,7 +189,9 @@ export interface PendingSubmission {
 function modelRef(value: unknown): ModelRef | undefined {
   if (typeof value !== 'object' || value === null) return
   const item = value as Record<string, unknown>
-  return typeof item.providerId === 'string' && typeof item.model === 'string' ? { providerId: item.providerId, model: item.model } : undefined
+  return typeof item.providerId === 'string' && typeof item.model === 'string'
+    ? { providerId: item.providerId, model: item.model }
+    : undefined
 }
 
 export function readPending(key: string): PendingSubmission | null {
@@ -156,19 +200,23 @@ export function readPending(key: string): PendingSubmission | null {
     if (typeof value !== 'object' || value === null) return null
     const item = value as Record<string, unknown>
     if (typeof item.requestId !== 'string' || typeof item.prompt !== 'string') return null
-    for (const field of ['sessionId', 'harnessId', 'workspaceId'] as const) if (item[field] !== undefined && typeof item[field] !== 'string') return null
+    for (const field of ['sessionId', 'harnessId', 'workspaceId'] as const)
+      if (item[field] !== undefined && typeof item[field] !== 'string') return null
     if (item.mode !== undefined && item.mode !== 'chat' && item.mode !== 'agent') return null
     if (item.model !== undefined && modelRef(item.model) === undefined) return null
     const model = modelRef(item.model)
     return {
-      requestId: item.requestId, prompt: item.prompt,
+      requestId: item.requestId,
+      prompt: item.prompt,
       ...(typeof item.sessionId === 'string' ? { sessionId: item.sessionId } : {}),
       ...(item.mode === 'chat' || item.mode === 'agent' ? { mode: item.mode } : {}),
       ...(typeof item.harnessId === 'string' ? { harnessId: item.harnessId } : {}),
       ...(typeof item.workspaceId === 'string' ? { workspaceId: item.workspaceId } : {}),
       ...(model ? { model } : {}),
     }
-  } catch { return null }
+  } catch {
+    return null
+  }
 }
 
 export function writePending(key: string, value: PendingSubmission | null): void {
@@ -185,7 +233,9 @@ export function submissionRequest(submission: PendingSubmission): { path: string
   return {
     path: 'tasks',
     body: {
-      prompt, requestId, mode: submission.mode ?? 'agent',
+      prompt,
+      requestId,
+      mode: submission.mode ?? 'agent',
       ...(submission.harnessId ? { harnessId: submission.harnessId } : {}),
       ...(model ? { model } : {}),
       ...(submission.workspaceId ? { workspaceId: submission.workspaceId } : {}),

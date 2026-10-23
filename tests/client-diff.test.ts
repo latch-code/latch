@@ -19,9 +19,18 @@ describe('line diff', () => {
     const diff = diffLines(undefined, 'one\ntwo\n')
     expect(diff).toMatchObject({ added: 2, removed: 0 })
     expect(diff).not.toHaveProperty('created')
-    expect(diff.hunks).toEqual([{ oldStart: 0, oldLines: 0, newStart: 1, newLines: 2, lines: [
-      { kind: 'add', text: 'one', newLine: 1 }, { kind: 'add', text: 'two', newLine: 2 },
-    ] }])
+    expect(diff.hunks).toEqual([
+      {
+        oldStart: 0,
+        oldLines: 0,
+        newStart: 1,
+        newLines: 2,
+        lines: [
+          { kind: 'add', text: 'one', newLine: 1 },
+          { kind: 'add', text: 'two', newLine: 2 },
+        ],
+      },
+    ])
   })
 
   it('calls a file new only when the producer reported it missing', () => {
@@ -39,24 +48,43 @@ describe('line diff', () => {
   })
 
   it('shows a middle edit with three lines of numbered context', () => {
-    const diff = diffLines(numbered(20), numbered(20, index => index === 10 ? 'changed 10' : undefined))
+    const diff = diffLines(
+      numbered(20),
+      numbered(20, index => (index === 10 ? 'changed 10' : undefined)),
+    )
     expect(diff.added).toBe(1)
     expect(diff.removed).toBe(1)
     expect(diff.hunks).toHaveLength(1)
     const [hunk] = diff.hunks
     expect(hunk).toMatchObject({ oldStart: 7, oldLines: 7, newStart: 7, newLines: 7 })
     expect(hunk!.lines.map(line => `${line.kind}:${line.text}`)).toEqual([
-      'context:line 7', 'context:line 8', 'context:line 9', 'remove:line 10', 'add:changed 10', 'context:line 11', 'context:line 12', 'context:line 13',
+      'context:line 7',
+      'context:line 8',
+      'context:line 9',
+      'remove:line 10',
+      'add:changed 10',
+      'context:line 11',
+      'context:line 12',
+      'context:line 13',
     ])
     expect(hunk!.lines[3]).toEqual({ kind: 'remove', text: 'line 10', oldLine: 10 })
     expect(hunk!.lines[4]).toEqual({ kind: 'add', text: 'changed 10', newLine: 10 })
   })
 
   it('merges nearby changes into one hunk and separates distant ones', () => {
-    const near = diffLines(numbered(30), numbered(30, index => index === 10 || index === 15 ? `x${index}` : undefined))
+    const near = diffLines(
+      numbered(30),
+      numbered(30, index => (index === 10 || index === 15 ? `x${index}` : undefined)),
+    )
     expect(near.hunks).toHaveLength(1)
-    const far = diffLines(numbered(40), numbered(40, index => index === 5 || index === 30 ? `x${index}` : undefined))
-    expect(far.hunks.map(hunk => [hunk.oldStart, hunk.newStart])).toEqual([[2, 2], [27, 27]])
+    const far = diffLines(
+      numbered(40),
+      numbered(40, index => (index === 5 || index === 30 ? `x${index}` : undefined)),
+    )
+    expect(far.hunks.map(hunk => [hunk.oldStart, hunk.newStart])).toEqual([
+      [2, 2],
+      [27, 27],
+    ])
   })
 
   it('keeps line numbers aligned after insertions', () => {

@@ -10,14 +10,39 @@ import { ErrorBoundary } from './components/ErrorBoundary.tsx'
 export function App() {
   const harness = useHarness()
   const preferences = usePreferences()
-  useLayoutEffect(() => { applyTheme(preferences.theme) }, [preferences.theme])
+  useLayoutEffect(() => {
+    applyTheme(preferences.theme)
+  }, [preferences.theme])
   // The confirmation dialog sits outside the boundary, so a render error never hides a pending local confirmation.
-  const page = harness.snapshot !== null
-    ? <ErrorBoundary key={harness.snapshot.device.id} resetKey={harness.selectedId} fallback={reset => <CrashScreen onNewSession={() => { harness.select(null); reset() }} />}>
-      <Workspace harness={harness} snapshot={harness.snapshot} />
-    </ErrorBoundary>
-    : harness.auth !== null
-      ? <EnrollmentPage key={harness.auth.reason} auth={harness.auth} onEnrolled={harness.confirmEnrollment} />
-      : <ConnectScreen error={harness.loading ? '' : harness.error} onRetry={() => { void harness.refresh() }} />
-  return <>{page}<ConfirmationDialog /></>
+  const page =
+    harness.snapshot !== null ? (
+      <ErrorBoundary
+        key={harness.snapshot.device.id}
+        resetKey={harness.selectedId}
+        fallback={reset => (
+          <CrashScreen
+            onNewSession={() => {
+              harness.select(null)
+              reset()
+            }}
+          />
+        )}>
+        <Workspace harness={harness} snapshot={harness.snapshot} />
+      </ErrorBoundary>
+    ) : harness.auth !== null ? (
+      <EnrollmentPage key={harness.auth.reason} auth={harness.auth} onEnrolled={harness.confirmEnrollment} />
+    ) : (
+      <ConnectScreen
+        error={harness.loading ? '' : harness.error}
+        onRetry={() => {
+          void harness.refresh()
+        }}
+      />
+    )
+  return (
+    <>
+      {page}
+      <ConfirmationDialog />
+    </>
+  )
 }

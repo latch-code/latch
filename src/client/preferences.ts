@@ -15,14 +15,20 @@ const KEY = 'harness-link.preferences'
 const defaults: Preferences = { theme: 'system', sendKey: 'enter', inspector: false }
 
 export function storageGet(key: string): string | null {
-  try { return localStorage.getItem(key) } catch { return null }
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    return null
+  }
 }
 
 export function storageSet(key: string, value: string | null): void {
   try {
     if (value === null) localStorage.removeItem(key)
     else localStorage.setItem(key, value)
-  } catch { /* A missing preference only resets to its default. */ }
+  } catch {
+    /* A missing preference only resets to its default. */
+  }
 }
 
 export function parsePreferences(raw: string | null): Preferences {
@@ -35,7 +41,9 @@ export function parsePreferences(raw: string | null): Preferences {
       sendKey: item.sendKey === 'mod-enter' ? 'mod-enter' : 'enter',
       inspector: item.inspector === true,
     }
-  } catch { return { ...defaults } }
+  } catch {
+    return { ...defaults }
+  }
 }
 
 let current: Preferences | null = null
@@ -54,8 +62,14 @@ export function setPreference<K extends keyof Preferences>(key: K, value: Prefer
 
 export function usePreferences(): Preferences {
   return useSyncExternalStore(
-    listener => { listeners.add(listener); return () => { listeners.delete(listener) } },
-    snapshot, () => defaults,
+    listener => {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
+    },
+    snapshot,
+    () => defaults,
   )
 }
 

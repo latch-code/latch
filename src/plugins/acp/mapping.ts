@@ -24,17 +24,27 @@ export function append(current: string, piece: string, limit = TEXT_LIMIT): stri
 
 export function pretty(value: unknown): string {
   if (typeof value === 'string') return value
-  try { return JSON.stringify(value, null, 2) ?? String(value) } catch { return String(value) }
+  try {
+    return JSON.stringify(value, null, 2) ?? String(value)
+  } catch {
+    return String(value)
+  }
 }
 
 export function blockText(block: ContentBlock): string {
   switch (block.type) {
-    case 'text': return block.text ?? ''
-    case 'image': return '[图片]'
-    case 'audio': return '[音频]'
-    case 'resource_link': return `[${block.name || block.uri || '资源'}](${block.uri ?? ''})`
-    case 'resource': return block.resource?.text !== undefined ? clip(block.resource.text, TOOL_TEXT_LIMIT) : `[${block.resource?.uri ?? '资源'}]`
-    default: return ''
+    case 'text':
+      return block.text ?? ''
+    case 'image':
+      return '[图片]'
+    case 'audio':
+      return '[音频]'
+    case 'resource_link':
+      return `[${block.name || block.uri || '资源'}](${block.uri ?? ''})`
+    case 'resource':
+      return block.resource?.text !== undefined ? clip(block.resource.text, TOOL_TEXT_LIMIT) : `[${block.resource?.uri ?? '资源'}]`
+    default:
+      return ''
   }
 }
 
@@ -74,16 +84,14 @@ export function mergeTool(state: ToolState, fields: ToolFields): void {
 export function settleTool(state: ToolState): boolean {
   if (state.final || state.status === 'completed' || state.status === 'failed') return false
   state.awaiting = 0
-  state.final = state.status === 'in_progress'
-    ? { state: 'failed', note: OUTCOME_UNKNOWN }
-    : { state: 'cancelled', note: NOT_STARTED }
+  state.final = state.status === 'in_progress' ? { state: 'failed', note: OUTCOME_UNKNOWN } : { state: 'cancelled', note: NOT_STARTED }
   return true
 }
 
 const TOOL_KINDS = new Set<string>(['read', 'edit', 'delete', 'move', 'search', 'execute', 'think', 'fetch', 'other'])
 function toolKind(kind: string | undefined): ToolKind | undefined {
   if (!kind) return undefined
-  return TOOL_KINDS.has(kind) ? kind as ToolKind : 'other'
+  return TOOL_KINDS.has(kind) ? (kind as ToolKind) : 'other'
 }
 
 export function toolLabel(state: ToolState): string {
@@ -112,11 +120,13 @@ export function toolDetail(state: ToolState): ToolDetail {
   }
   let output = texts.length ? texts.join('\n') : state.rawOutput !== undefined ? pretty(state.rawOutput) : undefined
   if (state.final) output = output ? `${output}\n\n${state.final.note}` : state.final.note
-  const locations = state.locations.flatMap(item => {
-    const parsed = toolLocation.safeParse(item)
-    if (!parsed.success) return []
-    return [parsed.data.line != null ? `${parsed.data.path}:${parsed.data.line}` : parsed.data.path]
-  }).slice(0, 64)
+  const locations = state.locations
+    .flatMap(item => {
+      const parsed = toolLocation.safeParse(item)
+      if (!parsed.success) return []
+      return [parsed.data.line != null ? `${parsed.data.path}:${parsed.data.line}` : parsed.data.path]
+    })
+    .slice(0, 64)
   const kind = toolKind(state.kind)
   return {
     ...(kind ? { kind } : {}),
@@ -132,18 +142,26 @@ function toolMessageState(state: ToolState): Message['state'] {
   if (state.awaiting > 0) return 'awaiting-approval'
   if (state.final) return state.final.state
   switch (state.status) {
-    case 'in_progress': return 'running'
-    case 'completed': return 'completed'
-    case 'failed': return 'failed'
-    default: return 'queued'
+    case 'in_progress':
+      return 'running'
+    case 'completed':
+      return 'completed'
+    case 'failed':
+      return 'failed'
+    default:
+      return 'queued'
   }
 }
 
 export function toolMessage(state: ToolState): Message {
   const tool = toolDetail(state)
   return {
-    id: state.id, role: 'tool', toolName: toolLabel(state), state: toolMessageState(state),
-    text: tool.output ?? tool.input ?? tool.title ?? '', tool,
+    id: state.id,
+    role: 'tool',
+    toolName: toolLabel(state),
+    state: toolMessageState(state),
+    text: tool.output ?? tool.input ?? tool.title ?? '',
+    tool,
   }
 }
 
@@ -151,9 +169,13 @@ export function toolMessage(state: ToolState): Message {
 export function settleToolMessage(message: Message): boolean {
   if (message.role !== 'tool') return false
   let note: string
-  if (message.state === 'running') { message.state = 'failed'; note = OUTCOME_UNKNOWN }
-  else if (message.state === 'queued' || message.state === 'awaiting-approval') { message.state = 'cancelled'; note = NOT_STARTED }
-  else return false
+  if (message.state === 'running') {
+    message.state = 'failed'
+    note = OUTCOME_UNKNOWN
+  } else if (message.state === 'queued' || message.state === 'awaiting-approval') {
+    message.state = 'cancelled'
+    note = NOT_STARTED
+  } else return false
   const output = message.tool?.output ? `${message.tool.output}\n\n${note}` : note
   message.tool = { ...message.tool, output }
   message.text = output
@@ -165,13 +187,16 @@ const PLAN_PRIORITY = new Set(['high', 'medium', 'low'])
 export function planEntries(entries: Array<{ content: string; status?: string | null; priority?: string | null }>): PlanEntry[] {
   return entries.slice(0, 200).map(entry => ({
     content: clip(entry.content, 4000),
-    status: PLAN_STATUS.has(entry.status ?? '') ? entry.status as PlanEntry['status'] : 'pending',
+    status: PLAN_STATUS.has(entry.status ?? '') ? (entry.status as PlanEntry['status']) : 'pending',
     ...(PLAN_PRIORITY.has(entry.priority ?? '') ? { priority: entry.priority as NonNullable<PlanEntry['priority']> } : {}),
   }))
 }
 
 export type ConfigSource = 'options' | 'legacy'
-export interface FoldedConfig { source: ConfigSource; options: SessionConfigOption[] }
+export interface FoldedConfig {
+  source: ConfigSource
+  options: SessionConfigOption[]
+}
 
 function selectConfig(item: unknown): SessionConfigOption[] {
   const parsed = configOption.safeParse(item)
@@ -179,16 +204,21 @@ function selectConfig(item: unknown): SessionConfigOption[] {
   const option = parsed.data
   // Boolean options are only sent to clients that advertise them; Latch does not.
   if (option.type !== 'select' || typeof option.currentValue !== 'string' || !option.options) return []
-  const values = option.options.flatMap(entry => 'group' in entry ? entry.options : [entry]).slice(0, 500)
-  return [{
-    id: option.id, name: clip(option.name, 200), currentValue: option.currentValue,
-    ...(option.category ? { category: option.category } : {}),
-    ...(option.description ? { description: clip(option.description, 1000) } : {}),
-    options: values.map(value => ({
-      value: value.value, name: clip(value.name, 200),
-      ...(value.description ? { description: clip(value.description, 1000) } : {}),
-    })),
-  }]
+  const values = option.options.flatMap(entry => ('group' in entry ? entry.options : [entry])).slice(0, 500)
+  return [
+    {
+      id: option.id,
+      name: clip(option.name, 200),
+      currentValue: option.currentValue,
+      ...(option.category ? { category: option.category } : {}),
+      ...(option.description ? { description: clip(option.description, 1000) } : {}),
+      options: values.map(value => ({
+        value: value.value,
+        name: clip(value.name, 200),
+        ...(value.description ? { description: clip(value.description, 1000) } : {}),
+      })),
+    },
+  ]
 }
 
 export function configFromOptions(items: unknown[]): SessionConfigOption[] {
@@ -201,17 +231,27 @@ export function foldConfig(state: SessionState): FoldedConfig | undefined {
   const options: SessionConfigOption[] = []
   if (state.models) {
     options.push({
-      id: 'model', name: '模型', category: 'model', currentValue: state.models.currentModelId,
+      id: 'model',
+      name: '模型',
+      category: 'model',
+      currentValue: state.models.currentModelId,
       options: state.models.availableModels.slice(0, 500).map(model => ({
-        value: model.modelId, name: clip(model.name, 200), ...(model.description ? { description: clip(model.description, 1000) } : {}),
+        value: model.modelId,
+        name: clip(model.name, 200),
+        ...(model.description ? { description: clip(model.description, 1000) } : {}),
       })),
     })
   }
   if (state.modes) {
     options.push({
-      id: 'mode', name: '模式', category: 'mode', currentValue: state.modes.currentModeId,
+      id: 'mode',
+      name: '模式',
+      category: 'mode',
+      currentValue: state.modes.currentModeId,
       options: state.modes.availableModes.slice(0, 100).map(mode => ({
-        value: mode.id, name: clip(mode.name, 200), ...(mode.description ? { description: clip(mode.description, 1000) } : {}),
+        value: mode.id,
+        name: clip(mode.name, 200),
+        ...(mode.description ? { description: clip(mode.description, 1000) } : {}),
       })),
     })
   }

@@ -1,7 +1,11 @@
 /** Stable product interfaces. No upstream harness types cross this module. */
 import type { HarnessDriver } from './harness.ts'
 
-export interface ToolCall { id: string; name: string; arguments: Record<string, unknown> }
+export interface ToolCall {
+  id: string
+  name: string
+  arguments: Record<string, unknown>
+}
 export interface ModelMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
   content: string
@@ -31,9 +35,15 @@ export interface ToolDefinition {
   kind?: 'read' | 'edit' | 'delete' | 'move' | 'search' | 'execute' | 'think' | 'fetch' | 'other'
   /** Optional, side-effect free. Describes a call before it runs, e.g. the diff a write would apply. */
   preview?(args: Record<string, unknown>, context: { workspaceRoot: string; signal: AbortSignal }): Promise<ToolPreview>
-  execute(args: Record<string, unknown>, context: {
-    sessionId: string; callId: string; workspaceRoot: string; signal: AbortSignal
-  }): Promise<{ text: string }>
+  execute(
+    args: Record<string, unknown>,
+    context: {
+      sessionId: string
+      callId: string
+      workspaceRoot: string
+      signal: AbortSignal
+    },
+  ): Promise<{ text: string }>
 }
 export interface ModelProvider {
   id: string
@@ -59,8 +69,13 @@ export interface HarnessPlugin {
   activate(context: PluginContext): void | Promise<void>
 }
 export interface PluginInfo {
-  id: string; name: string; version: string; description: string
-  enabled: boolean; activeRuns: number; capabilities: string[]
+  id: string
+  name: string
+  version: string
+  description: string
+  enabled: boolean
+  activeRuns: number
+  capabilities: string[]
   /** Set when the Host manages the plugin from settings (model providers, agents). */
   managed?: 'provider' | 'agent' | 'core'
 }

@@ -18,7 +18,10 @@ export interface StoredTask {
   allowedTools?: string[]
 }
 
-export interface RequestReceipt { taskId: string; payloadHash: string }
+export interface RequestReceipt {
+  taskId: string
+  payloadHash: string
+}
 export interface RuntimeState {
   version: 1
   tasks: Record<string, StoredTask>
@@ -39,49 +42,94 @@ const usageSchema = z.object({ inputTokens: z.number().nonnegative(), outputToke
 // Every persisted field must be listed: z.object drops unknown keys on load.
 const toolDetailSchema = z.object({
   kind: z.enum(['read', 'edit', 'delete', 'move', 'search', 'execute', 'think', 'fetch', 'other']).optional(),
-  title: z.string().optional(), input: z.string().optional(), output: z.string().optional(),
+  title: z.string().optional(),
+  input: z.string().optional(),
+  output: z.string().optional(),
   locations: z.array(z.string()).optional(),
-  diffs: z.array(z.object({
-    path: z.string(), oldText: z.string().optional(), newText: z.string(), previous: z.enum(['none', 'text', 'unavailable']).optional(),
-  })).optional(),
+  diffs: z
+    .array(
+      z.object({
+        path: z.string(),
+        oldText: z.string().optional(),
+        newText: z.string(),
+        previous: z.enum(['none', 'text', 'unavailable']).optional(),
+      }),
+    )
+    .optional(),
 })
 const messageSchema = z.object({
-  id: z.string(), role: z.enum(['system', 'user', 'assistant', 'tool']), text: z.string(),
-  toolName: z.string().optional(), state: z.enum(['queued', 'awaiting-approval', 'running', 'completed', 'failed', 'cancelled']).optional(),
-  reasoning: z.string().optional(), tool: toolDetailSchema.optional(), usage: usageSchema.optional(),
+  id: z.string(),
+  role: z.enum(['system', 'user', 'assistant', 'tool']),
+  text: z.string(),
+  toolName: z.string().optional(),
+  state: z.enum(['queued', 'awaiting-approval', 'running', 'completed', 'failed', 'cancelled']).optional(),
+  reasoning: z.string().optional(),
+  tool: toolDetailSchema.optional(),
+  usage: usageSchema.optional(),
 })
 const historySchema = z.object({
-  role: z.enum(['system', 'user', 'assistant', 'tool']), content: z.string(),
-  toolCalls: z.array(callSchema).optional(), toolCallId: z.string().optional(), isError: z.boolean().optional(),
+  role: z.enum(['system', 'user', 'assistant', 'tool']),
+  content: z.string(),
+  toolCalls: z.array(callSchema).optional(),
+  toolCallId: z.string().optional(),
+  isError: z.boolean().optional(),
 })
 const stateSchema = z.object({
   version: z.literal(1),
-  tasks: z.record(z.string(), z.object({
-    summary: z.object({
-      id: z.string(), title: z.string(), updatedAt: z.string(), cwd: z.string().optional(), model: z.string().optional(),
-      mode: z.enum(['chat', 'agent']).optional(),
-      status: z.enum(['idle', 'running', 'waiting-approval', 'cancelled', 'failed', 'interrupted']),
-      harnessId: z.string().optional(), providerId: z.string().optional(),
-      pinned: z.boolean().optional(), archived: z.boolean().optional(), usage: usageSchema.optional(),
+  tasks: z.record(
+    z.string(),
+    z.object({
+      summary: z.object({
+        id: z.string(),
+        title: z.string(),
+        updatedAt: z.string(),
+        cwd: z.string().optional(),
+        model: z.string().optional(),
+        mode: z.enum(['chat', 'agent']).optional(),
+        status: z.enum(['idle', 'running', 'waiting-approval', 'cancelled', 'failed', 'interrupted']),
+        harnessId: z.string().optional(),
+        providerId: z.string().optional(),
+        pinned: z.boolean().optional(),
+        archived: z.boolean().optional(),
+        usage: usageSchema.optional(),
+      }),
+      messages: z.array(messageSchema),
+      history: z.array(historySchema),
+      revision: z.number().int().nonnegative(),
+      approval: z
+        .object({
+          id: z.string(),
+          sessionId: z.string(),
+          toolName: z.string(),
+          toolCallId: z.string().optional(),
+          reason: z.string(),
+          arguments: z.string().optional(),
+          requestedAt: z.string(),
+          options: z
+            .array(
+              z.object({
+                id: z.string(),
+                label: z.string(),
+                kind: z.enum(['allow_once', 'allow_always', 'reject_once', 'reject_always']),
+              }),
+            )
+            .optional(),
+          tool: toolDetailSchema.optional(),
+          risk: z.enum(['R1', 'R2']).optional(),
+          advisory: z.literal(true).optional(),
+        })
+        .optional(),
+      batch: z.object({ calls: z.array(callSchema), started: z.array(z.string()), completed: z.array(z.string()) }).optional(),
+      allowedTools: z.array(z.string()).optional(),
     }),
-    messages: z.array(messageSchema), history: z.array(historySchema), revision: z.number().int().nonnegative(),
-    approval: z.object({
-      id: z.string(), sessionId: z.string(), toolName: z.string(), toolCallId: z.string().optional(), reason: z.string(),
-      arguments: z.string().optional(), requestedAt: z.string(),
-      options: z.array(z.object({
-        id: z.string(), label: z.string(), kind: z.enum(['allow_once', 'allow_always', 'reject_once', 'reject_always']),
-      })).optional(),
-      tool: toolDetailSchema.optional(),
-      risk: z.enum(['R1', 'R2']).optional(), advisory: z.literal(true).optional(),
-    }).optional(),
-    batch: z.object({ calls: z.array(callSchema), started: z.array(z.string()), completed: z.array(z.string()) }).optional(),
-    allowedTools: z.array(z.string()).optional(),
-  })),
+  ),
   receipts: z.record(z.string(), z.object({ taskId: z.string(), payloadHash: z.string() })),
   tombstones: z.record(z.string(), z.object({ deletedAt: z.string() })).optional(),
 })
 
-export function emptyRuntimeState(): RuntimeState { return { version: 1, tasks: {}, receipts: {} } }
+export function emptyRuntimeState(): RuntimeState {
+  return { version: 1, tasks: {}, receipts: {} }
+}
 
 function codeOf(error: unknown): string | undefined {
   return error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : undefined
@@ -101,8 +149,12 @@ export function createSnapshotStore(dataDir: string): RuntimeStore {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const handle = await open(lockFile, 'wx', 0o600)
-        try { await handle.writeFile(JSON.stringify({ pid: process.pid, token })); await handle.sync() }
-        finally { await handle.close() }
+        try {
+          await handle.writeFile(JSON.stringify({ pid: process.pid, token }))
+          await handle.sync()
+        } finally {
+          await handle.close()
+        }
         owned = true
         return
       } catch (error) {
@@ -112,17 +164,24 @@ export function createSnapshotStore(dataDir: string): RuntimeStore {
         try {
           previous = await readFile(lockFile, 'utf8')
           const value: unknown = JSON.parse(previous)
-          if (typeof value !== 'object' || value === null || !('pid' in value)
-            || !Number.isSafeInteger(value.pid) || Number(value.pid) <= 0) throw new Error('Invalid lock')
+          if (
+            typeof value !== 'object'
+            || value === null
+            || !('pid' in value)
+            || !Number.isSafeInteger(value.pid)
+            || Number(value.pid) <= 0
+          )
+            throw new Error('Invalid lock')
           pid = Number(value.pid)
         } catch (readError) {
           if (codeOf(readError) === 'ENOENT') continue
           throw new AppError(409, 'store-lock-invalid', '运行数据锁无法验证，请确认没有另一个运行实例后修复 runtime.lock')
         }
-        try { process.kill(pid, 0) }
-        catch (probeError) {
+        try {
+          process.kill(pid, 0)
+        } catch (probeError) {
           if (codeOf(probeError) === 'ESRCH') {
-            if (await readFile(lockFile, 'utf8').catch(() => '') === previous) await unlink(lockFile).catch(() => {})
+            if ((await readFile(lockFile, 'utf8').catch(() => '')) === previous) await unlink(lockFile).catch(() => {})
             continue
           }
         }
@@ -153,9 +212,16 @@ export function createSnapshotStore(dataDir: string): RuntimeStore {
         loaded = true
         return value
       } catch (error) {
-        if (codeOf(error) === 'ENOENT') { loaded = true; return emptyRuntimeState() }
+        if (codeOf(error) === 'ENOENT') {
+          loaded = true
+          return emptyRuntimeState()
+        }
         await this.close()
-        throw new AppError(500, 'store-corrupt', `运行数据无法读取，原文件已保留：${error instanceof Error ? error.message : String(error)}`)
+        throw new AppError(
+          500,
+          'store-corrupt',
+          `运行数据无法读取，原文件已保留：${error instanceof Error ? error.message : String(error)}`,
+        )
       }
     },
     async commit(state) {
@@ -176,9 +242,15 @@ export function createSnapshotStore(dataDir: string): RuntimeStore {
         // Directory fsync is unsupported on Windows; file fsync still precedes atomic rename.
         if (process.platform !== 'win32') {
           const directory = await open(dataDir, 'r')
-          try { await directory.sync() } finally { await directory.close() }
+          try {
+            await directory.sync()
+          } finally {
+            await directory.close()
+          }
         }
-      } finally { await unlink(temporary).catch(() => {}) }
+      } finally {
+        await unlink(temporary).catch(() => {})
+      }
     },
     async close() {
       if (closed) return
@@ -189,7 +261,9 @@ export function createSnapshotStore(dataDir: string): RuntimeStore {
       try {
         const value: unknown = JSON.parse(current)
         if (typeof value === 'object' && value !== null && 'token' in value && value.token === token) await unlink(lockFile)
-      } catch (error) { if (codeOf(error) !== 'ENOENT' && current !== '') throw error }
+      } catch (error) {
+        if (codeOf(error) !== 'ENOENT' && current !== '') throw error
+      }
     },
   }
 }

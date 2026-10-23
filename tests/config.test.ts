@@ -5,7 +5,9 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { HostConfig, availableId, originOf, type ProviderRecord } from '../src/host/config.ts'
 
 const directories: string[] = []
-afterEach(async () => { for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true }) })
+afterEach(async () => {
+  for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true })
+})
 
 async function dataDir() {
   const directory = await mkdtemp(join(tmpdir(), 'latch-config-'))
@@ -14,8 +16,16 @@ async function dataDir() {
 }
 
 const record = (id: string, extra: Partial<ProviderRecord> = {}): ProviderRecord => ({
-  id, name: id, kind: 'openai-compatible', baseURL: 'https://example.test/v1', apiKey: `key-${id}`, keyOrigin: 'https://example.test:443',
-  enabled: true, models: ['model-a', 'model-b'], defaultModel: 'model-a', ...extra,
+  id,
+  name: id,
+  kind: 'openai-compatible',
+  baseURL: 'https://example.test/v1',
+  apiKey: `key-${id}`,
+  keyOrigin: 'https://example.test:443',
+  enabled: true,
+  models: ['model-a', 'model-b'],
+  defaultModel: 'model-a',
+  ...extra,
 })
 const mode = async (file: string) => (await stat(file)).mode & 0o777
 const posix = process.platform !== 'win32'
@@ -34,11 +44,20 @@ describe('HostConfig', () => {
     const legacy = `${JSON.stringify({ baseURL: 'https://api.deepseek.com/v1/', apiKey: 'legacy-secret', model: 'deepseek-chat' })}\n`
     await writeFile(join(directory, 'provider.json'), legacy, { mode: 0o644 })
     const config = await HostConfig.open(directory)
-    expect(config.providers()).toEqual([{
-      id: 'openai-compatible', name: 'DeepSeek', kind: 'openai-compatible', presetId: 'deepseek',
-      baseURL: 'https://api.deepseek.com/v1/', apiKey: 'legacy-secret', keyOrigin: 'https://api.deepseek.com:443', enabled: true,
-      models: ['deepseek-chat'], defaultModel: 'deepseek-chat',
-    }])
+    expect(config.providers()).toEqual([
+      {
+        id: 'openai-compatible',
+        name: 'DeepSeek',
+        kind: 'openai-compatible',
+        presetId: 'deepseek',
+        baseURL: 'https://api.deepseek.com/v1/',
+        apiKey: 'legacy-secret',
+        keyOrigin: 'https://api.deepseek.com:443',
+        enabled: true,
+        models: ['deepseek-chat'],
+        defaultModel: 'deepseek-chat',
+      },
+    ])
     expect(await readFile(join(directory, 'provider.json'), 'utf8')).toBe(legacy)
     if (posix) expect(await mode(join(directory, 'providers.json'))).toBe(0o600)
 
@@ -78,16 +97,33 @@ describe('HostConfig', () => {
 
   it('rejects a saved key without a canonical origin once migrated', async () => {
     const config = await HostConfig.open(await dataDir())
-    for (const keyOrigin of [undefined, 'https://example.test', 'https://example.test:443/v1', 'HTTPS://example.test:443', 'ftp://example.test:21']) {
-      await expect(config.updateProviders(draft => { draft.push(record('a', { keyOrigin })) }))
-        .rejects.toMatchObject({ status: 400, code: 'invalid-provider' })
+    for (const keyOrigin of [
+      undefined,
+      'https://example.test',
+      'https://example.test:443/v1',
+      'HTTPS://example.test:443',
+      'ftp://example.test:21',
+    ]) {
+      await expect(
+        config.updateProviders(draft => {
+          draft.push(record('a', { keyOrigin }))
+        }),
+      ).rejects.toMatchObject({ status: 400, code: 'invalid-provider' })
     }
-    await expect(config.updateProviders(draft => { draft.push(record('a', { keyOrigin: undefined })) }))
-      .rejects.toMatchObject({ message: expect.stringContaining('API Key 必须绑定保存时的服务地址') })
+    await expect(
+      config.updateProviders(draft => {
+        draft.push(record('a', { keyOrigin: undefined }))
+      }),
+    ).rejects.toMatchObject({ message: expect.stringContaining('API Key 必须绑定保存时的服务地址') })
     expect(config.providers()).toEqual([])
     // A key bound to another origin may be stored; it is simply never sent (see usableKey).
-    await config.updateProviders(draft => { draft.push(record('a', { keyOrigin: 'https://other.test:443' }), record('b', { apiKey: '', keyOrigin: undefined })) })
-    expect(config.providers().map(item => [item.id, item.keyOrigin])).toEqual([['a', 'https://other.test:443'], ['b', undefined]])
+    await config.updateProviders(draft => {
+      draft.push(record('a', { keyOrigin: 'https://other.test:443' }), record('b', { apiKey: '', keyOrigin: undefined }))
+    })
+    expect(config.providers().map(item => [item.id, item.keyOrigin])).toEqual([
+      ['a', 'https://other.test:443'],
+      ['b', undefined],
+    ])
     expect(originOf('https://example.test/v1')).toBe('https://example.test:443')
   })
 
@@ -99,7 +135,10 @@ describe('HostConfig', () => {
   ])('reports a corrupt %s by name without leaking or overwriting it', async (file, content) => {
     const directory = await dataDir()
     await writeFile(join(directory, file), content)
-    const failure = await HostConfig.open(directory).then(() => undefined, (error: unknown) => error)
+    const failure = await HostConfig.open(directory).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
     expect(failure).toMatchObject({ name: 'AppError', status: 500, code: 'config-corrupt', message: expect.stringContaining(file) })
     expect(String((failure as Error).message)).not.toContain('sk-corrupt-secret')
     expect(await readFile(join(directory, file), 'utf8')).toBe(content)
@@ -109,11 +148,21 @@ describe('HostConfig', () => {
   it('writes 0600 files atomically and returns deep copies', async () => {
     const directory = await dataDir()
     const config = await HostConfig.open(directory)
-    await config.updateProviders(draft => { draft.push(record('openai')) })
+    await config.updateProviders(draft => {
+      draft.push(record('openai'))
+    })
     await config.updateSettings(draft => {
       draft.defaults = { harnessId: 'standard', mode: 'agent', workspaceId: 'default', model: { providerId: 'openai', model: 'model-b' } }
       draft.workspaces.push({ id: 'site', name: '站点', path: directory })
-      draft.agents.push({ id: 'codex', name: 'Codex', presetId: 'codex', command: 'codex-acp', args: [], env: { OPENAI_API_KEY: 'agent-secret' }, enabled: true })
+      draft.agents.push({
+        id: 'codex',
+        name: 'Codex',
+        presetId: 'codex',
+        command: 'codex-acp',
+        args: [],
+        env: { OPENAI_API_KEY: 'agent-secret' },
+        enabled: true,
+      })
       draft.plugins.disabled.push('safe-tools')
     })
     expect((await readdir(directory)).sort()).toEqual(['providers.json', 'settings.json'])
@@ -143,8 +192,11 @@ describe('HostConfig', () => {
   ])('rejects %s before writing', async (_label, providers, message) => {
     const directory = await dataDir()
     const config = await HostConfig.open(directory)
-    await expect(config.updateProviders(draft => { draft.push(...providers) }))
-      .rejects.toMatchObject({ status: 400, code: 'invalid-provider', message: expect.stringContaining(message) })
+    await expect(
+      config.updateProviders(draft => {
+        draft.push(...providers)
+      }),
+    ).rejects.toMatchObject({ status: 400, code: 'invalid-provider', message: expect.stringContaining(message) })
     expect(config.providers()).toEqual([])
     expect(await readdir(directory)).toEqual([])
   })
@@ -156,19 +208,32 @@ describe('HostConfig', () => {
     ['an invalid env name', { agents: [{ id: 'pi', name: 'pi', command: 'pi', args: [], env: { 'BAD-NAME': 'x' }, enabled: true }] }],
   ])('rejects settings with %s', async (_label, patch) => {
     const config = await HostConfig.open(await dataDir())
-    await expect(config.updateSettings(draft => { Object.assign(draft, patch) })).rejects.toMatchObject({ status: 400, code: 'invalid-settings' })
+    await expect(
+      config.updateSettings(draft => {
+        Object.assign(draft, patch)
+      }),
+    ).rejects.toMatchObject({ status: 400, code: 'invalid-settings' })
     expect(config.settings().workspaces).toEqual([])
   })
 
   it('aborts on a beforePublish failure without publishing or leaving temporary files', async () => {
     const directory = await dataDir()
     const config = await HostConfig.open(directory)
-    await config.updateProviders(draft => { draft.push(record('a')) })
+    await config.updateProviders(draft => {
+      draft.push(record('a'))
+    })
     const before = await readFile(join(directory, 'providers.json'), 'utf8')
-    await expect(config.updateProviders(draft => { draft[0]!.name = 'changed' }, async next => {
-      expect(next[0]?.name).toBe('changed')
-      throw new Error('registry refused')
-    })).rejects.toThrow('registry refused')
+    await expect(
+      config.updateProviders(
+        draft => {
+          draft[0]!.name = 'changed'
+        },
+        async next => {
+          expect(next[0]?.name).toBe('changed')
+          throw new Error('registry refused')
+        },
+      ),
+    ).rejects.toThrow('registry refused')
     expect(config.provider('a')?.name).toBe('a')
     expect(await readFile(join(directory, 'providers.json'), 'utf8')).toBe(before)
     expect(await readdir(directory)).toEqual(['providers.json'])
@@ -178,20 +243,32 @@ describe('HostConfig', () => {
     const directory = await dataDir()
     const config = await HostConfig.open(directory)
     const order: string[] = []
-    await config.updateProviders(draft => { draft.push(record('a')) }, async (_next, commit) => {
-      order.push('staged')
-      await commit()
-      order.push(JSON.parse(await readFile(join(directory, 'providers.json'), 'utf8')).providers[0].id)
-      expect(config.providers()).toEqual([])
-    })
+    await config.updateProviders(
+      draft => {
+        draft.push(record('a'))
+      },
+      async (_next, commit) => {
+        order.push('staged')
+        await commit()
+        order.push(JSON.parse(await readFile(join(directory, 'providers.json'), 'utf8')).providers[0].id)
+        expect(config.providers()).toEqual([])
+      },
+    )
     expect(order).toEqual(['staged', 'a'])
     expect(config.provider('a')).toBeDefined()
 
     // Once the file is renamed, memory follows the disk even if the caller fails afterwards.
-    await expect(config.updateProviders(draft => { draft[0]!.name = 'persisted' }, async (_next, commit) => {
-      await commit()
-      throw new Error('late failure')
-    })).rejects.toThrow('late failure')
+    await expect(
+      config.updateProviders(
+        draft => {
+          draft[0]!.name = 'persisted'
+        },
+        async (_next, commit) => {
+          await commit()
+          throw new Error('late failure')
+        },
+      ),
+    ).rejects.toThrow('late failure')
     expect(config.provider('a')?.name).toBe('persisted')
     expect((await HostConfig.open(directory)).provider('a')?.name).toBe('persisted')
   })
@@ -200,12 +277,34 @@ describe('HostConfig', () => {
     const directory = await dataDir()
     const config = await HostConfig.open(directory)
     const seen: string[][] = []
-    let release: () => void = () => { throw new Error('not initialized') }
-    const gate = new Promise<void>(resolve => { release = resolve })
-    const first = config.updateProviders(draft => { draft.push(record('a')) }, async () => { await gate })
-    const second = config.updateProviders(draft => { draft.push(record('b')) }, async next => { seen.push(next.map(item => item.id)) })
-    const failed = config.updateProviders(() => { throw new Error('bad mutation') })
-    const third = config.updateProviders(draft => { draft.push(record('c')) })
+    let release: () => void = () => {
+      throw new Error('not initialized')
+    }
+    const gate = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const first = config.updateProviders(
+      draft => {
+        draft.push(record('a'))
+      },
+      async () => {
+        await gate
+      },
+    )
+    const second = config.updateProviders(
+      draft => {
+        draft.push(record('b'))
+      },
+      async next => {
+        seen.push(next.map(item => item.id))
+      },
+    )
+    const failed = config.updateProviders(() => {
+      throw new Error('bad mutation')
+    })
+    const third = config.updateProviders(draft => {
+      draft.push(record('c'))
+    })
     await Promise.resolve()
     expect(seen).toEqual([])
     release()
@@ -213,7 +312,11 @@ describe('HostConfig', () => {
     await expect(failed).rejects.toThrow('bad mutation')
     expect(seen).toEqual([['a', 'b']])
     expect(config.providers().map(item => item.id)).toEqual(['a', 'b', 'c'])
-    expect(JSON.parse(await readFile(join(directory, 'providers.json'), 'utf8')).providers.map((item: ProviderRecord) => item.id)).toEqual(['a', 'b', 'c'])
+    expect(JSON.parse(await readFile(join(directory, 'providers.json'), 'utf8')).providers.map((item: ProviderRecord) => item.id)).toEqual([
+      'a',
+      'b',
+      'c',
+    ])
   })
 
   it.runIf(posix)('tightens a hand-created secrets file to 0600', async () => {

@@ -5,10 +5,21 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { AuditLog, verifyAuditFile, type AuditFs } from '../src/host/audit.ts'
 import { canonicalJson, sha256Hex } from '../src/host/crypto.ts'
-import { PolicyStore, ceilingFor, defaultPolicy, isEgressEntry, isLowering, policyDiff, policySchema, type Policy } from '../src/host/policy.ts'
+import {
+  PolicyStore,
+  ceilingFor,
+  defaultPolicy,
+  isEgressEntry,
+  isLowering,
+  policyDiff,
+  policySchema,
+  type Policy,
+} from '../src/host/policy.ts'
 
 const cleanups: Array<() => Promise<void> | void> = []
-afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
+})
 
 async function fixture(platform: NodeJS.Platform = 'darwin', auditFs?: AuditFs) {
   const dataDir = mkdtempSync(join(tmpdir(), 'harness-link-policy-'))
@@ -19,7 +30,10 @@ async function fixture(platform: NodeJS.Platform = 'darwin', auditFs?: AuditFs) 
 }
 
 function records(dataDir: string) {
-  return readFileSync(join(dataDir, 'audit', 'audit.jsonl'), 'utf8').trimEnd().split('\n').map(line => JSON.parse(line))
+  return readFileSync(join(dataDir, 'audit', 'audit.jsonl'), 'utf8')
+    .trimEnd()
+    .split('\n')
+    .map(line => JSON.parse(line))
 }
 
 function edit(policy: Policy, change: (draft: Policy) => void): Policy {
@@ -52,21 +66,71 @@ describe('policy defaults and schema', () => {
       change(draft)
       return policySchema.safeParse(draft).success
     }
-    expect(bad(draft => { draft.extra = true })).toBe(false)
-    expect(bad(draft => { draft.local.maxLevel = 'L3' })).toBe(false)
-    expect(bad(draft => { draft.remote.allowInstall = true })).toBe(false)
-    expect(bad(draft => { draft.insecureLan.enabled = true })).toBe(false)
-    expect(bad(draft => { draft.keyBackend = 'keychain' })).toBe(false)
-    expect(bad(draft => { draft.presence.helperCdhash = 'ABC' })).toBe(false)
-    expect(bad(draft => { draft.hostEgressAllow = ['localhost:11434', 'localhost:11434'] })).toBe(false)
-    expect(bad(draft => { draft.hostEgressAllow = Array.from({ length: 65 }, (_, index) => `h${index}.lan:80`) })).toBe(false)
-    expect(bad(draft => { draft.hostEgressAllow = ['localhost:11434', '127.0.0.1:8080', '[::1]:8080', 'my-box.lan:443'] })).toBe(true)
+    expect(
+      bad(draft => {
+        draft.extra = true
+      }),
+    ).toBe(false)
+    expect(
+      bad(draft => {
+        draft.local.maxLevel = 'L3'
+      }),
+    ).toBe(false)
+    expect(
+      bad(draft => {
+        draft.remote.allowInstall = true
+      }),
+    ).toBe(false)
+    expect(
+      bad(draft => {
+        draft.insecureLan.enabled = true
+      }),
+    ).toBe(false)
+    expect(
+      bad(draft => {
+        draft.keyBackend = 'keychain'
+      }),
+    ).toBe(false)
+    expect(
+      bad(draft => {
+        draft.presence.helperCdhash = 'ABC'
+      }),
+    ).toBe(false)
+    expect(
+      bad(draft => {
+        draft.hostEgressAllow = ['localhost:11434', 'localhost:11434']
+      }),
+    ).toBe(false)
+    expect(
+      bad(draft => {
+        draft.hostEgressAllow = Array.from({ length: 65 }, (_, index) => `h${index}.lan:80`)
+      }),
+    ).toBe(false)
+    expect(
+      bad(draft => {
+        draft.hostEgressAllow = ['localhost:11434', '127.0.0.1:8080', '[::1]:8080', 'my-box.lan:443']
+      }),
+    ).toBe(true)
   })
 
   it.each([
-    ['localhost:11434', true], ['127.0.0.1:1', true], ['[::1]:8080', true], ['[fd7a:115c:a1e0::1]:443', true], ['a.b-c.example:65535', true],
-    ['localhost', false], ['LOCALHOST:80', false], ['::1:80', false], ['[::1]', false], ['host:0', false], ['host:65536', false],
-    ['host:080', false], ['http://host:80', false], ['host:80/path', false], ['-bad.host:80', false], ['host_name:80', false], ['[zz::1]:80', false],
+    ['localhost:11434', true],
+    ['127.0.0.1:1', true],
+    ['[::1]:8080', true],
+    ['[fd7a:115c:a1e0::1]:443', true],
+    ['a.b-c.example:65535', true],
+    ['localhost', false],
+    ['LOCALHOST:80', false],
+    ['::1:80', false],
+    ['[::1]', false],
+    ['host:0', false],
+    ['host:65536', false],
+    ['host:080', false],
+    ['http://host:80', false],
+    ['host:80/path', false],
+    ['-bad.host:80', false],
+    ['host_name:80', false],
+    ['[zz::1]:80', false],
   ])('egress entry %s → %s', (entry, expected) => {
     expect(isEgressEntry(entry)).toBe(expected)
   })
@@ -76,31 +140,131 @@ describe('isLowering', () => {
   const base = defaultPolicy('darwin')
   it.each<[string, (draft: Policy) => void, boolean]>([
     ['no change', () => {}, true],
-    ['local L2 → L1', draft => { draft.local.maxLevel = 'L1' }, true],
-    ['local L2 → L0 and L3 off', draft => { draft.local.maxLevel = 'L0'; draft.local.allowL3 = false }, true],
-    ['remote L1 → L2', draft => { draft.remote.maxLevel = 'L2' }, false],
-    ['remote start off', draft => { draft.remote.allowRemoteStart = false }, true],
-    ['harnesses list → subset', draft => { draft.remote.harnesses = [] }, true],
-    ['harnesses list → any', draft => { draft.remote.harnesses = null }, false],
-    ['harnesses list → other', draft => { draft.remote.harnesses = ['codex'] }, false],
-    ['workspaces any → list', draft => { draft.remote.workspaces = ['default'] }, true],
-    ['egress add', draft => { draft.hostEgressAllow = ['localhost:11434'] }, false],
-    ['presence backend', draft => { draft.presence.backend = 'none' }, false],
-    ['presence pin', draft => { draft.presence.helperCdhash = 'a'.repeat(40) }, false],
-    ['unattended', draft => { draft.unattended.pauseAfterIdleDays = 7 }, false],
-    ['lower one, raise another', draft => { draft.local.maxLevel = 'L1'; draft.remote.maxLevel = 'L2' }, false],
+    [
+      'local L2 → L1',
+      draft => {
+        draft.local.maxLevel = 'L1'
+      },
+      true,
+    ],
+    [
+      'local L2 → L0 and L3 off',
+      draft => {
+        draft.local.maxLevel = 'L0'
+        draft.local.allowL3 = false
+      },
+      true,
+    ],
+    [
+      'remote L1 → L2',
+      draft => {
+        draft.remote.maxLevel = 'L2'
+      },
+      false,
+    ],
+    [
+      'remote start off',
+      draft => {
+        draft.remote.allowRemoteStart = false
+      },
+      true,
+    ],
+    [
+      'harnesses list → subset',
+      draft => {
+        draft.remote.harnesses = []
+      },
+      true,
+    ],
+    [
+      'harnesses list → any',
+      draft => {
+        draft.remote.harnesses = null
+      },
+      false,
+    ],
+    [
+      'harnesses list → other',
+      draft => {
+        draft.remote.harnesses = ['codex']
+      },
+      false,
+    ],
+    [
+      'workspaces any → list',
+      draft => {
+        draft.remote.workspaces = ['default']
+      },
+      true,
+    ],
+    [
+      'egress add',
+      draft => {
+        draft.hostEgressAllow = ['localhost:11434']
+      },
+      false,
+    ],
+    [
+      'presence backend',
+      draft => {
+        draft.presence.backend = 'none'
+      },
+      false,
+    ],
+    [
+      'presence pin',
+      draft => {
+        draft.presence.helperCdhash = 'a'.repeat(40)
+      },
+      false,
+    ],
+    [
+      'unattended',
+      draft => {
+        draft.unattended.pauseAfterIdleDays = 7
+      },
+      false,
+    ],
+    [
+      'lower one, raise another',
+      draft => {
+        draft.local.maxLevel = 'L1'
+        draft.remote.maxLevel = 'L2'
+      },
+      false,
+    ],
   ])('%s → %s', (_name, change, expected) => {
     expect(isLowering(base, edit(base, change))).toBe(expected)
   })
 
   it('treats removing egress entries and re-enabling L3 correctly', () => {
-    const wide = edit(base, draft => { draft.hostEgressAllow = ['a.lan:80', 'b.lan:80']; draft.local.allowL3 = false })
-    expect(isLowering(wide, edit(wide, draft => { draft.hostEgressAllow = ['b.lan:80'] }))).toBe(true)
-    expect(isLowering(wide, edit(wide, draft => { draft.local.allowL3 = true }))).toBe(false)
+    const wide = edit(base, draft => {
+      draft.hostEgressAllow = ['a.lan:80', 'b.lan:80']
+      draft.local.allowL3 = false
+    })
+    expect(
+      isLowering(
+        wide,
+        edit(wide, draft => {
+          draft.hostEgressAllow = ['b.lan:80']
+        }),
+      ),
+    ).toBe(true)
+    expect(
+      isLowering(
+        wide,
+        edit(wide, draft => {
+          draft.local.allowL3 = true
+        }),
+      ),
+    ).toBe(false)
   })
 
   it('describes changes as display lines', () => {
-    const next = edit(base, draft => { draft.local.maxLevel = 'L1'; draft.hostEgressAllow = ['localhost:11434'] })
+    const next = edit(base, draft => {
+      draft.local.maxLevel = 'L1'
+      draft.hostEgressAllow = ['localhost:11434']
+    })
     expect(policyDiff(base, next)).toEqual([
       { path: 'hostEgressAllow', before: '[]', after: '["localhost:11434"]' },
       { path: 'local.maxLevel', before: 'L2', after: 'L1' },
@@ -126,7 +290,9 @@ describe('PolicyStore', () => {
     expect(store.hash()).toBe(sha256Hex(canonicalJson(defaultPolicy('linux'))))
     expect(JSON.parse(readFileSync(join(dataDir, 'policy.json'), 'utf8'))).toEqual(defaultPolicy('linux'))
     expect(statSync(join(dataDir, 'policy.json')).mode & 0o777).toBe(0o600)
-    expect(records(dataDir).map(record => [record.action, record.detail])).toEqual([['policy.created', { before: '', after: store.hash(), fields: [], lowering: false }]])
+    expect(records(dataDir).map(record => [record.action, record.detail])).toEqual([
+      ['policy.created', { before: '', after: store.hash(), fields: [], lowering: false }],
+    ])
     const copy = store.get()
     copy.local.maxLevel = 'L0'
     expect(store.get().local.maxLevel).toBe('L2')
@@ -138,12 +304,19 @@ describe('PolicyStore', () => {
     const { dataDir, open } = await fixture()
     const store = await open()
     const actor = { deviceId: `dev_${'B'.repeat(22)}`, listener: 'loopback-tcp' as const, via: 'http' as const }
-    const lowered = edit(store.get(), draft => { draft.remote.maxLevel = 'L0' })
+    const lowered = edit(store.get(), draft => {
+      draft.remote.maxLevel = 'L0'
+    })
     await store.update(lowered, actor, 'none')
-    const raised = edit(store.get(), draft => { draft.hostEgressAllow = ['localhost:11434'] })
+    const raised = edit(store.get(), draft => {
+      draft.hostEgressAllow = ['localhost:11434']
+    })
     await expect(store.update(raised, actor, 'none')).rejects.toMatchObject({ status: 403, code: 'stepup-required' })
     await store.update(raised, { ...actor, listener: 'unix' }, 'lpc-local')
-    await expect(store.update({ ...raised, local: { maxLevel: 'L3', allowL3: true } } as never, actor, 'lpc-local')).rejects.toMatchObject({ status: 400, code: 'invalid-policy' })
+    await expect(store.update({ ...raised, local: { maxLevel: 'L3', allowL3: true } } as never, actor, 'lpc-local')).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid-policy',
+    })
     expect(JSON.parse(readFileSync(join(dataDir, 'policy.json'), 'utf8'))).toEqual(raised)
     const changes = records(dataDir).filter(record => record.action === 'policy.changed')
     expect(changes.map(record => [record.detail.fields, record.detail.lowering, record.stepup])).toEqual([
@@ -157,10 +330,16 @@ describe('PolicyStore', () => {
   it('detects and audits edits made outside Latch, without blocking', async () => {
     const { dataDir, audit, open } = await fixture()
     const store = await open()
-    await audit.append({ action: 'host.started', actor: { listener: 'host', via: 'startup' }, detail: { hostId: 'a'.repeat(52), version: '0.1.0', policyHash: store.hash(), settingsHash: sha256Hex(''), devMode: true } })
+    await audit.append({
+      action: 'host.started',
+      actor: { listener: 'host', via: 'startup' },
+      detail: { hostId: 'a'.repeat(52), version: '0.1.0', policyHash: store.hash(), settingsHash: sha256Hex(''), devMode: true },
+    })
     await open()
     expect(records(dataDir).some(record => record.action === 'policy.changed-outside')).toBe(false)
-    const edited = edit(store.get(), draft => { draft.remote.maxLevel = 'L2' })
+    const edited = edit(store.get(), draft => {
+      draft.remote.maxLevel = 'L2'
+    })
     writeFileSync(join(dataDir, 'policy.json'), JSON.stringify(edited))
     const reopened = await open()
     expect(reopened.get().remote.maxLevel).toBe('L2')
@@ -175,7 +354,11 @@ describe('PolicyStore', () => {
     const path = join(dataDir, 'policy.json')
     const valid = JSON.parse(readFileSync(path, 'utf8'))
     writeFileSync(path, JSON.stringify({ ...valid, insecureLan: { enabled: true } }))
-    await expect(open()).rejects.toMatchObject({ status: 500, code: 'insecure-lan-removed', message: expect.stringContaining('明文局域网接入已移除') })
+    await expect(open()).rejects.toMatchObject({
+      status: 500,
+      code: 'insecure-lan-removed',
+      message: expect.stringContaining('明文局域网接入已移除'),
+    })
     writeFileSync(path, '{broken')
     await expect(open()).rejects.toMatchObject({ code: 'policy-invalid' })
     expect(readFileSync(path, 'utf8')).toBe('{broken')
@@ -207,13 +390,20 @@ describe('PolicyStore', () => {
     const actor = { listener: 'unix' as const, via: 'http' as const }
     const changed = expect.objectContaining({ status: 409, code: 'policy-changed', message: '安全策略已被修改，请刷新后重试' })
     const base = store.hash()
-    const lowered = edit(store.get(), draft => { draft.remote.maxLevel = 'L0' })
+    const lowered = edit(store.get(), draft => {
+      draft.remote.maxLevel = 'L0'
+    })
     await expect(store.update(lowered, actor, 'none', 'f'.repeat(64))).rejects.toEqual(changed)
     expect(store.hash()).toBe(base)
 
     // Both confirmed against the same base: the first commits on the queue, the second no longer matches.
-    const raised = edit(store.get(), draft => { draft.hostEgressAllow = ['localhost:11434'] })
-    const [first, second] = await Promise.allSettled([store.update(lowered, actor, 'none', base), store.update(raised, actor, 'lpc-local', base)])
+    const raised = edit(store.get(), draft => {
+      draft.hostEgressAllow = ['localhost:11434']
+    })
+    const [first, second] = await Promise.allSettled([
+      store.update(lowered, actor, 'none', base),
+      store.update(raised, actor, 'lpc-local', base),
+    ])
     expect(first).toEqual({ status: 'fulfilled', value: { audited: true } })
     expect(second).toEqual({ status: 'rejected', reason: changed })
     expect(store.get()).toMatchObject({ remote: { maxLevel: 'L0' }, hostEgressAllow: [] })
@@ -221,10 +411,28 @@ describe('PolicyStore', () => {
     // The startup pin runs on the same queue, so a change confirmed against the unpinned policy is refused after it.
     const unpinned = store.hash()
     const pin = store.pinHelperCdhash('a'.repeat(40))
-    await expect(store.update(edit(store.get(), draft => { draft.local.allowL3 = false }), actor, 'none', unpinned)).rejects.toEqual(changed)
+    await expect(
+      store.update(
+        edit(store.get(), draft => {
+          draft.local.allowL3 = false
+        }),
+        actor,
+        'none',
+        unpinned,
+      ),
+    ).rejects.toEqual(changed)
     await pin
     expect(store.get()).toMatchObject({ local: { allowL3: true }, presence: { helperCdhash: 'a'.repeat(40) } })
-    await expect(store.update(edit(store.get(), draft => { draft.local.allowL3 = false }), actor, 'none', store.hash())).resolves.toEqual({ audited: true })
+    await expect(
+      store.update(
+        edit(store.get(), draft => {
+          draft.local.allowL3 = false
+        }),
+        actor,
+        'none',
+        store.hash(),
+      ),
+    ).resolves.toEqual({ audited: true })
     expect(records(dataDir).filter(record => record.action === 'policy.changed')).toHaveLength(3)
   })
 })
@@ -240,7 +448,10 @@ describe('PolicyStore when the audit log fails or policy.json disappears', () =>
           const handle = await openFile(path, 'a', 0o600)
           let written = false
           return {
-            write: data => { written = true; return handle.write(data) },
+            write: data => {
+              written = true
+              return handle.write(data)
+            },
             sync: async () => {
               const afterWrite = written
               written = false
@@ -261,12 +472,20 @@ describe('PolicyStore when the audit log fails or policy.json disappears', () =>
     const store = await open()
     const actor = { deviceId: `dev_${'B'.repeat(22)}`, listener: 'loopback-tcp' as const, via: 'http' as const }
     audit.state.failing = true
-    const lowered = edit(store.get(), draft => { draft.remote.maxLevel = 'L0'; draft.remote.allowRemoteStart = false })
+    const lowered = edit(store.get(), draft => {
+      draft.remote.maxLevel = 'L0'
+      draft.remote.allowRemoteStart = false
+    })
     await expect(store.update(lowered, actor, 'none')).resolves.toEqual({ audited: false })
     expect(store.get()).toEqual(lowered)
     expect(JSON.parse(readFileSync(join(dataDir, 'policy.json'), 'utf8'))).toEqual(lowered)
-    const raised = edit(store.get(), draft => { draft.remote.maxLevel = 'L1' })
-    await expect(store.update(raised, { ...actor, listener: 'unix' }, 'lpc-local')).rejects.toMatchObject({ status: 503, code: 'audit-unavailable' })
+    const raised = edit(store.get(), draft => {
+      draft.remote.maxLevel = 'L1'
+    })
+    await expect(store.update(raised, { ...actor, listener: 'unix' }, 'lpc-local')).rejects.toMatchObject({
+      status: 503,
+      code: 'audit-unavailable',
+    })
     expect(store.get()).toEqual(lowered)
     await expect(store.pinHelperCdhash('a'.repeat(40))).rejects.toMatchObject({ code: 'audit-unavailable' })
     expect(store.get().presence.helperCdhash).toBeNull()
@@ -279,13 +498,23 @@ describe('PolicyStore when the audit log fails or policy.json disappears', () =>
       ['policy.created', { before: '', after: sha256Hex(canonicalJson(defaultPolicy('darwin'))), fields: [], lowering: false }],
       ['policy.changed-outside', { expected: sha256Hex(canonicalJson(defaultPolicy('darwin'))), actual: reopened.hash() }],
     ])
-    await expect(reopened.update(edit(reopened.get(), draft => { draft.local.allowL3 = false }), actor, 'none')).resolves.toEqual({ audited: true })
+    await expect(
+      reopened.update(
+        edit(reopened.get(), draft => {
+          draft.local.allowL3 = false
+        }),
+        actor,
+        'none',
+      ),
+    ).resolves.toEqual({ audited: true })
   })
 
   it('records a deleted policy.json as changed outside Latch before recreating the defaults', async () => {
     const { dataDir, open } = await fixture()
     const store = await open()
-    const lowered = edit(store.get(), draft => { draft.remote.allowRemoteStart = false })
+    const lowered = edit(store.get(), draft => {
+      draft.remote.allowRemoteStart = false
+    })
     await store.update(lowered, { listener: 'unix', via: 'http' }, 'none')
     unlinkSync(join(dataDir, 'policy.json'))
     const recreated = await open()
@@ -307,7 +536,13 @@ describe('PolicyStore when the audit log fails or policy.json disappears', () =>
     await expect(recreated.pinHelperCdhash('b'.repeat(40))).rejects.toMatchObject({ status: 409, code: 'presence-repin-required' })
     expect(recreated.get().presence.helperCdhash).toBeNull()
     // The offline repin path still works.
-    await recreated.update(edit(recreated.get(), draft => { draft.presence.helperCdhash = 'b'.repeat(40) }), { listener: 'cli', via: 'cli' }, 'offline')
+    await recreated.update(
+      edit(recreated.get(), draft => {
+        draft.presence.helperCdhash = 'b'.repeat(40)
+      }),
+      { listener: 'cli', via: 'cli' },
+      'offline',
+    )
     expect(recreated.get().presence.helperCdhash).toBe('b'.repeat(40))
   })
 })

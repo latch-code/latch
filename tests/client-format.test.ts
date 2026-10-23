@@ -35,7 +35,13 @@ describe('client formatting', () => {
   it('renders tool arguments as entries and empty objects as no arguments', () => {
     expect(argumentView('{}')).toEqual({ kind: 'empty' })
     expect(argumentView(undefined)).toEqual({ kind: 'empty' })
-    expect(argumentView('{"path":"a.ts","lines":[1,2]}')).toEqual({ kind: 'entries', entries: [['path', 'a.ts'], ['lines', '[\n  1,\n  2\n]']] })
+    expect(argumentView('{"path":"a.ts","lines":[1,2]}')).toEqual({
+      kind: 'entries',
+      entries: [
+        ['path', 'a.ts'],
+        ['lines', '[\n  1,\n  2\n]'],
+      ],
+    })
     expect(argumentView('ls -la')).toEqual({ kind: 'text', text: 'ls -la' })
   })
 })

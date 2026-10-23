@@ -8,7 +8,10 @@ import { isActive } from '../format.ts'
  * no clock rather than a misleading one.
  */
 export function useRunClock(tasks: TaskSummary[], selectedId: string | null): number | undefined {
-  const [state, setState] = useState<{ statuses: Map<string, TaskStatus> | null; starts: Map<string, number> }>({ statuses: null, starts: new Map() })
+  const [state, setState] = useState<{ statuses: Map<string, TaskStatus> | null; starts: Map<string, number> }>({
+    statuses: null,
+    starts: new Map(),
+  })
   const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
@@ -27,8 +30,12 @@ export function useRunClock(tasks: TaskSummary[], selectedId: string | null): nu
   useEffect(() => {
     if (start === undefined) return
     setNow(Date.now())
-    const timer = setInterval(() => { setNow(Date.now()) }, 1000)
-    return () => { clearInterval(timer) }
+    const timer = setInterval(() => {
+      setNow(Date.now())
+    }, 1000)
+    return () => {
+      clearInterval(timer)
+    }
   }, [start])
   return start === undefined ? undefined : Math.max(0, now - start)
 }

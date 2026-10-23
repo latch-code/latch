@@ -5,7 +5,11 @@
  * Electron shell's proxy like every other API call.
  */
 
-export interface StreamEvent { event: string; data: string; id?: string }
+export interface StreamEvent {
+  event: string
+  data: string
+  id?: string
+}
 
 /** Incremental text/event-stream parser: CR, LF and CRLF line ends (also split across chunks), multi-line data, comments. */
 export class EventStreamParser {
@@ -28,7 +32,10 @@ export class EventStreamParser {
       const character = text[index]
       if (this.skipLineFeed) {
         this.skipLineFeed = false
-        if (character === '\n') { start = index + 1; continue }
+        if (character === '\n') {
+          start = index + 1
+          continue
+        }
       }
       if (character !== '\r' && character !== '\n') continue
       this.line += text.slice(start, index)
@@ -115,31 +122,62 @@ export function connectEventStream(url: string, handlers: EventStreamHandlers, o
   /** One immediate reconnect per renewal: a Host that keeps answering renewal-required falls back to the backoff. */
   let immediateUsed = false
 
-  const wait = (ms: number) => new Promise<void>(resolve => {
-    const timer = setTimeout(() => { wake = null; resolve() }, ms)
-    wake = () => { clearTimeout(timer); wake = null; resolve() }
-  })
+  const wait = (ms: number) =>
+    new Promise<void>(resolve => {
+      const timer = setTimeout(() => {
+        wake = null
+        resolve()
+      }, ms)
+      wake = () => {
+        clearTimeout(timer)
+        wake = null
+        resolve()
+      }
+    })
 
   async function connectOnce(): Promise<'retry-now' | 'backoff' | 'stop'> {
     const controller = new AbortController()
     request = controller
     let stall: ReturnType<typeof setTimeout> | undefined
-    const armStall = () => { clearTimeout(stall); stall = setTimeout(() => { controller.abort() }, stallMs) }
+    const armStall = () => {
+      clearTimeout(stall)
+      stall = setTimeout(() => {
+        controller.abort()
+      }, stallMs)
+    }
     try {
       armStall()
-      const response = await fetchImpl(url, { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'text/event-stream' }, signal: controller.signal })
+      const response = await fetchImpl(url, {
+        credentials: 'same-origin',
+        cache: 'no-store',
+        headers: { Accept: 'text/event-stream' },
+        signal: controller.signal,
+      })
       if (response.status === 401) {
         clearTimeout(stall)
         let code = 'unauthorized'
-        try { code = ((await response.json()) as { error?: string }).error ?? code } catch { /* A non-JSON 401 is still an authentication failure. */ }
+        try {
+          code = ((await response.json()) as { error?: string }).error ?? code
+        } catch {
+          /* A non-JSON 401 is still an authentication failure. */
+        }
         if (closed) return 'stop'
         const decision = await handlers.onUnauthorized(code)
         if (decision === 'stop') return 'stop'
-        if (decision === 'renewed' && code === 'renewal-required' && !immediateUsed) { immediateUsed = true; return 'retry-now' }
+        if (decision === 'renewed' && code === 'renewal-required' && !immediateUsed) {
+          immediateUsed = true
+          return 'retry-now'
+        }
         return 'backoff'
       }
-      if (!response.ok || response.body === null) { void response.body?.cancel().catch(() => {}); return 'backoff' }
-      if (closed) { void response.body.cancel().catch(() => {}); return 'stop' }
+      if (!response.ok || response.body === null) {
+        void response.body?.cancel().catch(() => {})
+        return 'backoff'
+      }
+      if (closed) {
+        void response.body.cancel().catch(() => {})
+        return 'stop'
+      }
       open = true
       attempt = 0
       immediateUsed = false
@@ -168,11 +206,20 @@ export function connectEventStream(url: string, handlers: EventStreamHandlers, o
   }
 
   // Resolved by reconnect() or close(); used while suspended.
-  const resumed = () => new Promise<void>(resolve => { wake = () => { wake = null; resolve() } })
+  const resumed = () =>
+    new Promise<void>(resolve => {
+      wake = () => {
+        wake = null
+        resolve()
+      }
+    })
 
   void (async () => {
     while (!closed) {
-      if (suspended) { await resumed(); continue }
+      if (suspended) {
+        await resumed()
+        continue
+      }
       const result = await connectOnce()
       if (closed || result === 'stop') break
       open = false
@@ -185,7 +232,9 @@ export function connectEventStream(url: string, handlers: EventStreamHandlers, o
   })()
 
   return {
-    get open() { return open },
+    get open() {
+      return open
+    },
     reconnect: () => {
       if (closed) return
       suspended = false

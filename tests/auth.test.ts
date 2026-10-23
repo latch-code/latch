@@ -6,8 +6,15 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AuditLog, verifyAuditFile, type AuditFs } from '../src/host/audit.ts'
 import {
-  CREDENTIAL_LIFETIME, DeviceStore, EnrollmentService, PENDING_LIFETIME, RENEW_INTERVAL, ROTATION_GRACE, createOfflineTicket,
-  type ConnectionContext, type DeviceFs,
+  CREDENTIAL_LIFETIME,
+  DeviceStore,
+  EnrollmentService,
+  PENDING_LIFETIME,
+  RENEW_INTERVAL,
+  ROTATION_GRACE,
+  createOfflineTicket,
+  type ConnectionContext,
+  type DeviceFs,
 } from '../src/host/auth.ts'
 import { deviceFingerprint, sha256Hex } from '../src/host/crypto.ts'
 import { PresenceService } from '../src/host/presence.ts'
@@ -16,7 +23,9 @@ import { P256_VECTOR, enrollSigningText, renewSigningText, testDeviceKey, type T
 import { createTestPresence, type TestPresence } from './helpers/presence.ts'
 
 const cleanups: Array<() => Promise<void> | void> = []
-afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
+})
 
 const hostId = P256_VECTOR.hostId
 const unix: ConnectionContext = { listener: 'unix', origin: 'unix:', remoteAddress: '' }
@@ -54,31 +63,66 @@ async function fixture(options: { dataDir?: string; presence?: TestPresence; fs?
   const service = new PresenceService({ backend: presence, hostId, audit, now, blockedReason: async () => undefined })
   const enrollments = new EnrollmentService({ hostId, devices, presence: service, audit, directory: authDir, now })
   return {
-    dataDir, authDir, clock, audit, devices, presence, enrollments,
+    dataDir,
+    authDir,
+    clock,
+    audit,
+    devices,
+    presence,
+    enrollments,
     reopen: reopenOptions => DeviceStore.open({ directory: authDir, hostId, audit, now, fs: reopenOptions?.fs }),
-    auditRecords: () => readFileSync(join(dataDir, 'audit', 'audit.jsonl'), 'utf8').trimEnd().split('\n').filter(Boolean).map(line => JSON.parse(line)),
+    auditRecords: () =>
+      readFileSync(join(dataDir, 'audit', 'audit.jsonl'), 'utf8')
+        .trimEnd()
+        .split('\n')
+        .filter(Boolean)
+        .map(line => JSON.parse(line)),
   }
 }
 
-interface Enrolled { id: string; credential: string; key: TestDeviceKey; connection: ConnectionContext }
+interface Enrolled {
+  id: string
+  credential: string
+  key: TestDeviceKey
+  connection: ConnectionContext
+}
 
-async function enroll(context: Fixture, connection: ConnectionContext, options: { scopes?: DeviceScope[]; invitation?: string; offlineCode?: string; name?: string } = {}): Promise<Enrolled> {
+async function enroll(
+  context: Fixture,
+  connection: ConnectionContext,
+  options: { scopes?: DeviceScope[]; invitation?: string; offlineCode?: string; name?: string } = {},
+): Promise<Enrolled> {
   const key = testDeviceKey()
-  const view = await context.enrollments.create({ publicKey: key.spki, name: options.name ?? '测试设备', scopes: options.scopes, invitation: options.invitation, offlineCode: options.offlineCode }, connection)
+  const view = await context.enrollments.create(
+    {
+      publicKey: key.spki,
+      name: options.name ?? '测试设备',
+      scopes: options.scopes,
+      invitation: options.invitation,
+      offlineCode: options.offlineCode,
+    },
+    connection,
+  )
   await vi.waitFor(() => expect(context.enrollments.status(view.id, connection).status).toBe('approved'))
   const result = await context.enrollments.complete(view.id, key.sign(enrollSigningText(hostId, view.id, view.nonce!)), connection)
   return { id: result.device.id, credential: result.credential, key, connection }
 }
 
 function presented(device: Enrolled) {
-  return { kind: device.connection.listener === 'unix' ? 'header' as const : 'cookie' as const, value: device.credential }
+  return { kind: device.connection.listener === 'unix' ? ('header' as const) : ('cookie' as const), value: device.credential }
 }
 
 /** Renews with `device`'s credential; the answer is pending until it is presented. */
 async function renew(context: Fixture, device: Enrolled): Promise<Enrolled> {
   const credentialHash = sha256Hex(device.credential)
   const { nonce } = context.devices.challenge(device.id, credentialHash)
-  const result = await context.devices.renew({ deviceId: device.id, nonce, signature: device.key.sign(renewSigningText(hostId, device.id, nonce)), connection: device.connection, credentialHash })
+  const result = await context.devices.renew({
+    deviceId: device.id,
+    nonce,
+    signature: device.key.sign(renewSigningText(hostId, device.id, nonce)),
+    connection: device.connection,
+    credentialHash,
+  })
   return { ...device, credential: result.credential }
 }
 
@@ -97,30 +141,70 @@ describe('device credentials', () => {
     const browser = await enroll(context, loopback)
     expect(browser.credential).toMatch(/^ldc1\.dev_[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}$/u)
     const ok = await context.devices.authenticate(presented(browser), loopback)
-    expect(ok).toMatchObject({ ok: true, device: { id: browser.id, status: 'active', listener: 'loopback-tcp', scopes: ['view', 'run', 'approve:standard'], dataScope: 'work' }, renewDue: false })
+    expect(ok).toMatchObject({
+      ok: true,
+      device: {
+        id: browser.id,
+        status: 'active',
+        listener: 'loopback-tcp',
+        scopes: ['view', 'run', 'approve:standard'],
+        dataScope: 'work',
+      },
+      renewDue: false,
+    })
     expect(ok.ok && ok.renewAfter).toBe(context.clock.now + RENEW_INTERVAL)
-    expect(await context.devices.authenticate(presented(browser), otherLoopback)).toEqual({ ok: false, code: 'listener-mismatch', deviceId: browser.id })
-    expect(await context.devices.authenticate(presented(browser), tls)).toEqual({ ok: false, code: 'listener-mismatch', deviceId: browser.id })
+    expect(await context.devices.authenticate(presented(browser), otherLoopback)).toEqual({
+      ok: false,
+      code: 'listener-mismatch',
+      deviceId: browser.id,
+    })
+    expect(await context.devices.authenticate(presented(browser), tls)).toEqual({
+      ok: false,
+      code: 'listener-mismatch',
+      deviceId: browser.id,
+    })
     // A cookie credential presented as a header (or on host.sock) is ignored.
-    expect(await context.devices.authenticate({ kind: 'header', value: browser.credential }, loopback)).toEqual({ ok: false, code: 'unauthorized' })
-    expect(await context.devices.authenticate({ kind: 'header', value: browser.credential }, unix)).toEqual({ ok: false, code: 'listener-mismatch', deviceId: browser.id })
+    expect(await context.devices.authenticate({ kind: 'header', value: browser.credential }, loopback)).toEqual({
+      ok: false,
+      code: 'unauthorized',
+    })
+    expect(await context.devices.authenticate({ kind: 'header', value: browser.credential }, unix)).toEqual({
+      ok: false,
+      code: 'listener-mismatch',
+      deviceId: browser.id,
+    })
     expect(context.devices.isActive(browser.id)).toBe(true)
     expect(context.devices.get(browser.id)?.status).toBe('active')
     expect(await context.devices.authenticate(undefined, loopback)).toEqual({ ok: false, code: 'unauthorized' })
     expect(await context.devices.authenticate({ kind: 'cookie', value: 'garbage' }, loopback)).toEqual({ ok: false, code: 'unauthorized' })
-    expect(await context.devices.authenticate({ kind: 'cookie', value: `${browser.credential.slice(0, -1)}${browser.credential.endsWith('A') ? 'B' : 'A'}` }, loopback)).toEqual({ ok: false, code: 'unauthorized' })
+    expect(
+      await context.devices.authenticate(
+        { kind: 'cookie', value: `${browser.credential.slice(0, -1)}${browser.credential.endsWith('A') ? 'B' : 'A'}` },
+        loopback,
+      ),
+    ).toEqual({ ok: false, code: 'unauthorized' })
   })
 
   it('requires renewal after 24 hours and expires after 30 days', async () => {
     const context = await fixture()
     const device = await enroll(context, loopback)
     context.clock.now += RENEW_INTERVAL + 1
-    expect(await context.devices.authenticate(presented(device), loopback)).toEqual({ ok: false, code: 'renewal-required', deviceId: device.id })
+    expect(await context.devices.authenticate(presented(device), loopback)).toEqual({
+      ok: false,
+      code: 'renewal-required',
+      deviceId: device.id,
+    })
     const renewed = await renew(context, device)
     expect(await context.devices.authenticate(presented(renewed), loopback)).toMatchObject({ ok: true })
-    expect(context.devices.get(device.id)?.credentialExpiresAt).toBe(new Date(Date.UTC(2026, 9, 23, 10) + CREDENTIAL_LIFETIME).toISOString())
+    expect(context.devices.get(device.id)?.credentialExpiresAt).toBe(
+      new Date(Date.UTC(2026, 9, 23, 10) + CREDENTIAL_LIFETIME).toISOString(),
+    )
     context.clock.now = Date.UTC(2026, 9, 23, 10) + CREDENTIAL_LIFETIME + 1
-    expect(await context.devices.authenticate(presented(renewed), loopback)).toEqual({ ok: false, code: 'credential-expired', deviceId: device.id })
+    expect(await context.devices.authenticate(presented(renewed), loopback)).toEqual({
+      ok: false,
+      code: 'credential-expired',
+      deviceId: device.id,
+    })
     expect(context.devices.isActive(device.id)).toBe(false)
     expect(() => context.devices.challenge(device.id)).toThrow(expect.objectContaining({ status: 401 }))
   })
@@ -135,26 +219,44 @@ describe('device credentials', () => {
 
     const first = context.devices.challenge(device.id)
     expect(first.expiresAt).toBe(context.clock.now + 60_000)
-    await expect(context.devices.renew({ deviceId: device.id, nonce: first.nonce, signature: sign(first.nonce, other.key), connection: loopback })).rejects.toEqual(invalid)
+    await expect(
+      context.devices.renew({ deviceId: device.id, nonce: first.nonce, signature: sign(first.nonce, other.key), connection: loopback }),
+    ).rejects.toEqual(invalid)
     // The challenge was consumed by the failed attempt.
-    await expect(context.devices.renew({ deviceId: device.id, nonce: first.nonce, signature: sign(first.nonce), connection: loopback })).rejects.toEqual(invalid)
+    await expect(
+      context.devices.renew({ deviceId: device.id, nonce: first.nonce, signature: sign(first.nonce), connection: loopback }),
+    ).rejects.toEqual(invalid)
 
     const foreign = context.devices.challenge(other.id)
-    await expect(context.devices.renew({ deviceId: device.id, nonce: foreign.nonce, signature: sign(foreign.nonce), connection: loopback })).rejects.toEqual(invalid)
+    await expect(
+      context.devices.renew({ deviceId: device.id, nonce: foreign.nonce, signature: sign(foreign.nonce), connection: loopback }),
+    ).rejects.toEqual(invalid)
 
     const stale = context.devices.challenge(device.id)
     context.clock.now += 60_001
-    await expect(context.devices.renew({ deviceId: device.id, nonce: stale.nonce, signature: sign(stale.nonce), connection: loopback })).rejects.toEqual(invalid)
+    await expect(
+      context.devices.renew({ deviceId: device.id, nonce: stale.nonce, signature: sign(stale.nonce), connection: loopback }),
+    ).rejects.toEqual(invalid)
 
     const wrongText = context.devices.challenge(device.id)
-    await expect(context.devices.renew({ deviceId: device.id, nonce: wrongText.nonce, signature: device.key.sign(enrollSigningText(hostId, device.id, wrongText.nonce)), connection: loopback })).rejects.toEqual(invalid)
+    await expect(
+      context.devices.renew({
+        deviceId: device.id,
+        nonce: wrongText.nonce,
+        signature: device.key.sign(enrollSigningText(hostId, device.id, wrongText.nonce)),
+        connection: loopback,
+      }),
+    ).rejects.toEqual(invalid)
 
     const elsewhere = context.devices.challenge(device.id)
-    await expect(context.devices.renew({ deviceId: device.id, nonce: elsewhere.nonce, signature: sign(elsewhere.nonce), connection: otherLoopback }))
-      .rejects.toMatchObject({ status: 401, code: 'listener-mismatch' })
+    await expect(
+      context.devices.renew({ deviceId: device.id, nonce: elsewhere.nonce, signature: sign(elsewhere.nonce), connection: otherLoopback }),
+    ).rejects.toMatchObject({ status: 401, code: 'listener-mismatch' })
 
     const ok = context.devices.challenge(device.id)
-    await expect(context.devices.renew({ deviceId: device.id, nonce: ok.nonce, signature: sign(ok.nonce), connection: loopback })).resolves.toMatchObject({ device: { id: device.id } })
+    await expect(
+      context.devices.renew({ deviceId: device.id, nonce: ok.nonce, signature: sign(ok.nonce), connection: loopback }),
+    ).resolves.toMatchObject({ device: { id: device.id } })
     expect(context.auditRecords().filter(record => record.action === 'device.credential.issued')).toHaveLength(1)
     expect(context.auditRecords().filter(record => record.action === 'device.credential.rotated')).toHaveLength(0)
   })
@@ -162,12 +264,19 @@ describe('device credentials', () => {
   it('keeps the replaced credential for a 60 s grace window once the new one is used, then treats its use as a replay', async () => {
     const context = await fixture()
     const admin = await enroll(context, unix, { name: '桌面' })
-    const invited = await enroll(context, tls, { invitation: (await context.enrollments.createInvitation({ inviter: context.devices.get(admin.id), tlsOrigin: tls.origin }, actor)).code })
+    const invited = await enroll(context, tls, {
+      invitation: (await context.enrollments.createInvitation({ inviter: context.devices.get(admin.id), tlsOrigin: tls.origin }, actor))
+        .code,
+    })
     const device = await enroll(context, loopback)
     context.clock.now += RENEW_INTERVAL + 1
     const renewed = await renew(context, device)
     // Until the new credential is used, the old one is still the current one (and still due for renewal).
-    expect(await context.devices.authenticate(presented(device), loopback)).toEqual({ ok: false, code: 'renewal-required', deviceId: device.id })
+    expect(await context.devices.authenticate(presented(device), loopback)).toEqual({
+      ok: false,
+      code: 'renewal-required',
+      deviceId: device.id,
+    })
     expect(await context.devices.authenticate(presented(renewed), loopback)).toMatchObject({ ok: true, renewDue: false })
     expect(await context.devices.authenticate(presented(device), loopback)).toMatchObject({ ok: true, device: { id: device.id } })
     // Inside the grace window the replaced credential can no longer renew.
@@ -175,17 +284,38 @@ describe('device credentials', () => {
     expect(() => context.devices.challenge(device.id, sha256Hex(device.credential))).toThrow(rotated)
     expect(() => context.devices.challenge(device.id)).toThrow(rotated)
     const nonce = context.devices.challenge(device.id, sha256Hex(renewed.credential)).nonce
-    await expect(context.devices.renew({
-      deviceId: device.id, nonce, signature: device.key.sign(renewSigningText(hostId, device.id, nonce)), connection: loopback, credentialHash: sha256Hex(device.credential),
-    })).rejects.toEqual(rotated)
+    await expect(
+      context.devices.renew({
+        deviceId: device.id,
+        nonce,
+        signature: device.key.sign(renewSigningText(hostId, device.id, nonce)),
+        connection: loopback,
+        credentialHash: sha256Hex(device.credential),
+      }),
+    ).rejects.toEqual(rotated)
     context.clock.now += ROTATION_GRACE + 1
     expect(await context.devices.authenticate(presented(renewed), loopback)).toMatchObject({ ok: true })
-    expect(await context.devices.authenticate(presented(device), loopback)).toEqual({ ok: false, code: 'device-revoked', deviceId: device.id })
+    expect(await context.devices.authenticate(presented(device), loopback)).toEqual({
+      ok: false,
+      code: 'device-revoked',
+      deviceId: device.id,
+    })
     expect(context.devices.get(device.id)).toMatchObject({ status: 'revoked', revokedReason: 'replay' })
-    expect(await context.devices.authenticate(presented(renewed), loopback)).toEqual({ ok: false, code: 'device-revoked', deviceId: device.id })
-    const revocations = readFileSync(join(context.authDir, 'revocations.jsonl'), 'utf8').trimEnd().split('\n').map(line => JSON.parse(line))
+    expect(await context.devices.authenticate(presented(renewed), loopback)).toEqual({
+      ok: false,
+      code: 'device-revoked',
+      deviceId: device.id,
+    })
+    const revocations = readFileSync(join(context.authDir, 'revocations.jsonl'), 'utf8')
+      .trimEnd()
+      .split('\n')
+      .map(line => JSON.parse(line))
     expect(revocations).toEqual([{ at: context.clock.now, deviceId: device.id, reason: 'replay' }])
-    expect(context.auditRecords().find(record => record.action === 'device.revoked')?.detail).toEqual({ deviceId: device.id, reason: 'replay', cascaded: 0 })
+    expect(context.auditRecords().find(record => record.action === 'device.revoked')?.detail).toEqual({
+      deviceId: device.id,
+      reason: 'replay',
+      cascaded: 0,
+    })
 
     // Replaying the unix admin's old credential cascades to the device it invited.
     context.clock.now += RENEW_INTERVAL + 1
@@ -202,15 +332,27 @@ describe('device credentials', () => {
     context.clock.now += RENEW_INTERVAL + 1
     // The answer to this renewal never arrives.
     await renew(context, device)
-    expect(await context.devices.authenticate(presented(device), loopback)).toEqual({ ok: false, code: 'renewal-required', deviceId: device.id })
+    expect(await context.devices.authenticate(presented(device), loopback)).toEqual({
+      ok: false,
+      code: 'renewal-required',
+      deviceId: device.id,
+    })
     context.clock.now += ROTATION_GRACE + 1
     const second = await renew(context, device)
     context.clock.now += ROTATION_GRACE + 1
-    expect(await context.devices.authenticate(presented(device), loopback)).toEqual({ ok: false, code: 'renewal-required', deviceId: device.id })
+    expect(await context.devices.authenticate(presented(device), loopback)).toEqual({
+      ok: false,
+      code: 'renewal-required',
+      deviceId: device.id,
+    })
     expect(await context.devices.authenticate(presented(second), loopback)).toMatchObject({ ok: true })
     expect(context.devices.get(device.id)).toMatchObject({ status: 'active' })
-    expect(context.auditRecords().map(record => record.action).filter(action => action.startsWith('device.credential') || action === 'device.revoked'))
-      .toEqual(['device.credential.issued', 'device.credential.issued', 'device.credential.rotated'])
+    expect(
+      context
+        .auditRecords()
+        .map(record => record.action)
+        .filter(action => action.startsWith('device.credential') || action === 'device.revoked'),
+    ).toEqual(['device.credential.issued', 'device.credential.issued', 'device.credential.rotated'])
   })
 
   it('makes a renewed credential current on its first use, after a restart too, and keeps only its hash on disk', async () => {
@@ -227,10 +369,17 @@ describe('device credentials', () => {
     const reopened = await context.reopen()
     context.clock.now += 1000
     const first = await reopened.authenticate(presented(renewed), loopback)
-    expect(first).toMatchObject({ ok: true, renewDue: false, renewAfter: context.clock.now + RENEW_INTERVAL, credentialHash: sha256Hex(renewed.credential) })
+    expect(first).toMatchObject({
+      ok: true,
+      renewDue: false,
+      renewAfter: context.clock.now + RENEW_INTERVAL,
+      credentialHash: sha256Hex(renewed.credential),
+    })
     expect(stored()).toMatchObject({ credential: { hash: sha256Hex(renewed.credential), rotatedAt: context.clock.now } })
     expect(stored().pending).toBeUndefined()
-    expect(stored().previous).toEqual([{ hash: sha256Hex(device.credential), rotatedAt: Date.UTC(2026, 9, 23, 10), graceUntil: context.clock.now + ROTATION_GRACE }])
+    expect(stored().previous).toEqual([
+      { hash: sha256Hex(device.credential), rotatedAt: Date.UTC(2026, 9, 23, 10), graceUntil: context.clock.now + ROTATION_GRACE },
+    ])
     expect(reopened.streamAllowed(device.id, sha256Hex(renewed.credential))).toBe(true)
     // Presenting it again changes nothing more.
     expect(await reopened.authenticate(presented(renewed), loopback)).toMatchObject({ ok: true })
@@ -245,7 +394,10 @@ describe('device credentials', () => {
     const renewed = await renew(context, device)
     context.clock.now += PENDING_LIFETIME + 1
     expect(await context.devices.authenticate(presented(renewed), loopback)).toEqual({ ok: false, code: 'unauthorized' })
-    expect(await context.devices.authenticate(presented(device), loopback)).toMatchObject({ ok: true, credentialHash: sha256Hex(device.credential) })
+    expect(await context.devices.authenticate(presented(device), loopback)).toMatchObject({
+      ok: true,
+      credentialHash: sha256Hex(device.credential),
+    })
     await context.devices.rename(device.id, '书房', actor)
     expect(devicesFile(context).devices.find(item => item.id === device.id)!.pending).toBeUndefined()
     expect(context.devices.get(device.id)?.status).toBe('active')
@@ -261,21 +413,56 @@ describe('device credentials', () => {
   it('cascades a revocation to the devices it invited and lets an admin restore them with a step-up', async () => {
     const context = await fixture()
     const desktop = await enroll(context, unix)
-    const invitation = await context.enrollments.createInvitation({ inviter: context.devices.get(desktop.id), scopes: ['view', 'run', 'approve:standard', 'admin'], tlsOrigin: tls.origin }, actor)
+    const invitation = await context.enrollments.createInvitation(
+      { inviter: context.devices.get(desktop.id), scopes: ['view', 'run', 'approve:standard', 'admin'], tlsOrigin: tls.origin },
+      actor,
+    )
     const phone = await enroll(context, tls, { invitation: invitation.code, scopes: ['view', 'run', 'approve:standard', 'admin'] })
-    expect(context.devices.get(phone.id)).toMatchObject({ pairedBy: { method: 'invitation', deviceId: desktop.id }, scopes: ['view', 'run', 'approve:standard', 'admin'] })
+    expect(context.devices.get(phone.id)).toMatchObject({
+      pairedBy: { method: 'invitation', deviceId: desktop.id },
+      scopes: ['view', 'run', 'approve:standard', 'admin'],
+    })
     const result = await context.devices.revoke(desktop.id, 'manual', actor)
-    expect(result).toMatchObject({ device: { id: desktop.id, status: 'revoked', revokedReason: 'manual' }, cascaded: [phone.id], audited: true })
+    expect(result).toMatchObject({
+      device: { id: desktop.id, status: 'revoked', revokedReason: 'manual' },
+      cascaded: [phone.id],
+      audited: true,
+    })
     expect(context.devices.get(phone.id)).toMatchObject({ status: 'review', scopes: ['view'] })
-    expect(await context.devices.authenticate(presented(phone), tls)).toMatchObject({ ok: true, device: { status: 'review', scopes: ['view'] } })
-    expect(context.auditRecords().filter(record => record.action === 'device.review').map(record => record.detail)).toEqual([{ deviceId: phone.id, causeDeviceId: desktop.id }])
+    expect(await context.devices.authenticate(presented(phone), tls)).toMatchObject({
+      ok: true,
+      device: { status: 'review', scopes: ['view'] },
+    })
+    expect(
+      context
+        .auditRecords()
+        .filter(record => record.action === 'device.review')
+        .map(record => record.detail),
+    ).toEqual([{ deviceId: phone.id, causeDeviceId: desktop.id }])
     expect(context.devices.hasActiveAdmin()).toBe(false)
 
-    await expect(context.devices.setScopes(phone.id, { scopes: ['view', 'run'] }, actor, 'none')).rejects.toMatchObject({ status: 403, code: 'stepup-required' })
-    await expect(context.devices.setScopes(phone.id, { scopes: ['view', 'secrets'] }, actor, 'lpc-local')).rejects.toMatchObject({ status: 400, code: 'scope-not-grantable' })
-    expect(await context.devices.setScopes(phone.id, { scopes: ['view', 'run'] }, actor, 'lpc-local')).toMatchObject({ status: 'active', scopes: ['view', 'run'] })
-    expect(await context.devices.setScopes(phone.id, { scopes: ['view'] }, actor, 'none')).toMatchObject({ status: 'active', scopes: ['view'] })
-    expect(context.auditRecords().filter(record => record.action === 'device.scopes.changed').map(record => [record.detail, record.stepup])).toEqual([
+    await expect(context.devices.setScopes(phone.id, { scopes: ['view', 'run'] }, actor, 'none')).rejects.toMatchObject({
+      status: 403,
+      code: 'stepup-required',
+    })
+    await expect(context.devices.setScopes(phone.id, { scopes: ['view', 'secrets'] }, actor, 'lpc-local')).rejects.toMatchObject({
+      status: 400,
+      code: 'scope-not-grantable',
+    })
+    expect(await context.devices.setScopes(phone.id, { scopes: ['view', 'run'] }, actor, 'lpc-local')).toMatchObject({
+      status: 'active',
+      scopes: ['view', 'run'],
+    })
+    expect(await context.devices.setScopes(phone.id, { scopes: ['view'] }, actor, 'none')).toMatchObject({
+      status: 'active',
+      scopes: ['view'],
+    })
+    expect(
+      context
+        .auditRecords()
+        .filter(record => record.action === 'device.scopes.changed')
+        .map(record => [record.detail, record.stepup]),
+    ).toEqual([
       [{ deviceId: phone.id, added: ['run'], removed: [] }, 'lpc-local'],
       [{ deviceId: phone.id, added: [], removed: ['run'] }, 'none'],
     ])
@@ -287,7 +474,10 @@ describe('device credentials', () => {
     let failRename = false
     const fs: DeviceFs = {
       open: (path, flags, mode) => open(path, flags, mode),
-      rename: async (from, to) => { if (failRename) throw Object.assign(new Error('crash'), { code: 'EIO' }); await rename(from, to) },
+      rename: async (from, to) => {
+        if (failRename) throw Object.assign(new Error('crash'), { code: 'EIO' })
+        await rename(from, to)
+      },
     }
     const context = await fixture({ fs })
     const device = await enroll(context, loopback)
@@ -359,15 +549,43 @@ describe('migration from v1', () => {
     mkdirSync(authDir, { recursive: true, mode: 0o700 })
     const hash = (token: string) => createHash('sha256').update(token).digest('hex')
     const base = { createdAt: '2026-01-01T00:00:00.000Z', lastSeenAt: '2026-01-02T00:00:00.000Z' }
-    writeFileSync(join(authDir, 'devices.json'), JSON.stringify({
-      version: 1,
-      devices: [
-        { ...base, id: 'a2c4e6a8-0000-4000-8000-000000000001', name: '书房电脑', role: 'owner', revoked: false, tokenHash: hash('owner-token-value'), expiresAt: now + 86_400_000 },
-        { ...base, id: 'a2c4e6a8-0000-4000-8000-000000000002', name: '手机', role: 'controller', revoked: false, tokenHash: hash('controller'), expiresAt: now + 86_400_000 },
-        { ...base, id: 'a2c4e6a8-0000-4000-8000-000000000003', name: '旧电脑', role: 'owner', revoked: true, tokenHash: hash('old'), expiresAt: now + 86_400_000 },
-      ],
-      pairings: [{ tokenHash: hash('pairing'), expiresAt: now + 60_000 }],
-    }), { mode: 0o600 })
+    writeFileSync(
+      join(authDir, 'devices.json'),
+      JSON.stringify({
+        version: 1,
+        devices: [
+          {
+            ...base,
+            id: 'a2c4e6a8-0000-4000-8000-000000000001',
+            name: '书房电脑',
+            role: 'owner',
+            revoked: false,
+            tokenHash: hash('owner-token-value'),
+            expiresAt: now + 86_400_000,
+          },
+          {
+            ...base,
+            id: 'a2c4e6a8-0000-4000-8000-000000000002',
+            name: '手机',
+            role: 'controller',
+            revoked: false,
+            tokenHash: hash('controller'),
+            expiresAt: now + 86_400_000,
+          },
+          {
+            ...base,
+            id: 'a2c4e6a8-0000-4000-8000-000000000003',
+            name: '旧电脑',
+            role: 'owner',
+            revoked: true,
+            tokenHash: hash('old'),
+            expiresAt: now + 86_400_000,
+          },
+        ],
+        pairings: [{ tokenHash: hash('pairing'), expiresAt: now + 60_000 }],
+      }),
+      { mode: 0o600 },
+    )
     writeFileSync(join(authDir, 'owner-token'), 'x'.repeat(43), { mode: 0o600 })
   }
 
@@ -381,20 +599,45 @@ describe('migration from v1', () => {
     expect(JSON.stringify(stored)).not.toContain('pairings')
     const byName = Object.fromEntries(stored.devices.map((device: { name: string }) => [device.name, device]))
     expect(byName['书房电脑']).toMatchObject({
-      status: 'legacy-pending', scopes: ['view'], listener: 'loopback-tcp', origin: '', publicKey: '', fingerprint: '', credential: null,
-      legacyTokenHash: createHash('sha256').update('owner-token-value').digest('hex'), pairedBy: { method: 'migration' },
+      status: 'legacy-pending',
+      scopes: ['view'],
+      listener: 'loopback-tcp',
+      origin: '',
+      publicKey: '',
+      fingerprint: '',
+      credential: null,
+      legacyTokenHash: createHash('sha256').update('owner-token-value').digest('hex'),
+      pairedBy: { method: 'migration' },
     })
     expect(byName['手机']).toMatchObject({ status: 'revoked', revokedReason: 'migration' })
     expect(byName['旧电脑']).toMatchObject({ status: 'revoked', revokedReason: 'migration' })
     for (const device of stored.devices) expect(device.id).toMatch(/^dev_[A-Za-z0-9_-]{22}$/u)
-    const revoked = readFileSync(join(context.authDir, 'revocations.jsonl'), 'utf8').trimEnd().split('\n').map(line => JSON.parse(line).deviceId)
+    const revoked = readFileSync(join(context.authDir, 'revocations.jsonl'), 'utf8')
+      .trimEnd()
+      .split('\n')
+      .map(line => JSON.parse(line).deviceId)
     expect(revoked.sort()).toEqual([byName['手机'].id, byName['旧电脑'].id].sort())
-    expect(context.auditRecords().filter(record => record.action === 'migration.devices.v2').map(record => record.detail)).toEqual([{ revoked: 2, legacy: 1 }])
+    expect(
+      context
+        .auditRecords()
+        .filter(record => record.action === 'migration.devices.v2')
+        .map(record => record.detail),
+    ).toEqual([{ revoked: 2, legacy: 1 }])
 
     // The old cookie only learns that it must re-confirm, and only on loopback.
-    expect(await context.devices.authenticate({ kind: 'legacy-cookie', value: 'owner-token-value' }, loopback)).toEqual({ ok: false, code: 'legacy-reconfirm', legacyName: '书房电脑' })
-    expect(await context.devices.authenticate({ kind: 'legacy-cookie', value: 'owner-token-value' }, tls)).toEqual({ ok: false, code: 'unauthorized' })
-    expect(await context.devices.authenticate({ kind: 'legacy-cookie', value: 'controller' }, loopback)).toEqual({ ok: false, code: 'unauthorized' })
+    expect(await context.devices.authenticate({ kind: 'legacy-cookie', value: 'owner-token-value' }, loopback)).toEqual({
+      ok: false,
+      code: 'legacy-reconfirm',
+      legacyName: '书房电脑',
+    })
+    expect(await context.devices.authenticate({ kind: 'legacy-cookie', value: 'owner-token-value' }, tls)).toEqual({
+      ok: false,
+      code: 'unauthorized',
+    })
+    expect(await context.devices.authenticate({ kind: 'legacy-cookie', value: 'controller' }, loopback)).toEqual({
+      ok: false,
+      code: 'unauthorized',
+    })
     expect(context.devices.isActive(byName['书房电脑'].id)).toBe(false)
     expect(context.devices.hasActiveAdmin()).toBe(false)
 
@@ -410,13 +653,22 @@ describe('migration from v1', () => {
     writeV1(join(dataDir, 'auth'), Date.UTC(2026, 9, 23, 10))
     const context = await fixture({ dataDir })
     const key = testDeviceKey()
-    const view = await context.enrollments.create({ publicKey: key.spki, name: '' }, loopback, { kind: 'legacy-cookie', value: 'owner-token-value' })
+    const view = await context.enrollments.create({ publicKey: key.spki, name: '' }, loopback, {
+      kind: 'legacy-cookie',
+      value: 'owner-token-value',
+    })
     await vi.waitFor(() => expect(context.enrollments.status(view.id, loopback).status).toBe('approved'))
     expect(context.presence.requests[0]!.preview.lines[0]).toEqual({ label: '设备名称', value: '书房电脑' })
     const result = await context.enrollments.complete(view.id, key.sign(enrollSigningText(hostId, view.id, view.nonce!)), loopback)
     expect(result.device.name).toBe('书房电脑')
-    expect(await context.devices.authenticate({ kind: 'legacy-cookie', value: 'owner-token-value' }, loopback)).toEqual({ ok: false, code: 'unauthorized' })
-    expect(context.devices.list().find(device => device.name === '书房电脑' && device.pairedBy.method === 'migration')).toMatchObject({ status: 'revoked', revokedReason: 'migration' })
+    expect(await context.devices.authenticate({ kind: 'legacy-cookie', value: 'owner-token-value' }, loopback)).toEqual({
+      ok: false,
+      code: 'unauthorized',
+    })
+    expect(context.devices.list().find(device => device.name === '书房电脑' && device.pairedBy.method === 'migration')).toMatchObject({
+      status: 'revoked',
+      revokedReason: 'migration',
+    })
   })
 
   it('deletes a stray owner token when there is no device file', async () => {
@@ -433,12 +685,27 @@ describe('enrollment', () => {
   it('shows the device on the Host and completes only with a signature from the enrolling key', async () => {
     const context = await fixture({ presence: createTestPresence({ mode: 'manual' }) })
     expect(await context.enrollments.info(loopback)).toEqual({
-      hostId, listener: 'loopback-tcp', presence: { status: 'available' }, firstDevice: true, invitationRequired: false, offlineCodeAccepted: false,
+      hostId,
+      listener: 'loopback-tcp',
+      presence: { status: 'available' },
+      firstDevice: true,
+      invitationRequired: false,
+      offlineCodeAccepted: false,
     })
     const key = testDeviceKey()
-    const view = await context.enrollments.create({ publicKey: key.spki, name: '我的浏览器', scopes: ['view', 'run', 'approve:standard', 'admin'] }, loopback)
+    const view = await context.enrollments.create(
+      { publicKey: key.spki, name: '我的浏览器', scopes: ['view', 'run', 'approve:standard', 'admin'] },
+      loopback,
+    )
     const fingerprint = deviceFingerprint(Buffer.from(key.spki, 'base64url'))
-    expect(view).toEqual({ id: expect.stringMatching(/^enr_/u), status: 'pending', fingerprint, nonce: expect.any(String), expiresAt: new Date(context.clock.now + 120_000).toISOString(), hashDisplay: expect.stringMatching(/^[0-9a-f]{4}(-[0-9a-f]{4}){3}$/u) })
+    expect(view).toEqual({
+      id: expect.stringMatching(/^enr_/u),
+      status: 'pending',
+      fingerprint,
+      nonce: expect.any(String),
+      expiresAt: new Date(context.clock.now + 120_000).toISOString(),
+      hashDisplay: expect.stringMatching(/^[0-9a-f]{4}(-[0-9a-f]{4}){3}$/u),
+    })
     const { preview } = await context.presence.waitForRequest()
     expect(preview.title).toBe('登记新设备')
     expect(preview.requester).toEqual({ deviceName: '我的浏览器', listener: 'loopback-tcp', remoteAddress: '127.0.0.1' })
@@ -450,27 +717,60 @@ describe('enrollment', () => {
       { label: '请求的权限', value: '查看、发起和继续会话、批准普通操作、管理此 Host' },
       { label: '数据范围', value: '工作' },
     ])
-    expect(preview.warnings).toEqual(['只有在你正在登记这台设备、并且两边显示的指纹完全一致时才确认。', '该设备将可以管理此 Host（模型服务、插件、项目和其他设备）。'])
+    expect(preview.warnings).toEqual([
+      '只有在你正在登记这台设备、并且两边显示的指纹完全一致时才确认。',
+      '该设备将可以管理此 Host（模型服务、插件、项目和其他设备）。',
+    ])
     expect(context.presence.requests[0]!.requireBiometric).toBe(true)
-    expect(context.enrollments.status(view.id, loopback)).toEqual({ id: view.id, status: 'pending', fingerprint, expiresAt: view.expiresAt, hashDisplay: view.hashDisplay })
+    expect(context.enrollments.status(view.id, loopback)).toEqual({
+      id: view.id,
+      status: 'pending',
+      fingerprint,
+      expiresAt: view.expiresAt,
+      hashDisplay: view.hashDisplay,
+    })
     await expect(context.enrollments.complete(view.id, 'x', loopback)).rejects.toMatchObject({ status: 409, code: 'enrollment-pending' })
-    expect(() => context.enrollments.status(view.id, otherLoopback)).toThrow(expect.objectContaining({ status: 409, code: 'listener-mismatch', message: '请在发起登记的同一页面完成登记' }))
-    expect(() => context.enrollments.status('enr_missing', loopback)).toThrow(expect.objectContaining({ status: 404, code: 'enrollment-not-found' }))
+    expect(() => context.enrollments.status(view.id, otherLoopback)).toThrow(
+      expect.objectContaining({ status: 409, code: 'listener-mismatch', message: '请在发起登记的同一页面完成登记' }),
+    )
+    expect(() => context.enrollments.status('enr_missing', loopback)).toThrow(
+      expect.objectContaining({ status: 404, code: 'enrollment-not-found' }),
+    )
     context.presence.approveNext()
     await vi.waitFor(() => expect(context.enrollments.status(view.id, loopback).status).toBe('approved'))
 
     const other = testDeviceKey()
     const sign = (signer: TestDeviceKey) => signer.sign(enrollSigningText(hostId, view.id, view.nonce!))
-    await expect(context.enrollments.complete(view.id, sign(other), loopback)).rejects.toMatchObject({ status: 401, code: 'invalid-signature' })
+    await expect(context.enrollments.complete(view.id, sign(other), loopback)).rejects.toMatchObject({
+      status: 401,
+      code: 'invalid-signature',
+    })
     await expect(context.enrollments.complete(view.id, sign(key), otherLoopback)).rejects.toMatchObject({ code: 'listener-mismatch' })
     const result = await context.enrollments.complete(view.id, sign(key), loopback)
-    expect(result.device).toMatchObject({ name: '我的浏览器', listener: 'loopback-tcp', fingerprint, scopes: ['view', 'run', 'approve:standard', 'admin'], dataScope: 'work', pairedBy: { method: 'lpc' } })
-    await expect(context.enrollments.complete(view.id, sign(key), loopback)).rejects.toMatchObject({ status: 409, code: 'enrollment-completed' })
+    expect(result.device).toMatchObject({
+      name: '我的浏览器',
+      listener: 'loopback-tcp',
+      fingerprint,
+      scopes: ['view', 'run', 'approve:standard', 'admin'],
+      dataScope: 'work',
+      pairedBy: { method: 'lpc' },
+    })
+    await expect(context.enrollments.complete(view.id, sign(key), loopback)).rejects.toMatchObject({
+      status: 409,
+      code: 'enrollment-completed',
+    })
     expect(context.devices.hasActiveAdmin()).toBe(true)
     expect((await context.enrollments.info(loopback)).firstDevice).toBe(false)
     const records = context.auditRecords()
-    expect(records.find(record => record.action === 'device.enroll.requested')?.detail).toMatchObject({ listener: 'loopback-tcp', fingerprint: fingerprint.replace(/ /gu, ''), scopes: ['view', 'run', 'approve:standard', 'admin'] })
-    expect(records.find(record => record.action === 'device.enrolled')).toMatchObject({ stepup: 'lpc-local', detail: { deviceId: result.device.id, method: 'lpc' } })
+    expect(records.find(record => record.action === 'device.enroll.requested')?.detail).toMatchObject({
+      listener: 'loopback-tcp',
+      fingerprint: fingerprint.replace(/ /gu, ''),
+      scopes: ['view', 'run', 'approve:standard', 'admin'],
+    })
+    expect(records.find(record => record.action === 'device.enrolled')).toMatchObject({
+      stepup: 'lpc-local',
+      detail: { deviceId: result.device.id, method: 'lpc' },
+    })
   })
 
   it('voids the enrollment after three bad signatures', async () => {
@@ -479,10 +779,20 @@ describe('enrollment', () => {
     const view = await context.enrollments.create({ publicKey: key.spki, name: '浏览器' }, loopback)
     await vi.waitFor(() => expect(context.enrollments.status(view.id, loopback).status).toBe('approved'))
     for (let attempt = 0; attempt < 3; attempt++) {
-      await expect(context.enrollments.complete(view.id, testDeviceKey().sign('x'), loopback)).rejects.toMatchObject({ status: 401, code: 'invalid-signature' })
+      await expect(context.enrollments.complete(view.id, testDeviceKey().sign('x'), loopback)).rejects.toMatchObject({
+        status: 401,
+        code: 'invalid-signature',
+      })
     }
-    await expect(context.enrollments.complete(view.id, key.sign(enrollSigningText(hostId, view.id, view.nonce!)), loopback)).rejects.toMatchObject({ status: 410 })
-    expect(context.auditRecords().filter(record => record.action === 'device.enroll.failed').map(record => record.detail.reason)).toEqual(['signature'])
+    await expect(
+      context.enrollments.complete(view.id, key.sign(enrollSigningText(hostId, view.id, view.nonce!)), loopback),
+    ).rejects.toMatchObject({ status: 410 })
+    expect(
+      context
+        .auditRecords()
+        .filter(record => record.action === 'device.enroll.failed')
+        .map(record => record.detail.reason),
+    ).toEqual(['signature'])
   })
 
   it('reports denials and expiry, and cancels the local dialog', async () => {
@@ -491,7 +801,11 @@ describe('enrollment', () => {
     await context.presence.waitForRequest()
     context.presence.denyNext()
     await vi.waitFor(() => expect(context.enrollments.status(denied.id, loopback).status).toBe('denied'))
-    await expect(context.enrollments.complete(denied.id, 'x', loopback)).rejects.toMatchObject({ status: 403, code: 'enrollment-denied', message: '本机拒绝了此设备' })
+    await expect(context.enrollments.complete(denied.id, 'x', loopback)).rejects.toMatchObject({
+      status: 403,
+      code: 'enrollment-denied',
+      message: '本机拒绝了此设备',
+    })
 
     const expired = await context.enrollments.create({ publicKey: testDeviceKey().spki, name: 'b' }, loopback)
     await context.presence.waitForRequest()
@@ -504,72 +818,160 @@ describe('enrollment', () => {
     context.enrollments.cancel(cancelled.id, loopback)
     expect(context.enrollments.status(cancelled.id, loopback).status).toBe('cancelled')
     expect(() => context.presence.approveNext()).toThrow()
-    await vi.waitFor(() => expect(context.auditRecords().filter(record => record.action === 'device.enroll.failed').map(record => record.detail.reason)).toEqual(['denied', 'expired', 'cancelled']))
+    await vi.waitFor(() =>
+      expect(
+        context
+          .auditRecords()
+          .filter(record => record.action === 'device.enroll.failed')
+          .map(record => record.detail.reason),
+      ).toEqual(['denied', 'expired', 'cancelled']),
+    )
   })
 
   it('refuses elevated scopes off host.sock and grants all six on host.sock', async () => {
     const context = await fixture()
     for (const scope of ['approve:elevated', 'secrets'] as const) {
-      await expect(context.enrollments.create({ publicKey: testDeviceKey().spki, name: 'x', scopes: ['view', scope] }, loopback))
-        .rejects.toMatchObject({ status: 400, code: 'scope-not-grantable', message: '该权限在此连接方式下不可授予' })
+      await expect(
+        context.enrollments.create({ publicKey: testDeviceKey().spki, name: 'x', scopes: ['view', scope] }, loopback),
+      ).rejects.toMatchObject({ status: 400, code: 'scope-not-grantable', message: '该权限在此连接方式下不可授予' })
     }
-    await expect(context.enrollments.create({ publicKey: testDeviceKey().spki, name: 'x', scopes: ['root' as DeviceScope] }, loopback)).rejects.toMatchObject({ status: 400 })
-    await expect(context.enrollments.create({ publicKey: 'bad', name: 'x' }, loopback)).rejects.toMatchObject({ status: 400, code: 'invalid-public-key' })
+    await expect(
+      context.enrollments.create({ publicKey: testDeviceKey().spki, name: 'x', scopes: ['root' as DeviceScope] }, loopback),
+    ).rejects.toMatchObject({ status: 400 })
+    await expect(context.enrollments.create({ publicKey: 'bad', name: 'x' }, loopback)).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid-public-key',
+    })
     const desktop = await enroll(context, unix)
-    expect(context.devices.get(desktop.id)).toMatchObject({ listener: 'unix', scopes: ['view', 'run', 'approve:standard', 'approve:elevated', 'admin', 'secrets'], dataScope: 'all' })
+    expect(context.devices.get(desktop.id)).toMatchObject({
+      listener: 'unix',
+      scopes: ['view', 'run', 'approve:standard', 'approve:elevated', 'admin', 'secrets'],
+      dataScope: 'all',
+    })
     expect(context.presence.requests.at(-1)!.preview.lines.find(line => line.label === '来源地址')?.value).toBe('本机 host.sock')
   })
 
   it('requires a single-use invitation on TLS listeners, capped to its scopes', async () => {
     const context = await fixture()
     const desktop = await enroll(context, unix, { name: '桌面' })
-    expect(await context.enrollments.info(tls)).toEqual({ hostId, listener: 'tailnet-tls', presence: { status: 'available' }, invitationRequired: true, offlineCodeAccepted: false })
-    await expect(context.enrollments.create({ publicKey: testDeviceKey().spki, name: '手机' }, tls)).rejects.toMatchObject({ status: 403, code: 'invitation-required' })
-    await expect(context.enrollments.create({ publicKey: testDeviceKey().spki, name: '手机', invitation: 'lpi1-AAAAAAAAAAAAAAAAAAAAAAAAAA' }, tls)).rejects.toMatchObject({ status: 403, code: 'invitation-invalid' })
-    await expect(context.enrollments.createInvitation({ scopes: ['view', 'secrets'], tlsOrigin: tls.origin }, actor)).rejects.toMatchObject({ code: 'scope-not-grantable' })
-    await expect(context.enrollments.createInvitation({ tlsOrigin: '' }, actor)).rejects.toMatchObject({ status: 409, code: 'tls-not-configured' })
-    await expect(context.enrollments.createInvitation({ tlsOrigin: 'http://latch.example' }, actor)).rejects.toMatchObject({ code: 'tls-not-configured' })
+    expect(await context.enrollments.info(tls)).toEqual({
+      hostId,
+      listener: 'tailnet-tls',
+      presence: { status: 'available' },
+      invitationRequired: true,
+      offlineCodeAccepted: false,
+    })
+    await expect(context.enrollments.create({ publicKey: testDeviceKey().spki, name: '手机' }, tls)).rejects.toMatchObject({
+      status: 403,
+      code: 'invitation-required',
+    })
+    await expect(
+      context.enrollments.create({ publicKey: testDeviceKey().spki, name: '手机', invitation: 'lpi1-AAAAAAAAAAAAAAAAAAAAAAAAAA' }, tls),
+    ).rejects.toMatchObject({ status: 403, code: 'invitation-invalid' })
+    await expect(context.enrollments.createInvitation({ scopes: ['view', 'secrets'], tlsOrigin: tls.origin }, actor)).rejects.toMatchObject(
+      { code: 'scope-not-grantable' },
+    )
+    await expect(context.enrollments.createInvitation({ tlsOrigin: '' }, actor)).rejects.toMatchObject({
+      status: 409,
+      code: 'tls-not-configured',
+    })
+    await expect(context.enrollments.createInvitation({ tlsOrigin: 'http://latch.example' }, actor)).rejects.toMatchObject({
+      code: 'tls-not-configured',
+    })
 
-    const invitation = await context.enrollments.createInvitation({ inviter: context.devices.get(desktop.id), tlsOrigin: tls.origin }, actor)
-    expect(invitation).toEqual({ id: expect.stringMatching(/^inv_/u), code: expect.stringMatching(/^lpi1-[A-Z2-7]{26}$/u), url: `${tls.origin}/link/#pair=${invitation.code}`, scopes: ['view', 'run', 'approve:standard'], expiresAt: new Date(context.clock.now + 600_000).toISOString() })
-    await expect(context.enrollments.create({ publicKey: testDeviceKey().spki, name: '手机', invitation: invitation.code, scopes: ['view', 'admin'] }, tls)).rejects.toMatchObject({ status: 400, code: 'scope-not-grantable' })
+    const invitation = await context.enrollments.createInvitation(
+      { inviter: context.devices.get(desktop.id), tlsOrigin: tls.origin },
+      actor,
+    )
+    expect(invitation).toEqual({
+      id: expect.stringMatching(/^inv_/u),
+      code: expect.stringMatching(/^lpi1-[A-Z2-7]{26}$/u),
+      url: `${tls.origin}/link/#pair=${invitation.code}`,
+      scopes: ['view', 'run', 'approve:standard'],
+      expiresAt: new Date(context.clock.now + 600_000).toISOString(),
+    })
+    await expect(
+      context.enrollments.create(
+        { publicKey: testDeviceKey().spki, name: '手机', invitation: invitation.code, scopes: ['view', 'admin'] },
+        tls,
+      ),
+    ).rejects.toMatchObject({ status: 400, code: 'scope-not-grantable' })
     const phone = await enroll(context, tls, { invitation: invitation.code, name: '手机' })
-    expect(context.devices.get(phone.id)).toMatchObject({ listener: 'tailnet-tls', scopes: ['view', 'run', 'approve:standard'], pairedBy: { method: 'invitation', deviceId: desktop.id } })
+    expect(context.devices.get(phone.id)).toMatchObject({
+      listener: 'tailnet-tls',
+      scopes: ['view', 'run', 'approve:standard'],
+      pairedBy: { method: 'invitation', deviceId: desktop.id },
+    })
     expect(context.presence.requests.at(-1)!.preview.lines.at(-1)).toEqual({ label: '邀请来源', value: '桌面' })
-    await expect(context.enrollments.create({ publicKey: testDeviceKey().spki, name: '第二台', invitation: invitation.code }, tls)).rejects.toMatchObject({ code: 'invitation-invalid' })
-    expect(context.auditRecords().find(record => record.action === 'pairing.invited')?.detail).toEqual({ invitationId: invitation.id, scopes: ['view', 'run', 'approve:standard'] })
+    await expect(
+      context.enrollments.create({ publicKey: testDeviceKey().spki, name: '第二台', invitation: invitation.code }, tls),
+    ).rejects.toMatchObject({ code: 'invitation-invalid' })
+    expect(context.auditRecords().find(record => record.action === 'pairing.invited')?.detail).toEqual({
+      invitationId: invitation.id,
+      scopes: ['view', 'run', 'approve:standard'],
+    })
     expect(readFileSync(join(context.dataDir, 'audit', 'audit.jsonl'), 'utf8')).not.toContain(invitation.code)
 
     const expiring = await context.enrollments.createInvitation({ tlsOrigin: tls.origin }, actor)
     context.clock.now += 600_001
-    await expect(context.enrollments.create({ publicKey: testDeviceKey().spki, name: '手机', invitation: expiring.code }, tls)).rejects.toMatchObject({ code: 'invitation-invalid' })
+    await expect(
+      context.enrollments.create({ publicKey: testDeviceKey().spki, name: '手机', invitation: expiring.code }, tls),
+    ).rejects.toMatchObject({ code: 'invitation-invalid' })
 
     // An invitation dies with its inviter.
     const orphan = await context.enrollments.createInvitation({ inviter: context.devices.get(desktop.id), tlsOrigin: tls.origin }, actor)
     await context.devices.revoke(desktop.id, 'manual', actor)
-    await expect(context.enrollments.create({ publicKey: testDeviceKey().spki, name: '手机', invitation: orphan.code }, tls)).rejects.toMatchObject({ code: 'invitation-invalid' })
+    await expect(
+      context.enrollments.create({ publicKey: testDeviceKey().spki, name: '手机', invitation: orphan.code }, tls),
+    ).rejects.toMatchObject({ code: 'invitation-invalid' })
   })
 
   it('accepts a one-time offline code on loopback and host.sock only', async () => {
     const context = await fixture({ presence: createTestPresence({ mode: 'unavailable' }) })
     const ticket = await createOfflineTicket(context.authDir, { now: () => context.clock.now })
-    expect(ticket).toEqual({ code: expect.stringMatching(/^lpo1-[A-Z2-7]{26}$/u), expiresAt: context.clock.now + 15 * 60_000, ticketId: expect.stringMatching(/^chl_/u) })
+    expect(ticket).toEqual({
+      code: expect.stringMatching(/^lpo1-[A-Z2-7]{26}$/u),
+      expiresAt: context.clock.now + 15 * 60_000,
+      ticketId: expect.stringMatching(/^chl_/u),
+    })
     expect(statSync(join(context.authDir, 'offline-enrollments.json')).mode & 0o777).toBe(0o600)
     expect(readFileSync(join(context.authDir, 'offline-enrollments.json'), 'utf8')).not.toContain(ticket.code)
-    expect(await context.enrollments.info(loopback)).toMatchObject({ presence: { status: 'unavailable', message: '测试中的本机确认不可用' }, offlineCodeAccepted: true })
+    expect(await context.enrollments.info(loopback)).toMatchObject({
+      presence: { status: 'unavailable', message: '测试中的本机确认不可用' },
+      offlineCodeAccepted: true,
+    })
     expect((await context.enrollments.info(tls)).offlineCodeAccepted).toBe(false)
-    await expect(context.enrollments.create({ publicKey: testDeviceKey().spki, name: 'x' }, loopback)).rejects.toMatchObject({ status: 503, code: 'presence-unavailable' })
-    await expect(context.enrollments.create({ publicKey: testDeviceKey().spki, name: 'x', offlineCode: ticket.code }, tls)).rejects.toMatchObject({ status: 403, code: 'offline-code-invalid' })
-    await expect(context.enrollments.create({ publicKey: testDeviceKey().spki, name: 'x', offlineCode: 'lpo1-AAAAAAAAAAAAAAAAAAAAAAAAAA' }, loopback)).rejects.toMatchObject({ code: 'offline-code-invalid', message: '离线登记码无效或已过期' })
+    await expect(context.enrollments.create({ publicKey: testDeviceKey().spki, name: 'x' }, loopback)).rejects.toMatchObject({
+      status: 503,
+      code: 'presence-unavailable',
+    })
+    await expect(
+      context.enrollments.create({ publicKey: testDeviceKey().spki, name: 'x', offlineCode: ticket.code }, tls),
+    ).rejects.toMatchObject({ status: 403, code: 'offline-code-invalid' })
+    await expect(
+      context.enrollments.create({ publicKey: testDeviceKey().spki, name: 'x', offlineCode: 'lpo1-AAAAAAAAAAAAAAAAAAAAAAAAAA' }, loopback),
+    ).rejects.toMatchObject({ code: 'offline-code-invalid', message: '离线登记码无效或已过期' })
 
     const key = testDeviceKey()
-    const view = await context.enrollments.create({ publicKey: key.spki, name: '浏览器', offlineCode: ticket.code, scopes: ['view'] }, loopback)
+    const view = await context.enrollments.create(
+      { publicKey: key.spki, name: '浏览器', offlineCode: ticket.code, scopes: ['view'] },
+      loopback,
+    )
     expect(view.status).toBe('approved')
     const result = await context.enrollments.complete(view.id, key.sign(enrollSigningText(hostId, view.id, view.nonce!)), loopback)
-    expect(result.device).toMatchObject({ scopes: ['view', 'run', 'approve:standard', 'admin'], dataScope: 'work', pairedBy: { method: 'offline' } })
-    await expect(context.enrollments.create({ publicKey: testDeviceKey().spki, name: 'again', offlineCode: ticket.code }, loopback)).rejects.toMatchObject({ code: 'offline-code-invalid' })
+    expect(result.device).toMatchObject({
+      scopes: ['view', 'run', 'approve:standard', 'admin'],
+      dataScope: 'work',
+      pairedBy: { method: 'offline' },
+    })
+    await expect(
+      context.enrollments.create({ publicKey: testDeviceKey().spki, name: 'again', offlineCode: ticket.code }, loopback),
+    ).rejects.toMatchObject({ code: 'offline-code-invalid' })
     const records = context.auditRecords()
-    expect(records.find(record => record.action === 'offline.ticket.consumed')).toMatchObject({ stepup: 'offline', detail: { ticketId: ticket.ticketId } })
+    expect(records.find(record => record.action === 'offline.ticket.consumed')).toMatchObject({
+      stepup: 'offline',
+      detail: { ticketId: ticket.ticketId },
+    })
     expect(records.find(record => record.action === 'device.enrolled')).toMatchObject({ stepup: 'offline', detail: { method: 'offline' } })
 
     const unixTicket = await createOfflineTicket(context.authDir, { now: () => context.clock.now })
@@ -578,7 +980,9 @@ describe('enrollment', () => {
 
     const late = await createOfflineTicket(context.authDir, { now: () => context.clock.now })
     context.clock.now += 15 * 60_000 + 1
-    await expect(context.enrollments.create({ publicKey: testDeviceKey().spki, name: 'late', offlineCode: late.code }, loopback)).rejects.toMatchObject({ code: 'offline-code-invalid' })
+    await expect(
+      context.enrollments.create({ publicKey: testDeviceKey().spki, name: 'late', offlineCode: late.code }, loopback),
+    ).rejects.toMatchObject({ code: 'offline-code-invalid' })
     expect((await context.enrollments.info(loopback)).offlineCodeAccepted).toBe(false)
   })
 
@@ -590,15 +994,38 @@ describe('enrollment', () => {
       fs: {
         async open(path) {
           const handle = await open(path, 'a', 0o600)
-          return { write: data => handle.write(data), sync: async () => { throw new Error('EIO') }, truncate: () => Promise.reject(new Error('EIO')), close: () => handle.close() }
+          return {
+            write: data => handle.write(data),
+            sync: async () => {
+              throw new Error('EIO')
+            },
+            truncate: () => Promise.reject(new Error('EIO')),
+            close: () => handle.close(),
+          }
         },
       },
     })
     cleanups.push(() => broken.close())
     const devices = await DeviceStore.open({ directory: context.authDir, hostId, audit: broken, now: () => context.clock.now })
-    const service = new PresenceService({ backend: createTestPresence(), hostId, audit: broken, now: () => context.clock.now, blockedReason: async () => undefined })
-    const enrollments = new EnrollmentService({ hostId, devices, presence: service, audit: broken, directory: context.authDir, now: () => context.clock.now })
-    await expect(enrollments.create({ publicKey: testDeviceKey().spki, name: 'x' }, loopback)).rejects.toMatchObject({ status: 503, code: 'audit-unavailable' })
+    const service = new PresenceService({
+      backend: createTestPresence(),
+      hostId,
+      audit: broken,
+      now: () => context.clock.now,
+      blockedReason: async () => undefined,
+    })
+    const enrollments = new EnrollmentService({
+      hostId,
+      devices,
+      presence: service,
+      audit: broken,
+      directory: context.authDir,
+      now: () => context.clock.now,
+    })
+    await expect(enrollments.create({ publicKey: testDeviceKey().spki, name: 'x' }, loopback)).rejects.toMatchObject({
+      status: 503,
+      code: 'audit-unavailable',
+    })
     expect(existsSync(auditFile)).toBe(true)
   })
 })
@@ -611,7 +1038,10 @@ function switchableAudit(): { fs: AuditFs; state: { failing: boolean } } {
       const handle = await open(path, 'a', 0o600)
       let written = false
       return {
-        write: data => { written = true; return handle.write(data) },
+        write: data => {
+          written = true
+          return handle.write(data)
+        },
         sync: async () => {
           const afterWrite = written
           written = false
@@ -626,7 +1056,8 @@ function switchableAudit(): { fs: AuditFs; state: { failing: boolean } } {
   return { fs, state }
 }
 
-const devicesFile = (context: Fixture) => JSON.parse(readFileSync(join(context.authDir, 'devices.json'), 'utf8')) as { devices: Array<Record<string, unknown>> }
+const devicesFile = (context: Fixture) =>
+  JSON.parse(readFileSync(join(context.authDir, 'devices.json'), 'utf8')) as { devices: Array<Record<string, unknown>> }
 
 describe('event stream credentials', () => {
   it('allows a stream only while its credential is current and not due for renewal, or inside the rotation grace', async () => {
@@ -669,7 +1100,10 @@ describe('revocation durability', () => {
   async function invitedPhone(context: Fixture) {
     const desktop = await enroll(context, unix, { name: '桌面' })
     const scopes: DeviceScope[] = ['view', 'run', 'approve:standard', 'admin']
-    const invitation = await context.enrollments.createInvitation({ inviter: context.devices.get(desktop.id), scopes, tlsOrigin: tls.origin }, actor)
+    const invitation = await context.enrollments.createInvitation(
+      { inviter: context.devices.get(desktop.id), scopes, tlsOrigin: tls.origin },
+      actor,
+    )
     const phone = await enroll(context, tls, { invitation: invitation.code, scopes, name: '手机' })
     return { desktop, phone }
   }
@@ -678,7 +1112,10 @@ describe('revocation durability', () => {
     let failRename = false
     const fs: DeviceFs = {
       open: (path, flags, mode) => open(path, flags, mode),
-      rename: async (from, to) => { if (failRename) throw Object.assign(new Error('crash'), { code: 'EIO' }); await rename(from, to) },
+      rename: async (from, to) => {
+        if (failRename) throw Object.assign(new Error('crash'), { code: 'EIO' })
+        await rename(from, to)
+      },
     }
     const context = await fixture({ fs })
     const { desktop, phone } = await invitedPhone(context)
@@ -690,11 +1127,22 @@ describe('revocation durability', () => {
     expect(reopened.get(desktop.id)).toMatchObject({ status: 'revoked' })
     expect(reopened.get(phone.id)).toMatchObject({ status: 'review', scopes: ['view'] })
     expect(await reopened.authenticate(presented(phone), tls)).toMatchObject({ ok: true, device: { status: 'review', scopes: ['view'] } })
-    expect(devicesFile(context).devices.find(device => device.id === phone.id))
-      .toMatchObject({ status: 'review', scopes: ['view'], scopesBeforeReview: ['view', 'run', 'approve:standard', 'admin'] })
-    expect(context.auditRecords().filter(record => record.action === 'device.review').map(record => [record.detail, record.actor])).toEqual([
+    expect(devicesFile(context).devices.find(device => device.id === phone.id)).toMatchObject({
+      status: 'review',
+      scopes: ['view'],
+      scopesBeforeReview: ['view', 'run', 'approve:standard', 'admin'],
+    })
+    expect(
+      context
+        .auditRecords()
+        .filter(record => record.action === 'device.review')
+        .map(record => [record.detail, record.actor]),
+    ).toEqual([
       [{ deviceId: phone.id, causeDeviceId: desktop.id }, actor],
-      [{ deviceId: phone.id, causeDeviceId: desktop.id }, { listener: 'host', via: 'startup' }],
+      [
+        { deviceId: phone.id, causeDeviceId: desktop.id },
+        { listener: 'host', via: 'startup' },
+      ],
     ])
   })
 
@@ -710,7 +1158,10 @@ describe('revocation durability', () => {
     expect(reopened.get(phone.id)).toMatchObject({ status: 'review', scopes: ['view'] })
     expect(await reopened.authenticate(presented(phone), tls)).toMatchObject({ ok: true, device: { scopes: ['view'] } })
 
-    expect(await reopened.setScopes(phone.id, { scopes: ['view', 'run'] }, actor, 'lpc-local')).toMatchObject({ status: 'active', scopes: ['view', 'run'] })
+    expect(await reopened.setScopes(phone.id, { scopes: ['view', 'run'] }, actor, 'lpc-local')).toMatchObject({
+      status: 'active',
+      scopes: ['view', 'run'],
+    })
     reopened = await context.reopen()
     expect(reopened.get(phone.id)).toMatchObject({ status: 'active', scopes: ['view', 'run'] })
   })
@@ -728,18 +1179,31 @@ describe('revocation durability', () => {
 
     expect((await context.devices.revoke(desktop.id, 'manual', actor)).cascaded).toEqual([])
     expect(context.enrollments.status(view.id, tls).status).toBe('cancelled')
-    await expect(context.enrollments.complete(view.id, key.sign(enrollSigningText(hostId, view.id, view.nonce!)), tls))
-      .rejects.toMatchObject({ status: 410, code: 'enrollment-cancelled' })
-    await expect(context.enrollments.create({ publicKey: testDeviceKey().spki, name: '手机', invitation: unused.code }, tls)).rejects.toMatchObject({ code: 'invitation-invalid' })
+    await expect(
+      context.enrollments.complete(view.id, key.sign(enrollSigningText(hostId, view.id, view.nonce!)), tls),
+    ).rejects.toMatchObject({ status: 410, code: 'enrollment-cancelled' })
+    await expect(
+      context.enrollments.create({ publicKey: testDeviceKey().spki, name: '手机', invitation: unused.code }, tls),
+    ).rejects.toMatchObject({ code: 'invitation-invalid' })
     expect(context.devices.list().filter(device => device.listener === 'tailnet-tls')).toEqual([])
-    await vi.waitFor(() => expect(context.auditRecords().filter(record => record.action === 'device.enroll.failed').map(record => record.detail.reason)).toEqual(['cancelled']))
+    await vi.waitFor(() =>
+      expect(
+        context
+          .auditRecords()
+          .filter(record => record.action === 'device.enroll.failed')
+          .map(record => record.detail.reason),
+      ).toEqual(['cancelled']),
+    )
   })
 
   it('closes the local dialog of a pending enrollment when its inviter is revoked', async () => {
     const context = await fixture({ presence: createTestPresence({ mode: 'manual' }) })
     const ticket = await createOfflineTicket(context.authDir, { now: () => context.clock.now })
     const desktop = await enroll(context, unix, { offlineCode: ticket.code })
-    const invitation = await context.enrollments.createInvitation({ inviter: context.devices.get(desktop.id), tlsOrigin: tls.origin }, actor)
+    const invitation = await context.enrollments.createInvitation(
+      { inviter: context.devices.get(desktop.id), tlsOrigin: tls.origin },
+      actor,
+    )
     const view = await context.enrollments.create({ publicKey: testDeviceKey().spki, name: '手机', invitation: invitation.code }, tls)
     await context.presence.waitForRequest()
     await context.devices.revoke(desktop.id, 'manual', actor)
@@ -752,12 +1216,23 @@ describe('revocation durability', () => {
     const desktop = await enroll(context, unix)
     await context.devices.revoke(desktop.id, 'manual', actor)
     const input = (deviceId: string) => ({
-      name: '手机', connection: tls, publicKeyDer: Buffer.from(testDeviceKey().spki, 'base64url'), scopes: ['view'] as DeviceScope[],
-      dataScope: 'work' as const, pairedBy: { method: 'invitation' as const, deviceId }, enrollmentId: `enr_${'A'.repeat(22)}`,
+      name: '手机',
+      connection: tls,
+      publicKeyDer: Buffer.from(testDeviceKey().spki, 'base64url'),
+      scopes: ['view'] as DeviceScope[],
+      dataScope: 'work' as const,
+      pairedBy: { method: 'invitation' as const, deviceId },
+      enrollmentId: `enr_${'A'.repeat(22)}`,
     })
     const enrolled = { listener: 'tailnet-tls' as const, via: 'http' as const }
-    await expect(context.devices.create(input(desktop.id), enrolled, 'lpc-local')).rejects.toMatchObject({ status: 403, code: 'invitation-invalid' })
-    await expect(context.devices.create(input(`dev_${'Q'.repeat(22)}`), enrolled, 'lpc-local')).rejects.toMatchObject({ status: 403, code: 'invitation-invalid' })
+    await expect(context.devices.create(input(desktop.id), enrolled, 'lpc-local')).rejects.toMatchObject({
+      status: 403,
+      code: 'invitation-invalid',
+    })
+    await expect(context.devices.create(input(`dev_${'Q'.repeat(22)}`), enrolled, 'lpc-local')).rejects.toMatchObject({
+      status: 403,
+      code: 'invitation-invalid',
+    })
     expect(context.devices.list().filter(device => device.listener === 'tailnet-tls')).toEqual([])
   })
 })
@@ -778,7 +1253,12 @@ describe('revocation log repair', () => {
     const torn = join(context.authDir, `revocations.jsonl.torn-${context.clock.now}`)
     expect(readFileSync(torn, 'utf8')).toBe(fragment)
     expect(statSync(torn).mode & 0o777).toBe(0o600)
-    expect(context.auditRecords().filter(record => record.action === 'device.revocations.torn-tail-removed').map(record => record.detail)).toEqual([{ bytes: fragment.length }])
+    expect(
+      context
+        .auditRecords()
+        .filter(record => record.action === 'device.revocations.torn-tail-removed')
+        .map(record => record.detail),
+    ).toEqual([{ bytes: fragment.length }])
 
     await reopened.revoke(second.id, 'manual', actor)
     const again = await context.reopen()
@@ -798,7 +1278,12 @@ describe('revocation log repair', () => {
     expect(readFileSync(log, 'utf8')).toBe(`${line}\n`)
     await reopened.revoke(second.id, 'manual', actor)
     expect((await context.reopen()).get(second.id)?.status).toBe('revoked')
-    expect(readFileSync(log, 'utf8').trimEnd().split('\n').map(item => JSON.parse(item).deviceId)).toEqual([first.id, second.id])
+    expect(
+      readFileSync(log, 'utf8')
+        .trimEnd()
+        .split('\n')
+        .map(item => JSON.parse(item).deviceId),
+    ).toEqual([first.id, second.id])
   })
 
   it('cuts a short revocation append off again instead of leaving a fragment behind', async () => {
@@ -816,7 +1301,10 @@ describe('revocation log repair', () => {
                 return { bytesWritten: part.length, buffer: data }
               }
             }
-            if (property === 'truncate' && mode.failTruncate) return async () => { throw Object.assign(new Error('EIO'), { code: 'EIO' }) }
+            if (property === 'truncate' && mode.failTruncate)
+              return async () => {
+                throw Object.assign(new Error('EIO'), { code: 'EIO' })
+              }
             const value = Reflect.get(target, property, target) as unknown
             return typeof value === 'function' ? value.bind(target) : value
           },
@@ -840,7 +1328,12 @@ describe('revocation log repair', () => {
     mode.short = false
     mode.failTruncate = false
     await context.devices.revoke(devices[2]!.id, 'manual', actor)
-    expect(readFileSync(log, 'utf8').trimEnd().split('\n').map(item => JSON.parse(item).deviceId)).toEqual([devices[2]!.id])
+    expect(
+      readFileSync(log, 'utf8')
+        .trimEnd()
+        .split('\n')
+        .map(item => JSON.parse(item).deviceId),
+    ).toEqual([devices[2]!.id])
 
     const reopened = await context.reopen()
     for (const device of devices) expect(reopened.get(device.id)?.status).toBe('revoked')
@@ -853,16 +1346,32 @@ describe('privilege-reducing changes and the audit log', () => {
     const context = await fixture({ auditFs: audit.fs })
     const browser = await enroll(context, loopback, { scopes: ['view', 'run', 'approve:standard', 'admin'] })
     audit.state.failing = true
-    await expect(context.devices.changeScopes(browser.id, { scopes: ['view', 'run'] }, actor, 'none'))
-      .resolves.toMatchObject({ audited: false, device: { scopes: ['view', 'run'] } })
+    await expect(context.devices.changeScopes(browser.id, { scopes: ['view', 'run'] }, actor, 'none')).resolves.toMatchObject({
+      audited: false,
+      device: { scopes: ['view', 'run'] },
+    })
     expect(devicesFile(context).devices.find(device => device.id === browser.id)).toMatchObject({ scopes: ['view', 'run'] })
-    await expect(context.devices.setScopes(browser.id, { scopes: ['view', 'run', 'admin'] }, actor, 'lpc-local')).rejects.toMatchObject({ status: 503, code: 'audit-unavailable' })
-    await expect(context.devices.setScopes(browser.id, { dataScope: 'all' }, actor, 'lpc-local')).rejects.toMatchObject({ status: 503, code: 'audit-unavailable' })
+    await expect(context.devices.setScopes(browser.id, { scopes: ['view', 'run', 'admin'] }, actor, 'lpc-local')).rejects.toMatchObject({
+      status: 503,
+      code: 'audit-unavailable',
+    })
+    await expect(context.devices.setScopes(browser.id, { dataScope: 'all' }, actor, 'lpc-local')).rejects.toMatchObject({
+      status: 503,
+      code: 'audit-unavailable',
+    })
     expect(context.devices.get(browser.id)).toMatchObject({ scopes: ['view', 'run'], dataScope: 'work' })
 
     audit.state.failing = false
-    await expect(context.devices.changeScopes(browser.id, { scopes: ['view'] }, actor, 'none')).resolves.toMatchObject({ audited: true, device: { scopes: ['view'] } })
-    expect(context.auditRecords().filter(record => record.action === 'device.scopes.changed').map(record => record.detail.removed)).toEqual([['run']])
+    await expect(context.devices.changeScopes(browser.id, { scopes: ['view'] }, actor, 'none')).resolves.toMatchObject({
+      audited: true,
+      device: { scopes: ['view'] },
+    })
+    expect(
+      context
+        .auditRecords()
+        .filter(record => record.action === 'device.scopes.changed')
+        .map(record => record.detail.removed),
+    ).toEqual([['run']])
   })
 })
 
@@ -870,8 +1379,11 @@ describe('device names', () => {
   it('refuses names the confirmation dialog would have to escape', async () => {
     const context = await fixture()
     for (const name of ['手机 工作目录：/Users/me', 'a‮b', 'x​y', 'tag\u{E0041}', 'soft­hyphen', `e${'́'.repeat(5)}`]) {
-      await expect(context.enrollments.create({ publicKey: testDeviceKey().spki, name }, loopback))
-        .rejects.toMatchObject({ status: 400, code: 'invalid-device-name', message: '设备名称不能包含控制字符或不可见字符' })
+      await expect(context.enrollments.create({ publicKey: testDeviceKey().spki, name }, loopback)).rejects.toMatchObject({
+        status: 400,
+        code: 'invalid-device-name',
+        message: '设备名称不能包含控制字符或不可见字符',
+      })
     }
     const device = await enroll(context, loopback, { name: 'Zoë 的 iPhone' })
     await expect(context.devices.rename(device.id, '书房 目标路径', actor)).rejects.toMatchObject({ code: 'invalid-device-name' })
@@ -885,7 +1397,9 @@ describe('device names', () => {
       expect(context.presence.requests.at(-1)!.preview.requester.deviceName).toBe(name)
     }
     for (const name of ['a‍b', '👨‍‍💻', 'x️', '#️', ' iPhone\n']) {
-      await expect(context.enrollments.create({ publicKey: testDeviceKey().spki, name }, loopback)).rejects.toMatchObject({ code: 'invalid-device-name' })
+      await expect(context.enrollments.create({ publicKey: testDeviceKey().spki, name }, loopback)).rejects.toMatchObject({
+        code: 'invalid-device-name',
+      })
     }
   })
 
@@ -893,18 +1407,36 @@ describe('device names', () => {
     const dataDir = tempDir()
     const authDir = join(dataDir, 'auth')
     mkdirSync(authDir, { recursive: true, mode: 0o700 })
-    writeFileSync(join(authDir, 'devices.json'), JSON.stringify({
-      version: 1,
-      devices: [{
-        id: 'a2c4e6a8-0000-4000-8000-000000000001', name: '书房 工作目录：/', role: 'owner', revoked: false,
-        tokenHash: createHash('sha256').update('owner-token-value').digest('hex'), expiresAt: Date.UTC(2026, 9, 23, 10) + 86_400_000,
-        createdAt: '2026-01-01T00:00:00.000Z', lastSeenAt: '2026-01-02T00:00:00.000Z',
-      }],
-    }), { mode: 0o600 })
+    writeFileSync(
+      join(authDir, 'devices.json'),
+      JSON.stringify({
+        version: 1,
+        devices: [
+          {
+            id: 'a2c4e6a8-0000-4000-8000-000000000001',
+            name: '书房 工作目录：/',
+            role: 'owner',
+            revoked: false,
+            tokenHash: createHash('sha256').update('owner-token-value').digest('hex'),
+            expiresAt: Date.UTC(2026, 9, 23, 10) + 86_400_000,
+            createdAt: '2026-01-01T00:00:00.000Z',
+            lastSeenAt: '2026-01-02T00:00:00.000Z',
+          },
+        ],
+      }),
+      { mode: 0o600 },
+    )
     const context = await fixture({ dataDir })
-    expect(await context.devices.authenticate({ kind: 'legacy-cookie', value: 'owner-token-value' }, loopback)).toEqual({ ok: false, code: 'legacy-reconfirm', legacyName: '未命名设备' })
+    expect(await context.devices.authenticate({ kind: 'legacy-cookie', value: 'owner-token-value' }, loopback)).toEqual({
+      ok: false,
+      code: 'legacy-reconfirm',
+      legacyName: '未命名设备',
+    })
     const key = testDeviceKey()
-    const view = await context.enrollments.create({ publicKey: key.spki, name: '' }, loopback, { kind: 'legacy-cookie', value: 'owner-token-value' })
+    const view = await context.enrollments.create({ publicKey: key.spki, name: '' }, loopback, {
+      kind: 'legacy-cookie',
+      value: 'owner-token-value',
+    })
     expect(context.presence.requests[0]!.preview.lines[0]).toEqual({ label: '设备名称', value: '未命名设备' })
     await vi.waitFor(() => expect(context.enrollments.status(view.id, loopback).status).toBe('approved'))
     const result = await context.enrollments.complete(view.id, key.sign(enrollSigningText(hostId, view.id, view.nonce!)), loopback)
@@ -916,7 +1448,11 @@ describe('scope changes against a confirmed base', () => {
   it('applies a change only while the device still has the base the confirmation showed', async () => {
     const context = await fixture()
     const browser = await enroll(context, loopback, { scopes: ['view', 'run', 'approve:standard', 'admin'] })
-    const base = { scopes: ['view', 'run', 'approve:standard', 'admin'] as DeviceScope[], dataScope: 'work' as const, status: 'active' as const }
+    const base = {
+      scopes: ['view', 'run', 'approve:standard', 'admin'] as DeviceScope[],
+      dataScope: 'work' as const,
+      status: 'active' as const,
+    }
     const changed = expect.objectContaining({ status: 409, code: 'device-changed', message: '设备权限已被修改，请刷新后重试' })
     for (const stale of [
       { ...base, scopes: ['view', 'run', 'approve:standard'] as DeviceScope[] },
@@ -924,19 +1460,32 @@ describe('scope changes against a confirmed base', () => {
       { ...base, dataScope: 'all' as const },
       { ...base, status: 'review' as const },
     ]) {
-      await expect(context.devices.changeScopes(browser.id, { scopes: ['view', 'run'] }, actor, 'lpc-local', stale)).rejects.toEqual(changed)
+      await expect(context.devices.changeScopes(browser.id, { scopes: ['view', 'run'] }, actor, 'lpc-local', stale)).rejects.toEqual(
+        changed,
+      )
     }
     expect(context.devices.get(browser.id)).toMatchObject({ scopes: base.scopes })
 
     // Two changes confirmed against the same base: the queue applies the first, and the second no longer matches.
     const [first, second] = await Promise.allSettled([
       context.devices.changeScopes(browser.id, { scopes: ['view', 'run'] }, actor, 'none', base),
-      context.devices.changeScopes(browser.id, { scopes: ['view', 'run', 'approve:standard', 'admin'], dataScope: 'all' }, actor, 'lpc-local', { ...base, scopes: [...base.scopes].reverse() }),
+      context.devices.changeScopes(
+        browser.id,
+        { scopes: ['view', 'run', 'approve:standard', 'admin'], dataScope: 'all' },
+        actor,
+        'lpc-local',
+        { ...base, scopes: [...base.scopes].reverse() },
+      ),
     ])
     expect(first).toMatchObject({ status: 'fulfilled', value: { audited: true, device: { scopes: ['view', 'run'] } } })
     expect(second).toMatchObject({ status: 'rejected', reason: changed })
     expect(context.devices.get(browser.id)).toMatchObject({ scopes: ['view', 'run'], dataScope: 'work' })
-    await expect(context.devices.setScopes(browser.id, { scopes: ['view'] }, actor, 'none', { scopes: ['run', 'view'], dataScope: 'work', status: 'active' }))
-      .resolves.toMatchObject({ scopes: ['view'] })
+    await expect(
+      context.devices.setScopes(browser.id, { scopes: ['view'] }, actor, 'none', {
+        scopes: ['run', 'view'],
+        dataScope: 'work',
+        status: 'active',
+      }),
+    ).resolves.toMatchObject({ scopes: ['view'] })
   })
 })

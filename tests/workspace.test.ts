@@ -8,16 +8,26 @@ import type { ToolDefinition } from '../src/core/plugins.ts'
 import type { FileDiff } from '../src/shared/types.ts'
 
 const dirs: string[] = []
-afterEach(async () => { for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true }) })
+afterEach(async () => {
+  for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true })
+})
 
 async function directory(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), 'harness-files-')); dirs.push(root)
+  const root = await mkdtemp(join(tmpdir(), 'harness-files-'))
+  dirs.push(root)
   return root
 }
 
 async function mount(options?: Parameters<typeof createWorkspacePlugin>[0]): Promise<Map<string, ToolDefinition>> {
   const tools = new Map<string, ToolDefinition>()
-  await createWorkspacePlugin(options).activate({ registerTool: t => { tools.set(t.name, t) }, registerProvider: () => {}, registerHarness: () => {}, onDispose: () => {} })
+  await createWorkspacePlugin(options).activate({
+    registerTool: t => {
+      tools.set(t.name, t)
+    },
+    registerProvider: () => {},
+    registerHarness: () => {},
+    onDispose: () => {},
+  })
   return tools
 }
 
@@ -45,12 +55,23 @@ it('writes and reads real files and rejects paths escaping the workspace', async
 it('labels tool kinds and previews a write as a diff against the current file', async () => {
   const root = await directory()
   const tools = await mount()
-  expect([...tools.values()].map(tool => [tool.name, tool.kind])).toEqual([['list_files', 'search'], ['read_file', 'read'], ['write_file', 'edit']])
+  expect([...tools.values()].map(tool => [tool.name, tool.kind])).toEqual([
+    ['list_files', 'search'],
+    ['read_file', 'read'],
+    ['write_file', 'edit'],
+  ])
   const write = tools.get('write_file')!
-  const preview = (path: string, content: string) => write.preview!({ path, content }, { workspaceRoot: root, signal: new AbortController().signal })
+  const preview = (path: string, content: string) =>
+    write.preview!({ path, content }, { workspaceRoot: root, signal: new AbortController().signal })
   await writeFile(join(root, 'existing.txt'), 'before')
-  expect(await preview('existing.txt', 'after')).toEqual({ title: '写入 existing.txt', diffs: [{ path: 'existing.txt', oldText: 'before', newText: 'after', previous: 'text' }] })
-  expect(await preview('new/file.txt', 'fresh')).toEqual({ title: '写入 new/file.txt', diffs: [{ path: 'new/file.txt', newText: 'fresh', previous: 'none' }] })
+  expect(await preview('existing.txt', 'after')).toEqual({
+    title: '写入 existing.txt',
+    diffs: [{ path: 'existing.txt', oldText: 'before', newText: 'after', previous: 'text' }],
+  })
+  expect(await preview('new/file.txt', 'fresh')).toEqual({
+    title: '写入 new/file.txt',
+    diffs: [{ path: 'new/file.txt', newText: 'fresh', previous: 'none' }],
+  })
   await writeFile(join(root, 'large.txt'), 'x'.repeat(131073))
   expect((await preview('large.txt', 'small')).diffs).toEqual([{ path: 'large.txt', newText: 'small', previous: 'unavailable' }])
   await expect(access(join(root, 'new'))).rejects.toMatchObject({ code: 'ENOENT' })
@@ -70,7 +91,9 @@ it('denies every tool access to protected paths, including when the workspace co
   await expect(tools.get('read_file')!.execute({ path: '.runtime/auth/owner-token' }, context)).rejects.toThrow(denied)
   await expect(tools.get('read_file')!.execute({ path: 'sub/../.runtime/auth/owner-token' }, context)).rejects.toThrow(denied)
   await expect(tools.get('list_files')!.execute({ path: '.runtime' }, context)).rejects.toThrow(denied)
-  await expect(tools.get('write_file')!.execute({ path: '.runtime/auth/owner-token', content: 'replaced' }, context)).rejects.toThrow(denied)
+  await expect(tools.get('write_file')!.execute({ path: '.runtime/auth/owner-token', content: 'replaced' }, context)).rejects.toThrow(
+    denied,
+  )
   await expect(tools.get('write_file')!.execute({ path: '.runtime/new/file.txt', content: 'planted' }, context)).rejects.toThrow(denied)
   await expect(tools.get('write_file')!.preview!({ path: '.runtime/auth/owner-token', content: 'x' }, context)).rejects.toThrow(denied)
   expect(await readFile(join(dataDir, 'auth', 'owner-token'), 'utf8')).toBe('secret')
@@ -80,7 +103,10 @@ it('denies every tool access to protected paths, including when the workspace co
   expect(await tools.get('read_file')!.execute({ path: 'visible.txt' }, context)).toEqual({ text: 'ok' })
 
   // On a case-insensitive file system another spelling names the same directory.
-  const caseInsensitive = await access(join(root, '.RUNTIME')).then(() => true, () => false)
+  const caseInsensitive = await access(join(root, '.RUNTIME')).then(
+    () => true,
+    () => false,
+  )
   if (caseInsensitive) await expect(tools.get('read_file')!.execute({ path: '.RUNTIME/auth/owner-token' }, context)).rejects.toThrow(denied)
 
   const nested = contextFor(join(dataDir, 'auth'))
@@ -93,14 +119,20 @@ it.skipIf(process.platform === 'win32')('refuses non-regular files without block
   execFileSync('mkfifo', [join(root, 'pipe')])
   const tools = await mount()
   await expect(tools.get('read_file')!.execute({ path: 'pipe' }, contextFor(root))).rejects.toThrow('普通文件')
-  expect(await tools.get('write_file')!.preview!({ path: 'pipe', content: 'x' }, { workspaceRoot: root, signal: new AbortController().signal }))
-    .toEqual({ title: '写入 pipe', diffs: [{ path: 'pipe', newText: 'x', previous: 'unavailable' }] })
+  expect(
+    await tools.get('write_file')!.preview!({ path: 'pipe', content: 'x' }, { workspaceRoot: root, signal: new AbortController().signal }),
+  ).toEqual({ title: '写入 pipe', diffs: [{ path: 'pipe', newText: 'x', previous: 'unavailable' }] })
 })
 
 it('marks a write preview as a new file only when nothing exists at the path', async () => {
   const root = await directory()
   const write = (await mount()).get('write_file')!
-  const previous = async (path: string) => ((await write.preview!({ path, content: 'x' }, { workspaceRoot: root, signal: new AbortController().signal })).diffs?.[0] as FileDiff | undefined)?.previous
+  const previous = async (path: string) =>
+    (
+      (await write.preview!({ path, content: 'x' }, { workspaceRoot: root, signal: new AbortController().signal })).diffs?.[0] as
+        | FileDiff
+        | undefined
+    )?.previous
   await writeFile(join(root, 'empty.txt'), '')
   expect(await previous('empty.txt')).toBe('text')
   await writeFile(join(root, 'binary.bin'), Buffer.from([0x50, 0x4b, 0x00, 0x01]))
@@ -118,7 +150,14 @@ describe.skipIf(process.platform === 'win32')('swaps between the path walk and t
   /** Runs `swap` once, at the seam after the walk: before a read's open, or before a write's rename. */
   async function racing(swap: (path: string) => Promise<void>) {
     const seen: string[] = []
-    const tools = await mount({ hooks: { async afterResolve(path) { seen.push(path); if (seen.length === 1) await swap(path) } } })
+    const tools = await mount({
+      hooks: {
+        async afterResolve(path) {
+          seen.push(path)
+          if (seen.length === 1) await swap(path)
+        },
+      },
+    })
     return { tools, seen }
   }
 
@@ -127,7 +166,10 @@ describe.skipIf(process.platform === 'win32')('swaps between the path walk and t
     const outside = await directory()
     await writeFile(join(outside, 'secret.txt'), 'outside secret')
     await writeFile(join(root, 'note.txt'), 'inside')
-    const { tools, seen } = await racing(async path => { await rm(path); await symlink(join(outside, 'secret.txt'), path) })
+    const { tools, seen } = await racing(async path => {
+      await rm(path)
+      await symlink(join(outside, 'secret.txt'), path)
+    })
     await expect(tools.get('read_file')!.execute({ path: 'note.txt' }, contextFor(root))).rejects.toThrow('工作区工具不访问符号链接')
     expect(seen.map(path => basename(path))).toEqual(['note.txt'])
   })
@@ -138,7 +180,10 @@ describe.skipIf(process.platform === 'win32')('swaps between the path walk and t
     await mkdir(join(root, 'sub'))
     await writeFile(join(root, 'sub', 'file.txt'), 'inside')
     await writeFile(join(outside, 'file.txt'), 'outside secret')
-    const { tools } = await racing(async () => { await rename(join(root, 'sub'), join(root, 'moved')); await symlink(outside, join(root, 'sub')) })
+    const { tools } = await racing(async () => {
+      await rename(join(root, 'sub'), join(root, 'moved'))
+      await symlink(outside, join(root, 'sub'))
+    })
     await expect(tools.get('read_file')!.execute({ path: 'sub/file.txt' }, contextFor(root))).rejects.toThrow('工作区工具不访问符号链接')
   })
 
@@ -150,7 +195,9 @@ describe.skipIf(process.platform === 'win32')('swaps between the path walk and t
       await rename(join(root, 'sub'), join(outside, 'sub'))
       await symlink(join(outside, 'sub'), join(root, 'sub'))
     })
-    await expect(tools.get('write_file')!.execute({ path: 'sub/planted.txt', content: 'planted' }, contextFor(root))).rejects.toThrow('工作区工具不访问符号链接')
+    await expect(tools.get('write_file')!.execute({ path: 'sub/planted.txt', content: 'planted' }, contextFor(root))).rejects.toThrow(
+      '工作区工具不访问符号链接',
+    )
     expect(seen.map(path => basename(path))).toEqual(['planted.txt'])
     expect(await readdir(join(outside, 'sub'))).toEqual([])
   })
@@ -159,8 +206,12 @@ describe.skipIf(process.platform === 'win32')('swaps between the path walk and t
     const root = await directory()
     const outside = await directory()
     await writeFile(join(outside, 'target.txt'), 'keep')
-    const { tools } = await racing(async path => { await symlink(join(outside, 'target.txt'), path) })
-    await expect(tools.get('write_file')!.execute({ path: 'new.txt', content: 'replaced' }, contextFor(root))).rejects.toThrow('工作区工具不访问符号链接')
+    const { tools } = await racing(async path => {
+      await symlink(join(outside, 'target.txt'), path)
+    })
+    await expect(tools.get('write_file')!.execute({ path: 'new.txt', content: 'replaced' }, contextFor(root))).rejects.toThrow(
+      '工作区工具不访问符号链接',
+    )
     expect(await readFile(join(outside, 'target.txt'), 'utf8')).toBe('keep')
     expect(await readdir(root)).toEqual(['new.txt'])
     expect(await readdir(outside)).toEqual(['target.txt'])

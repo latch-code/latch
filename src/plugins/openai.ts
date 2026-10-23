@@ -22,7 +22,12 @@ export interface OpenAIConfig {
 }
 
 export class ProviderError extends Error {
-  constructor(message: string, readonly code: string, readonly status?: number, readonly target?: string) {
+  constructor(
+    message: string,
+    readonly code: string,
+    readonly status?: number,
+    readonly target?: string,
+  ) {
     super(message)
     this.name = 'ProviderError'
   }
@@ -45,7 +50,11 @@ export function egressDenial(error: unknown): ProviderError | undefined {
 
 /** Sends one request; an egress denial becomes a ProviderError, every other failure is rethrown unchanged. */
 export async function send(fetcher: FetchLike, url: string, init: RequestInit): Promise<Response> {
-  try { return await fetcher(url, init) } catch (error) { throw egressDenial(error) ?? error }
+  try {
+    return await fetcher(url, init)
+  } catch (error) {
+    throw egressDenial(error) ?? error
+  }
 }
 
 const MAX_EVENT_CHARS = 1024 * 1024
@@ -55,7 +64,9 @@ export const MAX_TOOL_CALLS = 128
 /** Validates a user-supplied API base URL. Credentials belong in the API key, never in the URL. */
 export function parseBaseURL(value: string): URL {
   let url: URL
-  try { url = new URL(value) } catch {
+  try {
+    url = new URL(value)
+  } catch {
     throw new ProviderError('模型地址不是有效的 URL。', 'invalid-url')
   }
   if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
@@ -113,21 +124,36 @@ export function selectModel(requested: string | undefined, model: string, models
 
 const optionalText = z.string().nullable().optional()
 const chunkSchema = z.object({
-  choices: z.array(z.object({
-    index: z.number().int().nonnegative(),
-    delta: z.object({
-      content: optionalText,
-      reasoning_content: optionalText,
-      reasoning: optionalText,
-      refusal: optionalText,
-      tool_calls: z.array(z.object({
-        index: z.number().int().nonnegative(), id: optionalText, type: optionalText,
-        function: z.object({ name: optionalText, arguments: optionalText }).optional(),
-      })).optional(),
-    }).optional(),
-    finish_reason: optionalText,
-  })).optional(),
-  usage: z.object({ prompt_tokens: z.number().int().nonnegative(), completion_tokens: z.number().int().nonnegative() }).nullable().optional(),
+  choices: z
+    .array(
+      z.object({
+        index: z.number().int().nonnegative(),
+        delta: z
+          .object({
+            content: optionalText,
+            reasoning_content: optionalText,
+            reasoning: optionalText,
+            refusal: optionalText,
+            tool_calls: z
+              .array(
+                z.object({
+                  index: z.number().int().nonnegative(),
+                  id: optionalText,
+                  type: optionalText,
+                  function: z.object({ name: optionalText, arguments: optionalText }).optional(),
+                }),
+              )
+              .optional(),
+          })
+          .optional(),
+        finish_reason: optionalText,
+      }),
+    )
+    .optional(),
+  usage: z
+    .object({ prompt_tokens: z.number().int().nonnegative(), completion_tokens: z.number().int().nonnegative() })
+    .nullable()
+    .optional(),
   error: z.unknown().optional(),
 })
 
@@ -135,14 +161,24 @@ const chunkSchema = z.object({
 function messageOnWire(message: ModelMessage): Record<string, unknown> {
   if (message.role === 'tool') {
     if (!message.toolCallId) throw new ProviderError('工具结果缺少 toolCallId。', 'invalid-history')
-    return { role: 'tool', tool_call_id: message.toolCallId, content: message.isError ? `Tool failed: ${message.content}` : message.content }
+    return {
+      role: 'tool',
+      tool_call_id: message.toolCallId,
+      content: message.isError ? `Tool failed: ${message.content}` : message.content,
+    }
   }
   return {
     role: message.role,
     content: message.content,
-    ...(message.role === 'assistant' && message.toolCalls?.length ? {
-      tool_calls: message.toolCalls.map(call => ({ id: call.id, type: 'function', function: { name: call.name, arguments: JSON.stringify(call.arguments) } })),
-    } : {}),
+    ...(message.role === 'assistant' && message.toolCalls?.length
+      ? {
+          tool_calls: message.toolCalls.map(call => ({
+            id: call.id,
+            type: 'function',
+            function: { name: call.name, arguments: JSON.stringify(call.arguments) },
+          })),
+        }
+      : {}),
   }
 }
 
@@ -168,7 +204,8 @@ export async function* sseData(body: ReadableStream<Uint8Array>, signal: AbortSi
         if (size > MAX_EVENT_CHARS) throw new ProviderError('模型流事件过大。', 'stream-limit')
         if (line === '') {
           if (data.length) yield data.join('\n')
-          data = []; size = 0
+          data = []
+          size = 0
         } else if (line === 'data' || line.startsWith('data:')) {
           data.push(line.slice(5).replace(/^ /u, ''))
         }
@@ -180,7 +217,9 @@ export async function* sseData(body: ReadableStream<Uint8Array>, signal: AbortSi
       }
     }
   } finally {
-    await reader.cancel().catch(() => { /* An aborted fetch may already have closed the reader. */ })
+    await reader.cancel().catch(() => {
+      /* An aborted fetch may already have closed the reader. */
+    })
     reader.releaseLock()
   }
 }
@@ -196,10 +235,13 @@ export async function readErrorBody(response: Response): Promise<string> {
       const next = await reader.read()
       if (next.done) break
       const part = next.value.subarray(0, 4096 - length)
-      chunks.push(part); length += part.length
+      chunks.push(part)
+      length += part.length
     }
   } finally {
-    await reader.cancel().catch(() => { /* The error response may already have ended. */ })
+    await reader.cancel().catch(() => {
+      /* The error response may already have ended. */
+    })
     reader.releaseLock()
   }
   // Not clipped here: `redactor` must see the whole key before it clips, or a key cut at the boundary survives.
@@ -222,20 +264,43 @@ export function createOpenAIPlugin(config: OpenAIConfig): HarnessPlugin {
   const fetcher: FetchLike = config.fetch ?? ((input, init) => globalThis.fetch(input, init))
 
   const provider: ModelProvider = {
-    id, name: config.name ?? 'OpenAI 兼容接口', model: config.model, ...(models ? { models } : {}),
+    id,
+    name: config.name ?? 'OpenAI 兼容接口',
+    model: config.model,
+    ...(models ? { models } : {}),
     async *stream({ messages, tools, signal, model: requested }): AsyncIterable<ModelDelta> {
       signal.throwIfAborted()
       const model = selectModel(requested, config.model, models)
       const response = await send(fetcher, endpoint, {
-        method: 'POST', signal, redirect: 'error',
-        headers: { 'content-type': 'application/json', accept: 'text/event-stream', ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) },
+        method: 'POST',
+        signal,
+        redirect: 'error',
+        headers: {
+          'content-type': 'application/json',
+          accept: 'text/event-stream',
+          ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+        },
         body: JSON.stringify({
-          model, stream: true, stream_options: { include_usage: true },
+          model,
+          stream: true,
+          stream_options: { include_usage: true },
           messages: messages.map(messageOnWire),
-          ...(tools.length ? { tools: tools.map(tool => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.parameters } })) } : {}),
+          ...(tools.length
+            ? {
+                tools: tools.map(tool => ({
+                  type: 'function',
+                  function: { name: tool.name, description: tool.description, parameters: tool.parameters },
+                })),
+              }
+            : {}),
         }),
       })
-      if (!response.ok) throw new ProviderError(`模型服务 HTTP ${response.status}：${redacted(await readErrorBody(response))}`, 'http-error', response.status)
+      if (!response.ok)
+        throw new ProviderError(
+          `模型服务 HTTP ${response.status}：${redacted(await readErrorBody(response))}`,
+          'http-error',
+          response.status,
+        )
       if (!response.body) throw new ProviderError('模型服务没有返回响应体。', 'empty-response')
       if (!response.headers.get('content-type')?.toLowerCase().includes('text/event-stream')) {
         await response.body.cancel()
@@ -249,21 +314,25 @@ export function createOpenAIPlugin(config: OpenAIConfig): HarnessPlugin {
         signal.throwIfAborted()
         if (payload.trim() === '[DONE]') break
         let parsed: unknown
-        try { parsed = JSON.parse(payload) } catch {
+        try {
+          parsed = JSON.parse(payload)
+        } catch {
           throw new ProviderError('模型服务返回无效的 SSE JSON。', 'invalid-json')
         }
         const checked = chunkSchema.safeParse(parsed)
         if (!checked.success) throw new ProviderError('模型服务的流事件字段无效。', 'invalid-chunk')
         const chunk = checked.data
         if (chunk.error != null) throw new ProviderError(redacted(errorMessage(chunk.error)), 'upstream-error')
-        if (chunk.choices === undefined && chunk.usage == null) throw new ProviderError('模型流事件缺少 choices 或 usage。', 'invalid-chunk')
+        if (chunk.choices === undefined && chunk.usage == null)
+          throw new ProviderError('模型流事件缺少 choices 或 usage。', 'invalid-chunk')
         if (chunk.usage) usage = { inputTokens: chunk.usage.prompt_tokens, outputTokens: chunk.usage.completion_tokens }
         for (const choice of chunk.choices ?? []) {
           if (choice.index !== 0) throw new ProviderError('模型服务返回了未请求的多个候选。', 'invalid-choice')
           const delta = choice.delta
           // Some gateways send both reasoning fields with the same text.
           const reasoning = delta?.reasoning_content || delta?.reasoning
-          if (finish !== undefined && (delta?.content || reasoning || delta?.tool_calls?.length)) throw new ProviderError('模型在结束后继续发送内容。', 'invalid-chunk')
+          if (finish !== undefined && (delta?.content || reasoning || delta?.tool_calls?.length))
+            throw new ProviderError('模型在结束后继续发送内容。', 'invalid-chunk')
           if (delta?.refusal) throw new ProviderError(`模型拒绝了请求：${redacted(delta.refusal)}`, 'model-refusal')
           if (reasoning) yield { type: 'reasoning', text: reasoning }
           if (delta?.content) yield { type: 'text', text: delta.content }
@@ -293,7 +362,7 @@ export function createOpenAIPlugin(config: OpenAIConfig): HarnessPlugin {
       }
       signal.throwIfAborted()
       if (!finish) throw new ProviderError('模型流未给出结束状态，不能确认调用完成。', 'stream-incomplete')
-      if ((finish === 'tool-calls') !== (calls.size > 0)) throw new ProviderError('工具调用与模型结束状态不一致。', 'invalid-tool-call')
+      if ((finish === 'tool-calls') !== calls.size > 0) throw new ProviderError('工具调用与模型结束状态不一致。', 'invalid-tool-call')
       const completed: ToolCall[] = []
       const ids = new Set<string>()
       for (const [, call] of [...calls].sort(([left], [right]) => left - right)) {
@@ -307,16 +376,22 @@ export function createOpenAIPlugin(config: OpenAIConfig): HarnessPlugin {
     },
   }
   return {
-    id, name: config.name ?? 'OpenAI 兼容模型', version: '1.1.0',
+    id,
+    name: config.name ?? 'OpenAI 兼容模型',
+    version: '1.1.0',
     description: '通过 Chat Completions 接口调用用户配置的模型；支持流式文字、推理内容与多轮 function tool calls。',
-    activate(context) { context.registerProvider(provider) },
+    activate(context) {
+      context.registerProvider(provider)
+    },
   }
 }
 
 /** Parses streamed tool arguments; models must send a JSON object. */
 export function toolArguments(name: string, text: string): Record<string, unknown> {
   let value: unknown
-  try { value = JSON.parse(text) } catch {
+  try {
+    value = JSON.parse(text)
+  } catch {
     throw new ProviderError(`工具 ${name} 的参数不是有效 JSON。`, 'invalid-tool-json')
   }
   const record = z.record(z.string(), z.unknown()).safeParse(value)

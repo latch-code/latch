@@ -30,7 +30,11 @@ const uid = () => process.getuid?.()
 async function syncDirectory(directory: string): Promise<void> {
   if (process.platform === 'win32') return
   const handle = await open(directory, 'r')
-  try { await handle.sync() } finally { await handle.close() }
+  try {
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
 }
 
 /** The private key exists only in this file (PKCS#8 PEM, 0600); no other copy is ever written. */
@@ -45,8 +49,11 @@ export async function loadOrCreateHostIdentity(dataDir: string): Promise<HostIde
 
   const path = join(directory, KEY_FILE)
   let pem: string | undefined
-  try { pem = await readExisting(path) }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
+  try {
+    pem = await readExisting(path)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
   if (pem === undefined) {
     const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
     const created = privateKey.export({ format: 'pem', type: 'pkcs8' }) as string
@@ -55,7 +62,9 @@ export async function loadOrCreateHostIdentity(dataDir: string): Promise<HostIde
       try {
         await handle.writeFile(created)
         await handle.sync()
-      } finally { await handle.close() }
+      } finally {
+        await handle.close()
+      }
       await syncDirectory(directory)
       pem = created
     } catch (error) {
@@ -65,9 +74,13 @@ export async function loadOrCreateHostIdentity(dataDir: string): Promise<HostIde
     }
   }
   let privateKey: KeyObject
-  try { privateKey = createPrivateKey({ key: pem, format: 'pem' }) }
-  catch { throw invalid('无法解析') }
-  if (privateKey.asymmetricKeyType !== 'ec' || privateKey.asymmetricKeyDetails?.namedCurve !== 'prime256v1') throw invalid('不是 P-256 密钥')
+  try {
+    privateKey = createPrivateKey({ key: pem, format: 'pem' })
+  } catch {
+    throw invalid('无法解析')
+  }
+  if (privateKey.asymmetricKeyType !== 'ec' || privateKey.asymmetricKeyDetails?.namedCurve !== 'prime256v1')
+    throw invalid('不是 P-256 密钥')
   const publicKeySpki = createPublicKey(privateKey).export({ format: 'der', type: 'spki' })
   const hostId = hostIdFromSpki(publicKeySpki)
   return {
@@ -86,6 +99,9 @@ async function readExisting(path: string): Promise<string> {
     await chmod(path, 0o600)
     if (((await lstat(path)).mode & 0o077) !== 0) throw invalid('可被其他用户读取')
   }
-  try { return await readFile(path, 'utf8') }
-  catch { throw invalid('无法读取') }
+  try {
+    return await readFile(path, 'utf8')
+  } catch {
+    throw invalid('无法读取')
+  }
 }

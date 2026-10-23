@@ -33,7 +33,7 @@ export function base64url(data: Uint8Array): string {
 
 export function base64urlDecode(text: string): Uint8Array {
   const normal = text.replace(/-/g, '+').replace(/_/g, '/')
-  const binary = atob(normal + '='.repeat((4 - normal.length % 4) % 4))
+  const binary = atob(normal + '='.repeat((4 - (normal.length % 4)) % 4))
   return Uint8Array.from(binary, character => character.charCodeAt(0))
 }
 
@@ -54,7 +54,8 @@ export async function deviceFingerprint(spki: Uint8Array, subtle: SubtleCrypto =
   return fingerprintFromDigest(new Uint8Array(await subtle.digest('SHA-256', new Uint8Array(spki))))
 }
 
-export const enrollSigningText = (hostId: string, enrollmentId: string, nonce: string) => `latch-enroll-v1\n${hostId}\n${enrollmentId}\n${nonce}`
+export const enrollSigningText = (hostId: string, enrollmentId: string, nonce: string) =>
+  `latch-enroll-v1\n${hostId}\n${enrollmentId}\n${nonce}`
 export const renewSigningText = (hostId: string, deviceId: string, nonce: string) => `latch-renew-v1\n${hostId}\n${deviceId}\n${nonce}`
 
 /** WebCrypto ECDSA signatures are already IEEE P1363 (r || s, 64 bytes for P-256), as the Host expects. */
@@ -84,9 +85,12 @@ export async function generateDeviceKey(hostId: string, subtle: SubtleCrypto = s
  * renewals in several tabs run once.
  */
 export function browserKeySupport(): boolean {
-  return typeof globalThis.crypto?.subtle?.generateKey === 'function'
+  return (
+    typeof globalThis.crypto?.subtle?.generateKey === 'function'
     && typeof indexedDB !== 'undefined'
-    && typeof navigator !== 'undefined' && typeof navigator.locks?.request === 'function'
+    && typeof navigator !== 'undefined'
+    && typeof navigator.locks?.request === 'function'
+  )
 }
 
 const DATABASE = 'latch-device'
@@ -98,9 +102,15 @@ function openDatabase(): Promise<IDBDatabase> {
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains(STORE)) request.result.createObjectStore(STORE, { keyPath: 'hostId' })
     }
-    request.onsuccess = () => { resolve(request.result) }
-    request.onerror = () => { reject(request.error ?? new Error('IndexedDB unavailable')) }
-    request.onblocked = () => { reject(new Error('IndexedDB blocked')) }
+    request.onsuccess = () => {
+      resolve(request.result)
+    }
+    request.onerror = () => {
+      reject(request.error ?? new Error('IndexedDB unavailable'))
+    }
+    request.onblocked = () => {
+      reject(new Error('IndexedDB blocked'))
+    }
   })
 }
 
@@ -110,19 +120,32 @@ async function transact<T>(mode: IDBTransactionMode, run: (store: IDBObjectStore
     return await new Promise<T>((resolve, reject) => {
       const transaction = database.transaction(STORE, mode)
       const request = run(transaction.objectStore(STORE))
-      transaction.oncomplete = () => { resolve(request.result as T) }
-      transaction.onerror = () => { reject(transaction.error ?? request.error ?? new Error('IndexedDB failed')) }
-      transaction.onabort = () => { reject(transaction.error ?? new Error('IndexedDB aborted')) }
+      transaction.oncomplete = () => {
+        resolve(request.result as T)
+      }
+      transaction.onerror = () => {
+        reject(transaction.error ?? request.error ?? new Error('IndexedDB failed'))
+      }
+      transaction.onabort = () => {
+        reject(transaction.error ?? new Error('IndexedDB aborted'))
+      }
     })
-  } finally { database.close() }
+  } finally {
+    database.close()
+  }
 }
 
 function isRecord(value: unknown): value is DeviceKeyRecord {
   if (typeof value !== 'object' || value === null) return false
   const item = value as Record<string, unknown>
-  return typeof item.hostId === 'string' && typeof item.publicKeySpki === 'string' && typeof item.createdAt === 'string'
-    && typeof CryptoKey !== 'undefined' && item.privateKey instanceof CryptoKey
+  return (
+    typeof item.hostId === 'string'
+    && typeof item.publicKeySpki === 'string'
+    && typeof item.createdAt === 'string'
+    && typeof CryptoKey !== 'undefined'
+    && item.privateKey instanceof CryptoKey
     && (item.deviceId === undefined || typeof item.deviceId === 'string')
+  )
 }
 
 export async function loadDeviceKey(hostId: string): Promise<DeviceKeyRecord | undefined> {

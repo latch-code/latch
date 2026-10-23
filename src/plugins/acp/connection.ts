@@ -53,7 +53,11 @@ export interface SpawnSpec {
   redact(text: string): string
 }
 
-interface Pending { resolve(value: unknown): void; reject(error: Error): void; cleanup(): void }
+interface Pending {
+  resolve(value: unknown): void
+  reject(error: Error): void
+  cleanup(): void
+}
 
 const STDERR_LIMIT = 64 * 1024
 const STDERR_TAIL = 600
@@ -66,7 +70,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function rpcError(error: unknown): { code: number; message: string; data?: unknown } {
-  if (error instanceof RpcError) return { code: error.code, message: error.message, ...(error.data === undefined ? {} : { data: error.data }) }
+  if (error instanceof RpcError)
+    return { code: error.code, message: error.message, ...(error.data === undefined ? {} : { data: error.data }) }
   return { code: RPC.internal, message: 'Internal error' }
 }
 
@@ -94,8 +99,14 @@ export class AgentConnection {
   private info?: ExitInfo
   private fallback?: NodeJS.Timeout
 
-  private constructor(private readonly child: ChildProcessWithoutNullStreams, private readonly spec: SpawnSpec, private readonly handlers: ConnectionHandlers) {
-    this.exited = new Promise(resolve => { this.resolveExited = resolve })
+  private constructor(
+    private readonly child: ChildProcessWithoutNullStreams,
+    private readonly spec: SpawnSpec,
+    private readonly handlers: ConnectionHandlers,
+  ) {
+    this.exited = new Promise(resolve => {
+      this.resolveExited = resolve
+    })
     child.stdout.on('data', (chunk: Buffer) => this.onData(chunk))
     child.stderr.on('data', (chunk: Buffer) => this.onStderr(chunk))
     child.stdin.on('drain', () => this.onDrain())
@@ -109,19 +120,26 @@ export class AgentConnection {
   /** Throws only for invalid arguments; launch failures such as ENOENT arrive as an exit with `reason: 'spawn'`. */
   static spawn(spec: SpawnSpec, handlers: ConnectionHandlers): AgentConnection {
     const child = spawn(spec.command, spec.args, {
-      cwd: spec.cwd, env: spec.env, stdio: ['pipe', 'pipe', 'pipe'],
+      cwd: spec.cwd,
+      env: spec.env,
+      stdio: ['pipe', 'pipe', 'pipe'],
       // A separate process group lets one signal reach every helper process the agent starts.
-      detached: process.platform !== 'win32', windowsHide: true,
+      detached: process.platform !== 'win32',
+      windowsHide: true,
     })
     return new AgentConnection(child, spec, handlers)
   }
 
-  get closed(): boolean { return this.info !== undefined }
+  get closed(): boolean {
+    return this.info !== undefined
+  }
   /** Exited, being stopped, or no longer accepting input: hand no new work to it. */
   get stopping(): boolean {
     return this.info !== undefined || this.reason !== undefined || this.child.stdin.destroyed || this.child.stdin.writableEnded
   }
-  get pid(): number | undefined { return this.child.pid }
+  get pid(): number | undefined {
+    return this.child.pid
+  }
 
   /** A timeout or an aborted `signal` withdraws the request with `$/cancel_request`; a late reply is dropped. */
   request(method: string, params: unknown, timeoutMs?: number, signal?: AbortSignal): Promise<unknown> {
@@ -160,7 +178,10 @@ export class AgentConnection {
   /** `stop`: end stdin, then SIGTERM, then SIGKILL the group. `kill` skips stdin. Resolves once the process is gone. */
   async stop(reason: 'stop' | 'kill', graceMs: number, cause?: string): Promise<ExitInfo> {
     if (this.info) return this.info
-    if (!this.reason) { this.reason = reason; this.cause = cause }
+    if (!this.reason) {
+      this.reason = reason
+      this.cause = cause
+    }
     if (reason === 'stop' && !this.leaderExited) {
       this.child.stdin.end()
       if (await this.waitFor(graceMs)) return this.exited
@@ -183,9 +204,14 @@ export class AgentConnection {
 
   private async waitFor(ms: number): Promise<boolean> {
     let timer: NodeJS.Timeout | undefined
-    const timeout = new Promise<false>(resolve => { timer = setTimeout(() => resolve(false), ms) })
-    try { return await Promise.race([this.exited.then(() => true), timeout]) }
-    finally { clearTimeout(timer) }
+    const timeout = new Promise<false>(resolve => {
+      timer = setTimeout(() => resolve(false), ms)
+    })
+    try {
+      return await Promise.race([this.exited.then(() => true), timeout])
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   private signalGroup(signal: NodeJS.Signals): void {
@@ -194,13 +220,17 @@ export class AgentConnection {
     try {
       if (process.platform === 'win32') this.child.kill(signal)
       else process.kill(-pid, signal)
-    } catch { /* The group has already exited. */ }
+    } catch {
+      /* The group has already exited. */
+    }
   }
 
   private write(message: unknown): void {
     if (this.info || this.child.stdin.destroyed || this.child.stdin.writableEnded) return
     // Agents that read with line splitters treating U+2028/U+2029 as breaks would otherwise see a torn message.
-    const line = `${JSON.stringify(message).replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029')}\n`
+    const line = `${JSON.stringify(message)
+      .replace(/\u2028/g, '\\u2028')
+      .replace(/\u2029/g, '\\u2029')}\n`
     if (this.blocked) {
       this.queue.push(line)
       this.queued += line.length
@@ -252,26 +282,48 @@ export class AgentConnection {
     if (text.endsWith('\r')) text = text.slice(0, -1)
     if (!text.trim()) return
     let message: unknown
-    try { message = JSON.parse(text) } catch { this.noise++; return }
-    if (!isRecord(message)) { this.noise++; return }
+    try {
+      message = JSON.parse(text)
+    } catch {
+      this.noise++
+      return
+    }
+    if (!isRecord(message)) {
+      this.noise++
+      return
+    }
     const id = message.id
     // Request IDs from the two directions overlap, so the presence of `method` decides the direction.
     if (typeof message.method === 'string') {
       const method = message.method
       if (id === undefined || id === null) {
-        try { this.handlers.notification(method, message.params) } catch { this.noise++ }
+        try {
+          this.handlers.notification(method, message.params)
+        } catch {
+          this.noise++
+        }
         return
       }
-      if (typeof id !== 'string' && typeof id !== 'number') { this.noise++; return }
+      if (typeof id !== 'string' && typeof id !== 'number') {
+        this.noise++
+        return
+      }
       let reply: Promise<unknown>
-      try { reply = this.handlers.request(method, message.params, id) } catch (error) { reply = Promise.reject(error) }
+      try {
+        reply = this.handlers.request(method, message.params, id)
+      } catch (error) {
+        reply = Promise.reject(error)
+      }
       reply.then(
         result => this.write({ jsonrpc: '2.0', id, result: result ?? {} }),
         error => this.write({ jsonrpc: '2.0', id, error: rpcError(error) }),
       )
       return
     }
-    if (typeof id !== 'string' && typeof id !== 'number') { this.noise++; return }
+    if (typeof id !== 'string' && typeof id !== 'number') {
+      this.noise++
+      return
+    }
     const entry = this.pending.get(id)
     if (!entry) return
     this.pending.delete(id)
@@ -322,18 +374,27 @@ export class AgentConnection {
       this.onLine(line)
     }
     this.info = {
-      code: this.exitCode, signal: this.exitSignal, stderr: this.stderrTail(),
+      code: this.exitCode,
+      signal: this.exitSignal,
+      stderr: this.stderrTail(),
       ...(this.reason ? { reason: this.reason } : {}),
       ...(this.cause ? { cause: this.cause } : {}),
       ...(this.spawnError ? { error: this.spawnError } : {}),
     }
     const closed = new ConnectionClosed(this.info)
-    for (const entry of this.pending.values()) { entry.cleanup(); entry.reject(closed) }
+    for (const entry of this.pending.values()) {
+      entry.cleanup()
+      entry.reject(closed)
+    }
     this.pending.clear()
     this.queue = []
     this.queued = 0
     this.stderr = []
     this.stderrLength = 0
-    try { this.handlers.exit(this.info) } finally { this.resolveExited(this.info) }
+    try {
+      this.handlers.exit(this.info)
+    } finally {
+      this.resolveExited(this.info)
+    }
   }
 }

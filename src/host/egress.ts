@@ -6,20 +6,41 @@ import { Agent, buildConnector, fetch as undiciFetch } from 'undici'
 /** Plugins declare a structurally identical type of their own; they never import from src/host. */
 export type FetchLike = (input: string, init: RequestInit) => Promise<Response>
 
-export type EgressReason = 'loopback' | 'private' | 'link-local' | 'metadata' | 'multicast' | 'reserved' | 'local-interface' | 'redirect' | 'protocol'
+export type EgressReason =
+  | 'loopback'
+  | 'private'
+  | 'link-local'
+  | 'metadata'
+  | 'multicast'
+  | 'reserved'
+  | 'local-interface'
+  | 'redirect'
+  | 'protocol'
 
 export class EgressDenied extends Error {
   readonly code = 'egress-denied'
-  constructor(readonly target: string, readonly reason: EgressReason, message: string) {
+  constructor(
+    readonly target: string,
+    readonly reason: EgressReason,
+    message: string,
+  ) {
     super(message)
     this.name = 'EgressDenied'
   }
 }
 
-export type LookupFunction = (hostname: string, options: { all: true; verbatim: true }, callback: (error: NodeJS.ErrnoException | null, addresses: LookupAddress[]) => void) => void
+export type LookupFunction = (
+  hostname: string,
+  options: { all: true; verbatim: true },
+  callback: (error: NodeJS.ErrnoException | null, addresses: LookupAddress[]) => void,
+) => void
 
 function denied(target: string, reason: EgressReason): EgressDenied {
-  return new EgressDenied(target, reason, `Host 不会访问 ${target}（本机、私网或元数据地址）。如需访问本机模型服务，请在本机确认后加入出站白名单。`)
+  return new EgressDenied(
+    target,
+    reason,
+    `Host 不会访问 ${target}（本机、私网或元数据地址）。如需访问本机模型服务，请在本机确认后加入出站白名单。`,
+  )
 }
 
 function ipv4Number(ip: string): number {
@@ -38,7 +59,12 @@ function inV4(ip: number, base: string, bits: number): boolean {
  * the real (possibly private) address themselves.
  */
 const NON_GLOBAL_V4: ReadonlyArray<[string, number]> = [
-  ['192.0.0.0', 24], ['192.0.2.0', 24], ['192.88.99.0', 24], ['198.18.0.0', 15], ['198.51.100.0', 24], ['203.0.113.0', 24],
+  ['192.0.0.0', 24],
+  ['192.0.2.0', 24],
+  ['192.88.99.0', 24],
+  ['198.18.0.0', 15],
+  ['198.51.100.0', 24],
+  ['203.0.113.0', 24],
 ]
 
 function classifyV4(ip: string): Exclude<EgressReason, 'local-interface' | 'redirect' | 'protocol'> | undefined {
@@ -46,7 +72,8 @@ function classifyV4(ip: string): Exclude<EgressReason, 'local-interface' | 'redi
   if (ip === '169.254.169.254') return 'metadata'
   if (inV4(value, '0.0.0.0', 8)) return 'reserved'
   if (inV4(value, '127.0.0.0', 8)) return 'loopback'
-  if (inV4(value, '10.0.0.0', 8) || inV4(value, '100.64.0.0', 10) || inV4(value, '172.16.0.0', 12) || inV4(value, '192.168.0.0', 16)) return 'private'
+  if (inV4(value, '10.0.0.0', 8) || inV4(value, '100.64.0.0', 10) || inV4(value, '172.16.0.0', 12) || inV4(value, '192.168.0.0', 16))
+    return 'private'
   if (inV4(value, '169.254.0.0', 16)) return 'link-local'
   if (inV4(value, '224.0.0.0', 4)) return 'multicast'
   if (inV4(value, '240.0.0.0', 4)) return 'reserved'
@@ -65,7 +92,7 @@ function ipv6Groups(ip: string): number[] | undefined {
     tail.push(Math.floor(v4 / 65536), v4 % 65536)
     text = dotted[1]!.endsWith('::') ? dotted[1]! : dotted[1]!.slice(0, -1)
   }
-  const parse = (part: string) => part === '' ? [] : part.split(':').map(group => Number.parseInt(group, 16))
+  const parse = (part: string) => (part === '' ? [] : part.split(':').map(group => Number.parseInt(group, 16)))
   const total = 8 - tail.length
   const gap = text.indexOf('::')
   let groups: number[]
@@ -81,7 +108,10 @@ function ipv6Groups(ip: string): number[] | undefined {
 }
 
 function normalizeAddress(ip: string): string {
-  return ip.replace(/^\[|\]$/gu, '').replace(/%.*$/u, '').toLowerCase()
+  return ip
+    .replace(/^\[|\]$/gu, '')
+    .replace(/%.*$/u, '')
+    .toLowerCase()
 }
 
 /** Why the Host refuses to connect to `ip`, or undefined when it is a public address. */
@@ -103,7 +133,8 @@ export function isDeniedAddress(ip: string, localAddresses: ReadonlySet<string>)
     return classifyV4(local)
   }
   // NAT64 (64:ff9b::/96) and 6to4 (2002::/16) carry an IPv4 destination.
-  if (groups[0] === 0x64 && groups[1] === 0xff9b && groups.slice(2, 6).every(group => group === 0)) return classifyV4(embedded(groups[6]!, groups[7]!))
+  if (groups[0] === 0x64 && groups[1] === 0xff9b && groups.slice(2, 6).every(group => group === 0))
+    return classifyV4(embedded(groups[6]!, groups[7]!))
   if (groups[0] === 0x2002) {
     const reason = classifyV4(embedded(groups[1]!, groups[2]!))
     if (reason) return reason
@@ -150,14 +181,22 @@ function hostKey(hostname: string, port: string | number): string {
  * so the address that was checked is the address that is dialled.
  */
 export async function resolveEgressAddress(input: {
-  hostname: string; port: number; allow: readonly string[]; lookup: LookupFunction; localAddresses: ReadonlySet<string>
+  hostname: string
+  port: number
+  allow: readonly string[]
+  lookup: LookupFunction
+  localAddresses: ReadonlySet<string>
 }): Promise<string> {
   return (await resolveEgress(input)).address
 }
 
 /** `allowedBy` names the allowlist entry the address needed, if it was not a public address. */
 async function resolveEgress(input: {
-  hostname: string; port: number; allow: readonly string[]; lookup: LookupFunction; localAddresses: ReadonlySet<string>
+  hostname: string
+  port: number
+  allow: readonly string[]
+  lookup: LookupFunction
+  localAddresses: ReadonlySet<string>
 }): Promise<{ address: string; allowedBy?: string }> {
   const host = normalizeAddress(input.hostname)
   const target = hostKey(host, input.port)
@@ -166,7 +205,7 @@ async function resolveEgress(input: {
   if (isIP(host)) addresses = [host]
   else {
     addresses = await new Promise<string[]>((resolve, reject) => {
-      input.lookup(host, { all: true, verbatim: true }, (error, list) => error ? reject(error) : resolve(list.map(item => item.address)))
+      input.lookup(host, { all: true, verbatim: true }, (error, list) => (error ? reject(error) : resolve(list.map(item => item.address))))
     })
   }
   let firstReason: EgressReason | undefined
@@ -209,7 +248,7 @@ export function createEgressFetch(options: {
   }
   const track = (entry: string, socket: Socket) => {
     let sockets = allowedSockets.get(entry)
-    if (!sockets) allowedSockets.set(entry, sockets = new Set())
+    if (!sockets) allowedSockets.set(entry, (sockets = new Set()))
     sockets.add(socket)
     socket.once('close', () => {
       sockets.delete(socket)
@@ -222,18 +261,24 @@ export function createEgressFetch(options: {
       const tls = connectOptions.protocol === 'https:'
       const port = Number(connectOptions.port) || (tls ? 443 : 80)
       const original = normalizeAddress(connectOptions.hostname)
-      resolveEgress({ hostname: original, port, allow: options.allow(), lookup, localAddresses: localAddresses() }).then(({ address, allowedBy }) => {
-        connect({
-          ...connectOptions,
-          hostname: address,
-          // TLS still verifies the name in the URL, not the address dialled.
-          servername: tls && !isIP(original) ? original : undefined,
-        }, (...args) => {
-          const [, socket] = args
-          if (socket && allowedBy !== undefined) track(allowedBy, socket)
-          callback(...args)
-        })
-      }, (error: Error) => callback(error, null))
+      resolveEgress({ hostname: original, port, allow: options.allow(), lookup, localAddresses: localAddresses() }).then(
+        ({ address, allowedBy }) => {
+          connect(
+            {
+              ...connectOptions,
+              hostname: address,
+              // TLS still verifies the name in the URL, not the address dialled.
+              servername: tls && !isIP(original) ? original : undefined,
+            },
+            (...args) => {
+              const [, socket] = args
+              if (socket && allowedBy !== undefined) track(allowedBy, socket)
+              callback(...args)
+            },
+          )
+        },
+        (error: Error) => callback(error, null),
+      )
     },
   })
 
@@ -246,7 +291,9 @@ export function createEgressFetch(options: {
     const mode = init.redirect ?? 'follow'
     const request = (target: URL, requestInit: RequestInit) => {
       sweep()
-      return undiciFetch(target.href, { ...(requestInit as object), dispatcher: agent } as Parameters<typeof undiciFetch>[1]) as unknown as Promise<Response>
+      return undiciFetch(target.href, { ...(requestInit as object), dispatcher: agent } as Parameters<
+        typeof undiciFetch
+      >[1]) as unknown as Promise<Response>
     }
     if (mode !== 'follow') return request(url, init)
 

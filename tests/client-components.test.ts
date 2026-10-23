@@ -19,24 +19,54 @@ import { hashDisplay, sha256Hex } from '../src/host/crypto.ts'
 import type { Approval, AppSnapshot, HostCatalog, Message, TaskDetail, TaskSummary } from '../src/shared/types.ts'
 
 const noop = () => {}
-afterEach(() => { vi.unstubAllGlobals() })
-const approval = (extra: Partial<Approval> = {}): Approval => ({ id: 'ap1', sessionId: 's', toolName: 'write_file', toolCallId: 'c1', reason: '写入需要确认', arguments: '{}', requestedAt: new Date().toISOString(), ...extra })
-const tool = (extra: Partial<Message> = {}): Message => ({ id: 'tool:c1', role: 'tool', toolName: 'write_file', state: 'awaiting-approval', text: '', ...extra })
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+const approval = (extra: Partial<Approval> = {}): Approval => ({
+  id: 'ap1',
+  sessionId: 's',
+  toolName: 'write_file',
+  toolCallId: 'c1',
+  reason: '写入需要确认',
+  arguments: '{}',
+  requestedAt: new Date().toISOString(),
+  ...extra,
+})
+const tool = (extra: Partial<Message> = {}): Message => ({
+  id: 'tool:c1',
+  role: 'tool',
+  toolName: 'write_file',
+  state: 'awaiting-approval',
+  text: '',
+  ...extra,
+})
 
 describe('tool cards', () => {
   it('merges a pending approval into its tool card with the Host options, allow-once last', () => {
-    const html = renderToStaticMarkup(createElement(ToolCard, { message: tool({ tool: { kind: 'edit', title: '写入 a.ts' } }), approval: approval({ options: [
-      { id: 'allow_once', label: '允许一次', kind: 'allow_once' },
-      { id: 'allow_always', label: '本会话始终允许', kind: 'allow_always' },
-      { id: 'reject_once', label: '拒绝', kind: 'reject_once' },
-    ] }), onDecide: noop }))
+    const html = renderToStaticMarkup(
+      createElement(ToolCard, {
+        message: tool({ tool: { kind: 'edit', title: '写入 a.ts' } }),
+        approval: approval({
+          options: [
+            { id: 'allow_once', label: '允许一次', kind: 'allow_once' },
+            { id: 'allow_always', label: '本会话始终允许', kind: 'allow_always' },
+            { id: 'reject_once', label: '拒绝', kind: 'reject_once' },
+          ],
+        }),
+        onDecide: noop,
+      }),
+    )
     expect(html).toContain('data-message-id="tool:c1"')
     expect(html).toContain('data-approval-id="ap1"')
     expect(html).toContain('写入 a.ts')
     expect(html).toContain('<code class="tool-card-name">write_file</code>')
     expect(html).toContain('无参数')
     expect(html).not.toContain('{}')
-    expect([...html.matchAll(/<button[^>]*class="button [^"]*"[^>]*>([^<]+)<\/button>/g)].map(match => match[1])).toEqual(['拒绝', '本会话始终允许', '允许一次'])
+    expect([...html.matchAll(/<button[^>]*class="button [^"]*"[^>]*>([^<]+)<\/button>/g)].map(match => match[1])).toEqual([
+      '拒绝',
+      '本会话始终允许',
+      '允许一次',
+    ])
   })
 
   it('offers allow once and reject when the driver sends no options', () => {
@@ -46,10 +76,14 @@ describe('tool cards', () => {
   })
 
   it('shows the proposed diff in the approval and disables every option while one is in flight', () => {
-    const html = renderToStaticMarkup(createElement(ToolCard, {
-      message: tool(), busy: 'allow_once', onDecide: noop,
-      approval: approval({ arguments: '{"path":"a.ts"}', tool: { diffs: [{ path: 'a.ts', oldText: 'x\n', newText: 'y\n' }] } }),
-    }))
+    const html = renderToStaticMarkup(
+      createElement(ToolCard, {
+        message: tool(),
+        busy: 'allow_once',
+        onDecide: noop,
+        approval: approval({ arguments: '{"path":"a.ts"}', tool: { diffs: [{ path: 'a.ts', oldText: 'x\n', newText: 'y\n' }] } }),
+      }),
+    )
     expect(html).toContain('<dt>path</dt>')
     expect(html).toContain('class="diff-stat-add">+1</span>')
     expect(html).toContain('class="diff-stat-remove">−1</span>')
@@ -57,7 +91,9 @@ describe('tool cards', () => {
   })
 
   it('renders an approval without a matching tool row as its own card without a message anchor', () => {
-    const html = renderToStaticMarkup(createElement(ToolCard, { message: null, approval: approval({ toolCallId: undefined }), onDecide: noop }))
+    const html = renderToStaticMarkup(
+      createElement(ToolCard, { message: null, approval: approval({ toolCallId: undefined }), onDecide: noop }),
+    )
     expect(html).not.toContain('data-message-id')
     expect(html).toContain('data-approval-id="ap1"')
   })
@@ -65,11 +101,17 @@ describe('tool cards', () => {
 
 describe('assistant messages', () => {
   it('shows reported reasoning only when it exists and labels the live row', () => {
-    const live = renderToStaticMarkup(createElement(MessageRow, { message: { id: 'm', role: 'assistant', text: '', reasoning: '想一想' }, streaming: true }))
+    const live = renderToStaticMarkup(
+      createElement(MessageRow, { message: { id: 'm', role: 'assistant', text: '', reasoning: '想一想' }, streaming: true }),
+    )
     expect(live).toContain('aria-label="正在生成的回复"')
     expect(live).toContain('思考中…')
     expect(live).toContain('想一想')
-    const settled = renderToStaticMarkup(createElement(MessageRow, { message: { id: 'm', role: 'assistant', text: '答案', reasoning: '想一想', usage: { inputTokens: 1500, outputTokens: 20 } } }))
+    const settled = renderToStaticMarkup(
+      createElement(MessageRow, {
+        message: { id: 'm', role: 'assistant', text: '答案', reasoning: '想一想', usage: { inputTokens: 1500, outputTokens: 20 } },
+      }),
+    )
     expect(settled).not.toContain('正在生成的回复')
     expect(settled).toContain('思考过程')
     expect(settled).not.toContain('想一想')
@@ -82,13 +124,21 @@ describe('assistant messages', () => {
     const detail: TaskDetail = {
       summary: { id: 's', title: 't', status: 'running', updatedAt: '' },
       messages: [
-        { id: 'u1', role: 'user', text: '一' }, { id: 'a1', role: 'assistant', text: '' }, tool({ state: 'completed' }), { id: 'a2', role: 'assistant', text: '好' },
+        { id: 'u1', role: 'user', text: '一' },
+        { id: 'a1', role: 'assistant', text: '' },
+        tool({ state: 'completed' }),
+        { id: 'a2', role: 'assistant', text: '好' },
         { id: 'u2', role: 'user', text: '二' },
       ],
-      approvals: [], liveText: '继续', liveMessageId: 'a3', cursor: 1,
+      approvals: [],
+      liveText: '继续',
+      liveMessageId: 'a3',
+      cursor: 1,
     }
     expect(renderedMessages(detail).map(message => message.id)).toEqual(['u1', 'a1', 'tool:c1', 'a2', 'u2', 'a3'])
-    const html = renderToStaticMarkup(createElement(Transcript, { detail, approvals: [], busy: new Map(), onDecide: noop, harnessName: 'Standard' }))
+    const html = renderToStaticMarkup(
+      createElement(Transcript, { detail, approvals: [], busy: new Map(), onDecide: noop, harnessName: 'Standard' }),
+    )
     expect([...html.matchAll(/data-message-id="([^"]+)"/g)].map(match => match[1])).toEqual(['u1', 'a1', 'tool:c1', 'a2', 'u2', 'a3'])
     expect(html.match(/class="assistant-meta"/g)).toHaveLength(2)
     expect(html).toContain('data-message-id="a3" aria-label="正在生成的回复"')
@@ -97,10 +147,17 @@ describe('assistant messages', () => {
 
 describe('approval cards', () => {
   it('shows each argument once: no repeated reason, and file content only as the diff', () => {
-    const html = renderToStaticMarkup(createElement(ToolCard, {
-      message: tool({ tool: { kind: 'edit', title: 'Run ls' } }), onDecide: noop,
-      approval: approval({ reason: 'Run ls', arguments: JSON.stringify({ path: 'a.ts', content: 'SECRET_BODY\n' }), tool: { title: 'Run ls', diffs: [{ path: 'a.ts', newText: 'SECRET_BODY\n' }] } }),
-    }))
+    const html = renderToStaticMarkup(
+      createElement(ToolCard, {
+        message: tool({ tool: { kind: 'edit', title: 'Run ls' } }),
+        onDecide: noop,
+        approval: approval({
+          reason: 'Run ls',
+          arguments: JSON.stringify({ path: 'a.ts', content: 'SECRET_BODY\n' }),
+          tool: { title: 'Run ls', diffs: [{ path: 'a.ts', newText: 'SECRET_BODY\n' }] },
+        }),
+      }),
+    )
     expect(html.match(/Run ls/g)).toHaveLength(1)
     expect(html).toContain('<dt>path</dt>')
     expect(html).not.toContain('<dt>content</dt>')
@@ -111,14 +168,21 @@ describe('approval cards', () => {
 
   it('marks bidirectional and invisible characters so the reviewed text is the written text', () => {
     const content = 'if (accessLevel != "user\u202E \u2066// Check if admin\u2069 \u2066") { grant() }\n'
-    const html = renderToStaticMarkup(createElement(ToolCard, {
-      message: tool({ tool: { kind: 'edit', title: '写入 a\u200B.ts' } }), onDecide: noop,
-      approval: approval({
-        reason: '可能修改\u202Dworkspace', arguments: JSON.stringify({ path: 'a\u200B.ts', mode: 'x\u2067y', content }),
-        options: [{ id: 'allow_once', label: '允许一次', kind: 'allow_once' }, { id: 'reject_once', label: '拒绝', kind: 'reject_once' }],
-        tool: { title: '写入 a\u200B.ts', diffs: [{ path: 'a\u200B.ts', oldText: '', newText: content }] },
+    const html = renderToStaticMarkup(
+      createElement(ToolCard, {
+        message: tool({ tool: { kind: 'edit', title: '写入 a\u200B.ts' } }),
+        onDecide: noop,
+        approval: approval({
+          reason: '可能修改\u202Dworkspace',
+          arguments: JSON.stringify({ path: 'a\u200B.ts', mode: 'x\u2067y', content }),
+          options: [
+            { id: 'allow_once', label: '允许一次', kind: 'allow_once' },
+            { id: 'reject_once', label: '拒绝', kind: 'reject_once' },
+          ],
+          tool: { title: '写入 a\u200B.ts', diffs: [{ path: 'a\u200B.ts', oldText: '', newText: content }] },
+        }),
       }),
-    }))
+    )
     expect(html).not.toMatch(/[\u202A-\u202E\u2066-\u2069\u200B]/)
     for (const code of ['202E', '2066', '2069', '200B', '202D', '2067']) expect(html).toContain(`\\u{${code}}</span>`)
     expect(html).toContain(HIDDEN_CHARACTERS_TEXT)
@@ -128,10 +192,16 @@ describe('approval cards', () => {
   })
 
   it('never labels a write without previous text as a new file', () => {
-    const html = renderToStaticMarkup(createElement(ToolCard, {
-      message: tool(), onDecide: noop,
-      approval: approval({ arguments: JSON.stringify({ path: 'data.sqlite', content: 'x' }), tool: { diffs: [{ path: 'data.sqlite', newText: 'x' }] } }),
-    }))
+    const html = renderToStaticMarkup(
+      createElement(ToolCard, {
+        message: tool(),
+        onDecide: noop,
+        approval: approval({
+          arguments: JSON.stringify({ path: 'data.sqlite', content: 'x' }),
+          tool: { diffs: [{ path: 'data.sqlite', newText: 'x' }] },
+        }),
+      }),
+    )
     expect(html).not.toContain('>新文件<')
     expect(html).toContain(`<span class="badge badge-warn" title="${PREVIOUS_UNKNOWN_TEXT}">原内容未知</span>`)
     expect(html).toContain(`<p class="approval-warning" role="note">${PREVIOUS_UNKNOWN_TEXT}</p>`)
@@ -141,7 +211,8 @@ describe('approval cards', () => {
   })
 
   it('labels a diff by what the producer reported about the previous file', () => {
-    const render = (diff: { previous?: 'none' | 'text' | 'unavailable'; oldText?: string }) => renderToStaticMarkup(createElement(DiffView, { diffs: [{ path: 'a.txt', newText: 'x\n', ...diff }] }))
+    const render = (diff: { previous?: 'none' | 'text' | 'unavailable'; oldText?: string }) =>
+      renderToStaticMarkup(createElement(DiffView, { diffs: [{ path: 'a.txt', newText: 'x\n', ...diff }] }))
     const created = render({ previous: 'none' })
     expect(created).toContain('<span class="badge badge-neutral">新文件</span>')
     expect(created).toContain('@@ -0,0 +1,1 @@')
@@ -155,10 +226,20 @@ describe('approval cards', () => {
     const edited = render({ previous: 'text', oldText: 'y\n' })
     expect(edited).not.toMatch(/新文件|原内容/)
     expect(edited).toContain('−1')
-    const card = renderToStaticMarkup(createElement(ToolCard, {
-      message: tool(), onDecide: noop,
-      approval: approval({ tool: { diffs: [{ path: 'big.bin', newText: 'x', previous: 'unavailable' }, { path: 'new.txt', newText: 'y', previous: 'none' }] } }),
-    }))
+    const card = renderToStaticMarkup(
+      createElement(ToolCard, {
+        message: tool(),
+        onDecide: noop,
+        approval: approval({
+          tool: {
+            diffs: [
+              { path: 'big.bin', newText: 'x', previous: 'unavailable' },
+              { path: 'new.txt', newText: 'y', previous: 'none' },
+            ],
+          },
+        }),
+      }),
+    )
     expect(card).toContain(`<p class="approval-warning" role="note">${PREVIOUS_UNAVAILABLE_TEXT}</p>`)
     expect(card).not.toContain(PREVIOUS_UNKNOWN_TEXT)
   })
@@ -175,13 +256,24 @@ describe('turn footers', () => {
   ]
 
   it('gives only the block that ends a settled turn a footer, with the turn usage summed', () => {
-    expect([...turnFooters(turn, false)]).toEqual([['after', { inputTokens: 300, outputTokens: 30 }], ['next', undefined]])
+    expect([...turnFooters(turn, false)]).toEqual([
+      ['after', { inputTokens: 300, outputTokens: 30 }],
+      ['next', undefined],
+    ])
     expect([...turnFooters(turn, true).keys()]).toEqual(['after'])
   })
 
   it('renders no copy control between tool calls of one turn', () => {
-    const detail: TaskDetail = { summary: { id: 's', title: 't', status: 'idle', updatedAt: '' }, messages: turn.slice(0, 4), approvals: [], liveText: '', cursor: 1 }
-    const html = renderToStaticMarkup(createElement(Transcript, { detail, approvals: [], busy: new Map(), onDecide: noop, harnessName: 'Agent' }))
+    const detail: TaskDetail = {
+      summary: { id: 's', title: 't', status: 'idle', updatedAt: '' },
+      messages: turn.slice(0, 4),
+      approvals: [],
+      liveText: '',
+      cursor: 1,
+    }
+    const html = renderToStaticMarkup(
+      createElement(Transcript, { detail, approvals: [], busy: new Map(), onDecide: noop, harnessName: 'Agent' }),
+    )
     expect(html.match(/class="message-footer"/g)).toHaveLength(1)
     expect(html.match(/aria-label="复制回复"/g)).toHaveLength(1)
     expect(html).toContain('↑300 ↓30')
@@ -189,7 +281,10 @@ describe('turn footers', () => {
 })
 
 describe('plan', () => {
-  const plan = [{ content: 'Read', status: 'completed' as const }, { content: 'Write', status: 'in_progress' as const }]
+  const plan = [
+    { content: 'Read', status: 'completed' as const },
+    { content: 'Write', status: 'in_progress' as const },
+  ]
   it('spins only while the session runs', () => {
     expect(renderToStaticMarkup(createElement(PlanList, { plan, active: true }))).toContain(' spin"')
     const settled = renderToStaticMarkup(createElement(PlanList, { plan, active: false }))
@@ -207,27 +302,73 @@ const hostCatalog = (extra: Partial<HostCatalog> = {}): HostCatalog => ({
   ...extra,
 })
 const appSnapshot = (extra: Partial<AppSnapshot> = {}): AppSnapshot => ({
-  instanceId: 'host', device: { id: 'd', name: 'Mac', status: 'active', listener: 'loopback-tcp', scopes: ['view', 'run', 'approve:standard', 'admin'], dataScope: 'work', fingerprint: 'ABCD EFGH IJKL MNOP QRST', createdAt: '', lastSeenAt: '', credentialExpiresAt: '', pairedBy: { method: 'lpc' }, current: true, renewAfter: '' }, host: { hostId: 'h', devMode: true, presence: { status: 'available' }, tls: null, policy: { localMaxLevel: 'L2', remoteMaxLevel: 'L1', allowL3: true } }, tasks: [], approvals: [], demo: false, hostName: 'host', ...extra,
+  instanceId: 'host',
+  device: {
+    id: 'd',
+    name: 'Mac',
+    status: 'active',
+    listener: 'loopback-tcp',
+    scopes: ['view', 'run', 'approve:standard', 'admin'],
+    dataScope: 'work',
+    fingerprint: 'ABCD EFGH IJKL MNOP QRST',
+    createdAt: '',
+    lastSeenAt: '',
+    credentialExpiresAt: '',
+    pairedBy: { method: 'lpc' },
+    current: true,
+    renewAfter: '',
+  },
+  host: {
+    hostId: 'h',
+    devMode: true,
+    presence: { status: 'available' },
+    tls: null,
+    policy: { localMaxLevel: 'L2', remoteMaxLevel: 'L1', allowL3: true },
+  },
+  tasks: [],
+  approvals: [],
+  demo: false,
+  hostName: 'host',
+  ...extra,
 })
 
 describe('inspector', () => {
   it('leads the project row with the directory name and keeps the whole path', () => {
-    const html = renderToStaticMarkup(createElement(Inspector, { snapshot: appSnapshot(), summary: session({ cwd: '/Users/me/personal/harness-link' }), detail: null, onReveal: noop }))
+    const html = renderToStaticMarkup(
+      createElement(Inspector, {
+        snapshot: appSnapshot(),
+        summary: session({ cwd: '/Users/me/personal/harness-link' }),
+        detail: null,
+        onReveal: noop,
+      }),
+    )
     expect(html).toContain('<span class="inspector-path-name">harness-link</span>')
     expect(html).toContain('<span class="inspector-path-full">/Users/me/personal/harness-link</span>')
   })
 })
 
 describe('session model switch', () => {
-  const props = { catalog: hostCatalog(), summary: session({ harnessId: 'standard', providerId: 'fake', model: 'fake-chat' }), harness: hostCatalog().harnesses[0], current: { providerId: 'fake', model: 'fake-chat' },
-    onModel: noop, config: [], configBusy: null, onConfig: noop }
+  const props = {
+    catalog: hostCatalog(),
+    summary: session({ harnessId: 'standard', providerId: 'fake', model: 'fake-chat' }),
+    harness: hostCatalog().harnesses[0],
+    current: { providerId: 'fake', model: 'fake-chat' },
+    onModel: noop,
+    config: [],
+    configBusy: null,
+    onConfig: noop,
+  }
   it('marks a switch that the next message will carry', () => {
     const idle = renderToStaticMarkup(createElement(SessionControls, { ...props, model: props.current, phone: false }))
     expect(idle).not.toContain('is-pending')
-    const desktop = renderToStaticMarkup(createElement(SessionControls, { ...props, model: { providerId: 'fake', model: 'fake-coder-32k' }, phone: false }))
+    const desktop = renderToStaticMarkup(
+      createElement(SessionControls, { ...props, model: { providerId: 'fake', model: 'fake-coder-32k' }, phone: false }),
+    )
     expect(desktop).toContain('class="chip is-pending"')
     expect(desktop).toContain('下一条：fake-coder-32k')
-    const phone = renderToStaticMarkup(createElement(SessionControls, { ...props, model: { providerId: 'fake', model: 'fake-coder-32k' }, phone: true }))
+    const phone = renderToStaticMarkup(
+      createElement(SessionControls, { ...props, model: { providerId: 'fake', model: 'fake-coder-32k' }, phone: true }),
+    )
     expect(phone).toContain('run-settings-chip is-pending')
     expect(phone).toContain('aria-label="运行设置：下一条：fake-coder-32k"')
   })
@@ -235,8 +376,16 @@ describe('session model switch', () => {
 
 describe('phone run settings', () => {
   it('places each manage link inside the group it manages', () => {
-    const groups = newSessionGroups(hostCatalog(), { mode: 'agent', harnessId: 'standard', workspaceId: 'default', model: { providerId: 'fake', model: 'fake-chat' } }, noop, { providers: noop, workspaces: noop })
-    expect(groups.map(group => [group.id, group.links?.map(link => link.label)])).toEqual([['model', ['管理模型服务…']], ['workspace', ['管理项目…']]])
+    const groups = newSessionGroups(
+      hostCatalog(),
+      { mode: 'agent', harnessId: 'standard', workspaceId: 'default', model: { providerId: 'fake', model: 'fake-chat' } },
+      noop,
+      { providers: noop, workspaces: noop },
+    )
+    expect(groups.map(group => [group.id, group.links?.map(link => link.label)])).toEqual([
+      ['model', ['管理模型服务…']],
+      ['workspace', ['管理项目…']],
+    ])
     const html = renderToStaticMarkup(createElement(RunSettingsGroups, { groups, close: noop }))
     expect(html.indexOf('管理模型服务…')).toBeLessThan(html.indexOf('<h3>项目</h3>'))
     expect(html.indexOf('管理项目…')).toBeGreaterThan(html.indexOf('<h3>项目</h3>'))
@@ -245,9 +394,22 @@ describe('phone run settings', () => {
 
 describe('top bar', () => {
   it('keeps the connection state as a named dot on phones', () => {
-    const base = { summary: session(), cancelling: false, demo: false, drawerOpen: false, onNew: noop, inspectorOpen: false, onInspector: noop, menu: [], connection: 'offline' as const, onRefresh: noop }
+    const base = {
+      summary: session(),
+      cancelling: false,
+      demo: false,
+      drawerOpen: false,
+      onNew: noop,
+      inspectorOpen: false,
+      onInspector: noop,
+      menu: [],
+      connection: 'offline' as const,
+      onRefresh: noop,
+    }
     const phone = renderToStaticMarkup(createElement(TopBar, { ...base, phone: true }))
-    expect(phone).toMatch(/<button[^>]*class="connection-pill connection-offline is-compact"[^>]*aria-label="离线"[^>]*><i aria-hidden="true"><\/i><svg/)
+    expect(phone).toMatch(
+      /<button[^>]*class="connection-pill connection-offline is-compact"[^>]*aria-label="离线"[^>]*><i aria-hidden="true"><\/i><svg/,
+    )
     const desktop = renderToStaticMarkup(createElement(TopBar, { ...base, phone: false }))
     expect(desktop).toMatch(/<i aria-hidden="true"><\/i>离线<svg/)
   })
@@ -272,34 +434,66 @@ describe('content hash next to a write diff', () => {
 
   it('renders at once with a placeholder, then shows the hash the local confirmation shows for the new text', async () => {
     const text = 'export const answer = 42\n'
-    const card = () => renderToStaticMarkup(createElement(ToolCard, {
-      message: tool(), onDecide: noop,
-      approval: approval({ risk: 'R2', arguments: JSON.stringify({ path: 'a.ts', content: text }), tool: { diffs: [{ path: 'a.ts', newText: text, previous: 'none' }] } }),
-    }))
+    const card = () =>
+      renderToStaticMarkup(
+        createElement(ToolCard, {
+          message: tool(),
+          onDecide: noop,
+          approval: approval({
+            risk: 'R2',
+            arguments: JSON.stringify({ path: 'a.ts', content: text }),
+            tool: { diffs: [{ path: 'a.ts', newText: text, previous: 'none' }] },
+          }),
+        }),
+      )
     expect(card()).toContain(line('<span class="diff-hash-pending">计算中…</span>'))
     const expected = hashDisplay(sha256Hex(text))
     expect(await contentHash(text)).toBe(expected)
     expect(card()).toContain(line(`<code>${expected}</code>`))
     // Tool cards show their changes through the same diff view.
-    expect(renderToStaticMarkup(createElement(DiffView, { diffs: [{ path: 'a.ts', oldText: 'x\n', newText: text, previous: 'text' }] }))).toContain(line(`<code>${expected}</code>`))
+    expect(
+      renderToStaticMarkup(createElement(DiffView, { diffs: [{ path: 'a.ts', oldText: 'x\n', newText: text, previous: 'text' }] })),
+    ).toContain(line(`<code>${expected}</code>`))
   })
 
   it('leaves the line out without WebCrypto and for a diff side the agent clipped', () => {
-    expect(renderToStaticMarkup(createElement(DiffView, { diffs: [{ path: 'big.txt', newText: 'x\n…（内容过长，已截断）', previous: 'none' }] }))).not.toContain('新内容哈希')
+    expect(
+      renderToStaticMarkup(
+        createElement(DiffView, { diffs: [{ path: 'big.txt', newText: 'x\n…（内容过长，已截断）', previous: 'none' }] }),
+      ),
+    ).not.toContain('新内容哈希')
     vi.stubGlobal('crypto', undefined)
-    expect(renderToStaticMarkup(createElement(DiffView, { diffs: [{ path: 'b.ts', newText: 'only on an insecure origin' }] }))).not.toContain('新内容哈希')
+    expect(
+      renderToStaticMarkup(createElement(DiffView, { diffs: [{ path: 'b.ts', newText: 'only on an insecure origin' }] })),
+    ).not.toContain('新内容哈希')
   })
 })
 
 describe('workspace settings', () => {
   it('lists a workspace the Host disabled with its reason and keeps the remove action', () => {
     const reason = '该目录位于受保护目录（如 .git）内，不能作为项目'
-    const html = renderToStaticMarkup(createElement('ul', null, createElement(WorkspaceRow, { workspace: { id: 'w1', name: 'hooks', path: '/w/.git/hooks', unavailable: reason }, owner: true, onRemove: noop })))
+    const html = renderToStaticMarkup(
+      createElement(
+        'ul',
+        null,
+        createElement(WorkspaceRow, {
+          workspace: { id: 'w1', name: 'hooks', path: '/w/.git/hooks', unavailable: reason },
+          owner: true,
+          onRemove: noop,
+        }),
+      ),
+    )
     expect(html).toContain('class="workspace-row is-unavailable"')
     expect(html).toContain('<span class="badge badge-warn">不可用</span>')
     expect(html).toContain(`<span class="workspace-unavailable">${reason}</span>`)
     expect(html).toContain('>移除</button>')
-    const usable = renderToStaticMarkup(createElement('ul', null, createElement(WorkspaceRow, { workspace: { id: 'w2', name: 'app', path: '/w/app' }, owner: false, onRemove: noop })))
+    const usable = renderToStaticMarkup(
+      createElement(
+        'ul',
+        null,
+        createElement(WorkspaceRow, { workspace: { id: 'w2', name: 'app', path: '/w/app' }, owner: false, onRemove: noop }),
+      ),
+    )
     expect(usable).not.toMatch(/不可用|移除/)
   })
 })

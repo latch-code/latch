@@ -1,14 +1,10 @@
 import type { IncomingMessage } from 'node:http'
 import { AppError } from '../core/errors.ts'
 import type { ListenerContext } from './listeners.ts'
-import {
-  SCOPE_LABELS, type ConfirmationTicket, type DeviceScope, type ListenerClass, type PermissionLevel,
-} from '../shared/types.ts'
+import { SCOPE_LABELS, type ConfirmationTicket, type DeviceScope, type ListenerClass, type PermissionLevel } from '../shared/types.ts'
 
 /** Credential as presented on the wire; the device store decides what it is worth. */
-export type Presented =
-  | { kind: 'cookie' | 'header'; value: string }
-  | { kind: 'legacy-cookie'; value: string }
+export type Presented = { kind: 'cookie' | 'header'; value: string } | { kind: 'legacy-cookie'; value: string }
 
 export const LEGACY_COOKIE = 'harness_link'
 const CREDENTIAL_HEADER = /^Latch-Device ([!-~]{1,256})$/u
@@ -118,12 +114,23 @@ export function levelsUpTo(ceiling: PermissionLevel): PermissionLevel[] {
 
 /** Only the public ticket fields leave the Host. */
 export function publicTicket(record: ConfirmationTicket): ConfirmationTicket {
-  return { id: record.id, action: record.action, title: record.title, status: record.status, hashDisplay: record.hashDisplay, expiresAt: record.expiresAt }
+  return {
+    id: record.id,
+    action: record.action,
+    title: record.title,
+    status: record.status,
+    hashDisplay: record.hashDisplay,
+    expiresAt: record.expiresAt,
+  }
 }
 
 // ---- Rate limits -----------------------------------------------------------------------------
 
-export interface BucketSpec { capacity: number; refill: number; perMs: number }
+export interface BucketSpec {
+  capacity: number
+  refill: number
+  perMs: number
+}
 
 export const RATE_LIMITS = {
   authFailure: { capacity: 100, refill: 20, perMs: 1_000 },
@@ -143,9 +150,13 @@ export class RateLimiter {
   private readonly capacity: number
   private readonly rate: number
 
-  constructor(spec: BucketSpec, factor: number, private readonly now: () => number) {
+  constructor(
+    spec: BucketSpec,
+    factor: number,
+    private readonly now: () => number,
+  ) {
     this.capacity = spec.capacity * factor
-    this.rate = spec.refill * factor / spec.perMs
+    this.rate = (spec.refill * factor) / spec.perMs
   }
 
   /** Takes one token or throws `429 rate-limited` with `retryAfter` seconds. */
@@ -177,5 +188,8 @@ export class RateLimiter {
 
 export function createRateLimits(mode: 'default' | 'relaxed', now: () => number): Record<BucketName, RateLimiter> {
   const factor = mode === 'relaxed' ? 100 : 1
-  return Object.fromEntries(Object.entries(RATE_LIMITS).map(([name, spec]) => [name, new RateLimiter(spec, factor, now)])) as Record<BucketName, RateLimiter>
+  return Object.fromEntries(Object.entries(RATE_LIMITS).map(([name, spec]) => [name, new RateLimiter(spec, factor, now)])) as Record<
+    BucketName,
+    RateLimiter
+  >
 }

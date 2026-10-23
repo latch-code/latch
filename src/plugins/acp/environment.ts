@@ -7,7 +7,11 @@ import type { AcpPermissionProfile } from './profiles/index.ts'
 const INHERITED = new Set(['HOME', 'LANG', 'TERM', 'USER', 'SHELL'])
 const PROXIES = ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY']
 /** Git reads repository hooks and fsmonitor commands from the project; both would run code the agent did not choose. */
-const GIT_CONFIG: Array<[string, string]> = [['core.fsmonitor', 'false'], ['core.hooksPath', '/dev/null'], ['safe.bareRepository', 'explicit']]
+const GIT_CONFIG: Array<[string, string]> = [
+  ['core.fsmonitor', 'false'],
+  ['core.hooksPath', '/dev/null'],
+  ['safe.bareRepository', 'explicit'],
+]
 /** Removed last, whatever set them; compared case-insensitively. */
 const REMOVED_PREFIXES = ['NPM_', 'HARNESS_', 'DYLD_', 'LD_']
 
@@ -54,7 +58,10 @@ export function agentEnvironment(input: {
   }
   Object.assign(env, input.profile?.defaultEnv ?? {}, input.materializedEnv ?? {})
   env.TMPDIR = input.sessionTmpDir
-  for (const name of PROXIES) { env[name] = ''; env[name.toLowerCase()] = '' }
+  for (const name of PROXIES) {
+    env[name] = ''
+    env[name.toLowerCase()] = ''
+  }
   env.NODE_TLS_REJECT_UNAUTHORIZED = '1'
   env.NODE_EXTRA_CA_CERTS = ''
   env.GIT_CONFIG_COUNT = String(GIT_CONFIG.length)

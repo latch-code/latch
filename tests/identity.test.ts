@@ -8,7 +8,9 @@ import { hostIdFromSpki, loadOrCreateHostIdentity } from '../src/host/identity.t
 import { P256_VECTOR } from './helpers/crypto.ts'
 
 const cleanups: string[] = []
-afterEach(() => { for (const path of cleanups.splice(0)) rmSync(path, { recursive: true, force: true }) })
+afterEach(() => {
+  for (const path of cleanups.splice(0)) rmSync(path, { recursive: true, force: true })
+})
 
 function dataDir(): string {
   const path = mkdtempSync(join(tmpdir(), 'harness-link-identity-'))
@@ -31,7 +33,14 @@ describe('host identity', () => {
     expect(again.publicKeySpki.equals(first.publicKeySpki)).toBe(true)
     const signature = again.sign(Buffer.from('hello'))
     expect(signature).toHaveLength(64)
-    expect(verify('sha256', Buffer.from('hello'), { key: first.publicKeySpki, format: 'der', type: 'spki', dsaEncoding: 'ieee-p1363' }, signature)).toBe(true)
+    expect(
+      verify(
+        'sha256',
+        Buffer.from('hello'),
+        { key: first.publicKeySpki, format: 'der', type: 'spki', dsaEncoding: 'ieee-p1363' },
+        signature,
+      ),
+    ).toBe(true)
   })
 
   it('matches the shared host ID vector', () => {
@@ -65,7 +74,11 @@ describe('host identity', () => {
 
     const ed = dataDir()
     mkdirSync(join(ed, 'identity'), { mode: 0o700 })
-    writeFileSync(join(ed, 'identity', 'host-key.pem'), generateKeyPairSync('ed25519').privateKey.export({ format: 'pem', type: 'pkcs8' }) as string, { mode: 0o600 })
+    writeFileSync(
+      join(ed, 'identity', 'host-key.pem'),
+      generateKeyPairSync('ed25519').privateKey.export({ format: 'pem', type: 'pkcs8' }) as string,
+      { mode: 0o600 },
+    )
     await expect(loadOrCreateHostIdentity(ed)).rejects.toEqual(invalid)
 
     const linked = dataDir()

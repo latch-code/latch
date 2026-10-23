@@ -22,7 +22,11 @@ const OWN_PLUGIN = '@opencode-ai/plugin'
 /** OpenCode creates `.opencode/package.json` when it is missing and adds its own plugin package at every start. */
 function withoutOwnPlugin(text: string): unknown {
   let value: unknown
-  try { value = JSON.parse(text) } catch { return text }
+  try {
+    value = JSON.parse(text)
+  } catch {
+    return text
+  }
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return text
   const rest: Record<string, unknown> = { ...value }
   const dependencies = rest.dependencies

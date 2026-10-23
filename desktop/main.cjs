@@ -15,7 +15,14 @@ const { join, resolve } = require('node:path')
 const { readHostStateFile, inspectHostState } = require('./host.cjs')
 const { openCredentialStore, secureStorageProblem } = require('./credentials.cjs')
 const {
-  HTML_CSP, createExternalOpener, createShellProxy, debugFlagProblems, htmlErrorPage, isAllowedRendererRequest, isAppUrl, unexpectedArguments,
+  HTML_CSP,
+  createExternalOpener,
+  createShellProxy,
+  debugFlagProblems,
+  htmlErrorPage,
+  isAllowedRendererRequest,
+  isAppUrl,
+  unexpectedArguments,
 } = require('./proxy.cjs')
 
 const APP_URL = 'latch://app/link/'
@@ -43,10 +50,20 @@ app.setName('Latch')
 app.setPath('userData', resolve(argument('latch-user-data') ?? join(app.getPath('appData'), 'Latch', 'Desktop')))
 const hostStatePath = argument('latch-host-state')
 
-protocol.registerSchemesAsPrivileged([{
-  scheme: 'latch',
-  privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: false, allowServiceWorkers: false, bypassCSP: false },
-}])
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'latch',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+      corsEnabled: false,
+      allowServiceWorkers: false,
+      bypassCSP: false,
+    },
+  },
+])
 app.enableSandbox()
 
 const icon = nativeImage.createFromPath(join(__dirname, '../public/icon.png'))
@@ -54,8 +71,13 @@ let ready = false
 
 function createWindow({ width = 1250, height = 850, preload = true } = {}) {
   return new BrowserWindow({
-    width, height, minWidth: Math.min(width, 760), minHeight: Math.min(height, 560),
-    title: 'Latch', backgroundColor: '#fbfcfd', icon,
+    width,
+    height,
+    minWidth: Math.min(width, 760),
+    minHeight: Math.min(height, 560),
+    title: 'Latch',
+    backgroundColor: '#fbfcfd',
+    icon,
     webPreferences: {
       ...(preload ? { preload: join(__dirname, 'preload.cjs') } : {}),
       sandbox: true,
@@ -83,10 +105,14 @@ function openWindow() {
 function fatal(message) {
   log(message)
   if (protocol.isProtocolHandled('latch')) protocol.unhandle('latch')
-  protocol.handle('latch', () => new Response(htmlErrorPage(message), {
-    status: 200,
-    headers: { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': HTML_CSP, 'cache-control': 'no-store' },
-  }))
+  protocol.handle(
+    'latch',
+    () =>
+      new Response(htmlErrorPage(message), {
+        status: 200,
+        headers: { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': HTML_CSP, 'cache-control': 'no-store' },
+      }),
+  )
   void createWindow({ width: 560, height: 280, preload: false }).loadURL(APP_URL)
 }
 
@@ -112,7 +138,9 @@ app.on('web-contents-created', (_event, contents) => {
     void openExternal(url, BrowserWindow.fromWebContents(contents) ?? undefined)
     return { action: 'deny' }
   })
-  const guard = (event, url) => { if (!isAppUrl(event.url ?? url)) event.preventDefault() }
+  const guard = (event, url) => {
+    if (!isAppUrl(event.url ?? url)) event.preventDefault()
+  }
   contents.on('will-navigate', guard)
   contents.on('will-redirect', guard)
   contents.on('will-frame-navigate', guard)
@@ -153,10 +181,14 @@ async function start() {
         if (!result.ok) throw new Error(result.reason)
         socketPath = next.socketPath
         return socketPath
-      })().finally(() => { verifying = undefined })
+      })().finally(() => {
+        verifying = undefined
+      })
       return verifying
     },
-    invalidateSocket() { socketPath = undefined },
+    invalidateSocket() {
+      socketPath = undefined
+    },
   })
   protocol.handle('latch', request => proxy.handle(request))
   if (store.current()) await proxy.renew()
@@ -171,10 +203,18 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   app.on('second-instance', () => {
     const [window] = BrowserWindow.getAllWindows()
-    if (window) { if (window.isMinimized()) window.restore(); window.focus() }
+    if (window) {
+      if (window.isMinimized()) window.restore()
+      window.focus()
+    }
   })
-  app.whenReady().then(start).catch(error => fatal(`启动失败：${error instanceof Error ? error.message : '未知错误'}`))
-  app.on('activate', () => { if (ready && BrowserWindow.getAllWindows().length === 0) openWindow() })
+  app
+    .whenReady()
+    .then(start)
+    .catch(error => fatal(`启动失败：${error instanceof Error ? error.message : '未知错误'}`))
+  app.on('activate', () => {
+    if (ready && BrowserWindow.getAllWindows().length === 0) openWindow()
+  })
   // Closing the window ends the shell only; the Host keeps running and keeps its sessions.
   app.on('window-all-closed', () => app.quit())
 }

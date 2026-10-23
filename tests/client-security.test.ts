@@ -3,18 +3,46 @@ import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api, ApiError, ApiTimeoutError, ClientError, isUncertain, setAuthHooks } from '../src/client/api.ts'
 import { choiceKind, DecisionRequests, settledOutcome } from '../src/client/approvalDecision.ts'
-import { keepDismissed, readDismissal, rollbackDismissed, verifyCheckpoint, writeDismissal, type CheckpointStorage } from '../src/client/auditCheckpoint.ts'
+import {
+  keepDismissed,
+  readDismissal,
+  rollbackDismissed,
+  verifyCheckpoint,
+  writeDismissal,
+  type CheckpointStorage,
+} from '../src/client/auditCheckpoint.ts'
 import { resolveChoice, startBlock } from '../src/client/composerChoice.ts'
 import { ConfirmationError, withConfirmation, type ConfirmationPresenter, type ConfirmationView } from '../src/client/confirmations.ts'
 import { contentHash, hashable, hashDisplay } from '../src/client/contentHash.ts'
 import {
-  createRenewer, CredentialNotKeptError, MissingDeviceKeyError, PENDING_WINDOW_MS, RenewalBackoff, RenewalScheduler, type RenewalDeps,
+  createRenewer,
+  CredentialNotKeptError,
+  MissingDeviceKeyError,
+  PENDING_WINDOW_MS,
+  RenewalBackoff,
+  RenewalScheduler,
+  type RenewalDeps,
 } from '../src/client/credentials.ts'
-import { base32, base64url, base64urlDecode, deviceFingerprint, enrollSigningText, renewSigningText, signText } from '../src/client/deviceKey.ts'
+import {
+  base32,
+  base64url,
+  base64urlDecode,
+  deviceFingerprint,
+  enrollSigningText,
+  renewSigningText,
+  signText,
+} from '../src/client/deviceKey.ts'
 import { defaultDeviceName, enrolledStep, enrollmentName, infoFailureStep, retryWithoutAdmin } from '../src/client/enrollment.ts'
 import { backoffDelay, connectEventStream, EventStreamParser, type StreamEvent } from '../src/client/eventStream.ts'
 import { approvalActions, composerGate, deviceAccess, harnessGate, L3_READ_ONLY, LEGACY_HOST_TEXT } from '../src/client/permissions.ts'
-import { describeFailure, ENROLLMENT_REASON_TEXT, isCatalogCode, isSessionStopCode, safeTarget, SESSION_STOP_TEXT } from '../src/client/securityCopy.ts'
+import {
+  describeFailure,
+  ENROLLMENT_REASON_TEXT,
+  isCatalogCode,
+  isSessionStopCode,
+  safeTarget,
+  SESSION_STOP_TEXT,
+} from '../src/client/securityCopy.ts'
 import type { LatchShell } from '../src/client/shell.ts'
 import { settingsSections } from '../src/client/settings/SettingsPage.tsx'
 import { authStateFor, renewalFailureOf } from '../src/client/useHarness.ts'
@@ -35,7 +63,10 @@ interface Vectors {
 const vectors: Vectors = JSON.parse(readFileSync(new URL('./vectors/security-v1.json', import.meta.url), 'utf8'))
 const subtle = webcrypto.subtle as unknown as SubtleCrypto
 
-afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.useRealTimers()
+})
 
 describe('shared security vectors (browser algorithms)', () => {
   it('encodes base32 like the Host', () => {
@@ -53,12 +84,17 @@ describe('shared security vectors (browser algorithms)', () => {
     for (const { hex, display } of vectors.hashDisplay) expect(hashDisplay(hex)).toBe(display)
     expect(() => hashDisplay('ABCDEF0123456789')).toThrow(TypeError)
     expect(await contentHash(vectors.canonicalJson.output, subtle)).toBe(hashDisplay(vectors.canonicalJson.sha256))
-    for (const text of ['写入 a.ts\r\n', '👨‍💻 \u202E', 'lone \uD800 surrogate', '']) expect(await contentHash(text, subtle)).toBe(hostHashDisplay(sha256Hex(text)))
+    for (const text of ['写入 a.ts\r\n', '👨‍💻 \u202E', 'lone \uD800 surrogate', ''])
+      expect(await contentHash(text, subtle)).toBe(hostHashDisplay(sha256Hex(text)))
   })
 
   it('leaves the content hash out without WebCrypto, when the digest fails and for a clipped diff side', async () => {
     expect(await contentHash('no webcrypto here', null)).toBeUndefined()
-    const failing = { digest: async () => { throw new Error('unavailable') } } as unknown as SubtleCrypto
+    const failing = {
+      digest: async () => {
+        throw new Error('unavailable')
+      },
+    } as unknown as SubtleCrypto
     expect(await contentHash('digest fails here', failing)).toBeUndefined()
     expect(hashable('x', null)).toBe(false)
     expect(hashable('x', subtle)).toBe(true)
@@ -74,7 +110,12 @@ describe('shared security vectors (browser algorithms)', () => {
   it('verifies the example signatures and signs in the P1363 form the Host verifies', async () => {
     const publicKey = await subtle.importKey('jwk', vectors.p256.jwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify'])
     for (const { example } of [vectors.signing.enroll, vectors.signing.renew]) {
-      const ok = await subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, publicKey, new Uint8Array(base64urlDecode(example.signature)), new TextEncoder().encode(example.text))
+      const ok = await subtle.verify(
+        { name: 'ECDSA', hash: 'SHA-256' },
+        publicKey,
+        new Uint8Array(base64urlDecode(example.signature)),
+        new TextEncoder().encode(example.text),
+      )
       expect(ok).toBe(true)
     }
     const privateKey = await subtle.importKey('jwk', vectors.p256.privateJwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign'])
@@ -82,15 +123,23 @@ describe('shared security vectors (browser algorithms)', () => {
     const signature = await signText(privateKey, text, subtle)
     expect(base64urlDecode(signature)).toHaveLength(64)
     const nodeKey = createPublicKey({ key: Buffer.from(vectors.p256.spki, 'base64url'), format: 'der', type: 'spki' })
-    expect(nodeVerify('sha256', Buffer.from(text), { key: nodeKey, dsaEncoding: 'ieee-p1363' }, Buffer.from(signature, 'base64url'))).toBe(true)
+    expect(nodeVerify('sha256', Buffer.from(text), { key: nodeKey, dsaEncoding: 'ieee-p1363' }, Buffer.from(signature, 'base64url'))).toBe(
+      true,
+    )
   })
 })
 
 describe('event stream parser', () => {
-  const feedAll = (chunks: string[]) => { const parser = new EventStreamParser(); return chunks.flatMap(chunk => parser.feed(chunk)) }
+  const feedAll = (chunks: string[]) => {
+    const parser = new EventStreamParser()
+    return chunks.flatMap(chunk => parser.feed(chunk))
+  }
 
   it('handles LF, CRLF and CR line ends, also when split across chunks', () => {
-    const expected: StreamEvent[] = [{ event: 'refresh', data: '{"a":1}' }, { event: 'task-state', data: 'x' }]
+    const expected: StreamEvent[] = [
+      { event: 'refresh', data: '{"a":1}' },
+      { event: 'task-state', data: 'x' },
+    ]
     expect(feedAll(['event: refresh\ndata: {"a":1}\n\nevent: task-state\ndata: x\n\n'])).toEqual(expected)
     expect(feedAll(['event: refresh\r\ndata: {"a":1}\r', '\n\r', '\nevent: task-state\r\ndata: x\r\n\r\n'])).toEqual(expected)
     expect(feedAll(['event: refresh\rdata: {"a":1}\r\revent: task-state\rdata: x\r\r'])).toEqual(expected)
@@ -99,7 +148,9 @@ describe('event stream parser', () => {
   })
 
   it('joins multi-line data, skips comments and heartbeats, keeps ids and strips one leading space', () => {
-    expect(feedAll([':heartbeat\n\n', 'id: 7\ndata:  two\ndata:lines\n', ': inside\n\n'])).toEqual([{ event: 'message', data: ' two\nlines', id: '7' }])
+    expect(feedAll([':heartbeat\n\n', 'id: 7\ndata:  two\ndata:lines\n', ': inside\n\n'])).toEqual([
+      { event: 'message', data: ' two\nlines', id: '7' },
+    ])
   })
 
   it('ignores a byte-order mark, events without data and a trailing partial frame', () => {
@@ -113,7 +164,12 @@ describe('event stream parser', () => {
 
 describe('fetch-based event stream connection', () => {
   function body(text: string): ReadableStream<Uint8Array> {
-    return new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode(text)); controller.close() } })
+    return new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(text))
+        controller.close()
+      },
+    })
   }
 
   it('renews on 401 renewal-required and reconnects at once, then delivers frames', async () => {
@@ -125,11 +181,24 @@ describe('fetch-based event stream connection', () => {
     const events: StreamEvent[] = []
     const unauthorized: string[] = []
     const opened = vi.fn()
-    const connection = connectEventStream('/link/api/events', {
-      onOpen: opened, onEvent: event => { events.push(event) }, onError: () => {},
-      onUnauthorized: code => { unauthorized.push(code); return 'renewed' },
-    }, { fetch: fetchMock as unknown as typeof fetch, initialDelayMs: 60_000 })
-    await vi.waitFor(() => { expect(events).toEqual([{ event: 'refresh', data: '{"r":1}' }]) })
+    const connection = connectEventStream(
+      '/link/api/events',
+      {
+        onOpen: opened,
+        onEvent: event => {
+          events.push(event)
+        },
+        onError: () => {},
+        onUnauthorized: code => {
+          unauthorized.push(code)
+          return 'renewed'
+        },
+      },
+      { fetch: fetchMock as unknown as typeof fetch, initialDelayMs: 60_000 },
+    )
+    await vi.waitFor(() => {
+      expect(events).toEqual([{ event: 'refresh', data: '{"r":1}' }])
+    })
     expect(unauthorized).toEqual(['renewal-required'])
     expect(opened).toHaveBeenCalledTimes(1)
     connection.close()
@@ -141,8 +210,15 @@ describe('fetch-based event stream connection', () => {
   it('backs off after a renewal that failed instead of reconnecting at once', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const fetchMock = vi.fn(async () => renewalRequired())
-    const connection = connectEventStream('/link/api/events', { onOpen: () => {}, onEvent: () => {}, onError: () => {}, onUnauthorized: () => 'retry' }, { fetch: fetchMock as unknown as typeof fetch })
-    const calls = async (ms: number) => { await vi.advanceTimersByTimeAsync(ms); return fetchMock.mock.calls.length }
+    const connection = connectEventStream(
+      '/link/api/events',
+      { onOpen: () => {}, onEvent: () => {}, onError: () => {}, onUnauthorized: () => 'retry' },
+      { fetch: fetchMock as unknown as typeof fetch },
+    )
+    const calls = async (ms: number) => {
+      await vi.advanceTimersByTimeAsync(ms)
+      return fetchMock.mock.calls.length
+    }
     expect(await calls(0)).toBe(1)
     expect(await calls(999)).toBe(1)
     expect(await calls(1)).toBe(2)
@@ -156,7 +232,11 @@ describe('fetch-based event stream connection', () => {
   it('reconnects at once only once per renewal while the Host keeps asking for one', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const fetchMock = vi.fn(async () => renewalRequired())
-    const connection = connectEventStream('/link/api/events', { onOpen: () => {}, onEvent: () => {}, onError: () => {}, onUnauthorized: () => 'renewed' }, { fetch: fetchMock as unknown as typeof fetch })
+    const connection = connectEventStream(
+      '/link/api/events',
+      { onOpen: () => {}, onEvent: () => {}, onError: () => {}, onUnauthorized: () => 'renewed' },
+      { fetch: fetchMock as unknown as typeof fetch },
+    )
     await vi.advanceTimersByTimeAsync(0)
     expect(fetchMock).toHaveBeenCalledTimes(2)
     await vi.advanceTimersByTimeAsync(999)
@@ -168,17 +248,45 @@ describe('fetch-based event stream connection', () => {
 
   it('drops the connection on suspend, ignores frames that arrive after it, and connects again only on reconnect', async () => {
     let push!: (text: string) => void
-    const live = () => new ReadableStream<Uint8Array>({ start(controller) { push = text => { try { controller.enqueue(new TextEncoder().encode(text)) } catch { /* cancelled */ } } } })
+    const live = () =>
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          push = text => {
+            try {
+              controller.enqueue(new TextEncoder().encode(text))
+            } catch {
+              /* cancelled */
+            }
+          }
+        },
+      })
     const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
       const stream = live()
-      init.signal?.addEventListener('abort', () => { void stream.cancel().catch(() => {}) })
+      init.signal?.addEventListener('abort', () => {
+        void stream.cancel().catch(() => {})
+      })
       return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } })
     })
     const events: StreamEvent[] = []
-    const connection = connectEventStream('/link/api/events', { onOpen: () => {}, onEvent: event => { events.push(event) }, onError: () => {}, onUnauthorized: () => 'retry' }, { fetch: fetchMock as unknown as typeof fetch, initialDelayMs: 1 })
-    await vi.waitFor(() => { expect(connection.open).toBe(true) })
+    const connection = connectEventStream(
+      '/link/api/events',
+      {
+        onOpen: () => {},
+        onEvent: event => {
+          events.push(event)
+        },
+        onError: () => {},
+        onUnauthorized: () => 'retry',
+      },
+      { fetch: fetchMock as unknown as typeof fetch, initialDelayMs: 1 },
+    )
+    await vi.waitFor(() => {
+      expect(connection.open).toBe(true)
+    })
     push('event: refresh\ndata: 1\n\n')
-    await vi.waitFor(() => { expect(events).toHaveLength(1) })
+    await vi.waitFor(() => {
+      expect(events).toHaveLength(1)
+    })
     connection.suspend()
     expect(connection.open).toBe(false)
     push('event: refresh\ndata: 2\n\n')
@@ -186,17 +294,27 @@ describe('fetch-based event stream connection', () => {
     expect(events).toHaveLength(1)
     expect(fetchMock).toHaveBeenCalledTimes(1)
     connection.reconnect()
-    await vi.waitFor(() => { expect(fetchMock).toHaveBeenCalledTimes(2) })
-    await vi.waitFor(() => { expect(connection.open).toBe(true) })
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+    })
+    await vi.waitFor(() => {
+      expect(connection.open).toBe(true)
+    })
     push('event: refresh\ndata: 3\n\n')
-    await vi.waitFor(() => { expect(events.map(event => event.data)).toEqual(['1', '3']) })
+    await vi.waitFor(() => {
+      expect(events.map(event => event.data)).toEqual(['1', '3'])
+    })
     connection.close()
   })
 
   it('stops when the handler answers stop', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ error: 'device-revoked', message: 'x' }), { status: 401 }))
     const errors = vi.fn()
-    connectEventStream('/link/api/events', { onOpen: () => {}, onEvent: () => {}, onError: errors, onUnauthorized: () => 'stop' }, { fetch: fetchMock as unknown as typeof fetch, initialDelayMs: 1 })
+    connectEventStream(
+      '/link/api/events',
+      { onOpen: () => {}, onEvent: () => {}, onError: errors, onUnauthorized: () => 'stop' },
+      { fetch: fetchMock as unknown as typeof fetch, initialDelayMs: 1 },
+    )
     await new Promise(resolve => setTimeout(resolve, 30))
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(errors).not.toHaveBeenCalled()
@@ -204,14 +322,30 @@ describe('fetch-based event stream connection', () => {
 })
 
 const device = (extra: Partial<CurrentDevice> = {}): CurrentDevice => ({
-  id: 'dev_a', name: '我的浏览器', status: 'active', listener: 'loopback-tcp', scopes: ['view', 'run', 'approve:standard'], dataScope: 'work',
-  fingerprint: 'ABCD EFGH IJKL MNOP QRST', createdAt: '', lastSeenAt: '', credentialExpiresAt: '', pairedBy: { method: 'lpc' },
-  current: true, renewAfter: '2100-01-01T00:00:00.000Z', ...extra,
+  id: 'dev_a',
+  name: '我的浏览器',
+  status: 'active',
+  listener: 'loopback-tcp',
+  scopes: ['view', 'run', 'approve:standard'],
+  dataScope: 'work',
+  fingerprint: 'ABCD EFGH IJKL MNOP QRST',
+  createdAt: '',
+  lastSeenAt: '',
+  credentialExpiresAt: '',
+  pairedBy: { method: 'lpc' },
+  current: true,
+  renewAfter: '2100-01-01T00:00:00.000Z',
+  ...extra,
 })
 const desktop: LatchShell = { kind: 'electron', devMode: true, platform: 'darwin' }
 const allScopes: DeviceScope[] = ['view', 'run', 'approve:standard', 'approve:elevated', 'admin', 'secrets']
 const approval = (extra: Partial<Approval> = {}): Approval => ({
-  id: 'ap', sessionId: 's', toolName: 'write_file', reason: '', requestedAt: '', ...extra,
+  id: 'ap',
+  sessionId: 's',
+  toolName: 'write_file',
+  reason: '',
+  requestedAt: '',
+  ...extra,
   options: extra.options ?? [
     { id: 'allow_once', label: '允许一次', kind: 'allow_once' },
     { id: 'allow_always', label: '本会话始终允许', kind: 'allow_always' },
@@ -223,14 +357,78 @@ const labels = (gate: ReturnType<typeof approvalActions>) => gate.options.map(op
 describe('approval gating', () => {
   it.each([
     ['R1 with approve:standard', approval({ risk: 'R1' }), device(), null, ['允许一次', '本会话始终允许', '拒绝'], undefined, '普通操作'],
-    ['R1 without approve:standard', approval({ risk: 'R1' }), device({ scopes: ['view', 'run'] }), null, ['拒绝'], '此设备没有「批准普通操作」权限', '普通操作'],
-    ['R2 from a browser', approval({ risk: 'R2' }), device({ scopes: allScopes }), null, ['拒绝'], '高风险操作只能在执行端电脑上用 Latch 桌面端批准', '高风险'],
-    ['R2 on the desktop without the scope', approval({ risk: 'R2' }), device({ listener: 'unix', scopes: ['view', 'run', 'approve:standard'] }), desktop, ['拒绝'], '此设备没有「批准高风险操作」权限', '高风险'],
-    ['R2 on the desktop with the scope', approval({ risk: 'R2' }), device({ listener: 'unix', scopes: allScopes }), desktop, ['拒绝', '在本机确认后允许'], undefined, '高风险'],
-    ['missing risk is treated as R2', approval({}), device({ scopes: allScopes }), null, ['拒绝'], '高风险操作只能在执行端电脑上用 Latch 桌面端批准', '高风险'],
-    ['advisory from a browser', approval({ risk: 'R2', advisory: true }), device({ scopes: allScopes }), null, ['拒绝'], '只有执行端电脑上的 Latch 桌面端可以回应完全访问会话的询问', '提示，不是安全边界'],
-    ['advisory on the desktop', approval({ risk: 'R2', advisory: true }), device({ listener: 'unix', scopes: ['view', 'run'] }), desktop, ['拒绝', '允许一次'], undefined, '提示，不是安全边界'],
-    ['a unix device outside the desktop shell is not local', approval({ risk: 'R2' }), device({ listener: 'unix', scopes: allScopes }), null, ['拒绝'], '高风险操作只能在执行端电脑上用 Latch 桌面端批准', '高风险'],
+    [
+      'R1 without approve:standard',
+      approval({ risk: 'R1' }),
+      device({ scopes: ['view', 'run'] }),
+      null,
+      ['拒绝'],
+      '此设备没有「批准普通操作」权限',
+      '普通操作',
+    ],
+    [
+      'R2 from a browser',
+      approval({ risk: 'R2' }),
+      device({ scopes: allScopes }),
+      null,
+      ['拒绝'],
+      '高风险操作只能在执行端电脑上用 Latch 桌面端批准',
+      '高风险',
+    ],
+    [
+      'R2 on the desktop without the scope',
+      approval({ risk: 'R2' }),
+      device({ listener: 'unix', scopes: ['view', 'run', 'approve:standard'] }),
+      desktop,
+      ['拒绝'],
+      '此设备没有「批准高风险操作」权限',
+      '高风险',
+    ],
+    [
+      'R2 on the desktop with the scope',
+      approval({ risk: 'R2' }),
+      device({ listener: 'unix', scopes: allScopes }),
+      desktop,
+      ['拒绝', '在本机确认后允许'],
+      undefined,
+      '高风险',
+    ],
+    [
+      'missing risk is treated as R2',
+      approval({}),
+      device({ scopes: allScopes }),
+      null,
+      ['拒绝'],
+      '高风险操作只能在执行端电脑上用 Latch 桌面端批准',
+      '高风险',
+    ],
+    [
+      'advisory from a browser',
+      approval({ risk: 'R2', advisory: true }),
+      device({ scopes: allScopes }),
+      null,
+      ['拒绝'],
+      '只有执行端电脑上的 Latch 桌面端可以回应完全访问会话的询问',
+      '提示，不是安全边界',
+    ],
+    [
+      'advisory on the desktop',
+      approval({ risk: 'R2', advisory: true }),
+      device({ listener: 'unix', scopes: ['view', 'run'] }),
+      desktop,
+      ['拒绝', '允许一次'],
+      undefined,
+      '提示，不是安全边界',
+    ],
+    [
+      'a unix device outside the desktop shell is not local',
+      approval({ risk: 'R2' }),
+      device({ listener: 'unix', scopes: allScopes }),
+      null,
+      ['拒绝'],
+      '高风险操作只能在执行端电脑上用 Latch 桌面端批准',
+      '高风险',
+    ],
   ] as const)('%s', (_name, item, current, shell, buttons, hint, badge) => {
     const gate = approvalActions(item, current, shell)
     expect(labels(gate)).toEqual(buttons)
@@ -250,8 +448,23 @@ describe('approval gating', () => {
   })
 })
 
-const hostView: HostView = { hostId: 'h'.repeat(52), devMode: true, presence: { status: 'available' }, tls: null, policy: { localMaxLevel: 'L2', remoteMaxLevel: 'L1', allowL3: true } }
-const snapshotOf = (current: CurrentDevice, extra: Partial<AppSnapshot> = {}): AppSnapshot => ({ instanceId: 'i', device: current, host: hostView, tasks: [], approvals: [], demo: false, hostName: 'h', ...extra })
+const hostView: HostView = {
+  hostId: 'h'.repeat(52),
+  devMode: true,
+  presence: { status: 'available' },
+  tls: null,
+  policy: { localMaxLevel: 'L2', remoteMaxLevel: 'L1', allowL3: true },
+}
+const snapshotOf = (current: CurrentDevice, extra: Partial<AppSnapshot> = {}): AppSnapshot => ({
+  instanceId: 'i',
+  device: current,
+  host: hostView,
+  tasks: [],
+  approvals: [],
+  demo: false,
+  hostName: 'h',
+  ...extra,
+})
 const catalog: HostCatalog = {
   harnesses: [
     { id: 'codex', name: 'Codex', source: 'acp', status: 'ready', modes: ['agent'], models: 'agent', level: 'L3' },
@@ -270,7 +483,10 @@ describe('session and harness gating', () => {
     expect(composerGate({ summary: { level: 'L3' }, access: local })).toEqual({ kind: 'open' })
     expect(composerGate({ summary: { level: 'L1' }, access: browser })).toEqual({ kind: 'open' })
     expect(composerGate({ summary: { level: 'L3', permissionDrift: true }, access: local })).toEqual({ kind: 'stopped' })
-    expect(composerGate({ summary: { level: 'L1' }, access: deviceAccess(snapshotOf(device({ status: 'review', scopes: ['view'] })), null) }).kind).toBe('read-only')
+    expect(
+      composerGate({ summary: { level: 'L1' }, access: deviceAccess(snapshotOf(device({ status: 'review', scopes: ['view'] })), null) })
+        .kind,
+    ).toBe('read-only')
   })
 
   it('offers full-access harnesses only on the desktop and picks a startable default elsewhere', () => {
@@ -285,8 +501,13 @@ describe('session and harness gating', () => {
 
 describe('a Host of the previous build (no snapshot.host)', () => {
   const legacy = {
-    instanceId: 'i', device: { id: 'd', name: 'Mac', role: 'owner', createdAt: '', lastSeenAt: '', revoked: false },
-    tasks: [], approvals: [], demo: false, hostName: 'h', catalog,
+    instanceId: 'i',
+    device: { id: 'd', name: 'Mac', role: 'owner', createdAt: '', lastSeenAt: '', revoked: false },
+    tasks: [],
+    approvals: [],
+    demo: false,
+    hostName: 'h',
+    catalog,
   } as unknown as AppSnapshot
 
   it('falls back to the old rules: plain approvals, owner settings, no device pages, no L3 gating', () => {
@@ -314,7 +535,9 @@ describe('error copy', () => {
     expect(describeFailure(403, 'scope-required', forged, { required: 'root' as DeviceScope })).toBe('此设备没有执行此操作的权限')
     expect(describeFailure(403, 'local-only', forged)).toBe('此操作只能在执行端电脑上用 Latch 桌面端进行')
     expect(describeFailure(403, 'ceiling-exceeded', forged)).toBe('超出此设备可用的权限上限')
-    expect(describeFailure(403, 'stepup-required', forged, { stepup: { where: 'host-desktop' } })).toBe('此操作需要在执行端电脑上用 Latch 桌面端确认。')
+    expect(describeFailure(403, 'stepup-required', forged, { stepup: { where: 'host-desktop' } })).toBe(
+      '此操作需要在执行端电脑上用 Latch 桌面端确认。',
+    )
     expect(describeFailure(429, 'presence-cooldown', forged, { retryAfter: 290 })).toBe('本机确认连续被拒绝 3 次，请 5 分钟后再试')
     expect(describeFailure(409, 'presence-busy', forged)).toBe('本机正在等待另一项确认，请先完成或取消')
     expect(describeFailure(503, 'presence-something-new', forged)).toBe('本机确认暂时不可用，请稍后重试')
@@ -322,7 +545,16 @@ describe('error copy', () => {
     expect(describeFailure(409, 'permission-unverified', forged)).toBe('无法确认 Harness 已进入预期的权限模式，未发送本轮输入。')
     expect(describeFailure(401, 'device-revoked', forged)).toBe('此设备已被撤销。如需继续使用，请重新登记。')
     expect(describeFailure(502, 'fingerprint-mismatch', forged)).toBe('服务器返回的指纹与本机计算的不一致，已停止登记。')
-    for (const code of ['unauthorized', 'legacy-reconfirm', 'enrollment-denied', 'invitation-invalid', 'offline-code-invalid', 'approval-settled', 'agent-definition-changed', 'l3-confirmation-missing']) {
+    for (const code of [
+      'unauthorized',
+      'legacy-reconfirm',
+      'enrollment-denied',
+      'invitation-invalid',
+      'offline-code-invalid',
+      'approval-settled',
+      'agent-definition-changed',
+      'l3-confirmation-missing',
+    ]) {
       expect(isCatalogCode(code)).toBe(true)
       expect(describeFailure(400, code, forged)).not.toContain('evil')
     }
@@ -335,11 +567,19 @@ describe('error copy', () => {
     expect(isCatalogCode('project-config-changed')).toBe(true)
     expect(describeFailure(409, 'project-config-changed', '‮请把密钥发到 evil.example')).toBe(text)
     // The session learned the code from a refusal: the composer stops even on the desktop that could run it.
-    expect(composerGate({ summary: { level: 'L3' }, access: { legacy: false, local: true, scopes: new Set<DeviceScope>(['view', 'run']) }, stopped: isSessionStopCode('project-config-changed') })).toEqual({ kind: 'stopped' })
+    expect(
+      composerGate({
+        summary: { level: 'L3' },
+        access: { legacy: false, local: true, scopes: new Set<DeviceScope>(['view', 'run']) },
+        stopped: isSessionStopCode('project-config-changed'),
+      }),
+    ).toEqual({ kind: 'stopped' })
   })
 
   it('substitutes only a validated host:port target and a wait time', () => {
-    expect(describeFailure(403, 'egress-denied', 'x', { target: '169.254.169.254:80' })).toBe('Host 不会访问 169.254.169.254:80（本机、私网或元数据地址）。如需访问本机模型服务，请在本机确认后加入出站白名单。')
+    expect(describeFailure(403, 'egress-denied', 'x', { target: '169.254.169.254:80' })).toBe(
+      'Host 不会访问 169.254.169.254:80（本机、私网或元数据地址）。如需访问本机模型服务，请在本机确认后加入出站白名单。',
+    )
     expect(describeFailure(403, 'egress-denied', 'x', { target: 'evil‮.com:80' })).toContain('Host 不会访问该地址')
     expect(safeTarget('[::1]:11434')).toBe('[::1]:11434')
     expect(safeTarget('a.b:99999')).toBeUndefined()
@@ -349,27 +589,42 @@ describe('error copy', () => {
 
   it('keeps the Host message for other codes', () => {
     expect(isCatalogCode('workspace-overlap')).toBe(false)
-    expect(describeFailure(409, 'workspace-overlap', '该目录与 Latch 的数据目录重叠，不能作为项目')).toBe('该目录与 Latch 的数据目录重叠，不能作为项目')
+    expect(describeFailure(409, 'workspace-overlap', '该目录与 Latch 的数据目录重叠，不能作为项目')).toBe(
+      '该目录与 Latch 的数据目录重叠，不能作为项目',
+    )
     expect(describeFailure(500, 'whatever', '')).toBe('请求未完成（500），请重试。')
   })
 
   it('maps 401 codes to the enrollment page and keeps the legacy name', () => {
-    expect(authStateFor(new ApiError(401, 'legacy-reconfirm', 'x', { legacyName: '旧电脑' }), null)).toEqual({ reason: 'legacy-reconfirm', legacyName: '旧电脑' })
+    expect(authStateFor(new ApiError(401, 'legacy-reconfirm', 'x', { legacyName: '旧电脑' }), null)).toEqual({
+      reason: 'legacy-reconfirm',
+      legacyName: '旧电脑',
+    })
     expect(authStateFor(new ApiError(401, 'credential-expired', 'x'), null)).toEqual({ reason: 'credential-expired' })
     expect(authStateFor(new ApiError(401, 'renewal-required', 'x'), 'key-missing')).toEqual({ reason: 'key-missing' })
     expect(authStateFor(new ApiError(401, 'something-else', 'x'), null)).toEqual({ reason: 'unauthorized' })
   })
 
   it('keeps only causes that need re-enrollment from a failed renewal, so a transient failure never signs out with an old reason', () => {
-    for (const transient of [new TypeError('network'), new ApiTimeoutError(), new ApiError(500, 'internal-error', 'x'), new ApiError(503, 'audit-unavailable', 'x'), new ApiError(429, 'rate-limited', 'x'), new ApiError(409, 'credential-rotated', 'x')]) {
+    for (const transient of [
+      new TypeError('network'),
+      new ApiTimeoutError(),
+      new ApiError(500, 'internal-error', 'x'),
+      new ApiError(503, 'audit-unavailable', 'x'),
+      new ApiError(429, 'rate-limited', 'x'),
+      new ApiError(409, 'credential-rotated', 'x'),
+    ]) {
       expect(renewalFailureOf(transient)).toBeNull()
     }
     expect(renewalFailureOf(new MissingDeviceKeyError())).toBe('key-missing')
-    for (const code of ['device-revoked', 'credential-expired', 'listener-mismatch'] as const) expect(renewalFailureOf(new ApiError(401, code, 'x'))).toBe(code)
+    for (const code of ['device-revoked', 'credential-expired', 'listener-mismatch'] as const)
+      expect(renewalFailureOf(new ApiError(401, code, 'x'))).toBe(code)
     expect(renewalFailureOf(new ApiError(401, 'unauthorized', 'x'))).toBe('unauthorized')
     expect(renewalFailureOf(new ApiError(401, 'device-revoked', 'x'))).toBe('device-revoked')
     expect(renewalFailureOf(new ApiError(401, 'invalid-signature', 'x'))).toBe('unauthorized')
-    expect(authStateFor(new ApiError(401, 'renewal-required', 'x'), renewalFailureOf(new MissingDeviceKeyError()))).toEqual({ reason: 'key-missing' })
+    expect(authStateFor(new ApiError(401, 'renewal-required', 'x'), renewalFailureOf(new MissingDeviceKeyError()))).toEqual({
+      reason: 'key-missing',
+    })
   })
 
   it('leaves the completing step when the first snapshot after enrollment fails', () => {
@@ -400,10 +655,15 @@ describe('error copy', () => {
 })
 
 describe('api()', () => {
-  const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+  const json = (status: number, body: unknown) =>
+    new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 
   it('renews once on 401 renewal-required and retries the request; other 401s are reported', async () => {
-    const replies = [json(401, { error: 'renewal-required', message: 'x' }), json(200, { ok: true }), json(401, { error: 'device-revoked', message: 'x' })]
+    const replies = [
+      json(401, { error: 'renewal-required', message: 'x' }),
+      json(200, { ok: true }),
+      json(401, { error: 'device-revoked', message: 'x' }),
+    ]
     const fetchMock = vi.fn(async () => replies.shift()!)
     vi.stubGlobal('fetch', fetchMock)
     const renew = vi.fn(async () => true)
@@ -412,9 +672,15 @@ describe('api()', () => {
     try {
       expect(await api('snapshot')).toEqual({ ok: true })
       expect(renew).toHaveBeenCalledTimes(1)
-      await expect(api('snapshot')).rejects.toMatchObject({ status: 401, code: 'device-revoked', message: '此设备已被撤销。如需继续使用，请重新登记。' })
+      await expect(api('snapshot')).rejects.toMatchObject({
+        status: 401,
+        code: 'device-revoked',
+        message: '此设备已被撤销。如需继续使用，请重新登记。',
+      })
       expect(unauthorized).toHaveBeenCalledTimes(1)
-    } finally { remove() }
+    } finally {
+      remove()
+    }
   })
 
   it('sends a confirmation header and keeps error details', async () => {
@@ -423,12 +689,23 @@ describe('api()', () => {
       return json(403, { error: 'scope-required', message: 'server', required: 'admin' })
     })
     vi.stubGlobal('fetch', fetchMock)
-    await expect(api('policy', { method: 'PATCH', body: {}, confirmation: 'cfm_x' })).rejects.toMatchObject({ code: 'scope-required', message: '此设备没有「管理此 Host」权限', details: { required: 'admin' } })
+    await expect(api('policy', { method: 'PATCH', body: {}, confirmation: 'cfm_x' })).rejects.toMatchObject({
+      code: 'scope-required',
+      message: '此设备没有「管理此 Host」权限',
+      details: { required: 'admin' },
+    })
   })
 
   it('takes a 2xx status as the answer without reading the body when asked to', async () => {
-    const broken = new ReadableStream<Uint8Array>({ pull(controller) { controller.error(new TypeError('connection reset')) } })
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(broken, { status: 200 })))
+    const broken = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.error(new TypeError('connection reset'))
+      },
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(broken, { status: 200 })),
+    )
     await expect(api('credentials/renew', { method: 'POST', body: {}, discardBody: true })).resolves.toBeUndefined()
   })
 
@@ -442,32 +719,68 @@ describe('api()', () => {
 })
 
 describe('local confirmation', () => {
-  const ticket = (status: ConfirmationTicket['status']): ConfirmationTicket => ({ id: 'cfm_1', action: 'approval.r2', title: '批准高风险操作（R2）', status, hashDisplay: 'a1b2-c3d4-e5f6-0718', expiresAt: new Date(Date.now() + 60_000).toISOString() })
-  const stepup = () => new ApiError(403, 'stepup-required', '需要在本机确认', { stepup: { where: 'this-device' }, confirmation: ticket('pending') })
+  const ticket = (status: ConfirmationTicket['status']): ConfirmationTicket => ({
+    id: 'cfm_1',
+    action: 'approval.r2',
+    title: '批准高风险操作（R2）',
+    status,
+    hashDisplay: 'a1b2-c3d4-e5f6-0718',
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  })
+  const stepup = () =>
+    new ApiError(403, 'stepup-required', '需要在本机确认', { stepup: { where: 'this-device' }, confirmation: ticket('pending') })
   function presenter() {
     const views: ConfirmationView['phase'][] = []
     let actions: { cancel: () => void; dismiss: () => void } | undefined
-    const value: ConfirmationPresenter = { show: (view, next) => { views.push(view.phase); actions = next }, close: () => { views.push('closed' as never) } }
+    const value: ConfirmationPresenter = {
+      show: (view, next) => {
+        views.push(view.phase)
+        actions = next
+      },
+      close: () => {
+        views.push('closed' as never)
+      },
+    }
     return { value, views, cancel: () => actions?.cancel() }
   }
   const instant = () => Promise.resolve()
 
   it('polls until approved, then resends with the ticket id', async () => {
     const statuses: ConfirmationTicket['status'][] = ['pending', 'approved']
-    const fake = vi.fn(async (path: string) => { expect(path).toBe('confirmations/cfm_1'); return { confirmation: ticket(statuses.shift()!) } })
+    const fake = vi.fn(async (path: string) => {
+      expect(path).toBe('confirmations/cfm_1')
+      return { confirmation: ticket(statuses.shift()!) }
+    })
     const sends: Array<string | undefined> = []
     const ui = presenter()
-    const result = await withConfirmation(async confirmation => { sends.push(confirmation); if (!confirmation) throw stepup(); return 'done' },
-      { presenter: ui.value, api: fake as never, sleep: instant })
+    const result = await withConfirmation(
+      async confirmation => {
+        sends.push(confirmation)
+        if (!confirmation) throw stepup()
+        return 'done'
+      },
+      { presenter: ui.value, api: fake as never, sleep: instant },
+    )
     expect(result).toBe('done')
     expect(sends).toEqual([undefined, 'cfm_1'])
     expect(ui.views).toEqual(['waiting', 'waiting', 'sending', 'closed'])
   })
 
-  it.each([['denied', '本机拒绝了此操作。'], ['expired', '确认已超时，操作未执行。'], ['error', '本机确认未完成，操作未执行。']] as const)('stops on %s and keeps the dialog with the message', async (status, message) => {
+  it.each([
+    ['denied', '本机拒绝了此操作。'],
+    ['expired', '确认已超时，操作未执行。'],
+    ['error', '本机确认未完成，操作未执行。'],
+  ] as const)('stops on %s and keeps the dialog with the message', async (status, message) => {
     const ui = presenter()
-    const sends = vi.fn(async (confirmation?: string) => { if (!confirmation) throw stepup(); return 'never' })
-    const error = await withConfirmation(sends, { presenter: ui.value, api: (async () => ({ confirmation: ticket(status) })) as never, sleep: instant }).catch((cause: unknown) => cause)
+    const sends = vi.fn(async (confirmation?: string) => {
+      if (!confirmation) throw stepup()
+      return 'never'
+    })
+    const error = await withConfirmation(sends, {
+      presenter: ui.value,
+      api: (async () => ({ confirmation: ticket(status) })) as never,
+      sleep: instant,
+    }).catch((cause: unknown) => cause)
     expect(error).toBeInstanceOf(ConfirmationError)
     expect((error as ConfirmationError).message).toBe(message)
     expect((error as ConfirmationError).handled).toBe(true)
@@ -478,11 +791,26 @@ describe('local confirmation', () => {
   it('cancels the ticket on the Host when the dialog is cancelled', async () => {
     const ui = presenter()
     const calls: string[] = []
-    const fake = vi.fn(async (path: string, options?: { method?: string }) => { calls.push(`${options?.method ?? 'GET'} ${path}`); return { confirmation: ticket('pending') } })
+    const fake = vi.fn(async (path: string, options?: { method?: string }) => {
+      calls.push(`${options?.method ?? 'GET'} ${path}`)
+      return { confirmation: ticket('pending') }
+    })
     let wake: (() => void) | undefined
-    const sleep = (_ms: number, signal: AbortSignal) => new Promise<void>(resolve => { wake = resolve; signal.addEventListener('abort', () => resolve()) })
-    const pending = withConfirmation(async confirmation => { if (!confirmation) throw stepup(); return 'never' }, { presenter: ui.value, api: fake as never, sleep })
-    await vi.waitFor(() => { expect(wake).toBeDefined() })
+    const sleep = (_ms: number, signal: AbortSignal) =>
+      new Promise<void>(resolve => {
+        wake = resolve
+        signal.addEventListener('abort', () => resolve())
+      })
+    const pending = withConfirmation(
+      async confirmation => {
+        if (!confirmation) throw stepup()
+        return 'never'
+      },
+      { presenter: ui.value, api: fake as never, sleep },
+    )
+    await vi.waitFor(() => {
+      expect(wake).toBeDefined()
+    })
     ui.cancel()
     await expect(pending).rejects.toMatchObject({ reason: 'cancelled' })
     expect(calls).toContain('DELETE confirmations/cfm_1')
@@ -491,9 +819,22 @@ describe('local confirmation', () => {
 
   it('reports the host-desktop rule without a dialog and passes other errors through', async () => {
     const ui = presenter()
-    await expect(withConfirmation(async () => { throw new ApiError(403, 'stepup-required', 'x', { stepup: { where: 'host-desktop' } }) }, { presenter: ui.value }))
-      .rejects.toMatchObject({ message: '此操作需要在执行端电脑上用 Latch 桌面端确认。', reason: 'host-desktop' })
-    await expect(withConfirmation(async () => { throw new ApiError(403, 'local-only', 'x') }, { presenter: ui.value })).rejects.toMatchObject({ code: 'local-only' })
+    await expect(
+      withConfirmation(
+        async () => {
+          throw new ApiError(403, 'stepup-required', 'x', { stepup: { where: 'host-desktop' } })
+        },
+        { presenter: ui.value },
+      ),
+    ).rejects.toMatchObject({ message: '此操作需要在执行端电脑上用 Latch 桌面端确认。', reason: 'host-desktop' })
+    await expect(
+      withConfirmation(
+        async () => {
+          throw new ApiError(403, 'local-only', 'x')
+        },
+        { presenter: ui.value },
+      ),
+    ).rejects.toMatchObject({ code: 'local-only' })
     expect(ui.views).toEqual([])
   })
 
@@ -503,8 +844,9 @@ describe('local confirmation', () => {
       if (!confirmation) throw stepup()
       throw new ApiError(409, 'confirmation-mismatch', 'server text')
     }
-    await expect(withConfirmation(send, { presenter: ui.value, api: (async () => ({ confirmation: ticket('approved') })) as never, sleep: instant }))
-      .rejects.toMatchObject({ message: '确认内容与本次请求不一致，请重新确认', handled: true })
+    await expect(
+      withConfirmation(send, { presenter: ui.value, api: (async () => ({ confirmation: ticket('approved') })) as never, sleep: instant }),
+    ).rejects.toMatchObject({ message: '确认内容与本次请求不一致，请重新确认', handled: true })
     expect(ui.views.at(-1)).toBe('failed')
   })
 })
@@ -537,19 +879,33 @@ describe('credential renewal', () => {
     return {
       request: (name: string, callback: () => Promise<unknown>) => {
         const run = (tails.get(name) ?? Promise.resolve()).then(callback, callback)
-        tails.set(name, run.catch(() => {}))
+        tails.set(
+          name,
+          run.catch(() => {}),
+        )
         return run
       },
     } as unknown as RenewalDeps['locks']
   }
   const deps = (api: RenewalDeps['api'], locks?: RenewalDeps['locks'], loadKey: RenewalDeps['loadKey'] = async () => key): RenewalDeps => ({
-    api, locks, loadKey, sign: async (_key, text) => { expect(text).toBe('latch-renew-v1\nh\ndev_a\nn'); return 'sig' }, now: () => Date.now(),
+    api,
+    locks,
+    loadKey,
+    sign: async (_key, text) => {
+      expect(text).toBe('latch-renew-v1\nh\ndev_a\nn')
+      return 'sig'
+    },
+    now: () => Date.now(),
   })
 
   it('runs one renewal for concurrent callers in a tab', async () => {
     const host = fakeHost()
     const renewer = createRenewer(deps(host.api as never))
-    const results = await Promise.all([renewer.renew({ hostId: 'h', deviceId: 'dev_a' }), renewer.renew({ hostId: 'h', deviceId: 'dev_a' }), renewer.renew({ hostId: 'h' })])
+    const results = await Promise.all([
+      renewer.renew({ hostId: 'h', deviceId: 'dev_a' }),
+      renewer.renew({ hostId: 'h', deviceId: 'dev_a' }),
+      renewer.renew({ hostId: 'h' }),
+    ])
     expect(results).toEqual(['renewed', 'renewed', 'renewed'])
     expect(host.calls.filter(path => path === 'credentials/renew')).toHaveLength(1)
   })
@@ -559,7 +915,10 @@ describe('credential renewal', () => {
     const locks = fakeLocks()
     const tabA = createRenewer(deps(host.api as never, locks))
     const tabB = createRenewer(deps(host.api as never, locks))
-    expect(await Promise.all([tabA.renew({ hostId: 'h', deviceId: 'dev_a' }), tabB.renew({ hostId: 'h', deviceId: 'dev_a' })])).toEqual(['renewed', 'not-due'])
+    expect(await Promise.all([tabA.renew({ hostId: 'h', deviceId: 'dev_a' }), tabB.renew({ hostId: 'h', deviceId: 'dev_a' })])).toEqual([
+      'renewed',
+      'not-due',
+    ])
     expect(host.calls.filter(path => path === 'credentials/renew')).toHaveLength(1)
   })
 
@@ -570,12 +929,21 @@ describe('credential renewal', () => {
    * only when an answer arrives, and not at all for `not-stored` (a 2xx whose cookie the browser drops). `now` lets a
    * test drive the Host clock with fake timers; `advance` moves it further.
    */
-  function pendingHost(outcomes: Array<'ok' | 'lost-before' | 'lost-after' | 'failed-500' | 'expired' | 'not-stored'>, now: () => number = () => 1_000_000) {
+  function pendingHost(
+    outcomes: Array<'ok' | 'lost-before' | 'lost-after' | 'failed-500' | 'expired' | 'not-stored'>,
+    now: () => number = () => 1_000_000,
+  ) {
     let offset = 0
     const clock = () => now() + offset
     let issued = 0
     let cookie = 'cred-0'
-    const state = { current: 'cred-0', rotatedAt: clock() - 86_400_001, pending: null as string | null, previous: [] as Array<{ value: string; graceUntil: number }>, revoked: false }
+    const state = {
+      current: 'cred-0',
+      rotatedAt: clock() - 86_400_001,
+      pending: null as string | null,
+      previous: [] as Array<{ value: string; graceUntil: number }>,
+      revoked: false,
+    }
     const nonces = new Set<string>()
     const sent: Array<{ path: string; nonce?: string; discardBody?: boolean }> = []
     const authenticate = (renewal: boolean) => {
@@ -592,12 +960,22 @@ describe('credential renewal', () => {
       }
       const previous = state.previous.find(entry => entry.value === cookie)
       if (!previous) throw new ApiError(401, 'unauthorized', 'x')
-      if (clock() > previous.graceUntil) { state.revoked = true; throw new ApiError(401, 'device-revoked', 'x') }
+      if (clock() > previous.graceUntil) {
+        state.revoked = true
+        throw new ApiError(401, 'device-revoked', 'x')
+      }
       if (renewal) throw new ApiError(409, 'credential-rotated', 'x')
     }
     const api = vi.fn(async (path: string, request: { body?: { nonce?: string }; discardBody?: boolean } = {}) => {
-      sent.push({ path, ...(request.body?.nonce ? { nonce: request.body.nonce } : {}), ...(request.discardBody ? { discardBody: true } : {}) })
-      if (path === 'snapshot') { authenticate(false); return { device: { renewAfter: new Date(state.rotatedAt + 86_400_000).toISOString() } } }
+      sent.push({
+        path,
+        ...(request.body?.nonce ? { nonce: request.body.nonce } : {}),
+        ...(request.discardBody ? { discardBody: true } : {}),
+      })
+      if (path === 'snapshot') {
+        authenticate(false)
+        return { device: { renewAfter: new Date(state.rotatedAt + 86_400_000).toISOString() } }
+      }
       if (path === 'credentials/challenge') {
         authenticate(true)
         const nonce = `n${++issued}`
@@ -616,25 +994,34 @@ describe('credential renewal', () => {
     })
     const renewer = createRenewer({ api: api as never, loadKey: async () => key, sign: async (_key, text) => `sig:${text}`, now: clock })
     return {
-      renewer, state, sent,
+      renewer,
+      state,
+      sent,
       cookie: () => cookie,
-      advance: (ms: number) => { offset += ms },
+      advance: (ms: number) => {
+        offset += ms
+      },
       /** An ordinary request with whatever cookie the browser holds. */
-      request: () => { authenticate(false) },
+      request: () => {
+        authenticate(false)
+      },
       renews: () => sent.filter(call => call.path === 'credentials/renew'),
     }
   }
 
-  it.each(['lost-after', 'lost-before', 'failed-500'] as const)('keeps the current credential when a renew ends without an answer (%s) and leaves the retry to the caller', async outcome => {
-    const host = pendingHost([outcome])
-    const failure = await host.renewer.renew({ hostId: 'h', deviceId: 'dev_a' }).catch((cause: unknown) => cause)
-    expect(failure).toBeInstanceOf(Error)
-    // A transient cause: the page keeps the credential and reconnects instead of returning to enrollment.
-    expect(renewalFailureOf(failure)).toBeNull()
-    expect(host.renews()).toHaveLength(1)
-    expect(host.cookie()).toBe('cred-0')
-    expect(host.state.current).toBe('cred-0')
-  })
+  it.each(['lost-after', 'lost-before', 'failed-500'] as const)(
+    'keeps the current credential when a renew ends without an answer (%s) and leaves the retry to the caller',
+    async outcome => {
+      const host = pendingHost([outcome])
+      const failure = await host.renewer.renew({ hostId: 'h', deviceId: 'dev_a' }).catch((cause: unknown) => cause)
+      expect(failure).toBeInstanceOf(Error)
+      // A transient cause: the page keeps the credential and reconnects instead of returning to enrollment.
+      expect(renewalFailureOf(failure)).toBeNull()
+      expect(host.renews()).toHaveLength(1)
+      expect(host.cookie()).toBe('cred-0')
+      expect(host.state.current).toBe('cred-0')
+    },
+  )
 
   it('renews again with the same credential long after a lost answer; the unused credential is replaced and nothing is revoked', async () => {
     const host = pendingHost(['lost-after', 'ok'])
@@ -674,7 +1061,14 @@ describe('credential renewal', () => {
 
   it('counts one backoff step per failed attempt, however many requests were waiting on it', async () => {
     vi.useFakeTimers()
-    const renew = vi.fn(() => new Promise<never>((_resolve, reject) => { setTimeout(() => { reject(new TypeError('network')) }, 5) }))
+    const renew = vi.fn(
+      () =>
+        new Promise<never>((_resolve, reject) => {
+          setTimeout(() => {
+            reject(new TypeError('network'))
+          }, 5)
+        }),
+    )
     const retry = vi.fn()
     const scheduler = new RenewalScheduler({ renew, retry, now: () => Date.now() })
     // The snapshot, another request and the event stream hit renewal-required together.
@@ -704,7 +1098,15 @@ describe('credential renewal', () => {
   it('schedules nothing after sign-out, also for an attempt that was still running', async () => {
     vi.useFakeTimers()
     const retry = vi.fn()
-    const scheduler = new RenewalScheduler({ renew: () => new Promise<never>((_resolve, reject) => { setTimeout(() => { reject(new TypeError('network')) }, 5) }), retry })
+    const scheduler = new RenewalScheduler({
+      renew: () =>
+        new Promise<never>((_resolve, reject) => {
+          setTimeout(() => {
+            reject(new TypeError('network'))
+          }, 5)
+        }),
+      retry,
+    })
     const running = scheduler.renew({ hostId: 'h' })
     scheduler.stop()
     await vi.advanceTimersByTimeAsync(60_000)
@@ -740,8 +1142,12 @@ describe('credential renewal', () => {
     const host = pendingHost(['not-stored'], () => Date.now())
     const retries: number[] = []
     const scheduler: RenewalScheduler = new RenewalScheduler({
-      renew: id => host.renewer.renew(id), now: () => Date.now(),
-      retry: () => { retries.push(Date.now()); void scheduler.renew(identity) },
+      renew: id => host.renewer.renew(id),
+      now: () => Date.now(),
+      retry: () => {
+        retries.push(Date.now())
+        void scheduler.renew(identity)
+      },
     })
     const start = Date.now()
     expect(await scheduler.renew(identity)).toBe(true)
@@ -774,7 +1180,9 @@ describe('credential renewal', () => {
   })
 
   it('treats credential-rotated as another tab having renewed, and a missing key as re-enrollment', async () => {
-    expect(await createRenewer(deps(fakeHost({ rotateConflict: true }).api as never)).renew({ hostId: 'h', deviceId: 'dev_a' })).toBe('rotated')
+    expect(await createRenewer(deps(fakeHost({ rotateConflict: true }).api as never)).renew({ hostId: 'h', deviceId: 'dev_a' })).toBe(
+      'rotated',
+    )
     // The other tab's credential was promoted between this tab's snapshot and its challenge.
     const challengeConflict = vi.fn(async (path: string) => {
       if (path === 'snapshot') throw new ApiError(401, 'renewal-required', 'x')
@@ -782,7 +1190,9 @@ describe('credential renewal', () => {
     })
     expect(await createRenewer(deps(challengeConflict as never)).renew({ hostId: 'h', deviceId: 'dev_a' })).toBe('rotated')
     expect(challengeConflict.mock.calls.map(([path]) => path)).toEqual(['snapshot', 'credentials/challenge'])
-    await expect(createRenewer(deps(fakeHost().api as never, undefined, async () => undefined)).renew({ hostId: 'h', deviceId: 'dev_a' })).rejects.toBeInstanceOf(MissingDeviceKeyError)
+    await expect(
+      createRenewer(deps(fakeHost().api as never, undefined, async () => undefined)).renew({ hostId: 'h', deviceId: 'dev_a' }),
+    ).rejects.toBeInstanceOf(MissingDeviceKeyError)
   })
 })
 
@@ -806,26 +1216,52 @@ describe('approval decisions (idempotent retries)', () => {
     const settled = (decidedBy: unknown) => new ApiError(409, 'approval-settled', 'x', { decidedBy } as never)
     const allow = { decision: 'allow' as const, optionKind: 'allow_once' as const }
     expect(settledOutcome(settled({ kind: 'device', self: true, decision: 'allow', at: '' }), allow)).toEqual({ applied: true })
-    expect(settledOutcome(settled({ kind: 'device', self: false, deviceName: '我的手机', decision: 'reject', at: '' }), allow)).toEqual({ applied: false, message: '已由「我的手机」处理', conflict: false })
-    expect(settledOutcome(settled({ kind: 'device', self: false, deviceName: 'x\u202Eevil', decision: 'reject', at: '' }), allow)).toEqual({ applied: false, message: '该审批已结束', conflict: false })
-    expect(settledOutcome(settled({ kind: 'device', self: false, deviceName: '👨‍💻 Mac', decision: 'reject', at: '' }), allow)).toEqual({ applied: false, message: '已由「👨‍💻 Mac」处理', conflict: false })
-    expect(settledOutcome(settled({ kind: 'device', self: false, deviceName: 'a\u200Bb', decision: 'reject', at: '' }), allow)).toEqual({ applied: false, message: '该审批已结束', conflict: false })
+    expect(settledOutcome(settled({ kind: 'device', self: false, deviceName: '我的手机', decision: 'reject', at: '' }), allow)).toEqual({
+      applied: false,
+      message: '已由「我的手机」处理',
+      conflict: false,
+    })
+    expect(settledOutcome(settled({ kind: 'device', self: false, deviceName: 'x\u202Eevil', decision: 'reject', at: '' }), allow)).toEqual({
+      applied: false,
+      message: '该审批已结束',
+      conflict: false,
+    })
+    expect(settledOutcome(settled({ kind: 'device', self: false, deviceName: '👨‍💻 Mac', decision: 'reject', at: '' }), allow)).toEqual({
+      applied: false,
+      message: '已由「👨‍💻 Mac」处理',
+      conflict: false,
+    })
+    expect(settledOutcome(settled({ kind: 'device', self: false, deviceName: 'a\u200Bb', decision: 'reject', at: '' }), allow)).toEqual({
+      applied: false,
+      message: '该审批已结束',
+      conflict: false,
+    })
     expect(settledOutcome(settled({ kind: 'system' }), allow)).toEqual({ applied: false, message: '该审批已结束', conflict: false })
     expect(settledOutcome(new ApiError(403, 'local-only', 'x'), allow)).toBeUndefined()
   })
 
   it('never reports a changed choice as applied when this device had already decided otherwise', () => {
     const settled = (decidedBy: unknown) => new ApiError(409, 'approval-settled', 'x', { decidedBy } as never)
-    expect(settledOutcome(settled({ kind: 'device', self: true, decision: 'allow', at: '' }), { decision: 'reject', optionKind: 'reject_once' }))
-      .toEqual({ applied: false, message: '此设备此前已选择「允许」，本次「拒绝」未生效。', conflict: true })
-    expect(settledOutcome(settled({ kind: 'device', self: true, decision: 'reject', at: '' }), { decision: 'allow', optionKind: 'allow_once' }))
-      .toEqual({ applied: false, message: '此设备此前已选择「拒绝」，本次「允许」未生效。', conflict: true })
+    expect(
+      settledOutcome(settled({ kind: 'device', self: true, decision: 'allow', at: '' }), { decision: 'reject', optionKind: 'reject_once' }),
+    ).toEqual({ applied: false, message: '此设备此前已选择「允许」，本次「拒绝」未生效。', conflict: true })
+    expect(
+      settledOutcome(settled({ kind: 'device', self: true, decision: 'reject', at: '' }), { decision: 'allow', optionKind: 'allow_once' }),
+    ).toEqual({ applied: false, message: '此设备此前已选择「拒绝」，本次「允许」未生效。', conflict: true })
     // A Host that does not name the recorded option confirms only a plain once-choice.
-    expect(settledOutcome(settled({ kind: 'device', self: true, decision: 'allow', at: '' }), { decision: 'allow', optionKind: 'allow_always' }))
-      .toEqual({ applied: false, message: '此设备此前已选择「允许」。', conflict: false })
-    expect(settledOutcome(settled({ kind: 'device', self: true, decision: 'allow', at: '' }), { decision: 'allow' }))
-      .toEqual({ applied: false, message: '此设备此前已选择「允许」。', conflict: false })
-    expect(settledOutcome(settled({ kind: 'device', self: true, at: '' }), { decision: 'reject', optionKind: 'reject_once' })).toEqual({ applied: false, message: '该审批已结束', conflict: true })
+    expect(
+      settledOutcome(settled({ kind: 'device', self: true, decision: 'allow', at: '' }), { decision: 'allow', optionKind: 'allow_always' }),
+    ).toEqual({ applied: false, message: '此设备此前已选择「允许」。', conflict: false })
+    expect(settledOutcome(settled({ kind: 'device', self: true, decision: 'allow', at: '' }), { decision: 'allow' })).toEqual({
+      applied: false,
+      message: '此设备此前已选择「允许」。',
+      conflict: false,
+    })
+    expect(settledOutcome(settled({ kind: 'device', self: true, at: '' }), { decision: 'reject', optionKind: 'reject_once' })).toEqual({
+      applied: false,
+      message: '该审批已结束',
+      conflict: true,
+    })
     let next = 0
     const requests = new DecisionRequests(() => `req-${++next}`)
     const first = requests.idFor('ap', 'allow', 'allow_once')
@@ -838,14 +1274,26 @@ describe('approval decisions (idempotent retries)', () => {
     const record = (optionKind: string) => settled({ kind: 'device', self: true, deviceName: 'Mac', decision: 'allow', optionKind, at: '' })
     expect(settledOutcome(record('allow_always'), { decision: 'allow', optionKind: 'allow_always' })).toEqual({ applied: true })
     expect(settledOutcome(record('allow_once'), { decision: 'allow', optionKind: 'allow_once' })).toEqual({ applied: true })
-    expect(settledOutcome(record('allow_once'), { decision: 'allow', optionKind: 'allow_always' }))
-      .toEqual({ applied: false, message: '此设备此前已选择「允许一次」，本次「始终允许」未生效。', conflict: true })
-    expect(settledOutcome(record('allow_always'), { decision: 'allow', optionKind: 'allow_once' }))
-      .toEqual({ applied: false, message: '此设备此前已选择「始终允许」，本次「允许一次」未生效。', conflict: true })
-    expect(settledOutcome(record('something-new'), { decision: 'allow', optionKind: 'allow_once' }))
-      .toEqual({ applied: false, message: '此设备此前已选择「允许」，本次「允许一次」未生效。', conflict: true })
+    expect(settledOutcome(record('allow_once'), { decision: 'allow', optionKind: 'allow_always' })).toEqual({
+      applied: false,
+      message: '此设备此前已选择「允许一次」，本次「始终允许」未生效。',
+      conflict: true,
+    })
+    expect(settledOutcome(record('allow_always'), { decision: 'allow', optionKind: 'allow_once' })).toEqual({
+      applied: false,
+      message: '此设备此前已选择「始终允许」，本次「允许一次」未生效。',
+      conflict: true,
+    })
+    expect(settledOutcome(record('something-new'), { decision: 'allow', optionKind: 'allow_once' })).toEqual({
+      applied: false,
+      message: '此设备此前已选择「允许」，本次「允许一次」未生效。',
+      conflict: true,
+    })
     // The kind the Host records: the chosen option's, or the once-kind for a plain decision.
-    const options = [{ id: 'proceed_always', label: 'Always', kind: 'allow_always' as const }, { id: 'no', label: 'No', kind: 'reject_once' as const }]
+    const options = [
+      { id: 'proceed_always', label: 'Always', kind: 'allow_always' as const },
+      { id: 'no', label: 'No', kind: 'reject_once' as const },
+    ]
     expect(choiceKind({ options }, 'allow', 'proceed_always')).toBe('allow_always')
     expect(choiceKind({ options }, 'reject', 'no')).toBe('reject_once')
     expect(choiceKind({}, 'allow', undefined)).toBe('allow_once')
@@ -857,14 +1305,21 @@ describe('audit checkpoint', () => {
   const hash = (char: string) => char.repeat(64)
   function memory(initial: Record<string, string> = {}): CheckpointStorage & { data: Record<string, string> } {
     const data = { ...initial }
-    return { data, getItem: key => data[key] ?? null, setItem: (key, value) => { data[key] = value } }
+    return {
+      data,
+      getItem: key => data[key] ?? null,
+      setItem: (key, value) => {
+        data[key] = value
+      },
+    }
   }
-  const fakeApi = (head: { seq: number; hash: string }, at: Record<number, string>) => (async (path: string) => {
-    if (path === 'audit/head') return head
-    const seq = Number(new URLSearchParams(path.split('?')[1]).get('seq'))
-    if (!(seq in at)) throw new ApiError(404, 'not-found', 'x')
-    return { seq, hash: at[seq] }
-  }) as never
+  const fakeApi = (head: { seq: number; hash: string }, at: Record<number, string>) =>
+    (async (path: string) => {
+      if (path === 'audit/head') return head
+      const seq = Number(new URLSearchParams(path.split('?')[1]).get('seq'))
+      if (!(seq in at)) throw new ApiError(404, 'not-found', 'x')
+      return { seq, hash: at[seq] }
+    }) as never
 
   it('stores the head and accepts a log that grew from it', async () => {
     const storage = memory()
@@ -922,7 +1377,10 @@ describe('audit checkpoint', () => {
     expect(await check({ seq: 12, hash: hash('d') }, { 5: hash('c') })).toBe(false)
     // A dismissal made against another stored checkpoint does not carry over.
     const other = memory({ 'latch.audit.h': JSON.stringify({ seq: 4, hash: hash('a') }) })
-    const outcome = await verifyCheckpoint('h', { api: fakeApi({ seq: 9, hash: hash('b') }, { 4: hash('c'), 9: hash('b') }), storage: other })
+    const outcome = await verifyCheckpoint('h', {
+      api: fakeApi({ seq: 9, hash: hash('b') }, { 4: hash('c'), 9: hash('b') }),
+      storage: other,
+    })
     expect(await rollbackDismissed(outcome, dismissal, fakeApi({ seq: 9, hash: hash('b') }, { 9: hash('b') }))).toBe(false)
   })
 
@@ -954,12 +1412,15 @@ describe('audit checkpoint', () => {
     if (first.result !== 'rollback') throw new Error('expected a rollback')
     writeDismissal('h', { stored: first.stored, head: first.head }, session)
     let release!: () => void
-    const slow = new Promise<void>(resolve => { release = resolve })
+    const slow = new Promise<void>(resolve => {
+      release = resolve
+    })
     const log = { 5: hash('c'), 10: hash('b'), 20: hash('d'), 25: hash('e') }
-    const delayed = (head: { seq: number; hash: string }) => (async (path: string) => {
-      if (path.includes('seq=10')) await slow
-      return (fakeApi(head, log) as (path: string) => Promise<unknown>)(path)
-    }) as never
+    const delayed = (head: { seq: number; hash: string }) =>
+      (async (path: string) => {
+        if (path.includes('seq=10')) await slow
+        return (fakeApi(head, log) as (path: string) => Promise<unknown>)(path)
+      }) as never
     const api1 = delayed({ seq: 20, hash: hash('d') })
     const check1 = keepDismissed('h', await verifyCheckpoint('h', { api: api1, storage }), session, api1)
     const api2 = fakeApi({ seq: 25, hash: hash('e') }, log)

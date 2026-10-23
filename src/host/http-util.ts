@@ -14,8 +14,11 @@ export async function jsonBody(req: IncomingMessage, limit = 32 * KIB): Promise<
     if (bytes > limit) throw new AppError(413, 'body-too-large', '请求内容过长')
     chunks.push(buffer)
   }
-  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')) }
-  catch { throw new AppError(400, 'invalid-json', '请求不是有效的 JSON') }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+  } catch {
+    throw new AppError(400, 'invalid-json', '请求不是有效的 JSON')
+  }
 }
 
 /** Like `jsonBody`, but an empty body (or none) reads as `{}`. */
@@ -34,8 +37,11 @@ export function json(res: ServerResponse, value: unknown, status = 200): void {
 }
 
 export function safeDecode(value: string): string {
-  try { return decodeURIComponent(value) }
-  catch { throw new AppError(400, 'invalid-path', '请求路径编码无效') }
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    throw new AppError(400, 'invalid-path', '请求路径编码无效')
+  }
 }
 
 export function isWithin(path: string, parent: string): boolean {
@@ -43,17 +49,29 @@ export function isWithin(path: string, parent: string): boolean {
 }
 
 /** Either path contains the other. */
-export function overlaps(a: string, b: string): boolean { return isWithin(a, b) || isWithin(b, a) }
+export function overlaps(a: string, b: string): boolean {
+  return isWithin(a, b) || isWithin(b, a)
+}
 
-export function errorText(error: unknown): string { return error instanceof Error ? error.message : String(error) }
+export function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
 
 export function codeOf(error: unknown): string | undefined {
   return error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : undefined
 }
 
 export const MIME: Record<string, string> = {
-  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.json': 'application/json',
-  '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.ico': 'image/x-icon', '.woff2': 'font/woff2',
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript',
+  '.css': 'text/css',
+  '.svg': 'image/svg+xml',
+  '.json': 'application/json',
+  '.webmanifest': 'application/manifest+json',
+  '.png': 'image/png',
+  '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
 }
 
-export const UI_CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'"
+export const UI_CSP =
+  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'"

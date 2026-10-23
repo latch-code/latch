@@ -7,7 +7,10 @@ interface ErrorBoundaryProps {
   children: ReactNode
 }
 
-interface ErrorBoundaryState { failed: boolean; resetKey: unknown }
+interface ErrorBoundaryState {
+  failed: boolean
+  resetKey: unknown
+}
 
 /** Keeps a render error in one part of the page from unmounting the whole client. */
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
@@ -24,7 +27,9 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     return Object.is(props.resetKey, state.resetKey) ? null : { failed: false, resetKey: props.resetKey }
   }
 
-  reset = () => { this.setState({ failed: false }) }
+  reset = () => {
+    this.setState({ failed: false })
+  }
 
   render(): ReactNode {
     if (!this.state.failed) return this.props.children

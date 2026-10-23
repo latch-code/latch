@@ -32,11 +32,19 @@ const sections: Array<{ id: SettingsSection; label: string; icon: LucideIcon; ad
 ]
 
 export function settingsSections(snapshot: AppSnapshot, access: DeviceAccess = deviceAccess(snapshot, currentShell())): SettingsSection[] {
-  return sections.filter(section => (access.admin || !section.admin) && (snapshot.catalog || !section.catalog) && (!access.legacy || !section.devices)).map(section => section.id)
+  return sections
+    .filter(section => (access.admin || !section.admin) && (snapshot.catalog || !section.catalog) && (!access.legacy || !section.devices))
+    .map(section => section.id)
 }
 
 /** Full-page settings: two columns on wider screens, push navigation on phones. */
-export function SettingsPage({ snapshot, access: given, initial, onClose, onChanged }: {
+export function SettingsPage({
+  snapshot,
+  access: given,
+  initial,
+  onClose,
+  onChanged,
+}: {
   snapshot: AppSnapshot
   access?: DeviceAccess
   initial?: SettingsSection
@@ -47,7 +55,9 @@ export function SettingsPage({ snapshot, access: given, initial, onClose, onChan
   const access = given ?? deviceAccess(snapshot, currentShell())
   const ids = settingsSections(snapshot, access)
   const available = sections.filter(section => ids.includes(section.id))
-  const [chosen, setChosen] = useState<SettingsSection | null>(initial && available.some(section => section.id === initial) ? initial : null)
+  const [chosen, setChosen] = useState<SettingsSection | null>(
+    initial && available.some(section => section.id === initial) ? initial : null,
+  )
   const active = chosen ?? (phone ? null : 'general')
   const tabs = useRef<HTMLDivElement>(null)
   const current = available.find(section => section.id === active)
@@ -57,36 +67,82 @@ export function SettingsPage({ snapshot, access: given, initial, onClose, onChan
     if (!keys.includes(event.key)) return
     event.preventDefault()
     const index = available.findIndex(section => section.id === active)
-    const next = event.key === 'Home' ? 0 : event.key === 'End' ? available.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + available.length) % available.length
+    const next =
+      event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? available.length - 1
+          : (index + (event.key === 'ArrowDown' ? 1 : -1) + available.length) % available.length
     const target = available[next]!
     setChosen(target.id)
     tabs.current?.querySelector<HTMLButtonElement>(`#settings-tab-${target.id}`)?.focus()
   }
 
-  return <Modal label="设置" variant={phone ? 'page' : 'dialog'} className="settings-modal" onClose={onClose}>
-    <header className="modal-header settings-header">
-      {phone && active !== null && <button type="button" className="icon-button" aria-label="返回" title="返回" onClick={() => { setChosen(null) }}><ChevronLeft size={18} strokeWidth={ICON_STROKE} aria-hidden="true" /></button>}
-      <h2>{phone && current ? current.label : '设置'}</h2>
-      {phone && hostView(snapshot)?.devMode && <DevModeChip />}
-      <button type="button" className="icon-button" aria-label="关闭" title="关闭" onClick={onClose}><X size={18} strokeWidth={ICON_STROKE} aria-hidden="true" /></button>
-    </header>
-    <div className="settings-layout">
-      <div ref={tabs} className="settings-nav" role="tablist" aria-orientation="vertical" aria-label="设置分类" hidden={phone && active !== null} onKeyDown={keydown}>
-        {available.map(section => <button key={section.id} id={`settings-tab-${section.id}`} type="button" role="tab" aria-selected={active === section.id}
-          aria-controls="settings-panel" tabIndex={active === section.id || (active === null && section.id === available[0]!.id) ? 0 : -1} onClick={() => { setChosen(section.id) }}>
-          <section.icon size={16} strokeWidth={ICON_STROKE} aria-hidden="true" /><span>{section.label}</span>
-          {phone && <ChevronRight className="chevron" size={16} strokeWidth={ICON_STROKE} aria-hidden="true" />}
-        </button>)}
+  return (
+    <Modal label="设置" variant={phone ? 'page' : 'dialog'} className="settings-modal" onClose={onClose}>
+      <header className="modal-header settings-header">
+        {phone && active !== null && (
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="返回"
+            title="返回"
+            onClick={() => {
+              setChosen(null)
+            }}>
+            <ChevronLeft size={18} strokeWidth={ICON_STROKE} aria-hidden="true" />
+          </button>
+        )}
+        <h2>{phone && current ? current.label : '设置'}</h2>
+        {phone && hostView(snapshot)?.devMode && <DevModeChip />}
+        <button type="button" className="icon-button" aria-label="关闭" title="关闭" onClick={onClose}>
+          <X size={18} strokeWidth={ICON_STROKE} aria-hidden="true" />
+        </button>
+      </header>
+      <div className="settings-layout">
+        <div
+          ref={tabs}
+          className="settings-nav"
+          role="tablist"
+          aria-orientation="vertical"
+          aria-label="设置分类"
+          hidden={phone && active !== null}
+          onKeyDown={keydown}>
+          {available.map(section => (
+            <button
+              key={section.id}
+              id={`settings-tab-${section.id}`}
+              type="button"
+              role="tab"
+              aria-selected={active === section.id}
+              aria-controls="settings-panel"
+              tabIndex={active === section.id || (active === null && section.id === available[0]!.id) ? 0 : -1}
+              onClick={() => {
+                setChosen(section.id)
+              }}>
+              <section.icon size={16} strokeWidth={ICON_STROKE} aria-hidden="true" />
+              <span>{section.label}</span>
+              {phone && <ChevronRight className="chevron" size={16} strokeWidth={ICON_STROKE} aria-hidden="true" />}
+            </button>
+          ))}
+        </div>
+        {active !== null && (
+          <section className="settings-panel" role="tabpanel" id="settings-panel" aria-labelledby={`settings-tab-${active}`}>
+            {active === 'general' && <GeneralSettings snapshot={snapshot} admin={access.admin} onChanged={onChanged} />}
+            {active === 'providers'
+              && (snapshot.catalog ? (
+                <ProvidersSettings snapshot={snapshot} access={access} phone={phone} onChanged={onChanged} />
+              ) : (
+                <LegacyProviderSettings onChanged={onChanged} />
+              ))}
+            {active === 'agents' && <AgentsSettings snapshot={snapshot} access={access} onChanged={onChanged} />}
+            {active === 'workspaces' && <WorkspacesSettings snapshot={snapshot} access={access} onChanged={onChanged} />}
+            {active === 'plugins' && <PluginsSettings />}
+            {active === 'devices' && <DevicesSettings snapshot={snapshot} access={access} phone={phone} onChanged={onChanged} />}
+            {active === 'about' && <AboutSettings snapshot={snapshot} />}
+          </section>
+        )}
       </div>
-      {active !== null && <section className="settings-panel" role="tabpanel" id="settings-panel" aria-labelledby={`settings-tab-${active}`}>
-        {active === 'general' && <GeneralSettings snapshot={snapshot} admin={access.admin} onChanged={onChanged} />}
-        {active === 'providers' && (snapshot.catalog ? <ProvidersSettings snapshot={snapshot} access={access} phone={phone} onChanged={onChanged} /> : <LegacyProviderSettings onChanged={onChanged} />)}
-        {active === 'agents' && <AgentsSettings snapshot={snapshot} access={access} onChanged={onChanged} />}
-        {active === 'workspaces' && <WorkspacesSettings snapshot={snapshot} access={access} onChanged={onChanged} />}
-        {active === 'plugins' && <PluginsSettings />}
-        {active === 'devices' && <DevicesSettings snapshot={snapshot} access={access} phone={phone} onChanged={onChanged} />}
-        {active === 'about' && <AboutSettings snapshot={snapshot} />}
-      </section>}
-    </div>
-  </Modal>
+    </Modal>
+  )
 }

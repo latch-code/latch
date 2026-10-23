@@ -10,8 +10,15 @@ import { SCOPE_LABELS, type ApiFailure, type DeviceScope } from '../shared/types
  */
 
 /** Why this browser is on the enrollment page: the Host's 401 code or a local cause. */
-export type EnrollmentReason = 'unauthorized' | 'device-revoked' | 'credential-expired' | 'listener-mismatch' | 'legacy-reconfirm' | 'key-missing'
-  | 'credential-not-stored' | 'renewal-not-stored'
+export type EnrollmentReason =
+  | 'unauthorized'
+  | 'device-revoked'
+  | 'credential-expired'
+  | 'listener-mismatch'
+  | 'legacy-reconfirm'
+  | 'key-missing'
+  | 'credential-not-stored'
+  | 'renewal-not-stored'
 
 export const ENROLLMENT_REASON_TEXT: Partial<Record<EnrollmentReason, string>> = {
   'device-revoked': '此设备已被撤销。如需继续使用，请重新登记。',
@@ -19,7 +26,8 @@ export const ENROLLMENT_REASON_TEXT: Partial<Record<EnrollmentReason, string>> =
   'listener-mismatch': '此设备的凭据属于另一个访问地址，请重新登记。',
   'key-missing': '此浏览器已丢失设备密钥，请重新在本机确认。',
   'credential-not-stored': '登记已完成，但此浏览器没有保存设备凭据（可能禁止了 Cookie）。请允许此网站保存 Cookie 后重新登记。',
-  'renewal-not-stored': '设备凭据已续期，但此浏览器没有保存新的凭据（可能禁止了 Cookie）。请允许此网站保存 Cookie 后重新加载页面；仍无法连接时再重新登记。',
+  'renewal-not-stored':
+    '设备凭据已续期，但此浏览器没有保存新的凭据（可能禁止了 Cookie）。请允许此网站保存 Cookie 后重新加载页面；仍无法连接时再重新登记。',
 }
 
 export const HOST_DESKTOP_TEXT = '此操作需要在执行端电脑上用 Latch 桌面端确认。'
@@ -102,13 +110,20 @@ export function safeDeviceName(value: unknown): string | undefined {
 
 export const DEVICE_NAME_INVALID_TEXT = '设备名称不能包含换行、不可见字符或改变文字方向的字符。'
 
-const scopeLabel = (scope: unknown) => typeof scope === 'string' && Object.hasOwn(SCOPE_LABELS, scope) ? SCOPE_LABELS[scope as DeviceScope] : undefined
-const seconds = (value: unknown) => typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.ceil(value) : undefined
+const scopeLabel = (scope: unknown) =>
+  typeof scope === 'string' && Object.hasOwn(SCOPE_LABELS, scope) ? SCOPE_LABELS[scope as DeviceScope] : undefined
+const seconds = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.ceil(value) : undefined)
 
 /** True when the code's text comes from the catalog rather than the Host. */
 export function isCatalogCode(code: string): boolean {
-  return Object.hasOwn(FIXED, code) || code === 'scope-required' || code === 'stepup-required' || code === 'presence-cooldown'
-    || code === 'egress-denied' || FAMILY_FALLBACK.some(([prefix]) => code.startsWith(prefix))
+  return (
+    Object.hasOwn(FIXED, code)
+    || code === 'scope-required'
+    || code === 'stepup-required'
+    || code === 'presence-cooldown'
+    || code === 'egress-denied'
+    || FAMILY_FALLBACK.some(([prefix]) => code.startsWith(prefix))
+  )
 }
 
 /** The text a page shows for a Host error. */

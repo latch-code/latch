@@ -7,7 +7,17 @@ import type { RuntimeState, RuntimeStore, StoredTask } from './store.ts'
 import type { CapabilityLease, RuntimeRegistry, ToolCall, ToolDefinition } from './plugins.ts'
 import type { ToolRiskInput } from './harness.ts'
 import type {
-  Approval, ApprovalOption, Message, ModelRef, RiskLevel, TaskDetail, TaskMode, TaskStatus, TaskSummary, TokenUsage, ToolDetail,
+  Approval,
+  ApprovalOption,
+  Message,
+  ModelRef,
+  RiskLevel,
+  TaskDetail,
+  TaskMode,
+  TaskStatus,
+  TaskSummary,
+  TokenUsage,
+  ToolDetail,
 } from '../shared/types.ts'
 import type { Bridge, CreateTaskInput, DecideOptions, PromptOptions } from '../host/bridge.ts'
 
@@ -41,7 +51,9 @@ export const APPROVAL_OPTIONS: readonly ApprovalOption[] = Object.freeze([
   { id: 'reject_once', label: '拒绝', kind: 'reject_once' },
 ])
 /** R2 is asked every time, so it never offers a standing allowance. */
-export const HIGH_RISK_APPROVAL_OPTIONS: readonly ApprovalOption[] = Object.freeze(APPROVAL_OPTIONS.filter(option => option.kind !== 'allow_always'))
+export const HIGH_RISK_APPROVAL_OPTIONS: readonly ApprovalOption[] = Object.freeze(
+  APPROVAL_OPTIONS.filter(option => option.kind !== 'allow_always'),
+)
 
 const RISK_LEVELS: ReadonlySet<unknown> = new Set<RiskLevel>(['R0', 'R1', 'R2'])
 
@@ -69,18 +81,32 @@ interface Run {
   activity?: TaskDetail['activity']
 }
 /** Streamed, not yet committed output of the current step. */
-interface LiveStep { id: string; text: string; reasoning: string; usage?: TokenUsage }
+interface LiveStep {
+  id: string
+  text: string
+  reasoning: string
+  usage?: TokenUsage
+}
 /**
  * `persist` pins the provider on the session. Sessions without a stored provider follow the
  * current default on every input, as they always have.
  */
-interface Selection { providerId: string; model?: string; source: 'request' | 'session' | 'default'; persist: boolean }
+interface Selection {
+  providerId: string
+  model?: string
+  source: 'request' | 'session' | 'default'
+  persist: boolean
+}
 
 const MAX_OUTPUT = 2_000_000
 const MAX_PREVIEW = 1_000_000
 
-function digest(value: unknown): string { return createHash('sha256').update(JSON.stringify(value)).digest('hex') }
-function now(): string { return new Date().toISOString() }
+function digest(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex')
+}
+function now(): string {
+  return new Date().toISOString()
+}
 function assertPrompt(prompt: string, requestId: string): void {
   if (!prompt.trim() || prompt.length > 1_000_000) throw new AppError(400, 'invalid-prompt', '请输入不超过 1 MB 的任务内容')
   if (!requestId || requestId.length > 256) throw new AppError(400, 'invalid-request-id', '缺少有效的请求标识')
@@ -88,21 +114,39 @@ function assertPrompt(prompt: string, requestId: string): void {
 /** Returns a detached copy with only the two known keys, so hashes and records stay stable. */
 function modelRef(value: unknown): ModelRef {
   const ref = value as Partial<ModelRef> | null
-  if (typeof ref !== 'object' || ref === null || typeof ref.providerId !== 'string' || typeof ref.model !== 'string'
-    || !ref.providerId || ref.providerId.length > 128 || !ref.model.trim() || ref.model.length > 256) {
+  if (
+    typeof ref !== 'object'
+    || ref === null
+    || typeof ref.providerId !== 'string'
+    || typeof ref.model !== 'string'
+    || !ref.providerId
+    || ref.providerId.length > 128
+    || !ref.model.trim()
+    || ref.model.length > 256
+  ) {
     throw new AppError(400, 'invalid-model', '模型选择无效')
   }
   return { providerId: ref.providerId, model: ref.model }
 }
 function safeCall(call: ToolCall): ToolCall {
-  if (!call || typeof call.id !== 'string' || !call.id || typeof call.name !== 'string' || !call.name
-    || typeof call.arguments !== 'object' || call.arguments === null || Array.isArray(call.arguments)) {
+  if (
+    !call
+    || typeof call.id !== 'string'
+    || !call.id
+    || typeof call.name !== 'string'
+    || !call.name
+    || typeof call.arguments !== 'object'
+    || call.arguments === null
+    || Array.isArray(call.arguments)
+  ) {
     throw new AppError(502, 'invalid-tool-call', '模型返回了无效的工具调用')
   }
   // Detach provider-owned arguments before displaying, approving, or executing them.
   return JSON.parse(JSON.stringify(call)) as ToolCall
 }
-function tokens(value: unknown): number { return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0 }
+function tokens(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0
+}
 function addUsage(total: TokenUsage | undefined, delta: { inputTokens: unknown; outputTokens: unknown }): TokenUsage {
   return {
     inputTokens: (total?.inputTokens ?? 0) + tokens(delta.inputTokens),
@@ -117,21 +161,32 @@ function previewOf(value: unknown): Preview | undefined {
   const preview: Preview = {}
   if (typeof title === 'string' && title.trim()) preview.title = title.trim().slice(0, 200)
   if (Array.isArray(diffs)) {
-    const valid = diffs.filter((diff): diff is NonNullable<Preview['diffs']>[number] =>
-      typeof diff === 'object' && diff !== null && typeof diff.path === 'string' && typeof diff.newText === 'string'
-      && (diff.oldText === undefined || typeof diff.oldText === 'string')
-      && (diff.previous === undefined || PREVIOUS.has(diff.previous))).slice(0, 20)
+    const valid = diffs
+      .filter(
+        (diff): diff is NonNullable<Preview['diffs']>[number] =>
+          typeof diff === 'object'
+          && diff !== null
+          && typeof diff.path === 'string'
+          && typeof diff.newText === 'string'
+          && (diff.oldText === undefined || typeof diff.oldText === 'string')
+          && (diff.previous === undefined || PREVIOUS.has(diff.previous)),
+      )
+      .slice(0, 20)
     const size = valid.reduce((sum, diff) => sum + diff.path.length + diff.newText.length + (diff.oldText?.length ?? 0), 0)
     if (valid.length && size <= MAX_PREVIEW) {
       preview.diffs = valid.map(diff => ({
-        path: diff.path, ...(diff.oldText !== undefined ? { oldText: diff.oldText } : {}), newText: diff.newText,
+        path: diff.path,
+        ...(diff.oldText !== undefined ? { oldText: diff.oldText } : {}),
+        newText: diff.newText,
         ...(diff.previous ? { previous: diff.previous } : {}),
       }))
     }
   }
   return preview.title || preview.diffs ? preview : undefined
 }
-async function canonical(path: string): Promise<string> { return realpath(path).catch(() => resolve(path)) }
+async function canonical(path: string): Promise<string> {
+  return realpath(path).catch(() => resolve(path))
+}
 
 function toolMessage(task: StoredTask, call: ToolCall): Message | undefined {
   return task.messages.find(message => message.id === `tool:${call.id}`)
@@ -141,7 +196,10 @@ function recordResult(task: StoredTask, call: ToolCall, text: string, isError: b
   task.history.push({ role: 'tool', content: text, toolCallId: call.id, isError })
   const previous = toolMessage(task, call)
   const message: Message = {
-    id: `tool:${call.id}`, role: 'tool', toolName: call.name, text,
+    id: `tool:${call.id}`,
+    role: 'tool',
+    toolName: call.name,
+    text,
     state: cancelled ? 'cancelled' : isError ? 'failed' : 'completed',
     tool: { ...(previous?.tool ?? { title: call.name, input: JSON.stringify(call.arguments, null, 2) }), output: text },
   }
@@ -157,9 +215,15 @@ function closeBatch(task: StoredTask, cancelled: boolean): void {
   for (const call of batch.calls) {
     if (batch.completed.includes(call.id)) continue
     const unknown = batch.started.includes(call.id)
-    recordResult(task, call, unknown
-      ? 'TOOL_OUTCOME_UNKNOWN: 执行未取得已确认结果。请先核对实际副作用；系统不会自动重放此操作。'
-      : 'TOOL_NOT_STARTED: 本次运行已结束，工具没有开始执行。', true, cancelled && !unknown)
+    recordResult(
+      task,
+      call,
+      unknown
+        ? 'TOOL_OUTCOME_UNKNOWN: 执行未取得已确认结果。请先核对实际副作用；系统不会自动重放此操作。'
+        : 'TOOL_NOT_STARTED: 本次运行已结束，工具没有开始执行。',
+      true,
+      cancelled && !unknown,
+    )
   }
   delete task.batch
 }
@@ -187,32 +251,44 @@ class HarnessRuntime implements Bridge {
     this.store = options.store ?? createSnapshotStore(options.dataDir)
     this.workspaceRoot = resolve(options.workspaceRoot)
     this.maxSteps = options.maxSteps ?? 12
-    if (!Number.isSafeInteger(this.maxSteps) || this.maxSteps < 1 || this.maxSteps > 100) throw new Error('maxSteps must be between 1 and 100')
+    if (!Number.isSafeInteger(this.maxSteps) || this.maxSteps < 1 || this.maxSteps > 100)
+      throw new Error('maxSteps must be between 1 and 100')
   }
 
   start(): Promise<void> {
     if (this.closed) return Promise.reject(new AppError(503, 'runtime-closed', '运行节点已关闭'))
-    return this.starting ??= (async () => {
+    return (this.starting ??= (async () => {
       this.state = await this.store.load()
       const recovered = structuredClone(this.state)
       let changed = false
       for (const task of Object.values(recovered.tasks)) {
-        if (task.summary.mode === undefined) { task.summary.mode = 'agent'; changed = true }
+        if (task.summary.mode === undefined) {
+          task.summary.mode = 'agent'
+          changed = true
+        }
         if (task.summary.status !== 'running' && task.summary.status !== 'waiting-approval' && !task.approval && !task.batch) continue
         closeBatch(task, false)
         delete task.approval
         task.summary.status = 'interrupted'
         task.summary.updatedAt = now()
         task.revision++
-        task.messages.push({ id: randomUUID(), role: 'system', text: '上次运行被中断。旧审批已失效；请核对工具副作用后再明确发起后续任务。', state: 'failed' })
+        task.messages.push({
+          id: randomUUID(),
+          role: 'system',
+          text: '上次运行被中断。旧审批已失效；请核对工具副作用后再明确发起后续任务。',
+          state: 'failed',
+        })
         changed = true
       }
-      if (changed) { await this.store.commit(recovered); this.state = recovered }
-    })()
+      if (changed) {
+        await this.store.commit(recovered)
+        this.state = recovered
+      }
+    })())
   }
 
   close(): Promise<void> {
-    return this.closing ??= (async () => {
+    return (this.closing ??= (async () => {
       this.closed = true
       await this.starting?.catch(() => {})
       for (const run of this.runs.values()) run.controller.abort(new Error('Runtime closed'))
@@ -220,7 +296,7 @@ class HarnessRuntime implements Bridge {
       await this.queue
       await this.store.close()
       this.listeners.clear()
-    })()
+    })())
   }
 
   private async ready(): Promise<void> {
@@ -235,8 +311,9 @@ class HarnessRuntime implements Bridge {
       if (this.storageFailure) throw this.storageFailure
       const draft = structuredClone(this.state)
       const value = operation(draft)
-      try { await this.store.commit(draft) }
-      catch (error) {
+      try {
+        await this.store.commit(draft)
+      } catch (error) {
         this.storageFailure = error
         for (const run of this.runs.values()) run.controller.abort(error)
         throw error
@@ -245,7 +322,10 @@ class HarnessRuntime implements Bridge {
       this.notify(sessionId)
       return value
     })
-    this.queue = result.then(() => {}, () => {})
+    this.queue = result.then(
+      () => {},
+      () => {},
+    )
     return result
   }
 
@@ -269,7 +349,7 @@ class HarnessRuntime implements Bridge {
     if (typeof cwd !== 'string' || !isAbsolute(cwd) || cwd.includes('\0')) return undefined
     const target = await canonical(cwd)
     for (const candidate of this.options.workspaces?.() ?? [this.workspaceRoot]) {
-      if (await canonical(candidate) === target) return resolve(candidate)
+      if ((await canonical(candidate)) === target) return resolve(candidate)
     }
     return undefined
   }
@@ -283,8 +363,11 @@ class HarnessRuntime implements Bridge {
 
   async listTasks(): Promise<TaskSummary[]> {
     await this.ready()
-    return structuredClone(Object.values(this.state.tasks).map(task => task.summary)
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)))
+    return structuredClone(
+      Object.values(this.state.tasks)
+        .map(task => task.summary)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+    )
   }
 
   async detail(sessionId: string): Promise<TaskDetail> {
@@ -294,9 +377,11 @@ class HarnessRuntime implements Bridge {
     const live = this.live.get(sessionId)
     const visibleLive = active && live && !task.messages.some(message => message.id === live.id) ? live : undefined
     return structuredClone({
-      summary: task.summary, messages: task.messages,
+      summary: task.summary,
+      messages: task.messages,
       approvals: task.approval ? [task.approval] : [],
-      liveText: visibleLive?.text ?? '', cursor: task.revision,
+      liveText: visibleLive?.text ?? '',
+      cursor: task.revision,
       ...(visibleLive ? { liveMessageId: visibleLive.id } : {}),
       ...(visibleLive?.reasoning ? { liveReasoning: visibleLive.reasoning } : {}),
       ...(active && this.runs.get(sessionId)?.activity ? { activity: this.runs.get(sessionId)!.activity } : {}),
@@ -313,7 +398,12 @@ class HarnessRuntime implements Bridge {
     const cwd = input.cwd === undefined ? this.workspaceRoot : await this.workspaceFor(input.cwd)
     const key = digest(['create', input.requestId])
     // Selection keys join the hash only when given, so receipts written before they existed still match.
-    const payloadHash = digest({ prompt: input.prompt, mode, ...(model ? { model } : {}), ...(input.cwd !== undefined ? { cwd: input.cwd } : {}) })
+    const payloadHash = digest({
+      prompt: input.prompt,
+      mode,
+      ...(model ? { model } : {}),
+      ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
+    })
     let run: Run | undefined
     try {
       const result = await this.commit(draft => {
@@ -323,10 +413,14 @@ class HarnessRuntime implements Bridge {
             throw new AppError(410, 'task-deleted', '这个请求创建的任务已被删除')
           }
           // Before modes existed, creation receipts hashed the text alone.
-          const legacyAgentReceipt = mode === 'agent' && !model && input.cwd === undefined
+          const legacyAgentReceipt =
+            mode === 'agent'
+            && !model
+            && input.cwd === undefined
             && this.task(draft, receipt.taskId).summary.mode === 'agent'
             && receipt.payloadHash === digest(input.prompt)
-          if (receipt.payloadHash !== payloadHash && !legacyAgentReceipt) throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同任务内容或对话模式')
+          if (receipt.payloadHash !== payloadHash && !legacyAgentReceipt)
+            throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同任务内容或对话模式')
           receipt.payloadHash = payloadHash
           return { sessionId: receipt.taskId }
         }
@@ -336,18 +430,28 @@ class HarnessRuntime implements Bridge {
         const sessionId = run.sessionId
         draft.tasks[sessionId] = {
           summary: {
-            id: sessionId, title: input.prompt.trim().replace(/\s+/g, ' ').slice(0, 80), status: 'running',
-            updatedAt: now(), cwd, model: run.model, mode, ...(selection.persist ? { providerId: selection.providerId } : {}),
+            id: sessionId,
+            title: input.prompt.trim().replace(/\s+/g, ' ').slice(0, 80),
+            status: 'running',
+            updatedAt: now(),
+            cwd,
+            model: run.model,
+            mode,
+            ...(selection.persist ? { providerId: selection.providerId } : {}),
           },
           messages: [{ id: randomUUID(), role: 'user', text: input.prompt }],
-          history: [{ role: 'user', content: input.prompt }], revision: 1,
+          history: [{ role: 'user', content: input.prompt }],
+          revision: 1,
         }
         draft.receipts[key] = { taskId: sessionId, payloadHash }
         return { sessionId }
       })
       if (run) this.launch(run)
       return result
-    } catch (error) { if (run) this.releaseRun(run); throw error }
+    } catch (error) {
+      if (run) this.releaseRun(run)
+      throw error
+    }
   }
 
   async prompt(sessionId: string, prompt: string, requestId: string, options: PromptOptions = {}): Promise<void> {
@@ -374,8 +478,10 @@ class HarnessRuntime implements Bridge {
         if (this.runs.has(sessionId) || task.summary.status === 'running' || task.summary.status === 'waiting-approval') {
           throw new AppError(409, 'task-running', '任务仍在运行，请等待完成或先取消')
         }
-        const selection: Selection = model ? { ...model, source: 'request', persist: true }
-          : task.summary.providerId ? { providerId: task.summary.providerId, model: task.summary.model, source: 'session', persist: true }
+        const selection: Selection = model
+          ? { ...model, source: 'request', persist: true }
+          : task.summary.providerId
+            ? { providerId: task.summary.providerId, model: task.summary.model, source: 'session', persist: true }
             : { ...this.defaultSelection(), persist: false }
         run = this.allocateRun(sessionId, task.summary.mode ?? 'agent', selection, recorded)
         task.history.push({ role: 'user', content: prompt })
@@ -388,7 +494,10 @@ class HarnessRuntime implements Bridge {
         draft.receipts[key] = { taskId: sessionId, payloadHash }
       }, sessionId)
       if (run) this.launch(run)
-    } catch (error) { if (run) this.releaseRun(run); throw error }
+    } catch (error) {
+      if (run) this.releaseRun(run)
+      throw error
+    }
   }
 
   async remove(sessionId: string): Promise<void> {
@@ -417,9 +526,20 @@ class HarnessRuntime implements Bridge {
         : new AppError(409, 'model-unavailable', `模型 ${model} 已不可用，请切换模型后继续`)
     }
     let resolveDone!: () => void
-    const done = new Promise<void>(resolve => { resolveDone = resolve })
+    const done = new Promise<void>(resolve => {
+      resolveDone = resolve
+    })
     const run: Run = {
-      id: randomUUID(), sessionId, mode, model, cwd, controller: new AbortController(), lease, done, resolveDone, activity: { phase: 'model' },
+      id: randomUUID(),
+      sessionId,
+      mode,
+      model,
+      cwd,
+      controller: new AbortController(),
+      lease,
+      done,
+      resolveDone,
+      activity: { phase: 'model' },
     }
     // Reserve ownership before persistence publishes the new running task.
     this.runs.set(sessionId, run)
@@ -428,15 +548,21 @@ class HarnessRuntime implements Bridge {
 
   private releaseRun(run: Run): void {
     if (this.runs.get(run.sessionId) === run) this.runs.delete(run.sessionId)
-    try { run.lease.release() } finally { run.resolveDone() }
+    try {
+      run.lease.release()
+    } finally {
+      run.resolveDone()
+    }
   }
 
   private launch(run: Run): void {
     if (this.closed) run.controller.abort(new Error('Runtime closed'))
-    void this.drive(run).finally(() => {
-      this.releaseRun(run)
-      this.notify(run.sessionId)
-    }).catch(() => {}) // drive records execution errors; storage failure remains fail-closed.
+    void this.drive(run)
+      .finally(() => {
+        this.releaseRun(run)
+        this.notify(run.sessionId)
+      })
+      .catch(() => {}) // drive records execution errors; storage failure remains fail-closed.
   }
 
   async cancel(sessionId: string): Promise<void> {
@@ -476,12 +602,18 @@ class HarnessRuntime implements Bridge {
 
   subscribe(listener: (sessionId?: string) => void): () => void {
     this.listeners.add(listener)
-    return () => { this.listeners.delete(listener) }
+    return () => {
+      this.listeners.delete(listener)
+    }
   }
 
   private notify(sessionId?: string): void {
     for (const listener of this.listeners) {
-      try { listener(sessionId) } catch { /* One subscriber cannot prevent execution or other updates. */ }
+      try {
+        listener(sessionId)
+      } catch {
+        /* One subscriber cannot prevent execution or other updates. */
+      }
     }
   }
 
@@ -490,7 +622,9 @@ class HarnessRuntime implements Bridge {
     if (!tool.preview) return undefined
     try {
       return previewOf(await tool.preview(structuredClone(call.arguments), { workspaceRoot: run.cwd, signal: run.controller.signal }))
-    } catch { return undefined }
+    } catch {
+      return undefined
+    }
   }
 
   /** Fails closed: a classifier that throws or returns anything else yields R2. */
@@ -499,28 +633,53 @@ class HarnessRuntime implements Bridge {
     let level: unknown
     try {
       level = await this.options.classifyToolCall({
-        toolName: call.name, arguments: structuredClone(call.arguments), cwd: run.cwd, sessionId: run.sessionId,
+        toolName: call.name,
+        arguments: structuredClone(call.arguments),
+        cwd: run.cwd,
+        sessionId: run.sessionId,
       })
-    } catch { level = 'R2' }
-    return RISK_LEVELS.has(level) ? level as RiskLevel : 'R2'
+    } catch {
+      level = 'R2'
+    }
+    return RISK_LEVELS.has(level) ? (level as RiskLevel) : 'R2'
   }
 
-  private async approval(run: Run, call: ToolCall, tool: ToolDefinition, preview: Preview | undefined, risk: 'R1' | 'R2'): Promise<Decision> {
+  private async approval(
+    run: Run,
+    call: ToolCall,
+    tool: ToolDefinition,
+    preview: Preview | undefined,
+    risk: 'R1' | 'R2',
+  ): Promise<Decision> {
     const signal = run.controller.signal
     const value: Approval = {
-      id: randomUUID(), sessionId: run.sessionId, toolName: call.name, toolCallId: call.id,
-      reason: risk === 'R2'
-        ? '这是高风险操作，每次执行前都需要你确认，不能设为始终允许。'
-        : '该工具可能修改工作区或产生外部副作用，需要你确认本次操作。',
-      arguments: JSON.stringify(call.arguments, null, 2), requestedAt: now(),
-      options: structuredClone([...risk === 'R2' ? HIGH_RISK_APPROVAL_OPTIONS : APPROVAL_OPTIONS]),
-      tool: { ...(tool.kind ? { kind: tool.kind } : {}), title: preview?.title ?? call.name, ...(preview?.diffs ? { diffs: preview.diffs } : {}) },
+      id: randomUUID(),
+      sessionId: run.sessionId,
+      toolName: call.name,
+      toolCallId: call.id,
+      reason:
+        risk === 'R2'
+          ? '这是高风险操作，每次执行前都需要你确认，不能设为始终允许。'
+          : '该工具可能修改工作区或产生外部副作用，需要你确认本次操作。',
+      arguments: JSON.stringify(call.arguments, null, 2),
+      requestedAt: now(),
+      options: structuredClone([...(risk === 'R2' ? HIGH_RISK_APPROVAL_OPTIONS : APPROVAL_OPTIONS)]),
+      tool: {
+        ...(tool.kind ? { kind: tool.kind } : {}),
+        title: preview?.title ?? call.name,
+        ...(preview?.diffs ? { diffs: preview.diffs } : {}),
+      },
       risk,
     }
     let settle!: PendingApproval['resolve']
-    const decision = new Promise<Decision>(resolve => { settle = resolve })
+    const decision = new Promise<Decision>(resolve => {
+      settle = resolve
+    })
     const pending: PendingApproval = { value, claimed: false, resolve: settle, signal }
-    const abort = (): void => { pending.claimed = true; settle({ decision: 'cancel' }) }
+    const abort = (): void => {
+      pending.claimed = true
+      settle({ decision: 'cancel' })
+    }
     let outcome: Decision | undefined
     this.pending.set(value.id, pending)
     signal.addEventListener('abort', abort, { once: true })
@@ -528,9 +687,13 @@ class HarnessRuntime implements Bridge {
     try {
       if (!signal.aborted) run.activity = { phase: 'approval', toolName: call.name }
       await this.change(run.sessionId, task => {
-        task.approval = value; task.summary.status = 'waiting-approval'
+        task.approval = value
+        task.summary.status = 'waiting-approval'
         const message = toolMessage(task, call)
-        if (message) { message.state = 'awaiting-approval'; message.tool = { ...message.tool, ...preview } }
+        if (message) {
+          message.state = 'awaiting-approval'
+          message.tool = { ...message.tool, ...preview }
+        }
       })
       outcome = await decision
       return outcome
@@ -538,9 +701,10 @@ class HarnessRuntime implements Bridge {
       signal.removeEventListener('abort', abort)
       this.pending.delete(value.id)
       await this.change(run.sessionId, task => {
-        delete task.approval; task.summary.status = 'running'
+        delete task.approval
+        task.summary.status = 'running'
         if (risk === 'R1' && outcome?.decision === 'allow' && outcome.always && !task.allowedTools?.includes(call.name)) {
-          task.allowedTools = [...task.allowedTools ?? [], call.name]
+          task.allowedTools = [...(task.allowedTools ?? []), call.name]
         }
       })
     }
@@ -550,7 +714,9 @@ class HarnessRuntime implements Bridge {
     const signal = run.controller.signal
     signal.throwIfAborted()
     if (!tool) {
-      await this.change(run.sessionId, task => recordResult(task, call, `UNKNOWN_TOOL: 工具 ${call.name} 在本次运行的插件版本中不存在。`, true))
+      await this.change(run.sessionId, task =>
+        recordResult(task, call, `UNKNOWN_TOOL: 工具 ${call.name} 在本次运行的插件版本中不存在。`, true),
+      )
       return
     }
     const risk = await this.risk(run, call, tool)
@@ -565,7 +731,9 @@ class HarnessRuntime implements Bridge {
         const { decision } = await this.approval(run, call, tool, preview, risk)
         signal.throwIfAborted()
         if (decision !== 'allow') {
-          await this.change(run.sessionId, task => recordResult(task, call, 'APPROVAL_REJECTED: 用户拒绝了本次工具调用，未执行该操作。', true))
+          await this.change(run.sessionId, task =>
+            recordResult(task, call, 'APPROVAL_REJECTED: 用户拒绝了本次工具调用，未执行该操作。', true),
+          )
           return
         }
       }
@@ -574,13 +742,19 @@ class HarnessRuntime implements Bridge {
     await this.change(run.sessionId, task => {
       task.batch?.started.push(call.id)
       const message = toolMessage(task, call)
-      if (message) { message.state = 'running'; if (preview) message.tool = { ...message.tool, ...preview } }
+      if (message) {
+        message.state = 'running'
+        if (preview) message.tool = { ...message.tool, ...preview }
+      }
     })
     signal.throwIfAborted()
     let result: { text: string }
     try {
       result = await tool.execute(structuredClone(call.arguments), {
-        sessionId: run.sessionId, callId: call.id, workspaceRoot: run.cwd, signal,
+        sessionId: run.sessionId,
+        callId: call.id,
+        workspaceRoot: run.cwd,
+        signal,
       })
       if (!result || typeof result.text !== 'string') throw new Error('Tool returned an invalid result')
     } catch (error) {
@@ -618,10 +792,12 @@ class HarnessRuntime implements Bridge {
           if (finished) throw new AppError(502, 'provider-protocol', '模型在结束事件之后继续发送内容')
           if (delta.type === 'text' || delta.type === 'reasoning') {
             live[delta.type === 'text' ? 'text' : 'reasoning'] += delta.text
-            if (live.text.length + live.reasoning.length > MAX_OUTPUT) throw new AppError(502, 'response-too-large', '模型输出超过本次运行限制')
+            if (live.text.length + live.reasoning.length > MAX_OUTPUT)
+              throw new AppError(502, 'response-too-large', '模型输出超过本次运行限制')
             this.notify(run.sessionId)
           } else if (delta.type === 'tool-call') {
-            if (run.mode === 'chat') throw new AppError(502, 'chat-tools-disabled', '普通对话模式不允许调用工具；本次工具请求已拒绝，未执行任何操作。')
+            if (run.mode === 'chat')
+              throw new AppError(502, 'chat-tools-disabled', '普通对话模式不允许调用工具；本次工具请求已拒绝，未执行任何操作。')
             const call = safeCall(delta.call)
             if (seen.has(call.id) || calls.length >= 32) throw new AppError(502, 'provider-protocol', '模型返回重复工具标识或过多工具调用')
             seen.add(call.id)
@@ -637,7 +813,12 @@ class HarnessRuntime implements Bridge {
           current.history.push({ role: 'assistant', content: text, ...(calls.length ? { toolCalls: calls } : {}) })
           if (text || reasoning) {
             current.messages.push({
-              id, role: 'assistant', text, state: 'completed', ...(reasoning ? { reasoning } : {}), ...(usage ? { usage } : {}),
+              id,
+              role: 'assistant',
+              text,
+              state: 'completed',
+              ...(reasoning ? { reasoning } : {}),
+              ...(usage ? { usage } : {}),
             })
           }
           if (usage) current.summary.usage = addUsage(current.summary.usage, usage)
@@ -647,7 +828,11 @@ class HarnessRuntime implements Bridge {
               const input = JSON.stringify(call.arguments, null, 2)
               const kind = tools.get(call.name)?.kind
               current.messages.push({
-                id: `tool:${call.id}`, role: 'tool', toolName: call.name, text: input, state: 'queued',
+                id: `tool:${call.id}`,
+                role: 'tool',
+                toolName: call.name,
+                text: input,
+                state: 'queued',
                 tool: { ...(kind ? { kind } : {}), title: call.name, input },
               })
             }
@@ -656,7 +841,9 @@ class HarnessRuntime implements Bridge {
         this.live.delete(run.sessionId)
         if (!calls.length) return
         for (const call of calls) await this.execute(run, call, tools.get(call.name))
-        await this.change(run.sessionId, current => { delete current.batch })
+        await this.change(run.sessionId, current => {
+          delete current.batch
+        })
       }
       throw new AppError(409, 'step-limit', `已达到 ${this.maxSteps} 步运行上限，请检查结果后发起新的输入`)
     } catch (error) {
@@ -672,8 +859,12 @@ class HarnessRuntime implements Bridge {
           if (partial && (partial.text || partial.reasoning) && !task.messages.some(message => message.id === partial.id)) {
             if (partial.text) task.history.push({ role: 'assistant', content: partial.text })
             task.messages.push({
-              id: partial.id, role: 'assistant', text: partial.text, state: signal.aborted ? 'cancelled' : 'failed',
-              ...(partial.reasoning ? { reasoning: partial.reasoning } : {}), ...(partial.usage ? { usage: partial.usage } : {}),
+              id: partial.id,
+              role: 'assistant',
+              text: partial.text,
+              state: signal.aborted ? 'cancelled' : 'failed',
+              ...(partial.reasoning ? { reasoning: partial.reasoning } : {}),
+              ...(partial.usage ? { usage: partial.usage } : {}),
             })
           }
           if (partial?.usage) task.summary.usage = addUsage(task.summary.usage, partial.usage)

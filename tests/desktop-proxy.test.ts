@@ -11,7 +11,12 @@ import { startTestHost } from './helpers/host.ts'
 
 const require = createRequire(import.meta.url)
 
-interface DeviceKey { publicKey: string; fingerprint: string; sign(text: string): string; exportPem(): string }
+interface DeviceKey {
+  publicKey: string
+  fingerprint: string
+  sign(text: string): string
+  exportPem(): string
+}
 interface CredentialStore {
   file: string
   current(): { deviceId: string; credential: string } | undefined
@@ -20,15 +25,35 @@ interface CredentialStore {
   setCredential(credential: string): Promise<void>
   clear(): Promise<void>
 }
-interface SafeStorageLike { isEncryptionAvailable(): boolean; encryptString(text: string): Buffer; decryptString(data: Buffer): string; getSelectedStorageBackend?(): string }
-interface DialogOptions { type: string; title: string; message: string; detail: string; buttons: string[]; defaultId: number; cancelId: number; noLink: boolean }
+interface SafeStorageLike {
+  isEncryptionAvailable(): boolean
+  encryptString(text: string): Buffer
+  decryptString(data: Buffer): string
+  getSelectedStorageBackend?(): string
+}
+interface DialogOptions {
+  type: string
+  title: string
+  message: string
+  detail: string
+  buttons: string[]
+  defaultId: number
+  cancelId: number
+  noLink: boolean
+}
 interface ShellProxy {
   handle(request: Request): Promise<Response>
   renew(): Promise<boolean>
   startRenewalTimer(timers?: { setTimer?(callback: () => void, ms: number): unknown; clearTimer?(timer: unknown): void }): () => void
   state(): { renewAfter: number; retryAt: number; pendingEnrollments: number }
 }
-interface RouteInfo { kind: string; enrollmentId?: string; cancelEnrollment?: string; selfRevoke?: boolean; public?: boolean }
+interface RouteInfo {
+  kind: string
+  enrollmentId?: string
+  cancelEnrollment?: string
+  selfRevoke?: boolean
+  public?: boolean
+}
 
 const proxy = require('../desktop/proxy.cjs') as {
   HTML_CSP: string
@@ -42,7 +67,9 @@ const proxy = require('../desktop/proxy.cjs') as {
   externalUrl(url: string): string | undefined
   externalLinkDialog(url: string): DialogOptions
   createExternalOpener(options: {
-    confirm(options: DialogOptions, parent?: unknown): Promise<{ response: number }>; open(url: string): Promise<unknown>; log?(text: string): void
+    confirm(options: DialogOptions, parent?: unknown): Promise<{ response: number }>
+    open(url: string): Promise<unknown>
+    log?(text: string): void
   }): (url: string, parent?: unknown) => Promise<boolean>
   debugFlagProblems(argv: string[], env: Record<string, string | undefined>): string[]
   unexpectedArguments(args: string[]): string[]
@@ -54,8 +81,12 @@ const proxy = require('../desktop/proxy.cjs') as {
   stripCredential(value: unknown): unknown
   authFailureAction(status: number, body: unknown): 'renew' | 'clear' | undefined
   createShellProxy(options: {
-    hostId: string; store: CredentialStore; resolveSocket(): Promise<string>; invalidateSocket?(): void
-    log?(text: string): void; now?(): number
+    hostId: string
+    store: CredentialStore
+    resolveSocket(): Promise<string>
+    invalidateSocket?(): void
+    log?(text: string): void
+    now?(): number
   }): ShellProxy
 }
 const credentials = require('../desktop/credentials.cjs') as {
@@ -67,17 +98,27 @@ const credentials = require('../desktop/credentials.cjs') as {
   generateDeviceKey(): DeviceKey
   deviceKeyFrom(privateKey: KeyObject): DeviceKey
   secureStorageProblem(storage: Partial<SafeStorageLike>, platform?: string): string | undefined
-  openCredentialStore(options: { directory: string; hostId: string; safeStorage: SafeStorageLike; log?(text: string): void }): Promise<CredentialStore>
+  openCredentialStore(options: {
+    directory: string
+    hostId: string
+    safeStorage: SafeStorageLike
+    log?(text: string): void
+  }): Promise<CredentialStore>
 }
 const hostModule = require('../desktop/host.cjs') as {
   parseHostState(value: unknown): Record<string, unknown> | undefined
   readHostStateFile(path: string): Promise<Record<string, unknown> | undefined>
-  inspectHostState(state: unknown, options?: { timeoutMs?: number }): Promise<{ ok: true; info: Record<string, unknown> } | { ok: false; reason: string }>
+  inspectHostState(
+    state: unknown,
+    options?: { timeoutMs?: number },
+  ): Promise<{ ok: true; info: Record<string, unknown> } | { ok: false; reason: string }>
 }
 
 const HOST_ID = P256_VECTOR.hostId
 const cleanups: Array<() => Promise<void>> = []
-afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
+})
 
 async function directory() {
   const path = await mkdtemp(join(tmpdir(), 'latch-shell-'))
@@ -110,7 +151,12 @@ function verifyP1363(spki: string, text: string, signature: string) {
 const id = (prefix: string) => `${prefix}_${randomBytes(16).toString('base64url')}`
 const newCredential = (deviceId: string) => `ldc1.${deviceId}.${randomBytes(32).toString('base64url')}`
 
-interface Seen { method: string; url: string; headers: IncomingMessage['headers']; body: string }
+interface Seen {
+  method: string
+  url: string
+  headers: IncomingMessage['headers']
+  body: string
+}
 interface FakeDevice {
   publicKey: string
   credential: string
@@ -154,7 +200,10 @@ async function fakeHost(now: () => number = Date.now) {
     res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', ...headers })
     res.end(JSON.stringify(value))
   }
-  const authenticate = (req: IncomingMessage, renewal = false): { error: string; status?: number } | { deviceId: string; device: FakeDevice } => {
+  const authenticate = (
+    req: IncomingMessage,
+    renewal = false,
+  ): { error: string; status?: number } | { deviceId: string; device: FakeDevice } => {
     const header = req.headers.authorization
     if (!header?.startsWith('Latch-Device ')) return { error: 'unauthorized' }
     const credential = header.slice('Latch-Device '.length)
@@ -194,15 +243,21 @@ async function fakeHost(now: () => number = Date.now) {
         const nonce = randomBytes(16).toString('base64url')
         state.enrollments.set(enrollmentId, { publicKey: input.publicKey, nonce })
         const fingerprint = state.fingerprintOverride ?? credentials.deviceFingerprint(Buffer.from(input.publicKey, 'base64url'))
-        sendJson(res, 202, { enrollment: { id: enrollmentId, status: 'pending', fingerprint, nonce, expiresAt: new Date(Date.now() + 120_000).toISOString() } })
+        sendJson(res, 202, {
+          enrollment: { id: enrollmentId, status: 'pending', fingerprint, nonce, expiresAt: new Date(Date.now() + 120_000).toISOString() },
+        })
         return
       }
       if (req.method === 'POST' && completeMatch) {
         const enrollment = state.enrollments.get(completeMatch[1]!)
-        if (!enrollment) { sendJson(res, 404, { error: 'enrollment-not-found', message: '找不到该登记请求' }); return }
+        if (!enrollment) {
+          sendJson(res, 404, { error: 'enrollment-not-found', message: '找不到该登记请求' })
+          return
+        }
         const { signature } = JSON.parse(body) as { signature: string }
         if (!verifyP1363(enrollment.publicKey, credentials.enrollSigningText(HOST_ID, completeMatch[1]!, enrollment.nonce), signature)) {
-          sendJson(res, 401, { error: 'invalid-signature', message: '签名校验失败' }); return
+          sendJson(res, 401, { error: 'invalid-signature', message: '签名校验失败' })
+          return
         }
         const deviceId = id('dev')
         const credential = newCredential(deviceId)
@@ -210,50 +265,89 @@ async function fakeHost(now: () => number = Date.now) {
         sendJson(res, 200, { device: { id: deviceId, name: '测试', listener: 'unix' }, credential }, { 'set-cookie': ['leak=1; Path=/'] })
         return
       }
-      if (req.method === 'DELETE' && url.startsWith('/link/api/enrollments/')) { sendJson(res, 200, { cancelled: true }); return }
+      if (req.method === 'DELETE' && url.startsWith('/link/api/enrollments/')) {
+        sendJson(res, 200, { cancelled: true })
+        return
+      }
       if (req.method === 'POST' && url === '/link/api/credentials/challenge') {
-        if (state.failChallenge) { sendJson(res, 503, { error: 'host-closing', message: '运行节点正在关闭' }); return }
+        if (state.failChallenge) {
+          sendJson(res, 503, { error: 'host-closing', message: '运行节点正在关闭' })
+          return
+        }
         const auth = authenticate(req, true)
-        if ('error' in auth) { sendJson(res, auth.status ?? 401, { error: auth.error, message: 'x' }); return }
+        if ('error' in auth) {
+          sendJson(res, auth.status ?? 401, { error: auth.error, message: 'x' })
+          return
+        }
         const nonce = randomBytes(16).toString('base64url')
         state.challenges.set(auth.deviceId, nonce)
-        sendJson(res, 200, { nonce, expiresAt: new Date(Date.now() + 60_000).toISOString() }); return
+        sendJson(res, 200, { nonce, expiresAt: new Date(Date.now() + 60_000).toISOString() })
+        return
       }
       if (req.method === 'POST' && url === '/link/api/credentials/renew') {
         const auth = authenticate(req, true)
-        if ('error' in auth) { sendJson(res, auth.status ?? 401, { error: auth.error, message: 'x' }); return }
-        if (state.failRenew) { sendJson(res, 503, { error: 'host-closing', message: '运行节点正在关闭' }); return }
+        if ('error' in auth) {
+          sendJson(res, auth.status ?? 401, { error: auth.error, message: 'x' })
+          return
+        }
+        if (state.failRenew) {
+          sendJson(res, 503, { error: 'host-closing', message: '运行节点正在关闭' })
+          return
+        }
         const input = JSON.parse(body) as { nonce: string; signature: string }
-        if (state.challenges.get(auth.deviceId) !== input.nonce
-          || !verifyP1363(auth.device.publicKey, credentials.renewSigningText(HOST_ID, auth.deviceId, input.nonce), input.signature)) {
-          sendJson(res, 401, { error: 'invalid-signature', message: '签名校验失败' }); return
+        if (
+          state.challenges.get(auth.deviceId) !== input.nonce
+          || !verifyP1363(auth.device.publicKey, credentials.renewSigningText(HOST_ID, auth.deviceId, input.nonce), input.signature)
+        ) {
+          sendJson(res, 401, { error: 'invalid-signature', message: '签名校验失败' })
+          return
         }
         const credential = newCredential(auth.deviceId)
         auth.device.pending = { credential, issuedAt: now() }
         state.onRenew?.()
-        if (state.dropRenewAnswer) { res.socket?.destroy(); return }
-        sendJson(res, 200, { device: { id: auth.deviceId, renewAfter: new Date(now() + 86_400_000).toISOString() }, credential }); return
+        if (state.dropRenewAnswer) {
+          res.socket?.destroy()
+          return
+        }
+        sendJson(res, 200, { device: { id: auth.deviceId, renewAfter: new Date(now() + 86_400_000).toISOString() }, credential })
+        return
       }
       if (url === '/link/api/events') {
         res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store' })
         res.write(': hello\n\n')
         const timer = setInterval(() => res.write('event: refresh\ndata: {}\n\n'), 50)
-        res.on('close', () => { clearInterval(timer); state.streamClosed = true })
+        res.on('close', () => {
+          clearInterval(timer)
+          state.streamClosed = true
+        })
         return
       }
       if (url === '/link/' || url === '/link/index.html') {
-        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': "default-src 'self'", 'set-cookie': 'harness_link=old' })
-        res.end('<!doctype html><title>Latch</title>'); return
+        res.writeHead(200, {
+          'content-type': 'text/html; charset=utf-8',
+          'content-security-policy': "default-src 'self'",
+          'set-cookie': 'harness_link=old',
+        })
+        res.end('<!doctype html><title>Latch</title>')
+        return
       }
       if (url === '/link/assets/app.js') {
         res.writeHead(200, { 'content-type': 'text/javascript', 'content-security-policy': "default-src 'self'" })
-        res.end('console.log(1)'); return
+        res.end('console.log(1)')
+        return
       }
       if (url.startsWith('/link/api/')) {
         const auth = authenticate(req)
-        if ('error' in auth) { sendJson(res, auth.status ?? 401, { error: auth.error, message: 'x' }); return }
-        if (state.renewalRequired.has(auth.deviceId)) { sendJson(res, 401, { error: 'renewal-required', message: '设备凭据需要续期' }); return }
-        sendJson(res, 200, { ok: true, method: req.method, body }, { 'set-cookie': 'latch_x=leak; Path=/' }); return
+        if ('error' in auth) {
+          sendJson(res, auth.status ?? 401, { error: auth.error, message: 'x' })
+          return
+        }
+        if (state.renewalRequired.has(auth.deviceId)) {
+          sendJson(res, 401, { error: 'renewal-required', message: '设备凭据需要续期' })
+          return
+        }
+        sendJson(res, 200, { ok: true, method: req.method, body }, { 'set-cookie': 'latch_x=leak; Path=/' })
+        return
       }
       sendJson(res, 404, { error: 'not-found', message: '页面不存在' })
     })
@@ -269,12 +363,22 @@ async function fakeHost(now: () => number = Date.now) {
 async function shell(options: { now?: () => number; safeStorage?: SafeStorageLike } = {}) {
   const host = await fakeHost(options.now)
   const devices = join(await directory(), 'latch-devices')
-  const store = await credentials.openCredentialStore({ directory: devices, hostId: HOST_ID, safeStorage: options.safeStorage ?? fakeSafeStorage() })
+  const store = await credentials.openCredentialStore({
+    directory: devices,
+    hostId: HOST_ID,
+    safeStorage: options.safeStorage ?? fakeSafeStorage(),
+  })
   let invalidated = 0
   const logs: string[] = []
   const handler = proxy.createShellProxy({
-    hostId: HOST_ID, store, now: options.now, log: text => logs.push(text),
-    resolveSocket: async () => host.socketPath, invalidateSocket: () => { invalidated++ },
+    hostId: HOST_ID,
+    store,
+    now: options.now,
+    log: text => logs.push(text),
+    resolveSocket: async () => host.socketPath,
+    invalidateSocket: () => {
+      invalidated++
+    },
   })
   const request = (path: string, init: RequestInit = {}) => handler.handle(new Request(`latch://app${path}`, init))
   return { host, store, devices, handler, request, logs, invalidated: () => invalidated }
@@ -287,19 +391,27 @@ const NOT_ENROLLED = { error: 'unauthorized', message: '请先在本机确认这
 function manualTimers(handler: ShellProxy) {
   const timers: Array<{ callback: () => void; ms: number }> = []
   const stop = handler.startRenewalTimer({ setTimer: (callback, ms) => timers.push({ callback, ms }), clearTimer: () => {} })
-  const run = async () => { const count = timers.length; timers.at(-1)!.callback(); await vi.waitFor(() => expect(timers.length).toBe(count + 1)) }
+  const run = async () => {
+    const count = timers.length
+    timers.at(-1)!.callback()
+    await vi.waitFor(() => expect(timers.length).toBe(count + 1))
+  }
   return { timers, run, stop }
 }
 
 /** Drives the renderer side of enrollment: no key, an empty completion body. */
 async function enroll(context: Awaited<ReturnType<typeof shell>>) {
   const created = await context.request('/link/api/enrollments', {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: '我的电脑', publicKey: 'renderer-key', scopes: ['view'] }),
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: '我的电脑', publicKey: 'renderer-key', scopes: ['view'] }),
   })
   expect(created.status).toBe(202)
-  const { enrollment } = await created.json() as { enrollment: { id: string } }
+  const { enrollment } = (await created.json()) as { enrollment: { id: string } }
   const completed = await context.request(`/link/api/enrollments/${enrollment.id}/complete`, {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ signature: 'forged' }),
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ signature: 'forged' }),
   })
   return { enrollmentId: enrollment.id, completed }
 }
@@ -310,9 +422,18 @@ describe('desktop shell policy', () => {
       expect(proxy.isAllowedRendererRequest(url, { packaged: true })).toBe(true)
     }
     for (const url of [
-      'https://example.com/', 'http://127.0.0.1:4317/link/', 'ws://127.0.0.1:1/', 'wss://example.com/', 'file:///etc/passwd',
-      'data:text/html,hi', 'blob:latch://app/1', 'chrome-extension://x/', 'ftp://example.com/', 'not a url',
-    ]) expect(proxy.isAllowedRendererRequest(url, { packaged: false }), url).toBe(false)
+      'https://example.com/',
+      'http://127.0.0.1:4317/link/',
+      'ws://127.0.0.1:1/',
+      'wss://example.com/',
+      'file:///etc/passwd',
+      'data:text/html,hi',
+      'blob:latch://app/1',
+      'chrome-extension://x/',
+      'ftp://example.com/',
+      'not a url',
+    ])
+      expect(proxy.isAllowedRendererRequest(url, { packaged: false }), url).toBe(false)
     expect(proxy.isAllowedRendererRequest('devtools://devtools/bundled/inspector.html', { packaged: false })).toBe(true)
     expect(proxy.isAllowedRendererRequest('devtools://devtools/bundled/inspector.html', { packaged: true })).toBe(false)
   })
@@ -324,9 +445,14 @@ describe('desktop shell policy', () => {
     }
     expect(proxy.externalUrl('https://example.com/a?b=1')).toBe('https://example.com/a?b=1')
     for (const url of [
-      'http://example.com/', 'javascript:alert(1)', 'file:///etc/passwd', 'https://user:pass@example.com/', 'latch://app/',
+      'http://example.com/',
+      'javascript:alert(1)',
+      'file:///etc/passwd',
+      'https://user:pass@example.com/',
+      'latch://app/',
       `https://example.com/${'a'.repeat(proxy.EXTERNAL_URL_LIMIT)}`,
-    ]) expect(proxy.externalUrl(url), url).toBeUndefined()
+    ])
+      expect(proxy.externalUrl(url), url).toBeUndefined()
     // What the confirmation shows is printable ASCII: no bidi overrides, controls or look-alike host names.
     for (const url of ['https://example.com/\u202egnp.exe?\u0007#\u200f', 'https://exаmple.com/']) {
       expect(proxy.externalUrl(url), url).toMatch(/^[\x21-\x7e]+$/)
@@ -338,16 +464,34 @@ describe('desktop shell policy', () => {
     const opened: string[] = []
     let answer: (value: { response: number }) => void = () => {}
     const openExternal = proxy.createExternalOpener({
-      confirm: (options, parent) => { asked.push({ options, parent }); return new Promise(resolve => { answer = resolve }) },
-      open: async url => { opened.push(url) },
+      confirm: (options, parent) => {
+        asked.push({ options, parent })
+        return new Promise(resolve => {
+          answer = resolve
+        })
+      },
+      open: async url => {
+        opened.push(url)
+      },
     })
     const url = 'https://example.com/docs?q=1#part'
     const cancelled = openExternal(url, 'window')
     expect(await openExternal('https://example.com/other')).toBe(false)
-    expect(asked).toEqual([{
-      parent: 'window',
-      options: { type: 'question', title: 'Latch', message: '在浏览器中打开以下链接？', detail: url, buttons: ['打开', '取消'], defaultId: 1, cancelId: 1, noLink: true },
-    }])
+    expect(asked).toEqual([
+      {
+        parent: 'window',
+        options: {
+          type: 'question',
+          title: 'Latch',
+          message: '在浏览器中打开以下链接？',
+          detail: url,
+          buttons: ['打开', '取消'],
+          defaultId: 1,
+          cancelId: 1,
+          noLink: true,
+        },
+      },
+    ])
     answer({ response: 1 })
     expect(await cancelled).toBe(false)
     expect(opened).toEqual([])
@@ -357,7 +501,12 @@ describe('desktop shell policy', () => {
     expect(await confirmed).toBe(true)
     expect(opened).toEqual([url])
 
-    for (const raw of ['http://example.com/', 'javascript:alert(1)', 'https://user:pw@example.com/', `https://example.com/${'a'.repeat(proxy.EXTERNAL_URL_LIMIT)}`]) {
+    for (const raw of [
+      'http://example.com/',
+      'javascript:alert(1)',
+      'https://user:pw@example.com/',
+      `https://example.com/${'a'.repeat(proxy.EXTERNAL_URL_LIMIT)}`,
+    ]) {
       expect(await openExternal(raw), raw).toBe(false)
     }
     expect(asked).toHaveLength(2)
@@ -366,30 +515,70 @@ describe('desktop shell policy', () => {
 
   it('reports debugging switches from argv, NODE_OPTIONS and ELECTRON_RUN_AS_NODE', () => {
     expect(proxy.debugFlagProblems(['electron', 'main.cjs', '--latch-host-state=/x'], {})).toEqual([])
-    expect(proxy.debugFlagProblems(
-      ['electron', '--inspect=0', '--remote-debugging-port=0', '--inspect-brk', '--use-mock-keychain', '--inspector-not-a-flag'],
-      { NODE_OPTIONS: '--max-old-space-size=100 --inspect=9229', ELECTRON_RUN_AS_NODE: '1' },
-    )).toEqual(['--inspect', '--remote-debugging-port', '--inspect-brk', '--use-mock-keychain', 'NODE_OPTIONS --inspect', 'ELECTRON_RUN_AS_NODE'])
+    expect(
+      proxy.debugFlagProblems(
+        ['electron', '--inspect=0', '--remote-debugging-port=0', '--inspect-brk', '--use-mock-keychain', '--inspector-not-a-flag'],
+        { NODE_OPTIONS: '--max-old-space-size=100 --inspect=9229', ELECTRON_RUN_AS_NODE: '1' },
+      ),
+    ).toEqual([
+      '--inspect',
+      '--remote-debugging-port',
+      '--inspect-brk',
+      '--use-mock-keychain',
+      'NODE_OPTIONS --inspect',
+      'ELECTRON_RUN_AS_NODE',
+    ])
     // Chromium also honours a single dash, and the inspector switches have several spellings.
-    expect(proxy.debugFlagProblems([
-      'electron', '-remote-debugging-port=0', '--inspect-brk-node=0', '-inspect=0', '--remote-debugging-pipe', '--remote-debugging-address=0.0.0.0',
-      '--inspect-publish-uid=http', '--debug-port=9229', '--REMOTE-DEBUGGING-PORT=1',
-    ], { NODE_OPTIONS: '-r /tmp/x.js --import=/tmp/y.mjs --inspect-brk-node' })).toEqual([
-      '-remote-debugging-port', '--inspect-brk-node', '-inspect', '--remote-debugging-pipe', '--remote-debugging-address',
-      '--inspect-publish-uid', '--debug-port', '--REMOTE-DEBUGGING-PORT', 'NODE_OPTIONS -r', 'NODE_OPTIONS --import', 'NODE_OPTIONS --inspect-brk-node',
+    expect(
+      proxy.debugFlagProblems(
+        [
+          'electron',
+          '-remote-debugging-port=0',
+          '--inspect-brk-node=0',
+          '-inspect=0',
+          '--remote-debugging-pipe',
+          '--remote-debugging-address=0.0.0.0',
+          '--inspect-publish-uid=http',
+          '--debug-port=9229',
+          '--REMOTE-DEBUGGING-PORT=1',
+        ],
+        { NODE_OPTIONS: '-r /tmp/x.js --import=/tmp/y.mjs --inspect-brk-node' },
+      ),
+    ).toEqual([
+      '-remote-debugging-port',
+      '--inspect-brk-node',
+      '-inspect',
+      '--remote-debugging-pipe',
+      '--remote-debugging-address',
+      '--inspect-publish-uid',
+      '--debug-port',
+      '--REMOTE-DEBUGGING-PORT',
+      'NODE_OPTIONS -r',
+      'NODE_OPTIONS --import',
+      'NODE_OPTIONS --inspect-brk-node',
     ])
   })
 
   it('accepts only the shell arguments, once each, for packaged builds', () => {
     expect(proxy.unexpectedArguments([])).toEqual([])
     expect(proxy.unexpectedArguments(['--latch-host-state=/data/host.json', '--latch-user-data=/user'])).toEqual([])
-    expect(proxy.unexpectedArguments([
-      '--latch-host-state=/data/host.json', '--latch-host-state=/other/host.json', '--enable-logging', '-remote-allow-origins=*', 'latch://app/', '--latch-user-data=',
-    ])).toEqual(['--latch-host-state', '--enable-logging', '-remote-allow-origins', '（位置参数）', '--latch-user-data'])
+    expect(
+      proxy.unexpectedArguments([
+        '--latch-host-state=/data/host.json',
+        '--latch-host-state=/other/host.json',
+        '--enable-logging',
+        '-remote-allow-origins=*',
+        'latch://app/',
+        '--latch-user-data=',
+      ]),
+    ).toEqual(['--latch-host-state', '--enable-logging', '-remote-allow-origins', '（位置参数）', '--latch-user-data'])
   })
 
   it('maps latch://app/link paths to the Host and refuses everything else', () => {
-    expect(proxy.upstreamTarget('latch://app/link/api/events?sessionId=a%20b')).toEqual({ path: '/link/api/events?sessionId=a%20b', pathname: '/link/api/events' })
+    expect(proxy.upstreamTarget('latch://app/link/api/events?sessionId=a%20b')).toEqual({
+      path: '/link/api/events?sessionId=a%20b',
+      pathname: '/link/api/events',
+    })
     expect(proxy.upstreamTarget('latch://app/link')).toEqual({ path: '/link', pathname: '/link' })
     for (const url of ['latch://app/', 'latch://app/other', 'latch://app/linker', 'latch://evil/link/', 'https://app/link/']) {
       expect(proxy.upstreamTarget(url), url).toBeUndefined()
@@ -398,9 +587,15 @@ describe('desktop shell policy', () => {
 
   it('classifies credential, enrollment and device routes regardless of encoding, case or extra slashes', () => {
     for (const path of [
-      '/link/api/credentials/renew', '/link/api/credentials/challenge', '/link/api/credentials', '/link/api//credentials/renew',
-      '/link/api/%63redentials/renew', '/LINK/API/Credentials/Renew', '/link/api/credentials/renew/',
-    ]) expect(proxy.classifyRoute('POST', path), path).toEqual({ kind: 'credentials' })
+      '/link/api/credentials/renew',
+      '/link/api/credentials/challenge',
+      '/link/api/credentials',
+      '/link/api//credentials/renew',
+      '/link/api/%63redentials/renew',
+      '/LINK/API/Credentials/Renew',
+      '/link/api/credentials/renew/',
+    ])
+      expect(proxy.classifyRoute('POST', path), path).toEqual({ kind: 'credentials' })
     expect(proxy.classifyRoute('POST', '/link/api/enrollments')).toEqual({ kind: 'enroll' })
     expect(proxy.classifyRoute('POST', '/link/api/enrollments/')).toEqual({ kind: 'enroll' })
     expect(proxy.classifyRoute('GET', '/link/api/enrollments')).toEqual({ kind: 'forward' })
@@ -409,7 +604,11 @@ describe('desktop shell policy', () => {
     expect(proxy.classifyRoute('DELETE', '/link/api/enrollments/enr_AbC')).toEqual({ kind: 'forward', cancelEnrollment: 'enr_AbC' })
     expect(proxy.classifyRoute('GET', '/link/api/enrollments/enr_AbC')).toEqual({ kind: 'forward' })
     expect(proxy.classifyRoute('DELETE', '/link/api/devices/current')).toEqual({ kind: 'forward', selfRevoke: true })
-    for (const [method, path] of [['GET', '/link/api/devices'], ['DELETE', '/link/api/devices/dev_x'], ['POST', '/link/api/pairings']] as const) {
+    for (const [method, path] of [
+      ['GET', '/link/api/devices'],
+      ['DELETE', '/link/api/devices/dev_x'],
+      ['POST', '/link/api/pairings'],
+    ] as const) {
       expect(proxy.classifyRoute(method, path)).toEqual({ kind: 'forward' })
     }
     expect(proxy.classifyRoute('GET', '/link/api/snapshot')).toEqual({ kind: 'forward' })
@@ -418,34 +617,75 @@ describe('desktop shell policy', () => {
   it('lets only static files and enrollment routes go to the Host without a credential', () => {
     const enrollmentId = id('enr')
     for (const [method, path] of [
-      ['GET', '/link'], ['GET', '/link/'], ['HEAD', '/link/assets/app.js'], ['GET', '/link/manifest.webmanifest'],
-      ['GET', '/link/api/health'], ['GET', '/link/api/enrollment-info'], ['GET', `/link/api/enrollments/${enrollmentId}`],
-    ] as const) expect(proxy.classifyRoute(method, path), `${method} ${path}`).toEqual({ kind: 'forward', public: true })
-    expect(proxy.classifyRoute('DELETE', `/link/api/enrollments/${enrollmentId}`)).toEqual({ kind: 'forward', cancelEnrollment: enrollmentId, public: true })
+      ['GET', '/link'],
+      ['GET', '/link/'],
+      ['HEAD', '/link/assets/app.js'],
+      ['GET', '/link/manifest.webmanifest'],
+      ['GET', '/link/api/health'],
+      ['GET', '/link/api/enrollment-info'],
+      ['GET', `/link/api/enrollments/${enrollmentId}`],
+    ] as const)
+      expect(proxy.classifyRoute(method, path), `${method} ${path}`).toEqual({ kind: 'forward', public: true })
+    expect(proxy.classifyRoute('DELETE', `/link/api/enrollments/${enrollmentId}`)).toEqual({
+      kind: 'forward',
+      cancelEnrollment: enrollmentId,
+      public: true,
+    })
     for (const [method, path] of [
-      ['POST', '/link/'], ['GET', '/link/api'], ['GET', '/link/api/snapshot'], ['GET', '/link/api/events'], ['POST', '/link/api/health'],
-      ['GET', '/link/api/%68ealth'], ['GET', '/link//api/health'], ['GET', '/link/API/health'], ['GET', '/link/%61pi/devices'],
-      ['GET', '/link/api/enrollments'], ['GET', '/link/api/enrollments/enr_short'], ['GET', `/link/api/enrollments/${enrollmentId}/`],
-      ['PUT', `/link/api/enrollments/${enrollmentId}`], ['GET', '/link/api/devices'], ['POST', '/link/api/pairings'],
-    ] as const) expect(proxy.classifyRoute(method, path).public, `${method} ${path}`).toBeUndefined()
+      ['POST', '/link/'],
+      ['GET', '/link/api'],
+      ['GET', '/link/api/snapshot'],
+      ['GET', '/link/api/events'],
+      ['POST', '/link/api/health'],
+      ['GET', '/link/api/%68ealth'],
+      ['GET', '/link//api/health'],
+      ['GET', '/link/API/health'],
+      ['GET', '/link/%61pi/devices'],
+      ['GET', '/link/api/enrollments'],
+      ['GET', '/link/api/enrollments/enr_short'],
+      ['GET', `/link/api/enrollments/${enrollmentId}/`],
+      ['PUT', `/link/api/enrollments/${enrollmentId}`],
+      ['GET', '/link/api/devices'],
+      ['POST', '/link/api/pairings'],
+    ] as const)
+      expect(proxy.classifyRoute(method, path).public, `${method} ${path}`).toBeUndefined()
   })
 
   it('filters request headers and adds only the shell credential', () => {
-    const forwarded = proxy.forwardRequestHeaders({
-      cookie: 'latch_abc=stolen', authorization: 'Latch-Device ldc1.renderer', host: 'evil', origin: 'https://evil',
-      'content-length': '10', connection: 'keep-alive', 'x-forwarded-for': '1.2.3.4', forwarded: 'for=1.2.3.4', 'proxy-authorization': 'x',
-      'content-type': 'application/json', accept: 'text/event-stream', 'x-latch-confirmation': 'cfm_1',
-    }, 'ldc1.dev_x.y')
+    const forwarded = proxy.forwardRequestHeaders(
+      {
+        cookie: 'latch_abc=stolen',
+        authorization: 'Latch-Device ldc1.renderer',
+        host: 'evil',
+        origin: 'https://evil',
+        'content-length': '10',
+        connection: 'keep-alive',
+        'x-forwarded-for': '1.2.3.4',
+        forwarded: 'for=1.2.3.4',
+        'proxy-authorization': 'x',
+        'content-type': 'application/json',
+        accept: 'text/event-stream',
+        'x-latch-confirmation': 'cfm_1',
+      },
+      'ldc1.dev_x.y',
+    )
     expect(forwarded).toEqual({
-      'content-type': 'application/json', accept: 'text/event-stream', 'x-latch-confirmation': 'cfm_1', authorization: 'Latch-Device ldc1.dev_x.y',
+      'content-type': 'application/json',
+      accept: 'text/event-stream',
+      'x-latch-confirmation': 'cfm_1',
+      authorization: 'Latch-Device ldc1.dev_x.y',
     })
     expect(proxy.forwardRequestHeaders({ authorization: 'Latch-Device x', accept: '*/*' })).toEqual({ accept: '*/*' })
   })
 
   it('drops cookies from responses and replaces the CSP of HTML documents only', () => {
     const html = proxy.forwardResponseHeaders({
-      'content-type': 'text/html; charset=utf-8', 'content-security-policy': "default-src *", 'set-cookie': ['a=1', 'b=2'],
-      connection: 'keep-alive', 'transfer-encoding': 'chunked', 'x-frame-options': 'DENY',
+      'content-type': 'text/html; charset=utf-8',
+      'content-security-policy': 'default-src *',
+      'set-cookie': ['a=1', 'b=2'],
+      connection: 'keep-alive',
+      'transfer-encoding': 'chunked',
+      'x-frame-options': 'DENY',
     })
     expect(html.get('content-security-policy')).toBe(proxy.HTML_CSP)
     expect(html.get('set-cookie')).toBeNull()
@@ -453,22 +693,32 @@ describe('desktop shell policy', () => {
     expect(html.get('transfer-encoding')).toBeNull()
     expect(html.get('x-frame-options')).toBe('DENY')
     expect(proxy.forwardResponseHeaders({ 'content-type': 'application/xhtml+xml' }).get('content-security-policy')).toBe(proxy.HTML_CSP)
-    expect(proxy.forwardResponseHeaders({ 'content-type': 'text/javascript', 'content-security-policy': "default-src 'self'" })
-      .get('content-security-policy')).toBe("default-src 'self'")
+    expect(
+      proxy
+        .forwardResponseHeaders({ 'content-type': 'text/javascript', 'content-security-policy': "default-src 'self'" })
+        .get('content-security-policy'),
+    ).toBe("default-src 'self'")
     expect(proxy.forwardResponseHeaders({ 'content-type': 'application/json' }).get('content-security-policy')).toBeNull()
     expect(proxy.HTML_CSP).toContain("connect-src 'self'")
     expect(proxy.HTML_CSP).toContain("frame-ancestors 'none'")
   })
 
   it('rewrites the enrollment body with the shell key and strips credentials', () => {
-    expect(JSON.parse(proxy.rewriteEnrollmentBody(JSON.stringify({ name: 'n', publicKey: 'renderer', scopes: ['view'], offlineCode: 'lpo1-X' }), 'main-key')))
-      .toEqual({ name: 'n', publicKey: 'main-key', scopes: ['view'], offlineCode: 'lpo1-X' })
+    expect(
+      JSON.parse(
+        proxy.rewriteEnrollmentBody(
+          JSON.stringify({ name: 'n', publicKey: 'renderer', scopes: ['view'], offlineCode: 'lpo1-X' }),
+          'main-key',
+        ),
+      ),
+    ).toEqual({ name: 'n', publicKey: 'main-key', scopes: ['view'], offlineCode: 'lpo1-X' })
     expect(JSON.parse(proxy.rewriteEnrollmentBody('{"name":"n"}', 'k'))).toEqual({ name: 'n', publicKey: 'k' })
     expect(() => proxy.rewriteEnrollmentBody('nope', 'k')).toThrow(proxy.ProxyError)
     expect(() => proxy.rewriteEnrollmentBody('[]', 'k')).toThrow(proxy.ProxyError)
     expect(proxy.stripCredential({ device: { id: 'd' }, credential: 'ldc1.x' })).toEqual({ device: { id: 'd' } })
     expect(proxy.authFailureAction(401, { error: 'renewal-required' })).toBe('renew')
-    for (const code of ['device-revoked', 'credential-expired', 'listener-mismatch']) expect(proxy.authFailureAction(401, { error: code })).toBe('clear')
+    for (const code of ['device-revoked', 'credential-expired', 'listener-mismatch'])
+      expect(proxy.authFailureAction(401, { error: code })).toBe('clear')
     expect(proxy.authFailureAction(401, { error: 'unauthorized' })).toBeUndefined()
     expect(proxy.authFailureAction(403, { error: 'device-revoked' })).toBeUndefined()
   })
@@ -500,10 +750,23 @@ describe('desktop credential storage', () => {
   it('refuses to store credentials without secure storage', () => {
     const { NO_SECURE_STORAGE } = credentials
     expect(credentials.secureStorageProblem({ isEncryptionAvailable: () => false }, 'darwin')).toBe(NO_SECURE_STORAGE)
-    expect(credentials.secureStorageProblem({ isEncryptionAvailable: () => true, getSelectedStorageBackend: () => 'basic_text' }, 'linux')).toBe(NO_SECURE_STORAGE)
-    expect(credentials.secureStorageProblem({ isEncryptionAvailable: () => true, getSelectedStorageBackend: () => 'gnome_libsecret' }, 'linux')).toBeUndefined()
+    expect(
+      credentials.secureStorageProblem({ isEncryptionAvailable: () => true, getSelectedStorageBackend: () => 'basic_text' }, 'linux'),
+    ).toBe(NO_SECURE_STORAGE)
+    expect(
+      credentials.secureStorageProblem({ isEncryptionAvailable: () => true, getSelectedStorageBackend: () => 'gnome_libsecret' }, 'linux'),
+    ).toBeUndefined()
     expect(credentials.secureStorageProblem({ isEncryptionAvailable: () => true }, 'darwin')).toBeUndefined()
-    expect(credentials.secureStorageProblem({ isEncryptionAvailable: () => { throw new Error('x') } }, 'darwin')).toBe(NO_SECURE_STORAGE)
+    expect(
+      credentials.secureStorageProblem(
+        {
+          isEncryptionAvailable: () => {
+            throw new Error('x')
+          },
+        },
+        'darwin',
+      ),
+    ).toBe(NO_SECURE_STORAGE)
   })
 
   it('keeps the key and credential encrypted in a 0600 file and forgets both on clear', async () => {
@@ -530,7 +793,9 @@ describe('desktop credential storage', () => {
     const rotated = newCredential(deviceId)
     await reopened.setCredential(rotated)
     await expect(reopened.setCredential(newCredential(id('dev')))).rejects.toThrow()
-    expect((await credentials.openCredentialStore({ directory: devices, hostId: HOST_ID, safeStorage })).current()?.credential).toBe(rotated)
+    expect((await credentials.openCredentialStore({ directory: devices, hostId: HOST_ID, safeStorage })).current()?.credential).toBe(
+      rotated,
+    )
 
     await reopened.clear()
     await expect(stat(store.file)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -542,14 +807,25 @@ describe('desktop credential storage', () => {
     const store = await credentials.openCredentialStore({ directory: devices, hostId: HOST_ID, safeStorage: fakeSafeStorage() })
     const deviceId = id('dev')
     await store.commit({ key: credentials.generateDeviceKey(), deviceId, credential: newCredential(deviceId) })
-    const otherStorage = { ...fakeSafeStorage(), decryptString: () => { throw new Error('other keychain') } }
-    expect((await credentials.openCredentialStore({ directory: devices, hostId: HOST_ID, safeStorage: otherStorage })).current()).toBeUndefined()
+    const otherStorage = {
+      ...fakeSafeStorage(),
+      decryptString: () => {
+        throw new Error('other keychain')
+      },
+    }
+    expect(
+      (await credentials.openCredentialStore({ directory: devices, hostId: HOST_ID, safeStorage: otherStorage })).current(),
+    ).toBeUndefined()
     const value = JSON.parse(await readFile(store.file, 'utf8')) as Record<string, unknown>
     await writeFile(store.file, JSON.stringify({ ...value, hostId: 'a'.repeat(52) }))
     await chmod(store.file, 0o644)
-    expect((await credentials.openCredentialStore({ directory: devices, hostId: HOST_ID, safeStorage: fakeSafeStorage() })).current()).toBeUndefined()
+    expect(
+      (await credentials.openCredentialStore({ directory: devices, hostId: HOST_ID, safeStorage: fakeSafeStorage() })).current(),
+    ).toBeUndefined()
     expect((await stat(store.file)).mode & 0o777).toBe(0o600)
-    await expect(credentials.openCredentialStore({ directory: devices, hostId: '../escape', safeStorage: fakeSafeStorage() })).rejects.toThrow()
+    await expect(
+      credentials.openCredentialStore({ directory: devices, hostId: '../escape', safeStorage: fakeSafeStorage() }),
+    ).rejects.toThrow()
   })
 
   it('keeps using a credential whose file still carries a rotation mark from an older shell', async () => {
@@ -561,13 +837,24 @@ describe('desktop credential storage', () => {
     const value = JSON.parse(await readFile(store.file, 'utf8')) as Record<string, unknown>
     await writeFile(store.file, JSON.stringify({ ...value, rotating: true }))
     const logs: string[] = []
-    const reopened = await credentials.openCredentialStore({ directory: devices, hostId: HOST_ID, safeStorage: fakeSafeStorage(), log: text => logs.push(text) })
+    const reopened = await credentials.openCredentialStore({
+      directory: devices,
+      hostId: HOST_ID,
+      safeStorage: fakeSafeStorage(),
+      log: text => logs.push(text),
+    })
     expect(reopened.current()).toEqual({ deviceId, credential })
     expect(logs).toEqual([])
     // The next write drops the mark.
     const renewed = newCredential(deviceId)
     await reopened.setCredential(renewed)
-    expect(Object.keys(JSON.parse(await readFile(store.file, 'utf8'))).sort()).toEqual(['credential', 'deviceId', 'hostId', 'privateKey', 'v'])
+    expect(Object.keys(JSON.parse(await readFile(store.file, 'utf8'))).sort()).toEqual([
+      'credential',
+      'deviceId',
+      'hostId',
+      'privateKey',
+      'v',
+    ])
   })
 
   it('removes its temporary file and keeps the stored record when a write fails', async () => {
@@ -588,10 +875,14 @@ describe('desktop credential storage', () => {
         spy.mockRestore()
         expect(await readdir(devices), method).toEqual([`${HOST_ID}.json`])
         expect(store.current(), method).toEqual({ deviceId, credential })
-        expect((await credentials.openCredentialStore({ directory: devices, hostId: HOST_ID, safeStorage: fakeSafeStorage() })).current(), method)
-          .toEqual({ deviceId, credential })
+        expect(
+          (await credentials.openCredentialStore({ directory: devices, hostId: HOST_ID, safeStorage: fakeSafeStorage() })).current(),
+          method,
+        ).toEqual({ deviceId, credential })
       }
-    } finally { vi.restoreAllMocks() }
+    } finally {
+      vi.restoreAllMocks()
+    }
   })
 })
 
@@ -611,7 +902,7 @@ describe('desktop shell proxy', () => {
     expect(signature).not.toBe('forged')
     expect(completed.status).toBe(200)
     expect(completed.headers.get('set-cookie')).toBeNull()
-    const body = await completed.json() as Record<string, unknown>
+    const body = (await completed.json()) as Record<string, unknown>
     expect(Object.keys(body)).toEqual(['device'])
     expect(JSON.stringify(body)).not.toContain('ldc1.')
     expect(context.store.current()?.deviceId).toBe((body.device as { id: string }).id)
@@ -627,7 +918,11 @@ describe('desktop shell proxy', () => {
   it('stops an enrollment whose fingerprint does not match the shell key', async () => {
     const context = await shell()
     context.host.state.fingerprintOverride = 'AAAA BBBB CCCC DDDD EEEE'
-    const response = await context.request('/link/api/enrollments', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"name":"x"}' })
+    const response = await context.request('/link/api/enrollments', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{"name":"x"}',
+    })
     expect(response.status).toBe(502)
     expect(await response.json()).toMatchObject({ error: 'fingerprint-mismatch' })
     expect(context.host.seen.some(item => item.method === 'DELETE' && item.url.startsWith('/link/api/enrollments/enr_'))).toBe(true)
@@ -638,7 +933,9 @@ describe('desktop shell proxy', () => {
     const context = await shell()
     await enroll(context)
     const { credential } = context.store.current()!
-    const response = await context.request('/link/api/snapshot', { headers: { cookie: 'latch_x=1', authorization: 'Latch-Device ldc1.other', origin: 'https://evil' } })
+    const response = await context.request('/link/api/snapshot', {
+      headers: { cookie: 'latch_x=1', authorization: 'Latch-Device ldc1.other', origin: 'https://evil' },
+    })
     expect(response.status).toBe(200)
     expect(response.headers.get('set-cookie')).toBeNull()
     const seen = context.host.seen.at(-1)!
@@ -647,7 +944,11 @@ describe('desktop shell proxy', () => {
     expect(seen.headers.origin).toBeUndefined()
     expect(seen.headers.host).toBe('latch.unix')
 
-    const posted = await context.request('/link/api/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"prompt":"hi"}' })
+    const posted = await context.request('/link/api/tasks', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{"prompt":"hi"}',
+    })
     expect(await posted.json()).toMatchObject({ method: 'POST', body: '{"prompt":"hi"}' })
 
     const page = await context.request('/link/')
@@ -665,13 +966,25 @@ describe('desktop shell proxy', () => {
 
   it('answers renderer credential calls itself and keeps anonymous device routes closed', async () => {
     const context = await shell()
-    for (const path of ['/link/api/credentials/challenge', '/link/api/credentials/renew', '/link/api//credentials/renew', '/link/api/%63redentials/renew']) {
+    for (const path of [
+      '/link/api/credentials/challenge',
+      '/link/api/credentials/renew',
+      '/link/api//credentials/renew',
+      '/link/api/%63redentials/renew',
+    ]) {
       const response = await context.request(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
       expect(response.status, path).toBe(403)
       expect(await response.json()).toEqual({ error: 'shell-managed', message: '设备凭据由 Latch 桌面端管理' })
     }
-    for (const [method, path] of [['GET', '/link/api/devices'], ['DELETE', '/link/api/devices/dev_x'], ['POST', '/link/api/pairings']] as const) {
-      const response = await context.request(path, { method, ...(method === 'POST' ? { body: '{}', headers: { 'content-type': 'application/json' } } : {}) })
+    for (const [method, path] of [
+      ['GET', '/link/api/devices'],
+      ['DELETE', '/link/api/devices/dev_x'],
+      ['POST', '/link/api/pairings'],
+    ] as const) {
+      const response = await context.request(path, {
+        method,
+        ...(method === 'POST' ? { body: '{}', headers: { 'content-type': 'application/json' } } : {}),
+      })
       expect(response.status, path).toBe(401)
       expect(await response.json()).toEqual(NOT_ENROLLED)
     }
@@ -684,8 +997,12 @@ describe('desktop shell proxy', () => {
     const context = await shell()
     const enrollmentId = id('enr')
     for (const [method, path] of [
-      ['GET', '/link/'], ['GET', '/link/assets/app.js'], ['GET', '/link/api/health'], ['GET', '/link/api/enrollment-info'],
-      ['GET', `/link/api/enrollments/${enrollmentId}`], ['DELETE', `/link/api/enrollments/${enrollmentId}`],
+      ['GET', '/link/'],
+      ['GET', '/link/assets/app.js'],
+      ['GET', '/link/api/health'],
+      ['GET', '/link/api/enrollment-info'],
+      ['GET', `/link/api/enrollments/${enrollmentId}`],
+      ['DELETE', `/link/api/enrollments/${enrollmentId}`],
     ] as const) {
       await context.request(path, { method })
       expect(context.host.seen.at(-1), `${method} ${path}`).toMatchObject({ method, url: path })
@@ -693,9 +1010,17 @@ describe('desktop shell proxy', () => {
     }
     const forwarded = context.host.seen.length
     for (const [method, path] of [
-      ['GET', '/link/api/snapshot'], ['GET', '/link/api/events'], ['POST', '/link/api/tasks'], ['GET', '/link/api/devices'],
-      ['DELETE', '/link/api/devices/dev_x'], ['POST', '/link/api/pairings'], ['GET', '/link/api/%68ealth'], ['GET', '/link//api/devices'],
-      ['GET', '/link/%61pi/devices'], ['POST', '/link/'], ['GET', '/link/api/enrollments/enr_short'],
+      ['GET', '/link/api/snapshot'],
+      ['GET', '/link/api/events'],
+      ['POST', '/link/api/tasks'],
+      ['GET', '/link/api/devices'],
+      ['DELETE', '/link/api/devices/dev_x'],
+      ['POST', '/link/api/pairings'],
+      ['GET', '/link/api/%68ealth'],
+      ['GET', '/link//api/devices'],
+      ['GET', '/link/%61pi/devices'],
+      ['POST', '/link/'],
+      ['GET', '/link/api/enrollments/enr_short'],
     ] as const) {
       const response = await context.request(path, { method, ...(method === 'POST' ? { body: '{}' } : {}) })
       expect(response.status, `${method} ${path}`).toBe(401)
@@ -711,7 +1036,11 @@ describe('desktop shell proxy', () => {
     context.host.state.revoked.add(context.store.current()!.deviceId)
     time += 25 * HOUR
     const before = context.host.seen.length
-    const response = await context.request('/link/api/pairings', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"scopes":["admin"]}' })
+    const response = await context.request('/link/api/pairings', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{"scopes":["admin"]}',
+    })
     expect(response.status).toBe(401)
     expect(await response.json()).toEqual(NOT_ENROLLED)
     expect(context.store.current()).toBeUndefined()
@@ -724,7 +1053,11 @@ describe('desktop shell proxy', () => {
     const context = await shell()
     await enroll(context)
     let controller: ReadableStreamDefaultController<Uint8Array> | undefined
-    const body = new ReadableStream<Uint8Array>({ start(value) { controller = value } })
+    const body = new ReadableStream<Uint8Array>({
+      start(value) {
+        controller = value
+      },
+    })
     const pending = context.request('/link/api/devices/dev_other', { method: 'DELETE', body, duplex: 'half' } as RequestInit)
     await new Promise(done => setTimeout(done, 20))
     expect((await context.request('/link/api/devices/current', { method: 'DELETE' })).status).toBe(200)
@@ -749,7 +1082,9 @@ describe('desktop shell proxy', () => {
     expect(device.pending).toBeDefined()
     expect(context.store.current()).toEqual(before)
     // A restarted shell finds the same credential and may use it.
-    expect((await credentials.openCredentialStore({ directory: context.devices, hostId: HOST_ID, safeStorage: fakeSafeStorage() })).current()).toEqual(before)
+    expect(
+      (await credentials.openCredentialStore({ directory: context.devices, hostId: HOST_ID, safeStorage: fakeSafeStorage() })).current(),
+    ).toEqual(before)
 
     // Well past the 60 s a replaced credential is honoured, the stored one still works: the Host never switched.
     time += 5 * 60_000
@@ -762,10 +1097,16 @@ describe('desktop shell proxy', () => {
     const renewed = context.store.current()!
     expect(renewed.credential).not.toBe(before.credential)
     // The shell presents the new credential once right away, which makes it current on the Host.
-    expect(context.host.seen.at(-1)).toMatchObject({ method: 'GET', url: '/link/api/audit/head', headers: { authorization: `Latch-Device ${renewed.credential}` } })
+    expect(context.host.seen.at(-1)).toMatchObject({
+      method: 'GET',
+      url: '/link/api/audit/head',
+      headers: { authorization: `Latch-Device ${renewed.credential}` },
+    })
     expect(device.credential).toBe(renewed.credential)
     expect(device.pending).toBeUndefined()
-    expect((await credentials.openCredentialStore({ directory: context.devices, hostId: HOST_ID, safeStorage: fakeSafeStorage() })).current()).toEqual(renewed)
+    expect(
+      (await credentials.openCredentialStore({ directory: context.devices, hostId: HOST_ID, safeStorage: fakeSafeStorage() })).current(),
+    ).toEqual(renewed)
 
     time += 5 * 60_000
     expect((await context.request('/link/api/snapshot')).status).toBe(200)
@@ -783,7 +1124,9 @@ describe('desktop shell proxy', () => {
     const device = context.host.state.devices.get(before.deviceId)!
     time += 25 * HOUR
     // The write fails only after the Host has issued the new credential.
-    context.host.state.onRenew = () => { storage.failEncrypt = true }
+    context.host.state.onRenew = () => {
+      storage.failEncrypt = true
+    }
     expect(await context.handler.renew()).toBe(false)
     context.host.state.onRenew = undefined
     storage.failEncrypt = false
@@ -806,7 +1149,9 @@ describe('desktop shell proxy', () => {
     expect(renewed.credential).not.toBe(before.credential)
     expect(context.host.seen.at(-1)!.headers.authorization).toBe(`Latch-Device ${renewed.credential}`)
     expect(device.credential).toBe(renewed.credential)
-    expect((await credentials.openCredentialStore({ directory: context.devices, hostId: HOST_ID, safeStorage: fakeSafeStorage() })).current()).toEqual(renewed)
+    expect(
+      (await credentials.openCredentialStore({ directory: context.devices, hostId: HOST_ID, safeStorage: fakeSafeStorage() })).current(),
+    ).toEqual(renewed)
     expect(context.host.state.revoked.size).toBe(0)
   })
 
@@ -819,7 +1164,9 @@ describe('desktop shell proxy', () => {
     context.host.state.failRenew = true
     expect(await context.handler.renew()).toBe(false)
     expect(context.store.current()).toEqual(before)
-    expect((await credentials.openCredentialStore({ directory: context.devices, hostId: HOST_ID, safeStorage: fakeSafeStorage() })).current()).toEqual(before)
+    expect(
+      (await credentials.openCredentialStore({ directory: context.devices, hostId: HOST_ID, safeStorage: fakeSafeStorage() })).current(),
+    ).toEqual(before)
   })
 
   it('renews once on renewal-required and replays the request with the new credential', async () => {
@@ -827,13 +1174,19 @@ describe('desktop shell proxy', () => {
     await enroll(context)
     const before = context.store.current()!
     context.host.state.renewalRequired.add(before.deviceId)
-    const response = await context.request('/link/api/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"prompt":"again"}' })
+    const response = await context.request('/link/api/tasks', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{"prompt":"again"}',
+    })
     expect(response.status).toBe(200)
     expect(await response.json()).toMatchObject({ body: '{"prompt":"again"}' })
     const after = context.store.current()!
     expect(after.deviceId).toBe(before.deviceId)
     expect(after.credential).not.toBe(before.credential)
-    expect(context.host.seen.map(item => item.url)).toEqual(expect.arrayContaining(['/link/api/credentials/challenge', '/link/api/credentials/renew']))
+    expect(context.host.seen.map(item => item.url)).toEqual(
+      expect.arrayContaining(['/link/api/credentials/challenge', '/link/api/credentials/renew']),
+    )
     expect(context.host.seen.at(-1)!.headers.authorization).toBe(`Latch-Device ${after.credential}`)
     expect(context.handler.state().renewAfter).toBeGreaterThan(Date.now() + 86_000_000)
   })
@@ -859,7 +1212,7 @@ describe('desktop shell proxy', () => {
     const challenges = () => context.host.seen.filter(item => item.url === '/link/api/credentials/challenge').length
     const snapshot = async () => {
       const response = await context.request('/link/api/snapshot')
-      return { status: response.status, error: (await response.json() as { error?: string }).error }
+      return { status: response.status, error: ((await response.json()) as { error?: string }).error }
     }
 
     expect(await snapshot()).toEqual({ status: 401, error: 'renewal-required' })
@@ -958,10 +1311,22 @@ describe('desktop shell proxy', () => {
   })
 
   it('reports an unreachable Host without hanging and asks for re-verification', async () => {
-    const store = await credentials.openCredentialStore({ directory: join(await directory(), 'd'), hostId: HOST_ID, safeStorage: fakeSafeStorage() })
+    const store = await credentials.openCredentialStore({
+      directory: join(await directory(), 'd'),
+      hostId: HOST_ID,
+      safeStorage: fakeSafeStorage(),
+    })
     let invalidated = 0
     const missing = join(await directory(), 'missing.sock')
-    const handler = proxy.createShellProxy({ hostId: HOST_ID, store, log: () => {}, resolveSocket: async () => missing, invalidateSocket: () => { invalidated++ } })
+    const handler = proxy.createShellProxy({
+      hostId: HOST_ID,
+      store,
+      log: () => {},
+      resolveSocket: async () => missing,
+      invalidateSocket: () => {
+        invalidated++
+      },
+    })
     const api = await handler.handle(new Request('latch://app/link/api/enrollment-info'))
     expect(api.status).toBe(502)
     expect(await api.json()).toMatchObject({ error: 'host-unavailable' })
@@ -984,7 +1349,11 @@ async function renewalRelay(target: string) {
   const control = { dropRenewAnswer: false }
   const server = createServer((req, res) => {
     const upstream = httpRequest({ socketPath: target, method: req.method, path: req.url, headers: req.headers }, answer => {
-      if (control.dropRenewAnswer && req.url === '/link/api/credentials/renew') { answer.resume(); res.socket?.destroy(); return }
+      if (control.dropRenewAnswer && req.url === '/link/api/credentials/renew') {
+        answer.resume()
+        res.socket?.destroy()
+        return
+      }
       res.writeHead(answer.statusCode ?? 502, answer.headers)
       answer.pipe(res)
     })
@@ -992,7 +1361,10 @@ async function renewalRelay(target: string) {
     req.pipe(upstream)
   })
   await new Promise<void>(resolve => server.listen(socketPath, resolve))
-  cleanups.push(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())) })
+  cleanups.push(async () => {
+    server.closeAllConnections()
+    await new Promise<void>(resolve => server.close(() => resolve()))
+  })
   return { socketPath, control }
 }
 
@@ -1009,16 +1381,21 @@ describe('desktop shell renewal against the Host', () => {
     const handler = proxy.createShellProxy({ hostId: host.hostId, store, now, log: () => {}, resolveSocket: async () => relay.socketPath })
     const request = (path: string, init: RequestInit = {}) => handler.handle(new Request(`latch://app${path}`, init))
 
-    const created = await request('/link/api/enrollments', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: '桌面端' }) })
+    const created = await request('/link/api/enrollments', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: '桌面端' }),
+    })
     expect(created.status).toBe(202)
-    const { enrollment } = await created.json() as { enrollment: { id: string } }
+    const { enrollment } = (await created.json()) as { enrollment: { id: string } }
     await vi.waitFor(async () => {
       const status = await request(`/link/api/enrollments/${enrollment.id}`)
-      expect((await status.json() as { enrollment: { status: string } }).enrollment.status).toBe('approved')
+      expect(((await status.json()) as { enrollment: { status: string } }).enrollment.status).toBe('approved')
     })
     expect((await request(`/link/api/enrollments/${enrollment.id}/complete`, { method: 'POST', body: '{}' })).status).toBe(200)
     const before = store.current()!
-    const reopen = async () => (await credentials.openCredentialStore({ directory: devices, hostId: host.hostId, safeStorage: fakeSafeStorage() })).current()
+    const reopen = async () =>
+      (await credentials.openCredentialStore({ directory: devices, hostId: host.hostId, safeStorage: fakeSafeStorage() })).current()
 
     // The renewal reaches the Host, which issues a new credential, but its answer is lost.
     time += 23 * HOUR
@@ -1056,18 +1433,41 @@ async function hostInfoServer(info: { pid: number; hostId: string; instanceId: s
   await mkdir(runtime, { mode: 0o700 })
   const socketPath = join(runtime, 'host.sock')
   const server = createServer((req, res) => {
-    if (req.url !== '/link/api/host-info') { res.writeHead(404); res.end(); return }
+    if (req.url !== '/link/api/host-info') {
+      res.writeHead(404)
+      res.end()
+      return
+    }
     res.writeHead(200, { 'content-type': 'application/json' })
-    res.end(JSON.stringify({
-      product: 'Latch', version: '0.1.0', ...info, startedAt: new Date().toISOString(), loopbackOrigin: 'http://h.localhost:1',
-      tlsOrigin: null, devMode: true, presence: { status: 'unavailable' }, activeSessions: 0,
-    }))
+    res.end(
+      JSON.stringify({
+        product: 'Latch',
+        version: '0.1.0',
+        ...info,
+        startedAt: new Date().toISOString(),
+        loopbackOrigin: 'http://h.localhost:1',
+        tlsOrigin: null,
+        devMode: true,
+        presence: { status: 'unavailable' },
+        activeSessions: 0,
+      }),
+    )
   })
   await new Promise<void>(resolve => server.listen(socketPath, resolve))
-  cleanups.push(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())) })
+  cleanups.push(async () => {
+    server.closeAllConnections()
+    await new Promise<void>(resolve => server.close(() => resolve()))
+  })
   const state = {
-    version: 2, pid: info.pid, hostId: info.hostId, instanceId: info.instanceId, socketPath,
-    loopbackOrigin: 'http://h.localhost:1', tlsOrigin: null, startedAt: new Date().toISOString(), dataDir: root,
+    version: 2,
+    pid: info.pid,
+    hostId: info.hostId,
+    instanceId: info.instanceId,
+    socketPath,
+    loopbackOrigin: 'http://h.localhost:1',
+    tlsOrigin: null,
+    startedAt: new Date().toISOString(),
+    dataDir: root,
   }
   return { root, runtime, socketPath, state }
 }

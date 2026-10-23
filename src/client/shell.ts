@@ -6,7 +6,9 @@ export interface LatchShell {
 }
 
 declare global {
-  interface Window { latchShell?: LatchShell }
+  interface Window {
+    latchShell?: LatchShell
+  }
 }
 
 /** The desktop shell when this page runs inside Latch's Electron window, otherwise null (a browser). */

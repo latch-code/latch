@@ -13,13 +13,17 @@ async function main(): Promise<number> {
   const lockfile = await readFile(root('pnpm-lock.yaml'), 'utf8').catch(() => undefined)
   const manifest = JSON.parse(await readFile(root('package.json'), 'utf8')) as { packageManager?: unknown }
   let failures = 0
-  const fail = (lines: string[]) => { failures += lines.length; for (const line of lines) console.log(`  失败  ${line}`) }
+  const fail = (lines: string[]) => {
+    failures += lines.length
+    for (const line of lines) console.log(`  失败  ${line}`)
+  }
 
   const exceptions = checkExceptions(workspaceYaml, lockfile, utcDate())
   console.log('例外')
   fail(exceptions.problems)
   if (exceptions.problems.length === 0) {
-    for (const group of exceptions.groups) console.log(`  通过  ${group.setting}：${group.entries.length} 条，${group.expires} 到期，审阅人 ${group.reviewer}`)
+    for (const group of exceptions.groups)
+      console.log(`  通过  ${group.setting}：${group.entries.length} 条，${group.expires} 到期，审阅人 ${group.reviewer}`)
     if (exceptions.groups.length === 0) console.log('  通过  没有例外')
   }
 
@@ -43,12 +47,23 @@ async function main(): Promise<number> {
         console.log(`  通过  ${result.title}：${canary === CONTROL ? '已安装' : `安装失败，${canary.expectedCode}`}`)
         continue
       }
-      const why = canary === CONTROL ? '安装失败，其余金丝雀的结果不可信'
-        : result.scriptRan ? '依赖的安装脚本运行了'
-          : result.installed ? '安装成功，对应的保护已失效'
-            : `安装因其他原因失败（${result.codes.join('、') || '没有错误码'}），预期 ${canary.expectedCode}`
+      const why =
+        canary === CONTROL
+          ? '安装失败，其余金丝雀的结果不可信'
+          : result.scriptRan
+            ? '依赖的安装脚本运行了'
+            : result.installed
+              ? '安装成功，对应的保护已失效'
+              : `安装因其他原因失败（${result.codes.join('、') || '没有错误码'}），预期 ${canary.expectedCode}`
       fail([`${result.title}：${why}`])
-      console.log(result.output.trim().split('\n').slice(-20).map(line => `        ${line}`).join('\n'))
+      console.log(
+        result.output
+          .trim()
+          .split('\n')
+          .slice(-20)
+          .map(line => `        ${line}`)
+          .join('\n'),
+      )
     }
   }
 

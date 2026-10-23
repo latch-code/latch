@@ -5,9 +5,12 @@ function fixture() {
   let now = 1000
   const geometry = { top: 0, height: 200, extent: 1000 }
   const rows = Array.from({ length: 10 }, (_, index) => ({ id: `message-${index}`, top: index * 100, height: 100 }))
-  const write = vi.fn((top: number) => { geometry.top = Math.max(0, Math.min(top, geometry.extent - geometry.height)) })
+  const write = vi.fn((top: number) => {
+    geometry.top = Math.max(0, Math.min(top, geometry.extent - geometry.height))
+  })
   const viewport: ReadingViewport = {
-    measure: () => ({ ...geometry }), write,
+    measure: () => ({ ...geometry }),
+    write,
     anchor: () => {
       const row = rows.find(row => row.top + row.height > geometry.top && row.top < geometry.top + geometry.height)
       return row ? { messageId: row.id, offset: row.top - geometry.top } : null
@@ -19,8 +22,22 @@ function fixture() {
   }
   const changed = vi.fn()
   const controller = new ReadingPositionController(changed, () => now)
-  const userScroll = (top: number) => { geometry.top = top; controller.scroll(viewport) }
-  return { controller, viewport, geometry, rows, write, changed, userScroll, settle: () => { now += 1500 } }
+  const userScroll = (top: number) => {
+    geometry.top = top
+    controller.scroll(viewport)
+  }
+  return {
+    controller,
+    viewport,
+    geometry,
+    rows,
+    write,
+    changed,
+    userScroll,
+    settle: () => {
+      now += 1500
+    },
+  }
 }
 
 it('waits for detail readiness before restoring or following content', () => {

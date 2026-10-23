@@ -62,7 +62,10 @@ async function readAll(handle: FileHandle, size: number): Promise<Buffer> {
  * The user's home directory is skipped: harnesses keep their own user-level data there (`~/.codex`, `~/.opencode`).
  */
 export async function fingerprintProjectConfig(
-  cwd: string, paths: readonly string[], managed: ProjectConfigManaged = {}, home: string = process.env.HOME || homedir(),
+  cwd: string,
+  paths: readonly string[],
+  managed: ProjectConfigManaged = {},
+  home: string = process.env.HOME || homedir(),
 ): Promise<ProjectConfig> {
   const entries: Entry[] = []
   const skip = new Set(managed.skip ?? [])
@@ -74,7 +77,9 @@ export async function fingerprintProjectConfig(
   async function content(path: string, rel: string, follow: boolean): Promise<Partial<Entry> | 'omit'> {
     if (follow) {
       let target: Stats
-      try { target = await stat(path) } catch (error) {
+      try {
+        target = await stat(path)
+      } catch (error) {
         const code = codeOf(error)
         return code === 'ENOENT' ? { resolved: 'missing' } : { code }
       }
@@ -82,7 +87,7 @@ export async function fingerprintProjectConfig(
     }
     let handle: FileHandle
     try {
-      handle = await open(path, READ_FLAGS | (follow ? 0 : constants.O_NOFOLLOW ?? 0))
+      handle = await open(path, READ_FLAGS | (follow ? 0 : (constants.O_NOFOLLOW ?? 0)))
     } catch (error) {
       return { code: codeOf(error) }
     }
@@ -98,25 +103,39 @@ export async function fingerprintProjectConfig(
       try {
         const reduced = reduce(data.toString('utf8'))
         return reduced === undefined ? 'omit' : { sha256: sha256Hex(canonicalJson(reduced)) }
-      } catch { return whole }
+      } catch {
+        return whole
+      }
     } catch (error) {
       return { code: codeOf(error) }
-    } finally { await handle.close().catch(() => {}) }
+    } finally {
+      await handle.close().catch(() => {})
+    }
   }
 
   async function visit(path: string, rel: string, depth: number): Promise<void> {
     if (truncated || skip.has(rel)) return
     let info: Stats
-    try { info = await lstat(path) } catch (error) {
+    try {
+      info = await lstat(path)
+    } catch (error) {
       const code = codeOf(error)
       if (code !== 'ENOENT' && code !== 'ENOTDIR') entries.push({ path, kind: 'unreadable', code })
       return
     }
-    if (++visited > PROJECT_CONFIG_LIMITS.entries) { truncated = true; return }
+    if (++visited > PROJECT_CONFIG_LIMITS.entries) {
+      truncated = true
+      return
+    }
     if (info.isDirectory()) {
-      if (depth >= PROJECT_CONFIG_LIMITS.depth) { truncated = true; return }
+      if (depth >= PROJECT_CONFIG_LIMITS.depth) {
+        truncated = true
+        return
+      }
       let names: string[]
-      try { names = await readdir(path) } catch (error) {
+      try {
+        names = await readdir(path)
+      } catch (error) {
         entries.push({ path, kind: 'unreadable', code: codeOf(error) })
         return
       }
@@ -125,7 +144,9 @@ export async function fingerprintProjectConfig(
     }
     if (info.isSymbolicLink()) {
       let target: string
-      try { target = await readlink(path) } catch (error) {
+      try {
+        target = await readlink(path)
+      } catch (error) {
         entries.push({ path, kind: 'unreadable', code: codeOf(error) })
         return
       }
@@ -155,7 +176,7 @@ export async function fingerprintProjectConfig(
     }
   }
 
-  entries.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)
+  entries.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
   return {
     ...(entries.length || truncated ? { digest: sha256Hex(canonicalJson({ v: 1, entries, truncated })) } : {}),
     entries: entries.map(entry => ({ path: entry.path, unreadable: entry.kind === 'unreadable' || entry.code !== undefined })),

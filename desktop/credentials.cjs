@@ -34,8 +34,12 @@ function deviceFingerprint(spkiDer) {
   return /** @type {RegExpMatchArray} */ (text.match(/.{4}/g)).join(' ')
 }
 
-function enrollSigningText(hostId, enrollmentId, nonce) { return `latch-enroll-v1\n${hostId}\n${enrollmentId}\n${nonce}` }
-function renewSigningText(hostId, deviceId, nonce) { return `latch-renew-v1\n${hostId}\n${deviceId}\n${nonce}` }
+function enrollSigningText(hostId, enrollmentId, nonce) {
+  return `latch-enroll-v1\n${hostId}\n${enrollmentId}\n${nonce}`
+}
+function renewSigningText(hostId, deviceId, nonce) {
+  return `latch-renew-v1\n${hostId}\n${deviceId}\n${nonce}`
+}
 
 function deviceKeyFrom(privateKey) {
   if (privateKey.asymmetricKeyType !== 'ec' || privateKey.asymmetricKeyDetails?.namedCurve !== 'prime256v1') {
@@ -49,7 +53,9 @@ function deviceKeyFrom(privateKey) {
     sign(text) {
       return crypto.sign('sha256', Buffer.from(text, 'utf8'), { key: privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url')
     },
-    exportPem() { return privateKey.export({ type: 'pkcs8', format: 'pem' }) },
+    exportPem() {
+      return privateKey.export({ type: 'pkcs8', format: 'pem' })
+    },
   }
 }
 
@@ -63,7 +69,9 @@ function secureStorageProblem(safeStorage, platform = process.platform) {
     if (!safeStorage.isEncryptionAvailable()) return NO_SECURE_STORAGE
     if (platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text') return NO_SECURE_STORAGE
     return undefined
-  } catch { return NO_SECURE_STORAGE }
+  } catch {
+    return NO_SECURE_STORAGE
+  }
 }
 
 async function ensurePrivateDirectory(directory, uid) {
@@ -82,7 +90,13 @@ async function ensurePrivateDirectory(directory, uid) {
  * Older files may still carry `rotating: true`; it is ignored.
  * @param {{ directory: string, hostId: string, safeStorage: Electron.SafeStorage, uid?: number, log?: (message: string) => void }} options
  */
-async function openCredentialStore({ directory, hostId, safeStorage, uid = /** @type {() => number} */ (process.getuid)(), log = () => {} }) {
+async function openCredentialStore({
+  directory,
+  hostId,
+  safeStorage,
+  uid = /** @type {() => number} */ (process.getuid)(),
+  log = () => {},
+}) {
   if (!HOST_ID.test(hostId)) throw new Error('hostId 格式不正确')
   await ensurePrivateDirectory(directory, uid)
   const file = join(directory, `${hostId}.json`)
@@ -91,8 +105,15 @@ async function openCredentialStore({ directory, hostId, safeStorage, uid = /** @
 
   async function load() {
     let stats
-    try { stats = await lstat(file) } catch { return undefined }
-    if (stats.isSymbolicLink() || !stats.isFile() || stats.uid !== uid) { log('忽略不安全的设备凭据文件'); return undefined }
+    try {
+      stats = await lstat(file)
+    } catch {
+      return undefined
+    }
+    if (stats.isSymbolicLink() || !stats.isFile() || stats.uid !== uid) {
+      log('忽略不安全的设备凭据文件')
+      return undefined
+    }
     if ((stats.mode & 0o077) !== 0) await chmod(file, 0o600)
     try {
       const value = JSON.parse(await readFile(file, 'utf8'))
@@ -100,7 +121,8 @@ async function openCredentialStore({ directory, hostId, safeStorage, uid = /** @
       const key = deviceKeyFrom(crypto.createPrivateKey(safeStorage.decryptString(Buffer.from(value.privateKey, 'base64'))))
       if (value.credential === undefined) return { key }
       const credential = safeStorage.decryptString(Buffer.from(value.credential, 'base64'))
-      if (!DEVICE_ID.test(value.deviceId) || !CREDENTIAL.test(credential) || !credential.startsWith(`ldc1.${value.deviceId}.`)) throw new Error('format')
+      if (!DEVICE_ID.test(value.deviceId) || !CREDENTIAL.test(credential) || !credential.startsWith(`ldc1.${value.deviceId}.`))
+        throw new Error('format')
       return { key, deviceId: value.deviceId, credential }
     } catch {
       log('设备凭据文件无法读取，需要重新登记')
@@ -120,7 +142,9 @@ async function openCredentialStore({ directory, hostId, safeStorage, uid = /** @
       try {
         await handle.writeFile(JSON.stringify(value))
         await handle.sync()
-      } finally { await handle.close() }
+      } finally {
+        await handle.close()
+      }
       await rename(temporary, file)
     } catch (error) {
       // A full disk must not leave partial copies of the record behind.
@@ -130,8 +154,14 @@ async function openCredentialStore({ directory, hostId, safeStorage, uid = /** @
     // Resolves exactly when the record was replaced, so callers never use a credential the file lacks.
     try {
       const directoryHandle = await open(directory, 'r')
-      try { await directoryHandle.sync() } finally { await directoryHandle.close() }
-    } catch { /* Directory fsync is advisory on some file systems. */ }
+      try {
+        await directoryHandle.sync()
+      } finally {
+        await directoryHandle.close()
+      }
+    } catch {
+      /* Directory fsync is advisory on some file systems. */
+    }
   }
 
   function serialized(action) {
@@ -149,7 +179,9 @@ async function openCredentialStore({ directory, hostId, safeStorage, uid = /** @
     hostId,
     file,
     /** `{ deviceId, credential }` when this shell holds a credential for the Host. */
-    current() { return record?.credential === undefined ? undefined : { deviceId: record.deviceId, credential: record.credential } },
+    current() {
+      return record?.credential === undefined ? undefined : { deviceId: record.deviceId, credential: record.credential }
+    },
     sign(text) {
       if (!record) throw new Error('没有设备密钥')
       return record.key.sign(text)
@@ -172,7 +204,8 @@ async function openCredentialStore({ directory, hostId, safeStorage, uid = /** @
     setCredential(credential) {
       return serialized(async () => {
         const current = requireCredential()
-        if (!CREDENTIAL.test(credential) || !credential.startsWith(`ldc1.${current.deviceId}.`)) throw new Error('Host 返回的设备凭据格式不正确')
+        if (!CREDENTIAL.test(credential) || !credential.startsWith(`ldc1.${current.deviceId}.`))
+          throw new Error('Host 返回的设备凭据格式不正确')
         const next = { key: current.key, deviceId: current.deviceId, credential }
         await persist(next)
         record = next
@@ -189,6 +222,13 @@ async function openCredentialStore({ directory, hostId, safeStorage, uid = /** @
 }
 
 module.exports = {
-  NO_SECURE_STORAGE, base32, deviceFingerprint, enrollSigningText, renewSigningText,
-  generateDeviceKey, deviceKeyFrom, secureStorageProblem, openCredentialStore,
+  NO_SECURE_STORAGE,
+  base32,
+  deviceFingerprint,
+  enrollSigningText,
+  renewSigningText,
+  generateDeviceKey,
+  deviceKeyFrom,
+  secureStorageProblem,
+  openCredentialStore,
 }

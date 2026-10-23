@@ -16,7 +16,7 @@ const LOOKUP_TTL_MS = 5_000
 
 /** Short form for pickers; the full command stays in the agent settings. */
 function commandLine(record: AgentRecord): string {
-  const line = [record.command, ...record.args].map(part => isAbsolute(part) ? basename(part) : part).join(' ')
+  const line = [record.command, ...record.args].map(part => (isAbsolute(part) ? basename(part) : part)).join(' ')
   return line.length > 60 ? `${line.slice(0, 59)}…` : line
 }
 
@@ -52,7 +52,8 @@ export function createAcpAgentPlugin(agent: AgentRecord, options: AcpAgentOption
             const install = AGENT_PRESETS.find(preset => preset.id === record.presetId)?.install
             return { status: 'unavailable', statusMessage: `未找到命令 ${record.command}${install ? `。安装：${install}` : ''}` }
           }
-          if (health.pausedUntil()) return { status: 'unavailable', statusMessage: `${record.name} 在一分钟内连续崩溃 3 次，已暂停自动重启，请稍后再试` }
+          if (health.pausedUntil())
+            return { status: 'unavailable', statusMessage: `${record.name} 在一分钟内连续崩溃 3 次，已暂停自动重启，请稍后再试` }
           return health.lastError ? { status: 'ready', statusMessage: `上次运行异常：${health.lastError}` } : { status: 'ready' }
         },
         create(hostOptions) {

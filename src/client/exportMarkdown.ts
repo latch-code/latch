@@ -3,7 +3,12 @@ import { diffLines, knowsOldSide, previousState } from './diff.ts'
 import { dateTime, usageText } from './format.ts'
 
 const toolStates: Record<NonNullable<Message['state']>, string> = {
-  queued: '等待执行', 'awaiting-approval': '待批准', running: '执行中', completed: '已完成', failed: '失败', cancelled: '已取消',
+  queued: '等待执行',
+  'awaiting-approval': '待批准',
+  running: '执行中',
+  completed: '已完成',
+  failed: '失败',
+  cancelled: '已取消',
 }
 
 /** A fence longer than any backtick run inside, so content can never close it early. */
@@ -66,7 +71,11 @@ function inertMarkdown(text: string): string {
       return line
     }
     const opened = FENCE_OPEN.exec(line)
-    if (opened) { fence = opened[1] ?? opened[2]!; previous = ''; return line }
+    if (opened) {
+      fence = opened[1] ?? opened[2]!
+      previous = ''
+      return line
+    }
     const turn = ATX_TURN.test(line) || (SETEXT_UNDERLINE.test(line) && TURN_NAME.test(previous.trim()))
     previous = line
     return turn ? `\\${inertInline(line.trimStart())}` : inertInline(line)
@@ -84,7 +93,11 @@ function unifiedDiff(diff: FileDiff): string {
   // Only a file the producer reported as missing is new; without previous text it may still exist.
   const out = [previous === 'text' ? `--- a/${path}` : OLD_SIDE_HEADER[previous], `+++ b/${path}`]
   for (const hunk of lines.hunks) {
-    out.push(knowsOldSide(previous) ? `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@` : `@@ +${hunk.newStart},${hunk.newLines} @@`)
+    out.push(
+      knowsOldSide(previous)
+        ? `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`
+        : `@@ +${hunk.newStart},${hunk.newLines} @@`,
+    )
     for (const line of hunk.lines) out.push(`${line.kind === 'add' ? '+' : line.kind === 'remove' ? '-' : ' '}${line.text}`)
   }
   return out.join('\n')
@@ -119,20 +132,44 @@ export function transcriptMarkdown(detail: TaskDetail, meta: { harness?: string;
     if (message.role === 'user') out.push('## 你', '', message.text, '')
     else if (message.role === 'assistant') {
       out.push('## 助手', '')
-      if (message.reasoning) out.push('<details>', '<summary>思考过程</summary>', '', inertMarkdown(message.reasoning).split('\n').map(line => `> ${line}`).join('\n'), '', '</details>', '')
+      if (message.reasoning)
+        out.push(
+          '<details>',
+          '<summary>思考过程</summary>',
+          '',
+          inertMarkdown(message.reasoning)
+            .split('\n')
+            .map(line => `> ${line}`)
+            .join('\n'),
+          '',
+          '</details>',
+          '',
+        )
       if (message.text) out.push(inertMarkdown(message.text), '')
       if (message.state === 'cancelled') out.push('_已停止，保留了部分回复。_', '')
       else if (message.state === 'failed') out.push('_回复中断，保留了部分内容。_', '')
       if (message.usage) out.push(`_用量：${usageText(message.usage)}_`, '')
     } else if (message.role === 'tool') out.push(...toolBlock(message))
-    else out.push(inertMarkdown(message.text).split('\n').map(line => `> ${line}`).join('\n'), '')
+    else
+      out.push(
+        inertMarkdown(message.text)
+          .split('\n')
+          .map(line => `> ${line}`)
+          .join('\n'),
+        '',
+      )
   }
   if (detail.liveText) out.push('## 助手（生成中）', '', inertMarkdown(detail.liveText), '')
   return `${out.join('\n').trimEnd()}\n`
 }
 
 export function exportFileName(title: string): string {
-  const safe = title.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '-').replace(/\s+/g, ' ').trim().slice(0, 60).replace(/^[-. ]+|[-. ]+$/g, '')
+  const safe = title
+    .replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 60)
+    .replace(/^[-. ]+|[-. ]+$/g, '')
   return `${safe || 'latch-session'}.md`
 }
 
@@ -140,8 +177,12 @@ export function exportFileName(title: string): string {
 export async function saveText(name: string, text: string): Promise<void> {
   const file = new File([text], name, { type: 'text/markdown;charset=utf-8' })
   if (matchMedia('(pointer: coarse)').matches && navigator.canShare?.({ files: [file] })) {
-    try { await navigator.share({ files: [file], title: name }); return }
-    catch (error) { if (error instanceof DOMException && error.name === 'AbortError') return }
+    try {
+      await navigator.share({ files: [file], title: name })
+      return
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return
+    }
   }
   const url = URL.createObjectURL(file)
   const link = document.createElement('a')

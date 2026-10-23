@@ -32,16 +32,21 @@ class ControlledReply {
     try {
       while (true) {
         signal.throwIfAborted()
-        const delta = this.queue.shift() ?? await new Promise<ModelDelta>((resolveDelta, reject) => {
-          const abort = () => { this.waiting = undefined; reject(signal.reason) }
-          this.waiting = value => {
-            this.waiting = undefined
-            signal.removeEventListener('abort', abort)
-            resolveDelta(value)
-          }
-          signal.addEventListener('abort', abort, { once: true })
-          if (signal.aborted) abort()
-        })
+        const delta =
+          this.queue.shift()
+          ?? (await new Promise<ModelDelta>((resolveDelta, reject) => {
+            const abort = () => {
+              this.waiting = undefined
+              reject(signal.reason)
+            }
+            this.waiting = value => {
+              this.waiting = undefined
+              signal.removeEventListener('abort', abort)
+              resolveDelta(value)
+            }
+            signal.addEventListener('abort', abort, { once: true })
+            if (signal.aborted) abort()
+          }))
         yield delta
         if (delta.type === 'finish') return
       }
@@ -54,7 +59,10 @@ class ControlledReply {
 /** The shell reports its synchronized connection; the visible indicator differs per breakpoint. */
 const connected = (page: Page) => page.locator('.app-shell[data-connection="connected"]').waitFor()
 
-interface RequestCounts { snapshot: number; detail: number }
+interface RequestCounts {
+  snapshot: number
+  detail: number
+}
 function countProjectionRequests(page: Page): RequestCounts {
   const counts = { snapshot: 0, detail: 0 }
   page.on('request', request => {
@@ -81,10 +89,15 @@ describe('streamed messages in the real workspace', () => {
 
   beforeAll(async () => {
     const plugin: HarnessPlugin = {
-      id: 'streaming-ui-fixture', name: '可控流式测试模型', version: '1.0.0', description: '仅用于浏览器验收的本地模型。',
+      id: 'streaming-ui-fixture',
+      name: '可控流式测试模型',
+      version: '1.0.0',
+      description: '仅用于浏览器验收的本地模型。',
       activate(context) {
         context.registerProvider({
-          id: 'controlled-fixture', name: 'Controlled stream fixture', model: 'fixture',
+          id: 'controlled-fixture',
+          name: 'Controlled stream fixture',
+          model: 'fixture',
           stream({ messages, signal }) {
             const prompt = messages.findLast(message => message.role === 'user')?.content
             const reply = prompt === undefined ? undefined : replies.get(prompt)
@@ -94,7 +107,12 @@ describe('streamed messages in the real workspace', () => {
         })
       },
     }
-    testHost = await startTestHost({ uiDir: resolve(process.env.HARNESS_E2E_UI_DIR ?? 'dist/web'), demo: false, plugins: [plugin], providerId: 'controlled-fixture' })
+    testHost = await startTestHost({
+      uiDir: resolve(process.env.HARNESS_E2E_UI_DIR ?? 'dist/web'),
+      demo: false,
+      plugins: [plugin],
+      providerId: 'controlled-fixture',
+    })
     host = testHost.host
     browser = await chromium.launch(browserLaunchOptions())
     await mkdir('test-results/streaming', { recursive: true })
@@ -108,7 +126,13 @@ describe('streamed messages in the real workspace', () => {
 
   async function open(width: number, height: number): Promise<{ context: BrowserContext; page: Page; counts: RequestCounts }> {
     const mobile = width < 680
-    const context = await browser.newContext({ viewport: { width, height }, isMobile: mobile, hasTouch: mobile, deviceScaleFactor: 1, colorScheme: 'light' })
+    const context = await browser.newContext({
+      viewport: { width, height },
+      isMobile: mobile,
+      hasTouch: mobile,
+      deviceScaleFactor: 1,
+      colorScheme: 'light',
+    })
     context.setDefaultTimeout(15_000)
     const page = await context.newPage()
     await enrollBrowser(page, testHost, { name: `流式 ${width}` })
@@ -126,11 +150,13 @@ describe('streamed messages in the real workspace', () => {
     await page.locator('.drawer-backdrop').waitFor({ state: 'detached' })
     await page.getByRole('group', { name: '会话模式' }).getByRole('button', { name: '对话', exact: true }).click()
     await page.getByRole('textbox', { name: '新会话消息' }).fill(prompt)
-    const created = page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname === '/link/api/tasks')
+    const created = page.waitForResponse(
+      response => response.request().method() === 'POST' && new URL(response.url()).pathname === '/link/api/tasks',
+    )
     await page.getByRole('button', { name: '发送', exact: true }).click()
     const response = await created
     expect(response.status()).toBe(201)
-    const { sessionId: id } = await response.json() as { sessionId: string }
+    const { sessionId: id } = (await response.json()) as { sessionId: string }
     await page.getByRole('button', { name: '取消任务', exact: true }).waitFor()
     await connected(page)
     return { id, reply }
@@ -148,7 +174,13 @@ describe('streamed messages in the real workspace', () => {
     const { context, page, counts } = await open(1280, 820)
     try {
       const { id, reply } = await start(page, '检验流式阅读位置与消息身份')
-      reply.append('# 持续生成的阅读记录\n\n' + Array.from({ length: 48 }, (_, index) => `第 ${index + 1} 段：这是一段供阅读的已生成内容。继续生成时，正在阅读前文的位置应保持不变。`).join('\n\n'))
+      reply.append(
+        '# 持续生成的阅读记录\n\n'
+          + Array.from(
+            { length: 48 },
+            (_, index) => `第 ${index + 1} 段：这是一段供阅读的已生成内容。继续生成时，正在阅读前文的位置应保持不变。`,
+          ).join('\n\n'),
+      )
       const { row, messageId } = await liveRow(page, id)
       const originalRow = await row.elementHandle()
       expect(originalRow).not.toBeNull()
@@ -212,7 +244,9 @@ describe('streamed messages in the real workspace', () => {
       await block.getByRole('button', { name: '展开全部 26 行', exact: true }).click()
       expect(await block.getByRole('button', { name: '收起代码', exact: true }).getAttribute('aria-expanded')).toBe('true')
 
-      reply.append('```\n\n| 阶段 | 执行位置 | 响应方式 | 结果 |\n| --- | --- | --- | --- |\n| 生成内容 | 本地测试执行端 | 持续传输文本 | 已完成 |\n| 移动阅读 | 320 像素屏幕 | 表格内部横向滚动 | 可以操作 |')
+      reply.append(
+        '```\n\n| 阶段 | 执行位置 | 响应方式 | 结果 |\n| --- | --- | --- | --- |\n| 生成内容 | 本地测试执行端 | 持续传输文本 | 已完成 |\n| 移动阅读 | 320 像素屏幕 | 表格内部横向滚动 | 可以操作 |',
+      )
       reply.finish()
       await expect.poll(async () => (await host.bridge.detail(id)).summary.status, { interval: 20 }).toBe('idle')
       await row.locator('.message-table-scroll').waitFor()
@@ -223,13 +257,27 @@ describe('streamed messages in the real workspace', () => {
       // still run the actual CodeBlock event handler and visible feedback.
       await page.evaluate(() => {
         const state = window as Window & { copiedCode?: string }
-        Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (value: string) => { state.copiedCode = value } } })
+        Object.defineProperty(navigator, 'clipboard', {
+          configurable: true,
+          value: {
+            writeText: async (value: string) => {
+              state.copiedCode = value
+            },
+          },
+        })
       })
       await block.getByRole('button', { name: '复制代码', exact: true }).click()
       await expect.poll(() => page.evaluate(() => (window as Window & { copiedCode?: string }).copiedCode), { interval: 20 }).toBe(code)
       await expect.poll(() => block.getByRole('status').textContent(), { interval: 20 }).toBe('代码已复制到剪贴板')
       await page.evaluate(() => {
-        Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async () => { throw new DOMException('Denied by test', 'NotAllowedError') } } })
+        Object.defineProperty(navigator, 'clipboard', {
+          configurable: true,
+          value: {
+            writeText: async () => {
+              throw new DOMException('Denied by test', 'NotAllowedError')
+            },
+          },
+        })
       })
       await block.getByRole('button', { name: '复制代码', exact: true }).click()
       await block.getByRole('alert').waitFor()
@@ -240,7 +288,16 @@ describe('streamed messages in the real workspace', () => {
       const widths = await table.evaluate(element => {
         const rect = element.getBoundingClientRect()
         element.scrollLeft = 100
-        return { left: rect.left, right: rect.right, inner: element.clientWidth, content: element.scrollWidth, scrolled: element.scrollLeft, pageWidth: document.documentElement.scrollWidth, viewport: innerWidth, pageScroll: scrollX }
+        return {
+          left: rect.left,
+          right: rect.right,
+          inner: element.clientWidth,
+          content: element.scrollWidth,
+          scrolled: element.scrollLeft,
+          pageWidth: document.documentElement.scrollWidth,
+          viewport: innerWidth,
+          pageScroll: scrollX,
+        }
       })
       expect(widths.left).toBeGreaterThanOrEqual(0)
       expect(widths.right).toBeLessThanOrEqual(320)
@@ -282,12 +339,17 @@ describe('streamed messages in the real workspace', () => {
         expect.objectContaining({ id: messageId, text: prefix + suffix }),
       ])
       const expectedIds = authoritative.messages.map(message => message.id)
-      const renderedIds = () => page.locator('.transcript [data-message-id]').evaluateAll(elements => elements.map(element => element.getAttribute('data-message-id')))
+      const renderedIds = () =>
+        page
+          .locator('.transcript [data-message-id]')
+          .evaluateAll(elements => elements.map(element => element.getAttribute('data-message-id')))
       expect(await renderedIds()).toEqual(expectedIds)
       expect(await originalRow!.evaluate(element => element.isConnected)).toBe(true)
 
       // A manual resync from the session menu must not duplicate committed rows.
-      const refreshed = page.waitForResponse(response => response.request().method() === 'GET' && new URL(response.url()).pathname === `/link/api/tasks/${id}`)
+      const refreshed = page.waitForResponse(
+        response => response.request().method() === 'GET' && new URL(response.url()).pathname === `/link/api/tasks/${id}`,
+      )
       await page.getByRole('button', { name: '会话操作', exact: true }).click()
       await page.getByRole('menuitem', { name: '同步最新状态', exact: true }).click()
       await refreshed
@@ -304,11 +366,16 @@ describe('streamed messages in the real workspace', () => {
     const { context, page } = await open(1280, 820)
     try {
       const { id, reply } = await start(page, '检验流式输出时菜单保持打开')
-      reply.append(Array.from({ length: 40 }, (_, index) => `第 ${index + 1} 段：让会话记录超过一屏，跟随时会持续写入滚动位置。`).join('\n\n'))
+      reply.append(
+        Array.from({ length: 40 }, (_, index) => `第 ${index + 1} 段：让会话记录超过一屏，跟随时会持续写入滚动位置。`).join('\n\n'),
+      )
       const { row } = await liveRow(page, id)
       await expect.poll(async () => (await geometry(page)).gap, { interval: 20 }).toBeLessThanOrEqual(4)
       // The top bar and the composer model picker sit outside the scrolling transcript.
-      for (const [trigger, menu] of [[page.getByRole('button', { name: '会话操作', exact: true }), '会话操作'], [page.getByRole('button', { name: /^模型：/ }), '选择模型']] as const) {
+      for (const [trigger, menu] of [
+        [page.getByRole('button', { name: '会话操作', exact: true }), '会话操作'],
+        [page.getByRole('button', { name: /^模型：/ }), '选择模型'],
+      ] as const) {
         await trigger.click()
         const popover = page.getByRole('menu', { name: menu, exact: true })
         await popover.waitFor()

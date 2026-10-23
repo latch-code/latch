@@ -3,8 +3,14 @@ export type TaskStatus = 'idle' | 'running' | 'waiting-approval' | 'cancelled' |
 export type TaskMode = 'chat' | 'agent'
 
 /** A model offered by one of the Host's model providers. */
-export interface ModelRef { providerId: string; model: string }
-export interface TokenUsage { inputTokens: number; outputTokens: number }
+export interface ModelRef {
+  providerId: string
+  model: string
+}
+export interface TokenUsage {
+  inputTokens: number
+  outputTokens: number
+}
 
 export interface TaskSummary {
   id: string
@@ -65,7 +71,11 @@ export interface Message {
 }
 
 export type ApprovalOptionKind = 'allow_once' | 'allow_always' | 'reject_once' | 'reject_always'
-export interface ApprovalOption { id: string; label: string; kind: ApprovalOptionKind }
+export interface ApprovalOption {
+  id: string
+  label: string
+  kind: ApprovalOptionKind
+}
 
 export interface Approval {
   id: string
@@ -170,8 +180,14 @@ export interface SessionPermission {
 }
 
 export type PresenceAction =
-  | 'device.enroll' | 'device.grant' | 'task.start-l3' | 'task.mode-widen'
-  | 'agent.define' | 'policy.change' | 'provider.set-key' | 'approval.r2'
+  | 'device.enroll'
+  | 'device.grant'
+  | 'task.start-l3'
+  | 'task.mode-widen'
+  | 'agent.define'
+  | 'policy.change'
+  | 'provider.set-key'
+  | 'approval.r2'
 
 /** A local presence confirmation (Touch ID or login password on the Host computer). */
 export interface ConfirmationTicket {
@@ -232,11 +248,18 @@ export interface HostView {
 }
 
 export const SCOPE_LABELS: Record<DeviceScope, string> = {
-  view: '查看', run: '发起和继续会话', 'approve:standard': '批准普通操作',
-  'approve:elevated': '批准高风险操作', admin: '管理此 Host', secrets: '设置密钥',
+  view: '查看',
+  run: '发起和继续会话',
+  'approve:standard': '批准普通操作',
+  'approve:elevated': '批准高风险操作',
+  admin: '管理此 Host',
+  secrets: '设置密钥',
 }
 export const LISTENER_LABELS: Record<ListenerClass, string> = {
-  unix: '本机桌面端', 'loopback-tcp': '本机浏览器', 'lan-tls': '局域网 HTTPS', 'tailnet-tls': 'Tailscale HTTPS',
+  unix: '本机桌面端',
+  'loopback-tcp': '本机浏览器',
+  'lan-tls': '局域网 HTTPS',
+  'tailnet-tls': 'Tailscale HTTPS',
 }
 
 export type HarnessSource = 'builtin' | 'acp' | 'plugin'

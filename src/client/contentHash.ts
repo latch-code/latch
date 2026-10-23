@@ -17,7 +17,11 @@ const CLIPPED_SUFFIX = '\n…（内容过长，已截断）'
 
 /** WebCrypto's digest, or null where the page has none. */
 export function contentHashCrypto(): SubtleCrypto | null {
-  try { return globalThis.crypto?.subtle ?? null } catch { return null }
+  try {
+    return globalThis.crypto?.subtle ?? null
+  } catch {
+    return null
+  }
 }
 
 /** Whether `text` gets a hash line: WebCrypto is present and the text is not a clipped copy. */
@@ -45,5 +49,7 @@ export async function contentHash(text: string, subtle: SubtleCrypto | null = co
     recent.set(text, display)
     if (recent.size > RECENT_LIMIT) recent.delete(recent.keys().next().value!)
     return display
-  } catch { return undefined }
+  } catch {
+    return undefined
+  }
 }

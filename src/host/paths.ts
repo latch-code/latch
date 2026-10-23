@@ -16,7 +16,9 @@ export interface LatchPaths {
   warnings: string[]
 }
 
-function pathApi(platform: NodeJS.Platform) { return platform === 'win32' ? win32 : posix }
+function pathApi(platform: NodeJS.Platform) {
+  return platform === 'win32' ? win32 : posix
+}
 
 function platformData(platform: NodeJS.Platform, home: string, env: NodeJS.ProcessEnv, leaf: 'Host' | 'Agents'): string {
   const path = pathApi(platform)
@@ -29,8 +31,12 @@ function platformData(platform: NodeJS.Platform, home: string, env: NodeJS.Proce
 
 /** Data, workspace and agent-install directories, from flags, environment, a legacy `./.runtime`, or platform defaults. */
 export function resolveLatchPaths(input: {
-  dataDir?: string; workspace?: string
-  env: NodeJS.ProcessEnv; cwd: string; home?: string; platform?: NodeJS.Platform
+  dataDir?: string
+  workspace?: string
+  env: NodeJS.ProcessEnv
+  cwd: string
+  home?: string
+  platform?: NodeJS.Platform
   exists?: (path: string) => boolean
 }): LatchPaths {
   const platform = input.platform ?? process.platform
@@ -42,23 +48,39 @@ export function resolveLatchPaths(input: {
   let dataDir: string
   let dataDirSource: LatchPaths['dataDirSource']
   const platformDefault = platformData(platform, home, input.env, 'Host')
-  if (input.dataDir) { dataDir = path.resolve(input.cwd, input.dataDir); dataDirSource = 'flag' }
-  else if (input.env.HARNESS_DATA_DIR) { dataDir = path.resolve(input.cwd, input.env.HARNESS_DATA_DIR); dataDirSource = 'env' }
-  else if (exists(path.join(input.cwd, '.runtime'))) {
+  if (input.dataDir) {
+    dataDir = path.resolve(input.cwd, input.dataDir)
+    dataDirSource = 'flag'
+  } else if (input.env.HARNESS_DATA_DIR) {
+    dataDir = path.resolve(input.cwd, input.env.HARNESS_DATA_DIR)
+    dataDirSource = 'env'
+  } else if (exists(path.join(input.cwd, '.runtime'))) {
     dataDir = path.join(input.cwd, '.runtime')
     dataDirSource = 'legacy-runtime'
-    warnings.push(`正在使用旧的数据目录 ${dataDir}。新安装默认使用 ${platformDefault}；如需迁移，请停止 Host 后移动目录并用 --data-dir 指定。`)
-  } else { dataDir = platformDefault; dataDirSource = 'default' }
+    warnings.push(
+      `正在使用旧的数据目录 ${dataDir}。新安装默认使用 ${platformDefault}；如需迁移，请停止 Host 后移动目录并用 --data-dir 指定。`,
+    )
+  } else {
+    dataDir = platformDefault
+    dataDirSource = 'default'
+  }
 
   let workspaceRoot: string
   let workspaceSource: LatchPaths['workspaceSource']
-  if (input.workspace) { workspaceRoot = path.resolve(input.cwd, input.workspace); workspaceSource = 'flag' }
-  else if (input.env.HARNESS_WORKSPACE) { workspaceRoot = path.resolve(input.cwd, input.env.HARNESS_WORKSPACE); workspaceSource = 'env' }
-  else if (exists(path.join(dataDir, 'workspace'))) {
+  if (input.workspace) {
+    workspaceRoot = path.resolve(input.cwd, input.workspace)
+    workspaceSource = 'flag'
+  } else if (input.env.HARNESS_WORKSPACE) {
+    workspaceRoot = path.resolve(input.cwd, input.env.HARNESS_WORKSPACE)
+    workspaceSource = 'env'
+  } else if (exists(path.join(dataDir, 'workspace'))) {
     workspaceRoot = path.join(dataDir, 'workspace')
     workspaceSource = 'legacy-data'
     warnings.push(`工作区位于数据目录内（${workspaceRoot}）。迁出之前只能使用内置 Harness。`)
-  } else { workspaceRoot = path.join(home, 'Latch', 'workspace'); workspaceSource = 'default' }
+  } else {
+    workspaceRoot = path.join(home, 'Latch', 'workspace')
+    workspaceSource = 'default'
+  }
 
   const agentsDir = input.env.HARNESS_AGENTS_DIR
     ? path.resolve(input.cwd, input.env.HARNESS_AGENTS_DIR)
@@ -73,17 +95,28 @@ function insecureRuntime(path: string): AppError {
 /** A directory we own: real directory (not a symlink), owned by `uid`, and with no group/other bits in `mask`. */
 async function requireOwnedDirectory(path: string, uid: number, mask: number): Promise<void> {
   let info
-  try { info = await lstat(path) } catch { throw insecureRuntime(path) }
+  try {
+    info = await lstat(path)
+  } catch {
+    throw insecureRuntime(path)
+  }
   if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== uid || (info.mode & mask) !== 0) throw insecureRuntime(path)
 }
 
 async function makePrivateDirectory(path: string): Promise<void> {
-  try { await mkdir(path, { mode: 0o700 }) }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw insecureRuntime(path) }
+  try {
+    await mkdir(path, { mode: 0o700 })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw insecureRuntime(path)
+  }
 }
 
 function darwinUserTemp(): string {
-  return execFileSync('/usr/bin/getconf', ['DARWIN_USER_TEMP_DIR'], { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] })
+  return execFileSync('/usr/bin/getconf', ['DARWIN_USER_TEMP_DIR'], {
+    encoding: 'utf8',
+    timeout: 5000,
+    stdio: ['ignore', 'pipe', 'ignore'],
+  })
 }
 
 /**
@@ -91,7 +124,10 @@ function darwinUserTemp(): string {
  * The socket is protected only by this directory's ownership and mode; any process of the same user can connect.
  */
 export async function prepareRuntimeDir(input: {
-  hostId8: string; parent?: string; platform?: NodeJS.Platform; uid?: number
+  hostId8: string
+  parent?: string
+  platform?: NodeJS.Platform
+  uid?: number
   getconf?: () => string
 }): Promise<{ runtimeDir: string; socketPath: string; tmpRoot: string }> {
   const platform = input.platform ?? process.platform
@@ -103,10 +139,15 @@ export async function prepareRuntimeDir(input: {
 
   let parent = input.parent
   if (!parent && platform === 'darwin') {
-    try { parent = (input.getconf ?? darwinUserTemp)().trim() || undefined } catch { parent = undefined }
+    try {
+      parent = (input.getconf ?? darwinUserTemp)().trim() || undefined
+    } catch {
+      parent = undefined
+    }
     parent ||= process.env.TMPDIR || undefined
   }
-  if (!parent && platform === 'linux' && process.env.XDG_RUNTIME_DIR && isAbsolute(process.env.XDG_RUNTIME_DIR)) parent = process.env.XDG_RUNTIME_DIR
+  if (!parent && platform === 'linux' && process.env.XDG_RUNTIME_DIR && isAbsolute(process.env.XDG_RUNTIME_DIR))
+    parent = process.env.XDG_RUNTIME_DIR
   if (!parent) {
     // /tmp itself is world-writable (sticky); the per-user directory below it must not be.
     parent = `/tmp/latch-${uid}`
@@ -115,7 +156,11 @@ export async function prepareRuntimeDir(input: {
   if (!isAbsolute(parent)) throw insecureRuntime(parent)
 
   let realParent: string
-  try { realParent = await realpath(parent) } catch { throw insecureRuntime(parent) }
+  try {
+    realParent = await realpath(parent)
+  } catch {
+    throw insecureRuntime(parent)
+  }
   await requireOwnedDirectory(realParent, uid, 0o022)
 
   const runtimeDir = join(realParent, `latch-${input.hostId8}`)
@@ -150,14 +195,18 @@ async function identity(path: string): Promise<string | undefined> {
   try {
     const info = await stat(path, { bigint: true })
     return `${info.dev}:${info.ino}`
-  } catch { return undefined }
+  } catch {
+    return undefined
+  }
 }
 
 function identitySync(path: string): string | undefined {
   try {
     const info = statSync(path, { bigint: true })
     return `${info.dev}:${info.ino}`
-  } catch { return undefined }
+  } catch {
+    return undefined
+  }
 }
 
 /** Drops alias prefixes, but only while the shorter spelling is the very same directory. */
@@ -191,8 +240,10 @@ export function latchCodeRoot(): string {
     try {
       const manifest = JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8')) as { name?: unknown }
       // The native realpath reports the on-disk case; the JS one keeps whatever case the module URL was loaded with.
-      if (manifest.name === 'harness-link') return cachedCodeRoot = withoutAliasesSync(realpathSync.native(directory))
-    } catch { /* keep walking */ }
+      if (manifest.name === 'harness-link') return (cachedCodeRoot = withoutAliasesSync(realpathSync.native(directory)))
+    } catch {
+      /* keep walking */
+    }
     const parent = dirname(directory)
     if (parent === directory) throw new Error('Latch code root not found')
     directory = parent
@@ -201,8 +252,22 @@ export function latchCodeRoot(): string {
 
 /** Relative to HOME. Workspaces may not contain, equal or sit inside these. */
 export const DENY_READ_HOME_PATHS: readonly string[] = [
-  '.ssh', '.aws', '.gnupg', '.config/gcloud', '.kube', '.docker', '.netrc', '.npmrc', '.password-store',
-  'Library/Keychains', '.codex', '.gemini', '.qwen', '.config/opencode', '.pi', '.config/goose',
+  '.ssh',
+  '.aws',
+  '.gnupg',
+  '.config/gcloud',
+  '.kube',
+  '.docker',
+  '.netrc',
+  '.npmrc',
+  '.password-store',
+  'Library/Keychains',
+  '.codex',
+  '.gemini',
+  '.qwen',
+  '.config/opencode',
+  '.pi',
+  '.config/goose',
 ]
 
 /** Relative to HOME. Files placed here start at login, so these directories are never projects either. */
@@ -216,13 +281,15 @@ const AUTOSTART_HOME_PATHS: readonly string[] = ['Library/LaunchAgents', '.confi
 const CONFIG_HOME_PATHS: readonly string[] = ['.config', '.local', 'bin']
 
 export interface WorkspaceGuardContext {
-  dataDir: string; agentsDir: string; runtimeDir: string; home: string; codeRoot: string
+  dataDir: string
+  agentsDir: string
+  runtimeDir: string
+  home: string
+  codeRoot: string
   existing: Array<{ id: string; name: string; path: string }>
   tlsKeyPath?: string
 }
-export type WorkspaceVerdict =
-  | { ok: true; realPath: string }
-  | { ok: false; error: AppError }
+export type WorkspaceVerdict = { ok: true; realPath: string } | { ok: false; error: AppError }
 
 /** macOS and Windows volumes are usually case-insensitive; comparing case-folded can only add overlaps. */
 function pathKey(path: string): string {
@@ -269,8 +336,10 @@ async function locate(path: string): Promise<Located> {
   let current = absolute
   let found: string | undefined
   for (;;) {
-    try { found = await withoutAliases(await realpath(current)); break }
-    catch {
+    try {
+      found = await withoutAliases(await realpath(current))
+      break
+    } catch {
       const parent = dirname(current)
       if (parent === current) break
       missing.push(current.slice(parent.length).replace(/^[\\/]+/u, ''))
@@ -283,7 +352,7 @@ async function locate(path: string): Promise<Located> {
   // Through the firmlinked Data volume the same directory has other ancestors (the volume root and above).
   const dataSpelling = found === '/' ? undefined : `${DATA_VOLUME}${found}`
   const self = await identity(found)
-  if (dataSpelling && self !== undefined && await identity(dataSpelling) === self) await addAncestors(dataSpelling, chain)
+  if (dataSpelling && self !== undefined && (await identity(dataSpelling)) === self) await addAncestors(dataSpelling, chain)
   const real = missing.length ? join(found, ...missing.reverse()) : found
   return { real, key: pathKey(real), ...(missing.length === 0 && self !== undefined ? { self } : {}), chain }
 }
@@ -293,7 +362,9 @@ function within(child: Located, parent: Located): boolean {
   return isInsidePath(child.key, parent.key) || (parent.self !== undefined && child.chain.has(parent.self))
 }
 
-function overlapping(a: Located, b: Located): boolean { return within(a, b) || within(b, a) }
+function overlapping(a: Located, b: Located): boolean {
+  return within(a, b) || within(b, a)
+}
 
 function samePath(a: Located, b: Located): boolean {
   return a.key === b.key || (a.self !== undefined && a.self === b.self)
@@ -325,7 +396,7 @@ async function touchesHomeConfig(candidate: Located, home: Located): Promise<boo
   for (let current = candidate.real; dirname(current) !== current; current = dirname(current)) {
     if (!basename(current).startsWith('.')) continue
     const parent = dirname(current)
-    if (pathKey(parent) === home.key || (home.self !== undefined && await identity(parent) === home.self)) return true
+    if (pathKey(parent) === home.key || (home.self !== undefined && (await identity(parent)) === home.self)) return true
   }
   return false
 }
@@ -339,11 +410,17 @@ export async function checkWorkspaceCandidate(path: string, context: WorkspaceGu
   if (typeof path !== 'string' || !isAbsolute(path) || path.includes('\u0000')) return invalid
   try {
     if (!(await stat(await realpath(path))).isDirectory()) return invalid
-  } catch { return invalid }
+  } catch {
+    return invalid
+  }
   const candidate = await locate(path)
   if (candidate.self === undefined) return invalid
 
-  const reserved: Array<[string, string]> = [[context.dataDir, '数据目录'], [context.agentsDir, 'Agent 安装目录'], [context.runtimeDir, '运行目录']]
+  const reserved: Array<[string, string]> = [
+    [context.dataDir, '数据目录'],
+    [context.agentsDir, 'Agent 安装目录'],
+    [context.runtimeDir, '运行目录'],
+  ]
   for (const [directory, label] of reserved) {
     if (overlapping(candidate, await locate(directory))) return overlap(reservedMessage(label))
   }
@@ -392,7 +469,11 @@ export async function classifyDefaultWorkspace(realWorkspace: string, context: W
   return { insideData, codeRoot, ...(sensitive ? { sensitive } : {}) }
 }
 
-async function sensitiveOverlap(workspace: Located, context: WorkspaceGuardContext, insideData: boolean): Promise<DefaultWorkspaceFlags['sensitive']> {
+async function sensitiveOverlap(
+  workspace: Located,
+  context: WorkspaceGuardContext,
+  insideData: boolean,
+): Promise<DefaultWorkspaceFlags['sensitive']> {
   const home = await locate(context.home)
   if (samePath(workspace, home)) return { reason: 'home', message: HOME_MESSAGE }
   for (const entry of DENY_READ_HOME_PATHS) {
@@ -401,7 +482,7 @@ async function sensitiveOverlap(workspace: Located, context: WorkspaceGuardConte
   if (context.tlsKeyPath && within(await locate(context.tlsKeyPath), workspace)) return { reason: 'tls-key', message: SENSITIVE_MESSAGE }
   if (overlapping(workspace, await locate(context.runtimeDir))) return { reason: 'runtime', message: reservedMessage('运行目录') }
   if (overlapping(workspace, await locate(context.agentsDir))) return { reason: 'agents', message: reservedMessage('Agent 安装目录') }
-  if (!insideData && await touchesHomeConfig(workspace, home)) return { reason: 'home-config', message: HOME_CONFIG_MESSAGE }
+  if (!insideData && (await touchesHomeConfig(workspace, home))) return { reason: 'home-config', message: HOME_CONFIG_MESSAGE }
   return undefined
 }
 
@@ -413,22 +494,96 @@ async function sensitiveOverlap(workspace: Located, context: WorkspaceGuardConte
  */
 const PROTECTED_COMPONENTS = new Set([
   // Version control and hook managers.
-  '.git', '.gitconfig', '.githooks', '.husky', '.gitmodules', '.pre-commit-config.yaml', 'lefthook.yml', '.lefthook.yml',
+  '.git',
+  '.gitconfig',
+  '.githooks',
+  '.husky',
+  '.gitmodules',
+  '.pre-commit-config.yaml',
+  'lefthook.yml',
+  '.lefthook.yml',
   // Agent, editor and environment configuration loaded when a folder is opened or entered.
-  '.latch', '.codex', '.agents', '.opencode', '.gemini', '.qwen', '.pi', '.claude', '.cursor', '.vscode', '.idea',
-  '.devcontainer', '.mcp.json', 'opencode.json', 'opencode.jsonc', 'agents.md', 'agents.override.md', 'claude.md',
-  'claude.local.md', 'gemini.md', 'qwen.md', '.goosehints', '.envrc', '.direnv', 'mise.toml', '.mise.toml',
+  '.latch',
+  '.codex',
+  '.agents',
+  '.opencode',
+  '.gemini',
+  '.qwen',
+  '.pi',
+  '.claude',
+  '.cursor',
+  '.vscode',
+  '.idea',
+  '.devcontainer',
+  '.mcp.json',
+  'opencode.json',
+  'opencode.jsonc',
+  'agents.md',
+  'agents.override.md',
+  'claude.md',
+  'claude.local.md',
+  'gemini.md',
+  'qwen.md',
+  '.goosehints',
+  '.envrc',
+  '.direnv',
+  'mise.toml',
+  '.mise.toml',
   // Package managers: manifests, lockfiles, resolution hooks and registry or toolchain settings used on install.
-  'package.json', 'package-lock.json', 'npm-shrinkwrap.json', '.npmrc', 'pnpm-lock.yaml', 'pnpm-workspace.yaml',
-  '.pnpmfile.cjs', 'yarn.lock', '.yarnrc', '.yarnrc.yml', '.yarn', 'bun.lock', 'bun.lockb', 'bunfig.toml',
-  'cargo.toml', 'cargo.lock', '.cargo', 'build.rs', 'rust-toolchain', 'rust-toolchain.toml', 'go.mod', 'go.sum',
-  'pyproject.toml', 'setup.py', 'requirements.txt', 'pipfile', 'pipfile.lock', 'poetry.lock', 'uv.lock', 'uv.toml',
-  'pip.conf', 'gemfile', 'gemfile.lock', '.bundle', 'composer.json', 'composer.lock',
+  'package.json',
+  'package-lock.json',
+  'npm-shrinkwrap.json',
+  '.npmrc',
+  'pnpm-lock.yaml',
+  'pnpm-workspace.yaml',
+  '.pnpmfile.cjs',
+  'yarn.lock',
+  '.yarnrc',
+  '.yarnrc.yml',
+  '.yarn',
+  'bun.lock',
+  'bun.lockb',
+  'bunfig.toml',
+  'cargo.toml',
+  'cargo.lock',
+  '.cargo',
+  'build.rs',
+  'rust-toolchain',
+  'rust-toolchain.toml',
+  'go.mod',
+  'go.sum',
+  'pyproject.toml',
+  'setup.py',
+  'requirements.txt',
+  'pipfile',
+  'pipfile.lock',
+  'poetry.lock',
+  'uv.lock',
+  'uv.toml',
+  'pip.conf',
+  'gemfile',
+  'gemfile.lock',
+  '.bundle',
+  'composer.json',
+  'composer.lock',
   // Build entry points and wrappers.
-  'makefile', 'gnumakefile', 'cmakelists.txt', 'build.gradle', 'build.gradle.kts', 'settings.gradle',
-  'settings.gradle.kts', 'gradle.properties', 'gradlew', 'pom.xml', '.mvn', 'mvnw',
+  'makefile',
+  'gnumakefile',
+  'cmakelists.txt',
+  'build.gradle',
+  'build.gradle.kts',
+  'settings.gradle',
+  'settings.gradle.kts',
+  'gradle.properties',
+  'gradlew',
+  'pom.xml',
+  '.mvn',
+  'mvnw',
   // Installed dependency trees: ignored by git status, loaded by the next command.
-  'node_modules', '.venv', 'venv', '__pypackages__',
+  'node_modules',
+  '.venv',
+  'venv',
+  '__pypackages__',
 ])
 
 /** Code points some file systems ignore in names (e.g. HFS+), so `.g‌it` would still open `.git`. */

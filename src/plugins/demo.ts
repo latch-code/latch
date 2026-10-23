@@ -20,7 +20,9 @@ async function* textStream(text: string, signal: AbortSignal, interval = 10): As
 /** Deterministic model used only when the user chooses the demo provider. */
 export function createDemoPlugin(): HarnessPlugin {
   const provider: ModelProvider = {
-    id: 'demo', name: '确定性演示（不调用外部模型）', model: 'demo',
+    id: 'demo',
+    name: '确定性演示（不调用外部模型）',
+    model: 'demo',
     async *stream({ messages, tools, signal }) {
       signal.throwIfAborted()
       const lastUser = messages.findLastIndex(message => message.role === 'user')
@@ -65,20 +67,26 @@ export function createDemoPlugin(): HarnessPlugin {
         return
       }
       const afterPrompt = messages.slice(lastUser + 1)
-      const call = afterPrompt.flatMap(message => message.role === 'assistant' ? message.toolCalls ?? [] : [])
-        .filter(item => item.name === 'write_report' || item.name === 'long_task').at(-1)
+      const call = afterPrompt
+        .flatMap(message => (message.role === 'assistant' ? (message.toolCalls ?? []) : []))
+        .filter(item => item.name === 'write_report' || item.name === 'long_task')
+        .at(-1)
       if (call !== undefined) {
         const result = afterPrompt.findLast(message => message.role === 'tool' && message.toolCallId === call.id)
-        const text = result === undefined
-          ? '上一次工具调用尚无确定结果，请核对状态；不会重复执行或报告成功。'
-          : result.isError
-            ? `操作未完成：${result.content}。没有确认成功写入产物。`
-            : `${call.name === 'write_report' ? '审批已通过，报告已写入。' : '长任务已完成，产物已写入。'}\n${result.content}`
+        const text =
+          result === undefined
+            ? '上一次工具调用尚无确定结果，请核对状态；不会重复执行或报告成功。'
+            : result.isError
+              ? `操作未完成：${result.content}。没有确认成功写入产物。`
+              : `${call.name === 'write_report' ? '审批已通过，报告已写入。' : '长任务已完成，产物已写入。'}\n${result.content}`
         yield* textStream(text, signal)
         return
       }
-      const toolName = /长任务|长时间|30\s*秒|等待|\blong\b|\bwait\b/iu.test(prompt) ? 'long_task'
-        : /审批|批准|报告|\bapproval\b|\breport\b/iu.test(prompt) ? 'write_report' : undefined
+      const toolName = /长任务|长时间|30\s*秒|等待|\blong\b|\bwait\b/iu.test(prompt)
+        ? 'long_task'
+        : /审批|批准|报告|\bapproval\b|\breport\b/iu.test(prompt)
+          ? 'write_report'
+          : undefined
       if (toolName === undefined) {
         yield* textStream('当前为演示模式。发送“生成需要审批的报告”或“运行 30 秒长任务”，验证跨端审批、任务持续运行与取消。', signal)
       } else if (!tools.some(tool => tool.name === toolName)) {
@@ -91,9 +99,13 @@ export function createDemoPlugin(): HarnessPlugin {
     },
   }
   return {
-    id: 'demo', name: '确定性演示模型', version: '1.0.0',
+    id: 'demo',
+    name: '确定性演示模型',
+    version: '1.0.0',
     description: '无需 API Key；通过真实工具、审批与文件产物验证执行流程。用量为演示值。',
-    activate(context) { context.registerProvider(provider) },
+    activate(context) {
+      context.registerProvider(provider)
+    },
   }
 }
 
@@ -107,7 +119,7 @@ async function writeArtifact(prefix: 'report' | 'completion', content: string, c
   const root = resolve(context.workspaceRoot)
   const directory = join(root, 'artifacts')
   await mkdir(directory, { recursive: true })
-  if (await realpath(directory) !== join(await realpath(root), 'artifacts')) throw new Error('产物目录不能是符号链接。')
+  if ((await realpath(directory)) !== join(await realpath(root), 'artifacts')) throw new Error('产物目录不能是符号链接。')
   const path = join(directory, `${prefix}-${sessionId}.txt`)
   const temporary = join(directory, `.pending-${randomUUID()}.tmp`)
   const file = await open(temporary, 'wx', 0o600)
@@ -128,7 +140,8 @@ async function writeArtifact(prefix: 'report' | 'completion', content: string, c
 /** Bounded tools are shared by real providers and the explicitly selected demo. */
 export function createToolsPlugin(): HarnessPlugin {
   const report: ToolDefinition = {
-    name: 'write_report', description: '经用户审批后写入当前会话的报告。仅接受可选 content，最多 64 KiB；路径由执行节点固定。',
+    name: 'write_report',
+    description: '经用户审批后写入当前会话的报告。仅接受可选 content，最多 64 KiB；路径由执行节点固定。',
     requiresApproval: true,
     parameters: { type: 'object', properties: { content: { type: 'string', maxLength: CONTENT_LIMIT } }, additionalProperties: false },
     async execute(args, context) {
@@ -140,7 +153,8 @@ export function createToolsPlugin(): HarnessPlugin {
     },
   }
   const longTask: ToolDefinition = {
-    name: 'long_task', description: '运行固定 30 秒、可取消的任务，完成后写入当前会话的完成文件。不接受参数。',
+    name: 'long_task',
+    description: '运行固定 30 秒、可取消的任务，完成后写入当前会话的完成文件。不接受参数。',
     requiresApproval: false,
     parameters: { type: 'object', properties: {}, additionalProperties: false },
     async execute(args, context) {
@@ -151,8 +165,13 @@ export function createToolsPlugin(): HarnessPlugin {
     },
   }
   return {
-    id: 'safe-tools', name: '安全文件工具', version: '1.0.0',
+    id: 'safe-tools',
+    name: '安全文件工具',
+    version: '1.0.0',
     description: '需要审批的报告写入，以及固定 30 秒的可取消任务；文件只能写入执行节点的 artifacts 目录。',
-    activate(context) { context.registerTool(report); context.registerTool(longTask) },
+    activate(context) {
+      context.registerTool(report)
+      context.registerTool(longTask)
+    },
   }
 }

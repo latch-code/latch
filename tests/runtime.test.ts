@@ -20,7 +20,10 @@ afterEach(async () => {
 function deferred<T = void>() {
   let resolve!: (value: T | PromiseLike<T>) => void
   let reject!: (reason?: unknown) => void
-  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no })
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes
+    reject = no
+  })
   return { promise, resolve, reject }
 }
 
@@ -39,11 +42,16 @@ function registry(provider: ModelProvider, tools: ToolDefinition[] = []) {
   return { acquire, release }
 }
 
-function own(bridge: Bridge) { cleanups.push(() => bridge.close()); return bridge }
+function own(bridge: Bridge) {
+  cleanups.push(() => bridge.close())
+  return bridge
+}
 
 function textProvider(id = 'fixture'): ModelProvider {
   return {
-    id, name: 'Fixture provider', model: `${id}-model`,
+    id,
+    name: 'Fixture provider',
+    model: `${id}-model`,
     async *stream({ signal }) {
       signal.throwIfAborted()
       yield { type: 'text', text: '完成' }
@@ -54,7 +62,9 @@ function textProvider(id = 'fixture'): ModelProvider {
 
 function toolProvider(toolName: string, seen: ModelMessage[][] = []): ModelProvider {
   return {
-    id: 'fixture', name: 'Fixture provider', model: 'fixture-model',
+    id: 'fixture',
+    name: 'Fixture provider',
+    model: 'fixture-model',
     async *stream({ messages, signal }) {
       signal.throwIfAborted()
       seen.push(structuredClone(messages))
@@ -90,7 +100,10 @@ describe('independent harness runtime', () => {
     ])
     expect(first).toEqual(second)
     expect(backend.acquire).toHaveBeenCalledTimes(1)
-    await expect(bridge.createTask({ prompt: 'different', requestId: 'same-request' })).rejects.toMatchObject({ status: 409, code: 'request-conflict' })
+    await expect(bridge.createTask({ prompt: 'different', requestId: 'same-request' })).rejects.toMatchObject({
+      status: 409,
+      code: 'request-conflict',
+    })
     await waitStatus(bridge, first.sessionId, 'idle')
     await bridge.close()
     const restartedBackend = registry(provider)
@@ -132,7 +145,14 @@ describe('independent harness runtime', () => {
     const dataDir = await directory()
     const seen: ModelMessage[][] = []
     const execute = vi.fn(async () => ({ text: 'unexpected' }))
-    const bridge = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: registry(toolProvider('write_note', seen), [tool(execute)]), providerId: 'fixture' }))
+    const bridge = own(
+      createRuntime({
+        dataDir,
+        workspaceRoot: dataDir,
+        registry: registry(toolProvider('write_note', seen), [tool(execute)]),
+        providerId: 'fixture',
+      }),
+    )
     const { sessionId } = await bridge.createTask({ prompt: 'write', requestId: 'reject' })
     await waitStatus(bridge, sessionId, 'waiting-approval')
     await bridge.decide(bridge.approvals()[0]!.id, 'reject')
@@ -145,7 +165,14 @@ describe('independent harness runtime', () => {
   it('cancels a waiting approval, rejects late decisions, and rejects new input while active', async () => {
     const dataDir = await directory()
     const execute = vi.fn(async () => ({ text: 'unexpected' }))
-    const bridge = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: registry(toolProvider('write_note'), [tool(execute)]), providerId: 'fixture' }))
+    const bridge = own(
+      createRuntime({
+        dataDir,
+        workspaceRoot: dataDir,
+        registry: registry(toolProvider('write_note'), [tool(execute)]),
+        providerId: 'fixture',
+      }),
+    )
     const { sessionId } = await bridge.createTask({ prompt: 'write', requestId: 'cancel-approval' })
     await waitStatus(bridge, sessionId, 'waiting-approval')
     const approval = bridge.approvals()[0]!
@@ -167,7 +194,14 @@ describe('independent harness runtime', () => {
       started.resolve()
       await new Promise<void>(resolve => {
         if (signal.aborted) resolve()
-        else signal.addEventListener('abort', () => { resolve() }, { once: true })
+        else
+          signal.addEventListener(
+            'abort',
+            () => {
+              resolve()
+            },
+            { once: true },
+          )
       })
       aborted.resolve()
       await cleanup.promise
@@ -180,7 +214,9 @@ describe('independent harness runtime', () => {
     const { sessionId } = await bridge.createTask({ prompt: 'write', requestId: 'cancel-tool' })
     await started.promise
     let acknowledged = false
-    const cancellation = bridge.cancel(sessionId).then(() => { acknowledged = true })
+    const cancellation = bridge.cancel(sessionId).then(() => {
+      acknowledged = true
+    })
     await aborted.promise
     expect(acknowledged).toBe(false)
     expect((await bridge.detail(sessionId)).summary.status).toBe('running')
@@ -202,7 +238,15 @@ describe('independent harness runtime', () => {
         observedSignal = signal
         yield { type: 'text', text: 'partial response' }
         waiting.resolve()
-        await new Promise<void>(resolve => signal.addEventListener('abort', () => { resolve() }, { once: true }))
+        await new Promise<void>(resolve =>
+          signal.addEventListener(
+            'abort',
+            () => {
+              resolve()
+            },
+            { once: true },
+          ),
+        )
         signal.throwIfAborted()
       },
     }
@@ -217,44 +261,67 @@ describe('independent harness runtime', () => {
     expect(observedSignal?.aborted).toBe(true)
     const detail = await bridge.detail(sessionId)
     expect(detail.liveText).toBe('')
-    expect(detail.messages.at(-1)).toMatchObject({ id: live.liveMessageId, role: 'assistant', text: 'partial response', state: 'cancelled' })
+    expect(detail.messages.at(-1)).toMatchObject({
+      id: live.liveMessageId,
+      role: 'assistant',
+      text: 'partial response',
+      state: 'cancelled',
+    })
   })
 
-  it.each(['waiting-approval', 'running-tool'] as const)('recovers a %s crash snapshot as interrupted without replay or stale approvals', async mode => {
-    const dataDir = await directory()
-    const entered = deferred()
-    const execute = vi.fn(async (_args, { signal }: Parameters<ToolDefinition['execute']>[1]) => {
-      entered.resolve()
-      await new Promise<void>(resolve => signal.addEventListener('abort', () => { resolve() }, { once: true }))
-      signal.throwIfAborted()
-      return { text: 'unreachable' }
-    })
-    const original = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: registry(toolProvider('write_note'), [tool(execute, mode === 'waiting-approval')]), providerId: 'fixture' }))
-    const created = await original.createTask({ prompt: 'crash test', requestId: 'durable-input' })
-    if (mode === 'waiting-approval') await waitStatus(original, created.sessionId, 'waiting-approval')
-    else await entered.promise
-    // Capture bytes that were already durably committed at the simulated crash cut.
-    const crashImage = JSON.parse(await readFile(join(dataDir, 'runtime.json'), 'utf8')) as RuntimeState
-    const oldApproval = original.approvals()[0]?.id
-    await original.close()
-    const store = createSnapshotStore(dataDir)
-    await store.load()
-    await store.commit(crashImage)
-    await store.close()
-    const nextRegistry = registry(toolProvider('write_note'), [tool(execute)])
-    const restarted = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: nextRegistry, providerId: 'fixture' }))
-    await restarted.start()
-    expect((await restarted.detail(created.sessionId)).summary.status).toBe('interrupted')
-    expect(await restarted.createTask({ prompt: 'crash test', requestId: 'durable-input' })).toEqual(created)
-    expect(nextRegistry.acquire).not.toHaveBeenCalled()
-    expect(restarted.approvals()).toEqual([])
-    if (oldApproval) expect(await restarted.decide(oldApproval, 'allow')).toBe(false)
-    const recovered = JSON.parse(await readFile(join(dataDir, 'runtime.json'), 'utf8')) as RuntimeState
-    const outcomes = recovered.tasks[created.sessionId]!.history.filter(message => message.role === 'tool')
-    expect(outcomes).toHaveLength(1)
-    expect(outcomes[0]!.isError).toBe(true)
-    expect(outcomes[0]!.content).toContain(mode === 'running-tool' ? 'TOOL_OUTCOME_UNKNOWN' : 'TOOL_NOT_STARTED')
-  })
+  it.each(['waiting-approval', 'running-tool'] as const)(
+    'recovers a %s crash snapshot as interrupted without replay or stale approvals',
+    async mode => {
+      const dataDir = await directory()
+      const entered = deferred()
+      const execute = vi.fn(async (_args, { signal }: Parameters<ToolDefinition['execute']>[1]) => {
+        entered.resolve()
+        await new Promise<void>(resolve =>
+          signal.addEventListener(
+            'abort',
+            () => {
+              resolve()
+            },
+            { once: true },
+          ),
+        )
+        signal.throwIfAborted()
+        return { text: 'unreachable' }
+      })
+      const original = own(
+        createRuntime({
+          dataDir,
+          workspaceRoot: dataDir,
+          registry: registry(toolProvider('write_note'), [tool(execute, mode === 'waiting-approval')]),
+          providerId: 'fixture',
+        }),
+      )
+      const created = await original.createTask({ prompt: 'crash test', requestId: 'durable-input' })
+      if (mode === 'waiting-approval') await waitStatus(original, created.sessionId, 'waiting-approval')
+      else await entered.promise
+      // Capture bytes that were already durably committed at the simulated crash cut.
+      const crashImage = JSON.parse(await readFile(join(dataDir, 'runtime.json'), 'utf8')) as RuntimeState
+      const oldApproval = original.approvals()[0]?.id
+      await original.close()
+      const store = createSnapshotStore(dataDir)
+      await store.load()
+      await store.commit(crashImage)
+      await store.close()
+      const nextRegistry = registry(toolProvider('write_note'), [tool(execute)])
+      const restarted = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: nextRegistry, providerId: 'fixture' }))
+      await restarted.start()
+      expect((await restarted.detail(created.sessionId)).summary.status).toBe('interrupted')
+      expect(await restarted.createTask({ prompt: 'crash test', requestId: 'durable-input' })).toEqual(created)
+      expect(nextRegistry.acquire).not.toHaveBeenCalled()
+      expect(restarted.approvals()).toEqual([])
+      if (oldApproval) expect(await restarted.decide(oldApproval, 'allow')).toBe(false)
+      const recovered = JSON.parse(await readFile(join(dataDir, 'runtime.json'), 'utf8')) as RuntimeState
+      const outcomes = recovered.tasks[created.sessionId]!.history.filter(message => message.role === 'tool')
+      expect(outcomes).toHaveLength(1)
+      expect(outcomes[0]!.isError).toBe(true)
+      expect(outcomes[0]!.content).toContain(mode === 'running-tool' ? 'TOOL_OUTCOME_UNKNOWN' : 'TOOL_NOT_STARTED')
+    },
+  )
 
   it('holds one capability lease throughout a run and selects a changed provider only for the next input', async () => {
     const dataDir = await directory()
@@ -264,7 +331,8 @@ describe('independent harness runtime', () => {
     let selected = 'fixture'
     const acquire = vi.fn((id: string) => ({
       provider: id === 'fixture' ? first : second,
-      tools: [tool(async () => ({ text: 'success' }))], release: vi.fn(),
+      tools: [tool(async () => ({ text: 'success' }))],
+      release: vi.fn(),
     }))
     const bridge = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: { acquire }, providerId: () => selected }))
     const { sessionId } = await bridge.createTask({ prompt: 'first', requestId: 'first' })
@@ -307,9 +375,13 @@ describe('independent harness runtime', () => {
     const execute = vi.fn(async () => ({ text: 'unexpected' }))
     const provider: ModelProvider = {
       ...textProvider(),
-      async *stream() { yield { type: 'tool-call', call: { id: 'partial', name: 'write_note', arguments: {} } } },
+      async *stream() {
+        yield { type: 'tool-call', call: { id: 'partial', name: 'write_note', arguments: {} } }
+      },
     }
-    const bridge = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: registry(provider, [tool(execute, false)]), providerId: 'fixture' }))
+    const bridge = own(
+      createRuntime({ dataDir, workspaceRoot: dataDir, registry: registry(provider, [tool(execute, false)]), providerId: 'fixture' }),
+    )
     const { sessionId } = await bridge.createTask({ prompt: 'partial', requestId: 'partial' })
     await waitStatus(bridge, sessionId, 'failed')
     expect(execute).not.toHaveBeenCalled()
@@ -332,53 +404,74 @@ describe('independent harness runtime', () => {
     const dataDir = await directory()
     const originalWorkspace = await directory()
     const replacementWorkspace = await directory()
-    const original = own(createRuntime({ dataDir, workspaceRoot: originalWorkspace, registry: registry(textProvider()), providerId: 'fixture' }))
+    const original = own(
+      createRuntime({ dataDir, workspaceRoot: originalWorkspace, registry: registry(textProvider()), providerId: 'fixture' }),
+    )
     const { sessionId } = await original.createTask({ prompt: 'original workspace', requestId: 'workspace-task' })
     await waitStatus(original, sessionId, 'idle')
     await original.close()
     const backend = registry(textProvider())
     const changed = own(createRuntime({ dataDir, workspaceRoot: replacementWorkspace, registry: backend, providerId: 'fixture' }))
     expect((await changed.detail(sessionId)).summary.cwd).toBe(originalWorkspace)
-    await expect(changed.prompt(sessionId, 'continue working here', 'new-workspace-input')).rejects.toMatchObject({ code: 'workspace-changed', status: 409 })
+    await expect(changed.prompt(sessionId, 'continue working here', 'new-workspace-input')).rejects.toMatchObject({
+      code: 'workspace-changed',
+      status: 409,
+    })
     expect(backend.acquire).not.toHaveBeenCalled()
     expect((await changed.detail(sessionId)).messages.filter(message => message.role === 'user')).toHaveLength(1)
   })
 
-  it.each(['same-step', 'later-step'] as const)('rejects duplicate tool IDs in %s without dispatching a second ambiguous operation', async mode => {
-    const dataDir = await directory()
-    const execute = vi.fn(async () => ({ text: 'executed once' }))
-    const provider: ModelProvider = {
-      ...textProvider(),
-      async *stream() {
-        const call = { id: 'reused-id', name: 'write_note', arguments: {} }
-        yield { type: 'tool-call', call }
-        if (mode === 'same-step') yield { type: 'tool-call', call }
-        yield { type: 'finish', reason: 'tool-calls' }
-      },
-    }
-    const bridge = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: registry(provider, [tool(execute, false)]), providerId: 'fixture' }))
-    const { sessionId } = await bridge.createTask({ prompt: 'duplicate ids', requestId: 'duplicate-ids' })
-    await waitStatus(bridge, sessionId, 'failed')
-    expect(execute).toHaveBeenCalledTimes(mode === 'same-step' ? 0 : 1)
-    expect((await bridge.detail(sessionId)).messages.at(-1)?.text).toContain('重复工具标识')
-  })
+  it.each(['same-step', 'later-step'] as const)(
+    'rejects duplicate tool IDs in %s without dispatching a second ambiguous operation',
+    async mode => {
+      const dataDir = await directory()
+      const execute = vi.fn(async () => ({ text: 'executed once' }))
+      const provider: ModelProvider = {
+        ...textProvider(),
+        async *stream() {
+          const call = { id: 'reused-id', name: 'write_note', arguments: {} }
+          yield { type: 'tool-call', call }
+          if (mode === 'same-step') yield { type: 'tool-call', call }
+          yield { type: 'finish', reason: 'tool-calls' }
+        },
+      }
+      const bridge = own(
+        createRuntime({ dataDir, workspaceRoot: dataDir, registry: registry(provider, [tool(execute, false)]), providerId: 'fixture' }),
+      )
+      const { sessionId } = await bridge.createTask({ prompt: 'duplicate ids', requestId: 'duplicate-ids' })
+      await waitStatus(bridge, sessionId, 'failed')
+      expect(execute).toHaveBeenCalledTimes(mode === 'same-step' ? 0 : 1)
+      expect((await bridge.detail(sessionId)).messages.at(-1)?.text).toContain('重复工具标识')
+    },
+  )
 
-  it.each(['cancel-first', 'approve-first'] as const)('settles an approval/cancellation race (%s) without dispatching an approved-but-cancelled tool', async order => {
-    const dataDir = await directory()
-    const execute = vi.fn(async () => ({ text: 'must not run' }))
-    const bridge = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: registry(toolProvider('write_note'), [tool(execute)]), providerId: 'fixture' }))
-    const { sessionId } = await bridge.createTask({ prompt: 'race', requestId: 'approval-cancel-race' })
-    await waitStatus(bridge, sessionId, 'waiting-approval')
-    const approval = bridge.approvals()[0]!
-    const operations = order === 'cancel-first'
-      ? [bridge.cancel(sessionId), bridge.decide(approval.id, 'allow')]
-      : [bridge.decide(approval.id, 'allow'), bridge.cancel(sessionId)]
-    await Promise.all(operations)
-    expect((await bridge.detail(sessionId)).summary.status).toBe('cancelled')
-    expect(execute).not.toHaveBeenCalled()
-    expect(await bridge.decide(approval.id, 'allow')).toBe(false)
-    expect((await bridge.detail(sessionId)).approvals).toEqual([])
-  })
+  it.each(['cancel-first', 'approve-first'] as const)(
+    'settles an approval/cancellation race (%s) without dispatching an approved-but-cancelled tool',
+    async order => {
+      const dataDir = await directory()
+      const execute = vi.fn(async () => ({ text: 'must not run' }))
+      const bridge = own(
+        createRuntime({
+          dataDir,
+          workspaceRoot: dataDir,
+          registry: registry(toolProvider('write_note'), [tool(execute)]),
+          providerId: 'fixture',
+        }),
+      )
+      const { sessionId } = await bridge.createTask({ prompt: 'race', requestId: 'approval-cancel-race' })
+      await waitStatus(bridge, sessionId, 'waiting-approval')
+      const approval = bridge.approvals()[0]!
+      const operations =
+        order === 'cancel-first'
+          ? [bridge.cancel(sessionId), bridge.decide(approval.id, 'allow')]
+          : [bridge.decide(approval.id, 'allow'), bridge.cancel(sessionId)]
+      await Promise.all(operations)
+      expect((await bridge.detail(sessionId)).summary.status).toBe('cancelled')
+      expect(execute).not.toHaveBeenCalled()
+      expect(await bridge.decide(approval.id, 'allow')).toBe(false)
+      expect((await bridge.detail(sessionId)).approvals).toEqual([])
+    },
+  )
 
   it('remembers a continuation request across restart and rejects a changed body without acquiring a provider', async () => {
     const dataDir = await directory()
@@ -391,7 +484,10 @@ describe('independent harness runtime', () => {
     const backend = registry(textProvider())
     const restarted = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: backend, providerId: 'fixture' }))
     await restarted.prompt(sessionId, 'continue', 'continuation')
-    await expect(restarted.prompt(sessionId, 'different continuation', 'continuation')).rejects.toMatchObject({ code: 'request-conflict', status: 409 })
+    await expect(restarted.prompt(sessionId, 'different continuation', 'continuation')).rejects.toMatchObject({
+      code: 'request-conflict',
+      status: 409,
+    })
     expect(backend.acquire).not.toHaveBeenCalled()
     expect((await restarted.detail(sessionId)).messages.filter(message => message.role === 'user')).toHaveLength(2)
   })
@@ -408,13 +504,29 @@ describe('independent harness runtime', () => {
       },
     }
     const execute = vi.fn(async () => ({ text: 'not allowed in chat' }))
-    const first = own(standardHarnessDriver.create({ dataDir, workspaceRoot: dataDir, registry: registry(provider, [tool(execute)]), providerId: 'fixture' }))
+    const first = own(
+      standardHarnessDriver.create({
+        dataDir,
+        workspaceRoot: dataDir,
+        registry: registry(provider, [tool(execute)]),
+        providerId: 'fixture',
+      }),
+    )
     const created = await first.createTask({ prompt: 'chat with me', requestId: 'chat', mode: 'chat' })
     await waitStatus(first, created.sessionId, 'idle')
     expect((await first.detail(created.sessionId)).summary.mode).toBe('chat')
-    await expect(first.createTask({ prompt: 'chat with me', requestId: 'chat', mode: 'agent' })).rejects.toMatchObject({ code: 'request-conflict' })
+    await expect(first.createTask({ prompt: 'chat with me', requestId: 'chat', mode: 'agent' })).rejects.toMatchObject({
+      code: 'request-conflict',
+    })
     await first.close()
-    const restarted = own(standardHarnessDriver.create({ dataDir, workspaceRoot: dataDir, registry: registry(provider, [tool(execute)]), providerId: 'fixture' }))
+    const restarted = own(
+      standardHarnessDriver.create({
+        dataDir,
+        workspaceRoot: dataDir,
+        registry: registry(provider, [tool(execute)]),
+        providerId: 'fixture',
+      }),
+    )
     expect(await restarted.createTask({ prompt: 'chat with me', requestId: 'chat', mode: 'chat' })).toEqual(created)
     await restarted.prompt(created.sessionId, 'continue the conversation', 'chat-next')
     await waitStatus(restarted, created.sessionId, 'idle')
@@ -427,7 +539,14 @@ describe('independent harness runtime', () => {
   it('fails closed if a provider sends a tool call in chat mode, including tools that normally need no approval', async () => {
     const dataDir = await directory()
     const execute = vi.fn(async () => ({ text: 'must not execute' }))
-    const bridge = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: registry(toolProvider('write_note'), [tool(execute, false)]), providerId: 'fixture' }))
+    const bridge = own(
+      createRuntime({
+        dataDir,
+        workspaceRoot: dataDir,
+        registry: registry(toolProvider('write_note'), [tool(execute, false)]),
+        providerId: 'fixture',
+      }),
+    )
     const { sessionId } = await bridge.createTask({ prompt: 'ordinary chat', requestId: 'unexpected-tool', mode: 'chat' })
     await waitStatus(bridge, sessionId, 'failed')
     expect(execute).not.toHaveBeenCalled()
@@ -454,14 +573,19 @@ describe('independent harness runtime', () => {
     const restarted = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: backend, providerId: 'fixture' }))
     expect(await restarted.createTask({ prompt: 'old agent task', requestId: 'legacy' })).toEqual(created)
     expect((await restarted.detail(created.sessionId)).summary.mode).toBe('agent')
-    await expect(restarted.createTask({ prompt: 'old agent task', requestId: 'legacy', mode: 'chat' })).rejects.toMatchObject({ code: 'request-conflict' })
+    await expect(restarted.createTask({ prompt: 'old agent task', requestId: 'legacy', mode: 'chat' })).rejects.toMatchObject({
+      code: 'request-conflict',
+    })
     expect(backend.acquire).not.toHaveBeenCalled()
   })
 })
 
 function modelsProvider(id: string, models: string[], seen: Array<string | undefined> = []): ModelProvider {
   return {
-    id, name: `${id} provider`, model: models[0]!, models,
+    id,
+    name: `${id} provider`,
+    model: models[0]!,
+    models,
     async *stream({ model, signal }) {
       signal.throwIfAborted()
       seen.push(model)
@@ -489,7 +613,9 @@ describe('sessions with chosen models, workspaces, and structured output', () =>
     const betaSeen: Array<string | undefined> = []
     const backend = providers([modelsProvider('alpha', ['a-1', 'a-2'], alphaSeen), modelsProvider('beta', ['b-1'], betaSeen)])
     let fallback: ModelRef | undefined = { providerId: 'alpha', model: 'a-2' }
-    const bridge = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: backend, providerId: 'alpha', defaultModel: () => fallback }))
+    const bridge = own(
+      createRuntime({ dataDir, workspaceRoot: dataDir, registry: backend, providerId: 'alpha', defaultModel: () => fallback }),
+    )
     const beta = { providerId: 'beta', model: 'b-1' }
     const chosen = await bridge.createTask({ prompt: 'one', requestId: 'chosen', model: beta })
     await waitStatus(bridge, chosen.sessionId, 'idle')
@@ -523,11 +649,14 @@ describe('sessions with chosen models, workspaces, and structured output', () =>
     const alpha = modelsProvider('alpha', ['a-1', 'a-2'])
     const backend = providers([alpha])
     const bridge = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: backend, providerId: 'alpha' }))
-    await expect(bridge.createTask({ prompt: 'x', requestId: 'unknown', model: { providerId: 'alpha', model: 'nope' } }))
-      .rejects.toMatchObject({ status: 400, code: 'model-unavailable' })
+    await expect(
+      bridge.createTask({ prompt: 'x', requestId: 'unknown', model: { providerId: 'alpha', model: 'nope' } }),
+    ).rejects.toMatchObject({ status: 400, code: 'model-unavailable' })
     expect(backend.release).toHaveBeenCalledTimes(1)
-    await expect(bridge.createTask({ prompt: 'x', requestId: 'blank', model: { providerId: 'alpha', model: ' ' } }))
-      .rejects.toMatchObject({ status: 400, code: 'invalid-model' })
+    await expect(bridge.createTask({ prompt: 'x', requestId: 'blank', model: { providerId: 'alpha', model: ' ' } })).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid-model',
+    })
     expect(await bridge.listTasks()).toEqual([])
 
     const { sessionId } = await bridge.createTask({ prompt: 'x', requestId: 'pinned', model: { providerId: 'alpha', model: 'a-2' } })
@@ -563,10 +692,14 @@ describe('sessions with chosen models, workspaces, and structured output', () =>
     expect(summary.cwd).toBe(project)
     expect(summary).not.toHaveProperty('providerId')
     await expect(bridge.createTask({ prompt: 'work here', requestId: 'project' })).rejects.toMatchObject({ code: 'request-conflict' })
-    await expect(bridge.createTask({ prompt: 'elsewhere', requestId: 'outside', cwd: await directory() }))
-      .rejects.toMatchObject({ status: 400, code: 'workspace-unavailable' })
-    await expect(bridge.createTask({ prompt: 'relative', requestId: 'relative', cwd: 'project' }))
-      .rejects.toMatchObject({ status: 400, code: 'workspace-unavailable' })
+    await expect(bridge.createTask({ prompt: 'elsewhere', requestId: 'outside', cwd: await directory() })).rejects.toMatchObject({
+      status: 400,
+      code: 'workspace-unavailable',
+    })
+    await expect(bridge.createTask({ prompt: 'relative', requestId: 'relative', cwd: 'project' })).rejects.toMatchObject({
+      status: 400,
+      code: 'workspace-unavailable',
+    })
     allowed = [home]
     await expect(bridge.prompt(sessionId, 'continue', 'removed')).rejects.toMatchObject({ status: 409, code: 'workspace-changed' })
     expect(await bridge.createTask({ prompt: 'work here', requestId: 'project', cwd: spelled })).toEqual({ sessionId })
@@ -581,7 +714,10 @@ describe('sessions with chosen models, workspaces, and structured output', () =>
     await waitStatus(bridge, chat.sessionId, 'idle')
     const agent = await bridge.createTask({ prompt: 'agent', requestId: 'agent' })
     await waitStatus(bridge, agent.sessionId, 'idle')
-    expect(backend.acquire.mock.calls).toEqual([['fixture', { tools: false }], ['fixture', { tools: true }]])
+    expect(backend.acquire.mock.calls).toEqual([
+      ['fixture', { tools: false }],
+      ['fixture', { tools: true }],
+    ])
   })
 
   it('streams reasoning separately, settles it on the same message, and never replays it to the model', async () => {
@@ -608,7 +744,14 @@ describe('sessions with chosen models, workspaces, and structured output', () =>
         }
       },
     }
-    const bridge = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: registry(provider, [tool(async () => ({ text: 'saved' }), false)]), providerId: 'fixture' }))
+    const bridge = own(
+      createRuntime({
+        dataDir,
+        workspaceRoot: dataDir,
+        registry: registry(provider, [tool(async () => ({ text: 'saved' }), false)]),
+        providerId: 'fixture',
+      }),
+    )
     const { sessionId } = await bridge.createTask({ prompt: 'think', requestId: 'reasoning' })
     await reasoned.promise
     const live = await bridge.detail(sessionId)
@@ -619,7 +762,12 @@ describe('sessions with chosen models, workspaces, and structured output', () =>
     expect(detail.liveReasoning).toBeUndefined()
     expect(detail.messages.map(message => message.role)).toEqual(['user', 'assistant', 'tool', 'assistant'])
     expect(detail.messages[1]).toMatchObject({ text: '', reasoning: '需要写入', usage: { inputTokens: 10, outputTokens: 2 } })
-    expect(detail.messages[3]).toMatchObject({ id: live.liveMessageId, text: '完成', reasoning: '检查结果', usage: { inputTokens: 20, outputTokens: 4 } })
+    expect(detail.messages[3]).toMatchObject({
+      id: live.liveMessageId,
+      text: '完成',
+      reasoning: '检查结果',
+      usage: { inputTokens: 20, outputTokens: 4 },
+    })
     expect(detail.summary.usage).toEqual({ inputTokens: 30, outputTokens: 6 })
     expect(JSON.stringify(seen)).not.toContain('需要写入')
   })
@@ -634,7 +782,15 @@ describe('sessions with chosen models, workspaces, and structured output', () =>
         yield { type: 'usage', inputTokens: 7, outputTokens: 1 }
         yield { type: 'text', text: '部分' }
         waiting.resolve()
-        await new Promise<void>(resolve => signal.addEventListener('abort', () => { resolve() }, { once: true }))
+        await new Promise<void>(resolve =>
+          signal.addEventListener(
+            'abort',
+            () => {
+              resolve()
+            },
+            { once: true },
+          ),
+        )
         signal.throwIfAborted()
       },
     }
@@ -643,7 +799,13 @@ describe('sessions with chosen models, workspaces, and structured output', () =>
     await waiting.promise
     await bridge.cancel(sessionId)
     const detail = await bridge.detail(sessionId)
-    expect(detail.messages.at(-1)).toMatchObject({ role: 'assistant', text: '部分', reasoning: '先想一想', state: 'cancelled', usage: { inputTokens: 7, outputTokens: 1 } })
+    expect(detail.messages.at(-1)).toMatchObject({
+      role: 'assistant',
+      text: '部分',
+      reasoning: '先想一想',
+      state: 'cancelled',
+      usage: { inputTokens: 7, outputTokens: 1 },
+    })
     expect(detail.summary.usage).toEqual({ inputTokens: 7, outputTokens: 1 })
   })
 
@@ -651,14 +813,27 @@ describe('sessions with chosen models, workspaces, and structured output', () =>
     const dataDir = await directory()
     const preview = vi.fn(async (args: Record<string, unknown>) => ({
       title: `写入 ${String(args.text)}`,
-      diffs: [{ path: 'note.txt', oldText: 'old', newText: 'new', previous: 'text' as const }, { path: 'fresh.txt', newText: 'x', previous: 'none' as const }],
+      diffs: [
+        { path: 'note.txt', oldText: 'old', newText: 'new', previous: 'text' as const },
+        { path: 'fresh.txt', newText: 'x', previous: 'none' as const },
+      ],
     }))
     const definition: ToolDefinition = { ...tool(async () => ({ text: 'note saved' })), kind: 'edit', preview }
-    const bridge = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: registry(toolProvider('write_note'), [definition]), providerId: 'fixture' }))
+    const bridge = own(
+      createRuntime({
+        dataDir,
+        workspaceRoot: dataDir,
+        registry: registry(toolProvider('write_note'), [definition]),
+        providerId: 'fixture',
+      }),
+    )
     const { sessionId } = await bridge.createTask({ prompt: 'write', requestId: 'preview' })
     await waitStatus(bridge, sessionId, 'waiting-approval')
     const input = JSON.stringify({ text: 'example' }, null, 2)
-    const diffs = [{ path: 'note.txt', oldText: 'old', newText: 'new', previous: 'text' }, { path: 'fresh.txt', newText: 'x', previous: 'none' }]
+    const diffs = [
+      { path: 'note.txt', oldText: 'old', newText: 'new', previous: 'text' },
+      { path: 'fresh.txt', newText: 'x', previous: 'none' },
+    ]
     const approval = bridge.approvals()[0]!
     expect(approval.options).toEqual(APPROVAL_OPTIONS)
     expect(approval.tool).toEqual({ kind: 'edit', title: '写入 example', diffs })
@@ -666,12 +841,18 @@ describe('sessions with chosen models, workspaces, and structured output', () =>
     const waiting = await bridge.detail(sessionId)
     expect(waiting.approvals[0]).toEqual(approval)
     expect(waiting.messages.find(message => message.role === 'tool')).toMatchObject({
-      state: 'awaiting-approval', text: input, tool: { kind: 'edit', title: '写入 example', input, diffs },
+      state: 'awaiting-approval',
+      text: input,
+      tool: { kind: 'edit', title: '写入 example', input, diffs },
     })
     expect(await bridge.decide(approval.id, 'allow', { optionId: 'allow_once' })).toBe(true)
     await waitStatus(bridge, sessionId, 'idle')
     expect((await bridge.detail(sessionId)).messages.find(message => message.role === 'tool')).toEqual({
-      id: 'tool:call-1', role: 'tool', toolName: 'write_note', text: 'note saved', state: 'completed',
+      id: 'tool:call-1',
+      role: 'tool',
+      toolName: 'write_note',
+      text: 'note saved',
+      state: 'completed',
       tool: { kind: 'edit', title: '写入 example', input, diffs, output: 'note saved' },
     })
   })
@@ -680,25 +861,56 @@ describe('sessions with chosen models, workspaces, and structured output', () =>
     const dataDir = await directory()
     const seen: ModelMessage[][] = []
     const execute = vi.fn(async () => ({ text: 'saved' }))
-    const definition: ToolDefinition = { ...tool(execute), preview: async () => { throw new Error('preview unavailable') } }
-    const bridge = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: registry(toolProvider('write_note', seen), [definition]), providerId: 'fixture' }))
+    const definition: ToolDefinition = {
+      ...tool(execute),
+      preview: async () => {
+        throw new Error('preview unavailable')
+      },
+    }
+    const bridge = own(
+      createRuntime({
+        dataDir,
+        workspaceRoot: dataDir,
+        registry: registry(toolProvider('write_note', seen), [definition]),
+        providerId: 'fixture',
+      }),
+    )
     const { sessionId } = await bridge.createTask({ prompt: 'write', requestId: 'always' })
     await waitStatus(bridge, sessionId, 'waiting-approval')
     const approval = bridge.approvals()[0]!
     expect(approval.tool).toEqual({ title: 'write_note' })
-    await expect(bridge.decide(approval.id, 'reject', { optionId: 'allow_always' })).rejects.toMatchObject({ status: 400, code: 'invalid-decision' })
-    await expect(bridge.decide(approval.id, 'allow', { optionId: 'reject_once' })).rejects.toMatchObject({ status: 400, code: 'invalid-decision' })
-    await expect(bridge.decide(approval.id, 'allow', { optionId: 'missing' })).rejects.toMatchObject({ status: 400, code: 'invalid-option' })
+    await expect(bridge.decide(approval.id, 'reject', { optionId: 'allow_always' })).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid-decision',
+    })
+    await expect(bridge.decide(approval.id, 'allow', { optionId: 'reject_once' })).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid-decision',
+    })
+    await expect(bridge.decide(approval.id, 'allow', { optionId: 'missing' })).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid-option',
+    })
     expect(bridge.approvals()).toHaveLength(1)
     expect(await bridge.decide(approval.id, 'allow', { optionId: 'allow_always' })).toBe(true)
     await waitStatus(bridge, sessionId, 'idle')
     await bridge.prompt(sessionId, 'again', 'again')
     await waitStatus(bridge, sessionId, 'idle')
     expect(execute).toHaveBeenCalledTimes(2)
-    expect((await bridge.detail(sessionId)).messages.filter(message => message.role === 'tool').map(message => message.state)).toEqual(['completed', 'completed'])
+    expect((await bridge.detail(sessionId)).messages.filter(message => message.role === 'tool').map(message => message.state)).toEqual([
+      'completed',
+      'completed',
+    ])
     await bridge.close()
 
-    const restarted = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: registry(toolProvider('write_note', seen), [definition]), providerId: 'fixture' }))
+    const restarted = own(
+      createRuntime({
+        dataDir,
+        workspaceRoot: dataDir,
+        registry: registry(toolProvider('write_note', seen), [definition]),
+        providerId: 'fixture',
+      }),
+    )
     await restarted.prompt(sessionId, 'after restart', 'after-restart')
     await waitStatus(restarted, sessionId, 'idle')
     expect(execute).toHaveBeenCalledTimes(3)
@@ -736,7 +948,10 @@ describe('sessions with chosen models, workspaces, and structured output', () =>
 
     const restartedBackend = registry(toolProvider('write_note'))
     const restarted = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: restartedBackend, providerId: 'fixture' }))
-    await expect(restarted.createTask({ prompt: 'write', requestId: 'remove' })).rejects.toMatchObject({ status: 410, code: 'task-deleted' })
+    await expect(restarted.createTask({ prompt: 'write', requestId: 'remove' })).rejects.toMatchObject({
+      status: 410,
+      code: 'task-deleted',
+    })
     expect(restartedBackend.acquire).not.toHaveBeenCalled()
     const stored = JSON.parse(await readFile(join(dataDir, 'runtime.json'), 'utf8')) as RuntimeState
     expect(Object.keys(stored.tombstones ?? {})).toEqual([sessionId])
@@ -747,28 +962,52 @@ describe('sessions with chosen models, workspaces, and structured output', () =>
   it('round-trips every persisted field and still rejects receipts without a task or tombstone', async () => {
     const dataDir = await directory()
     const requestedAt = new Date(0).toISOString()
-    const diffs = [{ path: 'a.txt', oldText: 'x', newText: 'y' }, { path: 'b.txt', newText: 'z' }]
+    const diffs = [
+      { path: 'a.txt', oldText: 'x', newText: 'y' },
+      { path: 'b.txt', newText: 'z' },
+    ]
     const call = { id: 'c', name: 'write_file', arguments: { path: 'a.txt', content: 'y' } }
     const state: RuntimeState = {
       version: 1,
       tasks: {
         'task-1': {
           summary: {
-            id: 'task-1', title: 'title', status: 'waiting-approval', updatedAt: requestedAt, cwd: '/workspace', model: 'm', mode: 'agent',
-            harnessId: 'standard', providerId: 'p', pinned: true, archived: false, usage: { inputTokens: 1, outputTokens: 2 },
+            id: 'task-1',
+            title: 'title',
+            status: 'waiting-approval',
+            updatedAt: requestedAt,
+            cwd: '/workspace',
+            model: 'm',
+            mode: 'agent',
+            harnessId: 'standard',
+            providerId: 'p',
+            pinned: true,
+            archived: false,
+            usage: { inputTokens: 1, outputTokens: 2 },
           },
           messages: [
             { id: 'a', role: 'assistant', text: '', state: 'completed', reasoning: 'why', usage: { inputTokens: 1, outputTokens: 2 } },
             {
-              id: 'tool:c', role: 'tool', toolName: 'write_file', text: '{}', state: 'awaiting-approval',
+              id: 'tool:c',
+              role: 'tool',
+              toolName: 'write_file',
+              text: '{}',
+              state: 'awaiting-approval',
               tool: { kind: 'edit', title: '写入 a.txt', input: '{}', output: 'done', locations: ['a.txt'], diffs },
             },
           ],
           history: [{ role: 'assistant', content: '', toolCalls: [call] }],
           revision: 3,
           approval: {
-            id: 'approval', sessionId: 'task-1', toolName: 'write_file', toolCallId: 'c', reason: 'r', arguments: '{}', requestedAt,
-            options: [...APPROVAL_OPTIONS], tool: { kind: 'edit', title: '写入 a.txt', diffs },
+            id: 'approval',
+            sessionId: 'task-1',
+            toolName: 'write_file',
+            toolCallId: 'c',
+            reason: 'r',
+            arguments: '{}',
+            requestedAt,
+            options: [...APPROVAL_OPTIONS],
+            tool: { kind: 'edit', title: '写入 a.txt', diffs },
           },
           batch: { calls: [call], started: [], completed: [] },
           allowedTools: ['write_file'],
@@ -797,12 +1036,21 @@ describe('sessions with chosen models, workspaces, and structured output', () =>
 
 describe('Host risk classification', () => {
   function classifiedRuntime(
-    dataDir: string, classifyToolCall: (input: unknown) => Promise<RiskLevel>, execute: ToolDefinition['execute'], requiresApproval: boolean,
+    dataDir: string,
+    classifyToolCall: (input: unknown) => Promise<RiskLevel>,
+    execute: ToolDefinition['execute'],
+    requiresApproval: boolean,
     seen: ModelMessage[][] = [],
   ) {
-    return own(createRuntime({
-      dataDir, workspaceRoot: dataDir, registry: registry(toolProvider('write_note', seen), [tool(execute, requiresApproval)]), providerId: 'fixture', classifyToolCall,
-    }))
+    return own(
+      createRuntime({
+        dataDir,
+        workspaceRoot: dataDir,
+        registry: registry(toolProvider('write_note', seen), [tool(execute, requiresApproval)]),
+        providerId: 'fixture',
+        classifyToolCall,
+      }),
+    )
   }
 
   it('runs R0 calls without approval even when the tool asks for it, and classifies the exact call', async () => {
@@ -850,7 +1098,10 @@ describe('Host risk classification', () => {
       const approval = bridge.approvals()[0]!
       expect(approval).toMatchObject({ risk: 'R2', options: HIGH_RISK_APPROVAL_OPTIONS })
       expect(approval.options?.map(option => option.kind)).toEqual(['allow_once', 'reject_once'])
-      await expect(bridge.decide(approval.id, 'allow', { optionId: 'allow_always' })).rejects.toMatchObject({ status: 400, code: 'invalid-option' })
+      await expect(bridge.decide(approval.id, 'allow', { optionId: 'allow_always' })).rejects.toMatchObject({
+        status: 400,
+        code: 'invalid-option',
+      })
       expect(await bridge.decide(approval.id, 'allow', requestId === 'high-1' ? { optionId: 'allow_once' } : {})).toBe(true)
       await waitStatus(bridge, sessionId, 'idle')
     }
@@ -860,7 +1111,12 @@ describe('Host risk classification', () => {
   })
 
   it.each([
-    ['throws', async () => { throw new Error('classifier unavailable') }],
+    [
+      'throws',
+      async () => {
+        throw new Error('classifier unavailable')
+      },
+    ],
     ['returns an unknown level', async () => 'R9' as RiskLevel],
   ])('treats a classifier that %s as R2', async (_label, classify) => {
     const dataDir = await directory()
@@ -878,13 +1134,27 @@ describe('Host risk classification', () => {
   it('keeps the legacy rule without a classifier: requiresApproval asks as R1, anything else runs', async () => {
     const dataDir = await directory()
     const quiet = vi.fn(async () => ({ text: 'quiet' }))
-    const silent = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: registry(toolProvider('write_note'), [tool(quiet, false)]), providerId: 'fixture' }))
+    const silent = own(
+      createRuntime({
+        dataDir,
+        workspaceRoot: dataDir,
+        registry: registry(toolProvider('write_note'), [tool(quiet, false)]),
+        providerId: 'fixture',
+      }),
+    )
     const first = await silent.createTask({ prompt: 'write', requestId: 'legacy-r0' })
     await waitStatus(silent, first.sessionId, 'idle')
     expect(quiet).toHaveBeenCalledTimes(1)
     await silent.close()
 
-    const asking = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: registry(toolProvider('write_note'), [tool(quiet, true)]), providerId: 'fixture' }))
+    const asking = own(
+      createRuntime({
+        dataDir,
+        workspaceRoot: dataDir,
+        registry: registry(toolProvider('write_note'), [tool(quiet, true)]),
+        providerId: 'fixture',
+      }),
+    )
     const second = await asking.createTask({ prompt: 'write', requestId: 'legacy-r1' })
     await waitStatus(asking, second.sessionId, 'waiting-approval')
     expect(asking.approvals()[0]).toMatchObject({ risk: 'R1', options: APPROVAL_OPTIONS })
@@ -926,10 +1196,16 @@ describe('Host risk classification', () => {
   it('reaches the runtime through the Standard harness driver', async () => {
     const dataDir = await directory()
     const execute = vi.fn(async () => ({ text: 'saved' }))
-    const bridge = own(standardHarnessDriver.create({
-      dataDir, workspaceRoot: dataDir, registry: registry(toolProvider('write_note'), [tool(execute, false)]), providerId: 'fixture',
-      classifyToolCall: async () => 'R2', tmpRoot: dataDir,
-    }))
+    const bridge = own(
+      standardHarnessDriver.create({
+        dataDir,
+        workspaceRoot: dataDir,
+        registry: registry(toolProvider('write_note'), [tool(execute, false)]),
+        providerId: 'fixture',
+        classifyToolCall: async () => 'R2',
+        tmpRoot: dataDir,
+      }),
+    )
     const { sessionId } = await bridge.createTask({ prompt: 'write', requestId: 'driver' })
     await waitStatus(bridge, sessionId, 'waiting-approval')
     expect(bridge.approvals()[0]).toMatchObject({ risk: 'R2', options: HIGH_RISK_APPROVAL_OPTIONS })

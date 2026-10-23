@@ -9,7 +9,7 @@ const EXTRA_DIRECTORIES = ['/opt/homebrew/bin', '/usr/local/bin', '~/.npm-global
 export function extraDirectories(): string[] {
   if (process.platform === 'win32') return []
   const home = homedir()
-  return EXTRA_DIRECTORIES.map(directory => directory.startsWith('~/') ? join(home, directory.slice(2)) : directory)
+  return EXTRA_DIRECTORIES.map(directory => (directory.startsWith('~/') ? join(home, directory.slice(2)) : directory))
 }
 
 function searchDirectories(): string[] {
@@ -22,7 +22,9 @@ function executable(path: string): boolean {
     if (!statSync(path).isFile()) return false
     if (process.platform !== 'win32') accessSync(path, constants.X_OK)
     return true
-  } catch { return false }
+  } catch {
+    return false
+  }
 }
 
 /** Finds `command` on PATH and the usual install directories without spawning a shell. Returns an absolute path. */
@@ -31,9 +33,8 @@ export function resolveCommand(command: string): string | undefined {
   if (isAbsolute(command)) return executable(command) ? command : undefined
   // A relative path would depend on the Host's working directory.
   if (command.includes('/') || command.includes('\\')) return undefined
-  const extensions = process.platform === 'win32'
-    ? ['', ...(process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)]
-    : ['']
+  const extensions =
+    process.platform === 'win32' ? ['', ...(process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)] : ['']
   for (const directory of searchDirectories()) {
     for (const extension of extensions) {
       const candidate = join(directory, command + extension)

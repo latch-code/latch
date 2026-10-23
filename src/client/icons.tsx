@@ -1,6 +1,20 @@
 import {
-  ArrowLeftRight, Brain, Check, CircleSlash, Clock, FilePen, FileSearch, Globe, LoaderCircle, Search, ShieldAlert,
-  Terminal, Trash, Wrench, X, type LucideIcon,
+  ArrowLeftRight,
+  Brain,
+  Check,
+  CircleSlash,
+  Clock,
+  FilePen,
+  FileSearch,
+  Globe,
+  LoaderCircle,
+  Search,
+  ShieldAlert,
+  Terminal,
+  Trash,
+  Wrench,
+  X,
+  type LucideIcon,
 } from 'lucide-react'
 import type { Message, TaskStatus, ToolKind } from '../shared/types.ts'
 
@@ -10,8 +24,15 @@ export type { LucideIcon }
 export const ICON_STROKE = 1.75
 
 export const toolKindIcons: Record<ToolKind, LucideIcon> = {
-  read: FileSearch, edit: FilePen, delete: Trash, move: ArrowLeftRight, search: Search,
-  execute: Terminal, think: Brain, fetch: Globe, other: Wrench,
+  read: FileSearch,
+  edit: FilePen,
+  delete: Trash,
+  move: ArrowLeftRight,
+  search: Search,
+  execute: Terminal,
+  think: Brain,
+  fetch: Globe,
+  other: Wrench,
 }
 
 /** Guess a kind for tools that do not declare one, from conventional names. */
@@ -28,11 +49,23 @@ export function toolKind(message: Pick<Message, 'tool' | 'toolName'>): ToolKind 
 }
 
 export function Spinner({ size = 16, label }: { size?: number; label?: string }) {
-  return <LoaderCircle className="spin" size={size} strokeWidth={ICON_STROKE} {...(label ? { role: 'img', 'aria-label': label } : { 'aria-hidden': true })} />
+  return (
+    <LoaderCircle
+      className="spin"
+      size={size}
+      strokeWidth={ICON_STROKE}
+      {...(label ? { role: 'img', 'aria-label': label } : { 'aria-hidden': true })}
+    />
+  )
 }
 
 export const toolStateIcons: Record<NonNullable<Message['state']>, LucideIcon> = {
-  queued: Clock, 'awaiting-approval': ShieldAlert, running: LoaderCircle, completed: Check, failed: X, cancelled: CircleSlash,
+  queued: Clock,
+  'awaiting-approval': ShieldAlert,
+  running: LoaderCircle,
+  completed: Check,
+  failed: X,
+  cancelled: CircleSlash,
 }
 
 /** Sidebar/state glyph: nothing for a settled session, so only exceptions draw attention. */

@@ -9,7 +9,11 @@ import { resolveLatchPaths } from './src/host/paths.ts'
  */
 export function passesCredentialCookie(requestHost: string | undefined, hostName: string): boolean {
   if (requestHost === undefined) return false
-  try { return new URL(`http://${requestHost}`).hostname === hostName.toLowerCase() } catch { return false }
+  try {
+    return new URL(`http://${requestHost}`).hostname === hostName.toLowerCase()
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -26,7 +30,9 @@ async function hostProxy(): Promise<ProxyOptions> {
   const state = await readHostState(dataDir)
   if (state === undefined) {
     const port = process.env.HARNESS_PORT ?? '4317'
-    console.warn(`[Latch] 未找到运行中的 Host（${dataDir}/host.json）。先启动 Host，或用 HARNESS_DATA_DIR 指向它的数据目录；暂时转发到 127.0.0.1:${port}。`)
+    console.warn(
+      `[Latch] 未找到运行中的 Host（${dataDir}/host.json）。先启动 Host，或用 HARNESS_DATA_DIR 指向它的数据目录；暂时转发到 127.0.0.1:${port}。`,
+    )
     return { target: `http://127.0.0.1:${port}` }
   }
   const origin = new URL(state.loopbackOrigin)
@@ -52,7 +58,9 @@ export default defineConfig(async ({ command }): Promise<UserConfig> => ({
     emptyOutDir: true,
     rolldownOptions: {
       // Icon modules carry a "use client" directive that has no meaning in this single-page bundle.
-      onwarn(warning, warn) { if (warning.code !== 'MODULE_LEVEL_DIRECTIVE') warn(warning) },
+      onwarn(warning, warn) {
+        if (warning.code !== 'MODULE_LEVEL_DIRECTIVE') warn(warning)
+      },
     },
   },
   server: {

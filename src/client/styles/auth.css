@@ -1,71 +1,237 @@
 /* Enrollment: one quiet card; the fingerprint is the only large text because it is what the person compares. */
 .enroll-page {
-  display: grid; place-items: center; min-height: 100dvh; height: 100%; overflow-y: auto;
+  display: grid;
+  place-items: center;
+  min-height: 100dvh;
+  height: 100%;
+  overflow-y: auto;
   padding: max(32px, env(safe-area-inset-top)) 16px max(32px, env(safe-area-inset-bottom));
   background: radial-gradient(60% 40% at 50% 0%, var(--accent-subtle), transparent 70%), var(--bg-app);
 }
 .enroll-card {
-  display: grid; gap: 20px; width: min(440px, 100%); padding: 32px;
-  border: 1px solid var(--border); border-radius: var(--r-xl); background: var(--bg-raised); box-shadow: var(--sh-2);
+  display: grid;
+  gap: 20px;
+  width: min(440px, 100%);
+  padding: 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  background: var(--bg-raised);
+  box-shadow: var(--sh-2);
   animation: rise-in var(--d-base) var(--ease-out);
 }
-.enroll-header { display: grid; gap: 10px; justify-items: start; }
-.enroll-header .brand-mark { margin-bottom: 6px; }
-.enroll-header h1 { font-size: var(--fs-display); line-height: var(--lh-display); font-weight: 600; letter-spacing: -.01em; }
-.enroll-description { color: var(--text-2); font-size: var(--fs-ui); line-height: 22px; }
-.enroll-loading { min-height: 44px; }
-.enroll-card .inline-alert { width: 100%; }
+.enroll-header {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+.enroll-header .brand-mark {
+  margin-bottom: 6px;
+}
+.enroll-header h1 {
+  font-size: var(--fs-display);
+  line-height: var(--lh-display);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.enroll-description {
+  color: var(--text-2);
+  font-size: var(--fs-ui);
+  line-height: 22px;
+}
+.enroll-loading {
+  min-height: 44px;
+}
+.enroll-card .inline-alert {
+  width: 100%;
+}
 
-.enroll-form { display: grid; gap: 18px; }
-.enroll-form .field input { min-height: 44px; }
-.enroll-form .button.block, .enroll-waiting .button.block { min-height: 44px; }
-.enroll-offline-toggle { justify-self: center; }
+.enroll-form {
+  display: grid;
+  gap: 18px;
+}
+.enroll-form .field input {
+  min-height: 44px;
+}
+.enroll-form .button.block,
+.enroll-waiting .button.block {
+  min-height: 44px;
+}
+.enroll-offline-toggle {
+  justify-self: center;
+}
 
-.scope-list { display: grid; gap: 2px; min-width: 0; margin: 0; padding: 0; border: 0; }
-.scope-list legend { margin-bottom: 6px; padding: 0; color: var(--text-2); font-size: var(--fs-label); line-height: var(--lh-label); font-weight: 500; }
+.scope-list {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.scope-list legend {
+  margin-bottom: 6px;
+  padding: 0;
+  color: var(--text-2);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+  font-weight: 500;
+}
 .scope-item {
-  display: flex; align-items: center; gap: 10px; min-height: 32px; padding: 4px 2px;
-  color: var(--text-1); font-size: var(--fs-label); line-height: var(--lh-label);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  padding: 4px 2px;
+  color: var(--text-1);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
 }
-.scope-item.is-fixed { color: var(--text-2); }
+.scope-item.is-fixed {
+  color: var(--text-2);
+}
 .scope-check {
-  display: grid; place-items: center; width: 16px; height: 16px; flex-shrink: 0;
-  border-radius: var(--r-xs); background: var(--bg-hover); color: var(--text-3);
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  border-radius: var(--r-xs);
+  background: var(--bg-hover);
+  color: var(--text-3);
 }
-.scope-item input[type="checkbox"] { width: 16px; height: 16px; margin: 0; flex-shrink: 0; accent-color: var(--accent); }
-label.scope-item { cursor: pointer; }
-.scope-list:disabled label.scope-item { cursor: default; opacity: .7; }
-@media (pointer: coarse) { .scope-item { min-height: 44px; } }
+.scope-item input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+}
+label.scope-item {
+  cursor: pointer;
+}
+.scope-list:disabled label.scope-item {
+  cursor: default;
+  opacity: 0.7;
+}
+@media (pointer: coarse) {
+  .scope-item {
+    min-height: 44px;
+  }
+}
 
 /* Waiting for the Host's local confirmation: pending reads amber, like an approval. */
-.enroll-waiting { display: grid; gap: 14px; }
-.enroll-status { display: flex; align-items: center; gap: 10px; }
-.enroll-status h2 { flex: 1; font-size: var(--fs-title-sm); line-height: var(--lh-title-sm); font-weight: 600; }
-.enroll-timer { color: var(--text-3); font-size: var(--fs-label); font-variant-numeric: tabular-nums; }
-.enroll-compare { color: var(--text-2); font-size: var(--fs-ui); line-height: 22px; }
-.presence-pulse {
-  position: relative; width: 8px; height: 8px; flex-shrink: 0; border-radius: 50%; background: var(--warn-solid);
-  box-shadow: 0 0 0 0 var(--warn-border); animation: presence-pulse 1.8s var(--ease-out) infinite;
+.enroll-waiting {
+  display: grid;
+  gap: 14px;
 }
-@keyframes presence-pulse { 70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+.enroll-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.enroll-status h2 {
+  flex: 1;
+  font-size: var(--fs-title-sm);
+  line-height: var(--lh-title-sm);
+  font-weight: 600;
+}
+.enroll-timer {
+  color: var(--text-3);
+  font-size: var(--fs-label);
+  font-variant-numeric: tabular-nums;
+}
+.enroll-compare {
+  color: var(--text-2);
+  font-size: var(--fs-ui);
+  line-height: 22px;
+}
+.presence-pulse {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--warn-solid);
+  box-shadow: 0 0 0 0 var(--warn-border);
+  animation: presence-pulse 1.8s var(--ease-out) infinite;
+}
+@keyframes presence-pulse {
+  70% {
+    box-shadow: 0 0 0 7px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
 
 .fingerprint-block {
-  display: grid; justify-items: center; gap: 10px; padding: 18px 16px 16px;
-  border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--bg-sunken);
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 18px 16px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--bg-sunken);
 }
-.fingerprint-label { color: var(--text-3); font-size: var(--fs-caption); line-height: var(--lh-caption); font-weight: 500; }
+.fingerprint-label {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
+}
 .fingerprint {
-  display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 10px; max-width: 100%;
-  color: var(--text-1); font: 500 20px/28px var(--font-mono); letter-spacing: .04em; font-variant-numeric: tabular-nums;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 10px;
+  max-width: 100%;
+  color: var(--text-1);
+  font: 500 20px/28px var(--font-mono);
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
 }
-.fingerprint-hash { color: var(--text-3); font-size: var(--fs-caption); line-height: var(--lh-caption); }
-.fingerprint-hash code { color: var(--text-2); font-size: 12px; letter-spacing: .02em; }
-.countdown-track { display: block; height: 3px; overflow: hidden; border-radius: var(--r-pill); background: var(--bg-hover); }
-.countdown-track > i { display: block; height: 100%; border-radius: inherit; background: var(--warn-solid); opacity: .7; transition: width 1s linear; }
+.fingerprint-hash {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.fingerprint-hash code {
+  color: var(--text-2);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+.countdown-track {
+  display: block;
+  height: 3px;
+  overflow: hidden;
+  border-radius: var(--r-pill);
+  background: var(--bg-hover);
+}
+.countdown-track > i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--warn-solid);
+  opacity: 0.7;
+  transition: width 1s linear;
+}
 
 @media (max-width: 767.98px) {
-  .enroll-page { align-items: start; padding-top: max(6vh, 24px, env(safe-area-inset-top)); }
-  .enroll-card { padding: 24px 20px; gap: 18px; }
-  .fingerprint-block { padding: 16px 12px 14px; }
-  .fingerprint { font-size: 17px; line-height: 26px; gap: 4px 8px; letter-spacing: .02em; }
+  .enroll-page {
+    align-items: start;
+    padding-top: max(6vh, 24px, env(safe-area-inset-top));
+  }
+  .enroll-card {
+    padding: 24px 20px;
+    gap: 18px;
+  }
+  .fingerprint-block {
+    padding: 16px 12px 14px;
+  }
+  .fingerprint {
+    font-size: 17px;
+    line-height: 26px;
+    gap: 4px 8px;
+    letter-spacing: 0.02em;
+  }
 }

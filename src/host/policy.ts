@@ -42,9 +42,14 @@ export const policySchema = z.strictObject({
   operators: z.array(z.unknown()).max(16),
   presence: z.strictObject({
     backend: z.enum(['macos-helper', 'none']),
-    helperCdhash: z.string().regex(/^[0-9a-f]{40}$/u).nullable(),
+    helperCdhash: z
+      .string()
+      .regex(/^[0-9a-f]{40}$/u)
+      .nullable(),
   }),
-  hostEgressAllow: z.array(z.string().refine(isEgressEntry, '出站白名单条目必须是 host:port')).max(64)
+  hostEgressAllow: z
+    .array(z.string().refine(isEgressEntry, '出站白名单条目必须是 host:port'))
+    .max(64)
     .refine(list => new Set(list).size === list.length, '出站白名单条目不能重复'),
   keyBackend: z.literal('file'),
   /** Stored only; unattended runs are not implemented yet. */
@@ -117,14 +122,29 @@ function narrowerList(prev: string[] | null, next: string[] | null): boolean {
 export function isLowering(prev: Policy, next: Policy): boolean {
   for (const { path } of policyDiff(prev, next)) {
     switch (path) {
-      case 'local.maxLevel': if (LEVEL_RANK[next.local.maxLevel] > LEVEL_RANK[prev.local.maxLevel]) return false; break
-      case 'remote.maxLevel': if (LEVEL_RANK[next.remote.maxLevel] > LEVEL_RANK[prev.remote.maxLevel]) return false; break
-      case 'local.allowL3': if (next.local.allowL3) return false; break
-      case 'remote.allowRemoteStart': if (next.remote.allowRemoteStart) return false; break
-      case 'remote.harnesses': if (!narrowerList(prev.remote.harnesses, next.remote.harnesses)) return false; break
-      case 'remote.workspaces': if (!narrowerList(prev.remote.workspaces, next.remote.workspaces)) return false; break
-      case 'hostEgressAllow': if (!isSubset(next.hostEgressAllow, prev.hostEgressAllow)) return false; break
-      default: return false
+      case 'local.maxLevel':
+        if (LEVEL_RANK[next.local.maxLevel] > LEVEL_RANK[prev.local.maxLevel]) return false
+        break
+      case 'remote.maxLevel':
+        if (LEVEL_RANK[next.remote.maxLevel] > LEVEL_RANK[prev.remote.maxLevel]) return false
+        break
+      case 'local.allowL3':
+        if (next.local.allowL3) return false
+        break
+      case 'remote.allowRemoteStart':
+        if (next.remote.allowRemoteStart) return false
+        break
+      case 'remote.harnesses':
+        if (!narrowerList(prev.remote.harnesses, next.remote.harnesses)) return false
+        break
+      case 'remote.workspaces':
+        if (!narrowerList(prev.remote.workspaces, next.remote.workspaces)) return false
+        break
+      case 'hostEgressAllow':
+        if (!isSubset(next.hostEgressAllow, prev.hostEgressAllow)) return false
+        break
+      default:
+        return false
     }
   }
   return true
@@ -138,7 +158,11 @@ export function ceilingFor(policy: Policy, listener: ListenerClass): PermissionL
 async function syncDirectory(directory: string): Promise<void> {
   if (process.platform === 'win32') return
   const handle = await open(directory, 'r')
-  try { await handle.sync() } finally { await handle.close() }
+  try {
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
 }
 
 async function writeAtomic(directory: string, content: string): Promise<void> {
@@ -153,8 +177,12 @@ async function writeAtomic(directory: string, content: string): Promise<void> {
     throw error
   }
   await handle.close()
-  try { await rename(temporary, join(directory, FILE)) }
-  catch (error) { await unlink(temporary).catch(() => {}); throw error }
+  try {
+    await rename(temporary, join(directory, FILE))
+  } catch (error) {
+    await unlink(temporary).catch(() => {})
+    throw error
+  }
   await syncDirectory(directory)
 }
 
@@ -168,13 +196,20 @@ export class PolicyStore {
   /** Chinese startup warnings (never secrets). */
   readonly warnings: string[] = []
 
-  private constructor(private readonly dataDir: string, private readonly audit: AuditLog, private policy: Policy) {}
+  private constructor(
+    private readonly dataDir: string,
+    private readonly audit: AuditLog,
+    private policy: Policy,
+  ) {}
 
   static async open(options: { dataDir: string; audit: AuditLog; platform?: NodeJS.Platform }): Promise<PolicyStore> {
     const path = join(options.dataDir, FILE)
     let text: string | undefined
-    try { text = await readFile(path, 'utf8') }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw invalid((error as NodeJS.ErrnoException).code ?? '读取失败') }
+    try {
+      text = await readFile(path, 'utf8')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw invalid((error as NodeJS.ErrnoException).code ?? '读取失败')
+    }
     // The last hash this Host knowingly wrote or started with; anything else was edited outside Latch.
     const last = options.audit.latest(['host.started', 'policy.created', 'policy.changed'])
     const expected = last ? String(last.action === 'host.started' ? last.detail.policyHash : last.detail.after) : undefined
@@ -183,21 +218,34 @@ export class PolicyStore {
       const store = new PolicyStore(options.dataDir, options.audit, policy)
       // A missing file after this Host has run before was deleted outside Latch; the defaults are not what it knew.
       if (expected && expected !== store.hash()) {
-        await options.audit.append({ action: 'policy.changed-outside', actor: { listener: 'host', via: 'startup' }, detail: { expected, actual: store.hash() } })
+        await options.audit.append({
+          action: 'policy.changed-outside',
+          actor: { listener: 'host', via: 'startup' },
+          detail: { expected, actual: store.hash() },
+        })
         store.warnings.push('policy.json 在 Latch 之外被删除，已按默认值重建并记入审计。')
       }
       await options.audit.append({
-        action: 'policy.created', actor: { listener: 'host', via: 'startup' },
+        action: 'policy.created',
+        actor: { listener: 'host', via: 'startup' },
         detail: { before: '', after: store.hash(), fields: [], lowering: false },
       })
       await writeAtomic(options.dataDir, `${JSON.stringify(policy, null, 2)}\n`)
       return store
     }
     let raw: unknown
-    try { raw = JSON.parse(text) } catch { throw invalid('JSON 格式无效') }
+    try {
+      raw = JSON.parse(text)
+    } catch {
+      throw invalid('JSON 格式无效')
+    }
     const insecure = (raw as { insecureLan?: { enabled?: unknown } } | null)?.insecureLan?.enabled
     if (insecure === true) {
-      throw new AppError(500, 'insecure-lan-removed', '明文局域网接入已移除。请把 policy.json 中的 insecureLan.enabled 改为 false，并用 HTTPS 入口接入手机。')
+      throw new AppError(
+        500,
+        'insecure-lan-removed',
+        '明文局域网接入已移除。请把 policy.json 中的 insecureLan.enabled 改为 false，并用 HTTPS 入口接入手机。',
+      )
     }
     const parsed = policySchema.safeParse(raw)
     if (!parsed.success) throw invalid(parsed.error.issues.map(issue => `${issue.path.join('.') || '（根）'}：${issue.message}`).join('；'))
@@ -205,7 +253,8 @@ export class PolicyStore {
     if (parsed.data.operators.length) store.warnings.push('policy.json 中的 operators 已忽略：无界面确认通道尚未实现。')
     if (expected && expected !== store.hash()) {
       await options.audit.append({
-        action: 'policy.changed-outside', actor: { listener: 'host', via: 'startup' },
+        action: 'policy.changed-outside',
+        actor: { listener: 'host', via: 'startup' },
         detail: { expected, actual: store.hash() },
       })
       store.warnings.push('policy.json 在 Latch 之外被修改过，已记入审计。')
@@ -213,9 +262,13 @@ export class PolicyStore {
     return store
   }
 
-  get(): Policy { return structuredClone(this.policy) }
+  get(): Policy {
+    return structuredClone(this.policy)
+  }
 
-  hash(): string { return sha256Hex(canonicalJson(this.policy)) }
+  hash(): string {
+    return sha256Hex(canonicalJson(this.policy))
+  }
 
   /**
    * Audits 'policy.changed' first, then writes atomically. Raising changes need a step-up (local confirmation, or the
@@ -225,16 +278,24 @@ export class PolicyStore {
    */
   update(next: Policy, actor: AuditActor, stepup: StepupMethod, expectedBaseHash?: string): Promise<{ audited: boolean }> {
     const run = this.queue.then(async () => {
-      if (expectedBaseHash !== undefined && expectedBaseHash !== this.hash()) throw new AppError(409, 'policy-changed', '安全策略已被修改，请刷新后重试')
+      if (expectedBaseHash !== undefined && expectedBaseHash !== this.hash())
+        throw new AppError(409, 'policy-changed', '安全策略已被修改，请刷新后重试')
       const parsed = policySchema.safeParse(next)
-      if (!parsed.success) throw new AppError(400, 'invalid-policy', `安全策略无效：${parsed.error.issues.map(issue => issue.message).join('；')}`)
+      if (!parsed.success)
+        throw new AppError(400, 'invalid-policy', `安全策略无效：${parsed.error.issues.map(issue => issue.message).join('；')}`)
       const prev = this.policy
       const candidate = parsed.data
       const diff = policyDiff(prev, candidate)
       if (diff.length === 0) return { audited: true }
       const lowering = isLowering(prev, candidate)
       if (!lowering && stepup === 'none') throw new AppError(403, 'stepup-required', '需要在本机确认', { stepup: { where: 'this-device' } })
-      return this.commit(candidate, diff.map(item => item.path), lowering, actor, stepup)
+      return this.commit(
+        candidate,
+        diff.map(item => item.path),
+        lowering,
+        actor,
+        stepup,
+      )
     })
     this.queue = run.catch(() => {})
     return run
@@ -251,9 +312,18 @@ export class PolicyStore {
       if (!/^[0-9a-f]{40}$/u.test(cdhash)) throw new AppError(500, 'presence-cdhash-invalid', '本机确认组件的签名摘要格式无效')
       const pinned = this.policy.presence.helperCdhash
       if (pinned === cdhash) return
-      if (pinned !== null) throw new AppError(409, 'presence-already-pinned', '本机确认组件已登记其他签名；如需更换，请停止 Host 后运行 pnpm latch presence repin。')
+      if (pinned !== null)
+        throw new AppError(
+          409,
+          'presence-already-pinned',
+          '本机确认组件已登记其他签名；如需更换，请停止 Host 后运行 pnpm latch presence repin。',
+        )
       if (this.audit.latest(['presence.helper.pinned'])) {
-        throw new AppError(409, 'presence-repin-required', '本机确认组件的登记签名已丢失（policy.json 被修改或删除）。请停止 Host 后运行 pnpm latch presence repin。')
+        throw new AppError(
+          409,
+          'presence-repin-required',
+          '本机确认组件的登记签名已丢失（policy.json 被修改或删除）。请停止 Host 后运行 pnpm latch presence repin。',
+        )
       }
       await this.audit.append({ action: 'presence.helper.pinned', actor: { listener: 'host', via: 'startup' }, detail: { cdhash } })
       const candidate = structuredClone(this.policy)
@@ -265,16 +335,24 @@ export class PolicyStore {
   }
 
   /** Lowering changes are privilege-reducing: an audit failure is reported, never allowed to keep the wider policy. */
-  private async commit(candidate: Policy, fields: string[], lowering: boolean, actor: AuditActor, stepup: StepupMethod): Promise<{ audited: boolean }> {
+  private async commit(
+    candidate: Policy,
+    fields: string[],
+    lowering: boolean,
+    actor: AuditActor,
+    stepup: StepupMethod,
+  ): Promise<{ audited: boolean }> {
     const before = this.hash()
     const after = sha256Hex(canonicalJson(candidate))
     let seq: number | undefined
-    try { seq = (await this.audit.append({ action: 'policy.changed', actor, stepup, detail: { before, after, fields, lowering } })).seq }
-    catch (error) {
+    try {
+      seq = (await this.audit.append({ action: 'policy.changed', actor, stepup, detail: { before, after, fields, lowering } })).seq
+    } catch (error) {
       if (!lowering || !(error instanceof AppError && error.code === 'audit-unavailable')) throw error
     }
-    try { await writeAtomic(this.dataDir, `${JSON.stringify(candidate, null, 2)}\n`) }
-    catch (error) {
+    try {
+      await writeAtomic(this.dataDir, `${JSON.stringify(candidate, null, 2)}\n`)
+    } catch (error) {
       if (seq !== undefined) await this.audit.append({ action: 'action.failed', actor, detail: { refSeq: seq } }).catch(() => {})
       throw error
     }

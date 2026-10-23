@@ -5,7 +5,11 @@ import { AppError } from '../core/errors.ts'
 import { canonicalJson, sha256Hex } from './crypto.ts'
 
 export type StepupMethod = 'none' | 'lpc-local' | 'offline'
-export interface AuditActor { deviceId?: string; listener: 'unix' | 'loopback-tcp' | 'lan-tls' | 'tailnet-tls' | 'host' | 'cli'; via?: 'http' | 'cli' | 'startup' }
+export interface AuditActor {
+  deviceId?: string
+  listener: 'unix' | 'loopback-tcp' | 'lan-tls' | 'tailnet-tls' | 'host' | 'cli'
+  via?: 'http' | 'cli' | 'startup'
+}
 
 const GENESIS = '0'.repeat(64)
 const FILE = 'audit.jsonl'
@@ -20,25 +24,69 @@ const listener = z.enum(['unix', 'loopback-tcp', 'lan-tls', 'tailnet-tls'])
 const scopes = z.array(z.enum(['view', 'run', 'approve:standard', 'approve:elevated', 'admin', 'secrets'])).max(6)
 const dataScope = z.enum(['work', 'all'])
 const risk = z.enum(['R0', 'R1', 'R2'])
-const presenceAction = z.enum(['device.enroll', 'device.grant', 'task.start-l3', 'task.mode-widen', 'agent.define', 'policy.change', 'provider.set-key', 'approval.r2'])
-const fieldPath = z.string().regex(/^[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)*$/u).max(128)
-const policyChange = z.strictObject({ before: z.union([hex64, z.literal('')]), after: hex64, fields: z.array(fieldPath).max(64), lowering: z.boolean() })
+const presenceAction = z.enum([
+  'device.enroll',
+  'device.grant',
+  'task.start-l3',
+  'task.mode-widen',
+  'agent.define',
+  'policy.change',
+  'provider.set-key',
+  'approval.r2',
+])
+const fieldPath = z
+  .string()
+  .regex(/^[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)*$/u)
+  .max(128)
+const policyChange = z.strictObject({
+  before: z.union([hex64, z.literal('')]),
+  after: hex64,
+  fields: z.array(fieldPath).max(64),
+  lowering: z.boolean(),
+})
 const deviceOnly = z.strictObject({ deviceId })
 const ticket = z.strictObject({ ticketId: prefixed('chl') })
 const workspaceChange = z.strictObject({ workspaceId: opaqueId, pathHash: hex64 })
 
 /** Strict detail schema per action. */
 export const AUDIT_DETAIL = {
-  'host.started': z.strictObject({ hostId: z.string().regex(/^[a-z2-7]{52}$/u), version: z.string().regex(/^[0-9A-Za-z.+-]{1,64}$/u), policyHash: hex64, settingsHash: hex64, devMode: z.boolean() }),
+  'host.started': z.strictObject({
+    hostId: z.string().regex(/^[a-z2-7]{52}$/u),
+    version: z.string().regex(/^[0-9A-Za-z.+-]{1,64}$/u),
+    policyHash: hex64,
+    settingsHash: hex64,
+    devMode: z.boolean(),
+  }),
   'audit.torn-tail-removed': z.strictObject({ bytes: count }),
   'policy.created': policyChange,
   'policy.changed': policyChange,
   'policy.changed-outside': z.strictObject({ expected: hex64, actual: hex64 }),
   'presence.helper.pinned': z.strictObject({ cdhash: z.string().regex(/^[0-9a-f]{40}$/u) }),
-  'presence.result': z.strictObject({ confirmationId: prefixed('cfm'), action: presenceAction, result: z.enum(['denied', 'timeout', 'cancelled', 'error']) }),
-  'device.enroll.requested': z.strictObject({ enrollmentId: prefixed('enr'), listener, fingerprint: z.string().regex(/^[A-Z2-7]{20}$/u), scopes, invitationId: prefixed('inv').optional() }),
-  'device.enrolled': z.strictObject({ deviceId, enrollmentId: prefixed('enr'), listener, method: z.enum(['lpc', 'offline', 'invitation']), scopes, dataScope, pairedByDeviceId: deviceId.optional() }),
-  'device.enroll.failed': z.strictObject({ enrollmentId: prefixed('enr'), reason: z.enum(['denied', 'expired', 'cancelled', 'signature', 'commit']) }),
+  'presence.result': z.strictObject({
+    confirmationId: prefixed('cfm'),
+    action: presenceAction,
+    result: z.enum(['denied', 'timeout', 'cancelled', 'error']),
+  }),
+  'device.enroll.requested': z.strictObject({
+    enrollmentId: prefixed('enr'),
+    listener,
+    fingerprint: z.string().regex(/^[A-Z2-7]{20}$/u),
+    scopes,
+    invitationId: prefixed('inv').optional(),
+  }),
+  'device.enrolled': z.strictObject({
+    deviceId,
+    enrollmentId: prefixed('enr'),
+    listener,
+    method: z.enum(['lpc', 'offline', 'invitation']),
+    scopes,
+    dataScope,
+    pairedByDeviceId: deviceId.optional(),
+  }),
+  'device.enroll.failed': z.strictObject({
+    enrollmentId: prefixed('enr'),
+    reason: z.enum(['denied', 'expired', 'cancelled', 'signature', 'commit']),
+  }),
   'device.revoked': z.strictObject({ deviceId, reason: z.enum(['manual', 'self', 'replay', 'cascade', 'migration']), cascaded: count }),
   'device.review': z.strictObject({ deviceId, causeDeviceId: deviceId }),
   'device.scopes.changed': z.strictObject({ deviceId, added: scopes, removed: scopes, dataScope: dataScope.optional() }),
@@ -52,8 +100,14 @@ export const AUDIT_DETAIL = {
   'offline.ticket.consumed': ticket,
   'migration.devices.v2': z.strictObject({ revoked: count, legacy: count }),
   'approval.decided': z.strictObject({
-    approvalId: opaqueId, sessionId: opaqueId, harnessId: opaqueId, risk, advisory: z.boolean(),
-    decision: z.enum(['allow', 'reject']), optionKind: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/u), previewHash: hex64.optional(),
+    approvalId: opaqueId,
+    sessionId: opaqueId,
+    harnessId: opaqueId,
+    risk,
+    advisory: z.boolean(),
+    decision: z.enum(['allow', 'reject']),
+    optionKind: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/u),
+    previewHash: hex64.optional(),
   }),
   'approval.stale': z.strictObject({ approvalId: opaqueId }),
   /** Written before a full-access session is spawned; nothing is spawned without it. */
@@ -107,7 +161,9 @@ export type AuditRecord = z.infer<typeof recordSchema>
 type Failure = { ok: false; line: number; reason: 'json' | 'schema' | 'seq' | 'prev' | 'hash' }
 type Verified = { ok: true; head: { seq: number; hash: string }; records: AuditRecord[] }
 
-function hashRecord(record: Omit<AuditRecord, 'hash'>): string { return sha256Hex(canonicalJson(record)) }
+function hashRecord(record: Omit<AuditRecord, 'hash'>): string {
+  return sha256Hex(canonicalJson(record))
+}
 
 /** Verifies complete, newline-terminated lines. */
 function verifyLines(lines: string[]): Verified | Failure {
@@ -116,9 +172,14 @@ function verifyLines(lines: string[]): Verified | Failure {
   for (let index = 0; index < lines.length; index++) {
     const line = index + 1
     let value: unknown
-    try { value = JSON.parse(lines[index]!) } catch { return { ok: false, line, reason: 'json' } }
+    try {
+      value = JSON.parse(lines[index]!)
+    } catch {
+      return { ok: false, line, reason: 'json' }
+    }
     const parsed = recordSchema.safeParse(value)
-    if (!parsed.success || !AUDIT_DETAIL[parsed.data.action].safeParse(parsed.data.detail).success) return { ok: false, line, reason: 'schema' }
+    if (!parsed.success || !AUDIT_DETAIL[parsed.data.action].safeParse(parsed.data.detail).success)
+      return { ok: false, line, reason: 'schema' }
     const record = parsed.data
     if (record.seq !== head.seq + 1) return { ok: false, line, reason: 'seq' }
     if (record.prev !== head.hash) return { ok: false, line, reason: 'prev' }
@@ -153,11 +214,15 @@ export interface AuditFileHandle {
   truncate(length: number): Promise<void>
   close(): Promise<void>
 }
-export interface AuditFs { open(path: string): Promise<AuditFileHandle> }
+export interface AuditFs {
+  open(path: string): Promise<AuditFileHandle>
+}
 
 const defaultFs: AuditFs = { open: path => open(path, 'a', 0o600) }
 
-function unavailable(): AppError { return new AppError(503, 'audit-unavailable', '审计记录写入失败，操作未执行') }
+function unavailable(): AppError {
+  return new AppError(503, 'audit-unavailable', '审计记录写入失败，操作未执行')
+}
 
 /**
  * Append-only hash chain in `<data>/audit/audit.jsonl`. An append resolves only after its line is fsynced; callers
@@ -172,19 +237,29 @@ export class AuditLog {
   private bytes = 0
   private poisoned = false
 
-  private constructor(private readonly handle: AuditFileHandle, private readonly now: () => number) {}
+  private constructor(
+    private readonly handle: AuditFileHandle,
+    private readonly now: () => number,
+  ) {}
 
   static async open(directory: string, options: { now?: () => number; fs?: AuditFs } = {}): Promise<AuditLog> {
     await mkdir(directory, { recursive: true, mode: 0o700 })
     if (process.platform !== 'win32' && ((await stat(directory)).mode & 0o077) !== 0) await chmod(directory, 0o700)
     const path = join(directory, FILE)
     let text = ''
-    try { text = await readFile(path, 'utf8') }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
+    try {
+      text = await readFile(path, 'utf8')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
     const { lines, tail } = splitComplete(text)
     const verified = verifyLines(lines)
     if (!verified.ok) {
-      throw new AppError(500, 'audit-chain-broken', `审计记录在第 ${verified.line} 行校验失败。原文件已保留；如需继续，请把 audit/audit.jsonl 移走后重启。`)
+      throw new AppError(
+        500,
+        'audit-chain-broken',
+        `审计记录在第 ${verified.line} 行校验失败。原文件已保留；如需继续，请把 audit/audit.jsonl 移走后重启。`,
+      )
     }
     const now = options.now ?? Date.now
     let tornBytes = 0
@@ -206,11 +281,14 @@ export class AuditLog {
       log.hashes.push(record.hash)
       log.latestByAction.set(record.action, record)
     }
-    if (tornBytes) await log.append({ action: 'audit.torn-tail-removed', actor: { listener: 'host', via: 'startup' }, detail: { bytes: tornBytes } })
+    if (tornBytes)
+      await log.append({ action: 'audit.torn-tail-removed', actor: { listener: 'host', via: 'startup' }, detail: { bytes: tornBytes } })
     return log
   }
 
-  head(): { seq: number; hash: string } { return { ...this.headState } }
+  head(): { seq: number; hash: string } {
+    return { ...this.headState }
+  }
 
   async hashAt(seq: number): Promise<string | undefined> {
     if (!Number.isInteger(seq) || seq < 1) return undefined
@@ -228,16 +306,30 @@ export class AuditLog {
   }
 
   /** The most recent record of one action (for example the last `host.started`, to compare its hashes at startup). */
-  lastOf(action: AuditAction): AuditRecord | undefined { return this.latest([action]) }
+  lastOf(action: AuditAction): AuditRecord | undefined {
+    return this.latest([action])
+  }
 
   /** Validation failures throw `audit-detail-invalid` (a programming error: the action must be refused). */
-  append<A extends AuditAction>(event: { action: A; actor: AuditActor; target?: string; stepup?: StepupMethod; detail: AuditDetail<A> }): Promise<{ seq: number; hash: string }> {
+  append<A extends AuditAction>(event: {
+    action: A
+    actor: AuditActor
+    target?: string
+    stepup?: StepupMethod
+    detail: AuditDetail<A>
+  }): Promise<{ seq: number; hash: string }> {
     const run = this.queue.then(() => this.write(event))
     this.queue = run.catch(() => {})
     return run
   }
 
-  private async write<A extends AuditAction>(event: { action: A; actor: AuditActor; target?: string; stepup?: StepupMethod; detail: AuditDetail<A> }): Promise<{ seq: number; hash: string }> {
+  private async write<A extends AuditAction>(event: {
+    action: A
+    actor: AuditActor
+    target?: string
+    stepup?: StepupMethod
+    detail: AuditDetail<A>
+  }): Promise<{ seq: number; hash: string }> {
     const schema = AUDIT_DETAIL[event.action] as z.ZodType | undefined
     const detail = schema?.safeParse(event.detail)
     const actor = actorSchema.safeParse(event.actor)
@@ -247,8 +339,15 @@ export class AuditLog {
     }
     if (this.poisoned) throw unavailable()
     const body: Omit<AuditRecord, 'hash'> = {
-      v: 1, seq: this.headState.seq + 1, at: new Date(this.now()).toISOString(), actor: actor.data, action: event.action,
-      target, stepup: event.stepup ?? 'none', detail: detail.data as Record<string, unknown>, prev: this.headState.hash,
+      v: 1,
+      seq: this.headState.seq + 1,
+      at: new Date(this.now()).toISOString(),
+      actor: actor.data,
+      action: event.action,
+      target,
+      stepup: event.stepup ?? 'none',
+      detail: detail.data as Record<string, unknown>,
+      prev: this.headState.hash,
     }
     const record: AuditRecord = { ...body, hash: hashRecord(body) }
     const line = Buffer.from(`${JSON.stringify(record)}\n`, 'utf8')
@@ -259,8 +358,12 @@ export class AuditLog {
       await this.handle.sync()
     } catch {
       // Cut back to the last acknowledged byte so the chain stays valid; if that fails too, refuse every later append.
-      try { await this.handle.truncate(this.bytes); await this.handle.sync() }
-      catch { this.poisoned = true }
+      try {
+        await this.handle.truncate(this.bytes)
+        await this.handle.sync()
+      } catch {
+        this.poisoned = true
+      }
       throw unavailable()
     }
     this.bytes += line.length

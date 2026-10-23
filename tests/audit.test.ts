@@ -7,7 +7,9 @@ import { AuditLog, verifyAuditFile, type AuditFs } from '../src/host/audit.ts'
 import { canonicalJson, sha256Hex } from '../src/host/crypto.ts'
 
 const cleanups: Array<() => Promise<void> | void> = []
-afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
+})
 
 function directory(): string {
   const path = mkdtempSync(join(tmpdir(), 'harness-link-audit-'))
@@ -27,10 +29,33 @@ const deviceId = `dev_${'A'.repeat(22)}`
 async function populated(): Promise<{ path: string; file: string; lines: string[] }> {
   const path = directory()
   const log = await openLog(path, { now: () => Date.UTC(2026, 9, 23, 10) })
-  await log.append({ action: 'host.started', actor: { listener: 'host', via: 'startup' }, detail: { hostId: 'a'.repeat(52), version: '0.1.0', policyHash: hash('p'), settingsHash: hash('s'), devMode: true } })
-  await log.append({ action: 'device.revoked', actor: { deviceId, listener: 'loopback-tcp', via: 'http' }, target: deviceId, detail: { deviceId, reason: 'manual', cascaded: 0 } })
+  await log.append({
+    action: 'host.started',
+    actor: { listener: 'host', via: 'startup' },
+    detail: { hostId: 'a'.repeat(52), version: '0.1.0', policyHash: hash('p'), settingsHash: hash('s'), devMode: true },
+  })
+  await log.append({
+    action: 'device.revoked',
+    actor: { deviceId, listener: 'loopback-tcp', via: 'http' },
+    target: deviceId,
+    detail: { deviceId, reason: 'manual', cascaded: 0 },
+  })
   await log.append({ action: 'task.cancelled', actor: { listener: 'unix', via: 'cli' }, target: 'task-1', detail: { sessionId: 'task-1' } })
-  await log.append({ action: 'approval.decided', actor: { deviceId, listener: 'unix', via: 'http' }, stepup: 'lpc-local', detail: { approvalId: 'a-1', sessionId: 'task-1', harnessId: 'standard', risk: 'R2', advisory: false, decision: 'allow', optionKind: 'allow_once', previewHash: hash('x') } })
+  await log.append({
+    action: 'approval.decided',
+    actor: { deviceId, listener: 'unix', via: 'http' },
+    stepup: 'lpc-local',
+    detail: {
+      approvalId: 'a-1',
+      sessionId: 'task-1',
+      harnessId: 'standard',
+      risk: 'R2',
+      advisory: false,
+      decision: 'allow',
+      optionKind: 'allow_once',
+      previewHash: hash('x'),
+    },
+  })
   const file = join(path, 'audit.jsonl')
   return { path, file, lines: readFileSync(file, 'utf8').trimEnd().split('\n') }
 }
@@ -40,7 +65,16 @@ describe('audit chain', () => {
     const { path, file, lines } = await populated()
     expect(lines).toHaveLength(4)
     const first = JSON.parse(lines[0]!)
-    expect(first).toMatchObject({ v: 1, seq: 1, at: '2026-10-23T10:00:00.000Z', actor: { listener: 'host', via: 'startup' }, action: 'host.started', target: '', stepup: 'none', prev: '0'.repeat(64) })
+    expect(first).toMatchObject({
+      v: 1,
+      seq: 1,
+      at: '2026-10-23T10:00:00.000Z',
+      actor: { listener: 'host', via: 'startup' },
+      action: 'host.started',
+      target: '',
+      stepup: 'none',
+      prev: '0'.repeat(64),
+    })
     const { hash: recorded, ...body } = first
     expect(recorded).toBe(sha256Hex(canonicalJson(body)))
     expect(JSON.parse(lines[1]!).prev).toBe(recorded)
@@ -69,7 +103,8 @@ describe('audit chain', () => {
     const mutate = (value: unknown): unknown => {
       if (typeof value === 'boolean') return !value
       if (typeof value === 'number') return value + 1
-      if (typeof value === 'string') return value.length && /^[0-9a-f]+$/u.test(value) ? `${value.slice(0, -1)}${value.endsWith('0') ? '1' : '0'}` : `${value}x`
+      if (typeof value === 'string')
+        return value.length && /^[0-9a-f]+$/u.test(value) ? `${value.slice(0, -1)}${value.endsWith('0') ? '1' : '0'}` : `${value}x`
       if (Array.isArray(value)) return [...value, 'x']
       if (value && typeof value === 'object') return { ...value, injected: 1 }
       return value
@@ -94,7 +129,11 @@ describe('audit chain', () => {
       }
     }
     writeFileSync(file, `${lines.join('\n').replace('"listener":"host"', '"listener":"cli"')}\n`)
-    await expect(AuditLog.open(path)).rejects.toMatchObject({ status: 500, code: 'audit-chain-broken', message: '审计记录在第 1 行校验失败。原文件已保留；如需继续，请把 audit/audit.jsonl 移走后重启。' })
+    await expect(AuditLog.open(path)).rejects.toMatchObject({
+      status: 500,
+      code: 'audit-chain-broken',
+      message: '审计记录在第 1 行校验失败。原文件已保留；如需继续，请把 audit/audit.jsonl 移走后重启。',
+    })
     // The broken file is left in place.
     expect(readFileSync(file, 'utf8')).toContain('"listener":"cli"')
   })
@@ -140,7 +179,13 @@ describe('audit chain', () => {
         const handle = await open(file, 'a', 0o600)
         return {
           write: data => handle.write(data),
-          sync: async () => { if (failSync > 0) { failSync -= 1; throw Object.assign(new Error('EIO'), { code: 'EIO' }) } await handle.sync() },
+          sync: async () => {
+            if (failSync > 0) {
+              failSync -= 1
+              throw Object.assign(new Error('EIO'), { code: 'EIO' })
+            }
+            await handle.sync()
+          },
           truncate: length => handle.truncate(length),
           close: () => handle.close(),
         }
@@ -150,17 +195,22 @@ describe('audit chain', () => {
     await log.append({ action: 'task.cancelled', actor: { listener: 'host' }, detail: { sessionId: 's-1' } })
     const head = log.head()
     failSync = 1
-    await expect(log.append({ action: 'task.cancelled', actor: { listener: 'host' }, detail: { sessionId: 's-2' } }))
-      .rejects.toMatchObject({ status: 503, code: 'audit-unavailable', message: '审计记录写入失败，操作未执行' })
+    await expect(log.append({ action: 'task.cancelled', actor: { listener: 'host' }, detail: { sessionId: 's-2' } })).rejects.toMatchObject(
+      { status: 503, code: 'audit-unavailable', message: '审计记录写入失败，操作未执行' },
+    )
     expect(log.head()).toEqual(head)
     // The unacknowledged line was cut back, so the chain stays valid and later appends continue it.
     await log.append({ action: 'task.cancelled', actor: { listener: 'host' }, detail: { sessionId: 's-3' } })
     expect(await verifyAuditFile(join(path, 'audit.jsonl'))).toMatchObject({ ok: true, records: 2 })
 
     failSync = 2
-    await expect(log.append({ action: 'task.cancelled', actor: { listener: 'host' }, detail: { sessionId: 's-4' } })).rejects.toMatchObject({ code: 'audit-unavailable' })
+    await expect(log.append({ action: 'task.cancelled', actor: { listener: 'host' }, detail: { sessionId: 's-4' } })).rejects.toMatchObject(
+      { code: 'audit-unavailable' },
+    )
     // Recovery failed too: every later append is refused until the Host restarts.
-    await expect(log.append({ action: 'task.cancelled', actor: { listener: 'host' }, detail: { sessionId: 's-5' } })).rejects.toMatchObject({ code: 'audit-unavailable' })
+    await expect(log.append({ action: 'task.cancelled', actor: { listener: 'host' }, detail: { sessionId: 's-5' } })).rejects.toMatchObject(
+      { code: 'audit-unavailable' },
+    )
   })
 
   it('treats a short write as a failed append, so an acknowledged record is always complete', async () => {
@@ -171,7 +221,7 @@ describe('audit chain', () => {
         const handle = await open(file, 'a', 0o600)
         return {
           // A disk that fills up mid-write reports a short count, not an error.
-          write: async data => short ? handle.write(data.subarray(0, data.length - 7)) : handle.write(data),
+          write: async data => (short ? handle.write(data.subarray(0, data.length - 7)) : handle.write(data)),
           sync: () => handle.sync(),
           truncate: length => handle.truncate(length),
           close: () => handle.close(),
@@ -182,8 +232,13 @@ describe('audit chain', () => {
     await log.append({ action: 'task.cancelled', actor: { listener: 'host' }, detail: { sessionId: 's-1' } })
     const head = log.head()
     short = true
-    await expect(log.append({ action: 'policy.changed', actor: { listener: 'host' }, detail: { before: hash('a'), after: hash('b'), fields: ['remote.maxLevel'], lowering: false } }))
-      .rejects.toMatchObject({ status: 503, code: 'audit-unavailable' })
+    await expect(
+      log.append({
+        action: 'policy.changed',
+        actor: { listener: 'host' },
+        detail: { before: hash('a'), after: hash('b'), fields: ['remote.maxLevel'], lowering: false },
+      }),
+    ).rejects.toMatchObject({ status: 503, code: 'audit-unavailable' })
     expect(log.head()).toEqual(head)
     short = false
     await log.append({ action: 'task.cancelled', actor: { listener: 'host' }, detail: { sessionId: 's-2' } })
@@ -200,7 +255,13 @@ describe('audit chain', () => {
   it('accepts the workspace and settings records and returns the last record of an action', async () => {
     const log = await openLog(directory())
     const actor = { listener: 'host' as const, via: 'startup' as const }
-    const started = (settingsHash: string) => ({ hostId: 'a'.repeat(52), version: '0.1.0', policyHash: hash('p'), settingsHash, devMode: true })
+    const started = (settingsHash: string) => ({
+      hostId: 'a'.repeat(52),
+      version: '0.1.0',
+      policyHash: hash('p'),
+      settingsHash,
+      devMode: true,
+    })
     await log.append({ action: 'host.started', actor, detail: started(hash('s1')) })
     await log.append({ action: 'host.started', actor, detail: started(hash('s2')) })
     await log.append({ action: 'settings.changed', actor, detail: { before: hash('s2'), after: hash('s3') } })
@@ -214,21 +275,46 @@ describe('audit chain', () => {
     expect(log.lastOf('workspace.disabled')).toMatchObject({ seq: 9, detail: { workspaceId: 'w-1', reason: 'invalid' } })
     expect(log.lastOf('policy.changed')).toBeUndefined()
     const invalid = expect.objectContaining({ code: 'audit-detail-invalid' })
-    await expect(log.append({ action: 'workspace.disabled', actor, detail: { workspaceId: 'w-1', reason: 'other' } as never })).rejects.toEqual(invalid)
-    await expect(log.append({ action: 'workspace.disabled', actor, detail: { workspaceId: '/Users/me/project', reason: 'overlap' } })).rejects.toEqual(invalid)
-    await expect(log.append({ action: 'settings.changed-outside', actor, detail: { expected: 'x', actual: hash('s') } })).rejects.toEqual(invalid)
+    await expect(
+      log.append({ action: 'workspace.disabled', actor, detail: { workspaceId: 'w-1', reason: 'other' } as never }),
+    ).rejects.toEqual(invalid)
+    await expect(
+      log.append({ action: 'workspace.disabled', actor, detail: { workspaceId: '/Users/me/project', reason: 'overlap' } }),
+    ).rejects.toEqual(invalid)
+    await expect(log.append({ action: 'settings.changed-outside', actor, detail: { expected: 'x', actual: hash('s') } })).rejects.toEqual(
+      invalid,
+    )
   })
 
   it('accepts the credential issue and full-access intent records with their strict details', async () => {
     const log = await openLog(directory())
     const actor = { deviceId: `dev_${'a'.repeat(22)}`, listener: 'unix' as const, via: 'http' as const }
     await log.append({ action: 'device.credential.issued', actor, target: actor.deviceId, detail: { deviceId: actor.deviceId } })
-    await log.append({ action: 'task.l3.start-requested', actor, stepup: 'lpc-local', detail: { harnessId: 'codex', launchHash: hash('launch') } })
-    expect(log.lastOf('task.l3.start-requested')).toMatchObject({ seq: 2, stepup: 'lpc-local', detail: { harnessId: 'codex', launchHash: hash('launch') } })
+    await log.append({
+      action: 'task.l3.start-requested',
+      actor,
+      stepup: 'lpc-local',
+      detail: { harnessId: 'codex', launchHash: hash('launch') },
+    })
+    expect(log.lastOf('task.l3.start-requested')).toMatchObject({
+      seq: 2,
+      stepup: 'lpc-local',
+      detail: { harnessId: 'codex', launchHash: hash('launch') },
+    })
     const invalid = expect.objectContaining({ code: 'audit-detail-invalid' })
-    await expect(log.append({ action: 'device.credential.issued', actor, detail: { deviceId: actor.deviceId, credential: 'x' } as never })).rejects.toEqual(invalid)
-    await expect(log.append({ action: 'task.l3.start-requested', actor, detail: { harnessId: 'codex', launchHash: 'abc' } })).rejects.toEqual(invalid)
-    await expect(log.append({ action: 'task.l3.start-requested', actor, detail: { harnessId: 'codex', launchHash: hash('launch'), sessionId: 's' } as never })).rejects.toEqual(invalid)
+    await expect(
+      log.append({ action: 'device.credential.issued', actor, detail: { deviceId: actor.deviceId, credential: 'x' } as never }),
+    ).rejects.toEqual(invalid)
+    await expect(
+      log.append({ action: 'task.l3.start-requested', actor, detail: { harnessId: 'codex', launchHash: 'abc' } }),
+    ).rejects.toEqual(invalid)
+    await expect(
+      log.append({
+        action: 'task.l3.start-requested',
+        actor,
+        detail: { harnessId: 'codex', launchHash: hash('launch'), sessionId: 's' } as never,
+      }),
+    ).rejects.toEqual(invalid)
   })
 
   it('rejects details with extra keys or values that are not ids, hashes, enums, booleans or counts', async () => {
@@ -238,11 +324,17 @@ describe('audit chain', () => {
     await expect(log.append({ action: 'task.cancelled', actor, detail: { sessionId: 's', extra: 1 } as never })).rejects.toEqual(invalid)
     await expect(log.append({ action: 'task.cancelled', actor, detail: { sessionId: '/Users/me/secret' } })).rejects.toEqual(invalid)
     await expect(log.append({ action: 'task.cancelled', actor, detail: { sessionId: 'has space' } })).rejects.toEqual(invalid)
-    await expect(log.append({ action: 'workspace.added', actor, detail: { workspaceId: 'w', pathHash: '/tmp/project' } })).rejects.toEqual(invalid)
+    await expect(log.append({ action: 'workspace.added', actor, detail: { workspaceId: 'w', pathHash: '/tmp/project' } })).rejects.toEqual(
+      invalid,
+    )
     await expect(log.append({ action: 'device.renamed', actor, detail: { deviceId: '我的手机' } })).rejects.toEqual(invalid)
-    await expect(log.append({ action: 'device.revoked', actor, detail: { deviceId, reason: 'because', cascaded: 0 } as never })).rejects.toEqual(invalid)
+    await expect(
+      log.append({ action: 'device.revoked', actor, detail: { deviceId, reason: 'because', cascaded: 0 } as never }),
+    ).rejects.toEqual(invalid)
     await expect(log.append({ action: 'task.cancelled', actor, target: '../etc', detail: { sessionId: 's' } })).rejects.toEqual(invalid)
-    await expect(log.append({ action: 'task.cancelled', actor: { listener: 'host', name: 'x' } as never, detail: { sessionId: 's' } })).rejects.toEqual(invalid)
+    await expect(
+      log.append({ action: 'task.cancelled', actor: { listener: 'host', name: 'x' } as never, detail: { sessionId: 's' } }),
+    ).rejects.toEqual(invalid)
     await expect(log.append({ action: 'nope' as never, actor, detail: {} as never })).rejects.toEqual(invalid)
     expect(log.head().seq).toBe(0)
     await expect(log.append({ action: 'task.cancelled', actor, detail: { sessionId: 'task-1' } })).resolves.toMatchObject({ seq: 1 })

@@ -29,16 +29,46 @@ async function browserTls(): Promise<{ directory: string; options: NonNullable<T
   const directory = await mkdtemp(join(tmpdir(), 'lt-tls-'))
   const certPath = join(directory, 'cert.pem')
   const keyPath = join(directory, 'key.pem')
-  await promisify(execFile)('/usr/bin/openssl', [
-    'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-pkeyopt', 'ec_param_enc:named_curve', '-nodes',
-    '-keyout', keyPath, '-out', certPath, '-days', '2', '-subj', '/CN=latch-test.localhost', '-addext', 'subjectAltName=DNS:latch-test.localhost',
-  ], { env: { PATH: '/usr/bin:/bin' } })
+  await promisify(execFile)(
+    '/usr/bin/openssl',
+    [
+      'req',
+      '-x509',
+      '-newkey',
+      'ec',
+      '-pkeyopt',
+      'ec_paramgen_curve:prime256v1',
+      '-pkeyopt',
+      'ec_param_enc:named_curve',
+      '-nodes',
+      '-keyout',
+      keyPath,
+      '-out',
+      certPath,
+      '-days',
+      '2',
+      '-subj',
+      '/CN=latch-test.localhost',
+      '-addext',
+      'subjectAltName=DNS:latch-test.localhost',
+    ],
+    { env: { PATH: '/usr/bin:/bin' } },
+  )
   await chmod(keyPath, 0o600)
   const server = createServer()
-  await new Promise<void>(done => { server.listen(0, '127.0.0.1', done) })
+  await new Promise<void>(done => {
+    server.listen(0, '127.0.0.1', done)
+  })
   const port = (server.address() as { port: number }).port
-  await new Promise<void>(done => { server.close(() => { done() }) })
-  return { directory, options: { host: '127.0.0.1', port, certPath, keyPath, publicOrigin: `https://latch-test.localhost:${port}`, allowLocalPeers: true } }
+  await new Promise<void>(done => {
+    server.close(() => {
+      done()
+    })
+  })
+  return {
+    directory,
+    options: { host: '127.0.0.1', port, certPath, keyPath, publicOrigin: `https://latch-test.localhost:${port}`, allowLocalPeers: true },
+  }
 }
 
 /** The same state at the three reference widths; screenshots never contain a credential (cookies and keys are not rendered). */
@@ -46,7 +76,14 @@ async function captureSizes(page: Page, name: string): Promise<void> {
   const original = page.viewportSize()
   for (const size of SIZES) {
     await page.setViewportSize({ width: size.width, height: size.height })
-    await page.evaluate(() => new Promise(done => { requestAnimationFrame(() => { requestAnimationFrame(done) }) }))
+    await page.evaluate(
+      () =>
+        new Promise(done => {
+          requestAnimationFrame(() => {
+            requestAnimationFrame(done)
+          })
+        }),
+    )
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true)
     await page.screenshot({ path: `${OUTPUT}/${name}-${size.label}.png`, fullPage: true, animations: 'disabled' })
   }
@@ -61,8 +98,12 @@ describe('device enrollment in the browser', () => {
     browser = await chromium.launch(browserLaunchOptions())
     await mkdir(OUTPUT, { recursive: true })
   })
-  afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup().catch(() => {}) })
-  afterAll(async () => { await browser?.close() })
+  afterEach(async () => {
+    for (const cleanup of cleanups.splice(0).reverse()) await cleanup().catch(() => {})
+  })
+  afterAll(async () => {
+    await browser?.close()
+  })
 
   async function host(options: TestHostOptions = {}): Promise<TestHost> {
     const testHost = await startTestHost({ demo: true, uiDir: UI_DIR, ...options })
@@ -111,7 +152,9 @@ describe('device enrollment in the browser', () => {
     const page = await (await context()).newPage()
     await enrollBrowser(page, testHost, { name: '续期浏览器' })
     const renewals: number[] = []
-    page.on('response', response => { if (new URL(response.url()).pathname === '/link/api/credentials/renew') renewals.push(response.status()) })
+    page.on('response', response => {
+      if (new URL(response.url()).pathname === '/link/api/credentials/renew') renewals.push(response.status())
+    })
     offset = 25 * 60 * 60 * 1000
     await page.reload()
     await connected(page)
@@ -127,17 +170,44 @@ describe('device enrollment in the browser', () => {
     const token = randomBytes(32).toString('base64url')
     await mkdir(join(dataDir, 'auth'), { recursive: true, mode: 0o700 })
     const now = new Date().toISOString()
-    await writeFile(join(dataDir, 'auth', 'devices.json'), JSON.stringify({
-      version: 1, pairings: [],
-      devices: [{ id: 'owner-1', name: '旧版浏览器', role: 'owner', createdAt: now, lastSeenAt: now, revoked: false, tokenHash: createHash('sha256').update(token).digest('hex'), expiresAt: Date.now() + 86_400_000 }],
-    }), { mode: 0o600 })
+    await writeFile(
+      join(dataDir, 'auth', 'devices.json'),
+      JSON.stringify({
+        version: 1,
+        pairings: [],
+        devices: [
+          {
+            id: 'owner-1',
+            name: '旧版浏览器',
+            role: 'owner',
+            createdAt: now,
+            lastSeenAt: now,
+            revoked: false,
+            tokenHash: createHash('sha256').update(token).digest('hex'),
+            expiresAt: Date.now() + 86_400_000,
+          },
+        ],
+      }),
+      { mode: 0o600 },
+    )
     const testHost = await host({ dataDir })
     const browserContext = await context()
-    await browserContext.addCookies([{ name: 'harness_link', value: token, domain: new URL(testHost.host.loopbackOrigin).hostname, path: '/link', httpOnly: true, sameSite: 'Strict' }])
+    await browserContext.addCookies([
+      {
+        name: 'harness_link',
+        value: token,
+        domain: new URL(testHost.host.loopbackOrigin).hostname,
+        path: '/link',
+        httpOnly: true,
+        sameSite: 'Strict',
+      },
+    ])
     const page = await browserContext.newPage()
     await page.goto(`${testHost.host.loopbackOrigin}/link/`)
     await page.getByRole('heading', { name: '此设备需要在本机重新确认', exact: true }).waitFor()
-    await page.getByText('Latch 已升级设备凭据，旧的登录状态不再有效。请提交确认请求，并在运行 Latch 的电脑上核对指纹。', { exact: true }).waitFor()
+    await page
+      .getByText('Latch 已升级设备凭据，旧的登录状态不再有效。请提交确认请求，并在运行 Latch 的电脑上核对指纹。', { exact: true })
+      .waitFor()
     expect(await page.getByLabel('设备名称', { exact: true }).getAttribute('placeholder')).toBe('旧版浏览器')
     await captureSizes(page, 'legacy')
     await page.getByRole('button', { name: '在本机重新确认', exact: true }).click()

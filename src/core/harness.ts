@@ -2,7 +2,12 @@ import type { Bridge } from '../host/bridge.ts'
 import type { RuntimeRegistry } from './plugins.ts'
 import type { HarnessInfo, ModelRef, RiskLevel } from '../shared/types.ts'
 
-export interface ToolRiskInput { toolName: string; arguments: Record<string, unknown>; cwd: string; sessionId: string }
+export interface ToolRiskInput {
+  toolName: string
+  arguments: Record<string, unknown>
+  cwd: string
+  sessionId: string
+}
 
 export type HarnessSecurityEvent =
   | { type: 'permission-drift'; sessionId: string; observedHash: string }

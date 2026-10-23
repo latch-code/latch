@@ -26,7 +26,9 @@ function subscribeTo(list: string[]) {
     if (typeof window === 'undefined' || !window.matchMedia) return () => {}
     const media = list.map(query => window.matchMedia(query))
     for (const item of media) item.addEventListener('change', changed)
-    return () => { for (const item of media) item.removeEventListener('change', changed) }
+    return () => {
+      for (const item of media) item.removeEventListener('change', changed)
+    }
   }
 }
 

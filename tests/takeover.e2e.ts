@@ -39,10 +39,16 @@ describe('desktop to phone takeover', () => {
     await desktop.screenshot({ path: 'test-results/desktop-empty.png', fullPage: true, animations: 'disabled' })
     await mobile.screenshot({ path: 'test-results/mobile-empty.png', fullPage: true, animations: 'disabled' })
   })
-  afterAll(async () => { await browser?.close(); await testHost?.close() })
+  afterAll(async () => {
+    await browser?.close()
+    await testHost?.close()
+  })
 
   async function snapshot(): Promise<AppSnapshot> {
-    return desktop.context().request.get(host.origin + '/link/api/snapshot').then(r => r.json())
+    return desktop
+      .context()
+      .request.get(host.origin + '/link/api/snapshot')
+      .then(r => r.json())
   }
   async function choosePhone(id: string) {
     await mobile.getByRole('button', { name: '打开会话列表', exact: true }).click()
@@ -76,7 +82,9 @@ describe('desktop to phone takeover', () => {
       await opener.press('Enter')
       await mobile.getByRole('dialog', { name: '会话导航', exact: true }).waitFor()
       expect(await mobile.locator('.workspace').evaluate(element => (element as HTMLElement).inert)).toBe(true)
-      await expect.poll(() => mobile.locator('.sidebar').evaluate(element => element.contains(document.activeElement)), { timeout: 2_000 }).toBe(true)
+      await expect
+        .poll(() => mobile.locator('.sidebar').evaluate(element => element.contains(document.activeElement)), { timeout: 2_000 })
+        .toBe(true)
       await mobile.keyboard.press('Shift+Tab')
       expect(await mobile.locator('.sidebar').evaluate(element => element.contains(document.activeElement))).toBe(true)
       await mobile.keyboard.press('Tab')
@@ -89,7 +97,7 @@ describe('desktop to phone takeover', () => {
       expect(await desktop.locator('.workspace').evaluate(element => (element as HTMLElement).inert)).toBe(false)
       expect(await desktop.locator('.sidebar').evaluate(element => (element as HTMLElement).inert)).toBe(false)
     } finally {
-      if (await mobile.locator('#session-navigation').getAttribute('aria-modal') === 'true') {
+      if ((await mobile.locator('#session-navigation').getAttribute('aria-modal')) === 'true') {
         await mobile.locator('.sidebar').getByRole('button', { name: '关闭会话列表', exact: true }).click()
       }
     }
@@ -106,11 +114,13 @@ describe('desktop to phone takeover', () => {
     expect(button!.x + button!.width).toBeLessThanOrEqual(390)
     expect(button!.y).toBeGreaterThanOrEqual(0)
     expect(button!.y + button!.height).toBeLessThanOrEqual(844)
-    expect(await mobile.getByRole('button', { name: '允许一次', exact: true }).evaluate(element => {
-      const rect = element.getBoundingClientRect()
-      const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)
-      return hit !== null && element.contains(hit)
-    })).toBe(true)
+    expect(
+      await mobile.getByRole('button', { name: '允许一次', exact: true }).evaluate(element => {
+        const rect = element.getBoundingClientRect()
+        const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)
+        return hit !== null && element.contains(hit)
+      }),
+    ).toBe(true)
     const composer = await mobile.locator('.composer').boundingBox()
     expect(composer!.y + composer!.height).toBeLessThanOrEqual(844)
     await mobile.screenshot({ path: 'test-results/mobile-approval.png', fullPage: true, animations: 'disabled' })
@@ -122,7 +132,10 @@ describe('desktop to phone takeover', () => {
     await mobile.getByRole('button', { name: '允许一次', exact: true }).click()
     await expect.poll(async () => (await snapshot()).tasks.find(t => t.id === approvedTask)?.status).toBe('idle')
     await desktop.locator('[data-approval-id]').waitFor({ state: 'detached' })
-    const desktopDetail = await desktop.context().request.get(host.origin + `/link/api/tasks/${approvedTask}`).then(r => r.json())
+    const desktopDetail = await desktop
+      .context()
+      .request.get(host.origin + `/link/api/tasks/${approvedTask}`)
+      .then(r => r.json())
     const mobileDetail = await phoneContext.request.get(host.origin + `/link/api/tasks/${approvedTask}`).then(r => r.json())
     expect(mobileDetail).toEqual(desktopDetail)
     const files = await readdir(join(directory, 'artifacts'))
@@ -136,7 +149,10 @@ describe('desktop to phone takeover', () => {
     await desktop.screenshot({ path: 'test-results/desktop-dark.png', fullPage: true, animations: 'disabled' })
     await desktop.emulateMedia({ colorScheme: 'light' })
 
-    const tabletContext = await browser.newContext({ viewport: { width: 768, height: 1024 }, storageState: await desktop.context().storageState() })
+    const tabletContext = await browser.newContext({
+      viewport: { width: 768, height: 1024 },
+      storageState: await desktop.context().storageState(),
+    })
     try {
       const tablet = await tabletContext.newPage()
       tablet.setDefaultTimeout(15_000)
@@ -158,10 +174,12 @@ describe('desktop to phone takeover', () => {
   it('keeps a task running while the phone is offline and cancels the actual tool after reconnect', async () => {
     const id = await start('运行可取消长任务')
     await choosePhone(id)
-    await expect.poll(async () => {
-      const detail = await host.bridge.detail(id)
-      return detail.messages.some(m => m.role === 'tool' && m.state === 'running')
-    }).toBe(true)
+    await expect
+      .poll(async () => {
+        const detail = await host.bridge.detail(id)
+        return detail.messages.some(m => m.role === 'tool' && m.state === 'running')
+      })
+      .toBe(true)
     await phoneContext.setOffline(true)
     await new Promise(resolveDelay => setTimeout(resolveDelay, 400))
     expect((await snapshot()).tasks.find(t => t.id === id)?.status).toBe('running')

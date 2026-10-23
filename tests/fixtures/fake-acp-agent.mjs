@@ -38,7 +38,13 @@ function log(event, data = {}) {
   if (logFile) appendFileSync(logFile, `${JSON.stringify({ pid: process.pid, event, ...data })}\n`)
 }
 
-const readDisk = () => { try { return JSON.parse(readFileSync(stateFile, 'utf8')) } catch { return {} } }
+const readDisk = () => {
+  try {
+    return JSON.parse(readFileSync(stateFile, 'utf8'))
+  } catch {
+    return {}
+  }
+}
 const sessions = readDisk()
 const touched = new Set()
 const save = () => {
@@ -80,7 +86,10 @@ process.stdin.on('data', chunk => {
 })
 process.stdin.on('end', () => {
   log('stdin-end')
-  setTimeout(() => { log('exit'); process.stdout.write('', () => process.exit(0)) }, exitDelay)
+  setTimeout(() => {
+    log('exit')
+    process.stdout.write('', () => process.exit(0))
+  }, exitDelay)
 })
 
 const send = message => process.stdout.write(`${JSON.stringify(message)}\n`)
@@ -92,7 +101,9 @@ function request(method, params) {
   send({ jsonrpc: '2.0', id, method, params })
   return new Promise(resolve => waiting.set(id, resolve))
 }
-function rpcError(code, message) { return Object.assign(new Error(message), { code }) }
+function rpcError(code, message) {
+  return Object.assign(new Error(message), { code })
+}
 
 const cancelled = new Set()
 const cancelWaiters = new Map()
@@ -102,7 +113,13 @@ function waitCancel(sessionId) {
 }
 
 function receive(message) {
-  log('recv', { method: message.method ?? null, id: message.id ?? null, params: message.params, result: message.result, error: message.error })
+  log('recv', {
+    method: message.method ?? null,
+    id: message.id ?? null,
+    params: message.params,
+    result: message.result,
+    error: message.error,
+  })
   if (message.method === undefined) {
     const resolve = waiting.get(message.id)
     waiting.delete(message.id)
@@ -117,17 +134,22 @@ function receive(message) {
     }
     return
   }
-  Promise.resolve().then(() => handle(message.method, message.params ?? {})).then(
-    result => send({ jsonrpc: '2.0', id: message.id, result }),
-    error => send({ jsonrpc: '2.0', id: message.id, error: { code: error.code ?? -32603, message: error.message } }),
-  )
+  Promise.resolve()
+    .then(() => handle(message.method, message.params ?? {}))
+    .then(
+      result => send({ jsonrpc: '2.0', id: message.id, result }),
+      error => send({ jsonrpc: '2.0', id: message.id, error: { code: error.code ?? -32603, message: error.message } }),
+    )
 }
 
 // ---- sessions -----------------------------------------------------------------------------------------------
 
 function existing(sessionId) {
   // Another process may have created it since this one started.
-  if (!sessions[sessionId]) { const stored = readDisk()[sessionId]; if (stored) sessions[sessionId] = stored }
+  if (!sessions[sessionId]) {
+    const stored = readDisk()[sessionId]
+    if (stored) sessions[sessionId] = stored
+  }
   const session = sessions[sessionId]
   if (!session) throw rpcError(-32002, `Session not found: ${sessionId}`)
   touched.add(sessionId)
@@ -135,14 +157,44 @@ function existing(sessionId) {
 }
 
 function configOptions(session, shape = 'full') {
-  const mode = { id: 'mode', name: 'Mode', ...(shape === 'uncategorized' ? {} : { category: 'mode' }), type: 'select', currentValue: session.mode,
-    options: modes.map(mode => ({ value: mode, name: mode })) }
+  const mode = {
+    id: 'mode',
+    name: 'Mode',
+    ...(shape === 'uncategorized' ? {} : { category: 'mode' }),
+    type: 'select',
+    currentValue: session.mode,
+    options: modes.map(mode => ({ value: mode, name: mode })),
+  }
   return [
     ...(env.FAKE_ACP_MODES && shape !== 'unlisted' ? [mode] : []),
-    { id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: session.model,
-      options: [{ value: 'small', name: 'Small' }, { value: 'large', name: 'Large' }] },
-    { id: 'effort', name: 'Effort', category: 'thought_level', type: 'select', currentValue: session.effort,
-      options: [{ group: 'levels', name: 'Levels', options: [{ value: 'low', name: 'Low' }, { value: 'high', name: 'High' }] }] },
+    {
+      id: 'model',
+      name: 'Model',
+      category: 'model',
+      type: 'select',
+      currentValue: session.model,
+      options: [
+        { value: 'small', name: 'Small' },
+        { value: 'large', name: 'Large' },
+      ],
+    },
+    {
+      id: 'effort',
+      name: 'Effort',
+      category: 'thought_level',
+      type: 'select',
+      currentValue: session.effort,
+      options: [
+        {
+          group: 'levels',
+          name: 'Levels',
+          options: [
+            { value: 'low', name: 'Low' },
+            { value: 'high', name: 'High' },
+          ],
+        },
+      ],
+    },
     { id: 'fast', name: 'Fast', type: 'boolean', currentValue: false },
   ]
 }
@@ -150,8 +202,17 @@ function configOptions(session, shape = 'full') {
 function configState(session) {
   if (env.FAKE_ACP_CONFIG === 'legacy') {
     return {
-      models: { currentModelId: session.model, availableModels: [{ modelId: 'small', name: 'Fake Small' }, { modelId: 'large', name: 'Fake Large' }] },
-      modes: { currentModeId: session.mode, availableModes: modes.map(mode => ({ id: mode, name: mode[0].toUpperCase() + mode.slice(1) })) },
+      models: {
+        currentModelId: session.model,
+        availableModels: [
+          { modelId: 'small', name: 'Fake Small' },
+          { modelId: 'large', name: 'Fake Large' },
+        ],
+      },
+      modes: {
+        currentModeId: session.mode,
+        availableModes: modes.map(mode => ({ id: mode, name: mode[0].toUpperCase() + mode.slice(1) })),
+      },
     }
   }
   if (env.FAKE_ACP_CONFIG === 'options') return { configOptions: configOptions(session) }
@@ -161,13 +222,17 @@ function configState(session) {
 /** Reports the session's mode the way its configuration style does. */
 function reportMode(sessionId, session) {
   if (modeReport === 'none') return
-  if (env.FAKE_ACP_CONFIG === 'options') update(sessionId, { sessionUpdate: 'config_option_update', configOptions: configOptions(session, modeReport) })
+  if (env.FAKE_ACP_CONFIG === 'options')
+    update(sessionId, { sessionUpdate: 'config_option_update', configOptions: configOptions(session, modeReport) })
   else update(sessionId, { sessionUpdate: 'current_mode_update', currentModeId: session.mode })
 }
 
 function restored(sessionId) {
   const session = existing(sessionId)
-  if (resumeMode) { session.mode = resumeMode; save() }
+  if (resumeMode) {
+    session.mode = resumeMode
+    save()
+  }
   return session
 }
 
@@ -201,7 +266,10 @@ async function handle(method, params) {
       if (slowSetup) await delay(slowSetup)
       const session = restored(params.sessionId)
       for (const entry of session.history) {
-        update(params.sessionId, { sessionUpdate: entry.role === 'user' ? 'user_message_chunk' : 'agent_message_chunk', content: { type: 'text', text: entry.text } })
+        update(params.sessionId, {
+          sessionUpdate: entry.role === 'user' ? 'user_message_chunk' : 'agent_message_chunk',
+          content: { type: 'text', text: entry.text },
+        })
       }
       update(params.sessionId, { sessionUpdate: 'tool_call', toolCallId: 'replayed', title: 'Replayed tool', status: 'completed' })
       if (!resumeSilent) return configState(session)
@@ -213,8 +281,12 @@ async function handle(method, params) {
       const session = restored(params.sessionId)
       return resumeSilent ? {} : configState(session)
     }
-    case 'session/prompt': return prompt(params)
-    case 'session/set_model': existing(params.sessionId).model = params.modelId; save(); return {}
+    case 'session/prompt':
+      return prompt(params)
+    case 'session/set_model':
+      existing(params.sessionId).model = params.modelId
+      save()
+      return {}
     case 'session/set_mode': {
       const session = existing(params.sessionId)
       if (!stickyMode) session.mode = params.modeId
@@ -235,8 +307,13 @@ async function handle(method, params) {
       save()
       return { configOptions: configOptions(session) }
     }
-    case 'session/delete': existing(params.sessionId); delete sessions[params.sessionId]; save(); return {}
-    default: throw rpcError(-32601, `Method not found: ${method}`)
+    case 'session/delete':
+      existing(params.sessionId)
+      delete sessions[params.sessionId]
+      save()
+      return {}
+    default:
+      throw rpcError(-32601, `Method not found: ${method}`)
   }
 }
 
@@ -262,7 +339,13 @@ const text = value => ({ type: 'content', content: { type: 'text', text: value }
 async function prompt({ sessionId, prompt: blocks }) {
   const session = existing(sessionId)
   if (env.FAKE_ACP_STORE) {
-    const durable = (() => { try { return readFileSync(env.FAKE_ACP_STORE, 'utf8').includes(sessionId) } catch { return false } })()
+    const durable = (() => {
+      try {
+        return readFileSync(env.FAKE_ACP_STORE, 'utf8').includes(sessionId)
+      } catch {
+        return false
+      }
+    })()
     log('prompt-store', { sessionId, durable })
   }
   if (env.FAKE_ACP_AUTH === 'prompt') throw rpcError(-32000, 'Authentication required')
@@ -287,7 +370,10 @@ async function prompt({ sessionId, prompt: blocks }) {
 }
 
 const scenarios = {
-  echo: ({ input, say }) => { say(`echo: ${input}`); return END },
+  echo: ({ input, say }) => {
+    say(`echo: ${input}`)
+    return END
+  },
   count: async ({ sessionId, argument, say }) => {
     for (let index = 0; index < Number(argument ?? 5); index++) {
       if (cancelled.has(sessionId)) return { stopReason: 'cancelled' }
@@ -296,23 +382,53 @@ const scenarios = {
     }
     return END
   },
-  ids: ({ say }) => { say('first ', 'm1'); say('part', 'm1'); say('second', 'm2'); return END },
-  think: ({ think, say }) => { think('pondering'); think(' deeply'); say('answer'); return END },
+  ids: ({ say }) => {
+    say('first ', 'm1')
+    say('part', 'm1')
+    say('second', 'm2')
+    return END
+  },
+  think: ({ think, say }) => {
+    think('pondering')
+    think(' deeply')
+    say('answer')
+    return END
+  },
   tool: ({ say, tool }) => {
     say('before')
-    tool({ toolCallId: 'call_1', title: 'Edit a.txt', kind: 'edit', status: 'pending', rawInput: { path: '/w/a.txt' }, locations: [{ path: '/w/a.txt', line: 3 }] })
+    tool({
+      toolCallId: 'call_1',
+      title: 'Edit a.txt',
+      kind: 'edit',
+      status: 'pending',
+      rawInput: { path: '/w/a.txt' },
+      locations: [{ path: '/w/a.txt', line: 3 }],
+    })
     tool({ toolCallId: 'call_1', status: 'in_progress' }, 'tool_call_update')
-    tool({ toolCallId: 'call_1', status: 'completed', content: [{ type: 'diff', path: '/w/a.txt', oldText: 'old\n', newText: 'new\n' }, text('written')] }, 'tool_call_update')
+    tool(
+      {
+        toolCallId: 'call_1',
+        status: 'completed',
+        content: [{ type: 'diff', path: '/w/a.txt', oldText: 'old\n', newText: 'new\n' }, text('written')],
+      },
+      'tool_call_update',
+    )
     say('after')
     return END
   },
   // A new file (oldText null), an edit (oldText text) and an agent that leaves oldText out.
   diffs: ({ tool }) => {
-    tool({ toolCallId: 'call_1', title: 'Write files', kind: 'edit', status: 'completed', content: [
-      { type: 'diff', path: '/w/new.txt', oldText: null, newText: 'created\n' },
-      { type: 'diff', path: '/w/a.txt', oldText: 'old\n', newText: 'new\n' },
-      { type: 'diff', path: '/w/b.txt', newText: 'b\n' },
-    ] })
+    tool({
+      toolCallId: 'call_1',
+      title: 'Write files',
+      kind: 'edit',
+      status: 'completed',
+      content: [
+        { type: 'diff', path: '/w/new.txt', oldText: null, newText: 'created\n' },
+        { type: 'diff', path: '/w/a.txt', oldText: 'old\n', newText: 'new\n' },
+        { type: 'diff', path: '/w/b.txt', newText: 'b\n' },
+      ],
+    })
     return END
   },
   permission: async ({ say, tool, permission }) => {
@@ -408,7 +524,13 @@ const scenarios = {
     return END
   },
   plan: ({ sessionId, say }) => {
-    update(sessionId, { sessionUpdate: 'plan', entries: [{ content: 'Read', priority: 'high', status: 'completed' }, { content: 'Write', priority: 'medium', status: 'in_progress' }] })
+    update(sessionId, {
+      sessionUpdate: 'plan',
+      entries: [
+        { content: 'Read', priority: 'high', status: 'completed' },
+        { content: 'Write', priority: 'medium', status: 'in_progress' },
+      ],
+    })
     update(sessionId, { sessionUpdate: 'session_info_update', title: 'Fake title' })
     update(sessionId, { sessionUpdate: 'usage_update', used: 10, size: 100 })
     update(sessionId, { sessionUpdate: 'available_commands_update', availableCommands: [{ name: 'init', description: 'init' }] })
@@ -416,14 +538,21 @@ const scenarios = {
     say('planned')
     return { stopReason: 'end_turn', usage: { totalTokens: 30, inputTokens: 10, outputTokens: 20 } }
   },
-  noise: ({ say }) => { process.stdout.write('this line is not json\n'); say('still fine'); return END },
+  noise: ({ say }) => {
+    process.stdout.write('this line is not json\n')
+    say('still fine')
+    return END
+  },
   flood: async ({ say }) => {
     const chunk = `${'e'.repeat(1023)}\n`.repeat(64)
     for (let index = 0; index < 48; index++) process.stderr.write(chunk)
     say('survived')
     return END
   },
-  big: ({ argument, say }) => { say('x'.repeat(Number(argument))); return END },
+  big: ({ argument, say }) => {
+    say('x'.repeat(Number(argument)))
+    return END
+  },
   stray: ({ sessionId, say }) => {
     say('main')
     setTimeout(() => {

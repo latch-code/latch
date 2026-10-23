@@ -8,10 +8,16 @@ import type { Bridge, ConfigChangeClass, CreateTaskInput, DecideOptions, LaunchP
 import type { Approval, HarnessInfo, HarnessSource, SessionPermission, TaskDetail, TaskSummary } from '../shared/types.ts'
 
 /** `harnessId` is Host-only: the hub strips it before the driver sees the input. */
-export interface HubCreateInput extends CreateTaskInput { harnessId?: string }
+export interface HubCreateInput extends CreateTaskInput {
+  harnessId?: string
+}
 
 /** Host-level session metadata; it applies to every harness. `title: null` removes an override. */
-export interface SessionMetaPatch { title?: string | null; pinned?: boolean; archived?: boolean }
+export interface SessionMetaPatch {
+  title?: string | null
+  pinned?: boolean
+  archived?: boolean
+}
 
 export interface HarnessMount {
   /** Creates the unstarted Bridge; the hub starts it. */
@@ -54,12 +60,16 @@ type Member = Entry & { bridge: Bridge }
 const META_FILE = 'sessions-meta.json'
 const metaSchema = z.object({
   version: z.literal(1),
-  sessions: z.array(z.object({
-    id: z.string().min(1).max(256),
-    title: z.string().min(1).max(200).optional(),
-    pinned: z.literal(true).optional(),
-    archived: z.literal(true).optional(),
-  })).max(100_000),
+  sessions: z
+    .array(
+      z.object({
+        id: z.string().min(1).max(256),
+        title: z.string().min(1).max(200).optional(),
+        pinned: z.literal(true).optional(),
+        archived: z.literal(true).optional(),
+      }),
+    )
+    .max(100_000),
 })
 type StoredMeta = Omit<z.infer<typeof metaSchema>['sessions'][number], 'id'>
 
@@ -69,33 +79,51 @@ const MAX_DETAIL_APPROVALS = 1024
 const PLUGIN_NOTE = '第三方 Harness 插件，Latch 无法核实其执行范围'
 
 /** Builtin runs under Latch's own approvals (L1); ACP agents and plugin harnesses run unsandboxed (L3). */
-function levelFor(source: HarnessSource): 'L1' | 'L3' { return source === 'builtin' ? 'L1' : 'L3' }
+function levelFor(source: HarnessSource): 'L1' | 'L3' {
+  return source === 'builtin' ? 'L1' : 'L3'
+}
 
-function message(error: unknown): string { return error instanceof Error ? error.message : String(error) }
-function codeOf(error: unknown): unknown { return error instanceof Error && 'code' in error ? error.code : undefined }
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+function codeOf(error: unknown): unknown {
+  return error instanceof Error && 'code' in error ? error.code : undefined
+}
 
 /** Atomic, serialized writer for the Host's per-session overlay (title, pin, archive). */
 class SessionMetaStore {
   private queue: Promise<void> = Promise.resolve()
 
-  private constructor(private readonly path: string, private readonly dataDir: string, private entries: Map<string, StoredMeta>) {}
+  private constructor(
+    private readonly path: string,
+    private readonly dataDir: string,
+    private entries: Map<string, StoredMeta>,
+  ) {}
 
   static async open(dataDir: string): Promise<SessionMetaStore> {
     const path = join(dataDir, META_FILE)
     let text: string | undefined
-    try { text = await readFile(path, 'utf8') }
-    catch (error) { if (codeOf(error) !== 'ENOENT') throw error }
+    try {
+      text = await readFile(path, 'utf8')
+    } catch (error) {
+      if (codeOf(error) !== 'ENOENT') throw error
+    }
     const entries = new Map<string, StoredMeta>()
     if (text !== undefined) {
       let parsed: z.infer<typeof metaSchema>
-      try { parsed = metaSchema.parse(JSON.parse(text)) }
-      catch { throw new AppError(500, 'config-corrupt', `会话设置文件 ${path} 无法读取，原文件已保留；请修复或移走后重启`) }
+      try {
+        parsed = metaSchema.parse(JSON.parse(text))
+      } catch {
+        throw new AppError(500, 'config-corrupt', `会话设置文件 ${path} 无法读取，原文件已保留；请修复或移走后重启`)
+      }
       for (const { id, ...meta } of parsed.sessions) entries.set(id, meta)
     }
     return new SessionMetaStore(path, dataDir, entries)
   }
 
-  get(sessionId: string): StoredMeta | undefined { return this.entries.get(sessionId) }
+  get(sessionId: string): StoredMeta | undefined {
+    return this.entries.get(sessionId)
+  }
 
   /** Publishes in memory only after the rename, so a failed write leaves the previous state visible. */
   update(sessionId: string, change: (meta: StoredMeta) => StoredMeta | undefined): Promise<void> {
@@ -107,11 +135,16 @@ class SessionMetaStore {
       await this.write(next)
       this.entries = next
     })
-    this.queue = run.then(() => {}, () => {})
+    this.queue = run.then(
+      () => {},
+      () => {},
+    )
     return run
   }
 
-  flush(): Promise<void> { return this.queue }
+  flush(): Promise<void> {
+    return this.queue
+  }
 
   private async write(entries: Map<string, StoredMeta>): Promise<void> {
     await mkdir(this.dataDir, { recursive: true, mode: 0o700 })
@@ -120,13 +153,21 @@ class SessionMetaStore {
     let renamed = false
     try {
       const handle = await open(temporary, 'wx', 0o600)
-      try { await handle.writeFile(JSON.stringify({ version: 1, sessions }) + '\n'); await handle.sync() }
-      finally { await handle.close() }
+      try {
+        await handle.writeFile(JSON.stringify({ version: 1, sessions }) + '\n')
+        await handle.sync()
+      } finally {
+        await handle.close()
+      }
       await rename(temporary, this.path)
       renamed = true
       if (process.platform !== 'win32') {
         const directory = await open(this.dataDir, 'r')
-        try { await directory.sync() } finally { await directory.close() }
+        try {
+          await directory.sync()
+        } finally {
+          await directory.close()
+        }
       }
     } finally {
       if (!renamed) await unlink(temporary).catch(() => {})
@@ -149,7 +190,10 @@ export class HarnessHub implements Bridge {
   private readonly log: (message: string) => void
   private closing?: Promise<void>
 
-  private constructor(private readonly options: HubOptions, private readonly meta: SessionMetaStore) {
+  private constructor(
+    private readonly options: HubOptions,
+    private readonly meta: SessionMetaStore,
+  ) {
     this.log = options.log ?? (text => console.error(`[Latch] ${text}`))
   }
 
@@ -160,10 +204,22 @@ export class HarnessHub implements Bridge {
   /** Mounts a driver: creates and starts its Bridge. Order matters: on an ID collision the earlier mount wins. */
   async attach(driver: HarnessDriver, mount: HarnessMount): Promise<HarnessInfo> {
     const current = this.entries.get(driver.id)
-    const refusal = this.closing ? new AppError(503, 'host-closing', '运行节点正在关闭')
-      : current?.bridge || current?.starting ? new AppError(409, 'harness-exists', `Harness ${driver.id} 已加载`) : undefined
-    if (refusal) { mount.release(); throw refusal }
-    const entry: Entry = { driver, source: mount.source, starting: true, accepting: 0, ...(mount.capabilities ? { capabilities: mount.capabilities } : {}) }
+    const refusal = this.closing
+      ? new AppError(503, 'host-closing', '运行节点正在关闭')
+      : current?.bridge || current?.starting
+        ? new AppError(409, 'harness-exists', `Harness ${driver.id} 已加载`)
+        : undefined
+    if (refusal) {
+      mount.release()
+      throw refusal
+    }
+    const entry: Entry = {
+      driver,
+      source: mount.source,
+      starting: true,
+      accepting: 0,
+      ...(mount.capabilities ? { capabilities: mount.capabilities } : {}),
+    }
     this.entries.delete(driver.id)
     this.entries.set(driver.id, entry)
     let bridge: Bridge | undefined
@@ -176,13 +232,19 @@ export class HarnessHub implements Bridge {
       })
       await bridge.start()
       // close() or detach() ran while this driver was starting; it was never visible, so retire it here.
-      if (this.closing || this.entries.get(driver.id) !== entry) throw new AppError(503, 'harness-detached', `Harness ${driver.id} 已在启动期间停用`)
+      if (this.closing || this.entries.get(driver.id) !== entry)
+        throw new AppError(503, 'harness-detached', `Harness ${driver.id} 已在启动期间停用`)
       Object.assign(entry, { bridge, release: mount.release })
     } catch (error) {
       entry.unsubscribe?.()
       delete entry.unsubscribe
-      try { await bridge?.close() } catch (closeError) { this.log(`Harness ${driver.id} 启动失败后清理失败：${message(closeError)}`) }
-      finally { mount.release() }
+      try {
+        await bridge?.close()
+      } catch (closeError) {
+        this.log(`Harness ${driver.id} 启动失败后清理失败：${message(closeError)}`)
+      } finally {
+        mount.release()
+      }
       if (mount.required || this.entries.get(driver.id) !== entry) {
         if (this.entries.get(driver.id) === entry) this.entries.delete(driver.id)
         throw error
@@ -200,15 +262,23 @@ export class HarnessHub implements Bridge {
   async detach(id: string): Promise<void> {
     const entry = this.entries.get(id)
     if (!entry) return
-    if (!entry.bridge) { this.entries.delete(id); this.emit(); return }
+    if (!entry.bridge) {
+      this.entries.delete(id)
+      this.emit()
+      return
+    }
     if (entry.detaching) throw new AppError(409, 'harness-busy', `Harness ${id} 正在停用`)
     const member = entry as Member
     // A Bridge may list a new session or turn only once the call settles, so in-flight work counts as running.
     if (member.accepting) throw new AppError(409, 'harness-busy', `${member.driver.name} 正在接收新的请求，请稍后再试`)
     member.detaching = true
     let tasks: TaskSummary[]
-    try { tasks = await member.bridge.listTasks() }
-    catch (error) { member.detaching = false; throw error }
+    try {
+      tasks = await member.bridge.listTasks()
+    } catch (error) {
+      member.detaching = false
+      throw error
+    }
     if (tasks.some(task => ACTIVE.has(task.status))) {
       member.detaching = false
       throw new AppError(409, 'harness-busy', `${member.driver.name} 仍有运行中的会话，请等待完成或先取消`)
@@ -218,17 +288,23 @@ export class HarnessHub implements Bridge {
     for (const [approvalId, owner] of this.detailApprovals) if (owner === id) this.detailApprovals.delete(approvalId)
     member.unsubscribe?.()
     // The driver is already unrouted; a failed close must not leave the caller's change half-applied.
-    try { await member.bridge.close() }
-    catch (error) { this.log(`Harness ${id} 关闭失败：${message(error)}`) }
-    finally {
+    try {
+      await member.bridge.close()
+    } catch (error) {
+      this.log(`Harness ${id} 关闭失败：${message(error)}`)
+    } finally {
       member.release?.()
       this.emit()
     }
   }
 
-  has(id: string): boolean { return Boolean(this.entries.get(id)?.bridge) }
+  has(id: string): boolean {
+    return Boolean(this.entries.get(id)?.bridge)
+  }
 
-  sourceOf(harnessId: string): HarnessSource | undefined { return this.entries.get(harnessId)?.source }
+  sourceOf(harnessId: string): HarnessSource | undefined {
+    return this.entries.get(harnessId)?.source
+  }
 
   /** Unknown harnesses count as L3, the level that allows the least. */
   levelOf(harnessId: string): 'L1' | 'L3' {
@@ -263,30 +339,43 @@ export class HarnessHub implements Bridge {
   }
 
   /** Mounted drivers and drivers that failed to start, in mount order. */
-  drivers(): HarnessInfo[] { return [...this.entries.values()].map(entry => this.describe(entry)) }
+  drivers(): HarnessInfo[] {
+    return [...this.entries.values()].map(entry => this.describe(entry))
+  }
 
   /** The harness that owns a session. */
-  async harnessOf(sessionId: string): Promise<string> { return (await this.route(sessionId)).driver.id }
+  async harnessOf(sessionId: string): Promise<string> {
+    return (await this.route(sessionId)).driver.id
+  }
 
   async start(): Promise<void> {
     if (this.closing) throw new AppError(503, 'host-closing', '运行节点正在关闭')
   }
 
   close(): Promise<void> {
-    return this.closing ??= (async () => {
+    return (this.closing ??= (async () => {
       const failures: unknown[] = []
       for (const entry of [...this.entries.values()].reverse()) {
         if (!entry.bridge) continue
         entry.unsubscribe?.()
-        try { await entry.bridge.close() } catch (error) { failures.push(error) }
-        finally { entry.release?.() }
+        try {
+          await entry.bridge.close()
+        } catch (error) {
+          failures.push(error)
+        } finally {
+          entry.release?.()
+        }
       }
       this.entries.clear()
       this.routes.clear()
       this.listeners.clear()
-      try { await this.meta.flush() } catch (error) { failures.push(error) }
+      try {
+        await this.meta.flush()
+      } catch (error) {
+        failures.push(error)
+      }
       if (failures.length) throw new AggregateError(failures, 'Harness hub cleanup failed')
-    })()
+    })())
   }
 
   async listTasks(): Promise<TaskSummary[]> {
@@ -317,7 +406,9 @@ export class HarnessHub implements Bridge {
   }
 
   async prompt(sessionId: string, prompt: string, requestId: string, options?: PromptOptions): Promise<void> {
-    await this.accept(await this.route(sessionId), bridge => options ? bridge.prompt(sessionId, prompt, requestId, options) : bridge.prompt(sessionId, prompt, requestId))
+    await this.accept(await this.route(sessionId), bridge =>
+      options ? bridge.prompt(sessionId, prompt, requestId, options) : bridge.prompt(sessionId, prompt, requestId),
+    )
   }
 
   async cancel(sessionId: string): Promise<void> {
@@ -350,7 +441,9 @@ export class HarnessHub implements Bridge {
   }
 
   async decide(approvalId: string, decision: 'allow' | 'reject', options?: DecideOptions): Promise<boolean> {
-    const owners = this.listApprovals().filter(([, approvals]) => approvals.some(approval => approval.id === approvalId)).map(([member]) => member)
+    const owners = this.listApprovals()
+      .filter(([, approvals]) => approvals.some(approval => approval.id === approvalId))
+      .map(([member]) => member)
     if (owners.length > 1) {
       // Refusing an ambiguous decision is the only choice that cannot approve the wrong operation.
       this.log(`审批标识 ${approvalId} 同时属于 ${owners.map(owner => owner.driver.id).join('、')}，已拒绝路由`)
@@ -366,7 +459,9 @@ export class HarnessHub implements Bridge {
 
   subscribe(listener: (sessionId?: string) => void): () => void {
     this.listeners.add(listener)
-    return () => { this.listeners.delete(listener) }
+    return () => {
+      this.listeners.delete(listener)
+    }
   }
 
   async remove(sessionId: string): Promise<void> {
@@ -375,7 +470,8 @@ export class HarnessHub implements Bridge {
     await member.bridge.remove(sessionId)
     this.routes.delete(sessionId)
     // The session is already gone; a stale overlay entry is harmless, a reported failure would mislead.
-    if (this.meta.get(sessionId)) await this.meta.update(sessionId, () => undefined).catch(error => this.log(`会话设置清理失败：${message(error)}`))
+    if (this.meta.get(sessionId))
+      await this.meta.update(sessionId, () => undefined).catch(error => this.log(`会话设置清理失败：${message(error)}`))
   }
 
   async setConfig(sessionId: string, configId: string, value: string, options?: SetConfigOptions): Promise<void> {
@@ -393,8 +489,14 @@ export class HarnessHub implements Bridge {
       const next = { ...current }
       if (patch.title === null) delete next.title
       else if (patch.title !== undefined) next.title = patch.title
-      if (patch.pinned !== undefined) { if (patch.pinned) next.pinned = true; else delete next.pinned }
-      if (patch.archived !== undefined) { if (patch.archived) next.archived = true; else delete next.archived }
+      if (patch.pinned !== undefined) {
+        if (patch.pinned) next.pinned = true
+        else delete next.pinned
+      }
+      if (patch.archived !== undefined) {
+        if (patch.archived) next.archived = true
+        else delete next.archived
+      }
       return next
     })
     this.emit(sessionId)
@@ -403,7 +505,7 @@ export class HarnessHub implements Bridge {
 
   private member(id: string): Member | undefined {
     const entry = this.entries.get(id)
-    return entry?.bridge ? entry as Member : undefined
+    return entry?.bridge ? (entry as Member) : undefined
   }
 
   private members(): Member[] {
@@ -417,7 +519,10 @@ export class HarnessHub implements Bridge {
     const listed: Array<[Member, TaskSummary[]]> = []
     settled.forEach((result, index) => {
       const member = members[index]!
-      if (result.status === 'rejected') { this.log(`Harness ${member.driver.id} 无法列出会话：${message(result.reason)}`); return }
+      if (result.status === 'rejected') {
+        this.log(`Harness ${member.driver.id} 无法列出会话：${message(result.reason)}`)
+        return
+      }
       for (const task of result.value) this.claim(member.driver.id, task.id)
       listed.push([member, result.value])
     })
@@ -427,8 +532,11 @@ export class HarnessHub implements Bridge {
   private listApprovals(): Array<[Member, Approval[]]> {
     const listed: Array<[Member, Approval[]]> = []
     for (const member of this.members()) {
-      try { listed.push([member, member.bridge.approvals()]) }
-      catch (error) { this.log(`Harness ${member.driver.id} 无法列出审批：${message(error)}`) }
+      try {
+        listed.push([member, member.bridge.approvals()])
+      } catch (error) {
+        this.log(`Harness ${member.driver.id} 无法列出审批：${message(error)}`)
+      }
     }
     return listed
   }
@@ -436,7 +544,10 @@ export class HarnessHub implements Bridge {
   /** Routes a session, re-listing once for IDs not seen yet (e.g. after a restart). */
   private async route(sessionId: string): Promise<Member> {
     let member = this.owner(sessionId)
-    if (!member) { await this.discover(); member = this.owner(sessionId) }
+    if (!member) {
+      await this.discover()
+      member = this.owner(sessionId)
+    }
     if (!member) throw new AppError(404, 'task-not-found', '找不到该任务')
     return member
   }
@@ -446,10 +557,14 @@ export class HarnessHub implements Bridge {
    * so `detach` either sees the call or the call sees the detach.
    */
   private async accept<T>(member: Member, call: (bridge: Bridge) => Promise<T>): Promise<T> {
-    if (member.detaching || this.entries.get(member.driver.id) !== member) throw new AppError(409, 'harness-unavailable', `${member.driver.name} 正在停用`)
+    if (member.detaching || this.entries.get(member.driver.id) !== member)
+      throw new AppError(409, 'harness-unavailable', `${member.driver.name} 正在停用`)
     member.accepting++
-    try { return await call(member.bridge) }
-    finally { member.accepting-- }
+    try {
+      return await call(member.bridge)
+    } finally {
+      member.accepting--
+    }
   }
 
   private owner(sessionId: string): Member | undefined {
@@ -481,7 +596,7 @@ export class HarnessHub implements Bridge {
   /** Builtin: Latch enforces. ACP: what the bridge verified, but never more than L3. Plugin harness: nothing verified. */
   private permission(member: Member, reported: SessionPermission | undefined): SessionPermission {
     if (member.source === 'builtin') return { level: 'L1', enforcer: 'LATCH', notes: [] }
-    if (member.source === 'acp') return { ...reported, notes: [...reported?.notes ?? []], level: 'L3', enforcer: 'NONE' }
+    if (member.source === 'acp') return { ...reported, notes: [...(reported?.notes ?? [])], level: 'L3', enforcer: 'NONE' }
     return { level: 'L3', enforcer: 'NONE', notes: [PLUGIN_NOTE] }
   }
 
@@ -489,7 +604,9 @@ export class HarnessHub implements Bridge {
     const { pinned: _pinned, archived: _archived, level: _level, ...rest } = summary
     const meta = this.meta.get(summary.id)
     return {
-      ...rest, harnessId, level: this.levelOf(harnessId),
+      ...rest,
+      harnessId,
+      level: this.levelOf(harnessId),
       ...(meta?.title ? { title: meta.title } : {}),
       ...(meta?.pinned ? { pinned: true } : {}),
       ...(meta?.archived ? { archived: true } : {}),
@@ -501,24 +618,44 @@ export class HarnessHub implements Bridge {
     const capabilities = entry.capabilities ?? driver.capabilities ?? DEFAULT_CAPABILITIES
     let status: HarnessInfo['status'] = 'ready'
     let statusMessage: string | undefined
-    if (entry.failure) { status = 'unavailable'; statusMessage = entry.failure }
-    else if (entry.starting) { status = 'unavailable'; statusMessage = '正在启动' }
-    else {
+    if (entry.failure) {
+      status = 'unavailable'
+      statusMessage = entry.failure
+    } else if (entry.starting) {
+      status = 'unavailable'
+      statusMessage = '正在启动'
+    } else {
       try {
         const reported = driver.status?.()
-        if (reported) { status = reported.status; statusMessage = reported.statusMessage }
-      } catch (error) { status = 'unavailable'; statusMessage = message(error) }
+        if (reported) {
+          status = reported.status
+          statusMessage = reported.statusMessage
+        }
+      } catch (error) {
+        status = 'unavailable'
+        statusMessage = message(error)
+      }
     }
     return {
-      id: driver.id, name: driver.name, ...(driver.description ? { description: driver.description } : {}),
-      source: entry.source, status, ...(statusMessage ? { statusMessage } : {}),
-      modes: [...capabilities.modes], models: capabilities.models, level: levelFor(entry.source),
+      id: driver.id,
+      name: driver.name,
+      ...(driver.description ? { description: driver.description } : {}),
+      source: entry.source,
+      status,
+      ...(statusMessage ? { statusMessage } : {}),
+      modes: [...capabilities.modes],
+      models: capabilities.models,
+      level: levelFor(entry.source),
     }
   }
 
   private emit(sessionId?: string): void {
     for (const listener of this.listeners) {
-      try { listener(sessionId) } catch { /* One subscriber cannot block the others. */ }
+      try {
+        listener(sessionId)
+      } catch {
+        /* One subscriber cannot block the others. */
+      }
     }
   }
 }

@@ -1,4 +1,13 @@
-import type { AppSnapshot, HarnessInfo, HostCatalog, ModelRef, ProviderSummary, TaskMode, TaskSummary, WorkspaceInfo } from '../shared/types.ts'
+import type {
+  AppSnapshot,
+  HarnessInfo,
+  HostCatalog,
+  ModelRef,
+  ProviderSummary,
+  TaskMode,
+  TaskSummary,
+  WorkspaceInfo,
+} from '../shared/types.ts'
 import { harnessGate, type DeviceAccess } from './permissions.ts'
 import { storageGet, storageSet } from './preferences.ts'
 
@@ -48,27 +57,39 @@ export function defaultModel(catalog: HostCatalog): ModelRef | undefined {
  * missing harness, unsupported mode, removed workspace or model falls back to
  * the Host defaults instead of failing at submit time.
  */
-export function resolveChoice(catalog: HostCatalog | undefined, stored: Partial<ComposerChoice> | null, access: StartAccess = openAccess): ComposerChoice {
+export function resolveChoice(
+  catalog: HostCatalog | undefined,
+  stored: Partial<ComposerChoice> | null,
+  access: StartAccess = openAccess,
+): ComposerChoice {
   if (!catalog) return { mode: stored?.mode ?? 'agent' }
   // Full-access harnesses that this device may not start are skipped like unavailable ones.
-  const ready = (harness: HarnessInfo | undefined) => harness?.status === 'ready' && harnessGate(harness, access).allowed ? harness : undefined
-  const harness = ready(catalog.harnesses.find(item => item.id === stored?.harnessId))
+  const ready = (harness: HarnessInfo | undefined) =>
+    harness?.status === 'ready' && harnessGate(harness, access).allowed ? harness : undefined
+  const harness =
+    ready(catalog.harnesses.find(item => item.id === stored?.harnessId))
     ?? ready(catalog.harnesses.find(item => item.id === catalog.defaults.harnessId))
     ?? catalog.harnesses.find(item => ready(item) !== undefined)
     ?? catalog.harnesses.find(item => item.id === catalog.defaults.harnessId)
     ?? catalog.harnesses[0]
-  const modes = harness?.modes.length ? harness.modes : ['chat', 'agent'] as TaskMode[]
-  const mode = [stored?.mode, catalog.defaults.mode].find((item): item is TaskMode => item !== undefined && modes.includes(item)) ?? modes.at(-1)!
+  const modes = harness?.modes.length ? harness.modes : (['chat', 'agent'] as TaskMode[])
+  const mode =
+    [stored?.mode, catalog.defaults.mode].find((item): item is TaskMode => item !== undefined && modes.includes(item)) ?? modes.at(-1)!
   const workspaces = startableWorkspaces(catalog)
-  const workspace = workspaces.find(item => item.id === stored?.workspaceId)
-    ?? workspaces.find(item => item.id === catalog.defaults.workspaceId) ?? workspaces[0]
-  const model = harness?.models === 'host' ? validModel(catalog, stored?.model) ?? defaultModel(catalog) : undefined
-  return { mode, ...(harness ? { harnessId: harness.id } : {}), ...(workspace ? { workspaceId: workspace.id } : {}), ...(model ? { model } : {}) }
+  const workspace =
+    workspaces.find(item => item.id === stored?.workspaceId)
+    ?? workspaces.find(item => item.id === catalog.defaults.workspaceId)
+    ?? workspaces[0]
+  const model = harness?.models === 'host' ? (validModel(catalog, stored?.model) ?? defaultModel(catalog)) : undefined
+  return {
+    mode,
+    ...(harness ? { harnessId: harness.id } : {}),
+    ...(workspace ? { workspaceId: workspace.id } : {}),
+    ...(model ? { model } : {}),
+  }
 }
 
-export type StartBlock =
-  | { kind: 'harness-unavailable'; message: string }
-  | { kind: 'model-required'; message: string }
+export type StartBlock = { kind: 'harness-unavailable'; message: string } | { kind: 'model-required'; message: string }
 
 /** Why a new session cannot start with this choice, or null when it can. */
 export function startBlock(snapshot: AppSnapshot, choice: ComposerChoice, access: StartAccess = openAccess): StartBlock | null {
@@ -81,7 +102,8 @@ export function startBlock(snapshot: AppSnapshot, choice: ComposerChoice, access
   const harness = findHarness(catalog, choice.harnessId)
   if (!harness) return { kind: 'harness-unavailable', message: '执行端没有可用的 Harness。' }
   if (harness.status !== 'ready') return { kind: 'harness-unavailable', message: harness.statusMessage || `${harness.name} 暂不可用。` }
-  if (!harnessGate(harness, access).allowed) return { kind: 'harness-unavailable', message: `${harness.name} 是完全访问（L3）Harness，只能在执行端电脑上用 Latch 桌面端开启。` }
+  if (!harnessGate(harness, access).allowed)
+    return { kind: 'harness-unavailable', message: `${harness.name} 是完全访问（L3）Harness，只能在执行端电脑上用 Latch 桌面端开启。` }
   if (harness.models === 'host' && !choice.model) return { kind: 'model-required', message: `${harness.name} 需要一个模型服务。` }
   return null
 }
@@ -119,9 +141,13 @@ export function readChoice(deviceId: string): Partial<ComposerChoice> | null {
       ...(item.mode === 'chat' || item.mode === 'agent' ? { mode: item.mode } : {}),
       ...(typeof item.harnessId === 'string' ? { harnessId: item.harnessId } : {}),
       ...(typeof item.workspaceId === 'string' ? { workspaceId: item.workspaceId } : {}),
-      ...(model && typeof model.providerId === 'string' && typeof model.model === 'string' ? { model: { providerId: model.providerId, model: model.model } } : {}),
+      ...(model && typeof model.providerId === 'string' && typeof model.model === 'string'
+        ? { model: { providerId: model.providerId, model: model.model } }
+        : {}),
     }
-  } catch { return null }
+  } catch {
+    return null
+  }
 }
 
 export function writeChoice(deviceId: string, choice: ComposerChoice): void {

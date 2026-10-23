@@ -12,8 +12,15 @@ export default {
       requiresApproval: false,
       async execute(args, { signal }) {
         signal.throwIfAborted()
-        if (typeof args.text !== 'string' || args.text.length > 65536 || Object.keys(args).some(key => key !== 'text')) throw new Error('text must be a string of at most 65536 characters')
-        return { text: JSON.stringify({ characters: [...args.text].length, lines: args.text.split('\n').length, words: args.text.trim() ? args.text.trim().split(/\s+/).length : 0 }) }
+        if (typeof args.text !== 'string' || args.text.length > 65536 || Object.keys(args).some(key => key !== 'text'))
+          throw new Error('text must be a string of at most 65536 characters')
+        return {
+          text: JSON.stringify({
+            characters: [...args.text].length,
+            lines: args.text.split('\n').length,
+            words: args.text.trim() ? args.text.trim().split(/\s+/).length : 0,
+          }),
+        }
       },
     })
   },

@@ -2,15 +2,26 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { KeyboardEvent, PointerEvent, TouchEvent, WheelEvent } from 'react'
 
 type Mode = 'follow' | 'read'
-export interface ReadingAnchor { messageId: string; offset: number }
-export interface ViewportGeometry { top: number; height: number; extent: number }
+export interface ReadingAnchor {
+  messageId: string
+  offset: number
+}
+export interface ViewportGeometry {
+  top: number
+  height: number
+  extent: number
+}
 export interface ReadingViewport {
   measure(): ViewportGeometry
   anchor(): ReadingAnchor | null
   positionFor(anchor: ReadingAnchor): number | null
   write(top: number): void
 }
-interface Position { mode: Mode; top: number; anchor: ReadingAnchor | null }
+interface Position {
+  mode: Mode
+  top: number
+  anchor: ReadingAnchor | null
+}
 const bottom = (geometry: ViewportGeometry) => Math.max(0, geometry.extent - geometry.height)
 const close = (left: number, right: number) => Math.abs(left - right) < 0.75
 /** Space kept above a revealed row so it does not sit under the pane's top edge. */
@@ -29,11 +40,20 @@ export class ReadingPositionController {
   private following = true
   private request: { sessionId: string; messageId?: string } | null = null
 
-  constructor(private readonly changed: (following: boolean) => void = () => {}, private readonly now = () => performance.now()) {}
+  constructor(
+    private readonly changed: (following: boolean) => void = () => {},
+    private readonly now = () => performance.now(),
+  ) {}
 
-  get isFollowing(): boolean { return this.following }
-  private get position(): Position | undefined { return this.sessionId === null ? undefined : this.positions.get(this.sessionId) }
-  private get readerActive(): boolean { return this.pointerHeld || this.touchHeld || this.now() < this.inputUntil }
+  get isFollowing(): boolean {
+    return this.following
+  }
+  private get position(): Position | undefined {
+    return this.sessionId === null ? undefined : this.positions.get(this.sessionId)
+  }
+  private get readerActive(): boolean {
+    return this.pointerHeld || this.touchHeld || this.now() < this.inputUntil
+  }
 
   sync(sessionId: string | null, ready: boolean, viewport: ReadingViewport | null): void {
     if (sessionId !== this.sessionId) {
@@ -80,8 +100,12 @@ export class ReadingPositionController {
       this.capture(viewport)
       return
     }
-    const target = position.mode === 'follow' ? bottom(geometry)
-      : position.anchor ? viewport.positionFor(position.anchor) ?? position.top : position.top
+    const target =
+      position.mode === 'follow'
+        ? bottom(geometry)
+        : position.anchor
+          ? (viewport.positionFor(position.anchor) ?? position.top)
+          : position.top
     const bounded = Math.max(0, Math.min(target, bottom(geometry)))
     if (!close(geometry.top, bounded)) {
       viewport.write(bounded)
@@ -117,7 +141,11 @@ export class ReadingPositionController {
     if (!active) this.inputUntil = this.now() + 1000
   }
 
-  clearInput(): void { this.pointerHeld = false; this.touchHeld = false; this.inputUntil = 0 }
+  clearInput(): void {
+    this.pointerHeld = false
+    this.touchHeld = false
+    this.inputUntil = 0
+  }
 
   scroll(viewport: ReadingViewport): void {
     const position = this.position
@@ -131,8 +159,8 @@ export class ReadingPositionController {
     }
     this.writtenTop = null
     // Keyboard/composer resizing can clamp scrollTop before ResizeObserver runs.
-    const clamped = previous !== null && bottom(geometry) < bottom(previous) - 0.75
-      && close(geometry.top, Math.min(previous.top, bottom(geometry)))
+    const clamped =
+      previous !== null && bottom(geometry) < bottom(previous) - 0.75 && close(geometry.top, Math.min(previous.top, bottom(geometry)))
     if (clamped || !this.readerActive) return
     const delta = previous === null ? 0 : geometry.top - previous.top
     if (delta < -0.75) position.mode = 'read'
@@ -143,7 +171,10 @@ export class ReadingPositionController {
 
   jumpToLatest(viewport: ReadingViewport | null): void {
     const position = this.position
-    if (position) { position.mode = 'follow'; position.anchor = null }
+    if (position) {
+      position.mode = 'follow'
+      position.anchor = null
+    }
     this.clearInput()
     this.report(true)
     if (viewport) this.layout(viewport)
@@ -163,7 +194,8 @@ export class ReadingPositionController {
     const request = this.request
     if (!request || request.sessionId !== this.sessionId || !this.ready || !viewport) return
     this.request = null
-    if (request.messageId && viewport.positionFor({ messageId: request.messageId, offset: REVEAL_MARGIN }) !== null) this.reveal(request.messageId, viewport)
+    if (request.messageId && viewport.positionFor({ messageId: request.messageId, offset: REVEAL_MARGIN }) !== null)
+      this.reveal(request.messageId, viewport)
     else this.jumpToLatest(viewport)
   }
 
@@ -177,7 +209,10 @@ export class ReadingPositionController {
       const target = viewport.positionFor(anchor)
       if (target === null) return
       // A row already within reach of the bottom is simply the latest content.
-      if (target >= bottom(viewport.measure()) - 4) { this.jumpToLatest(viewport); return }
+      if (target >= bottom(viewport.measure()) - 4) {
+        this.jumpToLatest(viewport)
+        return
+      }
     }
     position.mode = 'read'
     position.anchor = anchor
@@ -189,16 +224,24 @@ export class ReadingPositionController {
 function nestedScrollerConsumes(target: EventTarget | null, container: HTMLElement, direction: number): boolean {
   let element = target instanceof Element ? target : null
   while (element && element !== container) {
-    if (element instanceof HTMLElement && /(auto|scroll)/.test(getComputedStyle(element).overflowY)
+    if (
+      element instanceof HTMLElement
+      && /(auto|scroll)/.test(getComputedStyle(element).overflowY)
       && element.scrollHeight > element.clientHeight + 1
-      && (direction < 0 ? element.scrollTop > 0 : element.scrollTop + element.clientHeight < element.scrollHeight - 1)) return true
+      && (direction < 0 ? element.scrollTop > 0 : element.scrollTop + element.clientHeight < element.scrollHeight - 1)
+    )
+      return true
     element = element.parentElement
   }
   return false
 }
 
 /** Attach containerRef/handlers to the scroller; contentRef to its content wrapper. */
-export function useReadingPosition({ sessionId, ready, contentVersion }: {
+export function useReadingPosition({
+  sessionId,
+  ready,
+  contentVersion,
+}: {
   sessionId: string | null
   ready: boolean
   contentVersion: string | number
@@ -211,38 +254,48 @@ export function useReadingPosition({ sessionId, ready, contentVersion }: {
   const controller = controllerRef.current
   const touchY = useRef<number | null>(null)
 
-  const viewport = useMemo<ReadingViewport>(() => ({
-    measure: () => {
-      const element = containerRef.current
-      return { top: element?.scrollTop ?? 0, height: element?.clientHeight ?? 0, extent: element?.scrollHeight ?? 0 }
-    },
-    anchor: () => {
-      const container = containerRef.current
-      const content = contentRef.current
-      if (!container || !content) return null
-      const top = container.getBoundingClientRect().top + container.clientTop
-      for (const message of content.querySelectorAll<HTMLElement>('[data-message-id]')) {
-        const rect = message.getBoundingClientRect()
-        if (rect.height > 0 && rect.bottom > top && rect.top < top + container.clientHeight) {
-          return { messageId: message.dataset.messageId!, offset: rect.top - top }
+  const viewport = useMemo<ReadingViewport>(
+    () => ({
+      measure: () => {
+        const element = containerRef.current
+        return { top: element?.scrollTop ?? 0, height: element?.clientHeight ?? 0, extent: element?.scrollHeight ?? 0 }
+      },
+      anchor: () => {
+        const container = containerRef.current
+        const content = contentRef.current
+        if (!container || !content) return null
+        const top = container.getBoundingClientRect().top + container.clientTop
+        for (const message of content.querySelectorAll<HTMLElement>('[data-message-id]')) {
+          const rect = message.getBoundingClientRect()
+          if (rect.height > 0 && rect.bottom > top && rect.top < top + container.clientHeight) {
+            return { messageId: message.dataset.messageId!, offset: rect.top - top }
+          }
         }
-      }
-      return null
-    },
-    positionFor: anchor => {
-      const container = containerRef.current
-      const content = contentRef.current
-      if (!container || !content) return null
-      for (const message of content.querySelectorAll<HTMLElement>('[data-message-id]')) {
-        if (message.dataset.messageId === anchor.messageId) {
-          return container.scrollTop + message.getBoundingClientRect().top
-            - container.getBoundingClientRect().top - container.clientTop - anchor.offset
+        return null
+      },
+      positionFor: anchor => {
+        const container = containerRef.current
+        const content = contentRef.current
+        if (!container || !content) return null
+        for (const message of content.querySelectorAll<HTMLElement>('[data-message-id]')) {
+          if (message.dataset.messageId === anchor.messageId) {
+            return (
+              container.scrollTop
+              + message.getBoundingClientRect().top
+              - container.getBoundingClientRect().top
+              - container.clientTop
+              - anchor.offset
+            )
+          }
         }
-      }
-      return null
-    },
-    write: top => { if (containerRef.current) containerRef.current.scrollTop = top },
-  }), [])
+        return null
+      },
+      write: top => {
+        if (containerRef.current) containerRef.current.scrollTop = top
+      },
+    }),
+    [],
+  )
 
   useLayoutEffect(() => {
     controller.sync(sessionId, ready, containerRef.current && contentRef.current ? viewport : null)
@@ -255,17 +308,29 @@ export function useReadingPosition({ sessionId, ready, contentVersion }: {
     let frame: number | null = null
     const observer = new ResizeObserver(() => {
       if (frame !== null) return
-      frame = requestAnimationFrame(() => { frame = null; controller.layout(viewport) })
+      frame = requestAnimationFrame(() => {
+        frame = null
+        controller.layout(viewport)
+      })
     })
     observer.observe(container)
     observer.observe(content)
-    return () => { observer.disconnect(); if (frame !== null) cancelAnimationFrame(frame) }
+    return () => {
+      observer.disconnect()
+      if (frame !== null) cancelAnimationFrame(frame)
+    }
   }, [controller, sessionId, ready, viewport])
 
   useEffect(() => {
     const releasePointer = () => controller.pointer(false)
-    const releaseTouch = () => { touchY.current = null; controller.touch(false) }
-    const blur = () => { touchY.current = null; controller.clearInput() }
+    const releaseTouch = () => {
+      touchY.current = null
+      controller.touch(false)
+    }
+    const blur = () => {
+      touchY.current = null
+      controller.clearInput()
+    }
     window.addEventListener('pointerup', releasePointer)
     window.addEventListener('pointercancel', releasePointer)
     window.addEventListener('touchend', releaseTouch)
@@ -280,49 +345,63 @@ export function useReadingPosition({ sessionId, ready, contentVersion }: {
     }
   }, [controller])
 
-  const handlers = useMemo(() => ({
-    onScroll: () => controller.scroll(viewport),
-    onWheel: (event: WheelEvent<HTMLDivElement>) => {
-      if (event.defaultPrevented || event.deltaY === 0 || event.ctrlKey) return
-      if (!nestedScrollerConsumes(event.target, event.currentTarget, event.deltaY)) controller.input(event.deltaY < 0 ? -1 : 1, viewport)
-    },
-    onTouchStart: (event: TouchEvent<HTMLDivElement>) => {
-      touchY.current = event.touches[0]?.clientY ?? null
-      controller.touch(true)
-    },
-    onTouchMove: (event: TouchEvent<HTMLDivElement>) => {
-      const next = event.touches[0]?.clientY
-      if (next === undefined || touchY.current === null) return
-      const direction = touchY.current - next
-      touchY.current = next
-      if (Math.abs(direction) > 1 && !nestedScrollerConsumes(event.target, event.currentTarget, direction)) controller.input(direction < 0 ? -1 : 1, viewport)
-    },
-    onTouchEnd: () => { touchY.current = null; controller.touch(false) },
-    onTouchCancel: () => { touchY.current = null; controller.touch(false) },
-    onPointerDown: (event: PointerEvent<HTMLDivElement>) => {
-      if (event.button !== 0 || event.pointerType === 'touch') return
-      const container = event.currentTarget
-      const rect = container.getBoundingClientRect()
-      const onScrollbar = event.clientX >= rect.left + container.clientLeft + container.clientWidth
-      if (event.target === container || onScrollbar) controller.pointer(true)
-    },
-    onPointerUp: () => controller.pointer(false),
-    onPointerCancel: () => controller.pointer(false),
-    onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
-      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return
-      const target = event.target
-      if (target instanceof Element && target.closest('input, textarea, select, [contenteditable="true"]')) return
-      if (event.key === ' ' && target instanceof Element && target.closest('button, a')) return
-      const upward = ['ArrowUp', 'PageUp', 'Home'].includes(event.key) || (event.key === ' ' && event.shiftKey)
-      const downward = ['ArrowDown', 'PageDown', 'End'].includes(event.key) || (event.key === ' ' && !event.shiftKey)
-      if ((upward || downward) && !nestedScrollerConsumes(target, event.currentTarget, upward ? -1 : 1)) controller.input(upward ? -1 : 1, viewport)
-    },
-  }), [controller, viewport])
+  const handlers = useMemo(
+    () => ({
+      onScroll: () => controller.scroll(viewport),
+      onWheel: (event: WheelEvent<HTMLDivElement>) => {
+        if (event.defaultPrevented || event.deltaY === 0 || event.ctrlKey) return
+        if (!nestedScrollerConsumes(event.target, event.currentTarget, event.deltaY)) controller.input(event.deltaY < 0 ? -1 : 1, viewport)
+      },
+      onTouchStart: (event: TouchEvent<HTMLDivElement>) => {
+        touchY.current = event.touches[0]?.clientY ?? null
+        controller.touch(true)
+      },
+      onTouchMove: (event: TouchEvent<HTMLDivElement>) => {
+        const next = event.touches[0]?.clientY
+        if (next === undefined || touchY.current === null) return
+        const direction = touchY.current - next
+        touchY.current = next
+        if (Math.abs(direction) > 1 && !nestedScrollerConsumes(event.target, event.currentTarget, direction))
+          controller.input(direction < 0 ? -1 : 1, viewport)
+      },
+      onTouchEnd: () => {
+        touchY.current = null
+        controller.touch(false)
+      },
+      onTouchCancel: () => {
+        touchY.current = null
+        controller.touch(false)
+      },
+      onPointerDown: (event: PointerEvent<HTMLDivElement>) => {
+        if (event.button !== 0 || event.pointerType === 'touch') return
+        const container = event.currentTarget
+        const rect = container.getBoundingClientRect()
+        const onScrollbar = event.clientX >= rect.left + container.clientLeft + container.clientWidth
+        if (event.target === container || onScrollbar) controller.pointer(true)
+      },
+      onPointerUp: () => controller.pointer(false),
+      onPointerCancel: () => controller.pointer(false),
+      onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
+        if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return
+        const target = event.target
+        if (target instanceof Element && target.closest('input, textarea, select, [contenteditable="true"]')) return
+        if (event.key === ' ' && target instanceof Element && target.closest('button, a')) return
+        const upward = ['ArrowUp', 'PageUp', 'Home'].includes(event.key) || (event.key === ' ' && event.shiftKey)
+        const downward = ['ArrowDown', 'PageDown', 'End'].includes(event.key) || (event.key === ' ' && !event.shiftKey)
+        if ((upward || downward) && !nestedScrollerConsumes(target, event.currentTarget, upward ? -1 : 1))
+          controller.input(upward ? -1 : 1, viewport)
+      },
+    }),
+    [controller, viewport],
+  )
 
   const jumpToLatest = useCallback(() => controller.jumpToLatest(viewport), [controller, viewport])
   const reveal = useCallback((messageId: string) => controller.reveal(messageId, viewport), [controller, viewport])
-  const show = useCallback((sessionId: string, messageId?: string) => {
-    controller.show(sessionId, messageId, containerRef.current && contentRef.current ? viewport : null)
-  }, [controller, viewport])
+  const show = useCallback(
+    (sessionId: string, messageId?: string) => {
+      controller.show(sessionId, messageId, containerRef.current && contentRef.current ? viewport : null)
+    },
+    [controller, viewport],
+  )
   return { containerRef, contentRef, isFollowing, jumpToLatest, reveal, show, handlers }
 }

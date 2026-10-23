@@ -21,12 +21,18 @@ const isWhitespace = (character: string | undefined) => character === undefined 
 function lineContainers(line: string): number {
   let index = 0
   let width = 0
-  while (isSpace(line[index])) { width = line[index] === '\t' ? width + 4 - (width % 4) : width + 1; index++ }
+  while (isSpace(line[index])) {
+    width = line[index] === '\t' ? width + 4 - (width % 4) : width + 1
+    index++
+  }
   let markers = 0
   for (;;) {
-    if (line[index] === '>') { markers++; index++ }
-    else {
-      const marker = line[index] === '[' ? FOOTNOTE_LABEL.exec(line.slice(index, index + 1004)) : LIST_MARKER.exec(line.slice(index, index + 11))
+    if (line[index] === '>') {
+      markers++
+      index++
+    } else {
+      const marker =
+        line[index] === '[' ? FOOTNOTE_LABEL.exec(line.slice(index, index + 1004)) : LIST_MARKER.exec(line.slice(index, index + 11))
       if (!marker) break
       markers++
       index += marker[0].length
@@ -72,13 +78,16 @@ export function exceedsMarkdownNesting(text: string): boolean {
   }
   for (const line of text.split(/\r\n|\r|\n/)) {
     if (lineContainers(line) > MAX_LINE_CONTAINERS) return true
-    if (line.trim() === '') { if (closeParagraph()) return true }
-    else paragraph.push(line)
+    if (line.trim() === '') {
+      if (closeParagraph()) return true
+    } else paragraph.push(line)
   }
   return closeParagraph()
 }
 
-interface TreeNode { children?: TreeNode[] }
+interface TreeNode {
+  children?: TreeNode[]
+}
 
 /** Depth of a parsed tree, measured without recursion. */
 export function treeDepth(root: TreeNode): number {

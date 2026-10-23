@@ -10,10 +10,17 @@ const at = (day: number, hour = 12) => new Date(2026, 9, day, hour)
 
 describe('session list', () => {
   it('groups by local day with pinned sessions first, newest first in each group', () => {
-    const groups = groupSessions([
-      task('old', at(1)), task('week', at(18)), task('yesterday', at(22, 23)), task('morning', at(23, 1)),
-      task('afternoon', at(23, 14)), task('pinned-old', at(2), { pinned: true }),
-    ], now)
+    const groups = groupSessions(
+      [
+        task('old', at(1)),
+        task('week', at(18)),
+        task('yesterday', at(22, 23)),
+        task('morning', at(23, 1)),
+        task('afternoon', at(23, 14)),
+        task('pinned-old', at(2), { pinned: true }),
+      ],
+      now,
+    )
     expect(groups.map(group => [group.label, group.tasks.map(item => item.id)])).toEqual([
       ['置顶', ['pinned-old']],
       ['今天', ['afternoon', 'morning']],

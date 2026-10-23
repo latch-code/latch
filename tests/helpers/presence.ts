@@ -51,13 +51,24 @@ export function createTestPresence(options: { mode?: TestPresence['mode']; metho
       for (const notify of listeners.splice(0)) notify()
       if (signal.aborted) return Promise.resolve({ result: 'cancelled' })
       switch (presence.mode) {
-        case 'approve': return Promise.resolve({ result: 'approved', method: presence.method, nonce: preview.nonce, previewHash })
-        case 'deny': return Promise.resolve({ result: 'denied' })
-        case 'unavailable': return Promise.resolve({ result: 'error', message: '测试中的本机确认不可用' })
-        case 'manual': break
+        case 'approve':
+          return Promise.resolve({ result: 'approved', method: presence.method, nonce: preview.nonce, previewHash })
+        case 'deny':
+          return Promise.resolve({ result: 'denied' })
+        case 'unavailable':
+          return Promise.resolve({ result: 'error', message: '测试中的本机确认不可用' })
+        case 'manual':
+          break
       }
       return new Promise<PresenceOutcome>(resolve => {
-        const item: Waiting = { preview, previewHash, resolve: outcome => { signal.removeEventListener('abort', onAbort); resolve(outcome) } }
+        const item: Waiting = {
+          preview,
+          previewHash,
+          resolve: outcome => {
+            signal.removeEventListener('abort', onAbort)
+            resolve(outcome)
+          },
+        }
         const onAbort = () => {
           const index = waiting.indexOf(item)
           if (index >= 0) waiting.splice(index, 1)
@@ -68,9 +79,15 @@ export function createTestPresence(options: { mode?: TestPresence['mode']; metho
       })
     },
 
-    approveNext() { settleNext(item => ({ result: 'approved', method: presence.method, nonce: item.preview.nonce, previewHash: item.previewHash })) },
-    denyNext() { settleNext(() => ({ result: 'denied' })) },
-    timeoutNext() { settleNext(() => ({ result: 'timeout' })) },
+    approveNext() {
+      settleNext(item => ({ result: 'approved', method: presence.method, nonce: item.preview.nonce, previewHash: item.previewHash }))
+    },
+    denyNext() {
+      settleNext(() => ({ result: 'denied' }))
+    },
+    timeoutNext() {
+      settleNext(() => ({ result: 'timeout' }))
+    },
 
     waitForRequest(timeoutMs = 5000) {
       return new Promise((resolve, reject) => {
@@ -84,9 +101,14 @@ export function createTestPresence(options: { mode?: TestPresence['mode']; metho
           resolve({ preview: request.preview, previewHash: request.previewHash })
           return true
         }
-        const timer = setTimeout(() => { finished = true; reject(new Error('test presence: no confirmation request arrived')) }, timeoutMs)
+        const timer = setTimeout(() => {
+          finished = true
+          reject(new Error('test presence: no confirmation request arrived'))
+        }, timeoutMs)
         if (take()) return
-        const listen = () => { if (!finished && !take()) listeners.push(listen) }
+        const listen = () => {
+          if (!finished && !take()) listeners.push(listen)
+        }
         listeners.push(listen)
       })
     },

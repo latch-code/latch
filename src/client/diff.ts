@@ -2,9 +2,24 @@ import type { FileDiff } from '../shared/types.ts'
 
 /** Line-based unified diff for tool previews. Pure and bounded; no external dependency. */
 export type DiffLineKind = 'context' | 'add' | 'remove'
-export interface DiffLine { kind: DiffLineKind; text: string; oldLine?: number; newLine?: number }
-export interface DiffHunk { oldStart: number; oldLines: number; newStart: number; newLines: number; lines: DiffLine[] }
-export interface LineDiff { added: number; removed: number; hunks: DiffHunk[] }
+export interface DiffLine {
+  kind: DiffLineKind
+  text: string
+  oldLine?: number
+  newLine?: number
+}
+export interface DiffHunk {
+  oldStart: number
+  oldLines: number
+  newStart: number
+  newLines: number
+  lines: DiffLine[]
+}
+export interface LineDiff {
+  added: number
+  removed: number
+  hunks: DiffHunk[]
+}
 
 /**
  * What a diff says about the file before the change. `none`: the producer found no file, so it is new. `text`: the
@@ -37,7 +52,10 @@ function operations(a: string[], b: string[]): Array<{ kind: DiffLineKind; text:
   while (start < a.length && start < b.length && a[start] === b[start]) start++
   let endA = a.length
   let endB = b.length
-  while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) { endA--; endB-- }
+  while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) {
+    endA--
+    endB--
+  }
   const ops: Array<{ kind: DiffLineKind; text: string }> = []
   for (let index = 0; index < start; index++) ops.push({ kind: 'context', text: a[index]! })
   const midA = a.slice(start, endA)
@@ -53,15 +71,24 @@ function operations(a: string[], b: string[]): Array<{ kind: DiffLineKind; text:
     const table = new Uint32Array((m + 1) * width)
     for (let i = m - 1; i >= 0; i--) {
       for (let j = n - 1; j >= 0; j--) {
-        table[i * width + j] = midA[i] === midB[j] ? table[(i + 1) * width + j + 1]! + 1 : Math.max(table[(i + 1) * width + j]!, table[i * width + j + 1]!)
+        table[i * width + j] =
+          midA[i] === midB[j] ? table[(i + 1) * width + j + 1]! + 1 : Math.max(table[(i + 1) * width + j]!, table[i * width + j + 1]!)
       }
     }
     let i = 0
     let j = 0
     while (i < m && j < n) {
-      if (midA[i] === midB[j]) { ops.push({ kind: 'context', text: midA[i]! }); i++; j++ }
-      else if (table[(i + 1) * width + j]! >= table[i * width + j + 1]!) { ops.push({ kind: 'remove', text: midA[i]! }); i++ }
-      else { ops.push({ kind: 'add', text: midB[j]! }); j++ }
+      if (midA[i] === midB[j]) {
+        ops.push({ kind: 'context', text: midA[i]! })
+        i++
+        j++
+      } else if (table[(i + 1) * width + j]! >= table[i * width + j + 1]!) {
+        ops.push({ kind: 'remove', text: midA[i]! })
+        i++
+      } else {
+        ops.push({ kind: 'add', text: midB[j]! })
+        j++
+      }
     }
     for (; i < m; i++) ops.push({ kind: 'remove', text: midA[i]! })
     for (; j < n; j++) ops.push({ kind: 'add', text: midB[j]! })
@@ -80,9 +107,19 @@ export function diffLines(oldText: string | undefined, newText: string, context 
   let removed = 0
   for (const op of ops) {
     before.push({ old: oldLine, new: newLine })
-    if (op.kind === 'context') { oldLine++; newLine++; lines.push({ kind: 'context', text: op.text, oldLine, newLine }) }
-    else if (op.kind === 'remove') { oldLine++; removed++; lines.push({ kind: 'remove', text: op.text, oldLine }) }
-    else { newLine++; added++; lines.push({ kind: 'add', text: op.text, newLine }) }
+    if (op.kind === 'context') {
+      oldLine++
+      newLine++
+      lines.push({ kind: 'context', text: op.text, oldLine, newLine })
+    } else if (op.kind === 'remove') {
+      oldLine++
+      removed++
+      lines.push({ kind: 'remove', text: op.text, oldLine })
+    } else {
+      newLine++
+      added++
+      lines.push({ kind: 'add', text: op.text, newLine })
+    }
   }
   const ranges: Array<[number, number]> = []
   lines.forEach((line, index) => {
@@ -98,7 +135,13 @@ export function diffLines(oldText: string | undefined, newText: string, context 
     const oldLines = slice.filter(line => line.kind !== 'add').length
     const newLines = slice.filter(line => line.kind !== 'remove').length
     const origin = before[from]!
-    return { oldStart: oldLines === 0 ? origin.old : origin.old + 1, oldLines, newStart: newLines === 0 ? origin.new : origin.new + 1, newLines, lines: slice }
+    return {
+      oldStart: oldLines === 0 ? origin.old : origin.old + 1,
+      oldLines,
+      newStart: newLines === 0 ? origin.new : origin.new + 1,
+      newLines,
+      lines: slice,
+    }
   })
   return { added, removed, hunks }
 }

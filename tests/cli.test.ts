@@ -22,7 +22,9 @@ const TSX_LOADER = pathToFileURL(resolve('node_modules/tsx/dist/loader.mjs')).hr
 const LATCH = resolve('scripts/latch.ts')
 
 const cleanups: Array<() => Promise<void>> = []
-afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
+})
 
 async function temporaryDirectory() {
   const directory = await mkdtemp(join(tmpdir(), 'lt-cli-'))
@@ -33,10 +35,20 @@ async function temporaryDirectory() {
 function cli(options: { tty?: boolean; secret?: string; cwd?: string } = {}) {
   const output = { stdout: '', stderr: '' }
   const io: CliIO = {
-    stdout: { write: (text: string) => { output.stdout += text }, isTTY: options.tty ?? false },
-    stderr: { write: (text: string) => { output.stderr += text } },
+    stdout: {
+      write: (text: string) => {
+        output.stdout += text
+      },
+      isTTY: options.tty ?? false,
+    },
+    stderr: {
+      write: (text: string) => {
+        output.stderr += text
+      },
+    },
     readSecret: async () => options.secret ?? '',
-    env: {}, cwd: options.cwd ?? tmpdir(),
+    env: {},
+    cwd: options.cwd ?? tmpdir(),
   }
   return { io, output, latch: (...argv: string[]) => runLatch(argv, io) }
 }
@@ -46,14 +58,26 @@ async function runningHost(options: Parameters<typeof startTestHost>[0] = {}): P
   const t = await startTestHost(options)
   cleanups.push(() => t.close())
   await writeHostState(t.dataDir, {
-    version: 2, pid: process.pid, hostId: t.host.hostId, instanceId: t.host.instanceId, socketPath: t.host.socketPath,
-    loopbackOrigin: t.host.loopbackOrigin, tlsOrigin: t.host.tlsOrigin ?? null, startedAt: t.host.startedAt, dataDir: t.dataDir,
+    version: 2,
+    pid: process.pid,
+    hostId: t.host.hostId,
+    instanceId: t.host.instanceId,
+    socketPath: t.host.socketPath,
+    loopbackOrigin: t.host.loopbackOrigin,
+    tlsOrigin: t.host.tlsOrigin ?? null,
+    startedAt: t.host.startedAt,
+    dataDir: t.dataDir,
   })
   return t
 }
 
-async function auditActions(dataDir: string): Promise<Array<{ action: string; actor: { listener: string; via?: string }; stepup: string }>> {
-  return (await readFile(join(dataDir, 'audit', 'audit.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+async function auditActions(
+  dataDir: string,
+): Promise<Array<{ action: string; actor: { listener: string; via?: string }; stepup: string }>> {
+  return (await readFile(join(dataDir, 'audit', 'audit.jsonl'), 'utf8'))
+    .trim()
+    .split('\n')
+    .map(line => JSON.parse(line))
 }
 
 /**
@@ -63,9 +87,24 @@ async function auditActions(dataDir: string): Promise<Array<{ action: string; ac
 async function stoppedDataDir(): Promise<string> {
   const dataDir = join(await temporaryDirectory(), 'data')
   await mkdir(dataDir, { recursive: true, mode: 0o700 })
-  await writeFile(join(dataDir, 'policy.json'), JSON.stringify({ ...defaultPolicy(process.platform), presence: { backend: 'none', helperCdhash: null } }), { mode: 0o600 })
+  await writeFile(
+    join(dataDir, 'policy.json'),
+    JSON.stringify({ ...defaultPolicy(process.platform), presence: { backend: 'none', helperCdhash: null } }),
+    { mode: 0o600 },
+  )
   const config = await HostConfig.open(dataDir)
-  await config.updateProviders(draft => { draft.push({ id: 'lab', name: 'Lab', kind: 'openai-compatible', baseURL: 'https://lab.example/v1', apiKey: '', enabled: true, models: ['m'], defaultModel: 'm' }) })
+  await config.updateProviders(draft => {
+    draft.push({
+      id: 'lab',
+      name: 'Lab',
+      kind: 'openai-compatible',
+      baseURL: 'https://lab.example/v1',
+      apiKey: '',
+      enabled: true,
+      models: ['m'],
+      defaultModel: 'm',
+    })
+  })
   return dataDir
 }
 
@@ -82,7 +121,9 @@ async function deadPid(): Promise<number> {
  */
 async function lockContenders(directory: string, dataDir: string, count: number) {
   const script = join(directory, 'contender.mts')
-  await writeFile(script, `import { createInterface } from 'node:readline'
+  await writeFile(
+    script,
+    `import { createInterface } from 'node:readline'
 import { acquireDataDirLock } from ${JSON.stringify(pathToFileURL(resolve('src/host/host-state.ts')).href)}
 let lock
 createInterface({ input: process.stdin }).on('line', async line => {
@@ -92,26 +133,53 @@ createInterface({ input: process.stdin }).on('line', async line => {
   } else if (line === 'release') { await lock.release(); console.log('released') }
 })
 console.log('ready')
-`)
-  return Promise.all(Array.from({ length: count }, async () => {
-    const child: ChildProcess = spawn(process.execPath, ['--import', TSX_LOADER, script], { cwd: directory, stdio: ['pipe', 'pipe', 'pipe'] })
-    cleanups.push(async () => { if (child.exitCode === null && child.signalCode === null) { child.stdin!.end(); await once(child, 'exit') } })
-    let stderr = ''
-    child.stderr!.on('data', chunk => { stderr += String(chunk) })
-    const lines: string[] = []
-    let waiting: ((line: string) => void) | undefined
-    const deliver = (line: string) => { if (waiting) { const done = waiting; waiting = undefined; done(line) } else lines.push(line) }
-    createInterface({ input: child.stdout! }).on('line', deliver)
-    child.once('exit', code => deliver(`exited ${code} ${stderr}`))
-    const next = () => lines.length > 0 ? Promise.resolve(lines.shift()!) : new Promise<string>(done => { waiting = done })
-    expect(await next()).toBe('ready')
-    return { send: (line: string) => child.stdin!.write(`${line}\n`), next }
-  }))
+`,
+  )
+  return Promise.all(
+    Array.from({ length: count }, async () => {
+      const child: ChildProcess = spawn(process.execPath, ['--import', TSX_LOADER, script], {
+        cwd: directory,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      })
+      cleanups.push(async () => {
+        if (child.exitCode === null && child.signalCode === null) {
+          child.stdin!.end()
+          await once(child, 'exit')
+        }
+      })
+      let stderr = ''
+      child.stderr!.on('data', chunk => {
+        stderr += String(chunk)
+      })
+      const lines: string[] = []
+      let waiting: ((line: string) => void) | undefined
+      const deliver = (line: string) => {
+        if (waiting) {
+          const done = waiting
+          waiting = undefined
+          done(line)
+        } else lines.push(line)
+      }
+      createInterface({ input: child.stdout! }).on('line', deliver)
+      child.once('exit', code => deliver(`exited ${code} ${stderr}`))
+      const next = () =>
+        lines.length > 0
+          ? Promise.resolve(lines.shift()!)
+          : new Promise<string>(done => {
+              waiting = done
+            })
+      expect(await next()).toBe('ready')
+      return { send: (line: string) => child.stdin!.write(`${line}\n`), next }
+    }),
+  )
 }
 
 async function snapshot(directory: string): Promise<Record<string, string>> {
   const entries = await readdir(directory, { recursive: true, withFileTypes: true }).catch(() => [])
-  const files = entries.filter(entry => entry.isFile()).map(entry => join(entry.parentPath, entry.name)).sort()
+  const files = entries
+    .filter(entry => entry.isFile())
+    .map(entry => join(entry.parentPath, entry.name))
+    .sort()
   return Object.fromEntries(await Promise.all(files.map(async file => [file, await readFile(file, 'utf8')] as const)))
 }
 
@@ -130,7 +198,9 @@ describe('latch CLI', () => {
     const revoke = cli()
     expect(await revoke.latch('device', 'revoke', phone.id, '--data-dir', t.dataDir)).toBe(0)
     expect(t.host.security.devices.get(phone.id)?.status).toBe('revoked')
-    expect((await auditActions(t.dataDir)).find(record => record.action === 'device.revoked')).toMatchObject({ actor: { listener: 'unix', via: 'cli' } })
+    expect((await auditActions(t.dataDir)).find(record => record.action === 'device.revoked')).toMatchObject({
+      actor: { listener: 'unix', via: 'cli' },
+    })
     const missing = cli()
     expect(await missing.latch('device', 'list', '--data-dir', await temporaryDirectory())).toBe(1)
     expect(missing.output.stderr).toContain('没有可确认的运行中 Host')
@@ -145,12 +215,16 @@ describe('latch CLI', () => {
     const file = cli({ cwd: directory })
     expect(await file.latch('device', 'invite', '--scopes', 'view,run', '--code-file', 'invite.txt', '--data-dir', t.dataDir)).toBe(0)
     expect(file.output.stdout).not.toMatch(/lpi1-/)
-    expect(await readFile(join(directory, 'invite.txt'), 'utf8')).toMatch(new RegExp(`^${t.host.tlsOrigin}/link/#pair=lpi1-[A-Z2-7]{26}\\n$`))
+    expect(await readFile(join(directory, 'invite.txt'), 'utf8')).toMatch(
+      new RegExp(`^${t.host.tlsOrigin}/link/#pair=lpi1-[A-Z2-7]{26}\\n$`),
+    )
     expect((await stat(join(directory, 'invite.txt'))).mode & 0o777).toBe(0o600)
     const tty = cli({ tty: true })
     expect(await tty.latch('device', 'invite', '--data-dir', t.dataDir)).toBe(0)
     expect(tty.output.stdout).toContain('#pair=lpi1-')
-    expect(await cli().latch('device', 'invite', '--scopes', 'view,secrets', '--code-file', join(directory, 'x'), '--data-dir', t.dataDir)).toBe(1)
+    expect(
+      await cli().latch('device', 'invite', '--scopes', 'view,secrets', '--code-file', join(directory, 'x'), '--data-dir', t.dataDir),
+    ).toBe(1)
   })
 
   it('creates an offline enrollment code only while the Host is stopped, and the Host accepts it once', async () => {
@@ -182,13 +256,31 @@ describe('latch CLI', () => {
     const dataDir = join(await temporaryDirectory(), 'data')
     await mkdir(dataDir, { recursive: true, mode: 0o700 })
     const config = await HostConfig.open(dataDir)
-    await config.updateProviders(draft => { draft.push({ id: 'lab', name: 'Lab', kind: 'openai-compatible', baseURL: 'https://lab.example/v1', apiKey: '', enabled: true, models: ['m'], defaultModel: 'm' }) })
+    await config.updateProviders(draft => {
+      draft.push({
+        id: 'lab',
+        name: 'Lab',
+        kind: 'openai-compatible',
+        baseURL: 'https://lab.example/v1',
+        apiKey: '',
+        enabled: true,
+        models: ['m'],
+        defaultModel: 'm',
+      })
+    })
     const { output, latch } = cli({ secret: 'sk-offline-secret\n' })
     expect(await latch('provider', 'set-key', 'lab', '--data-dir', dataDir)).toBe(0)
     expect(output.stdout).toContain('https://lab.example:443')
     expect(output.stdout + output.stderr).not.toContain('sk-offline-secret')
-    expect((await HostConfig.open(dataDir)).provider('lab')).toMatchObject({ apiKey: 'sk-offline-secret', keyOrigin: 'https://lab.example:443' })
-    expect((await auditActions(dataDir)).at(-1)).toMatchObject({ action: 'provider.secret.set', stepup: 'offline', actor: { listener: 'cli' } })
+    expect((await HostConfig.open(dataDir)).provider('lab')).toMatchObject({
+      apiKey: 'sk-offline-secret',
+      keyOrigin: 'https://lab.example:443',
+    })
+    expect((await auditActions(dataDir)).at(-1)).toMatchObject({
+      action: 'provider.secret.set',
+      stepup: 'offline',
+      actor: { listener: 'cli' },
+    })
     expect(await cli({ secret: 'x' }).latch('provider', 'set-key', 'missing', '--data-dir', dataDir)).toBe(1)
     expect(await cli({ secret: '' }).latch('provider', 'set-key', 'lab', '--data-dir', dataDir)).toBe(1)
   })
@@ -204,13 +296,15 @@ describe('latch CLI', () => {
       ['provider', 'set-key', 'lab'],
       ['presence', 'status'],
       ['presence', 'test'],
-      ...process.platform === 'darwin' ? [['presence', 'repin']] : [],
+      ...(process.platform === 'darwin' ? [['presence', 'repin']] : []),
     ]
     for (const command of commands) {
       const { output, latch } = cli({ cwd: directory, secret: 'sk-during-startup\n' })
       expect(await latch(...command, '--data-dir', dataDir)).toBe(1)
       expect(output.stderr).toContain('这个数据目录已有 Host 在运行或正在启动')
-      expect(output.stderr).toContain(`请先停止它（pnpm stop），或使用其他 --data-dir；如果确认没有 Host 在运行，删除锁文件 ${join(dataDir, 'host.lock')} 后重试。`)
+      expect(output.stderr).toContain(
+        `请先停止它（pnpm stop），或使用其他 --data-dir；如果确认没有 Host 在运行，删除锁文件 ${join(dataDir, 'host.lock')} 后重试。`,
+      )
     }
     expect(await snapshot(dataDir)).toEqual(before)
     await expect(lstat(join(directory, 'code.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
@@ -239,7 +333,9 @@ describe('latch CLI', () => {
       await plant()
       const invalid = cli({ cwd: directory, secret: 'sk-x\n' })
       expect(await invalid.latch('provider', 'set-key', 'lab', '--data-dir', dataDir)).toBe(1)
-      expect(invalid.output.stderr).toContain(`数据目录锁 ${lockPath} 无法读取。请先停止 Host（pnpm stop）；如果确认没有 Host 或 latch 命令在使用这个目录，删除该文件后重试。`)
+      expect(invalid.output.stderr).toContain(
+        `数据目录锁 ${lockPath} 无法读取。请先停止 Host（pnpm stop）；如果确认没有 Host 或 latch 命令在使用这个目录，删除该文件后重试。`,
+      )
       expect((await lstat(lockPath)).isFile() || (await lstat(lockPath)).isSymbolicLink()).toBe(true)
       await rm(lockPath)
     }
@@ -248,8 +344,17 @@ describe('latch CLI', () => {
 
     const held = await acquireDataDirLock(dataDir, 'host')
     expect((await stat(lockPath)).mode & 0o777).toBe(0o600)
-    expect(JSON.parse(await readFile(lockPath, 'utf8'))).toEqual({ pid: process.pid, instanceId: held.instanceId, role: 'host', bootTime: await bootTime() })
-    await expect(acquireDataDirLock(dataDir, 'host')).rejects.toMatchObject({ status: 409, code: 'data-dir-locked', details: { role: 'host' } })
+    expect(JSON.parse(await readFile(lockPath, 'utf8'))).toEqual({
+      pid: process.pid,
+      instanceId: held.instanceId,
+      role: 'host',
+      bootTime: await bootTime(),
+    })
+    await expect(acquireDataDirLock(dataDir, 'host')).rejects.toMatchObject({
+      status: 409,
+      code: 'data-dir-locked',
+      details: { role: 'host' },
+    })
     await held.release()
     await expect(lstat(lockPath)).rejects.toMatchObject({ code: 'ENOENT' })
   })
@@ -271,10 +376,13 @@ describe('latch CLI', () => {
     const lockPath = join(dataDir, 'host.lock')
     const boot = await bootTime()
     // This test process stands in for whatever process reused the recorded pid.
-    const plant = (record: Record<string, unknown>) => writeFile(lockPath, JSON.stringify({ pid: process.pid, instanceId: randomUUID(), role: 'host', ...record }), { mode: 0o600 })
+    const plant = (record: Record<string, unknown>) =>
+      writeFile(lockPath, JSON.stringify({ pid: process.pid, instanceId: randomUUID(), role: 'host', ...record }), { mode: 0o600 })
 
     await plant({ bootTime: boot - 3_600 })
-    expect(await cli({ cwd: directory }).latch('device', 'enroll', '--offline', '--code-file', 'after-reboot.txt', '--data-dir', dataDir)).toBe(0)
+    expect(
+      await cli({ cwd: directory }).latch('device', 'enroll', '--offline', '--code-file', 'after-reboot.txt', '--data-dir', dataDir),
+    ).toBe(0)
     await expect(lstat(lockPath)).rejects.toMatchObject({ code: 'ENOENT' })
 
     for (const record of [{ bootTime: boot }, { bootTime: boot - 2 }, {}]) {
@@ -303,8 +411,10 @@ describe('latch CLI', () => {
       await writeFile(lockPath, JSON.stringify({ instanceId: randomUUID(), role: 'host', ...stale[trial % 2] }), { mode: 0o600 })
       for (const contender of contenders) contender.send('go')
       const outcomes = await Promise.all(contenders.map(contender => contender.next()))
-      const holders = outcomes.flatMap((outcome, index) => outcome.startsWith('held ') ? [{ index, instanceId: outcome.slice(5) }] : [])
-      expect({ trial, holders: holders.length, refused: outcomes.filter(outcome => outcome === 'refused data-dir-locked').length }).toEqual({ trial, holders: 1, refused: 7 })
+      const holders = outcomes.flatMap((outcome, index) => (outcome.startsWith('held ') ? [{ index, instanceId: outcome.slice(5) }] : []))
+      expect({ trial, holders: holders.length, refused: outcomes.filter(outcome => outcome === 'refused data-dir-locked').length }).toEqual(
+        { trial, holders: 1, refused: 7 },
+      )
       expect(JSON.parse(await readFile(lockPath, 'utf8'))).toMatchObject({ instanceId: holders[0]!.instanceId, role: 'cli' })
       contenders[holders[0]!.index]!.send('release')
       expect(await contenders[holders[0]!.index]!.next()).toBe('released')
@@ -317,7 +427,8 @@ describe('latch CLI', () => {
     await mkdir(dataDir, { mode: 0o700 })
     const lockPath = join(dataDir, 'host.lock')
     const guard = join(dataDir, '.host-lock-takeover')
-    const plantStale = () => writeFile(lockPath, JSON.stringify({ pid: process.pid, instanceId: randomUUID(), role: 'host', bootTime: 1 }), { mode: 0o600 })
+    const plantStale = () =>
+      writeFile(lockPath, JSON.stringify({ pid: process.pid, instanceId: randomUUID(), role: 'host', bootTime: 1 }), { mode: 0o600 })
     const plantGuard = async (pid: number) => {
       await mkdir(guard, { mode: 0o700 })
       const marker = join(guard, randomUUID())
@@ -329,7 +440,11 @@ describe('latch CLI', () => {
     await plantStale()
     const marker = await plantGuard(process.pid)
     const before = await readFile(lockPath, 'utf8')
-    await expect(acquireDataDirLock(dataDir, 'cli')).rejects.toMatchObject({ status: 409, code: 'data-dir-locked', message: expect.stringContaining(`无法取得数据目录锁 ${lockPath}，请稍后重试`) })
+    await expect(acquireDataDirLock(dataDir, 'cli')).rejects.toMatchObject({
+      status: 409,
+      code: 'data-dir-locked',
+      message: expect.stringContaining(`无法取得数据目录锁 ${lockPath}，请稍后重试`),
+    })
     expect(await readFile(lockPath, 'utf8')).toBe(before)
     expect(await readdir(guard)).toHaveLength(1)
 
@@ -341,7 +456,12 @@ describe('latch CLI', () => {
     expect(await readdir(dataDir)).toEqual([])
 
     // A takeover whose process has exited, and one that stopped after emptying its directory.
-    for (const leftover of [async () => { await plantGuard(await deadPid()) }, () => mkdir(guard, { mode: 0o700 })]) {
+    for (const leftover of [
+      async () => {
+        await plantGuard(await deadPid())
+      },
+      () => mkdir(guard, { mode: 0o700 }),
+    ]) {
       await plantStale()
       await leftover()
       const lock = await acquireDataDirLock(dataDir, 'cli')
@@ -368,7 +488,8 @@ describe('latch CLI', () => {
   it('counts a host.json it cannot read as a running Host unless the pid it records is gone', async () => {
     const dataDir = await stoppedDataDir()
     const directory = await temporaryDirectory()
-    const older = (pid: number) => JSON.stringify({ pid, origin: 'http://127.0.0.1:1', instanceId: randomUUID(), startedAt: new Date().toISOString() })
+    const older = (pid: number) =>
+      JSON.stringify({ pid, origin: 'http://127.0.0.1:1', instanceId: randomUUID(), startedAt: new Date().toISOString() })
     await writeFile(join(dataDir, 'host.json'), older(process.pid), { mode: 0o600 })
     const running = cli({ cwd: directory })
     expect(await running.latch('device', 'enroll', '--offline', '--code-file', 'a.txt', '--data-dir', dataDir)).toBe(1)
@@ -388,11 +509,26 @@ describe('latch CLI', () => {
     let lockDuringPrompt: unknown
     let host: TestHost | undefined
     const io: CliIO = {
-      stdout: { write: (text: string) => { output.stdout += text } },
-      stderr: { write: (text: string) => { output.stderr += text } },
-      env: {}, cwd: dataDir,
+      stdout: {
+        write: (text: string) => {
+          output.stdout += text
+        },
+      },
+      stderr: {
+        write: (text: string) => {
+          output.stderr += text
+        },
+      },
+      env: {},
+      cwd: dataDir,
       async readSecret() {
-        lockDuringPrompt = await acquireDataDirLock(dataDir, 'host').then(async lock => { await lock.release(); return 'acquired' }, (error: unknown) => error)
+        lockDuringPrompt = await acquireDataDirLock(dataDir, 'host').then(
+          async lock => {
+            await lock.release()
+            return 'acquired'
+          },
+          (error: unknown) => error,
+        )
         // An in-process Host takes no lock, like a Host from an older build.
         host = await runningHost({ dataDir })
         return 'sk-typed-while-starting\n'
@@ -454,39 +590,52 @@ describe('latch CLI', () => {
     await expect(lstat(join(shared, 'code.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
 
     const missing = cli({ cwd: directory })
-    expect(await missing.latch('device', 'enroll', '--offline', '--code-file', join(directory, 'absent', 'code.txt'), '--data-dir', dataDir)).toBe(1)
+    expect(
+      await missing.latch('device', 'enroll', '--offline', '--code-file', join(directory, 'absent', 'code.txt'), '--data-dir', dataDir),
+    ).toBe(1)
     expect(missing.output.stderr).toContain('无法访问目录')
     await expect(lstat(join(dataDir, 'auth', 'offline-enrollments.json'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  it.runIf(typeof process.getuid === 'function' && process.getuid() !== 0)('writes a code file only into a directory this user owns, or a sticky one root owns', async () => {
-    const dataDir = await stoppedDataDir()
-    // The root directory belongs to root and has no sticky bit: another owner could swap the file.
-    const foreign = cli()
-    expect(await foreign.latch('device', 'enroll', '--offline', '--code-file', `/lt-cli-${randomUUID()}.txt`, '--data-dir', dataDir)).toBe(1)
-    expect(foreign.output.stderr).toContain('/ 不属于当前用户')
-    await expect(lstat(join(dataDir, 'auth', 'offline-enrollments.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+  it.runIf(typeof process.getuid === 'function' && process.getuid() !== 0)(
+    'writes a code file only into a directory this user owns, or a sticky one root owns',
+    async () => {
+      const dataDir = await stoppedDataDir()
+      // The root directory belongs to root and has no sticky bit: another owner could swap the file.
+      const foreign = cli()
+      expect(
+        await foreign.latch('device', 'enroll', '--offline', '--code-file', `/lt-cli-${randomUUID()}.txt`, '--data-dir', dataDir),
+      ).toBe(1)
+      expect(foreign.output.stderr).toContain('/ 不属于当前用户')
+      await expect(lstat(join(dataDir, 'auth', 'offline-enrollments.json'))).rejects.toMatchObject({ code: 'ENOENT' })
 
-    const shared = await realpath('/tmp').catch(() => undefined)
-    const info = shared ? await stat(shared) : undefined
-    const listing = shared && process.platform === 'darwin' ? (await run('/bin/ls', ['-led', shared])).stdout.trim().split('\n') : []
-    if (!shared || info?.uid !== 0 || (info.mode & 0o1000) === 0 || listing.length > 1) return
-    const file = join(shared, `lt-cli-${randomUUID()}.txt`)
-    cleanups.push(() => rm(file, { force: true }))
-    expect(await cli().latch('device', 'enroll', '--offline', '--code-file', file, '--data-dir', dataDir)).toBe(0)
-    expect((await stat(file)).mode & 0o777).toBe(0o600)
-    expect(await readFile(file, 'utf8')).toMatch(/^lpo1-[A-Z2-7]{26}\n$/u)
-  })
+      const shared = await realpath('/tmp').catch(() => undefined)
+      const info = shared ? await stat(shared) : undefined
+      const listing = shared && process.platform === 'darwin' ? (await run('/bin/ls', ['-led', shared])).stdout.trim().split('\n') : []
+      if (!shared || info?.uid !== 0 || (info.mode & 0o1000) === 0 || listing.length > 1) return
+      const file = join(shared, `lt-cli-${randomUUID()}.txt`)
+      cleanups.push(() => rm(file, { force: true }))
+      expect(await cli().latch('device', 'enroll', '--offline', '--code-file', file, '--data-dir', dataDir)).toBe(0)
+      expect((await stat(file)).mode & 0o777).toBe(0o600)
+      expect(await readFile(file, 'utf8')).toMatch(/^lpo1-[A-Z2-7]{26}\n$/u)
+    },
+  )
 
   it.runIf(process.platform === 'darwin')('refuses a code-file directory with access-control entries, whatever they grant', async () => {
     const directory = await temporaryDirectory()
     const dataDir = await stoppedDataDir()
     // Entries that let others swap the file, that a new file would inherit, and a deny entry like the one on home folders.
-    for (const [name, entry] of [['writable', 'everyone allow add_file,delete_child'], ['inherited', 'everyone allow read,file_inherit'], ['denying', 'everyone deny delete']] as const) {
+    for (const [name, entry] of [
+      ['writable', 'everyone allow add_file,delete_child'],
+      ['inherited', 'everyone allow read,file_inherit'],
+      ['denying', 'everyone deny delete'],
+    ] as const) {
       const target = join(directory, name)
       await mkdir(target, { mode: 0o700 })
       await run('/bin/chmod', ['+a', entry, target])
-      cleanups.push(async () => { await run('/bin/chmod', ['-N', target]).catch(() => {}) })
+      cleanups.push(async () => {
+        await run('/bin/chmod', ['-N', target]).catch(() => {})
+      })
       const { output, latch } = cli({ cwd: directory })
       expect(await latch('device', 'enroll', '--offline', '--code-file', join(target, 'code.txt'), '--data-dir', dataDir)).toBe(1)
       expect(output.stderr).toContain(`${target} 带有访问控制列表（ACL）`)
@@ -521,7 +670,9 @@ describe('latch CLI', () => {
     const usage = await run(TSX, [LATCH], { cwd: directory, env }).catch((error: { code: number; stdout: string }) => error)
     expect(usage).toMatchObject({ code: 1 })
     expect((usage as { stdout: string }).stdout).toContain('用法：pnpm latch')
-    const missing = await run(TSX, [LATCH, 'audit', 'verify', '--data-dir', join(directory, 'data')], { cwd: directory, env }).catch((error: { code: number; stderr: string }) => error)
+    const missing = await run(TSX, [LATCH, 'audit', 'verify', '--data-dir', join(directory, 'data')], { cwd: directory, env }).catch(
+      (error: { code: number; stderr: string }) => error,
+    )
     expect(missing).toMatchObject({ code: 1, stderr: expect.stringContaining('找不到审计记录') })
     const t = await startTestHost()
     cleanups.push(() => t.close())

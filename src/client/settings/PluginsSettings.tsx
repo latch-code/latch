@@ -35,51 +35,123 @@ export function PluginsSettings() {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const load = useCallback(async () => {
-    try { setPlugins((await api<{ plugins: PluginInfo[] }>('plugins')).plugins); setError('') }
-    catch (cause) { setError(errorMessage(cause)) }
+    try {
+      setPlugins((await api<{ plugins: PluginInfo[] }>('plugins')).plugins)
+      setError('')
+    } catch (cause) {
+      setError(errorMessage(cause))
+    }
   }, [])
-  useEffect(() => { void load() }, [load])
+  useEffect(() => {
+    void load()
+  }, [load])
 
   const toggle = async (plugin: PluginInfo) => {
     if (busy !== null) return
-    setBusy(plugin.id); setError(''); setNotice('')
+    setBusy(plugin.id)
+    setError('')
+    setNotice('')
     try {
-      setPlugins((await api<{ plugins: PluginInfo[] }>(`plugins/${encodeURIComponent(plugin.id)}`, { method: 'POST', body: { enabled: !plugin.enabled } })).plugins)
+      setPlugins(
+        (
+          await api<{ plugins: PluginInfo[] }>(`plugins/${encodeURIComponent(plugin.id)}`, {
+            method: 'POST',
+            body: { enabled: !plugin.enabled },
+          })
+        ).plugins,
+      )
       setNotice(`${plugin.name} 已${plugin.enabled ? '停用' : '启用'}。`)
-    } catch (cause) { setError(errorMessage(cause)); await load() }
-    finally { setBusy(null) }
+    } catch (cause) {
+      setError(errorMessage(cause))
+      await load()
+    } finally {
+      setBusy(null)
+    }
   }
 
-  const heading = <SectionHeading title="插件" description="插件是在执行端运行的可信本机代码，提供 Harness、模型和工具。停用会立即生效并保存。"
-    action={<button type="button" className="text-button" disabled={busy !== null} onClick={() => { setError(''); void load() }}>刷新</button>} />
-  if (plugins === null) return <>{heading}{error ? <InlineAlert tone="error">{error}</InlineAlert> : <Loading label="正在读取插件…" />}</>
-  return <>
-    {heading}
-    {plugins.length === 0 && <p className="settings-hint">执行端目前没有可管理的插件。</p>}
-    {groups.map(group => {
-      const members = plugins.filter(plugin => groupOf(plugin) === group.id)
-      if (members.length === 0) return null
-      return <section key={group.id} className="plugin-group" aria-label={group.label}>
-        <h4><group.icon size={16} strokeWidth={ICON_STROKE} aria-hidden="true" />{group.label}</h4>
-        <ul className="plugin-list">{members.map(plugin => {
-          const reason = lockReason(plugin)
-          return <li key={plugin.id} className="plugin-row" data-plugin-id={plugin.id}>
-            <div className="plugin-row-main">
-              <div className="plugin-row-heading"><strong>{plugin.name}</strong><span className="plugin-version">v{plugin.version}</span>
-                {plugin.managed && <Badge>{managedNotes[plugin.managed]}</Badge>}{plugin.activeRuns > 0 && <Badge tone="accent">使用中</Badge>}</div>
-              {plugin.description && <p>{plugin.description}</p>}
-              {plugin.capabilities.length > 0 && <ul className="capability-chips">{plugin.capabilities.map(capability => {
-                const [kind = '', ...name] = capability.split(':')
-                return <li key={capability}>{capabilityLabels[kind] ?? kind} · {name.join(':')}</li>
-              })}</ul>}
-              {reason && <span className="plugin-lock">{reason}</span>}
-            </div>
-            <Switch label={plugin.name} checked={plugin.enabled} disabled={busy !== null || reason !== undefined} title={reason} onChange={() => { void toggle(plugin) }} />
-          </li>
-        })}</ul>
-      </section>
-    })}
-    {error && <InlineAlert tone="error">{error}</InlineAlert>}
-    {notice && !error && <InlineAlert tone="ok">{notice}</InlineAlert>}
-  </>
+  const heading = (
+    <SectionHeading
+      title="插件"
+      description="插件是在执行端运行的可信本机代码，提供 Harness、模型和工具。停用会立即生效并保存。"
+      action={
+        <button
+          type="button"
+          className="text-button"
+          disabled={busy !== null}
+          onClick={() => {
+            setError('')
+            void load()
+          }}>
+          刷新
+        </button>
+      }
+    />
+  )
+  if (plugins === null)
+    return (
+      <>
+        {heading}
+        {error ? <InlineAlert tone="error">{error}</InlineAlert> : <Loading label="正在读取插件…" />}
+      </>
+    )
+  return (
+    <>
+      {heading}
+      {plugins.length === 0 && <p className="settings-hint">执行端目前没有可管理的插件。</p>}
+      {groups.map(group => {
+        const members = plugins.filter(plugin => groupOf(plugin) === group.id)
+        if (members.length === 0) return null
+        return (
+          <section key={group.id} className="plugin-group" aria-label={group.label}>
+            <h4>
+              <group.icon size={16} strokeWidth={ICON_STROKE} aria-hidden="true" />
+              {group.label}
+            </h4>
+            <ul className="plugin-list">
+              {members.map(plugin => {
+                const reason = lockReason(plugin)
+                return (
+                  <li key={plugin.id} className="plugin-row" data-plugin-id={plugin.id}>
+                    <div className="plugin-row-main">
+                      <div className="plugin-row-heading">
+                        <strong>{plugin.name}</strong>
+                        <span className="plugin-version">v{plugin.version}</span>
+                        {plugin.managed && <Badge>{managedNotes[plugin.managed]}</Badge>}
+                        {plugin.activeRuns > 0 && <Badge tone="accent">使用中</Badge>}
+                      </div>
+                      {plugin.description && <p>{plugin.description}</p>}
+                      {plugin.capabilities.length > 0 && (
+                        <ul className="capability-chips">
+                          {plugin.capabilities.map(capability => {
+                            const [kind = '', ...name] = capability.split(':')
+                            return (
+                              <li key={capability}>
+                                {capabilityLabels[kind] ?? kind} · {name.join(':')}
+                              </li>
+                            )
+                          })}
+                        </ul>
+                      )}
+                      {reason && <span className="plugin-lock">{reason}</span>}
+                    </div>
+                    <Switch
+                      label={plugin.name}
+                      checked={plugin.enabled}
+                      disabled={busy !== null || reason !== undefined}
+                      title={reason}
+                      onChange={() => {
+                        void toggle(plugin)
+                      }}
+                    />
+                  </li>
+                )
+              })}
+            </ul>
+          </section>
+        )
+      })}
+      {error && <InlineAlert tone="error">{error}</InlineAlert>}
+      {notice && !error && <InlineAlert tone="ok">{notice}</InlineAlert>}
+    </>
+  )
 }

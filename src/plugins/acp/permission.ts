@@ -25,7 +25,9 @@ function commandName(command: string): string {
 
 function matchesName(patterns: readonly string[], name: string): boolean {
   const upper = name.toUpperCase()
-  return patterns.some(pattern => pattern.endsWith('*') ? upper.startsWith(pattern.slice(0, -1).toUpperCase()) : upper === pattern.toUpperCase())
+  return patterns.some(pattern =>
+    pattern.endsWith('*') ? upper.startsWith(pattern.slice(0, -1).toUpperCase()) : upper === pattern.toUpperCase(),
+  )
 }
 
 /** By `presetId`, else by the command's file name. The profile's environment applies even when not verified. */
@@ -35,12 +37,21 @@ export function selectProfile(record: AgentRecord): ProfileSelection {
   const preset = byId ?? AGENT_PRESETS.find(item => item.command === name)
   const profile = preset ? HARNESS_PROFILES.get(preset.id) : undefined
   const configEnv = profile?.permission.configEnv ?? []
-  const redirected = Object.keys(record.env).filter(key => matchesName(configEnv, key)).sort()
-  const verified = byId !== undefined && name === byId.command && redirected.length === 0
-    && record.args.length === byId.args.length && record.args.every((arg, index) => arg === byId.args[index])
-  const notes = preset && redirected.length
-    ? [`定义设置了 ${redirected.join('、')}，${preset.name} 可能改从其他位置读取配置、Agent 定义与插件，覆盖 Latch 设置的询问规则；该定义不作为已验证的预设`]
-    : []
+  const redirected = Object.keys(record.env)
+    .filter(key => matchesName(configEnv, key))
+    .sort()
+  const verified =
+    byId !== undefined
+    && name === byId.command
+    && redirected.length === 0
+    && record.args.length === byId.args.length
+    && record.args.every((arg, index) => arg === byId.args[index])
+  const notes =
+    preset && redirected.length
+      ? [
+          `定义设置了 ${redirected.join('、')}，${preset.name} 可能改从其他位置读取配置、Agent 定义与插件，覆盖 Latch 设置的询问规则；该定义不作为已验证的预设`,
+        ]
+      : []
   return { ...(profile ? { profile } : {}), ...(preset ? { preset } : {}), verified, ...(notes.length ? { notes } : {}) }
 }
 
@@ -58,19 +69,25 @@ export function validateAgentDefinition(record: AgentRecord): { ok: true; verifi
  * `projectConfig` is the digest of the project configuration found; without one the fingerprint is the definition's.
  */
 export function launchHash(input: {
-  resolvedCommand: string; args: string[]; definitionEnv: Record<string, string>; presetId?: string; profileVersion: 1
+  resolvedCommand: string
+  args: string[]
+  definitionEnv: Record<string, string>
+  presetId?: string
+  profileVersion: 1
   projectConfig?: string
 }): string {
-  return sha256Hex(canonicalJson({
-    v: 1,
-    command: input.resolvedCommand,
-    args: input.args,
-    envNames: Object.keys(input.definitionEnv).sort(),
-    envValues: sha256Hex(canonicalJson(input.definitionEnv)),
-    presetId: input.presetId,
-    profileVersion: input.profileVersion,
-    projectConfig: input.projectConfig,
-  }))
+  return sha256Hex(
+    canonicalJson({
+      v: 1,
+      command: input.resolvedCommand,
+      args: input.args,
+      envNames: Object.keys(input.definitionEnv).sort(),
+      envValues: sha256Hex(canonicalJson(input.definitionEnv)),
+      presetId: input.presetId,
+      profileVersion: input.profileVersion,
+      projectConfig: input.projectConfig,
+    }),
+  )
 }
 
 /** How `value` relates to `expected`: unknown modes and an unknown baseline count as wider. */
@@ -90,7 +107,9 @@ const KNOWN_KINDS = new Set(['allow_once', 'allow_always', 'reject_once', 'rejec
 const PERSISTENT_KINDS = new Set(['allow_always', 'reject_always'])
 
 function hiddenId(profile: AcpPermissionProfile | undefined, optionId: string): boolean {
-  return (profile?.hiddenOptionIds ?? []).some(pattern => pattern.endsWith('*') ? optionId.startsWith(pattern.slice(0, -1)) : optionId === pattern)
+  return (profile?.hiddenOptionIds ?? []).some(pattern =>
+    pattern.endsWith('*') ? optionId.startsWith(pattern.slice(0, -1)) : optionId === pattern,
+  )
 }
 
 export function isVisibleOption(profile: AcpPermissionProfile | undefined, option: { optionId: string; kind: string }): boolean {
@@ -101,8 +120,12 @@ export function isVisibleOption(profile: AcpPermissionProfile | undefined, optio
  * Keeps only one-time choices that the profile does not hide. Without a one-time allow left, the request is answered
  * at once: with a visible one-time reject, else as cancelled.
  */
-export function filterPermissionOptions(profile: AcpPermissionProfile | undefined, options: Array<{ optionId: string; name: string; kind: string }>): {
-  visible: PermissionOption[]; autoReject?: { reason: 'persistent-only' | 'unknown-kind'; optionId?: string }
+export function filterPermissionOptions(
+  profile: AcpPermissionProfile | undefined,
+  options: Array<{ optionId: string; name: string; kind: string }>,
+): {
+  visible: PermissionOption[]
+  autoReject?: { reason: 'persistent-only' | 'unknown-kind'; optionId?: string }
 } {
   const visible = options.filter(option => isVisibleOption(profile, option))
   if (visible.some(option => option.kind === 'allow_once')) return { visible }

@@ -15,20 +15,34 @@ const R2_PROMPT = '标记发布版本'
 const SECRET_MARKERS = ['ldc1.', 'PRIVATE KEY']
 
 /** What the test records in main instead of showing the link dialog or opening the system browser. */
-interface ExternalLinks { asked: Array<Record<string, unknown>>; opened: string[]; answer: number }
+interface ExternalLinks {
+  asked: Array<Record<string, unknown>>
+  opened: string[]
+  answer: number
+}
 
 /** A local model that asks for one unlisted tool; the Host classifies unlisted tools as high risk. */
 function markPlugin(marks: { ran: number }): HarnessPlugin {
   return {
-    id: 'e2e-desktop', name: '桌面端测试工具', version: '1.0.0', description: '只在测试中使用。',
+    id: 'e2e-desktop',
+    name: '桌面端测试工具',
+    version: '1.0.0',
+    description: '只在测试中使用。',
     activate(context) {
       context.registerTool({
-        name: MARK_TOOL, description: '记录一次发布标记。', requiresApproval: false,
+        name: MARK_TOOL,
+        description: '记录一次发布标记。',
+        requiresApproval: false,
         parameters: { type: 'object', properties: {}, additionalProperties: false },
-        async execute() { marks.ran++; return { text: '已标记' } },
+        async execute() {
+          marks.ran++
+          return { text: '已标记' }
+        },
       })
       context.registerProvider({
-        id: 'e2e-desktop', name: '桌面端测试模型', model: 'e2e',
+        id: 'e2e-desktop',
+        name: '桌面端测试模型',
+        model: 'e2e',
         async *stream({ messages, tools }) {
           const lastUser = messages.findLastIndex(message => message.role === 'user')
           if (messages.slice(lastUser + 1).some(message => message.role === 'tool')) {
@@ -49,19 +63,30 @@ function markPlugin(marks: { ran: number }): HarnessPlugin {
 async function connectionCounter() {
   const sockets = new Set<Socket>()
   let connections = 0
-  const server = createServer(socket => { connections++; sockets.add(socket); socket.on('close', () => sockets.delete(socket)); socket.destroy() })
+  const server = createServer(socket => {
+    connections++
+    sockets.add(socket)
+    socket.on('close', () => sockets.delete(socket))
+    socket.destroy()
+  })
   await new Promise<void>(done => server.listen(0, '127.0.0.1', done))
   const address = server.address()
   if (!address || typeof address === 'string') throw new Error('Expected a TCP address')
   return {
     port: address.port,
     connections: () => connections,
-    close: () => new Promise<void>(done => { for (const socket of sockets) socket.destroy(); server.close(() => done()) }),
+    close: () =>
+      new Promise<void>(done => {
+        for (const socket of sockets) socket.destroy()
+        server.close(() => done())
+      }),
   }
 }
 
 function shellEnvironment(): Record<string, string> {
-  return Object.fromEntries(Object.entries(desktopShellEnvironment(process.env)).filter((entry): entry is [string, string] => entry[1] !== undefined))
+  return Object.fromEntries(
+    Object.entries(desktopShellEnvironment(process.env)).filter((entry): entry is [string, string] => entry[1] !== undefined),
+  )
 }
 
 async function waitFor(check: () => boolean | Promise<boolean>, timeoutMs = 20_000) {
@@ -97,28 +122,49 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
     // Moved forward later to make the Host ask for credential renewal; the shell keeps its own clock.
     let hostClockOffset = 0
     const testHost = await startTestHost({
-      demo: true, uiDir: resolve('dist/web'), presenceMode: 'manual', plugins: [markPlugin(marks)], now: () => Date.now() + hostClockOffset,
+      demo: true,
+      uiDir: resolve('dist/web'),
+      presenceMode: 'manual',
+      plugins: [markPlugin(marks)],
+      now: () => Date.now() + hostClockOffset,
     })
     const { host } = testHost
     const counter = await connectionCounter()
     let application: ElectronApplication | undefined
     try {
       await writeHostState(testHost.dataDir, {
-        version: 2, pid: process.pid, hostId: host.hostId, instanceId: host.instanceId, socketPath: host.socketPath,
-        loopbackOrigin: host.loopbackOrigin, tlsOrigin: host.tlsOrigin ?? null, startedAt: new Date().toISOString(), dataDir: testHost.dataDir,
+        version: 2,
+        pid: process.pid,
+        hostId: host.hostId,
+        instanceId: host.instanceId,
+        socketPath: host.socketPath,
+        loopbackOrigin: host.loopbackOrigin,
+        tlsOrigin: host.tlsOrigin ?? null,
+        startedAt: new Date().toISOString(),
+        dataDir: testHost.dataDir,
       })
       const userData = join(root, 'electron')
       await mkdir('test-results', { recursive: true })
       application = await _electron.launch({
         // The mock keychain keeps safeStorage away from the login keychain during tests.
-        args: [resolve('desktop/main.cjs'), `--latch-host-state=${join(testHost.dataDir, 'host.json')}`, `--latch-user-data=${userData}`, '--use-mock-keychain'],
-        cwd: process.cwd(), env: shellEnvironment(), timeout: 30_000,
+        args: [
+          resolve('desktop/main.cjs'),
+          `--latch-host-state=${join(testHost.dataDir, 'host.json')}`,
+          `--latch-user-data=${userData}`,
+          '--use-mock-keychain',
+        ],
+        cwd: process.cwd(),
+        env: shellEnvironment(),
+        timeout: 30_000,
       })
       const page = await application.firstWindow()
       page.setDefaultTimeout(20_000)
       expect(page.url()).toBe('latch://app/link/')
-      expect(await page.evaluate(() => (globalThis as unknown as { latchShell?: unknown }).latchShell))
-        .toEqual({ kind: 'electron', devMode: true, platform: 'darwin' })
+      expect(await page.evaluate(() => (globalThis as unknown as { latchShell?: unknown }).latchShell)).toEqual({
+        kind: 'electron',
+        devMode: true,
+        platform: 'darwin',
+      })
 
       const fingerprint = await enrollShell(page, testHost, '桌面端测试')
       const devices = host.security.devices.list()
@@ -136,7 +182,8 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
         cookie: document.cookie,
         storage: JSON.stringify({ ...localStorage }) + JSON.stringify({ ...sessionStorage }),
         databases: (await indexedDB.databases()).map(database => database.name),
-        renew: (await fetch('/link/api/credentials/renew', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status,
+        renew: (await fetch('/link/api/credentials/renew', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }))
+          .status,
       }))
       expect(rendererState.cookie).toBe('')
       expect(rendererState.storage).not.toContain('ldc1.')
@@ -145,20 +192,31 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
 
       // No network of its own: fetch, WebSocket and images outside latch: never leave the renderer.
       const blocked = await page.evaluate(async port => {
-        const settle = (promise: Promise<unknown>) => promise.then(() => 'loaded', () => 'blocked')
-        const image = (src: string) => new Promise<string>(done => {
-          const element = new Image()
-          element.onload = () => done('loaded')
-          element.onerror = () => done('blocked')
-          element.src = src
-        })
-        const socket = (url: string) => new Promise<string>(done => {
-          try {
-            const ws = new WebSocket(url)
-            ws.onopen = () => { ws.close(); done('loaded') }
-            ws.onerror = () => done('blocked')
-          } catch { done('blocked') }
-        })
+        const settle = (promise: Promise<unknown>) =>
+          promise.then(
+            () => 'loaded',
+            () => 'blocked',
+          )
+        const image = (src: string) =>
+          new Promise<string>(done => {
+            const element = new Image()
+            element.onload = () => done('loaded')
+            element.onerror = () => done('blocked')
+            element.src = src
+          })
+        const socket = (url: string) =>
+          new Promise<string>(done => {
+            try {
+              const ws = new WebSocket(url)
+              ws.onopen = () => {
+                ws.close()
+                done('loaded')
+              }
+              ws.onerror = () => done('blocked')
+            } catch {
+              done('blocked')
+            }
+          })
         return {
           https: await settle(fetch('https://example.com/')),
           loopback: await settle(fetch(`http://127.0.0.1:${port}/`)),
@@ -168,7 +226,14 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
           opened: window.open(`http://127.0.0.1:${port}/`) === null,
         }
       }, counter.port)
-      expect(blocked).toEqual({ https: 'blocked', loopback: 'blocked', loopbackTls: 'blocked', webSocket: 'blocked', image: 'blocked', opened: true })
+      expect(blocked).toEqual({
+        https: 'blocked',
+        loopback: 'blocked',
+        loopbackTls: 'blocked',
+        webSocket: 'blocked',
+        image: 'blocked',
+        opened: true,
+      })
       expect(application.windows()).toHaveLength(1)
       expect(counter.connections()).toBe(0)
 
@@ -181,7 +246,9 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
           links.asked.push(args.at(-1) as Record<string, unknown>)
           return { response: links.answer, checkboxChecked: false }
         }) as typeof dialog.showMessageBox
-        shell.openExternal = async (url: string) => { links.opened.push(url) }
+        shell.openExternal = async (url: string) => {
+          links.opened.push(url)
+        }
       })
       const externalLinks = () => application!.evaluate(() => (globalThis as unknown as { externalLinks: ExternalLinks }).externalLinks)
       const link = 'https://example.invalid/docs?from=latch#intro'
@@ -189,10 +256,16 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
       expect(await openLink(link)).toBe(true)
       await waitFor(async () => (await externalLinks()).asked.length === 1)
       expect((await externalLinks()).asked[0]).toMatchObject({
-        message: '在浏览器中打开以下链接？', detail: link, buttons: ['打开', '取消'], defaultId: 1, cancelId: 1,
+        message: '在浏览器中打开以下链接？',
+        detail: link,
+        buttons: ['打开', '取消'],
+        defaultId: 1,
+        cancelId: 1,
       })
       expect((await externalLinks()).opened).toEqual([])
-      await application.evaluate(() => { (globalThis as unknown as { externalLinks: ExternalLinks }).externalLinks.answer = 0 })
+      await application.evaluate(() => {
+        ;(globalThis as unknown as { externalLinks: ExternalLinks }).externalLinks.answer = 0
+      })
       expect(await openLink(link)).toBe(true)
       await waitFor(async () => (await externalLinks()).opened.length === 1)
       expect((await externalLinks()).opened).toEqual([link])
@@ -209,12 +282,17 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
       await page.getByRole('button', { name: '发送', exact: true }).click()
       await waitFor(async () => (await host.bridge.listTasks()).length === 1)
       const longTask = (await host.bridge.listTasks())[0]!
-      await waitFor(async () => (await host.bridge.detail(longTask.id)).messages.some(message => message.role === 'tool' && message.state === 'running'))
+      await waitFor(async () =>
+        (await host.bridge.detail(longTask.id)).messages.some(message => message.role === 'tool' && message.state === 'running'),
+      )
       await page.screenshot({ path: 'test-results/native-desktop.png' })
 
       // High-risk approval: allowed only after the local confirmation.
       const { sessionId } = await host.bridge.createTask({
-        prompt: R2_PROMPT, requestId: randomUUID(), mode: 'agent', model: { providerId: 'e2e-desktop', model: 'e2e' },
+        prompt: R2_PROMPT,
+        requestId: randomUUID(),
+        mode: 'agent',
+        model: { providerId: 'e2e-desktop', model: 'e2e' },
       })
       await waitFor(() => host.bridge.approvals().some(approval => approval.sessionId === sessionId))
       await page.getByText(R2_PROMPT).first().click()
@@ -253,7 +331,9 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
         const contents = BrowserWindow.getAllWindows()[0]!.webContents
         const attempts: string[] = []
         // Main's guard refuses these at will-frame-navigate, so will-navigate is never emitted for them.
-        const record = (event: { url: string }) => { attempts.push(event.url) }
+        const record = (event: { url: string }) => {
+          attempts.push(event.url)
+        }
         contents.on('will-frame-navigate', record)
         await contents.executeJavaScript(
           `setTimeout(() => { location.href = 'http://127.0.0.1:${port}/' }, 0); setTimeout(() => { location.href = 'https://example.com/' }, 200); true`,

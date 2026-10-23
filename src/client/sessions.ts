@@ -35,10 +35,24 @@ export function groupSessions(tasks: TaskSummary[], now = new Date()): SessionGr
     { id: 'week', label: '过去 7 天', tasks: [] },
     { id: 'earlier', label: '更早', tasks: [] },
   ]
-  const [pinned, todayGroup, yesterdayGroup, weekGroup, earlier] = groups as [SessionGroup, SessionGroup, SessionGroup, SessionGroup, SessionGroup]
+  const [pinned, todayGroup, yesterdayGroup, weekGroup, earlier] = groups as [
+    SessionGroup,
+    SessionGroup,
+    SessionGroup,
+    SessionGroup,
+    SessionGroup,
+  ]
   for (const task of [...tasks].sort(byRecency)) {
     const time = Date.parse(task.updatedAt) || 0
-    const group = task.pinned ? pinned : time >= today ? todayGroup : time >= yesterday ? yesterdayGroup : time >= week ? weekGroup : earlier
+    const group = task.pinned
+      ? pinned
+      : time >= today
+        ? todayGroup
+        : time >= yesterday
+          ? yesterdayGroup
+          : time >= week
+            ? weekGroup
+            : earlier
     group.tasks.push(task)
   }
   return groups.filter(group => group.tasks.length > 0)
@@ -48,9 +62,14 @@ export function groupSessions(tasks: TaskSummary[], now = new Date()): SessionGr
  * Per-device read markers. Sessions updated after the device last opened them get
  * an unread dot; the baseline keeps a first visit from marking all history unread.
  */
-export interface SeenState { baseline: string; seen: Record<string, string> }
+export interface SeenState {
+  baseline: string
+  seen: Record<string, string>
+}
 
-export function emptySeen(now = new Date()): SeenState { return { baseline: now.toISOString(), seen: {} } }
+export function emptySeen(now = new Date()): SeenState {
+  return { baseline: now.toISOString(), seen: {} }
+}
 
 export function isUnread(task: TaskSummary, state: SeenState): boolean {
   const updated = Date.parse(task.updatedAt)
@@ -79,7 +98,11 @@ export function readSeen(key: string): SeenState | null {
     if (typeof item.baseline !== 'string' || typeof item.seen !== 'object' || item.seen === null) return null
     const seen = Object.fromEntries(Object.entries(item.seen).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
     return { baseline: item.baseline, seen }
-  } catch { return null }
+  } catch {
+    return null
+  }
 }
 
-export function writeSeen(key: string, state: SeenState): void { storageSet(key, JSON.stringify(state)) }
+export function writeSeen(key: string, state: SeenState): void {
+  storageSet(key, JSON.stringify(state))
+}

@@ -12,10 +12,14 @@ import type { ModelProvider, ToolDefinition } from '../src/core/plugins.ts'
 import type { ChangeEvent, TaskDetail, TaskStateEvent } from '../src/shared/types.ts'
 
 const cleanups: Array<() => Promise<void>> = []
-afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
+})
 function deferred() {
   let resolve!: () => void
-  const promise = new Promise<void>(done => { resolve = done })
+  const promise = new Promise<void>(done => {
+    resolve = done
+  })
   return { promise, resolve }
 }
 async function directory() {
@@ -49,12 +53,20 @@ async function events(device: TestDevice, query: string) {
       while ((separator = buffer.indexOf('\n\n')) >= 0) {
         const block = buffer.slice(0, separator)
         buffer = buffer.slice(separator + 2)
-        const data = block.split('\n').find(line => line.startsWith('data: '))?.slice(6)
+        const data = block
+          .split('\n')
+          .find(line => line.startsWith('data: '))
+          ?.slice(6)
         if (data) received.push(JSON.parse(data) as ChangeEvent | TaskStateEvent)
       }
     }
-  })().catch(error => { if (!controller.signal.aborted) throw error })
-  cleanups.push(async () => { controller.abort(); await consume })
+  })().catch(error => {
+    if (!controller.signal.aborted) throw error
+  })
+  cleanups.push(async () => {
+    controller.abort()
+    await consume
+  })
   return received
 }
 
@@ -65,26 +77,67 @@ describe('streamed task state', () => {
     const release = deferred()
     let blockNext = true
     let notify: (sessionId?: string) => void = () => {}
-    const current: TaskDetail = { summary: { id: 'slow-session', title: 'Slow fixture', status: 'running', updatedAt: '2026-01-01' }, messages: [], approvals: [], liveText: 'old', cursor: 1 }
+    const current: TaskDetail = {
+      summary: { id: 'slow-session', title: 'Slow fixture', status: 'running', updatedAt: '2026-01-01' },
+      messages: [],
+      approvals: [],
+      liveText: 'old',
+      cursor: 1,
+    }
     const other: TaskDetail = { ...structuredClone(current), summary: { ...current.summary, id: 'other-session' }, liveText: '' }
     const bridge: Bridge = {
-      async start() {}, async close() {},
-      async listTasks() { return [structuredClone(current.summary), structuredClone(other.summary)] },
+      async start() {},
+      async close() {},
+      async listTasks() {
+        return [structuredClone(current.summary), structuredClone(other.summary)]
+      },
       async detail(sessionId) {
         if (sessionId === other.summary.id) return structuredClone(other)
         const captured = structuredClone(current)
-        if (blockNext) { blockNext = false; entered.resolve(); await release.promise }
+        if (blockNext) {
+          blockNext = false
+          entered.resolve()
+          await release.promise
+        }
         return captured
       },
-      async createTask() { throw new Error('Unused fixture operation') },
-      async prompt() {}, async cancel() {}, approvals() { return [] }, async decide() { return false },
-      subscribe(listener) { notify = listener; return () => { notify = () => {} } },
+      async createTask() {
+        throw new Error('Unused fixture operation')
+      },
+      async prompt() {},
+      async cancel() {},
+      approvals() {
+        return []
+      },
+      async decide() {
+        return false
+      },
+      subscribe(listener) {
+        notify = listener
+        return () => {
+          notify = () => {}
+        }
+      },
     }
-    const { device } = await testHost({ dataDir, demo: false, harnessId: 'slow', plugins: [{
-      id: 'slow-driver', name: 'Slow fixture', version: '1', description: 'Legacy async Bridge fixture',
-      activate(ctx) { ctx.registerHarness({ id: 'slow', name: 'Slow', version: '1', create: () => bridge }) },
-    }] })
-    cleanups.push(async () => { release.resolve() })
+    const { device } = await testHost({
+      dataDir,
+      demo: false,
+      harnessId: 'slow',
+      plugins: [
+        {
+          id: 'slow-driver',
+          name: 'Slow fixture',
+          version: '1',
+          description: 'Legacy async Bridge fixture',
+          activate(ctx) {
+            ctx.registerHarness({ id: 'slow', name: 'Slow', version: '1', create: () => bridge })
+          },
+        },
+      ],
+    })
+    cleanups.push(async () => {
+      release.resolve()
+    })
     notify(current.summary.id)
     await entered.promise
     current.liveText = 'new'
@@ -95,29 +148,66 @@ describe('streamed task state', () => {
     await vi.waitFor(() => expect(received.length).toBe(1))
     const initialRevision = received[0].revision
     release.resolve()
-    await vi.waitFor(() => expect(received.some(event => event.type === 'tasks-invalidated' && event.sessionId === other.summary.id)).toBe(true))
+    await vi.waitFor(() =>
+      expect(received.some(event => event.type === 'tasks-invalidated' && event.sessionId === other.summary.id)).toBe(true),
+    )
     expect(received.some(event => event.type === 'task-state' && event.detail.liveText === 'new')).toBe(true)
     expect(received.every(event => event.revision >= initialRevision)).toBe(true)
     expect(received.some(event => event.type === 'task-state' && event.detail.liveText === 'old')).toBe(false)
     // Different event types in one pending batch legitimately share a revision.
-    expect(received.filter(event => event.revision === initialRevision).map(event => event.type)).toEqual(['refresh', 'task-state', 'tasks-invalidated'])
+    expect(received.filter(event => event.revision === initialRevision).map(event => event.type)).toEqual([
+      'refresh',
+      'task-state',
+      'tasks-invalidated',
+    ])
   })
 
   it('falls back to a single refresh per batch when sessions cannot be read', async () => {
     const dataDir = await directory()
     let notify: (sessionId?: string) => void = () => {}
     const bridge: Bridge = {
-      async start() {}, async close() {},
-      async listTasks() { return ['gone-1', 'gone-2'].map(id => ({ id, title: id, status: 'idle' as const, updatedAt: '2026-01-01' })) },
-      async detail() { throw new Error('Session data unavailable') },
-      async createTask() { throw new Error('Unused fixture operation') },
-      async prompt() {}, async cancel() {}, approvals() { return [] }, async decide() { return false },
-      subscribe(listener) { notify = listener; return () => { notify = () => {} } },
+      async start() {},
+      async close() {},
+      async listTasks() {
+        return ['gone-1', 'gone-2'].map(id => ({ id, title: id, status: 'idle' as const, updatedAt: '2026-01-01' }))
+      },
+      async detail() {
+        throw new Error('Session data unavailable')
+      },
+      async createTask() {
+        throw new Error('Unused fixture operation')
+      },
+      async prompt() {},
+      async cancel() {},
+      approvals() {
+        return []
+      },
+      async decide() {
+        return false
+      },
+      subscribe(listener) {
+        notify = listener
+        return () => {
+          notify = () => {}
+        }
+      },
     }
-    const { device } = await testHost({ dataDir, demo: false, harnessId: 'unreadable', plugins: [{
-      id: 'unreadable-driver', name: 'Unreadable fixture', version: '1', description: 'Bridge whose details fail',
-      activate(ctx) { ctx.registerHarness({ id: 'unreadable', name: 'Unreadable', version: '1', create: () => bridge }) },
-    }] })
+    const { device } = await testHost({
+      dataDir,
+      demo: false,
+      harnessId: 'unreadable',
+      plugins: [
+        {
+          id: 'unreadable-driver',
+          name: 'Unreadable fixture',
+          version: '1',
+          description: 'Bridge whose details fail',
+          activate(ctx) {
+            ctx.registerHarness({ id: 'unreadable', name: 'Unreadable', version: '1', create: () => bridge })
+          },
+        },
+      ],
+    })
     await delay(100)
     const received = await events(device, '?sessionId=gone-1')
     await vi.waitFor(() => expect(received).toHaveLength(1))
@@ -133,7 +223,9 @@ describe('streamed task state', () => {
     const start = deferred()
     const finish = deferred()
     const provider: ModelProvider = {
-      id: 'flood', name: 'Flood fixture', model: 'fixture',
+      id: 'flood',
+      name: 'Flood fixture',
+      model: 'fixture',
       async *stream({ signal }) {
         await start.promise
         for (let batch = 0; batch < 20; batch++) {
@@ -144,9 +236,30 @@ describe('streamed task state', () => {
         yield { type: 'finish', reason: 'stop' }
       },
     }
-    const { t, device } = await testHost({ dataDir, demo: false, providerId: 'flood', plugins: [{ id: 'flood', name: 'Flood fixture', version: '1', description: 'Deterministic transport fixture', activate(ctx) { ctx.registerProvider(provider) } }] })
-    cleanups.push(async () => { start.resolve(); finish.resolve() })
-    const { sessionId } = await device.json<{ sessionId: string }>('tasks', { method: 'POST', body: { prompt: 'flood', requestId: randomUUID() } })
+    const { t, device } = await testHost({
+      dataDir,
+      demo: false,
+      providerId: 'flood',
+      plugins: [
+        {
+          id: 'flood',
+          name: 'Flood fixture',
+          version: '1',
+          description: 'Deterministic transport fixture',
+          activate(ctx) {
+            ctx.registerProvider(provider)
+          },
+        },
+      ],
+    })
+    cleanups.push(async () => {
+      start.resolve()
+      finish.resolve()
+    })
+    const { sessionId } = await device.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { prompt: 'flood', requestId: randomUUID() },
+    })
     const selected = await events(device, `?sessionId=${sessionId}`)
     const other = await events(device, '?sessionId=another-session')
     start.resolve()
@@ -177,7 +290,9 @@ describe('streamed task state', () => {
     const entered = deferred()
     const cleanup = deferred()
     const provider: ModelProvider = {
-      id: 'fixture', name: 'Fixture', model: 'fixture',
+      id: 'fixture',
+      name: 'Fixture',
+      model: 'fixture',
       async *stream() {
         yield { type: 'tool-call', call: { id: 'first', name: 'write', arguments: {} } }
         yield { type: 'tool-call', call: { id: 'second', name: 'write', arguments: {} } }
@@ -185,7 +300,10 @@ describe('streamed task state', () => {
       },
     }
     const tool: ToolDefinition = {
-      name: 'write', description: 'Fixture', parameters: {}, requiresApproval: true,
+      name: 'write',
+      description: 'Fixture',
+      parameters: {},
+      requiresApproval: true,
       async execute(_args, { signal }) {
         entered.resolve()
         await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }))
@@ -194,13 +312,24 @@ describe('streamed task state', () => {
         return { text: 'unreachable' }
       },
     }
-    const bridge = createRuntime({ dataDir, workspaceRoot: dataDir, providerId: 'fixture', registry: { acquire: () => ({ provider, tools: [tool], release() {} }) } })
-    cleanups.push(async () => { cleanup.resolve(); await bridge.close() })
+    const bridge = createRuntime({
+      dataDir,
+      workspaceRoot: dataDir,
+      providerId: 'fixture',
+      registry: { acquire: () => ({ provider, tools: [tool], release() {} }) },
+    })
+    cleanups.push(async () => {
+      cleanup.resolve()
+      await bridge.close()
+    })
     const { sessionId } = await bridge.createTask({ prompt: 'write', requestId: 'states' })
     await vi.waitFor(async () => expect((await bridge.detail(sessionId)).summary.status).toBe('waiting-approval'))
     const approval = await bridge.detail(sessionId)
     expect(approval.activity).toEqual({ phase: 'approval', toolName: 'write' })
-    expect(approval.messages.filter(message => message.role === 'tool').map(message => message.state)).toEqual(['awaiting-approval', 'queued'])
+    expect(approval.messages.filter(message => message.role === 'tool').map(message => message.state)).toEqual([
+      'awaiting-approval',
+      'queued',
+    ])
     expect(approval.approvals[0].toolCallId).toBe('first')
     await bridge.decide(approval.approvals[0].id, 'allow')
     await entered.promise

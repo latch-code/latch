@@ -31,8 +31,12 @@ export const geminiProfile: HarnessProfile = {
     try {
       await handle.writeFile(`${JSON.stringify(SYSTEM_SETTINGS, null, 2)}\n`)
       await handle.sync()
-    } finally { await handle.close() }
-    try { await rename(temporary, path) } catch (error) {
+    } finally {
+      await handle.close()
+    }
+    try {
+      await rename(temporary, path)
+    } catch (error) {
       await unlink(temporary).catch(() => {})
       throw error
     }

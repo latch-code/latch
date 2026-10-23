@@ -1,4 +1,14 @@
-import type { Approval, ApprovalOption, AppSnapshot, CurrentDevice, DeviceScope, HarnessInfo, HostView, SessionPermission, TaskSummary } from '../shared/types.ts'
+import type {
+  Approval,
+  ApprovalOption,
+  AppSnapshot,
+  CurrentDevice,
+  DeviceScope,
+  HarnessInfo,
+  HostView,
+  SessionPermission,
+  TaskSummary,
+} from '../shared/types.ts'
 import type { LatchShell } from './shell.ts'
 
 /**
@@ -31,14 +41,21 @@ export function isLocalDevice(device: Pick<CurrentDevice, 'listener'> | null, sh
 export function deviceAccess(snapshot: AppSnapshot, shell: LatchShell | null): DeviceAccess {
   if (hostView(snapshot) === undefined) {
     const owner = (snapshot.device as unknown as { role?: string }).role === 'owner'
-    return { legacy: true, local: false, scopes: new Set(owner ? ALL_SCOPES : ['view', 'run', 'approve:standard']), admin: owner, device: null }
+    return {
+      legacy: true,
+      local: false,
+      scopes: new Set(owner ? ALL_SCOPES : ['view', 'run', 'approve:standard']),
+      admin: owner,
+      device: null,
+    }
   }
   const device = snapshot.device
   const scopes = new Set(Array.isArray(device.scopes) ? device.scopes : [])
   return { legacy: false, local: isLocalDevice(device, shell), scopes, admin: scopes.has('admin'), device }
 }
 
-export const harnessLevel = (harness: Pick<HarnessInfo, 'level' | 'source'>): 'L1' | 'L3' => harness.level ?? (harness.source === 'builtin' ? 'L1' : 'L3')
+export const harnessLevel = (harness: Pick<HarnessInfo, 'level' | 'source'>): 'L1' | 'L3' =>
+  harness.level ?? (harness.source === 'builtin' ? 'L1' : 'L3')
 
 export const LEVEL_LABELS = { L1: '逐项询问（L1）', L3: '完全访问（L3）' } as const
 export const LOCAL_ONLY_HARNESS = '仅本机桌面端'
@@ -48,7 +65,10 @@ export const DEV_MODE_TEXT = '开发模式：Host 代码可被本机修改'
 export const LEGACY_HOST_TEXT = '此 Host 仍是旧版本，重启 Host 后启用设备确认。'
 
 /** New sessions on a full-access harness can only be started from the Host's own desktop. */
-export function harnessGate(harness: Pick<HarnessInfo, 'level' | 'source'>, access: Pick<DeviceAccess, 'legacy' | 'local'>): { allowed: boolean; reason?: string } {
+export function harnessGate(
+  harness: Pick<HarnessInfo, 'level' | 'source'>,
+  access: Pick<DeviceAccess, 'legacy' | 'local'>,
+): { allowed: boolean; reason?: string } {
   if (access.legacy || access.local || harnessLevel(harness) !== 'L3') return { allowed: true }
   return { allowed: false, reason: LOCAL_ONLY_HARNESS }
 }
@@ -101,7 +121,9 @@ export function approvalActions(approval: Approval, device: CurrentDevice | null
   if (approval.advisory) {
     const allowed = local && scopes.has('run')
     return {
-      badge: { label: APPROVAL_COPY.advisory, tone: 'warn' }, note: APPROVAL_COPY.advisoryNote, explicit,
+      badge: { label: APPROVAL_COPY.advisory, tone: 'warn' },
+      note: APPROVAL_COPY.advisoryNote,
+      explicit,
       options: allowed ? [...rejects, ...allowOnce] : rejects,
       ...(allowed ? {} : { hint: APPROVAL_COPY.advisoryRemote }),
     }
@@ -109,7 +131,8 @@ export function approvalActions(approval: Approval, device: CurrentDevice | null
   if (approval.risk === 'R1') {
     const allowed = scopes.has('approve:standard')
     return {
-      badge: { label: APPROVAL_COPY.R1, tone: 'neutral' }, explicit,
+      badge: { label: APPROVAL_COPY.R1, tone: 'neutral' },
+      explicit,
       options: allowed ? offered : rejects,
       ...(allowed ? {} : { hint: APPROVAL_COPY.noStandard }),
     }

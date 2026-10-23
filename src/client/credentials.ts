@@ -5,7 +5,9 @@ import { ENROLLMENT_REASON_TEXT, type EnrollmentReason } from './securityCopy.ts
 
 /** The stored key is gone (cleared site data, another browser profile): only a new enrollment helps. */
 export class MissingDeviceKeyError extends ClientError {
-  constructor() { super(ENROLLMENT_REASON_TEXT['key-missing']!, 'key-missing') }
+  constructor() {
+    super(ENROLLMENT_REASON_TEXT['key-missing']!, 'key-missing')
+  }
 }
 
 /** The Host drops a renewed credential that is not presented within 10 minutes. */
@@ -22,10 +24,15 @@ const NOT_KEPT_WINDOW_MS = 60 * 60_000
  * passed, so the renewed credential can no longer be used and the page leaves for the enrollment page.
  */
 export class CredentialNotKeptError extends ClientError {
-  constructor(readonly final: boolean) { super(ENROLLMENT_REASON_TEXT['renewal-not-stored']!, 'renewal-not-stored') }
+  constructor(readonly final: boolean) {
+    super(ENROLLMENT_REASON_TEXT['renewal-not-stored']!, 'renewal-not-stored')
+  }
 }
 
-export interface RenewalIdentity { hostId?: string; deviceId?: string }
+export interface RenewalIdentity {
+  hostId?: string
+  deviceId?: string
+}
 
 export interface RenewalDeps {
   api: <T>(path: string, options?: ApiOptions) => Promise<T>
@@ -65,7 +72,10 @@ export function createRenewer(deps: RenewalDeps) {
   async function run(hostId: string, identity: RenewalIdentity): Promise<RenewalResult> {
     try {
       const snapshot = await deps.api<AppSnapshot>('snapshot', { noRenew: true })
-      if (Date.parse(snapshot.device.renewAfter) > deps.now()) { renewedAt = null; return 'not-due' }
+      if (Date.parse(snapshot.device.renewAfter) > deps.now()) {
+        renewedAt = null
+        return 'not-due'
+      }
     } catch (error) {
       if (!(error instanceof ApiError && error.status === 401 && error.code === 'renewal-required')) throw error
     }
@@ -87,7 +97,11 @@ export function createRenewer(deps: RenewalDeps) {
   async function rotate(hostId: string, deviceId: string, key: DeviceKeyRecord): Promise<RenewalResult> {
     for (let attempt = 0; ; attempt++) {
       try {
-        const { nonce } = await deps.api<{ nonce: string; expiresAt: string }>('credentials/challenge', { method: 'POST', body: {}, noRenew: true })
+        const { nonce } = await deps.api<{ nonce: string; expiresAt: string }>('credentials/challenge', {
+          method: 'POST',
+          body: {},
+          noRenew: true,
+        })
         const signature = await deps.sign(key.privateKey, renewSigningText(hostId, deviceId, nonce))
         // The new cookie arrives with the response headers, so a 2xx status settles it even if the body is lost.
         await deps.api<unknown>('credentials/renew', { method: 'POST', body: { nonce, signature }, noRenew: true, discardBody: true })
@@ -106,8 +120,12 @@ export function createRenewer(deps: RenewalDeps) {
       if (inflight) return inflight
       inflight = (async () => {
         const hostId = await hostIdOf(identity)
-        return deps.locks ? deps.locks.request(`latch-renew-${hostId}`, () => run(hostId, identity)) as Promise<RenewalResult> : run(hostId, identity)
-      })().finally(() => { inflight = null })
+        return deps.locks
+          ? (deps.locks.request(`latch-renew-${hostId}`, () => run(hostId, identity)) as Promise<RenewalResult>)
+          : run(hostId, identity)
+      })().finally(() => {
+        inflight = null
+      })
       return inflight
     },
   }
@@ -127,7 +145,9 @@ export class RenewalBackoff {
   constructor(private readonly now: () => number = Date.now) {}
 
   /** Milliseconds until the next attempt may start; 0 when it may start now. */
-  wait(): number { return Math.max(0, this.notBefore - this.now()) }
+  wait(): number {
+    return Math.max(0, this.notBefore - this.now())
+  }
 
   /** Records a transient failure and returns the wait before the next attempt. */
   failed(): number {
@@ -138,9 +158,14 @@ export class RenewalBackoff {
   }
 
   /** The scheduled retry starts: the wait is over even when its timer fired a little early. */
-  release(): void { this.notBefore = 0 }
+  release(): void {
+    this.notBefore = 0
+  }
 
-  reset(): void { this.failures = 0; this.notBefore = 0 }
+  reset(): void {
+    this.failures = 0
+    this.notBefore = 0
+  }
 }
 
 const RENEWAL_401_CODES = new Set<string>(['device-revoked', 'credential-expired', 'listener-mismatch'])
@@ -154,7 +179,8 @@ const RENEWAL_401_CODES = new Set<string>(['device-revoked', 'credential-expired
 export function renewalFailureOf(cause: unknown): EnrollmentReason | null {
   if (cause instanceof MissingDeviceKeyError) return 'key-missing'
   if (cause instanceof CredentialNotKeptError) return cause.final ? 'renewal-not-stored' : null
-  if (cause instanceof ApiError && cause.status === 401) return RENEWAL_401_CODES.has(cause.code) ? cause.code as EnrollmentReason : 'unauthorized'
+  if (cause instanceof ApiError && cause.status === 401)
+    return RENEWAL_401_CODES.has(cause.code) ? (cause.code as EnrollmentReason) : 'unauthorized'
   return null
 }
 
@@ -179,7 +205,9 @@ export class RenewalScheduler {
   private generation = 0
   private readonly backoff: RenewalBackoff
 
-  constructor(private readonly deps: RenewalSchedulerDeps) { this.backoff = new RenewalBackoff(deps.now) }
+  constructor(private readonly deps: RenewalSchedulerDeps) {
+    this.backoff = new RenewalBackoff(deps.now)
+  }
 
   /** True when the page should reload state: renewed here or by another tab, or no longer due. */
   renew(identity: RenewalIdentity): Promise<boolean> {
@@ -187,18 +215,30 @@ export class RenewalScheduler {
     this.failure = null
     if (this.backoff.wait() > 0) return Promise.resolve(false)
     const generation = this.generation
-    const attempt = this.deps.renew(identity).then(() => {
-      if (generation === this.generation) this.backoff.reset()
-      return true
-    }, (cause: unknown) => {
-      if (generation !== this.generation) return false
-      this.failure = renewalFailureOf(cause)
-      if (this.failure === null) {
-        clearTimeout(this.timer)
-        this.timer = setTimeout(() => { this.timer = undefined; this.backoff.release(); this.deps.retry() }, this.backoff.failed())
-      }
-      return false
-    }).finally(() => { if (this.attempt === attempt) this.attempt = null })
+    const attempt = this.deps
+      .renew(identity)
+      .then(
+        () => {
+          if (generation === this.generation) this.backoff.reset()
+          return true
+        },
+        (cause: unknown) => {
+          if (generation !== this.generation) return false
+          this.failure = renewalFailureOf(cause)
+          if (this.failure === null) {
+            clearTimeout(this.timer)
+            this.timer = setTimeout(() => {
+              this.timer = undefined
+              this.backoff.release()
+              this.deps.retry()
+            }, this.backoff.failed())
+          }
+          return false
+        },
+      )
+      .finally(() => {
+        if (this.attempt === attempt) this.attempt = null
+      })
     this.attempt = attempt
     return attempt
   }

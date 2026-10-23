@@ -23,11 +23,18 @@ function escapedSegments(text: string, out: Segment[]): void {
   }
   if (text === '') return
   const escaped = escapeSecurityText(text)
-  if (escaped === text) { plain(text); return }
+  if (escaped === text) {
+    plain(text)
+    return
+  }
   let at = 0
   for (const point of text) {
     // An escaped code point never starts with itself: its marker begins with a backslash, which is never escaped.
-    if (escaped.startsWith(point, at)) { plain(point); at += point.length; continue }
+    if (escaped.startsWith(point, at)) {
+      plain(point)
+      at += point.length
+      continue
+    }
     const shown = marker(point)
     if (!escaped.startsWith(shown, at)) {
       // Not expected; the escaped text still holds no raw hidden character, only without per-character marks.
@@ -58,16 +65,23 @@ export function hasHiddenCharacters(text: string | undefined): boolean {
 
 /** Plain-string form for attributes such as `title`, with the Host preview's `\u{XXXX}`. */
 export function escapeHiddenCharacters(text: string): string {
-  return text.split(/(\r\n|\n|\t)/).map((piece, index) => index % 2 === 1 ? piece : escapeSecurityText(piece)).join('')
+  return text
+    .split(/(\r\n|\n|\t)/)
+    .map((piece, index) => (index % 2 === 1 ? piece : escapeSecurityText(piece)))
+    .join('')
 }
 
 /** Text with every hidden character shown as a highlighted `\u{XXXX}`; the raw character never reaches the DOM. */
 export function VisibleText({ text }: { text: string }) {
   const parts = segments(text)
   if (!parts.some(segment => segment.hidden)) return <>{parts.map(segment => segment.text).join('')}</>
-  return <>{parts.map((segment, index) => {
-    if (!segment.hidden) return segment.text
-    const code = codePoint(segment.text)
-    return <span key={index} className="hidden-char" title={`不可见或改变显示方向的字符 U+${code}`}>{`\\u{${code}}`}</span>
-  })}</>
+  return (
+    <>
+      {parts.map((segment, index) => {
+        if (!segment.hidden) return segment.text
+        const code = codePoint(segment.text)
+        return <span key={index} className="hidden-char" title={`不可见或改变显示方向的字符 U+${code}`}>{`\\u{${code}}`}</span>
+      })}
+    </>
+  )
 }

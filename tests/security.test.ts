@@ -29,7 +29,9 @@ const LATCH = resolve('scripts/latch.ts')
 const SECRET_PATTERNS = [/ldc1\./u, /lpi1-/u, /lpo1-/u, /harness_link=/u, /token=/u]
 
 const cleanups: Array<() => Promise<void>> = []
-afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
+})
 
 /** The child sees no HARNESS_* variable from the developer's shell. */
 function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
@@ -38,7 +40,10 @@ function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
 
 async function freePort(): Promise<number> {
   const server = createServer()
-  await new Promise<void>((done, fail) => { server.once('error', fail); server.listen(0, '127.0.0.1', done) })
+  await new Promise<void>((done, fail) => {
+    server.once('error', fail)
+    server.listen(0, '127.0.0.1', done)
+  })
   const address = server.address()
   await new Promise<void>(done => server.close(() => done()))
   if (!address || typeof address === 'string') throw new Error('no port')
@@ -51,20 +56,28 @@ async function prepare() {
   cleanups.push(() => rm(root, { recursive: true, force: true }))
   const dataDir = join(root, 'data')
   await mkdir(dataDir, { mode: 0o700 })
-  await writeFile(join(dataDir, 'policy.json'), JSON.stringify({ ...defaultPolicy('darwin'), presence: { backend: 'none', helperCdhash: null } }), { mode: 0o600 })
+  await writeFile(
+    join(dataDir, 'policy.json'),
+    JSON.stringify({ ...defaultPolicy('darwin'), presence: { backend: 'none', helperCdhash: null } }),
+    { mode: 0o600 },
+  )
   return { root, dataDir, workspace: join(root, 'workspace') }
 }
 
 function collect(child: ChildProcess) {
   const output = { stdout: '', stderr: '' }
-  child.stdout!.on('data', chunk => { output.stdout += String(chunk) })
-  child.stderr!.on('data', chunk => { output.stderr += String(chunk) })
+  child.stdout!.on('data', chunk => {
+    output.stdout += String(chunk)
+  })
+  child.stderr!.on('data', chunk => {
+    output.stderr += String(chunk)
+  })
   return output
 }
 
 async function waitFor(check: () => boolean | Promise<boolean>, child: ChildProcess, timeoutMs = 30_000): Promise<void> {
   const deadline = Date.now() + timeoutMs
-  while (!await check()) {
+  while (!(await check())) {
     if (child.exitCode !== null) throw new Error(`process exited with ${child.exitCode}`)
     if (Date.now() > deadline) throw new Error('timed out')
     await new Promise(done => setTimeout(done, 50))
@@ -83,18 +96,46 @@ describe('Host process', () => {
     const tlsPort = await freePort()
     const codeFile = join(root, 'offline-code.txt')
     // Offline enrollment needs the Host stopped; it is how a device enrolls without local confirmation.
-    const offline = await run(TSX, [LATCH, 'device', 'enroll', '--offline', '--code-file', codeFile, '--data-dir', dataDir], { cwd: root, env: childEnv() })
+    const offline = await run(TSX, [LATCH, 'device', 'enroll', '--offline', '--code-file', codeFile, '--data-dir', dataDir], {
+      cwd: root,
+      env: childEnv(),
+    })
     expect(offline.stdout).not.toMatch(/lpo1-/u)
     const code = (await readFile(codeFile, 'utf8')).trim()
 
-    const child = spawn(process.execPath, [
-      '--import', TSX_LOADER, START, '--data-dir', dataDir, '--workspace', workspace, '--port', '0', '--demo',
-      '--tls-cert', tls.certPath, '--tls-key', tls.keyPath, '--public-origin', `https://${tls.hostname}:${tlsPort}`, '--tls-host', '127.0.0.1', '--tls-port', String(tlsPort),
-    ], { cwd: root, env: childEnv({ HARNESS_API_KEY: 'sk-never-printed' }), stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(
+      process.execPath,
+      [
+        '--import',
+        TSX_LOADER,
+        START,
+        '--data-dir',
+        dataDir,
+        '--workspace',
+        workspace,
+        '--port',
+        '0',
+        '--demo',
+        '--tls-cert',
+        tls.certPath,
+        '--tls-key',
+        tls.keyPath,
+        '--public-origin',
+        `https://${tls.hostname}:${tlsPort}`,
+        '--tls-host',
+        '127.0.0.1',
+        '--tls-port',
+        String(tlsPort),
+      ],
+      { cwd: root, env: childEnv({ HARNESS_API_KEY: 'sk-never-printed' }), stdio: ['ignore', 'pipe', 'pipe'] },
+    )
     const output = collect(child)
     let socketDir: string | undefined
     cleanups.push(async () => {
-      if (child.exitCode === null && child.signalCode === null) { child.kill('SIGTERM'); await new Promise(done => child.once('exit', done)) }
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill('SIGTERM')
+        await new Promise(done => child.once('exit', done))
+      }
       if (socketDir) await rm(socketDir, { recursive: true, force: true })
     })
     await waitFor(() => output.stdout.split('\n').length > 4, child)
@@ -118,11 +159,17 @@ describe('Host process', () => {
     expect((invited.body as { invitation: InvitationView }).invitation.code).toMatch(/^lpi1-/u)
 
     const key = testDeviceKey()
-    const created = await unixRequest(state.socketPath, '/link/api/enrollments', { method: 'POST', body: { publicKey: key.spki, name: 'CLI desktop', offlineCode: code } })
+    const created = await unixRequest(state.socketPath, '/link/api/enrollments', {
+      method: 'POST',
+      body: { publicKey: key.spki, name: 'CLI desktop', offlineCode: code },
+    })
     expect(created.status).toBe(202)
     const enrollment = (created.body as { enrollment: EnrollmentView }).enrollment
     expect(enrollment.status).toBe('approved')
-    const completed = await unixRequest(state.socketPath, `/link/api/enrollments/${enrollment.id}/complete`, { method: 'POST', body: { signature: key.sign(enrollSigningText(state.hostId, enrollment.id, enrollment.nonce!)) } })
+    const completed = await unixRequest(state.socketPath, `/link/api/enrollments/${enrollment.id}/complete`, {
+      method: 'POST',
+      body: { signature: key.sign(enrollSigningText(state.hostId, enrollment.id, enrollment.nonce!)) },
+    })
     expect(completed.status).toBe(200)
     const { credential, device } = completed.body as { credential: string; device: Device }
     expect(device.pairedBy.method).toBe('offline')
@@ -142,7 +189,7 @@ describe('Host process', () => {
 
     const stopped = await run(TSX, [STOP, '--data-dir', dataDir], { cwd: root, env: childEnv() })
     expect(stopped.stdout).toContain('Latch 运行节点已停止。')
-    expect(child.exitCode ?? await new Promise(done => child.once('exit', done))).toBe(0)
+    expect(child.exitCode ?? (await new Promise(done => child.once('exit', done)))).toBe(0)
     expect(await readHostState(dataDir)).toBeUndefined()
     expect(existsSync(join(dataDir, 'host.lock'))).toBe(false)
     const again = await run(TSX, [STOP, '--data-dir', dataDir], { cwd: root, env: childEnv() })
@@ -151,11 +198,24 @@ describe('Host process', () => {
 
   it('refuses plaintext LAN access at startup', async () => {
     const { root, dataDir, workspace } = await prepare()
-    for (const flags of [['--lan'], ['--tailnet'], ['--host', '192.168.1.20'], ['--tls-host', '192.168.1.20'], ['--tls-cert', join(root, 'cert.pem')]]) {
-      const failure = await run(TSX, [START, '--data-dir', dataDir, '--workspace', workspace, '--port', '0', ...flags], { cwd: root, env: childEnv() })
-        .then(() => ({ code: 0, stderr: '' }), (error: { code: number; stderr: string }) => error)
+    for (const flags of [
+      ['--lan'],
+      ['--tailnet'],
+      ['--host', '192.168.1.20'],
+      ['--tls-host', '192.168.1.20'],
+      ['--tls-cert', join(root, 'cert.pem')],
+    ]) {
+      const failure = await run(TSX, [START, '--data-dir', dataDir, '--workspace', workspace, '--port', '0', ...flags], {
+        cwd: root,
+        env: childEnv(),
+      }).then(
+        () => ({ code: 0, stderr: '' }),
+        (error: { code: number; stderr: string }) => error,
+      )
       expect(failure.code).toBe(1)
-      expect(failure.stderr).toContain('明文局域网接入已移除：请提供 --tls-cert、--tls-key 和 --public-origin（例如用 tailscale cert 生成的证书）。')
+      expect(failure.stderr).toContain(
+        '明文局域网接入已移除：请提供 --tls-cert、--tls-key 和 --public-origin（例如用 tailscale cert 生成的证书）。',
+      )
     }
     expect(await readHostState(dataDir)).toBeUndefined()
   }, 60_000)
@@ -166,44 +226,71 @@ describe('Host process', () => {
     // stores but has not written host.json yet.
     const gate = join(root, 'gate')
     const plugin = join(root, 'gate-plugin.mjs')
-    await writeFile(plugin, `import { existsSync } from 'node:fs'
+    await writeFile(
+      plugin,
+      `import { existsSync } from 'node:fs'
 export default { id: 'gate', name: 'Gate', version: '0.0.1', description: 'Holds startup until a file appears.',
   async activate() { while (!existsSync(${JSON.stringify(gate)})) await new Promise(done => setTimeout(done, 25)) } }
-`)
-    const child = spawn(process.execPath, [
-      '--import', TSX_LOADER, START, '--data-dir', dataDir, '--workspace', workspace, '--port', '0', '--plugin', plugin,
-    ], { cwd: root, env: childEnv(), stdio: ['ignore', 'pipe', 'pipe'] })
+`,
+    )
+    const child = spawn(
+      process.execPath,
+      ['--import', TSX_LOADER, START, '--data-dir', dataDir, '--workspace', workspace, '--port', '0', '--plugin', plugin],
+      { cwd: root, env: childEnv(), stdio: ['ignore', 'pipe', 'pipe'] },
+    )
     const output = collect(child)
     let socketDir: string | undefined
     cleanups.push(async () => {
       await writeFile(gate, '')
-      if (child.exitCode === null && child.signalCode === null) { child.kill('SIGTERM'); await new Promise(done => child.once('exit', done)) }
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill('SIGTERM')
+        await new Promise(done => child.once('exit', done))
+      }
       if (socketDir) await rm(socketDir, { recursive: true, force: true })
     })
     const lockPath = join(dataDir, 'host.lock')
-    const lockOf = () => readFile(lockPath, 'utf8').then(text => JSON.parse(text) as { pid: number; role: string }, () => undefined)
-    await waitFor(async () => await lockOf() !== undefined, child)
+    const lockOf = () =>
+      readFile(lockPath, 'utf8').then(
+        text => JSON.parse(text) as { pid: number; role: string },
+        () => undefined,
+      )
+    await waitFor(async () => (await lockOf()) !== undefined, child)
     expect(await lockOf()).toMatchObject({ pid: child.pid, role: 'host' })
     expect((await stat(lockPath)).mode & 0o777).toBe(0o600)
     await waitFor(() => existsSync(join(dataDir, 'audit', 'audit.jsonl')), child)
     expect(await readHostState(dataDir)).toBeUndefined()
 
     const codeFile = join(root, 'code.txt')
-    const offline = await run(TSX, [LATCH, 'device', 'enroll', '--offline', '--code-file', codeFile, '--data-dir', dataDir], { cwd: root, env: childEnv() })
-      .then(() => ({ code: 0, stderr: '' }), (error: { code: number; stderr: string }) => error)
+    const offline = await run(TSX, [LATCH, 'device', 'enroll', '--offline', '--code-file', codeFile, '--data-dir', dataDir], {
+      cwd: root,
+      env: childEnv(),
+    }).then(
+      () => ({ code: 0, stderr: '' }),
+      (error: { code: number; stderr: string }) => error,
+    )
     expect(offline.code).toBe(1)
     expect(offline.stderr).toContain(`这个数据目录已有 Host 在运行或正在启动（进程 ${child.pid}）`)
     expect(offline.stderr).toContain(`删除锁文件 ${lockPath} 后重试`)
     expect(existsSync(codeFile)).toBe(false)
 
-    const stop = await run(TSX, [STOP, '--data-dir', dataDir], { cwd: root, env: childEnv() }).then(() => ({ code: 0, stderr: '' }), (error: { code: number; stderr: string }) => error)
+    const stop = await run(TSX, [STOP, '--data-dir', dataDir], { cwd: root, env: childEnv() }).then(
+      () => ({ code: 0, stderr: '' }),
+      (error: { code: number; stderr: string }) => error,
+    )
     expect(stop.code).toBe(1)
-    expect(stop.stderr).toContain(`数据目录锁 ${lockPath} 由进程 ${child.pid} 持有，Host 可能仍在启动，还不能通过 host.sock 确认，未发送停止信号。请稍后再运行 pnpm stop`)
+    expect(stop.stderr).toContain(
+      `数据目录锁 ${lockPath} 由进程 ${child.pid} 持有，Host 可能仍在启动，还不能通过 host.sock 确认，未发送停止信号。请稍后再运行 pnpm stop`,
+    )
     expect(child.exitCode).toBeNull()
 
     const audit = await readFile(join(dataDir, 'audit', 'audit.jsonl'), 'utf8')
-    const second = await run(TSX, [START, '--data-dir', dataDir, '--workspace', workspace, '--port', '0'], { cwd: root, env: childEnv() })
-      .then(() => ({ code: 0, stderr: '' }), (error: { code: number; stderr: string }) => error)
+    const second = await run(TSX, [START, '--data-dir', dataDir, '--workspace', workspace, '--port', '0'], {
+      cwd: root,
+      env: childEnv(),
+    }).then(
+      () => ({ code: 0, stderr: '' }),
+      (error: { code: number; stderr: string }) => error,
+    )
     expect(second.code).toBe(1)
     expect(second.stderr).toContain(`这个数据目录已有 Host 在运行或正在启动（进程 ${child.pid}）`)
     expect(await readFile(join(dataDir, 'audit', 'audit.jsonl'), 'utf8')).toBe(audit)
@@ -215,26 +302,44 @@ export default { id: 'gate', name: 'Gate', version: '0.0.1', description: 'Holds
     socketDir = dirname(state.socketPath)
     const stopped = await run(TSX, [STOP, '--data-dir', dataDir], { cwd: root, env: childEnv() })
     expect(stopped.stdout).toContain('Latch 运行节点已停止。')
-    expect(child.exitCode ?? await new Promise(done => child.once('exit', done))).toBe(0)
+    expect(child.exitCode ?? (await new Promise(done => child.once('exit', done)))).toBe(0)
     expect(existsSync(lockPath)).toBe(false)
     expect(await verifyAuditFile(join(dataDir, 'audit', 'audit.jsonl'))).toMatchObject({ ok: true })
   }, 90_000)
 
   it('refuses every spelling of an all-interfaces or named HTTPS bind address', async () => {
     const { root, dataDir, workspace } = await prepare()
-    const material = ['--tls-cert', join(root, 'cert.pem'), '--tls-key', join(root, 'key.pem'), '--public-origin', 'https://latch-test.localhost:4318']
+    const material = [
+      '--tls-cert',
+      join(root, 'cert.pem'),
+      '--tls-key',
+      join(root, 'key.pem'),
+      '--public-origin',
+      'https://latch-test.localhost:4318',
+    ]
     const attempts: Array<{ flags: string[]; env?: Record<string, string>; message: string }> = [
       ...['0.0.0.0', '::', '[::]', '::0', '0:0:0:0:0:0:0:0', '[0:0::0]', '::ffff:0.0.0.0', '::0.0.0.0', '0', '000.0.0.0'].map(host => ({
-        flags: ['--tls-host', host], message: '请使用具体网卡地址，不要绑定所有接口',
+        flags: ['--tls-host', host],
+        message: '请使用具体网卡地址，不要绑定所有接口',
       })),
       { flags: ['--host', '0.0.0.0'], message: '请使用具体网卡地址，不要绑定所有接口' },
       { flags: [], env: { HARNESS_TLS_HOST: '[::]' }, message: '请使用具体网卡地址，不要绑定所有接口' },
       { flags: ['--tls-host', 'latch-test.localhost'], message: 'HTTPS 监听地址必须是本机网卡的 IP 地址' },
     ]
     for (const attempt of attempts) {
-      const failure = await run(TSX, [START, '--data-dir', dataDir, '--workspace', workspace, '--port', '0', ...material, ...attempt.flags], { cwd: root, env: childEnv(attempt.env) })
-        .then(() => ({ code: 0, stderr: '' }), (error: { code: number; stderr: string }) => error)
-      expect({ flags: attempt.flags, code: failure.code, refused: failure.stderr.includes(attempt.message) }).toEqual({ flags: attempt.flags, code: 1, refused: true })
+      const failure = await run(
+        TSX,
+        [START, '--data-dir', dataDir, '--workspace', workspace, '--port', '0', ...material, ...attempt.flags],
+        { cwd: root, env: childEnv(attempt.env) },
+      ).then(
+        () => ({ code: 0, stderr: '' }),
+        (error: { code: number; stderr: string }) => error,
+      )
+      expect({ flags: attempt.flags, code: failure.code, refused: failure.stderr.includes(attempt.message) }).toEqual({
+        flags: attempt.flags,
+        code: 1,
+        refused: true,
+      })
     }
     expect(await readHostState(dataDir)).toBeUndefined()
     expect(existsSync(join(dataDir, 'host.lock'))).toBe(false)
@@ -246,9 +351,16 @@ export default { id: 'gate', name: 'Gate', version: '0.0.1', description: 'Holds
     const plugin = join(root, 'not-a-plugin.mjs')
     await writeFile(plugin, 'export default {}\n')
     const hostJson = join(dataDir, 'host.json')
-    const older = (pid: number) => JSON.stringify({ pid, origin: 'http://127.0.0.1:1', instanceId: randomUUID(), startedAt: new Date().toISOString() })
-    const start = () => run(TSX, [START, '--data-dir', dataDir, '--workspace', workspace, '--port', '0', '--plugin', plugin], { cwd: root, env: childEnv() })
-      .then(() => ({ code: 0, stderr: '' }), (error: { code: number; stderr: string }) => error)
+    const older = (pid: number) =>
+      JSON.stringify({ pid, origin: 'http://127.0.0.1:1', instanceId: randomUUID(), startedAt: new Date().toISOString() })
+    const start = () =>
+      run(TSX, [START, '--data-dir', dataDir, '--workspace', workspace, '--port', '0', '--plugin', plugin], {
+        cwd: root,
+        env: childEnv(),
+      }).then(
+        () => ({ code: 0, stderr: '' }),
+        (error: { code: number; stderr: string }) => error,
+      )
 
     // The previous build's Host takes no lock; this test process stands in for it.
     await writeFile(hostJson, older(process.pid), { mode: 0o600 })
@@ -273,8 +385,11 @@ export default { id: 'gate', name: 'Gate', version: '0.0.1', description: 'Holds
     const { root, dataDir } = await prepare()
     const lockPath = join(dataDir, 'host.lock')
     const boot = await bootTime()
-    const stop = () => run(TSX, [STOP, '--data-dir', dataDir], { cwd: root, env: childEnv() })
-      .then(result => ({ code: 0, ...result }), (error: { code: number; stdout: string; stderr: string }) => error)
+    const stop = () =>
+      run(TSX, [STOP, '--data-dir', dataDir], { cwd: root, env: childEnv() }).then(
+        result => ({ code: 0, ...result }),
+        (error: { code: number; stdout: string; stderr: string }) => error,
+      )
     // This test process stands in for a starting Host, or for whatever reused its pid after a reboot.
     await writeFile(lockPath, JSON.stringify({ pid: process.pid, instanceId: randomUUID(), role: 'host', bootTime: boot }), { mode: 0o600 })
     const starting = await stop()
@@ -283,7 +398,9 @@ export default { id: 'gate', name: 'Gate', version: '0.0.1', description: 'Holds
     expect(starting.stderr).toContain('未发送停止信号。请稍后再运行 pnpm stop；如果确认没有 Host 在运行')
     expect(starting.stderr).toContain('删除该锁文件后再启动')
 
-    await writeFile(lockPath, JSON.stringify({ pid: process.pid, instanceId: randomUUID(), role: 'host', bootTime: boot - 3_600 }), { mode: 0o600 })
+    await writeFile(lockPath, JSON.stringify({ pid: process.pid, instanceId: randomUUID(), role: 'host', bootTime: boot - 3_600 }), {
+      mode: 0o600,
+    })
     const rebooted = await stop()
     expect(rebooted.code).toBe(0)
     expect(rebooted.stdout).toContain('没有正在运行的 Host')
@@ -299,18 +416,46 @@ export default { id: 'gate', name: 'Gate', version: '0.0.1', description: 'Holds
   it('binds an IPv4-mapped Tailscale address as IPv4, so the HTTPS entry is classed as Tailscale', async () => {
     const { root, dataDir, workspace } = await prepare()
     const tls = await makeTestTls(join(root, 'tls'))
-    const local = new Set(Object.values(networkInterfaces()).flat().map(entry => entry?.address))
+    const local = new Set(
+      Object.values(networkInterfaces())
+        .flat()
+        .map(entry => entry?.address),
+    )
     // An address in 100.64.0.0/10 that this machine does not have, so listen() reports the address it was given.
     const address = ['100.100.100.101', '100.127.254.253', '100.64.254.253'].find(candidate => !local.has(candidate))!
     expect(tlsListenerClass(address)).toBe('tailnet-tls')
     // The Host gets as far as its runtime directory before listen() fails; it is this identity's, so it goes afterwards.
     const { hostId8 } = await loadOrCreateHostIdentity(dataDir)
-    cleanups.push(async () => { await rm((await prepareRuntimeDir({ hostId8 })).runtimeDir, { recursive: true, force: true }) })
+    cleanups.push(async () => {
+      await rm((await prepareRuntimeDir({ hostId8 })).runtimeDir, { recursive: true, force: true })
+    })
     const port = await freePort()
-    const failure = await run(TSX, [
-      START, '--data-dir', dataDir, '--workspace', workspace, '--port', '0',
-      '--tls-cert', tls.certPath, '--tls-key', tls.keyPath, '--public-origin', `https://${tls.hostname}:${port}`, '--tls-host', `::ffff:${address}`, '--tls-port', String(port),
-    ], { cwd: root, env: childEnv() }).then(() => ({ code: 0, stderr: '' }), (error: { code: number; stderr: string }) => error)
+    const failure = await run(
+      TSX,
+      [
+        START,
+        '--data-dir',
+        dataDir,
+        '--workspace',
+        workspace,
+        '--port',
+        '0',
+        '--tls-cert',
+        tls.certPath,
+        '--tls-key',
+        tls.keyPath,
+        '--public-origin',
+        `https://${tls.hostname}:${port}`,
+        '--tls-host',
+        `::ffff:${address}`,
+        '--tls-port',
+        String(port),
+      ],
+      { cwd: root, env: childEnv() },
+    ).then(
+      () => ({ code: 0, stderr: '' }),
+      (error: { code: number; stderr: string }) => error,
+    )
     expect(failure.code).toBe(1)
     expect(failure.stderr).toContain(`${address}:${port}`)
     expect(failure.stderr).not.toMatch(/::ffff/iu)
@@ -319,25 +464,53 @@ export default { id: 'gate', name: 'Gate', version: '0.0.1', description: 'Holds
 
   it('never signals an unverified host.json, nor a Host with running sessions unless forced', async () => {
     const { root, dataDir } = await prepare()
-    await writeFile(join(dataDir, 'host.json'), JSON.stringify({
-      version: 2, pid: process.pid, hostId: 'a'.repeat(52), instanceId: '00000000-0000-4000-8000-000000000000',
-      socketPath: join(root, 'missing.sock'), loopbackOrigin: 'http://127.0.0.1:1', tlsOrigin: null, startedAt: new Date().toISOString(), dataDir,
-    }), { mode: 0o600 })
-    const unverified = await run(TSX, [STOP, '--data-dir', dataDir], { cwd: root, env: childEnv() }).then(() => ({ code: 0, stderr: '' }), (error: { code: number; stderr: string }) => error)
+    await writeFile(
+      join(dataDir, 'host.json'),
+      JSON.stringify({
+        version: 2,
+        pid: process.pid,
+        hostId: 'a'.repeat(52),
+        instanceId: '00000000-0000-4000-8000-000000000000',
+        socketPath: join(root, 'missing.sock'),
+        loopbackOrigin: 'http://127.0.0.1:1',
+        tlsOrigin: null,
+        startedAt: new Date().toISOString(),
+        dataDir,
+      }),
+      { mode: 0o600 },
+    )
+    const unverified = await run(TSX, [STOP, '--data-dir', dataDir], { cwd: root, env: childEnv() }).then(
+      () => ({ code: 0, stderr: '' }),
+      (error: { code: number; stderr: string }) => error,
+    )
     expect(unverified.code).toBe(1)
     expect(unverified.stderr).toContain('未发送停止信号')
     // An older build's record has no socket to check, so a live pid in it is reported, not signalled.
-    await writeFile(join(dataDir, 'host.json'), JSON.stringify({ pid: process.pid, origin: 'http://127.0.0.1:1', instanceId: randomUUID(), startedAt: new Date().toISOString() }), { mode: 0o600 })
-    const older = await run(TSX, [STOP, '--data-dir', dataDir], { cwd: root, env: childEnv() }).then(() => ({ code: 0, stderr: '' }), (error: { code: number; stderr: string }) => error)
+    await writeFile(
+      join(dataDir, 'host.json'),
+      JSON.stringify({ pid: process.pid, origin: 'http://127.0.0.1:1', instanceId: randomUUID(), startedAt: new Date().toISOString() }),
+      { mode: 0o600 },
+    )
+    const older = await run(TSX, [STOP, '--data-dir', dataDir], { cwd: root, env: childEnv() }).then(
+      () => ({ code: 0, stderr: '' }),
+      (error: { code: number; stderr: string }) => error,
+    )
     expect(older.code).toBe(1)
     expect(older.stderr).toContain('格式无法识别')
     expect(older.stderr).toContain('未发送停止信号')
-    expect(older.stderr).toContain(`请在运行旧版本 Host 的终端中停止它（Ctrl+C）；如果确认没有 Host 在运行，删除 ${join(dataDir, 'host.json')} 后再启动。`)
+    expect(older.stderr).toContain(
+      `请在运行旧版本 Host 的终端中停止它（Ctrl+C）；如果确认没有 Host 在运行，删除 ${join(dataDir, 'host.json')} 后再启动。`,
+    )
     // A damaged record proves nothing either way, so it is reported like the ones above rather than as no Host.
     await writeFile(join(dataDir, 'host.json'), '{"pid":', { mode: 0o600 })
-    const damaged = await run(TSX, [STOP, '--data-dir', dataDir], { cwd: root, env: childEnv() }).then(result => ({ code: 0, ...result }), (error: { code: number; stdout: string; stderr: string }) => error)
+    const damaged = await run(TSX, [STOP, '--data-dir', dataDir], { cwd: root, env: childEnv() }).then(
+      result => ({ code: 0, ...result }),
+      (error: { code: number; stdout: string; stderr: string }) => error,
+    )
     expect(damaged.code).toBe(1)
-    expect(damaged.stderr).toContain(`无法识别 ${join(dataDir, 'host.json')}，无法确认是否有 Host 在运行，未发送停止信号。如果确认没有 Host 在运行，删除该文件后再启动。`)
+    expect(damaged.stderr).toContain(
+      `无法识别 ${join(dataDir, 'host.json')}，无法确认是否有 Host 在运行，未发送停止信号。如果确认没有 Host 在运行，删除该文件后再启动。`,
+    )
     expect(damaged.stdout).not.toContain('没有正在运行的 Host')
 
     // This Host lives in the test process itself, so stop must refuse before it would signal anything.
@@ -347,10 +520,20 @@ export default { id: 'gate', name: 'Gate', version: '0.0.1', description: 'Holds
     cleanups.push(() => t.host.bridge.cancel(sessionId))
     await expect.poll(async () => (await t.host.bridge.detail(sessionId)).summary.status).toBe('running')
     await writeHostState(t.dataDir, {
-      version: 2, pid: process.pid, hostId: t.host.hostId, instanceId: t.host.instanceId, socketPath: t.host.socketPath,
-      loopbackOrigin: t.host.loopbackOrigin, tlsOrigin: null, startedAt: t.host.startedAt, dataDir: t.dataDir,
+      version: 2,
+      pid: process.pid,
+      hostId: t.host.hostId,
+      instanceId: t.host.instanceId,
+      socketPath: t.host.socketPath,
+      loopbackOrigin: t.host.loopbackOrigin,
+      tlsOrigin: null,
+      startedAt: t.host.startedAt,
+      dataDir: t.dataDir,
     })
-    const busy = await run(TSX, [STOP, '--data-dir', t.dataDir], { cwd: root, env: childEnv() }).then(() => ({ code: 0, stderr: '' }), (error: { code: number; stderr: string }) => error)
+    const busy = await run(TSX, [STOP, '--data-dir', t.dataDir], { cwd: root, env: childEnv() }).then(
+      () => ({ code: 0, stderr: '' }),
+      (error: { code: number; stderr: string }) => error,
+    )
     expect(busy.code).toBe(1)
     expect(busy.stderr).toContain('有 1 个会话正在运行。确认后使用 pnpm stop --force。')
   }, 30_000)

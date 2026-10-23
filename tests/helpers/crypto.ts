@@ -8,7 +8,11 @@ export interface SecurityVectors {
   p256: {
     jwk: { kty: 'EC'; crv: 'P-256'; x: string; y: string }
     privateJwk: { kty: 'EC'; crv: 'P-256'; x: string; y: string; d: string }
-    spki: string; sha256: string; hostId: string; hostId8: string; fingerprint: string
+    spki: string
+    sha256: string
+    hostId: string
+    hostId8: string
+    fingerprint: string
   }
   canonicalJson: { input: unknown; output: string; sha256: string }
   /** Extra cases: code-unit key order, C0 escapes, lone surrogates, integers. */

@@ -13,7 +13,12 @@ const INFO_LIMIT = 64 * 1024
 
 function isUrl(value) {
   if (typeof value !== 'string') return false
-  try { new URL(value); return true } catch { return false }
+  try {
+    new URL(value)
+    return true
+  } catch {
+    return false
+  }
 }
 
 /** Strict parse of host.json v2. Unknown members, like zod's `.strict()`, make the file invalid. */
@@ -30,16 +35,31 @@ function parseHostState(value) {
   if (value.tlsOrigin !== null && !isUrl(value.tlsOrigin)) return undefined
   if (typeof value.startedAt !== 'string' || typeof value.dataDir !== 'string') return undefined
   return {
-    version: 2, pid: value.pid, hostId: value.hostId, instanceId: value.instanceId, socketPath: value.socketPath,
-    loopbackOrigin: value.loopbackOrigin, tlsOrigin: value.tlsOrigin, startedAt: value.startedAt, dataDir: value.dataDir,
+    version: 2,
+    pid: value.pid,
+    hostId: value.hostId,
+    instanceId: value.instanceId,
+    socketPath: value.socketPath,
+    loopbackOrigin: value.loopbackOrigin,
+    tlsOrigin: value.tlsOrigin,
+    startedAt: value.startedAt,
+    dataDir: value.dataDir,
   }
 }
 
 /** Returns the parsed state, or undefined when the file is missing or malformed. */
 async function readHostStateFile(path) {
   let text
-  try { text = await readFile(path, 'utf8') } catch { return undefined }
-  try { return parseHostState(JSON.parse(text)) } catch { return undefined }
+  try {
+    text = await readFile(path, 'utf8')
+  } catch {
+    return undefined
+  }
+  try {
+    return parseHostState(JSON.parse(text))
+  } catch {
+    return undefined
+  }
 }
 
 /**
@@ -57,8 +77,14 @@ function socketRequest(socketPath, { method = 'GET', path, headers = {}, body, t
     if (timeoutMs !== undefined) {
       timer = setTimeout(() => req.destroy(Object.assign(new Error('Latch Host 响应超时'), { code: 'ETIMEDOUT' })), timeoutMs)
     }
-    req.once('response', response => { if (timer) clearTimeout(timer); resolve({ request: req, response }) })
-    req.once('error', error => { if (timer) clearTimeout(timer); reject(error) })
+    req.once('response', response => {
+      if (timer) clearTimeout(timer)
+      resolve({ request: req, response })
+    })
+    req.once('error', error => {
+      if (timer) clearTimeout(timer)
+      reject(error)
+    })
     req.end(body)
   })
 }
@@ -69,14 +95,28 @@ function readBody(stream, limit) {
     const chunks = []
     let size = 0
     let settled = false
-    const fail = error => { if (!settled) { settled = true; reject(error) } }
+    const fail = error => {
+      if (!settled) {
+        settled = true
+        reject(error)
+      }
+    }
     stream.on('data', chunk => {
       if (settled) return
       size += chunk.length
-      if (size > limit) { fail(new Error('Latch Host 响应过大')); stream.destroy(); return }
+      if (size > limit) {
+        fail(new Error('Latch Host 响应过大'))
+        stream.destroy()
+        return
+      }
       chunks.push(chunk)
     })
-    stream.once('end', () => { if (!settled) { settled = true; resolve(Buffer.concat(chunks)) } })
+    stream.once('end', () => {
+      if (!settled) {
+        settled = true
+        resolve(Buffer.concat(chunks))
+      }
+    })
     stream.once('error', fail)
     stream.once('close', () => fail(new Error('Latch Host 连接中断')))
   })
@@ -90,7 +130,11 @@ function parseHostInfo(value) {
 }
 
 async function queryHostInfo(socketPath, timeoutMs = 2_000) {
-  const { request: req, response } = await socketRequest(socketPath, { path: '/link/api/host-info', headers: { accept: 'application/json' }, timeoutMs })
+  const { request: req, response } = await socketRequest(socketPath, {
+    path: '/link/api/host-info',
+    headers: { accept: 'application/json' },
+    timeoutMs,
+  })
   const timer = setTimeout(() => req.destroy(), timeoutMs)
   try {
     const body = await readBody(response, INFO_LIMIT)
@@ -98,11 +142,18 @@ async function queryHostInfo(socketPath, timeoutMs = 2_000) {
     const info = parseHostInfo(JSON.parse(body.toString('utf8')))
     if (!info) throw new Error('host-info 格式不正确')
     return info
-  } finally { clearTimeout(timer) }
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 function isAlive(pid) {
-  try { process.kill(pid, 0); return true } catch { return false }
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -114,16 +165,28 @@ function isAlive(pid) {
 async function inspectHostState(state, { timeoutMs = 2_000, uid = /** @type {() => number} */ (process.getuid)() } = {}) {
   const directory = dirname(state.socketPath)
   let stats
-  try { stats = await lstat(directory) } catch { return { ok: false, reason: '运行目录不存在' } }
+  try {
+    stats = await lstat(directory)
+  } catch {
+    return { ok: false, reason: '运行目录不存在' }
+  }
   if (stats.isSymbolicLink() || !stats.isDirectory()) return { ok: false, reason: '运行目录不是普通目录' }
   if (stats.uid !== uid) return { ok: false, reason: '运行目录不属于当前用户' }
   if ((stats.mode & 0o077) !== 0) return { ok: false, reason: '运行目录权限不是 0700' }
-  try { stats = await lstat(state.socketPath) } catch { return { ok: false, reason: 'host.sock 不存在' } }
+  try {
+    stats = await lstat(state.socketPath)
+  } catch {
+    return { ok: false, reason: 'host.sock 不存在' }
+  }
   if (!stats.isSocket()) return { ok: false, reason: 'host.sock 不是套接字' }
   if (stats.uid !== uid) return { ok: false, reason: 'host.sock 不属于当前用户' }
   if (!isAlive(state.pid)) return { ok: false, reason: 'Host 进程已退出' }
   let info
-  try { info = await queryHostInfo(state.socketPath, timeoutMs) } catch { return { ok: false, reason: '无法通过 host.sock 读取 Host 信息' } }
+  try {
+    info = await queryHostInfo(state.socketPath, timeoutMs)
+  } catch {
+    return { ok: false, reason: '无法通过 host.sock 读取 Host 信息' }
+  }
   if (info.pid !== state.pid || info.hostId !== state.hostId || info.instanceId !== state.instanceId) {
     return { ok: false, reason: 'host.sock 上的 Host 与 host.json 记录不一致' }
   }
@@ -135,4 +198,13 @@ async function verifyHostState(state, options) {
   return result.ok ? result.info : undefined
 }
 
-module.exports = { SOCKET_HOST, parseHostState, readHostStateFile, socketRequest, readBody, queryHostInfo, inspectHostState, verifyHostState }
+module.exports = {
+  SOCKET_HOST,
+  parseHostState,
+  readHostStateFile,
+  socketRequest,
+  readBody,
+  queryHostInfo,
+  inspectHostState,
+  verifyHostState,
+}

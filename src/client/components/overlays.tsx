@@ -1,4 +1,14 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode, type Ref } from 'react'
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type ReactNode,
+  type Ref,
+} from 'react'
 import { Check, X } from 'lucide-react'
 import { useViewport } from '../breakpoints.ts'
 import { ICON_STROKE, Spinner, type LucideIcon } from '../icons.tsx'
@@ -7,7 +17,13 @@ import { ICON_STROKE, Spinner, type LucideIcon } from '../icons.tsx'
  * Native modal dialog: the browser makes the rest of the page inert and keeps
  * focus inside; closing restores focus to the control that opened it.
  */
-export function Modal({ label, variant = 'dialog', onClose, children, className = '' }: {
+export function Modal({
+  label,
+  variant = 'dialog',
+  onClose,
+  children,
+  className = '',
+}: {
   label: string
   variant?: 'dialog' | 'sheet' | 'side' | 'page'
   onClose: () => void
@@ -25,22 +41,46 @@ export function Modal({ label, variant = 'dialog', onClose, children, className 
       if (previous?.isConnected) previous.focus({ preventScroll: true })
     }
   }, [])
-  return <dialog ref={ref} className={`modal modal-${variant} ${className}`} aria-label={label}
-    onCancel={event => { event.preventDefault(); onClose() }}
-    onClick={event => { if (event.target === event.currentTarget) onClose() }}>
-    <div className="modal-surface">
-      {variant === 'sheet' && <span className="sheet-grabber" aria-hidden="true" />}
-      {children}
-    </div>
-  </dialog>
+  return (
+    <dialog
+      ref={ref}
+      className={`modal modal-${variant} ${className}`}
+      aria-label={label}
+      onCancel={event => {
+        event.preventDefault()
+        onClose()
+      }}
+      onClick={event => {
+        if (event.target === event.currentTarget) onClose()
+      }}>
+      <div className="modal-surface">
+        {variant === 'sheet' && <span className="sheet-grabber" aria-hidden="true" />}
+        {children}
+      </div>
+    </dialog>
+  )
 }
 
-export function ModalHeader({ title, onClose, leading, closeLabel = '关闭' }: { title: ReactNode; onClose: () => void; leading?: ReactNode; closeLabel?: string }) {
-  return <header className="modal-header">
-    {leading}
-    <h2>{title}</h2>
-    <button type="button" className="icon-button" aria-label={closeLabel} title={closeLabel} onClick={onClose}><X size={18} strokeWidth={ICON_STROKE} aria-hidden="true" /></button>
-  </header>
+export function ModalHeader({
+  title,
+  onClose,
+  leading,
+  closeLabel = '关闭',
+}: {
+  title: ReactNode
+  onClose: () => void
+  leading?: ReactNode
+  closeLabel?: string
+}) {
+  return (
+    <header className="modal-header">
+      {leading}
+      <h2>{title}</h2>
+      <button type="button" className="icon-button" aria-label={closeLabel} title={closeLabel} onClick={onClose}>
+        <X size={18} strokeWidth={ICON_STROKE} aria-hidden="true" />
+      </button>
+    </header>
+  )
 }
 
 export interface MenuItem {
@@ -56,7 +96,11 @@ export interface MenuItem {
   danger?: boolean
   onSelect: () => void
 }
-export interface MenuSection { id: string; label?: string; items: MenuItem[] }
+export interface MenuSection {
+  id: string
+  label?: string
+  items: MenuItem[]
+}
 export interface MenuTriggerProps {
   ref: Ref<HTMLButtonElement>
   onClick: () => void
@@ -79,7 +123,15 @@ function itemsOf(container: HTMLElement | null): HTMLButtonElement[] {
  * Anchored popover on wider screens, bottom sheet on phones. The popover is
  * fixed-positioned so scrolling lists and the composer never clip it.
  */
-export function Menu({ label, sections, trigger, placement = 'bottom-start', selection = false, footer, className = '' }: {
+export function Menu({
+  label,
+  sections,
+  trigger,
+  placement = 'bottom-start',
+  selection = false,
+  footer,
+  className = '',
+}: {
   label: string
   sections: MenuSection[]
   trigger: (props: MenuTriggerProps) => ReactNode
@@ -131,7 +183,9 @@ export function Menu({ label, sections, trigger, placement = 'bottom-start', sel
       close(false)
     }
     // Programmatic scrolls elsewhere, such as the transcript following a stream, leave the anchor in place.
-    const scroll = (event: Event) => { if (scrollMovesAnchor(event.target, triggerRef.current)) close(false) }
+    const scroll = (event: Event) => {
+      if (scrollMovesAnchor(event.target, triggerRef.current)) close(false)
+    }
     document.addEventListener('pointerdown', outside, true)
     window.addEventListener('resize', place)
     window.addEventListener('scroll', scroll, true)
@@ -154,46 +208,104 @@ export function Menu({ label, sections, trigger, placement = 'bottom-start', sel
   const keydown = (event: KeyboardEvent<HTMLDivElement>) => {
     const items = itemsOf(event.currentTarget)
     const index = items.indexOf(document.activeElement as HTMLButtonElement)
-    const move = (next: number) => { event.preventDefault(); items[(next + items.length) % items.length]?.focus() }
+    const move = (next: number) => {
+      event.preventDefault()
+      items[(next + items.length) % items.length]?.focus()
+    }
     if (event.key === 'ArrowDown') move(index + 1)
     else if (event.key === 'ArrowUp') move(index - 1)
     else if (event.key === 'Home') move(0)
     else if (event.key === 'End') move(items.length - 1)
-    else if (event.key === 'Escape' && !sheet) { event.preventDefault(); event.stopPropagation(); close() }
-    else if (event.key === 'Tab' && !sheet) close(false)
+    else if (event.key === 'Escape' && !sheet) {
+      event.preventDefault()
+      event.stopPropagation()
+      close()
+    } else if (event.key === 'Tab' && !sheet) close(false)
   }
 
-  const content = <div className="menu-sections" role="menu" aria-label={label} id={id} onKeyDown={keydown} ref={sheet ? sheetMenu : undefined}>
-    {sections.filter(section => section.items.length > 0).map(section => <div className="menu-section" key={section.id} role="group" aria-label={section.label}>
-      {section.label && <div className="menu-section-label" aria-hidden="true">{section.label}</div>}
-      {section.items.map(item => <button key={item.id} type="button" tabIndex={-1}
-        role={selection ? 'menuitemradio' : 'menuitem'} aria-checked={selection ? item.checked === true : undefined}
-        className={`menu-item ${item.danger ? 'is-danger' : ''}`} disabled={item.disabled} title={item.disabled ? item.disabledReason : undefined}
-        onClick={() => { close(); item.onSelect() }}>
-        {item.icon && <item.icon className="menu-item-icon" size={16} strokeWidth={ICON_STROKE} aria-hidden="true" />}
-        <span className="menu-item-text">
-          <span className="menu-item-label">{item.label}{item.tag}</span>
-          {(item.disabled && item.disabledReason ? item.disabledReason : item.description) && <span className="menu-item-description">{item.disabled && item.disabledReason ? item.disabledReason : item.description}</span>}
-        </span>
-        {selection && item.checked && <Check className="menu-item-check" size={16} strokeWidth={ICON_STROKE} aria-hidden="true" />}
-      </button>)}
-    </div>)}
-  </div>
+  const content = (
+    <div className="menu-sections" role="menu" aria-label={label} id={id} onKeyDown={keydown} ref={sheet ? sheetMenu : undefined}>
+      {sections
+        .filter(section => section.items.length > 0)
+        .map(section => (
+          <div className="menu-section" key={section.id} role="group" aria-label={section.label}>
+            {section.label && (
+              <div className="menu-section-label" aria-hidden="true">
+                {section.label}
+              </div>
+            )}
+            {section.items.map(item => (
+              <button
+                key={item.id}
+                type="button"
+                tabIndex={-1}
+                role={selection ? 'menuitemradio' : 'menuitem'}
+                aria-checked={selection ? item.checked === true : undefined}
+                className={`menu-item ${item.danger ? 'is-danger' : ''}`}
+                disabled={item.disabled}
+                title={item.disabled ? item.disabledReason : undefined}
+                onClick={() => {
+                  close()
+                  item.onSelect()
+                }}>
+                {item.icon && <item.icon className="menu-item-icon" size={16} strokeWidth={ICON_STROKE} aria-hidden="true" />}
+                <span className="menu-item-text">
+                  <span className="menu-item-label">
+                    {item.label}
+                    {item.tag}
+                  </span>
+                  {(item.disabled && item.disabledReason ? item.disabledReason : item.description) && (
+                    <span className="menu-item-description">
+                      {item.disabled && item.disabledReason ? item.disabledReason : item.description}
+                    </span>
+                  )}
+                </span>
+                {selection && item.checked && <Check className="menu-item-check" size={16} strokeWidth={ICON_STROKE} aria-hidden="true" />}
+              </button>
+            ))}
+          </div>
+        ))}
+    </div>
+  )
 
-  return <>
-    {trigger({ ref: triggerRef, onClick: () => { if (open) close(); else setOpen(true) }, 'aria-haspopup': sheet ? 'dialog' : 'menu', 'aria-expanded': open })}
-    {open && !sheet && <div ref={popover} className={`popover ${className}`} style={{ position: 'fixed', ...style }}>
-      {content}
-      {footer && <div className="menu-footer">{footer(() => close(false))}</div>}
-    </div>}
-    {open && sheet && <Modal label={label} variant="sheet" onClose={() => close()} className={className}>
-      <ModalHeader title={label} onClose={() => close()} />
-      <div className="sheet-body">{content}{footer && <div className="menu-footer">{footer(() => close(false))}</div>}</div>
-    </Modal>}
-  </>
+  return (
+    <>
+      {trigger({
+        ref: triggerRef,
+        onClick: () => {
+          if (open) close()
+          else setOpen(true)
+        },
+        'aria-haspopup': sheet ? 'dialog' : 'menu',
+        'aria-expanded': open,
+      })}
+      {open && !sheet && (
+        <div ref={popover} className={`popover ${className}`} style={{ position: 'fixed', ...style }}>
+          {content}
+          {footer && <div className="menu-footer">{footer(() => close(false))}</div>}
+        </div>
+      )}
+      {open && sheet && (
+        <Modal label={label} variant="sheet" onClose={() => close()} className={className}>
+          <ModalHeader title={label} onClose={() => close()} />
+          <div className="sheet-body">
+            {content}
+            {footer && <div className="menu-footer">{footer(() => close(false))}</div>}
+          </div>
+        </Modal>
+      )}
+    </>
+  )
 }
 
-export function ConfirmDialog({ title, message, confirmLabel, danger = false, onConfirm, onClose }: {
+export function ConfirmDialog({
+  title,
+  message,
+  confirmLabel,
+  danger = false,
+  onConfirm,
+  onClose,
+}: {
   title: string
   message: ReactNode
   confirmLabel: string
@@ -205,21 +317,61 @@ export function ConfirmDialog({ title, message, confirmLabel, danger = false, on
   const [error, setError] = useState('')
   const viewport = useViewport()
   const confirm = async () => {
-    setBusy(true); setError('')
-    try { await onConfirm(); onClose() }
-    catch (cause) { setError(cause instanceof Error ? cause.message : '操作未完成，请重试。'); setBusy(false) }
+    setBusy(true)
+    setError('')
+    try {
+      await onConfirm()
+      onClose()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '操作未完成，请重试。')
+      setBusy(false)
+    }
   }
-  return <Modal label={title} variant={viewport === 'phone' ? 'sheet' : 'dialog'} onClose={() => { if (!busy) onClose() }} className="confirm-dialog">
-    <ModalHeader title={title} onClose={onClose} />
-    <div className="modal-body"><p className="confirm-message">{message}</p>{error && <p className="inline-alert inline-alert-error" role="alert">{error}</p>}</div>
-    <footer className="modal-footer">
-      <button type="button" className="button secondary" disabled={busy} onClick={onClose}>取消</button>
-      <button type="button" className={`button ${danger ? 'danger' : 'primary'}`} disabled={busy} onClick={() => { void confirm() }}>{busy && <Spinner size={14} />}{confirmLabel}</button>
-    </footer>
-  </Modal>
+  return (
+    <Modal
+      label={title}
+      variant={viewport === 'phone' ? 'sheet' : 'dialog'}
+      onClose={() => {
+        if (!busy) onClose()
+      }}
+      className="confirm-dialog">
+      <ModalHeader title={title} onClose={onClose} />
+      <div className="modal-body">
+        <p className="confirm-message">{message}</p>
+        {error && (
+          <p className="inline-alert inline-alert-error" role="alert">
+            {error}
+          </p>
+        )}
+      </div>
+      <footer className="modal-footer">
+        <button type="button" className="button secondary" disabled={busy} onClick={onClose}>
+          取消
+        </button>
+        <button
+          type="button"
+          className={`button ${danger ? 'danger' : 'primary'}`}
+          disabled={busy}
+          onClick={() => {
+            void confirm()
+          }}>
+          {busy && <Spinner size={14} />}
+          {confirmLabel}
+        </button>
+      </footer>
+    </Modal>
+  )
 }
 
-export function PromptDialog({ title, label, initial, confirmLabel = '保存', maxLength = 200, onSubmit, onClose }: {
+export function PromptDialog({
+  title,
+  label,
+  initial,
+  confirmLabel = '保存',
+  maxLength = 200,
+  onSubmit,
+  onClose,
+}: {
   title: string
   label: string
   initial: string
@@ -233,24 +385,64 @@ export function PromptDialog({ title, label, initial, confirmLabel = '保存', m
   const [error, setError] = useState('')
   const viewport = useViewport()
   const input = useRef<HTMLInputElement>(null)
-  useEffect(() => { input.current?.select() }, [])
+  useEffect(() => {
+    input.current?.select()
+  }, [])
   const submit = async () => {
     if (!value.trim() || busy) return
-    setBusy(true); setError('')
-    try { await onSubmit(value.trim()); onClose() }
-    catch (cause) { setError(cause instanceof Error ? cause.message : '保存失败，请重试。'); setBusy(false) }
+    setBusy(true)
+    setError('')
+    try {
+      await onSubmit(value.trim())
+      onClose()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '保存失败，请重试。')
+      setBusy(false)
+    }
   }
-  return <Modal label={title} variant={viewport === 'phone' ? 'sheet' : 'dialog'} onClose={() => { if (!busy) onClose() }} className="prompt-dialog">
-    <form onSubmit={event => { event.preventDefault(); void submit() }}>
-      <ModalHeader title={title} onClose={onClose} />
-      <div className="modal-body">
-        <label className="field"><span>{label}</span><input ref={input} value={value} maxLength={maxLength} autoComplete="off" onChange={event => { setValue(event.target.value) }} /></label>
-        {error && <p className="inline-alert inline-alert-error" role="alert">{error}</p>}
-      </div>
-      <footer className="modal-footer">
-        <button type="button" className="button secondary" disabled={busy} onClick={onClose}>取消</button>
-        <button type="submit" className="button primary" disabled={busy || !value.trim()}>{busy && <Spinner size={14} />}{confirmLabel}</button>
-      </footer>
-    </form>
-  </Modal>
+  return (
+    <Modal
+      label={title}
+      variant={viewport === 'phone' ? 'sheet' : 'dialog'}
+      onClose={() => {
+        if (!busy) onClose()
+      }}
+      className="prompt-dialog">
+      <form
+        onSubmit={event => {
+          event.preventDefault()
+          void submit()
+        }}>
+        <ModalHeader title={title} onClose={onClose} />
+        <div className="modal-body">
+          <label className="field">
+            <span>{label}</span>
+            <input
+              ref={input}
+              value={value}
+              maxLength={maxLength}
+              autoComplete="off"
+              onChange={event => {
+                setValue(event.target.value)
+              }}
+            />
+          </label>
+          {error && (
+            <p className="inline-alert inline-alert-error" role="alert">
+              {error}
+            </p>
+          )}
+        </div>
+        <footer className="modal-footer">
+          <button type="button" className="button secondary" disabled={busy} onClick={onClose}>
+            取消
+          </button>
+          <button type="submit" className="button primary" disabled={busy || !value.trim()}>
+            {busy && <Spinner size={14} />}
+            {confirmLabel}
+          </button>
+        </footer>
+      </form>
+    </Modal>
+  )
 }

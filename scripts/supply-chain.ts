@@ -3,7 +3,7 @@ import { z } from 'zod'
 
 /** Workspace settings whose entries let a package version past a supply-chain policy. */
 const EXCEPTION_SETTINGS = ['minimumReleaseAgeExclude', 'trustPolicyExclude'] as const
-type ExceptionSetting = typeof EXCEPTION_SETTINGS[number]
+type ExceptionSetting = (typeof EXCEPTION_SETTINGS)[number]
 
 /** An exception may be dated at most this many days ahead, so every one comes back for review. */
 const MAX_EXCEPTION_DAYS = 90
@@ -48,7 +48,10 @@ export function checkExceptions(workspaceYaml: string, lockfileYaml: string | un
   for (const setting of EXCEPTION_SETTINGS) {
     const node = workspace.get(setting, true)
     if (node === undefined) continue
-    if (!isSeq(node)) { problems.push(`${setting} 必须是逐行列出的列表`); continue }
+    if (!isSeq(node)) {
+      problems.push(`${setting} 必须是逐行列出的列表`)
+      continue
+    }
     const seen = new Set<string>()
     let group: ExceptionGroup | undefined
     node.items.forEach((item, index) => {
@@ -58,9 +61,15 @@ export function checkExceptions(workspaceYaml: string, lockfileYaml: string | un
         group = parseGroup(setting, comment, today, problems)
         groups.push(group)
       }
-      if (!isScalar(item) || typeof item.value !== 'string') { problems.push(`${setting} 第 ${index + 1} 项不是字符串`); return }
+      if (!isScalar(item) || typeof item.value !== 'string') {
+        problems.push(`${setting} 第 ${index + 1} 项不是字符串`)
+        return
+      }
       const entry = item.value
-      if (!group) { problems.push(`${setting}：${entry} 前缺少 reason:、reviewer: 与 expires: 注释`); return }
+      if (!group) {
+        problems.push(`${setting}：${entry} 前缺少 reason:、reviewer: 与 expires: 注释`)
+        return
+      }
       group.entries.push(entry)
       if (seen.has(entry)) problems.push(`${setting}：${entry} 重复`)
       seen.add(entry)
@@ -70,7 +79,8 @@ export function checkExceptions(workspaceYaml: string, lockfileYaml: string | un
         return
       }
       for (const version of match[2]!.split('||').map(part => part.trim())) {
-        if (locked && !locked.has(`${match[1]}@${version}`)) problems.push(`${setting}：${match[1]}@${version} 不在 pnpm-lock.yaml 中，删除这条例外`)
+        if (locked && !locked.has(`${match[1]}@${version}`))
+          problems.push(`${setting}：${match[1]}@${version} 不在 pnpm-lock.yaml 中，删除这条例外`)
       }
     })
   }
@@ -93,7 +103,13 @@ function parseGroup(setting: ExceptionSetting, comment: string, today: string, p
       problems.push(`${setting}：例外注释必须以 reason: 开头（发现「${line}」）`)
     }
   }
-  const group: ExceptionGroup = { setting, reason: fields.reason ?? '', reviewer: fields.reviewer ?? '', expires: fields.expires ?? '', entries: [] }
+  const group: ExceptionGroup = {
+    setting,
+    reason: fields.reason ?? '',
+    reviewer: fields.reviewer ?? '',
+    expires: fields.expires ?? '',
+    entries: [],
+  }
   const summary = group.reason || comment.trim().split('\n')[0]!.trim()
   const label = `${setting} 的例外「${summary.length > 60 ? `${summary.slice(0, 60)}…` : summary}」`
   if (!group.reason) problems.push(`${label} 缺少 reason:`)
@@ -120,10 +136,16 @@ function addDays(day: string, days: number): string {
 
 /** `name@version` keys of every package in the lockfile, from all of its YAML documents. */
 function lockedPackages(lockfileYaml: string | undefined, problems: string[]): Set<string> | undefined {
-  if (lockfileYaml === undefined) { problems.push('找不到 pnpm-lock.yaml，无法核对例外'); return undefined }
+  if (lockfileYaml === undefined) {
+    problems.push('找不到 pnpm-lock.yaml，无法核对例外')
+    return undefined
+  }
   const keys = new Set<string>()
   for (const document of parseAllDocuments(lockfileYaml)) {
-    if (document.errors.length > 0) { problems.push('pnpm-lock.yaml 无法解析'); return undefined }
+    if (document.errors.length > 0) {
+      problems.push('pnpm-lock.yaml 无法解析')
+      return undefined
+    }
     const packages = document.get('packages', true)
     if (isMap(packages)) for (const pair of packages.items) if (isScalar(pair.key)) keys.add(String(pair.key.value))
   }
@@ -159,17 +181,30 @@ export const PUBLIC_REGISTRY = 'https://registry.npmjs.org'
  * pnpm release. pnpm's own version switch does not read this hash, so a wrong one would go unnoticed
  * until someone installs pnpm through Corepack.
  */
-export async function checkPackageManagerPin(packageManager: unknown, fetchJson: FetchJson): Promise<{ pin?: PackageManagerPin, problems: string[] }> {
+export async function checkPackageManagerPin(
+  packageManager: unknown,
+  fetchJson: FetchJson,
+): Promise<{ pin?: PackageManagerPin; problems: string[] }> {
   const pin = parsePackageManagerPin(packageManager)
-  if (!pin) return { problems: [`package.json 的 packageManager 必须写成 pnpm@<版本>+sha512.<128 位十六进制>，现为 ${JSON.stringify(packageManager)}`] }
+  if (!pin)
+    return {
+      problems: [`package.json 的 packageManager 必须写成 pnpm@<版本>+sha512.<128 位十六进制>，现为 ${JSON.stringify(packageManager)}`],
+    }
   let document: z.infer<typeof VersionDocument>
   try {
     document = VersionDocument.parse(await fetchJson(`${PUBLIC_REGISTRY}/pnpm/${pin.version}`))
   } catch (error) {
-    return { pin, problems: [`无法从 ${PUBLIC_REGISTRY} 读取 pnpm@${pin.version} 的完整性信息：${error instanceof Error ? error.message : String(error)}`] }
+    return {
+      pin,
+      problems: [
+        `无法从 ${PUBLIC_REGISTRY} 读取 pnpm@${pin.version} 的完整性信息：${error instanceof Error ? error.message : String(error)}`,
+      ],
+    }
   }
   const published = Buffer.from(document.dist.integrity.slice('sha512-'.length), 'base64').toString('hex')
-  if (document.version !== pin.version) return { pin, problems: [`registry 返回的版本 ${document.version} 与 packageManager 的 ${pin.version} 不一致`] }
-  if (published !== pin.sha512) return { pin, problems: [`packageManager 的 sha512 与 ${PUBLIC_REGISTRY} 上 pnpm@${pin.version} 的完整性不一致`] }
+  if (document.version !== pin.version)
+    return { pin, problems: [`registry 返回的版本 ${document.version} 与 packageManager 的 ${pin.version} 不一致`] }
+  if (published !== pin.sha512)
+    return { pin, problems: [`packageManager 的 sha512 与 ${PUBLIC_REGISTRY} 上 pnpm@${pin.version} 的完整性不一致`] }
   return { pin, problems: [] }
 }

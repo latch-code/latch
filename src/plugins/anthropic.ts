@@ -1,8 +1,19 @@
 import { z } from 'zod'
 import type { HarnessPlugin, ModelDelta, ModelMessage, ModelProvider, ToolCall } from '../core/plugins.ts'
 import {
-  MAX_TOOL_ARGUMENT_CHARS, MAX_TOOL_CALLS, ProviderError, errorMessage, modelList, parseBaseURL, readErrorBody, redactor,
-  selectModel, send, sseData, toolArguments, type FetchLike,
+  MAX_TOOL_ARGUMENT_CHARS,
+  MAX_TOOL_CALLS,
+  ProviderError,
+  errorMessage,
+  modelList,
+  parseBaseURL,
+  readErrorBody,
+  redactor,
+  selectModel,
+  send,
+  sseData,
+  toolArguments,
+  type FetchLike,
 } from './openai.ts'
 
 export interface AnthropicConfig {
@@ -36,7 +47,10 @@ type WireBlock =
   | { type: 'text'; text: string }
   | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
   | { type: 'tool_result'; tool_use_id: string; content?: string; is_error?: true }
-interface WireMessage { role: 'user' | 'assistant'; content: WireBlock[] }
+interface WireMessage {
+  role: 'user' | 'assistant'
+  content: WireBlock[]
+}
 
 /** Messages API history: system text is top-level and tool results travel inside one user turn. */
 function messagesOnWire(messages: ModelMessage[]): { system?: string; messages: WireMessage[] } {
@@ -60,10 +74,14 @@ function messagesOnWire(messages: ModelMessage[]): { system?: string; messages: 
       ])
     } else {
       if (!message.toolCallId) throw new ProviderError('工具结果缺少 toolCallId。', 'invalid-history')
-      append('user', [{
-        type: 'tool_result', tool_use_id: message.toolCallId,
-        ...(message.content ? { content: message.content } : {}), ...(message.isError ? { is_error: true as const } : {}),
-      }])
+      append('user', [
+        {
+          type: 'tool_result',
+          tool_use_id: message.toolCallId,
+          ...(message.content ? { content: message.content } : {}),
+          ...(message.isError ? { is_error: true as const } : {}),
+        },
+      ])
     }
   }
   return { ...(system.length ? { system: system.join('\n\n') } : {}), messages: wire }
@@ -71,7 +89,10 @@ function messagesOnWire(messages: ModelMessage[]): { system?: string; messages: 
 
 const count = z.number().int().nonnegative().nullable().optional()
 const usageSchema = z.object({
-  input_tokens: count, output_tokens: count, cache_creation_input_tokens: count, cache_read_input_tokens: count,
+  input_tokens: count,
+  output_tokens: count,
+  cache_creation_input_tokens: count,
+  cache_read_input_tokens: count,
 })
 const index = z.number().int().nonnegative()
 const eventSchemas = {
@@ -129,19 +150,34 @@ export function createAnthropicPlugin(config: AnthropicConfig): HarnessPlugin {
   const fetcher: FetchLike = config.fetch ?? ((input, init) => globalThis.fetch(input, init))
 
   const provider: ModelProvider = {
-    id, name: config.name ?? 'Anthropic', model: config.model, ...(models ? { models } : {}),
+    id,
+    name: config.name ?? 'Anthropic',
+    model: config.model,
+    ...(models ? { models } : {}),
     async *stream({ messages, tools, signal, model: requested }): AsyncIterable<ModelDelta> {
       signal.throwIfAborted()
       const model = selectModel(requested, config.model, models)
       const response = await send(fetcher, endpoint, {
-        method: 'POST', signal, redirect: 'error',
+        method: 'POST',
+        signal,
+        redirect: 'error',
         headers: { 'content-type': 'application/json', accept: 'text/event-stream', ...anthropicHeaders(apiKey) },
         body: JSON.stringify({
-          model, max_tokens: MAX_OUTPUT_TOKENS, stream: true, ...messagesOnWire(messages),
-          ...(tools.length ? { tools: tools.map(tool => ({ name: tool.name, description: tool.description, input_schema: tool.parameters })) } : {}),
+          model,
+          max_tokens: MAX_OUTPUT_TOKENS,
+          stream: true,
+          ...messagesOnWire(messages),
+          ...(tools.length
+            ? { tools: tools.map(tool => ({ name: tool.name, description: tool.description, input_schema: tool.parameters })) }
+            : {}),
         }),
       })
-      if (!response.ok) throw new ProviderError(`模型服务 HTTP ${response.status}：${redacted(await readErrorBody(response))}`, 'http-error', response.status)
+      if (!response.ok)
+        throw new ProviderError(
+          `模型服务 HTTP ${response.status}：${redacted(await readErrorBody(response))}`,
+          'http-error',
+          response.status,
+        )
       if (!response.body) throw new ProviderError('模型服务没有返回响应体。', 'empty-response')
       if (!response.headers.get('content-type')?.toLowerCase().includes('text/event-stream')) {
         await response.body.cancel()
@@ -171,7 +207,9 @@ export function createAnthropicPlugin(config: AnthropicConfig): HarnessPlugin {
       for await (const payload of sseData(response.body, signal)) {
         signal.throwIfAborted()
         let parsed: unknown
-        try { parsed = JSON.parse(payload) } catch {
+        try {
+          parsed = JSON.parse(payload)
+        } catch {
           throw new ProviderError('模型服务返回无效的 SSE JSON。', 'invalid-json')
         }
         const type = typeof parsed === 'object' && parsed !== null && 'type' in parsed ? parsed.type : undefined
@@ -192,7 +230,10 @@ export function createAnthropicPlugin(config: AnthropicConfig): HarnessPlugin {
           continue
         }
         if (!started) throw new ProviderError('模型流缺少 message_start。', 'invalid-chunk')
-        if (type === 'message_stop') { stopped = true; break }
+        if (type === 'message_stop') {
+          stopped = true
+          break
+        }
         if (type === 'message_delta') {
           const event = eventSchemas.message_delta.safeParse(parsed)
           if (!event.success) throw new ProviderError('模型服务的流事件字段无效。', 'invalid-chunk')
@@ -246,8 +287,8 @@ export function createAnthropicPlugin(config: AnthropicConfig): HarnessPlugin {
       signal.throwIfAborted()
       if (!stopped || !finish) throw new ProviderError('模型流未给出结束状态，不能确认调用完成。', 'stream-incomplete')
       if ([...blocks.values()].some(block => block.open)) throw new ProviderError('模型流在内容块结束前停止。', 'stream-incomplete')
-      const pending = [...blocks].sort(([left], [right]) => left - right).flatMap(([, block]) => block.call ? [block.call] : [])
-      if ((finish === 'tool-calls') !== (pending.length > 0)) throw new ProviderError('工具调用与模型结束状态不一致。', 'invalid-tool-call')
+      const pending = [...blocks].sort(([left], [right]) => left - right).flatMap(([, block]) => (block.call ? [block.call] : []))
+      if ((finish === 'tool-calls') !== pending.length > 0) throw new ProviderError('工具调用与模型结束状态不一致。', 'invalid-tool-call')
       const completed: ToolCall[] = []
       const ids = new Set<string>()
       for (const call of pending) {
@@ -269,8 +310,12 @@ export function createAnthropicPlugin(config: AnthropicConfig): HarnessPlugin {
     },
   }
   return {
-    id, name: config.name ?? 'Anthropic', version: '1.0.0',
+    id,
+    name: config.name ?? 'Anthropic',
+    version: '1.0.0',
     description: '通过 Anthropic Messages 接口流式调用模型；支持文字、推理内容与多轮工具调用。',
-    activate(context) { context.registerProvider(provider) },
+    activate(context) {
+      context.registerProvider(provider)
+    },
   }
 }

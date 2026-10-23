@@ -5,11 +5,28 @@ import { z } from 'zod'
 import { AppError } from '../core/errors.ts'
 import { isAcceptableDeviceName } from '../shared/text.ts'
 import {
-  LISTENER_LABELS, SCOPE_LABELS,
-  type DataScope, type Device, type DeviceScope, type DeviceStatus, type EnrollmentInfo, type EnrollmentView, type InvitationView, type ListenerClass,
+  LISTENER_LABELS,
+  SCOPE_LABELS,
+  type DataScope,
+  type Device,
+  type DeviceScope,
+  type DeviceStatus,
+  type EnrollmentInfo,
+  type EnrollmentView,
+  type InvitationView,
+  type ListenerClass,
 } from '../shared/types.ts'
 import type { AuditActor, AuditLog, StepupMethod } from './audit.ts'
-import { constantTimeEqualHex, deviceFingerprint, parseP256Spki, randomCode, randomId, randomNonce, sha256Hex, verifyP256 } from './crypto.ts'
+import {
+  constantTimeEqualHex,
+  deviceFingerprint,
+  parseP256Spki,
+  randomCode,
+  randomId,
+  randomNonce,
+  sha256Hex,
+  verifyP256,
+} from './crypto.ts'
 import { paramsHash, type PresenceService } from './presence.ts'
 
 export const CREDENTIAL_LIFETIME = 30 * 24 * 60 * 60_000
@@ -61,7 +78,11 @@ const storedDevice = z.strictObject({
   scopes: z.array(scopeEnum).max(6),
   scopesBeforeReview: z.array(scopeEnum).optional(),
   dataScope: z.enum(['work', 'all']),
-  pairedBy: z.strictObject({ method: z.enum(['lpc', 'offline', 'invitation', 'migration']), deviceId: z.string().optional(), invitationId: z.string().optional() }),
+  pairedBy: z.strictObject({
+    method: z.enum(['lpc', 'offline', 'invitation', 'migration']),
+    deviceId: z.string().optional(),
+    invitationId: z.string().optional(),
+  }),
   createdAt: z.string(),
   lastSeenAt: z.string(),
   /** Epoch ms: enrollment + 30 days, never extended. */
@@ -80,10 +101,18 @@ type DevicesFile = z.infer<typeof devicesFile>
 
 const legacyFile = z.object({
   version: z.literal(1),
-  devices: z.array(z.object({
-    id: z.string(), name: z.string(), role: z.enum(['owner', 'controller']),
-    createdAt: z.string(), lastSeenAt: z.string(), revoked: z.boolean(), tokenHash: z.string(), expiresAt: z.number(),
-  })),
+  devices: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      role: z.enum(['owner', 'controller']),
+      createdAt: z.string(),
+      lastSeenAt: z.string(),
+      revoked: z.boolean(),
+      tokenHash: z.string(),
+      expiresAt: z.number(),
+    }),
+  ),
   pairings: z.array(z.unknown()).optional(),
 })
 
@@ -94,18 +123,33 @@ function parseRevocation(bytes: Buffer): RevocationLine | undefined {
   try {
     const parsed = revocationLine.safeParse(JSON.parse(bytes.toString('utf8')))
     return parsed.success ? parsed.data : undefined
-  } catch { return undefined }
+  } catch {
+    return undefined
+  }
 }
 
 const offlineFile = z.strictObject({
   version: z.literal(1),
-  tickets: z.array(z.strictObject({ id: z.string().regex(/^chl_[A-Za-z0-9_-]{22}$/u), codeHash: hex64, expiresAt: z.number(), scopesProfile: z.literal('offline') })).max(64),
+  tickets: z
+    .array(
+      z.strictObject({
+        id: z.string().regex(/^chl_[A-Za-z0-9_-]{22}$/u),
+        codeHash: hex64,
+        expiresAt: z.number(),
+        scopesProfile: z.literal('offline'),
+      }),
+    )
+    .max(64),
 })
 type OfflineTicket = z.infer<typeof offlineFile>['tickets'][number]
 
 const CREDENTIAL = /^ldc1\.(dev_[A-Za-z0-9_-]{22})\.[A-Za-z0-9_-]{43}$/u
 
-export interface ConnectionContext { listener: ListenerClass; origin: string; remoteAddress: string }
+export interface ConnectionContext {
+  listener: ListenerClass
+  origin: string
+  remoteAddress: string
+}
 export type PresentedCredential =
   | { kind: 'cookie' | 'header'; value: string }
   /** `harness_link=…` from the previous build; read on loopback-tcp only. */
@@ -114,7 +158,11 @@ export type PresentedCredential =
 export type AuthOutcome =
   /** `credentialHash` is the SHA-256 of the presented credential (current or previous); event streams re-check it. */
   | { ok: true; device: Device; renewAfter: number; renewDue: boolean; credentialHash: string }
-  | { ok: false; code: 'unauthorized' | 'renewal-required' | 'credential-expired' | 'device-revoked' | 'listener-mismatch' | 'credential-rotated'; deviceId?: string }
+  | {
+      ok: false
+      code: 'unauthorized' | 'renewal-required' | 'credential-expired' | 'device-revoked' | 'listener-mismatch' | 'credential-rotated'
+      deviceId?: string
+    }
   | { ok: false; code: 'legacy-reconfirm'; legacyName: string }
 
 /** Test seam for crash injection; defaults to node:fs/promises. */
@@ -126,7 +174,9 @@ const defaultFs: DeviceFs = { open: (path, flags, mode) => openFile(path, flags,
 
 const codeOf = (error: unknown) => (error as NodeJS.ErrnoException | undefined)?.code
 
-function isTls(listener: ListenerClass): boolean { return listener === 'lan-tls' || listener === 'tailnet-tls' }
+function isTls(listener: ListenerClass): boolean {
+  return listener === 'lan-tls' || listener === 'tailnet-tls'
+}
 
 /** Canonical order, `view` always included, unknown names rejected. */
 function normalizeScopes(scopes: readonly string[]): DeviceScope[] {
@@ -154,12 +204,18 @@ function legacyName(name: string): string {
   return isAcceptableDeviceName(name) ? name.trim() : DEFAULT_DEVICE_NAME
 }
 
-function unauthorized(): AppError { return new AppError(401, 'unauthorized', '请先在本机确认这台设备') }
+function unauthorized(): AppError {
+  return new AppError(401, 'unauthorized', '请先在本机确认这台设备')
+}
 
 async function syncDirectory(directory: string): Promise<void> {
   if (process.platform === 'win32') return
   const handle = await openFile(directory, 'r')
-  try { await handle.sync() } finally { await handle.close() }
+  try {
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
 }
 
 async function writeAtomic(fs: DeviceFs, directory: string, file: string, content: unknown): Promise<void> {
@@ -174,8 +230,12 @@ async function writeAtomic(fs: DeviceFs, directory: string, file: string, conten
     throw error
   }
   await handle.close()
-  try { await fs.rename(temporary, join(directory, file)) }
-  catch (error) { await unlink(temporary).catch(() => {}); throw error }
+  try {
+    await fs.rename(temporary, join(directory, file))
+  } catch (error) {
+    await unlink(temporary).catch(() => {})
+    throw error
+  }
   await syncDirectory(directory)
 }
 
@@ -188,12 +248,21 @@ function corrupt(file: string, detail: string): AppError {
   return new AppError(500, 'devices-corrupt', `设备登记文件 auth/${file} 无法读取，原文件已保留：${detail}`)
 }
 
-function iso(ms: number): string { return new Date(ms).toISOString() }
+function iso(ms: number): string {
+  return new Date(ms).toISOString()
+}
 
 function publicDevice(device: StoredDevice): Device {
   return {
-    id: device.id, name: device.name, status: device.status, listener: device.listener, scopes: [...device.scopes],
-    dataScope: device.dataScope, fingerprint: device.fingerprint, createdAt: device.createdAt, lastSeenAt: device.lastSeenAt,
+    id: device.id,
+    name: device.name,
+    status: device.status,
+    listener: device.listener,
+    scopes: [...device.scopes],
+    dataScope: device.dataScope,
+    fingerprint: device.fingerprint,
+    createdAt: device.createdAt,
+    lastSeenAt: device.lastSeenAt,
     credentialExpiresAt: iso(device.credentialExpiresAt),
     pairedBy: { method: device.pairedBy.method, ...(device.pairedBy.deviceId ? { deviceId: device.pairedBy.deviceId } : {}) },
     ...(device.revokedAt !== undefined ? { revokedAt: iso(device.revokedAt) } : {}),
@@ -201,10 +270,16 @@ function publicDevice(device: StoredDevice): Device {
   }
 }
 
-function newCredential(deviceId: string): string { return `ldc1.${deviceId}.${randomBytes(32).toString('base64url')}` }
+function newCredential(deviceId: string): string {
+  return `ldc1.${deviceId}.${randomBytes(32).toString('base64url')}`
+}
 
 /** The part of a device a scope change is decided against. */
-export interface DeviceScopeBase { scopes: DeviceScope[]; dataScope: DataScope; status: DeviceStatus }
+export interface DeviceScopeBase {
+  scopes: DeviceScope[]
+  dataScope: DataScope
+  status: DeviceStatus
+}
 
 function sameBase(device: StoredDevice, base: DeviceScopeBase): boolean {
   if (!base || !Array.isArray(base.scopes) || base.dataScope !== device.dataScope || base.status !== device.status) return false
@@ -233,30 +308,48 @@ export class DeviceStore {
   private readonly revocationListeners: Array<(deviceId: string) => void> = []
 
   private constructor(
-    private readonly directory: string, readonly hostId: string, private readonly audit: AuditLog,
-    private readonly now: () => number, private readonly fs: DeviceFs,
+    private readonly directory: string,
+    readonly hostId: string,
+    private readonly audit: AuditLog,
+    private readonly now: () => number,
+    private readonly fs: DeviceFs,
   ) {
     this.state = { version: 2, hostId, devices: [] }
   }
 
-  static async open(options: { directory: string; hostId: string; audit: AuditLog; now?: () => number; fs?: DeviceFs }): Promise<DeviceStore> {
+  static async open(options: {
+    directory: string
+    hostId: string
+    audit: AuditLog
+    now?: () => number
+    fs?: DeviceFs
+  }): Promise<DeviceStore> {
     const store = new DeviceStore(options.directory, options.hostId, options.audit, options.now ?? Date.now, options.fs ?? defaultFs)
     await preparePrivateDirectory(options.directory)
     await store.load()
     return store
   }
 
-  private get path(): string { return join(this.directory, DEVICES_FILE) }
+  private get path(): string {
+    return join(this.directory, DEVICES_FILE)
+  }
 
   private async load(): Promise<void> {
     let text: string | undefined
-    try { text = await readFile(this.path, 'utf8') }
-    catch (error) { if (codeOf(error) !== 'ENOENT') throw corrupt(DEVICES_FILE, codeOf(error) ?? '读取失败') }
+    try {
+      text = await readFile(this.path, 'utf8')
+    } catch (error) {
+      if (codeOf(error) !== 'ENOENT') throw corrupt(DEVICES_FILE, codeOf(error) ?? '读取失败')
+    }
     let dirty = false
     if (text === undefined) dirty = true
     else {
       let raw: unknown
-      try { raw = JSON.parse(text) } catch { throw corrupt(DEVICES_FILE, 'JSON 格式无效') }
+      try {
+        raw = JSON.parse(text)
+      } catch {
+        throw corrupt(DEVICES_FILE, 'JSON 格式无效')
+      }
       const version = (raw as { version?: unknown } | null)?.version
       if (version === 1) {
         const legacy = legacyFile.safeParse(raw)
@@ -281,7 +374,9 @@ export class DeviceStore {
       await this.audit.append({ action: 'device.review', actor, target: review.deviceId, detail: review }).catch(() => {})
     }
     if (replayed.tornBytes) {
-      await this.audit.append({ action: 'device.revocations.torn-tail-removed', actor, detail: { bytes: replayed.tornBytes } }).catch(() => {})
+      await this.audit
+        .append({ action: 'device.revocations.torn-tail-removed', actor, detail: { bytes: replayed.tornBytes } })
+        .catch(() => {})
     }
   }
 
@@ -296,13 +391,26 @@ export class DeviceStore {
       const usable = item.role === 'owner' && !item.revoked && item.expiresAt > now && hex64.safeParse(item.tokenHash).success
       const name = item.name.trim().slice(0, 80) || DEFAULT_DEVICE_NAME
       const base: StoredDevice = {
-        id, name, status: usable ? 'legacy-pending' : 'revoked', listener: 'loopback-tcp', origin: '', publicKey: '', fingerprint: '',
-        scopes: ['view'], dataScope: 'work', pairedBy: { method: 'migration' },
-        createdAt: item.createdAt, lastSeenAt: item.lastSeenAt, credentialExpiresAt: item.expiresAt,
-        credential: null, previous: [],
+        id,
+        name,
+        status: usable ? 'legacy-pending' : 'revoked',
+        listener: 'loopback-tcp',
+        origin: '',
+        publicKey: '',
+        fingerprint: '',
+        scopes: ['view'],
+        dataScope: 'work',
+        pairedBy: { method: 'migration' },
+        createdAt: item.createdAt,
+        lastSeenAt: item.lastSeenAt,
+        credentialExpiresAt: item.expiresAt,
+        credential: null,
+        previous: [],
       }
-      if (usable) { base.legacyTokenHash = item.tokenHash; legacyCount += 1 }
-      else {
+      if (usable) {
+        base.legacyTokenHash = item.tokenHash
+        legacyCount += 1
+      } else {
         base.revokedAt = now
         base.revokedReason = 'migration'
         revocations.push({ at: now, deviceId: id, reason: 'migration' })
@@ -313,7 +421,8 @@ export class DeviceStore {
     this.state = { version: 2, hostId: this.hostId, devices }
     await this.persist()
     await this.audit.append({
-      action: 'migration.devices.v2', actor: { listener: 'host', via: 'startup' },
+      action: 'migration.devices.v2',
+      actor: { listener: 'host', via: 'startup' },
       detail: { revoked: revocations.length, legacy: legacyCount },
     })
   }
@@ -322,21 +431,30 @@ export class DeviceStore {
     try {
       await unlink(join(this.directory, LEGACY_TOKEN_FILE))
       await syncDirectory(this.directory)
-    } catch (error) { if (codeOf(error) !== 'ENOENT') throw error }
+    } catch (error) {
+      if (codeOf(error) !== 'ENOENT') throw error
+    }
   }
 
-  private get revocationsPath(): string { return join(this.directory, REVOCATIONS_FILE) }
+  private get revocationsPath(): string {
+    return join(this.directory, REVOCATIONS_FILE)
+  }
 
   /**
    * Replays the revocation log over devices.json. A logged revocation that devices.json does not show yet (a crash
    * before the rewrite, a failed write, or a restored backup) also never recorded its cascade, so the cascade is
    * derived again here. Devices restored by an admin after a persisted revocation are left alone.
    */
-  private async applyRevocationLog(): Promise<{ changed: boolean; reviews: Array<{ deviceId: string; causeDeviceId: string }>; tornBytes: number }> {
+  private async applyRevocationLog(): Promise<{
+    changed: boolean
+    reviews: Array<{ deviceId: string; causeDeviceId: string }>
+    tornBytes: number
+  }> {
     const result = { changed: false, reviews: [] as Array<{ deviceId: string; causeDeviceId: string }>, tornBytes: 0 }
     let bytes: Buffer
-    try { bytes = await readFile(this.revocationsPath) }
-    catch (error) {
+    try {
+      bytes = await readFile(this.revocationsPath)
+    } catch (error) {
       if (codeOf(error) === 'ENOENT') return result
       throw corrupt(REVOCATIONS_FILE, codeOf(error) ?? '读取失败')
     }
@@ -363,8 +481,11 @@ export class DeviceStore {
     // An unterminated last line may be a revocation cut short by a crash; honour it when it parses.
     const tail = parseRevocation(bytes.subarray(end))
     if (tail) apply(tail)
-    try { result.tornBytes = await this.repairRevocationTail(bytes) }
-    catch { this.revocationsTorn = true }
+    try {
+      result.tornBytes = await this.repairRevocationTail(bytes)
+    } catch {
+      this.revocationsTorn = true
+    }
     return result
   }
 
@@ -376,7 +497,10 @@ export class DeviceStore {
   private async repairRevocationTail(bytes: Buffer): Promise<number> {
     const end = bytes.lastIndexOf(0x0a) + 1
     const tail = bytes.subarray(end)
-    if (tail.length === 0) { this.revocationsTorn = false; return 0 }
+    if (tail.length === 0) {
+      this.revocationsTorn = false
+      return 0
+    }
     const terminate = parseRevocation(tail) !== undefined
     if (!terminate) await this.keepTornTail(tail)
     const handle = await this.fs.open(this.revocationsPath, 'r+', 0o600)
@@ -384,15 +508,18 @@ export class DeviceStore {
       if (terminate) await handle.write(Buffer.from('\n'), 0, 1, bytes.length)
       else await handle.truncate(end)
       await handle.sync()
-    } finally { await handle.close() }
+    } finally {
+      await handle.close()
+    }
     this.revocationsTorn = false
     return terminate ? 0 : tail.length
   }
 
   private async keepTornTail(tail: Buffer): Promise<void> {
     const base = join(this.directory, `${REVOCATIONS_FILE}.torn-${this.now()}`)
-    try { await writeFile(base, tail, { mode: 0o600, flag: 'wx' }) }
-    catch (error) {
+    try {
+      await writeFile(base, tail, { mode: 0o600, flag: 'wx' })
+    } catch (error) {
       if (codeOf(error) !== 'EEXIST') throw error
       await writeFile(`${base}-${randomUUID()}`, tail, { mode: 0o600, flag: 'wx' })
     }
@@ -402,7 +529,11 @@ export class DeviceStore {
   private async appendRevocation(entry: RevocationLine): Promise<void> {
     if (this.revocationsTorn) {
       let bytes = Buffer.alloc(0)
-      try { bytes = await readFile(this.revocationsPath) } catch (error) { if (codeOf(error) !== 'ENOENT') throw error }
+      try {
+        bytes = await readFile(this.revocationsPath)
+      } catch (error) {
+        if (codeOf(error) !== 'ENOENT') throw error
+      }
       await this.repairRevocationTail(bytes)
     }
     const handle = await this.fs.open(this.revocationsPath, 'a', 0o600)
@@ -415,10 +546,17 @@ export class DeviceStore {
         await handle.sync()
       } catch (error) {
         // Cut the unacknowledged fragment off again; if that fails too, repair before the next append.
-        try { await handle.truncate(size); await handle.sync() } catch { this.revocationsTorn = true }
+        try {
+          await handle.truncate(size)
+          await handle.sync()
+        } catch {
+          this.revocationsTorn = true
+        }
         throw error
       }
-    } finally { await handle.close() }
+    } finally {
+      await handle.close()
+    }
   }
 
   /** Active devices paired through an invitation from `deviceId`; revoking that inviter moves them to review. */
@@ -435,7 +573,10 @@ export class DeviceStore {
       return now - device.credentialExpiresAt <= PRUNE_AFTER
     })
     for (const device of this.state.devices) {
-      if (device.pending && now - device.pending.issuedAt > PENDING_LIFETIME) { delete device.pending; changed = true }
+      if (device.pending && now - device.pending.issuedAt > PENDING_LIFETIME) {
+        delete device.pending
+        changed = true
+      }
     }
     return changed || this.state.devices.length !== before
   }
@@ -468,7 +609,8 @@ export class DeviceStore {
       const hash = sha256Hex(presented.value)
       let match: StoredDevice | undefined
       for (const device of this.state.devices) {
-        const equal = device.status === 'legacy-pending' && device.legacyTokenHash !== undefined && constantTimeEqualHex(device.legacyTokenHash, hash)
+        const equal =
+          device.status === 'legacy-pending' && device.legacyTokenHash !== undefined && constantTimeEqualHex(device.legacyTokenHash, hash)
         if (equal && now <= device.credentialExpiresAt) match = device
       }
       return match ? { ok: false, code: 'legacy-reconfirm', legacyName: legacyName(match.name) } : denied
@@ -485,18 +627,25 @@ export class DeviceStore {
     const pending = !current && !previous && device.pending !== undefined && constantTimeEqualHex(device.pending.hash, hash)
     if (!current && !previous && !pending) return denied
     if (device.status === 'revoked') return { ok: false, code: 'device-revoked', deviceId: device.id }
-    if (connection.listener !== device.listener || connection.origin !== device.origin) return { ok: false, code: 'listener-mismatch', deviceId: device.id }
+    if (connection.listener !== device.listener || connection.origin !== device.origin)
+      return { ok: false, code: 'listener-mismatch', deviceId: device.id }
     if (now > device.credentialExpiresAt) return { ok: false, code: 'credential-expired', deviceId: device.id }
     if (previous && now > previous.graceUntil) {
       // A rotated-out credential used after its grace window was copied: revoke the device.
       await this.serialize(() => this.revokeStored(device, 'replay', { deviceId: device.id, listener: connection.listener, via: 'http' }))
       return { ok: false, code: 'device-revoked', deviceId: device.id }
     }
-    if (pending && !await this.serialize(() => this.promote(device.id, hash, connection))) return denied
+    if (pending && !(await this.serialize(() => this.promote(device.id, hash, connection)))) return denied
     const rotatedAt = device.credential!.rotatedAt
     if (!previous && now - rotatedAt > RENEW_INTERVAL) return { ok: false, code: 'renewal-required', deviceId: device.id }
     this.touch(device, now)
-    return { ok: true, device: publicDevice(device), renewAfter: rotatedAt + RENEW_INTERVAL, renewDue: now - rotatedAt > RENEW_INTERVAL, credentialHash: hash }
+    return {
+      ok: true,
+      device: publicDevice(device),
+      renewAfter: rotatedAt + RENEW_INTERVAL,
+      renewDue: now - rotatedAt > RENEW_INTERVAL,
+      credentialHash: hash,
+    }
   }
 
   /**
@@ -516,13 +665,20 @@ export class DeviceStore {
     }
     const actor: AuditActor = { deviceId, listener: connection.listener, via: 'http' }
     // The new credential was issued, signed for and audited already; this record only marks when it took over.
-    const seq = await this.audit.append({ action: 'device.credential.rotated', actor, target: deviceId, detail: { deviceId } }).then(result => result.seq, () => undefined)
+    const seq = await this.audit.append({ action: 'device.credential.rotated', actor, target: deviceId, detail: { deviceId } }).then(
+      result => result.seq,
+      () => undefined,
+    )
     const before = { credential: device.credential, previous: device.previous, pending: device.pending }
-    device.previous = [{ hash: device.credential.hash, rotatedAt: device.credential.rotatedAt, graceUntil: now + ROTATION_GRACE }, ...device.previous].slice(0, 4)
+    device.previous = [
+      { hash: device.credential.hash, rotatedAt: device.credential.rotatedAt, graceUntil: now + ROTATION_GRACE },
+      ...device.previous,
+    ].slice(0, 4)
     device.credential = { hash, rotatedAt: now }
     delete device.pending
-    try { await this.persist() }
-    catch (error) {
+    try {
+      await this.persist()
+    } catch (error) {
       Object.assign(device, before)
       if (seq !== undefined) await this.audit.append({ action: 'action.failed', actor, detail: { refSeq: seq } }).catch(() => {})
       throw error
@@ -567,7 +723,9 @@ export class DeviceStore {
   }
 
   /** Called synchronously after every revocation (including replay revocations), before it is audited. */
-  onRevoked(listener: (deviceId: string) => void): void { this.revocationListeners.push(listener) }
+  onRevoked(listener: (deviceId: string) => void): void {
+    this.revocationListeners.push(listener)
+  }
 
   /** Status active or review, and the 30-day credential lifetime not exceeded. */
   isActive(deviceId: string): boolean {
@@ -580,7 +738,9 @@ export class DeviceStore {
     return device && publicDevice(device)
   }
 
-  list(): Device[] { return this.state.devices.map(publicDevice) }
+  list(): Device[] {
+    return this.state.devices.map(publicDevice)
+  }
 
   hasActiveAdmin(): boolean {
     return this.state.devices.some(device => device.status === 'active' && this.usable(device) && device.scopes.includes('admin'))
@@ -591,15 +751,29 @@ export class DeviceStore {
     if (!/^[\w-]{1,128}$/u.test(cookieValue)) return undefined
     const hash = sha256Hex(cookieValue)
     const now = this.now()
-    const device = this.state.devices.find(item => item.status === 'legacy-pending' && item.legacyTokenHash !== undefined
-      && constantTimeEqualHex(item.legacyTokenHash, hash) && now <= item.credentialExpiresAt)
+    const device = this.state.devices.find(
+      item =>
+        item.status === 'legacy-pending'
+        && item.legacyTokenHash !== undefined
+        && constantTimeEqualHex(item.legacyTokenHash, hash)
+        && now <= item.credentialExpiresAt,
+    )
     return device && publicDevice(device)
   }
 
-  create(input: {
-    name: string; connection: ConnectionContext; publicKeyDer: Buffer; scopes: DeviceScope[]; dataScope: DataScope
-    pairedBy: Device['pairedBy']; enrollmentId: string
-  }, actor: AuditActor, stepup: StepupMethod): Promise<{ device: Device; credential: string }> {
+  create(
+    input: {
+      name: string
+      connection: ConnectionContext
+      publicKeyDer: Buffer
+      scopes: DeviceScope[]
+      dataScope: DataScope
+      pairedBy: Device['pairedBy']
+      enrollmentId: string
+    },
+    actor: AuditActor,
+    stepup: StepupMethod,
+  ): Promise<{ device: Device; credential: string }> {
     return this.serialize(async () => {
       const name = deviceName(input.name)
       const { der } = parseP256Spki(Buffer.from(input.publicKeyDer).toString('base64url'))
@@ -612,28 +786,48 @@ export class DeviceStore {
       // in the meantime would otherwise create an active device that the inviter's cascade never reached.
       if (input.pairedBy.deviceId !== undefined) {
         const inviter = this.find(input.pairedBy.deviceId)
-        if (!inviter || inviter.status !== 'active' || !this.usable(inviter)) throw new AppError(403, 'invitation-invalid', '配对码无效或已过期')
+        if (!inviter || inviter.status !== 'active' || !this.usable(inviter))
+          throw new AppError(403, 'invitation-invalid', '配对码无效或已过期')
       }
       const now = this.now()
       const id = randomId('dev')
       const credential = newCredential(id)
       const record: StoredDevice = {
-        id, name, status: 'active', listener: input.connection.listener, origin: input.connection.origin,
-        publicKey: der.toString('base64url'), fingerprint: deviceFingerprint(der), scopes, dataScope: input.dataScope,
+        id,
+        name,
+        status: 'active',
+        listener: input.connection.listener,
+        origin: input.connection.origin,
+        publicKey: der.toString('base64url'),
+        fingerprint: deviceFingerprint(der),
+        scopes,
+        dataScope: input.dataScope,
         pairedBy: { method, ...(input.pairedBy.deviceId ? { deviceId: input.pairedBy.deviceId } : {}) },
-        createdAt: iso(now), lastSeenAt: iso(now), credentialExpiresAt: now + CREDENTIAL_LIFETIME,
-        credential: { hash: sha256Hex(credential), rotatedAt: now }, previous: [],
+        createdAt: iso(now),
+        lastSeenAt: iso(now),
+        credentialExpiresAt: now + CREDENTIAL_LIFETIME,
+        credential: { hash: sha256Hex(credential), rotatedAt: now },
+        previous: [],
       }
       const { seq } = await this.audit.append({
-        action: 'device.enrolled', actor, stepup, target: id,
+        action: 'device.enrolled',
+        actor,
+        stepup,
+        target: id,
         detail: {
-          deviceId: id, enrollmentId: input.enrollmentId, listener: record.listener, method, scopes, dataScope: record.dataScope,
+          deviceId: id,
+          enrollmentId: input.enrollmentId,
+          listener: record.listener,
+          method,
+          scopes,
+          dataScope: record.dataScope,
           ...(record.pairedBy.deviceId ? { pairedByDeviceId: record.pairedBy.deviceId } : {}),
         },
       })
       this.state.devices.push(record)
-      try { await this.persist() }
-      catch (error) {
+      try {
+        await this.persist()
+      } catch (error) {
         this.state.devices = this.state.devices.filter(device => device !== record)
         await this.audit.append({ action: 'action.failed', actor, detail: { refSeq: seq } }).catch(() => {})
         throw error
@@ -662,7 +856,13 @@ export class DeviceStore {
    * Issues a new credential as `pending`; the presented one stays current until the new one is first used, and a
    * later renewal replaces a pending one. `credentialHash` is the SHA-256 of the credential the request presented.
    */
-  renew(input: { deviceId: string; nonce: string; signature: string; connection: ConnectionContext; credentialHash?: string }): Promise<{ device: Device; credential: string }> {
+  renew(input: {
+    deviceId: string
+    nonce: string
+    signature: string
+    connection: ConnectionContext
+    credentialHash?: string
+  }): Promise<{ device: Device; credential: string }> {
     return this.serialize(async () => {
       const invalidSignature = new AppError(401, 'invalid-signature', '签名校验失败')
       const challenge = typeof input.nonce === 'string' ? this.challenges.get(input.nonce) : undefined
@@ -672,7 +872,9 @@ export class DeviceStore {
       const device = this.find(input.deviceId)
       if (!device || device.status === 'revoked') throw new AppError(401, 'device-revoked', '此设备已被撤销，请重新在本机确认')
       if (!this.usable(device) || !device.credential) {
-        throw now > device.credentialExpiresAt ? new AppError(401, 'credential-expired', '此设备的登记已满 30 天，请重新在本机确认') : unauthorized()
+        throw now > device.credentialExpiresAt
+          ? new AppError(401, 'credential-expired', '此设备的登记已满 30 天，请重新在本机确认')
+          : unauthorized()
       }
       if (input.connection.listener !== device.listener || input.connection.origin !== device.origin) {
         throw new AppError(401, 'listener-mismatch', '此设备凭据不能在当前地址使用，请重新在本机确认')
@@ -682,11 +884,17 @@ export class DeviceStore {
       if (!verifyP256(key, `latch-renew-v1\n${this.hostId}\n${device.id}\n${input.nonce}`, input.signature)) throw invalidSignature
       const credential = newCredential(device.id)
       const actor: AuditActor = { deviceId: device.id, listener: input.connection.listener, via: 'http' }
-      const { seq } = await this.audit.append({ action: 'device.credential.issued', actor, target: device.id, detail: { deviceId: device.id } })
+      const { seq } = await this.audit.append({
+        action: 'device.credential.issued',
+        actor,
+        target: device.id,
+        detail: { deviceId: device.id },
+      })
       const replaced = device.pending
       device.pending = { hash: sha256Hex(credential), issuedAt: now }
-      try { await this.persist() }
-      catch (error) {
+      try {
+        await this.persist()
+      } catch (error) {
         if (replaced) device.pending = replaced
         else delete device.pending
         await this.audit.append({ action: 'action.failed', actor, detail: { refSeq: seq } }).catch(() => {})
@@ -699,18 +907,30 @@ export class DeviceStore {
   rename(deviceId: string, name: string, actor: AuditActor): Promise<Device> {
     return this.serialize(async () => {
       const device = this.find(deviceId)
-      if (!device || device.status === 'revoked' || device.status === 'legacy-pending') throw new AppError(404, 'device-not-found', '找不到该设备')
+      if (!device || device.status === 'revoked' || device.status === 'legacy-pending')
+        throw new AppError(404, 'device-not-found', '找不到该设备')
       const next = deviceName(name)
       await this.audit.append({ action: 'device.renamed', actor, target: deviceId, detail: { deviceId } })
       const previous = device.name
       device.name = next
-      try { await this.persist() } catch (error) { device.name = previous; throw error }
+      try {
+        await this.persist()
+      } catch (error) {
+        device.name = previous
+        throw error
+      }
       return publicDevice(device)
     })
   }
 
   /** Raising (more scopes, or `all` data) needs a step-up; leaving review requires raising past `view`. */
-  async setScopes(deviceId: string, change: { scopes?: DeviceScope[]; dataScope?: DataScope }, actor: AuditActor, stepup: StepupMethod, expectedBase?: DeviceScopeBase): Promise<Device> {
+  async setScopes(
+    deviceId: string,
+    change: { scopes?: DeviceScope[]; dataScope?: DataScope },
+    actor: AuditActor,
+    stepup: StepupMethod,
+    expectedBase?: DeviceScopeBase,
+  ): Promise<Device> {
     return (await this.changeScopes(deviceId, change, actor, stepup, expectedBase)).device
   }
 
@@ -720,7 +940,13 @@ export class DeviceStore {
    * With `expectedBase` (what a confirmation showed), the change applies only if the device still has exactly that
    * base, compared on this store's queue so no other change can slip in between.
    */
-  changeScopes(deviceId: string, change: { scopes?: DeviceScope[]; dataScope?: DataScope }, actor: AuditActor, stepup: StepupMethod, expectedBase?: DeviceScopeBase): Promise<{ device: Device; audited: boolean }> {
+  changeScopes(
+    deviceId: string,
+    change: { scopes?: DeviceScope[]; dataScope?: DataScope },
+    actor: AuditActor,
+    stepup: StepupMethod,
+    expectedBase?: DeviceScopeBase,
+  ): Promise<{ device: Device; audited: boolean }> {
     return this.serialize(async () => {
       const device = this.find(deviceId)
       if (!device || !this.usable(device)) throw new AppError(404, 'device-not-found', '找不到该设备')
@@ -738,21 +964,34 @@ export class DeviceStore {
       let audited = true
       try {
         await this.audit.append({
-          action: 'device.scopes.changed', actor, stepup, target: deviceId,
+          action: 'device.scopes.changed',
+          actor,
+          stepup,
+          target: deviceId,
           detail: { deviceId, added, removed, ...(dataScope !== device.dataScope ? { dataScope } : {}) },
         })
       } catch (error) {
         if (raising || !(error instanceof AppError && error.code === 'audit-unavailable')) throw error
         audited = false
       }
-      const before = { scopes: device.scopes, dataScope: device.dataScope, status: device.status, scopesBeforeReview: device.scopesBeforeReview }
+      const before = {
+        scopes: device.scopes,
+        dataScope: device.dataScope,
+        status: device.status,
+        scopesBeforeReview: device.scopesBeforeReview,
+      }
       device.scopes = scopes
       device.dataScope = dataScope
       if (device.status === 'review' && added.length) {
         device.status = 'active'
         delete device.scopesBeforeReview
       }
-      try { await this.persist() } catch (error) { Object.assign(device, before); throw error }
+      try {
+        await this.persist()
+      } catch (error) {
+        Object.assign(device, before)
+        throw error
+      }
       return { device: publicDevice(device), audited }
     })
   }
@@ -761,7 +1000,11 @@ export class DeviceStore {
    * Revocation never waits for, or fails because of, the audit log. The append to revocations.jsonl comes first, so a
    * crash before devices.json is rewritten still leaves the device revoked.
    */
-  revoke(deviceId: string, reason: 'manual' | 'self' | 'replay', actor: AuditActor): Promise<{ device: Device; cascaded: string[]; audited: boolean }> {
+  revoke(
+    deviceId: string,
+    reason: 'manual' | 'self' | 'replay',
+    actor: AuditActor,
+  ): Promise<{ device: Device; cascaded: string[]; audited: boolean }> {
     return this.serialize(async () => {
       const device = this.find(deviceId)
       if (!device) throw new AppError(404, 'device-not-found', '找不到该设备')
@@ -779,7 +1022,11 @@ export class DeviceStore {
     })
   }
 
-  private async revokeStored(device: StoredDevice, reason: 'manual' | 'self' | 'replay' | 'migration', actor: AuditActor): Promise<{ device: Device; cascaded: string[]; audited: boolean }> {
+  private async revokeStored(
+    device: StoredDevice,
+    reason: 'manual' | 'self' | 'replay' | 'migration',
+    actor: AuditActor,
+  ): Promise<{ device: Device; cascaded: string[]; audited: boolean }> {
     if (device.status === 'revoked') return { device: publicDevice(device), cascaded: [], audited: true }
     const now = this.now()
     device.status = 'revoked'
@@ -788,23 +1035,50 @@ export class DeviceStore {
     for (const [nonce, entry] of this.challenges) if (entry.deviceId === device.id) this.challenges.delete(nonce)
     // The cascade below is not logged separately: replaying this line on open derives it again.
     let logged = true
-    try { await this.appendRevocation({ at: now, deviceId: device.id, reason }) } catch { logged = false }
+    try {
+      await this.appendRevocation({ at: now, deviceId: device.id, reason })
+    } catch {
+      logged = false
+    }
 
     const cascaded = this.cascadeTargets(device.id)
     for (const item of cascaded) demote(item)
     for (const listener of this.revocationListeners) {
-      try { listener(device.id) } catch { /* a listener must not undo a revocation */ }
+      try {
+        listener(device.id)
+      } catch {
+        /* a listener must not undo a revocation */
+      }
     }
     let audited = true
     try {
-      await this.audit.append({ action: 'device.revoked', actor, target: device.id, detail: { deviceId: device.id, reason, cascaded: cascaded.length } })
-    } catch { audited = false }
+      await this.audit.append({
+        action: 'device.revoked',
+        actor,
+        target: device.id,
+        detail: { deviceId: device.id, reason, cascaded: cascaded.length },
+      })
+    } catch {
+      audited = false
+    }
     for (const item of cascaded) {
-      try { await this.audit.append({ action: 'device.review', actor, target: item.id, detail: { deviceId: item.id, causeDeviceId: device.id } }) }
-      catch { audited = false }
+      try {
+        await this.audit.append({
+          action: 'device.review',
+          actor,
+          target: item.id,
+          detail: { deviceId: item.id, causeDeviceId: device.id },
+        })
+      } catch {
+        audited = false
+      }
     }
     let saved = true
-    try { await this.persist() } catch { saved = false }
+    try {
+      await this.persist()
+    } catch {
+      saved = false
+    }
     if (!logged && !saved) {
       throw new AppError(500, 'revocation-not-persisted', '撤销已在本次运行中生效，但未能写入磁盘；重启 Host 前请检查数据目录。')
     }
@@ -857,13 +1131,18 @@ interface Invitation {
 
 async function readOfflineTickets(directory: string): Promise<OfflineTicket[]> {
   let text: string
-  try { text = await readFile(join(directory, OFFLINE_FILE), 'utf8') }
-  catch (error) {
+  try {
+    text = await readFile(join(directory, OFFLINE_FILE), 'utf8')
+  } catch (error) {
     if (codeOf(error) === 'ENOENT') return []
     throw corrupt(OFFLINE_FILE, codeOf(error) ?? '读取失败')
   }
   let raw: unknown
-  try { raw = JSON.parse(text) } catch { throw corrupt(OFFLINE_FILE, 'JSON 格式无效') }
+  try {
+    raw = JSON.parse(text)
+  } catch {
+    throw corrupt(OFFLINE_FILE, 'JSON 格式无效')
+  }
   const parsed = offlineFile.safeParse(raw)
   if (!parsed.success) throw corrupt(OFFLINE_FILE, '格式无效')
   return parsed.data.tickets
@@ -877,12 +1156,20 @@ async function writeOfflineTickets(directory: string, tickets: OfflineTicket[]):
  * One-time offline enrollment code, written while the Host is stopped (CLI). It relies on no malicious process of the
  * same user running at that moment.
  */
-export async function createOfflineTicket(authDirectory: string, options: { now?: () => number } = {}): Promise<{ code: string; expiresAt: number; ticketId: string }> {
+export async function createOfflineTicket(
+  authDirectory: string,
+  options: { now?: () => number } = {},
+): Promise<{ code: string; expiresAt: number; ticketId: string }> {
   const now = (options.now ?? Date.now)()
   await preparePrivateDirectory(authDirectory)
   const tickets = (await readOfflineTickets(authDirectory)).filter(ticket => ticket.expiresAt > now)
   const code = randomCode('lpo1')
-  const ticket: OfflineTicket = { id: randomId('chl'), codeHash: sha256Hex(code), expiresAt: now + OFFLINE_TICKET_LIFETIME, scopesProfile: 'offline' }
+  const ticket: OfflineTicket = {
+    id: randomId('chl'),
+    codeHash: sha256Hex(code),
+    expiresAt: now + OFFLINE_TICKET_LIFETIME,
+    scopesProfile: 'offline',
+  }
   await writeOfflineTickets(authDirectory, [...tickets, ticket].slice(-MAX_OFFLINE_TICKETS))
   return { code, expiresAt: ticket.expiresAt, ticketId: ticket.id }
 }
@@ -902,7 +1189,14 @@ export class EnrollmentService {
   private readonly invitations = new Map<string, Invitation>()
   private offlineQueue: Promise<unknown> = Promise.resolve()
 
-  constructor(options: { hostId: string; devices: DeviceStore; presence: PresenceService; audit: AuditLog; directory: string; now?: () => number }) {
+  constructor(options: {
+    hostId: string
+    devices: DeviceStore
+    presence: PresenceService
+    audit: AuditLog
+    directory: string
+    now?: () => number
+  }) {
     this.hostId = options.hostId
     this.devices = options.devices
     this.presence = options.presence
@@ -950,18 +1244,26 @@ export class EnrollmentService {
   /** The legacy cookie (loopback only) lets the new device take over the old name and retires the old record. */
   async create(request: EnrollmentRequest, connection: ConnectionContext, legacy?: PresentedCredential): Promise<EnrollmentView> {
     this.prune()
-    if ([...this.enrollments.values()].filter(item => item.status === 'pending' || item.status === 'approved').length >= MAX_PENDING_ENROLLMENTS) {
+    if (
+      [...this.enrollments.values()].filter(item => item.status === 'pending' || item.status === 'approved').length
+      >= MAX_PENDING_ENROLLMENTS
+    ) {
       throw new AppError(429, 'rate-limited', '请求过于频繁，请稍后再试', { retryAfter: 20 })
     }
     if (!request || typeof request !== 'object') throw new AppError(400, 'invalid-request', '登记请求无效')
     const { der } = parseP256Spki(request.publicKey)
-    const legacyDevice = connection.listener === 'loopback-tcp' && legacy?.kind === 'legacy-cookie' ? this.devices.legacyMatch(legacy.value) : undefined
+    const legacyDevice =
+      connection.listener === 'loopback-tcp' && legacy?.kind === 'legacy-cookie' ? this.devices.legacyMatch(legacy.value) : undefined
     // A migrated name is checked like any other before it reaches the confirmation dialog.
-    const name = legacyDevice && (typeof request.name !== 'string' || request.name.trim() === '') ? legacyName(legacyDevice.name) : deviceName(request.name)
+    const name =
+      legacyDevice && (typeof request.name !== 'string' || request.name.trim() === '')
+        ? legacyName(legacyDevice.name)
+        : deviceName(request.name)
     if (request.scopes !== undefined && (!Array.isArray(request.scopes) || request.scopes.some(scope => typeof scope !== 'string'))) {
       throw new AppError(400, 'invalid-scope', '未知的设备权限')
     }
-    if (request.dataScope !== undefined && request.dataScope !== 'work' && request.dataScope !== 'all') throw new AppError(400, 'invalid-data-scope', '数据范围无效')
+    if (request.dataScope !== undefined && request.dataScope !== 'work' && request.dataScope !== 'all')
+      throw new AppError(400, 'invalid-data-scope', '数据范围无效')
     const unix = connection.listener === 'unix'
     const tls = isTls(connection.listener)
     const id = randomId('enr')
@@ -985,7 +1287,8 @@ export class EnrollmentService {
       invitation = this.findInvitation(request.invitation)
       if (!invitation) throw new AppError(403, 'invitation-invalid', '配对码无效或已过期')
       if (!request.scopes) scopes = scopes.filter(scope => invitation!.scopes.includes(scope))
-      if (scopes.some(scope => !invitation!.scopes.includes(scope))) throw new AppError(400, 'scope-not-grantable', '该权限在此连接方式下不可授予')
+      if (scopes.some(scope => !invitation!.scopes.includes(scope)))
+        throw new AppError(400, 'scope-not-grantable', '该权限在此连接方式下不可授予')
       // Single use: consumed by the first create that passes validation.
       this.invitations.delete(invitation.id)
       method = 'invitation'
@@ -994,12 +1297,31 @@ export class EnrollmentService {
     const fingerprint = deviceFingerprint(der)
     const actor: AuditActor = { listener: connection.listener, via: 'http' }
     await this.audit.append({
-      action: 'device.enroll.requested', actor, target: id,
-      detail: { enrollmentId: id, listener: connection.listener, fingerprint: fingerprint.replace(/ /gu, ''), scopes, ...(invitation ? { invitationId: invitation.id } : {}) },
+      action: 'device.enroll.requested',
+      actor,
+      target: id,
+      detail: {
+        enrollmentId: id,
+        listener: connection.listener,
+        fingerprint: fingerprint.replace(/ /gu, ''),
+        scopes,
+        ...(invitation ? { invitationId: invitation.id } : {}),
+      },
     })
     const enrollment: Enrollment = {
-      id, status: 'pending', fingerprint, nonce: randomNonce(), expiresAt: now + ENROLLMENT_LIFETIME, connection: { ...connection },
-      publicKeyDer: der, name, scopes, dataScope, method, failures: 0, completing: false,
+      id,
+      status: 'pending',
+      fingerprint,
+      nonce: randomNonce(),
+      expiresAt: now + ENROLLMENT_LIFETIME,
+      connection: { ...connection },
+      publicKeyDer: der,
+      name,
+      scopes,
+      dataScope,
+      method,
+      failures: 0,
+      completing: false,
       ...(invitation?.inviterDeviceId ? { inviterDeviceId: invitation.inviterDeviceId } : {}),
       ...(legacyDevice ? { legacyDeviceId: legacyDevice.id } : {}),
     }
@@ -1024,13 +1346,23 @@ export class EnrollmentService {
     const warnings = ['只有在你正在登记这台设备、并且两边显示的指纹完全一致时才确认。']
     if (scopes.includes('admin')) warnings.push('该设备将可以管理此 Host（模型服务、插件、项目和其他设备）。')
     const binding = paramsHash('device.enroll', {
-      enrollmentId: id, publicKey: request.publicKey, name, scopes, dataScope, listener: connection.listener, origin: connection.origin,
+      enrollmentId: id,
+      publicKey: request.publicKey,
+      name,
+      scopes,
+      dataScope,
+      listener: connection.listener,
+      origin: connection.origin,
       ...(invitation ? { invitationId: invitation.id } : {}),
     })
     let confirmation
     try {
       confirmation = await this.presence.request({
-        action: 'device.enroll', requester: { deviceName: name, listener: connection.listener, remoteAddress }, lines, warnings, paramsHash: binding,
+        action: 'device.enroll',
+        requester: { deviceName: name, listener: connection.listener, remoteAddress },
+        lines,
+        warnings,
+        paramsHash: binding,
       })
     } catch (error) {
       await this.failed(id, 'cancelled', actor)
@@ -1044,10 +1376,13 @@ export class EnrollmentService {
       if (outcome.result === 'approved') {
         try {
           this.presence.consume(confirmation.id, { action: 'device.enroll', paramsHash: binding })
-          if (enrollment.inviterDeviceId !== undefined && !this.devices.isActive(enrollment.inviterDeviceId)) throw new Error('inviter revoked')
+          if (enrollment.inviterDeviceId !== undefined && !this.devices.isActive(enrollment.inviterDeviceId))
+            throw new Error('inviter revoked')
           enrollment.status = this.now() > enrollment.expiresAt ? 'expired' : 'approved'
           return
-        } catch { enrollment.status = 'cancelled' }
+        } catch {
+          enrollment.status = 'cancelled'
+        }
       } else {
         enrollment.status = outcome.result === 'denied' ? 'denied' : outcome.result === 'timeout' ? 'expired' : 'cancelled'
       }
@@ -1056,8 +1391,14 @@ export class EnrollmentService {
     return this.view(enrollment, true)
   }
 
-  private async failed(enrollmentId: string, reason: 'denied' | 'expired' | 'cancelled' | 'signature' | 'commit', actor: AuditActor): Promise<void> {
-    await this.audit.append({ action: 'device.enroll.failed', actor, target: enrollmentId, detail: { enrollmentId, reason } }).catch(() => {})
+  private async failed(
+    enrollmentId: string,
+    reason: 'denied' | 'expired' | 'cancelled' | 'signature' | 'commit',
+    actor: AuditActor,
+  ): Promise<void> {
+    await this.audit
+      .append({ action: 'device.enroll.failed', actor, target: enrollmentId, detail: { enrollmentId, reason } })
+      .catch(() => {})
   }
 
   private findInvitation(code: unknown): Invitation | undefined {
@@ -1087,9 +1428,18 @@ export class EnrollmentService {
     const run = this.offlineQueue.then(async () => {
       const tickets = await readOfflineTickets(this.directory)
       if (!tickets.some(item => item.id === ticket.id)) throw new AppError(403, 'offline-code-invalid', '离线登记码无效或已过期')
-      await this.audit.append({ action: 'offline.ticket.consumed', actor, stepup: 'offline', target: ticket.id, detail: { ticketId: ticket.id } })
+      await this.audit.append({
+        action: 'offline.ticket.consumed',
+        actor,
+        stepup: 'offline',
+        target: ticket.id,
+        detail: { ticketId: ticket.id },
+      })
       const now = this.now()
-      await writeOfflineTickets(this.directory, tickets.filter(item => item.id !== ticket.id && item.expiresAt > now))
+      await writeOfflineTickets(
+        this.directory,
+        tickets.filter(item => item.id !== ticket.id && item.expiresAt > now),
+      )
     })
     this.offlineQueue = run.catch(() => {})
     return run
@@ -1111,7 +1461,9 @@ export class EnrollmentService {
 
   private view(enrollment: Enrollment, withNonce: boolean): EnrollmentView {
     return {
-      id: enrollment.id, status: enrollment.status, fingerprint: enrollment.fingerprint,
+      id: enrollment.id,
+      status: enrollment.status,
+      fingerprint: enrollment.fingerprint,
       ...(withNonce ? { nonce: enrollment.nonce } : {}),
       expiresAt: iso(enrollment.expiresAt),
       ...(enrollment.hashDisplay ? { hashDisplay: enrollment.hashDisplay } : {}),
@@ -1125,12 +1477,18 @@ export class EnrollmentService {
   async complete(id: string, signature: string, connection: ConnectionContext): Promise<{ device: Device; credential: string }> {
     const enrollment = this.lookup(id, connection)
     switch (enrollment.status) {
-      case 'pending': throw new AppError(409, 'enrollment-pending', '本机尚未确认')
-      case 'denied': throw new AppError(403, 'enrollment-denied', '本机拒绝了此设备')
-      case 'expired': throw new AppError(410, 'enrollment-expired', '登记请求已超时，请重新提交')
-      case 'cancelled': throw new AppError(410, 'enrollment-cancelled', '登记请求已取消，请重新提交')
-      case 'completed': throw new AppError(409, 'enrollment-completed', '该登记已完成')
-      case 'approved': break
+      case 'pending':
+        throw new AppError(409, 'enrollment-pending', '本机尚未确认')
+      case 'denied':
+        throw new AppError(403, 'enrollment-denied', '本机拒绝了此设备')
+      case 'expired':
+        throw new AppError(410, 'enrollment-expired', '登记请求已超时，请重新提交')
+      case 'cancelled':
+        throw new AppError(410, 'enrollment-cancelled', '登记请求已取消，请重新提交')
+      case 'completed':
+        throw new AppError(409, 'enrollment-completed', '该登记已完成')
+      case 'approved':
+        break
     }
     if (enrollment.completing) throw new AppError(409, 'enrollment-pending', '本机尚未确认')
     const actor: AuditActor = { listener: connection.listener, via: 'http' }
@@ -1145,13 +1503,24 @@ export class EnrollmentService {
     }
     enrollment.completing = true
     try {
-      const result = await this.devices.create({
-        name: enrollment.name, connection: enrollment.connection, publicKeyDer: enrollment.publicKeyDer, scopes: enrollment.scopes,
-        dataScope: enrollment.dataScope, enrollmentId: enrollment.id,
-        pairedBy: { method: enrollment.method, ...(enrollment.inviterDeviceId ? { deviceId: enrollment.inviterDeviceId } : {}) },
-      }, actor, enrollment.method === 'offline' ? 'offline' : 'lpc-local')
+      const result = await this.devices.create(
+        {
+          name: enrollment.name,
+          connection: enrollment.connection,
+          publicKeyDer: enrollment.publicKeyDer,
+          scopes: enrollment.scopes,
+          dataScope: enrollment.dataScope,
+          enrollmentId: enrollment.id,
+          pairedBy: { method: enrollment.method, ...(enrollment.inviterDeviceId ? { deviceId: enrollment.inviterDeviceId } : {}) },
+        },
+        actor,
+        enrollment.method === 'offline' ? 'offline' : 'lpc-local',
+      )
       enrollment.status = 'completed'
-      if (enrollment.legacyDeviceId) await this.devices.retireLegacy(enrollment.legacyDeviceId, { deviceId: result.device.id, listener: connection.listener, via: 'http' }).catch(() => {})
+      if (enrollment.legacyDeviceId)
+        await this.devices
+          .retireLegacy(enrollment.legacyDeviceId, { deviceId: result.device.id, listener: connection.listener, via: 'http' })
+          .catch(() => {})
       return result
     } catch (error) {
       await this.failed(enrollment.id, 'commit', actor)
@@ -1170,15 +1539,23 @@ export class EnrollmentService {
   }
 
   /** Ten minutes, single use, in memory. The code is returned exactly once and never logged. */
-  async createInvitation(input: { inviter?: Device; scopes?: DeviceScope[]; tlsOrigin: string }, actor: AuditActor): Promise<InvitationView> {
+  async createInvitation(
+    input: { inviter?: Device; scopes?: DeviceScope[]; tlsOrigin: string },
+    actor: AuditActor,
+  ): Promise<InvitationView> {
     let origin: URL | undefined
-    try { origin = new URL(input.tlsOrigin) } catch { origin = undefined }
+    try {
+      origin = new URL(input.tlsOrigin)
+    } catch {
+      origin = undefined
+    }
     if (!origin || origin.protocol !== 'https:' || origin.origin !== input.tlsOrigin) {
       throw new AppError(409, 'tls-not-configured', '尚未配置 HTTPS 入口，无法生成手机配对码')
     }
     if (input.inviter && !this.devices.isActive(input.inviter.id)) throw unauthorized()
     const scopes = input.scopes ? normalizeScopes(input.scopes) : [...DEFAULT_REMOTE_SCOPES]
-    if (scopes.some(scope => !INVITABLE_SCOPES.includes(scope))) throw new AppError(400, 'scope-not-grantable', '该权限在此连接方式下不可授予')
+    if (scopes.some(scope => !INVITABLE_SCOPES.includes(scope)))
+      throw new AppError(400, 'scope-not-grantable', '该权限在此连接方式下不可授予')
     this.prune()
     if (this.invitations.size >= MAX_INVITATIONS) throw new AppError(429, 'rate-limited', '请求过于频繁，请稍后再试', { retryAfter: 60 })
     const id = randomId('inv')
@@ -1186,7 +1563,10 @@ export class EnrollmentService {
     const expiresAt = this.now() + INVITATION_LIFETIME
     await this.audit.append({ action: 'pairing.invited', actor, target: id, detail: { invitationId: id, scopes } })
     this.invitations.set(id, {
-      id, codeHash: sha256Hex(code), scopes, expiresAt,
+      id,
+      codeHash: sha256Hex(code),
+      scopes,
+      expiresAt,
       ...(input.inviter ? { inviterDeviceId: input.inviter.id, inviterName: input.inviter.name } : {}),
     })
     return { id, code, url: `${input.tlsOrigin}/link/#pair=${code}`, scopes, expiresAt: iso(expiresAt) }

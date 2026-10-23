@@ -17,14 +17,24 @@ const FAKE_AGENT = fileURLToPath(new URL('./fixtures/fake-acp-agent.mjs', import
  * tools it does not know as high risk (R2), whatever the plugin declares.
  */
 const highRiskFixture: HarnessPlugin = {
-  id: 'r2-fixture', name: '高风险工具验收插件', version: '1.0.0', description: '仅测试使用。',
+  id: 'r2-fixture',
+  name: '高风险工具验收插件',
+  version: '1.0.0',
+  description: '仅测试使用。',
   activate(context) {
     context.registerTool({
-      name: 'touch_marker', description: '测试用工具，不访问文件。', parameters: { type: 'object', properties: {} }, requiresApproval: false,
-      async execute() { return { text: 'marker touched' } },
+      name: 'touch_marker',
+      description: '测试用工具，不访问文件。',
+      parameters: { type: 'object', properties: {} },
+      requiresApproval: false,
+      async execute() {
+        return { text: 'marker touched' }
+      },
     })
     context.registerProvider({
-      id: 'r2-model', name: 'R2 fixture', model: 'fixture',
+      id: 'r2-model',
+      name: 'R2 fixture',
+      model: 'fixture',
       async *stream({ messages }) {
         if (messages.at(-1)?.role === 'tool') {
           yield { type: 'text', text: '工具调用已结算。' }
@@ -57,7 +67,10 @@ describe('permission states in a browser', () => {
     remote = await testHost.enroll({ name: '另一台浏览器' })
     await mkdir(OUTPUT, { recursive: true })
   })
-  afterAll(async () => { await browser?.close(); await testHost?.close() })
+  afterAll(async () => {
+    await browser?.close()
+    await testHost?.close()
+  })
 
   async function open(sessionId: string): Promise<void> {
     await page.locator(`[data-task-id="${sessionId}"]`).click()
@@ -66,7 +79,10 @@ describe('permission states in a browser', () => {
   const detail = (id: string) => local.json<TaskDetail>(`tasks/${encodeURIComponent(id)}`)
 
   it('shows a high-risk approval with the host-desktop hint and no allow button; reject still works', async () => {
-    const { sessionId } = await remote.json<{ sessionId: string }>('tasks', { method: 'POST', body: { prompt: '写入标记', requestId: randomUUID(), mode: 'agent', model: { providerId: 'r2-model', model: 'fixture' } } })
+    const { sessionId } = await remote.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { prompt: '写入标记', requestId: randomUUID(), mode: 'agent', model: { providerId: 'r2-model', model: 'fixture' } },
+    })
     await expect.poll(async () => (await detail(sessionId)).approvals.length).toBe(1)
     expect((await detail(sessionId)).approvals[0]?.risk).toBe('R2')
     await open(sessionId)
@@ -81,12 +97,18 @@ describe('permission states in a browser', () => {
   })
 
   it('keeps a full-access session read-only in the browser and shows permission drift', async () => {
-    const saved = await local.confirmed('agents', { method: 'POST', body: { name: 'Fake Agent', command: process.execPath, args: [FAKE_AGENT], env: {} } })
+    const saved = await local.confirmed('agents', {
+      method: 'POST',
+      body: { name: 'Fake Agent', command: process.execPath, args: [FAKE_AGENT], env: {} },
+    })
     expect(saved.status).toBe(201)
-    const { agent } = await saved.json() as { agent: AgentSettings }
-    const created = await local.confirmed('tasks', { method: 'POST', body: { prompt: 'permission', requestId: randomUUID(), mode: 'agent', harnessId: agent.id } })
+    const { agent } = (await saved.json()) as { agent: AgentSettings }
+    const created = await local.confirmed('tasks', {
+      method: 'POST',
+      body: { prompt: 'permission', requestId: randomUUID(), mode: 'agent', harnessId: agent.id },
+    })
     expect(created.status).toBe(201)
-    const { sessionId } = await created.json() as { sessionId: string }
+    const { sessionId } = (await created.json()) as { sessionId: string }
     await expect.poll(async () => (await detail(sessionId)).approvals.length).toBe(1)
     await open(sessionId)
 
@@ -106,7 +128,10 @@ describe('permission states in a browser', () => {
     await expect.poll(async () => (await detail(sessionId)).summary.status).toBe('idle')
 
     // The harness switches its own permission mode mid-turn: the Host cancels the turn and stops the session.
-    await local.json(`tasks/${encodeURIComponent(sessionId)}/prompt`, { method: 'POST', body: { prompt: 'drift plan', requestId: randomUUID() } })
+    await local.json(`tasks/${encodeURIComponent(sessionId)}/prompt`, {
+      method: 'POST',
+      body: { prompt: 'drift plan', requestId: randomUUID() },
+    })
     await expect.poll(async () => (await detail(sessionId)).summary.permissionDrift, { timeout: 15_000 }).toBe(true)
     await page.getByText('检测到权限模式变化，本轮已取消，挂起的询问已拒绝。该会话不再接受输入，请新建会话。', { exact: true }).waitFor()
     expect(await page.getByRole('textbox', { name: '继续对话' }).count()).toBe(0)

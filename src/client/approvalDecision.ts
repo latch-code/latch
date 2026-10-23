@@ -32,14 +32,24 @@ export type SettledOutcome = { applied: true } | { applied: false; message: stri
 
 const DECISION_LABELS = { allow: '允许', reject: '拒绝' } as const
 const ONCE_KIND = { allow: 'allow_once', reject: 'reject_once' } as const
-const KIND_LABELS: Record<ApprovalOptionKind, string> = { allow_once: '允许一次', allow_always: '始终允许', reject_once: '拒绝', reject_always: '始终拒绝' }
-const kindLabel = (kind: unknown) => typeof kind === 'string' && Object.hasOwn(KIND_LABELS, kind) ? KIND_LABELS[kind as ApprovalOptionKind] : undefined
+const KIND_LABELS: Record<ApprovalOptionKind, string> = {
+  allow_once: '允许一次',
+  allow_always: '始终允许',
+  reject_once: '拒绝',
+  reject_always: '始终拒绝',
+}
+const kindLabel = (kind: unknown) =>
+  typeof kind === 'string' && Object.hasOwn(KIND_LABELS, kind) ? KIND_LABELS[kind as ApprovalOptionKind] : undefined
 
 /**
  * The option kind the Host records for a choice: the chosen option's kind, or the once-kind of a plain allow/reject
  * sent without an option. Undefined when the chosen option is not among the approval's own.
  */
-export function choiceKind(approval: Pick<Approval, 'options'>, decision: 'allow' | 'reject', optionId: string | undefined): ApprovalOptionKind | undefined {
+export function choiceKind(
+  approval: Pick<Approval, 'options'>,
+  decision: 'allow' | 'reject',
+  optionId: string | undefined,
+): ApprovalOptionKind | undefined {
   if (optionId === undefined) return ONCE_KIND[decision]
   return approval.options?.find(option => option.id === optionId)?.kind
 }
@@ -50,7 +60,10 @@ export function choiceKind(approval: Pick<Approval, 'options'>, decision: 'allow
  * decision, and the same option kind when the Host names it. A Host that does not name it confirms only a plain
  * once-choice.
  */
-export function settledOutcome(error: unknown, attempted: { decision: 'allow' | 'reject'; optionKind?: ApprovalOptionKind }): SettledOutcome | undefined {
+export function settledOutcome(
+  error: unknown,
+  attempted: { decision: 'allow' | 'reject'; optionKind?: ApprovalOptionKind },
+): SettledOutcome | undefined {
   if (!(error instanceof ApiError) || error.status !== 409 || error.code !== 'approval-settled') return
   const decidedBy = (error.details as { decidedBy?: unknown }).decidedBy
   if (typeof decidedBy === 'object' && decidedBy !== null) {
@@ -59,15 +72,25 @@ export function settledOutcome(error: unknown, attempted: { decision: 'allow' | 
       if (record.decision !== 'allow' && record.decision !== 'reject') return { applied: false, message: '该审批已结束', conflict: true }
       const recorded = DECISION_LABELS[record.decision]
       if (record.decision !== attempted.decision) {
-        return { applied: false, message: `此设备此前已选择「${recorded}」，本次「${DECISION_LABELS[attempted.decision]}」未生效。`, conflict: true }
+        return {
+          applied: false,
+          message: `此设备此前已选择「${recorded}」，本次「${DECISION_LABELS[attempted.decision]}」未生效。`,
+          conflict: true,
+        }
       }
       const kind = attempted.optionKind
       if (kind === undefined) return { applied: false, message: `此设备此前已选择「${recorded}」。`, conflict: false }
       if (record.optionKind === undefined) {
-        return kind === ONCE_KIND[attempted.decision] ? { applied: true } : { applied: false, message: `此设备此前已选择「${recorded}」。`, conflict: false }
+        return kind === ONCE_KIND[attempted.decision]
+          ? { applied: true }
+          : { applied: false, message: `此设备此前已选择「${recorded}」。`, conflict: false }
       }
       if (record.optionKind === kind) return { applied: true }
-      return { applied: false, message: `此设备此前已选择「${kindLabel(record.optionKind) ?? recorded}」，本次「${KIND_LABELS[kind]}」未生效。`, conflict: true }
+      return {
+        applied: false,
+        message: `此设备此前已选择「${kindLabel(record.optionKind) ?? recorded}」，本次「${KIND_LABELS[kind]}」未生效。`,
+        conflict: true,
+      }
     }
     if (record.kind === 'device') {
       const name = safeDeviceName(record.deviceName)

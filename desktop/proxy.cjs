@@ -6,7 +6,8 @@ const { socketRequest, readBody } = require('./host.cjs')
 const { generateDeviceKey, enrollSigningText, renewSigningText } = require('./credentials.cjs')
 
 const APP_ORIGIN = 'latch://app'
-const HTML_CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+const HTML_CSP =
+  "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 /** API bodies are JSON of at most 256 KiB; buffering them lets a request be replayed once after renewal. */
 const REQUEST_BODY_LIMIT = 1024 * 1024
 const JSON_RESPONSE_LIMIT = 1024 * 1024
@@ -28,11 +29,29 @@ const EXTERNAL_URL_LIMIT = 2048
 const NULL_BODY_STATUS = new Set([101, 103, 204, 205, 304])
 const CLEARING_CODES = new Set(['device-revoked', 'credential-expired', 'listener-mismatch'])
 const DROPPED_REQUEST_HEADERS = new Set([
-  'cookie', 'authorization', 'host', 'origin', 'forwarded', 'content-length', 'expect',
-  'connection', 'keep-alive', 'te', 'trailer', 'transfer-encoding', 'upgrade',
+  'cookie',
+  'authorization',
+  'host',
+  'origin',
+  'forwarded',
+  'content-length',
+  'expect',
+  'connection',
+  'keep-alive',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
 ])
 const DROPPED_RESPONSE_HEADERS = new Set([
-  'set-cookie', 'set-cookie2', 'connection', 'keep-alive', 'trailer', 'transfer-encoding', 'upgrade', 'proxy-connection',
+  'set-cookie',
+  'set-cookie2',
+  'connection',
+  'keep-alive',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+  'proxy-connection',
 ])
 
 class ProxyError extends Error {
@@ -49,7 +68,11 @@ class ProxyError extends Error {
  */
 function isAllowedRendererRequest(raw, { packaged }) {
   let url
-  try { url = new URL(raw) } catch { return false }
+  try {
+    url = new URL(raw)
+  } catch {
+    return false
+  }
   if (url.protocol === 'latch:') return true
   return url.protocol === 'devtools:' && !packaged
 }
@@ -57,7 +80,11 @@ function isAllowedRendererRequest(raw, { packaged }) {
 /** Navigation and redirects stay inside `latch://app/`. */
 function isAppUrl(raw) {
   let url
-  try { url = new URL(raw) } catch { return false }
+  try {
+    url = new URL(raw)
+  } catch {
+    return false
+  }
   return url.protocol === 'latch:' && url.hostname === 'app' && !url.port && !url.username && !url.password
 }
 
@@ -67,7 +94,11 @@ function isAppUrl(raw) {
  */
 function externalUrl(raw) {
   let url
-  try { url = new URL(raw) } catch { return undefined }
+  try {
+    url = new URL(raw)
+  } catch {
+    return undefined
+  }
   if (url.protocol !== 'https:' || url.username || url.password) return undefined
   return url.href.length > EXTERNAL_URL_LIMIT ? undefined : url.href
 }
@@ -77,7 +108,16 @@ function externalUrl(raw) {
  * @returns {Electron.MessageBoxOptions}
  */
 function externalLinkDialog(url) {
-  return { type: 'question', title: 'Latch', message: '在浏览器中打开以下链接？', detail: url, buttons: ['打开', '取消'], defaultId: 1, cancelId: 1, noLink: true }
+  return {
+    type: 'question',
+    title: 'Latch',
+    message: '在浏览器中打开以下链接？',
+    detail: url,
+    buttons: ['打开', '取消'],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+  }
 }
 
 /**
@@ -104,12 +144,15 @@ function createExternalOpener({ confirm, open, log = () => {} }) {
     } catch (error) {
       log(`无法打开链接：${error instanceof Error ? error.message : '未知错误'}`)
       return false
-    } finally { asking = false }
+    } finally {
+      asking = false
+    }
   }
 }
 
 // Chromium also accepts a single leading dash, and Node and Electron spell the inspector switches several ways.
-const DEBUG_SWITCH = /^--?(inspect(-brk|-wait)?(-node)?|inspect-port|inspect-publish-uid|debug|debug-brk|debug-port|remote-debugging-[a-z-]+|use-mock-keychain)(=|$)/i
+const DEBUG_SWITCH =
+  /^--?(inspect(-brk|-wait)?(-node)?|inspect-port|inspect-publish-uid|debug|debug-brk|debug-port|remote-debugging-[a-z-]+|use-mock-keychain)(=|$)/i
 const CODE_LOADING_OPTION = /^(-r|--require|--import|--loader|--experimental-loader)(=|$)/i
 const SHELL_ARGUMENT = /^--latch-(host-state|user-data)=./
 
@@ -134,7 +177,10 @@ function unexpectedArguments(args) {
   const problems = []
   for (const arg of args) {
     const name = arg.startsWith('-') ? arg.split('=')[0] : '（位置参数）'
-    if (SHELL_ARGUMENT.test(arg) && !seen.has(name)) { seen.add(name); continue }
+    if (SHELL_ARGUMENT.test(arg) && !seen.has(name)) {
+      seen.add(name)
+      continue
+    }
     problems.push(name)
   }
   return problems
@@ -143,7 +189,11 @@ function unexpectedArguments(args) {
 /** Maps `latch://app/link/...` to the Host path. Anything outside `/link` is not served. */
 function upstreamTarget(raw) {
   let url
-  try { url = new URL(raw) } catch { return undefined }
+  try {
+    url = new URL(raw)
+  } catch {
+    return undefined
+  }
   if (url.protocol !== 'latch:' || url.hostname !== 'app' || url.port || url.username || url.password) return undefined
   if (url.pathname !== '/link' && !url.pathname.startsWith('/link/')) return undefined
   return { path: url.pathname + url.search, pathname: url.pathname }
@@ -166,7 +216,11 @@ function isPublicRoute(method, pathname, normalized) {
 /** Route detection works on a decoded, slash-collapsed, case-folded path so encodings cannot slip past it. */
 function classifyRoute(method, pathname) {
   let decoded = pathname
-  try { decoded = decodeURIComponent(pathname) } catch { /* Keep the raw path; the Host rejects it. */ }
+  try {
+    decoded = decodeURIComponent(pathname)
+  } catch {
+    /* Keep the raw path; the Host rejects it. */
+  }
   decoded = decoded.replace(/\/{2,}/g, '/').replace(/(.)\/+$/, '$1')
   const lower = decoded.toLowerCase()
   if (lower === '/link/api/credentials' || lower.startsWith('/link/api/credentials/')) return { kind: 'credentials' }
@@ -193,7 +247,10 @@ function forwardRequestHeaders(headers, credential) {
 }
 
 function isHtmlContentType(value) {
-  const type = String(value ?? '').split(';')[0].trim().toLowerCase()
+  const type = String(value ?? '')
+    .split(';')[0]
+    .trim()
+    .toLowerCase()
   return type === 'text/html' || type === 'application/xhtml+xml'
 }
 
@@ -213,8 +270,13 @@ function forwardResponseHeaders(raw) {
 /** The renderer's enrollment request with main's public key in place of anything it supplied. */
 function rewriteEnrollmentBody(text, publicKey) {
   let value
-  try { value = JSON.parse(text) } catch { throw new ProxyError(400, 'invalid-json', '请求不是有效的 JSON') }
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ProxyError(400, 'invalid-input', '输入格式不正确，请检查必填内容')
+  try {
+    value = JSON.parse(text)
+  } catch {
+    throw new ProxyError(400, 'invalid-json', '请求不是有效的 JSON')
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new ProxyError(400, 'invalid-input', '输入格式不正确，请检查必填内容')
   return JSON.stringify({ ...value, publicKey })
 }
 
@@ -232,7 +294,9 @@ function authFailureAction(status, body) {
   return undefined
 }
 
-function errorBody(code, message) { return { error: code, message } }
+function errorBody(code, message) {
+  return { error: code, message }
+}
 
 function jsonResponse(status, value, base) {
   const headers = new Headers(base)
@@ -243,7 +307,9 @@ function jsonResponse(status, value, base) {
   return new Response(JSON.stringify(value), { status, headers })
 }
 
-function errorResponse(status, code, message) { return jsonResponse(status, errorBody(code, message)) }
+function errorResponse(status, code, message) {
+  return jsonResponse(status, errorBody(code, message))
+}
 
 function escapeHtml(text) {
   return String(text).replace(/[&<>"']/g, character => `&#${character.charCodeAt(0)};`)
@@ -289,7 +355,11 @@ async function bufferUpstream({ response }) {
   const buffer = await readBody(response, JSON_RESPONSE_LIMIT)
   let json
   if (/json/i.test(String(response.headers['content-type'] ?? ''))) {
-    try { json = JSON.parse(buffer.toString('utf8')) } catch { json = undefined }
+    try {
+      json = JSON.parse(buffer.toString('utf8'))
+    } catch {
+      json = undefined
+    }
   }
   return { status: response.statusCode, headers: response.headers, buffer, json }
 }
@@ -315,11 +385,28 @@ function streamedResponse({ request: upstreamRequest, response }, method) {
         controller.enqueue(new Uint8Array(chunk))
         if ((controller.desiredSize ?? 1) <= 0) response.pause()
       })
-      response.once('end', () => { if (!finished) { finished = true; controller.close() } })
-      response.once('error', error => { if (!finished) { finished = true; controller.error(error) } })
-      response.once('close', () => { if (!finished) { finished = true; controller.error(new Error('Latch Host 连接中断')) } })
+      response.once('end', () => {
+        if (!finished) {
+          finished = true
+          controller.close()
+        }
+      })
+      response.once('error', error => {
+        if (!finished) {
+          finished = true
+          controller.error(error)
+        }
+      })
+      response.once('close', () => {
+        if (!finished) {
+          finished = true
+          controller.error(new Error('Latch Host 连接中断'))
+        }
+      })
     },
-    pull() { response.resume() },
+    pull() {
+      response.resume()
+    },
     cancel() {
       finished = true
       upstreamRequest.destroy()
@@ -354,8 +441,12 @@ function createShellProxy(options) {
 
   async function upstream(method, path, headers, body, timeoutMs) {
     const socketPath = await options.resolveSocket()
-    try { return await socketRequest(socketPath, { method, path, headers, body, timeoutMs }) }
-    catch (error) { options.invalidateSocket?.(); throw error }
+    try {
+      return await socketRequest(socketPath, { method, path, headers, body, timeoutMs })
+    } catch (error) {
+      options.invalidateSocket?.()
+      throw error
+    }
   }
 
   async function control(path, credential, value) {
@@ -379,7 +470,9 @@ function createShellProxy(options) {
       failures = renewed ? 0 : failures + 1
       retryAt = renewed ? 0 : now() + Math.min(RENEW_RETRY_MAX_MS, RENEW_RETRY_MS * 2 ** Math.min(failures - 1, 10))
       return renewed
-    })().finally(() => { renewing = undefined })
+    })().finally(() => {
+      renewing = undefined
+    })
     return renewing
   }
 
@@ -408,7 +501,9 @@ function createShellProxy(options) {
         if (authFailureAction(result.status, result.json) === 'clear') await forget(current.credential)
         return false
       }
-      try { await store.setCredential(result.json.credential) } catch (error) {
+      try {
+        await store.setCredential(result.json.credential)
+      } catch (error) {
         log(`设备凭据已续期，但保存失败，继续使用原凭据：${error instanceof Error ? error.message : '未知错误'}`)
         return false
       }
@@ -451,11 +546,16 @@ function createShellProxy(options) {
     if (result.status >= 200 && result.status < 300 && ENROLLMENT_ID.test(enrollment?.id ?? '') && typeof enrollment.nonce === 'string') {
       if (enrollment.fingerprint !== key.fingerprint) {
         await upstream('DELETE', `/link/api/enrollments/${enrollment.id}`, { accept: 'application/json' }, undefined, CONTROL_TIMEOUT_MS)
-          .then(bufferUpstream).catch(() => {})
+          .then(bufferUpstream)
+          .catch(() => {})
         return errorResponse(502, 'fingerprint-mismatch', '服务器返回的指纹与本机计算的不一致，已停止登记。')
       }
       const expires = Date.parse(enrollment.expiresAt ?? '')
-      pending.set(enrollment.id, { key, nonce: enrollment.nonce, until: Math.max(Number.isFinite(expires) ? expires : 0, now() + 120_000) + 30_000 })
+      pending.set(enrollment.id, {
+        key,
+        nonce: enrollment.nonce,
+        until: Math.max(Number.isFinite(expires) ? expires : 0, now() + 120_000) + 30_000,
+      })
       prunePending()
     }
     return bufferedResponse(result, 'POST')
@@ -468,9 +568,14 @@ function createShellProxy(options) {
     const entry = pending.get(enrollmentId)
     if (!entry) return errorResponse(404, 'enrollment-not-found', '找不到该登记请求')
     const signature = entry.key.sign(enrollSigningText(hostId, enrollmentId, entry.nonce))
-    const result = await bufferUpstream(await upstream(
-      'POST', `/link/api/enrollments/${enrollmentId}/complete`, { ...JSON_HEADERS }, Buffer.from(JSON.stringify({ signature })),
-    ))
+    const result = await bufferUpstream(
+      await upstream(
+        'POST',
+        `/link/api/enrollments/${enrollmentId}/complete`,
+        { ...JSON_HEADERS },
+        Buffer.from(JSON.stringify({ signature })),
+      ),
+    )
     const device = result.json?.device
     if (result.status === 200 && typeof result.json?.credential === 'string' && typeof device?.id === 'string') {
       pending.delete(enrollmentId)
@@ -485,7 +590,8 @@ function createShellProxy(options) {
       failures = 0
       return jsonResponse(200, { device }, forwardResponseHeaders(result.headers))
     }
-    if (result.status === 403 || result.status === 404 || result.status === 410 || result.json?.error === 'enrollment-completed') pending.delete(enrollmentId)
+    if (result.status === 403 || result.status === 404 || result.status === 410 || result.json?.error === 'enrollment-completed')
+      pending.delete(enrollmentId)
     if (result.json !== undefined) return jsonResponse(result.status, stripCredential(result.json), forwardResponseHeaders(result.headers))
     return bufferedResponse(result, 'POST')
   }
@@ -572,7 +678,10 @@ function createShellProxy(options) {
       if (!stopped) timer = setTimer(tick, nextWait())
     }
     timer = setTimer(tick, nextWait())
-    return () => { stopped = true; clearTimer(timer) }
+    return () => {
+      stopped = true
+      clearTimer(timer)
+    }
   }
 
   return {
@@ -580,13 +689,39 @@ function createShellProxy(options) {
     renew,
     startRenewalTimer,
     /** Test and diagnostics view; never contains keys or credentials. */
-    state() { return { renewAfter, retryAt, pendingEnrollments: pending.size } },
+    state() {
+      return { renewAfter, retryAt, pendingEnrollments: pending.size }
+    },
   }
 }
 
 module.exports = {
-  APP_ORIGIN, HTML_CSP, REQUEST_BODY_LIMIT, RENEW_INTERVAL_MS, RENEW_CHECK_MS, RENEW_RETRY_MS, RENEW_RETRY_MAX_MS, EXTERNAL_URL_LIMIT,
-  ProxyError, isAllowedRendererRequest, isAppUrl, externalUrl, externalLinkDialog, createExternalOpener, debugFlagProblems, unexpectedArguments,
-  upstreamTarget, classifyRoute, forwardRequestHeaders, forwardResponseHeaders, isHtmlContentType,
-  rewriteEnrollmentBody, stripCredential, authFailureAction, errorBody, htmlErrorPage, escapeHtml, createShellProxy,
+  APP_ORIGIN,
+  HTML_CSP,
+  REQUEST_BODY_LIMIT,
+  RENEW_INTERVAL_MS,
+  RENEW_CHECK_MS,
+  RENEW_RETRY_MS,
+  RENEW_RETRY_MAX_MS,
+  EXTERNAL_URL_LIMIT,
+  ProxyError,
+  isAllowedRendererRequest,
+  isAppUrl,
+  externalUrl,
+  externalLinkDialog,
+  createExternalOpener,
+  debugFlagProblems,
+  unexpectedArguments,
+  upstreamTarget,
+  classifyRoute,
+  forwardRequestHeaders,
+  forwardResponseHeaders,
+  isHtmlContentType,
+  rewriteEnrollmentBody,
+  stripCredential,
+  authFailureAction,
+  errorBody,
+  htmlErrorPage,
+  escapeHtml,
+  createShellProxy,
 }

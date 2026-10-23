@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { DEMO_TOOLS, R0_TOOLS, classifyStandardCall, type StandardCallInput } from '../src/host/risk.ts'
 
-function call(pluginId: string | undefined, toolName: string, args: unknown = {}, options: Partial<StandardCallInput> = {}): StandardCallInput {
+function call(
+  pluginId: string | undefined,
+  toolName: string,
+  args: unknown = {},
+  options: Partial<StandardCallInput> = {},
+): StandardCallInput {
   return { pluginId, toolName, args, demo: false, workspace: { codeRoot: false }, ...options }
 }
 
@@ -32,26 +37,41 @@ describe('classifyStandardCall', () => {
   })
 
   it('makes every write R2 when the workspace overlaps the code root', () => {
-    expect(classifyStandardCall(call('workspace-files', 'write_file', { path: 'src/app.ts' }, { workspace: { codeRoot: true } })))
-      .toEqual({ risk: 'R2', reason: 'code-root' })
+    expect(classifyStandardCall(call('workspace-files', 'write_file', { path: 'src/app.ts' }, { workspace: { codeRoot: true } }))).toEqual({
+      risk: 'R2',
+      reason: 'code-root',
+    })
   })
 
   it.each([
-    ['/repo/.git', 'hooks/pre-commit'], ['/repo/.github', 'workflows/ci.yml'], ['/repo/.github/workflows', 'ci.yml'],
-    ['/repo/.husky', 'pre-commit'], ['/repo/.vscode', 'tasks.json'], ['/repo/node_modules/pkg', 'index.js'], ['/Users/me/.cargo', 'config.toml'],
+    ['/repo/.git', 'hooks/pre-commit'],
+    ['/repo/.github', 'workflows/ci.yml'],
+    ['/repo/.github/workflows', 'ci.yml'],
+    ['/repo/.husky', 'pre-commit'],
+    ['/repo/.vscode', 'tasks.json'],
+    ['/repo/node_modules/pkg', 'index.js'],
+    ['/Users/me/.cargo', 'config.toml'],
   ])('makes writes R2 when the workspace root %s is itself protected (%s)', (root, path) => {
-    expect(classifyStandardCall(call('workspace-files', 'write_file', { path }, { workspace: { codeRoot: false, root } })))
-      .toEqual({ risk: 'R2', reason: 'protected-path' })
+    expect(classifyStandardCall(call('workspace-files', 'write_file', { path }, { workspace: { codeRoot: false, root } }))).toEqual({
+      risk: 'R2',
+      reason: 'protected-path',
+    })
   })
 
   it('keeps ordinary writes R1 under an ordinary root, and reads R0 under any root', () => {
     const workspace = { codeRoot: false, root: '/Users/me/projects/app' }
     expect(classifyStandardCall(call('workspace-files', 'write_file', { path: 'src/app.ts' }, { workspace }))).toEqual({ risk: 'R1' })
-    expect(classifyStandardCall(call('workspace-files', 'write_file', { path: '.pnpmfile.cjs' }, { workspace }))).toEqual({ risk: 'R2', reason: 'protected-path' })
-    expect(classifyStandardCall(call('workspace-files', 'read_file', { path: 'HEAD' }, { workspace: { codeRoot: false, root: '/repo/.git' } }))).toEqual({ risk: 'R0' })
+    expect(classifyStandardCall(call('workspace-files', 'write_file', { path: '.pnpmfile.cjs' }, { workspace }))).toEqual({
+      risk: 'R2',
+      reason: 'protected-path',
+    })
+    expect(
+      classifyStandardCall(call('workspace-files', 'read_file', { path: 'HEAD' }, { workspace: { codeRoot: false, root: '/repo/.git' } })),
+    ).toEqual({ risk: 'R0' })
     // A root that is not absolute cannot be judged, so it counts as protected.
-    expect(classifyStandardCall(call('workspace-files', 'write_file', { path: 'a.txt' }, { workspace: { codeRoot: false, root: 'repo' } })))
-      .toEqual({ risk: 'R2', reason: 'protected-path' })
+    expect(
+      classifyStandardCall(call('workspace-files', 'write_file', { path: 'a.txt' }, { workspace: { codeRoot: false, root: 'repo' } })),
+    ).toEqual({ risk: 'R2', reason: 'protected-path' })
   })
 
   it('honours demo tools only in demo mode', () => {

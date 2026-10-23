@@ -1,8 +1,12 @@
 import type { TaskStatus, TokenUsage } from '../shared/types.ts'
 
 export const statusLabels: Record<TaskStatus, string> = {
-  idle: '已完成', running: '运行中', 'waiting-approval': '待批准',
-  cancelled: '已取消', failed: '失败', interrupted: '已中断',
+  idle: '已完成',
+  running: '运行中',
+  'waiting-approval': '待批准',
+  cancelled: '已取消',
+  failed: '失败',
+  interrupted: '已中断',
 }
 
 export const isActive = (status: TaskStatus | undefined) => status === 'running' || status === 'waiting-approval'
@@ -34,7 +38,14 @@ export function relativeTime(value: string, now = new Date()): string {
 export function dateTime(value: string): string {
   const time = parse(value)
   if (time === null) return ''
-  return new Date(time).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
+  return new Date(time).toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
 }
 
 export function formatTokens(value: number): string {
@@ -73,13 +84,14 @@ export function basename(path: string): string {
 }
 
 export function hostOf(url: string): string {
-  try { return new URL(url).host } catch { return url }
+  try {
+    return new URL(url).host
+  } catch {
+    return url
+  }
 }
 
-export type ArgumentView =
-  | { kind: 'empty' }
-  | { kind: 'entries'; entries: Array<[string, string]> }
-  | { kind: 'text'; text: string }
+export type ArgumentView = { kind: 'empty' } | { kind: 'entries'; entries: Array<[string, string]> } | { kind: 'text'; text: string }
 
 /** Tool arguments as a key–value list; `{}` and blanks become "无参数" instead of an empty box. */
 export function argumentView(text: string | undefined): ArgumentView {
@@ -88,10 +100,15 @@ export function argumentView(text: string | undefined): ArgumentView {
   try {
     const value: unknown = JSON.parse(trimmed)
     if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-      const entries = Object.entries(value).map(([key, item]): [string, string] => [key, typeof item === 'string' ? item : JSON.stringify(item, null, 2)])
+      const entries = Object.entries(value).map(([key, item]): [string, string] => [
+        key,
+        typeof item === 'string' ? item : JSON.stringify(item, null, 2),
+      ])
       return entries.length === 0 ? { kind: 'empty' } : { kind: 'entries', entries }
     }
-  } catch { /* Plain-text arguments are shown as written. */ }
+  } catch {
+    /* Plain-text arguments are shown as written. */
+  }
   return { kind: 'text', text: trimmed }
 }
 

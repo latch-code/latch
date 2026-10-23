@@ -7,17 +7,22 @@ import { setPreference, usePreferences, type SendKey, type ThemePreference } fro
 import { InlineAlert, Segmented } from '../components/ui.tsx'
 import { SectionHeading } from './common.tsx'
 
-const encodeModel = (ref: ModelRef | undefined) => ref ? JSON.stringify([ref.providerId, ref.model]) : ''
+const encodeModel = (ref: ModelRef | undefined) => (ref ? JSON.stringify([ref.providerId, ref.model]) : '')
 function decodeModel(value: string): ModelRef | undefined {
   try {
     const [providerId, model] = JSON.parse(value) as [string, string]
     return { providerId, model }
-  } catch { return undefined }
+  } catch {
+    return undefined
+  }
 }
 
 /** Host-wide defaults that a new session starts from on every device. */
 function SessionDefaultsForm({ catalog, onChanged }: { catalog: HostCatalog; onChanged: () => void }) {
-  const [draft, setDraft] = useState<SessionDefaults>(() => ({ ...catalog.defaults, ...(catalog.defaults.model ? {} : { model: defaultModel(catalog) }) }))
+  const [draft, setDraft] = useState<SessionDefaults>(() => ({
+    ...catalog.defaults,
+    ...(catalog.defaults.model ? {} : { model: defaultModel(catalog) }),
+  }))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [saved, setSaved] = useState(false)
@@ -25,66 +30,176 @@ function SessionDefaultsForm({ catalog, onChanged }: { catalog: HostCatalog; onC
   const modes: TaskMode[] = harness?.modes.length ? harness.modes : ['chat', 'agent']
   // The Host already answers a disabled saved default with the default workspace, so disabled ones are never offered.
   const workspaces = startableWorkspaces(catalog)
-  const workspaceId = workspaces.some(item => item.id === draft.workspaceId) ? draft.workspaceId : workspaces[0]?.id ?? draft.workspaceId
-  const update = (patch: Partial<SessionDefaults>) => { setDraft(previous => ({ ...previous, ...patch })); setSaved(false) }
+  const workspaceId = workspaces.some(item => item.id === draft.workspaceId) ? draft.workspaceId : (workspaces[0]?.id ?? draft.workspaceId)
+  const update = (patch: Partial<SessionDefaults>) => {
+    setDraft(previous => ({ ...previous, ...patch }))
+    setSaved(false)
+  }
   const save = async () => {
-    setBusy(true); setError('')
+    setBusy(true)
+    setError('')
     try {
       const mode = modes.includes(draft.mode) ? draft.mode : modes[0]!
-      await api('preferences', { method: 'PUT', body: { defaults: { harnessId: draft.harnessId, mode, workspaceId, ...(harness?.models === 'host' && draft.model ? { model: draft.model } : {}) } } })
-      setSaved(true); onChanged()
-    } catch (cause) { setError(errorMessage(cause)) }
-    finally { setBusy(false) }
+      await api('preferences', {
+        method: 'PUT',
+        body: {
+          defaults: {
+            harnessId: draft.harnessId,
+            mode,
+            workspaceId,
+            ...(harness?.models === 'host' && draft.model ? { model: draft.model } : {}),
+          },
+        },
+      })
+      setSaved(true)
+      onChanged()
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setBusy(false)
+    }
   }
-  return <section className="settings-group">
-    <h4>新会话默认值</h4>
-    <p className="settings-hint">每台设备会记住自己上次的选择；首次使用或选择失效时采用这里的默认值。</p>
-    <div className="form-grid">
-      <label className="field"><span>Harness</span><select value={draft.harnessId} onChange={event => { update({ harnessId: event.target.value }) }}>
-        {catalog.harnesses.map(item => <option key={item.id} value={item.id} disabled={item.status !== 'ready'}>{item.name}{item.status !== 'ready' ? '（不可用）' : ''}</option>)}
-      </select></label>
-      <label className="field"><span>模式</span><select value={modes.includes(draft.mode) ? draft.mode : modes[0]} onChange={event => { update({ mode: event.target.value as TaskMode }) }}>
-        {modes.map(mode => <option key={mode} value={mode}>{mode === 'chat' ? '对话' : 'Agent'}</option>)}
-      </select></label>
-      {harness?.models === 'host' && <label className="field"><span>模型</span><select value={encodeModel(draft.model)} onChange={event => { update({ model: decodeModel(event.target.value) }) }}>
-        {!draft.model && <option value="">未选择</option>}
-        {catalog.providers.map(provider => <optgroup key={provider.id} label={provider.name}>
-          {(provider.models.length ? provider.models : [provider.defaultModel]).map(model => <option key={model} value={encodeModel({ providerId: provider.id, model })}>{model}</option>)}
-        </optgroup>)}
-      </select></label>}
-      <label className="field"><span>项目</span><select value={workspaceId} onChange={event => { update({ workspaceId: event.target.value }) }}>
-        {workspaces.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-      </select></label>
-    </div>
-    <div className="settings-actions">
-      {saved && <span className="settings-saved" role="status">已保存</span>}
-      <button type="button" className="button primary" disabled={busy} onClick={() => { void save() }}>{busy && <Spinner size={14} />}保存默认值</button>
-    </div>
-    {error && <InlineAlert tone="error">{error}</InlineAlert>}
-  </section>
+  return (
+    <section className="settings-group">
+      <h4>新会话默认值</h4>
+      <p className="settings-hint">每台设备会记住自己上次的选择；首次使用或选择失效时采用这里的默认值。</p>
+      <div className="form-grid">
+        <label className="field">
+          <span>Harness</span>
+          <select
+            value={draft.harnessId}
+            onChange={event => {
+              update({ harnessId: event.target.value })
+            }}>
+            {catalog.harnesses.map(item => (
+              <option key={item.id} value={item.id} disabled={item.status !== 'ready'}>
+                {item.name}
+                {item.status !== 'ready' ? '（不可用）' : ''}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>模式</span>
+          <select
+            value={modes.includes(draft.mode) ? draft.mode : modes[0]}
+            onChange={event => {
+              update({ mode: event.target.value as TaskMode })
+            }}>
+            {modes.map(mode => (
+              <option key={mode} value={mode}>
+                {mode === 'chat' ? '对话' : 'Agent'}
+              </option>
+            ))}
+          </select>
+        </label>
+        {harness?.models === 'host' && (
+          <label className="field">
+            <span>模型</span>
+            <select
+              value={encodeModel(draft.model)}
+              onChange={event => {
+                update({ model: decodeModel(event.target.value) })
+              }}>
+              {!draft.model && <option value="">未选择</option>}
+              {catalog.providers.map(provider => (
+                <optgroup key={provider.id} label={provider.name}>
+                  {(provider.models.length ? provider.models : [provider.defaultModel]).map(model => (
+                    <option key={model} value={encodeModel({ providerId: provider.id, model })}>
+                      {model}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </label>
+        )}
+        <label className="field">
+          <span>项目</span>
+          <select
+            value={workspaceId}
+            onChange={event => {
+              update({ workspaceId: event.target.value })
+            }}>
+            {workspaces.map(item => (
+              <option key={item.id} value={item.id}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className="settings-actions">
+        {saved && (
+          <span className="settings-saved" role="status">
+            已保存
+          </span>
+        )}
+        <button
+          type="button"
+          className="button primary"
+          disabled={busy}
+          onClick={() => {
+            void save()
+          }}>
+          {busy && <Spinner size={14} />}保存默认值
+        </button>
+      </div>
+      {error && <InlineAlert tone="error">{error}</InlineAlert>}
+    </section>
+  )
 }
 
 export function GeneralSettings({ snapshot, admin, onChanged }: { snapshot: AppSnapshot; admin: boolean; onChanged: () => void }) {
   const preferences = usePreferences()
   const owner = admin
-  return <>
-    <SectionHeading title="通用" description="外观与发送方式只影响这台设备。" />
-    <section className="settings-group">
-      <h4>外观</h4>
-      <Segmented<ThemePreference> label="外观" value={preferences.theme} onChange={value => { setPreference('theme', value) }} options={[
-        { value: 'system', label: '跟随系统' }, { value: 'light', label: '浅色' }, { value: 'dark', label: '深色' },
-      ]} />
-    </section>
-    <section className="settings-group">
-      <h4>发送消息</h4>
-      <div className="choice-list" role="radiogroup" aria-label="发送消息">
-        {([['enter', 'Enter 发送', 'Shift + Enter 换行'], ['mod-enter', '⌘/Ctrl + Enter 发送', 'Enter 换行，适合输入长段落']] as Array<[SendKey, string, string]>).map(([value, label, description]) =>
-          <button key={value} type="button" role="radio" aria-checked={preferences.sendKey === value} className="choice-row" onClick={() => { setPreference('sendKey', value) }}>
-            <i className="choice-radio" aria-hidden="true" /><span><strong>{label}</strong><small>{description}</small></span>
-          </button>)}
-      </div>
-      <p className="settings-hint">触屏设备上 Enter 始终换行，点按发送按钮发送；⌘/Ctrl + Enter 在任何设备上都会发送。</p>
-    </section>
-    {owner && snapshot.catalog && <SessionDefaultsForm catalog={snapshot.catalog} onChanged={onChanged} />}
-  </>
+  return (
+    <>
+      <SectionHeading title="通用" description="外观与发送方式只影响这台设备。" />
+      <section className="settings-group">
+        <h4>外观</h4>
+        <Segmented<ThemePreference>
+          label="外观"
+          value={preferences.theme}
+          onChange={value => {
+            setPreference('theme', value)
+          }}
+          options={[
+            { value: 'system', label: '跟随系统' },
+            { value: 'light', label: '浅色' },
+            { value: 'dark', label: '深色' },
+          ]}
+        />
+      </section>
+      <section className="settings-group">
+        <h4>发送消息</h4>
+        <div className="choice-list" role="radiogroup" aria-label="发送消息">
+          {(
+            [
+              ['enter', 'Enter 发送', 'Shift + Enter 换行'],
+              ['mod-enter', '⌘/Ctrl + Enter 发送', 'Enter 换行，适合输入长段落'],
+            ] as Array<[SendKey, string, string]>
+          ).map(([value, label, description]) => (
+            <button
+              key={value}
+              type="button"
+              role="radio"
+              aria-checked={preferences.sendKey === value}
+              className="choice-row"
+              onClick={() => {
+                setPreference('sendKey', value)
+              }}>
+              <i className="choice-radio" aria-hidden="true" />
+              <span>
+                <strong>{label}</strong>
+                <small>{description}</small>
+              </span>
+            </button>
+          ))}
+        </div>
+        <p className="settings-hint">触屏设备上 Enter 始终换行，点按发送按钮发送；⌘/Ctrl + Enter 在任何设备上都会发送。</p>
+      </section>
+      {owner && snapshot.catalog && <SessionDefaultsForm catalog={snapshot.catalog} onChanged={onChanged} />}
+    </>
+  )
 }

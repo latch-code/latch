@@ -12,7 +12,9 @@ import { HarnessHub, type HarnessMount } from '../src/host/hub.ts'
 import type { Approval, TaskSummary } from '../src/shared/types.ts'
 
 const cleanups: Array<() => Promise<void>> = []
-afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
+})
 
 async function directory() {
   const path = await mkdtemp(join(tmpdir(), 'latch-hub-'))
@@ -22,7 +24,7 @@ async function directory() {
 
 async function hub(dataDir?: string, defaultId = 'standard') {
   const log = vi.fn()
-  const value = await HarnessHub.open({ dataDir: dataDir ?? await directory(), defaultId: () => defaultId, log })
+  const value = await HarnessHub.open({ dataDir: dataDir ?? (await directory()), defaultId: () => defaultId, log })
   cleanups.push(() => value.close())
   return { hub: value, log }
 }
@@ -41,14 +43,25 @@ function external(tasks: TaskSummary[] = [], approvals: Approval[] = [], extra: 
     detail: vi.fn(async (sessionId: string) => {
       const found = tasks.find(task => task.id === sessionId)
       if (!found) throw new AppError(404, 'task-not-found', 'missing')
-      return { summary: structuredClone(found), messages: [], approvals: approvals.filter(item => item.sessionId === sessionId), liveText: '', cursor: 1 }
+      return {
+        summary: structuredClone(found),
+        messages: [],
+        approvals: approvals.filter(item => item.sessionId === sessionId),
+        liveText: '',
+        cursor: 1,
+      }
     }),
     createTask: vi.fn<Bridge['createTask']>(async () => ({ sessionId: `created-${randomUUID()}` })),
     prompt: vi.fn<Bridge['prompt']>(async () => {}),
     cancel: vi.fn(async () => {}),
     approvals: vi.fn(() => structuredClone(approvals)),
     decide: vi.fn<Bridge['decide']>(async () => true),
-    subscribe: (listener: (sessionId?: string) => void) => { notify = listener; return () => { notify = () => {} } },
+    subscribe: (listener: (sessionId?: string) => void) => {
+      notify = listener
+      return () => {
+        notify = () => {}
+      }
+    },
   } satisfies Bridge
   // Overrides replace behaviour only; the mock handles stay typed for assertions.
   const bridge = Object.assign(mocks, extra) as typeof mocks & Pick<Bridge, 'remove' | 'setConfig'>
@@ -56,7 +69,15 @@ function external(tasks: TaskSummary[] = [], approvals: Approval[] = [], extra: 
 }
 
 function driver(id: string, extra: Partial<HarnessDriver> = {}): HarnessDriver {
-  return { id, name: `Driver ${id}`, version: '1', create: () => { throw new Error('mounted through HarnessMount.create') }, ...extra }
+  return {
+    id,
+    name: `Driver ${id}`,
+    version: '1',
+    create: () => {
+      throw new Error('mounted through HarnessMount.create')
+    },
+    ...extra,
+  }
 }
 
 function mount(bridge: Bridge, extra: Partial<HarnessMount> = {}): HarnessMount & { release: ReturnType<typeof vi.fn> } {
@@ -71,15 +92,30 @@ describe('harness hub routing', () => {
   it('routes sessions verbatim between the Standard runtime and an external driver without injecting Host fields', async () => {
     const dataDir = await directory()
     const provider: ModelProvider = {
-      id: 'fixture', name: 'Fixture', model: 'fixture',
-      async *stream() { yield { type: 'text', text: 'done' }; yield { type: 'finish', reason: 'stop' } },
+      id: 'fixture',
+      name: 'Fixture',
+      model: 'fixture',
+      async *stream() {
+        yield { type: 'text', text: 'done' }
+        yield { type: 'finish', reason: 'stop' }
+      },
     }
-    const standard = createRuntime({ dataDir: join(dataDir, 'sessions'), workspaceRoot: dataDir, providerId: 'fixture', registry: { acquire: () => ({ provider, tools: [], release() {} }) } })
+    const standard = createRuntime({
+      dataDir: join(dataDir, 'sessions'),
+      workspaceRoot: dataDir,
+      providerId: 'fixture',
+      registry: { acquire: () => ({ provider, tools: [], release() {} }) },
+    })
     const outside = external([summary('ext-1')])
     const { hub: value } = await hub(dataDir)
     const notified: Array<string | undefined> = []
-    value.subscribe(sessionId => { notified.push(sessionId) })
-    await value.attach(driver('standard'), mount(standard, { source: 'builtin', capabilities: { modes: ['chat', 'agent'], models: 'host' } }))
+    value.subscribe(sessionId => {
+      notified.push(sessionId)
+    })
+    await value.attach(
+      driver('standard'),
+      mount(standard, { source: 'builtin', capabilities: { modes: ['chat', 'agent'], models: 'host' } }),
+    )
     await value.attach(driver('ext'), mount(outside.bridge))
 
     const { sessionId } = await value.createTask({ prompt: 'hello', requestId: randomUUID(), mode: 'chat' })
@@ -87,7 +123,12 @@ describe('harness hub routing', () => {
     await vi.waitFor(async () => expect((await value.detail(sessionId)).summary.status).toBe('idle'))
     expect(notified).toContain(sessionId)
     const tasks = await value.listTasks()
-    expect(tasks.map(task => [task.id, task.harnessId])).toEqual(expect.arrayContaining([[sessionId, 'standard'], ['ext-1', 'ext']]))
+    expect(tasks.map(task => [task.id, task.harnessId])).toEqual(
+      expect.arrayContaining([
+        [sessionId, 'standard'],
+        ['ext-1', 'ext'],
+      ]),
+    )
     expect((await value.detail('ext-1')).summary.harnessId).toBe('ext')
 
     const input = { prompt: 'external', requestId: randomUUID(), mode: 'agent' as const }
@@ -116,13 +157,24 @@ describe('harness hub routing', () => {
     const first = external([summary('s-a')], [approval('a-1', 's-a'), approval('dup', 's-a')])
     const second = external([summary('s-b')], [approval('b-1', 's-b'), approval('dup', 's-b')])
     const detailOnly = external([summary('s-c')], [], {})
-    detailOnly.bridge.detail.mockImplementation(async (sessionId: string) => ({ summary: summary(sessionId), messages: [], approvals: [approval('c-1', sessionId)], liveText: '', cursor: 1 }))
+    detailOnly.bridge.detail.mockImplementation(async (sessionId: string) => ({
+      summary: summary(sessionId),
+      messages: [],
+      approvals: [approval('c-1', sessionId)],
+      liveText: '',
+      cursor: 1,
+    }))
     const { hub: value, log } = await hub()
     await value.attach(driver('first'), mount(first.bridge))
     await value.attach(driver('second'), mount(second.bridge))
     await value.attach(driver('third'), mount(detailOnly.bridge))
 
-    expect(value.approvals().map(item => item.id).sort()).toEqual(['a-1', 'b-1', 'dup', 'dup'])
+    expect(
+      value
+        .approvals()
+        .map(item => item.id)
+        .sort(),
+    ).toEqual(['a-1', 'b-1', 'dup', 'dup'])
     expect(await value.decide('a-1', 'allow', { optionId: 'allow_always' })).toBe(true)
     expect(first.bridge.decide).toHaveBeenCalledExactlyOnceWith('a-1', 'allow', { optionId: 'allow_always' })
     expect(await value.decide('b-1', 'reject')).toBe(true)
@@ -154,14 +206,21 @@ describe('harness hub routing', () => {
     await value.detail('same')
     expect(second.bridge.detail).not.toHaveBeenCalled()
     second.bridge.createTask.mockResolvedValueOnce({ sessionId: 'same' })
-    await expect(value.createTask({ prompt: 'x', requestId: randomUUID(), harnessId: 'second' })).rejects.toMatchObject({ status: 502, code: 'session-id-collision' })
+    await expect(value.createTask({ prompt: 'x', requestId: randomUUID(), harnessId: 'second' })).rejects.toMatchObject({
+      status: 502,
+      code: 'session-id-collision',
+    })
   })
 })
 
 describe('harness hub isolation and lifecycle', () => {
   it('serves the other drivers when one cannot list its sessions', async () => {
     const healthy = external([summary('ok')])
-    const broken = external([], [], { listTasks: vi.fn(async () => { throw new Error('backend offline') }) })
+    const broken = external([], [], {
+      listTasks: vi.fn(async () => {
+        throw new Error('backend offline')
+      }),
+    })
     const { hub: value, log } = await hub()
     await value.attach(driver('healthy'), mount(healthy.bridge))
     await value.attach(driver('broken'), mount(broken.bridge))
@@ -170,7 +229,11 @@ describe('harness hub isolation and lifecycle', () => {
   })
 
   it('lists an optional driver that fails to start as unavailable but rethrows a required one', async () => {
-    const failing = external([], [], { start: vi.fn(async () => { throw new Error('binary missing') }) })
+    const failing = external([], [], {
+      start: vi.fn(async () => {
+        throw new Error('binary missing')
+      }),
+    })
     const { hub: value } = await hub()
     const optional = mount(failing.bridge)
     const info = await value.attach(driver('optional'), optional)
@@ -179,9 +242,18 @@ describe('harness hub isolation and lifecycle', () => {
     expect(failing.bridge.close).toHaveBeenCalledOnce()
     expect(value.has('optional')).toBe(false)
     expect(value.drivers().map(item => [item.id, item.status])).toEqual([['optional', 'unavailable']])
-    await expect(value.createTask({ prompt: 'x', requestId: randomUUID(), harnessId: 'optional' })).rejects.toMatchObject({ code: 'harness-unavailable' })
+    await expect(value.createTask({ prompt: 'x', requestId: randomUUID(), harnessId: 'optional' })).rejects.toMatchObject({
+      code: 'harness-unavailable',
+    })
 
-    const required = mount(external([], [], { start: vi.fn(async () => { throw new Error('locked') }) }).bridge, { required: true })
+    const required = mount(
+      external([], [], {
+        start: vi.fn(async () => {
+          throw new Error('locked')
+        }),
+      }).bridge,
+      { required: true },
+    )
     await expect(value.attach(driver('required'), required)).rejects.toThrow('locked')
     expect(required.release).toHaveBeenCalledOnce()
     expect(value.info('required')).toBeUndefined()
@@ -194,14 +266,23 @@ describe('harness hub isolation and lifecycle', () => {
 
   it('routes to a driver only after it has started, and retires one detached while starting', async () => {
     let finishStart!: () => void
-    const slow = external([summary('slow-1')], [], { start: vi.fn(() => new Promise<void>(resolve => { finishStart = resolve })) })
+    const slow = external([summary('slow-1')], [], {
+      start: vi.fn(
+        () =>
+          new Promise<void>(resolve => {
+            finishStart = resolve
+          }),
+      ),
+    })
     const { hub: value } = await hub()
     const mounted = mount(slow.bridge)
     const attaching = value.attach(driver('slow'), mounted)
     await vi.waitFor(() => expect(slow.bridge.start).toHaveBeenCalled())
     expect(value.has('slow')).toBe(false)
     expect(value.info('slow')).toMatchObject({ status: 'unavailable', statusMessage: '正在启动' })
-    await expect(value.createTask({ prompt: 'x', requestId: randomUUID(), harnessId: 'slow' })).rejects.toMatchObject({ code: 'harness-unavailable' })
+    await expect(value.createTask({ prompt: 'x', requestId: randomUUID(), harnessId: 'slow' })).rejects.toMatchObject({
+      code: 'harness-unavailable',
+    })
     await expect(value.attach(driver('slow'), mount(external().bridge))).rejects.toMatchObject({ code: 'harness-exists' })
     await value.detach('slow')
     finishStart()
@@ -233,7 +314,10 @@ describe('harness hub isolation and lifecycle', () => {
     // Like a runtime that persists before it publishes: in-flight work is not listed yet.
     const tasks = [summary('ext-1')]
     const settle: Array<() => void> = []
-    const gate = <T>(value: T) => new Promise<T>(resolve => { settle.push(() => resolve(value)) })
+    const gate = <T>(value: T) =>
+      new Promise<T>(resolve => {
+        settle.push(() => resolve(value))
+      })
     const outside = external(tasks, [], { setConfig: vi.fn(() => gate(undefined)) })
     outside.bridge.createTask.mockImplementationOnce(() => gate({ sessionId: 'ext-new' }))
     outside.bridge.prompt.mockImplementationOnce(() => gate(undefined))
@@ -258,23 +342,49 @@ describe('harness hub isolation and lifecycle', () => {
     expect(await value.harnessOf('ext-new')).toBe('ext')
     await value.detach('ext')
     expect(mounted.release).toHaveBeenCalledOnce()
-    await expect(value.createTask({ prompt: 'late', requestId: randomUUID(), harnessId: 'ext' })).rejects.toMatchObject({ code: 'harness-unavailable' })
+    await expect(value.createTask({ prompt: 'late', requestId: randomUUID(), harnessId: 'ext' })).rejects.toMatchObject({
+      code: 'harness-unavailable',
+    })
   })
 
   it('reports capabilities, readiness and source for the catalog', async () => {
     const { hub: value } = await hub()
     await value.attach(driver('plain'), mount(external().bridge))
-    await value.attach(driver('agent', { capabilities: { modes: ['agent'], models: 'agent' }, status: () => ({ status: 'unavailable', statusMessage: '未安装' }) }), mount(external().bridge, { source: 'acp' }))
+    await value.attach(
+      driver('agent', {
+        capabilities: { modes: ['agent'], models: 'agent' },
+        status: () => ({ status: 'unavailable', statusMessage: '未安装' }),
+      }),
+      mount(external().bridge, { source: 'acp' }),
+    )
     expect(value.drivers()).toEqual([
       { id: 'plain', name: 'Driver plain', source: 'plugin', status: 'ready', modes: ['chat', 'agent'], models: 'agent', level: 'L3' },
-      { id: 'agent', name: 'Driver agent', source: 'acp', status: 'unavailable', statusMessage: '未安装', modes: ['agent'], models: 'agent', level: 'L3' },
+      {
+        id: 'agent',
+        name: 'Driver agent',
+        source: 'acp',
+        status: 'unavailable',
+        statusMessage: '未安装',
+        modes: ['agent'],
+        models: 'agent',
+        level: 'L3',
+      },
     ])
   })
 
   it('closes every driver in reverse order, releases every lease, and reports cleanup failures', async () => {
     const order: string[] = []
-    const first = external([], [], { close: vi.fn(async () => { order.push('first') }) })
-    const second = external([], [], { close: vi.fn(async () => { order.push('second'); throw new Error('stuck') }) })
+    const first = external([], [], {
+      close: vi.fn(async () => {
+        order.push('first')
+      }),
+    })
+    const second = external([], [], {
+      close: vi.fn(async () => {
+        order.push('second')
+        throw new Error('stuck')
+      }),
+    })
     const value = await HarnessHub.open({ dataDir: await directory(), defaultId: () => 'first', log: vi.fn() })
     const mounts = [mount(first.bridge), mount(second.bridge)]
     await value.attach(driver('first'), mounts[0]!)
@@ -290,9 +400,19 @@ describe('permission levels', () => {
     const builtin = external([summary('b-1')])
     const acp = external([summary('a-1')], [], {
       detail: vi.fn(async (sessionId: string) => ({
-        summary: summary(sessionId), messages: [], approvals: [], liveText: '', cursor: 1,
+        summary: summary(sessionId),
+        messages: [],
+        approvals: [],
+        liveText: '',
+        cursor: 1,
         // A bridge cannot raise its own level or claim Latch enforces it.
-        permission: { level: 'L1' as const, enforcer: 'LATCH' as const, readback: 'mode' as const, expectedMode: 'read-only', notes: ['note'] },
+        permission: {
+          level: 'L1' as const,
+          enforcer: 'LATCH' as const,
+          readback: 'mode' as const,
+          expectedMode: 'read-only',
+          notes: ['note'],
+        },
       })),
     })
     const plugin = external([summary('p-1')])
@@ -305,14 +425,38 @@ describe('permission levels', () => {
     expect(value.levelOf('plugin')).toBe('L3')
     expect(value.levelOf('missing')).toBe('L3')
     expect(value.sourceOf('agent')).toBe('acp')
-    expect(Object.fromEntries((await value.listTasks()).map(task => [task.id, task.level]))).toEqual({ 'b-1': 'L1', 'a-1': 'L3', 'p-1': 'L3' })
+    expect(Object.fromEntries((await value.listTasks()).map(task => [task.id, task.level]))).toEqual({
+      'b-1': 'L1',
+      'a-1': 'L3',
+      'p-1': 'L3',
+    })
     expect((await value.detail('b-1')).permission).toEqual({ level: 'L1', enforcer: 'LATCH', notes: [] })
-    expect((await value.detail('a-1')).permission).toEqual({ level: 'L3', enforcer: 'NONE', readback: 'mode', expectedMode: 'read-only', notes: ['note'] })
-    expect((await value.detail('p-1')).permission).toEqual({ level: 'L3', enforcer: 'NONE', notes: ['第三方 Harness 插件，Latch 无法核实其执行范围'] })
+    expect((await value.detail('a-1')).permission).toEqual({
+      level: 'L3',
+      enforcer: 'NONE',
+      readback: 'mode',
+      expectedMode: 'read-only',
+      notes: ['note'],
+    })
+    expect((await value.detail('p-1')).permission).toEqual({
+      level: 'L3',
+      enforcer: 'NONE',
+      notes: ['第三方 Harness 插件，Latch 无法核实其执行范围'],
+    })
   })
 
   it('passes launch hashes, widen consent, config classification and launch previews through unchanged', async () => {
-    const preview = { launchHash: 'a'.repeat(64), command: '/bin/agent', args: [], envNames: ['A'], cwd: '/tmp', verified: true, approvals: 'prompts' as const, readback: 'mode' as const, notes: [] }
+    const preview = {
+      launchHash: 'a'.repeat(64),
+      command: '/bin/agent',
+      args: [],
+      envNames: ['A'],
+      cwd: '/tmp',
+      verified: true,
+      approvals: 'prompts' as const,
+      readback: 'mode' as const,
+      notes: [],
+    }
     const setConfig = vi.fn(async () => {})
     const classifyConfigChange = vi.fn(async () => 'wider' as const)
     const launchPreview = vi.fn(async () => preview)
@@ -352,7 +496,13 @@ describe('permission levels', () => {
   it('finds a pending approval by ID, including one a driver reports only in its detail', async () => {
     const listed = external([summary('s-a')], [approval('a-1', 's-a')])
     const detailOnly = external([summary('s-c', 'waiting-approval')])
-    detailOnly.bridge.detail.mockImplementation(async (sessionId: string) => ({ summary: summary(sessionId, 'waiting-approval'), messages: [], approvals: [approval('c-1', sessionId)], liveText: '', cursor: 1 }))
+    detailOnly.bridge.detail.mockImplementation(async (sessionId: string) => ({
+      summary: summary(sessionId, 'waiting-approval'),
+      messages: [],
+      approvals: [approval('c-1', sessionId)],
+      liveText: '',
+      cursor: 1,
+    }))
     const { hub: value } = await hub()
     await value.attach(driver('first'), mount(listed.bridge))
     await value.attach(driver('third'), mount(detailOnly.bridge))
@@ -372,7 +522,12 @@ describe('host-level session metadata', () => {
     await first.attach(driver('ext'), mount(outside.bridge))
     const notified = vi.fn()
     first.subscribe(notified)
-    expect(await first.updateMeta('s-1', { title: '重命名的会话', pinned: true })).toMatchObject({ id: 's-1', title: '重命名的会话', pinned: true, harnessId: 'ext' })
+    expect(await first.updateMeta('s-1', { title: '重命名的会话', pinned: true })).toMatchObject({
+      id: 's-1',
+      title: '重命名的会话',
+      pinned: true,
+      harnessId: 'ext',
+    })
     expect(notified).toHaveBeenCalledWith('s-1')
     expect((await stat(join(dataDir, 'sessions-meta.json'))).mode & 0o777).toBe(0o600)
     await first.close()

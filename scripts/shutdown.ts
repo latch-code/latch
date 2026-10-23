@@ -2,5 +2,5 @@
 export function createShutdown(cleanup: () => void | Promise<void>): () => Promise<void> {
   let shutdown: Promise<void> | undefined
   // Defer invocation so synchronous throws are memoized as a rejected Promise too.
-  return () => shutdown ??= Promise.resolve().then(cleanup)
+  return () => (shutdown ??= Promise.resolve().then(cleanup))
 }

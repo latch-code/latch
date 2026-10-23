@@ -1,7 +1,16 @@
 import { Context, type Fiber } from 'cordis'
 import { AppError } from './errors.ts'
 import type { HarnessDriver } from './harness.ts'
-import type { CapabilityLease, HarnessLease, HarnessPlugin, ModelProvider, PluginContext, PluginInfo, RuntimeRegistry, ToolDefinition } from './plugins.ts'
+import type {
+  CapabilityLease,
+  HarnessLease,
+  HarnessPlugin,
+  ModelProvider,
+  PluginContext,
+  PluginInfo,
+  RuntimeRegistry,
+  ToolDefinition,
+} from './plugins.ts'
 
 interface Entry {
   plugin: HarnessPlugin
@@ -16,7 +25,9 @@ interface Entry {
   fiber?: Fiber
 }
 
-export interface RegisterOptions { managed?: PluginInfo['managed'] }
+export interface RegisterOptions {
+  managed?: PluginInfo['managed']
+}
 export interface ReplaceOptions extends RegisterOptions {
   /** Keep a plugin the user disabled disabled; the new generation is installed without activation. */
   preserveEnabled?: boolean
@@ -40,13 +51,21 @@ export class PluginRegistry implements RuntimeRegistry {
 
   constructor(
     private readonly root = new Context(),
-    private readonly log: RegistryLogger = (message, error) => console.error(`[Latch] ${message}:`, error instanceof Error ? error.message : error),
+    private readonly log: RegistryLogger = (message, error) =>
+      console.error(`[Latch] ${message}:`, error instanceof Error ? error.message : error),
   ) {}
 
   private newEntry(plugin: HarnessPlugin, managed?: PluginInfo['managed']): Entry {
     return {
-      plugin, ...(managed ? { managed } : {}), enabled: false, leases: 0,
-      providers: [], tools: [], harnesses: [], disposers: [], cleanupFailures: [],
+      plugin,
+      ...(managed ? { managed } : {}),
+      enabled: false,
+      leases: 0,
+      providers: [],
+      tools: [],
+      harnesses: [],
+      disposers: [],
+      cleanupFailures: [],
     }
   }
 
@@ -65,10 +84,15 @@ export class PluginRegistry implements RuntimeRegistry {
       await this.activate(entry)
       entry.enabled = true
     } catch (error) {
-      try { await this.dispose(entry) }
-      catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Plugin activation and cleanup failed') }
+      try {
+        await this.dispose(entry)
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], 'Plugin activation and cleanup failed')
+      }
       throw error
-    } finally { this.mutating.delete(id) }
+    } finally {
+      this.mutating.delete(id)
+    }
   }
 
   private async activate(entry: Entry, previous?: Entry): Promise<void> {
@@ -104,7 +128,10 @@ export class PluginRegistry implements RuntimeRegistry {
             }
             entry.harnesses.push(driver)
           },
-          onDispose: disposer => { ctx.fiber.assertActive(); entry.disposers.push(disposer) },
+          onDispose: disposer => {
+            ctx.fiber.assertActive()
+            entry.disposers.push(disposer)
+          },
         }
         await entry.plugin.activate(context)
       },
@@ -119,8 +146,11 @@ export class PluginRegistry implements RuntimeRegistry {
     if (this.leases(id)) throw new AppError(409, 'plugin-in-use', `${IN_USE}停用`)
     if (this.mutating.has(id)) throw new AppError(409, 'plugin-busy', '插件正在变更，请稍后重试')
     this.mutating.add(id)
-    try { await this.dispose(entry) }
-    finally { this.mutating.delete(id) }
+    try {
+      await this.dispose(entry)
+    } finally {
+      this.mutating.delete(id)
+    }
   }
 
   /** Disables and forgets a plugin. The entry is forgotten even when its cleanup reports failures. */
@@ -129,8 +159,9 @@ export class PluginRegistry implements RuntimeRegistry {
     if (this.leases(id)) throw new AppError(409, 'plugin-in-use', `${IN_USE}删除`)
     if (this.mutating.has(id)) throw new AppError(409, 'plugin-busy', '插件正在变更，请稍后重试')
     this.mutating.add(id)
-    try { await this.dispose(entry) }
-    finally {
+    try {
+      await this.dispose(entry)
+    } finally {
       if (this.entries.get(id) === entry) this.entries.delete(id)
       this.mutating.delete(id)
     }
@@ -152,7 +183,11 @@ export class PluginRegistry implements RuntimeRegistry {
     entry.harnesses = []
     const disposers = entry.disposers.splice(0).reverse()
     for (const dispose of disposers) {
-      try { await dispose() } catch (error) { entry.cleanupFailures.push(error) }
+      try {
+        await dispose()
+      } catch (error) {
+        entry.cleanupFailures.push(error)
+      }
     }
   }
 
@@ -178,7 +213,9 @@ export class PluginRegistry implements RuntimeRegistry {
 
   /** Disposes a retired generation outside the caller's stack; nobody awaits a lease release. */
   private collect(entry: Entry): void {
-    const disposal = this.dispose(entry).catch(error => { this.log(`Retired plugin ${entry.plugin.id} cleanup failed`, error) })
+    const disposal = this.dispose(entry).catch(error => {
+      this.log(`Retired plugin ${entry.plugin.id} cleanup failed`, error)
+    })
     this.disposals.add(disposal)
     void disposal.finally(() => this.disposals.delete(disposal))
   }
@@ -209,9 +246,17 @@ export class PluginRegistry implements RuntimeRegistry {
 
   list(): PluginInfo[] {
     return [...this.entries.values()].map(e => ({
-      id: e.plugin.id, name: e.plugin.name, version: e.plugin.version,
-      description: e.plugin.description, enabled: e.enabled, activeRuns: this.leases(e.plugin.id),
-      capabilities: [...e.providers.map(p => `provider:${p.id}`), ...e.tools.map(t => `tool:${t.name}`), ...e.harnesses.map(h => `harness:${h.id}`)],
+      id: e.plugin.id,
+      name: e.plugin.name,
+      version: e.plugin.version,
+      description: e.plugin.description,
+      enabled: e.enabled,
+      activeRuns: this.leases(e.plugin.id),
+      capabilities: [
+        ...e.providers.map(p => `provider:${p.id}`),
+        ...e.tools.map(t => `tool:${t.name}`),
+        ...e.harnesses.map(h => `harness:${h.id}`),
+      ],
       ...(e.managed ? { managed: e.managed } : {}),
     }))
   }
@@ -244,11 +289,17 @@ export class PluginRegistry implements RuntimeRegistry {
       this.entries.set(plugin.id, staged)
       committed = true
       if (previous?.leases) this.retired.add(previous)
-      else if (previous) await this.dispose(previous).catch(error => { this.log(`Replaced plugin ${plugin.id} cleanup failed`, error) })
+      else if (previous)
+        await this.dispose(previous).catch(error => {
+          this.log(`Replaced plugin ${plugin.id} cleanup failed`, error)
+        })
     } catch (error) {
       if (!committed) {
-        try { await this.dispose(staged) }
-        catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Plugin replacement and cleanup failed') }
+        try {
+          await this.dispose(staged)
+        } catch (cleanupError) {
+          throw new AggregateError([error, cleanupError], 'Plugin replacement and cleanup failed')
+        }
       }
       throw error
     } finally {
@@ -264,7 +315,11 @@ export class PluginRegistry implements RuntimeRegistry {
     if (this.mutating.size) throw new AppError(409, 'plugin-busy', '插件正在变更，请稍后关闭')
     const failures: unknown[] = []
     for (const id of [...this.entries.keys()].reverse()) {
-      try { await this.disable(id) } catch (error) { failures.push(error) }
+      try {
+        await this.disable(id)
+      } catch (error) {
+        failures.push(error)
+      }
     }
     await Promise.all(this.disposals)
     await this.root.fiber.dispose()

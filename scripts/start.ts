@@ -4,7 +4,15 @@ import { networkInterfaces } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { LATCH_VERSION, startServer, type TlsListenerOptions } from '../src/host/server.ts'
-import { acquireDataDirLock, processAlive, readHostState, readRecordedPid, removeHostState, verifyHostState, writeHostState } from '../src/host/host-state.ts'
+import {
+  acquireDataDirLock,
+  processAlive,
+  readHostState,
+  readRecordedPid,
+  removeHostState,
+  verifyHostState,
+  writeHostState,
+} from '../src/host/host-state.ts'
 import { latchCodeRoot, resolveLatchPaths } from '../src/host/paths.ts'
 import { presenceHelperPath } from '../src/host/presence.ts'
 import { redactSecrets } from '../src/host/redact.ts'
@@ -39,7 +47,9 @@ function option(name: string): string | undefined {
 }
 
 function addresses(): string[] {
-  return Object.values(networkInterfaces()).flat().flatMap(entry => entry && !entry.internal ? [entry.address] : [])
+  return Object.values(networkInterfaces())
+    .flat()
+    .flatMap(entry => (entry && !entry.internal ? [entry.address] : []))
 }
 
 function firstPrivateIPv4(): string {
@@ -58,9 +68,20 @@ function firstTailnetAddress(): string {
 }
 
 function isPlugin(value: unknown): value is HarnessPlugin {
-  return typeof value === 'object' && value !== null && 'id' in value && typeof value.id === 'string'
-    && 'name' in value && typeof value.name === 'string' && 'version' in value && typeof value.version === 'string'
-    && 'description' in value && typeof value.description === 'string' && 'activate' in value && typeof value.activate === 'function'
+  return (
+    typeof value === 'object'
+    && value !== null
+    && 'id' in value
+    && typeof value.id === 'string'
+    && 'name' in value
+    && typeof value.name === 'string'
+    && 'version' in value
+    && typeof value.version === 'string'
+    && 'description' in value
+    && typeof value.description === 'string'
+    && 'activate' in value
+    && typeof value.activate === 'function'
+  )
 }
 
 /** `host:port` with an explicit port, for the process-local egress allowlist. */
@@ -69,13 +90,18 @@ function egressEntry(baseURL: string): string | undefined {
     const url = new URL(baseURL)
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return undefined
     return `${url.hostname.toLowerCase()}:${url.port || (url.protocol === 'https:' ? '443' : '80')}`
-  } catch { return undefined }
+  } catch {
+    return undefined
+  }
 }
 
 /** The helper is pointless when the policy turned local confirmation off. */
 function presenceDisabled(dataDir: string): boolean {
-  try { return JSON.parse(readFileSync(join(dataDir, 'policy.json'), 'utf8'))?.presence?.backend === 'none' }
-  catch { return false }
+  try {
+    return JSON.parse(readFileSync(join(dataDir, 'policy.json'), 'utf8'))?.presence?.backend === 'none'
+  } catch {
+    return false
+  }
 }
 
 const ALL_INTERFACES = new Set(['0.0.0.0', '[::]'])
@@ -89,8 +115,11 @@ function bindAddress(value: string): string {
   const literal = value.replace(/^\[|\]$/gu, '')
   const family = isIP(literal)
   let canonical: string | undefined
-  try { canonical = family === 0 ? undefined : new URL(`http://${family === 6 ? `[${literal}]` : literal}/`).hostname }
-  catch { canonical = undefined }
+  try {
+    canonical = family === 0 ? undefined : new URL(`http://${family === 6 ? `[${literal}]` : literal}/`).hostname
+  } catch {
+    canonical = undefined
+  }
   if (canonical === undefined) {
     if (literal === '0' || /^[0.]+$/u.test(literal)) throw new StartupError('请使用具体网卡地址，不要绑定所有接口')
     throw new StartupError('HTTPS 监听地址必须是本机网卡的 IP 地址，不能是主机名')
@@ -138,14 +167,18 @@ async function refuseHostWithoutLock(dataDir: string): Promise<void> {
   const path = join(dataDir, 'host.json')
   const state = await readHostState(dataDir)
   if (state) {
-    if (await verifyHostState(state)) throw new StartupError(`这个数据目录已有 Host 在运行（进程 ${state.pid}）。请先停止它（pnpm stop），或使用其他 --data-dir。`)
+    if (await verifyHostState(state))
+      throw new StartupError(`这个数据目录已有 Host 在运行（进程 ${state.pid}）。请先停止它（pnpm stop），或使用其他 --data-dir。`)
     return
   }
   const recorded = await readRecordedPid(dataDir)
   if (!recorded.present) return
-  if (recorded.pid === undefined) throw new StartupError(`无法识别 ${path}，不能确认没有其他 Host 在运行。确认没有 Host 在运行后删除该文件再重试。`)
+  if (recorded.pid === undefined)
+    throw new StartupError(`无法识别 ${path}，不能确认没有其他 Host 在运行。确认没有 Host 在运行后删除该文件再重试。`)
   if (processAlive(recorded.pid)) {
-    throw new StartupError(`${path} 记录的进程 ${recorded.pid} 仍在运行，可能是旧版本的 Host。请先在它的终端中停止它（Ctrl+C），或使用其他 --data-dir；如果确认没有 Host 在运行，删除该文件后重试。`)
+    throw new StartupError(
+      `${path} 记录的进程 ${recorded.pid} 仍在运行，可能是旧版本的 Host。请先在它的终端中停止它（Ctrl+C），或使用其他 --data-dir；如果确认没有 Host 在运行，删除该文件后重试。`,
+    )
   }
 }
 
@@ -183,39 +216,72 @@ async function main(): Promise<void> {
   const providerId = option('--provider')
   const harnessId = option('--harness')
   const server = await startServer({
-    dataDir: paths.dataDir, workspaceRoot: paths.workspaceRoot, agentsDir: paths.agentsDir, uiDir: resolve(codeRoot, 'dist/web'),
-    port, demo, plugins, egressAllow, ...(tls ? { tls } : {}),
-    ...(providerId ? { providerId } : {}), ...(harnessId ? { harnessId } : {}),
+    dataDir: paths.dataDir,
+    workspaceRoot: paths.workspaceRoot,
+    agentsDir: paths.agentsDir,
+    uiDir: resolve(codeRoot, 'dist/web'),
+    port,
+    demo,
+    plugins,
+    egressAllow,
+    ...(tls ? { tls } : {}),
+    ...(providerId ? { providerId } : {}),
+    ...(harnessId ? { harnessId } : {}),
     // The key from the environment is used in memory only; it never reaches the disk.
-    ...(env.HARNESS_MODEL ? { provider: {
-      baseURL: env.HARNESS_BASE_URL ?? 'https://api.openai.com/v1', apiKey: env.HARNESS_API_KEY ?? '', model: env.HARNESS_MODEL,
-    } } : {}),
+    ...(env.HARNESS_MODEL
+      ? {
+          provider: {
+            baseURL: env.HARNESS_BASE_URL ?? 'https://api.openai.com/v1',
+            apiKey: env.HARNESS_API_KEY ?? '',
+            model: env.HARNESS_MODEL,
+          },
+        }
+      : {}),
   })
   const stop = createShutdown(async () => {
-    try { await server.close() }
-    finally {
+    try {
+      await server.close()
+    } finally {
       await removeHostState(paths.dataDir, server.instanceId)
       await lock.release()
     }
   })
   for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-    process.on(signal, () => { void stop().then(() => process.exit(0), error => { console.error(redactSecrets(String(error))); process.exit(1) }) })
+    process.on(signal, () => {
+      void stop().then(
+        () => process.exit(0),
+        error => {
+          console.error(redactSecrets(String(error)))
+          process.exit(1)
+        },
+      )
+    })
   }
   await writeHostState(paths.dataDir, {
-    version: 2, pid: process.pid, hostId: server.hostId, instanceId: server.instanceId, socketPath: server.socketPath,
-    loopbackOrigin: server.loopbackOrigin, tlsOrigin: server.tlsOrigin ?? null, startedAt: server.startedAt, dataDir: paths.dataDir,
+    version: 2,
+    pid: process.pid,
+    hostId: server.hostId,
+    instanceId: server.instanceId,
+    socketPath: server.socketPath,
+    loopbackOrigin: server.loopbackOrigin,
+    tlsOrigin: server.tlsOrigin ?? null,
+    startedAt: server.startedAt,
+    dataDir: paths.dataDir,
   })
   console.log(`Latch ${LATCH_VERSION} · ${demo ? '演示模型 / 真实工具' : '通用模型接口'}`)
   console.log(`打开 ${server.loopbackOrigin}/link/ ，请在本机确认。`)
   console.log(`工作区：${paths.workspaceRoot}`)
-  console.log(server.tlsOrigin
-    ? `手机接入：${server.tlsOrigin}/link/（在电脑上的 Latch 桌面端生成配对二维码）`
-    : '手机接入需要 HTTPS：用 --tls-cert、--tls-key 和 --public-origin 启动。')
+  console.log(
+    server.tlsOrigin
+      ? `手机接入：${server.tlsOrigin}/link/（在电脑上的 Latch 桌面端生成配对二维码）`
+      : '手机接入需要 HTTPS：用 --tls-cert、--tls-key 和 --public-origin 启动。',
+  )
   for (const warning of paths.warnings) console.log(warning)
 }
 
-try { await main() }
-catch (error) {
+try {
+  await main()
+} catch (error) {
   console.error(redactSecrets(error instanceof Error ? error.message : String(error)))
   process.exit(1)
 }

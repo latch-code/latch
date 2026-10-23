@@ -18,7 +18,10 @@ export function desktopLaunchOptions(argv: string[], cwd = process.cwd(), env: N
   const args: string[] = []
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index]!
-    if (arg !== '--data-dir' && !arg.startsWith('--data-dir=')) { args.push(arg); continue }
+    if (arg !== '--data-dir' && !arg.startsWith('--data-dir=')) {
+      args.push(arg)
+      continue
+    }
     if (directory !== undefined) throw new Error('--data-dir may only be specified once')
     directory = arg === '--data-dir' ? argv[++index] : arg.slice('--data-dir='.length)
     if (!directory || directory.startsWith('--')) throw new Error('--data-dir requires a value')
@@ -27,7 +30,14 @@ export function desktopLaunchOptions(argv: string[], cwd = process.cwd(), env: N
   const dataDir = resolve(cwd, paths.dataDir)
   const hostEnv: NodeJS.ProcessEnv = { ...env }
   for (const name of DROPPED_ENV) delete hostEnv[name]
-  return { dataDir, hostStatePath: join(dataDir, 'host.json'), args: ['--data-dir', dataDir, ...args], cwd, env: hostEnv, warnings: paths.warnings }
+  return {
+    dataDir,
+    hostStatePath: join(dataDir, 'host.json'),
+    args: ['--data-dir', dataDir, ...args],
+    cwd,
+    env: hostEnv,
+    warnings: paths.warnings,
+  }
 }
 
 export type DesktopLaunchOptions = ReturnType<typeof desktopLaunchOptions>
@@ -40,7 +50,9 @@ export async function probeDesktopHost(dataDir: string, timeoutMs = 2_000, expec
     if (!state || (expectedPid !== undefined && state.pid !== expectedPid)) return undefined
     const info = await verifyHostState(state, timeoutMs)
     return info ? { ...state, info } : undefined
-  } catch { return undefined }
+  } catch {
+    return undefined
+  }
 }
 
 /** host.log is append-only, 0600, and never followed through a symlink. */
@@ -56,17 +68,31 @@ export async function ensureDesktopHost(
 ): Promise<DesktopHost & { reused: boolean; hostStatePath: string; notice?: string }> {
   await mkdir(options.dataDir, { recursive: true, mode: 0o700 })
   const existing = await probeDesktopHost(options.dataDir)
-  if (existing) return {
-    ...existing, reused: true, hostStatePath: options.hostStatePath,
-    notice: `复用已有节点（${options.dataDir}）。本次 --demo、--harness、--provider、--plugin、--workspace、网络参数和模型环境变量不会重新应用；要更改启动配置，请先停止该目录的节点，或使用其他 --data-dir。`,
-  }
+  if (existing)
+    return {
+      ...existing,
+      reused: true,
+      hostStatePath: options.hostStatePath,
+      notice: `复用已有节点（${options.dataDir}）。本次 --demo、--harness、--provider、--plugin、--workspace、网络参数和模型环境变量不会重新应用；要更改启动配置，请先停止该目录的节点，或使用其他 --data-dir。`,
+    }
   const logPath = join(options.dataDir, 'host.log')
   const log = await openHostLog(logPath)
-  const child = spawn(process.execPath, [...HOST_NODE_ARGS, ...(startup.nodeArgs ?? []), startup.script ?? resolve(options.cwd, 'dist/start.js'), ...options.args], {
-    cwd: options.cwd, detached: true, stdio: ['ignore', log.fd, log.fd], env: options.env,
-  })
-  try { await once(child, 'spawn'); child.unref() }
-  finally { await log.close() }
+  const child = spawn(
+    process.execPath,
+    [...HOST_NODE_ARGS, ...(startup.nodeArgs ?? []), startup.script ?? resolve(options.cwd, 'dist/start.js'), ...options.args],
+    {
+      cwd: options.cwd,
+      detached: true,
+      stdio: ['ignore', log.fd, log.fd],
+      env: options.env,
+    },
+  )
+  try {
+    await once(child, 'spawn')
+    child.unref()
+  } finally {
+    await log.close()
+  }
   // Startup may build the macOS confirmation helper on first run, so allow more than a plain boot.
   const deadline = Date.now() + (startup.timeoutMs ?? 60_000)
   while (Date.now() < deadline && child.exitCode === null && child.signalCode === null) {

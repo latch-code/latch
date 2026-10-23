@@ -23,7 +23,9 @@ export function base32(data: Uint8Array): string {
 
 /** Strings are hashed as UTF-8. */
 export function sha256Hex(data: string | Uint8Array): string {
-  return createHash('sha256').update(typeof data === 'string' ? Buffer.from(data, 'utf8') : data).digest('hex')
+  return createHash('sha256')
+    .update(typeof data === 'string' ? Buffer.from(data, 'utf8') : data)
+    .digest('hex')
 }
 
 /**
@@ -38,28 +40,36 @@ export function canonicalJson(value: unknown): string {
 function encode(value: unknown, seen: Set<object>): string {
   if (value === null) return 'null'
   switch (typeof value) {
-    case 'boolean': return value ? 'true' : 'false'
-    case 'string': return JSON.stringify(value)
+    case 'boolean':
+      return value ? 'true' : 'false'
+    case 'string':
+      return JSON.stringify(value)
     case 'number':
       if (!Number.isFinite(value)) throw new TypeError('canonicalJson: non-finite number')
       return JSON.stringify(value)
-    case 'object': break
-    default: throw new TypeError(`canonicalJson: unsupported ${typeof value}`)
+    case 'object':
+      break
+    default:
+      throw new TypeError(`canonicalJson: unsupported ${typeof value}`)
   }
   const object = value as object
   if (seen.has(object)) throw new TypeError('canonicalJson: circular structure')
   seen.add(object)
   try {
     if (Array.isArray(object)) {
-      return `[${object.map(item => {
-        if (item === undefined) throw new TypeError('canonicalJson: undefined array element')
-        return encode(item, seen)
-      }).join(',')}]`
+      return `[${object
+        .map(item => {
+          if (item === undefined) throw new TypeError('canonicalJson: undefined array element')
+          return encode(item, seen)
+        })
+        .join(',')}]`
     }
     const withJson = object as { toJSON?: () => unknown }
     if (typeof withJson.toJSON === 'function') return encode(withJson.toJSON(), seen)
     const record = object as Record<string, unknown>
-    const members = Object.keys(record).sort().flatMap(key => record[key] === undefined ? [] : [`${JSON.stringify(key)}:${encode(record[key], seen)}`])
+    const members = Object.keys(record)
+      .sort()
+      .flatMap(key => (record[key] === undefined ? [] : [`${JSON.stringify(key)}:${encode(record[key], seen)}`]))
     return `{${members.join(',')}}`
   } finally {
     seen.delete(object)
@@ -101,8 +111,11 @@ export function parseP256Spki(spkiBase64url: string): { key: KeyObject; der: Buf
   // Only the uncompressed form WebCrypto exports; OpenSSL would otherwise accept and re-export compressed points.
   if (!der || der.length !== 91 || !der.subarray(0, P256_SPKI_PREFIX.length).equals(P256_SPKI_PREFIX)) throw invalidPublicKey()
   let key: KeyObject
-  try { key = createPublicKey({ key: der, format: 'der', type: 'spki' }) }
-  catch { throw invalidPublicKey() }
+  try {
+    key = createPublicKey({ key: der, format: 'der', type: 'spki' })
+  } catch {
+    throw invalidPublicKey()
+  }
   if (key.asymmetricKeyType !== 'ec' || key.asymmetricKeyDetails?.namedCurve !== 'prime256v1') throw invalidPublicKey()
   const exported = key.export({ format: 'der', type: 'spki' })
   if (!exported.equals(der)) throw invalidPublicKey()
@@ -126,8 +139,11 @@ export function verifyP256(key: KeyObject, text: string, signatureBase64url: str
   if (typeof signatureBase64url !== 'string') return false
   const signature = decodeBase64url(signatureBase64url)
   if (!signature || signature.length !== 64) return false
-  try { return verify('sha256', Buffer.from(text, 'utf8'), { key, dsaEncoding: 'ieee-p1363' }, signature) }
-  catch { return false }
+  try {
+    return verify('sha256', Buffer.from(text, 'utf8'), { key, dsaEncoding: 'ieee-p1363' }, signature)
+  } catch {
+    return false
+  }
 }
 
 export function constantTimeEqualHex(a: string, b: string): boolean {

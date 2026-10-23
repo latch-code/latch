@@ -8,10 +8,15 @@ import { startTestHost, type TestHost } from './helpers/host.ts'
 describe('custom model extension in the app', () => {
   it('runs without built-in provider configuration and responds to hot plugin toggles', async () => {
     const plugin: HarnessPlugin = {
-      id: 'fixture-model', name: '验收模型插件', version: '1.0.0', description: '仅测试使用的确定性模型。',
+      id: 'fixture-model',
+      name: '验收模型插件',
+      version: '1.0.0',
+      description: '仅测试使用的确定性模型。',
       activate(context) {
         context.registerProvider({
-          id: 'custom-fixture', name: 'Custom fixture', model: 'fixture',
+          id: 'custom-fixture',
+          name: 'Custom fixture',
+          model: 'fixture',
           async *stream({ signal }) {
             signal.throwIfAborted()
             yield { type: 'text', text: '自定义模型插件已经响应。' }
@@ -23,13 +28,21 @@ describe('custom model extension in the app', () => {
     let testHost: TestHost | undefined
     let browser: Browser | undefined
     try {
-      testHost = await startTestHost({ uiDir: resolve(process.env.HARNESS_E2E_UI_DIR ?? 'dist/web'), demo: false, plugins: [plugin], providerId: 'custom-fixture' })
+      testHost = await startTestHost({
+        uiDir: resolve(process.env.HARNESS_E2E_UI_DIR ?? 'dist/web'),
+        demo: false,
+        plugins: [plugin],
+        providerId: 'custom-fixture',
+      })
       const host = testHost.host
       browser = await chromium.launch(browserLaunchOptions())
       const page = await browser.newPage()
       page.setDefaultTimeout(15_000)
       await enrollBrowser(page, testHost)
-      const config = await page.context().request.get(host.origin + '/link/api/provider').then(response => response.json())
+      const config = await page
+        .context()
+        .request.get(host.origin + '/link/api/provider')
+        .then(response => response.json())
       expect(config.configured).toBe(false)
       const composer = page.getByRole('textbox', { name: '新会话消息' })
       const send = page.getByRole('button', { name: '发送', exact: true })

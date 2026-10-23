@@ -14,7 +14,11 @@ export const RPC = {
 } as const
 
 export class RpcError extends Error {
-  constructor(readonly code: number, message: string, readonly data?: unknown) {
+  constructor(
+    readonly code: number,
+    message: string,
+    readonly data?: unknown,
+  ) {
     super(message)
     this.name = 'RpcError'
   }
@@ -24,17 +28,27 @@ const optionalText = z.string().nullish()
 
 export const initializeResult = z.object({
   protocolVersion: z.number().int(),
-  agentCapabilities: z.object({
-    loadSession: z.boolean().nullish(),
-    sessionCapabilities: z.object({ resume: z.unknown().optional(), delete: z.unknown().optional() }).nullish().catch(undefined),
-  }).nullish().catch(undefined),
-  authMethods: z.array(z.object({ id: z.string(), name: z.string(), description: optionalText })).nullish().catch(undefined),
+  agentCapabilities: z
+    .object({
+      loadSession: z.boolean().nullish(),
+      sessionCapabilities: z.object({ resume: z.unknown().optional(), delete: z.unknown().optional() }).nullish().catch(undefined),
+    })
+    .nullish()
+    .catch(undefined),
+  authMethods: z
+    .array(z.object({ id: z.string(), name: z.string(), description: optionalText }))
+    .nullish()
+    .catch(undefined),
   agentInfo: z.object({ name: optionalText, version: optionalText }).nullish().catch(undefined),
 })
 
 export const selectOption = z.object({ value: z.string(), name: z.string(), description: optionalText })
 export const configOption = z.object({
-  id: z.string().min(1).max(256), name: z.string(), description: optionalText, category: optionalText, type: z.string(),
+  id: z.string().min(1).max(256),
+  name: z.string(),
+  description: optionalText,
+  category: optionalText,
+  type: z.string(),
   currentValue: z.unknown().optional(),
   options: z.array(z.union([selectOption, z.object({ group: z.string(), name: z.string(), options: z.array(selectOption) })])).optional(),
 })
@@ -104,8 +118,10 @@ export const permissionKind = z.string().max(256)
 export const permissionRequest = z.object({
   sessionId: z.string(),
   toolCall: toolFields,
-  options: z.array(z.object({ optionId: z.string().min(1).max(256), name: z.string().max(2000), kind: permissionKind }))
-    .min(1).max(16)
+  options: z
+    .array(z.object({ optionId: z.string().min(1).max(256), name: z.string().max(2000), kind: permissionKind }))
+    .min(1)
+    .max(16)
     .refine(options => new Set(options.map(option => option.optionId)).size === options.length, 'Duplicate optionId'),
 })
 export type PermissionOption = z.infer<typeof permissionRequest>['options'][number]

@@ -25,9 +25,14 @@ async function reachable(locator: Locator, options: { allowDisabled?: boolean } 
     const rect = element.getBoundingClientRect()
     const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)
     return {
-      left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom,
-      width: rect.width, height: rect.height,
-      viewportWidth: innerWidth, viewportHeight: innerHeight,
+      left: rect.left,
+      right: rect.right,
+      top: rect.top,
+      bottom: rect.bottom,
+      width: rect.width,
+      height: rect.height,
+      viewportWidth: innerWidth,
+      viewportHeight: innerHeight,
       hit: hit !== null && element.contains(hit),
     }
   })
@@ -78,7 +83,7 @@ async function openSettings(page: Page, name: '设置' | '设备'): Promise<Loca
 /** Phones push into a section; return to the section list before choosing another. */
 async function openSection(settings: Locator, name: string): Promise<void> {
   const tab = settings.getByRole('tab', { name, exact: true })
-  if (!await tab.isVisible()) await settings.getByRole('button', { name: '返回', exact: true }).click()
+  if (!(await tab.isVisible())) await settings.getByRole('button', { name: '返回', exact: true }).click()
   await reachable(tab)
   await tab.click()
 }
@@ -100,8 +105,12 @@ describe('responsive workspace controls', () => {
 
   it.each(VIEWPORTS)('$label keeps new-session, navigation and settings controls reachable', async ({ width, height, label, touch }) => {
     const context = await browser.newContext({
-      viewport: { width, height }, hasTouch: touch, isMobile: touch,
-      deviceScaleFactor: 1, colorScheme: 'light', locale: 'zh-CN',
+      viewport: { width, height },
+      hasTouch: touch,
+      isMobile: touch,
+      deviceScaleFactor: 1,
+      colorScheme: 'light',
+      locale: 'zh-CN',
     })
     context.setDefaultTimeout(15_000)
     const page = await context.newPage()
@@ -161,7 +170,11 @@ describe('responsive workspace controls', () => {
       await settings.getByRole('button', { name: '添加服务', exact: true }).click()
       await settings.getByRole('button', { name: /^OpenAI/ }).click()
       // Unsaved form input only; nothing is submitted, checked or persisted. A browser cannot set keys.
-      for (const input of [settings.getByLabel('名称', { exact: true }), settings.getByLabel('API 地址', { exact: true }), settings.getByLabel('手动添加模型 ID', { exact: true })]) {
+      for (const input of [
+        settings.getByLabel('名称', { exact: true }),
+        settings.getByLabel('API 地址', { exact: true }),
+        settings.getByLabel('手动添加模型 ID', { exact: true }),
+      ]) {
         await reachable(input)
       }
       await settings.getByText('设置密钥需要在执行端电脑上用 Latch 桌面端确认。', { exact: true }).waitFor()
@@ -173,7 +186,7 @@ describe('responsive workspace controls', () => {
       await openSection(settings, '插件')
       const switches = settings.getByRole('switch')
       await switches.first().waitFor()
-      for (let index = 0; index < await switches.count(); index++) await reachable(switches.nth(index), { allowDisabled: true })
+      for (let index = 0; index < (await switches.count()); index++) await reachable(switches.nth(index), { allowDisabled: true })
       await noHorizontalOverflow(page, settings)
       await reachable(settings.getByRole('button', { name: '关闭', exact: true }))
       await capture(page, `${label}-plugin-settings`)
@@ -191,7 +204,9 @@ describe('responsive workspace controls', () => {
       expect((await testHost.host.bridge.listTasks()).length).toBe(0)
       await rm(`${OUTPUT}/${label}-failure.png`, { force: true })
     } catch (error) {
-      await capture(page, `${label}-failure`).catch(() => { /* The original UI failure remains authoritative if the page has closed. */ })
+      await capture(page, `${label}-failure`).catch(() => {
+        /* The original UI failure remains authoritative if the page has closed. */
+      })
       throw error
     } finally {
       await context.close()

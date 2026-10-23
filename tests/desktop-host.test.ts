@@ -16,7 +16,9 @@ const FAKE_HOST_ID = 'fpi3wdcevcl4gct2ucmrzxry3adc7zcb3zinud2gqjjuj5qc5atq'
 const SECRET_MARKERS = ['ldc1.', 'lpi1-', 'lpo1-', 'token=', 'harness_link=']
 
 const cleanups: Array<() => Promise<void>> = []
-afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
+})
 
 async function directory() {
   const path = await mkdtemp(join(tmpdir(), 'latch-desktop-'))
@@ -25,7 +27,12 @@ async function directory() {
 }
 
 function alive(pid: number) {
-  try { process.kill(pid, 0); return true } catch { return false }
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
 }
 
 /** Stops a Host this test started, and only that one. */
@@ -73,7 +80,8 @@ async function fakeHostScript() {
 
 function cleanEnvironment(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, ...extra }
-  for (const name of ['HARNESS_MODEL', 'HARNESS_API_KEY', 'HARNESS_BASE_URL', 'HARNESS_WORKSPACE', 'HARNESS_DATA_DIR', 'HARNESS_PORT']) delete env[name]
+  for (const name of ['HARNESS_MODEL', 'HARNESS_API_KEY', 'HARNESS_BASE_URL', 'HARNESS_WORKSPACE', 'HARNESS_DATA_DIR', 'HARNESS_PORT'])
+    delete env[name]
   return env
 }
 
@@ -85,7 +93,11 @@ describe('desktop Host launch', () => {
     const dataDir = join(root, 'data')
     // No local confirmation backend: the spawned Host neither builds nor runs the macOS helper.
     await mkdir(dataDir, { mode: 0o700 })
-    await writeFile(join(dataDir, 'policy.json'), JSON.stringify({ ...defaultPolicy(process.platform), presence: { backend: 'none', helperCdhash: null } }), { mode: 0o600 })
+    await writeFile(
+      join(dataDir, 'policy.json'),
+      JSON.stringify({ ...defaultPolicy(process.platform), presence: { backend: 'none', helperCdhash: null } }),
+      { mode: 0o600 },
+    )
     const env = cleanEnvironment({ HARNESS_DATA_DIR: join(root, 'environment') })
     const options = desktopLaunchOptions(['--data-dir', dataDir, '--demo', '--port', '0', '--workspace', join(root, 'workspace')], cwd, env)
     expect(options.args.filter(arg => arg === '--data-dir')).toHaveLength(1)
@@ -96,7 +108,12 @@ describe('desktop Host launch', () => {
     const state = await readHostState(dataDir)
     expect(state).toMatchObject({ version: 2, pid: host.pid, hostId: host.hostId, instanceId: host.instanceId })
     expect((await stat(join(dataDir, 'host.json'))).mode & 0o777).toBe(0o600)
-    expect(await queryHostInfo(state!.socketPath)).toMatchObject({ product: 'Latch', pid: host.pid, hostId: host.hostId, instanceId: host.instanceId })
+    expect(await queryHostInfo(state!.socketPath)).toMatchObject({
+      product: 'Latch',
+      pid: host.pid,
+      hostId: host.hostId,
+      instanceId: host.instanceId,
+    })
     await expect(stat(join(root, 'environment'))).rejects.toMatchObject({ code: 'ENOENT' })
 
     // The unknown Harness would make a fresh start fail, so success proves the live instance was reused.
@@ -125,7 +142,11 @@ describe('desktop Host launch', () => {
     const host = await ensureDesktopHost(options, { script: await fakeHostScript(), timeoutMs: 10_000 })
     stopLater(host.pid)
     expect(host).toMatchObject({ reused: false, hostId: FAKE_HOST_ID, info: { pid: host.pid, instanceId: host.instanceId } })
-    const launch = JSON.parse(await readFile(join(dataDir, `launch-${host.pid}.json`), 'utf8')) as { argv: string[]; execArgv: string[]; env: Record<string, string> }
+    const launch = JSON.parse(await readFile(join(dataDir, `launch-${host.pid}.json`), 'utf8')) as {
+      argv: string[]
+      execArgv: string[]
+      env: Record<string, string>
+    }
     expect(launch.argv).toEqual(['--data-dir', dataDir, '--demo'])
     expect(launch.execArgv).toEqual(['--disable-sigusr1'])
     expect(launch.env.HARNESS_DESKTOP_URL).toBeUndefined()
@@ -144,7 +165,10 @@ describe('desktop Host launch', () => {
   it('does not reuse a Host whose socket directory, pid or identity does not check out', async () => {
     const root = await directory()
     const dataDir = join(root, 'data')
-    const host = await ensureDesktopHost(desktopLaunchOptions(['--data-dir', dataDir], root, cleanEnvironment()), { script: await fakeHostScript(), timeoutMs: 10_000 })
+    const host = await ensureDesktopHost(desktopLaunchOptions(['--data-dir', dataDir], root, cleanEnvironment()), {
+      script: await fakeHostScript(),
+      timeoutMs: 10_000,
+    })
     stopLater(host.pid)
     const state = (await readHostState(dataDir))!
     expect(await probeDesktopHost(dataDir)).toMatchObject({ pid: host.pid, instanceId: host.instanceId })
@@ -174,30 +198,39 @@ describe('desktop Host launch', () => {
     const target = join(root, 'elsewhere.txt')
     await writeFile(target, 'untouched')
     await symlink(target, join(dataDir, 'host.log'))
-    await expect(ensureDesktopHost(desktopLaunchOptions(['--data-dir', dataDir], root, cleanEnvironment()), { script: await fakeHostScript() }))
-      .rejects.toMatchObject({ code: 'ELOOP' })
+    await expect(
+      ensureDesktopHost(desktopLaunchOptions(['--data-dir', dataDir], root, cleanEnvironment()), { script: await fakeHostScript() }),
+    ).rejects.toMatchObject({ code: 'ELOOP' })
     expect(await readFile(target, 'utf8')).toBe('untouched')
     expect((await lstat(join(dataDir, 'host.log'))).isSymbolicLink()).toBe(true)
 
     const silent = join(root, 'silent.mjs')
     const pidFile = join(root, 'silent.pid')
-    await writeFile(silent, `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000)`)
+    await writeFile(
+      silent,
+      `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000)`,
+    )
     const otherData = join(root, 'other')
-    await expect(ensureDesktopHost(desktopLaunchOptions(['--data-dir', otherData], root, cleanEnvironment()), { script: silent, timeoutMs: 1_000 }))
-      .rejects.toThrow('节点启动失败')
+    await expect(
+      ensureDesktopHost(desktopLaunchOptions(['--data-dir', otherData], root, cleanEnvironment()), { script: silent, timeoutMs: 1_000 }),
+    ).rejects.toThrow('节点启动失败')
     const pid = Number(await readFile(pidFile, 'utf8'))
     await vi.waitFor(() => expect(alive(pid)).toBe(false), { timeout: 5_000 })
 
     const crashing = join(root, 'crash.mjs')
     await writeFile(crashing, 'process.exit(3)')
-    await expect(ensureDesktopHost(desktopLaunchOptions(['--data-dir', otherData], root, cleanEnvironment()), { script: crashing, timeoutMs: 10_000 }))
-      .rejects.toThrow(join(otherData, 'host.log'))
+    await expect(
+      ensureDesktopHost(desktopLaunchOptions(['--data-dir', otherData], root, cleanEnvironment()), { script: crashing, timeoutMs: 10_000 }),
+    ).rejects.toThrow(join(otherData, 'host.log'))
   })
 
   it('resolves the data directory once, like the Host, and rejects ambiguous values', async () => {
     const root = await directory()
-    expect(desktopLaunchOptions(['--demo', '--data-dir=chosen'], root, { HARNESS_DATA_DIR: 'ignored' }).args)
-      .toEqual(['--data-dir', join(root, 'chosen'), '--demo'])
+    expect(desktopLaunchOptions(['--demo', '--data-dir=chosen'], root, { HARNESS_DATA_DIR: 'ignored' }).args).toEqual([
+      '--data-dir',
+      join(root, 'chosen'),
+      '--demo',
+    ])
     expect(desktopLaunchOptions([], root, { HARNESS_DATA_DIR: 'environment' }).dataDir).toBe(join(root, 'environment'))
     await mkdir(join(root, '.runtime'))
     const legacy = desktopLaunchOptions([], root, {})
@@ -210,9 +243,17 @@ describe('desktop Host launch', () => {
   })
 
   it('gives the shell no Host settings, model keys or debugging hooks', () => {
-    expect(desktopShellEnvironment({
-      PATH: '/bin', HOME: '/home/me', LANG: 'zh_CN.UTF-8', HARNESS_API_KEY: 'sk-x', HARNESS_DATA_DIR: '/d', HARNESS_DESKTOP_URL: 'http://x/#token=y',
-      NODE_OPTIONS: '--inspect', ELECTRON_RUN_AS_NODE: '1',
-    })).toEqual({ PATH: '/bin', HOME: '/home/me', LANG: 'zh_CN.UTF-8' })
+    expect(
+      desktopShellEnvironment({
+        PATH: '/bin',
+        HOME: '/home/me',
+        LANG: 'zh_CN.UTF-8',
+        HARNESS_API_KEY: 'sk-x',
+        HARNESS_DATA_DIR: '/d',
+        HARNESS_DESKTOP_URL: 'http://x/#token=y',
+        NODE_OPTIONS: '--inspect',
+        ELECTRON_RUN_AS_NODE: '1',
+      }),
+    ).toEqual({ PATH: '/bin', HOME: '/home/me', LANG: 'zh_CN.UTF-8' })
   })
 })

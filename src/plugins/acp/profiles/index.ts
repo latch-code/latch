@@ -10,7 +10,10 @@ import type { HarnessProfile } from './types.ts'
 export type { AcpPermissionProfile, HarnessProfile, ProjectConfigManaged } from './types.ts'
 
 export const HARNESS_PROFILES: ReadonlyMap<string, HarnessProfile> = new Map(
-  [codexProfile, qwenProfile, gooseProfile, geminiProfile, dshProfile, opencodeProfile, piProfile].map(profile => [profile.presetId, profile]),
+  [codexProfile, qwenProfile, gooseProfile, geminiProfile, dshProfile, opencodeProfile, piProfile].map(profile => [
+    profile.presetId,
+    profile,
+  ]),
 )
 
 export function profileFor(presetId: string | undefined): HarnessProfile | undefined {

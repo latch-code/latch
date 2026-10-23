@@ -3,12 +3,23 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
-  DENY_READ_HOME_PATHS, canonicalPath, checkPrivateFile, checkWorkspaceCandidate, classifyDefaultWorkspace, hasProtectedComponent,
-  isProtectedWorkspacePath, latchCodeRoot, prepareRuntimeDir, resolveLatchPaths, type WorkspaceGuardContext,
+  DENY_READ_HOME_PATHS,
+  canonicalPath,
+  checkPrivateFile,
+  checkWorkspaceCandidate,
+  classifyDefaultWorkspace,
+  hasProtectedComponent,
+  isProtectedWorkspacePath,
+  latchCodeRoot,
+  prepareRuntimeDir,
+  resolveLatchPaths,
+  type WorkspaceGuardContext,
 } from '../src/host/paths.ts'
 
 const cleanups: string[] = []
-afterEach(() => { for (const path of cleanups.splice(0)) rmSync(path, { recursive: true, force: true }) })
+afterEach(() => {
+  for (const path of cleanups.splice(0)) rmSync(path, { recursive: true, force: true })
+})
 
 /** Short base so socket paths stay under the 104-byte limit on macOS. */
 function temp(): string {
@@ -25,25 +36,47 @@ describe('resolveLatchPaths', () => {
   it('uses flag, then env, then a legacy ./.runtime, then the platform default', () => {
     const base = { env: {}, cwd: '/work', home: '/Users/me', platform: 'darwin' as const, exists: none }
     expect(resolveLatchPaths({ ...base, dataDir: 'data' })).toMatchObject({ dataDir: '/work/data', dataDirSource: 'flag' })
-    expect(resolveLatchPaths({ ...base, env: { HARNESS_DATA_DIR: '/srv/latch' } })).toMatchObject({ dataDir: '/srv/latch', dataDirSource: 'env' })
+    expect(resolveLatchPaths({ ...base, env: { HARNESS_DATA_DIR: '/srv/latch' } })).toMatchObject({
+      dataDir: '/srv/latch',
+      dataDirSource: 'env',
+    })
     const legacy = resolveLatchPaths({ ...base, exists: path => path === '/work/.runtime' })
     expect(legacy).toMatchObject({ dataDir: '/work/.runtime', dataDirSource: 'legacy-runtime' })
-    expect(legacy.warnings[0]).toBe('正在使用旧的数据目录 /work/.runtime。新安装默认使用 /Users/me/Library/Application Support/Latch/Host；如需迁移，请停止 Host 后移动目录并用 --data-dir 指定。')
+    expect(legacy.warnings[0]).toBe(
+      '正在使用旧的数据目录 /work/.runtime。新安装默认使用 /Users/me/Library/Application Support/Latch/Host；如需迁移，请停止 Host 后移动目录并用 --data-dir 指定。',
+    )
     expect(resolveLatchPaths(base)).toMatchObject({
-      dataDir: '/Users/me/Library/Application Support/Latch/Host', dataDirSource: 'default',
-      agentsDir: '/Users/me/Library/Application Support/Latch/Agents', warnings: [],
+      dataDir: '/Users/me/Library/Application Support/Latch/Host',
+      dataDirSource: 'default',
+      agentsDir: '/Users/me/Library/Application Support/Latch/Agents',
+      warnings: [],
     })
   })
 
   it('follows XDG on Linux and APPDATA on Windows', () => {
-    expect(resolveLatchPaths({ env: {}, cwd: '/w', home: '/home/me', platform: 'linux', exists: none }))
-      .toMatchObject({ dataDir: '/home/me/.local/share/latch/host', agentsDir: '/home/me/.local/share/latch/agents', workspaceRoot: '/home/me/Latch/workspace' })
-    expect(resolveLatchPaths({ env: { XDG_DATA_HOME: '/xdg' }, cwd: '/w', home: '/home/me', platform: 'linux', exists: none }))
-      .toMatchObject({ dataDir: '/xdg/latch/host', agentsDir: '/xdg/latch/agents' })
-    expect(resolveLatchPaths({ env: { XDG_DATA_HOME: 'relative' }, cwd: '/w', home: '/home/me', platform: 'linux', exists: none }).dataDir)
-      .toBe('/home/me/.local/share/latch/host')
-    expect(resolveLatchPaths({ env: { APPDATA: 'C:\\Users\\me\\AppData\\Roaming' }, cwd: 'C:\\w', home: 'C:\\Users\\me', platform: 'win32', exists: none }))
-      .toMatchObject({ dataDir: 'C:\\Users\\me\\AppData\\Roaming\\Latch\\Host', agentsDir: 'C:\\Users\\me\\AppData\\Roaming\\Latch\\Agents' })
+    expect(resolveLatchPaths({ env: {}, cwd: '/w', home: '/home/me', platform: 'linux', exists: none })).toMatchObject({
+      dataDir: '/home/me/.local/share/latch/host',
+      agentsDir: '/home/me/.local/share/latch/agents',
+      workspaceRoot: '/home/me/Latch/workspace',
+    })
+    expect(
+      resolveLatchPaths({ env: { XDG_DATA_HOME: '/xdg' }, cwd: '/w', home: '/home/me', platform: 'linux', exists: none }),
+    ).toMatchObject({ dataDir: '/xdg/latch/host', agentsDir: '/xdg/latch/agents' })
+    expect(
+      resolveLatchPaths({ env: { XDG_DATA_HOME: 'relative' }, cwd: '/w', home: '/home/me', platform: 'linux', exists: none }).dataDir,
+    ).toBe('/home/me/.local/share/latch/host')
+    expect(
+      resolveLatchPaths({
+        env: { APPDATA: 'C:\\Users\\me\\AppData\\Roaming' },
+        cwd: 'C:\\w',
+        home: 'C:\\Users\\me',
+        platform: 'win32',
+        exists: none,
+      }),
+    ).toMatchObject({
+      dataDir: 'C:\\Users\\me\\AppData\\Roaming\\Latch\\Host',
+      agentsDir: 'C:\\Users\\me\\AppData\\Roaming\\Latch\\Agents',
+    })
   })
 
   it('resolves the workspace and agents directory', () => {
@@ -62,7 +95,11 @@ describe('prepareRuntimeDir', () => {
   it('creates a private runtime directory with a socket path and tmp root', async () => {
     const parent = temp()
     const result = await prepareRuntimeDir({ hostId8: 'abcdefgh', parent })
-    expect(result).toEqual({ runtimeDir: join(parent, 'latch-abcdefgh'), socketPath: join(parent, 'latch-abcdefgh', 'host.sock'), tmpRoot: join(parent, 'latch-abcdefgh', 'tmp') })
+    expect(result).toEqual({
+      runtimeDir: join(parent, 'latch-abcdefgh'),
+      socketPath: join(parent, 'latch-abcdefgh', 'host.sock'),
+      tmpRoot: join(parent, 'latch-abcdefgh', 'tmp'),
+    })
     const { statSync } = await import('node:fs')
     expect(statSync(result.runtimeDir).mode & 0o777).toBe(0o700)
     expect(statSync(result.tmpRoot).mode & 0o777).toBe(0o700)
@@ -95,7 +132,9 @@ describe('prepareRuntimeDir', () => {
 
     const long = join(temp(), 'x'.repeat(90))
     mkdirSync(long, { mode: 0o700 })
-    await expect(prepareRuntimeDir({ hostId8: 'longpath', parent: long })).rejects.toEqual(expect.objectContaining({ code: 'runtime-dir-too-long' }))
+    await expect(prepareRuntimeDir({ hostId8: 'longpath', parent: long })).rejects.toEqual(
+      expect.objectContaining({ code: 'runtime-dir-too-long' }),
+    )
   })
 })
 
@@ -103,20 +142,41 @@ describe('workspace guard', () => {
   async function context(): Promise<WorkspaceGuardContext & { root: string }> {
     const root = temp()
     const home = join(root, 'home')
-    for (const path of ['home', 'data', 'agents', 'runtime', 'code', 'home/.ssh', 'home/.config/gcloud', 'home/Library/Keychains', 'home/projects/a', 'home/projects/b', 'tls'])
+    for (const path of [
+      'home',
+      'data',
+      'agents',
+      'runtime',
+      'code',
+      'home/.ssh',
+      'home/.config/gcloud',
+      'home/Library/Keychains',
+      'home/projects/a',
+      'home/projects/b',
+      'tls',
+    ])
       mkdirSync(join(root, path), { recursive: true })
     writeFileSync(join(root, 'code', 'package.json'), '{}')
     writeFileSync(join(root, 'tls', 'key.pem'), 'k', { mode: 0o600 })
     return {
-      root, home, dataDir: join(root, 'data'), agentsDir: join(root, 'agents-not-created'), runtimeDir: join(root, 'runtime'),
-      codeRoot: join(root, 'code'), existing: [{ id: 'b', name: '项目 B', path: join(home, 'projects', 'b') }], tlsKeyPath: join(root, 'tls', 'key.pem'),
+      root,
+      home,
+      dataDir: join(root, 'data'),
+      agentsDir: join(root, 'agents-not-created'),
+      runtimeDir: join(root, 'runtime'),
+      codeRoot: join(root, 'code'),
+      existing: [{ id: 'b', name: '项目 B', path: join(home, 'projects', 'b') }],
+      tlsKeyPath: join(root, 'tls', 'key.pem'),
     }
   }
 
   it('accepts an ordinary project directory and returns its realpath', async () => {
     const guard = await context()
     symlinkSync(join(guard.home, 'projects', 'a'), join(guard.root, 'alias'))
-    await expect(checkWorkspaceCandidate(join(guard.root, 'alias'), guard)).resolves.toEqual({ ok: true, realPath: join(guard.home, 'projects', 'a') })
+    await expect(checkWorkspaceCandidate(join(guard.root, 'alias'), guard)).resolves.toEqual({
+      ok: true,
+      realPath: join(guard.home, 'projects', 'a'),
+    })
   })
 
   it('reports each rule with its code', async () => {
@@ -134,7 +194,9 @@ describe('workspace guard', () => {
     mkdirSync(join(guard.dataDir, 'inner'))
     expect(await verdict(join(guard.dataDir, 'inner'))).toBe('409 workspace-overlap 该目录与 Latch 的数据目录重叠，不能作为项目')
     mkdirSync(join(guard.root, 'agents-not-created'))
-    expect(await verdict(join(guard.root, 'agents-not-created'))).toBe('409 workspace-overlap 该目录与 Latch 的Agent 安装目录重叠，不能作为项目')
+    expect(await verdict(join(guard.root, 'agents-not-created'))).toBe(
+      '409 workspace-overlap 该目录与 Latch 的Agent 安装目录重叠，不能作为项目',
+    )
     expect(await verdict(guard.runtimeDir)).toBe('409 workspace-overlap 该目录与 Latch 的运行目录重叠，不能作为项目')
     expect(await verdict(guard.home)).toBe('409 workspace-overlap 不能把主目录整体作为项目')
     const sensitive = '409 workspace-overlap 该目录包含或位于敏感目录（如 ~/.ssh），不能作为项目'
@@ -163,19 +225,34 @@ describe('workspace guard', () => {
     mkdirSync(join(guard.dataDir, 'workspace'))
     await expect(classifyDefaultWorkspace(join(guard.dataDir, 'workspace'), guard)).resolves.toEqual({ insideData: true, codeRoot: false })
     await expect(classifyDefaultWorkspace(guard.codeRoot, guard)).resolves.toEqual({ insideData: false, codeRoot: true })
-    await expect(classifyDefaultWorkspace(join(guard.home, 'projects', 'a'), guard)).resolves.toEqual({ insideData: false, codeRoot: false })
+    await expect(classifyDefaultWorkspace(join(guard.home, 'projects', 'a'), guard)).resolves.toEqual({
+      insideData: false,
+      codeRoot: false,
+    })
   })
 
-  it('reports a startup workspace that would expose secrets or Latch\'s own directories', async () => {
+  it("reports a startup workspace that would expose secrets or Latch's own directories", async () => {
     const guard = await context()
     mkdirSync(join(guard.root, 'agents-not-created'))
     const sensitive = async (path: string) => (await classifyDefaultWorkspace(path, guard)).sensitive
     expect(await sensitive(guard.home)).toEqual({ reason: 'home', message: '不能把主目录整体作为项目' })
-    expect(await sensitive(join(guard.home, '.ssh'))).toEqual({ reason: 'deny-read', message: '该目录包含或位于敏感目录（如 ~/.ssh），不能作为项目' })
-    expect(await sensitive(join(guard.home, 'Library'))).toEqual({ reason: 'deny-read', message: '该目录包含或位于敏感目录（如 ~/.ssh），不能作为项目' })
-    expect(await sensitive(join(guard.root, 'tls'))).toEqual({ reason: 'tls-key', message: '该目录包含或位于敏感目录（如 ~/.ssh），不能作为项目' })
+    expect(await sensitive(join(guard.home, '.ssh'))).toEqual({
+      reason: 'deny-read',
+      message: '该目录包含或位于敏感目录（如 ~/.ssh），不能作为项目',
+    })
+    expect(await sensitive(join(guard.home, 'Library'))).toEqual({
+      reason: 'deny-read',
+      message: '该目录包含或位于敏感目录（如 ~/.ssh），不能作为项目',
+    })
+    expect(await sensitive(join(guard.root, 'tls'))).toEqual({
+      reason: 'tls-key',
+      message: '该目录包含或位于敏感目录（如 ~/.ssh），不能作为项目',
+    })
     expect(await sensitive(guard.runtimeDir)).toEqual({ reason: 'runtime', message: '该目录与 Latch 的运行目录重叠，不能作为项目' })
-    expect(await sensitive(join(guard.root, 'agents-not-created'))).toEqual({ reason: 'agents', message: '该目录与 Latch 的Agent 安装目录重叠，不能作为项目' })
+    expect(await sensitive(join(guard.root, 'agents-not-created'))).toEqual({
+      reason: 'agents',
+      message: '该目录与 Latch 的Agent 安装目录重叠，不能作为项目',
+    })
     expect(await sensitive(join(guard.home, 'projects', 'a'))).toBeUndefined()
     expect(await sensitive(join(guard.dataDir, 'workspace'))).toBeUndefined()
   })
@@ -192,23 +269,85 @@ describe('workspace guard', () => {
 
 describe('isProtectedWorkspacePath', () => {
   it.each([
-    ['.git/config', true], ['.GIT/config', true], ['sub/.git/HEAD', true], ['.g\u200Cit/config', true], ['.git./config', true],
-    ['sub/package.json', true], ['Package.JSON', true], ['Makefile', true], ['go.sum', true], ['pnpm-lock.yaml', true],
-    ['.github/workflows/x.yml', true], ['.GitHub/Workflows/ci.yml', true], ['.github/ISSUE_TEMPLATE.md', false],
-    ['.env', true], ['.env.local', true], ['config/.ENV.production', true], ['.envrc', true], ['env.example', false],
-    ['AGENTS.md', true], ['docs/claude.md', true], ['.vscode/settings.json', true], ['.husky/pre-commit', true],
-    ['opencode.jsonc', true], ['.latch/x', true], ['ｐａｃｋａｇｅ.json', true],
-    ['.pnpmfile.cjs', true], ['.npmrc', true], ['.yarnrc.yml', true], ['.yarn/releases/yarn.cjs', true], ['pnpm-workspace.yaml', true],
-    ['bunfig.toml', true], ['node_modules/.bin/vitest', true], ['.venv/lib/python3.12/site-packages/x.py', true], ['venv/bin/activate', true],
-    ['lib/site-packages/evil.pth', true], ['.githooks/pre-commit', true], ['.pre-commit-config.yaml', true], ['lefthook.yml', true],
-    ['.gitmodules', true], ['.gitconfig', true], ['sub/.GitConfig', true], ['.mcp.json', true], ['.cursor/rules', true], ['.idea/workspace.xml', true], ['.devcontainer/devcontainer.json', true],
-    ['AGENTS.override.md', true], ['.goosehints', true], ['mise.toml', true], ['.cargo/config.toml', true], ['build.rs', true],
-    ['Cargo.toml', true], ['rust-toolchain.toml', true], ['go.mod', true], ['pyproject.toml', true], ['setup.py', true],
-    ['requirements.txt', true], ['Gemfile', true], ['composer.json', true], ['CMakeLists.txt', true], ['build.gradle.kts', true],
-    ['gradlew', true], ['.mvn/jvm.config', true], ['pom.xml', true],
-    ['src/index.ts', false], ['README.md', false], ['notes/package.json.bak', false], ['./src/app.ts', false],
-    ['tests/conftest.py', false], ['docs/requirements.md', false], ['src/venv.ts', false], ['path.txt', false],
-    ['', true], ['   ', true], ['/etc/passwd', true], ['C:\\Windows', true], ['../outside', true], ['a/../../b', true], ['a/../b', true], ['.', true],
+    ['.git/config', true],
+    ['.GIT/config', true],
+    ['sub/.git/HEAD', true],
+    ['.g\u200Cit/config', true],
+    ['.git./config', true],
+    ['sub/package.json', true],
+    ['Package.JSON', true],
+    ['Makefile', true],
+    ['go.sum', true],
+    ['pnpm-lock.yaml', true],
+    ['.github/workflows/x.yml', true],
+    ['.GitHub/Workflows/ci.yml', true],
+    ['.github/ISSUE_TEMPLATE.md', false],
+    ['.env', true],
+    ['.env.local', true],
+    ['config/.ENV.production', true],
+    ['.envrc', true],
+    ['env.example', false],
+    ['AGENTS.md', true],
+    ['docs/claude.md', true],
+    ['.vscode/settings.json', true],
+    ['.husky/pre-commit', true],
+    ['opencode.jsonc', true],
+    ['.latch/x', true],
+    ['ｐａｃｋａｇｅ.json', true],
+    ['.pnpmfile.cjs', true],
+    ['.npmrc', true],
+    ['.yarnrc.yml', true],
+    ['.yarn/releases/yarn.cjs', true],
+    ['pnpm-workspace.yaml', true],
+    ['bunfig.toml', true],
+    ['node_modules/.bin/vitest', true],
+    ['.venv/lib/python3.12/site-packages/x.py', true],
+    ['venv/bin/activate', true],
+    ['lib/site-packages/evil.pth', true],
+    ['.githooks/pre-commit', true],
+    ['.pre-commit-config.yaml', true],
+    ['lefthook.yml', true],
+    ['.gitmodules', true],
+    ['.gitconfig', true],
+    ['sub/.GitConfig', true],
+    ['.mcp.json', true],
+    ['.cursor/rules', true],
+    ['.idea/workspace.xml', true],
+    ['.devcontainer/devcontainer.json', true],
+    ['AGENTS.override.md', true],
+    ['.goosehints', true],
+    ['mise.toml', true],
+    ['.cargo/config.toml', true],
+    ['build.rs', true],
+    ['Cargo.toml', true],
+    ['rust-toolchain.toml', true],
+    ['go.mod', true],
+    ['pyproject.toml', true],
+    ['setup.py', true],
+    ['requirements.txt', true],
+    ['Gemfile', true],
+    ['composer.json', true],
+    ['CMakeLists.txt', true],
+    ['build.gradle.kts', true],
+    ['gradlew', true],
+    ['.mvn/jvm.config', true],
+    ['pom.xml', true],
+    ['src/index.ts', false],
+    ['README.md', false],
+    ['notes/package.json.bak', false],
+    ['./src/app.ts', false],
+    ['tests/conftest.py', false],
+    ['docs/requirements.md', false],
+    ['src/venv.ts', false],
+    ['path.txt', false],
+    ['', true],
+    ['   ', true],
+    ['/etc/passwd', true],
+    ['C:\\Windows', true],
+    ['../outside', true],
+    ['a/../../b', true],
+    ['a/../b', true],
+    ['.', true],
   ])('%j → %s', (path, expected) => {
     expect(isProtectedWorkspacePath(path)).toBe(expected)
   })
@@ -216,10 +355,17 @@ describe('isProtectedWorkspacePath', () => {
 
 describe('protected workspace roots', () => {
   it.each([
-    ['hooks/pre-commit', '/r/proj/.git', true], ['workflows/ci.yml', '/r/proj/.github', true], ['ci.yml', '/r/proj/.github/workflows', true],
-    ['pre-commit', '/r/proj/.husky', true], ['x.js', '/r/proj/node_modules/pkg', true], ['config.toml', 'C:\\proj\\.cargo', true],
-    ['src/app.ts', '/r/proj', false], ['ISSUE_TEMPLATE.md', '/r/proj/.github', false], ['app.ts', 'C:\\proj\\src', false],
-    ['src/app.ts', 'relative/root', true], ['src/app.ts', '/r/../proj', true],
+    ['hooks/pre-commit', '/r/proj/.git', true],
+    ['workflows/ci.yml', '/r/proj/.github', true],
+    ['ci.yml', '/r/proj/.github/workflows', true],
+    ['pre-commit', '/r/proj/.husky', true],
+    ['x.js', '/r/proj/node_modules/pkg', true],
+    ['config.toml', 'C:\\proj\\.cargo', true],
+    ['src/app.ts', '/r/proj', false],
+    ['ISSUE_TEMPLATE.md', '/r/proj/.github', false],
+    ['app.ts', 'C:\\proj\\src', false],
+    ['src/app.ts', 'relative/root', true],
+    ['src/app.ts', '/r/../proj', true],
   ])('%j under %j → %s', (path, root, expected) => {
     expect(isProtectedWorkspacePath(path, root)).toBe(expected)
   })
@@ -235,11 +381,26 @@ describe('protected workspace roots', () => {
 
   it('refuses to register a directory inside a protected one, also through a symlink', async () => {
     const root = temp()
-    for (const path of ['home', 'data', 'runtime', 'code', 'repo/.git/hooks', 'repo/.github/workflows', 'repo/.husky', 'repo/node_modules/pkg', 'repo/src'])
+    for (const path of [
+      'home',
+      'data',
+      'runtime',
+      'code',
+      'repo/.git/hooks',
+      'repo/.github/workflows',
+      'repo/.husky',
+      'repo/node_modules/pkg',
+      'repo/src',
+    ])
       mkdirSync(join(root, path), { recursive: true })
     symlinkSync(join(root, 'repo', '.git'), join(root, 'repo', 'docs'))
     const guard: WorkspaceGuardContext = {
-      dataDir: join(root, 'data'), agentsDir: join(root, 'agents'), runtimeDir: join(root, 'runtime'), home: join(root, 'home'), codeRoot: join(root, 'code'), existing: [],
+      dataDir: join(root, 'data'),
+      agentsDir: join(root, 'agents'),
+      runtimeDir: join(root, 'runtime'),
+      home: join(root, 'home'),
+      codeRoot: join(root, 'code'),
+      existing: [],
     }
     const protectedMessage = '409 workspace-overlap 该目录位于受保护目录（如 .git）内，不能作为项目'
     for (const path of ['repo/.git', 'repo/.git/hooks', 'repo/docs', 'repo/.github/workflows', 'repo/.husky', 'repo/node_modules/pkg']) {
@@ -255,7 +416,14 @@ describe('protected workspace roots', () => {
     const home = join(root, 'home')
     for (const path of ['home/Library/LaunchAgents', 'home/.config/autostart', 'home/.config/systemd/user', 'data', 'runtime', 'code'])
       mkdirSync(join(root, path), { recursive: true })
-    const guard: WorkspaceGuardContext = { dataDir: join(root, 'data'), agentsDir: join(root, 'agents'), runtimeDir: join(root, 'runtime'), home, codeRoot: join(root, 'code'), existing: [] }
+    const guard: WorkspaceGuardContext = {
+      dataDir: join(root, 'data'),
+      agentsDir: join(root, 'agents'),
+      runtimeDir: join(root, 'runtime'),
+      home,
+      codeRoot: join(root, 'code'),
+      existing: [],
+    }
     for (const path of ['Library/LaunchAgents', '.config/autostart', '.config/systemd/user']) {
       const verdict = await checkWorkspaceCandidate(join(home, path), guard)
       expect(verdict.ok ? 'ok' : verdict.error.message, path).toBe('该目录包含或位于敏感目录（如 ~/.ssh），不能作为项目')
@@ -271,12 +439,30 @@ describe('home configuration directories', () => {
     const root = temp()
     const home = join(root, 'users', 'me')
     for (const path of [
-      '.config/fish', '.config/git', '.local/bin', '.local/share/latch/host/workspace', 'bin', '.oh-my-zsh/custom', '.zshrc.d',
-      'Library/Application Support/Code/User', 'projects/a/.cache', 'binaries', 'Documents',
-    ]) mkdirSync(join(home, path), { recursive: true })
+      '.config/fish',
+      '.config/git',
+      '.local/bin',
+      '.local/share/latch/host/workspace',
+      'bin',
+      '.oh-my-zsh/custom',
+      '.zshrc.d',
+      'Library/Application Support/Code/User',
+      'projects/a/.cache',
+      'binaries',
+      'Documents',
+    ])
+      mkdirSync(join(home, path), { recursive: true })
     for (const path of ['data', 'runtime', 'code']) mkdirSync(join(root, path))
     symlinkSync(join(home, '.oh-my-zsh', 'custom'), join(home, 'Documents', 'shell'))
-    return { root, home, dataDir: join(root, 'data'), agentsDir: join(root, 'agents'), runtimeDir: join(root, 'runtime'), codeRoot: join(root, 'code'), existing: [] }
+    return {
+      root,
+      home,
+      dataDir: join(root, 'data'),
+      agentsDir: join(root, 'agents'),
+      runtimeDir: join(root, 'runtime'),
+      codeRoot: join(root, 'code'),
+      existing: [],
+    }
   }
 
   it('refuses hidden entries directly under $HOME, ~/.config, ~/.local, ~/bin and (on macOS) all of ~/Library', async () => {
@@ -285,7 +471,17 @@ describe('home configuration directories', () => {
       const result = await checkWorkspaceCandidate(join(guard.home, path), guard)
       return result.ok ? 'ok' : `${result.error.status} ${result.error.code} ${result.error.message}`
     }
-    for (const path of ['.config/fish', '.config/git', '.local', '.local/bin', 'bin', '.oh-my-zsh', '.oh-my-zsh/custom', '.zshrc.d', 'Documents/shell']) {
+    for (const path of [
+      '.config/fish',
+      '.config/git',
+      '.local',
+      '.local/bin',
+      'bin',
+      '.oh-my-zsh',
+      '.oh-my-zsh/custom',
+      '.zshrc.d',
+      'Documents/shell',
+    ]) {
       expect(await verdict(path), path).toBe(HOME_CONFIG)
     }
     expect(await verdict('Library/Application Support/Code/User')).toBe(darwin ? HOME_CONFIG : 'ok')
@@ -297,14 +493,19 @@ describe('home configuration directories', () => {
 
   it('refuses them as the startup workspace too, except the legacy workspace inside the data directory', async () => {
     const guard = setup()
-    const sensitive = async (path: string, context: WorkspaceGuardContext = guard) => (await classifyDefaultWorkspace(join(guard.home, path), context)).sensitive
+    const sensitive = async (path: string, context: WorkspaceGuardContext = guard) =>
+      (await classifyDefaultWorkspace(join(guard.home, path), context)).sensitive
     const homeConfig = { reason: 'home-config', message: '主目录下的隐藏目录、配置目录和系统目录不能作为项目' }
-    for (const path of ['.config/fish', '.local/bin', 'bin', '.oh-my-zsh/custom', 'Documents/shell']) expect(await sensitive(path), path).toEqual(homeConfig)
+    for (const path of ['.config/fish', '.local/bin', 'bin', '.oh-my-zsh/custom', 'Documents/shell'])
+      expect(await sensitive(path), path).toEqual(homeConfig)
     expect(await sensitive('Library/Application Support/Code/User')).toEqual(darwin ? homeConfig : undefined)
     expect(await sensitive('projects/a')).toBeUndefined()
     // The Linux default data directory lives in ~/.local/share; its legacy workspace stays usable for the built-in harness.
     const legacy = { ...guard, dataDir: join(guard.home, '.local', 'share', 'latch', 'host') }
-    await expect(classifyDefaultWorkspace(join(legacy.dataDir, 'workspace'), legacy)).resolves.toEqual({ insideData: true, codeRoot: false })
+    await expect(classifyDefaultWorkspace(join(legacy.dataDir, 'workspace'), legacy)).resolves.toEqual({
+      insideData: true,
+      codeRoot: false,
+    })
   })
 })
 
@@ -319,8 +520,14 @@ describe('macOS path aliases', () => {
     writeFileSync(join(root, 'code', 'package.json'), '{}')
     writeFileSync(join(root, 'tls', 'key.pem'), 'k', { mode: 0o600 })
     return {
-      root, home: join(root, 'home'), dataDir: join(root, 'data'), agentsDir: join(root, 'agents'), runtimeDir: join(root, 'runtime'),
-      codeRoot: join(root, 'code'), existing: [{ id: 'a', name: '项目 A', path: join(root, 'home', 'projects', 'a') }], tlsKeyPath: join(root, 'tls', 'key.pem'),
+      root,
+      home: join(root, 'home'),
+      dataDir: join(root, 'data'),
+      agentsDir: join(root, 'agents'),
+      runtimeDir: join(root, 'runtime'),
+      codeRoot: join(root, 'code'),
+      existing: [{ id: 'a', name: '项目 A', path: join(root, 'home', 'projects', 'a') }],
+      tlsKeyPath: join(root, 'tls', 'key.pem'),
     }
   }
 
@@ -366,15 +573,21 @@ describe('macOS path aliases', () => {
   it.skipIf(!darwin)('classifies an aliased startup workspace like the plain one', async () => {
     const guard = await guarded()
     await expect(classifyDefaultWorkspace(dataVolume(guard.codeRoot), guard)).resolves.toEqual({ insideData: false, codeRoot: true })
-    await expect(classifyDefaultWorkspace(`/.nofollow${join(guard.dataDir, 'inner')}`, guard)).resolves.toEqual({ insideData: true, codeRoot: false })
+    await expect(classifyDefaultWorkspace(`/.nofollow${join(guard.dataDir, 'inner')}`, guard)).resolves.toEqual({
+      insideData: true,
+      codeRoot: false,
+    })
     await expect(classifyDefaultWorkspace(dataVolume(guard.home), guard)).resolves.toMatchObject({ sensitive: { reason: 'home' } })
   })
 
   it.skipIf(!darwin)('finds a TLS key inside an aliased workspace', async () => {
     const guard = await guarded()
-    await expect(checkPrivateFile(guard.tlsKeyPath!, { uid, notInside: [dataVolume(join(guard.root, 'tls'))], label: 'HTTPS 私钥' }))
-      .rejects.toMatchObject({ code: 'private-file-insecure' })
-    await expect(checkPrivateFile(guard.tlsKeyPath!, { uid, notInside: [dataVolume(guard.home)], label: 'HTTPS 私钥' })).resolves.toBeUndefined()
+    await expect(
+      checkPrivateFile(guard.tlsKeyPath!, { uid, notInside: [dataVolume(join(guard.root, 'tls'))], label: 'HTTPS 私钥' }),
+    ).rejects.toMatchObject({ code: 'private-file-insecure' })
+    await expect(
+      checkPrivateFile(guard.tlsKeyPath!, { uid, notInside: [dataVolume(guard.home)], label: 'HTTPS 私钥' }),
+    ).resolves.toBeUndefined()
   })
 })
 
@@ -387,7 +600,11 @@ describe('checkPrivateFile', () => {
     writeFileSync(good, 'k', { mode: 0o600 })
     const rule = { uid, notInside: [workspace], label: 'TLS 私钥' }
     await expect(checkPrivateFile(good, rule)).resolves.toBeUndefined()
-    const failure = expect.objectContaining({ status: 500, code: 'private-file-insecure', message: 'TLS 私钥 必须是仅本用户可读的文件（0600），且不能位于工作区内' })
+    const failure = expect.objectContaining({
+      status: 500,
+      code: 'private-file-insecure',
+      message: 'TLS 私钥 必须是仅本用户可读的文件（0600），且不能位于工作区内',
+    })
     const loose = join(root, 'loose.pem')
     writeFileSync(loose, 'k', { mode: 0o644 })
     chmodSync(loose, 0o644)

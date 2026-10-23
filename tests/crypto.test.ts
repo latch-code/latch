@@ -1,12 +1,31 @@
 import { createECDH, createPrivateKey, createPublicKey, generateKeyPairSync, sign, webcrypto } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import {
-  BASE32_ALPHABET, base32, canonicalJson, constantTimeEqualHex, deviceFingerprint, hashDisplay, parseP256Spki,
-  randomCode, randomId, randomNonce, sha256Hex, verifyP256,
+  BASE32_ALPHABET,
+  base32,
+  canonicalJson,
+  constantTimeEqualHex,
+  deviceFingerprint,
+  hashDisplay,
+  parseP256Spki,
+  randomCode,
+  randomId,
+  randomNonce,
+  sha256Hex,
+  verifyP256,
 } from '../src/host/crypto.ts'
 import {
-  BASE32_VECTORS, CANONICAL_JSON_CASES, CANONICAL_JSON_VECTOR, ENROLL_SIGNING_VECTOR, HASH_DISPLAY_VECTORS, P256_VECTOR, RENEW_SIGNING_VECTOR,
-  SECURITY_VECTORS, enrollSigningText, renewSigningText, testDeviceKey,
+  BASE32_VECTORS,
+  CANONICAL_JSON_CASES,
+  CANONICAL_JSON_VECTOR,
+  ENROLL_SIGNING_VECTOR,
+  HASH_DISPLAY_VECTORS,
+  P256_VECTOR,
+  RENEW_SIGNING_VECTOR,
+  SECURITY_VECTORS,
+  enrollSigningText,
+  renewSigningText,
+  testDeviceKey,
 } from './helpers/crypto.ts'
 
 describe('shared vectors', () => {
@@ -18,7 +37,9 @@ describe('shared vectors', () => {
 
   it('derives the host ID and device fingerprint from the P-256 SPKI', () => {
     const der = Buffer.from(P256_VECTOR.spki, 'base64url')
-    expect(createPublicKey({ key: P256_VECTOR.jwk, format: 'jwk' }).export({ format: 'der', type: 'spki' }).toString('base64url')).toBe(P256_VECTOR.spki)
+    expect(createPublicKey({ key: P256_VECTOR.jwk, format: 'jwk' }).export({ format: 'der', type: 'spki' }).toString('base64url')).toBe(
+      P256_VECTOR.spki,
+    )
     expect(sha256Hex(der)).toBe(P256_VECTOR.sha256)
     const hostId = base32(Buffer.from(sha256Hex(der), 'hex'))
     expect(hostId).toBe(P256_VECTOR.hostId)
@@ -94,14 +115,21 @@ describe('P-256 keys and signatures', () => {
     const pair = await webcrypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify'])
     const spki = Buffer.from(await webcrypto.subtle.exportKey('spki', pair.publicKey)).toString('base64url')
     const text = renewSigningText(P256_VECTOR.hostId, 'dev_' + 'A'.repeat(22), randomNonce())
-    const signature = Buffer.from(await webcrypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, pair.privateKey, new TextEncoder().encode(text)))
+    const signature = Buffer.from(
+      await webcrypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, pair.privateKey, new TextEncoder().encode(text)),
+    )
     expect(signature).toHaveLength(64)
     const { key, der } = parseP256Spki(spki)
     expect(verifyP256(key, text, signature.toString('base64url'))).toBe(true)
     expect(verifyP256(key, text.replace('latch', 'latcH'), signature.toString('base64url'))).toBe(false)
     // The browser computes the fingerprint from the same SPKI with SubtleCrypto.
     const digest = Buffer.from(await webcrypto.subtle.digest('SHA-256', der))
-    expect(deviceFingerprint(der)).toBe(base32(digest).toUpperCase().slice(0, 20).replace(/(.{4})(?!$)/gu, '$1 '))
+    expect(deviceFingerprint(der)).toBe(
+      base32(digest)
+        .toUpperCase()
+        .slice(0, 20)
+        .replace(/(.{4})(?!$)/gu, '$1 '),
+    )
   })
 
   it('accepts only 64-byte P1363 signatures', () => {
@@ -116,17 +144,23 @@ describe('P-256 keys and signatures', () => {
   })
 
   it('rejects P-384, Ed25519, RSA, compressed and non-canonical encodings', () => {
-    const expectInvalid = (spki: string) => expect(() => parseP256Spki(spki)).toThrow(expect.objectContaining({ status: 400, code: 'invalid-public-key' }))
+    const expectInvalid = (spki: string) =>
+      expect(() => parseP256Spki(spki)).toThrow(expect.objectContaining({ status: 400, code: 'invalid-public-key' }))
     const spkiOf = (type: 'ec' | 'ed25519' | 'rsa', options: object) =>
-      (generateKeyPairSync as (type: string, options: object) => { publicKey: ReturnType<typeof createPublicKey> })(type, options)
-        .publicKey.export({ format: 'der', type: 'spki' }) as Buffer
+      (generateKeyPairSync as (type: string, options: object) => { publicKey: ReturnType<typeof createPublicKey> })(
+        type,
+        options,
+      ).publicKey.export({ format: 'der', type: 'spki' }) as Buffer
     expectInvalid(spkiOf('ec', { namedCurve: 'secp384r1' }).toString('base64url'))
     expectInvalid(spkiOf('ed25519', {}).toString('base64url'))
     expectInvalid(spkiOf('rsa', { modulusLength: 1024 }).toString('base64url'))
 
     const ecdh = createECDH('prime256v1')
     ecdh.generateKeys()
-    const compressed = Buffer.concat([Buffer.from('3039301306072a8648ce3d020106082a8648ce3d030107032200', 'hex'), ecdh.getPublicKey(undefined, 'compressed')])
+    const compressed = Buffer.concat([
+      Buffer.from('3039301306072a8648ce3d020106082a8648ce3d030107032200', 'hex'),
+      ecdh.getPublicKey(undefined, 'compressed'),
+    ])
     expect(() => createPublicKey({ key: compressed, format: 'der', type: 'spki' })).not.toThrow()
     expectInvalid(compressed.toString('base64url'))
 
@@ -149,7 +183,8 @@ describe('P-256 keys and signatures', () => {
 
 describe('random values', () => {
   it('uses the documented shapes', () => {
-    for (const prefix of ['dev', 'enr', 'cfm', 'inv', 'chl'] as const) expect(randomId(prefix)).toMatch(new RegExp(`^${prefix}_[A-Za-z0-9_-]{22}$`, 'u'))
+    for (const prefix of ['dev', 'enr', 'cfm', 'inv', 'chl'] as const)
+      expect(randomId(prefix)).toMatch(new RegExp(`^${prefix}_[A-Za-z0-9_-]{22}$`, 'u'))
     expect(randomNonce()).toMatch(/^[A-Za-z0-9_-]{22}$/u)
     expect(randomCode('lpi1')).toMatch(/^lpi1-[A-Z2-7]{26}$/u)
     expect(randomCode('lpo1')).toMatch(/^lpo1-[A-Z2-7]{26}$/u)

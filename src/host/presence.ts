@@ -47,7 +47,11 @@ const STDOUT_LIMIT = 4096
 /** The shared security-text rule; the macOS helper's `visible()` applies the same one. */
 export { escapeSecurityText as escapePreviewText } from '../shared/text.ts'
 
-export function buildPreview(input: Omit<PresencePreview, 'v' | 'nonce' | 'expiresAt' | 'title'> & { now: number }): { preview: PresencePreview; previewHash: string; hashDisplay: string } {
+export function buildPreview(input: Omit<PresencePreview, 'v' | 'nonce' | 'expiresAt' | 'title'> & { now: number }): {
+  preview: PresencePreview
+  previewHash: string
+  hashDisplay: string
+} {
   const requester: PresencePreview['requester'] = {
     ...(input.requester.deviceId !== undefined ? { deviceId: input.requester.deviceId } : {}),
     ...(input.requester.deviceName !== undefined ? { deviceName: escapeSecurityText(input.requester.deviceName) } : {}),
@@ -88,7 +92,13 @@ export interface PresenceBackend {
   readonly kind: 'macos-helper' | 'none' | 'test'
   availability(): Promise<PresenceAvailability>
   /** Shows the preview and asks for OS authentication. Must not throw for denials; must honour signal (abort = cancelled). */
-  confirm(request: { preview: PresencePreview; previewHash: string; hashDisplay: string; requireBiometric: boolean; signal: AbortSignal }): Promise<PresenceOutcome>
+  confirm(request: {
+    preview: PresencePreview
+    previewHash: string
+    hashDisplay: string
+    requireBiometric: boolean
+    signal: AbortSignal
+  }): Promise<PresenceOutcome>
 }
 
 export type ExecFileLike = (file: string, args: readonly string[]) => Promise<{ code: number | null; stdout: string; stderr: string }>
@@ -99,14 +109,19 @@ export interface ChildProcessLike {
   once(event: 'exit', listener: (code: number | null, signal: NodeJS.Signals | null) => void): unknown
   once(event: 'error', listener: (error: Error) => void): unknown
 }
-export type SpawnLike = (file: string, args: readonly string[], options: { env: Record<string, string>; cwd: string; stdio: ['pipe', 'pipe', 'ignore'] }) => ChildProcessLike
+export type SpawnLike = (
+  file: string,
+  args: readonly string[],
+  options: { env: Record<string, string>; cwd: string; stdio: ['pipe', 'pipe', 'ignore'] },
+) => ChildProcessLike
 
-const defaultExecFile: ExecFileLike = (file, args) => new Promise(resolve => {
-  nodeExecFile(file, [...args], { env: {}, cwd: '/', timeout: 15_000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
-    const code = error ? (typeof (error as { code?: unknown }).code === 'number' ? (error as { code: number }).code : 1) : 0
-    resolve({ code, stdout: String(stdout), stderr: String(stderr) })
+const defaultExecFile: ExecFileLike = (file, args) =>
+  new Promise(resolve => {
+    nodeExecFile(file, [...args], { env: {}, cwd: '/', timeout: 15_000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
+      const code = error ? (typeof (error as { code?: unknown }).code === 'number' ? (error as { code: number }).code : 1) : 0
+      resolve({ code, stdout: String(stdout), stderr: String(stderr) })
+    })
   })
-})
 
 const defaultSpawn: SpawnLike = (file, args, options) => nodeSpawn(file, [...args], options)
 
@@ -119,28 +134,42 @@ const PIN_LOST_MESSAGE = '本机确认组件的登记签名已丢失（policy.js
 function noneBackend(availability: Extract<PresenceAvailability, { status: 'unavailable' }>): PresenceBackend {
   return {
     kind: 'none',
-    async availability() { return availability },
-    async confirm() { return { result: 'error', message: availability.message } },
+    async availability() {
+      return availability
+    },
+    async confirm() {
+      return { result: 'error', message: availability.message }
+    },
   }
 }
 
 /** Absolute path of the helper inside the code root. */
-export function presenceHelperPath(codeRoot: string): string { return join(codeRoot, 'dist', 'native', 'latch-presence') }
+export function presenceHelperPath(codeRoot: string): string {
+  return join(codeRoot, 'dist', 'native', 'latch-presence')
+}
 
 /**
  * The production backends. A test backend is never constructed here: tests inject their own through dependency
  * injection, so a production Host cannot be switched to an always-approving backend.
  */
 export function createPresenceBackend(options: {
-  platform?: NodeJS.Platform; codeRoot: string; policy: PolicyStore
-  execFile?: ExecFileLike; spawn?: SpawnLike
+  platform?: NodeJS.Platform
+  codeRoot: string
+  policy: PolicyStore
+  execFile?: ExecFileLike
+  spawn?: SpawnLike
 }): PresenceBackend {
   const platform = options.platform ?? process.platform
   if (platform !== 'darwin') return noneBackend({ status: 'unavailable', reason: 'platform', message: PLATFORM_MESSAGE })
   if (options.policy.get().presence.backend === 'none') {
     return noneBackend({ status: 'unavailable', reason: 'disabled', message: '本机确认已在安全策略（policy.json）中停用' })
   }
-  return new MacHelperBackend(presenceHelperPath(options.codeRoot), options.policy, options.execFile ?? defaultExecFile, options.spawn ?? defaultSpawn)
+  return new MacHelperBackend(
+    presenceHelperPath(options.codeRoot),
+    options.policy,
+    options.execFile ?? defaultExecFile,
+    options.spawn ?? defaultSpawn,
+  )
 }
 
 const CODESIGN = '/usr/bin/codesign'
@@ -149,7 +178,12 @@ class MacHelperBackend implements PresenceBackend {
   readonly kind = 'macos-helper' as const
   private cached?: { at: number; value: PresenceAvailability }
 
-  constructor(private readonly path: string, private readonly policy: PolicyStore, private readonly execFile: ExecFileLike, private readonly spawn: SpawnLike) {}
+  constructor(
+    private readonly path: string,
+    private readonly policy: PolicyStore,
+    private readonly execFile: ExecFileLike,
+    private readonly spawn: SpawnLike,
+  ) {}
 
   async availability(): Promise<PresenceAvailability> {
     if (this.cached && Date.now() - this.cached.at < 60_000) return this.cached.value
@@ -161,8 +195,11 @@ class MacHelperBackend implements PresenceBackend {
   /** File ownership and mode, then the code signature pinned by cdhash (trust on first use). */
   private async check(): Promise<PresenceAvailability> {
     let info
-    try { info = await lstat(this.path) }
-    catch { return { status: 'unavailable', reason: 'helper-missing', message: MISSING_MESSAGE } }
+    try {
+      info = await lstat(this.path)
+    } catch {
+      return { status: 'unavailable', reason: 'helper-missing', message: MISSING_MESSAGE }
+    }
     const uid = process.getuid?.()
     if (!info.isFile() || info.isSymbolicLink() || (info.mode & 0o022) !== 0 || (info.uid !== uid && info.uid !== 0)) {
       return { status: 'unavailable', reason: 'helper-signature', message: SIGNATURE_MESSAGE }
@@ -170,14 +207,16 @@ class MacHelperBackend implements PresenceBackend {
     const signatureValid = async () => (await this.execFile(CODESIGN, ['--verify', '--strict', this.path])).code === 0
     let pinned = this.policy.get().presence.helperCdhash
     if (pinned === null) {
-      if (!await signatureValid()) return { status: 'unavailable', reason: 'helper-signature', message: SIGNATURE_MESSAGE }
+      if (!(await signatureValid())) return { status: 'unavailable', reason: 'helper-signature', message: SIGNATURE_MESSAGE }
       const details = await this.execFile(CODESIGN, ['-dvvv', this.path])
       const cdhash = /^CDHash=([0-9a-f]{40})$/mu.exec(details.stderr)?.[1]
       if (details.code !== 0 || !cdhash) return { status: 'unavailable', reason: 'helper-signature', message: SIGNATURE_MESSAGE }
       // Refused when an earlier pin was lost: the binary here is not necessarily the one first trusted.
-      try { await this.policy.pinHelperCdhash(cdhash) }
-      catch (error) {
-        if (error instanceof AppError && error.code === 'presence-repin-required') return { status: 'unavailable', reason: 'cdhash-mismatch', message: PIN_LOST_MESSAGE }
+      try {
+        await this.policy.pinHelperCdhash(cdhash)
+      } catch (error) {
+        if (error instanceof AppError && error.code === 'presence-repin-required')
+          return { status: 'unavailable', reason: 'cdhash-mismatch', message: PIN_LOST_MESSAGE }
         throw error
       }
       pinned = cdhash
@@ -188,7 +227,13 @@ class MacHelperBackend implements PresenceBackend {
     return { status: 'unavailable', reason: 'helper-signature', message: SIGNATURE_MESSAGE }
   }
 
-  async confirm(request: { preview: PresencePreview; previewHash: string; hashDisplay: string; requireBiometric: boolean; signal: AbortSignal }): Promise<PresenceOutcome> {
+  async confirm(request: {
+    preview: PresencePreview
+    previewHash: string
+    hashDisplay: string
+    requireBiometric: boolean
+    signal: AbortSignal
+  }): Promise<PresenceOutcome> {
     if (request.signal.aborted) return { result: 'cancelled' }
     // Checked again right before every run, never from the cache.
     const availability = await this.check()
@@ -196,13 +241,21 @@ class MacHelperBackend implements PresenceBackend {
     if (availability.status !== 'available') return { result: 'error', message: availability.message }
     if (request.signal.aborted) return { result: 'cancelled' }
     const input = `${JSON.stringify({
-      v: 1, preview: request.preview, previewHash: request.previewHash, hashDisplay: request.hashDisplay,
-      timeoutSeconds: HELPER_TIMEOUT_SECONDS, requireBiometric: request.requireBiometric,
+      v: 1,
+      preview: request.preview,
+      previewHash: request.previewHash,
+      hashDisplay: request.hashDisplay,
+      timeoutSeconds: HELPER_TIMEOUT_SECONDS,
+      requireBiometric: request.requireBiometric,
     })}\n`
     return await new Promise<PresenceOutcome>(resolve => {
       let child: ChildProcessLike
-      try { child = this.spawn(this.path, [], { env: {}, cwd: '/', stdio: ['pipe', 'pipe', 'ignore'] }) }
-      catch { resolve({ result: 'error', message: '无法启动本机确认组件' }); return }
+      try {
+        child = this.spawn(this.path, [], { env: {}, cwd: '/', stdio: ['pipe', 'pipe', 'ignore'] })
+      } catch {
+        resolve({ result: 'error', message: '无法启动本机确认组件' })
+        return
+      }
       let settled = false
       let output = Buffer.alloc(0)
       let overflow = false
@@ -212,7 +265,10 @@ class MacHelperBackend implements PresenceBackend {
         request.signal.removeEventListener('abort', onAbort)
         resolve(outcome)
       }
-      const onAbort = () => { child.kill('SIGTERM'); finish({ result: 'cancelled' }) }
+      const onAbort = () => {
+        child.kill('SIGTERM')
+        finish({ result: 'cancelled' })
+      }
       request.signal.addEventListener('abort', onAbort, { once: true })
       child.once('error', () => finish({ result: 'error', message: '无法启动本机确认组件' }))
       child.stdout?.on('data', (chunk: Buffer) => {
@@ -235,15 +291,22 @@ function parseHelperOutput(text: string, nonce: string, previewHash: string): Pr
   const malformed: PresenceOutcome = { result: 'error', message: '本机确认组件返回了无效结果' }
   const line = text.split('\n')[0] ?? ''
   let value: unknown
-  try { value = JSON.parse(line) } catch { return malformed }
+  try {
+    value = JSON.parse(line)
+  } catch {
+    return malformed
+  }
   if (!value || typeof value !== 'object' || Array.isArray(value)) return malformed
   const record = value as Record<string, unknown>
   switch (record.result) {
     case 'approved':
       if (record.v !== 1 || (record.method !== 'biometric' && record.method !== 'password')) return malformed
-      if (record.nonce !== nonce || record.previewHash !== previewHash) return { result: 'error', message: '本机确认组件返回了不匹配的结果' }
+      if (record.nonce !== nonce || record.previewHash !== previewHash)
+        return { result: 'error', message: '本机确认组件返回了不匹配的结果' }
       return { result: 'approved', method: record.method, nonce, previewHash }
-    case 'denied': case 'cancelled': case 'timeout':
+    case 'denied':
+    case 'cancelled':
+    case 'timeout':
       return { result: record.result }
     case 'error':
       return { result: 'error', message: record.error === 'preview-hash-mismatch' ? '本机确认组件无法核对确认内容' : '本机确认失败' }
@@ -270,7 +333,14 @@ interface Entry {
 }
 
 function ticketOf(record: ConfirmationRecord): ConfirmationTicket {
-  return { id: record.id, action: record.action, title: record.title, status: record.status, hashDisplay: record.hashDisplay, expiresAt: record.expiresAt }
+  return {
+    id: record.id,
+    action: record.action,
+    title: record.title,
+    status: record.status,
+    hashDisplay: record.hashDisplay,
+    expiresAt: record.expiresAt,
+  }
 }
 
 const RETENTION_MS = 10 * 60_000
@@ -300,7 +370,10 @@ export class PresenceService {
   private readonly cooldownUntil = { device: 0, anonymous: 0 }
 
   constructor(options: {
-    backend: PresenceBackend; hostId: string; audit: AuditLog; now?: () => number
+    backend: PresenceBackend
+    hostId: string
+    audit: AuditLog
+    now?: () => number
     /** Returns a Chinese reason while unsandboxed execution runs. */
     blockedReason: () => Promise<string | undefined>
   }) {
@@ -311,13 +384,16 @@ export class PresenceService {
     this.blockedReason = options.blockedReason
   }
 
-  availability(): Promise<PresenceAvailability> { return this.backend.availability() }
+  availability(): Promise<PresenceAvailability> {
+    return this.backend.availability()
+  }
 
   /** Starts one confirmation and returns at once; `settled` resolves when the backend answers. */
   async request(input: {
     action: PresenceAction
     requester: PresencePreview['requester']
-    lines: PresencePreview['lines']; warnings: string[]
+    lines: PresencePreview['lines']
+    warnings: string[]
     paramsHash: string
   }): Promise<ConfirmationRecord> {
     const availability = await this.backend.availability()
@@ -331,7 +407,9 @@ export class PresenceService {
     const until = kind === 'device' ? this.cooldownUntil.device : Math.max(this.cooldownUntil.device, this.cooldownUntil.anonymous)
     if (now < until) {
       const seconds = Math.ceil((until - now) / 1000)
-      throw new AppError(429, 'presence-cooldown', `本机确认连续被拒绝 3 次，请 ${Math.ceil(seconds / 60)} 分钟后再试`, { retryAfter: seconds })
+      throw new AppError(429, 'presence-cooldown', `本机确认连续被拒绝 3 次，请 ${Math.ceil(seconds / 60)} 分钟后再试`, {
+        retryAfter: seconds,
+      })
     }
     this.expire()
     const waiting = this.active && !this.active.done ? this.active : undefined
@@ -341,18 +419,38 @@ export class PresenceService {
     }
 
     const { preview, previewHash, hashDisplay } = buildPreview({
-      hostId: this.hostId, action: input.action, requester: input.requester, lines: input.lines, warnings: input.warnings, now,
+      hostId: this.hostId,
+      action: input.action,
+      requester: input.requester,
+      lines: input.lines,
+      warnings: input.warnings,
+      now,
     })
     if (waiting) this.abandon(waiting)
     const controller = new AbortController()
     let resolveSettled!: (outcome: PresenceOutcome) => void
     const record: ConfirmationRecord = {
-      id: randomId('cfm'), action: input.action, title: preview.title, status: 'pending', hashDisplay,
-      expiresAt: preview.expiresAt, paramsHash: input.paramsHash, previewHash,
+      id: randomId('cfm'),
+      action: input.action,
+      title: preview.title,
+      status: 'pending',
+      hashDisplay,
+      expiresAt: preview.expiresAt,
+      paramsHash: input.paramsHash,
+      previewHash,
       ...(input.requester.deviceId !== undefined ? { requesterDeviceId: input.requester.deviceId } : {}),
-      settled: new Promise(resolve => { resolveSettled = resolve }),
+      settled: new Promise(resolve => {
+        resolveSettled = resolve
+      }),
     }
-    const entry: Entry = { record, requester: input.requester, createdAt: now, expiresAtMs: now + CONFIRMATION_LIFETIME_MS, controller, done: false }
+    const entry: Entry = {
+      record,
+      requester: input.requester,
+      createdAt: now,
+      expiresAtMs: now + CONFIRMATION_LIFETIME_MS,
+      controller,
+      done: false,
+    }
     this.prune(now)
     this.entries.set(record.id, entry)
     this.active = entry
@@ -362,7 +460,13 @@ export class PresenceService {
     void (async () => {
       let outcome: PresenceOutcome
       try {
-        outcome = await this.backend.confirm({ preview, previewHash, hashDisplay, requireBiometric: PRESENCE_ACTIONS[input.action].requireBiometric, signal: controller.signal })
+        outcome = await this.backend.confirm({
+          preview,
+          previewHash,
+          hashDisplay,
+          requireBiometric: PRESENCE_ACTIONS[input.action].requireBiometric,
+          signal: controller.signal,
+        })
       } catch (error) {
         outcome = { result: 'error', message: error instanceof Error ? error.message : '本机确认失败' }
       }
@@ -406,14 +510,25 @@ export class PresenceService {
       }
     }
     if (record.status === 'pending') {
-      record.status = outcome.result === 'denied' ? 'denied' : outcome.result === 'timeout' ? 'expired' : outcome.result === 'cancelled' ? 'cancelled' : 'error'
+      record.status =
+        outcome.result === 'denied'
+          ? 'denied'
+          : outcome.result === 'timeout'
+            ? 'expired'
+            : outcome.result === 'cancelled'
+              ? 'cancelled'
+              : 'error'
     }
     // Denials are privilege-reducing outcomes: an audit failure must not change them.
     const { deviceId, listener } = entry.requester
-    void this.audit.append({
-      action: 'presence.result', actor: { ...(deviceId ? { deviceId } : {}), listener, via: listener === 'cli' ? 'cli' : 'http' }, target: record.id,
-      detail: { confirmationId: record.id, action: record.action, result: outcome.result },
-    }).catch(() => {})
+    void this.audit
+      .append({
+        action: 'presence.result',
+        actor: { ...(deviceId ? { deviceId } : {}), listener, via: listener === 'cli' ? 'cli' : 'http' },
+        target: record.id,
+        detail: { confirmationId: record.id, action: record.action, result: outcome.result },
+      })
+      .catch(() => {})
   }
 
   private expire(): void {
@@ -452,19 +567,29 @@ export class PresenceService {
   }
 
   /** Verifies and consumes an approved confirmation for exactly this binding. */
-  consume(id: string, binding: { action: PresenceAction; requesterDeviceId?: string; paramsHash: string }): { stepup: 'lpc-local'; method: 'biometric' | 'password' } {
+  consume(
+    id: string,
+    binding: { action: PresenceAction; requesterDeviceId?: string; paramsHash: string },
+  ): { stepup: 'lpc-local'; method: 'biometric' | 'password' } {
     this.expire()
     const entry = this.lookup(id, binding.requesterDeviceId)
     if (!entry) throw new AppError(404, 'confirmation-not-found', '找不到该确认')
     const record = entry.record
     switch (record.status) {
-      case 'pending': throw new AppError(409, 'confirmation-pending', '本机尚未确认')
-      case 'denied': throw new AppError(403, 'confirmation-denied', '本机拒绝了此操作')
-      case 'expired': throw new AppError(410, 'confirmation-expired', '本机确认已超时，请重试')
-      case 'cancelled': throw new AppError(410, 'confirmation-cancelled', '本机确认已取消，请重试')
-      case 'error': throw new AppError(409, 'confirmation-failed', '本机确认失败，请重试')
-      case 'consumed': throw new AppError(409, 'confirmation-used', '该确认已使用')
-      case 'approved': break
+      case 'pending':
+        throw new AppError(409, 'confirmation-pending', '本机尚未确认')
+      case 'denied':
+        throw new AppError(403, 'confirmation-denied', '本机拒绝了此操作')
+      case 'expired':
+        throw new AppError(410, 'confirmation-expired', '本机确认已超时，请重试')
+      case 'cancelled':
+        throw new AppError(410, 'confirmation-cancelled', '本机确认已取消，请重试')
+      case 'error':
+        throw new AppError(409, 'confirmation-failed', '本机确认失败，请重试')
+      case 'consumed':
+        throw new AppError(409, 'confirmation-used', '该确认已使用')
+      case 'approved':
+        break
     }
     if (record.action !== binding.action || record.paramsHash !== binding.paramsHash) {
       // The approved preview no longer matches the request: void it so it cannot be replayed with other parameters.

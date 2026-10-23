@@ -10,15 +10,26 @@ import { AuditLog } from '../src/host/audit.ts'
 import { canonicalJson, hashDisplay, sha256Hex } from '../src/host/crypto.ts'
 import { PolicyStore } from '../src/host/policy.ts'
 import {
-  PRESENCE_ACTIONS, PresenceService, buildPreview, createPresenceBackend, escapePreviewText, paramsHash,
-  type ChildProcessLike, type ExecFileLike, type PresenceBackend, type PresenceOutcome, type SpawnLike,
+  PRESENCE_ACTIONS,
+  PresenceService,
+  buildPreview,
+  createPresenceBackend,
+  escapePreviewText,
+  paramsHash,
+  type ChildProcessLike,
+  type ExecFileLike,
+  type PresenceBackend,
+  type PresenceOutcome,
+  type SpawnLike,
 } from '../src/host/presence.ts'
 import { escapeSecurityText, isAcceptableDeviceName } from '../src/shared/text.ts'
 import { ESCAPE_PREVIEW_VECTORS, P256_VECTOR, PREVIEW_HASH_VECTORS, SECURITY_VECTORS } from './helpers/crypto.ts'
 import { createTestPresence, type TestPresence } from './helpers/presence.ts'
 
 const cleanups: Array<() => Promise<void> | void> = []
-afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
+})
 
 function temp(): string {
   const path = mkdtempSync(join(tmpdir(), 'harness-link-presence-'))
@@ -35,7 +46,11 @@ async function auditLog(dataDir = temp()): Promise<{ audit: AuditLog; dataDir: s
 function auditActions(dataDir: string): Array<{ action: string; detail: Record<string, unknown> }> {
   const path = join(dataDir, 'audit', 'audit.jsonl')
   if (!existsSync(path)) return []
-  return readFileSync(path, 'utf8').trimEnd().split('\n').filter(Boolean).map(line => JSON.parse(line))
+  return readFileSync(path, 'utf8')
+    .trimEnd()
+    .split('\n')
+    .filter(Boolean)
+    .map(line => JSON.parse(line))
 }
 
 const hostId = P256_VECTOR.hostId
@@ -44,11 +59,21 @@ const requester = { deviceId, deviceName: '桌面', listener: 'unix' as const, r
 
 async function service(backend: PresenceBackend, options: { now?: () => number; blocked?: () => Promise<string | undefined> } = {}) {
   const { audit, dataDir } = await auditLog()
-  const presence = new PresenceService({ backend, hostId, audit, now: options.now, blockedReason: options.blocked ?? (async () => undefined) })
+  const presence = new PresenceService({
+    backend,
+    hostId,
+    audit,
+    now: options.now,
+    blockedReason: options.blocked ?? (async () => undefined),
+  })
   return { presence, dataDir }
 }
 
-function request(action: keyof typeof PRESENCE_ACTIONS = 'approval.r2', params: Record<string, unknown> = { approvalId: 'a-1' }, who = requester) {
+function request(
+  action: keyof typeof PRESENCE_ACTIONS = 'approval.r2',
+  params: Record<string, unknown> = { approvalId: 'a-1' },
+  who = requester,
+) {
   return { action, requester: who, lines: [{ label: '工具', value: 'write_file' }], warnings: [], paramsHash: paramsHash(action, params) }
 }
 
@@ -61,7 +86,14 @@ describe('preview text and hashing', () => {
 
   it('leaves emoji joiners and presentation selectors alone only inside an emoji', () => {
     expect(escapePreviewText).toBe(escapeSecurityText)
-    const kept = ['\u2764\uFE0F', '\u{1F468}\u200D\u{1F4BB}', '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}', '1\uFE0F\u20E3', '*\uFE0E\u20E3', '\u263A\uFE0E']
+    const kept = [
+      '\u2764\uFE0F',
+      '\u{1F468}\u200D\u{1F4BB}',
+      '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}',
+      '1\uFE0F\u20E3',
+      '*\uFE0E\u20E3',
+      '\u263A\uFE0E',
+    ]
     for (const text of kept) expect(escapeSecurityText(text)).toBe(text)
     // A joiner counts only directly between two pictographs, not after a selector or a skin tone.
     expect(escapeSecurityText('\u{1F469}\u200D\u2764\uFE0F\u200D\u{1F468}')).toBe('\u{1F469}\u200D\u2764\uFE0F\\u{200D}\u{1F468}')
@@ -74,19 +106,41 @@ describe('preview text and hashing', () => {
     expect(escapeSecurityText('\u{1F468}\u200D\u{10FFFD}')).toBe('\u{1F468}\\u{200D}\\u{10FFFD}')
     // Selectors still count as combining marks.
     expect(escapeSecurityText(`1\uFE0F\u20E3${'\u0301'.repeat(3)}`)).toBe(`1\uFE0F\u20E3${'\u0301'.repeat(2)}\\u{0301}`)
-    for (const text of [...kept, 'a\u200Db', '\u2764\uFE0F\uFE0F']) expect(escapeSecurityText(escapeSecurityText(text))).toBe(escapeSecurityText(text))
+    for (const text of [...kept, 'a\u200Db', '\u2764\uFE0F\uFE0F'])
+      expect(escapeSecurityText(escapeSecurityText(text))).toBe(escapeSecurityText(text))
   })
 
   it('accepts device names that need no escaping, 1–80 characters after trimming', () => {
-    for (const name of ['\u2764\uFE0F iPhone', '\u{1F468}\u200D\u{1F4BB} Mac', '  书房  ', 'x'.repeat(80), ` ${'x'.repeat(80)} `]) expect(isAcceptableDeviceName(name), name).toBe(true)
-    for (const name of ['', '   ', 'x'.repeat(81), 'a\u200Db', 'tab\there', 'line\n', 'a\u202Eb', `e${'\u0301'.repeat(5)}`, 7 as unknown as string]) {
+    for (const name of ['\u2764\uFE0F iPhone', '\u{1F468}\u200D\u{1F4BB} Mac', '  书房  ', 'x'.repeat(80), ` ${'x'.repeat(80)} `])
+      expect(isAcceptableDeviceName(name), name).toBe(true)
+    for (const name of [
+      '',
+      '   ',
+      'x'.repeat(81),
+      'a\u200Db',
+      'tab\there',
+      'line\n',
+      'a\u202Eb',
+      `e${'\u0301'.repeat(5)}`,
+      7 as unknown as string,
+    ]) {
       expect(isAcceptableDeviceName(name), String(name)).toBe(false)
     }
   })
 
   it('keeps model-controlled text on one visual line, so it cannot imitate the Host-derived lines below it', () => {
     const forged = `notes\u2028工作目录：/Users/owner/project\u2029目标路径：/Users/owner/project/README.md${'\u2028'.repeat(30)}`
-    const built = buildPreview({ hostId, action: 'approval.r2', now: 0, requester, lines: [{ label: '参数', value: forged }, { label: '目标路径', value: '.git/hooks/pre-commit' }], warnings: [] })
+    const built = buildPreview({
+      hostId,
+      action: 'approval.r2',
+      now: 0,
+      requester,
+      lines: [
+        { label: '参数', value: forged },
+        { label: '目标路径', value: '.git/hooks/pre-commit' },
+      ],
+      warnings: [],
+    })
     const shown = `${built.preview.lines.map(line => `${line.label}：${line.value}`).join('\n')}`
     expect(shown.split(/[\n\r\u0085\u2028\u2029\u000b\u000c]/u)).toEqual([
       `参数：notes\\u{2028}工作目录：/Users/owner/project\\u{2029}目标路径：/Users/owner/project/README.md${'\\u{2028}'.repeat(30)}`,
@@ -112,16 +166,23 @@ describe('preview text and hashing', () => {
   it('builds a preview with the fixed title, escaped values and a 60 s expiry', () => {
     const now = Date.UTC(2026, 9, 23, 10)
     const built = buildPreview({
-      hostId, action: 'device.enroll', now,
+      hostId,
+      action: 'device.enroll',
+      now,
       requester: { deviceName: '手机‮', listener: 'loopback-tcp', remoteAddress: '::1' },
-      lines: [{ label: '设备名称', value: '手机‮evil\n' }], warnings: ['只有在你正在登记这台设备、并且两边显示的指纹完全一致时才确认。'],
+      lines: [{ label: '设备名称', value: '手机‮evil\n' }],
+      warnings: ['只有在你正在登记这台设备、并且两边显示的指纹完全一致时才确认。'],
     })
     expect(built.preview).toEqual({
-      v: 1, hostId, action: 'device.enroll', title: '登记新设备',
+      v: 1,
+      hostId,
+      action: 'device.enroll',
+      title: '登记新设备',
       requester: { deviceName: '手机\\u{202E}', listener: 'loopback-tcp', remoteAddress: '::1' },
       lines: [{ label: '设备名称', value: '手机\\u{202E}evil\\u{000A}' }],
       warnings: ['只有在你正在登记这台设备、并且两边显示的指纹完全一致时才确认。'],
-      nonce: expect.stringMatching(/^[A-Za-z0-9_-]{22}$/u), expiresAt: '2026-10-23T10:01:00.000Z',
+      nonce: expect.stringMatching(/^[A-Za-z0-9_-]{22}$/u),
+      expiresAt: '2026-10-23T10:01:00.000Z',
     })
     expect(built.previewHash).toBe(sha256Hex(canonicalJson(built.preview)))
     expect(built.hashDisplay).toBe(hashDisplay(built.previewHash))
@@ -131,8 +192,16 @@ describe('preview text and hashing', () => {
   })
 
   it('refuses previews larger than 64 KiB', () => {
-    expect(() => buildPreview({ hostId, action: 'approval.r2', now: 0, requester, lines: [{ label: '参数', value: 'x'.repeat(70_000) }], warnings: [] }))
-      .toThrow(expect.objectContaining({ status: 413, code: 'preview-too-large' }))
+    expect(() =>
+      buildPreview({
+        hostId,
+        action: 'approval.r2',
+        now: 0,
+        requester,
+        lines: [{ label: '参数', value: 'x'.repeat(70_000) }],
+        warnings: [],
+      }),
+    ).toThrow(expect.objectContaining({ status: 413, code: 'preview-too-large' }))
   })
 
   it('binds parameters independent of key order', () => {
@@ -142,7 +211,11 @@ describe('preview text and hashing', () => {
   })
 
   it('requires biometrics for class A actions only', () => {
-    expect(Object.entries(PRESENCE_ACTIONS).filter(([, value]) => !value.requireBiometric).map(([key]) => key)).toEqual(['provider.set-key', 'approval.r2'])
+    expect(
+      Object.entries(PRESENCE_ACTIONS)
+        .filter(([, value]) => !value.requireBiometric)
+        .map(([key]) => key),
+    ).toEqual(['provider.set-key', 'approval.r2'])
   })
 })
 
@@ -153,10 +226,21 @@ describe('PresenceService', () => {
     const record = await presence.request(request())
     expect(record).toMatchObject({ id: expect.stringMatching(/^cfm_/u), action: 'approval.r2', title: '批准高风险操作（R2）' })
     await expect(record.settled).resolves.toMatchObject({ result: 'approved' })
-    expect(presence.get(record.id, deviceId)).toEqual({ id: record.id, action: 'approval.r2', title: '批准高风险操作（R2）', status: 'approved', hashDisplay: record.hashDisplay, expiresAt: record.expiresAt })
+    expect(presence.get(record.id, deviceId)).toEqual({
+      id: record.id,
+      action: 'approval.r2',
+      title: '批准高风险操作（R2）',
+      status: 'approved',
+      hashDisplay: record.hashDisplay,
+      expiresAt: record.expiresAt,
+    })
     expect(backend.requests[0]!.requireBiometric).toBe(false)
     expect(backend.requests[0]!.preview.requester).toEqual(requester)
-    const binding = { action: 'approval.r2' as const, requesterDeviceId: deviceId, paramsHash: paramsHash('approval.r2', { approvalId: 'a-1' }) }
+    const binding = {
+      action: 'approval.r2' as const,
+      requesterDeviceId: deviceId,
+      paramsHash: paramsHash('approval.r2', { approvalId: 'a-1' }),
+    }
     expect(presence.consume(record.id, binding)).toEqual({ stepup: 'lpc-local', method: 'password' })
     expect(presence.get(record.id, deviceId)?.status).toBe('consumed')
     expect(() => presence.consume(record.id, binding)).toThrow(expect.objectContaining({ status: 409, code: 'confirmation-used' }))
@@ -164,20 +248,29 @@ describe('PresenceService', () => {
 
   it('refuses another device, another action or other parameters', async () => {
     const { presence } = await service(createTestPresence())
-    const binding = { action: 'approval.r2' as const, requesterDeviceId: deviceId, paramsHash: paramsHash('approval.r2', { approvalId: 'a-1' }) }
+    const binding = {
+      action: 'approval.r2' as const,
+      requesterDeviceId: deviceId,
+      paramsHash: paramsHash('approval.r2', { approvalId: 'a-1' }),
+    }
     const first = await presence.request(request())
     await first.settled
     expect(presence.get(first.id, `dev_${'D'.repeat(22)}`)).toBeUndefined()
     expect(presence.get(first.id)).toBeUndefined()
-    expect(() => presence.consume(first.id, { ...binding, requesterDeviceId: `dev_${'D'.repeat(22)}` })).toThrow(expect.objectContaining({ status: 404, code: 'confirmation-not-found' }))
+    expect(() => presence.consume(first.id, { ...binding, requesterDeviceId: `dev_${'D'.repeat(22)}` })).toThrow(
+      expect.objectContaining({ status: 404, code: 'confirmation-not-found' }),
+    )
     expect(() => presence.consume('cfm_missing', binding)).toThrow(expect.objectContaining({ status: 404 }))
-    expect(() => presence.consume(first.id, { ...binding, paramsHash: paramsHash('approval.r2', { approvalId: 'a-2' }) }))
-      .toThrow(expect.objectContaining({ status: 409, code: 'confirmation-mismatch' }))
+    expect(() => presence.consume(first.id, { ...binding, paramsHash: paramsHash('approval.r2', { approvalId: 'a-2' }) })).toThrow(
+      expect.objectContaining({ status: 409, code: 'confirmation-mismatch' }),
+    )
     // A mismatched attempt voids the confirmation.
     expect(() => presence.consume(first.id, binding)).toThrow(expect.objectContaining({ code: 'confirmation-cancelled' }))
     const second = await presence.request(request())
     await second.settled
-    expect(() => presence.consume(second.id, { ...binding, action: 'policy.change' })).toThrow(expect.objectContaining({ code: 'confirmation-mismatch' }))
+    expect(() => presence.consume(second.id, { ...binding, action: 'policy.change' })).toThrow(
+      expect.objectContaining({ code: 'confirmation-mismatch' }),
+    )
   })
 
   it('allows one confirmation at a time', async () => {
@@ -185,13 +278,19 @@ describe('PresenceService', () => {
     const { presence } = await service(backend)
     const first = await presence.request(request())
     await backend.waitForRequest()
-    await expect(presence.request(request())).rejects.toMatchObject({ status: 409, code: 'presence-busy', message: '本机正在等待另一项确认，请先完成或取消' })
-    expect(() => presence.consume(first.id, { action: 'approval.r2', requesterDeviceId: deviceId, paramsHash: first.paramsHash }))
-      .toThrow(expect.objectContaining({ status: 409, code: 'confirmation-pending' }))
+    await expect(presence.request(request())).rejects.toMatchObject({
+      status: 409,
+      code: 'presence-busy',
+      message: '本机正在等待另一项确认，请先完成或取消',
+    })
+    expect(() => presence.consume(first.id, { action: 'approval.r2', requesterDeviceId: deviceId, paramsHash: first.paramsHash })).toThrow(
+      expect.objectContaining({ status: 409, code: 'confirmation-pending' }),
+    )
     backend.denyNext()
     await first.settled
-    expect(() => presence.consume(first.id, { action: 'approval.r2', requesterDeviceId: deviceId, paramsHash: first.paramsHash }))
-      .toThrow(expect.objectContaining({ status: 403, code: 'confirmation-denied' }))
+    expect(() => presence.consume(first.id, { action: 'approval.r2', requesterDeviceId: deviceId, paramsHash: first.paramsHash })).toThrow(
+      expect.objectContaining({ status: 403, code: 'confirmation-denied' }),
+    )
     await expect(presence.request(request())).resolves.toMatchObject({ status: 'pending' })
   })
 
@@ -204,8 +303,9 @@ describe('PresenceService', () => {
     now += 60_001
     expect(presence.get(pending.id, deviceId)?.status).toBe('expired')
     await expect(pending.settled).resolves.toEqual({ result: 'timeout' })
-    expect(() => presence.consume(pending.id, { action: 'approval.r2', requesterDeviceId: deviceId, paramsHash: pending.paramsHash }))
-      .toThrow(expect.objectContaining({ status: 410, code: 'confirmation-expired' }))
+    expect(() =>
+      presence.consume(pending.id, { action: 'approval.r2', requesterDeviceId: deviceId, paramsHash: pending.paramsHash }),
+    ).toThrow(expect.objectContaining({ status: 410, code: 'confirmation-expired' }))
 
     backend.mode = 'approve'
     const approved = await presence.request(request())
@@ -213,8 +313,9 @@ describe('PresenceService', () => {
     now += 59_000
     expect(presence.get(approved.id, deviceId)?.status).toBe('approved')
     now += 2_000
-    expect(() => presence.consume(approved.id, { action: 'approval.r2', requesterDeviceId: deviceId, paramsHash: approved.paramsHash }))
-      .toThrow(expect.objectContaining({ status: 410 }))
+    expect(() =>
+      presence.consume(approved.id, { action: 'approval.r2', requesterDeviceId: deviceId, paramsHash: approved.paramsHash }),
+    ).toThrow(expect.objectContaining({ status: 410 }))
     await expect.poll(() => auditActions(dataDir).map(record => record.detail.result)).toEqual(['timeout'])
   })
 
@@ -223,16 +324,28 @@ describe('PresenceService', () => {
     const backend = createTestPresence({ mode: 'deny' })
     const { presence, dataDir } = await service(backend, { now: () => now })
     const deny = async () => (await presence.request(request())).settled
-    await deny(); await deny()
+    await deny()
+    await deny()
     backend.mode = 'approve'
-    await (await presence.request(request())).settled
+    await (
+      await presence.request(request())
+    ).settled
     backend.mode = 'deny'
-    await deny(); await deny()
+    await deny()
+    await deny()
     await expect(presence.request(request())).resolves.toBeTruthy()
     await new Promise(resolve => setTimeout(resolve, 0))
-    await expect(presence.request(request())).rejects.toMatchObject({ status: 429, code: 'presence-cooldown', message: '本机确认连续被拒绝 3 次，请 5 分钟后再试', details: { retryAfter: 300 } })
+    await expect(presence.request(request())).rejects.toMatchObject({
+      status: 429,
+      code: 'presence-cooldown',
+      message: '本机确认连续被拒绝 3 次，请 5 分钟后再试',
+      details: { retryAfter: 300 },
+    })
     now += 4 * 60_000
-    await expect(presence.request(request())).rejects.toMatchObject({ message: '本机确认连续被拒绝 3 次，请 1 分钟后再试', details: { retryAfter: 60 } })
+    await expect(presence.request(request())).rejects.toMatchObject({
+      message: '本机确认连续被拒绝 3 次，请 1 分钟后再试',
+      details: { retryAfter: 60 },
+    })
     now += 60_001
     backend.mode = 'approve'
     await expect(presence.request(request())).resolves.toBeTruthy()
@@ -250,7 +363,11 @@ describe('PresenceService', () => {
       await record.settled
     }
     backend.mode = 'unavailable'
-    await expect(presence.request(request())).rejects.toMatchObject({ status: 503, code: 'presence-unavailable', message: '本机确认不可用：测试中的本机确认不可用' })
+    await expect(presence.request(request())).rejects.toMatchObject({
+      status: 503,
+      code: 'presence-unavailable',
+      message: '本机确认不可用：测试中的本机确认不可用',
+    })
     backend.mode = 'approve'
     await expect(presence.request(request())).resolves.toBeTruthy()
   })
@@ -283,7 +400,11 @@ describe('PresenceService', () => {
   it('refuses new confirmations while unsandboxed execution runs', async () => {
     let blocked: string | undefined = 'L3 会话运行中'
     const { presence } = await service(createTestPresence(), { blocked: async () => blocked })
-    await expect(presence.request(request())).rejects.toMatchObject({ status: 409, code: 'presence-blocked', message: '有完全访问会话正在运行，本机确认暂时只能用于拒绝。请等待其结束或取消后重试。' })
+    await expect(presence.request(request())).rejects.toMatchObject({
+      status: 409,
+      code: 'presence-blocked',
+      message: '有完全访问会话正在运行，本机确认暂时只能用于拒绝。请等待其结束或取消后重试。',
+    })
     blocked = undefined
     await expect(presence.request(request())).resolves.toBeTruthy()
   })
@@ -291,11 +412,15 @@ describe('PresenceService', () => {
   it('binds anonymous host.sock requests to the anonymous requester', async () => {
     const backend: TestPresence = createTestPresence()
     const { presence } = await service(backend)
-    const record = await presence.request(request('device.enroll', { enrollmentId: 'enr_x' }, { listener: 'unix', remoteAddress: '本机 host.sock' } as never))
+    const record = await presence.request(
+      request('device.enroll', { enrollmentId: 'enr_x' }, { listener: 'unix', remoteAddress: '本机 host.sock' } as never),
+    )
     await record.settled
     expect(backend.requests[0]!.requireBiometric).toBe(true)
     expect(presence.get(record.id, deviceId)).toBeUndefined()
-    expect(presence.consume(record.id, { action: 'device.enroll', paramsHash: paramsHash('device.enroll', { enrollmentId: 'enr_x' }) })).toMatchObject({ stepup: 'lpc-local' })
+    expect(
+      presence.consume(record.id, { action: 'device.enroll', paramsHash: paramsHash('device.enroll', { enrollmentId: 'enr_x' }) }),
+    ).toMatchObject({ stepup: 'lpc-local' })
   })
 })
 
@@ -303,7 +428,7 @@ describe('PresenceService fairness between enrollments and the owner', () => {
   const anonymous = { listener: 'loopback-tcp' as const, remoteAddress: '127.0.0.1' }
   const enrollRequest = () => request('device.enroll', { enrollmentId: 'enr_x' }, anonymous as never)
 
-  it('lets the owner\'s desktop take the dialog back from a pending anonymous enrollment', async () => {
+  it("lets the owner's desktop take the dialog back from a pending anonymous enrollment", async () => {
     const backend = createTestPresence({ mode: 'manual' })
     const { presence, dataDir } = await service(backend)
     const stranger = await presence.request(enrollRequest())
@@ -326,7 +451,9 @@ describe('PresenceService fairness between enrollments and the owner', () => {
     // Another enrollment, or a device that is not the desktop, still waits its turn.
     await expect(presence.request(enrollRequest())).rejects.toMatchObject({ status: 409, code: 'presence-busy' })
     const browser = { deviceId, deviceName: '浏览器', listener: 'loopback-tcp' as const, remoteAddress: '127.0.0.1' }
-    await expect(presence.request(request('approval.r2', { approvalId: 'a-1' }, browser as never))).rejects.toMatchObject({ code: 'presence-busy' })
+    await expect(presence.request(request('approval.r2', { approvalId: 'a-1' }, browser as never))).rejects.toMatchObject({
+      code: 'presence-busy',
+    })
     // A device request is never pre-empted by an enrollment.
     const second = await service(createTestPresence({ mode: 'manual' }))
     await second.presence.request(request())
@@ -343,7 +470,7 @@ describe('PresenceService fairness between enrollments and the owner', () => {
     await expect(presence.request(enrollRequest())).rejects.toMatchObject({ status: 429, code: 'presence-cooldown' })
   })
 
-  it('still cools down everything after the owner\'s own requests are denied three times', async () => {
+  it("still cools down everything after the owner's own requests are denied three times", async () => {
     const backend = createTestPresence({ mode: 'deny' })
     const { presence } = await service(backend)
     for (let index = 0; index < 3; index++) await (await presence.request(request())).settled
@@ -371,7 +498,9 @@ class FakeChild extends EventEmitter implements ChildProcessLike {
     this.stdout.end()
     setTimeout(() => this.emit('exit', 0, null), 5)
   }
-  input(): Record<string, unknown> { return JSON.parse(Buffer.concat(this.received).toString('utf8')) }
+  input(): Record<string, unknown> {
+    return JSON.parse(Buffer.concat(this.received).toString('utf8'))
+  }
 }
 
 describe('macOS helper backend', () => {
@@ -379,7 +508,12 @@ describe('macOS helper backend', () => {
     const codeRoot = temp()
     const { audit, dataDir } = await auditLog()
     const policy = await PolicyStore.open({ dataDir, audit, platform: 'darwin' })
-    if (options.backend === 'none') await policy.update({ ...policy.get(), presence: { backend: 'none', helperCdhash: null } }, { listener: 'cli', via: 'cli' }, 'offline')
+    if (options.backend === 'none')
+      await policy.update(
+        { ...policy.get(), presence: { backend: 'none', helperCdhash: null } },
+        { listener: 'cli', via: 'cli' },
+        'offline',
+      )
     const helper = join(codeRoot, 'dist', 'native', 'latch-presence')
     if (options.helper !== false) {
       mkdirSync(join(codeRoot, 'dist', 'native'), { recursive: true })
@@ -408,12 +542,23 @@ describe('macOS helper backend', () => {
   }
 
   const confirmInput = () => {
-    const built = buildPreview({ hostId, action: 'device.enroll', now: Date.now(), requester, lines: [{ label: '设备名称', value: '手机' }], warnings: [] })
+    const built = buildPreview({
+      hostId,
+      action: 'device.enroll',
+      now: Date.now(),
+      requester,
+      lines: [{ label: '设备名称', value: '手机' }],
+      warnings: [],
+    })
     return { ...built, requireBiometric: true }
   }
 
   it('is unavailable off macOS or when disabled by policy', async () => {
-    await expect((await setup({ platform: 'linux' })).backend.availability()).resolves.toEqual({ status: 'unavailable', reason: 'platform', message: '此系统暂不支持本机确认（Touch ID 或登录密码）' })
+    await expect((await setup({ platform: 'linux' })).backend.availability()).resolves.toEqual({
+      status: 'unavailable',
+      reason: 'platform',
+      message: '此系统暂不支持本机确认（Touch ID 或登录密码）',
+    })
     const disabled = await setup({ backend: 'none' })
     expect(disabled.backend.kind).toBe('none')
     await expect(disabled.backend.availability()).resolves.toMatchObject({ status: 'unavailable', reason: 'disabled' })
@@ -421,7 +566,9 @@ describe('macOS helper backend', () => {
 
   it('reports a missing helper, insecure file or bad signature', async () => {
     await expect((await setup({ helper: false })).backend.availability()).resolves.toEqual({
-      status: 'unavailable', reason: 'helper-missing', message: '未找到本机确认组件。请运行 pnpm build:presence 后重启 Host。',
+      status: 'unavailable',
+      reason: 'helper-missing',
+      message: '未找到本机确认组件。请运行 pnpm build:presence 后重启 Host。',
     })
     await expect((await setup({ mode: 0o775 })).backend.availability()).resolves.toMatchObject({ reason: 'helper-signature' })
     const unsigned = await setup()
@@ -439,7 +586,8 @@ describe('macOS helper backend', () => {
     const input = confirmInput()
     // Every confirm re-checks, never from the cache.
     await expect(context.backend.confirm({ ...input, signal: new AbortController().signal })).resolves.toEqual({
-      result: 'error', message: '本机确认组件与登记的签名不一致。如果你重新构建了它，请停止 Host 后运行 pnpm latch presence repin。',
+      result: 'error',
+      message: '本机确认组件与登记的签名不一致。如果你重新构建了它，请停止 Host 后运行 pnpm latch presence repin。',
     })
     expect(context.children).toHaveLength(0)
     context.codesign.verify = 1
@@ -450,12 +598,23 @@ describe('macOS helper backend', () => {
     const context = await setup()
     await expect(context.backend.availability()).resolves.toEqual({ status: 'available', backend: 'macos-helper' })
     // policy.json reset outside Latch: the pin is gone, the audit log still records it.
-    writeFileSync(join(context.dataDir, 'policy.json'), JSON.stringify({ ...context.policy.get(), presence: { backend: 'macos-helper', helperCdhash: null } }))
+    writeFileSync(
+      join(context.dataDir, 'policy.json'),
+      JSON.stringify({ ...context.policy.get(), presence: { backend: 'macos-helper', helperCdhash: null } }),
+    )
     const reopened = await PolicyStore.open({ dataDir: context.dataDir, audit: context.audit, platform: 'darwin' })
-    const backend = createPresenceBackend({ platform: 'darwin', codeRoot: context.codeRoot, policy: reopened, execFile: context.execFile, spawn: context.spawn })
+    const backend = createPresenceBackend({
+      platform: 'darwin',
+      codeRoot: context.codeRoot,
+      policy: reopened,
+      execFile: context.execFile,
+      spawn: context.spawn,
+    })
     // The helper itself is fine; only the pin is gone, so the fix is a repin, not a rebuild.
     await expect(backend.availability()).resolves.toEqual({
-      status: 'unavailable', reason: 'cdhash-mismatch', message: '本机确认组件的登记签名已丢失（policy.json 被修改或删除）。请停止 Host 后运行 pnpm latch presence repin。',
+      status: 'unavailable',
+      reason: 'cdhash-mismatch',
+      message: '本机确认组件的登记签名已丢失（policy.json 被修改或删除）。请停止 Host 后运行 pnpm latch presence repin。',
     })
     expect(reopened.get().presence.helperCdhash).toBeNull()
   })
@@ -468,19 +627,41 @@ describe('macOS helper backend', () => {
     const child = context.children[0]!
     await expect.poll(() => child.received.length).toBeGreaterThan(0)
     expect(context.spawns[0]).toEqual({ file: context.helper, options: { env: {}, cwd: '/', stdio: ['pipe', 'pipe', 'ignore'] } })
-    expect(child.input()).toEqual({ v: 1, preview: input.preview, previewHash: input.previewHash, hashDisplay: input.hashDisplay, timeoutSeconds: 55, requireBiometric: true })
-    child.reply(`${JSON.stringify({ v: 1, nonce: input.preview.nonce, previewHash: input.previewHash, result: 'approved', method: 'biometric' })}\n`)
-    await expect(pending).resolves.toEqual({ result: 'approved', method: 'biometric', nonce: input.preview.nonce, previewHash: input.previewHash })
+    expect(child.input()).toEqual({
+      v: 1,
+      preview: input.preview,
+      previewHash: input.previewHash,
+      hashDisplay: input.hashDisplay,
+      timeoutSeconds: 55,
+      requireBiometric: true,
+    })
+    child.reply(
+      `${JSON.stringify({ v: 1, nonce: input.preview.nonce, previewHash: input.previewHash, result: 'approved', method: 'biometric' })}\n`,
+    )
+    await expect(pending).resolves.toEqual({
+      result: 'approved',
+      method: 'biometric',
+      nonce: input.preview.nonce,
+      previewHash: input.previewHash,
+    })
   })
 
   it.each<[string, string, PresenceOutcome]>([
     ['denied', '{"v":1,"nonce":"n","previewHash":"h","result":"denied"}\n', { result: 'denied' }],
     ['timeout', '{"v":1,"result":"timeout"}\n', { result: 'timeout' }],
-    ['hash mismatch', '{"v":1,"result":"error","error":"preview-hash-mismatch"}\n', { result: 'error', message: '本机确认组件无法核对确认内容' }],
+    [
+      'hash mismatch',
+      '{"v":1,"result":"error","error":"preview-hash-mismatch"}\n',
+      { result: 'error', message: '本机确认组件无法核对确认内容' },
+    ],
     ['malformed', 'not json\n', { result: 'error', message: '本机确认组件返回了无效结果' }],
     ['empty', '', { result: 'error', message: '本机确认组件返回了无效结果' }],
     ['unknown result', '{"v":1,"result":"maybe"}\n', { result: 'error', message: '本机确认组件返回了无效结果' }],
-    ['wrong echo', '{"v":1,"nonce":"x","previewHash":"y","result":"approved","method":"biometric"}\n', { result: 'error', message: '本机确认组件返回了不匹配的结果' }],
+    [
+      'wrong echo',
+      '{"v":1,"nonce":"x","previewHash":"y","result":"approved","method":"biometric"}\n',
+      { result: 'error', message: '本机确认组件返回了不匹配的结果' },
+    ],
   ])('maps helper output: %s', async (_name, output, expected) => {
     const context = await setup()
     const pending = context.backend.confirm({ ...confirmInput(), signal: new AbortController().signal })
@@ -509,17 +690,28 @@ describe('macOS helper backend', () => {
 describe('macOS helper self-test', () => {
   const helper = resolve('dist/native/latch-presence')
   // The only automated run of the real helper: no window, no LocalAuthentication.
-  it.skipIf(process.platform !== 'darwin' || !existsSync(helper))('reproduces canonical JSON, preview hashes and display escaping byte for byte', async () => {
-    const { stdout } = await promisify(execFile)(helper, ['--self-test', resolve('tests/vectors/security-v1.json')], { env: {}, cwd: '/', timeout: 10_000 })
-    const result = JSON.parse(stdout.trim()) as {
-      ok: boolean; canonicalJson: Array<{ ok: boolean; sha256: string }>; previewHash: Array<{ ok: boolean; previewHash: string; hashDisplay: string }>
-      escapePreviewText: boolean[]
-    }
-    const canonical = [SECURITY_VECTORS.canonicalJson, ...SECURITY_VECTORS.canonicalJsonCases]
-    expect(result.canonicalJson).toEqual(canonical.map(vector => ({ ok: true, sha256: vector.sha256 })))
-    expect(result.previewHash).toEqual(PREVIEW_HASH_VECTORS.map(vector => ({ ok: true, previewHash: vector.previewHash, hashDisplay: vector.hashDisplay })))
-    // The dialog escapes text exactly like the Host.
-    expect(result.escapePreviewText).toEqual(ESCAPE_PREVIEW_VECTORS.map(() => true))
-    expect(result.ok).toBe(true)
-  })
+  it.skipIf(process.platform !== 'darwin' || !existsSync(helper))(
+    'reproduces canonical JSON, preview hashes and display escaping byte for byte',
+    async () => {
+      const { stdout } = await promisify(execFile)(helper, ['--self-test', resolve('tests/vectors/security-v1.json')], {
+        env: {},
+        cwd: '/',
+        timeout: 10_000,
+      })
+      const result = JSON.parse(stdout.trim()) as {
+        ok: boolean
+        canonicalJson: Array<{ ok: boolean; sha256: string }>
+        previewHash: Array<{ ok: boolean; previewHash: string; hashDisplay: string }>
+        escapePreviewText: boolean[]
+      }
+      const canonical = [SECURITY_VECTORS.canonicalJson, ...SECURITY_VECTORS.canonicalJsonCases]
+      expect(result.canonicalJson).toEqual(canonical.map(vector => ({ ok: true, sha256: vector.sha256 })))
+      expect(result.previewHash).toEqual(
+        PREVIEW_HASH_VECTORS.map(vector => ({ ok: true, previewHash: vector.previewHash, hashDisplay: vector.hashDisplay })),
+      )
+      // The dialog escapes text exactly like the Host.
+      expect(result.escapePreviewText).toEqual(ESCAPE_PREVIEW_VECTORS.map(() => true))
+      expect(result.ok).toBe(true)
+    },
+  )
 })

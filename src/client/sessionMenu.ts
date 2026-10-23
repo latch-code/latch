@@ -16,14 +16,33 @@ export function sessionMenuSections(task: TaskSummary, actions: SessionActions, 
   const exportItem = { id: 'export', label: '导出 Markdown', icon: Download, onSelect: actions.export }
   if (!manage) return [{ id: 'manage', items: [exportItem] }]
   return [
-    { id: 'manage', items: [
-      { id: 'rename', label: '重命名', icon: PenLine, onSelect: actions.rename },
-      { id: 'pin', label: task.pinned ? '取消置顶' : '置顶', icon: task.pinned ? PinOff : Pin, onSelect: actions.pin },
-      { id: 'archive', label: task.archived ? '取消归档' : '归档', icon: task.archived ? ArchiveRestore : Archive, onSelect: actions.archive },
-      exportItem,
-    ] },
-    { id: 'danger', items: [
-      { id: 'delete', label: '删除', icon: Trash, danger: true, disabled: isActive(task.status), disabledReason: '运行中的会话需要先停止', onSelect: actions.remove },
-    ] },
+    {
+      id: 'manage',
+      items: [
+        { id: 'rename', label: '重命名', icon: PenLine, onSelect: actions.rename },
+        { id: 'pin', label: task.pinned ? '取消置顶' : '置顶', icon: task.pinned ? PinOff : Pin, onSelect: actions.pin },
+        {
+          id: 'archive',
+          label: task.archived ? '取消归档' : '归档',
+          icon: task.archived ? ArchiveRestore : Archive,
+          onSelect: actions.archive,
+        },
+        exportItem,
+      ],
+    },
+    {
+      id: 'danger',
+      items: [
+        {
+          id: 'delete',
+          label: '删除',
+          icon: Trash,
+          danger: true,
+          disabled: isActive(task.status),
+          disabledReason: '运行中的会话需要先停止',
+          onSelect: actions.remove,
+        },
+      ],
+    },
   ]
 }

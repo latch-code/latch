@@ -6,8 +6,12 @@ export function useCountdown(expiresAt: string | undefined, totalSeconds: number
   useEffect(() => {
     if (expiresAt === undefined) return
     setNow(Date.now())
-    const timer = setInterval(() => { setNow(Date.now()) }, 1000)
-    return () => { clearInterval(timer) }
+    const timer = setInterval(() => {
+      setNow(Date.now())
+    }, 1000)
+    return () => {
+      clearInterval(timer)
+    }
   }, [expiresAt])
   const end = expiresAt === undefined ? Number.NaN : Date.parse(expiresAt)
   if (!Number.isFinite(end)) return { seconds: 0, fraction: 0 }

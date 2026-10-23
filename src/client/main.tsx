@@ -5,4 +5,8 @@ import './styles/index.css'
 
 const root = document.getElementById('root')
 if (root === null) throw new Error('Missing application root')
-createRoot(root).render(<React.StrictMode><App /></React.StrictMode>)
+createRoot(root).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+)

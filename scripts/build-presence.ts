@@ -13,7 +13,11 @@ export type PresenceBuildResult =
   | { built: false; reason: 'platform' | 'no-swiftc' | 'failed'; message: string }
 
 async function mtime(path: string): Promise<number | undefined> {
-  try { return (await stat(path)).mtimeMs } catch { return undefined }
+  try {
+    return (await stat(path)).mtimeMs
+  } catch {
+    return undefined
+  }
 }
 
 async function cdhashOf(path: string): Promise<string> {
@@ -24,7 +28,9 @@ async function cdhashOf(path: string): Promise<string> {
 }
 
 /** Builds and ad-hoc signs the macOS confirmation helper (hardened runtime). Skips without failing elsewhere. */
-export async function buildPresenceHelper(options: { codeRoot?: string; force?: boolean; log?: (text: string) => void } = {}): Promise<PresenceBuildResult> {
+export async function buildPresenceHelper(
+  options: { codeRoot?: string; force?: boolean; log?: (text: string) => void } = {},
+): Promise<PresenceBuildResult> {
   const log = options.log ?? (text => console.error(text))
   if (process.platform !== 'darwin') {
     log(`${SKIPPED}（仅支持 macOS）`)
@@ -33,8 +39,9 @@ export async function buildPresenceHelper(options: { codeRoot?: string; force?: 
   const root = options.codeRoot ?? latchCodeRoot()
   const source = join(root, 'native', 'macos', 'LatchPresence.swift')
   const output = join(root, 'dist', 'native', 'latch-presence')
-  try { await run('/usr/bin/xcrun', ['--find', 'swiftc']) }
-  catch {
+  try {
+    await run('/usr/bin/xcrun', ['--find', 'swiftc'])
+  } catch {
     log(`${SKIPPED}（未找到 swiftc，请安装 Xcode 命令行工具）`)
     return { built: false, reason: 'no-swiftc', message: SKIPPED }
   }
@@ -47,7 +54,11 @@ export async function buildPresenceHelper(options: { codeRoot?: string; force?: 
       return { built: true, path: output, cdhash }
     }
     await mkdir(join(root, 'dist', 'native'), { recursive: true })
-    await run('/usr/bin/xcrun', ['swiftc', '-O', '-parse-as-library', '-framework', 'AppKit', '-framework', 'LocalAuthentication', '-o', output, source], { maxBuffer: 16 * 1024 * 1024 })
+    await run(
+      '/usr/bin/xcrun',
+      ['swiftc', '-O', '-parse-as-library', '-framework', 'AppKit', '-framework', 'LocalAuthentication', '-o', output, source],
+      { maxBuffer: 16 * 1024 * 1024 },
+    )
     await run('/usr/bin/codesign', ['--force', '--sign', '-', '--options', 'runtime', '--identifier', 'dev.latch.presence', output])
     await run('/usr/bin/codesign', ['--verify', '--strict', output])
     const cdhash = await cdhashOf(output)

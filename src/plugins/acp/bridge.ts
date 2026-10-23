@@ -5,26 +5,68 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { AppError } from '../../core/errors.ts'
 import type { HarnessHostOptions, HarnessSecurityEvent } from '../../core/harness.ts'
 import type {
-  Bridge, ConfigChangeClass, CreateTaskInput, DecideOptions, LaunchPreview, PromptOptions, SetConfigOptions,
+  Bridge,
+  ConfigChangeClass,
+  CreateTaskInput,
+  DecideOptions,
+  LaunchPreview,
+  PromptOptions,
+  SetConfigOptions,
 } from '../../host/bridge.ts'
 import { sha256Hex } from '../../host/crypto.ts'
 import type {
-  Approval, ApprovalOptionKind, Message, SessionConfigOption, SessionPermission, TaskDetail, TaskStatus, TaskSummary,
+  Approval,
+  ApprovalOptionKind,
+  Message,
+  SessionConfigOption,
+  SessionPermission,
+  TaskDetail,
+  TaskStatus,
+  TaskSummary,
 } from '../../shared/types.ts'
 import { redactor, resolveCommand } from './command.ts'
 import { AgentConnection, ConnectionClosed, ConnectionStopping, RequestTimeout, type ExitInfo } from './connection.ts'
 import { agentEnvironment } from './environment.ts'
 import {
-  append, blockText, clip, configFromOptions, foldConfig, mergeTool, modelName, planEntries, pretty, settleTool,
-  settleToolMessage, TOOL_TEXT_LIMIT, toolDetail, toolLabel, toolMessage, type ToolState,
+  append,
+  blockText,
+  clip,
+  configFromOptions,
+  foldConfig,
+  mergeTool,
+  modelName,
+  planEntries,
+  pretty,
+  settleTool,
+  settleToolMessage,
+  TOOL_TEXT_LIMIT,
+  toolDetail,
+  toolLabel,
+  toolMessage,
+  type ToolState,
 } from './mapping.ts'
 import { classifyMode, filterPermissionOptions, isVisibleOption, launchHash, selectProfile, type ProfileSelection } from './permission.ts'
 import type { AcpPermissionProfile } from './profiles/index.ts'
 import { fingerprintProjectConfig, PROJECT_CONFIG_LIMITS, type ProjectConfig } from './project-config.ts'
 import {
-  cancelRequest, chunkUpdate, configUpdate, infoUpdate, initializeResult, modeUpdate, permissionRequest, planUpdate,
-  promptResult, PROTOCOL_VERSION, RPC, RpcError, sessionState, toolFields, updateEnvelope,
-  type PermissionOption, type RpcId, type ToolFields,
+  cancelRequest,
+  chunkUpdate,
+  configUpdate,
+  infoUpdate,
+  initializeResult,
+  modeUpdate,
+  permissionRequest,
+  planUpdate,
+  promptResult,
+  PROTOCOL_VERSION,
+  RPC,
+  RpcError,
+  sessionState,
+  toolFields,
+  updateEnvelope,
+  type PermissionOption,
+  type RpcId,
+  type ToolFields,
 } from './protocol.ts'
 import { createAcpStore, emptyAcpState, type AcpState, type AcpStore, type AcpTask } from './store.ts'
 import type { AgentHealth, AgentRecord, ResolvedOptions } from './types.ts'
@@ -48,7 +90,12 @@ interface Live {
   lastUsed: number
 }
 
-interface Segment { id: string; text: string; reasoning: string; acpMessageId?: string }
+interface Segment {
+  id: string
+  text: string
+  reasoning: string
+  acpMessageId?: string
+}
 
 interface Run {
   taskId: string
@@ -82,13 +129,23 @@ interface Permission {
   fail(error: Error): void
 }
 
-interface Binding { live: Live; acpSessionId: string }
+interface Binding {
+  live: Live
+  acpSessionId: string
+}
 
 /** What a new process would launch: `hash` covers the project configuration, `definitionHash` only the definition. */
-interface Launch { command: string; hash: string; definitionHash: string }
+interface Launch {
+  command: string
+  hash: string
+  definitionHash: string
+}
 
 /** The launch the owner confirmed for a session, as stored with it. */
-interface Confirmed { launchHash?: string; definitionHash?: string }
+interface Confirmed {
+  launchHash?: string
+  definitionHash?: string
+}
 
 /** A mode change Latch requested and is waiting on; the agent's reports meanwhile are measured against `allowed`. */
 interface ModeChange {
@@ -101,16 +158,24 @@ interface ModeChange {
 /** Recorded, and shown, as the observed mode when the agent stops reporting a mode it reported before. */
 const UNREPORTED_MODE = '未报告'
 
-function digest(value: unknown): string { return createHash('sha256').update(JSON.stringify(value)).digest('hex') }
-function now(): string { return new Date().toISOString() }
-function message(error: unknown): string { return error instanceof Error ? error.message : String(error) }
+function digest(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex')
+}
+function now(): string {
+  return new Date().toISOString()
+}
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
 function codeOf(error: unknown): string | undefined {
   return error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : undefined
 }
 
 function assertPrompt(prompt: unknown, requestId: unknown): void {
-  if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 1_000_000) throw new AppError(400, 'invalid-prompt', '请输入不超过 1 MB 的任务内容')
-  if (typeof requestId !== 'string' || !requestId || requestId.length > 256) throw new AppError(400, 'invalid-request-id', '缺少有效的请求标识')
+  if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 1_000_000)
+    throw new AppError(400, 'invalid-prompt', '请输入不超过 1 MB 的任务内容')
+  if (typeof requestId !== 'string' || !requestId || requestId.length > 256)
+    throw new AppError(400, 'invalid-request-id', '缺少有效的请求标识')
 }
 
 function cancelledBeforeSend(): AppError {
@@ -221,7 +286,7 @@ export class AcpBridge implements Bridge {
 
   start(): Promise<void> {
     if (this.closed) return Promise.reject(new AppError(503, 'runtime-closed', '运行节点已关闭'))
-    return this.started ??= (async () => {
+    return (this.started ??= (async () => {
       this.state = await this.store.load()
       this.loaded = true
       let changed = false
@@ -229,22 +294,31 @@ export class AcpBridge implements Bridge {
         if (task.summary.status !== 'running' && task.summary.status !== 'waiting-approval') continue
         for (const item of task.messages) settleToolMessage(item)
         task.summary.status = 'interrupted'
-        task.messages.push({ id: randomUUID(), role: 'system', text: '上次运行被中断。旧审批已失效；请核对工具副作用后再明确发起后续任务。', state: 'failed' })
+        task.messages.push({
+          id: randomUUID(),
+          role: 'system',
+          text: '上次运行被中断。旧审批已失效；请核对工具副作用后再明确发起后续任务。',
+          state: 'failed',
+        })
         this.touch(task)
         changed = true
       }
-      if (changed) { this.mark(); await this.flush() }
-    })()
+      if (changed) {
+        this.mark()
+        await this.flush()
+      }
+    })())
   }
 
   close(): Promise<void> {
-    return this.closing ??= (async () => {
+    return (this.closing ??= (async () => {
       this.closed = true
       this.lifetime.abort()
       await this.started?.catch(() => {})
       const runs = [...this.runs.values()]
       for (const run of runs) this.requestCancel(run, false)
-      if (runs.length) await this.within(Promise.all(runs.map(run => run.done)), Math.min(this.limits.cancelGraceMs, this.limits.stopGraceMs))
+      if (runs.length)
+        await this.within(Promise.all(runs.map(run => run.done)), Math.min(this.limits.cancelGraceMs, this.limits.stopGraceMs))
       // Stopping the processes settles every remaining turn and setup request as interrupted.
       await this.stopAll()
       await Promise.allSettled([...this.spawning.values()])
@@ -254,17 +328,22 @@ export class AcpBridge implements Bridge {
       await Promise.allSettled([...this.inflight.values()].map(entry => entry.promise))
       await Promise.all([...this.runs.values()].map(run => run.done))
       if (this.loaded) await this.flush().catch(() => {})
-      try { await this.store.close() } finally {
+      try {
+        await this.store.close()
+      } finally {
         this.listeners.clear()
         this.onClosed?.()
       }
-    })()
+    })())
   }
 
   async listTasks(): Promise<TaskSummary[]> {
     await this.ready()
-    return structuredClone(Object.values(this.state.tasks).map(task => task.summary)
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)))
+    return structuredClone(
+      Object.values(this.state.tasks)
+        .map(task => task.summary)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+    )
   }
 
   async detail(sessionId: string): Promise<TaskDetail> {
@@ -274,8 +353,11 @@ export class AcpBridge implements Bridge {
     const active = task.summary.status === 'running' || task.summary.status === 'waiting-approval'
     const segment = active ? run?.segment : undefined
     return structuredClone({
-      summary: task.summary, messages: task.messages,
-      approvals: this.openApprovals(sessionId), liveText: segment?.text ?? '', cursor: task.revision,
+      summary: task.summary,
+      messages: task.messages,
+      approvals: this.openApprovals(sessionId),
+      liveText: segment?.text ?? '',
+      cursor: task.revision,
       ...(segment ? { liveMessageId: segment.id } : {}),
       ...(segment?.reasoning ? { liveReasoning: segment.reasoning } : {}),
       ...(active && run ? { activity: run.activity } : {}),
@@ -300,10 +382,18 @@ export class AcpBridge implements Bridge {
     }
     const materializedEnv = await this.selection.profile?.materialize?.({ dataDir: this.options.dataDir })
     const env = agentEnvironment({
-      resolvedCommand: launch.command, profile: this.profile, materializedEnv, definitionEnv: this.agent.env, sessionTmpDir: this.tmpRoot(),
+      resolvedCommand: launch.command,
+      profile: this.profile,
+      materializedEnv,
+      definitionEnv: this.agent.env,
+      sessionTmpDir: this.tmpRoot(),
     })
     return {
-      launchHash: launch.hash, command: launch.command, args: [...this.agent.args], envNames: Object.keys(env).sort(), cwd,
+      launchHash: launch.hash,
+      command: launch.command,
+      args: [...this.agent.args],
+      envNames: Object.keys(env).sort(),
+      cwd,
       ...(this.selection.preset ? { presetId: this.selection.preset.id } : {}),
       verified: this.selection.verified,
       approvals: this.profile?.approvals ?? 'prompts',
@@ -327,7 +417,10 @@ export class AcpBridge implements Bridge {
     this.assertOpen()
     const key = digest(['create', input.requestId])
     const payloadHash = digest({
-      prompt: input.prompt, mode, ...(input.cwd !== undefined ? { cwd: input.cwd } : {}), ...(input.model ? { model: input.model } : {}),
+      prompt: input.prompt,
+      mode,
+      ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
+      ...(input.model ? { model: input.model } : {}),
     })
     const receipt = this.state.receipts[key]
     if (receipt) {
@@ -344,13 +437,20 @@ export class AcpBridge implements Bridge {
     const run = this.reserve(sessionId, 1, input.prompt)
     this.state.tasks[sessionId] = {
       summary: {
-        id: sessionId, title: input.prompt.trim().replace(/\s+/g, ' ').slice(0, 80), status: 'running',
-        updatedAt: now(), cwd, mode: 'agent',
+        id: sessionId,
+        title: input.prompt.trim().replace(/\s+/g, ' ').slice(0, 80),
+        status: 'running',
+        updatedAt: now(),
+        cwd,
+        mode: 'agent',
       },
       messages: [{ id: randomUUID(), role: 'user', text: input.prompt }],
       revision: 1,
       acp: {
-        cwd, turnSeq: 1, launchHash: launch.hash, definitionHash: launch.definitionHash,
+        cwd,
+        turnSeq: 1,
+        launchHash: launch.hash,
+        definitionHash: launch.definitionHash,
         ...(this.selection.profile ? { profilePresetId: this.selection.profile.presetId } : {}),
       },
     }
@@ -358,7 +458,12 @@ export class AcpBridge implements Bridge {
     this.tools.set(sessionId, { seq: 1, calls: new Map() })
     this.mark()
     this.notify(sessionId)
-    try { await this.flush() } catch (error) { this.release(run); throw error }
+    try {
+      await this.flush()
+    } catch (error) {
+      this.release(run)
+      throw error
+    }
     this.begin(run)
     return { sessionId }
   }
@@ -452,13 +557,20 @@ export class AcpBridge implements Bridge {
 
   subscribe(listener: (sessionId?: string) => void): () => void {
     this.listeners.add(listener)
-    return () => { this.listeners.delete(listener) }
+    return () => {
+      this.listeners.delete(listener)
+    }
   }
 
   async remove(sessionId: string): Promise<void> {
     await this.ready()
     const task = this.task(sessionId)
-    if (this.runs.has(sessionId) || this.attaching.has(sessionId) || task.summary.status === 'running' || task.summary.status === 'waiting-approval') {
+    if (
+      this.runs.has(sessionId)
+      || this.attaching.has(sessionId)
+      || task.summary.status === 'running'
+      || task.summary.status === 'waiting-approval'
+    ) {
       throw new AppError(409, 'task-running', '任务仍在运行，请等待完成或先取消')
     }
     const { acpSessionId, cwd, deletable, launchHash, definitionHash } = task.acp
@@ -491,7 +603,8 @@ export class AcpBridge implements Bridge {
     const task = this.task(sessionId)
     const option = task.config?.find(item => item.id === configId)
     if (!option) throw new AppError(404, 'config-not-found', '该会话没有这个设置项')
-    if (typeof value !== 'string' || !option.options.some(item => item.value === value)) throw new AppError(400, 'config-value-invalid', '设置值不在可选范围内')
+    if (typeof value !== 'string' || !option.options.some(item => item.value === value))
+      throw new AppError(400, 'config-value-invalid', '设置值不在可选范围内')
     this.assertUsable(task)
     await this.assertLaunch(task.acp.cwd, task.acp)
     const mode = this.isModeOption(task, option)
@@ -520,13 +633,17 @@ export class AcpBridge implements Bridge {
       const method = !legacy ? 'session/set_config_option' : option.category === 'model' ? 'session/set_model' : 'session/set_mode'
       const params = !legacy
         ? { sessionId: binding.acpSessionId, configId, value }
-        : option.category === 'model' ? { sessionId: binding.acpSessionId, modelId: value } : { sessionId: binding.acpSessionId, modeId: value }
+        : option.category === 'model'
+          ? { sessionId: binding.acpSessionId, modelId: value }
+          : { sessionId: binding.acpSessionId, modeId: value }
       const apply = async (change?: ModeChange): Promise<void> => {
         let result: unknown
-        try { result = await binding.live.connection.request(method, params, this.limits.requestTimeoutMs) }
-        catch (error) {
+        try {
+          result = await binding.live.connection.request(method, params, this.limits.requestTimeoutMs)
+        } catch (error) {
           if (this.state.tasks[sessionId]?.acp.drift) throw permissionDrift()
-          if (error instanceof RpcError && error.code === RPC.methodNotFound) throw new AppError(501, 'not-supported', `${this.agent.name} 不支持修改该设置`)
+          if (error instanceof RpcError && error.code === RPC.methodNotFound)
+            throw new AppError(501, 'not-supported', `${this.agent.name} 不支持修改该设置`)
           throw this.publicError(error, binding.live)
         }
         const current = this.state.tasks[sessionId]
@@ -586,15 +703,25 @@ export class AcpBridge implements Bridge {
 
   private notify(sessionId?: string): void {
     for (const listener of this.listeners) {
-      try { listener(sessionId) } catch { /* One subscriber cannot block execution or other subscribers. */ }
+      try {
+        listener(sessionId)
+      } catch {
+        /* One subscriber cannot block execution or other subscribers. */
+      }
     }
   }
 
   private securityEvent(event: HarnessSecurityEvent): void {
-    try { this.options.securityEvent?.(event) } catch { /* The Host audits these; a failure never blocks the session. */ }
+    try {
+      this.options.securityEvent?.(event)
+    } catch {
+      /* The Host audits these; a failure never blocks the session. */
+    }
   }
 
-  private enter(counts: Map<string, number>, key: string): void { counts.set(key, (counts.get(key) ?? 0) + 1) }
+  private enter(counts: Map<string, number>, key: string): void {
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+  }
   private leave(counts: Map<string, number>, key: string): void {
     const count = (counts.get(key) ?? 1) - 1
     if (count > 0) counts.set(key, count)
@@ -605,9 +732,11 @@ export class AcpBridge implements Bridge {
   private async changeMode(taskId: string, allowed: Array<string | undefined>, work: (change: ModeChange) => Promise<void>): Promise<void> {
     const change: ModeChange = { allowed }
     let open = this.changes.get(taskId)
-    if (!open) this.changes.set(taskId, open = new Set())
+    if (!open) this.changes.set(taskId, (open = new Set()))
     open.add(change)
-    try { await work(change) } finally {
+    try {
+      await work(change)
+    } finally {
       open.delete(change)
       if (!open.size && this.changes.get(taskId) === open) this.changes.delete(taskId)
     }
@@ -615,15 +744,18 @@ export class AcpBridge implements Bridge {
 
   private async workspace(input: string | undefined): Promise<string> {
     const target = input ?? this.workspaceRoot
-    if (typeof target !== 'string' || !isAbsolute(target)) throw new AppError(400, 'workspace-unavailable', '工作目录必须是 Host 已登记的项目目录')
+    if (typeof target !== 'string' || !isAbsolute(target))
+      throw new AppError(400, 'workspace-unavailable', '工作目录必须是 Host 已登记的项目目录')
     const real = await realpath(target).catch(() => undefined)
     const roots = (this.options.workspaces?.() ?? [this.workspaceRoot]).map(root => resolve(root))
-    if (real) for (const root of roots) if (await realpath(root).catch(() => undefined) === real) return root
+    if (real) for (const root of roots) if ((await realpath(root).catch(() => undefined)) === real) return root
     throw new AppError(400, 'workspace-unavailable', '工作目录不是 Host 已登记的项目目录，或目录已不存在')
   }
 
   private async assertWorkspace(task: AcpTask): Promise<void> {
-    try { await this.workspace(task.acp.cwd) } catch {
+    try {
+      await this.workspace(task.acp.cwd)
+    } catch {
       throw new AppError(409, 'workspace-changed', '该会话所属的项目目录已不在 Host 的项目列表中。请重新添加该目录，或新建会话。')
     }
   }
@@ -636,7 +768,11 @@ export class AcpBridge implements Bridge {
   }
 
   private projectConfigChanged(): AppError {
-    return new AppError(409, 'project-config-changed', `项目中的 ${this.harnessName()} 配置在确认后发生了变化，该会话不能继续。请新建会话（需要本机确认）。`)
+    return new AppError(
+      409,
+      'project-config-changed',
+      `项目中的 ${this.harnessName()} 配置在确认后发生了变化，该会话不能继续。请新建会话（需要本机确认）。`,
+    )
   }
 
   /** The configuration the profile names, found from `cwd` upwards; undefined when the profile names none. */
@@ -649,7 +785,8 @@ export class AcpBridge implements Bridge {
   private projectNotes(project: ProjectConfig | undefined, roots: string[]): string[] {
     if (!project?.digest) return []
     const names = project.entries.map(entry => `${displayPath(entry.path, roots)}${entry.unreadable ? '（无法读取）' : ''}`)
-    const listed = names.length > NOTE_PATHS ? `${names.slice(0, NOTE_PATHS).join('、')} 等 ${names.length} 项` : names.join('、') || '（未列出）'
+    const listed =
+      names.length > NOTE_PATHS ? `${names.slice(0, NOTE_PATHS).join('、')} 等 ${names.length} 项` : names.join('、') || '（未列出）'
     const partial = project.truncated ? `（文件过多或层级过深，只比较了前 ${PROJECT_CONFIG_LIMITS.entries} 项）` : ''
     return [`项目中有 ${this.harnessName()} 配置：${listed}。启动指纹包含这些配置的内容${partial}，确认后如有增删或修改，该会话不能继续`]
   }
@@ -660,10 +797,18 @@ export class AcpBridge implements Bridge {
    */
   private currentLaunch(project?: ProjectConfig): Launch {
     const command = resolveCommand(this.agent.command)
-    if (!command) throw new AppError(503, 'agent-not-found', `未找到命令 ${this.agent.command}。请先安装 ${this.agent.name}，或在设置中填写可执行文件的绝对路径。`)
+    if (!command)
+      throw new AppError(
+        503,
+        'agent-not-found',
+        `未找到命令 ${this.agent.command}。请先安装 ${this.agent.name}，或在设置中填写可执行文件的绝对路径。`,
+      )
     const definition = {
-      resolvedCommand: command, args: this.agent.args, definitionEnv: this.agent.env,
-      ...(this.selection.profile ? { presetId: this.selection.profile.presetId } : {}), profileVersion: 1 as const,
+      resolvedCommand: command,
+      args: this.agent.args,
+      definitionEnv: this.agent.env,
+      ...(this.selection.profile ? { presetId: this.selection.profile.presetId } : {}),
+      profileVersion: 1 as const,
     }
     const definitionHash = launchHash(definition)
     const hash = project?.digest ? launchHash({ ...definition, projectConfig: project.digest }) : definitionHash
@@ -671,7 +816,8 @@ export class AcpBridge implements Bridge {
   }
 
   private assertConfirmed(confirmed: Confirmed): asserts confirmed is Confirmed & { launchHash: string } {
-    if (!confirmed.launchHash) throw new AppError(409, 'l3-confirmation-missing', '此会话创建于安全升级之前，不能继续。请新建会话（需要本机确认）。')
+    if (!confirmed.launchHash)
+      throw new AppError(409, 'l3-confirmation-missing', '此会话创建于安全升级之前，不能继续。请新建会话（需要本机确认）。')
   }
 
   /** The launch of a session in `cwd`, unless it is no longer the one the owner confirmed. */
@@ -708,7 +854,8 @@ export class AcpBridge implements Bridge {
   private permissionView(task: AcpTask): SessionPermission {
     const expected = this.expectedMode(task)
     return {
-      level: 'L3', enforcer: 'NONE',
+      level: 'L3',
+      enforcer: 'NONE',
       readback: this.profile?.readback === 'mode' || task.acp.expectedMode !== undefined ? 'mode' : 'none',
       verifiedDefinition: this.selection.verified,
       approvals: this.profile?.approvals ?? 'prompts',
@@ -719,7 +866,7 @@ export class AcpBridge implements Bridge {
   }
 
   private permissionNotes(): string[] {
-    return [...this.profile?.notes ?? [], ...this.selection.notes ?? []]
+    return [...(this.profile?.notes ?? []), ...(this.selection.notes ?? [])]
   }
 
   /**
@@ -733,7 +880,9 @@ export class AcpBridge implements Bridge {
     if (expected === undefined) return
     const option = this.modeOption(task)
     if (option && (option.currentValue !== expected || this.unconfirmed.has(taskId))) {
-      try { await this.applyMode(taskId, binding, option, expected, signal) } catch (error) {
+      try {
+        await this.applyMode(taskId, binding, option, expected, signal)
+      } catch (error) {
         if (signal.aborted) throw signal.reason
         if (error instanceof ConnectionClosed || error instanceof ConnectionStopping) throw error
         // Any other failure leaves the mode unconfirmed, which refuses the turn below.
@@ -746,13 +895,20 @@ export class AcpBridge implements Bridge {
     throw new AppError(409, 'permission-unverified', `无法确认 ${this.agent.name} 已进入预期的权限模式，未发送本轮输入。`)
   }
 
-  private async applyMode(taskId: string, binding: Binding, option: SessionConfigOption, value: string, signal: AbortSignal): Promise<void> {
+  private async applyMode(
+    taskId: string,
+    binding: Binding,
+    option: SessionConfigOption,
+    value: string,
+    signal: AbortSignal,
+  ): Promise<void> {
     const legacy = this.task(taskId).acp.configSource === 'legacy'
     await this.changeMode(taskId, [value, option.currentValue], async () => {
       const result = await binding.live.connection.request(
         legacy ? 'session/set_mode' : 'session/set_config_option',
         legacy ? { sessionId: binding.acpSessionId, modeId: value } : { sessionId: binding.acpSessionId, configId: option.id, value },
-        this.limits.requestTimeoutMs, signal,
+        this.limits.requestTimeoutMs,
+        signal,
       )
       const task = this.state.tasks[taskId]
       if (!task) return
@@ -871,7 +1027,8 @@ export class AcpBridge implements Bridge {
 
   /** Resolves once every change made so far is durable. */
   private flush(): Promise<void> {
-    if (this.storageFailure) return Promise.reject(new AppError(503, 'storage-unavailable', '持久化失败，运行节点已停止接收新操作。请检查数据存储。'))
+    if (this.storageFailure)
+      return Promise.reject(new AppError(503, 'storage-unavailable', '持久化失败，运行节点已停止接收新操作。请检查数据存储。'))
     if (this.durable >= this.version) return Promise.resolve()
     return new Promise((resolve, reject) => {
       this.waiters.push({ version: this.version, resolve, reject })
@@ -890,19 +1047,36 @@ export class AcpBridge implements Bridge {
         this.waiters = this.waiters.filter(waiter => waiter.version > version)
         for (const waiter of ready) waiter.resolve()
       }
-    })().catch(error => {
-      this.storageFailure = error
-      for (const waiter of this.waiters.splice(0)) waiter.reject(new AppError(503, 'storage-unavailable', '持久化失败，运行节点已停止接收新操作。请检查数据存储。'))
-      for (const run of this.runs.values()) this.requestCancel(run, true)
-    }).finally(() => { this.writing = undefined })
+    })()
+      .catch(error => {
+        this.storageFailure = error
+        for (const waiter of this.waiters.splice(0))
+          waiter.reject(new AppError(503, 'storage-unavailable', '持久化失败，运行节点已停止接收新操作。请检查数据存储。'))
+        for (const run of this.runs.values()) this.requestCancel(run, true)
+      })
+      .finally(() => {
+        this.writing = undefined
+      })
   }
 
   // ---- turns --------------------------------------------------------------------------------------------------
 
   private reserve(taskId: string, seq: number, prompt: string): Run {
     let resolveDone!: () => void
-    const done = new Promise<void>(resolve => { resolveDone = resolve })
-    const run: Run = { taskId, seq, prompt, sent: false, cancelRequested: false, activity: { phase: 'model' }, notes: [], done, resolveDone }
+    const done = new Promise<void>(resolve => {
+      resolveDone = resolve
+    })
+    const run: Run = {
+      taskId,
+      seq,
+      prompt,
+      sent: false,
+      cancelRequested: false,
+      activity: { phase: 'model' },
+      notes: [],
+      done,
+      resolveDone,
+    }
     this.runs.set(taskId, run)
     return run
   }
@@ -922,16 +1096,23 @@ export class AcpBridge implements Bridge {
     let status: TaskStatus = 'idle'
     const notes: string[] = []
     try {
-      if (run.cancelRequested) { status = 'cancelled'; return }
+      if (run.cancelRequested) {
+        status = 'cancelled'
+        return
+      }
       // Binding also confirms the permission mode, right before the prompt is written.
       const binding = await this.attach(run.taskId)
-      if (run.cancelRequested) { status = 'cancelled'; return }
+      if (run.cancelRequested) {
+        status = 'cancelled'
+        return
+      }
       run.live = binding.live
       run.acpSessionId = binding.acpSessionId
       this.holdIdle(binding.live)
       run.sent = true
       const result = await binding.live.connection.request('session/prompt', {
-        sessionId: binding.acpSessionId, prompt: [{ type: 'text', text: run.prompt }],
+        sessionId: binding.acpSessionId,
+        prompt: [{ type: 'text', text: run.prompt }],
       })
       status = this.outcome(run, result, notes)
     } catch (error) {
@@ -950,17 +1131,30 @@ export class AcpBridge implements Bridge {
     }
     const stopReason = parsed.success ? parsed.data.stopReason : undefined
     if (run.cancelRequested) {
-      if (stopReason !== 'cancelled') notes.push(`已请求取消；${this.agent.name} 以 ${clip(this.redact(stopReason ?? '无效响应'), 64)} 结束本轮，已按取消处理。`)
+      if (stopReason !== 'cancelled')
+        notes.push(`已请求取消；${this.agent.name} 以 ${clip(this.redact(stopReason ?? '无效响应'), 64)} 结束本轮，已按取消处理。`)
       return 'cancelled'
     }
     switch (stopReason) {
-      case 'end_turn': return 'idle'
-      case 'cancelled': return 'cancelled'
-      case 'max_tokens': notes.push('模型输出达到长度上限，回复可能不完整。'); return 'failed'
-      case 'max_turn_requests': notes.push(`已达到 ${this.agent.name} 的单轮请求上限，本轮提前结束。`); return 'failed'
-      case 'refusal': notes.push('模型拒绝继续处理本轮请求。'); return 'failed'
-      case undefined: notes.push(`${this.agent.name} 返回了无效的本轮结束响应。`); return 'failed'
-      default: notes.push(`${this.agent.name} 以未知原因 ${clip(this.redact(stopReason), 64)} 结束本轮。`); return 'failed'
+      case 'end_turn':
+        return 'idle'
+      case 'cancelled':
+        return 'cancelled'
+      case 'max_tokens':
+        notes.push('模型输出达到长度上限，回复可能不完整。')
+        return 'failed'
+      case 'max_turn_requests':
+        notes.push(`已达到 ${this.agent.name} 的单轮请求上限，本轮提前结束。`)
+        return 'failed'
+      case 'refusal':
+        notes.push('模型拒绝继续处理本轮请求。')
+        return 'failed'
+      case undefined:
+        notes.push(`${this.agent.name} 返回了无效的本轮结束响应。`)
+        return 'failed'
+      default:
+        notes.push(`${this.agent.name} 以未知原因 ${clip(this.redact(stopReason), 64)} 结束本轮。`)
+        return 'failed'
     }
   }
 
@@ -975,7 +1169,8 @@ export class AcpBridge implements Bridge {
         if (this.closed) notes.push(`Latch 关闭时本轮尚未发送给 ${this.agent.name}，已取消。`)
         return 'cancelled'
       }
-      if (!(error instanceof RpcError && error.code === RPC.cancelled)) notes.push(`取消时 ${this.agent.name} 返回错误：${clip(this.redact(message(error)), 1000)}`)
+      if (!(error instanceof RpcError && error.code === RPC.cancelled))
+        notes.push(`取消时 ${this.agent.name} 返回错误：${clip(this.redact(message(error)), 1000)}`)
       return 'cancelled'
     }
     if (error instanceof ConnectionStopping) {
@@ -984,7 +1179,10 @@ export class AcpBridge implements Bridge {
     }
     if (error instanceof RpcError) {
       if (error.code === RPC.cancelled) return 'cancelled'
-      if (error.code === RPC.authRequired) { notes.push(this.authMessage(run.live)); return 'failed' }
+      if (error.code === RPC.authRequired) {
+        notes.push(this.authMessage(run.live))
+        return 'failed'
+      }
       if (error.code === RPC.notFound) {
         if (run.live && run.acpSessionId) run.live.sessions.delete(run.acpSessionId)
         notes.push(`${this.agent.name} 找不到这个会话，请新建会话。`)
@@ -1000,7 +1198,8 @@ export class AcpBridge implements Bridge {
   private exitNote(run: Run, info: ExitInfo): string {
     const name = this.agent.name
     if (info.reason === 'kill') {
-      if (info.cause === run.taskId) return `取消未在 ${Math.ceil(this.limits.cancelGraceMs / 1000)} 秒内完成，已强制结束 ${name} 进程；本轮已中断。请核对工具副作用。`
+      if (info.cause === run.taskId)
+        return `取消未在 ${Math.ceil(this.limits.cancelGraceMs / 1000)} 秒内完成，已强制结束 ${name} 进程；本轮已中断。请核对工具副作用。`
       return `${name} 进程已被强制结束；本轮已中断。请核对工具副作用。`
     }
     if (info.reason === 'stop') return `${name} 进程已随 Latch 关闭而结束；本轮已中断。请核对工具副作用。`
@@ -1022,7 +1221,12 @@ export class AcpBridge implements Bridge {
       }
       task.summary.status = status
       for (const note of notes) {
-        task.messages.push({ id: randomUUID(), role: 'system', text: note, ...(status === 'failed' || status === 'interrupted' ? { state: 'failed' as const } : {}) })
+        task.messages.push({
+          id: randomUUID(),
+          role: 'system',
+          text: note,
+          ...(status === 'failed' || status === 'interrupted' ? { state: 'failed' as const } : {}),
+        })
       }
       this.touch(task)
       this.mark()
@@ -1030,7 +1234,9 @@ export class AcpBridge implements Bridge {
     if (this.runs.get(run.taskId) === run) this.runs.delete(run.taskId)
     this.notify(run.taskId)
     this.scheduleIdle(run.taskId)
-    void this.flush().catch(() => {}).finally(() => run.resolveDone())
+    void this.flush()
+      .catch(() => {})
+      .finally(() => run.resolveDone())
   }
 
   private requestCancel(run: Run, withGrace: boolean): void {
@@ -1039,7 +1245,10 @@ export class AcpBridge implements Bridge {
       run.activity = { phase: 'cancelling', ...(run.activity.toolName ? { toolName: run.activity.toolName } : {}) }
       if (run.sent && run.live && run.acpSessionId) run.live.connection.notify('session/cancel', { sessionId: run.acpSessionId })
       // Nothing reached the agent yet: withdraw the session setup instead of waiting for it.
-      else if (!run.sent) this.attaching.get(run.taskId)?.controller.abort(this.closed ? new AppError(503, 'runtime-closed', '运行节点已关闭') : cancelledBeforeSend())
+      else if (!run.sent)
+        this.attaching
+          .get(run.taskId)
+          ?.controller.abort(this.closed ? new AppError(503, 'runtime-closed', '运行节点已关闭') : cancelledBeforeSend())
       for (const permission of [...this.permissions.values()]) {
         if (permission.taskId === run.taskId) this.closePermission(permission, CANCELLED_OUTCOME)
       }
@@ -1072,10 +1281,13 @@ export class AcpBridge implements Bridge {
   private async prepareTmpDir(key: string): Promise<string> {
     await mkdir(this.tmpRoot(), { recursive: true, mode: 0o700 })
     const directory = this.tmpDirFor(key)
-    await mkdir(directory, { mode: 0o700 }).catch(error => { if (codeOf(error) !== 'EEXIST') throw error })
+    await mkdir(directory, { mode: 0o700 }).catch(error => {
+      if (codeOf(error) !== 'EEXIST') throw error
+    })
     const info = await lstat(directory)
     const uid = process.getuid?.()
-    const insecure = !info.isDirectory() || (process.platform !== 'win32' && ((info.mode & 0o077) !== 0 || (uid !== undefined && info.uid !== uid)))
+    const insecure =
+      !info.isDirectory() || (process.platform !== 'win32' && ((info.mode & 0o077) !== 0 || (uid !== undefined && info.uid !== uid)))
     if (insecure) throw new AppError(503, 'agent-start-failed', `${this.agent.name} 启动失败：会话临时目录的属主或权限不安全`)
     return directory
   }
@@ -1091,7 +1303,10 @@ export class AcpBridge implements Bridge {
       const live = this.lives.get(key)
       if (live?.initialized && !live.connection.stopping) return live
       // A process being stopped would drop new requests; start its successor only once it is gone.
-      if (live) { await live.connection.exited; continue }
+      if (live) {
+        await live.connection.exited
+        continue
+      }
       const spawn = this.spawnProcess(key, cwd, confirmed).finally(() => {
         if (this.spawning.get(key) === spawn) this.spawning.delete(key)
       })
@@ -1131,31 +1346,54 @@ export class AcpBridge implements Bridge {
     let live!: Live
     let connection: AgentConnection
     try {
-      connection = AgentConnection.spawn({
-        command, args: this.agent.args, cwd,
-        env: agentEnvironment({ resolvedCommand: command, profile: this.profile, materializedEnv, definitionEnv: this.agent.env, sessionTmpDir }),
-        maxLineBytes: this.limits.maxLineBytes, redact: this.redact,
-      }, {
-        request: (method, params, id) => this.onRequest(live, method, params, id),
-        notification: (method, params) => this.onNotification(live, method, params),
-        exit: info => this.onExit(live, info),
-      })
+      connection = AgentConnection.spawn(
+        {
+          command,
+          args: this.agent.args,
+          cwd,
+          env: agentEnvironment({
+            resolvedCommand: command,
+            profile: this.profile,
+            materializedEnv,
+            definitionEnv: this.agent.env,
+            sessionTmpDir,
+          }),
+          maxLineBytes: this.limits.maxLineBytes,
+          redact: this.redact,
+        },
+        {
+          request: (method, params, id) => this.onRequest(live, method, params, id),
+          notification: (method, params) => this.onNotification(live, method, params),
+          exit: info => this.onExit(live, info),
+        },
+      )
     } catch (error) {
       const detail = clip(this.redact(message(error)), 1000)
       this.health.lastError = `无法启动：${clip(detail, 300)}`
       throw new AppError(503, 'agent-start-failed', `${name} 启动失败：${detail}`)
     }
     live = {
-      key, connection, initialized: false, capabilities: { resume: false, load: false, delete: false }, authMethods: [],
-      sessions: new Map(), lastUsed: Date.now(),
+      key,
+      connection,
+      initialized: false,
+      capabilities: { resume: false, load: false, delete: false },
+      authMethods: [],
+      sessions: new Map(),
+      lastUsed: Date.now(),
     }
     this.lives.set(key, live)
     try {
-      const result = initializeResult.safeParse(await connection.request('initialize', {
-        protocolVersion: PROTOCOL_VERSION,
-        clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
-        clientInfo: { name: 'latch', title: 'Latch', version: CLIENT_VERSION },
-      }, this.limits.requestTimeoutMs))
+      const result = initializeResult.safeParse(
+        await connection.request(
+          'initialize',
+          {
+            protocolVersion: PROTOCOL_VERSION,
+            clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+            clientInfo: { name: 'latch', title: 'Latch', version: CLIENT_VERSION },
+          },
+          this.limits.requestTimeoutMs,
+        ),
+      )
       if (!result.success) throw new Error('initialize 响应无效')
       if (result.data.protocolVersion !== PROTOCOL_VERSION) {
         throw new Error(`Harness 使用 ACP 协议版本 ${result.data.protocolVersion}，Latch 仅支持版本 ${PROTOCOL_VERSION}`)
@@ -1163,7 +1401,11 @@ export class AcpBridge implements Bridge {
       const reported = result.data.agentInfo?.version ?? undefined
       const rule = this.profile?.versionRule
       if (rule && (typeof reported !== 'string' || !new RegExp(rule.pattern).test(reported))) {
-        throw new AppError(409, 'harness-version-unsupported', `${name} 版本 ${clip(this.redact(reported ?? '未知'), 64)} 未经验证（${rule.message}），已拒绝启动。`)
+        throw new AppError(
+          409,
+          'harness-version-unsupported',
+          `${name} 版本 ${clip(this.redact(reported ?? '未知'), 64)} 未经验证（${rule.message}），已拒绝启动。`,
+        )
       }
       const capabilities = result.data.agentCapabilities
       live.capabilities = {
@@ -1172,7 +1414,8 @@ export class AcpBridge implements Bridge {
         delete: capabilities?.sessionCapabilities?.delete != null,
       }
       live.authMethods = (result.data.authMethods ?? []).slice(0, 16).map(method => ({
-        name: clip(this.redact(method.name), 200), ...(method.description ? { description: clip(this.redact(method.description), 500) } : {}),
+        name: clip(this.redact(method.name), 200),
+        ...(method.description ? { description: clip(this.redact(method.description), 500) } : {}),
       }))
       if (reported) live.agentVersion = clip(reported, 100)
       live.initialized = true
@@ -1187,9 +1430,18 @@ export class AcpBridge implements Bridge {
       const exited = error instanceof ConnectionClosed || error instanceof ConnectionStopping ? info : undefined
       if (this.closed) throw new AppError(503, 'runtime-closed', '运行节点已关闭')
       // The agent's own error text can echo configured secrets; its stderr goes only to the Host log.
-      const detail = clip(this.redact(exited
-        ? exited.reason === 'spawn' ? `无法启动（${exited.error}）` : `进程退出（${describeExit(exited)}）`
-        : error instanceof RequestTimeout ? '初始化超时' : message(error)), 1000)
+      const detail = clip(
+        this.redact(
+          exited
+            ? exited.reason === 'spawn'
+              ? `无法启动（${exited.error}）`
+              : `进程退出（${describeExit(exited)}）`
+            : error instanceof RequestTimeout
+              ? '初始化超时'
+              : message(error),
+        ),
+        1000,
+      )
       this.health.lastError = clip(detail, 300)
       throw new AppError(503, 'agent-start-failed', `${name} 启动失败：${detail}${info.stderr ? '。错误输出已记入 Host 日志。' : ''}`)
     }
@@ -1209,8 +1461,11 @@ export class AcpBridge implements Bridge {
     }
     this.notify()
     if (info.stderr && (unexpected || !live.initialized)) {
-      try { this.limits.log(`Harness ${this.agent.id} 进程结束（${describeExit(info)}），stderr 末尾（已脱敏）：\n${info.stderr}`) }
-      catch { /* Diagnostics never block cleanup. */ }
+      try {
+        this.limits.log(`Harness ${this.agent.id} 进程结束（${describeExit(info)}），stderr 末尾（已脱敏）：\n${info.stderr}`)
+      } catch {
+        /* Diagnostics never block cleanup. */
+      }
     }
   }
 
@@ -1249,12 +1504,15 @@ export class AcpBridge implements Bridge {
     } catch (error) {
       if (signal.aborted) throw signal.reason
       throw this.publicError(error, live)
-    } finally { if (quiet) this.leave(this.quiet, taskId) }
+    } finally {
+      if (quiet) this.leave(this.quiet, taskId)
+    }
   }
 
   private async session(taskId: string, live: Live, signal: AbortSignal): Promise<Binding> {
     const connection = live.connection
-    const setup = (method: string, params: unknown): Promise<unknown> => connection.request(method, params, this.limits.requestTimeoutMs, signal)
+    const setup = (method: string, params: unknown): Promise<unknown> =>
+      connection.request(method, params, this.limits.requestTimeoutMs, signal)
     const task = this.task(taskId)
     const cwd = task.acp.cwd
     const current = task.acp.acpSessionId
@@ -1300,7 +1558,8 @@ export class AcpBridge implements Bridge {
       // A prompt follows at once. Were the Host to crash before this is durable, the task could not find the agent
       // session that received it, and the next prompt would quietly start a fresh one.
       await this.flush()
-      if (connection.stopping || live.sessions.get(acpSessionId) !== taskId) throw new AppError(503, 'agent-exited', `${this.agent.name} 进程已退出，请重试`)
+      if (connection.stopping || live.sessions.get(acpSessionId) !== taskId)
+        throw new AppError(503, 'agent-exited', `${this.agent.name} 进程已退出，请重试`)
     }
     return { live, acpSessionId }
   }
@@ -1308,7 +1567,8 @@ export class AcpBridge implements Bridge {
   private publicError(error: unknown, live: Live | undefined): AppError {
     const name = this.agent.name
     if (error instanceof AppError) return error
-    if (error instanceof ConnectionClosed) return new AppError(503, 'agent-exited', `${name} 进程已退出（${this.redact(describeExit(error.info))}）。`)
+    if (error instanceof ConnectionClosed)
+      return new AppError(503, 'agent-exited', `${name} 进程已退出（${this.redact(describeExit(error.info))}）。`)
     if (error instanceof ConnectionStopping) return new AppError(503, 'agent-exited', `${name} 进程正在停止，请稍后重试。`)
     if (error instanceof RequestTimeout) return new AppError(504, 'agent-timeout', `${name} 长时间没有响应，请稍后重试`)
     if (error instanceof RpcError) {
@@ -1360,21 +1620,43 @@ export class AcpBridge implements Bridge {
       try {
         await this.spawning.get(key)?.catch(() => undefined)
         let live = this.lives.get(key)
-        if (live && (!live.initialized || live.connection.stopping)) { await live.connection.exited; live = undefined }
+        if (live && (!live.initialized || live.connection.stopping)) {
+          await live.connection.exited
+          live = undefined
+        }
         if (!acpSessionId) return
         live?.sessions.delete(acpSessionId)
-        if (live ? !live.capabilities.delete : !deletable || !await this.assertLaunch(cwd, confirmed).then(() => true, () => false)) return
+        if (
+          live
+            ? !live.capabilities.delete
+            : !deletable
+              || !(await this.assertLaunch(cwd, confirmed).then(
+                () => true,
+                () => false,
+              ))
+        )
+          return
         // Agents can run code from their working directory at start-up; a project the owner removed gets none.
-        if (!live && !await this.workspace(cwd).then(() => true, () => false)) {
-          this.limits.log(`已删除 ${this.agent.name} 会话在 Latch 中的记录。该会话的项目目录已不在 Host 的项目列表中，未启动 ${this.agent.name} 删除它自己保存的会话副本。`)
+        if (
+          !live
+          && !(await this.workspace(cwd).then(
+            () => true,
+            () => false,
+          ))
+        ) {
+          this.limits.log(
+            `已删除 ${this.agent.name} 会话在 Latch 中的记录。该会话的项目目录已不在 Host 的项目列表中，未启动 ${this.agent.name} 删除它自己保存的会话副本。`,
+          )
           return
         }
-        const target = live ?? await this.ensureProcess(key, cwd, confirmed)
+        const target = live ?? (await this.ensureProcess(key, cwd, confirmed))
         target.sessions.delete(acpSessionId)
         if (!target.capabilities.delete) return
         this.holdIdle(target)
         await target.connection.request('session/delete', { sessionId: acpSessionId }, Math.min(this.limits.requestTimeoutMs, 10_000))
-      } catch { /* Best effort. */ } finally {
+      } catch {
+        /* Best effort. */
+      } finally {
         const live = this.lives.get(key)
         if (live) await live.connection.stop('stop', this.limits.stopGraceMs).catch(() => {})
         await rm(this.tmpDirFor(key), { recursive: true, force: true }).catch(() => {})
@@ -1387,8 +1669,16 @@ export class AcpBridge implements Bridge {
 
   private async within(promise: Promise<unknown>, ms: number): Promise<void> {
     let timer: NodeJS.Timeout | undefined
-    try { await Promise.race([promise, new Promise(resolve => { timer = setTimeout(resolve, ms) })]) }
-    finally { clearTimeout(timer) }
+    try {
+      await Promise.race([
+        promise,
+        new Promise(resolve => {
+          timer = setTimeout(resolve, ms)
+        }),
+      ])
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   // ---- agent messages ---------------------------------------------------------------------------------------------
@@ -1405,7 +1695,8 @@ export class AcpBridge implements Bridge {
       const parsed = cancelRequest.safeParse(params)
       if (!parsed.success) return
       for (const permission of [...this.permissions.values()]) {
-        if (permission.live === live && permission.rpcId === parsed.data.requestId) this.closePermission(permission, new RpcError(RPC.cancelled, 'Request cancelled'))
+        if (permission.live === live && permission.rpcId === parsed.data.requestId)
+          this.closePermission(permission, new RpcError(RPC.cancelled, 'Request cancelled'))
       }
     }
   }
@@ -1471,7 +1762,8 @@ export class AcpBridge implements Bridge {
         break
       }
       // user_message_chunk, available_commands_update, usage_update and unknown kinds carry nothing Latch shows.
-      default: return
+      default:
+        return
     }
     this.touch(task)
     this.mark()
@@ -1492,7 +1784,8 @@ export class AcpBridge implements Bridge {
       this.settleSegment(run, task, 'completed')
       segment = undefined
     }
-    if (!segment) segment = run.segment = { id: this.messageId(task, acpMessageId), text: '', reasoning: '', ...(acpMessageId ? { acpMessageId } : {}) }
+    if (!segment)
+      segment = run.segment = { id: this.messageId(task, acpMessageId), text: '', reasoning: '', ...(acpMessageId ? { acpMessageId } : {}) }
     else if (acpMessageId && !segment.acpMessageId) segment.acpMessageId = acpMessageId
     if (kind === 'text') segment.text = append(segment.text, piece)
     else segment.reasoning = append(segment.reasoning, piece)
@@ -1505,7 +1798,10 @@ export class AcpBridge implements Bridge {
     run.segment = undefined
     if (!segment || (!segment.text && !segment.reasoning)) return
     task.messages.push({
-      id: segment.id, role: 'assistant', text: segment.text, state,
+      id: segment.id,
+      role: 'assistant',
+      text: segment.text,
+      state,
       ...(segment.reasoning ? { reasoning: segment.reasoning } : {}),
     })
     this.touch(task)
@@ -1517,7 +1813,8 @@ export class AcpBridge implements Bridge {
     const taskId = task.summary.id
     const open = this.stray.get(taskId)
     const last = task.messages.at(-1)
-    let target = open && last?.id === open.id && (!acpMessageId || !open.acpMessageId || open.acpMessageId === acpMessageId) ? last : undefined
+    let target =
+      open && last?.id === open.id && (!acpMessageId || !open.acpMessageId || open.acpMessageId === acpMessageId) ? last : undefined
     if (!target) {
       target = { id: this.messageId(task, acpMessageId), role: 'assistant', text: '', state: 'completed' }
       task.messages.push(target)
@@ -1581,7 +1878,11 @@ export class AcpBridge implements Bridge {
     if (filtered.autoReject) {
       // Persistent or unknown choices only: nothing Latch could offer, so the request is refused at once.
       this.upsert(task, toolMessage(state))
-      task.messages.push({ id: randomUUID(), role: 'system', text: `已自动拒绝：${this.agent.name} 只提供会持久保存的选项或未知选项，Latch 不提供。` })
+      task.messages.push({
+        id: randomUUID(),
+        role: 'system',
+        text: `已自动拒绝：${this.agent.name} 只提供会持久保存的选项或未知选项，Latch 不提供。`,
+      })
       this.touch(task)
       this.mark()
       this.notify(taskId)
@@ -1590,11 +1891,18 @@ export class AcpBridge implements Bridge {
     }
     state.awaiting++
     const approval: Approval = {
-      id: randomUUID(), sessionId: taskId, toolName: toolLabel(state), toolCallId: state.id.slice('tool:'.length),
+      id: randomUUID(),
+      sessionId: taskId,
+      toolName: toolLabel(state),
+      toolCallId: state.id.slice('tool:'.length),
       reason: clip(state.title || `${this.agent.name} 请求执行一项操作`, 1000),
       ...(state.rawInput !== undefined ? { arguments: clip(pretty(state.rawInput), TOOL_TEXT_LIMIT) } : {}),
       requestedAt: now(),
-      options: filtered.visible.map(option => ({ id: option.optionId, label: clip(option.name, 200), kind: option.kind as ApprovalOptionKind })),
+      options: filtered.visible.map(option => ({
+        id: option.optionId,
+        label: clip(option.name, 200),
+        kind: option.kind as ApprovalOptionKind,
+      })),
       tool: toolDetail(state),
       // The harness asks on its own terms in a full-access session: a prompt, not a security boundary.
       risk: 'R2',
@@ -1602,8 +1910,16 @@ export class AcpBridge implements Bridge {
     }
     return new Promise((resolve, reject) => {
       this.permissions.set(approval.id, {
-        approval, live, rpcId, taskId, tool: state, options: parsed.data.options, visible: filtered.visible,
-        claimed: false, answer: resolve, fail: reject,
+        approval,
+        live,
+        rpcId,
+        taskId,
+        tool: state,
+        options: parsed.data.options,
+        visible: filtered.visible,
+        claimed: false,
+        answer: resolve,
+        fail: reject,
       })
       this.upsert(task, toolMessage(state))
       task.summary.status = 'waiting-approval'

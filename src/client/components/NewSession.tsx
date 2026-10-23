@@ -5,7 +5,13 @@ import type { StartBlock } from '../composerChoice.ts'
 import { ICON_STROKE, type LucideIcon } from '../icons.tsx'
 import { Badge, BrandMark } from './ui.tsx'
 
-interface Suggestion { title: string; description: string; prompt: string; icon: LucideIcon; modes: TaskMode[] }
+interface Suggestion {
+  title: string
+  description: string
+  prompt: string
+  icon: LucideIcon
+  modes: TaskMode[]
+}
 
 /** Prompts the built-in demo model recognizes; shown only while the Host runs in demo mode. */
 const demoSuggestions: Suggestion[] = [
@@ -17,17 +23,33 @@ const demoSuggestions: Suggestion[] = [
 /** Explains why a session cannot start and links to the setting that fixes it. */
 export function SetupCard({ block, owner, onSetup }: { block: StartBlock; owner: boolean; onSetup: () => void }) {
   const model = block.kind === 'model-required'
-  return <div className="setup-card" role="status">
-    <span className="setup-card-icon" aria-hidden="true">{model ? <PlugZap size={18} strokeWidth={ICON_STROKE} /> : <TriangleAlert size={18} strokeWidth={ICON_STROKE} />}</span>
-    <div className="setup-card-text">
-      <strong>{model ? '连接模型服务' : 'Harness 暂不可用'}</strong>
-      <p>{block.message} {owner ? (model ? '添加一个模型服务后即可开始。' : '可在设置中检查 Agent 与插件。') : '请在主设备上完成配置。'}</p>
+  return (
+    <div className="setup-card" role="status">
+      <span className="setup-card-icon" aria-hidden="true">
+        {model ? <PlugZap size={18} strokeWidth={ICON_STROKE} /> : <TriangleAlert size={18} strokeWidth={ICON_STROKE} />}
+      </span>
+      <div className="setup-card-text">
+        <strong>{model ? '连接模型服务' : 'Harness 暂不可用'}</strong>
+        <p>
+          {block.message} {owner ? (model ? '添加一个模型服务后即可开始。' : '可在设置中检查 Agent 与插件。') : '请在主设备上完成配置。'}
+        </p>
+      </div>
+      {owner && (
+        <button type="button" className="button primary" onClick={onSetup}>
+          {model ? '添加模型服务' : '打开设置'}
+        </button>
+      )}
     </div>
-    {owner && <button type="button" className="button primary" onClick={onSetup}>{model ? '添加模型服务' : '打开设置'}</button>}
-  </div>
+  )
 }
 
-export function NewSession({ composer, setup, demo, mode, onSuggestion }: {
+export function NewSession({
+  composer,
+  setup,
+  demo,
+  mode,
+  onSuggestion,
+}: {
   composer: ReactNode
   setup?: ReactNode
   demo: boolean
@@ -35,18 +57,36 @@ export function NewSession({ composer, setup, demo, mode, onSuggestion }: {
   onSuggestion: (prompt: string) => void
 }) {
   const suggestions = demo ? demoSuggestions.filter(item => item.modes.includes(mode)) : []
-  return <div className="new-session">
-    <div className="new-session-inner">
-      <div className="greeting"><BrandMark size={40} /><h2>今天要做什么？</h2></div>
-      {setup}
-      {composer}
-      {suggestions.length > 0 && <section className="suggestions" aria-label="演示任务">
-        {suggestions.map(item => <button key={item.prompt} type="button" className="suggestion-card" onClick={() => { onSuggestion(item.prompt) }}>
-          <item.icon size={20} strokeWidth={ICON_STROKE} aria-hidden="true" />
-          <span className="suggestion-title">{item.title}<Badge tone="warn">演示</Badge></span>
-          <span className="suggestion-description">{item.description}</span>
-        </button>)}
-      </section>}
+  return (
+    <div className="new-session">
+      <div className="new-session-inner">
+        <div className="greeting">
+          <BrandMark size={40} />
+          <h2>今天要做什么？</h2>
+        </div>
+        {setup}
+        {composer}
+        {suggestions.length > 0 && (
+          <section className="suggestions" aria-label="演示任务">
+            {suggestions.map(item => (
+              <button
+                key={item.prompt}
+                type="button"
+                className="suggestion-card"
+                onClick={() => {
+                  onSuggestion(item.prompt)
+                }}>
+                <item.icon size={20} strokeWidth={ICON_STROKE} aria-hidden="true" />
+                <span className="suggestion-title">
+                  {item.title}
+                  <Badge tone="warn">演示</Badge>
+                </span>
+                <span className="suggestion-description">{item.description}</span>
+              </button>
+            ))}
+          </section>
+        )}
+      </div>
     </div>
-  </div>
+  )
 }

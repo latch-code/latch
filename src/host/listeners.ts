@@ -8,7 +8,11 @@ import { AppError } from '../core/errors.ts'
 import type { ListenerClass } from '../shared/types.ts'
 
 export interface TlsListenerOptions {
-  host: string; port: number; certPath: string; keyPath: string; publicOrigin: string
+  host: string
+  port: number
+  certPath: string
+  keyPath: string
+  publicOrigin: string
   /** Tests only: allow peers whose address is a local interface address (default false = reject). */
   allowLocalPeers?: boolean
 }
@@ -68,13 +72,17 @@ function inIpv4Range(address: string, base: string, bits: number): boolean {
   const start = ipv4Number(base)
   if (value === undefined || start === undefined) return false
   const mask = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0
-  return ((value & mask) >>> 0) === ((start & mask) >>> 0)
+  return (value & mask) >>> 0 === (start & mask) >>> 0
 }
 
 /** `tailnet-tls` for Tailscale's CGNAT and ULA ranges (IPv4-mapped CGNAT included), `lan-tls` otherwise. */
 export function tlsListenerClass(host: string): 'lan-tls' | 'tailnet-tls' {
   let address: string
-  try { address = canonicalBindAddress(host) } catch { return 'lan-tls' }
+  try {
+    address = canonicalBindAddress(host)
+  } catch {
+    return 'lan-tls'
+  }
   const ipv4 = isIP(address) === 4 ? address : mappedIpv4(address)
   if (ipv4 !== undefined && inIpv4Range(ipv4, '100.64.0.0', 10)) return 'tailnet-tls'
   if (isIP(address) === 6 && /^fd7a:115c:a1e0:/u.test(expandIpv6(address))) return 'tailnet-tls'
@@ -96,7 +104,7 @@ function mappedIpv4(address: string): string | undefined {
   if (isIP(address) !== 6) return undefined
   const groups = expandIpv6(address).split(':')
   if (groups.slice(0, 5).some(group => group !== '0000') || groups[5] !== 'ffff') return undefined
-  const value = (parseInt(groups[6]!, 16) << 16 | parseInt(groups[7]!, 16)) >>> 0
+  const value = ((parseInt(groups[6]!, 16) << 16) | parseInt(groups[7]!, 16)) >>> 0
   return [value >>> 24, (value >>> 16) & 255, (value >>> 8) & 255, value & 255].join('.')
 }
 
@@ -107,11 +115,16 @@ function mappedIpv4(address: string): string | undefined {
  */
 export function canonicalBindAddress(host: string): string {
   const literal = /^\[(.*)\]$/u.exec(host)?.[1] ?? host
-  const invalid = () => new AppError(400, 'tls-invalid', 'HTTPS 监听地址必须是本机网卡的具体 IP 地址，不能是主机名或 0.0.0.0、:: 等通配地址')
+  const invalid = () =>
+    new AppError(400, 'tls-invalid', 'HTTPS 监听地址必须是本机网卡的具体 IP 地址，不能是主机名或 0.0.0.0、:: 等通配地址')
   let canonical: string
   if (isIP(literal) === 4) canonical = literal
   else if (isIP(literal) === 6 && !literal.includes('%')) {
-    try { canonical = new URL(`http://[${literal}]/`).hostname.slice(1, -1) } catch { throw invalid() }
+    try {
+      canonical = new URL(`http://[${literal}]/`).hostname.slice(1, -1)
+    } catch {
+      throw invalid()
+    }
   } else throw invalid()
   const ipv4 = isIP(canonical) === 4 ? canonical : mappedIpv4(canonical)
   if (canonical === '::' || (ipv4 !== undefined && inIpv4Range(ipv4, '0.0.0.0', 8))) throw invalid()
@@ -126,7 +139,8 @@ export function isLocalAddress(address: string): boolean {
   const now = Date.now()
   if (!localCache || now - localCache.at > LOCAL_ADDRESS_TTL_MS) {
     const addresses = new Set<string>()
-    for (const entries of Object.values(networkInterfaces())) for (const entry of entries ?? []) addresses.add(normalizeAddress(entry.address))
+    for (const entries of Object.values(networkInterfaces()))
+      for (const entry of entries ?? []) addresses.add(normalizeAddress(entry.address))
     localCache = { at: now, addresses }
   }
   return localCache.addresses.has(normalized)
@@ -138,17 +152,35 @@ export function isLocalAddress(address: string): boolean {
  */
 export async function validateTls(options: TlsListenerOptions, now: number, log: (text: string) => void): Promise<ValidatedTls> {
   let origin: URL
-  try { origin = new URL(options.publicOrigin) } catch { throw new AppError(400, 'tls-invalid', 'HTTPS 公开地址无效') }
-  if (origin.protocol !== 'https:' || origin.username || origin.password || origin.search || origin.hash || (origin.pathname !== '/' && origin.pathname !== '')) {
+  try {
+    origin = new URL(options.publicOrigin)
+  } catch {
+    throw new AppError(400, 'tls-invalid', 'HTTPS 公开地址无效')
+  }
+  if (
+    origin.protocol !== 'https:'
+    || origin.username
+    || origin.password
+    || origin.search
+    || origin.hash
+    || (origin.pathname !== '/' && origin.pathname !== '')
+  ) {
     throw new AppError(400, 'tls-invalid', 'HTTPS 公开地址必须是不含路径和查询参数的 https:// 地址')
   }
   if (!Number.isInteger(options.port) || options.port < 0 || options.port > 65535) throw new AppError(400, 'tls-invalid', 'HTTPS 端口无效')
   let cert: Buffer
   let key: Buffer
-  try { [cert, key] = await Promise.all([readFile(options.certPath), readFile(options.keyPath)]) }
-  catch { throw new AppError(400, 'tls-invalid', '无法读取 HTTPS 证书或私钥') }
+  try {
+    ;[cert, key] = await Promise.all([readFile(options.certPath), readFile(options.keyPath)])
+  } catch {
+    throw new AppError(400, 'tls-invalid', '无法读取 HTTPS 证书或私钥')
+  }
   let certificate: X509Certificate
-  try { certificate = new X509Certificate(cert) } catch { throw new AppError(400, 'tls-invalid', 'HTTPS 证书无法解析') }
+  try {
+    certificate = new X509Certificate(cert)
+  } catch {
+    throw new AppError(400, 'tls-invalid', 'HTTPS 证书无法解析')
+  }
   const notAfter = Date.parse(certificate.validTo)
   if (!Number.isFinite(notAfter) || notAfter <= now) throw new AppError(400, 'tls-expired', 'HTTPS 证书已过期，已拒绝启动')
   const hostname = origin.hostname.replace(/^\[|\]$/gu, '')
@@ -157,15 +189,27 @@ export async function validateTls(options: TlsListenerOptions, now: number, log:
   if (notAfter - now < 14 * DAY_MS) log(`HTTPS 证书将在 ${Math.max(0, Math.floor((notAfter - now) / DAY_MS))} 天后过期，请及时更新。`)
   const host = canonicalBindAddress(options.host)
   return {
-    listener: tlsListenerClass(host), host, port: options.port, publicOrigin: origin.origin,
-    cert, key, notAfter, allowLocalPeers: options.allowLocalPeers === true,
+    listener: tlsListenerClass(host),
+    host,
+    port: options.port,
+    publicOrigin: origin.origin,
+    cert,
+    key,
+    notAfter,
+    allowLocalPeers: options.allowLocalPeers === true,
   }
 }
 
 function listen(server: Server, options: ListenOptions): Promise<void> {
   return new Promise((resolve, reject) => {
-    const onError = (error: Error) => { server.off('listening', onListening); reject(error) }
-    const onListening = () => { server.off('error', onError); resolve() }
+    const onError = (error: Error) => {
+      server.off('listening', onListening)
+      reject(error)
+    }
+    const onListening = () => {
+      server.off('error', onError)
+      resolve()
+    }
     server.once('error', onError)
     server.once('listening', onListening)
     server.listen(options)
@@ -174,8 +218,11 @@ function listen(server: Server, options: ListenOptions): Promise<void> {
 
 function closeServer(server: Server): Promise<void> {
   return new Promise((resolve, reject) => {
-    if (!server.listening) { resolve(); return }
-    server.close(error => error && (error as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING' ? reject(error) : resolve())
+    if (!server.listening) {
+      resolve()
+      return
+    }
+    server.close(error => (error && (error as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING' ? reject(error) : resolve()))
   })
 }
 
@@ -186,26 +233,43 @@ function codeOf(error: unknown): string | undefined {
 /** A live socket means another Host owns this runtime directory; a dead one is removed. */
 async function clearStaleSocket(path: string): Promise<void> {
   let stats
-  try { stats = await lstat(path) }
-  catch (error) { if (codeOf(error) === 'ENOENT') return; throw error }
+  try {
+    stats = await lstat(path)
+  } catch (error) {
+    if (codeOf(error) === 'ENOENT') return
+    throw error
+  }
   if (!stats.isSocket()) throw new AppError(500, 'socket-path-occupied', `${path} 不是 Latch 的套接字，已拒绝启动。请删除后重试。`)
   const live = await new Promise<boolean>(resolve => {
     const socket: Socket = connect(path)
-    socket.once('connect', () => { socket.destroy(); resolve(true) })
+    socket.once('connect', () => {
+      socket.destroy()
+      resolve(true)
+    })
     socket.once('error', () => resolve(false))
   })
   if (live) throw new AppError(409, 'host-running', '另一个 Host 正在使用此数据目录，已拒绝启动')
   await unlink(path)
 }
 
-async function bindLoopback(port: number, handler: (req: IncomingMessage, res: ServerResponse) => void, log: (text: string) => void): Promise<{ servers: Server[]; port: number }> {
+async function bindLoopback(
+  port: number,
+  handler: (req: IncomingMessage, res: ServerResponse) => void,
+  log: (text: string) => void,
+): Promise<{ servers: Server[]; port: number }> {
   const inUse = (value: number) => new AppError(500, 'port-in-use', `端口 ${value} 已被占用（127.0.0.1 或 ::1），已拒绝启动`)
   for (let attempt = 0; ; attempt++) {
     const v4 = createHttpServer(handler)
-    try { await listen(v4, { host: '127.0.0.1', port, exclusive: true }) }
-    catch (error) { throw codeOf(error) === 'EADDRINUSE' ? inUse(port) : error }
+    try {
+      await listen(v4, { host: '127.0.0.1', port, exclusive: true })
+    } catch (error) {
+      throw codeOf(error) === 'EADDRINUSE' ? inUse(port) : error
+    }
     const address = v4.address()
-    if (!address || typeof address === 'string') { await closeServer(v4); throw new Error('Loopback listener did not bind a TCP port') }
+    if (!address || typeof address === 'string') {
+      await closeServer(v4)
+      throw new Error('Loopback listener did not bind a TCP port')
+    }
     const v6 = createHttpServer(handler)
     try {
       await listen(v6, { host: '::1', port: address.port, ipv6Only: true, exclusive: true })
@@ -244,11 +308,18 @@ export async function startListeners(options: {
     const failures: unknown[] = []
     for (const server of servers) {
       server.closeAllConnections()
-      try { await closeServer(server) } catch (error) { failures.push(error) }
+      try {
+        await closeServer(server)
+      } catch (error) {
+        failures.push(error)
+      }
     }
     if (socketBound) {
-      try { if ((await lstat(options.socketPath)).isSocket()) await unlink(options.socketPath) }
-      catch (error) { if (codeOf(error) !== 'ENOENT') failures.push(error) }
+      try {
+        if ((await lstat(options.socketPath)).isSocket()) await unlink(options.socketPath)
+      } catch (error) {
+        if (codeOf(error) !== 'ENOENT') failures.push(error)
+      }
     }
     if (failures.length) throw new AggregateError(failures, 'Listener cleanup failed')
   }
@@ -262,10 +333,17 @@ export async function startListeners(options: {
     await chmod(options.socketPath, 0o600)
 
     let loopbackContext: ListenerContext | undefined
-    const loopback = await bindLoopback(options.port, (req, res) => {
-      if (!loopbackContext) { res.destroy(); return }
-      options.handler(req, res, loopbackContext)
-    }, options.log)
+    const loopback = await bindLoopback(
+      options.port,
+      (req, res) => {
+        if (!loopbackContext) {
+          res.destroy()
+          return
+        }
+        options.handler(req, res, loopbackContext)
+      },
+      options.log,
+    )
     servers.push(...loopback.servers)
     const host = `h-${options.hostId}.localhost:${loopback.port}`
     loopbackContext = { listener: 'loopback-tcp', origin: `http://${host}`, host, port: loopback.port }
@@ -274,23 +352,31 @@ export async function startListeners(options: {
     if (options.tls) {
       const tls = options.tls
       const tlsContext: ListenerContext = { listener: tls.listener, origin: tls.publicOrigin, host: new URL(tls.publicOrigin).host }
-      const secure = createHttpsServer({ cert: tls.cert, key: tls.key, minVersion: 'TLSv1.3', maxVersion: 'TLSv1.3' }, (req, res) => options.handler(req, res, tlsContext))
+      const secure = createHttpsServer({ cert: tls.cert, key: tls.key, minVersion: 'TLSv1.3', maxVersion: 'TLSv1.3' }, (req, res) =>
+        options.handler(req, res, tlsContext),
+      )
       secure.on('connection', (socket: Socket) => {
         if (!tls.allowLocalPeers && (!socket.remoteAddress || isLocalAddress(socket.remoteAddress))) socket.destroy()
       })
       secure.on('tlsClientError', (_error, socket) => socket.destroy())
       servers.push(secure)
-      try { await listen(secure, { host: tls.host, port: tls.port, exclusive: true }) }
-      catch (error) { throw codeOf(error) === 'EADDRINUSE' ? new AppError(500, 'port-in-use', `HTTPS 端口 ${tls.port} 已被占用，已拒绝启动`) : error }
+      try {
+        await listen(secure, { host: tls.host, port: tls.port, exclusive: true })
+      } catch (error) {
+        throw codeOf(error) === 'EADDRINUSE' ? new AppError(500, 'port-in-use', `HTTPS 端口 ${tls.port} 已被占用，已拒绝启动`) : error
+      }
       tlsOrigin = tls.publicOrigin
       const now = options.now ?? Date.now
-      const expiry = setInterval(() => {
-        if (now() < tls.notAfter) return
-        options.log('HTTPS 证书已过期，已关闭 HTTPS 入口。')
-        clearInterval(expiry)
-        secure.closeAllConnections()
-        void closeServer(secure).catch(() => {})
-      }, 60 * 60 * 1000)
+      const expiry = setInterval(
+        () => {
+          if (now() < tls.notAfter) return
+          options.log('HTTPS 证书已过期，已关闭 HTTPS 入口。')
+          clearInterval(expiry)
+          secure.closeAllConnections()
+          void closeServer(secure).catch(() => {})
+        },
+        60 * 60 * 1000,
+      )
       expiry.unref()
       timers.push(expiry)
     }
@@ -299,7 +385,9 @@ export async function startListeners(options: {
       loopbackPort: loopback.port,
       loopbackOrigin: loopbackContext.origin,
       ...(tlsOrigin ? { tlsOrigin } : {}),
-      closeAllConnections() { for (const server of servers) server.closeAllConnections() },
+      closeAllConnections() {
+        for (const server of servers) server.closeAllConnections()
+      },
       close: closeAll,
     }
   } catch (error) {

@@ -5,11 +5,32 @@ import type { HarnessPlugin } from '../src/core/plugins.ts'
 import { standardHarnessDriver } from '../src/plugins/standard-harness.ts'
 
 function plugin(dispose = vi.fn()): HarnessPlugin {
-  return { id: 'example', name: 'Example', version: '1', description: 'fixture', activate(ctx) {
-    ctx.registerProvider({ id: 'test', name: 'Test', model: 'test', async *stream() { yield { type: 'text', text: 'ok' } } })
-    ctx.registerTool({ name: 'echo', description: 'Echo', parameters: {}, requiresApproval: false, async execute() { return { text: 'ok' } } })
-    ctx.onDispose(dispose)
-  } }
+  return {
+    id: 'example',
+    name: 'Example',
+    version: '1',
+    description: 'fixture',
+    activate(ctx) {
+      ctx.registerProvider({
+        id: 'test',
+        name: 'Test',
+        model: 'test',
+        async *stream() {
+          yield { type: 'text', text: 'ok' }
+        },
+      })
+      ctx.registerTool({
+        name: 'echo',
+        description: 'Echo',
+        parameters: {},
+        requiresApproval: false,
+        async execute() {
+          return { text: 'ok' }
+        },
+      })
+      ctx.onDispose(dispose)
+    },
+  }
 }
 
 describe('plugin lifecycle', () => {
@@ -17,16 +38,31 @@ describe('plugin lifecycle', () => {
     const registry = new PluginRegistry()
     const order: string[] = []
     registry.register({
-      ...plugin(), activate(ctx) {
-        ctx.onDispose(() => { order.push('first') })
-        ctx.onDispose(async () => { order.push('second:start'); await Promise.resolve(); order.push('second:end'); throw new Error('async cleanup') })
-        ctx.onDispose(() => { order.push('third'); throw new Error('sync cleanup') })
+      ...plugin(),
+      activate(ctx) {
+        ctx.onDispose(() => {
+          order.push('first')
+        })
+        ctx.onDispose(async () => {
+          order.push('second:start')
+          await Promise.resolve()
+          order.push('second:end')
+          throw new Error('async cleanup')
+        })
+        ctx.onDispose(() => {
+          order.push('third')
+          throw new Error('sync cleanup')
+        })
       },
     })
     await registry.enable('example')
-    await expect(registry.disable('example')).rejects.toMatchObject({ name: 'AggregateError', errors: expect.arrayContaining([
-      expect.objectContaining({ message: 'sync cleanup' }), expect.objectContaining({ message: 'async cleanup' }),
-    ]) })
+    await expect(registry.disable('example')).rejects.toMatchObject({
+      name: 'AggregateError',
+      errors: expect.arrayContaining([
+        expect.objectContaining({ message: 'sync cleanup' }),
+        expect.objectContaining({ message: 'async cleanup' }),
+      ]),
+    })
     expect(order).toEqual(['third', 'second:start', 'second:end', 'first'])
     await registry.disable('example')
     expect(order).toHaveLength(4)
@@ -42,7 +78,8 @@ describe('plugin lifecycle', () => {
     const lease = registry.acquire('test')
     expect(lease.tools.map(t => t.name)).toEqual(['echo'])
     await expect(registry.disable('example')).rejects.toMatchObject({ code: 'plugin-in-use' })
-    lease.release(); lease.release()
+    lease.release()
+    lease.release()
     await registry.disable('example')
     expect(context.registry.size).toBe(0)
     expect(dispose).toHaveBeenCalledOnce()
@@ -59,7 +96,13 @@ describe('plugin lifecycle', () => {
     const registry = new PluginRegistry()
     const dispose = vi.fn()
     const fixture = plugin(dispose)
-    registry.register({ ...fixture, async activate(ctx) { await fixture.activate(ctx); throw new Error('bad version') } })
+    registry.register({
+      ...fixture,
+      async activate(ctx) {
+        await fixture.activate(ctx)
+        throw new Error('bad version')
+      },
+    })
     await expect(registry.enable('example')).rejects.toThrow('bad version')
     expect(registry.list()[0]).toMatchObject({ enabled: false, capabilities: [] })
     expect(dispose).toHaveBeenCalledOnce()
@@ -71,10 +114,16 @@ describe('plugin lifecycle', () => {
     registry.register(plugin(previousDispose))
     await registry.enable('example')
     const failedDispose = vi.fn()
-    await expect(registry.replace({ ...plugin(failedDispose), version: '2', async activate(ctx) {
-      await plugin(failedDispose).activate(ctx)
-      throw new Error('new activation failed')
-    } })).rejects.toThrow('new activation failed')
+    await expect(
+      registry.replace({
+        ...plugin(failedDispose),
+        version: '2',
+        async activate(ctx) {
+          await plugin(failedDispose).activate(ctx)
+          throw new Error('new activation failed')
+        },
+      }),
+    ).rejects.toThrow('new activation failed')
     expect(registry.list()[0]).toMatchObject({ version: '1', enabled: true })
     const lease = registry.acquire('test')
     expect(lease.provider.model).toBe('test')
@@ -92,9 +141,16 @@ describe('plugin lifecycle', () => {
     await registry.enable('example')
     let releaseCommit!: () => void
     let enteredCommit!: () => void
-    const gate = new Promise<void>(resolve => { releaseCommit = resolve })
-    const entered = new Promise<void>(resolve => { enteredCommit = resolve })
-    const replacement = registry.replace({ ...plugin(), version: '2' }, async () => { enteredCommit(); await gate })
+    const gate = new Promise<void>(resolve => {
+      releaseCommit = resolve
+    })
+    const entered = new Promise<void>(resolve => {
+      enteredCommit = resolve
+    })
+    const replacement = registry.replace({ ...plugin(), version: '2' }, async () => {
+      enteredCommit()
+      await gate
+    })
     await entered
     expect(context.registry.size).toBe(2)
     expect(registry.list()[0]).toMatchObject({ version: '1', enabled: true })
@@ -117,7 +173,11 @@ describe('plugin lifecycle', () => {
     const newDispose = vi.fn()
     registry.register(plugin(oldDispose))
     await registry.enable('example')
-    await expect(registry.replace({ ...plugin(newDispose), version: '2' }, async () => { throw new Error('disk full') })).rejects.toThrow('disk full')
+    await expect(
+      registry.replace({ ...plugin(newDispose), version: '2' }, async () => {
+        throw new Error('disk full')
+      }),
+    ).rejects.toThrow('disk full')
     expect(context.registry.size).toBe(1)
     expect(registry.list()[0]).toMatchObject({ version: '1', enabled: true })
     expect(newDispose).toHaveBeenCalledOnce()
@@ -132,8 +192,14 @@ describe('plugin lifecycle', () => {
     const registry = new PluginRegistry(context)
     const dispose = vi.fn()
     const harnessPlugin: HarnessPlugin = {
-      id: 'standard-harness', name: 'Standard', description: 'Fixture', version: '1',
-      activate(ctx) { ctx.registerHarness(standardHarnessDriver); ctx.onDispose(dispose) },
+      id: 'standard-harness',
+      name: 'Standard',
+      description: 'Fixture',
+      version: '1',
+      activate(ctx) {
+        ctx.registerHarness(standardHarnessDriver)
+        ctx.onDispose(dispose)
+      },
     }
     registry.register(harnessPlugin)
     await registry.enable('standard-harness')
@@ -143,7 +209,8 @@ describe('plugin lifecycle', () => {
     expect(registry.list()[0]?.activeRuns).toBe(1)
     await expect(registry.disable('standard-harness')).rejects.toMatchObject({ code: 'plugin-in-use' })
     expect(dispose).not.toHaveBeenCalled()
-    lease.release(); lease.release()
+    lease.release()
+    lease.release()
     await registry.disable('standard-harness')
     expect(dispose).toHaveBeenCalledOnce()
     expect(() => registry.acquireHarness('standard')).toThrow()
@@ -155,7 +222,9 @@ describe('plugin lifecycle', () => {
     const context = new Context()
     const log = vi.fn()
     const registry = new PluginRegistry(context, log)
-    const oldDispose = vi.fn(() => { throw new Error('late cleanup failed') })
+    const oldDispose = vi.fn(() => {
+      throw new Error('late cleanup failed')
+    })
     const newDispose = vi.fn()
     registry.register(plugin(oldDispose), { managed: 'provider' })
     await registry.enable('example')
@@ -172,7 +241,8 @@ describe('plugin lifecycle', () => {
     await expect(registry.unregister('example')).rejects.toMatchObject({ code: 'plugin-in-use' })
     await expect(registry.close()).rejects.toMatchObject({ code: 'plugin-in-use' })
     expect(oldDispose).not.toHaveBeenCalled()
-    running.release(); running.release()
+    running.release()
+    running.release()
     await vi.waitFor(() => expect(log).toHaveBeenCalledWith('Retired plugin example cleanup failed', expect.anything()))
     expect(oldDispose).toHaveBeenCalledOnce()
     expect(newDispose).not.toHaveBeenCalled()
@@ -185,7 +255,13 @@ describe('plugin lifecycle', () => {
   it('reports a committed replacement as successful when the old generation fails to clean up', async () => {
     const log = vi.fn()
     const registry = new PluginRegistry(new Context(), log)
-    registry.register(plugin(vi.fn(() => { throw new Error('old cleanup failed') })))
+    registry.register(
+      plugin(
+        vi.fn(() => {
+          throw new Error('old cleanup failed')
+        }),
+      ),
+    )
     await registry.enable('example')
     await expect(registry.replace({ ...plugin(), version: '2' })).resolves.toBeUndefined()
     expect(registry.list()[0]).toMatchObject({ version: '2', enabled: true })
@@ -211,23 +287,54 @@ describe('plugin lifecycle', () => {
 
   it('leases only the provider plugin for tool-free runs, so tool plugins stay free to change', async () => {
     const registry = new PluginRegistry()
-    registry.register({ id: 'provider', name: 'Provider', version: '1', description: 'fixture', activate(ctx) {
-      ctx.registerProvider({ id: 'test', name: 'Test', model: 'test', async *stream() { yield { type: 'finish', reason: 'stop' } } })
-    } })
-    registry.register({ id: 'tools', name: 'Tools', version: '1', description: 'fixture', activate(ctx) {
-      ctx.registerTool({ name: 'echo', description: 'Echo', parameters: {}, requiresApproval: false, async execute() { return { text: 'ok' } } })
-    } })
+    registry.register({
+      id: 'provider',
+      name: 'Provider',
+      version: '1',
+      description: 'fixture',
+      activate(ctx) {
+        ctx.registerProvider({
+          id: 'test',
+          name: 'Test',
+          model: 'test',
+          async *stream() {
+            yield { type: 'finish', reason: 'stop' }
+          },
+        })
+      },
+    })
+    registry.register({
+      id: 'tools',
+      name: 'Tools',
+      version: '1',
+      description: 'fixture',
+      activate(ctx) {
+        ctx.registerTool({
+          name: 'echo',
+          description: 'Echo',
+          parameters: {},
+          requiresApproval: false,
+          async execute() {
+            return { text: 'ok' }
+          },
+        })
+      },
+    })
     await registry.enable('provider')
     await registry.enable('tools')
     const chat = registry.acquire('test', { tools: false })
     expect(chat.tools).toEqual([])
-    expect(registry.list().map(item => [item.id, item.activeRuns])).toEqual([['provider', 1], ['tools', 0]])
+    expect(registry.list().map(item => [item.id, item.activeRuns])).toEqual([
+      ['provider', 1],
+      ['tools', 0],
+    ])
     await registry.disable('tools')
     await registry.enable('tools')
     const agent = registry.acquire('test')
     expect(agent.tools.map(tool => tool.name)).toEqual(['echo'])
     await expect(registry.disable('tools')).rejects.toMatchObject({ code: 'plugin-in-use' })
-    chat.release(); agent.release()
+    chat.release()
+    agent.release()
     await registry.close()
   })
 
@@ -236,7 +343,18 @@ describe('plugin lifecycle', () => {
     const registry = new PluginRegistry(context)
     const dispose = vi.fn()
     registry.register(plugin(dispose), { managed: 'provider' })
-    registry.register({ id: 'standard-harness', name: 'Standard', description: 'Fixture', version: '1', activate(ctx) { ctx.registerHarness(standardHarnessDriver) } }, { managed: 'core' })
+    registry.register(
+      {
+        id: 'standard-harness',
+        name: 'Standard',
+        description: 'Fixture',
+        version: '1',
+        activate(ctx) {
+          ctx.registerHarness(standardHarnessDriver)
+        },
+      },
+      { managed: 'core' },
+    )
     expect(registry.providers()).toEqual([])
     await registry.enable('example')
     await registry.enable('standard-harness')

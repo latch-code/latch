@@ -9,23 +9,40 @@ import { createDemoPlugin, createToolsPlugin } from '../src/plugins/demo.ts'
 import { createAnthropicPlugin } from '../src/plugins/anthropic.ts'
 import { createOpenAIPlugin, redactor, type FetchLike } from '../src/plugins/openai.ts'
 import {
-  checkProvider, listProviderModels, originOf, providerPlugin, providerSettings, summarizeProvider, usableKey,
+  checkProvider,
+  listProviderModels,
+  originOf,
+  providerPlugin,
+  providerSettings,
+  summarizeProvider,
+  usableKey,
 } from '../src/host/providers.ts'
 import type { ProviderRecord } from '../src/host/config.ts'
 import { PROVIDER_PRESETS } from '../src/shared/presets.ts'
 
 const cleanups: Array<() => Promise<void>> = []
-afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
+})
 
 async function mount(...plugins: HarnessPlugin[]) {
   const providers: ModelProvider[] = []
   const tools: ToolDefinition[] = []
-  for (const plugin of plugins) await plugin.activate({
-    registerProvider(provider) { providers.push(provider) },
-    registerTool(tool) { tools.push(tool) },
-    registerHarness() {},
-    onDispose(dispose) { cleanups.push(async () => { await dispose() }) },
-  })
+  for (const plugin of plugins)
+    await plugin.activate({
+      registerProvider(provider) {
+        providers.push(provider)
+      },
+      registerTool(tool) {
+        tools.push(tool)
+      },
+      registerHarness() {},
+      onDispose(dispose) {
+        cleanups.push(async () => {
+          await dispose()
+        })
+      },
+    })
   return { providers, tools }
 }
 
@@ -39,7 +56,9 @@ const message: ModelMessage = { role: 'user', content: '你好' }
 const freshSignal = () => new AbortController().signal
 /** Loopback test servers only; production passes the Host's egress-checked fetch. */
 const direct = { fetch: globalThis.fetch as FetchLike }
-const unusedFetch: FetchLike = async () => { throw new Error('unexpected request') }
+const unusedFetch: FetchLike = async () => {
+  throw new Error('unexpected request')
+}
 const frame = (value: unknown) => `data: ${JSON.stringify(value)}\r\n\r\n`
 const chunk = (delta: Record<string, unknown>, finish: string | null = null) => ({ choices: [{ index: 0, delta, finish_reason: finish }] })
 
@@ -54,10 +73,13 @@ async function listen(handler: (request: IncomingMessage, response: ServerRespon
       response.end(String(error))
     })
   })
-  await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve) })
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
   cleanups.push(async () => {
     server.closeAllConnections()
-    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
+    await new Promise<void>((resolve, reject) => server.close(error => (error ? reject(error) : resolve())))
   })
   const address = server.address()
   if (address === null || typeof address === 'string') throw new Error('Expected a TCP listener')
@@ -79,11 +101,26 @@ describe('OpenAI-compatible streaming provider', () => {
         response.end(frame(chunk({ content: '完成' }, 'stop')) + 'data: [DONE]\n\n')
         return
       }
-      const stream = ': heartbeat\r\n\r\n' + frame(chunk({ content: '开始' }))
-        + frame(chunk({ tool_calls: [{ index: 0, id: 'call_a', type: 'function', function: { name: 'write_', arguments: '{"content":' } }] }))
+      const stream =
+        ': heartbeat\r\n\r\n'
+        + frame(chunk({ content: '开始' }))
+        + frame(
+          chunk({ tool_calls: [{ index: 0, id: 'call_a', type: 'function', function: { name: 'write_', arguments: '{"content":' } }] }),
+        )
         + frame(chunk({ tool_calls: [{ index: 1, id: 'call_b', type: 'function', function: { name: 'long_task', arguments: '{' } }] }))
-        + frame(chunk({ tool_calls: [{ index: 0, function: { name: 'report', arguments: '"你好"}' } }, { index: 1, function: { arguments: '}' } }] }, 'tool_calls'))
-        + frame({ choices: [], usage: { prompt_tokens: 23, completion_tokens: 9 } }) + 'data: [DONE]\r\n\r\n'
+        + frame(
+          chunk(
+            {
+              tool_calls: [
+                { index: 0, function: { name: 'report', arguments: '"你好"}' } },
+                { index: 1, function: { arguments: '}' } },
+              ],
+            },
+            'tool_calls',
+          ),
+        )
+        + frame({ choices: [], usage: { prompt_tokens: 23, completion_tokens: 9 } })
+        + 'data: [DONE]\r\n\r\n'
       const bytes = Buffer.from(stream)
       for (let offset = 0; offset < bytes.length; offset += 7) {
         response.write(bytes.subarray(offset, offset + 7))
@@ -101,31 +138,61 @@ describe('OpenAI-compatible streaming provider', () => {
       { type: 'tool-call', call: { id: 'call_b', name: 'long_task', arguments: {} } },
       { type: 'finish', reason: 'tool-calls' },
     ])
-    const calls = deltas.flatMap(delta => delta.type === 'tool-call' ? [delta.call] : [])
-    await collect(provider.stream({
-      messages: [message, { role: 'assistant', content: '开始', toolCalls: calls },
-        { role: 'tool', content: '产物已写入', toolCallId: 'call_a' },
-        { role: 'tool', content: '用户取消', toolCallId: 'call_b', isError: true }], tools, signal: freshSignal(),
-    }))
-    expect(requests[0]).toMatchObject({ url: '/v1/chat/completions', authorization: 'Bearer local-test-key', body: {
-      model: 'test-model', stream: true, stream_options: { include_usage: true },
-      tools: [{ type: 'function', function: { name: 'write_report' } }, { type: 'function', function: { name: 'long_task' } }],
-    } })
-    expect(requests[1]?.body).toMatchObject({ messages: [message, {
-      role: 'assistant', content: '开始', tool_calls: [
-        { id: 'call_a', type: 'function', function: { name: 'write_report', arguments: '{"content":"你好"}' } },
-        { id: 'call_b', type: 'function', function: { name: 'long_task', arguments: '{}' } },
+    const calls = deltas.flatMap(delta => (delta.type === 'tool-call' ? [delta.call] : []))
+    await collect(
+      provider.stream({
+        messages: [
+          message,
+          { role: 'assistant', content: '开始', toolCalls: calls },
+          { role: 'tool', content: '产物已写入', toolCallId: 'call_a' },
+          { role: 'tool', content: '用户取消', toolCallId: 'call_b', isError: true },
+        ],
+        tools,
+        signal: freshSignal(),
+      }),
+    )
+    expect(requests[0]).toMatchObject({
+      url: '/v1/chat/completions',
+      authorization: 'Bearer local-test-key',
+      body: {
+        model: 'test-model',
+        stream: true,
+        stream_options: { include_usage: true },
+        tools: [
+          { type: 'function', function: { name: 'write_report' } },
+          { type: 'function', function: { name: 'long_task' } },
+        ],
+      },
+    })
+    expect(requests[1]?.body).toMatchObject({
+      messages: [
+        message,
+        {
+          role: 'assistant',
+          content: '开始',
+          tool_calls: [
+            { id: 'call_a', type: 'function', function: { name: 'write_report', arguments: '{"content":"你好"}' } },
+            { id: 'call_b', type: 'function', function: { name: 'long_task', arguments: '{}' } },
+          ],
+        },
+        { role: 'tool', content: '产物已写入', tool_call_id: 'call_a' },
+        { role: 'tool', content: 'Tool failed: 用户取消', tool_call_id: 'call_b' },
       ],
-    }, { role: 'tool', content: '产物已写入', tool_call_id: 'call_a' },
-    { role: 'tool', content: 'Tool failed: 用户取消', tool_call_id: 'call_b' }] })
+    })
   })
 
   it('aborts a stalled upstream stream and closes its connection', async () => {
     let closed = false
-    let receivedResolve: () => void = () => { throw new Error('Listener not initialized') }
-    const received = new Promise<void>(resolve => { receivedResolve = resolve })
+    let receivedResolve: () => void = () => {
+      throw new Error('Listener not initialized')
+    }
+    const received = new Promise<void>(resolve => {
+      receivedResolve = resolve
+    })
     const endpoint = await listen((_request, response) => {
-      response.on('close', () => { closed = true })
+      response.on('close', () => {
+        closed = true
+      })
       response.writeHead(200, { 'content-type': 'text/event-stream' })
       response.write(': connected\n\n')
       receivedResolve()
@@ -146,14 +213,25 @@ describe('OpenAI-compatible streaming provider', () => {
       response.end(JSON.stringify({ error: { message: 'invalid local-test-key' } }))
     })
     const provider = await openaiAt(endpoint)
-    await expect(collect(provider.stream({ messages: [message], tools: [], signal: freshSignal() })))
-      .rejects.toMatchObject({ code: 'http-error', status: 401, message: expect.stringContaining('[redacted]') })
+    await expect(collect(provider.stream({ messages: [message], tools: [], signal: freshSignal() }))).rejects.toMatchObject({
+      code: 'http-error',
+      status: 401,
+      message: expect.stringContaining('[redacted]'),
+    })
   })
 
   it.each([
     ['invalid SSE JSON', 'data: {broken}\n\n', 'invalid-json'],
-    ['invalid tool JSON', frame(chunk({ tool_calls: [{ index: 0, id: 'bad', function: { name: 'write_report', arguments: '{' } }] }, 'tool_calls')), 'invalid-tool-json'],
-    ['array tool JSON', frame(chunk({ tool_calls: [{ index: 0, id: 'bad', function: { name: 'write_report', arguments: '[]' } }] }, 'tool_calls')), 'invalid-tool-json'],
+    [
+      'invalid tool JSON',
+      frame(chunk({ tool_calls: [{ index: 0, id: 'bad', function: { name: 'write_report', arguments: '{' } }] }, 'tool_calls')),
+      'invalid-tool-json',
+    ],
+    [
+      'array tool JSON',
+      frame(chunk({ tool_calls: [{ index: 0, id: 'bad', function: { name: 'write_report', arguments: '[]' } }] }, 'tool_calls')),
+      'invalid-tool-json',
+    ],
     ['missing finish', frame(chunk({ content: 'partial' })), 'stream-incomplete'],
     ['length finish', frame(chunk({ content: 'partial' }, 'length')), 'model-incomplete'],
     ['streamed error', frame({ error: { message: 'rate limited' } }), 'upstream-error'],
@@ -164,9 +242,11 @@ describe('OpenAI-compatible streaming provider', () => {
     })
     const provider = await openaiAt(endpoint)
     const deltas: ModelDelta[] = []
-    await expect((async () => {
-      for await (const delta of provider.stream({ messages: [message], tools: [], signal: freshSignal() })) deltas.push(delta)
-    })()).rejects.toMatchObject({ code })
+    await expect(
+      (async () => {
+        for await (const delta of provider.stream({ messages: [message], tools: [], signal: freshSignal() })) deltas.push(delta)
+      })(),
+    ).rejects.toMatchObject({ code })
     expect(deltas.some(delta => delta.type === 'tool-call' || delta.type === 'finish')).toBe(false)
   })
 })
@@ -177,21 +257,45 @@ describe('OpenAI-compatible model selection and reasoning', () => {
     const endpoint = await listen((_request, response, body) => {
       bodies.push(JSON.parse(body))
       response.writeHead(200, { 'content-type': 'text/event-stream' })
-      response.end(frame(chunk({ reasoning_content: '先想' })) + frame(chunk({ reasoning: '再想' }))
-        + frame(chunk({ reasoning_content: '一次', reasoning: '一次' })) + frame(chunk({ content: '答' }, 'stop')) + 'data: [DONE]\n\n')
+      response.end(
+        frame(chunk({ reasoning_content: '先想' }))
+          + frame(chunk({ reasoning: '再想' }))
+          + frame(chunk({ reasoning_content: '一次', reasoning: '一次' }))
+          + frame(chunk({ content: '答' }, 'stop'))
+          + 'data: [DONE]\n\n',
+      )
     })
-    const { providers } = await mount(createOpenAIPlugin({ id: 'deepseek', name: 'DeepSeek', baseURL: endpoint, apiKey: 'k', model: 'model-a', models: ['model-a', 'model-b'] }))
+    const { providers } = await mount(
+      createOpenAIPlugin({
+        id: 'deepseek',
+        name: 'DeepSeek',
+        baseURL: endpoint,
+        apiKey: 'k',
+        model: 'model-a',
+        models: ['model-a', 'model-b'],
+      }),
+    )
     const provider = providers[0]!
     expect(provider).toMatchObject({ id: 'deepseek', name: 'DeepSeek', model: 'model-a', models: ['model-a', 'model-b'] })
     expect(await collect(provider.stream({ messages: [message], tools: [], signal: freshSignal(), model: 'model-b' }))).toEqual([
-      { type: 'reasoning', text: '先想' }, { type: 'reasoning', text: '再想' }, { type: 'reasoning', text: '一次' },
-      { type: 'text', text: '答' }, { type: 'finish', reason: 'stop' },
+      { type: 'reasoning', text: '先想' },
+      { type: 'reasoning', text: '再想' },
+      { type: 'reasoning', text: '一次' },
+      { type: 'text', text: '答' },
+      { type: 'finish', reason: 'stop' },
     ])
-    await collect(provider.stream({ messages: [message, { role: 'assistant', content: '答' }, { role: 'user', content: '继续' }], tools: [], signal: freshSignal() }))
+    await collect(
+      provider.stream({
+        messages: [message, { role: 'assistant', content: '答' }, { role: 'user', content: '继续' }],
+        tools: [],
+        signal: freshSignal(),
+      }),
+    )
     expect(bodies.map(body => body.model)).toEqual(['model-b', 'model-a'])
     expect(JSON.stringify(bodies[1])).not.toContain('reasoning')
-    await expect(collect(provider.stream({ messages: [message], tools: [], signal: freshSignal(), model: 'model-c' })))
-      .rejects.toMatchObject({ name: 'ProviderError', code: 'model-unavailable' })
+    await expect(
+      collect(provider.stream({ messages: [message], tools: [], signal: freshSignal(), model: 'model-c' })),
+    ).rejects.toMatchObject({ name: 'ProviderError', code: 'model-unavailable' })
     expect(bodies).toHaveLength(2)
   })
 
@@ -216,17 +320,23 @@ describe('OpenAI-compatible model selection and reasoning', () => {
       response.writeHead(200, { 'content-type': 'text/event-stream' })
       response.end(frame(chunk({ content: 'a' }, 'stop')) + frame(chunk({ reasoning_content: 'late' })))
     })
-    await expect(collect((await openaiAt(endpoint)).stream({ messages: [message], tools: [], signal: freshSignal() })))
-      .rejects.toMatchObject({ code: 'invalid-chunk' })
+    await expect(
+      collect((await openaiAt(endpoint)).stream({ messages: [message], tools: [], signal: freshSignal() })),
+    ).rejects.toMatchObject({ code: 'invalid-chunk' })
   })
 })
 
-const anthropicEvent = (type: string, data: Record<string, unknown> = {}) => `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`
+const anthropicEvent = (type: string, data: Record<string, unknown> = {}) =>
+  `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`
 const messageStart = (usage: Record<string, number> = { input_tokens: 12, output_tokens: 1 }) =>
-  anthropicEvent('message_start', { message: { id: 'msg_1', type: 'message', role: 'assistant', model: 'claude-test', content: [], usage } })
+  anthropicEvent('message_start', {
+    message: { id: 'msg_1', type: 'message', role: 'assistant', model: 'claude-test', content: [], usage },
+  })
 const messageEnd = (reason: string, output = 7) =>
-  anthropicEvent('message_delta', { delta: { stop_reason: reason, stop_sequence: null }, usage: { output_tokens: output } }) + anthropicEvent('message_stop')
-const textBlock = (index: number, ...parts: string[]) => anthropicEvent('content_block_start', { index, content_block: { type: 'text', text: '' } })
+  anthropicEvent('message_delta', { delta: { stop_reason: reason, stop_sequence: null }, usage: { output_tokens: output } })
+  + anthropicEvent('message_stop')
+const textBlock = (index: number, ...parts: string[]) =>
+  anthropicEvent('content_block_start', { index, content_block: { type: 'text', text: '' } })
   + parts.map(text => anthropicEvent('content_block_delta', { index, delta: { type: 'text_delta', text } })).join('')
   + anthropicEvent('content_block_stop', { index })
 const toolBlock = (index: number, id: string, name: string, ...json: string[]) =>
@@ -235,7 +345,16 @@ const toolBlock = (index: number, id: string, name: string, ...json: string[]) =
   + anthropicEvent('content_block_stop', { index })
 
 async function anthropicAt(baseURL: string, apiKey = 'local-test-key') {
-  const { providers } = await mount(createAnthropicPlugin({ id: 'claude', name: 'Anthropic', baseURL, apiKey, model: 'claude-test', models: ['claude-test', 'claude-other'] }))
+  const { providers } = await mount(
+    createAnthropicPlugin({
+      id: 'claude',
+      name: 'Anthropic',
+      baseURL,
+      apiKey,
+      model: 'claude-test',
+      models: ['claude-test', 'claude-other'],
+    }),
+  )
   return providers[0]!
 }
 
@@ -249,7 +368,8 @@ describe('Anthropic Messages streaming provider', () => {
         response.end(messageStart() + textBlock(0, '完成') + messageEnd('end_turn'))
         return
       }
-      const stream = messageStart({ input_tokens: 20, cache_read_input_tokens: 5, cache_creation_input_tokens: 3, output_tokens: 1 })
+      const stream =
+        messageStart({ input_tokens: 20, cache_read_input_tokens: 5, cache_creation_input_tokens: 3, output_tokens: 1 })
         + anthropicEvent('ping')
         + anthropicEvent('content_block_start', { index: 0, content_block: { type: 'thinking', thinking: '' } })
         + anthropicEvent('content_block_delta', { index: 0, delta: { type: 'thinking_delta', thinking: '先读文件' } })
@@ -270,47 +390,78 @@ describe('Anthropic Messages streaming provider', () => {
     const provider = await anthropicAt(endpoint)
     expect(provider).toMatchObject({ id: 'claude', model: 'claude-test', models: ['claude-test', 'claude-other'] })
     const { tools } = await mount(createToolsPlugin())
-    const deltas = await collect(provider.stream({
-      messages: [{ role: 'system', content: '你是助手' }, message], tools, signal: freshSignal(), model: 'claude-other',
-    }))
+    const deltas = await collect(
+      provider.stream({
+        messages: [{ role: 'system', content: '你是助手' }, message],
+        tools,
+        signal: freshSignal(),
+        model: 'claude-other',
+      }),
+    )
     expect(deltas).toEqual([
       { type: 'reasoning', text: '先读文件' },
-      { type: 'text', text: '开' }, { type: 'text', text: '始' },
+      { type: 'text', text: '开' },
+      { type: 'text', text: '始' },
       { type: 'usage', inputTokens: 28, outputTokens: 42 },
       { type: 'tool-call', call: { id: 'toolu_a', name: 'write_report', arguments: { content: '你好' } } },
       { type: 'tool-call', call: { id: 'toolu_b', name: 'long_task', arguments: {} } },
       { type: 'finish', reason: 'tool-calls' },
     ])
-    const calls = deltas.flatMap(delta => delta.type === 'tool-call' ? [delta.call] : [])
-    expect(await collect(provider.stream({
-      messages: [{ role: 'system', content: '你是助手' }, message, { role: 'assistant', content: '开始', toolCalls: calls },
-        { role: 'tool', content: '产物已写入', toolCallId: 'toolu_a' },
-        { role: 'tool', content: '用户取消', toolCallId: 'toolu_b', isError: true }],
-      tools, signal: freshSignal(),
-    }))).toEqual([{ type: 'text', text: '完成' }, { type: 'usage', inputTokens: 12, outputTokens: 7 }, { type: 'finish', reason: 'stop' }])
+    const calls = deltas.flatMap(delta => (delta.type === 'tool-call' ? [delta.call] : []))
+    expect(
+      await collect(
+        provider.stream({
+          messages: [
+            { role: 'system', content: '你是助手' },
+            message,
+            { role: 'assistant', content: '开始', toolCalls: calls },
+            { role: 'tool', content: '产物已写入', toolCallId: 'toolu_a' },
+            { role: 'tool', content: '用户取消', toolCallId: 'toolu_b', isError: true },
+          ],
+          tools,
+          signal: freshSignal(),
+        }),
+      ),
+    ).toEqual([
+      { type: 'text', text: '完成' },
+      { type: 'usage', inputTokens: 12, outputTokens: 7 },
+      { type: 'finish', reason: 'stop' },
+    ])
 
     expect(requests[0]).toMatchObject({
       url: '/v1/messages',
       headers: { 'x-api-key': 'local-test-key', 'anthropic-version': '2023-06-01' },
       body: {
-        model: 'claude-other', max_tokens: 8192, stream: true, system: '你是助手',
+        model: 'claude-other',
+        max_tokens: 8192,
+        stream: true,
+        system: '你是助手',
         messages: [{ role: 'user', content: [{ type: 'text', text: '你好' }] }],
-        tools: [{ name: 'write_report', input_schema: { type: 'object' } }, { name: 'long_task', input_schema: { type: 'object' } }],
+        tools: [
+          { name: 'write_report', input_schema: { type: 'object' } },
+          { name: 'long_task', input_schema: { type: 'object' } },
+        ],
       },
     })
     expect(requests[0]?.headers.authorization).toBeUndefined()
     expect(requests[1]?.body).toMatchObject({ model: 'claude-test', system: '你是助手' })
     expect(requests[1]?.body.messages).toEqual([
       { role: 'user', content: [{ type: 'text', text: '你好' }] },
-      { role: 'assistant', content: [
-        { type: 'text', text: '开始' },
-        { type: 'tool_use', id: 'toolu_a', name: 'write_report', input: { content: '你好' } },
-        { type: 'tool_use', id: 'toolu_b', name: 'long_task', input: {} },
-      ] },
-      { role: 'user', content: [
-        { type: 'tool_result', tool_use_id: 'toolu_a', content: '产物已写入' },
-        { type: 'tool_result', tool_use_id: 'toolu_b', content: '用户取消', is_error: true },
-      ] },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: '开始' },
+          { type: 'tool_use', id: 'toolu_a', name: 'write_report', input: { content: '你好' } },
+          { type: 'tool_use', id: 'toolu_b', name: 'long_task', input: {} },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: 'toolu_a', content: '产物已写入' },
+          { type: 'tool_result', tool_use_id: 'toolu_b', content: '用户取消', is_error: true },
+        ],
+      },
     ])
     expect(JSON.stringify(requests[1]?.body)).not.toContain('先读文件')
   })
@@ -334,29 +485,83 @@ describe('Anthropic Messages streaming provider', () => {
     await collect((await anthropicAt(endpoint.replace(/\/v1$/u, ''))).stream({ messages: [message], tools: [], signal: freshSignal() }))
     await collect((await anthropicAt(`${endpoint}/`)).stream({ messages: [message], tools: [], signal: freshSignal() }))
     expect(urls).toEqual(['/v1/messages', '/v1/messages'])
-    await expect(collect((await anthropicAt(endpoint)).stream({ messages: [message], tools: [], signal: freshSignal(), model: 'unlisted' })))
-      .rejects.toMatchObject({ code: 'model-unavailable' })
+    await expect(
+      collect((await anthropicAt(endpoint)).stream({ messages: [message], tools: [], signal: freshSignal(), model: 'unlisted' })),
+    ).rejects.toMatchObject({ code: 'model-unavailable' })
     expect(urls).toHaveLength(2)
   })
 
   it.each([
     ['max_tokens', messageStart() + textBlock(0, 'partial') + messageEnd('max_tokens'), 'model-incomplete'],
     ['refusal', messageStart() + messageEnd('refusal'), 'model-refusal'],
-    ['an error event', messageStart() + textBlock(0, 'partial') + anthropicEvent('error', { error: { type: 'overloaded_error', message: 'Overloaded local-test-key' } }), 'upstream-error'],
-    ['a missing message_stop', messageStart() + toolBlock(0, 'toolu_a', 'write_report', '{}') + anthropicEvent('message_delta', { delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 1 } }), 'stream-incomplete'],
+    [
+      'an error event',
+      messageStart()
+        + textBlock(0, 'partial')
+        + anthropicEvent('error', { error: { type: 'overloaded_error', message: 'Overloaded local-test-key' } }),
+      'upstream-error',
+    ],
+    [
+      'a missing message_stop',
+      messageStart()
+        + toolBlock(0, 'toolu_a', 'write_report', '{}')
+        + anthropicEvent('message_delta', { delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 1 } }),
+      'stream-incomplete',
+    ],
     ['a missing stop reason', messageStart() + textBlock(0, 'partial') + anthropicEvent('message_stop'), 'stream-incomplete'],
     ['events before message_start', textBlock(0, 'x') + messageEnd('end_turn'), 'invalid-chunk'],
     ['a tool_use stop without tool blocks', messageStart() + textBlock(0, 'x') + messageEnd('tool_use'), 'invalid-tool-call'],
-    ['tool blocks with an end_turn stop', messageStart() + toolBlock(0, 'toolu_a', 'write_report', '{}') + messageEnd('end_turn'), 'invalid-tool-call'],
-    ['invalid tool JSON', messageStart() + toolBlock(0, 'toolu_a', 'write_report', '{"content":') + messageEnd('tool_use'), 'invalid-tool-json'],
+    [
+      'tool blocks with an end_turn stop',
+      messageStart() + toolBlock(0, 'toolu_a', 'write_report', '{}') + messageEnd('end_turn'),
+      'invalid-tool-call',
+    ],
+    [
+      'invalid tool JSON',
+      messageStart() + toolBlock(0, 'toolu_a', 'write_report', '{"content":') + messageEnd('tool_use'),
+      'invalid-tool-json',
+    ],
     ['array tool JSON', messageStart() + toolBlock(0, 'toolu_a', 'write_report', '[]') + messageEnd('tool_use'), 'invalid-tool-json'],
-    ['duplicate tool IDs', messageStart() + toolBlock(0, 'toolu_a', 'write_report', '{}') + toolBlock(1, 'toolu_a', 'long_task', '{}') + messageEnd('tool_use'), 'invalid-tool-call'],
-    ['a delta for an unknown block', messageStart() + anthropicEvent('content_block_delta', { index: 4, delta: { type: 'text_delta', text: 'x' } }) + messageEnd('end_turn'), 'invalid-chunk'],
-    ['a delta of the wrong kind', messageStart() + anthropicEvent('content_block_start', { index: 0, content_block: { type: 'text', text: '' } })
-      + anthropicEvent('content_block_delta', { index: 0, delta: { type: 'input_json_delta', partial_json: '{}' } }), 'invalid-chunk'],
-    ['an unsupported block', messageStart() + anthropicEvent('content_block_start', { index: 0, content_block: { type: 'server_tool_use', id: 'x', name: 'web_search' } }), 'unsupported-block'],
-    ['an unclosed block', messageStart() + anthropicEvent('content_block_start', { index: 0, content_block: { type: 'text', text: '' } }) + messageEnd('end_turn'), 'stream-incomplete'],
-    ['content after the stop reason', messageStart() + anthropicEvent('message_delta', { delta: { stop_reason: 'end_turn' } }) + textBlock(0, 'late') + anthropicEvent('message_stop'), 'invalid-chunk'],
+    [
+      'duplicate tool IDs',
+      messageStart() + toolBlock(0, 'toolu_a', 'write_report', '{}') + toolBlock(1, 'toolu_a', 'long_task', '{}') + messageEnd('tool_use'),
+      'invalid-tool-call',
+    ],
+    [
+      'a delta for an unknown block',
+      messageStart()
+        + anthropicEvent('content_block_delta', { index: 4, delta: { type: 'text_delta', text: 'x' } })
+        + messageEnd('end_turn'),
+      'invalid-chunk',
+    ],
+    [
+      'a delta of the wrong kind',
+      messageStart()
+        + anthropicEvent('content_block_start', { index: 0, content_block: { type: 'text', text: '' } })
+        + anthropicEvent('content_block_delta', { index: 0, delta: { type: 'input_json_delta', partial_json: '{}' } }),
+      'invalid-chunk',
+    ],
+    [
+      'an unsupported block',
+      messageStart()
+        + anthropicEvent('content_block_start', { index: 0, content_block: { type: 'server_tool_use', id: 'x', name: 'web_search' } }),
+      'unsupported-block',
+    ],
+    [
+      'an unclosed block',
+      messageStart()
+        + anthropicEvent('content_block_start', { index: 0, content_block: { type: 'text', text: '' } })
+        + messageEnd('end_turn'),
+      'stream-incomplete',
+    ],
+    [
+      'content after the stop reason',
+      messageStart()
+        + anthropicEvent('message_delta', { delta: { stop_reason: 'end_turn' } })
+        + textBlock(0, 'late')
+        + anthropicEvent('message_stop'),
+      'invalid-chunk',
+    ],
     ['invalid SSE JSON', messageStart() + 'data: {broken}\n\n', 'invalid-json'],
   ])('rejects %s before publishing a tool call or finish', async (_label, stream, code) => {
     const endpoint = await listen((_request, response) => {
@@ -367,7 +572,10 @@ describe('Anthropic Messages streaming provider', () => {
     const deltas: ModelDelta[] = []
     const failure = await (async () => {
       for await (const delta of provider.stream({ messages: [message], tools: [], signal: freshSignal() })) deltas.push(delta)
-    })().then(() => undefined, (error: unknown) => error)
+    })().then(
+      () => undefined,
+      (error: unknown) => error,
+    )
     expect(failure).toMatchObject({ name: 'ProviderError', code })
     expect(String((failure as Error).message)).not.toContain('local-test-key')
     expect(deltas.some(delta => delta.type === 'tool-call' || delta.type === 'finish')).toBe(false)
@@ -378,16 +586,23 @@ describe('Anthropic Messages streaming provider', () => {
       response.writeHead(401, { 'content-type': 'application/json' })
       response.end(JSON.stringify({ type: 'error', error: { type: 'authentication_error', message: 'invalid x-api-key local-test-key' } }))
     })
-    await expect(collect((await anthropicAt(endpoint)).stream({ messages: [message], tools: [], signal: freshSignal() })))
-      .rejects.toMatchObject({ code: 'http-error', status: 401, message: expect.stringContaining('[redacted]') })
+    await expect(
+      collect((await anthropicAt(endpoint)).stream({ messages: [message], tools: [], signal: freshSignal() })),
+    ).rejects.toMatchObject({ code: 'http-error', status: 401, message: expect.stringContaining('[redacted]') })
   })
 
   it('aborts a stalled stream and closes its connection', async () => {
     let closed = false
-    let receivedResolve: () => void = () => { throw new Error('Listener not initialized') }
-    const received = new Promise<void>(resolve => { receivedResolve = resolve })
+    let receivedResolve: () => void = () => {
+      throw new Error('Listener not initialized')
+    }
+    const received = new Promise<void>(resolve => {
+      receivedResolve = resolve
+    })
     const endpoint = await listen((_request, response) => {
-      response.on('close', () => { closed = true })
+      response.on('close', () => {
+        closed = true
+      })
       response.writeHead(200, { 'content-type': 'text/event-stream' })
       response.write(messageStart() + anthropicEvent('content_block_start', { index: 0, content_block: { type: 'text', text: '' } }))
       receivedResolve()
@@ -404,7 +619,15 @@ describe('Anthropic Messages streaming provider', () => {
 
 describe('Host provider helpers', () => {
   const record = (kind: ProviderRecord['kind'], baseURL: string): ProviderRecord => ({
-    id: 'svc', name: '服务', kind, baseURL, apiKey: 'list-secret', keyOrigin: originOf(baseURL), enabled: true, models: ['m1', 'm2'], defaultModel: 'm2',
+    id: 'svc',
+    name: '服务',
+    kind,
+    baseURL,
+    apiKey: 'list-secret',
+    keyOrigin: originOf(baseURL),
+    enabled: true,
+    models: ['m1', 'm2'],
+    defaultModel: 'm2',
   })
 
   it('builds one plugin per provider record and summarizes it without credentials', async () => {
@@ -415,12 +638,27 @@ describe('Host provider helpers', () => {
       expect(providers[0]).toMatchObject({ id: 'svc', name: '服务', model: 'm2', models: ['m1', 'm2'] })
       expect(summarizeProvider(providers[0]!, kind)).toEqual({ id: 'svc', name: '服务', kind, models: ['m1', 'm2'], defaultModel: 'm2' })
     }
-    const legacy: ModelProvider = { id: 'plugin', name: 'P', model: 'only', async *stream() { yield { type: 'finish', reason: 'stop' } } }
+    const legacy: ModelProvider = {
+      id: 'plugin',
+      name: 'P',
+      model: 'only',
+      async *stream() {
+        yield { type: 'finish', reason: 'stop' }
+      },
+    }
     expect(summarizeProvider(legacy, 'plugin')).toEqual({ id: 'plugin', name: 'P', kind: 'plugin', models: ['only'], defaultModel: 'only' })
     const settings = providerSettings({ ...record('anthropic', 'https://api.anthropic.com'), presetId: 'anthropic' })
     expect(settings).toEqual({
-      id: 'svc', name: '服务', kind: 'anthropic', presetId: 'anthropic', baseURL: 'https://api.anthropic.com',
-      hasKey: true, keyOrigin: 'https://api.anthropic.com:443', enabled: true, models: ['m1', 'm2'], defaultModel: 'm2',
+      id: 'svc',
+      name: '服务',
+      kind: 'anthropic',
+      presetId: 'anthropic',
+      baseURL: 'https://api.anthropic.com',
+      hasKey: true,
+      keyOrigin: 'https://api.anthropic.com:443',
+      enabled: true,
+      models: ['m1', 'm2'],
+      defaultModel: 'm2',
     })
     expect(JSON.stringify(settings)).not.toContain('list-secret')
   })
@@ -430,13 +668,23 @@ describe('Host provider helpers', () => {
     const endpoint = await listen((request, response) => {
       seen.push({ url: request.url, authorization: request.headers.authorization })
       response.writeHead(200, { 'content-type': 'application/json' })
-      response.end(JSON.stringify({ object: 'list', data: [{ id: 'gpt-b', object: 'model' }, { id: 'gpt-a' }, { id: 'gpt-b' }, { id: ' ' }, { id: 'x'.repeat(300) }] }))
+      response.end(
+        JSON.stringify({
+          object: 'list',
+          data: [{ id: 'gpt-b', object: 'model' }, { id: 'gpt-a' }, { id: 'gpt-b' }, { id: ' ' }, { id: 'x'.repeat(300) }],
+        }),
+      )
     })
-    expect(await listProviderModels({ kind: 'openai-compatible', baseURL: endpoint, apiKey: 'list-secret' }, freshSignal(), direct)).toEqual(['gpt-a', 'gpt-b'])
+    expect(
+      await listProviderModels({ kind: 'openai-compatible', baseURL: endpoint, apiKey: 'list-secret' }, freshSignal(), direct),
+    ).toEqual(['gpt-a', 'gpt-b'])
     const check = await checkProvider({ kind: 'openai-compatible', baseURL: `${endpoint}/`, apiKey: '' }, freshSignal(), direct)
     expect(check).toMatchObject({ ok: true, models: ['gpt-a', 'gpt-b'] })
     expect(check.latencyMs).toBeGreaterThanOrEqual(0)
-    expect(seen).toEqual([{ url: '/v1/models', authorization: 'Bearer list-secret' }, { url: '/v1/models', authorization: undefined }])
+    expect(seen).toEqual([
+      { url: '/v1/models', authorization: 'Bearer list-secret' },
+      { url: '/v1/models', authorization: undefined },
+    ])
   })
 
   it('pages through Anthropic models with native headers', async () => {
@@ -445,11 +693,21 @@ describe('Host provider helpers', () => {
       seen.push({ url: request.url, key: request.headers['x-api-key'], version: request.headers['anthropic-version'] })
       response.writeHead(200, { 'content-type': 'application/json' })
       const first = !request.url?.includes('after_id')
-      response.end(JSON.stringify(first
-        ? { data: [{ id: 'claude-b', type: 'model' }], has_more: true, first_id: 'claude-b', last_id: 'claude-b' }
-        : { data: [{ id: 'claude-a', type: 'model' }], has_more: false, first_id: 'claude-a', last_id: 'claude-a' }))
+      response.end(
+        JSON.stringify(
+          first
+            ? { data: [{ id: 'claude-b', type: 'model' }], has_more: true, first_id: 'claude-b', last_id: 'claude-b' }
+            : { data: [{ id: 'claude-a', type: 'model' }], has_more: false, first_id: 'claude-a', last_id: 'claude-a' },
+        ),
+      )
     })
-    expect(await listProviderModels({ kind: 'anthropic', baseURL: endpoint.replace(/\/v1$/u, ''), apiKey: 'list-secret' }, freshSignal(), direct)).toEqual(['claude-a', 'claude-b'])
+    expect(
+      await listProviderModels(
+        { kind: 'anthropic', baseURL: endpoint.replace(/\/v1$/u, ''), apiKey: 'list-secret' },
+        freshSignal(),
+        direct,
+      ),
+    ).toEqual(['claude-a', 'claude-b'])
     expect(seen).toEqual([
       { url: '/v1/models?limit=1000', key: 'list-secret', version: '2023-06-01' },
       { url: '/v1/models?limit=1000&after_id=claude-b', key: 'list-secret', version: '2023-06-01' },
@@ -459,12 +717,17 @@ describe('Host provider helpers', () => {
   it('reports listing failures with stable codes and without the key', async () => {
     let redirectTargetHit = false
     const endpoint = await listen((request, response) => {
-      if (request.url === '/v1/elsewhere/models') { redirectTargetHit = true; response.end('{}'); return }
+      if (request.url === '/v1/elsewhere/models') {
+        redirectTargetHit = true
+        response.end('{}')
+        return
+      }
       if (request.url?.startsWith('/v1/auth')) {
         response.writeHead(401, { 'content-type': 'application/json' })
         response.end(JSON.stringify({ error: { message: 'bad key list-secret' } }))
       } else if (request.url?.startsWith('/v1/redirect')) {
-        response.writeHead(302, { location: '/v1/elsewhere/models' }); response.end()
+        response.writeHead(302, { location: '/v1/elsewhere/models' })
+        response.end()
       } else if (request.url?.startsWith('/v1/declared')) {
         response.writeHead(200, { 'content-type': 'application/json', 'content-length': String(9 * 1024 * 1024) })
         response.write('{"data":[')
@@ -472,33 +735,52 @@ describe('Host provider helpers', () => {
         response.writeHead(200, { 'content-type': 'application/json' })
         response.end(`{"data":[],"pad":"${'x'.repeat(8 * 1024 * 1024)}"}`)
       } else if (request.url?.startsWith('/v1/html')) {
-        response.writeHead(200, { 'content-type': 'text/html' }); response.end('<html>')
+        response.writeHead(200, { 'content-type': 'text/html' })
+        response.end('<html>')
       } else if (request.url?.startsWith('/v1/shape')) {
-        response.writeHead(200, { 'content-type': 'application/json' }); response.end(JSON.stringify({ data: [{ name: 'no id' }] }))
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ data: [{ name: 'no id' }] }))
       }
       // `/v1/stall` never answers.
     })
     const list = (path: string, options?: { timeoutMs?: number }) =>
-      listProviderModels({ kind: 'openai-compatible', baseURL: `${endpoint}/${path}`, apiKey: 'list-secret' }, freshSignal(), { ...direct, ...options })
-        .then(() => undefined, (error: unknown) => error)
+      listProviderModels({ kind: 'openai-compatible', baseURL: `${endpoint}/${path}`, apiKey: 'list-secret' }, freshSignal(), {
+        ...direct,
+        ...options,
+      }).then(
+        () => undefined,
+        (error: unknown) => error,
+      )
     const failures = {
-      auth: await list('auth'), redirect: await list('redirect'), declared: await list('declared'), huge: await list('huge'),
-      html: await list('html'), shape: await list('shape'), stall: await list('stall', { timeoutMs: 50 }),
+      auth: await list('auth'),
+      redirect: await list('redirect'),
+      declared: await list('declared'),
+      huge: await list('huge'),
+      html: await list('html'),
+      shape: await list('shape'),
+      stall: await list('stall', { timeoutMs: 50 }),
     }
     expect(failures).toMatchObject({
       auth: { name: 'ProviderError', code: 'http-error', status: 401, message: expect.stringContaining('API Key 无效') },
-      redirect: { code: 'redirect' }, declared: { code: 'response-too-large' }, huge: { code: 'response-too-large' },
-      html: { code: 'invalid-response' }, shape: { code: 'invalid-response' }, stall: { code: 'timeout' },
+      redirect: { code: 'redirect' },
+      declared: { code: 'response-too-large' },
+      huge: { code: 'response-too-large' },
+      html: { code: 'invalid-response' },
+      shape: { code: 'invalid-response' },
+      stall: { code: 'timeout' },
     })
     for (const failure of Object.values(failures)) expect(String((failure as Error).message)).not.toContain('list-secret')
     expect(String((failures.auth as Error).message)).toContain('[redacted]')
     expect(redirectTargetHit).toBe(false)
-    await expect(listProviderModels({ kind: 'openai-compatible', baseURL: 'ftp://example.test', apiKey: '' }, freshSignal(), { fetch: unusedFetch }))
-      .rejects.toMatchObject({ code: 'invalid-url' })
+    await expect(
+      listProviderModels({ kind: 'openai-compatible', baseURL: 'ftp://example.test', apiKey: '' }, freshSignal(), { fetch: unusedFetch }),
+    ).rejects.toMatchObject({ code: 'invalid-url' })
   })
 
   it('propagates the caller abort instead of a timeout', async () => {
-    const endpoint = await listen(() => { /* never answers */ })
+    const endpoint = await listen(() => {
+      /* never answers */
+    })
     const controller = new AbortController()
     const pending = listProviderModels({ kind: 'openai-compatible', baseURL: endpoint, apiKey: '' }, controller.signal, direct)
     controller.abort()
@@ -511,15 +793,25 @@ describe('Host provider helpers', () => {
     expect(byId.anthropic).toMatchObject({ kind: 'anthropic', baseURL: 'https://api.anthropic.com', requiresKey: true })
     expect(byId.ollama).toMatchObject({ kind: 'openai-compatible', baseURL: 'http://127.0.0.1:11434/v1', requiresKey: false })
     expect(byId.custom).toMatchObject({ baseURL: '', requiresKey: false })
-    for (const preset of PROVIDER_PRESETS) if (preset.baseURL) expect(() => providerPlugin({ ...record(preset.kind, preset.baseURL), apiKey: '' }, { fetch: unusedFetch })).not.toThrow()
+    for (const preset of PROVIDER_PRESETS)
+      if (preset.baseURL)
+        expect(() => providerPlugin({ ...record(preset.kind, preset.baseURL), apiKey: '' }, { fetch: unusedFetch })).not.toThrow()
   })
 })
 
 describe('Host egress and key origin binding', () => {
   const offline = 'http://127.0.0.1:9/v1' // Nothing listens there; a request that bypasses the injected fetch fails.
   const record = (kind: ProviderRecord['kind'], extra: Partial<ProviderRecord> = {}): ProviderRecord => ({
-    id: 'svc', name: '服务', kind, baseURL: offline, apiKey: 'origin-secret', keyOrigin: 'http://127.0.0.1:9',
-    enabled: true, models: ['m1'], defaultModel: 'm1', ...extra,
+    id: 'svc',
+    name: '服务',
+    kind,
+    baseURL: offline,
+    apiKey: 'origin-secret',
+    keyOrigin: 'http://127.0.0.1:9',
+    enabled: true,
+    models: ['m1'],
+    defaultModel: 'm1',
+    ...extra,
   })
   const denial = (target: string) => Object.assign(new Error('denied by policy'), { code: 'egress-denied', target, reason: 'metadata' })
 
@@ -542,10 +834,18 @@ describe('Host egress and key origin binding', () => {
       const deltas = await collect(providers[0]!.stream({ messages: [message], tools: [], signal: freshSignal() }))
       expect(deltas.filter(delta => delta.type === 'text')).toEqual([{ type: 'text', text: '经由注入' }])
       expect(await listProviderModels({ kind, baseURL: offline, apiKey: 'origin-secret' }, freshSignal(), { fetch })).toEqual(['listed'])
-      expect(await checkProvider({ kind, baseURL: offline, apiKey: '' }, freshSignal(), { fetch })).toMatchObject({ ok: true, models: ['listed'] })
+      expect(await checkProvider({ kind, baseURL: offline, apiKey: '' }, freshSignal(), { fetch })).toMatchObject({
+        ok: true,
+        models: ['listed'],
+      })
     }
     expect(calls.map(call => new URL(call.url).pathname)).toEqual([
-      '/v1/chat/completions', '/v1/models', '/v1/models', '/v1/messages', '/v1/models', '/v1/models',
+      '/v1/chat/completions',
+      '/v1/models',
+      '/v1/models',
+      '/v1/messages',
+      '/v1/models',
+      '/v1/models',
     ])
     expect(calls.every(call => call.init.redirect === 'error')).toBe(true)
     const headers = calls.map(call => new Headers(call.init.headers))
@@ -554,24 +854,43 @@ describe('Host egress and key origin binding', () => {
   })
 
   it('maps egress denials to egress-denied with the target, whether thrown directly or as the cause', async () => {
-    const viaCause: FetchLike = async () => { throw new TypeError('fetch failed', { cause: denial('169.254.169.254:80') }) }
-    const thrown: FetchLike = async () => { throw denial('[fd00::1]:443') }
+    const viaCause: FetchLike = async () => {
+      throw new TypeError('fetch failed', { cause: denial('169.254.169.254:80') })
+    }
+    const thrown: FetchLike = async () => {
+      throw denial('[fd00::1]:443')
+    }
     const expected = (target: string) => ({
-      name: 'ProviderError', code: 'egress-denied', target, message: `Host 出站策略拒绝访问 ${target}（本机、私网或元数据地址）。`,
+      name: 'ProviderError',
+      code: 'egress-denied',
+      target,
+      message: `Host 出站策略拒绝访问 ${target}（本机、私网或元数据地址）。`,
     })
-    await expect(listProviderModels({ kind: 'openai-compatible', baseURL: 'http://169.254.169.254/v1', apiKey: 'origin-secret' }, freshSignal(), { fetch: viaCause }))
-      .rejects.toMatchObject(expected('169.254.169.254:80'))
-    await expect(checkProvider({ kind: 'anthropic', baseURL: offline, apiKey: '' }, freshSignal(), { fetch: thrown }))
-      .rejects.toMatchObject(expected('[fd00::1]:443'))
+    await expect(
+      listProviderModels({ kind: 'openai-compatible', baseURL: 'http://169.254.169.254/v1', apiKey: 'origin-secret' }, freshSignal(), {
+        fetch: viaCause,
+      }),
+    ).rejects.toMatchObject(expected('169.254.169.254:80'))
+    await expect(
+      checkProvider({ kind: 'anthropic', baseURL: offline, apiKey: '' }, freshSignal(), { fetch: thrown }),
+    ).rejects.toMatchObject(expected('[fd00::1]:443'))
     for (const kind of ['openai-compatible', 'anthropic'] as const) {
-      for (const [fetch, target] of [[viaCause, '169.254.169.254:80'], [thrown, '[fd00::1]:443']] as const) {
+      for (const [fetch, target] of [
+        [viaCause, '169.254.169.254:80'],
+        [thrown, '[fd00::1]:443'],
+      ] as const) {
         const { providers } = await mount(providerPlugin(record(kind), { fetch }))
-        await expect(collect(providers[0]!.stream({ messages: [message], tools: [], signal: freshSignal() }))).rejects.toMatchObject(expected(target))
+        await expect(collect(providers[0]!.stream({ messages: [message], tools: [], signal: freshSignal() }))).rejects.toMatchObject(
+          expected(target),
+        )
       }
     }
-    const refused: FetchLike = async () => { throw new TypeError('fetch failed', { cause: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }) }) }
-    await expect(listProviderModels({ kind: 'openai-compatible', baseURL: offline, apiKey: '' }, freshSignal(), { fetch: refused }))
-      .rejects.toMatchObject({ code: 'network-error', message: expect.stringContaining('ECONNREFUSED') })
+    const refused: FetchLike = async () => {
+      throw new TypeError('fetch failed', { cause: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }) })
+    }
+    await expect(
+      listProviderModels({ kind: 'openai-compatible', baseURL: offline, apiKey: '' }, freshSignal(), { fetch: refused }),
+    ).rejects.toMatchObject({ code: 'network-error', message: expect.stringContaining('ECONNREFUSED') })
   })
 
   it('uses a saved key only at the origin it was saved for', async () => {
@@ -579,9 +898,13 @@ describe('Host egress and key origin binding', () => {
     expect(usableKey(saved)).toBe('origin-secret')
     expect(usableKey({ ...saved, baseURL: 'HTTP://127.0.0.1:9/elsewhere' })).toBe('origin-secret')
     for (const moved of [
-      { ...saved, baseURL: 'http://127.0.0.1:10/v1' }, { ...saved, baseURL: 'https://127.0.0.1:9/v1' },
-      { ...saved, baseURL: 'http://localhost:9/v1' }, { ...saved, keyOrigin: undefined }, { ...saved, baseURL: 'not a url' },
-    ]) expect(usableKey(moved)).toBe('')
+      { ...saved, baseURL: 'http://127.0.0.1:10/v1' },
+      { ...saved, baseURL: 'https://127.0.0.1:9/v1' },
+      { ...saved, baseURL: 'http://localhost:9/v1' },
+      { ...saved, keyOrigin: undefined },
+      { ...saved, baseURL: 'not a url' },
+    ])
+      expect(usableKey(moved)).toBe('')
     const moved = { ...saved, baseURL: 'http://127.0.0.1:10/v1' }
     expect(providerSettings(saved)).toMatchObject({ hasKey: true, keyOrigin: 'http://127.0.0.1:9' })
     expect(providerSettings(moved).hasKey).toBe(false)
@@ -605,22 +928,32 @@ describe('Host egress and key origin binding', () => {
     expect(originOf('http://example.test')).toBe('http://example.test:80')
     expect(originOf('https://example.test:8443/')).toBe('https://example.test:8443')
     expect(originOf('http://[::1]:8080/v1')).toBe('http://[::1]:8080')
-    for (const invalid of ['ftp://example.test', 'not a url']) expect(() => originOf(invalid)).toThrow(expect.objectContaining({ code: 'invalid-url' }))
+    for (const invalid of ['ftp://example.test', 'not a url'])
+      expect(() => originOf(invalid)).toThrow(expect.objectContaining({ code: 'invalid-url' }))
   })
 
   it('refuses the metadata address, unlisted loopback and redirects through the Host egress fetch', async () => {
     const { createEgressFetch } = await import('../src/host/egress.ts')
     let redirectTargetHit = false
     const endpoint = await listen((request, response) => {
-      if (request.url === '/v1/elsewhere/models') { redirectTargetHit = true; response.end('{}'); return }
-      if (request.url?.startsWith('/v1/redirect')) { response.writeHead(302, { location: '/v1/elsewhere/models' }); response.end(); return }
+      if (request.url === '/v1/elsewhere/models') {
+        redirectTargetHit = true
+        response.end('{}')
+        return
+      }
+      if (request.url?.startsWith('/v1/redirect')) {
+        response.writeHead(302, { location: '/v1/elsewhere/models' })
+        response.end()
+        return
+      }
       response.writeHead(200, { 'content-type': 'application/json' })
       response.end(JSON.stringify({ data: [{ id: 'local-model' }] }))
     })
     const local = new URL(endpoint).host
     const allow: string[] = []
     const fetch = createEgressFetch({ allow: () => allow }) as FetchLike
-    const list = (baseURL: string) => listProviderModels({ kind: 'openai-compatible', baseURL, apiKey: 'origin-secret' }, freshSignal(), { fetch })
+    const list = (baseURL: string) =>
+      listProviderModels({ kind: 'openai-compatible', baseURL, apiKey: 'origin-secret' }, freshSignal(), { fetch })
     await expect(list('http://169.254.169.254/v1')).rejects.toMatchObject({ code: 'egress-denied', target: '169.254.169.254:80' })
     await expect(list(endpoint)).rejects.toMatchObject({ code: 'egress-denied', target: local })
     allow.push(local)
@@ -641,27 +974,45 @@ describe('API key redaction in upstream errors', () => {
       response.writeHead(401, { 'content-type': 'text/plain' })
       response.end(`${'x'.repeat(472)}Incorrect API key provided: ${key}`)
     })
-    const failure = await collect((await openaiAt(endpoint, key)).stream({ messages: [message], tools: [], signal: freshSignal() })).then(() => undefined, (error: unknown) => error)
+    const failure = await collect((await openaiAt(endpoint, key)).stream({ messages: [message], tools: [], signal: freshSignal() })).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
     expect(failure).toMatchObject({ code: 'http-error', status: 401 })
     const text = String((failure as Error).message)
     expect(leaks(text)).toEqual([])
     expect(text).toContain('[redacted]')
 
-    const anthropic = await collect((await anthropicAt(endpoint, key)).stream({ messages: [message], tools: [], signal: freshSignal() })).then(() => undefined, (error: unknown) => error)
+    const anthropic = await collect(
+      (await anthropicAt(endpoint, key)).stream({ messages: [message], tools: [], signal: freshSignal() }),
+    ).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
     expect(leaks(String((anthropic as Error).message))).toEqual([])
-    const listing = await listProviderModels({ kind: 'openai-compatible', baseURL: endpoint, apiKey: key }, freshSignal(), direct).then(() => undefined, (error: unknown) => error)
+    const listing = await listProviderModels({ kind: 'openai-compatible', baseURL: endpoint, apiKey: key }, freshSignal(), direct).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
     expect(leaks(String((listing as Error).message))).toEqual([])
   })
 
   it('redacts JSON-escaped and URL-encoded echoes of the key', async () => {
     const endpoint = await listen((request, response) => {
       response.writeHead(400, { 'content-type': 'application/json' })
-      if (request.url?.includes('chat')) response.end(`{"error":{"message":"bad key ${JSON.stringify(key).slice(1, -1).replace(/\//gu, '\\/')}"}}`)
+      if (request.url?.includes('chat'))
+        response.end(`{"error":{"message":"bad key ${JSON.stringify(key).slice(1, -1).replace(/\//gu, '\\/')}"}}`)
       else response.end(`{"error":"bad key ${encodeURIComponent(key)}"}`)
     })
-    const chat = await collect((await openaiAt(endpoint, key)).stream({ messages: [message], tools: [], signal: freshSignal() })).then(() => undefined, (error: unknown) => error)
+    const chat = await collect((await openaiAt(endpoint, key)).stream({ messages: [message], tools: [], signal: freshSignal() })).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
     expect(leaks(String((chat as Error).message).replace(/\\\//gu, '/'))).toEqual([])
-    const listing = await listProviderModels({ kind: 'openai-compatible', baseURL: endpoint, apiKey: key }, freshSignal(), direct).then(() => undefined, (error: unknown) => error)
+    const listing = await listProviderModels({ kind: 'openai-compatible', baseURL: endpoint, apiKey: key }, freshSignal(), direct).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
     expect(leaks(decodeURIComponent(String((listing as Error).message)))).toEqual([])
   })
 
@@ -693,28 +1044,51 @@ describe('demo provider and bounded tools', () => {
     const report = tools.find(tool => tool.name === call.call.name)!
     expect(report.requiresApproval).toBe(true)
     await expect(readFile(join(workspaceRoot, 'artifacts/report-session1.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
-    const result = await report.execute({ content: '真实报告内容' }, { workspaceRoot, sessionId: 'session1', callId: call.call.id, signal: freshSignal() })
+    const result = await report.execute(
+      { content: '真实报告内容' },
+      { workspaceRoot, sessionId: 'session1', callId: call.call.id, signal: freshSignal() },
+    )
     expect(await readFile(join(workspaceRoot, 'artifacts/report-session1.txt'), 'utf8')).toBe('真实报告内容')
-    const history: ModelMessage[] = [prompt, { role: 'assistant', content: '', toolCalls: [call.call] },
-      { role: 'tool', content: result.text, toolCallId: call.call.id }]
+    const history: ModelMessage[] = [
+      prompt,
+      { role: 'assistant', content: '', toolCalls: [call.call] },
+      { role: 'tool', content: result.text, toolCallId: call.call.id },
+    ]
     const completed = await collect(provider.stream({ messages: history, tools, signal: freshSignal() }))
-    expect(completed.flatMap(delta => delta.type === 'text' ? [delta.text] : []).join('')).toContain('报告已写入')
-    const rejected = await collect(provider.stream({ messages: [...history.slice(0, -1),
-      { role: 'tool', content: '用户拒绝审批', toolCallId: call.call.id, isError: true }], tools, signal: freshSignal() }))
-    expect(rejected.flatMap(delta => delta.type === 'text' ? [delta.text] : []).join('')).toContain('操作未完成')
+    expect(completed.flatMap(delta => (delta.type === 'text' ? [delta.text] : [])).join('')).toContain('报告已写入')
+    const rejected = await collect(
+      provider.stream({
+        messages: [...history.slice(0, -1), { role: 'tool', content: '用户拒绝审批', toolCallId: call.call.id, isError: true }],
+        tools,
+        signal: freshSignal(),
+      }),
+    )
+    expect(rejected.flatMap(delta => (delta.type === 'text' ? [delta.text] : [])).join('')).toContain('操作未完成')
     expect(rejected.some(delta => delta.type === 'tool-call')).toBe(false)
   })
 
   it('does not trigger tools when unavailable and starts a distinct call for a new user turn', async () => {
     const { provider, tools } = await fixture()
     const prompt: ModelMessage = { role: 'user', content: '审批报告' }
-    expect((await collect(provider.stream({ messages: [prompt], tools: [], signal: freshSignal() })))
-      .some(delta => delta.type === 'tool-call')).toBe(false)
-    const first = (await collect(provider.stream({ messages: [prompt], tools, signal: freshSignal() })))
-      .find(delta => delta.type === 'tool-call')
+    expect(
+      (await collect(provider.stream({ messages: [prompt], tools: [], signal: freshSignal() }))).some(delta => delta.type === 'tool-call'),
+    ).toBe(false)
+    const first = (await collect(provider.stream({ messages: [prompt], tools, signal: freshSignal() }))).find(
+      delta => delta.type === 'tool-call',
+    )
     if (first?.type !== 'tool-call') throw new Error('Missing call')
-    const second = await collect(provider.stream({ messages: [prompt, { role: 'assistant', content: '', toolCalls: [first.call] },
-      { role: 'tool', content: '用户拒绝', toolCallId: first.call.id, isError: true }, { role: 'user', content: '重新生成报告' }], tools, signal: freshSignal() }))
+    const second = await collect(
+      provider.stream({
+        messages: [
+          prompt,
+          { role: 'assistant', content: '', toolCalls: [first.call] },
+          { role: 'tool', content: '用户拒绝', toolCallId: first.call.id, isError: true },
+          { role: 'user', content: '重新生成报告' },
+        ],
+        tools,
+        signal: freshSignal(),
+      }),
+    )
     const next = second.find(delta => delta.type === 'tool-call')
     expect(next?.type).toBe('tool-call')
     if (next?.type !== 'tool-call') throw new Error('Missing new-turn tool call')
@@ -724,9 +1098,17 @@ describe('demo provider and bounded tools', () => {
   it('cancels the fixed long task without writing a completion artifact', async () => {
     const { tools, workspaceRoot } = await fixture()
     const controller = new AbortController()
-    const pending = tools.find(tool => tool.name === 'long_task')!.execute({}, {
-      workspaceRoot, sessionId: 'cancelled', callId: 'call-wait', signal: controller.signal,
-    })
+    const pending = tools
+      .find(tool => tool.name === 'long_task')!
+      .execute(
+        {},
+        {
+          workspaceRoot,
+          sessionId: 'cancelled',
+          callId: 'call-wait',
+          signal: controller.signal,
+        },
+      )
     const rejection = expect(pending).rejects.toMatchObject({ name: 'AbortError' })
     await delay(20)
     controller.abort()
@@ -756,9 +1138,17 @@ describe('demo provider and bounded tools', () => {
     const target = join(workspaceRoot, 'outside.txt')
     await writeFile(target, 'keep')
     await symlink(target, join(workspaceRoot, 'artifacts/report-session1.txt'))
-    await tools.find(tool => tool.name === 'write_report')!.execute({ content: 'new report' }, {
-      workspaceRoot, sessionId: 'session1', callId: 'call', signal: freshSignal(),
-    })
+    await tools
+      .find(tool => tool.name === 'write_report')!
+      .execute(
+        { content: 'new report' },
+        {
+          workspaceRoot,
+          sessionId: 'session1',
+          callId: 'call',
+          signal: freshSignal(),
+        },
+      )
     expect(await readFile(target, 'utf8')).toBe('keep')
     expect(await readFile(join(workspaceRoot, 'artifacts/report-session1.txt'), 'utf8')).toBe('new report')
     expect(await readdir(join(workspaceRoot, 'artifacts'))).toEqual(['report-session1.txt'])

@@ -28,8 +28,12 @@ type Hooks = WorkspacePluginOptions['hooks']
 function codeOf(error: unknown): unknown {
   return error instanceof Error && 'code' in error ? error.code : undefined
 }
-function missing(error: unknown): boolean { return codeOf(error) === 'ENOENT' || codeOf(error) === 'ENOTDIR' }
-function identity(stats: { dev: number | bigint; ino: number | bigint }): string { return `${stats.dev}:${stats.ino}` }
+function missing(error: unknown): boolean {
+  return codeOf(error) === 'ENOENT' || codeOf(error) === 'ENOTDIR'
+}
+function identity(stats: { dev: number | bigint; ino: number | bigint }): string {
+  return `${stats.dev}:${stats.ino}`
+}
 function sameFile(left: { dev: bigint; ino: bigint }, right: { dev: bigint; ino: bigint }): boolean {
   return left.dev === right.dev && left.ino === right.ino
 }
@@ -41,12 +45,18 @@ function sameFile(left: { dev: bigint; ino: bigint }, right: { dev: bigint; ino:
 class ProtectedPaths {
   constructor(private readonly paths: readonly string[]) {}
 
-  get empty(): boolean { return this.paths.length === 0 }
+  get empty(): boolean {
+    return this.paths.length === 0
+  }
 
   async identities(): Promise<Set<string>> {
     const ids = new Set<string>()
     for (const path of this.paths) {
-      try { ids.add(identity(await stat(path, { bigint: true }))) } catch (error) { if (!missing(error)) throw error }
+      try {
+        ids.add(identity(await stat(path, { bigint: true })))
+      } catch (error) {
+        if (!missing(error)) throw error
+      }
     }
     return ids
   }
@@ -58,8 +68,13 @@ class ProtectedPaths {
     const spelled = await Promise.all(this.paths.map(path => realpath(path).catch(() => resolve(path))))
     for (let current = target; ; current = dirname(current)) {
       let id: string | undefined
-      try { id = identity(await lstat(current, { bigint: true })) } catch (error) { if (!missing(error)) throw error }
-      if (spelled.includes(current) || (id !== undefined && ids.has(id))) throw new Error('该路径属于 Latch 的私有数据目录，工作区工具不能访问')
+      try {
+        id = identity(await lstat(current, { bigint: true }))
+      } catch (error) {
+        if (!missing(error)) throw error
+      }
+      if (spelled.includes(current) || (id !== undefined && ids.has(id)))
+        throw new Error('该路径属于 Latch 的私有数据目录，工作区工具不能访问')
       if (dirname(current) === current) return
     }
   }
@@ -74,8 +89,11 @@ async function workspacePath(root: string, name: string, guard: ProtectedPaths):
   let current = base
   for (const part of relative(base, target).split(sep).filter(Boolean)) {
     current = resolve(current, part)
-    try { if ((await lstat(current)).isSymbolicLink()) throw new Error(SYMLINK_REFUSED) }
-    catch (error) { if (codeOf(error) !== 'ENOENT') throw error }
+    try {
+      if ((await lstat(current)).isSymbolicLink()) throw new Error(SYMLINK_REFUSED)
+    } catch (error) {
+      if (codeOf(error) !== 'ENOENT') throw error
+    }
   }
   await guard.assertAllowed(target)
   return target
@@ -101,7 +119,9 @@ async function readRegular(root: string, name: string, guard: ProtectedPaths, si
     if (!current || !sameFile(current, info)) throw new Error(SYMLINK_REFUSED)
     if (info.size > READ_LIMIT) throw new Error('文件超过 128 KiB，请缩小读取范围')
     return await handle.readFile({ encoding: 'utf8', signal })
-  } finally { await handle.close() }
+  } finally {
+    await handle.close()
+  }
 }
 
 /**
@@ -109,7 +129,14 @@ async function readRegular(root: string, name: string, guard: ProtectedPaths, si
  * rename resolves the path again, so it happens only while the parent directory is still the one that
  * was checked, no component is a symlink, and the temporary file is still ours.
  */
-async function writeRegular(root: string, name: string, content: string, guard: ProtectedPaths, signal: AbortSignal, hooks: Hooks): Promise<void> {
+async function writeRegular(
+  root: string,
+  name: string,
+  content: string,
+  guard: ProtectedPaths,
+  signal: AbortSignal,
+  hooks: Hooks,
+): Promise<void> {
   const target = await workspacePath(root, name, guard)
   signal.throwIfAborted()
   await mkdir(dirname(target), { recursive: true })
@@ -127,8 +154,13 @@ async function writeRegular(root: string, name: string, content: string, guard: 
     tempId = await handle.stat({ bigint: true })
     // Nothing is written into a directory that was swapped after the walk.
     await unchanged(temp, tempId)
-    await handle.writeFile(content, { encoding: 'utf8', signal }); await handle.sync()
-  } catch (error) { await handle.close(); await unlink(temp).catch(() => {}); throw error }
+    await handle.writeFile(content, { encoding: 'utf8', signal })
+    await handle.sync()
+  } catch (error) {
+    await handle.close()
+    await unlink(temp).catch(() => {})
+    throw error
+  }
   await handle.close()
   try {
     await hooks?.afterResolve?.(target)
@@ -136,7 +168,10 @@ async function writeRegular(root: string, name: string, content: string, guard: 
     await workspacePath(root, name, guard)
     await unchanged(temp, tempId)
     await rename(temp, target)
-  } catch (error) { await unlink(temp).catch(() => {}); throw error }
+  } catch (error) {
+    await unlink(temp).catch(() => {})
+    throw error
+  }
 }
 
 /** Built-in file capabilities; all writes pass through the runtime approval gate. */
@@ -148,15 +183,20 @@ export function createWorkspacePlugin(options: WorkspacePluginOptions = {}): Har
   const guard = new ProtectedPaths(protectedPaths)
   const hooks = options.hooks
   return {
-    id: 'workspace-files', name: '工作区文件', version: '1.1.0',
+    id: 'workspace-files',
+    name: '工作区文件',
+    version: '1.1.0',
     description: '列出、读取和编辑当前工作区文件；每次写入需要审批，节点私有数据不可访问。',
     activate(ctx) {
       ctx.registerTool({
-        name: 'list_files', description: 'List up to 200 entries in a workspace directory. Use path "." for the root.',
+        name: 'list_files',
+        description: 'List up to 200 entries in a workspace directory. Use path "." for the root.',
         parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'], additionalProperties: false },
-        requiresApproval: false, kind: 'search',
+        requiresApproval: false,
+        kind: 'search',
         async execute(args, context) {
-          const { path } = pathInput.parse(args); context.signal.throwIfAborted()
+          const { path } = pathInput.parse(args)
+          context.signal.throwIfAborted()
           const directory = await workspacePath(context.workspaceRoot, path, guard)
           const entries = (await readdir(directory, { withFileTypes: true })).slice(0, 200)
           const hidden = guard.empty ? new Set<string>() : await guard.identities()
@@ -173,29 +213,47 @@ export function createWorkspacePlugin(options: WorkspacePluginOptions = {}): Har
         },
       })
       ctx.registerTool({
-        name: 'read_file', description: 'Read a UTF-8 file within the workspace (up to 128 KiB).',
+        name: 'read_file',
+        description: 'Read a UTF-8 file within the workspace (up to 128 KiB).',
         parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'], additionalProperties: false },
-        requiresApproval: false, kind: 'read',
+        requiresApproval: false,
+        kind: 'read',
         async execute(args, context) {
-          const { path } = pathInput.parse(args); context.signal.throwIfAborted()
+          const { path } = pathInput.parse(args)
+          context.signal.throwIfAborted()
           return { text: await readRegular(context.workspaceRoot, path, guard, context.signal, hooks) }
         },
       })
       ctx.registerTool({
-        name: 'write_file', description: 'Create or replace a UTF-8 workspace file. The user approves the exact path and content before writing.',
-        parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'], additionalProperties: false },
-        requiresApproval: true, kind: 'edit',
+        name: 'write_file',
+        description: 'Create or replace a UTF-8 workspace file. The user approves the exact path and content before writing.',
+        parameters: {
+          type: 'object',
+          properties: { path: { type: 'string' }, content: { type: 'string' } },
+          required: ['path', 'content'],
+          additionalProperties: false,
+        },
+        requiresApproval: true,
+        kind: 'edit',
         async preview(args, context) {
           const input = writeInput.parse(args)
           const target = await workspacePath(context.workspaceRoot, input.path, guard)
           let oldText: string | undefined
           // A missing, oversized, non-regular, or swapped file has no previous text to show.
-          try { oldText = await readRegular(context.workspaceRoot, input.path, guard, context.signal, undefined) }
-          catch (error) { if (context.signal.aborted) throw error }
+          try {
+            oldText = await readRegular(context.workspaceRoot, input.path, guard, context.signal, undefined)
+          } catch (error) {
+            if (context.signal.aborted) throw error
+          }
           if (oldText?.includes('\0')) oldText = undefined // Binary content is not shown as text.
           // Only a confirmed absence is a new file; anything that exists but is not shown, or could not be checked, is not.
-          const previous: NonNullable<FileDiff['previous']> = oldText !== undefined ? 'text'
-            : await lstat(target).then(() => 'unavailable' as const, (error: unknown) => codeOf(error) === 'ENOENT' ? 'none' as const : 'unavailable' as const)
+          const previous: NonNullable<FileDiff['previous']> =
+            oldText !== undefined
+              ? 'text'
+              : await lstat(target).then(
+                  () => 'unavailable' as const,
+                  (error: unknown) => (codeOf(error) === 'ENOENT' ? ('none' as const) : ('unavailable' as const)),
+                )
           const diff: FileDiff = { path: input.path, ...(oldText !== undefined ? { oldText } : {}), newText: input.content, previous }
           return { title: `写入 ${input.path}`, diffs: [diff] }
         },
