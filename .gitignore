@@ -5,6 +5,8 @@
 /.runtime*/
 /work/
 /test-results/
+# Vitest reports and attachments (json, junit, html, blob, attachments).
+/.vitest/
 /playwright-report/
 /blob-report/
 /coverage/

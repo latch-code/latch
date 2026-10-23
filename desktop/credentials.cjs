@@ -31,7 +31,7 @@ function base32(bytes) {
 /** Same algorithm as the Host's deviceFingerprint: base32(sha256(SPKI)), first 20 chars, upper case, groups of 4. */
 function deviceFingerprint(spkiDer) {
   const text = base32(crypto.createHash('sha256').update(spkiDer).digest()).toUpperCase().slice(0, 20)
-  return text.match(/.{4}/g).join(' ')
+  return /** @type {RegExpMatchArray} */ (text.match(/.{4}/g)).join(' ')
 }
 
 function enrollSigningText(hostId, enrollmentId, nonce) { return `latch-enroll-v1\n${hostId}\n${enrollmentId}\n${nonce}` }
@@ -80,8 +80,9 @@ async function ensurePrivateDirectory(directory, uid) {
  * A renewed credential is written before it is used: the Host keeps the stored one current until the
  * new one is first presented, so a renewal whose answer or write is lost leaves the file valid.
  * Older files may still carry `rotating: true`; it is ignored.
+ * @param {{ directory: string, hostId: string, safeStorage: Electron.SafeStorage, uid?: number, log?: (message: string) => void }} options
  */
-async function openCredentialStore({ directory, hostId, safeStorage, uid = process.getuid(), log = () => {} }) {
+async function openCredentialStore({ directory, hostId, safeStorage, uid = /** @type {() => number} */ (process.getuid)(), log = () => {} }) {
   if (!HOST_ID.test(hostId)) throw new Error('hostId 格式不正确')
   await ensurePrivateDirectory(directory, uid)
   const file = join(directory, `${hostId}.json`)
@@ -141,6 +142,7 @@ async function openCredentialStore({ directory, hostId, safeStorage, uid = proce
 
   function requireCredential() {
     if (!record || record.credential === undefined) throw new Error('没有设备凭据')
+    return record
   }
 
   return {
@@ -169,9 +171,9 @@ async function openCredentialStore({ directory, hostId, safeStorage, uid = proce
      */
     setCredential(credential) {
       return serialized(async () => {
-        requireCredential()
-        if (!CREDENTIAL.test(credential) || !credential.startsWith(`ldc1.${record.deviceId}.`)) throw new Error('Host 返回的设备凭据格式不正确')
-        const next = { key: record.key, deviceId: record.deviceId, credential }
+        const current = requireCredential()
+        if (!CREDENTIAL.test(credential) || !credential.startsWith(`ldc1.${current.deviceId}.`)) throw new Error('Host 返回的设备凭据格式不正确')
+        const next = { key: current.key, deviceId: current.deviceId, credential }
         await persist(next)
         record = next
       })

@@ -1,0 +1,10 @@
+// Host, plugins, scripts and tool configs: Node ESM, no DOM.
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "tsBuildInfoFile": "./node_modules/.cache/typescript/host.tsbuildinfo"
+  },
+  "include": ["src/host", "src/core", "src/plugins", "src/shared", "scripts", "*.config.ts"]
+}

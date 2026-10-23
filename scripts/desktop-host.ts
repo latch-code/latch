@@ -10,6 +10,9 @@ import { resolveLatchPaths } from '../src/host/paths.ts'
 /** Variables that must never reach the Host or the shell: the shell finds the Host through host.json only. */
 const DROPPED_ENV = ['HARNESS_DESKTOP_URL', 'ELECTRON_RUN_AS_NODE']
 
+/** Without it any same-user process can open an inspector in the running Host with SIGUSR1 (`process._debugProcess`). */
+const HOST_NODE_ARGS = ['--disable-sigusr1']
+
 export function desktopLaunchOptions(argv: string[], cwd = process.cwd(), env: NodeJS.ProcessEnv = process.env) {
   let directory: string | undefined
   const args: string[] = []
@@ -59,7 +62,7 @@ export async function ensureDesktopHost(
   }
   const logPath = join(options.dataDir, 'host.log')
   const log = await openHostLog(logPath)
-  const child = spawn(process.execPath, [...(startup.nodeArgs ?? []), startup.script ?? resolve(options.cwd, 'dist/start.js'), ...options.args], {
+  const child = spawn(process.execPath, [...HOST_NODE_ARGS, ...(startup.nodeArgs ?? []), startup.script ?? resolve(options.cwd, 'dist/start.js'), ...options.args], {
     cwd: options.cwd, detached: true, stdio: ['ignore', log.fd, log.fd], env: options.env,
   })
   try { await once(child, 'spawn'); child.unref() }

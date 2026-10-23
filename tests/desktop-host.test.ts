@@ -3,6 +3,7 @@ import { chmod, lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } 
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { desktopLaunchOptions, desktopShellEnvironment, ensureDesktopHost, probeDesktopHost } from '../scripts/desktop-host.ts'
@@ -49,7 +50,7 @@ mkdirSync(runtime, { recursive: true, mode: 0o700 })
 const socketPath = join(runtime, 'host.sock')
 const instanceId = randomUUID()
 const startedAt = new Date().toISOString()
-writeFileSync(join(dataDir, 'launch-' + process.pid + '.json'), JSON.stringify({ argv: args, env: process.env }))
+writeFileSync(join(dataDir, 'launch-' + process.pid + '.json'), JSON.stringify({ argv: args, execArgv: process.execArgv, env: process.env }))
 const info = { product: 'Latch', version: '0.1.0', hostId: '${FAKE_HOST_ID}', instanceId, pid: process.pid, startedAt,
   loopbackOrigin: 'http://h-${FAKE_HOST_ID}.localhost:1', tlsOrigin: null, devMode: true, presence: { status: 'unavailable' }, activeSessions: 0 }
 const server = createServer((req, res) => {
@@ -103,7 +104,13 @@ describe('desktop Host launch', () => {
     expect(reused).toMatchObject({ pid: host.pid, hostId: host.hostId, instanceId: host.instanceId, reused: true })
     expect(reused.notice).toContain('不会重新应用')
 
+    // SIGUSR1 is what process._debugProcess sends; the Host ignores it instead of opening an inspector.
+    process.kill(host.pid, 'SIGUSR1')
+    await delay(300)
+    expect(await probeDesktopHost(dataDir, 2_000, host.pid)).toMatchObject({ instanceId: host.instanceId })
+
     const log = await readFile(join(dataDir, 'host.log'), 'utf8')
+    expect(log).not.toMatch(/debugger listening|inspector/iu)
     expect((await stat(join(dataDir, 'host.log'))).mode & 0o777).toBe(0o600)
     for (const marker of SECRET_MARKERS) expect(log).not.toContain(marker)
     const hostJson = await readFile(join(dataDir, 'host.json'), 'utf8')
@@ -118,8 +125,9 @@ describe('desktop Host launch', () => {
     const host = await ensureDesktopHost(options, { script: await fakeHostScript(), timeoutMs: 10_000 })
     stopLater(host.pid)
     expect(host).toMatchObject({ reused: false, hostId: FAKE_HOST_ID, info: { pid: host.pid, instanceId: host.instanceId } })
-    const launch = JSON.parse(await readFile(join(dataDir, `launch-${host.pid}.json`), 'utf8')) as { argv: string[]; env: Record<string, string> }
+    const launch = JSON.parse(await readFile(join(dataDir, `launch-${host.pid}.json`), 'utf8')) as { argv: string[]; execArgv: string[]; env: Record<string, string> }
     expect(launch.argv).toEqual(['--data-dir', dataDir, '--demo'])
+    expect(launch.execArgv).toEqual(['--disable-sigusr1'])
     expect(launch.env.HARNESS_DESKTOP_URL).toBeUndefined()
     expect(launch.env.ELECTRON_RUN_AS_NODE).toBeUndefined()
     const added = Object.keys(launch.env).filter(name => !(name in parent) && name !== '__CF_USER_TEXT_ENCODING')

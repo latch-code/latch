@@ -10,16 +10,20 @@ Latch 是跨电脑与手机的 AI Agent 工作台。Node Host（`src/host/server
 
 ## 命令
 
-需要 Node.js ≥ 22.19 与 pnpm 11。
+需要 Node.js 24.22.1（`.node-version`）与 pnpm 11.28.6（`package.json` 的 `packageManager` 固定版本与 sha512，其他版本的 pnpm 会切换到它）。`package.json` 的 `engines` 与 `devEngines.runtime` 只接受含 2026-10-20 安全修复的版本（22.x ≥ 22.23.4、24.x ≥ 24.22.1、≥ 26.12.1），其他版本下 pnpm 命令直接失败；切换版本用 `fnm use` 等读取 `.node-version` 的工具。
 
 ```sh
 pnpm install
-pnpm typecheck
+pnpm typecheck                               # tsc -b：按 tsconfig.json 引用的环境分别检查（浏览器、Host、桌面端 CJS、测试）
+pnpm lint                                    # oxlint，含类型感知规则与各环境禁用的全局变量；目前只报告，不会失败
+pnpm fmt                                     # oxfmt 按 .oxfmtrc.json 格式化；不处理 Markdown 与 tests/vectors/
+pnpm fmt:check                               # 只检查格式，不改文件
 pnpm test                                    # Vitest 单元与集成（tests/**/*.test.ts）
 pnpm exec vitest run --config vitest.config.ts tests/<name>.test.ts
 pnpm build                                   # build:host + build:web + build:presence；e2e 使用 dist/web
 pnpm build:presence                          # 只构建 macOS 本机确认组件 dist/native/latch-presence
 pnpm test:e2e                                # Vitest + Playwright，进程内真实 Host
+pnpm check:supply                            # 依赖例外的格式与到期、packageManager 的 sha512、安装金丝雀（127.0.0.1 上的假 registry）
 HARNESS_BROWSER_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' pnpm test:e2e
 HARNESS_ELECTRON_E2E=1 pnpm exec vitest run --config vitest.e2e.config.ts tests/desktop.e2e.ts
                                              # 仅 macOS，先 pnpm build；用例自带 --use-mock-keychain 与临时 --latch-user-data
@@ -28,6 +32,8 @@ pnpm start:demo -- --port 0 --data-dir <临时数据目录> --workspace <临时�
 pnpm stop -- --data-dir <同一数据目录>
 HARNESS_DATA_DIR=<临时目录> pnpm dev:web      # 仅开发；按 Vite 打印的 http://h-<hostId>.localhost:<端口>/link/ 打开
 ```
+
+每个克隆手动设置一次：`pnpm exec lefthook install` 安装 Git 钩子（`lefthook.yml`：pre-commit 检查暂存文件的格式与 lint 错误，pre-push 运行 `pnpm typecheck` 与 `pnpm test`）；`git config blame.ignoreRevsFile .git-blame-ignore-revs` 让 `git blame` 跳过只改格式的提交。`pnpm install` 不会安装钩子（`allowBuilds` 禁止 lefthook 的安装脚本）。Git 已设置 `core.hooksPath` 时 lefthook 拒绝安装：不要加 `--force`（会写入那个目录）或 `--reset-hooks-path`（会删除该设置），改为提交前运行 `pnpm exec lefthook run pre-commit`、推送前运行 `pnpm exec lefthook run pre-push`。
 
 ## 代码地图
 
@@ -57,10 +63,12 @@ HARNESS_DATA_DIR=<临时目录> pnpm dev:web      # 仅开发；按 Vite 打印�
 | `src/client/eventStream.ts`、`credentials.ts`、`deviceKey.ts`、`enrollment.ts` | fetch 事件流；凭据续期；WebCrypto 设备密钥；登记与 `#pair=` 邀请 |
 | `src/client/securityCopy.ts`、`permissions.ts`、`confirmations.ts`、`auditCheckpoint.ts`、`approvalDecision.ts`、`contentHash.ts` | 安全文案目录；按权限的界面显示；`withConfirmation`；审计回滚检查；审批 `requestId`；新内容哈希 |
 | `scripts/start.ts`、`stop.ts`、`latch.ts` | 启动 Host（取锁、写 `host.json`）、核对后停止、`pnpm latch` 命令行 |
+| `scripts/check-supply.ts`、`supply-chain.ts`、`supply-canaries.ts` | `pnpm check:supply`：`pnpm-workspace.yaml` 中例外的格式、到期与锁文件核对，`packageManager` 的 sha512；假 registry 与安装金丝雀 |
 | `scripts/desktop.ts`、`desktop-host.ts`、`build.ts`、`build-presence.ts`、`shutdown.ts` | 桌面启动器（启动或复用 Host）、esbuild 打包、构建确认组件、退出清理 |
 | `desktop/main.cjs` | Electron 主进程：窗口、`latch://app/` 协议、渲染进程限制、调试参数检查 |
 | `desktop/proxy.cjs`、`credentials.cjs`、`host.cjs`、`preload.cjs` | 经 `host.sock` 转发并附加凭据（纯函数，可单测）；设备密钥与凭据（safeStorage）；`host.json` 核对的 CJS 版；只暴露 `latchShell` |
 | `native/macos/LatchPresence.swift` | 本机确认组件（Touch ID / 登录密码），`--self-test` 校验共享向量 |
+| `tsconfig.json`、`tsconfig.{web,host,desktop,tests}.json`、`.oxlintrc.json`、`.oxfmtrc.json`、`lefthook.yml` | 类型检查的四个运行环境（根 `tsconfig.json` 只做引用）；lint 规则；格式；Git 钩子 |
 | `tests/` | `*.test.ts`、`*.e2e.ts`；`helpers/`（`startTestHost`、测试确认后端、TLS、`enrollBrowser`）、`vectors/security-v1.json`、`fixtures/fake-acp-agent.mjs` |
 
 ## 不变量（违反即缺陷）
@@ -81,6 +89,8 @@ HARNESS_DATA_DIR=<临时目录> pnpm dev:web      # 仅开发；按 Vite 打印�
 - **秘密不外泄。** 设备凭据、邀请码、离线登记码与模型密钥不进入标准输出、日志、环境变量、命令行参数、URL、SSE、错误信息、Git 或截图。URL 里的邀请码只出现在配对链接的 `#pair=` 片段中，页面读取后立即从地址栏移除；`pnpm latch` 只把邀请与离线码显示在交互终端，或写入新建的 0600 `--code-file`。Host 的每行日志都经过 `redactSecrets`，新增秘密格式时同步补充模式。
 - **磁盘上只存哈希。** 凭据与离线登记码只保存 SHA-256；邀请只在内存中、也只存哈希。模型密钥只在数据目录的 0600 文件中，不返回浏览器；`HARNESS_API_KEY` 只在内存中使用。
 - **本机确认只经 `PresenceService`。** 测试确认后端只通过 `startServer({ presence })` 注入；`src/`、`scripts/` 与 `desktop/` 从不导入 `tests/`，构建后 `grep -rn "createTestPresence\|tests/helpers" dist/` 必须为空。需要本机确认的操作只能由 `host.sock` 上的桌面端发起（设备登记例外）。
+- **Host 进程不响应 SIGUSR1。** `pnpm start`、`start:demo`、`start:built` 与桌面启动器都以 `--disable-sigusr1` 启动 Host，否则同用户进程可以用 `process._debugProcess` 让它打开调试端口；新增启动 Host 的入口时同样加上。
+- **依赖供应链。** 依赖版本都以精确版本写在 `pnpm-workspace.yaml` 的 `catalog` 中，`package.json` 只写 `catalog:`（`pnpm add` 会自动这样写）；新版本须发布满 7 天。只有 `allowBuilds` 中设为 `true` 的包能运行安装脚本（`false` 表示已审阅、不运行）；传递依赖不能来自 git 或 URL；信任证据下降的版本、没有发布时间的元数据都会使安装失败，冻结安装也会重新核对锁文件。例外只写 `name@精确版本`，每组以 `reason:`、`reviewer:`、`expires:`（UTC 日期，最多 90 天后）三行注释开头，到期后删除或重新审阅。放宽这些设置、新增例外或 `allowBuilds` 条目都要所有者同意；改依赖、`pnpm-workspace.yaml` 或 `packageManager` 后运行 `pnpm check:supply`，它的金丝雀证明每项保护仍让安装失败。
 - **请求上下文只来自监听入口。** 从不读取代理请求头（`forwarded`、`x-forwarded-*` 等）；入口类别、来源与凭据形式由接受连接的 `ListenerContext` 决定。
 - **先审计再执行。** 授予或执行权限的操作先写审计，写入失败就不执行。撤销、拒绝、取消、删除、移除权限与收紧策略等减少权限的操作从不因审计失败受阻，改为响应带 `x-latch-audit: failed`。审计 detail 只含 ID、哈希、枚举、布尔与计数。
 - **出站只经注入的 `fetch`。** 内置模型协议（`openai.ts`、`anthropic.ts`）只用 Host 传入的出站策略 `fetch`，不导入 `src/host`；密钥只发往保存时绑定的 `keyOrigin`，地址的源改变后视为没有密钥。
@@ -120,8 +130,8 @@ HARNESS_DATA_DIR=<临时目录> pnpm dev:web      # 仅开发；按 Vite 打印�
 
 ## 完成标准
 
-1. `pnpm typecheck`、`pnpm test`、`pnpm build` 通过；构建后 `dist/` 中没有测试代码（见「安全」）。
-2. 修改连接、登记、审批、取消或流式状态时运行 `pnpm test:e2e`；修改 `desktop/` 或桌面启动脚本时再运行 Electron 用例；修改安全模块时运行 [docs/TESTING.md](docs/TESTING.md) 对应的定向用例。
+1. `pnpm fmt:check`、`pnpm typecheck`、`pnpm test`、`pnpm build` 通过；构建后 `dist/` 中没有测试代码（见「安全」）。
+2. 修改连接、登记、审批、取消或流式状态时运行 `pnpm test:e2e`；修改 `desktop/` 或桌面启动脚本时再运行 Electron 用例；修改依赖、`pnpm-workspace.yaml` 或 `packageManager` 时运行 `pnpm check:supply`；修改安全模块时运行 [docs/TESTING.md](docs/TESTING.md) 对应的定向用例。
 3. UI 改动在手机、平板、桌面宽度检查真实渲染，覆盖正常、进行中、失败或等待状态与深色模式（`tests/design.e2e.ts`、`test-results/` 截图）。测试夹具、测试确认后端与演示模型不等于真实模型、Touch ID 或真机验收；确认窗口只能由用户本人用 `pnpm latch presence test` 人工检查。
 4. 行为变化时更新对应的 `docs/` 机制文档。
 5. 汇报时区分已执行与未执行的检查。
@@ -129,6 +139,7 @@ HARNESS_DATA_DIR=<临时目录> pnpm dev:web      # 仅开发；按 Vite 打印�
 ## 约定
 
 - 测试只用 Vitest（Playwright 仅作驱动）；为新行为添加聚焦用例；不为配置、清单或文档的字面内容写测试。
-- 代码风格：严格 TypeScript，边界处用 zod 校验，错误用 `AppError(status, code, 中文消息)`；标识符与注释用英文，注释只写不显而易见的原因。
+- 代码风格：严格 TypeScript，边界处用 zod 校验，错误用 `AppError(status, code, 中文消息)`；标识符与注释用英文，注释只写不显而易见的原因。只用作类型的导入写 `import type`（`verbatimModuleSyntax`）。格式以 `pnpm fmt` 的结果为准，不手工调整；只改格式的提交单独提交，并把它的完整哈希加入 `.git-blame-ignore-revs`。
+- 运行环境：`src/client`、`src/shared` 在浏览器中运行，不用 `process`、`Buffer` 等 Node 全局变量与 Node 内置模块；其余 TypeScript 是 ES 模块，不用 `require`、`__dirname` 等 CommonJS 全局变量（改用 `createRequire(import.meta.url)`、`import.meta.dirname`）；`desktop/*.cjs` 是 CommonJS。新增目录时把它加入对应的 `tsconfig.*.json` 与 `.oxlintrc.json` 覆盖规则。
 - 仓库只保存产品代码与机制文档：不在文档中引用其他产品作为设计参考。工作状态写在提交信息、PR 或 issue 中。
 - 提交信息使用 Conventional Commits（`feat`、`fix`、`docs`、`design`、`refactor`、`test`、`chore`）。

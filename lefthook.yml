@@ -1,0 +1,27 @@
+# Git hooks. Each clone installs them once with `pnpm exec lefthook install` (see AGENTS.md);
+# `pnpm install` never does. Only pre-commit and pre-push are defined: a hook runs the
+# lefthook.yml of whatever is checked out, so a checkout or merge hook would run commands from
+# a branch the moment it is checked out.
+#
+# Hook files change only when someone runs `lefthook install`, not as a side effect of a hook.
+no_auto_install: true
+
+pre-commit:
+  parallel: true
+  jobs:
+    # oxfmt skips staged files it does not format (Markdown, images, ignored paths).
+    - name: format
+      run: pnpm exec oxfmt --check --no-error-on-unmatched-pattern {staged_files}
+      fail_text: Run `pnpm fmt` and stage the result.
+    # Lint rules only warn for now; --quiet prints just the errors that block the commit.
+    - name: lint
+      glob: '*.{ts,tsx,js,jsx,cjs,mjs}'
+      run: pnpm exec oxlint --quiet {staged_files}
+
+pre-push:
+  piped: true
+  jobs:
+    - name: typecheck
+      run: pnpm typecheck
+    - name: unit tests
+      run: pnpm test

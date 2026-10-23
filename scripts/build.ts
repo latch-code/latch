@@ -9,5 +9,7 @@ await build({
     'host/index': 'src/host/server.ts', 'core/plugins': 'src/core/plugins.ts', 'core/harness': 'src/core/harness.ts',
   },
   bundle: true, platform: 'node', target: 'node22', format: 'esm',
+  // The root tsconfig.json is a solution without compiler options, and esbuild does not follow its references.
+  tsconfig: 'tsconfig.host.json',
   packages: 'external', outdir: 'dist', sourcemap: true,
 })

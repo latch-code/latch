@@ -1,16 +1,11 @@
+// Solution: `pnpm typecheck` runs `tsc -b`, which checks every environment below in one call.
+// Each file is checked with the globals and libraries of the place it runs in.
 {
-  "compilerOptions": {
-    "target": "ES2023",
-    "lib": ["ES2023", "DOM", "DOM.Iterable"],
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
-    "jsx": "react-jsx",
-    "strict": true,
-    "noEmit": true,
-    "allowImportingTsExtensions": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "types": ["node", "vite/client"]
-  },
-  "include": ["src", "scripts", "tests", "*.config.ts"]
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.web.json" },
+    { "path": "./tsconfig.host.json" },
+    { "path": "./tsconfig.desktop.json" },
+    { "path": "./tsconfig.tests.json" }
+  ]
 }

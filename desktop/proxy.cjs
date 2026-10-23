@@ -72,7 +72,10 @@ function externalUrl(raw) {
   return url.href.length > EXTERNAL_URL_LIMIT ? undefined : url.href
 }
 
-/** The confirmation main shows before a link leaves the shell; cancel is the default and the Escape answer. */
+/**
+ * The confirmation main shows before a link leaves the shell; cancel is the default and the Escape answer.
+ * @returns {Electron.MessageBoxOptions}
+ */
 function externalLinkDialog(url) {
   return { type: 'question', title: 'Latch', message: '在浏览器中打开以下链接？', detail: url, buttons: ['打开', '取消'], defaultId: 1, cancelId: 1, noLink: true }
 }
@@ -81,8 +84,11 @@ function externalLinkDialog(url) {
  * Electron reports window.open without saying whether the user asked for it, so a link reaches the system
  * browser (outside the renderer's network confinement) only after the owner confirms the full URL.
  * One confirmation at a time; links requested while it is open are dropped.
- * @param options.confirm  (dialogOptions, parent) => Promise<{ response }>, e.g. dialog.showMessageBox
- * @param options.open  (url) => Promise, e.g. shell.openExternal
+ * @param {object} options
+ * @param {(dialogOptions: Electron.MessageBoxOptions, parent?: Electron.BaseWindow) => Promise<{ response: number }>} options.confirm
+ *   e.g. dialog.showMessageBox
+ * @param {(url: string) => Promise<unknown>} options.open  e.g. shell.openExternal
+ * @param {(message: string) => void} [options.log]
  */
 function createExternalOpener({ confirm, open, log = () => {} }) {
   let asking = false
@@ -326,9 +332,14 @@ function streamedResponse({ request: upstreamRequest, response }, method) {
 const JSON_HEADERS = Object.freeze({ 'content-type': 'application/json', accept: 'application/json' })
 
 /**
- * @param options.resolveSocket  async () => socketPath of the verified Host
- * @param options.invalidateSocket  called after a connection error so the next request re-verifies the Host
- * @param options.store  credential store from credentials.cjs
+ * @param {object} options
+ * @param {string} options.hostId
+ * @param {() => Promise<string>} options.resolveSocket  socket path of the verified Host
+ * @param {() => void} [options.invalidateSocket]  called after a connection error so the next request re-verifies the Host
+ * @param {Awaited<ReturnType<typeof import('./credentials.cjs').openCredentialStore>>} options.store
+ * @param {(message: string) => void} [options.log]
+ * @param {() => number} [options.now]
+ * @param {typeof generateDeviceKey} [options.generateKey]
  */
 function createShellProxy(options) {
   const { hostId, store, log = () => {}, now = Date.now, generateKey = generateDeviceKey } = options
@@ -500,8 +511,9 @@ function createShellProxy(options) {
         // Another request may already have renewed the credential this one was sent with.
         const latest = store.current()?.credential
         const renewed = latest !== undefined && latest !== used ? true : await renewUnlessWaiting()
-        if (renewed && store.current()) {
-          used = store.current().credential
+        const current = renewed ? store.current() : undefined
+        if (current) {
+          used = current.credential
           result = await send()
           if (result.response.statusCode !== 401) return finish(result, request.method, route)
           failure = await bufferUpstream(result)

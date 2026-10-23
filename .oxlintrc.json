@@ -1,0 +1,52 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  // Every rule is a warning for now, so `pnpm lint` reports findings without failing.
+  "plugins": ["eslint", "typescript", "unicorn", "oxc", "import", "react"],
+  "categories": { "correctness": "warn", "suspicious": "warn" },
+  // Type-aware rules run through oxlint-tsgolint, which reads the environments of tsconfig.json.
+  "options": { "typeAware": true },
+  "rules": {
+    // The automatic JSX runtime needs no React import.
+    "react/react-in-jsx-scope": "off",
+    "import/no-cycle": "warn",
+    "typescript/no-misused-promises": "warn",
+    "typescript/switch-exhaustiveness-check": "warn"
+  },
+  "overrides": [
+    {
+      // Browser client and isomorphic shared code. tsconfig.web.json cannot keep Node out on its own:
+      // dependency typings (@types/qrcode, undici-types) load Node's globals into the browser program.
+      "files": ["src/client/**", "src/shared/**"],
+      "rules": {
+        "no-restricted-globals": [
+          "warn",
+          { "name": "process", "message": "浏览器中没有 process。" },
+          { "name": "Buffer", "message": "浏览器中没有 Buffer，用 Uint8Array 与 TextEncoder。" },
+          { "name": "global", "message": "浏览器中没有 global，用 globalThis。" },
+          { "name": "require", "message": "浏览器代码只用 import。" },
+          { "name": "module", "message": "浏览器代码只用 import 与 export。" },
+          { "name": "exports", "message": "浏览器代码只用 import 与 export。" },
+          { "name": "__dirname", "message": "浏览器中没有 __dirname。" },
+          { "name": "__filename", "message": "浏览器中没有 __filename。" },
+          { "name": "setImmediate", "message": "浏览器中没有 setImmediate，用 setTimeout 或 queueMicrotask。" },
+          { "name": "clearImmediate", "message": "浏览器中没有 clearImmediate。" }
+        ],
+        "import/no-nodejs-modules": "warn"
+      }
+    },
+    {
+      // ES modules that run in Node. @types/node declares the CommonJS globals, but they do not exist here.
+      "files": ["src/host/**", "src/core/**", "src/plugins/**", "scripts/**", "tests/**", "examples/**", "*.config.ts"],
+      "rules": {
+        "no-restricted-globals": [
+          "warn",
+          { "name": "require", "message": "ES 模块中没有 require，用 import 或 createRequire(import.meta.url)。" },
+          { "name": "module", "message": "ES 模块中没有 module，用 export。" },
+          { "name": "exports", "message": "ES 模块中没有 exports，用 export。" },
+          { "name": "__dirname", "message": "ES 模块中没有 __dirname，用 import.meta.dirname。" },
+          { "name": "__filename", "message": "ES 模块中没有 __filename，用 import.meta.filename。" }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  // Options follow the code as it was written before the formatter: lines ran to about 140 columns,
+  // wrapped expressions started the next line with the operator, and JSX kept `>` on the last attribute line.
+  "printWidth": 140,
+  "semi": false,
+  "singleQuote": true,
+  "arrowParens": "avoid",
+  "bracketSameLine": true,
+  "experimentalOperatorPosition": "start",
+  // Keep the hand-grouped key order of package.json.
+  "sortPackageJson": false,
+  "ignorePatterns": [
+    // Prose: the formatter pads every table row to the widest cell and reformats code blocks
+    // whose layout is part of the example (one JSON record per line, aligned columns).
+    "**/*.md",
+    // Shared security test vectors are read by TypeScript and Swift; keep the bytes as written.
+    "tests/vectors/"
+  ]
+}

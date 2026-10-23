@@ -23,7 +23,7 @@ Provider、Tool 与 Harness 都是 [Cordis](https://github.com/cordiverse/cordis
 | 项目 | 要求 |
 | --- | --- |
 | 系统 | macOS（完整功能）；Linux 可运行但没有本机确认；Windows 暂不支持运行 Host（见「平台限制」） |
-| Node.js / pnpm | Node.js ≥ 22.19，pnpm 11 |
+| Node.js / pnpm | Node.js 24.22.1（见 `.node-version`；也支持 22.x ≥ 22.23.4 与 ≥ 26.12.1，其他版本下 pnpm 命令直接报错），pnpm 11.28.6（`packageManager` 固定，已安装的其他版本 pnpm 会自动切换到它） |
 | 本机确认组件 | macOS 上需要 Xcode 命令行工具（`xcode-select --install`），用于构建 Touch ID 确认组件 |
 | 手机接入 | 你自己提供的 HTTPS 证书（推荐 Tailscale 的 `tailscale cert`） |
 
@@ -238,13 +238,17 @@ pnpm stop -- --force                    # 仍有会话在运行或等待审批�
 ## 开发
 
 ```sh
-pnpm typecheck
+pnpm typecheck                 # tsc -b，分浏览器、Host、桌面端与测试四个环境检查
+pnpm lint                      # oxlint，目前只报告
+pnpm fmt                       # oxfmt 格式化；pnpm fmt:check 只检查
 pnpm test                      # Vitest 单元与集成测试
 pnpm build
 pnpm test:e2e                  # Vitest + Playwright，使用 dist/web
 HARNESS_BROWSER_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' pnpm test:e2e
 HARNESS_ELECTRON_E2E=1 pnpm exec vitest run --config vitest.e2e.config.ts tests/desktop.e2e.ts
 ```
+
+Git 钩子与 `git blame` 的忽略列表需要在每个克隆中手动设置一次，见 [AGENTS.md](AGENTS.md)「命令」。
 
 测试只使用临时目录、本地假模型服务与假 ACP Agent，不调用付费模型。手动查看界面时请用独立的数据目录、工作区与端口：`pnpm start:demo -- --port <空闲端口> --data-dir <临时数据目录> --workspace <临时工作区>`，结束后 `pnpm stop -- --data-dir <同一数据目录>`。
 

@@ -1,0 +1,11 @@
+// Vitest and Playwright tests: Node, plus DOM for code that runs in the page or renders components.
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["node"],
+    "tsBuildInfoFile": "./node_modules/.cache/typescript/tests.tsbuildinfo"
+  },
+  "include": ["tests"]
+}

@@ -1,5 +1,96 @@
 packages:
   - .
+
+# Supply-chain policy. Settings that pnpm 11 already defaults are written out as well, so a
+# pnpm upgrade cannot change them silently. `pnpm check:supply` installs canary packages from
+# a local registry under this file to prove that each protection still makes installs fail.
+minimumReleaseAge: 10080
+minimumReleaseAgeStrict: true
+minimumReleaseAgeIgnoreMissingTime: false
+trustPolicy: no-downgrade
+trustLockfile: false
+blockExoticSubdeps: true
+strictDepBuilds: true
+
+# Exceptions name exact versions only (name@1.2.3, or name@1.2.3 || 1.2.4): an entry with just
+# a package name would also let every future release through. Each group of entries starts
+# with three comment lines, `reason:`, `reviewer:` and `expires:` (YYYY-MM-DD in UTC, at most
+# 90 days ahead). `pnpm check:supply` fails once a group has expired or names a version that
+# is no longer in pnpm-lock.yaml.
+minimumReleaseAgeExclude:
+  # reason: direct dependencies locked before the seven-day rule; both published on 2026-10-21
+  # reviewer: Nirvana-Jie
+  # expires: 2026-10-28
+  - cordis@4.0.0-rc.12
+  - lucide-react@1.61.0
+  # reason: vite 8.2.2 dependencies locked before the seven-day rule (rolldown and its bindings
+  #   2026-10-21, @oxc-project/types 2026-10-19, postcss 2026-10-18). Frozen installs verify
+  #   every lockfile entry, so every platform binding is listed, not only the local one.
+  # reviewer: Nirvana-Jie
+  # expires: 2026-10-28
+  - rolldown@1.2.15
+  - '@rolldown/binding-android-arm-eabi@1.2.15'
+  - '@rolldown/binding-android-arm64@1.2.15'
+  - '@rolldown/binding-darwin-arm64@1.2.15'
+  - '@rolldown/binding-darwin-x64@1.2.15'
+  - '@rolldown/binding-freebsd-x64@1.2.15'
+  - '@rolldown/binding-linux-arm-gnueabihf@1.2.15'
+  - '@rolldown/binding-linux-arm64-gnu@1.2.15'
+  - '@rolldown/binding-linux-arm64-musl@1.2.15'
+  - '@rolldown/binding-linux-ppc64-gnu@1.2.15'
+  - '@rolldown/binding-linux-s390x-gnu@1.2.15'
+  - '@rolldown/binding-linux-x64-gnu@1.2.15'
+  - '@rolldown/binding-linux-x64-musl@1.2.15'
+  - '@rolldown/binding-openharmony-arm64@1.2.15'
+  - '@rolldown/binding-win32-arm64-msvc@1.2.15'
+  - '@rolldown/binding-win32-x64-msvc@1.2.15'
+  - '@oxc-project/types@0.155.0'
+  - postcss@8.5.31
+
+trustPolicyExclude:
+  # reason: @types/node 22 requires undici-types ~6.21.0. 6.13.0 to 6.19.2 were published with
+  #   provenance and 6.19.3 to 6.21.0 without it, so no-downgrade rejects 6.21.0. Remove this
+  #   entry when @types/node moves to a release line that depends on undici-types 7.
+  # reviewer: Nirvana-Jie
+  # expires: 2027-01-20
+  - undici-types@6.21.0
+
+# Only packages set to true may run install scripts; any unlisted package with one fails the install.
+# lefthook's postinstall would install Git hooks into every checkout that runs `pnpm install`,
+# including worktrees made to review outside changes, so it never runs: each clone installs the
+# hooks by hand (see AGENTS.md).
 allowBuilds:
   electron: true
   esbuild: true
+  lefthook: false
+
+# Every dependency version lives here, pinned exactly; package.json files refer to it with `catalog:`.
+# With these two settings `pnpm add <name>` writes `catalog:` and an exact catalog entry by itself.
+catalogMode: strict
+savePrefix: ''
+catalog:
+  '@playwright/test': 1.64.1
+  '@types/node': 22.20.5
+  '@types/qrcode': 1.5.6
+  '@types/react': 18.3.31
+  '@types/react-dom': 18.3.7
+  cordis: 4.0.0-rc.12
+  electron: 44.7.0
+  esbuild: 0.28.2
+  lefthook: 2.2.1
+  lucide-react: 1.61.0
+  oxfmt: 0.73.0
+  oxlint: 1.88.0
+  oxlint-tsgolint: 7.0.2004
+  qrcode: 1.5.4
+  react: 18.3.1
+  react-dom: 18.3.1
+  react-markdown: 10.1.0
+  remark-gfm: 4.0.1
+  tsx: 4.23.15
+  typescript: 7.0.2
+  undici: 7.30.1
+  vite: 8.2.2
+  vitest: 5.0.5
+  yaml: 2.9.1
+  zod: 4.4.3

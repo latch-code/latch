@@ -45,6 +45,8 @@ async function readHostStateFile(path) {
 /**
  * One HTTP/1.1 request over host.sock. Resolves once response headers arrive; the caller owns the body.
  * `timeoutMs` bounds the wait for response headers only, so long-lived streams are not cut.
+ * @param {string} socketPath
+ * @param {{ method?: string, path?: string, headers?: Record<string, string>, body?: Buffer, timeoutMs?: number }} [options]
  */
 function socketRequest(socketPath, { method = 'GET', path, headers = {}, body, timeoutMs } = {}) {
   return new Promise((resolve, reject) => {
@@ -109,7 +111,7 @@ function isAlive(pid) {
  * host-info over the socket reports the same pid, hostId and instanceId.
  * Returns `{ ok: true, info }` or `{ ok: false, reason }` (Chinese, for the error page).
  */
-async function inspectHostState(state, { timeoutMs = 2_000, uid = process.getuid() } = {}) {
+async function inspectHostState(state, { timeoutMs = 2_000, uid = /** @type {() => number} */ (process.getuid)() } = {}) {
   const directory = dirname(state.socketPath)
   let stats
   try { stats = await lstat(directory) } catch { return { ok: false, reason: '运行目录不存在' } }

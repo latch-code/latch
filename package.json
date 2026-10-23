@@ -6,9 +6,16 @@
   "description": "Latch: a cross-device agent workspace that composes harnesses and model providers through Cordis plugins",
   "license": "Apache-2.0",
   "engines": {
-    "node": ">=22.19"
+    "node": ">=22.23.4 <23 || >=24.22.1 <25 || >=26.12.1"
   },
-  "packageManager": "pnpm@11.22.0",
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": ">=22.23.4 <23 || >=24.22.1 <25 || >=26.12.1",
+      "onFail": "error"
+    }
+  },
+  "packageManager": "pnpm@11.28.6+sha512.55d90390c3b39042f1505a2697789f0256c6d95bb28bdd7cb731af1887c9f2629ef581acb9f4e4ec772024c8203c2aed22a03299b97103fdcf32668e905d0024",
   "exports": {
     ".": "./dist/host/index.js",
     "./plugin-sdk": {
@@ -26,39 +33,48 @@
     "build:host": "tsx scripts/build.ts",
     "build:web": "vite build",
     "build:presence": "tsx scripts/build-presence.ts",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc -b",
+    "lint": "oxlint",
+    "fmt": "oxfmt",
+    "fmt:check": "oxfmt --check",
     "test": "vitest run --config vitest.config.ts",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
-    "start": "tsx scripts/start.ts",
-    "start:demo": "tsx scripts/start.ts --demo",
+    "check:supply": "tsx scripts/check-supply.ts",
+    "start": "node --disable-sigusr1 --import tsx scripts/start.ts",
+    "start:demo": "node --disable-sigusr1 --import tsx scripts/start.ts --demo",
     "desktop": "tsx scripts/desktop.ts",
     "dev:web": "vite",
-    "start:built": "node dist/start.js",
+    "start:built": "node --disable-sigusr1 dist/start.js",
     "stop": "tsx scripts/stop.ts",
     "latch": "tsx scripts/latch.ts"
   },
   "dependencies": {
-    "cordis": "4.0.0-rc.12",
-    "lucide-react": "1.61.0",
-    "qrcode": "1.5.4",
-    "react": "18.3.1",
-    "react-dom": "18.3.1",
-    "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1",
-    "undici": "7.30.1",
-    "zod": "4.4.3"
+    "cordis": "catalog:",
+    "lucide-react": "catalog:",
+    "qrcode": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "react-markdown": "catalog:",
+    "remark-gfm": "catalog:",
+    "undici": "catalog:",
+    "zod": "catalog:"
   },
   "devDependencies": {
-    "@playwright/test": "^1.56.0",
-    "@types/node": "^22.20.1",
-    "@types/qrcode": "^1.5.5",
-    "@types/react": "^18.3.1",
-    "@types/react-dom": "^18.3.0",
-    "electron": "44.7.0",
-    "esbuild": "^0.28.2",
-    "tsx": "^4.23.13",
-    "typescript": "^6.0.3",
-    "vite": "8.2.2",
-    "vitest": "4.1.11"
+    "@playwright/test": "catalog:",
+    "@types/node": "catalog:",
+    "@types/qrcode": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "electron": "catalog:",
+    "esbuild": "catalog:",
+    "lefthook": "catalog:",
+    "oxfmt": "catalog:",
+    "oxlint": "catalog:",
+    "oxlint-tsgolint": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:",
+    "yaml": "catalog:"
   }
 }
