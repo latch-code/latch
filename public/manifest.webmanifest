@@ -1,0 +1,19 @@
+{
+  "name": "Latch",
+  "short_name": "Latch",
+  "description": "在桌面和手机之间接续的 Agent 工作台。",
+  "lang": "zh-CN",
+  "start_url": "/link/",
+  "scope": "/link/",
+  "display": "standalone",
+  "background_color": "#f7f9fc",
+  "theme_color": "#f7f9fc",
+  "icons": [
+    {
+      "src": "/link/icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

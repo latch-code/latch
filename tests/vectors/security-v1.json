@@ -1,0 +1,346 @@
+{
+  "version": 1,
+  "description": "Shared security encodings. Every Latch client implementation is tested against these values.",
+  "base32": {
+    "alphabet": "abcdefghijklmnopqrstuvwxyz234567",
+    "cases": [
+      {
+        "utf8": "",
+        "base32": ""
+      },
+      {
+        "utf8": "f",
+        "base32": "my"
+      },
+      {
+        "utf8": "fo",
+        "base32": "mzxq"
+      },
+      {
+        "utf8": "foo",
+        "base32": "mzxw6"
+      },
+      {
+        "utf8": "foob",
+        "base32": "mzxw6yq"
+      },
+      {
+        "utf8": "fooba",
+        "base32": "mzxw6ytb"
+      },
+      {
+        "utf8": "foobar",
+        "base32": "mzxw6ytboi"
+      }
+    ]
+  },
+  "p256": {
+    "source": "RFC 7515 appendix A.3 example key (public test key)",
+    "jwk": {
+      "kty": "EC",
+      "crv": "P-256",
+      "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+      "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"
+    },
+    "privateJwk": {
+      "kty": "EC",
+      "crv": "P-256",
+      "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+      "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0",
+      "d": "jpsQnnGQmL-YBIffH1136cspYG6-0iY7X1fCE9-E9LI"
+    },
+    "spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEf83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEXH8UTNG72bfocs3-257rn0s2ldbqkLJK2KRiMohYjlrQ",
+    "sha256": "2bd1bb0c44a897c30a7aa0991cde38d8062fe441de50da0f46825344f602e827",
+    "hostId": "fpi3wdcevcl4gct2ucmrzxry3adc7zcb3zinud2gqjjuj5qc5atq",
+    "hostId8": "fpi3wdce",
+    "fingerprint": "FPI3 WDCE VCL4 GCT2 UCMR"
+  },
+  "canonicalJson": {
+    "input": {
+      "b": [
+        2,
+        "x"
+      ],
+      "a": {
+        "z": "é",
+        "y": null
+      },
+      "c": "line\u202Eend"
+    },
+    "output": "{\"a\":{\"y\":null,\"z\":\"é\"},\"b\":[2,\"x\"],\"c\":\"line\u202Eend\"}",
+    "sha256": "a1cf7306dd48049d32637f397c1b63bbebd18bcd49e4b05c35ecad97bb6382c7"
+  },
+  "canonicalJsonCases": [
+    {
+      "input": {
+        "～": 1,
+        "😀": 2,
+        "z": 3,
+        "A": true,
+        "a": false,
+        "": null
+      },
+      "output": "{\"\":null,\"A\":true,\"a\":false,\"z\":3,\"😀\":2,\"～\":1}",
+      "sha256": "154fca7903c2cf9a51fdc298c5a79e60e4fa4fba136f9a69337498d4f552ffe4"
+    },
+    {
+      "input": [
+        "\u0001\u001f\b\f\n\r\t\"\\/",
+        "\ud800",
+        "a\udc00b",
+        "😀",
+        "\u007F\u0085\u2028\u2029",
+        "\u202E\u200B"
+      ],
+      "output": "[\"\\u0001\\u001f\\b\\f\\n\\r\\t\\\"\\\\/\",\"\\ud800\",\"a\\udc00b\",\"😀\",\"\u007F\u0085\u2028\u2029\",\"\u202E\u200B\"]",
+      "sha256": "32ff75d1de65b48e584b4e3b63b0fdfbfac1caefd6562601269de6c4ad41d1a3"
+    },
+    {
+      "input": {
+        "nested": {
+          "b": [
+            1,
+            -42,
+            9007199254740991,
+            0
+          ],
+          "a": {
+            "y": [],
+            "x": {}
+          }
+        },
+        "k\"\\": "v"
+      },
+      "output": "{\"k\\\"\\\\\":\"v\",\"nested\":{\"a\":{\"x\":{},\"y\":[]},\"b\":[1,-42,9007199254740991,0]}}",
+      "sha256": "faf57813794743b70951716b6ec71dea241bcb1be547129a3ef5dbab853773a1"
+    }
+  ],
+  "previewHash": [
+    {
+      "preview": {
+        "v": 1,
+        "hostId": "fpi3wdcevcl4gct2ucmrzxry3adc7zcb3zinud2gqjjuj5qc5atq",
+        "action": "device.enroll",
+        "title": "登记新设备",
+        "requester": {
+          "deviceName": "我的\u202E手机\u200B",
+          "listener": "loopback-tcp",
+          "remoteAddress": "::1"
+        },
+        "lines": [
+          {
+            "label": "设备名称",
+            "value": "我的\u202E手机\u200B"
+          },
+          {
+            "label": "设备指纹",
+            "value": "FPI3 WDCE VCL4 GCT2 UCMR"
+          },
+          {
+            "label": "备注",
+            "value": "lone \ud800 surrogate, tab\tnewline\n, quote \" backslash \\ ctrl \u0001 emoji 😀"
+          },
+          {
+            "label": "工作目录",
+            "value": "/Users/me/项目"
+          }
+        ],
+        "warnings": [
+          "只有在你正在登记这台设备、并且两边显示的指纹完全一致时才确认。"
+        ],
+        "nonce": "AQIDBAUGBwgJCgsMDQ4PEA",
+        "expiresAt": "2026-10-23T10:01:00.000Z"
+      },
+      "previewHash": "fb646b8ecd96f46eaedc7963094aa7357a0196cfd6a6295cdf6137729192c9f9",
+      "hashDisplay": "fb64-6b8e-cd96-f46e"
+    },
+    {
+      "preview": {
+        "v": 1,
+        "hostId": "fpi3wdcevcl4gct2ucmrzxry3adc7zcb3zinud2gqjjuj5qc5atq",
+        "action": "approval.r2",
+        "title": "批准高风险操作（R2）",
+        "requester": {
+          "deviceId": "dev_IiIiIiIiIiIiIiIiIiIiIg",
+          "deviceName": "我的\\u{202E}手机\\u{200B}",
+          "listener": "unix",
+          "remoteAddress": "本机 host.sock"
+        },
+        "lines": [
+          {
+            "label": "工具",
+            "value": "write_file"
+          },
+          {
+            "label": "参数",
+            "value": "{\"content\":\"x\\u{202E}y\\n\",\"path\":\".git/config\"}"
+          },
+          {
+            "label": "风险原因",
+            "value": "受保护路径"
+          }
+        ],
+        "warnings": [],
+        "nonce": "AQIDBAUGBwgJCgsMDQ4PEA",
+        "expiresAt": "2026-10-23T10:01:00.000Z"
+      },
+      "previewHash": "9270d1af7fd3647d0852dc9c3aba0aaf8114ac73092cff6dffbc392b1c97a6a8",
+      "hashDisplay": "9270-d1af-7fd3-647d"
+    }
+  ],
+  "hashDisplay": [
+    {
+      "hex": "a1cf7306dd48049d32637f397c1b63bbebd18bcd49e4b05c35ecad97bb6382c7",
+      "display": "a1cf-7306-dd48-049d"
+    },
+    {
+      "hex": "2bd1bb0c44a897c30a7aa0991cde38d8062fe441de50da0f46825344f602e827",
+      "display": "2bd1-bb0c-44a8-97c3"
+    }
+  ],
+  "escapePreviewText": [
+    {
+      "input": "a\u202Eb",
+      "output": "a\\u{202E}b"
+    },
+    {
+      "input": "x\u200By",
+      "output": "x\\u{200B}y"
+    },
+    {
+      "input": "line1\nline2\tend\r",
+      "output": "line1\\u{000A}line2\\u{0009}end\\u{000D}"
+    },
+    {
+      "input": "\u0000\u001f\u007F\u0085\u009F",
+      "output": "\\u{0000}\\u{001F}\\u{007F}\\u{0085}\\u{009F}"
+    },
+    {
+      "input": "\u061C\u200E\u200F\u202A\u202D",
+      "output": "\\u{061C}\\u{200E}\\u{200F}\\u{202A}\\u{202D}"
+    },
+    {
+      "input": "\u2060\u2066x\u2069\uFEFF",
+      "output": "\\u{2060}\\u{2066}x\\u{2069}\\u{FEFF}"
+    },
+    {
+      "input": "我的手机 · /Users/me/项目 é 😀",
+      "output": "我的手机 · /Users/me/项目 é 😀"
+    },
+    {
+      "input": "\\u{202E} stays literal",
+      "output": "\\u{202E} stays literal"
+    },
+    {
+      "input": "notes 工作目录：/Users/owner/project 目标路径：README.md",
+      "output": "notes\\u{2028}工作目录：/Users/owner/project\\u{2029}目标路径：README.md"
+    },
+    {
+      "input": "­͏ᅟᅠ឴᠎ㅤﾠ",
+      "output": "\\u{00AD}\\u{034F}\\u{115F}\\u{1160}\\u{17B4}\\u{180E}\\u{3164}\\u{FFA0}"
+    },
+    {
+      "input": "x￹y￻z⁪⁯",
+      "output": "x\\u{FFF9}y\\u{FFFB}z\\u{206A}\\u{206F}"
+    },
+    {
+      "input": "tag󠁁󠁿",
+      "output": "tag\\u{E0041}\\u{E007F}"
+    },
+    {
+      "input": "heart ❤️  ",
+      "output": "heart ❤️ \\u{E000} \\u{F8FF}"
+    },
+    {
+      "input": "é́́́́́́",
+      "output": "é́́́\\u{0301}\\u{0301}\\u{0301}"
+    },
+    {
+      "input": "Zoë שָּ֑ á̂̃̄",
+      "output": "Zoë שָּ֑ á̂̃̄"
+    },
+    {
+      "input": "nbsp ideographic　space",
+      "output": "nbsp ideographic　space"
+    },
+    {
+      "input": "❤\uFE0F iPhone",
+      "output": "❤\uFE0F iPhone"
+    },
+    {
+      "input": "👨\u200D💻 Mac",
+      "output": "👨\u200D💻 Mac"
+    },
+    {
+      "input": "1\uFE0F\u20E3 号机",
+      "output": "1\uFE0F\u20E3 号机"
+    },
+    {
+      "input": "#\uFE0F\u20E3 *\uFE0E\u20E3",
+      "output": "#\uFE0F\u20E3 *\uFE0E\u20E3"
+    },
+    {
+      "input": "☺\uFE0E text",
+      "output": "☺\uFE0E text"
+    },
+    {
+      "input": "👍🏽 skin tone",
+      "output": "👍🏽 skin tone"
+    },
+    {
+      "input": "a\u200Db",
+      "output": "a\\u{200D}b"
+    },
+    {
+      "input": "👨\u200D\u200D💻",
+      "output": "👨\\u{200D}\\u{200D}💻"
+    },
+    {
+      "input": "👨\u200D x \u200D💻",
+      "output": "👨\\u{200D} x \\u{200D}💻"
+    },
+    {
+      "input": "❤\uFE0F\u200D🔥",
+      "output": "❤\uFE0F\\u{200D}🔥"
+    },
+    {
+      "input": "x\uFE0F #\uFE0F",
+      "output": "x\\u{FE0F} #\\u{FE0F}"
+    },
+    {
+      "input": "1\uFE0F\uFE0F\u20E3",
+      "output": "1\\u{FE0F}\\u{FE0F}\u20E3"
+    },
+    {
+      "input": "❤\uFE0F\uFE0F",
+      "output": "❤\uFE0F\\u{FE0F}"
+    },
+    {
+      "input": "❤\u200B\uFE0F",
+      "output": "❤\\u{200B}\\u{FE0F}"
+    }
+  ],
+  "signing": {
+    "encoding": "UTF-8 text, fields joined by \"\\n\", no trailing newline; ECDSA P-256 SHA-256, IEEE P1363 (64 bytes), base64url",
+    "enroll": {
+      "format": "latch-enroll-v1\n<hostId>\n<enrollmentId>\n<nonce>",
+      "example": {
+        "hostId": "fpi3wdcevcl4gct2ucmrzxry3adc7zcb3zinud2gqjjuj5qc5atq",
+        "enrollmentId": "enr_EREREREREREREREREREREQ",
+        "nonce": "AQIDBAUGBwgJCgsMDQ4PEA",
+        "text": "latch-enroll-v1\nfpi3wdcevcl4gct2ucmrzxry3adc7zcb3zinud2gqjjuj5qc5atq\nenr_EREREREREREREREREREREQ\nAQIDBAUGBwgJCgsMDQ4PEA",
+        "signature": "6EwBcHBX2X3hXWa75aQWnwHBlDoAYRQw1aLjHg2R7WvWNGnx65OHPGX9ci9sa0PM3oScuLTO7zterqY3KySw2Q"
+      }
+    },
+    "renew": {
+      "format": "latch-renew-v1\n<hostId>\n<deviceId>\n<nonce>",
+      "example": {
+        "hostId": "fpi3wdcevcl4gct2ucmrzxry3adc7zcb3zinud2gqjjuj5qc5atq",
+        "deviceId": "dev_IiIiIiIiIiIiIiIiIiIiIg",
+        "nonce": "AQIDBAUGBwgJCgsMDQ4PEA",
+        "text": "latch-renew-v1\nfpi3wdcevcl4gct2ucmrzxry3adc7zcb3zinud2gqjjuj5qc5atq\ndev_IiIiIiIiIiIiIiIiIiIiIg\nAQIDBAUGBwgJCgsMDQ4PEA",
+        "signature": "CILda8RyBilMtCG3Bv2pntLiGXSIKCqcQCrY9GyBSRe42ycbbpEuh8TEBsfRrrwjnmT70cpPTZjQGE0p-wApDg"
+      }
+    }
+  }
+}

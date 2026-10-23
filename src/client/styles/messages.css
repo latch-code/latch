@@ -1,0 +1,103 @@
+.message { min-width: 0; }
+
+/* Actions sit beside the bubble so a hidden copy button adds no height to the turn. */
+.message-user { display: flex; justify-content: flex-end; align-items: flex-end; gap: 4px; }
+.message-user .message-actions { order: -1; }
+.user-bubble {
+  max-width: min(80%, 560px); padding: 10px 14px;
+  border-radius: 16px 16px 4px 16px; background: var(--accent-subtle); color: var(--text-1);
+  font-size: var(--fs-body); line-height: var(--lh-body); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+
+.message-actions { display: inline-flex; align-items: center; gap: 2px; opacity: 0; transition: opacity var(--d-fast); }
+.message:hover .message-actions, .message:focus-within .message-actions { opacity: 1; }
+@media (hover: none) { .message-actions { opacity: .6; } }
+
+.message-assistant { display: flex; flex-direction: column; gap: 8px; }
+.assistant-meta { display: flex; align-items: center; gap: 8px; height: 20px; color: var(--text-3); font-size: var(--fs-caption); line-height: var(--lh-caption); font-weight: 500; }
+.message-text { font-size: var(--fs-body); line-height: var(--lh-body); color: var(--text-1); }
+.message-footer { display: flex; align-items: center; gap: 12px; min-height: 28px; color: var(--text-3); font-size: var(--fs-caption); line-height: var(--lh-caption); }
+.message-usage { font-variant-numeric: tabular-nums; }
+.message-outcome { color: var(--text-3); }
+
+/* A blinking caret after the live text; ::after never enters the message's textContent. */
+.message-assistant.is-live .message-content > :is(p, h1, h2, h3, h4, h5, h6):last-child::after,
+.message-assistant.is-live .message-content > :is(ul, ol):last-child > li:last-child::after {
+  content: ''; display: inline-block; width: 2px; height: 1em; margin-left: 2px; vertical-align: -.15em;
+  background: var(--accent); animation: caret 1s steps(1) infinite;
+}
+@keyframes caret { 50% { opacity: 0; } }
+
+.message-system { display: flex; align-items: flex-start; gap: 8px; padding: 8px 12px; border-radius: var(--r-md); background: var(--bg-sunken); color: var(--text-2); font-size: var(--fs-label); line-height: 20px; }
+.message-system > svg { margin-top: 3px; flex-shrink: 0; color: var(--text-3); }
+.message-system p { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.reasoning { border-left: 2px solid var(--border); padding-left: 12px; }
+.reasoning-toggle {
+  display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0;
+  border: 0; background: none; color: var(--text-3); font-size: var(--fs-label); font-weight: 500;
+}
+.reasoning-toggle:hover { color: var(--text-1); }
+.reasoning-toggle .chevron { transition: transform var(--d-fast); }
+.reasoning-toggle[aria-expanded="true"] .chevron { transform: rotate(90deg); }
+.reasoning.is-live .reasoning-toggle > svg:first-child { color: var(--accent); }
+.reasoning-scroll { max-height: 280px; overflow-y: auto; margin-top: 4px; }
+/* While streaming, column-reverse keeps the newest reasoning in view without writing scrollTop. */
+.reasoning.is-live .reasoning-scroll { display: flex; flex-direction: column-reverse; }
+.reasoning-text { color: var(--text-2); font-size: var(--fs-ui); line-height: 24px; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* New-session helpers */
+.suggestions { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.suggestion-card {
+  display: grid; gap: 6px; padding: 14px; text-align: left;
+  border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--bg-pane); color: var(--text-1);
+  transition: box-shadow var(--d-fast), transform var(--d-fast), border-color var(--d-fast);
+}
+.suggestion-card > svg { color: var(--accent); }
+.suggestion-card:hover { box-shadow: var(--sh-2); transform: translateY(-1px); border-color: var(--border-strong); }
+.suggestion-title { display: flex; align-items: center; gap: 8px; font-size: var(--fs-ui); line-height: var(--lh-ui); font-weight: 500; }
+.suggestion-description { color: var(--text-3); font-size: var(--fs-caption); line-height: var(--lh-caption); }
+@media (max-width: 767.98px) { .suggestions { grid-template-columns: 1fr; } }
+
+.setup-card {
+  display: flex; align-items: center; gap: 12px; padding: 12px 14px;
+  border: 1px solid var(--accent-muted); border-radius: var(--r-lg); background: var(--accent-subtle);
+}
+.setup-card-icon { display: grid; place-items: center; width: 32px; height: 32px; flex-shrink: 0; border-radius: var(--r-md); background: var(--bg-pane); color: var(--accent-text); }
+.setup-card-text { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.setup-card-text strong { font-size: var(--fs-ui); font-weight: 600; }
+.setup-card-text p { color: var(--text-2); font-size: var(--fs-label); line-height: var(--lh-label); }
+@media (max-width: 767.98px) {
+  .setup-card { flex-wrap: wrap; }
+  .setup-card .button { width: 100%; min-height: 44px; }
+}
+
+/* Inspector content */
+.inspector { display: grid; gap: 4px; align-content: start; }
+.inspector-section { display: grid; gap: 10px; padding: 14px 0; border-bottom: 1px solid var(--border-subtle); }
+.inspector-section:last-child { border-bottom: 0; }
+.inspector-section h3 { display: flex; align-items: center; gap: 8px; color: var(--text-3); font-size: var(--fs-caption); line-height: var(--lh-caption); font-weight: 600; }
+.inspector-count { color: var(--text-3); font-weight: 500; font-variant-numeric: tabular-nums; }
+.inspector-section > .progress { width: 100%; }
+.inspector dl { display: grid; gap: 8px; }
+.inspector-row { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 8px; align-items: start; font-size: var(--fs-label); line-height: 20px; }
+.inspector-row dt { color: var(--text-3); }
+.inspector-row dd { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; min-width: 0; color: var(--text-1); overflow-wrap: anywhere; }
+.inspector-sub { color: var(--text-3); font-size: var(--fs-caption); }
+.inspector-row dd:has(.inspector-path) { flex-wrap: nowrap; align-items: flex-start; }
+/* The project name leads; the full path wraps below it instead of being cut twice. */
+.inspector-path { display: grid; flex: 1; min-width: 0; }
+.inspector-path-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.inspector-path-full { color: var(--text-3); font-family: var(--font-mono); font-size: var(--fs-caption); line-height: 18px; overflow-wrap: anywhere; }
+.inspector-row .copy-button { margin: -4px 0; }
+.timeline { list-style: none; display: grid; gap: 2px; }
+.timeline-item button {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-height: 32px; padding: 4px 6px;
+  border: 0; border-radius: var(--r-sm); background: none; color: var(--text-1); text-align: left; font-size: var(--fs-label);
+}
+.timeline-item button:hover { background: var(--bg-hover); }
+.timeline-icon { display: grid; place-items: center; width: 16px; flex-shrink: 0; color: var(--text-3); }
+.timeline-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.timeline-state { flex-shrink: 0; color: var(--text-3); font-size: var(--fs-caption); }
+.timeline-item.state-failed .timeline-state { color: var(--err-text); }
+.timeline-item.state-awaiting-approval .timeline-state { color: var(--warn-text); }

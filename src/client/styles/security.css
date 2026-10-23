@@ -1,0 +1,113 @@
+/*
+ * Device and permission chrome. Neutral by default; amber for pending or full-access
+ * states; red only for real risk (R2 approvals, permission drift, audit rollback, revocation).
+ */
+
+/* Dev-build marker: compact and neutral, never an alarm. */
+.dev-chip {
+  display: inline-flex; align-items: center; flex-shrink: 0; height: 18px; padding: 0 6px;
+  border: 1px solid var(--border); border-radius: var(--r-pill); background: var(--bg-sunken); color: var(--text-3);
+  font: 500 11px/1 var(--font-sans); letter-spacing: .02em; white-space: nowrap; cursor: default;
+}
+.dev-chip.is-compact { height: 18px; padding: 0 5px; margin-bottom: 4px; }
+.device-name-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.device-name-row strong { min-width: 0; }
+.settings-header .dev-chip { margin-right: 4px; }
+.dev-note { display: flex; align-items: flex-start; gap: 8px; color: var(--text-3); font-size: var(--fs-caption); line-height: 18px; }
+.dev-note .dev-chip { margin-top: 0; }
+
+/* Session level */
+.level-badge {
+  height: 24px; padding: 0 8px; border-radius: var(--r-sm); background: var(--bg-sunken);
+  color: var(--text-3); font-size: var(--fs-caption); line-height: 24px; font-weight: 500; white-space: nowrap;
+}
+.inspector-permission { display: grid; justify-items: start; gap: 6px; }
+.inspector-permission > .badge + .badge { margin-top: -2px; }
+.inspector-facts { list-style: none; display: grid; gap: 2px; color: var(--text-3); font-size: var(--fs-caption); line-height: 18px; }
+
+/* Approvals: badge in the heading, explanation and the reason allow is missing above the buttons. */
+.approval-heading .badge { margin-left: 2px; }
+.approval-note { color: var(--text-2); font-size: var(--fs-label); line-height: 20px; }
+.approval-hint {
+  display: flex; align-items: flex-start; gap: 6px; padding: 8px 10px;
+  border-radius: var(--r-md); background: var(--bg-pane); color: var(--text-2);
+  font-size: var(--fs-label); line-height: var(--lh-label);
+}
+.approval-hint > svg { flex-shrink: 0; margin-top: 2px; color: var(--text-3); }
+.tool-card.has-approval.is-r2 { border-color: var(--err-border); background: var(--err-bg); }
+.tool-card.has-approval.is-r2 .tool-card-body { border-top-color: var(--err-border); }
+.tool-card.is-r2 .approval-heading { color: var(--err-text); }
+.tool-card.is-r2 .tool-card-state.state-awaiting-approval { color: var(--err-text); }
+
+/* Composer that this device may watch but not type into. */
+.composer-readonly {
+  display: flex; align-items: flex-start; gap: 10px; padding: 14px 16px 4px;
+  color: var(--text-2); font-size: var(--fs-ui); line-height: 22px;
+}
+.composer-readonly > svg { flex-shrink: 0; margin-top: 3px; color: var(--text-3); }
+.composer-notice {
+  display: flex; align-items: flex-start; gap: 6px; padding: 0 6px;
+  color: var(--warn-text); font-size: var(--fs-caption); line-height: 18px;
+}
+.composer-notice > svg { flex-shrink: 0; margin-top: 2px; }
+
+/* Banners */
+.inline-alert-neutral { color: var(--text-2); }
+.banner-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.banner-close { width: 28px; height: 28px; color: inherit; }
+.banner-region .inline-alert .button.small { flex-shrink: 0; }
+
+/* Local confirmation dialog */
+.presence-body { gap: 14px; }
+.presence-subject { display: flex; align-items: center; gap: 10px; }
+.presence-subject strong { font-size: var(--fs-title-sm); line-height: var(--lh-title-sm); font-weight: 600; }
+.presence-icon {
+  display: grid; place-items: center; width: 36px; height: 36px; flex-shrink: 0;
+  border-radius: var(--r-lg); background: var(--bg-hover); color: var(--text-2);
+}
+[data-confirmation-phase="sending"] .presence-icon { background: var(--ok-bg); color: var(--ok-text); }
+.presence-text { color: var(--text-2); font-size: var(--fs-ui); line-height: 22px; }
+.presence-inline { white-space: nowrap; color: var(--text-1); font-size: 13px; }
+.presence-code {
+  display: grid; justify-items: center; gap: 6px; padding: 14px;
+  border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--bg-sunken);
+}
+.presence-code > span { color: var(--text-3); font-size: var(--fs-caption); line-height: var(--lh-caption); font-weight: 500; }
+.presence-code > code { color: var(--text-1); font: 500 20px/28px var(--font-mono); letter-spacing: .06em; }
+.presence-timer { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 8px 10px; color: var(--text-3); font-size: var(--fs-label); font-variant-numeric: tabular-nums; }
+.presence-timer .countdown-track { grid-column: 1 / -1; }
+
+/* Devices */
+.device-card { display: flex; align-items: flex-start; gap: 14px; }
+.device-avatar.is-large { width: 40px; height: 40px; border-radius: var(--r-lg); }
+.device-card-main { display: grid; gap: 12px; flex: 1; min-width: 0; }
+.device-facts { display: grid; border-top: 1px solid var(--border-subtle); }
+.device-facts > div {
+  display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 12px; align-items: center; min-height: 36px; padding: 6px 0;
+  border-bottom: 1px solid var(--border-subtle); font-size: var(--fs-label); line-height: 20px;
+}
+.device-facts dt { color: var(--text-3); }
+.device-facts dd { min-width: 0; color: var(--text-1); overflow-wrap: anywhere; }
+.fingerprint-inline { font: 12px/18px var(--font-mono); letter-spacing: .04em; color: var(--text-1); }
+.device-card-actions { display: flex; justify-content: flex-end; }
+.device-row { align-items: flex-start; }
+.device-row .device-avatar { margin-top: 2px; }
+.device-row.is-revoked { background: var(--bg-sunken); }
+.device-row.is-revoked .device-row-text strong { color: var(--text-3); }
+.device-row-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.device-row-text .device-row-scopes { white-space: normal; }
+.device-row-actions { display: flex; align-items: center; gap: 12px; flex-shrink: 0; align-self: center; }
+.pair-hint { font-size: var(--fs-label); line-height: 20px; color: var(--text-2); }
+@media (max-width: 767.98px) {
+  .device-card { gap: 12px; }
+  .device-avatar.is-large { display: none; }
+  .device-card .inline-form { flex-direction: column; align-items: stretch; }
+  .device-row { flex-wrap: wrap; }
+  .device-row-actions { width: 100%; justify-content: flex-end; padding-left: 40px; }
+}
+
+/* Providers: keys that this device cannot set, and the address-change warning. */
+.key-state.is-locked { color: var(--text-3); }
+.key-state.is-locked > svg { color: var(--text-3); }
+.field-hint.is-warn { color: var(--warn-text); }
+.field-hint.is-error { color: var(--err-text); }

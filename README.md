@@ -1,0 +1,263 @@
+<p align="center"><img src="public/icon.png" width="96" height="96" alt="Latch"></p>
+
+<h1 align="center">Latch</h1>
+
+<p align="center">跨电脑与手机的 AI Agent 工作台：自由组合 Harness 与模型，在任何设备上接着干。</p>
+
+Latch 在你的电脑（执行端）上运行一个 Host。Host 持有会话、执行工具、保管密钥与设备登记；Latch 桌面端、本机浏览器和手机连接同一个 Host，查看同一份进度、审批同一个操作、取消同一个任务。关闭页面不会取消任务，断线后从 Host 的状态恢复。
+
+每个会话可以组合：
+
+- **Harness**：内置的 Standard 执行循环，或通过 [Agent Client Protocol](https://agentclientprotocol.com)（ACP）接入的开源 Agent（Codex、pi、OpenCode、DeepSeek Harness、Gemini CLI、Qwen Code、goose）。
+- **模型**：OpenAI 兼容接口或 Anthropic 原生接口的模型服务，会话中可切换。
+- **项目目录**：Host 登记过的工作目录之一。
+
+Provider、Tool 与 Harness 都是 [Cordis](https://github.com/cordiverse/cordis) 插件，可以用本地模块扩展。
+
+界面提供流式回复、思考过程、工具卡片（参数、输出、文件差异）、计划进度与 token 用量；审批紧挨对应的工具；会话支持搜索、按日期分组、置顶、归档、重命名、导出 Markdown 与删除；桌面三栏、平板侧栏、手机抽屉，浅色、深色与跟随系统。
+
+> 当前是开发版：没有签名安装包，从源码运行，所有客户端常驻显示「开发版」标记。
+
+## 要求
+
+| 项目 | 要求 |
+| --- | --- |
+| 系统 | macOS（完整功能）；Linux 可运行但没有本机确认；Windows 暂不支持运行 Host（见「平台限制」） |
+| Node.js / pnpm | Node.js ≥ 22.19，pnpm 11 |
+| 本机确认组件 | macOS 上需要 Xcode 命令行工具（`xcode-select --install`），用于构建 Touch ID 确认组件 |
+| 手机接入 | 你自己提供的 HTTPS 证书（推荐 Tailscale 的 `tailscale cert`） |
+
+## 安装与首次运行
+
+```sh
+pnpm install
+pnpm build      # Host、页面与 macOS 本机确认组件（dist/native/latch-presence）
+pnpm desktop    # 启动 Host 并打开 Latch 桌面端（推荐）
+# 或：pnpm start，然后在浏览器打开它打印的地址
+```
+
+`pnpm start` 会打印 `http://h-<hostId>.localhost:4317/link/` 形式的地址。每台 Host 用自己的 `h-<hostId>.localhost` 地址，因此不同 Host 的 Cookie 互不混用；直接访问 `http://localhost:4317/` 会被重定向到这个地址。
+
+**登记这台设备。** 第一次打开时页面是登记页：
+
+1. 填写设备名称并提交。本机浏览器上的第一台设备默认勾选「管理此 Host」；桌面端总是获得全部权限。
+2. 电脑上弹出 Latch 的确认窗口，显示设备名称、指纹、来源与权限。核对窗口里的指纹与页面上的完全一致。
+3. 用 Touch ID 或登录密码确认（Touch ID 可用时，登记等操作必须用 Touch ID）。
+
+设备凭据每 24 小时自动续期，从登记起 30 天后失效，届时需要重新登记确认。
+
+登记完成后，在「设置 → 模型服务」添加服务，或在桌面端「设置 → Agent」启用已安装的 ACP Agent。密钥、Agent 定义等需要本机确认的设置只能在桌面端完成（见「桌面端」）。
+
+**本机确认组件。** Touch ID 与登录密码确认由 `dist/native/latch-presence` 完成：
+
+- `pnpm build` 的最后一步（也可单独运行 `pnpm build:presence`）用 `swiftc` 构建并做 ad-hoc 签名。缺少 Xcode 命令行工具时跳过，本机确认不可用；`pnpm start` 发现组件缺失时也会尝试构建。
+- Host 第一次使用组件时记录它的签名。之后重新构建导致签名变化时，本机确认显示不可用并提示签名不一致：停止 Host，运行 `pnpm latch presence repin`，再启动。
+- `pnpm latch presence status` 查看状态；`pnpm latch presence test` 显示一次示例确认，确认或拒绝都不改变设置。
+
+**本机确认不可用时**（Linux、未构建组件），用离线登记码登记第一台设备：停止 Host，运行 `pnpm latch device enroll --offline`，再启动 Host，在登记页填写这个码。码 15 分钟内有效、只能使用一次，只在本机浏览器与桌面端接受；本机浏览器用它得到查看、发起会话、批准普通操作与管理权限，桌面端得到全部权限。它依赖此刻本机没有恶意的同用户进程。
+
+**不配置模型体验流程**：`pnpm start:demo` 或 `pnpm desktop -- --demo` 使用显式启用的确定性演示模型，界面会标注；文件工具真实执行。
+
+## 桌面端
+
+`pnpm desktop`（需要先 `pnpm build`）：
+
+- 为解析出的数据目录启动 Host（在后台运行，日志写入 `<数据目录>/host.log`），或复用已在运行的 Host。复用时本次的 `--demo`、`--harness`、`--provider`、`--plugin`、`--workspace`、网络参数与模型环境变量不会生效，要改启动配置请先停止该 Host。
+- 只通过 `<数据目录>/host.json` 与 `host.sock` 找到并核对 Host，不做网络探测。
+- 页面从 `latch://app/link/` 加载，所有请求由 Electron 主进程经 `host.sock` 转发；页面本身不能建立网络连接，也接触不到设备密钥与凭据。
+- 设备密钥与凭据由主进程用系统安全存储加密，保存在 `<userData>/latch-devices/<hostId>.json`（macOS 为 `~/Library/Application Support/Latch/Desktop/latch-devices/`）。没有可用的安全存储时桌面端拒绝启动。
+- 页面里的外部链接只有在原生对话框中确认完整地址后，才交给系统浏览器打开。
+- 关闭窗口不会停止 Host，用 `pnpm stop` 停止。
+
+需要本机确认的操作只能在执行端电脑上的桌面端发起：设置模型服务密钥、保存 Agent 定义（命令、参数、环境变量）、新建 ACP 会话、放宽会话权限模式、批准高风险（R2）操作、授予设备权限、放宽安全策略（包括出站白名单）。本机浏览器和手机都不能发起本机确认，唯一的例外是登记设备本身。
+
+## 手机接入（HTTPS）
+
+手机只通过 HTTPS 接入，证书由你提供，Latch 不生成自签名证书。以 Tailscale 为例（需要在 Tailscale 中启用 MagicDNS 与 HTTPS 证书）：
+
+```sh
+mkdir -p ~/latch-tls && cd ~/latch-tls
+tailscale cert my-mac.example.ts.net          # 生成 my-mac.example.ts.net.crt 与 .key
+chmod 600 my-mac.example.ts.net.key
+pnpm desktop -- --tailnet \
+  --tls-cert ~/latch-tls/my-mac.example.ts.net.crt \
+  --tls-key  ~/latch-tls/my-mac.example.ts.net.key \
+  --public-origin https://my-mac.example.ts.net:4318
+```
+
+- 三项 `--tls-cert`、`--tls-key`、`--public-origin` 必须同时提供（或用 `HARNESS_TLS_CERT`、`HARNESS_TLS_KEY`、`HARNESS_PUBLIC_ORIGIN`）。
+- 监听地址：`--tailnet` 取本机第一个 Tailscale 地址（`100.64.0.0/10`），`--lan` 取第一个私网 IPv4，`--tls-host <IP>` 指定网卡地址；公开地址的主机是 IP 时也可省略。必须是具体的 IP，不接受主机名或 `0.0.0.0`、`::` 等通配地址。端口默认 `4318`（`--tls-port`、`HARNESS_TLS_PORT`）。
+- 启动前检查：私钥是你拥有的 0600 普通文件，且不在数据目录或任何项目目录内；证书未过期并与公开地址的主机名匹配。证书剩余不足 14 天时告警，过期后 HTTPS 入口关闭；Latch 不会续签证书。
+- HTTPS 入口只接受 TLS 1.3，并断开来自本机网卡地址的连接，请用手机测试（手机也需加入同一 tailnet）。
+- 该数据目录的 Host 已在运行时，`pnpm desktop` 会复用它而忽略这些参数，请先 `pnpm stop`。
+
+**配对手机：**
+
+1. 在桌面端「设置 → 设备」生成配对二维码，或在 Host 运行时执行 `pnpm latch device invite`（终端显示二维码）。邀请 10 分钟内有效、只能使用一次，Host 重启后失效。
+2. 手机扫码打开页面并提交登记。
+3. 在电脑上的确认窗口核对指纹后确认。
+
+邀请默认授予查看、发起会话与批准普通操作；`pnpm latch device invite --scopes view,run,approve:standard,admin` 可以加入管理权限。撤销某台设备时，由它邀请配对的设备降为仅查看，等待在桌面端复核。
+
+## 模型服务
+
+在「设置 → 模型服务」添加服务：预置常用服务地址（OpenAI、Anthropic、DeepSeek、OpenRouter、Ollama、LM Studio 等），可获取模型列表、检测连接、设置默认模型。
+
+- **密钥**：只能在桌面端经本机确认设置，或在 Host 停止时运行 `pnpm latch provider set-key <服务 ID>`（从不回显的终端或标准输入读取）。密钥保存在数据目录的 0600 文件中，不返回浏览器，不写入日志。
+- **密钥绑定地址**：密钥只发往保存时服务地址的源（协议、主机与端口）。修改为其他源会清空密钥，需要重新输入；从旧版本升级时，已有密钥绑定到当时的地址。
+- **出站策略**：Host 发出的模型请求一律经过出站策略，默认拒绝本机回环、私网、链路本地、云元数据与其他特殊用途地址，拒绝跨源重定向。Host 自己解析域名并连接检查过的地址，DNS 重绑定无法绕过。
+- **本机模型服务**（Ollama、LM Studio 等）因此默认无法访问：在桌面端点「获取模型」或「检测连接」失败后，选择「允许 Host 访问 `127.0.0.1:11434`（需要本机确认）」把这个 `host:port` 加入出站白名单。元数据地址始终拒绝。使用 fake-IP 模式透明代理（系统 DNS 返回 `198.18.0.0/15`）时，同样需要把模型服务的 `host:port` 加入白名单，或在代理中为它关闭 fake-IP。
+- **临时服务**：`HARNESS_BASE_URL`、`HARNESS_MODEL`、`HARNESS_API_KEY` 为本次运行提供一个服务（替换 `openai-compatible` 的连接，不写入数据目录；见 [.env.example](.env.example)）。`HARNESS_BASE_URL` 的 `host:port` 自动加入本进程的出站白名单；地址不能包含用户名、密码、查询参数或片段。
+- 真实服务失败时报错，不会回退到演示模型。出站策略只约束 Host 自己的模型请求，不约束插件与 ACP Agent 的网络访问。
+
+## Harness
+
+| | Standard（内置） | ACP Agent、插件 Harness |
+| --- | --- | --- |
+| 级别 | L1：逐项询问，由 Latch 把关 | L3：完全访问，Agent 自己的询问只是提示 |
+| 本机桌面端 | 发起、输入、批准；R2 需要本机确认 | 新建需要本机确认；输入、修改设置、允许询问、删除 |
+| 本机浏览器、手机 | 发起、输入、批准 R1、拒绝、取消（受安全策略上限约束） | 只能查看、拒绝询问和取消 |
+
+**Standard** 对每个工具调用分级：读取与列目录不询问（R0）；写入项目内普通文件询问，可选「本会话始终允许」（R1）；写入受保护路径（`.git/`、`package.json`、`node_modules/`、`.env*` 等会被开发工具自动执行或读取的位置）、无法判定的路径，以及第三方插件注册的工具，每次询问且只能在桌面端经本机确认批准（R2）。
+
+**ACP Agent** 是与 Host 同权限运行的本机代码，Latch 不提供操作系统沙箱：
+
+- 在运行 Host 的电脑上安装并登录 Agent，再在桌面端「设置 → Agent」选择预设或填写自定义命令，保存需要本机确认。Latch 不下载、不安装 Agent，也不代为登录。
+- 新建会话时，确认窗口显示完整命令、参数、环境变量名、工作目录、项目中找到的 Agent 配置与启动指纹；之后定义或这些项目配置变化，会话就不能继续。
+- 启动前 Latch 把 Agent 设到预设规定的权限模式，每轮输入前读回核对，发现 Agent 自行放宽时停止会话，并隐藏会持久保存授权的「始终允许 / 始终拒绝」类选项。pi 与 DeepSeek Harness 无法读回模式，pi 执行工具前也不请求审批。
+- Agent 进程只继承 `PATH`、`HOME`、`LANG`、`TERM`、`USER`、`SHELL`、`LC_*`，每个会话有私有临时目录，代理变量被清空。Agent 需要的 API Key 等变量请写在 Agent 定义里；`PATH`、`HOME`、代理、`NODE_OPTIONS`、`HARNESS_*`、`npm_*`、`DYLD_*`、`LD_*`、`GIT_CONFIG_*` 等由 Latch 管理的变量不能在定义中设置。
+- 任何 L3 会话运行或等待审批时，新的本机确认会被拒绝（例如登记设备、批准 R2），等会话结束或取消后再试。
+
+| 预设 | 启动命令 | 许可证 |
+| --- | --- | --- |
+| [Codex](https://github.com/agentclientprotocol/codex-acp) | `codex-acp` | Apache-2.0 |
+| [pi](https://github.com/svkozak/pi-acp) | `pi-acp` | MIT |
+| [OpenCode](https://github.com/anomalyco/opencode) | `opencode acp` | MIT |
+| [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) | `dsh --profile acp` | MIT |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `gemini --acp --approval-mode default` | Apache-2.0 |
+| [Qwen Code](https://github.com/QwenLM/qwen-code) | `qwen --acp` | Apache-2.0 |
+| [goose](https://github.com/block/goose) | `goose acp` | Apache-2.0 |
+
+安装方式、各预设的权限模式与已知限制见 [docs/HARNESSES.md](docs/HARNESSES.md)。
+
+**插件。** `pnpm start -- --plugin ./examples/text-statistics.mjs` 加载可信的本地插件（可重复）；`--harness <id>` 让新会话默认使用某个 Harness。插件以 Host 的权限运行，它注册的工具在 Standard 中按 R2 处理，它提供的 Harness 为 L3。编写方式见 [docs/PLUGIN-DEVELOPMENT.md](docs/PLUGIN-DEVELOPMENT.md)。
+
+## 命令行 `pnpm latch`
+
+每个命令都接受 `--data-dir <目录>`，未指定时按「数据与工作区」中的顺序解析。
+
+| 命令 | Host 状态 | 作用 |
+| --- | --- | --- |
+| `device list [--json]` | 运行中 | 列出已登记的设备 |
+| `device revoke <设备 ID>` | 运行中 | 撤销设备；由它邀请的设备降为待复核 |
+| `device invite [--scopes …] [--code-file <路径>]` | 运行中，已配置 HTTPS | 生成手机配对二维码 |
+| `device enroll --offline [--code-file <路径>] [--port <端口>]` | 已停止 | 生成一次性离线登记码（15 分钟） |
+| `provider set-key <服务 ID>` | 已停止 | 保存模型服务密钥，绑定到当前服务地址 |
+| `presence status` | 任意 | 本机确认是否可用 |
+| `presence repin` | 已停止 | 重新登记本机确认组件的签名（仅 macOS） |
+| `presence test` | 任意 | 显示一次示例本机确认 |
+| `audit verify` | 任意 | 只读校验审计记录的哈希链 |
+
+配对链接与离线登记码默认只打印到终端。非交互环境必须用 `--code-file <路径>`，内容只写入本次新建的 0600 文件：
+
+- 目标已存在（包括符号链接）时拒绝，不跟随、不覆盖。
+- 所在目录必须属于当前用户，或属于 root 且带粘滞位（如 `/tmp`）；没有粘滞位时其他用户不能写入。
+- macOS 上目录不能带访问控制列表（ACL）。主目录 `~` 及其下的常用文件夹通常默认带有一条，因此会被拒绝；请改用例如 `mktemp -d` 新建的目录。
+
+## 启动参数与环境变量
+
+| 参数 | 环境变量 | 默认值 |
+| --- | --- | --- |
+| `--data-dir <目录>` | `HARNESS_DATA_DIR` | 见下节 |
+| `--workspace <目录>` | `HARNESS_WORKSPACE` | `~/Latch/workspace` |
+| `--port <端口>` | `HARNESS_PORT` | `4317`（同时监听 `127.0.0.1` 与 `::1`） |
+| `--tls-cert`、`--tls-key`、`--public-origin` | `HARNESS_TLS_CERT`、`HARNESS_TLS_KEY`、`HARNESS_PUBLIC_ORIGIN` | 不启用 HTTPS |
+| `--tls-host <IP>`、`--lan`、`--tailnet`、`--tls-port` | `HARNESS_TLS_HOST`、`HARNESS_TLS_PORT` | 端口 `4318` |
+| `--plugin <模块>`、`--harness <id>`、`--provider <id>`、`--demo` | — | — |
+
+同时运行多个 Host 时，为每个 Host 使用不同的 `--data-dir` 与 `--port`。
+
+## 数据与工作区
+
+**数据目录**（设备登记、审计、安全策略、模型服务与密钥、会话）按以下顺序确定：
+
+1. `--data-dir` 或 `HARNESS_DATA_DIR`；
+2. 当前目录下已存在的 `.runtime`（旧版本的位置，继续使用并打印迁移提示；迁移时停止 Host、移动目录，再用 `--data-dir` 指定）；
+3. 平台默认：macOS `~/Library/Application Support/Latch/Host`，Linux `${XDG_DATA_HOME:-~/.local/share}/latch/host`。
+
+**启动工作区**：`--workspace` → `HARNESS_WORKSPACE` → 数据目录内已存在的 `workspace`（旧布局，迁出之前只能使用 Standard）→ `~/Latch/workspace`。其他项目目录在「设置 → 项目」登记。
+
+以下位置既不能作为启动工作区（Host 拒绝启动），也不能登记为项目：
+
+- 主目录本身；包含或位于敏感目录（`~/.ssh`、`~/.aws`、`~/.gnupg`、`~/.kube`、`~/.docker`、`~/Library/Keychains`，以及 `~/.codex`、`~/.gemini` 等 Agent 配置目录）的位置；包含 TLS 私钥的目录。
+- 主目录下的隐藏目录、`~/.config`、`~/.local`、`~/bin`，以及 macOS 的整个 `~/Library`（数据目录内的旧布局工作区除外）。
+- 与运行目录或 Agent 安装目录重叠的位置。
+
+登记项目时另外拒绝：与数据目录重叠、登录时自动启动的目录（如 `~/Library/LaunchAgents`）、与 Latch 程序目录重叠、位于 `.git`、`node_modules` 等受保护目录内的目录，以及已登记过的目录。启动工作区与 Latch 程序目录重叠时 Host 仍会启动，但 Standard 的每次写入都按 R2 处理，ACP Agent 不可用。已保存的项目在每次启动时重新检查，不再符合规则的在本次运行中停用，可在设置中移除。
+
+完整的路径规则与数据目录内容见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 的「路径与项目目录」与「持久化与恢复」。
+
+## 停止 Host
+
+```sh
+pnpm stop                               # 默认数据目录
+pnpm stop -- --data-dir <目录>
+pnpm stop -- --force                    # 仍有会话在运行或等待审批时
+```
+
+- `pnpm stop` 只在通过 `host.sock` 核对 PID、hostId 与实例 ID 之后才发送停止信号。有会话在运行或等待审批时拒绝，加 `--force` 继续。在启动 Host 的终端里按 Ctrl+C 也可以停止。
+- `<数据目录>/host.lock` 保证同一数据目录同一时间只有一个 Host 或离线 `pnpm latch` 命令在写入。持有进程已退出、或锁写于电脑重启之前时，锁会被自动接管，无需处理。
+- `pnpm stop` 从不凭 `host.lock` 或无法识别的 `host.json` 发信号，遇到以下情况说明原因后以状态 1 退出：Host 仍在启动（稍后再运行）；锁或 `host.json` 无法读取；`host.json` 记录的进程仍在运行但无法通过 `host.sock` 核对；`host.json` 来自上一版本且其中的进程仍在运行（在旧 Host 的终端中按 Ctrl+C 停止）。
+- 只有在同一次开机内 Host 被强制结束、它的进程号又被其他程序复用，并且确认没有 Host 或 `latch` 命令在使用该目录时，才需要手动删除 `host.lock`。
+
+## 平台限制
+
+- **Linux**：没有本机确认（尚未实现 polkit 等系统确认）。第一台设备用离线登记码登记；需要本机确认的操作都不可用，包括在界面中设置密钥、保存 Agent 定义、新建 ACP 会话、批准 R2、授予设备权限与放宽安全策略（含出站白名单）。密钥改用 `pnpm latch provider set-key` 设置；本机模型服务可以通过 `HARNESS_BASE_URL` 为本次运行放行。桌面端需要系统密钥环，没有密钥环、只能明文保存时拒绝启动。
+- **Windows**：Host 依赖 `host.sock` 所在的每用户运行目录，Windows 上尚未实现，Host 无法启动。
+
+## 与上一版本不兼容的变化
+
+- **启动令牌与旧链接失效。** 不再打印带一次性令牌的「管理入口」；旧的 `#token=` 链接被页面丢弃，旧的登录与配对接口返回 410 `login-removed`。所有设备改为本机确认登记。
+- **所有设备需要重新登记确认。** 旧版浏览器的登录状态不再有效，需要在本机重新登记；旧的配对设备（手机）在升级时被撤销，需要通过 HTTPS 重新邀请。旧版 Latch 无法读取新的设备登记文件，回退旧版需要手动恢复备份。
+- **明文局域网接入已移除。** `--lan`、`--tailnet`、`--tls-host` 或非回环 `--host` 都必须同时提供证书、私钥与公开地址，否则拒绝启动。
+- **`GET /link/api/health` 只返回 `{"ok":true}`。** Host 实例信息只在 `host.sock` 上提供。
+- **`HARNESS_DESKTOP_URL` 已移除。** 桌面端只通过 `host.json` 与 `host.sock` 连接 Host，启动器会丢弃这个变量。
+- **默认位置变化。** 新安装的数据目录与工作区使用上文的平台默认位置；当前目录已有的 `.runtime` 与其中的 `workspace` 仍会被使用。
+- **升级前创建的 ACP 会话只能查看和删除**，因为它们没有经过本机确认；请新建会话。
+- 执行 `pnpm build` 后，仍在运行的旧 Host 会直接提供新页面，页面提示「此 Host 仍是旧版本，重启 Host 后启用设备确认。」，重启 Host 即可。
+
+## 安全边界
+
+- Latch 约束的是「谁能让 Host 做什么」，不隔离执行的代码。插件、ACP Agent 与第三方 Harness 是可信的本机代码；工具审批、路径检查与出站策略是应用层约束，不是操作系统沙箱。L3 会话可以读写 Latch 的数据与 Host 身份私钥。
+- 同一系统用户下的其他进程可以连接 `host.sock`、读取数据目录；Latch 的保护来自 0700 的运行目录与本机确认。
+- 每台设备持有自己的 P-256 密钥，Host 只保存公钥与凭据哈希；授予或执行权限的操作先写入哈希链审计记录。
+- 不要把端口直接暴露到公网；远程设备只通过你提供证书的 HTTPS 入口接入。
+
+完整的安全模型、不防御的情况与尚未实现的部分见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+
+## 开发
+
+```sh
+pnpm typecheck
+pnpm test                      # Vitest 单元与集成测试
+pnpm build
+pnpm test:e2e                  # Vitest + Playwright，使用 dist/web
+HARNESS_BROWSER_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' pnpm test:e2e
+HARNESS_ELECTRON_E2E=1 pnpm exec vitest run --config vitest.e2e.config.ts tests/desktop.e2e.ts
+```
+
+测试只使用临时目录、本地假模型服务与假 ACP Agent，不调用付费模型。手动查看界面时请用独立的数据目录、工作区与端口：`pnpm start:demo -- --port <空闲端口> --data-dir <临时数据目录> --workspace <临时工作区>`，结束后 `pnpm stop -- --data-dir <同一数据目录>`。
+
+| 文档 | 内容 |
+| --- | --- |
+| [AGENTS.md](AGENTS.md) | 给 AI 编码助手的工作约定与入口 |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 分层、安全模型、设备与凭据、Harness 路由、持久化、HTTP API |
+| [docs/HARNESSES.md](docs/HARNESSES.md) | ACP Agent 接入、权限模式、项目配置与限制 |
+| [docs/PLUGIN-DEVELOPMENT.md](docs/PLUGIN-DEVELOPMENT.md) | 编写 Provider、Tool 与 Harness 插件 |
+| [docs/STREAMING.md](docs/STREAMING.md) | 流式同步、消息身份、重连、凭据续期与阅读位置 |
+| [docs/DESIGN.md](docs/DESIGN.md) | 界面结构、设计令牌与交互规则 |
+| [docs/TESTING.md](docs/TESTING.md) | 测试命令与按改动选择回归 |
+
+## 许可证
+
+源代码以 [Apache License 2.0](LICENSE) 授权。"Latch" 名称与图标不在该许可范围内（见许可证第 6 条）。

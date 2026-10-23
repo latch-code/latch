@@ -1,0 +1,253 @@
+import { lookup as dnsLookup, type LookupAddress } from 'node:dns'
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { createServer } from 'node:net'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
+import { Agent, fetch as undiciFetch } from 'undici'
+import { startServer, type ServerOptions, type StartedHost, type TlsListenerOptions } from '../../src/host/server.ts'
+import type { ConfirmationTicket, Device, DeviceScope, EnrollmentView, InvitationView } from '../../src/shared/types.ts'
+import { enrollSigningText, renewSigningText, testDeviceKey, type TestDeviceKey } from './crypto.ts'
+import { createTestPresence, type TestPresence } from './presence.ts'
+import { makeTestTls } from './tls.ts'
+
+export type TestListener = 'unix' | 'loopback-tcp' | 'tls'
+
+export interface TestHostOptions extends Omit<Partial<ServerOptions>, 'tls'> {
+  presenceMode?: TestPresence['mode']
+  /** `true`: a self-signed `latch-test.localhost` certificate on 127.0.0.1 with local peers allowed. */
+  tls?: boolean | TlsListenerOptions
+}
+
+export interface TestRequestInit {
+  method?: string
+  body?: unknown
+  headers?: Record<string, string>
+  /** Sent as `x-latch-confirmation`. */
+  confirmation?: string
+  signal?: AbortSignal
+}
+
+export interface TestDevice {
+  id: string
+  listener: TestListener
+  credential: string
+  /** 'name=value' for TCP devices. */
+  cookie?: string
+  key: TestDeviceKey
+  device: Device
+  /** Path under /link/api/. */
+  request(path: string, init?: TestRequestInit): Promise<Response>
+  /** Throws `{ status, body }` when the response is not ok. */
+  json<T>(path: string, init?: TestRequestInit): Promise<T>
+  /** Performs the request; on 403 stepup-required with a confirmation, approves via presence and retries with the header. */
+  confirmed(path: string, init?: TestRequestInit): Promise<Response>
+  renew(): Promise<void>
+}
+
+export interface TestHost {
+  host: StartedHost
+  presence: TestPresence
+  dataDir: string
+  workspaceRoot: string
+  /** Temp directory holding data, workspace, runtime parent and TLS material; removed by `close`. */
+  root: string
+  /** Present with `tls`. */
+  tlsCa?: string
+  enroll(options?: { listener?: TestListener; name?: string; scopes?: DeviceScope[]; invitation?: string; offlineCode?: string }): Promise<TestDevice>
+  /** Anonymous unix invitation (needs TLS). */
+  invite(scopes?: DeviceScope[]): Promise<InvitationView>
+  /** Path under /link/. */
+  raw(listener: TestListener, path: string, init?: TestRequestInit): Promise<Response>
+  close(): Promise<void>
+}
+
+export class HttpFailure extends Error {
+  constructor(readonly status: number, readonly body: unknown) { super(`HTTP ${status}: ${JSON.stringify(body)}`) }
+}
+
+type LookupCallback = (error: NodeJS.ErrnoException | null, address: string | LookupAddress[], family?: number) => void
+
+/** `*.localhost` resolves to 127.0.0.1 in tests, as browsers do. */
+function localhostLookup(hostname: string, options: { all?: boolean }, callback: LookupCallback): void {
+  if (hostname === 'localhost' || hostname.endsWith('.localhost')) {
+    if (options.all) callback(null, [{ address: '127.0.0.1', family: 4 }])
+    else callback(null, '127.0.0.1', 4)
+    return
+  }
+  dnsLookup(hostname, options as never, callback as never)
+}
+
+async function freePort(): Promise<number> {
+  const server = createServer()
+  await new Promise<void>((done, fail) => { server.once('error', fail); server.listen(0, '127.0.0.1', done) })
+  const address = server.address()
+  await new Promise<void>(done => server.close(() => done()))
+  if (!address || typeof address === 'string') throw new Error('no port')
+  return address.port
+}
+
+function setCookieOf(response: Response, prefix: string): string | undefined {
+  const values = (response.headers as unknown as { getSetCookie(): string[] }).getSetCookie()
+  return values.map(value => value.split(';')[0]!).find(value => value.startsWith(prefix) && !value.endsWith('='))
+}
+
+/** A Host on fresh temp directories with test presence, relaxed rate limits and all three transports. */
+export async function startTestHost(options: TestHostOptions = {}): Promise<TestHost> {
+  const root = await mkdtemp(join(tmpdir(), 'lt-'))
+  const runtimeParent = join(root, 'r')
+  await mkdir(runtimeParent, { mode: 0o700 })
+  const presence = createTestPresence({ mode: options.presenceMode ?? 'approve' })
+  let tls: TlsListenerOptions | undefined
+  let tlsCa: string | undefined
+  if (options.tls === true) {
+    const material = await makeTestTls(join(root, 'tls'))
+    const port = await freePort()
+    tls = { host: '127.0.0.1', port, certPath: material.certPath, keyPath: material.keyPath, publicOrigin: `https://${material.hostname}:${port}`, allowLocalPeers: true }
+    tlsCa = material.ca
+  } else if (options.tls) {
+    tls = options.tls
+    tlsCa = await readFile(options.tls.certPath, 'utf8')
+  }
+  const { presenceMode: _mode, tls: _tls, presence: _presence, ...rest } = options
+  const dataDir = rest.dataDir ?? join(root, 'data')
+  const workspaceRoot = rest.workspaceRoot ?? join(root, 'workspace')
+  let host: StartedHost
+  try {
+    host = await startServer({
+      uiDir: resolve('dist/web'), port: 0, demo: true, runtimeParent, rateLimits: 'relaxed',
+      ...rest, dataDir, workspaceRoot, presence, ...(tls ? { tls } : {}),
+    })
+  } catch (error) {
+    await rm(root, { recursive: true, force: true })
+    throw error
+  }
+  const agents: Record<TestListener, Agent | undefined> = {
+    unix: new Agent({ connect: { socketPath: host.socketPath } }),
+    'loopback-tcp': new Agent({ connect: { lookup: localhostLookup as never } }),
+    tls: tlsCa ? new Agent({ connect: { ca: tlsCa, lookup: localhostLookup as never } }) : undefined,
+  }
+
+  function raw(listener: TestListener, path: string, init: TestRequestInit = {}): Promise<Response> {
+    const dispatcher = agents[listener]
+    if (!dispatcher) throw new Error(`listener ${listener} is not configured`)
+    const base = listener === 'unix' ? 'http://latch.unix' : listener === 'tls' ? host.tlsOrigin! : host.loopbackOrigin
+    const headers: Record<string, string> = {
+      ...(init.body !== undefined ? { 'content-type': 'application/json' } : {}),
+      ...(init.confirmation ? { 'x-latch-confirmation': init.confirmation } : {}),
+      ...init.headers,
+    }
+    return undiciFetch(`${base}/link/${path}`, {
+      method: init.method ?? (init.body === undefined ? 'GET' : 'POST'), headers, dispatcher, redirect: 'manual',
+      ...(init.body !== undefined ? { body: typeof init.body === 'string' ? init.body : JSON.stringify(init.body) } : {}),
+      ...(init.signal ? { signal: init.signal } : {}),
+    }) as unknown as Promise<Response>
+  }
+
+  async function invite(scopes?: DeviceScope[]): Promise<InvitationView> {
+    const response = await raw('unix', 'api/pairings', { method: 'POST', body: scopes ? { scopes } : {} })
+    const body = await response.json() as { invitation: InvitationView }
+    if (response.status !== 201) throw new HttpFailure(response.status, body)
+    return body.invitation
+  }
+
+  async function settleConfirmation(id: string, poll: (path: string) => Promise<Response>): Promise<ConfirmationTicket['status']> {
+    if (presence.mode === 'manual') { await presence.waitForRequest(); presence.approveNext() }
+    for (let attempt = 0; attempt < 250; attempt++) {
+      const response = await poll(id)
+      const body = await response.json() as { enrollment?: EnrollmentView; confirmation?: ConfirmationTicket }
+      const status = body.enrollment?.status ?? body.confirmation?.status
+      if (!status) throw new HttpFailure(response.status, body)
+      if (status !== 'pending') return status as ConfirmationTicket['status']
+      await delay(20)
+    }
+    throw new Error('confirmation did not settle')
+  }
+
+  function makeDevice(listener: TestListener, key: TestDeviceKey, device: Device, credential: string, cookieName?: string): TestDevice {
+    const state = { credential, device }
+    const authHeaders = (): Record<string, string> => listener === 'unix'
+      ? { authorization: `Latch-Device ${state.credential}` }
+      : { cookie: `${cookieName}=${state.credential}` }
+    const testDevice: TestDevice = {
+      id: device.id, listener, key,
+      get credential() { return state.credential },
+      get cookie() { return listener === 'unix' ? undefined : `${cookieName}=${state.credential}` },
+      get device() { return state.device },
+      request(path, init = {}) { return raw(listener, `api/${path}`, { ...init, headers: { ...authHeaders(), ...init.headers } }) },
+      async json<T>(path: string, init?: TestRequestInit): Promise<T> {
+        const response = await testDevice.request(path, init)
+        const text = await response.text()
+        const body = text ? JSON.parse(text) : undefined
+        if (!response.ok) throw new HttpFailure(response.status, body)
+        return body as T
+      },
+      async confirmed(path, init = {}) {
+        const first = await testDevice.request(path, init)
+        if (first.status !== 403) return first
+        const body = await first.clone().json() as { error?: string; confirmation?: ConfirmationTicket }
+        if (body.error !== 'stepup-required' || !body.confirmation) return first
+        const status = await settleConfirmation(body.confirmation.id, id => testDevice.request(`confirmations/${id}`))
+        if (status !== 'approved') throw new Error(`confirmation ${status}`)
+        return testDevice.request(path, { ...init, confirmation: body.confirmation.id })
+      },
+      async renew() {
+        const { nonce } = await testDevice.json<{ nonce: string }>('credentials/challenge', { method: 'POST', body: {} })
+        const response = await testDevice.request('credentials/renew', { method: 'POST', body: { nonce, signature: key.sign(renewSigningText(host.hostId, device.id, nonce)) } })
+        const body = await response.json() as { device: Device; credential?: string }
+        if (!response.ok) throw new HttpFailure(response.status, body)
+        state.device = body.device
+        state.credential = listener === 'unix' ? body.credential! : setCookieOf(response, `${cookieName}=`)!.slice(cookieName!.length + 1)
+      },
+    }
+    return testDevice
+  }
+
+  async function enroll(input: { listener?: TestListener; name?: string; scopes?: DeviceScope[]; invitation?: string; offlineCode?: string } = {}): Promise<TestDevice> {
+    const listener = input.listener ?? 'loopback-tcp'
+    const key = testDeviceKey()
+    let invitation = input.invitation
+    if (listener === 'tls' && !invitation && !input.offlineCode) {
+      invitation = (await invite(input.scopes?.filter(scope => scope !== 'approve:elevated' && scope !== 'secrets'))).code
+    }
+    const created = await raw(listener, 'api/enrollments', {
+      method: 'POST',
+      body: {
+        publicKey: key.spki, name: input.name ?? 'Test device',
+        ...(input.scopes ? { scopes: input.scopes } : {}), ...(invitation ? { invitation } : {}), ...(input.offlineCode ? { offlineCode: input.offlineCode } : {}),
+      },
+    })
+    const createdBody = await created.json() as { enrollment: EnrollmentView }
+    if (created.status !== 202) throw new HttpFailure(created.status, createdBody)
+    const { enrollment } = createdBody
+    const status = enrollment.status === 'pending'
+      ? await settleConfirmation(enrollment.id, id => raw(listener, `api/enrollments/${id}`))
+      : enrollment.status
+    if (status !== 'approved') throw new Error(`enrollment ${status}`)
+    const completed = await raw(listener, `api/enrollments/${enrollment.id}/complete`, {
+      method: 'POST', body: { signature: key.sign(enrollSigningText(host.hostId, enrollment.id, enrollment.nonce!)) },
+    })
+    const result = await completed.json() as { device: Device; credential?: string }
+    if (!completed.ok) throw new HttpFailure(completed.status, result)
+    if (listener === 'unix') return makeDevice(listener, key, result.device, result.credential!)
+    const cookieName = listener === 'tls' ? `__Host-latch_${host.hostId8}` : `latch_${host.hostId8}`
+    const cookie = setCookieOf(completed, `${cookieName}=`)
+    if (!cookie) throw new Error('enrollment returned no credential cookie')
+    return makeDevice(listener, key, result.device, cookie.slice(cookieName.length + 1), cookieName)
+  }
+
+  let closed: Promise<void> | undefined
+  return {
+    host, presence, dataDir, workspaceRoot, root, ...(tlsCa ? { tlsCa } : {}),
+    enroll, invite, raw,
+    close() {
+      return closed ??= (async () => {
+        try { await host.close() }
+        finally {
+          await Promise.allSettled(Object.values(agents).map(agent => agent?.destroy()))
+          await rm(root, { recursive: true, force: true })
+        }
+      })()
+    },
+  }
+}
