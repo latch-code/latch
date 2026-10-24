@@ -111,7 +111,7 @@ describe('permission states in a browser', () => {
     await expect.poll(async () => (await detail(sessionId)).approvals.length).toBe(1)
     await open(sessionId)
 
-    await page.locator('.topbar').getByText('完全访问（L3）', { exact: true }).waitFor()
+    await page.locator('.topbar').getByText('完全访问', { exact: true }).waitFor()
     await page.getByText('完全访问会话只接受执行端电脑上 Latch 桌面端的输入。此设备可以查看、拒绝和取消。', { exact: true }).waitFor()
     expect(await page.getByRole('textbox', { name: '继续对话' }).count()).toBe(0)
     const card = page.locator('[data-approval-id]')

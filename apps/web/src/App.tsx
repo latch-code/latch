@@ -35,7 +35,7 @@ export function App() {
       <ConnectScreen
         error={harness.loading ? '' : harness.error}
         onRetry={() => {
-          void harness.refresh()
+          void harness.resync()
         }}
       />
     )

@@ -1,0 +1,136 @@
+/*
+ * Element defaults under every page of the design system, imported into the base layer (ui.css does that): box
+ * sizing, the type and colours of the document, form controls inheriting their text, the keyboard focus ring, the
+ * screen-reader-only helper, keys, and reduced motion.
+ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  font-family: var(--font-sans);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+  color: var(--text-1);
+  background: var(--bg-app);
+}
+
+body {
+  margin: 0;
+  background: var(--bg-app);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+}
+button {
+  cursor: pointer;
+}
+button:disabled,
+[aria-disabled='true'] {
+  cursor: default;
+}
+h1,
+h2,
+h3,
+h4,
+h5,
+p,
+ol,
+ul,
+dl,
+dd,
+figure {
+  margin: 0;
+}
+ol,
+ul {
+  padding: 0;
+}
+img {
+  display: block;
+}
+code,
+kbd,
+pre {
+  font-family: var(--font-mono);
+}
+a {
+  color: var(--accent-text);
+}
+a:hover {
+  color: var(--accent-text-hover);
+}
+
+/*
+ * Keyboard focus only: a 2px gap that shows whatever surface is underneath (paper, ground, a dialog), then 2px of the
+ * focus colour, following the element's corners. An outline needs no ring colour per surface and stays visible in
+ * forced-colours mode. Rows in scrolling lists draw the inset ring instead, so their container does not clip it.
+ */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+[hidden] {
+  display: none !important;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* A key: only in tooltips, menu item ends, the search row and an approval card's hint line, never inside a button. */
+kbd {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 var(--sp-4);
+  border-radius: var(--r-4);
+  corner-shape: var(--corner-shape);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--kbd-ring);
+  color: var(--text-3);
+  font-family: var(--font-sans);
+  font-size: var(--fs-micro);
+  line-height: var(--lh-micro);
+  font-weight: 500;
+}
+
+/*
+ * Reduced motion keeps colour changes and the spinners (with the turning arc of a tile's indeterminate progress ring),
+ * and drops movement, stretching, scaling and sliding.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+  .ui-spinner {
+    animation: ui-spin 900ms linear infinite !important;
+  }
+  .ui-tile-progress:not([data-determinate]) .ui-tile-progress-arc {
+    animation: ui-tile-progress 1.4s linear infinite !important;
+  }
+}

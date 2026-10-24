@@ -1,12 +1,11 @@
 import { useLayoutEffect, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
-import { ArrowUp, LockKeyhole, ShieldAlert, Square } from 'lucide-react'
+import { ArrowUp, LockKeyhole, ShieldAlert } from 'lucide-react'
 import type { PlanEntry } from '@latch/protocol'
 import type { PendingSubmission } from '../core/api.ts'
 import { formatElapsed } from '../format.ts'
-import { ICON_STROKE, Spinner } from '../icons.tsx'
 import type { SendKey } from '../preferences.ts'
 import { PlanCard } from './PlanCard.tsx'
-import { InlineAlert } from './ui.tsx'
+import { Button, Comet, ICON_STROKE, InlineNotice, Spinner } from '@latch/ui'
 
 export interface RunState {
   label: string
@@ -48,7 +47,7 @@ export function Composer({
   readOnly,
   notice,
 }: {
-  textareaRef: RefObject<HTMLTextAreaElement>
+  textareaRef: RefObject<HTMLTextAreaElement | null>
   variant: 'new' | 'session'
   label: string
   placeholder: string
@@ -90,16 +89,14 @@ export function Composer({
   const shortcut = sendKey === 'enter' && !coarse ? 'Enter 发送 · Shift+Enter 换行' : `${isMac() ? '⌘' : 'Ctrl'} Enter 发送`
   return (
     <div className={`composer-stack composer-${variant}`}>
-      {error && <InlineAlert tone="error">{error}</InlineAlert>}
+      {error && <InlineNotice tone="error">{error}</InlineNotice>}
       {pending !== null && !sending && (
-        <div className="pending-submission" role="status">
+        <div className="pending-submission" data-tint="warn" role="status">
           <div>
             <strong>有一条待确认的提交</strong>
             <p>{pending.prompt}</p>
           </div>
-          <button type="button" className="button secondary" onClick={onRetry}>
-            重试这次提交
-          </button>
+          <Button onClick={onRetry}>重试这次提交</Button>
         </div>
       )}
       {plan && plan.length > 0 && <PlanCard plan={plan} />}
@@ -113,7 +110,7 @@ export function Composer({
           <div className={`run-bar ${run.approvals > 0 ? 'is-waiting' : ''}`}>
             {run.approvals > 0 ? (
               <>
-                <ShieldAlert size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />
+                <ShieldAlert size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
                 <span role="status">{run.approvals} 项待批准</span>
                 <button type="button" className="run-bar-action" onClick={run.onRevealApprovals}>
                   查看
@@ -121,7 +118,7 @@ export function Composer({
               </>
             ) : (
               <>
-                <Spinner size={14} />
+                <Comet />
                 <span role="status">
                   {run.cancel === 'cancelling'
                     ? '正在取消，等待执行端确认'
@@ -140,7 +137,7 @@ export function Composer({
         )}
         {readOnly !== undefined ? (
           <p className="composer-readonly" role="note">
-            <LockKeyhole size={16} strokeWidth={ICON_STROKE} aria-hidden="true" />
+            <LockKeyhole size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
             <span>{readOnly}</span>
           </p>
         ) : (
@@ -167,22 +164,18 @@ export function Composer({
               title={run.cancel === 'uncertain' ? '重试取消' : run.cancel === 'cancelling' ? '正在取消…' : '停止'}
               disabled={run.cancel === 'cancelling'}
               onClick={run.onCancel}>
-              {run.cancel === 'cancelling' ? (
-                <Spinner size={14} />
-              ) : (
-                <Square size={12} strokeWidth={2.5} fill="currentColor" aria-hidden="true" />
-              )}
+              {run.cancel === 'cancelling' ? <Spinner size={14} /> : <span className="stop-glyph" aria-hidden="true" />}
             </button>
           ) : (
             <button type="submit" className="send-button" aria-label="发送" title={blockReason ?? shortcut} disabled={!sendable}>
-              {sending ? <Spinner size={16} /> : <ArrowUp size={18} strokeWidth={2} aria-hidden="true" />}
+              {sending ? <Spinner size={16} /> : <ArrowUp size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />}
             </button>
           )}
         </div>
       </form>
       {notice && readOnly === undefined && (
         <p className="composer-notice" role="note">
-          <ShieldAlert size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />
+          <ShieldAlert size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
           {notice}
         </p>
       )}

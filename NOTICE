@@ -1,2 +1,67 @@
 Latch
 Copyright 2026 The Latch Authors
+
+Brand icons
+
+The web client shows the icon of each agent and model service it can use, from the files in
+apps/web/src/assets/brands/. They are copied unmodified from the sources below. The marks are trademarks of their
+respective owners and are used only to identify the service or tool; their use does not imply endorsement.
+
+From the project's own repository or site:
+
+- pi: pi.svg, https://pi.dev/logo-auto.svg (the logo linked from the README of github.com/earendil-works/pi,
+  MIT), retrieved 2026-10-25.
+- OpenCode: opencode-light.svg and opencode-dark.svg, github.com/anomalyco/opencode (MIT) at commit
+  6806c6e29a7d2087335794d8b86c6031cdb5f6dd, packages/console/app/src/asset/brand/opencode-logo-light-square.svg and
+  opencode-logo-dark-square.svg.
+- DeepSeek Harness: deepseek-harness.svg, github.com/deepseek-ai/deepseek-harness (MIT) at commit
+  22ddee3792402c3e70ec5f86a63c3e3e895a2f60, apps/web/public/favicon.svg. DeepSeek Harness is a registered trademark
+  of DeepSeek.
+- Gemini CLI: gemini-cli.png, github.com/google-gemini/gemini-cli (Apache-2.0) at commit
+  cd1b45c2db0a5ea7b7fc3b67c1ba5879601d6005, packages/vscode-ide-companion/assets/icon.png.
+- Qwen Code: qwen-code.svg, github.com/QwenLM/qwen-code (Apache-2.0) at commit
+  e4eb0183ff56becfc6913ccb67cad8587e8ba6b0, packages/desktop/bootstrap/qwen-code-logo.svg.
+- goose: goose.png, github.com/aaif-goose/goose (Apache-2.0) at commit 0276d567aa00d426161c51e9c0f52baabe5958ea,
+  documentation/static/img/logo_light.png.
+- Ollama: ollama.svg, github.com/ollama/ollama (MIT) at commit 675150d6ad2747df1e218ef59de9194bc4a7e538,
+  docs/favicon.svg.
+
+From the icon set LobeHub Icons, github.com/lobehub/lobe-icons at commit 8a1b2821bb768c484fe8da20c5e1838b6bf551a9,
+packages/static-svg/icons/:
+
+- Codex: codex.svg (codex.svg)
+- OpenAI: openai.svg (openai.svg)
+- Anthropic: anthropic.svg (anthropic.svg)
+- DeepSeek: deepseek.svg (deepseek-color.svg)
+- OpenRouter: openrouter.svg (openrouter.svg)
+- Google Gemini: gemini.svg (gemini-color.svg)
+- Moonshot AI: moonshot.svg (moonshot.svg)
+- Zhipu AI: zhipu.svg (zhipu-color.svg)
+- Alibaba Cloud Bailian: bailian.svg (bailian-color.svg)
+- Volcengine: volcengine.svg (volcengine-color.svg)
+- SiliconFlow: siliconcloud.svg (siliconcloud-color.svg)
+- LM Studio: lmstudio.svg (lmstudio.svg)
+
+The icon set is distributed under the MIT License:
+
+MIT License
+
+Copyright (c) 2023 LobeHub
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

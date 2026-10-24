@@ -25,6 +25,21 @@ describe('verification plan', () => {
     expect(plan.unknown).toEqual([])
   })
 
+  it('captures the gallery of primitives again when it changes, but not for the other design system tests', () => {
+    const projects = [...PROJECTS, { name: '@latch/ui', dir: 'packages/ui/test' }]
+    const plan = (path: string) => verificationPlan(changed(path), projects).run.map(item => item.command)
+    expect(plan('packages/ui/test/gallery/Gallery.tsx')).toEqual([
+      'pnpm check:quick',
+      'pnpm knip',
+      'pnpm test --project @latch/ui',
+      'pnpm build',
+      expect.stringMatching(/^grep -rnE .* dist\/$/u),
+      'pnpm test:e2e',
+      'pnpm docs:affected -- --base HEAD',
+    ])
+    expect(plan('packages/ui/test/button.test.tsx')).not.toContain('pnpm test:e2e')
+  })
+
   it('runs only the Vitest project of a changed test file', () => {
     expect(commands(['apps/web/test/client-diff.test.ts', 'tests/redact.test.ts'])).toEqual([
       'pnpm check:quick',
@@ -62,6 +77,16 @@ describe('verification plan', () => {
       'HARNESS_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desktop.e2e.ts',
     )
     expect(commands(['apps/web/src/components/ToolCard.tsx']).some(command => command.includes('深色模式'))).toBe(true)
+    expect(commands(['packages/ui/src/tokens.css'])).toEqual([
+      'pnpm check:quick',
+      'pnpm knip',
+      'pnpm test --project @latch/ui --project @latch/web',
+      'pnpm build',
+      expect.stringMatching(/^grep -rnE .* dist\/$/u),
+      'pnpm test:e2e',
+      expect.stringContaining('深色模式'),
+      'pnpm docs:affected -- --base HEAD',
+    ])
     expect(commands(['apps/web/vite.config.ts']).some(command => command.includes('深色模式'))).toBe(false)
     expect(commands(['apps/web/src/core/api.ts']).some(command => command.includes('深色模式'))).toBe(false)
   })

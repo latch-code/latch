@@ -2,10 +2,10 @@ import { useState, type FormEvent, type ReactNode } from 'react'
 import { Check, KeyRound, RefreshCw } from 'lucide-react'
 import { acceptableName, enrollmentName, pendingInvitation, useEnrollment, type EnrolledResult } from '../core/enrollment.ts'
 import { useCountdown } from '../hooks/useCountdown.ts'
-import { ICON_STROKE, Spinner } from '../icons.tsx'
 import { DEVICE_NAME_INVALID_TEXT, ENROLLMENT_REASON_TEXT } from '../core/securityCopy.ts'
 import type { AuthState } from '../core/useHarness.ts'
-import { BrandMark, InlineAlert } from './ui.tsx'
+import { Button, ICON_STROKE, InlineNotice, Loading, StatusDot } from '@latch/ui'
+import { BrandMark } from './ui.tsx'
 
 const COPY = {
   title: '连接到 Latch',
@@ -67,25 +67,24 @@ function Shell({ title, description, children }: { title: string; description?: 
 export function CrashScreen({ onNewSession }: { onNewSession: () => void }) {
   return (
     <Shell title="Latch">
-      <InlineAlert
+      <InlineNotice
         tone="error"
         action={
           <span className="banner-actions">
-            <button type="button" className="text-button" onClick={onNewSession}>
+            <Button variant="link" onClick={onNewSession}>
               回到新会话
-            </button>
-            <button
-              type="button"
-              className="text-button"
+            </Button>
+            <Button
+              variant="link"
               onClick={() => {
                 location.reload()
               }}>
               重新加载
-            </button>
+            </Button>
           </span>
         }>
         界面出错，当前内容无法显示。
-      </InlineAlert>
+      </InlineNotice>
     </Shell>
   )
 }
@@ -95,20 +94,17 @@ export function ConnectScreen({ error, onRetry }: { error: string; onRetry: () =
   return (
     <Shell title={COPY.title}>
       {error ? (
-        <InlineAlert
+        <InlineNotice
           tone="warn"
           action={
-            <button type="button" className="text-button" onClick={onRetry}>
+            <Button variant="link" onClick={onRetry}>
               重试
-            </button>
+            </Button>
           }>
           {error}
-        </InlineAlert>
+        </InlineNotice>
       ) : (
-        <p className="loading-line enroll-loading" role="status">
-          <Spinner size={16} />
-          正在连接执行端…
-        </p>
+        <Loading className="enroll-loading" label="正在连接执行端…" />
       )}
     </Shell>
   )
@@ -148,7 +144,7 @@ function Waiting({
   return (
     <section className="enroll-waiting" aria-labelledby="enroll-waiting-title">
       <div className="enroll-status">
-        <span className="presence-pulse" aria-hidden="true" />
+        <StatusDot tone="warn" />
         <h2 id="enroll-waiting-title">{COPY.waiting}</h2>
         <span className="enroll-timer" role="timer">
           剩余 {seconds} 秒
@@ -159,9 +155,9 @@ function Waiting({
       <span className="countdown-track" aria-hidden="true">
         <i style={{ width: `${Math.round(fraction * 100)}%` }} />
       </span>
-      <button type="button" className="button secondary block" onClick={onCancel}>
+      <Button size="md" block onClick={onCancel}>
         取消
-      </button>
+      </Button>
     </section>
   )
 }
@@ -183,47 +179,43 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
   if (step.kind === 'loading')
     return (
       <Shell title={title}>
-        <p className="loading-line enroll-loading" role="status">
-          <Spinner size={16} />
-          正在连接执行端…
-        </p>
+        <Loading className="enroll-loading" label="正在连接执行端…" />
       </Shell>
     )
   if (step.kind === 'old-host')
     return (
       <Shell title={COPY.title}>
-        <InlineAlert tone="info">{COPY.oldHost}</InlineAlert>
+        <InlineNotice tone="neutral">{COPY.oldHost}</InlineNotice>
       </Shell>
     )
   if (step.kind === 'load-failed')
     return (
       <Shell title={title}>
-        <InlineAlert
+        <InlineNotice
           tone="warn"
           action={
-            <button
-              type="button"
-              className="text-button"
+            <Button
+              variant="link"
               onClick={() => {
                 void enrollment.reload()
               }}>
               重试
-            </button>
+            </Button>
           }>
           {step.message}
-        </InlineAlert>
+        </InlineNotice>
       </Shell>
     )
   if (step.kind === 'unsupported')
     return (
       <Shell title={title}>
-        <InlineAlert tone="error">{COPY.unsupported}</InlineAlert>
+        <InlineNotice tone="error">{COPY.unsupported}</InlineNotice>
       </Shell>
     )
   if (step.kind === 'invitation-required')
     return (
       <Shell title={COPY.title}>
-        <InlineAlert tone="info">{COPY.invitationRequired}</InlineAlert>
+        <InlineNotice tone="neutral">{COPY.invitationRequired}</InlineNotice>
       </Shell>
     )
   if (step.kind === 'waiting')
@@ -240,30 +232,26 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
   if (step.kind === 'completing')
     return (
       <Shell title={title}>
-        <p className="loading-line enroll-loading" role="status">
-          <Spinner size={16} />
-          {COPY.completing}
-        </p>
+        <Loading className="enroll-loading" label={COPY.completing} />
       </Shell>
     )
   if (step.kind === 'confirm-failed')
     return (
       <Shell title={title}>
-        <InlineAlert
+        <InlineNotice
           tone="warn"
           action={
-            <button
-              type="button"
-              className="text-button"
+            <Button
+              variant="link"
               onClick={() => {
                 void enrollment.retryConfirm()
               }}>
               重试
-            </button>
+            </Button>
           }>
           {COPY.confirmFailed}
           {step.message}
-        </InlineAlert>
+        </InlineNotice>
       </Shell>
     )
 
@@ -283,9 +271,9 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
 
   return (
     <Shell title={title} description={description}>
-      {reason && !legacy && <InlineAlert tone={auth.reason === 'device-revoked' ? 'error' : 'warn'}>{reason}</InlineAlert>}
-      {outcome && <InlineAlert tone="error">{outcome}</InlineAlert>}
-      {presenceDown && <InlineAlert tone="warn">{unavailableText(info?.presence.message)}</InlineAlert>}
+      {reason && !legacy && <InlineNotice tone={auth.reason === 'device-revoked' ? 'error' : 'warn'}>{reason}</InlineNotice>}
+      {outcome && <InlineNotice tone="error">{outcome}</InlineNotice>}
+      {presenceDown && <InlineNotice tone="warn">{unavailableText(info?.presence.message)}</InlineNotice>}
       <form
         className="enroll-form"
         onSubmit={event => {
@@ -316,7 +304,7 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
           {(electron ? DESKTOP_SCOPES : FIXED_SCOPES).map(label => (
             <div key={label} className="scope-item is-fixed">
               <span className="scope-check" aria-hidden="true">
-                <Check size={12} strokeWidth={2.5} />
+                <Check size={12} strokeWidth={ICON_STROKE[12]} />
               </span>
               <span>{label}</span>
             </div>
@@ -350,41 +338,53 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
           </label>
         )}
         {offlineOnly ? (
-          <button type="submit" className="button primary block" disabled={busy || chosenName === null || !offlineCode.trim()}>
-            {busy ? <Spinner size={16} /> : <KeyRound size={16} strokeWidth={ICON_STROKE} aria-hidden="true" />}
+          <Button
+            type="submit"
+            variant="primary"
+            size="md"
+            block
+            icon={KeyRound}
+            loading={busy}
+            disabled={chosenName === null || !offlineCode.trim()}>
             {COPY.offlineSubmit}
-          </button>
+          </Button>
         ) : (
           <>
-            <button type="submit" className="button primary block" disabled={busy || chosenName === null}>
-              {busy ? <Spinner size={16} /> : outcome ? <RefreshCw size={16} strokeWidth={ICON_STROKE} aria-hidden="true" /> : null}
+            <Button
+              type="submit"
+              variant="primary"
+              size="md"
+              block
+              icon={outcome ? RefreshCw : undefined}
+              loading={busy}
+              disabled={chosenName === null}>
               {legacy ? COPY.legacySubmit : COPY.submit}
-            </button>
+            </Button>
             {offlineOffered
               && (showOffline ? (
-                <button
-                  type="button"
-                  className="button secondary block"
+                <Button
+                  size="md"
+                  block
                   disabled={busy || chosenName === null || !offlineCode.trim()}
                   onClick={event => {
                     send(event, true)
                   }}>
                   {COPY.offlineSubmit}
-                </button>
+                </Button>
               ) : (
-                <button
-                  type="button"
-                  className="text-button enroll-offline-toggle"
+                <Button
+                  variant="link"
+                  className="enroll-offline-toggle"
                   onClick={() => {
                     setShowOffline(true)
                   }}>
                   {COPY.offlineSubmit}
-                </button>
+                </Button>
               ))}
           </>
         )}
       </form>
-      {error && <InlineAlert tone="error">{error}</InlineAlert>}
+      {error && <InlineNotice tone="error">{error}</InlineNotice>}
     </Shell>
   )
 }

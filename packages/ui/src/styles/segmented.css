@@ -1,0 +1,84 @@
+/*
+ * Segmented control, only for two or three equal views or modes: a well without a ring (radius 8, 2px inside), equal
+ * segments (radius 6 = 8 − 2), and a raised white thumb that slides to the selected one over 180ms. sm is 28 overall,
+ * md 32, phones 36; on touch every segment's hit box reaches 44 tall without leaving the track.
+ */
+.ui-segmented {
+  /* The number of segments and the selected one, set by the component. */
+  --count: 2;
+  --index: 0;
+  position: relative;
+  display: inline-grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  flex-shrink: 0;
+  padding: var(--sp-2);
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
+  background: var(--well);
+}
+.ui-segmented-thumb {
+  position: absolute;
+  top: var(--sp-2);
+  bottom: var(--sp-2);
+  left: var(--sp-2);
+  width: calc((100% - 2 * var(--sp-2)) / var(--count));
+  translate: calc(var(--index) * 100%) 0;
+  border-radius: var(--r-6);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-raised);
+  box-shadow: var(--sh-raised);
+  transition: translate var(--d-base) var(--ease);
+}
+.ui-segmented-option {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  padding: 0 var(--sp-12);
+  border: 0;
+  border-radius: var(--r-6);
+  corner-shape: var(--corner-shape);
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
+  white-space: nowrap;
+  transition: color var(--d-fast) var(--ease-exit);
+}
+.ui-segmented[data-size='md'] .ui-segmented-option {
+  height: 28px;
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+}
+.ui-segmented-option[aria-checked='true'] {
+  color: var(--text-1);
+}
+.ui-segmented-option:hover:not([aria-checked='true'], [aria-disabled='true']) {
+  color: var(--text-1);
+  transition-duration: 0s;
+}
+.ui-segmented-option[aria-disabled='true'] {
+  opacity: 0.45;
+}
+.ui-segmented[aria-disabled='true'] .ui-segmented-thumb {
+  opacity: 0.45;
+}
+@media (max-width: 767.98px) {
+  .ui-segmented .ui-segmented-option,
+  .ui-segmented[data-size='md'] .ui-segmented-option {
+    height: 32px;
+    padding: 0 var(--sp-16);
+    font-size: var(--fs-label);
+    line-height: var(--lh-label);
+  }
+}
+@media (pointer: coarse) {
+  .ui-segmented-option::before {
+    content: '';
+    position: absolute;
+    inset: calc((100% - 44px) / 2) 0;
+  }
+}

@@ -13,44 +13,41 @@
   margin-bottom: 0;
 }
 .message-content p {
-  margin: 0 0 12px;
+  margin: 0 0 var(--sp-12);
 }
 .message-content :is(h1, h2, h3, h4, h5, h6) {
-  margin: 24px 0 8px;
+  margin: var(--sp-24) 0 var(--sp-8);
   font-weight: 600;
-  letter-spacing: -0.01em;
 }
 .message-content h1 {
-  font-size: 20px;
-  line-height: 28px;
+  font-size: var(--fs-title);
+  line-height: var(--lh-title);
 }
 .message-content h2 {
-  font-size: 17px;
-  line-height: 26px;
+  font-size: var(--fs-title-sm);
+  line-height: var(--lh-title-sm);
 }
-.message-content h3 {
-  font-size: 15px;
-  line-height: 24px;
+.message-content :is(h3, h4, h5, h6) {
+  font-size: inherit;
+  line-height: inherit;
 }
-.message-content :is(h4, h5, h6) {
-  font-size: 1em;
-}
+/* Emphasis inside prose is 500; 600 belongs to titles. */
 .message-content strong {
-  font-weight: 600;
+  font-weight: 500;
 }
 .message-content :is(ul, ol) {
-  margin: 8px 0 12px;
+  margin: var(--sp-8) 0 var(--sp-12);
   padding-inline-start: 1.6em;
 }
 .message-content li {
-  margin: 4px 0;
+  margin: var(--sp-4) 0;
   padding-inline-start: 0.2em;
 }
 .message-content li > :is(ul, ol) {
-  margin-block: 4px;
+  margin-block: var(--sp-4);
 }
 .message-content li > p {
-  margin-block: 6px;
+  margin-block: var(--sp-6);
 }
 .message-content li::marker {
   color: var(--text-3);
@@ -62,19 +59,23 @@
   margin-inline: -1.4em 0.45em;
   accent-color: var(--accent);
 }
+/* A quote is a tray inside the reading column. */
 .message-content blockquote {
-  margin: 12px 0;
-  padding: 2px 0 2px 14px;
-  border-inline-start: 3px solid var(--accent-muted);
+  margin: var(--sp-12) 0;
+  padding: var(--sp-8) var(--sp-12);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-sunken);
   color: var(--text-2);
 }
 .message-content blockquote > :last-child {
   margin-bottom: 0;
 }
 .message-content hr {
-  margin: 24px 0;
+  margin: var(--sp-24) 0;
   border: 0;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--line);
 }
 .message-content a {
   color: var(--accent-text);
@@ -83,19 +84,18 @@
   text-decoration-thickness: 1px;
 }
 .message-content a:hover {
-  color: var(--accent-hover);
+  color: var(--accent-text-hover);
 }
 /* Images are never loaded; a web image is an ordinary link the reader opens. */
 .message-content .message-image {
   color: var(--text-3);
-  font-size: 0.92em;
 }
 .message-content a.message-image {
   color: var(--accent-text);
 }
 /* Text too deeply nested for Markdown, shown as written. */
 .message-content .message-plain-note {
-  margin: 0 0 8px;
+  margin: 0 0 var(--sp-8);
   color: var(--text-3);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
@@ -107,11 +107,11 @@
   overflow-wrap: anywhere;
 }
 .message-content :not(pre) > code {
-  padding: 0.1em 0.35em;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--r-xs);
-  background: var(--bg-sunken);
-  font-size: 0.88em;
+  padding: 1px var(--sp-4);
+  border-radius: var(--r-4);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-hover);
+  font-size: var(--fs-mono);
   white-space: break-spaces;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
@@ -121,20 +121,21 @@
   position: relative;
   min-width: 0;
   max-width: 100%;
-  margin: 12px 0;
+  margin: var(--sp-12) 0;
   overflow: hidden;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--r-lg);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--r-12);
+  corner-shape: var(--corner-shape);
   background: var(--bg-sunken);
 }
 .message-code-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--sp-12);
   min-height: 32px;
-  padding: 0 4px 0 12px;
-  border-bottom: 1px solid var(--border-subtle);
+  padding: 0 var(--sp-4) 0 var(--sp-12);
+  border-bottom: 1px solid var(--line-subtle);
 }
 .message-code-language {
   min-width: 0;
@@ -142,29 +143,33 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-3);
-  font: 12px/16px var(--font-sans);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
 }
 .message-code-copy,
 .message-code-expand {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--sp-6);
   flex-shrink: 0;
   border: 0;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-6);
+  corner-shape: var(--corner-shape);
   background: transparent;
   color: var(--text-3);
-  font: 12px/16px var(--font-sans);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
 }
 .message-code-copy {
   min-height: 28px;
-  padding: 0 8px;
+  padding: 0 var(--sp-8);
 }
 .message-code-hidden {
   margin-left: auto;
   color: var(--warn-text);
-  font: 12px/16px var(--font-sans);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
   white-space: nowrap;
 }
 .message-code-copy:hover,
@@ -173,17 +178,19 @@
   background: var(--bg-hover);
 }
 .message-code-copy:disabled {
-  opacity: 0.6;
+  opacity: 0.45;
 }
 .message-content .message-code pre {
   max-width: 100%;
   margin: 0;
-  padding: 12px 14px;
+  padding: var(--sp-12) var(--sp-16);
   overflow: auto;
   overscroll-behavior-inline: contain;
   background: transparent;
   color: var(--text-1);
-  font: 13px/20px var(--font-mono);
+  font-family: var(--font-mono);
+  font-size: var(--fs-code);
+  line-height: var(--lh-code);
   white-space: pre;
   overflow-wrap: normal;
   word-break: normal;
@@ -201,17 +208,18 @@
 .message-code-expand {
   width: 100%;
   min-height: 32px;
-  padding: 6px 12px;
-  border-top: 1px solid var(--border-subtle);
+  padding: var(--sp-6) var(--sp-12);
+  border-top: 1px solid var(--line-subtle);
   border-radius: 0;
 }
 .message-content .message-copy-error {
   margin: 0;
-  padding: 8px 12px;
+  padding: var(--sp-8) var(--sp-12);
   border-top: 1px solid var(--err-border);
   background: var(--err-bg);
   color: var(--err-text);
-  font: 12px/18px var(--font-sans);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
 }
 .message-copy-status {
   position: absolute;
@@ -225,11 +233,12 @@
 .message-table-scroll {
   min-width: 0;
   max-width: 100%;
-  margin: 12px 0;
+  margin: var(--sp-12) 0;
   overflow-x: auto;
   overscroll-behavior-inline: contain;
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
   scrollbar-width: thin;
 }
 .message-content table {
@@ -237,21 +246,21 @@
   min-width: 100%;
   border-collapse: collapse;
   font-size: var(--fs-label);
-  line-height: 20px;
+  line-height: var(--lh-label-para);
 }
 .message-content :is(th, td) {
   min-width: 7em;
   max-width: 25em;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border-subtle);
-  border-right: 1px solid var(--border-subtle);
+  padding: var(--sp-8) var(--sp-12);
+  border-bottom: 1px solid var(--line-subtle);
+  border-right: 1px solid var(--line-subtle);
   text-align: left;
   vertical-align: top;
   overflow-wrap: anywhere;
 }
 .message-content th {
   background: var(--bg-sunken);
-  font-weight: 600;
+  font-weight: 500;
 }
 .message-content :is(th, td):last-child {
   border-right: 0;
@@ -260,20 +269,22 @@
   border-bottom: 0;
 }
 .message-content .footnotes {
-  margin-top: 24px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
+  margin-top: var(--sp-24);
+  padding-top: var(--sp-12);
+  border-top: 1px solid var(--line);
   color: var(--text-3);
-  font-size: 0.88em;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
 }
 .message-content .footnotes h2 {
-  font-size: 1em;
+  font-size: inherit;
+  line-height: inherit;
 }
 .message-content .footnotes :is(ol, p) {
-  margin-block: 6px;
+  margin-block: var(--sp-6);
 }
 .message-content :is(pre, .message-table-scroll):focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus);
   outline-offset: -2px;
 }
 

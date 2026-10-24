@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Bot, Puzzle, Sparkles, Wrench } from 'lucide-react'
+import { Bot, Puzzle, RefreshCw, Sparkles, Wrench } from 'lucide-react'
 import type { PluginInfo } from '@latch/protocol'
 import { api, errorMessage } from '../core/api.ts'
-import { ICON_STROKE, type LucideIcon } from '../icons.tsx'
-import { Badge, InlineAlert, Switch } from '../components/ui.tsx'
+import { Badge, Button, ICON_STROKE, InlineNotice, type LucideIcon, StatusPill, Switch } from '@latch/ui'
 import { Loading, SectionHeading } from './common.tsx'
 
 type Group = 'harness' | 'provider' | 'tool' | 'other'
@@ -74,16 +73,16 @@ export function PluginsSettings() {
       title="插件"
       description="插件是在执行端运行的可信本机代码，提供 Harness、模型和工具。停用会立即生效并保存。"
       action={
-        <button
-          type="button"
-          className="text-button"
+        <Button
+          variant="ghost"
           disabled={busy !== null}
           onClick={() => {
             setError('')
             void load()
-          }}>
+          }}
+          icon={RefreshCw}>
           刷新
-        </button>
+        </Button>
       }
     />
   )
@@ -91,7 +90,7 @@ export function PluginsSettings() {
     return (
       <>
         {heading}
-        {error ? <InlineAlert tone="error">{error}</InlineAlert> : <Loading label="正在读取插件…" />}
+        {error ? <InlineNotice tone="error">{error}</InlineNotice> : <Loading label="正在读取插件…" />}
       </>
     )
   return (
@@ -104,7 +103,7 @@ export function PluginsSettings() {
         return (
           <section key={group.id} className="plugin-group" aria-label={group.label}>
             <h4>
-              <group.icon size={16} strokeWidth={ICON_STROKE} aria-hidden="true" />
+              <group.icon size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
               {group.label}
             </h4>
             <ul className="plugin-list">
@@ -117,7 +116,7 @@ export function PluginsSettings() {
                         <strong>{plugin.name}</strong>
                         <span className="plugin-version">v{plugin.version}</span>
                         {plugin.managed && <Badge>{managedNotes[plugin.managed]}</Badge>}
-                        {plugin.activeRuns > 0 && <Badge tone="accent">使用中</Badge>}
+                        {plugin.activeRuns > 0 && <StatusPill>使用中</StatusPill>}
                       </div>
                       {plugin.description && <p>{plugin.description}</p>}
                       {plugin.capabilities.length > 0 && (
@@ -139,7 +138,7 @@ export function PluginsSettings() {
                       checked={plugin.enabled}
                       disabled={busy !== null || reason !== undefined}
                       title={reason}
-                      onChange={() => {
+                      onCheckedChange={() => {
                         void toggle(plugin)
                       }}
                     />
@@ -150,8 +149,8 @@ export function PluginsSettings() {
           </section>
         )
       })}
-      {error && <InlineAlert tone="error">{error}</InlineAlert>}
-      {notice && !error && <InlineAlert tone="ok">{notice}</InlineAlert>}
+      {error && <InlineNotice tone="error">{error}</InlineNotice>}
+      {notice && !error && <InlineNotice tone="neutral">{notice}</InlineNotice>}
     </>
   )
 }

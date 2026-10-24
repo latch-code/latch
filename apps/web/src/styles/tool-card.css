@@ -1,18 +1,24 @@
+/*
+ * Tool card: a tray on the paper (sunken, with a subtle line); its expanded body is a sheet of paper inside the tray.
+ * Running state is ink; amber marks only what waits for the person, red only a failure or real risk.
+ */
 .tool-card {
   min-width: 0;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--r-lg);
-  background: var(--bg-pane);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--r-12);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-sunken);
 }
 .tool-card-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-8);
   width: 100%;
-  min-height: 36px;
-  padding: 6px 10px 6px 12px;
+  min-height: 32px;
+  padding: var(--sp-6) var(--sp-8) var(--sp-6) var(--sp-12);
   border: 0;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-12);
+  corner-shape: var(--corner-shape);
   background: transparent;
   color: var(--text-1);
   text-align: left;
@@ -23,19 +29,16 @@
   background: var(--bg-hover);
 }
 .tool-card-icon {
-  display: grid;
-  place-items: center;
   width: 16px;
-  flex-shrink: 0;
-  color: var(--text-2);
+  color: var(--icon);
 }
 .tool-card-title {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
   font-weight: 500;
 }
 .tool-card-name {
@@ -45,12 +48,14 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-3);
-  font-size: var(--fs-caption);
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono-sm);
+  line-height: var(--lh-mono-sm);
 }
 .tool-card-state {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--sp-4);
   margin-left: auto;
   flex-shrink: 0;
   color: var(--text-3);
@@ -59,24 +64,18 @@
   white-space: nowrap;
 }
 .tool-card-state.state-running {
-  color: var(--accent-text);
+  color: var(--text-2);
 }
 .tool-card-state.state-failed {
   color: var(--err-text);
 }
-.tool-card-state.state-awaiting-approval {
-  color: var(--warn-text);
-}
 .tool-card-header .chevron {
   flex-shrink: 0;
-  color: var(--text-3);
-  transition: transform var(--d-fast);
+  color: var(--icon);
+  transition: transform var(--d-base) var(--ease);
 }
 .tool-card-header[aria-expanded='true'] .chevron {
   transform: rotate(90deg);
-}
-.tool-card.tool-failed .tool-card-icon {
-  color: var(--err-text);
 }
 @media (max-width: 767.98px) {
   .tool-card-name {
@@ -86,127 +85,140 @@
 
 .tool-card-body {
   display: grid;
-  gap: 12px;
-  padding: 12px;
-  border-top: 1px solid var(--border-subtle);
-  animation: fade-in var(--d-base) var(--ease-out);
+  gap: var(--sp-12);
+  margin: 0 var(--sp-4) var(--sp-4);
+  padding: var(--sp-12);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-pane);
+  animation: fade-in var(--d-base) var(--ease);
 }
 .tool-card-body h4 {
-  margin-bottom: 6px;
+  margin-bottom: var(--sp-6);
   color: var(--text-3);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
-  font-weight: 600;
+  font-weight: 500;
 }
 .tool-pre {
   max-height: 240px;
   margin: 0;
-  padding: 8px 10px;
+  padding: var(--sp-8) var(--sp-12);
   overflow: auto;
-  border-radius: var(--r-md);
+  border-radius: var(--r-6);
+  corner-shape: var(--corner-shape);
   background: var(--bg-sunken);
   color: var(--text-2);
-  font-size: 12px;
-  line-height: 18px;
+  font-size: var(--fs-code);
+  line-height: var(--lh-code);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 .argument-list {
   display: grid;
-  gap: 6px;
+  gap: var(--sp-6);
 }
 .argument-list > div {
   display: grid;
   grid-template-columns: minmax(56px, max-content) minmax(0, 1fr);
-  gap: 4px 12px;
+  gap: var(--sp-4) var(--sp-12);
   align-items: start;
 }
 .argument-list dt {
+  padding-top: var(--sp-2);
   color: var(--text-3);
-  font: 12px/18px var(--font-mono);
-  padding-top: 2px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono-sm);
+  line-height: var(--lh-mono-sm);
 }
 .argument-list dd pre {
   max-height: 160px;
   margin: 0;
-  padding: 2px 0;
+  padding: var(--sp-2) 0;
   overflow: auto;
   color: var(--text-1);
-  font-size: 12px;
-  line-height: 18px;
+  font-size: var(--fs-code);
+  line-height: var(--lh-code);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-/* A pending approval grows the tool card; it is flat amber, not a gradient. */
-.tool-card.has-approval {
-  border-color: var(--warn-border);
-  background: var(--warn-bg);
-}
+/*
+ * A pending approval grows the tool card. The heading is ink; the amber status pill in the card's header is the only
+ * sign that it waits for the person. An ordinary approval keeps the neutral tray; a high-risk one turns the tray red
+ * and carries the red risk pill (security.css), so red always means the risk, never the waiting.
+ */
 .tool-card.has-approval .tool-card-header:hover {
   background: transparent;
 }
-.tool-card.has-approval .tool-card-body {
-  border-top-color: var(--warn-border);
-}
 .approval-panel {
   display: grid;
-  gap: 10px;
-  padding: 2px 12px 12px;
-  animation: rise-in var(--d-base) var(--ease-out);
+  gap: var(--sp-8);
+  padding: 0 var(--sp-8) var(--sp-8) var(--sp-12);
+  animation: rise-in var(--d-base) var(--ease);
 }
 .approval-heading {
   display: flex;
   align-items: center;
-  gap: 6px;
-  color: var(--warn-text);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  gap: var(--sp-6);
+  color: var(--text-1);
+  font-size: var(--fs-card-title);
+  line-height: var(--lh-card-title);
   font-weight: 600;
+}
+.approval-heading > svg {
+  flex-shrink: 0;
+  color: var(--icon);
 }
 .approval-heading time {
   margin-left: auto;
   color: var(--text-3);
   font-weight: 400;
   font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
 }
 .approval-reason {
   color: var(--text-2);
-  font-size: var(--fs-ui);
-  line-height: 22px;
+  font-size: var(--fs-label);
+  line-height: var(--lh-label-para);
 }
+/* The colour carries the warning, so the line stays caption-sized and regular beside the consequence text. */
 .approval-warning {
   color: var(--warn-text);
-  font-size: var(--fs-label);
-  line-height: 20px;
-  font-weight: 500;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
+  font-weight: 400;
 }
 .tool-card.is-r2 .approval-warning {
   color: var(--err-text);
 }
 /* A control, bidirectional or zero-width character shown as \u{XXXX} instead of being applied. */
 .hidden-char {
-  padding: 0 2px;
-  border-radius: var(--r-xs);
+  padding: 0 var(--sp-2);
+  border-radius: var(--r-4);
+  corner-shape: var(--corner-shape);
   background: var(--warn-bg);
   box-shadow: inset 0 0 0 1px var(--warn-border);
   color: var(--warn-text);
   font-family: var(--font-mono);
-  font-size: 0.92em;
 }
+/* What the approval would do, on paper inside the tray. */
 .approval-panel .argument-list,
 .approval-panel .tool-pre {
-  padding: 8px 10px;
-  border-radius: var(--r-md);
+  padding: var(--sp-8) var(--sp-12);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
   background: var(--bg-pane);
 }
 .approval-actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--sp-8);
 }
-.approval-actions .spin {
+.approval-actions .ui-spinner {
   color: currentColor;
 }
 @media (max-width: 767.98px) {
@@ -214,8 +226,12 @@
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .approval-actions .button {
+  .approval-actions .ui-button {
     min-height: 44px;
+    border-radius: var(--r-12);
+    corner-shape: var(--corner-shape);
+    font-size: var(--fs-ui);
+    line-height: var(--lh-ui);
   }
   /* With an odd number of choices the primary (last) one takes the full row. */
   .approval-actions > :last-child:nth-child(odd) {
@@ -223,50 +239,57 @@
   }
 }
 
-/* Diff */
+/* Diff: paper with a sunken header; rows are tinted, their text stays text-1, the signs take the tone. */
 .diff-view {
   display: grid;
-  gap: 8px;
+  gap: var(--sp-8);
   min-width: 0;
 }
 .diff-file {
   min-width: 0;
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
   background: var(--bg-pane);
 }
 .diff-file-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-8);
   width: 100%;
   min-height: 32px;
-  padding: 4px 10px;
+  padding: var(--sp-4) var(--sp-8);
   border: 0;
   background: var(--bg-sunken);
   color: var(--text-2);
   text-align: left;
   font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
 }
 .diff-file-header > svg:first-child {
   flex-shrink: 0;
-  color: var(--text-3);
+  color: var(--icon);
 }
 .diff-path {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font: 12px/18px var(--font-mono);
   color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono-sm);
+  line-height: var(--lh-mono-sm);
+  font-weight: 500;
 }
 .diff-stat {
   display: flex;
-  gap: 6px;
+  gap: var(--sp-6);
   margin-left: auto;
   flex-shrink: 0;
-  font: 12px/18px var(--font-mono);
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono-sm);
+  line-height: var(--lh-mono-sm);
   font-variant-numeric: tabular-nums;
 }
 .diff-stat-add {
@@ -275,10 +298,14 @@
 .diff-stat-remove {
   color: var(--err-text);
 }
+/* A count of zero marks no change, so it takes no tone. */
+.diff-stat-zero {
+  color: var(--text-3);
+}
 .diff-file-header .chevron {
   flex-shrink: 0;
-  color: var(--text-3);
-  transition: transform var(--d-fast);
+  color: var(--icon);
+  transition: transform var(--d-base) var(--ease);
 }
 .diff-file-header[aria-expanded='true'] .chevron {
   transform: rotate(90deg);
@@ -287,17 +314,18 @@
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 4px 8px;
+  gap: var(--sp-4) var(--sp-8);
   margin: 0;
-  padding: 6px 10px;
-  border-top: 1px solid var(--border-subtle);
+  padding: var(--sp-6) var(--sp-8);
+  border-top: 1px solid var(--line-subtle);
   color: var(--text-3);
-  font: 12px/18px var(--font-sans);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
 }
 .diff-hash code {
   color: var(--text-2);
-  font: 12px/18px var(--font-mono);
-  letter-spacing: 0.02em;
+  font-size: var(--fs-mono-sm);
+  line-height: var(--lh-mono-sm);
 }
 .diff-hash-pending {
   color: var(--text-3);
@@ -306,29 +334,31 @@
   max-height: 360px;
   overflow: auto;
   overscroll-behavior: contain;
-  border-top: 1px solid var(--border-subtle);
-  font: 12px/18px var(--font-mono);
+  border-top: 1px solid var(--line-subtle);
+  font-family: var(--font-mono);
+  font-size: var(--fs-code);
+  line-height: var(--lh-code);
 }
 .diff-body:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus);
   outline-offset: -2px;
 }
 .diff-table {
   min-width: max-content;
 }
 .diff-hunk-header {
-  padding: 2px 10px;
-  background: var(--accent-subtle);
+  padding: var(--sp-2) var(--sp-8);
+  background: var(--bg-sunken);
   color: var(--text-3);
 }
 .diff-line {
   display: grid;
-  grid-template-columns: 40px 40px 18px minmax(0, 1fr);
+  grid-template-columns: 40px 40px 16px minmax(0, 1fr);
   white-space: pre;
 }
 .diff-ln {
-  padding-right: 6px;
-  color: var(--text-disabled);
+  padding-right: var(--sp-6);
+  color: var(--text-3);
   text-align: right;
   user-select: none;
 }
@@ -338,77 +368,80 @@
   user-select: none;
 }
 .diff-text {
-  padding-right: 12px;
-  color: var(--text-2);
+  padding-right: var(--sp-12);
+  color: var(--text-1);
 }
 .diff-add {
   background: var(--diff-add-bg);
 }
-.diff-add .diff-sign,
-.diff-add .diff-text {
-  color: var(--diff-add-text);
+.diff-add .diff-sign {
+  color: var(--ok-text);
 }
 .diff-remove {
-  background: var(--diff-remove-bg);
+  background: var(--diff-del-bg);
 }
-.diff-remove .diff-sign,
-.diff-remove .diff-text {
-  color: var(--diff-remove-text);
+.diff-remove .diff-sign {
+  color: var(--err-text);
 }
 .diff-empty {
-  padding: 10px;
+  padding: var(--sp-8) var(--sp-12);
   color: var(--text-3);
   font-family: var(--font-sans);
 }
 .diff-note {
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--border-subtle);
+  padding: var(--sp-6) var(--sp-8);
+  border-bottom: 1px solid var(--line-subtle);
   background: var(--warn-bg);
   color: var(--warn-text);
   font-family: var(--font-sans);
   white-space: normal;
 }
 .diff-more {
-  margin: 4px 10px 8px;
+  margin: var(--sp-4) var(--sp-8) var(--sp-8);
   font-family: var(--font-sans);
 }
 @media (max-width: 767.98px) {
   .diff-line {
-    grid-template-columns: 34px 16px minmax(0, 1fr);
+    grid-template-columns: 32px 16px minmax(0, 1fr);
   }
   .diff-ln-old {
     display: none;
   }
 }
 
-/* Plan */
+/* Plan: a resting card on the paper; the current step is the one in ink, finished steps fade back. */
 .plan-card {
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-  background: var(--bg-raised);
-  box-shadow: var(--sh-1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-pane);
 }
 .plan-card-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-8);
   width: 100%;
   min-height: 36px;
-  padding: 0 12px;
+  padding: 0 var(--sp-12);
   border: 0;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-12);
+  corner-shape: var(--corner-shape);
   background: transparent;
   color: var(--text-1);
   text-align: left;
   font-size: var(--fs-label);
+  line-height: var(--lh-label);
+}
+.plan-card-header:hover {
+  background: var(--bg-hover);
 }
 .plan-card-header > svg:first-child {
   flex-shrink: 0;
-  color: var(--accent);
+  color: var(--icon);
 }
 .plan-card-title {
   flex-shrink: 0;
-  font-weight: 600;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
 .plan-card-current {
@@ -424,8 +457,8 @@
 }
 .plan-card-header .chevron {
   flex-shrink: 0;
-  color: var(--text-3);
-  transition: transform var(--d-fast);
+  color: var(--icon);
+  transition: transform var(--d-base) var(--ease);
 }
 .plan-card-header[aria-expanded='true'] .chevron {
   transform: rotate(90deg);
@@ -433,8 +466,8 @@
 .plan-card-body {
   max-height: 220px;
   overflow-y: auto;
-  padding: 4px 12px 8px;
-  border-top: 1px solid var(--border-subtle);
+  padding: var(--sp-4) var(--sp-12) var(--sp-8);
+  border-top: 1px solid var(--line-subtle);
 }
 .plan-list {
   list-style: none;
@@ -443,28 +476,34 @@
 .plan-entry {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: var(--sp-8);
   min-height: 32px;
-  padding: 6px 0;
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui);
+  padding: var(--sp-6) 0;
+  color: var(--text-2);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label-para);
 }
 .plan-icon {
   display: grid;
   place-items: center;
   width: 16px;
-  height: var(--lh-ui);
+  height: var(--lh-label-para);
   flex-shrink: 0;
-  color: var(--text-3);
+  color: var(--icon);
+}
+.plan-in_progress {
+  color: var(--text-1);
+  font-weight: 500;
 }
 .plan-in_progress .plan-icon {
-  color: var(--accent);
+  color: var(--text-1);
+}
+.plan-list.is-settled .plan-in_progress {
+  color: var(--text-2);
+  font-weight: 400;
 }
 .plan-list.is-settled .plan-in_progress .plan-icon {
-  color: var(--text-3);
-}
-.plan-completed .plan-icon {
-  color: var(--ok-text);
+  color: var(--icon);
 }
 .plan-completed .plan-text {
   color: var(--text-3);

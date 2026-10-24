@@ -7,16 +7,18 @@
   display: flex;
   justify-content: flex-end;
   align-items: flex-end;
-  gap: 4px;
+  gap: var(--sp-4);
 }
 .message-user .message-actions {
   order: -1;
 }
+/* Only the person's own messages have a bubble, and it is neutral. */
 .user-bubble {
   max-width: min(80%, 560px);
-  padding: 10px 14px;
-  border-radius: 16px 16px 4px 16px;
-  background: var(--accent-subtle);
+  padding: var(--sp-8) var(--sp-16);
+  border-radius: var(--r-16) var(--r-16) var(--r-4) var(--r-16);
+  corner-shape: var(--corner-shape);
+  background: var(--bubble-user);
   color: var(--text-1);
   font-size: var(--fs-body);
   line-height: var(--lh-body);
@@ -27,33 +29,35 @@
 .message-actions {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--sp-2);
   opacity: 0;
-  transition: opacity var(--d-fast);
+  transition: opacity var(--d-fast) var(--ease-exit);
 }
 .message:hover .message-actions,
 .message:focus-within .message-actions {
   opacity: 1;
 }
+/* Touch has no hover, so the actions stay shown, at full strength: opacity is never an ink step. */
 @media (hover: none) {
   .message-actions {
-    opacity: 0.6;
+    opacity: 1;
   }
 }
 
 .message-assistant {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--sp-8);
 }
+/* The source line, once per turn. */
 .assistant-meta {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-6);
   height: 20px;
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
+  color: var(--text-2);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
   font-weight: 500;
 }
 .message-text {
@@ -64,7 +68,7 @@
 .message-footer {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--sp-12);
   min-height: 28px;
   color: var(--text-3);
   font-size: var(--fs-caption);
@@ -84,9 +88,9 @@
   display: inline-block;
   width: 2px;
   height: 1em;
-  margin-left: 2px;
+  margin-left: var(--sp-2);
   vertical-align: -0.15em;
-  background: var(--accent);
+  background: var(--text-2);
   animation: caret 1s steps(1) infinite;
 }
 @keyframes caret {
@@ -98,56 +102,66 @@
 .message-system {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  padding: 8px 12px;
-  border-radius: var(--r-md);
+  gap: var(--sp-8);
+  padding: var(--sp-8) var(--sp-12);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
   background: var(--bg-sunken);
   color: var(--text-2);
   font-size: var(--fs-label);
-  line-height: 20px;
+  line-height: var(--lh-label-para);
 }
 .message-system > svg {
   margin-top: 3px;
   flex-shrink: 0;
-  color: var(--text-3);
+  color: var(--icon);
 }
 .message-system p {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* A failure is drawn like an error notice: the red tint and circle-x, the text in text-2. */
+.message-system.is-failed {
+  border-color: var(--err-border);
+  background: var(--err-bg);
+}
+.message-system.is-failed > svg {
+  color: var(--err-text);
+}
 
 .reasoning {
-  border-left: 2px solid var(--border);
-  padding-left: 12px;
+  border-left: 1px solid var(--line);
+  padding-left: var(--sp-12);
 }
 .reasoning-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-6);
   height: 24px;
   padding: 0;
   border: 0;
   background: none;
   color: var(--text-3);
   font-size: var(--fs-label);
-  font-weight: 500;
+  line-height: var(--lh-label);
 }
 .reasoning-toggle:hover {
   color: var(--text-1);
 }
 .reasoning-toggle .chevron {
-  transition: transform var(--d-fast);
+  transition: transform var(--d-base) var(--ease);
 }
 .reasoning-toggle[aria-expanded='true'] .chevron {
   transform: rotate(90deg);
 }
 .reasoning.is-live .reasoning-toggle > svg:first-child {
-  color: var(--accent);
+  color: var(--text-2);
 }
 .reasoning-scroll {
   max-height: 280px;
   overflow-y: auto;
-  margin-top: 4px;
+  margin-top: var(--sp-4);
 }
 /* While streaming, column-reverse keeps the newest reasoning in view without writing scrollTop. */
 .reasoning.is-live .reasoning-scroll {
@@ -157,43 +171,46 @@
 .reasoning-text {
   color: var(--text-2);
   font-size: var(--fs-ui);
-  line-height: 24px;
+  line-height: var(--lh-ui-para);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-/* New-session helpers */
+/* New-session helpers: resting cards on the paper, neutral icons. */
 .suggestions {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 12px;
+  gap: var(--sp-12);
 }
 .suggestion-card {
   display: grid;
-  gap: 6px;
-  padding: 14px;
+  gap: var(--sp-6);
+  padding: var(--sp-16);
   text-align: left;
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+  corner-shape: var(--corner-shape);
   background: var(--bg-pane);
   color: var(--text-1);
   transition:
-    box-shadow var(--d-fast),
-    transform var(--d-fast),
-    border-color var(--d-fast);
+    background-color var(--d-fast) var(--ease-exit),
+    border-color var(--d-fast) var(--ease-exit);
 }
 .suggestion-card > svg {
-  color: var(--accent);
+  color: var(--icon);
 }
 .suggestion-card:hover {
-  box-shadow: var(--sh-2);
-  transform: translateY(-1px);
-  border-color: var(--border-strong);
+  border-color: var(--line-strong);
+  background: var(--bg-hover);
+  transition-duration: 0s;
+}
+.suggestion-card:active {
+  background: var(--bg-press);
 }
 .suggestion-title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-8);
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
   font-weight: 500;
@@ -201,7 +218,7 @@
 .suggestion-description {
   color: var(--text-3);
   font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
+  line-height: var(--lh-caption-para);
 }
 @media (max-width: 767.98px) {
   .suggestions {
@@ -212,42 +229,47 @@
 .setup-card {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
-  border: 1px solid var(--accent-muted);
-  border-radius: var(--r-lg);
-  background: var(--accent-subtle);
+  gap: var(--sp-12);
+  padding: var(--sp-12) var(--sp-16);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--r-12);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-sunken);
 }
+/* An icon tile: round(32 × 0.225) = 7. */
 .setup-card-icon {
   display: grid;
   place-items: center;
   width: 32px;
   height: 32px;
   flex-shrink: 0;
-  border-radius: var(--r-md);
+  border-radius: 7px;
+  corner-shape: var(--corner-shape);
   background: var(--bg-pane);
-  color: var(--accent-text);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text-2);
 }
 .setup-card-text {
   flex: 1;
   min-width: 0;
   display: grid;
-  gap: 2px;
+  gap: var(--sp-2);
 }
 .setup-card-text strong {
-  font-size: var(--fs-ui);
+  font-size: var(--fs-card-title);
+  line-height: var(--lh-card-title);
   font-weight: 600;
 }
 .setup-card-text p {
   color: var(--text-2);
   font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  line-height: var(--lh-label-para);
 }
 @media (max-width: 767.98px) {
   .setup-card {
     flex-wrap: wrap;
   }
-  .setup-card .button {
+  .setup-card .ui-button {
     width: 100%;
     min-height: 44px;
   }
@@ -256,30 +278,32 @@
 /* Inspector content */
 .inspector {
   display: grid;
-  gap: 4px;
+  gap: var(--sp-4);
   align-content: start;
 }
 .inspector-section {
   display: grid;
-  gap: 10px;
-  padding: 14px 0;
-  border-bottom: 1px solid var(--border-subtle);
+  gap: var(--sp-8);
+  padding: var(--sp-12) 0;
+  box-shadow: inset 0 -1px 0 var(--line-subtle);
 }
 .inspector-section:last-child {
-  border-bottom: 0;
+  box-shadow: none;
 }
 .inspector-section h3 {
   display: flex;
   align-items: center;
-  gap: 8px;
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-  font-weight: 600;
+  gap: var(--sp-8);
+  color: var(--text-2);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+  font-weight: 500;
 }
 .inspector-count {
   color: var(--text-3);
-  font-weight: 500;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
 }
 .inspector-section > .progress {
@@ -287,24 +311,25 @@
 }
 .inspector dl {
   display: grid;
-  gap: 8px;
+  gap: var(--sp-8);
 }
 .inspector-row {
   display: grid;
   grid-template-columns: 72px minmax(0, 1fr);
-  gap: 8px;
+  gap: var(--sp-8);
   align-items: start;
   font-size: var(--fs-label);
-  line-height: 20px;
+  line-height: var(--lh-label-para);
 }
 .inspector-row dt {
   color: var(--text-3);
+  font-size: var(--fs-caption);
 }
 .inspector-row dd {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 4px 6px;
+  gap: var(--sp-4) var(--sp-6);
   min-width: 0;
   color: var(--text-1);
   overflow-wrap: anywhere;
@@ -332,8 +357,8 @@
 .inspector-path-full {
   color: var(--text-3);
   font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-  line-height: 18px;
+  font-size: var(--fs-mono-sm);
+  line-height: var(--lh-mono-sm);
   overflow-wrap: anywhere;
 }
 .inspector-row .copy-button {
@@ -342,21 +367,23 @@
 .timeline {
   list-style: none;
   display: grid;
-  gap: 2px;
+  gap: var(--sp-2);
 }
 .timeline-item button {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-8);
   width: 100%;
   min-height: 32px;
-  padding: 4px 6px;
+  padding: var(--sp-4) var(--sp-6);
   border: 0;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-6);
+  corner-shape: var(--corner-shape);
   background: none;
   color: var(--text-1);
   text-align: left;
   font-size: var(--fs-label);
+  line-height: var(--lh-label);
 }
 .timeline-item button:hover {
   background: var(--bg-hover);
@@ -366,7 +393,7 @@
   place-items: center;
   width: 16px;
   flex-shrink: 0;
-  color: var(--text-3);
+  color: var(--icon);
 }
 .timeline-title {
   flex: 1;
@@ -379,6 +406,7 @@
   flex-shrink: 0;
   color: var(--text-3);
   font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
 }
 .timeline-item.state-failed .timeline-state {
   color: var(--err-text);

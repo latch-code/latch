@@ -55,12 +55,12 @@ describe('responsive workspace controls', () => {
       expect(await page.locator('textarea[aria-label="新会话消息"]').count()).toBe(1)
       await reachable(composer)
       await composer.fill('这是一条未提交的布局验收草稿。')
-      const modes = page.getByRole('group', { name: '会话模式', exact: true })
+      const modes = page.getByRole('radiogroup', { name: '会话模式', exact: true })
       for (const mode of ['对话', 'Agent']) {
-        const button = modes.getByRole('button', { name: mode, exact: true })
+        const button = modes.getByRole('radio', { name: mode, exact: true })
         await reachable(button)
         await button.click()
-        expect(await button.getAttribute('aria-pressed')).toBe('true')
+        expect(await button.getAttribute('aria-checked')).toBe('true')
         expect(await composer.inputValue()).toBe('这是一条未提交的布局验收草稿。')
         await noHorizontalOverflow(page)
       }
@@ -85,7 +85,7 @@ describe('responsive workspace controls', () => {
         await navigationButton.click()
         const drawer = page.getByRole('dialog', { name: '会话导航', exact: true })
         await drawer.waitFor()
-        for (const name of ['新建会话', '设置', '设备', '关闭会话列表']) {
+        for (const name of ['新建会话', '设置', '关闭会话列表']) {
           await reachable(drawer.getByRole('button', { name, exact: true }))
         }
         await noHorizontalOverflow(page, drawer)

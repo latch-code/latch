@@ -3,175 +3,134 @@
  * states; red only for real risk (R2 approvals, permission drift, audit rollback, revocation).
  */
 
-/* Dev-build marker: compact and neutral, never an alarm. */
+/* Dev-build marker: the neutral small badge after the computer's name in the sidebar footer, never an alarm. */
 .dev-chip {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-  height: 18px;
-  padding: 0 6px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-pill);
-  background: var(--bg-sunken);
-  color: var(--text-3);
-  font: 500 11px/1 var(--font-sans);
-  letter-spacing: 0.02em;
-  white-space: nowrap;
   cursor: default;
 }
 .dev-chip.is-compact {
-  height: 18px;
-  padding: 0 5px;
-  margin-bottom: 4px;
-}
-.device-name-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-.device-name-row strong {
-  min-width: 0;
+  padding: 0 var(--sp-4);
+  margin-bottom: var(--sp-4);
 }
 .settings-header .dev-chip {
-  margin-right: 4px;
+  margin-right: var(--sp-4);
 }
 .dev-note {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: var(--sp-8);
   color: var(--text-3);
   font-size: var(--fs-caption);
-  line-height: 18px;
+  line-height: var(--lh-caption-para);
 }
+/* (18 − 16) / 2: the small badge sits on the note's first line and never wraps. */
 .dev-note .dev-chip {
-  margin-top: 0;
+  margin-top: 1px;
 }
 
 /* Session level */
-.level-badge {
-  height: 24px;
-  padding: 0 8px;
-  border-radius: var(--r-sm);
-  background: var(--bg-sunken);
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  line-height: 24px;
-  font-weight: 500;
-  white-space: nowrap;
-}
 .inspector-permission {
   display: grid;
   justify-items: start;
-  gap: 6px;
+  gap: var(--sp-6);
 }
-.inspector-permission > .badge + .badge {
+.inspector-permission > .ui-status-pill + .ui-status-pill {
   margin-top: -2px;
 }
 .inspector-facts {
   list-style: none;
   display: grid;
-  gap: 2px;
+  gap: var(--sp-2);
   color: var(--text-3);
   font-size: var(--fs-caption);
-  line-height: 18px;
+  line-height: var(--lh-caption-para);
 }
 
 /* Approvals: badge in the heading, explanation and the reason allow is missing above the buttons. */
-.approval-heading .badge {
-  margin-left: 2px;
+.approval-heading .ui-status-pill {
+  margin-left: var(--sp-2);
 }
 .approval-note {
   color: var(--text-2);
   font-size: var(--fs-label);
-  line-height: 20px;
+  line-height: var(--lh-label-para);
 }
+/* Why this device cannot allow: a lock and the reason, next to the buttons. */
 .approval-hint {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
-  padding: 8px 10px;
-  border-radius: var(--r-md);
+  gap: var(--sp-6);
+  padding: var(--sp-8) var(--sp-12);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
   background: var(--bg-pane);
   color: var(--text-2);
   font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  line-height: var(--lh-label-para);
 }
 .approval-hint > svg {
   flex-shrink: 0;
-  margin-top: 2px;
-  color: var(--text-3);
+  margin-top: 3px;
+  color: var(--icon);
 }
+/* High risk: the only tray that turns red. Its buttons are all secondary, raised white on the tint; no blue. */
 .tool-card.has-approval.is-r2 {
   border-color: var(--err-border);
   background: var(--err-bg);
 }
-.tool-card.has-approval.is-r2 .tool-card-body {
-  border-top-color: var(--err-border);
-}
-.tool-card.is-r2 .approval-heading {
-  color: var(--err-text);
-}
-.tool-card.is-r2 .tool-card-state.state-awaiting-approval {
-  color: var(--err-text);
-}
 
-/* Composer that this device may watch but not type into. */
+/* Composer that this device may watch but not type into: a dashed tray with no shadow, so it does not read as an
+ * input waiting for text. */
+.composer:has(> .composer-readonly),
+.composer:has(> .composer-readonly):focus-within {
+  border: 1px dashed var(--line-strong);
+  background: var(--bg-sunken);
+  box-shadow: none;
+}
 .composer-readonly {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 14px 16px 4px;
+  gap: var(--sp-8);
+  padding: var(--sp-12) var(--sp-16) var(--sp-4);
   color: var(--text-2);
-  font-size: var(--fs-ui);
-  line-height: 22px;
+  font-size: var(--fs-label);
+  line-height: var(--lh-label-para);
 }
 .composer-readonly > svg {
   flex-shrink: 0;
   margin-top: 3px;
-  color: var(--text-3);
+  color: var(--icon);
 }
 .composer-notice {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
-  padding: 0 6px;
+  gap: var(--sp-6);
+  padding: 0 var(--sp-6);
   color: var(--warn-text);
   font-size: var(--fs-caption);
-  line-height: 18px;
+  line-height: var(--lh-caption-para);
 }
 .composer-notice > svg {
   flex-shrink: 0;
-  margin-top: 2px;
+  margin-top: var(--sp-2);
 }
 
 /* Banners */
-.inline-alert-neutral {
-  color: var(--text-2);
-}
 .banner-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
-  flex-shrink: 0;
-}
-.banner-close {
-  width: 28px;
-  height: 28px;
-  color: inherit;
-}
-.banner-region .inline-alert .button.small {
+  gap: var(--sp-2);
   flex-shrink: 0;
 }
 
 /* Local confirmation dialog */
 .presence-body {
-  gap: 14px;
+  gap: var(--sp-16);
 }
 .presence-subject {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-12);
 }
 .presence-subject strong {
   font-size: var(--fs-title-sm);
@@ -184,7 +143,8 @@
   width: 36px;
   height: 36px;
   flex-shrink: 0;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
   background: var(--bg-hover);
   color: var(--text-2);
 }
@@ -194,21 +154,23 @@
 }
 .presence-text {
   color: var(--text-2);
-  font-size: var(--fs-ui);
-  line-height: 22px;
+  font-size: var(--fs-label);
+  line-height: var(--lh-label-para);
 }
 .presence-inline {
   white-space: nowrap;
   color: var(--text-1);
-  font-size: 13px;
+  font-size: var(--fs-mono);
 }
+/* The check code: the one place for the large mono figures, spaced for reading character by character. */
 .presence-code {
   display: grid;
   justify-items: center;
-  gap: 6px;
-  padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
+  gap: var(--sp-6);
+  padding: var(--sp-16);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--r-12);
+  corner-shape: var(--corner-shape);
   background: var(--bg-sunken);
 }
 .presence-code > span {
@@ -219,16 +181,19 @@
 }
 .presence-code > code {
   color: var(--text-1);
-  font: 500 20px/28px var(--font-mono);
-  letter-spacing: 0.06em;
+  font-size: var(--fs-mono-display);
+  line-height: var(--lh-mono-display);
+  font-weight: 600;
+  letter-spacing: var(--ls-mono-display);
 }
 .presence-timer {
   display: grid;
   grid-template-columns: auto 1fr;
   align-items: center;
-  gap: 8px 10px;
+  gap: var(--sp-8) var(--sp-12);
   color: var(--text-3);
-  font-size: var(--fs-label);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
   font-variant-numeric: tabular-nums;
 }
 .presence-timer .countdown-track {
@@ -239,33 +204,47 @@
 .device-card {
   display: flex;
   align-items: flex-start;
-  gap: 14px;
+  gap: var(--sp-16);
 }
+/* A device's glyph on a quiet tile: 28 in the list, 40 for this device. */
+.device-avatar {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: var(--r-6);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-hover);
+  color: var(--text-2);
+}
+/* An icon tile: round(40 × 0.225) = 9. */
 .device-avatar.is-large {
   width: 40px;
   height: 40px;
-  border-radius: var(--r-lg);
+  border-radius: 9px;
+  corner-shape: var(--corner-shape);
 }
 .device-card-main {
   display: grid;
-  gap: 12px;
+  gap: var(--sp-12);
   flex: 1;
   min-width: 0;
 }
 .device-facts {
   display: grid;
-  border-top: 1px solid var(--border-subtle);
+  border-top: 1px solid var(--line-subtle);
 }
 .device-facts > div {
   display: grid;
   grid-template-columns: 88px minmax(0, 1fr);
-  gap: 12px;
+  gap: var(--sp-12);
   align-items: center;
   min-height: 36px;
-  padding: 6px 0;
-  border-bottom: 1px solid var(--border-subtle);
+  padding: var(--sp-6) 0;
+  border-bottom: 1px solid var(--line-subtle);
   font-size: var(--fs-label);
-  line-height: 20px;
+  line-height: var(--lh-label-para);
 }
 .device-facts dt {
   color: var(--text-3);
@@ -276,9 +255,10 @@
   overflow-wrap: anywhere;
 }
 .fingerprint-inline {
-  font: 12px/18px var(--font-mono);
-  letter-spacing: 0.04em;
   color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono-sm);
+  line-height: var(--lh-mono-sm);
 }
 .device-card-actions {
   display: flex;
@@ -288,7 +268,7 @@
   align-items: flex-start;
 }
 .device-row .device-avatar {
-  margin-top: 2px;
+  margin-top: var(--sp-2);
 }
 .device-row.is-revoked {
   background: var(--bg-sunken);
@@ -308,18 +288,18 @@
 .device-row-actions {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--sp-8);
   flex-shrink: 0;
   align-self: center;
 }
 .pair-hint {
   font-size: var(--fs-label);
-  line-height: 20px;
+  line-height: var(--lh-label-para);
   color: var(--text-2);
 }
 @media (max-width: 767.98px) {
   .device-card {
-    gap: 12px;
+    gap: var(--sp-12);
   }
   .device-avatar.is-large {
     display: none;
@@ -334,7 +314,7 @@
   .device-row-actions {
     width: 100%;
     justify-content: flex-end;
-    padding-left: 40px;
+    padding-left: var(--sp-40);
   }
 }
 

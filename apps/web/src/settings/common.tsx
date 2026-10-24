@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Spinner } from '../icons.tsx'
+import { Loading as InlineLoading } from '@latch/ui'
 
 export function SectionHeading({ title, description, action }: { title: string; description?: ReactNode; action?: ReactNode }) {
   return (
@@ -13,19 +13,7 @@ export function SectionHeading({ title, description, action }: { title: string; 
   )
 }
 
-export function Avatar({ name }: { name: string }) {
-  return (
-    <span className="avatar" aria-hidden="true">
-      {[...name.trim()][0]?.toUpperCase() ?? '?'}
-    </span>
-  )
-}
-
+/** Settings sections loading their data: the design system's inline loading line. */
 export function Loading({ label = '正在读取…' }: { label?: string }) {
-  return (
-    <p className="loading-line" role="status">
-      <Spinner size={16} />
-      {label}
-    </p>
-  )
+  return <InlineLoading label={label} />
 }

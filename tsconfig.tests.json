@@ -1,13 +1,23 @@
 // Vitest and Playwright tests (tests/, e2e/ and each project's test/) and the test kit they import (packages/testkit):
-// Node, plus DOM for code that runs in the page or renders components. The test kit returns fetch Responses typed as
+// Node, plus DOM for code that runs in the page or renders components (the design system's tests run in a browser and
+// import its stylesheets, which vite/client types). The test kit returns fetch Responses typed as
 // the tests see them.
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",
-    "types": ["node"],
+    "types": ["node", "vite/client"],
     "tsBuildInfoFile": "./node_modules/.cache/typescript/tests.tsbuildinfo"
   },
-  "include": ["tests", "e2e", "apps/host/test", "apps/web/test", "apps/desktop/test", "packages/harness-acp/test", "packages/testkit"]
+  "include": [
+    "tests",
+    "e2e",
+    "apps/host/test",
+    "apps/web/test",
+    "apps/desktop/test",
+    "packages/harness-acp/test",
+    "packages/ui/test",
+    "packages/testkit"
+  ]
 }

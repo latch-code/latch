@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { api, errorMessage } from '../core/api.ts'
-import { Spinner } from '../icons.tsx'
-import { InlineAlert } from '../components/ui.tsx'
+import { Button, InlineNotice } from '@latch/ui'
 import { Loading, SectionHeading } from './common.tsx'
 
 /** `GET /provider` of a Host that predates multiple providers (its snapshot has no catalog). */
@@ -69,20 +68,18 @@ export function LegacyProviderSettings({ onChanged }: { onChanged: () => void })
       <>
         {heading}
         {error ? (
-          <InlineAlert
+          <InlineNotice
             tone="error"
             action={
-              <button
-                type="button"
-                className="button secondary"
+              <Button
                 onClick={() => {
                   void load()
                 }}>
                 重试
-              </button>
+              </Button>
             }>
             {error}
-          </InlineAlert>
+          </InlineNotice>
         ) : (
           <Loading />
         )}
@@ -151,13 +148,13 @@ export function LegacyProviderSettings({ onChanged }: { onChanged: () => void })
           </label>
         </div>
         <div className="settings-actions">
-          <button type="submit" className="button primary" disabled={busy || !baseURL.trim() || !model.trim()}>
-            {busy && <Spinner size={14} />}保存
-          </button>
+          <Button type="submit" disabled={busy || !baseURL.trim() || !model.trim()} loading={busy}>
+            保存
+          </Button>
         </div>
       </form>
-      {error && <InlineAlert tone="error">{error}</InlineAlert>}
-      {notice && !error && <InlineAlert tone="ok">{notice}</InlineAlert>}
+      {error && <InlineNotice tone="error">{error}</InlineNotice>}
+      {notice && !error && <InlineNotice tone="neutral">{notice}</InlineNotice>}
     </>
   )
 }

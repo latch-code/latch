@@ -5,6 +5,7 @@ import { Check, ChevronDown, ChevronUp, Copy } from 'lucide-react'
 import { ErrorBoundary } from './components/ErrorBoundary.tsx'
 import { hasHiddenCharacters, VisibleText } from './components/VisibleText.tsx'
 import { exceedsMarkdownNesting, MAX_TREE_DEPTH, treeDepth } from './markdownNesting.ts'
+import { ICON_STROKE } from '@latch/ui'
 
 export interface MessageContentProps {
   text: string
@@ -49,7 +50,7 @@ const CodeBlock = memo(function CodeBlock({ code, language }: { code: string; la
   const [copying, setCopying] = useState(false)
   const codeId = useId()
   const mounted = useRef(false)
-  const resetTimer = useRef<ReturnType<typeof setTimeout>>()
+  const resetTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   const lines = useMemo(() => (code ? code.split('\n').length - (code.endsWith('\n') ? 1 : 0) : 0), [code])
   const hidden = useMemo(() => hasHiddenCharacters(code), [code])
   const isLong = lines > 18
@@ -97,7 +98,11 @@ const CodeBlock = memo(function CodeBlock({ code, language }: { code: string; la
           disabled={copying || !code}
           aria-label="复制代码"
           title={copied ? '已复制' : '复制'}>
-          {copied ? <Check size={14} strokeWidth={1.75} aria-hidden="true" /> : <Copy size={14} strokeWidth={1.75} aria-hidden="true" />}
+          {copied ? (
+            <Check size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+          ) : (
+            <Copy size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+          )}
         </button>
       </div>
       <pre id={codeId} tabIndex={0} aria-label={language ? `${language} 代码` : '代码内容'}>
@@ -114,9 +119,9 @@ const CodeBlock = memo(function CodeBlock({ code, language }: { code: string; la
           onClick={() => setExpanded(value => !value)}>
           {expanded ? '收起代码' : `展开全部 ${lines} 行`}
           {expanded ? (
-            <ChevronUp size={14} strokeWidth={1.75} aria-hidden="true" />
+            <ChevronUp size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
           ) : (
-            <ChevronDown size={14} strokeWidth={1.75} aria-hidden="true" />
+            <ChevronDown size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
           )}
         </button>
       )}

@@ -1,19 +1,27 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { ArrowDown, PanelRight, RefreshCw, SquarePen, X } from 'lucide-react'
 import type { Approval, AppSnapshot, TaskDetail, TaskSummary } from '@latch/protocol'
 import { api, ApiError, errorMessage, inlineError, isUncertain } from './core/api.ts'
 import { choiceKind, DecisionRequests, settledOutcome } from './core/approvalDecision.ts'
 import { AUDIT_ROLLBACK_TEXT, useAuditCheckpoint } from './core/auditCheckpoint.ts'
-import { usesDrawer, useCoarsePointer, useViewport } from './breakpoints.ts'
+import { usesDrawer, useCoarsePointer, useViewport, useWindowWidth } from './breakpoints.ts'
 import { findHarness, sessionHarness, sessionModel, startBlock, usesDemoModel } from './composerChoice.ts'
 import { withConfirmation } from './core/confirmations.ts'
 import { exportFileName, saveText, transcriptMarkdown } from './exportMarkdown.ts'
-import { isActive } from './format.ts'
-import { ICON_STROKE, Spinner } from './icons.tsx'
+import { basename, isActive } from './format.ts'
 import { approvalActions, composerGate, deviceAccess, harnessLevel, hostView, L3_START_HINT, LEGACY_HOST_TEXT } from './core/permissions.ts'
 import { setPreference, usePreferences } from './preferences.ts'
 import { isSessionStopCode, SESSION_STOP_TEXT, type SessionStopCode } from './core/securityCopy.ts'
 import { sessionMenuSections } from './sessionMenu.ts'
+import {
+  SIDEBAR_MIN,
+  SIDEBAR_SNAP_MS,
+  clampSidebar,
+  defaultSidebarWidth,
+  sidebarAfterDrag,
+  sidebarMax,
+  widthClassOf,
+} from './sidebarLayout.ts'
 import { emptySeen, isUnread, markSeen, pruneSeen, readSeen, writeSeen, type SeenState, type SessionFilter } from './sessions.ts'
 import type { useHarness } from './core/useHarness.ts'
 import { useReadingPosition } from './core/useReadingPosition.ts'
@@ -30,11 +38,11 @@ import { ConfirmDialog, Modal, ModalHeader, PromptDialog, type MenuSection } fro
 import { Rail, Sidebar } from './components/Sidebar.tsx'
 import { TopBar } from './components/TopBar.tsx'
 import { Transcript, isLive, toolRowId } from './components/Transcript.tsx'
-import { IconButton, InlineAlert } from './components/ui.tsx'
+import { Button, ICON_STROKE, IconButton, InlineNotice, LiveChanges, Loading, ResizeHandle, Toast, type ResizePhase } from '@latch/ui'
 import { SettingsPage, type SettingsSection } from './settings/SettingsPage.tsx'
 
 type Harness = ReturnType<typeof useHarness>
-type Toast = { text: string; tone: 'ok' | 'error' }
+type ToastMessage = { text: string; tone: 'ok' | 'error' }
 /** Results of session actions belong to the session they were made in, not whichever is open when they settle. */
 type ActionError = { sessionId: string; text: string }
 
@@ -46,16 +54,66 @@ const without = <T,>(set: ReadonlySet<T>, value: T): ReadonlySet<T> => {
 
 /** The signed-in shell. Mounted once per device identity, so per-device state starts fresh. */
 export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: AppSnapshot }) {
-  const { selectedId, detail, select, refresh, connection } = harness
+  const { selectedId, detail, select, refresh, resync, connection } = harness
+  // One-shot indicators play only for changes seen as they happened: a resynchronized snapshot starts a new epoch, and
+  // so does a switch of session for what shows the open session (the conversation and its details). The session list
+  // lives across switches, so opening an unread session lets its row settle from the dot to the time.
+  const conversationEpoch = `${harness.resyncs}:${selectedId ?? ''}`
   const viewport = useViewport()
   const coarse = useCoarsePointer()
   const preferences = usePreferences()
   const phone = viewport === 'phone'
   const drawerMode = usesDrawer(viewport)
+  // From 1024px the sidebar can be dragged wider or narrower, or shut; per breakpoint class, on this device only.
+  const widthClass = widthClassOf(viewport)
+  const windowWidth = useWindowWidth()
+  /** A drag in progress: the width under the pointer, or shut once it passed the snap point. */
+  const [sidebarDrag, setSidebarDrag] = useState<{ width: number } | { collapsed: true } | null>(null)
+  const sidebarCollapsed =
+    widthClass !== null && (sidebarDrag !== null ? 'collapsed' in sidebarDrag : preferences.sidebar.collapsed[widthClass] === true)
+  /**
+   * A drag that has just snapped the column shut, or pulled it open again: for one track transition the column slides
+   * instead of following the pointer. Each snap restarts the window.
+   */
+  const [sidebarSnapping, setSidebarSnapping] = useState(false)
+  const snapTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const snapSidebar = () => {
+    setSidebarSnapping(true)
+    clearTimeout(snapTimer.current)
+    snapTimer.current = setTimeout(() => {
+      setSidebarSnapping(false)
+    }, SIDEBAR_SNAP_MS)
+  }
+  useEffect(
+    () => () => {
+      clearTimeout(snapTimer.current)
+    },
+    [],
+  )
   const navigation = useRef<HTMLElement>(null)
   const main = useRef<HTMLElement>(null)
   const rail = useRef<HTMLElement>(null)
-  const drawer = useDrawer({ enabled: drawerMode, navigation, inertWhenOpen: [main, rail] })
+  const collapseButton = useRef<HTMLButtonElement>(null)
+  const expandButton = useRef<HTMLButtonElement>(null)
+  const drawer = useDrawer({ enabled: drawerMode, navigation, inertWhenOpen: [main, rail], shut: sidebarCollapsed })
+  /** Where focus goes once the sidebar has opened or shut: after the drawer hook made the column usable or inert. */
+  const focusAfterToggle = useRef<{ target: RefObject<HTMLElement | null>; shut: boolean } | null>(null)
+  useEffect(() => {
+    const pending = focusAfterToggle.current
+    if (pending?.shut !== sidebarCollapsed) return
+    focusAfterToggle.current = null
+    pending.target.current?.focus({ preventScroll: true })
+  }, [sidebarCollapsed])
+  const saveSidebar = (patch: { width?: number | null; collapsed?: boolean }) => {
+    if (widthClass === null) return
+    const width = { ...preferences.sidebar.width }
+    const collapsed = { ...preferences.sidebar.collapsed }
+    if (patch.width === null) delete width[widthClass]
+    else if (patch.width !== undefined) width[widthClass] = patch.width
+    if (patch.collapsed === true) collapsed[widthClass] = true
+    else if (patch.collapsed === false) delete collapsed[widthClass]
+    setPreference('sidebar', { width, collapsed })
+  }
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   const [search, setSearch] = useState('')
@@ -64,7 +122,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
   const [inspectorSheet, setInspectorSheet] = useState(false)
   const [renaming, setRenaming] = useState<TaskSummary | null>(null)
   const [deleting, setDeleting] = useState<TaskSummary | null>(null)
-  const [toast, setToast] = useState<Toast | null>(null)
+  const [toast, setToast] = useState<ToastMessage | null>(null)
   const [actionError, setActionError] = useState<ActionError | null>(null)
   const [approvalBusy, setApprovalBusy] = useState<ReadonlyMap<string, string>>(new Map())
   const approvalFlights = useRef(new Set<string>())
@@ -196,7 +254,11 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
   }
   const openSearch = () => {
     if (drawerMode) drawer.show(searchRef.current)
-    else searchRef.current?.focus()
+    else if (sidebarCollapsed) {
+      // The search is in the shut column: open it, then focus the search once the column can take focus.
+      focusAfterToggle.current = { target: searchRef, shut: false }
+      saveSidebar({ collapsed: false })
+    } else searchRef.current?.focus()
   }
 
   const searchShortcut = useStableCallback((event: KeyboardEvent) => {
@@ -316,11 +378,11 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
     }
   }
 
-  const patchTask = useStableCallback(async (task: TaskSummary, patch: { pinned?: boolean; archived?: boolean }, done: string) => {
+  // A local action says nothing when it works: the row moving or folding away is the feedback. Failures are toasts.
+  const patchTask = useStableCallback(async (task: TaskSummary, patch: { pinned?: boolean; archived?: boolean }) => {
     try {
       await api<unknown>(`tasks/${encodeURIComponent(task.id)}`, { method: 'PATCH', body: patch })
       await refresh()
-      setToast({ text: done, tone: 'ok' })
     } catch (cause) {
       setToast({ text: errorMessage(cause), tone: 'error' })
     }
@@ -343,10 +405,10 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
             setRenaming(task)
           },
           pin: () => {
-            void patchTask(task, { pinned: !task.pinned }, task.pinned ? '已取消置顶' : '已置顶')
+            void patchTask(task, { pinned: !task.pinned })
           },
           archive: () => {
-            void patchTask(task, { archived: !task.archived }, task.archived ? '已移回会话列表' : '已归档，可在筛选中查看')
+            void patchTask(task, { archived: !task.archived })
           },
           export: () => {
             void exportTask(task)
@@ -500,6 +562,33 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
   )
 
   const inspectorInline = viewport === 'desktop' && preferences.inspector && summary !== undefined
+  // The inline inspector stands beside the paper, which keeps its minimum width between the two columns.
+  const inspectorBeside = inspectorInline ? 320 : 0
+  const sidebarLimit = sidebarMax(windowWidth, inspectorBeside)
+  const sidebarWidth =
+    sidebarDrag !== null && 'width' in sidebarDrag
+      ? sidebarDrag.width
+      : clampSidebar(
+          (widthClass ? preferences.sidebar.width[widthClass] : undefined) ?? defaultSidebarWidth(windowWidth),
+          windowWidth,
+          inspectorBeside,
+        )
+  /** Shuts or opens the sidebar; from its own buttons, focus follows to the button that does the opposite. */
+  const setSidebarShut = (shut: boolean, moveFocus: boolean) => {
+    if (moveFocus) focusAfterToggle.current = { target: shut ? expandButton : collapseButton, shut }
+    saveSidebar({ collapsed: shut })
+  }
+  const resizeSidebar = (raw: number, step: ResizePhase) => {
+    const next = sidebarAfterDrag(raw, windowWidth, inspectorBeside)
+    if (step === 'drag') {
+      // Passing the snap point either way slides the column; widths in between follow the pointer.
+      if (next.collapsed !== sidebarCollapsed) snapSidebar()
+      setSidebarDrag(next.collapsed ? { collapsed: true } : { width: next.width })
+      return
+    }
+    setSidebarDrag(null)
+    saveSidebar(next.collapsed ? { collapsed: true } : { width: next.width, collapsed: false })
+  }
   const toggleInspector = () => {
     if (viewport === 'desktop') setPreference('inspector', !preferences.inspector)
     else setInspectorSheet(true)
@@ -508,12 +597,28 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
     setInspectorSheet(false)
     reveal(messageId)
   }
-  const runtime = summary ? [harnessName, summary.model].filter(Boolean).join(' · ') : undefined
+  // Where the session runs: its harness (a Host without a catalog runs the built-in one) and its project's folder.
+  const topHarness = harnessInfo ?? (snapshot.harness ? { ...snapshot.harness, source: 'builtin' as const } : undefined)
+  const project = summary?.cwd ? basename(summary.cwd) : undefined
   // The demo label follows what this session (or the new-session choice) actually runs on.
   const demo =
     selectedId === null
       ? usesDemoModel(snapshot, choice.harnessId, choice.model?.providerId)
       : summary !== undefined && usesDemoModel(snapshot, summary.harnessId, summary.providerId)
+  const syncSection: MenuSection = {
+    id: 'sync',
+    items: [
+      {
+        id: 'refresh',
+        label: '同步最新状态',
+        icon: RefreshCw,
+        onSelect: () => {
+          void resync()
+        },
+      },
+    ],
+  }
+  const titleMenu = summary ? sessionMenu(summary) : []
   const topMenu: MenuSection[] = summary
     ? [
         ...(viewport !== 'desktop'
@@ -533,350 +638,386 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
               },
             ]
           : []),
-        ...sessionMenu(summary),
-        {
-          id: 'sync',
-          items: [
-            {
-              id: 'refresh',
-              label: '同步最新状态',
-              icon: RefreshCw,
-              onSelect: () => {
-                void refresh()
-              },
-            },
-          ],
-        },
+        ...titleMenu,
+        syncSection,
       ]
-    : []
+    : [syncSection]
+  const canStart = catalog !== undefined && (access.legacy || access.scopes.has('run'))
+  const startIn = canStart
+    ? (workspaceId: string) => {
+        submission.updateChoice({ workspaceId })
+        startNew()
+      }
+    : undefined
   const connectionProblem = harness.error || connection === 'reconnecting' || connection === 'offline'
   const devMode = host?.devMode === true
   const level = current?.permission?.level ?? summary?.level
 
   return (
-    <div
-      className={`app-shell viewport-${viewport} ${inspectorInline ? 'has-inspector' : ''}`}
-      data-viewport={viewport}
-      data-connection={connection}>
-      {viewport === 'tablet' && (
-        <nav ref={rail} className="rail" aria-label="快捷导航">
-          <Rail
-            approvals={snapshot.approvals.length}
-            drawerOpen={drawer.open}
-            onSessions={() => {
-              drawer.show()
+    <LiveChanges value={harness.resyncs}>
+      <div
+        className={`app-shell viewport-${viewport} ${inspectorInline ? 'has-inspector' : ''}`}
+        data-viewport={viewport}
+        data-connection={connection}
+        data-sidebar={widthClass === null ? undefined : sidebarCollapsed ? 'collapsed' : 'open'}
+        data-resizing={sidebarDrag !== null && !sidebarSnapping ? '' : undefined}
+        style={
+          widthClass === null
+            ? undefined
+            : {
+                // Shut, the column keeps the window inset, so the paper sits 8px in on every side.
+                '--sidebar-width': sidebarCollapsed ? 'var(--shell-inset)' : `${sidebarWidth}px`,
+                '--sidebar-open-width': `${sidebarWidth}px`,
+              }
+        }>
+        {viewport === 'tablet' && (
+          <nav ref={rail} className="rail" aria-label="快捷导航">
+            <Rail
+              approvals={snapshot.approvals.length}
+              drawerOpen={drawer.open}
+              onSessions={() => {
+                drawer.show()
+              }}
+              onNew={startNew}
+              onSearch={openSearch}
+              onApprovals={openApprovals}
+              onSettings={() => {
+                openSettings()
+              }}
+              devMode={devMode}
+            />
+          </nav>
+        )}
+        {drawerMode && drawer.open && (
+          <button
+            type="button"
+            className="drawer-backdrop"
+            aria-label="关闭会话列表"
+            tabIndex={-1}
+            onClick={() => {
+              drawer.setOpen(false)
             }}
+          />
+        )}
+        <aside
+          ref={navigation}
+          id="session-navigation"
+          className={`sidebar ${drawer.open ? 'is-open' : ''}`}
+          aria-label="会话导航"
+          role={drawerMode && drawer.open ? 'dialog' : undefined}
+          aria-modal={drawerMode && drawer.open ? true : undefined}
+          tabIndex={-1}>
+          <Sidebar
+            snapshot={snapshot}
+            selectedId={selectedId}
+            isUnread={unread}
+            cancelling={cancelling}
+            search={search}
+            onSearch={setSearch}
+            searchRef={searchRef}
+            filter={filter}
+            onFilter={setFilter}
+            onSelect={choose}
             onNew={startNew}
-            onSearch={openSearch}
+            onNewIn={startIn}
+            newActive={selectedId === null}
             onApprovals={openApprovals}
-            onDevices={() => {
-              openSettings('devices')
+            drawer={drawerMode}
+            phone={phone}
+            onClose={() => {
+              drawer.setOpen(false)
+            }}
+            onCollapse={
+              widthClass === null
+                ? undefined
+                : () => {
+                    setSidebarShut(true, true)
+                  }
+            }
+            collapseRef={collapseButton}
+            connection={connection}
+            onRefresh={() => {
+              void resync()
             }}
             onSettings={() => {
               openSettings()
             }}
-            connection={connection}
-            onRefresh={() => {
-              void refresh()
-            }}
-            devMode={devMode}
+            sessionMenu={sessionMenu}
+            now={now}
+            devMode={devMode && !drawerMode}
           />
-        </nav>
-      )}
-      {drawerMode && drawer.open && (
-        <button
-          type="button"
-          className="drawer-backdrop"
-          aria-label="关闭会话列表"
-          tabIndex={-1}
-          onClick={() => {
-            drawer.setOpen(false)
-          }}
-        />
-      )}
-      <aside
-        ref={navigation}
-        id="session-navigation"
-        className={`sidebar ${drawer.open ? 'is-open' : ''}`}
-        aria-label="会话导航"
-        role={drawerMode && drawer.open ? 'dialog' : undefined}
-        aria-modal={drawerMode && drawer.open ? true : undefined}
-        tabIndex={-1}>
-        <Sidebar
-          snapshot={snapshot}
-          selectedId={selectedId}
-          isUnread={unread}
-          cancelling={cancelling}
-          search={search}
-          onSearch={setSearch}
-          searchRef={searchRef}
-          filter={filter}
-          onFilter={setFilter}
-          onSelect={choose}
-          onNew={startNew}
-          onApprovals={openApprovals}
-          drawer={drawerMode}
-          onClose={() => {
-            drawer.setOpen(false)
-          }}
-          connection={connection}
-          onRefresh={() => {
-            void refresh()
-          }}
-          onDevices={() => {
-            openSettings('devices')
-          }}
-          onSettings={() => {
-            openSettings()
-          }}
-          sessionMenu={sessionMenu}
-          now={now}
-          devMode={devMode && !drawerMode}
-        />
-      </aside>
-      <main ref={main} className={`workspace ${selectedId === null ? 'is-new' : 'has-task'}`}>
-        <TopBar
-          summary={summary}
-          cancelling={selectedId !== null && cancelling.has(selectedId)}
-          level={access.legacy ? undefined : level}
-          runtime={runtime}
-          demo={demo}
-          phone={phone}
-          drawerOpen={drawer.open}
-          onDrawer={
-            phone
-              ? () => {
-                  drawer.show()
-                }
-              : undefined
-          }
-          onNew={startNew}
-          inspectorOpen={inspectorInline}
-          onInspector={toggleInspector}
-          menu={topMenu}
-          connection={connection}
-          onRefresh={() => {
-            void refresh()
-          }}
-        />
-        {connectionProblem && (
-          <div className="banner-region">
-            <InlineAlert
-              tone="warn"
-              action={
-                <button
-                  type="button"
-                  className="text-button"
-                  onClick={() => {
-                    void refresh()
-                  }}>
-                  重试
-                </button>
-              }>
-              {connection === 'offline'
-                ? '当前设备已离线。已读内容仍可查看；恢复连接后会同步执行端状态。'
-                : harness.error || '连接已中断，正在重连；恢复后会同步执行端的最新状态。'}
-            </InlineAlert>
-          </div>
-        )}
-        {audit.rollback && (
-          <div className="banner-region">
-            <InlineAlert
-              tone="error"
-              action={
-                <span className="banner-actions">
-                  <button type="button" className="text-button" onClick={audit.accept}>
-                    已核对
-                  </button>
-                  <button type="button" className="icon-button banner-close" aria-label="关闭提示" title="关闭提示" onClick={audit.dismiss}>
-                    <X size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />
-                  </button>
-                </span>
-              }>
-              {AUDIT_ROLLBACK_TEXT}
-            </InlineAlert>
-          </div>
-        )}
-        {access.legacy && (
-          <div className="banner-region">
-            <InlineAlert tone="neutral">{LEGACY_HOST_TEXT}</InlineAlert>
-          </div>
-        )}
-        {stopCode && (
-          <div className="banner-region">
-            <InlineAlert
-              tone={stopCode === 'permission-drift' ? 'error' : 'warn'}
-              action={
-                <button type="button" className="button secondary small" onClick={startNew}>
-                  <SquarePen size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />
-                  新建会话
-                </button>
-              }>
-              {SESSION_STOP_TEXT[stopCode]}
-            </InlineAlert>
-          </div>
-        )}
-        {sessionBlock && (
-          <div className="banner-region">
-            <InlineAlert tone="info">{sessionBlock}</InlineAlert>
-          </div>
-        )}
-        {selectedId === null ? (
-          <NewSession
-            composer={composer}
-            demo={demo}
-            mode={choice.mode}
-            setup={
-              block && (
-                <SetupCard
-                  block={block}
-                  owner={owner}
-                  onSetup={() => {
-                    openSettings(block.kind === 'model-required' ? 'providers' : catalog ? 'agents' : 'plugins')
-                  }}
-                />
-              )
-            }
-            onSuggestion={prompt => {
-              submission.setDraft(prompt)
-              composerRef.current?.focus()
+        </aside>
+        {widthClass !== null && (
+          <ResizeHandle
+            className="sidebar-resize"
+            label="调整侧栏宽度"
+            value={sidebarCollapsed ? 0 : sidebarWidth}
+            min={SIDEBAR_MIN}
+            max={sidebarLimit}
+            collapsed={sidebarCollapsed}
+            onResize={resizeSidebar}
+            onReset={() => {
+              setSidebarDrag(null)
+              saveSidebar({ width: null, collapsed: false })
+            }}
+            onToggle={() => {
+              setSidebarShut(!sidebarCollapsed, false)
             }}
           />
-        ) : (
-          <div className="conversation">
-            <div className="transcript-shell">
-              <div className="transcript" ref={reading.containerRef} {...reading.handlers} tabIndex={0} aria-label="会话记录">
-                <div className="transcript-content" ref={reading.contentRef}>
-                  {current === null ? (
-                    <p className="loading-line">
-                      <Spinner size={16} />
-                      正在读取会话记录…
-                    </p>
-                  ) : (
-                    <Transcript
-                      detail={current}
-                      approvals={approvals}
-                      busy={approvalBusy}
-                      onDecide={onDecide}
-                      gateFor={gateFor}
-                      harnessName={harnessName}
-                      active={active}
-                    />
-                  )}
-                  {current !== null && current.messages.length === 0 && !isLive(current) && approvals.length === 0 && (
-                    <p className="transcript-empty">{active ? '执行端已接收，等待输出。' : '会话记录会显示在这里。'}</p>
-                  )}
-                </div>
-              </div>
-              {!reading.isFollowing && (
-                <button type="button" className="jump-latest" onClick={jumpToLatest}>
-                  <ArrowDown size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />
-                  回到最新
-                </button>
-              )}
-            </div>
-            <div className="composer-dock">{composer}</div>
-          </div>
         )}
-      </main>
-      {inspectorInline && summary && (
-        <aside className="inspector-pane" aria-label="会话详情">
-          <header className="pane-header">
-            <h2>会话详情</h2>
-            <IconButton
-              label="收起会话详情"
-              icon={X}
-              onClick={() => {
-                setPreference('inspector', false)
+        <LiveChanges value={conversationEpoch}>
+          <main ref={main} className={`workspace ${selectedId === null ? 'is-new' : 'has-task'}`}>
+            <TopBar
+              summary={summary}
+              harness={topHarness}
+              project={project}
+              cancelling={selectedId !== null && cancelling.has(selectedId)}
+              level={access.legacy ? undefined : level}
+              demo={demo}
+              phone={phone}
+              drawerOpen={drawer.open}
+              onDrawer={
+                phone
+                  ? () => {
+                      drawer.show()
+                    }
+                  : undefined
+              }
+              onNew={startNew}
+              sidebarCollapsed={sidebarCollapsed}
+              onExpandSidebar={
+                widthClass === null
+                  ? undefined
+                  : () => {
+                      setSidebarShut(false, true)
+                    }
+              }
+              expandRef={expandButton}
+              approvals={snapshot.approvals.length}
+              onApprovals={openApprovals}
+              inspectorOpen={inspectorInline}
+              onInspector={toggleInspector}
+              sessionMenu={titleMenu}
+              menu={topMenu}
+              connection={connection}
+              onRefresh={() => {
+                void resync()
               }}
             />
-          </header>
-          <Inspector snapshot={snapshot} summary={summary} detail={current} onReveal={reveal} />
-        </aside>
-      )}
-      {inspectorSheet && summary && viewport !== 'desktop' && (
-        <Modal
-          label="会话详情"
-          variant={phone ? 'sheet' : 'side'}
-          onClose={() => {
-            setInspectorSheet(false)
-          }}>
-          <ModalHeader
-            title="会话详情"
+            {connectionProblem && (
+              <div className="banner-region">
+                <InlineNotice
+                  tone="warn"
+                  title={connection === 'offline' ? '当前设备已离线' : '连接已中断，正在重连…'}
+                  action={
+                    <Button
+                      size="xs"
+                      onClick={() => {
+                        void resync()
+                      }}>
+                      重试
+                    </Button>
+                  }>
+                  {connection === 'offline'
+                    ? '已读内容仍可查看；恢复连接后会同步执行端状态。'
+                    : harness.error || '恢复后会同步执行端的最新状态。'}
+                </InlineNotice>
+              </div>
+            )}
+            {audit.rollback && (
+              <div className="banner-region">
+                <InlineNotice
+                  tone="error"
+                  action={
+                    <span className="banner-actions">
+                      <Button size="xs" onClick={audit.accept}>
+                        已核对
+                      </Button>
+                      <IconButton className="banner-close" label="关闭提示" icon={X} size="xs" onClick={audit.dismiss} />
+                    </span>
+                  }>
+                  {AUDIT_ROLLBACK_TEXT}
+                </InlineNotice>
+              </div>
+            )}
+            {access.legacy && (
+              <div className="banner-region">
+                <InlineNotice tone="neutral">{LEGACY_HOST_TEXT}</InlineNotice>
+              </div>
+            )}
+            {stopCode && (
+              <div className="banner-region">
+                <InlineNotice
+                  tone={stopCode === 'permission-drift' ? 'error' : 'warn'}
+                  action={
+                    <Button size="xs" onClick={startNew} icon={SquarePen}>
+                      新建会话
+                    </Button>
+                  }>
+                  {SESSION_STOP_TEXT[stopCode]}
+                </InlineNotice>
+              </div>
+            )}
+            {sessionBlock && (
+              <div className="banner-region">
+                <InlineNotice tone="neutral">{sessionBlock}</InlineNotice>
+              </div>
+            )}
+            {selectedId === null ? (
+              <NewSession
+                composer={composer}
+                demo={demo}
+                mode={choice.mode}
+                setup={
+                  block && (
+                    <SetupCard
+                      block={block}
+                      owner={owner}
+                      onSetup={() => {
+                        openSettings(block.kind === 'model-required' ? 'providers' : catalog ? 'agents' : 'plugins')
+                      }}
+                    />
+                  )
+                }
+                onSuggestion={prompt => {
+                  submission.setDraft(prompt)
+                  composerRef.current?.focus()
+                }}
+              />
+            ) : (
+              <div className="conversation">
+                <div className="transcript-shell">
+                  <div className="transcript" ref={reading.containerRef} {...reading.handlers} tabIndex={0} aria-label="会话记录">
+                    <div className="transcript-content" ref={reading.contentRef}>
+                      {current === null ? (
+                        <Loading label="正在读取会话记录…" />
+                      ) : (
+                        <Transcript
+                          detail={current}
+                          approvals={approvals}
+                          busy={approvalBusy}
+                          onDecide={onDecide}
+                          gateFor={gateFor}
+                          harnessName={harnessName}
+                          harness={topHarness}
+                          active={active}
+                        />
+                      )}
+                      {current !== null && current.messages.length === 0 && !isLive(current) && approvals.length === 0 && (
+                        <p className="transcript-empty">{active ? '执行端已接收，等待输出。' : '会话记录会显示在这里。'}</p>
+                      )}
+                    </div>
+                  </div>
+                  {!reading.isFollowing && (
+                    <button type="button" className="jump-latest" onClick={jumpToLatest}>
+                      <ArrowDown size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+                      回到最新
+                    </button>
+                  )}
+                </div>
+                <div className="composer-dock">{composer}</div>
+              </div>
+            )}
+          </main>
+          {inspectorInline && summary && (
+            <aside className="inspector-pane" aria-label="会话详情">
+              <header className="pane-header">
+                <h2>会话详情</h2>
+                <IconButton
+                  label="收起会话详情"
+                  icon={X}
+                  onClick={() => {
+                    setPreference('inspector', false)
+                  }}
+                />
+              </header>
+              <Inspector snapshot={snapshot} summary={summary} detail={current} onReveal={reveal} />
+            </aside>
+          )}
+          {inspectorSheet && summary && viewport !== 'desktop' && (
+            <Modal
+              label="会话详情"
+              variant={phone ? 'sheet' : 'side'}
+              onClose={() => {
+                setInspectorSheet(false)
+              }}>
+              <ModalHeader
+                title="会话详情"
+                onClose={() => {
+                  setInspectorSheet(false)
+                }}
+              />
+              <div className="sheet-body">
+                <Inspector snapshot={snapshot} summary={summary} detail={current} onReveal={revealFromInspector} />
+              </div>
+            </Modal>
+          )}
+        </LiveChanges>
+        {settings && (
+          <SettingsPage
+            snapshot={snapshot}
+            access={access}
+            initial={settings.section}
             onClose={() => {
-              setInspectorSheet(false)
+              setSettings(null)
+              void refresh()
+            }}
+            onChanged={() => {
+              void refresh()
             }}
           />
-          <div className="sheet-body">
-            <Inspector snapshot={snapshot} summary={summary} detail={current} onReveal={revealFromInspector} />
-          </div>
-        </Modal>
-      )}
-      {settings && (
-        <SettingsPage
-          snapshot={snapshot}
-          access={access}
-          initial={settings.section}
-          onClose={() => {
-            setSettings(null)
-            void refresh()
-          }}
-          onChanged={() => {
-            void refresh()
-          }}
-        />
-      )}
-      {renaming && (
-        <PromptDialog
-          title="重命名会话"
-          label="会话名称"
-          initial={renaming.title}
-          maxLength={120}
-          onClose={() => {
-            setRenaming(null)
-          }}
-          onSubmit={async title => {
-            try {
-              await api<unknown>(`tasks/${encodeURIComponent(renaming.id)}`, { method: 'PATCH', body: { title } })
-            } catch (cause) {
-              throw new Error(errorMessage(cause))
-            }
-            await refresh()
-          }}
-        />
-      )}
-      {deleting && (
-        <ConfirmDialog
-          title="删除会话"
-          danger
-          confirmLabel="删除"
-          message={`删除「${deleting.title || '未命名会话'}」及其全部记录？此操作无法撤销。`}
-          onClose={() => {
-            setDeleting(null)
-          }}
-          onConfirm={async () => {
-            try {
-              await api<unknown>(`tasks/${encodeURIComponent(deleting.id)}`, { method: 'DELETE' })
-            } catch (cause) {
-              throw new Error(errorMessage(cause))
-            }
-            setStopped(previous => {
-              if (!previous.has(deleting.id)) return previous
-              const next = new Map(previous)
-              next.delete(deleting.id)
-              return next
-            })
-            if (deleting.id === selectedId) choose(null)
-            await refresh()
-            setToast({ text: '会话已删除', tone: 'ok' })
-          }}
-        />
-      )}
-      {toast && (
-        <div className={`toast toast-${toast.tone}`} role={toast.tone === 'error' ? 'alert' : 'status'}>
-          {toast.text}
-        </div>
-      )}
-    </div>
+        )}
+        {renaming && (
+          <PromptDialog
+            title="重命名会话"
+            label="会话名称"
+            initial={renaming.title}
+            maxLength={120}
+            onClose={() => {
+              setRenaming(null)
+            }}
+            onSubmit={async title => {
+              try {
+                await api<unknown>(`tasks/${encodeURIComponent(renaming.id)}`, { method: 'PATCH', body: { title } })
+              } catch (cause) {
+                throw new Error(errorMessage(cause))
+              }
+              await refresh()
+            }}
+          />
+        )}
+        {deleting && (
+          <ConfirmDialog
+            title="删除会话"
+            danger
+            confirmLabel="删除"
+            message={`删除「${deleting.title || '未命名会话'}」及其全部记录？此操作无法撤销。`}
+            onClose={() => {
+              setDeleting(null)
+            }}
+            onConfirm={async () => {
+              try {
+                await api<unknown>(`tasks/${encodeURIComponent(deleting.id)}`, { method: 'DELETE' })
+              } catch (cause) {
+                throw new Error(errorMessage(cause))
+              }
+              setStopped(previous => {
+                if (!previous.has(deleting.id)) return previous
+                const next = new Map(previous)
+                next.delete(deleting.id)
+                return next
+              })
+              if (deleting.id === selectedId) choose(null)
+              await refresh()
+            }}
+          />
+        )}
+        {toast && (
+          <Toast className="toast" tone={toast.tone === 'error' ? 'error' : 'neutral'} duration={null}>
+            {toast.text}
+          </Toast>
+        )}
+      </div>
+    </LiveChanges>
   )
 }

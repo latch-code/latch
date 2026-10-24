@@ -1,0 +1,398 @@
+/*
+ * Live indicators. Only live states move (running, waiting for the person, newly arrived); facts at rest (a time,
+ * done, cancelled, failed) never do. Each row moves at most one thing, every moving element is at most 52×20, and
+ * motion uses only transform, opacity or a small element's background position: no blinking, bouncing or colour
+ * change. The rules outside the media query are the still frame, which is also what reduced motion shows and reads on
+ * its own; every animation is declared at the end, under prefers-reduced-motion: no-preference.
+ */
+
+/*
+ * Running: the comet. A track ring (--comet-track, 1.5, 1.6 and 1.75px at 12, 14 and 16) carries a tail that brightens
+ * over 160° into a round head, in --comet. Two nested layers turn: the drift is the steady turn every comet shares,
+ * the lap the relay's extra turn. Still, the head stands at 12 o'clock with the tail fading down the left.
+ */
+.ui-comet {
+  --comet-size: 12px;
+  --comet-stroke: 1.5px;
+  /* The relay sets these on a numbered item: its slot and the cycle's number of slots. */
+  --i: 0;
+  --cyc: 3;
+  position: relative;
+  display: inline-block;
+  flex-shrink: 0;
+  width: var(--comet-size);
+  height: var(--comet-size);
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 var(--comet-stroke) var(--comet-track);
+  color: var(--comet);
+}
+.ui-comet[data-size='14'] {
+  --comet-size: 14px;
+  --comet-stroke: 1.6px;
+}
+.ui-comet[data-size='16'] {
+  --comet-size: 16px;
+  --comet-stroke: 1.75px;
+}
+.ui-comet-drift,
+.ui-comet-lap,
+.ui-comet-held {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+.ui-comet svg {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/*
+ * Waiting for the person: the amber status pill. When its turn in the relay comes, a warm band (--sweep) crosses
+ * behind its text from left to right; at rest the band lies outside the pill, so nothing shows.
+ */
+.ui-waiting-pill {
+  --i: 0;
+  --cyc: 3;
+  position: relative;
+  isolation: isolate;
+}
+.ui-waiting-pill::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent 38%, var(--sweep) 50%, transparent 62%) no-repeat;
+  background-position: 100% 0;
+  background-size: 300% 100%;
+  pointer-events: none;
+}
+
+/*
+ * A row's status slot: one thing, right-aligned, at least 24 wide. A failure is the red triangle with its words; at
+ * rest the time in hint ink. What leaves when a status settles stays in the same cell, already gone in the still frame.
+ */
+.ui-status-slot {
+  display: inline-grid;
+  flex-shrink: 0;
+  align-items: center;
+  justify-items: end;
+  min-width: 24px;
+}
+.ui-status-slot > * {
+  grid-area: 1 / 1;
+}
+.ui-status-failed {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--err-text);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.ui-status-time {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ui-status-leaving {
+  display: inline-grid;
+  opacity: 0;
+  pointer-events: none;
+}
+/* The comet draws in towards where the dot lands, the dot's centre at the slot's end (a 6 dot, 8 on phones), so the
+ * settle reads as the ring closing on the point rather than a hop beside it. */
+.ui-status-slot[data-settle='ring-dot'] > .ui-status-leaving {
+  transform-origin: calc(100% - 3px) 50%;
+}
+@media (max-width: 767.98px) {
+  .ui-status-slot[data-settle='ring-dot'] > .ui-status-leaving {
+    transform-origin: calc(100% - 4px) 50%;
+  }
+}
+
+/*
+ * A process row's status glyph: the comet or the row's icon, and after a change of state the one that leaves, in one
+ * cell; the leaving one is already gone in the still frame. The state's words beside it carry no style of their own.
+ */
+.ui-status-glyph {
+  display: inline-grid;
+  flex-shrink: 0;
+  place-items: center;
+}
+.ui-status-glyph > * {
+  display: grid;
+  grid-area: 1 / 1;
+  place-items: center;
+}
+.ui-status-glyph-leaving {
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* Every comet turns once every 2.4s, in one shared phase (the delay set at mount). */
+  .ui-comet-drift {
+    animation: ui-comet-turn 2.4s linear infinite;
+  }
+
+  /*
+   * The relay: in a cycle of --cyc slots of 1.6s, the item in slot --i laps its comet once more (1.6s, eased in and
+   * out, so it ends in the shared phase) or sweeps its pill (1.5s), then rests until its slot comes round again.
+   */
+  .ui-comet[data-relay] .ui-comet-lap,
+  .ui-waiting-pill[data-relay]::before {
+    animation-duration: calc(var(--cyc) * 1.6s);
+    animation-timing-function: linear;
+    animation-delay: calc(var(--i) * 1.6s);
+    animation-iteration-count: infinite;
+    animation-fill-mode: both;
+  }
+  .ui-comet[data-relay='3'] .ui-comet-lap {
+    animation-name: ui-relay-lap-3;
+  }
+  .ui-comet[data-relay='4'] .ui-comet-lap {
+    animation-name: ui-relay-lap-4;
+  }
+  .ui-comet[data-relay='5'] .ui-comet-lap {
+    animation-name: ui-relay-lap-5;
+  }
+  .ui-comet[data-relay='6'] .ui-comet-lap {
+    animation-name: ui-relay-lap-6;
+  }
+  .ui-comet[data-relay='7'] .ui-comet-lap {
+    animation-name: ui-relay-lap-7;
+  }
+  .ui-comet[data-relay='8'] .ui-comet-lap {
+    animation-name: ui-relay-lap-8;
+  }
+  .ui-waiting-pill[data-relay='3']::before {
+    animation-name: ui-relay-sweep-3;
+  }
+  .ui-waiting-pill[data-relay='4']::before {
+    animation-name: ui-relay-sweep-4;
+  }
+  .ui-waiting-pill[data-relay='5']::before {
+    animation-name: ui-relay-sweep-5;
+  }
+  .ui-waiting-pill[data-relay='6']::before {
+    animation-name: ui-relay-sweep-6;
+  }
+  .ui-waiting-pill[data-relay='7']::before {
+    animation-name: ui-relay-sweep-7;
+  }
+  .ui-waiting-pill[data-relay='8']::before {
+    animation-name: ui-relay-sweep-8;
+  }
+
+  /* A run that ends with something new: the comet draws in (240ms) as the dot lands, 48ms later (264ms). */
+  .ui-status-slot[data-settle='ring-dot'] > .ui-status-leaving {
+    animation: ui-settle-ring 240ms var(--ease-exit) both;
+  }
+  .ui-status-slot[data-settle='ring-dot'] > .ui-status-dot {
+    animation: ui-settle-dot-in 264ms var(--ease) 48ms both;
+  }
+  /* A session that has been read: the dot sinks (144ms) and the time fades in (192ms). */
+  .ui-status-slot[data-settle='dot-time'] > .ui-status-leaving {
+    animation: ui-settle-dot-out 144ms var(--ease-exit) both;
+  }
+  .ui-status-slot[data-settle='dot-time'] > .ui-status-time {
+    animation: ui-fade-in 192ms var(--ease) 96ms both;
+  }
+
+  /*
+   * A process row that changes state: the comet and the result icon cross-fade, the old one out on the exit curve and
+   * the new one in from 80%, and the state's words rise 4px into place, all over --d-fast. A failure changes only its
+   * icon and words; nothing shakes.
+   */
+  .ui-status-glyph[data-shift] > .ui-status-glyph-leaving {
+    animation: ui-glyph-out var(--d-fast) var(--ease-exit) both;
+  }
+  .ui-status-glyph[data-shift] > .ui-status-glyph-current {
+    animation: ui-glyph-in var(--d-fast) var(--ease);
+  }
+  .ui-status-words[data-shift] {
+    animation: ui-words-in var(--d-fast) var(--ease);
+  }
+}
+
+@keyframes ui-comet-turn {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+/* The extra lap takes the first 1.6s of the cycle; the sweep the first 1.5s. One pair per cycle of 3 to 8 slots. */
+@keyframes ui-relay-lap-3 {
+  0% {
+    transform: rotate(0deg);
+    animation-timing-function: cubic-bezier(0.37, 0, 0.63, 1);
+  }
+  33.333%,
+  100% {
+    transform: rotate(360deg);
+  }
+}
+@keyframes ui-relay-lap-4 {
+  0% {
+    transform: rotate(0deg);
+    animation-timing-function: cubic-bezier(0.37, 0, 0.63, 1);
+  }
+  25%,
+  100% {
+    transform: rotate(360deg);
+  }
+}
+@keyframes ui-relay-lap-5 {
+  0% {
+    transform: rotate(0deg);
+    animation-timing-function: cubic-bezier(0.37, 0, 0.63, 1);
+  }
+  20%,
+  100% {
+    transform: rotate(360deg);
+  }
+}
+@keyframes ui-relay-lap-6 {
+  0% {
+    transform: rotate(0deg);
+    animation-timing-function: cubic-bezier(0.37, 0, 0.63, 1);
+  }
+  16.667%,
+  100% {
+    transform: rotate(360deg);
+  }
+}
+@keyframes ui-relay-lap-7 {
+  0% {
+    transform: rotate(0deg);
+    animation-timing-function: cubic-bezier(0.37, 0, 0.63, 1);
+  }
+  14.286%,
+  100% {
+    transform: rotate(360deg);
+  }
+}
+@keyframes ui-relay-lap-8 {
+  0% {
+    transform: rotate(0deg);
+    animation-timing-function: cubic-bezier(0.37, 0, 0.63, 1);
+  }
+  12.5%,
+  100% {
+    transform: rotate(360deg);
+  }
+}
+@keyframes ui-relay-sweep-3 {
+  0% {
+    background-position: 100% 0;
+    animation-timing-function: cubic-bezier(0.45, 0, 0.2, 1);
+  }
+  31.25%,
+  100% {
+    background-position: 0% 0;
+  }
+}
+@keyframes ui-relay-sweep-4 {
+  0% {
+    background-position: 100% 0;
+    animation-timing-function: cubic-bezier(0.45, 0, 0.2, 1);
+  }
+  23.438%,
+  100% {
+    background-position: 0% 0;
+  }
+}
+@keyframes ui-relay-sweep-5 {
+  0% {
+    background-position: 100% 0;
+    animation-timing-function: cubic-bezier(0.45, 0, 0.2, 1);
+  }
+  18.75%,
+  100% {
+    background-position: 0% 0;
+  }
+}
+@keyframes ui-relay-sweep-6 {
+  0% {
+    background-position: 100% 0;
+    animation-timing-function: cubic-bezier(0.45, 0, 0.2, 1);
+  }
+  15.625%,
+  100% {
+    background-position: 0% 0;
+  }
+}
+@keyframes ui-relay-sweep-7 {
+  0% {
+    background-position: 100% 0;
+    animation-timing-function: cubic-bezier(0.45, 0, 0.2, 1);
+  }
+  13.393%,
+  100% {
+    background-position: 0% 0;
+  }
+}
+@keyframes ui-relay-sweep-8 {
+  0% {
+    background-position: 100% 0;
+    animation-timing-function: cubic-bezier(0.45, 0, 0.2, 1);
+  }
+  11.719%,
+  100% {
+    background-position: 0% 0;
+  }
+}
+
+@keyframes ui-settle-ring {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+}
+@keyframes ui-settle-dot-in {
+  from {
+    opacity: 0;
+    transform: scale(1.8);
+  }
+}
+@keyframes ui-settle-dot-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(2px) scale(0.5);
+  }
+}
+@keyframes ui-glyph-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@keyframes ui-glyph-in {
+  from {
+    opacity: 0;
+    scale: 0.8;
+  }
+}
+@keyframes ui-words-in {
+  from {
+    opacity: 0;
+    translate: 0 4px;
+  }
+}

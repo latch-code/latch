@@ -1,4 +1,7 @@
-/* Native <dialog> variants: centered dialog, phone bottom sheet, right side sheet, full page. */
+/*
+ * Native <dialog> variants: centered dialog, phone bottom sheet, right side sheet, full page. Every modal is raised
+ * material with the modal shadow over the scrim.
+ */
 .modal {
   padding: 0;
   border: 0;
@@ -10,7 +13,7 @@
 }
 .modal::backdrop {
   background: var(--scrim);
-  animation: fade-in var(--d-base) var(--ease-out);
+  animation: fade-in var(--d-base) var(--ease);
 }
 .modal-surface {
   display: flex;
@@ -19,7 +22,7 @@
   max-height: inherit;
   overflow: hidden;
   background: var(--bg-raised);
-  box-shadow: var(--sh-4);
+  box-shadow: var(--sh-modal);
 }
 
 .modal-dialog {
@@ -28,8 +31,15 @@
   margin: auto;
 }
 .modal-dialog > .modal-surface {
-  border-radius: var(--r-xl);
-  animation: rise-in var(--d-base) var(--ease-out);
+  border-radius: var(--r-16);
+  corner-shape: var(--corner-shape);
+  animation: dialog-in var(--d-slow) var(--ease);
+}
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
 }
 
 .modal-sheet {
@@ -39,18 +49,19 @@
   margin: auto 0 0;
 }
 .modal-sheet > .modal-surface {
-  border-radius: var(--r-xl) var(--r-xl) 0 0;
+  border-radius: var(--r-16) var(--r-16) 0 0;
+  corner-shape: var(--corner-shape);
   padding-bottom: env(safe-area-inset-bottom);
-  animation: sheet-in var(--d-slow) var(--ease-out);
+  animation: sheet-in var(--d-slow) var(--ease);
 }
 .sheet-grabber {
   align-self: center;
   flex-shrink: 0;
   width: 36px;
   height: 4px;
-  margin: 8px 0 0;
-  border-radius: var(--r-pill);
-  background: var(--border-strong);
+  margin: var(--sp-8) 0 0;
+  border-radius: var(--r-2);
+  background: var(--line-strong);
 }
 @keyframes sheet-in {
   from {
@@ -67,7 +78,7 @@
 }
 .modal-side > .modal-surface {
   height: 100%;
-  animation: side-in var(--d-slow) var(--ease-out);
+  animation: side-in var(--d-slow) var(--ease);
 }
 @keyframes side-in {
   from {
@@ -91,11 +102,11 @@
 .modal-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-8);
   flex-shrink: 0;
   min-height: 56px;
-  padding: 8px 8px 8px 20px;
-  border-bottom: 1px solid var(--border-subtle);
+  padding: var(--sp-8) var(--sp-12) var(--sp-8) var(--sp-24);
+  border-bottom: 1px solid var(--line-subtle);
 }
 .modal-header h2 {
   flex: 1;
@@ -103,8 +114,8 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--fs-title);
-  line-height: var(--lh-title);
+  font-size: var(--fs-title-sm);
+  line-height: var(--lh-title-sm);
   font-weight: 600;
 }
 .modal-body,
@@ -113,76 +124,95 @@
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 16px 20px;
+  padding: var(--sp-16) var(--sp-20);
 }
+/* Desktop dialogs: a 56 header, a 24 body inset and a 64 footer, the header and footer each set off by a subtle
+ * line. Phone sheets keep the tighter 16/20 inset. */
 .modal-body {
   display: grid;
-  gap: 12px;
+  gap: var(--sp-12);
   align-content: start;
+  padding: var(--sp-24);
 }
 .modal-footer {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--sp-8);
   flex-shrink: 0;
-  padding: 12px 20px 16px;
+  min-height: 64px;
+  padding: 0 var(--sp-24);
+  border-top: 1px solid var(--line-subtle);
+}
+.modal-sheet .modal-body {
+  padding: var(--sp-16) var(--sp-20);
 }
 .modal-sheet .modal-footer {
-  padding-bottom: 16px;
+  min-height: 0;
+  padding: var(--sp-12) var(--sp-20) var(--sp-16);
 }
-.modal-sheet .modal-footer .button {
+.modal-sheet .modal-footer .ui-button {
   flex: 1;
   min-height: 44px;
 }
 .confirm-message {
   color: var(--text-2);
   font-size: var(--fs-ui);
-  line-height: 22px;
+  line-height: var(--lh-ui-para);
 }
 .sheet-group + .sheet-group {
-  margin-top: 16px;
+  margin-top: var(--sp-16);
 }
 .sheet-group h3 {
-  margin-bottom: 6px;
+  margin-bottom: var(--sp-6);
   color: var(--text-3);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
-  font-weight: 600;
+  font-weight: 500;
 }
 
-/* Anchored menus and pickers */
+/* Anchored menus and pickers: floating material; the selected option is the only blue, a check. */
 .popover {
   z-index: 50;
   min-width: 220px;
   max-width: min(340px, calc(100vw - 16px));
-  padding: 4px;
+  padding: var(--sp-4);
   overflow-y: auto;
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-12);
+  corner-shape: var(--corner-shape);
   background: var(--bg-raised);
-  box-shadow: var(--sh-3);
-  animation: fade-in var(--d-base) var(--ease-out);
+  box-shadow: var(--sh-float);
+  animation: drop-in var(--d-base) var(--ease);
+}
+/* It moves in from its trigger's side: down when it opens below the trigger, up when it opens above. */
+.popover[data-side='top'] {
+  animation-name: rise-in;
 }
 .menu-section + .menu-section {
-  margin-top: 4px;
-  padding-top: 4px;
-  border-top: 1px solid var(--border-subtle);
+  margin-top: var(--sp-4);
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--line-subtle);
 }
 .menu-section-label {
-  padding: 8px 10px 4px;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  padding: var(--sp-8) var(--sp-8) var(--sp-4);
   color: var(--text-3);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
-  font-weight: 600;
+  font-weight: 500;
 }
 .menu-item {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: var(--sp-8);
   width: 100%;
-  padding: 7px 10px;
+  min-height: 32px;
+  padding: var(--sp-6) var(--sp-8);
   border: 0;
-  border-radius: var(--r-md);
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
   background: transparent;
   color: var(--text-1);
   text-align: left;
@@ -194,8 +224,20 @@
   background: var(--bg-hover);
   outline: none;
 }
-.menu-item:disabled {
-  color: var(--text-disabled);
+.menu-item:active:not(:disabled) {
+  background: var(--bg-press);
+}
+/* A harness's or a model service's tile, on the title's line. */
+.menu-item-leading {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+/* A disabled item dims its leading icon or tile, title and description; the reason row below stays at full strength. */
+.menu-item:disabled :is(.menu-item-icon, .menu-item-leading, .menu-item-label, .menu-item-description) {
+  opacity: 0.45;
+}
+.menu-item[aria-checked='true'] .menu-item-label {
+  font-weight: 500;
 }
 .menu-item.is-danger {
   color: var(--err-text);
@@ -206,11 +248,11 @@
 .menu-item-icon {
   flex-shrink: 0;
   margin-top: 1px;
-  color: var(--text-2);
+  color: var(--icon);
 }
 .menu-item-text {
   display: grid;
-  gap: 2px;
+  gap: var(--sp-2);
   flex: 1;
   min-width: 0;
 }
@@ -218,7 +260,7 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--sp-6);
   overflow-wrap: anywhere;
 }
 .menu-item-description {
@@ -227,26 +269,43 @@
   line-height: var(--lh-caption);
   overflow-wrap: anywhere;
 }
+.menu-item-reason {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  overflow-wrap: anywhere;
+}
+.menu-item-reason > svg {
+  flex-shrink: 0;
+  color: var(--icon);
+}
 .menu-item-check {
   flex-shrink: 0;
   margin-left: auto;
   color: var(--accent);
 }
 .menu-footer {
-  margin-top: 4px;
-  padding-top: 4px;
-  border-top: 1px solid var(--border-subtle);
+  margin-top: var(--sp-4);
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--line-subtle);
 }
+/* Goes to another page, so it reads as a link. */
 .menu-footer-link {
   display: block;
   width: 100%;
-  padding: 7px 10px;
+  min-height: 32px;
+  padding: var(--sp-6) var(--sp-8);
   border: 0;
-  border-radius: var(--r-md);
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
   background: none;
   color: var(--accent-text);
   text-align: left;
   font-size: var(--fs-label);
+  line-height: var(--lh-label);
   font-weight: 500;
 }
 .menu-footer-link:hover {
@@ -255,15 +314,15 @@
 .sheet-body .menu-item {
   min-height: 44px;
   align-items: center;
-  padding: 8px 12px;
+  padding: var(--sp-8) var(--sp-12);
 }
 .sheet-body .menu-footer-link {
   min-height: 44px;
 }
 .radio-list {
   display: grid;
-  gap: 2px;
+  gap: var(--sp-2);
 }
 .radio-section + .radio-section {
-  margin-top: 6px;
+  margin-top: var(--sp-6);
 }

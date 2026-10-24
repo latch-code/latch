@@ -1,17 +1,18 @@
-import { useState } from 'react'
-import { Bot, Check, ChevronDown, Folder, SlidersHorizontal, Sparkles } from 'lucide-react'
+import { useState, type ReactNode } from 'react'
+import { Bot, Check, ChevronsUpDown, Folder, SlidersHorizontal, Sparkles } from 'lucide-react'
 import type { HarnessInfo, HostCatalog, ModelRef, SessionConfigOption, TaskMode } from '@latch/protocol'
 import { findHarness, sameModel, startableWorkspaces } from '../composerChoice.ts'
 import { basename, middleEllipsis } from '../format.ts'
-import { ICON_STROKE, type LucideIcon } from '../icons.tsx'
-import { harnessGate, harnessLevel, type DeviceAccess } from '../core/permissions.ts'
-import { Menu, Modal, ModalHeader, type MenuSection, type MenuTriggerProps } from './overlays.tsx'
-import { Badge, Segmented } from './ui.tsx'
+import { harnessGate, harnessLevel, LEVEL_LABELS, type DeviceAccess } from '../core/permissions.ts'
+import { HarnessTile, ProviderTile } from './BrandTile.tsx'
+import { Menu, MenuItemText, Modal, ModalHeader, type MenuSection, type MenuTriggerProps } from './overlays.tsx'
+import { Badge, ICON_STROKE, type LucideIcon, SegmentedControl } from '@latch/ui'
 
 const sourceLabels: Record<HarnessInfo['source'], string> = { builtin: '内置', acp: 'ACP', plugin: '插件' }
 
 function ChipButton({
   icon: Icon,
+  leading,
   text,
   label,
   trigger,
@@ -19,6 +20,8 @@ function ChipButton({
   className = '',
 }: {
   icon: LucideIcon
+  /** A tile in place of the glyph: the harness's or the model service's. */
+  leading?: ReactNode
   text: string
   label: string
   trigger: MenuTriggerProps
@@ -33,17 +36,17 @@ function ChipButton({
       title={label}
       disabled={disabled}
       {...trigger}>
-      <Icon size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />
+      {leading ?? <Icon size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />}
       <span className="chip-text">{text}</span>
-      <ChevronDown className="chip-chevron" size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />
+      <ChevronsUpDown className="chip-chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
     </button>
   )
 }
 
-export function StaticChip({ icon: Icon, text, label }: { icon: LucideIcon; text: string; label: string }) {
+export function StaticChip({ icon: Icon, leading, text, label }: { icon: LucideIcon; leading?: ReactNode; text: string; label: string }) {
   return (
     <span className="chip chip-static" title={label}>
-      <Icon size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />
+      {leading ?? <Icon size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />}
       <span className="chip-text">{text}</span>
     </span>
   )
@@ -84,11 +87,12 @@ export function harnessSections(
         return {
           id: harness.id,
           label: harness.name,
+          leading: <HarnessTile harness={harness} size={20} />,
           checked: harness.id === value,
           description: harness.description ?? (harness.models === 'agent' ? '自带模型与登录' : '使用执行端的模型服务'),
           tag: (
             <>
-              {full && <Badge tone="warn">L3</Badge>}
+              {full && <Badge title={LEVEL_LABELS.L3}>L3</Badge>}
               <Badge>{sourceLabels[harness.source]}</Badge>
             </>
           ),
@@ -107,6 +111,7 @@ export function modelSections(catalog: HostCatalog, value: ModelRef | undefined,
   return catalog.providers.map(provider => ({
     id: provider.id,
     label: provider.name,
+    leading: <ProviderTile provider={provider} size={16} />,
     items: (provider.models.length ? provider.models : [provider.defaultModel]).filter(Boolean).map(model => ({
       id: `${provider.id}/${model}`,
       label: model,
@@ -151,14 +156,16 @@ export function HarnessPicker({
 }) {
   const harness = findHarness(catalog, value)
   const text = harness?.name ?? '选择 Harness'
-  if (catalog.harnesses.length <= 1 && harness?.status === 'ready') return <StaticChip icon={Bot} text={text} label={`Harness：${text}`} />
+  const tile = harness ? <HarnessTile harness={harness} size={16} /> : undefined
+  if (catalog.harnesses.length <= 1 && harness?.status === 'ready')
+    return <StaticChip icon={Bot} leading={tile} text={text} label={`Harness：${text}`} />
   return (
     <Menu
       label="选择 Harness"
       selection
       placement="top-start"
       sections={harnessSections(catalog, value, onChange, access)}
-      trigger={props => <ChipButton icon={Bot} text={text} label={`Harness：${text}`} trigger={props} disabled={disabled} />}
+      trigger={props => <ChipButton icon={Bot} leading={tile} text={text} label={`Harness：${text}`} trigger={props} disabled={disabled} />}
     />
   )
 }
@@ -188,6 +195,7 @@ export function ModelPicker({
   pending?: PendingModel
 }) {
   const text = value ? (pending ? pendingModelText(value.model) : value.model) : '选择模型'
+  const provider = value ? catalog.providers.find(item => item.id === value.providerId) : undefined
   const footer =
     pending || onManage
       ? (close: () => void) => (
@@ -227,6 +235,7 @@ export function ModelPicker({
       trigger={props => (
         <ChipButton
           icon={Sparkles}
+          leading={provider ? <ProviderTile provider={provider} size={16} /> : undefined}
           text={text}
           label={pending && value ? `下一条消息使用：${value.model}` : `模型：${text}`}
           trigger={props}
@@ -281,11 +290,11 @@ export function ModeSwitch({
   disabled?: boolean
 }) {
   return (
-    <Segmented
+    <SegmentedControl
       label="会话模式"
       value={value}
       disabled={disabled}
-      onChange={onChange}
+      onValueChange={onChange}
       className="mode-switch"
       options={[
         {
@@ -368,7 +377,12 @@ export function RadioList({ label, sections }: { label: string; sections: MenuSe
         .filter(section => section.items.length)
         .map(section => (
           <div key={section.id} className="radio-section">
-            {section.label && <div className="menu-section-label">{section.label}</div>}
+            {section.label && (
+              <div className="menu-section-label">
+                {section.leading}
+                {section.label}
+              </div>
+            )}
             {section.items.map(item => (
               <button
                 key={item.id}
@@ -378,16 +392,9 @@ export function RadioList({ label, sections }: { label: string; sections: MenuSe
                 disabled={item.disabled}
                 className="menu-item"
                 onClick={item.onSelect}>
-                <span className="menu-item-text">
-                  <span className="menu-item-label">
-                    {item.label}
-                    {item.tag}
-                  </span>
-                  {(item.disabled ? item.disabledReason : item.description) && (
-                    <span className="menu-item-description">{item.disabled ? item.disabledReason : item.description}</span>
-                  )}
-                </span>
-                {item.checked && <Check className="menu-item-check" size={16} strokeWidth={ICON_STROKE} aria-hidden="true" />}
+                {item.leading && <span className="menu-item-leading">{item.leading}</span>}
+                <MenuItemText item={item} />
+                {item.checked && <Check className="menu-item-check" size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />}
               </button>
             ))}
           </div>
@@ -456,9 +463,9 @@ export function RunSettingsSheet({
         onClick={() => {
           setOpen(true)
         }}>
-        <SlidersHorizontal size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />
+        <SlidersHorizontal size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
         <span className="chip-text">{summary}</span>
-        <ChevronDown className="chip-chevron" size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />
+        <ChevronsUpDown className="chip-chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
       </button>
       {open && (
         <Modal

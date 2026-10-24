@@ -1,12 +1,20 @@
-@import './tokens.css';
-@import './base.css';
-@import './layout.css';
-@import './sidebar.css';
-@import './messages.css';
-@import './markdown.css';
-@import './tool-card.css';
-@import './composer.css';
-@import './overlays.css';
-@import './settings.css';
-@import './auth.css';
-@import './security.css';
+/*
+ * Stylesheet entry. @latch/ui/tokens.css declares the cascade layers and fills the first one; @latch/ui/ui.css fills
+ * base (element defaults) and ui (the design system's primitives); every file of this page goes into the layer named
+ * here. A later layer wins over an earlier one whatever the selectors' specificity: tokens, base, ui (with ./ui.css,
+ * the page's shared pieces that are not primitives yet), app (the page's own surfaces), and security (enrollment,
+ * device, permission and confirmation surfaces), which nothing before it can restyle.
+ */
+@import '@latch/ui/tokens.css';
+@import '@latch/ui/ui.css';
+@import './ui.css' layer(ui);
+@import './layout.css' layer(app);
+@import './sidebar.css' layer(app);
+@import './messages.css' layer(app);
+@import './markdown.css' layer(app);
+@import './tool-card.css' layer(app);
+@import './composer.css' layer(app);
+@import './overlays.css' layer(app);
+@import './settings.css' layer(app);
+@import './auth.css' layer(security);
+@import './security.css' layer(security);

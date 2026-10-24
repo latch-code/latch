@@ -1,0 +1,505 @@
+/*
+ * Layers pinned to a trigger (menus, pickers, popovers): the raised surface with the float shadow, 12px corners and
+ * 4px inside, at least 220 wide, 6px from the trigger. They live in the top layer, so no scrolling list or dialog
+ * clips them. Opening moves them 4px in from the trigger's side while fading in over 180ms; closing only fades, over
+ * 120ms. A dot or count inside is cut out in the raised colour.
+ */
+.ui-popover {
+  --surface: var(--bg-raised);
+  position: fixed;
+  inset: auto;
+  min-width: 220px;
+  max-width: calc(100vw - 16px);
+  margin: 0;
+  padding: var(--sp-4);
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 0;
+  border-radius: var(--r-12);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-raised);
+  color: var(--text-1);
+  box-shadow: var(--sh-float);
+  opacity: 0;
+  transition:
+    opacity var(--d-fast) var(--ease-exit),
+    display var(--d-fast) allow-discrete,
+    overlay var(--d-fast) allow-discrete;
+}
+.ui-popover:popover-open {
+  opacity: 1;
+  translate: 0 0;
+  transition:
+    opacity var(--d-base) var(--ease),
+    translate var(--d-base) var(--ease),
+    display var(--d-base) allow-discrete,
+    overlay var(--d-base) allow-discrete;
+}
+@starting-style {
+  .ui-popover:popover-open {
+    opacity: 0;
+    translate: 0 -4px;
+  }
+  .ui-popover[data-side='top']:popover-open {
+    translate: 0 4px;
+  }
+}
+.ui-popover:focus-visible {
+  outline: none;
+}
+/* The same surface drawn in place, without a trigger (a sheet of the design system). */
+.ui-popover:not([popover]) {
+  position: relative;
+  display: inline-block;
+  opacity: 1;
+}
+/* A searchable picker: the search row spans the layer's width and the list keeps the 4px inside. */
+.ui-popover:has(> .ui-menu-search) {
+  padding: 0;
+}
+.ui-popover:has(> .ui-menu-search) > .ui-menu {
+  padding: var(--sp-4);
+}
+
+.ui-menu {
+  display: grid;
+  min-width: 212px;
+}
+.ui-menu-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-8);
+  min-height: 28px;
+  padding: 0 var(--sp-8);
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
+}
+.ui-menu-header-meta {
+  font-weight: 400;
+}
+.ui-menu-section {
+  display: grid;
+}
+.ui-menu-section-label {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 var(--sp-8);
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
+}
+.ui-menu-separator {
+  height: 1px;
+  margin: var(--sp-4) var(--sp-8);
+  background: var(--line-subtle);
+}
+
+/*
+ * Items: 32px (48 with a description), radius 8 (the layer's 12 minus its 4px inside), a 16px leading slot (the
+ * accent check of the chosen value, or an action's glyph), the label (400; 500 when chosen), and one trailing element.
+ * The highlight is instant. A disabled item dims its slot, label and description; the reason under it stays readable.
+ */
+.ui-menu-item {
+  /* The height of the title's line, on which a two-line item keeps its check and its trailing element. */
+  --item-line: var(--lh-label);
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  column-gap: var(--sp-8);
+  align-items: center;
+  width: 100%;
+  min-height: 32px;
+  padding: 0 var(--sp-8);
+  border: 0;
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
+  background: transparent;
+  color: var(--text-1);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+  font-weight: 400;
+  text-align: start;
+}
+.ui-menu-item[data-two-line] {
+  align-items: start;
+  min-height: 48px;
+  padding: var(--sp-6) var(--sp-8);
+}
+/* The check (or glyph) and the trailing element sit on the title's line, not between the title and the description. */
+.ui-menu-item[data-two-line] > :is(.ui-menu-item-lead, .ui-menu-item-meta) {
+  display: grid;
+  place-items: center;
+  height: var(--item-line);
+}
+.ui-menu-item:hover,
+.ui-menu-item:focus-visible {
+  background: var(--bg-hover);
+}
+.ui-menu-item:focus-visible {
+  outline: none;
+  box-shadow: var(--ring-focus-inset);
+}
+.ui-menu-item:active:not([aria-disabled='true']) {
+  background: var(--bg-press);
+}
+.ui-menu-item[aria-disabled='true']:hover {
+  background: transparent;
+}
+.ui-menu-item-lead {
+  display: grid;
+  place-items: center;
+  color: var(--icon);
+}
+/* A glyph is the icon colour at rest and text-1 while its item is hovered, highlighted or pressed. */
+.ui-menu-item:is(:hover, :focus-visible, :active):not([aria-disabled='true'], [data-danger]) .ui-menu-item-lead {
+  color: var(--text-1);
+}
+.ui-menu-check {
+  color: var(--accent);
+}
+.ui-menu-item-text {
+  display: grid;
+  min-width: 0;
+}
+.ui-menu-item-label {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+}
+.ui-menu-item-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ui-menu-item[aria-checked='true'] .ui-menu-item-title {
+  font-weight: 500;
+}
+.ui-menu-item-description {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ui-menu-item-reason {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  margin-top: var(--sp-4);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.ui-menu-item-reason > .ui-icon {
+  color: var(--icon);
+}
+.ui-menu-item[aria-disabled='true'] :is(.ui-menu-item-lead, .ui-menu-item-label, .ui-menu-item-description) {
+  opacity: 0.45;
+}
+.ui-menu-item-meta {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-variant-numeric: tabular-nums;
+}
+.ui-menu-item[data-danger] {
+  color: var(--err-text);
+}
+/* A glyph next to text takes the text's colour, so a destructive item reads as one red line. */
+.ui-menu-item[data-danger] .ui-menu-item-lead {
+  color: var(--err-text);
+}
+
+/*
+ * The footer row under a separator, 32px on the items' grid so its text starts on their titles' column: a link to where
+ * the setting lives (13/18 text-1, an empty leading slot, chevron-right at the end), or a note (12/16 text-3) with its
+ * lock centred in the leading slot.
+ */
+.ui-menu-footer {
+  display: grid;
+}
+.ui-menu-footer-link,
+.ui-menu-footer-note {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  column-gap: var(--sp-8);
+  align-items: center;
+  min-height: 32px;
+  padding: 0 var(--sp-8);
+}
+.ui-menu-footer-note {
+  grid-template-columns: 16px minmax(0, 1fr);
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.ui-menu-footer-link {
+  width: 100%;
+  border: 0;
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
+  background: transparent;
+  color: var(--text-1);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+  font-weight: 400;
+  text-align: start;
+}
+.ui-menu-footer-link:hover,
+.ui-menu-footer-link:focus-visible {
+  background: var(--bg-hover);
+}
+.ui-menu-footer-link:active {
+  background: var(--bg-press);
+}
+.ui-menu-footer-link:focus-visible {
+  outline: none;
+  box-shadow: var(--ring-focus-inset);
+}
+.ui-menu-footer-text {
+  min-width: 0;
+}
+.ui-menu-footer-link > .ui-icon,
+.ui-menu-footer-note > .ui-icon {
+  justify-self: center;
+  color: var(--icon);
+}
+.ui-menu-footer-link:is(:hover, :focus-visible, :active) > .ui-icon {
+  color: var(--text-1);
+}
+
+/* The search row of a long picker: 36px, no field of its own, a subtle line under it. */
+.ui-menu-search {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-raised);
+  box-shadow: inset 0 -1px 0 var(--line-subtle);
+}
+.ui-menu-search > input {
+  width: 100%;
+  height: 36px;
+  padding: 0 var(--sp-12);
+  border: 0;
+  background: transparent;
+  color: var(--text-1);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+  outline: none;
+}
+.ui-menu-search > input::placeholder {
+  color: var(--text-3);
+}
+.ui-menu-search > input::-webkit-search-cancel-button {
+  display: none;
+}
+
+/*
+ * Value picker: a ghost control that shows the current value (13/18·400, text-2) and ends in chevrons-up-down, the
+ * three 6 apart. Hover and an open menu darken it and turn the value to text-1. One possible value is plain text
+ * without an arrow. The value fades in over 120ms when it changes (the component animates it); 「等待验证…」 takes its
+ * place while a raise is verified, without moving the arrow.
+ */
+.ui-value-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+  max-width: 100%;
+  height: 28px;
+  padding: 0 var(--sp-8);
+  border: 0;
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+  font-weight: 400;
+  white-space: nowrap;
+  transition:
+    background-color var(--d-fast) var(--ease-exit),
+    color var(--d-fast) var(--ease-exit);
+}
+.ui-value-picker[data-leading] {
+  padding-inline-start: var(--sp-6);
+}
+.ui-value-picker:not([data-static], [aria-disabled='true']):hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
+  transition-duration: 0s;
+}
+.ui-value-picker[aria-expanded='true'],
+.ui-value-picker:not([data-static], [aria-disabled='true']):active {
+  background: var(--bg-press);
+  color: var(--text-1);
+}
+.ui-value-picker[aria-disabled='true'] {
+  opacity: 0.45;
+}
+/* The leading slot is at least 14 wide, so the 12px spinner of a pending value takes the place of a glyph exactly. */
+.ui-value-picker-lead {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  min-width: 14px;
+  color: var(--icon);
+}
+.ui-value-picker-lead.ui-spinner {
+  color: var(--text-2);
+}
+.ui-value-picker-risk {
+  color: var(--warn-text);
+}
+.ui-value-picker-chevron {
+  color: var(--icon);
+}
+/*
+ * The value starts right after the leading slot (or the picker's edge), so a column of values lines up. A toolbar
+ * picker that reserves room for 「等待验证…」 leaves the spare width after the value, before the arrow.
+ */
+.ui-value-picker-value {
+  display: grid;
+  justify-items: start;
+  min-width: 0;
+  text-align: start;
+}
+.ui-value-picker-text {
+  grid-area: 1 / 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ui-value-picker-text:not([data-shown]) {
+  display: none;
+}
+.ui-value-picker-value[data-reserve] > .ui-value-picker-text:not([data-shown]) {
+  display: block;
+  visibility: hidden;
+}
+.ui-value-picker[data-placeholder] .ui-value-picker-text,
+.ui-value-picker-text[data-pending] {
+  color: var(--text-3);
+}
+.ui-value-picker[data-size='xs'] {
+  height: 24px;
+  padding: 0 var(--sp-6);
+  border-radius: var(--r-6);
+  corner-shape: var(--corner-shape);
+}
+.ui-value-picker[data-chevron='hover'] > .ui-value-picker-chevron {
+  opacity: 0;
+}
+.ui-value-picker[data-chevron='hover']:is(:hover, :focus-visible, [aria-expanded='true']) > .ui-value-picker-chevron {
+  opacity: 1;
+}
+/* Reaching past the column keeps the value (or, at the end of a settings row, the arrow) on the column's edge. */
+.ui-value-picker[data-bleed='end'] {
+  margin-inline-end: calc(-1 * var(--bleed));
+  padding-inline-end: var(--bleed);
+}
+.ui-value-picker[data-bleed='both'] {
+  margin-inline: calc(-1 * var(--bleed));
+  padding-inline: var(--bleed);
+}
+/*
+ * The phone row of a settings sheet: the label in text-1, the value in text-3, a 16px arrow; 48px tall. Rows that
+ * follow one another in a card are parted by a line-subtle hairline that starts at the text, never at the card's edge.
+ */
+.ui-value-picker[data-variant='row'] {
+  position: relative;
+  width: 100%;
+  height: 48px;
+  padding: 0 var(--sp-16);
+  border-radius: 0;
+  color: var(--text-3);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.ui-value-picker[data-variant='row'] ~ .ui-value-picker[data-variant='row']::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: var(--sp-16);
+  height: 1px;
+  background: var(--line-subtle);
+}
+.ui-value-row-label {
+  flex: 1;
+  color: var(--text-1);
+  text-align: start;
+}
+/* In a phone row the value ends 6 before the arrow, so the values of a card share their right edge. */
+.ui-value-picker[data-variant='row'] .ui-value-picker-value {
+  justify-items: end;
+  text-align: end;
+}
+@media (pointer: coarse) {
+  .ui-value-picker:not([data-variant='row']) {
+    position: relative;
+  }
+  .ui-value-picker:not([data-variant='row'], [data-static])::before {
+    content: '';
+    position: absolute;
+    inset: calc((100% - 44px) / 2) 0;
+  }
+}
+
+/* Pickers as bottom sheets on phones: each group of choices is a card, with its heading above it. */
+.ui-sheet-group {
+  display: grid;
+  gap: var(--sp-8);
+}
+.ui-sheet-group + .ui-sheet-group {
+  margin-top: var(--sp-24);
+}
+.ui-sheet-group-label {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-8);
+  padding: 0 var(--sp-16);
+  color: var(--text-2);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+  font-weight: 500;
+}
+/* The menu header's meta (「goose · MacBook Pro」) at the heading's end, as in the menu. */
+.ui-sheet-group-meta {
+  color: var(--text-3);
+  font-weight: 400;
+}
+.ui-sheet-footer {
+  margin-top: var(--sp-8);
+  padding: 0 var(--sp-16);
+}
+/*
+ * Under a single-choice list the note follows the list's columns (past the card's 1px edge): the lock under the radios,
+ * the text on the titles.
+ */
+.ui-sheet-footer > .ui-menu-footer-note {
+  column-gap: var(--sp-12);
+  padding: 0 0 0 1px;
+}
+.ui-sheet-body > .ui-menu {
+  --surface: var(--bg-pane);
+  min-width: 0;
+  padding: var(--sp-4);
+  border-radius: var(--r-12);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-pane);
+}
+.ui-sheet-body .ui-menu-item {
+  --item-line: var(--lh-ui);
+  min-height: 48px;
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.ui-sheet-body .ui-menu-item[data-two-line] {
+  min-height: 64px;
+}

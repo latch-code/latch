@@ -2,8 +2,8 @@ import type { ReactNode } from 'react'
 import { BookOpenText, FileCheck, PlugZap, Timer, TriangleAlert } from 'lucide-react'
 import type { TaskMode } from '@latch/protocol'
 import type { StartBlock } from '../composerChoice.ts'
-import { ICON_STROKE, type LucideIcon } from '../icons.tsx'
-import { Badge, BrandMark } from './ui.tsx'
+import { Badge, Button, ICON_STROKE, type LucideIcon } from '@latch/ui'
+import { BrandMark } from './ui.tsx'
 
 interface Suggestion {
   title: string
@@ -26,7 +26,7 @@ export function SetupCard({ block, owner, onSetup }: { block: StartBlock; owner:
   return (
     <div className="setup-card" role="status">
       <span className="setup-card-icon" aria-hidden="true">
-        {model ? <PlugZap size={18} strokeWidth={ICON_STROKE} /> : <TriangleAlert size={18} strokeWidth={ICON_STROKE} />}
+        {model ? <PlugZap size={16} strokeWidth={ICON_STROKE[16]} /> : <TriangleAlert size={16} strokeWidth={ICON_STROKE[16]} />}
       </span>
       <div className="setup-card-text">
         <strong>{model ? '连接模型服务' : 'Harness 暂不可用'}</strong>
@@ -35,9 +35,9 @@ export function SetupCard({ block, owner, onSetup }: { block: StartBlock; owner:
         </p>
       </div>
       {owner && (
-        <button type="button" className="button primary" onClick={onSetup}>
+        <Button variant="primary" onClick={onSetup}>
           {model ? '添加模型服务' : '打开设置'}
-        </button>
+        </Button>
       )}
     </div>
   )
@@ -76,7 +76,7 @@ export function NewSession({
                 onClick={() => {
                   onSuggestion(item.prompt)
                 }}>
-                <item.icon size={20} strokeWidth={ICON_STROKE} aria-hidden="true" />
+                <item.icon size={20} strokeWidth={ICON_STROKE[20]} aria-hidden="true" />
                 <span className="suggestion-title">
                   {item.title}
                   <Badge tone="warn">演示</Badge>

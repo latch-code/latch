@@ -1,0 +1,20 @@
+/*
+ * The design system's stylesheet, loaded after tokens.css (which declares the cascade layers): element defaults in the
+ * base layer, then each primitive in the ui layer. A page's own styles come later, in the app and security layers.
+ */
+@import './base.css' layer(base);
+@import './styles/icon.css' layer(ui);
+@import './styles/button.css' layer(ui);
+@import './styles/pill.css' layer(ui);
+@import './styles/field.css' layer(ui);
+@import './styles/switch.css' layer(ui);
+@import './styles/segmented.css' layer(ui);
+@import './styles/tabs.css' layer(ui);
+@import './styles/choice.css' layer(ui);
+@import './styles/menu.css' layer(ui);
+@import './styles/dialog.css' layer(ui);
+@import './styles/notice.css' layer(ui);
+@import './styles/state.css' layer(ui);
+@import './styles/tile.css' layer(ui);
+@import './styles/live.css' layer(ui);
+@import './styles/resize.css' layer(ui);

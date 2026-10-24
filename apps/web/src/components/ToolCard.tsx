@@ -3,10 +3,10 @@ import { ChevronRight, LockKeyhole, ShieldAlert } from 'lucide-react'
 import type { Approval, FileDiff, Message, ToolDetail } from '@latch/protocol'
 import { previousState } from '../diff.ts'
 import { argumentView, relativeTime } from '../format.ts'
-import { ICON_STROKE, Spinner, toolKind, toolKindIcons, toolStateIcons } from '../icons.tsx'
+import { toolKind, toolKindIcons, toolStateIcons } from '../icons.tsx'
 import { approvalActions, type ApprovalGate } from '../core/permissions.ts'
 import { DiffView, PREVIOUS_NOTES } from './DiffView.tsx'
-import { Badge } from './ui.tsx'
+import { Button, ICON_STROKE, StatusGlyph, StatusPill, StatusWords, WaitingPill } from '@latch/ui'
 import { hasHiddenCharacters, VisibleText } from './VisibleText.tsx'
 
 type ToolState = NonNullable<Message['state']>
@@ -85,6 +85,9 @@ function ApprovalPanel({
       || Number(a.kind === 'allow_once') - Number(b.kind === 'allow_once'),
   )
   const hidden = approvalHidesText(approval, title, diffs)
+  // The gate's high-risk path (R2, or a current Host that sent no risk). Its card carries no blue: allowing opens the
+  // local confirmation, which is where the strong visual belongs.
+  const highRisk = gate.badge?.tone === 'err'
   // One line per kind of previous content the reviewer cannot see.
   const previousNotes = (['unavailable', 'unknown'] as const)
     .filter(state => diffs.some(diff => previousState(diff) === state))
@@ -96,9 +99,9 @@ function ApprovalPanel({
       data-risk={approval.advisory ? 'advisory' : approval.risk}
       aria-label="待批准操作">
       <div className="approval-heading">
-        <ShieldAlert size={16} strokeWidth={ICON_STROKE} aria-hidden="true" />
+        <ShieldAlert size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
         <span>需要你批准</span>
-        {gate.badge && <Badge tone={gate.badge.tone}>{gate.badge.label}</Badge>}
+        {gate.badge && <StatusPill tone={gate.badge.tone}>{gate.badge.label}</StatusPill>}
         <time dateTime={approval.requestedAt}>{relativeTime(approval.requestedAt)}</time>
       </div>
       {gate.note && <p className="approval-note">{gate.note}</p>}
@@ -121,7 +124,7 @@ function ApprovalPanel({
       <DiffView diffs={diffs} />
       {gate.hint && (
         <p className="approval-hint">
-          <LockKeyhole size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />
+          <LockKeyhole size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
           {gate.hint}
         </p>
       )}
@@ -131,17 +134,17 @@ function ApprovalPanel({
           const pressed = busy === option.id
           // Hidden characters leave no allow option as the default-looking choice.
           return (
-            <button
+            <Button
               key={option.id}
-              type="button"
-              className={`button ${option.kind === 'allow_once' && !hidden ? 'primary' : 'secondary'}`}
-              disabled={busy !== undefined}
+              variant={option.kind === 'allow_once' && !hidden && !highRisk ? 'primary' : 'secondary'}
+              icon={highRisk && allow ? LockKeyhole : undefined}
+              loading={pressed}
+              disabled={busy !== undefined && !pressed}
               onClick={() => {
                 onDecide(approval, allow ? 'allow' : 'reject', gate.explicit ? option.id : undefined)
               }}>
-              {pressed && <Spinner size={14} />}
               {option.label}
-            </button>
+            </Button>
           )
         })}
       </div>
@@ -199,11 +202,12 @@ export const ToolCard = memo(
     // While an approval is open its panel shows the arguments and diff; the body adds only output.
     const showOutput = message !== null && state !== 'awaiting-approval' && state !== 'queued'
     const hasBody = !approval || showOutput
+    // A state change the page saw happen: the comet and the result icon cross-fade and the state's words rise in.
     const heading = (
       <>
-        <span className="tool-card-icon" aria-hidden="true">
-          {state === 'running' ? <Spinner size={16} /> : <KindIcon size={16} strokeWidth={ICON_STROKE} />}
-        </span>
+        <StatusGlyph className="tool-card-icon" running={state === 'running'} size={14}>
+          <KindIcon size={16} strokeWidth={ICON_STROKE[16]} />
+        </StatusGlyph>
         <span className="tool-card-title">
           <VisibleText text={title} />
         </span>
@@ -212,10 +216,16 @@ export const ToolCard = memo(
             <VisibleText text={toolName} />
           </code>
         )}
-        <span className={`tool-card-state state-${state}`}>
-          {state !== 'running' && state !== 'completed' && <StateIcon size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />}
-          {stateLabels[state]}
-        </span>
+        <StatusWords state={state} className={`tool-card-state state-${state}`}>
+          {state === 'awaiting-approval' ? (
+            <WaitingPill className="tool-card-waiting">{stateLabels[state]}</WaitingPill>
+          ) : (
+            <>
+              {state !== 'running' && state !== 'completed' && <StateIcon size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />}
+              {stateLabels[state]}
+            </>
+          )}
+        </StatusWords>
       </>
     )
     const risk =
@@ -231,6 +241,7 @@ export const ToolCard = memo(
     return (
       <article
         className={`tool-card tool-${state} ${approval ? 'has-approval' : ''}${risk}`}
+        data-tint={risk === ' is-r2' ? 'err' : undefined}
         {...(message ? { 'data-message-id': message.id } : {})}>
         {hasBody ? (
           <button
@@ -242,7 +253,7 @@ export const ToolCard = memo(
               setExpanded(!expanded)
             }}>
             {heading}
-            <ChevronRight className="chevron" size={16} strokeWidth={ICON_STROKE} aria-hidden="true" />
+            <ChevronRight className="chevron" size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
           </button>
         ) : (
           <div className="tool-card-header">{heading}</div>

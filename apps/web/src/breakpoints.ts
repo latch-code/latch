@@ -51,3 +51,20 @@ const currentCoarse = () => typeof window !== 'undefined' && !!window.matchMedia
 export function useCoarsePointer(): boolean {
   return useSyncExternalStore(subscribeCoarse, currentCoarse, () => false)
 }
+
+function subscribeWidth(changed: () => void) {
+  if (typeof window === 'undefined') return () => {}
+  window.addEventListener('resize', changed)
+  return () => {
+    window.removeEventListener('resize', changed)
+  }
+}
+
+/** The window's width in CSS pixels, for layouts that clamp a column against it. */
+export function useWindowWidth(): number {
+  return useSyncExternalStore(
+    subscribeWidth,
+    () => (typeof window === 'undefined' ? 1440 : window.innerWidth),
+    () => 1440,
+  )
+}

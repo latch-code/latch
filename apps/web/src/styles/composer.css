@@ -1,6 +1,6 @@
 .composer-stack {
   display: grid;
-  gap: 8px;
+  gap: var(--sp-8);
   width: 100%;
   max-width: var(--content-width);
   margin: 0 auto;
@@ -9,10 +9,11 @@
 .pending-submission {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
+  gap: var(--sp-12);
+  padding: var(--sp-8) var(--sp-12);
   border: 1px solid var(--warn-border);
-  border-radius: var(--r-md);
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
   background: var(--warn-bg);
   font-size: var(--fs-label);
   line-height: var(--lh-label);
@@ -23,7 +24,7 @@
 }
 .pending-submission strong {
   color: var(--warn-text);
-  font-weight: 600;
+  font-weight: 500;
 }
 .pending-submission p {
   overflow: hidden;
@@ -32,30 +33,29 @@
   color: var(--text-2);
 }
 
+/* The composer floats on its own shadow; with focus inside, its ring darkens to line-strong instead of turning blue. */
 .composer {
   position: relative;
   min-width: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--r-xl);
+  border-radius: var(--r-16);
+  corner-shape: var(--corner-shape);
   background: var(--bg-raised);
-  box-shadow: var(--sh-2);
-  transition:
-    border-color var(--d-fast),
-    box-shadow var(--d-fast);
+  box-shadow: var(--sh-composer);
+  transition: box-shadow var(--d-fast) var(--ease-exit);
 }
 .composer:focus-within {
-  border-color: var(--accent);
-  box-shadow: var(--sh-2), var(--ring);
+  box-shadow: var(--sh-composer-focus);
 }
 
 .run-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-8);
   min-height: 32px;
-  padding: 0 12px 0 14px;
-  border-bottom: 1px solid var(--border-subtle);
-  border-radius: var(--r-xl) var(--r-xl) 0 0;
+  padding: 0 var(--sp-8) 0 var(--sp-12);
+  border-bottom: 1px solid var(--line-subtle);
+  border-radius: var(--r-16) var(--r-16) 0 0;
+  corner-shape: var(--corner-shape);
   background: var(--bg-sunken);
   color: var(--text-2);
   font-size: var(--fs-caption);
@@ -74,7 +74,7 @@
   font-weight: 500;
 }
 .run-bar.is-waiting > svg {
-  color: var(--warn-solid);
+  color: var(--warn-text);
   flex-shrink: 0;
 }
 .run-bar-time {
@@ -86,32 +86,34 @@
 .run-bar-action {
   margin-left: auto;
   min-height: 28px;
-  padding: 0 4px;
+  padding: 0 var(--sp-4);
   border: 0;
   background: none;
   color: inherit;
   font-size: var(--fs-caption);
-  font-weight: 600;
+  line-height: var(--lh-caption);
+  font-weight: 500;
   text-decoration: underline;
   text-underline-offset: 3px;
 }
 @media (pointer: coarse) {
   .run-bar-action {
     min-height: 36px;
-    padding: 0 8px;
+    padding: 0 var(--sp-8);
   }
 }
 
 .composer textarea {
   display: block;
   width: 100%;
-  min-height: calc(var(--lh-body) + 20px);
+  min-height: calc(var(--lh-body) + 16px);
   max-height: 292px;
-  padding: 14px 16px 6px;
+  padding: var(--sp-12) var(--sp-16) var(--sp-4);
   overflow-y: auto;
   resize: none;
   border: 0;
-  border-radius: var(--r-xl);
+  border-radius: var(--r-16);
+  corner-shape: var(--corner-shape);
   background: transparent;
   color: var(--text-1);
   font-size: var(--fs-body);
@@ -122,10 +124,10 @@
   border-radius: 0;
 }
 .composer-new textarea {
-  min-height: calc(var(--lh-body) * 3 + 20px);
+  min-height: calc(var(--lh-body) * 3 + 16px);
 }
 .composer textarea::placeholder {
-  color: var(--text-disabled);
+  color: var(--text-3);
 }
 .composer textarea:disabled {
   color: var(--text-2);
@@ -134,19 +136,20 @@
 .composer-toolbar {
   display: flex;
   align-items: flex-end;
-  gap: 8px;
+  gap: var(--sp-8);
   min-height: 44px;
-  padding: 4px 8px 8px 10px;
+  padding: var(--sp-4) var(--sp-8) var(--sp-8);
 }
 .composer-controls {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 6px;
+  gap: var(--sp-4) var(--sp-6);
   flex: 1;
   min-width: 0;
 }
 
+/* Send is the composer's one blue action; when there is nothing to send it falls back to a neutral fill. */
 .send-button {
   display: grid;
   place-items: center;
@@ -159,37 +162,59 @@
   background: var(--accent);
   color: var(--on-accent);
   transition:
-    background-color var(--d-fast),
-    color var(--d-fast);
+    background-color var(--d-fast) var(--ease-exit),
+    color var(--d-fast) var(--ease-exit);
 }
 .send-button:hover:not(:disabled) {
   background: var(--accent-hover);
+  transition-duration: 0s;
+}
+.send-button:active:not(:disabled) {
+  background: var(--accent-press);
 }
 .send-button:disabled {
-  background: var(--bg-hover);
-  color: var(--text-disabled);
+  background: var(--fill);
+  color: var(--text-3);
 }
-.send-button .spin {
+.send-button .ui-spinner {
   color: currentColor;
 }
+/* Stopping is not a risk, so the stop button is never red. */
 .stop-button {
-  border: 1px solid var(--border-strong);
-  background: var(--bg-pane);
+  background: var(--bg-raised);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
   color: var(--text-1);
 }
 .stop-button:hover:not(:disabled) {
-  border-color: var(--err-border);
-  background: var(--err-bg);
-  color: var(--err-text);
+  background: linear-gradient(var(--bg-hover), var(--bg-hover)) var(--bg-raised);
+  color: var(--text-1);
+}
+.stop-button:active:not(:disabled) {
+  background: linear-gradient(var(--bg-press), var(--bg-press)) var(--bg-raised);
 }
 .stop-button:disabled {
-  background: var(--bg-pane);
+  background: var(--bg-raised);
   color: var(--text-3);
 }
+/* Stop is a filled 10×10 square with a 2px radius, not a stroked glyph. */
+.stop-glyph {
+  width: 10px;
+  height: 10px;
+  border-radius: var(--r-2);
+  background: currentColor;
+}
+/* On touch the send and stop buttons draw a 36px circle inside a 44px hit box (the pseudo-element is part of the
+ * button), so the toolbar keeps its height and neighbouring boxes do not overlap. */
 @media (pointer: coarse) {
   .send-button {
-    width: 40px;
-    height: 40px;
+    position: relative;
+    width: 36px;
+    height: 36px;
+  }
+  .send-button::after {
+    content: '';
+    position: absolute;
+    inset: -4px;
   }
 }
 
@@ -198,12 +223,19 @@
 }
 @media (max-width: 767.98px) {
   .composer-dock .composer-stack {
-    gap: 6px;
+    gap: var(--sp-6);
   }
+  /* Phones type in the input role (16/24), which also keeps iOS from zooming on focus. */
   .composer textarea {
-    padding: 12px 14px 4px;
+    min-height: calc(var(--lh-input) + 16px);
+    padding: var(--sp-12) var(--sp-12) var(--sp-4);
+    font-size: var(--fs-input);
+    line-height: var(--lh-input);
+  }
+  .composer-new textarea {
+    min-height: calc(var(--lh-input) * 3 + 16px);
   }
   .composer-toolbar {
-    padding: 2px 6px 6px 8px;
+    padding: var(--sp-2) var(--sp-6) var(--sp-6) var(--sp-8);
   }
 }

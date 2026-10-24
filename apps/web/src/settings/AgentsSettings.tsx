@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { ChevronLeft, CircleAlert, CircleCheck, ExternalLink, LockKeyhole, Plus, Terminal, X } from 'lucide-react'
+import { ChevronLeft, CircleAlert, CircleCheck, ExternalLink, LockKeyhole, Plus, X } from 'lucide-react'
 import type { AgentSettings, AppSnapshot, AgentPreset } from '@latch/protocol'
 import { api, errorMessage, inlineError } from '../core/api.ts'
 import { withConfirmation } from '../core/confirmations.ts'
 import { LEVEL_LABELS, type DeviceAccess } from '../core/permissions.ts'
 import { LOCAL_ONLY_TEXT } from '../core/securityCopy.ts'
-import { ICON_STROKE, Spinner } from '../icons.tsx'
 import { ConfirmDialog } from '../components/overlays.tsx'
-import { Badge, CopyButton, InlineAlert, Switch } from '../components/ui.tsx'
-import { Avatar, Loading, SectionHeading } from './common.tsx'
+import { Badge, Button, ButtonLink, ICON_STROKE, IconButton, InlineNotice, StatusPill, Switch } from '@latch/ui'
+import { CopyButton } from '../components/ui.tsx'
+import { HarnessTile } from '../components/BrandTile.tsx'
+import { Loading, SectionHeading } from './common.tsx'
 
 interface AgentsResponse {
   agents: AgentSettings[]
@@ -102,12 +103,15 @@ function AgentEditor({
         void save(event)
       }}>
       <div className="editor-heading">
-        <Avatar name={name || '?'} />
+        <HarnessTile
+          harness={{ id: agent?.id ?? preset?.id ?? '', source: 'acp', presetId: agent ? agent.presetId : preset?.id }}
+          size={32}
+        />
         <div>
           <h4>{agent ? `编辑 ${agent.name}` : preset ? `添加 ${preset.name}` : '自定义 Agent'}</h4>
           <span>通过 ACP 在本机启动</span>
         </div>
-        <Switch label="启用" checked={enabled} onChange={setEnabled} />
+        <Switch label="启用" checked={enabled} onCheckedChange={setEnabled} />
       </div>
       <div className="form-grid">
         <label className="field">
@@ -151,7 +155,7 @@ function AgentEditor({
       </div>
       {!definable && (
         <p className="settings-hint">
-          <LockKeyhole size={12} strokeWidth={ICON_STROKE} aria-hidden="true" /> 启动命令、参数和环境变量：{LOCAL_ONLY_TEXT}。
+          <LockKeyhole size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" /> 启动命令、参数和环境变量：{LOCAL_ONLY_TEXT}。
         </p>
       )}
       {definable && (
@@ -169,14 +173,13 @@ function AgentEditor({
               <li key={key} className={removed.includes(key) ? 'is-removed' : ''}>
                 <code>{key}</code>
                 <span>{removed.includes(key) ? '保存后移除' : '已设置'}</span>
-                <button
-                  type="button"
-                  className="text-button"
+                <Button
+                  variant="link"
                   onClick={() => {
                     setRemoved(previous => (previous.includes(key) ? previous.filter(item => item !== key) : [...previous, key]))
                   }}>
                   {removed.includes(key) ? '撤销' : '移除'}
-                </button>
+                </Button>
               </li>
             ))}
             {added.map((item, index) => (
@@ -202,39 +205,35 @@ function AgentEditor({
                     setAdded(previous => previous.map((entry, i) => (i === index ? { ...entry, value } : entry)))
                   }}
                 />
-                <button
-                  type="button"
-                  className="icon-button"
-                  aria-label="删除此变量"
+                <IconButton
+                  label="删除此变量"
+                  icon={X}
                   onClick={() => {
                     setAdded(previous => previous.filter((_, i) => i !== index))
-                  }}>
-                  <X size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />
-                </button>
+                  }}
+                />
               </li>
             ))}
           </ul>
-          <button
-            type="button"
-            className="text-button"
+          <Button
+            variant="link"
             onClick={() => {
               setAdded(previous => [...previous, { key: '', value: '' }])
             }}>
-            <Plus size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />
+            <Plus size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
             添加变量
-          </button>
+          </Button>
         </section>
       )}
-      {error && <InlineAlert tone="error">{error}</InlineAlert>}
+      {error && <InlineNotice tone="error">{error}</InlineNotice>}
       <footer className="editor-footer">
         <span className="editor-footer-spacer" />
-        <button type="button" className="button secondary" disabled={busy} onClick={onCancel}>
+        <Button size="md" disabled={busy} onClick={onCancel}>
           取消
-        </button>
-        <button type="submit" className="button primary" disabled={busy}>
-          {busy && <Spinner size={14} />}
+        </Button>
+        <Button size="md" type="submit" variant={agent ? 'secondary' : 'primary'} disabled={busy} loading={busy}>
           {agent ? '保存' : '添加 Agent'}
-        </button>
+        </Button>
       </footer>
     </form>
   )
@@ -256,7 +255,7 @@ function PresetCards({
         return (
           <article key={preset.id} className="agent-preset">
             <div className="agent-preset-heading">
-              <Avatar name={preset.name} />
+              <HarnessTile harness={{ id: preset.id, source: 'acp', presetId: preset.id }} size={32} />
               <strong>{preset.name}</strong>
               <Badge>{preset.license}</Badge>
             </div>
@@ -270,40 +269,34 @@ function PresetCards({
               </div>
             )}
             <div className="agent-preset-actions">
-              <a className="text-button" href={preset.homepage} target="_blank" rel="noopener noreferrer">
+              <ButtonLink variant="link" href={preset.homepage} target="_blank" rel="noopener noreferrer">
                 项目主页
-                <ExternalLink size={12} strokeWidth={ICON_STROKE} aria-hidden="true" />
-              </a>
-              <button
-                type="button"
-                className="button secondary small"
+                <ExternalLink size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+              </ButtonLink>
+              <Button
                 onClick={() => {
                   onPick(preset)
                 }}>
                 {exists ? '再添加一个' : '添加'}
-              </button>
+              </Button>
             </div>
           </article>
         )
       })}
       <article className="agent-preset is-custom">
         <div className="agent-preset-heading">
-          <span className="avatar" aria-hidden="true">
-            <Terminal size={14} strokeWidth={ICON_STROKE} />
-          </span>
+          <HarnessTile harness={{ id: '', source: 'acp' }} size={32} />
           <strong>自定义命令</strong>
         </div>
         <p>任何支持 Agent Client Protocol 的本机程序。</p>
         <div className="agent-preset-actions">
           <span />
-          <button
-            type="button"
-            className="button secondary small"
+          <Button
             onClick={() => {
               onPick()
             }}>
             添加
-          </button>
+          </Button>
         </div>
       </article>
     </div>
@@ -361,15 +354,13 @@ export function AgentsSettings({
       description="在本机启动的开源 Agent，通过 ACP 接入。Agent 使用自己的登录和模型；Latch 不保存它们的账号。"
       action={
         editing === null && data && definable ? (
-          <button
-            type="button"
-            className="button secondary small"
+          <Button
             onClick={() => {
               setEditing({ kind: 'presets' })
-            }}>
-            <Plus size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />
+            }}
+            icon={Plus}>
             添加 Agent
-          </button>
+          </Button>
         ) : undefined
       }
     />
@@ -378,7 +369,7 @@ export function AgentsSettings({
     return (
       <>
         {heading}
-        {error ? <InlineAlert tone="error">{error}</InlineAlert> : <Loading />}
+        {error ? <InlineNotice tone="error">{error}</InlineNotice> : <Loading />}
       </>
     )
   if (editing !== null)
@@ -391,7 +382,7 @@ export function AgentsSettings({
           onClick={() => {
             setEditing(editing.kind === 'new' ? { kind: 'presets' } : null)
           }}>
-          <ChevronLeft size={16} strokeWidth={ICON_STROKE} aria-hidden="true" />
+          <ChevronLeft size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
           {editing.kind === 'new' ? '选择 Agent' : 'Agent 列表'}
         </button>
         {editing.kind === 'presets' ? (
@@ -419,20 +410,18 @@ export function AgentsSettings({
   return (
     <>
       {heading}
-      {error && <InlineAlert tone="error">{error}</InlineAlert>}
+      {error && <InlineNotice tone="error">{error}</InlineNotice>}
       {!definable && <p className="settings-hint">添加 Agent 或修改启动定义：{LOCAL_ONLY_TEXT}。</p>}
       {data.agents.length === 0 ? (
         <div className="empty-panel">
           <p>还没有添加 Agent。</p>
           {definable && (
-            <button
-              type="button"
-              className="button primary"
+            <Button
               onClick={() => {
                 setEditing({ kind: 'presets' })
               }}>
               从预设添加
-            </button>
+            </Button>
           )}
         </div>
       ) : (
@@ -444,19 +433,22 @@ export function AgentsSettings({
               <li key={agent.id} className="agent-row">
                 <div className="agent-row-main">
                   <div className="agent-row-heading">
+                    <HarnessTile
+                      harness={{ id: agent.id, source: 'acp', presetId: agent.presetId, ...(harness ? { status: harness.status } : {}) }}
+                      size={24}
+                    />
                     <strong>{agent.name}</strong>
-                    <Badge tone="warn">L3</Badge>
+                    <Badge title={LEVEL_LABELS.L3}>L3</Badge>
                     {preset && <Badge>{preset.license}</Badge>}
-                    {agent.verified === true && <Badge tone="ok">已验证的预设</Badge>}
                     {agent.verified === false && <Badge>未验证的定义</Badge>}
-                    {!agent.enabled && <Badge>已停用</Badge>}
+                    {!agent.enabled && <StatusPill>已停用</StatusPill>}
                   </div>
                   <code className="agent-command">{[agent.command, ...agent.args].join(' ')}</code>
                   <span className={`detect ${agent.detected.found ? 'is-ok' : 'is-warn'}`}>
                     {agent.detected.found ? (
-                      <CircleCheck size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />
+                      <CircleCheck size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
                     ) : (
-                      <CircleAlert size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />
+                      <CircleAlert size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
                     )}
                     {agent.detected.found
                       ? `已找到 ${agent.detected.path ?? agent.command}`
@@ -467,7 +459,7 @@ export function AgentsSettings({
                   )}
                   {agent.problem && (
                     <span className="detect is-warn">
-                      <CircleAlert size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />
+                      <CircleAlert size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
                       {agent.problem}
                     </span>
                   )}
@@ -478,26 +470,24 @@ export function AgentsSettings({
                     label={`启用 ${agent.name}`}
                     checked={agent.enabled}
                     disabled={busy !== null}
-                    onChange={() => {
+                    onCheckedChange={() => {
                       void toggle(agent)
                     }}
                   />
-                  <button
-                    type="button"
-                    className="text-button"
+                  <Button
+                    variant="ghost"
                     onClick={() => {
                       setEditing({ kind: 'agent', agent })
                     }}>
                     编辑
-                  </button>
-                  <button
-                    type="button"
-                    className="text-button danger-text"
+                  </Button>
+                  <Button
+                    variant="danger"
                     onClick={() => {
                       setRemoving(agent)
                     }}>
                     删除
-                  </button>
+                  </Button>
                 </div>
               </li>
             )

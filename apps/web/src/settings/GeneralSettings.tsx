@@ -2,9 +2,8 @@ import { useState } from 'react'
 import type { AppSnapshot, HostCatalog, ModelRef, SessionDefaults, TaskMode } from '@latch/protocol'
 import { api, errorMessage } from '../core/api.ts'
 import { defaultModel, findHarness, startableWorkspaces } from '../composerChoice.ts'
-import { Spinner } from '../icons.tsx'
 import { setPreference, usePreferences, type SendKey, type ThemePreference } from '../preferences.ts'
-import { InlineAlert, Segmented } from '../components/ui.tsx'
+import { Button, ChoiceList, InlineNotice, SegmentedControl } from '@latch/ui'
 import { SectionHeading } from './common.tsx'
 
 const encodeModel = (ref: ModelRef | undefined) => (ref ? JSON.stringify([ref.providerId, ref.model]) : '')
@@ -135,17 +134,16 @@ function SessionDefaultsForm({ catalog, onChanged }: { catalog: HostCatalog; onC
             已保存
           </span>
         )}
-        <button
-          type="button"
-          className="button primary"
+        <Button
           disabled={busy}
           onClick={() => {
             void save()
-          }}>
-          {busy && <Spinner size={14} />}保存默认值
-        </button>
+          }}
+          loading={busy}>
+          保存默认值
+        </Button>
       </div>
-      {error && <InlineAlert tone="error">{error}</InlineAlert>}
+      {error && <InlineNotice tone="error">{error}</InlineNotice>}
     </section>
   )
 }
@@ -158,10 +156,10 @@ export function GeneralSettings({ snapshot, admin, onChanged }: { snapshot: AppS
       <SectionHeading title="通用" description="外观与发送方式只影响这台设备。" />
       <section className="settings-group">
         <h4>外观</h4>
-        <Segmented<ThemePreference>
+        <SegmentedControl<ThemePreference>
           label="外观"
           value={preferences.theme}
-          onChange={value => {
+          onValueChange={value => {
             setPreference('theme', value)
           }}
           options={[
@@ -173,30 +171,17 @@ export function GeneralSettings({ snapshot, admin, onChanged }: { snapshot: AppS
       </section>
       <section className="settings-group">
         <h4>发送消息</h4>
-        <div className="choice-list" role="radiogroup" aria-label="发送消息">
-          {(
-            [
-              ['enter', 'Enter 发送', 'Shift + Enter 换行'],
-              ['mod-enter', '⌘/Ctrl + Enter 发送', 'Enter 换行，适合输入长段落'],
-            ] as Array<[SendKey, string, string]>
-          ).map(([value, label, description]) => (
-            <button
-              key={value}
-              type="button"
-              role="radio"
-              aria-checked={preferences.sendKey === value}
-              className="choice-row"
-              onClick={() => {
-                setPreference('sendKey', value)
-              }}>
-              <i className="choice-radio" aria-hidden="true" />
-              <span>
-                <strong>{label}</strong>
-                <small>{description}</small>
-              </span>
-            </button>
-          ))}
-        </div>
+        <ChoiceList<SendKey>
+          label="发送消息"
+          value={preferences.sendKey}
+          onValueChange={value => {
+            setPreference('sendKey', value)
+          }}
+          options={[
+            { value: 'enter', title: 'Enter 发送', description: 'Shift + Enter 换行' },
+            { value: 'mod-enter', title: '⌘/Ctrl + Enter 发送', description: 'Enter 换行，适合输入长段落' },
+          ]}
+        />
         <p className="settings-hint">触屏设备上 Enter 始终换行，点按发送按钮发送；⌘/Ctrl + Enter 在任何设备上都会发送。</p>
       </section>
       {owner && snapshot.catalog && <SessionDefaultsForm catalog={snapshot.catalog} onChanged={onChanged} />}

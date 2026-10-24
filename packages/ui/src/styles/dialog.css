@@ -1,0 +1,249 @@
+/*
+ * Dialogs: native modal <dialog> elements over the scrim. The element itself is only a transparent frame; the surface
+ * inside carries the raised colour, the 16px corners and the modal shadow, so a design sheet can show it in place.
+ * A dialog fades in from 98% over 240ms and the scrim over 180ms; closing fades out over 120ms.
+ */
+.ui-dialog,
+.ui-sheet {
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  overflow: visible;
+  border: 0;
+  background: transparent;
+  color: var(--text-1);
+}
+.ui-dialog {
+  margin: auto;
+  opacity: 0;
+  scale: 0.98;
+  transition:
+    opacity var(--d-fast) var(--ease-exit),
+    scale var(--d-fast) var(--ease-exit),
+    display var(--d-fast) allow-discrete,
+    overlay var(--d-fast) allow-discrete;
+}
+.ui-dialog[open] {
+  opacity: 1;
+  scale: 1;
+  transition:
+    opacity var(--d-slow) var(--ease),
+    scale var(--d-slow) var(--ease),
+    display var(--d-slow) allow-discrete,
+    overlay var(--d-slow) allow-discrete;
+}
+@starting-style {
+  .ui-dialog[open] {
+    opacity: 0;
+    scale: 0.98;
+  }
+}
+.ui-dialog::backdrop,
+.ui-sheet::backdrop {
+  background: var(--scrim);
+  opacity: 0;
+  transition:
+    opacity var(--d-fast) var(--ease-exit),
+    display var(--d-fast) allow-discrete,
+    overlay var(--d-fast) allow-discrete;
+}
+.ui-dialog[open]::backdrop,
+.ui-sheet[open]::backdrop {
+  opacity: 1;
+  transition:
+    opacity var(--d-base) var(--ease),
+    display var(--d-base) allow-discrete,
+    overlay var(--d-base) allow-discrete;
+}
+@starting-style {
+  .ui-dialog[open]::backdrop,
+  .ui-sheet[open]::backdrop {
+    opacity: 0;
+  }
+}
+.ui-dialog:focus-visible,
+.ui-sheet:focus-visible {
+  outline: none;
+}
+
+/* 480 for a confirmation, 560 for a form, 720 for two columns; never wider than the window less 16px a side. */
+.ui-dialog-surface {
+  --surface: var(--bg-raised);
+  display: flex;
+  flex-direction: column;
+  width: min(480px, calc(100vw - 2 * var(--sp-16)));
+  max-height: calc(100dvh - 2 * var(--sp-32));
+  overflow: hidden;
+  border-radius: var(--r-16);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-raised);
+  box-shadow: var(--sh-modal);
+}
+.ui-dialog-surface[data-size='form'] {
+  width: min(560px, calc(100vw - 2 * var(--sp-16)));
+}
+.ui-dialog-surface[data-size='wide'] {
+  width: min(720px, calc(100vw - 2 * var(--sp-16)));
+}
+.ui-dialog-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  flex-shrink: 0;
+  min-height: 56px;
+  padding: 0 var(--sp-12) 0 var(--sp-24);
+  box-shadow: inset 0 -1px 0 var(--line-subtle);
+}
+.ui-dialog-heading {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+.ui-dialog-title {
+  color: var(--text-1);
+  font-size: var(--fs-title-sm);
+  line-height: var(--lh-title-sm);
+  font-weight: 600;
+}
+.ui-dialog-subtitle {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.ui-dialog-body {
+  flex: 1;
+  min-height: 0;
+  padding: var(--sp-24);
+  overflow: auto;
+  color: var(--text-2);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label-para);
+}
+.ui-dialog-surface[data-bare] .ui-dialog-body {
+  display: grid;
+  gap: var(--sp-8);
+}
+.ui-dialog-footer,
+.ui-dialog-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-8);
+  flex-shrink: 0;
+}
+.ui-dialog-footer {
+  min-height: 64px;
+  padding: 0 var(--sp-24);
+  box-shadow: inset 0 1px 0 var(--line-subtle);
+}
+.ui-dialog-actions {
+  margin-top: var(--sp-16);
+}
+.ui-dialog-note {
+  margin-inline-end: auto;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
+}
+
+/*
+ * Bottom sheets (phones): the ground colour with 16px top corners, a grabber, a 52px header (取消 · title · action)
+ * and the body. They slide up over 240ms and down when closed. A tall sheet opens at 65% of the window and reaches
+ * 92% when dragged up.
+ */
+.ui-sheet {
+  width: 100%;
+  margin: auto 0 0;
+  translate: 0 100%;
+  transition:
+    translate var(--d-slow) var(--ease-exit),
+    display var(--d-slow) allow-discrete,
+    overlay var(--d-slow) allow-discrete;
+}
+.ui-sheet[open] {
+  translate: 0 0;
+  transition:
+    translate var(--d-slow) var(--ease),
+    display var(--d-slow) allow-discrete,
+    overlay var(--d-slow) allow-discrete;
+}
+@starting-style {
+  .ui-sheet[open] {
+    translate: 0 100%;
+  }
+}
+.ui-sheet-surface {
+  --surface: var(--bg-app);
+  display: flex;
+  flex-direction: column;
+  max-height: 65dvh;
+  padding-bottom: env(safe-area-inset-bottom);
+  overflow: hidden;
+  border-radius: var(--r-16) var(--r-16) 0 0;
+  corner-shape: var(--corner-shape);
+  background: var(--bg-app);
+  box-shadow: var(--sh-modal);
+  transition: max-height var(--d-slow) var(--ease);
+}
+.ui-sheet[data-detent='large'] .ui-sheet-surface {
+  max-height: 92dvh;
+}
+.ui-sheet-top {
+  flex-shrink: 0;
+  touch-action: none;
+}
+.ui-sheet-grabber {
+  display: block;
+  width: 36px;
+  height: 4px;
+  margin: var(--sp-8) auto 0;
+  border-radius: var(--r-2);
+  background: var(--line-strong);
+}
+.ui-sheet-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--sp-8);
+  min-height: 52px;
+  /* 取消's text and the action's right edge land on the 16px column of the cards below. */
+  padding: 0 var(--sp-16) 0 var(--sp-8);
+}
+.ui-sheet-title {
+  overflow: hidden;
+  color: var(--text-1);
+  font-size: var(--fs-title-sm);
+  line-height: var(--lh-title-sm);
+  font-weight: 600;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 取消 only closes: quiet text at the regular weight, with 8px of padding so its words start 16 from the edge. */
+.ui-sheet-header .ui-sheet-cancel {
+  justify-self: start;
+  padding-inline: var(--sp-8);
+  font-weight: 400;
+}
+.ui-sheet-action {
+  display: flex;
+  justify-content: flex-end;
+}
+/* Header buttons read 15/22 and keep a 44px tap target around their 32px face. */
+.ui-sheet-header .ui-button {
+  min-height: 32px;
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.ui-sheet-header .ui-button::before {
+  content: '';
+  position: absolute;
+  inset: calc((100% - 44px) / 2) 0;
+}
+.ui-sheet-body {
+  flex: 1;
+  min-height: 0;
+  padding: 0 var(--sp-16) var(--sp-16);
+  overflow: auto;
+  overscroll-behavior: contain;
+}

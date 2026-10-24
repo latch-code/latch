@@ -339,6 +339,8 @@ export interface ServerOptions {
   codeRoot?: string
   /** Tests: credentials, confirmations, enrollments. */
   now?: () => number
+  /** Tests: the computer's name in the snapshot; default the operating system's host name. */
+  hostName?: string
   /** Tests: 'relaxed' multiplies every rate-limit bucket by 100. Production never sets it. */
   rateLimits?: 'default' | 'relaxed'
   /** Default `console.error('[Latch] ' + text)`; every line is redacted first. */
@@ -3071,7 +3073,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           tasks,
           approvals: await decorateAll(hub!.approvals(), tasks),
           demo: options.demo,
-          hostName: hostname(),
+          hostName: options.hostName ?? hostname(),
           harness: { id: defaultId, name: hub!.info(defaultId)?.name ?? defaultId },
           execution,
           catalog: catalog(),

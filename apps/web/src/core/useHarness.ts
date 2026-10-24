@@ -46,6 +46,11 @@ export function useHarness() {
   const [connection, setConnection] = useState<ConnectionStatus>('connecting')
   /** Set each time the selected session disappears from the Host. */
   const [removed, setRemoved] = useState<{ sessionId: string } | null>(null)
+  /**
+   * Counts the snapshots that replaced the state wholesale (the first load, a reconnect, a tab shown again) rather than
+   * bringing a change as it happened. The page plays its one-shot indicators only for changes made in neither.
+   */
+  const [resyncs, setResyncs] = useState(0)
   const guard = useRef(new ProjectionGuard())
   const latestSnapshot = useRef<AppSnapshot | null>(null)
   const latestDetail = useRef<TaskDetail | null>(null)
@@ -53,6 +58,8 @@ export function useHarness() {
   const alive = useRef(true)
   const running = useRef<Promise<boolean> | null>(null)
   const pending = useRef<SyncMode | null>(null)
+  /** Whether a queued synchronization re-establishes state instead of following a change; merged requests keep it. */
+  const pendingResync = useRef(false)
   const request = useRef<AbortController | null>(null)
   const activeStream = useRef<{ stream: EventStreamConnection; ticket: ProjectionTicket } | null>(null)
   /** Renews and then reloads state; set once synchronize exists. */
@@ -74,9 +81,10 @@ export function useHarness() {
     latestDetail.current = next
     setDetail(next)
   }, [])
-  const publishSnapshot = useCallback((next: AppSnapshot | null) => {
+  const publishSnapshot = useCallback((next: AppSnapshot | null, resync: boolean) => {
     latestSnapshot.current = next
     setSnapshot(next)
+    if (resync) setResyncs(count => count + 1)
   }, [])
   const storeSelection = useCallback((id: string | null) => {
     if (restoredDevice.current === null) return
@@ -95,7 +103,7 @@ export function useHarness() {
       signedOut.current = true
       renewal.stop()
       setAuth(state)
-      publishSnapshot(null)
+      publishSnapshot(null, true)
       publishDetail(null)
       restoredDevice.current = null
       guard.current.invalidate()
@@ -119,15 +127,19 @@ export function useHarness() {
     return renewal.renew(host ? { hostId: host.hostId, deviceId: current!.device.id } : {})
   }, [renewal])
 
+  /** `resync`: the request re-establishes state (first load, reconnect) rather than following a change. */
   const synchronize = useCallback(
-    (mode: SyncMode): Promise<boolean> => {
+    (mode: SyncMode, resync = false): Promise<boolean> => {
+      pendingResync.current = (pending.current !== null && pendingResync.current) || resync
       pending.current = pending.current === 'all' || mode === 'all' ? 'all' : 'list'
       if (running.current) return running.current
       const task = async () => {
         let synchronized = false
         while (pending.current && alive.current) {
           const currentMode = pending.current
+          const currentResync = pendingResync.current
           pending.current = null
+          pendingResync.current = false
           const ticket = guard.current.capture()
           const controller = new AbortController()
           request.current = controller
@@ -155,7 +167,7 @@ export function useHarness() {
               setSelectedId(initial)
               publishDetail(null)
             }
-            publishSnapshot(mergeTaskSnapshot(next, latestDetail.current))
+            publishSnapshot(mergeTaskSnapshot(next, latestDetail.current), currentResync)
             // A list-only change that drops the selection is confirmed by the detail request below.
             if (currentMode === 'list' && guard.current.sessionId !== null && !next.tasks.some(task => task.id === guard.current.sessionId))
               pending.current = 'all'
@@ -177,7 +189,7 @@ export function useHarness() {
                   setRemoved({ sessionId: detailTicket.sessionId })
                 } else if (guard.current.accept(detailTicket, nextDetail)) {
                   publishDetail(nextDetail)
-                  if (latestSnapshot.current) publishSnapshot(mergeTaskSnapshot(latestSnapshot.current, nextDetail))
+                  if (latestSnapshot.current) publishSnapshot(mergeTaskSnapshot(latestSnapshot.current, nextDetail), currentResync)
                 }
               } else publishDetail(null)
               synchronized = true
@@ -210,21 +222,26 @@ export function useHarness() {
     [publishDetail, publishSnapshot, storeSelection, signOut, renewal],
   )
 
+  /** Reloads state after something this page did, as a change it follows. */
   const refresh = useCallback(async (): Promise<void> => {
     await synchronize('all')
+  }, [synchronize])
+  /** Reloads state when the person asks to sync the latest state: a resynchronization. */
+  const resync = useCallback(async (): Promise<void> => {
+    await synchronize('all', true)
   }, [synchronize])
   // A cause that needs re-enrollment is acted on by the snapshot, which then signs out.
   useEffect(() => {
     retryRenewal.current = () => {
       if (signedOut.current) return
       void renew().then(ok => {
-        if (!signedOut.current && (ok || renewal.failure !== null)) void synchronize('all')
+        if (!signedOut.current && (ok || renewal.failure !== null)) void synchronize('all', true)
       })
     }
   }, [renew, synchronize, renewal])
   /** The first snapshot after `complete`: a 401 then means the browser did not keep the new cookie. */
   const confirmEnrollment = useCallback(async (): Promise<EnrolledResult> => {
-    if (await synchronize('all')) return { status: 'connected' }
+    if (await synchronize('all', true)) return { status: 'connected' }
     const cause = lastSyncFailure.current
     if (cause instanceof ApiError && cause.status === 401 && cause.code === 'unauthorized') {
       signOut({ reason: 'credential-not-stored' })
@@ -252,7 +269,7 @@ export function useHarness() {
         renew,
         // Any request can learn that this device lost its credential; the snapshot decides where the page goes.
         unauthorized: () => {
-          if (latestSnapshot.current !== null) void synchronize('all')
+          if (latestSnapshot.current !== null) void synchronize('all', true)
         },
       }),
     [renew, synchronize],
@@ -260,11 +277,11 @@ export function useHarness() {
 
   useEffect(() => {
     alive.current = true
-    void refresh()
+    void synchronize('all', true)
     const recoverInitialConnection = () => {
       if (latestSnapshot.current === null) {
         setConnection('connecting')
-        void refresh()
+        void synchronize('all', true)
       }
     }
     window.addEventListener('online', recoverInitialConnection)
@@ -275,7 +292,7 @@ export function useHarness() {
       renewal.stop()
       window.removeEventListener('online', recoverInitialConnection)
     }
-  }, [refresh, renewal])
+  }, [synchronize, renewal])
 
   // Browsers renew at `renewAfter` (and on any 401 renewal-required); a hidden tab catches up when shown.
   const renewAfter = snapshot && hostView(snapshot) && !currentShell() ? snapshot.device.renewAfter : null
@@ -312,7 +329,7 @@ export function useHarness() {
     setConnection(navigator.onLine ? 'connecting' : 'offline')
     const syncConnection = () => {
       const attempt = ++openGeneration
-      void synchronize('all').then(ok => {
+      void synchronize('all', true).then(ok => {
         if (!disposed && attempt === openGeneration && guard.current.current(ticket) && ok && stream.open && navigator.onLine)
           setConnection('connected')
       })
@@ -339,14 +356,14 @@ export function useHarness() {
           const event = parseTaskState(message.data)
           if (!event || !guard.current.accept(ticket, event.detail, 'stream')) return
           publishDetail(event.detail)
-          if (latestSnapshot.current) publishSnapshot(mergeTaskSnapshot(latestSnapshot.current, event.detail))
+          if (latestSnapshot.current) publishSnapshot(mergeTaskSnapshot(latestSnapshot.current, event.detail), false)
         } else if (message.event === 'refresh' || message.event === 'tasks-invalidated') invalidate(message.data)
       },
       onError: () => {
         if (disposed) return
         openGeneration++
         setConnection(navigator.onLine ? 'reconnecting' : 'offline')
-        if (navigator.onLine) void synchronize('all')
+        if (navigator.onLine) void synchronize('all', true)
       },
       // Otherwise onError's snapshot decides between re-enrollment and a transient failure, after the backoff.
       onUnauthorized: async code => {
@@ -387,5 +404,5 @@ export function useHarness() {
     }
   }, [identity, selectedId, synchronize, publishDetail, publishSnapshot, renew])
 
-  return { snapshot, detail, selectedId, select, refresh, confirmEnrollment, auth, loading, connection, error, removed }
+  return { snapshot, detail, selectedId, select, refresh, resync, confirmEnrollment, auth, loading, connection, error, removed, resyncs }
 }

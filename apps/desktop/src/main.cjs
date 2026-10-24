@@ -10,7 +10,7 @@ if (typeof electron === 'string' || !electron.app) {
   process.exit(1)
 }
 
-const { app, BrowserWindow, dialog, nativeImage, protocol, safeStorage, session, shell } = electron
+const { app, BrowserWindow, dialog, nativeImage, nativeTheme, protocol, safeStorage, session, shell } = electron
 const { join, resolve } = require('node:path')
 const { readHostStateFile, inspectHostState } = require('./host.cjs')
 const { openCredentialStore, secureStorageProblem } = require('./credentials.cjs')
@@ -77,7 +77,8 @@ function createWindow({ width = 1250, height = 850, preload = true } = {}) {
     minWidth: Math.min(width, 760),
     minHeight: Math.min(height, 560),
     title: 'Latch',
-    backgroundColor: '#fbfcfd',
+    // The page's ground colour (--bg-app in @latch/ui), so the window shows no flash before the first paint.
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#141413' : '#f2f1ee',
     icon,
     webPreferences: {
       ...(preload ? { preload: join(__dirname, 'preload.cjs') } : {}),

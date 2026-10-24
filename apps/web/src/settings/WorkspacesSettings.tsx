@@ -4,9 +4,9 @@ import type { AppSnapshot, WorkspaceInfo } from '@latch/protocol'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { api, errorMessage } from '../core/api.ts'
 import { middleEllipsis } from '../format.ts'
-import { ICON_STROKE, Spinner } from '../icons.tsx'
 import { ConfirmDialog } from '../components/overlays.tsx'
-import { Badge, CopyButton, InlineAlert } from '../components/ui.tsx'
+import { Badge, Button, ICON_STROKE, InlineNotice, StatusPill } from '@latch/ui'
+import { CopyButton } from '../components/ui.tsx'
 import { Loading, SectionHeading } from './common.tsx'
 
 /** A saved workspace. One the Host disabled for this run stays listed with its reason so it can be removed. */
@@ -22,26 +22,25 @@ export function WorkspaceRow({
   const disabled = workspace.unavailable !== undefined
   return (
     <li className={`workspace-row${disabled ? ' is-unavailable' : ''}`}>
-      <Folder size={18} strokeWidth={ICON_STROKE} aria-hidden="true" />
+      <Folder size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
       <div className="workspace-row-text">
         <strong>
           {workspace.name}
           {workspace.id === 'default' && <Badge>启动目录</Badge>}
-          {disabled && <Badge tone="warn">不可用</Badge>}
+          {disabled && <StatusPill tone="warn">不可用</StatusPill>}
         </strong>
         <span title={workspace.path}>{middleEllipsis(workspace.path, 56)}</span>
         {disabled && <span className="workspace-unavailable">{workspace.unavailable || '此项目本次未通过检查，不能用于新会话。'}</span>}
       </div>
       <CopyButton text={workspace.path} label="复制路径" />
       {owner && workspace.id !== 'default' && (
-        <button
-          type="button"
-          className="text-button danger-text"
+        <Button
+          variant="danger"
           onClick={() => {
             onRemove(workspace)
           }}>
           移除
-        </button>
+        </Button>
       )}
     </li>
   )
@@ -98,7 +97,7 @@ export function WorkspacesSettings({
       <SectionHeading title="项目" description="新会话可以选择在哪个目录中工作。Agent 的文件工具只能访问所选项目。" />
       {workspaces === null ? (
         error ? (
-          <InlineAlert tone="error">{error}</InlineAlert>
+          <InlineNotice tone="error">{error}</InlineNotice>
         ) : (
           <Loading />
         )
@@ -145,13 +144,13 @@ export function WorkspacesSettings({
             </label>
           </div>
           <div className="settings-actions">
-            <button type="submit" className="button primary" disabled={busy || !path.trim()}>
-              {busy && <Spinner size={14} />}添加项目
-            </button>
+            <Button type="submit" variant="primary" disabled={busy || !path.trim()} loading={busy}>
+              添加项目
+            </Button>
           </div>
         </form>
       )}
-      {error && workspaces !== null && <InlineAlert tone="error">{error}</InlineAlert>}
+      {error && workspaces !== null && <InlineNotice tone="error">{error}</InlineNotice>}
       {removing && (
         <ConfirmDialog
           title="移除项目"

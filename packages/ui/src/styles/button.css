@@ -1,0 +1,263 @@
+/*
+ * Buttons. Hover appears at once and fades out over --d-fast; pressing darkens one step and never moves or scales.
+ * Sizes: xs 24 (notices, tray rows, inspector), sm 28 (desktop default), md 32 (dialog and panel footers), lg 44
+ * (phones). A leading glyph takes 4px off the start padding. A disabled button (aria-disabled, still focusable) is the
+ * whole control at 45%; a running one keeps its colours and ignores the pointer.
+ */
+.ui-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-6);
+  flex-shrink: 0;
+  min-height: 28px;
+  padding: 0 var(--sp-12);
+  border: 0;
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
+  background: transparent;
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+  font-weight: 500;
+  white-space: nowrap;
+  text-decoration: none;
+  transition:
+    background-color var(--d-fast) var(--ease-exit),
+    color var(--d-fast) var(--ease-exit);
+}
+.ui-button:hover {
+  transition-duration: 0s;
+}
+.ui-button[data-leading] {
+  padding-inline-start: var(--sp-8);
+}
+.ui-button[data-size='xs'] {
+  gap: var(--sp-4);
+  min-height: 24px;
+  padding: 0 var(--sp-8);
+  border-radius: var(--r-6);
+  corner-shape: var(--corner-shape);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.ui-button[data-size='xs'][data-leading] {
+  padding-inline-start: var(--sp-6);
+}
+.ui-button[data-size='md'] {
+  min-height: 32px;
+  padding: 0 var(--sp-16);
+}
+.ui-button[data-size='md'][data-leading] {
+  padding-inline-start: var(--sp-12);
+}
+.ui-button[data-size='lg'] {
+  gap: var(--sp-8);
+  min-height: 44px;
+  padding: 0 var(--sp-16);
+  border-radius: var(--r-12);
+  corner-shape: var(--corner-shape);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.ui-button[data-size='lg'][data-leading] {
+  padding-inline-start: var(--sp-12);
+}
+.ui-button[data-block] {
+  width: 100%;
+}
+.ui-button[aria-busy='true'] {
+  cursor: progress;
+}
+.ui-button[aria-disabled='true'] {
+  opacity: 0.45;
+}
+
+.ui-button[data-variant='primary'] {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.ui-button[data-variant='primary']:hover:not([aria-disabled='true'], [aria-busy='true']) {
+  background: var(--accent-hover);
+}
+.ui-button[data-variant='primary']:active:not([aria-disabled='true'], [aria-busy='true']) {
+  background: var(--accent-press);
+}
+
+.ui-button:is([data-variant='secondary'], [data-variant='danger']) {
+  background: var(--fill);
+  color: var(--text-1);
+}
+.ui-button[data-variant='danger'] {
+  color: var(--err-text);
+}
+.ui-button:is([data-variant='secondary'], [data-variant='danger']):hover:not([aria-disabled='true'], [aria-busy='true']) {
+  background: var(--fill-hover);
+}
+.ui-button:is([data-variant='secondary'], [data-variant='danger']):active:not([aria-disabled='true'], [aria-busy='true']) {
+  background: var(--fill-press);
+}
+
+/* Translucent ink turns muddy over amber or red, so a secondary button inside a tint is raised white instead. */
+:is([data-tint='warn'], [data-tint='err']) .ui-button[data-variant='secondary'] {
+  background: var(--bg-raised);
+  box-shadow: var(--sh-raised);
+}
+:is([data-tint='warn'], [data-tint='err']) .ui-button[data-variant='secondary']:hover:not([aria-disabled='true'], [aria-busy='true']) {
+  background: linear-gradient(var(--bg-hover), var(--bg-hover)) var(--bg-raised);
+}
+:is([data-tint='warn'], [data-tint='err']) .ui-button[data-variant='secondary']:active:not([aria-disabled='true'], [aria-busy='true']) {
+  background: linear-gradient(var(--bg-press), var(--bg-press)) var(--bg-raised);
+  box-shadow: 0 0 0 1px var(--line);
+}
+
+.ui-button[data-variant='ghost'] {
+  color: var(--text-2);
+}
+.ui-button[data-variant='ghost']:hover:not([aria-disabled='true'], [aria-busy='true']) {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+.ui-button[data-variant='ghost']:active:not([aria-disabled='true'], [aria-busy='true']) {
+  background: var(--bg-press);
+}
+
+/* A link goes to another page or place; it has no fill and underlines on hover. */
+.ui-button[data-variant='link'] {
+  min-height: 28px;
+  padding: 0 var(--sp-2);
+  color: var(--accent-text);
+}
+.ui-button[data-variant='link']:hover:not([aria-disabled='true']) {
+  color: var(--accent-text-hover);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* The destructive confirmation inside a confirmation dialog: the only solid red. */
+.ui-button[data-variant='destroy'] {
+  background: var(--err-solid);
+  color: var(--on-accent);
+}
+
+.ui-button > .ui-spinner {
+  color: currentColor;
+}
+
+/* On touch screens a button smaller than 44 keeps its look and gains a 44px-tall tap area around it. */
+@media (pointer: coarse) {
+  .ui-button:not([data-size='lg'])::before {
+    content: '';
+    position: absolute;
+    inset: calc((100% - 44px) / 2) 0;
+  }
+}
+
+/*
+ * Icon buttons: squares of 24, 28, 32 and 44 with the corners of the same button size; the composer's are circles.
+ * The face (the hover, press and on fills, and the keyboard focus ring) is drawn by ::before at the button's own size
+ * and centred, so it looks the same on every screen. On touch screens the box grows to 44×44 around it: neighbours in
+ * a toolbar or rail are laid out 44 apart and their targets never overlap. Where a dense row keeps a smaller box, the
+ * transparent ::after still reaches 44×44 around the face.
+ */
+.ui-icon-button {
+  --icon-button-size: 28px;
+  --icon-button-radius: var(--r-8);
+  position: relative;
+  isolation: isolate;
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: var(--icon-button-size);
+  height: var(--icon-button-size);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--icon);
+  transition: color var(--d-fast) var(--ease-exit);
+}
+.ui-icon-button::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  top: calc(50% - var(--icon-button-size) / 2);
+  left: calc(50% - var(--icon-button-size) / 2);
+  width: var(--icon-button-size);
+  height: var(--icon-button-size);
+  border-radius: var(--icon-button-radius);
+  corner-shape: var(--corner-shape);
+  transition: background-color var(--d-fast) var(--ease-exit);
+}
+.ui-icon-button[data-size='xs'] {
+  --icon-button-size: 24px;
+  --icon-button-radius: var(--r-6);
+}
+.ui-icon-button[data-size='md'] {
+  --icon-button-size: 32px;
+}
+.ui-icon-button[data-size='lg'] {
+  --icon-button-size: 44px;
+  --icon-button-radius: var(--r-12);
+}
+.ui-icon-button[data-round] {
+  --icon-button-radius: var(--r-pill);
+}
+.ui-icon-button[data-round]::before {
+  corner-shape: round;
+}
+.ui-icon-button:hover:not([aria-disabled='true']) {
+  color: var(--text-1);
+  transition-duration: 0s;
+}
+.ui-icon-button:hover:not([aria-disabled='true'])::before {
+  background-color: var(--bg-hover);
+  transition-duration: 0s;
+}
+.ui-icon-button:active:not([aria-disabled='true'])::before {
+  background-color: var(--bg-press);
+}
+/* A toggle that is on: a neutral press, never blue. */
+.ui-icon-button[aria-pressed='true'] {
+  color: var(--text-1);
+}
+.ui-icon-button[aria-pressed='true']::before {
+  background-color: var(--bg-press);
+}
+.ui-icon-button:focus-visible {
+  outline: none;
+}
+.ui-icon-button:focus-visible::before {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.ui-icon-button[aria-disabled='true'] {
+  opacity: 0.45;
+}
+/*
+ * A count on the face's top-right corner, 4px past it so the glyph stays readable. It sits on an opaque pill of the
+ * surface under it (so a translucent tint never shows the glyph through the digits) and is cut out of what it overlaps
+ * by a 2px ring of that surface.
+ */
+.ui-icon-button-badge {
+  position: absolute;
+  top: calc(50% - var(--icon-button-size) / 2 - var(--sp-4));
+  right: calc(50% - var(--icon-button-size) / 2 - var(--sp-4));
+  display: flex;
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+@media (pointer: coarse) {
+  .ui-icon-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .ui-icon-button::after {
+    content: '';
+    position: absolute;
+    top: calc(50% - 22px);
+    left: calc(50% - 22px);
+    width: 44px;
+    height: 44px;
+  }
+}

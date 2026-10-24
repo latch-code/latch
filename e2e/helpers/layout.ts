@@ -42,25 +42,27 @@ export async function noHorizontalOverflow(page: Page, region?: Locator): Promis
 
 /**
  * Navigation may be persistent (desktop sidebar, tablet rail) or behind a drawer
- * (phones); tests do not select a breakpoint. Returns the opened settings dialog.
+ * (phones); tests do not select a breakpoint. Returns the opened settings dialog,
+ * on its 设备 section when `section` is 设备 (devices are reached through settings).
  */
-export async function openSettings(page: Page, name: '设置' | '设备'): Promise<Locator> {
+export async function openSettings(page: Page, section: '设置' | '设备' = '设置'): Promise<Locator> {
   // A closing drawer may remain visually visible while becoming inert. Use
   // navigation semantics rather than the transient visibility of its children.
   const rail = page.getByRole('navigation', { name: '快捷导航', exact: true })
   const navigationButton = page.getByRole('button', { name: '打开会话列表', exact: true })
-  let button = page.locator('#session-navigation').getByRole('button', { name, exact: true })
-  if (await rail.isVisible()) button = rail.getByRole('button', { name, exact: true })
+  let button = page.locator('#session-navigation').getByRole('button', { name: '设置', exact: true })
+  if (await rail.isVisible()) button = rail.getByRole('button', { name: '设置', exact: true })
   else if (await navigationButton.isVisible()) {
     await navigationButton.click()
     const drawer = page.getByRole('dialog', { name: '会话导航', exact: true })
     await drawer.waitFor()
-    button = drawer.getByRole('button', { name, exact: true })
+    button = drawer.getByRole('button', { name: '设置', exact: true })
   }
   await reachable(button)
   await button.click()
   const dialog = page.getByRole('dialog', { name: '设置', exact: true })
   await dialog.waitFor()
+  if (section === '设备') await openSection(dialog, '设备')
   return dialog
 }
 

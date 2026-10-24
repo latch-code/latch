@@ -1,352 +1,378 @@
+/*
+ * The session column on the ground: the brand row with 新建会话 and collapse (48), the search (32) with its filter
+ * pills, 等你处理 (32) while something waits, the sessions in groups, and the footer (52) with the computer this Host
+ * runs on. From 1024px the column keeps its own width while its grid track narrows, so collapsing clips it instead of
+ * reflowing it.
+ */
+.sidebar-body {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: var(--sp-8) var(--sp-8) 0;
+}
+@media (min-width: 1024px) {
+  .sidebar-body {
+    width: var(--sidebar-open-width);
+  }
+}
+
+.sidebar-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  flex-shrink: 0;
+  height: var(--topbar-height);
+  padding-left: var(--sp-8);
+}
 .sidebar-brand {
   display: flex;
   align-items: center;
-  gap: 10px;
-  flex-shrink: 0;
-  height: var(--topbar-height);
-  padding: 0 12px 0 16px;
-}
-.brand-name {
-  flex: 1;
-  font-size: var(--fs-title-sm);
-  line-height: 20px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
-.sidebar-actions {
-  display: grid;
-  gap: 8px;
-  padding: 4px 12px 8px;
-  flex-shrink: 0;
-}
-.new-session-button {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 36px;
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  background: var(--bg-raised);
-  color: var(--text-1);
-  box-shadow: var(--sh-1);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
-  font-weight: 500;
-  transition: background-color var(--d-fast);
-}
-.new-session-button:hover {
-  background: var(--bg-hover);
-}
-.new-session-button > svg {
-  color: var(--text-2);
-}
-
-.search-field {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 32px;
-  padding: 0 6px 0 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  background: var(--bg-pane);
-  color: var(--text-3);
-  transition:
-    border-color var(--d-fast),
-    box-shadow var(--d-fast);
-}
-.search-field:focus-within {
-  border-color: var(--accent);
-  box-shadow: var(--ring);
-}
-.search-field input {
+  gap: var(--sp-8);
   flex: 1;
   min-width: 0;
-  height: 100%;
-  padding: 0;
+}
+.brand-name {
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  font-weight: 600;
+}
+
+/*
+ * The search is a ghost row: no fill at rest, the hover background at once, the raised well only while it has focus.
+ * Its filter pills unfold under it while it is in use or a filter is on (the disclosure's height and fade), so the
+ * column stays quiet otherwise.
+ */
+.sidebar-search {
+  flex-shrink: 0;
+  margin-top: var(--sp-4);
+}
+.sidebar-search .ui-search[data-variant='ghost'] {
+  height: 32px;
+}
+.sidebar-filters {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows var(--d-fast) var(--ease-exit),
+    opacity var(--d-fast) var(--ease-exit);
+}
+.sidebar-filters[data-open] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition:
+    grid-template-rows var(--d-base) var(--ease),
+    opacity var(--d-fast) var(--ease) 40ms;
+}
+.sidebar-filters-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+.sidebar-filters .ui-filters {
+  padding: var(--sp-4) var(--sp-4) var(--sp-2);
+}
+
+/*
+ * Rows above and below the list (等你处理, 已归档) are ghost rows too, so the open session's neutral selection stays the
+ * only resting fill in the column: a 14 glyph in a 16 slot, 8 from the start and from the label.
+ */
+.approvals-row,
+.archived-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  flex-shrink: 0;
+  height: 32px;
+  padding: 0 var(--sp-8);
   border: 0;
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
   background: transparent;
-  color: var(--text-1);
   font-size: var(--fs-label);
-  outline: none;
+  line-height: var(--lh-label);
+  text-align: left;
+  transition: background-color var(--d-fast) var(--ease-exit);
 }
-.search-field input::placeholder {
-  color: var(--text-3);
+.approvals-row:hover,
+.archived-row:hover {
+  background: var(--bg-hover);
+  transition-duration: 0s;
 }
-.search-field input::-webkit-search-cancel-button {
-  display: none;
+.approvals-row:active,
+.archived-row:active {
+  background: var(--bg-press);
 }
-.search-clear {
+.sidebar-row-icon {
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--r-xs);
-  background: none;
-  color: var(--text-3);
-}
-.search-clear:hover {
-  background: var(--bg-hover);
-}
-
-.approvals-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 32px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: var(--r-md);
-  background: transparent;
-  color: var(--text-1);
-  font-size: var(--fs-label);
-  font-weight: 500;
-  text-align: left;
-}
-.approvals-row > svg {
-  color: var(--warn-solid);
-}
-.approvals-row:hover {
-  background: var(--bg-hover);
-}
-.approvals-row .count-pill {
-  margin-left: auto;
-  background: var(--warn-bg);
-  color: var(--warn-text);
-}
-
-.session-list-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 32px;
-  padding: 8px 6px 0 16px;
   flex-shrink: 0;
+  width: 16px;
+  color: var(--icon);
+}
+/* Waiting: one amber mark per row, the count; the icon and the words stay neutral. */
+.approvals-row {
+  margin-top: var(--sp-8);
+  color: var(--text-1);
+  font-weight: 500;
+}
+.approvals-row .ui-count {
+  margin-left: auto;
+}
+.archived-row {
+  width: 100%;
+  margin-top: var(--sp-12);
   color: var(--text-3);
-  font-size: var(--fs-caption);
-  font-weight: 500;
 }
-.session-list-header > span {
-  flex: 1;
-}
-.session-list-header .icon-button {
-  width: 28px;
-  height: 28px;
-}
-.filter-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 22px;
-  padding: 0 6px 0 8px;
-  border: 0;
-  border-radius: var(--r-pill);
-  background: var(--accent-subtle);
-  color: var(--accent-text);
-  font-size: var(--fs-caption);
-  font-weight: 500;
+.archived-count {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
 }
 
 .session-list {
   flex: 1;
   min-height: 0;
+  margin: 0 calc(-1 * var(--sp-8));
+  padding: 0 var(--sp-8) var(--sp-12);
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 0 8px 12px;
+}
+.session-group {
+  margin-top: var(--sp-12);
+}
+.session-group-head {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 var(--sp-2) 0 var(--sp-8);
 }
 .session-group-label {
-  padding: 14px 8px 4px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text-3);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   font-weight: 500;
 }
-.session-group:first-child .session-group-label {
-  padding-top: 6px;
+/* 「在 … 中新建会话」 shows on hover or keyboard focus of its group, and always on touch screens. */
+.session-group-new.ui-icon-button {
+  min-width: 0;
+  min-height: 0;
+  opacity: 0;
+  transition: opacity var(--d-fast) var(--ease-exit);
+}
+.session-group-head:is(:hover, :focus-within) .session-group-new {
+  opacity: 1;
+  transition-duration: 0s;
 }
 /* A single track bounded by the list: a long nowrap title must not size the column. */
 .session-group ul {
   list-style: none;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 2px;
+  gap: var(--sp-2);
+}
+/* A row that leaves (archived, deleted, moved to another group) folds its height away and fades. */
+.session-entry {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition:
+    grid-template-rows var(--d-fast) var(--ease-exit),
+    opacity var(--d-fast) var(--ease-exit);
+}
+.session-entry[data-leaving] {
+  grid-template-rows: 0fr;
+  opacity: 0;
 }
 
+/*
+ * Session rows (36): the harness tile (20), the title and the status slot. Titles are text-2, quieter than the reading
+ * column; the selected row is the neutral selection of a list row with a 500 title; an unread row turns its title to
+ * text-1 at the same weight. The slot shows one thing (the design system's StatusSlot): waiting, failed, running,
+ * unread or the time. The selection changes in 120ms; a hover shows at once and leaves in 120ms.
+ */
 .session-item {
   position: relative;
   display: flex;
   align-items: center;
   min-width: 0;
-  border-radius: var(--r-md);
+  min-height: 0;
+  overflow: hidden;
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
+  transition: background-color var(--d-fast) var(--ease);
 }
 .session-item:hover {
   background: var(--bg-hover);
+  transition-duration: 0s;
+}
+/* The row whose menu is open stays marked while the pointer is in the menu. */
+.session-item:not(.is-selected):has(.session-item-more[aria-expanded='true']) {
+  background: var(--bg-hover);
+  transition-duration: 0s;
 }
 .session-item.is-selected {
-  background: var(--bg-selected);
+  background: var(--bg-selected-solid);
+  /* The row just clicked is still under the pointer: its selection fades in too. */
+  transition-duration: var(--d-fast);
 }
 .session-item-main {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-8);
   flex: 1;
   min-width: 0;
-  height: 34px;
-  padding: 0 8px;
+  height: 36px;
+  padding: 0 var(--sp-8);
   border: 0;
-  border-radius: var(--r-md);
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
   background: transparent;
-  color: var(--text-1);
+  color: var(--text-2);
   text-align: left;
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  font-size: var(--fs-list-title);
+  line-height: var(--lh-list-title);
+}
+.session-item-main:focus-visible {
+  outline: none;
+  box-shadow: var(--ring-focus-inset);
 }
 .session-item.is-selected .session-item-main {
+  color: var(--text-1);
   font-weight: 500;
 }
-.session-glyph {
-  display: grid;
-  place-items: center;
-  width: 12px;
-  flex-shrink: 0;
-  color: var(--text-3);
-}
-.session-glyph:empty {
-  width: 0;
-  margin-right: -8px;
+.session-item.is-unread .session-item-main {
+  color: var(--text-1);
 }
 .session-title {
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
+  /* A long title fades out over its last 16px instead of ending in an ellipsis. */
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent);
 }
-.session-item.is-unread .session-title {
-  font-weight: 600;
-}
-.unread-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-  flex-shrink: 0;
-}
-.session-time {
-  flex-shrink: 0;
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  font-variant-numeric: tabular-nums;
+/* The status fades out in 120ms when ⋯ takes its place. */
+.session-status {
+  transition: opacity var(--d-fast) var(--ease-exit);
 }
 .session-item-more {
   position: absolute;
-  right: 2px;
+  right: 4px;
   width: 28px;
   height: 28px;
+  min-width: 0;
+  min-height: 0;
   opacity: 0;
-  color: var(--text-2);
 }
+/* Hover, keyboard focus or an open menu shows ⋯ in place of the status; a click leaves the status in view. */
 .session-item:hover .session-item-more,
-.session-item:focus-within .session-item-more,
+.session-item:has(:focus-visible) .session-item-more,
 .session-item-more[aria-expanded='true'] {
   opacity: 1;
 }
-.session-item:hover .session-time,
-.session-item:focus-within .session-time {
-  visibility: hidden;
+.session-item:is(:hover, :has(:focus-visible), :has([aria-expanded='true'])) .session-status {
+  opacity: 0;
 }
 @media (hover: none), (pointer: coarse) {
+  .approvals-row,
+  .archived-row {
+    height: 44px;
+  }
+  .sidebar-search .ui-search[data-variant='ghost'] {
+    height: 44px;
+  }
+  .session-group-new.ui-icon-button {
+    opacity: 1;
+  }
   .session-item-main {
     height: 44px;
     padding-right: 0;
   }
+  /* In the row's flow on touch screens; still positioned, since the icon button draws its face and target from it. */
   .session-item-more {
-    position: static;
+    position: relative;
+    right: auto;
     opacity: 1;
     width: 36px;
     height: 36px;
   }
-  .session-item:hover .session-time,
-  .session-item:focus-within .session-time {
-    visibility: visible;
+  .session-item:is(:hover, :has(:focus-visible), :has([aria-expanded='true'])) .session-status {
+    opacity: 1;
   }
 }
 
 .list-empty {
-  padding: 32px 12px;
+  padding: var(--sp-32) var(--sp-12);
   text-align: center;
-  color: var(--text-3);
+  color: var(--text-2);
   font-size: var(--fs-label);
+  line-height: var(--lh-label);
 }
 .list-empty span {
   display: block;
-  margin-top: 4px;
+  margin-top: var(--sp-4);
+  color: var(--text-3);
   font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
 }
 
+/*
+ * The footer names the computer this Host runs on (this device's own name is in 设置 › 设备), with the development-build
+ * mark and, only when the connection is lost, the amber small badge that also syncs the latest state. 已连接 is the
+ * default and is not drawn.
+ */
 .sidebar-footer {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-8);
   flex-shrink: 0;
-  min-height: 56px;
-  padding: 8px 8px calc(8px + env(safe-area-inset-bottom)) 12px;
-  border-top: 1px solid var(--border-subtle);
+  min-height: 52px;
+  padding: 0 var(--sp-4) env(safe-area-inset-bottom) var(--sp-8);
 }
-.device-avatar {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
+.host-icon {
   flex-shrink: 0;
-  border-radius: var(--r-md);
-  background: var(--bg-hover);
-  color: var(--text-2);
+  color: var(--icon);
 }
-.device-meta {
-  display: grid;
-  flex: 1;
+.host-name {
   min-width: 0;
-}
-.device-meta strong {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--text-2);
   font-size: var(--fs-label);
   line-height: var(--lh-label);
   font-weight: 500;
 }
-.connection-button {
+.sidebar-footer-spacer {
+  flex: 1;
+}
+/* A 16px badge that is also a button: its target reaches 4px past it on every side (24 high). */
+.connection-badge {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  justify-self: start;
-  height: 18px;
-  padding: 0;
+  flex-shrink: 0;
+  height: 16px;
+  padding: 0 var(--sp-6);
   border: 0;
-  background: none;
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
+  border-radius: var(--r-pill);
+  background: var(--warn-bg);
+  box-shadow: inset 0 0 0 1px var(--warn-border);
+  color: var(--warn-text);
+  font-size: var(--fs-micro);
+  line-height: var(--lh-micro);
+  font-weight: 500;
+  white-space: nowrap;
 }
-.connection-button:hover {
-  color: var(--text-1);
-}
-.connection-button > i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--ok-text);
-}
-.connection-button.connection-reconnecting > i,
-.connection-button.connection-connecting > i {
-  background: var(--warn-solid);
-}
-.connection-button.connection-offline > i {
-  background: var(--text-disabled);
+.connection-badge::before {
+  content: '';
+  position: absolute;
+  inset: calc(-1 * var(--sp-4));
 }

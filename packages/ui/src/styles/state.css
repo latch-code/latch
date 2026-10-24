@@ -1,0 +1,90 @@
+/* Empty: a short noun phrase in text-2, one line of text-3, at most one xs action; left-aligned, no illustration. */
+.ui-empty {
+  display: grid;
+  justify-items: start;
+  gap: var(--sp-4);
+}
+.ui-empty-title {
+  color: var(--text-2);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+}
+.ui-empty-description {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
+}
+.ui-empty-action {
+  margin-top: var(--sp-8);
+}
+
+/* Loading: inline, a 14px spinner in text-3 beside its line; on a page, the 20px spinner centred with its line. */
+.ui-loading {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  color: var(--text-3);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+}
+.ui-loading > .ui-spinner {
+  color: var(--text-3);
+}
+.ui-loading[data-variant='page'] {
+  justify-content: center;
+  min-height: 100%;
+}
+
+/* Skeletons breathe (opacity .55 to 1 over 1.6s) in the box of the content they stand for; they never sweep. */
+.ui-skeleton {
+  display: block;
+  border-radius: var(--r-4);
+  corner-shape: var(--corner-shape);
+  background: var(--fill);
+  animation: ui-breathe 1.6s var(--ease) infinite alternate;
+}
+.ui-skeleton[data-round] {
+  border-radius: var(--r-pill);
+}
+@keyframes ui-breathe {
+  from {
+    opacity: 0.55;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* A part of the page that failed to render: a 480 card of paper, the red triangle, the title, one line, two buttons. */
+.ui-error-state {
+  display: grid;
+  justify-items: start;
+  gap: var(--sp-8);
+  width: min(480px, 100%);
+  padding: var(--sp-24);
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-pane);
+}
+.ui-error-state-glyph {
+  color: var(--err-text);
+}
+.ui-error-state-title {
+  color: var(--text-1);
+  font-size: var(--fs-title-sm);
+  line-height: var(--lh-title-sm);
+  font-weight: 600;
+}
+.ui-error-state-description {
+  color: var(--text-2);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label-para);
+}
+.ui-error-state-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-8);
+  justify-self: stretch;
+  margin-top: var(--sp-8);
+}

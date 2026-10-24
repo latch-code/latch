@@ -145,7 +145,7 @@ describe('streamed messages in the real workspace', () => {
     // Phones show 新建会话 in the top bar; wider layouts in the sidebar or rail.
     await page.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
     await page.locator('.drawer-backdrop').waitFor({ state: 'detached' })
-    await page.getByRole('group', { name: '会话模式' }).getByRole('button', { name: '对话', exact: true }).click()
+    await page.getByRole('radiogroup', { name: '会话模式' }).getByRole('radio', { name: '对话', exact: true }).click()
     await page.getByRole('textbox', { name: '新会话消息' }).fill(prompt)
     const created = page.waitForResponse(
       response => response.request().method() === 'POST' && new URL(response.url()).pathname === '/link/api/tasks',
@@ -320,7 +320,10 @@ describe('streamed messages in the real workspace', () => {
       const originalRow = await row.elementHandle()
 
       await context.setOffline(true)
-      await page.getByRole('main').getByRole('button', { name: '离线', exact: true }).waitFor()
+      await page
+        .getByRole('main')
+        .getByRole('button', { name: /^离线/ })
+        .waitFor()
       reply.append(suffix)
       reply.finish()
       await expect.poll(async () => (await host.bridge.detail(id)).summary.status, { interval: 20 }).toBe('idle')

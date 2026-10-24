@@ -53,16 +53,17 @@ describe('desktop to phone takeover', () => {
     await mobile.locator('.drawer-backdrop').waitFor({ state: 'detached' })
     await expect.poll(() => mobile.locator('.sidebar').evaluate(element => element.getBoundingClientRect().right)).toBeLessThanOrEqual(0)
   }
-  async function filterSessions(page: Page, name: '全部会话' | '对话' | 'Agent') {
-    await page.getByRole('button', { name: '筛选会话', exact: true }).click()
-    await page.getByRole('menuitemradio', { name, exact: true }).click()
+  async function filterSessions(page: Page, name: '全部' | '对话' | 'Agent') {
+    // The filter pills unfold under the search while it is in use.
+    await page.getByRole('searchbox', { name: '搜索会话', exact: true }).focus()
+    await page.getByRole('group', { name: '筛选会话', exact: true }).getByRole('button', { name, exact: true }).click()
   }
   async function start(prompt: string): Promise<string> {
     const before = (await snapshot()).tasks.map(t => t.id)
     await filterSessions(desktop, '对话')
     await desktop.getByRole('button', { name: '新建会话', exact: true }).click()
     // The device remembers its last mode; demo tasks that use tools need Agent.
-    await desktop.getByRole('group', { name: '会话模式' }).getByRole('button', { name: 'Agent', exact: true }).click()
+    await desktop.getByRole('radiogroup', { name: '会话模式' }).getByRole('radio', { name: 'Agent', exact: true }).click()
     await desktop.getByRole('textbox', { name: '新会话消息' }).fill(prompt)
     await desktop.getByRole('button', { name: '发送', exact: true }).click()
     await expect.poll(async () => (await snapshot()).tasks.filter(t => !before.includes(t.id)).length).toBe(1)
@@ -189,7 +190,7 @@ describe('desktop to phone takeover', () => {
     const detail = await host.bridge.detail(id)
     expect(new Set(detail.messages.map(m => m.id)).size).toBe(detail.messages.length)
     await mobile.reload()
-    await mobile.locator('.topbar .status-pill', { hasText: '已取消' }).waitFor()
+    await mobile.locator('.topbar .ui-status-pill', { hasText: '已取消' }).waitFor()
     expect((await host.bridge.detail(id)).messages).toEqual(detail.messages)
     await mobile.screenshot({ path: 'test-results/mobile-cancelled.png', fullPage: true, animations: 'disabled' })
   })
@@ -198,7 +199,7 @@ describe('desktop to phone takeover', () => {
     const before = (await snapshot()).tasks.map(task => task.id)
     await filterSessions(desktop, 'Agent')
     await desktop.getByRole('button', { name: '新建会话', exact: true }).click()
-    await desktop.getByRole('group', { name: '会话模式' }).getByRole('button', { name: '对话', exact: true }).click()
+    await desktop.getByRole('radiogroup', { name: '会话模式' }).getByRole('radio', { name: '对话', exact: true }).click()
     await desktop.getByRole('textbox', { name: '新会话消息' }).fill('批准生成验收报告')
     await desktop.getByRole('button', { name: '发送', exact: true }).click()
     await expect.poll(async () => (await snapshot()).tasks.filter(task => !before.includes(task.id)).length).toBe(1)

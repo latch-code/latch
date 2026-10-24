@@ -7,6 +7,7 @@
   "license": "Apache-2.0",
   "dependencies": {
     "@latch/protocol": "workspace:*",
+    "@latch/ui": "workspace:*",
     "lucide-react": "catalog:",
     "qrcode": "catalog:",
     "react": "catalog:",

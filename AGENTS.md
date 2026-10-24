@@ -5,7 +5,7 @@ Latch 是跨电脑与手机的 AI Agent 工作台。Node Host（`apps/host`）�
 ## 开始之前
 
 1. 运行 `git status`，保留已有的未提交改动。
-2. 编辑某目录前，先读该目录及其上层目录中的 `AGENTS.md`（Claude Code 经同目录的 `CLAUDE.md` 自动读取），再按「改动前先读」打开文档；以源码与测试为准，不凭记忆推断现状。
+2. 编辑某目录前，先读该目录及其上层目录中的 `AGENTS.md`（Claude Code 经 `CLAUDE.md` 读取），再按「改动前先读」打开文档；以源码与测试为准，不凭记忆推断现状。
 3. 不停止、重启或连接用户正在运行的 Host，也不使用默认数据目录（见「本机运行安全」）。
 
 ## 代码地图
@@ -16,6 +16,7 @@ Latch 是跨电脑与手机的 AI Agent 工作台。Node Host（`apps/host`）�
 | `apps/web/` | `@latch/web`：浏览器客户端，构建到根 `dist/web`，桌面端显示同一页面 |
 | `apps/desktop/` | `@latch/desktop`：Electron 主进程与 preload（CommonJS） |
 | `packages/protocol/` | `@latch/protocol`：浏览器与 Host 共用的 DTO、预设与安全文本规则 |
+| `packages/ui/` | `@latch/ui`：令牌、层叠层与原语 |
 | `packages/sdk/` | `@latch/sdk`：插件作者面与 `AppError` |
 | `packages/core/` | `@latch/core`：Cordis 注册表、Standard 执行循环与快照存储，Node 工具 `./node-kit` |
 | `packages/harness-acp/` | `@latch/harness-acp`：ACP HarnessDriver 与每个预设的权限配置 |
@@ -29,7 +30,7 @@ Latch 是跨电脑与手机的 AI Agent 工作台。Node Host（`apps/host`）�
 | `.agents/skills/` | 技能 `latch-verify`、`latch-security-review`；`.claude/skills/` 是 `pnpm agents:sync` 生成的链接 |
 | `tsconfig.*.json`、`.oxlintrc.json`、`.oxfmtrc.json`、`knip.json`、`lefthook.yml` | 类型检查的各运行环境、lint、格式、依赖检查、Git 钩子 |
 
-依赖只向下：`apps/host` → `harness-acp` → `core` → `sdk` → `protocol`（箭头指向被依赖的包）；`apps/web` 与 `apps/desktop` 运行时只用 `protocol`；`testkit` 与 `e2e` 只能写在 devDependencies。矩阵在 `scripts/boundaries.ts` 的 `PROJECTS`（仓库根也在其中），由 `pnpm check:boundaries`、`pnpm knip` 与 `pnpm lint` 执行；违规在边界上修，不加例外。
+依赖只向下：`apps/host` → `harness-acp` → `core` → `sdk` → `protocol`（箭头指向被依赖的包）；`apps/web` 运行时只用 `protocol` 与 `ui`，`apps/desktop` 只用 `protocol`；`testkit` 与 `e2e` 只能写在 devDependencies。矩阵在 `scripts/boundaries.ts` 的 `PROJECTS`（仓库根也在其中），由 `pnpm check:boundaries`、`pnpm knip` 与 `pnpm lint` 执行；违规在边界上修，不加例外。
 
 ## 命令
 
@@ -41,7 +42,7 @@ pnpm check:quick                             # fmt:check、lint、typecheck、ch
 pnpm check                                   # check:quick 加 knip 与 test，逐项汇报
 pnpm check -- --plan                         # 按改动路径列出要运行与不需要运行的检查；--base <ref> 指定比较的提交
 pnpm fmt                                     # oxfmt 写入格式；不处理 Markdown 与 packages/testkit/vectors/
-pnpm test --project @latch/host              # 只跑一个项目（harness-link、@latch/host、@latch/web、@latch/desktop、@latch/harness-acp）
+pnpm test --project @latch/host              # 只跑一个项目（项目名见 vitest.config.ts）
 pnpm exec vitest run --config vitest.config.ts <目录>/<name>.test.ts
 pnpm build                                   # build:host + build:web + build:presence；e2e 使用 dist/web
 HARNESS_BROWSER_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' pnpm test:e2e
@@ -103,7 +104,7 @@ HARNESS_DATA_DIR=<临时目录> pnpm dev:web      # 仅开发；按 Vite 打印�
 
 ## 产品规则
 
-- 界面以蓝白为主，蓝色只用于执行类操作；应用图标为 `apps/web/public/icon.png`（源图 `build/icon.png`），不改动图形；琥珀色只表示警告与待审批。设计令牌集中在 `apps/web/src/styles/tokens.css`。
+- 蓝白为主：蓝色只给执行与勾选，琥珀只表示警告与等你处理，红色只表示真实风险或失败，都配文字；令牌只在 `packages/ui/src/tokens.css`。应用图标为 `apps/web/public/icon.png`（源图 `build/icon.png`），不改动图形。
 - 密钥、Agent 的命令与环境变量、放宽安全策略、批准高风险操作（R2）与开启完全访问会话（L3）只在执行端电脑上处理：桌面端经本机确认，或 Host 停止时的 `pnpm latch` 离线命令；不为远程设备提供绕过路径。
 - Harness 预设只收录可在本机安装运行、许可证可核对的开源 Agent，并记录许可证；预设使用已安装的命令，不在运行时下载代码。
 - 只展示真实能力：不在界面或文档中声称未实现的功能、集成或隔离；未实现的写明「尚未实现」与原因。

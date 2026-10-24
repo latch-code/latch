@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react'
+import { parseSidebarPreference, type SidebarPreference } from './sidebarLayout.ts'
 
 /** Per-viewer conveniences. Browser storage can be missing or throw; every read has a default. */
 export type ThemePreference = 'system' | 'light' | 'dark'
@@ -9,10 +10,12 @@ export interface Preferences {
   sendKey: SendKey
   /** Whether the desktop inspector pane is open. */
   inspector: boolean
+  /** The sidebar's dragged width and whether it is shut, per breakpoint class (local only, never sent to the Host). */
+  sidebar: SidebarPreference
 }
 
 const KEY = 'harness-link.preferences'
-const defaults: Preferences = { theme: 'system', sendKey: 'enter', inspector: false }
+const defaults: Preferences = { theme: 'system', sendKey: 'enter', inspector: false, sidebar: { width: {}, collapsed: {} } }
 
 export function storageGet(key: string): string | null {
   try {
@@ -40,6 +43,7 @@ export function parsePreferences(raw: string | null): Preferences {
       theme: item.theme === 'light' || item.theme === 'dark' ? item.theme : 'system',
       sendKey: item.sendKey === 'mod-enter' ? 'mod-enter' : 'enter',
       inspector: item.inspector === true,
+      sidebar: parseSidebarPreference(item.sidebar),
     }
   } catch {
     return { ...defaults }
@@ -73,15 +77,26 @@ export function usePreferences(): Preferences {
   )
 }
 
-const themeColors = { light: '#f7f9fc', dark: '#0b0f17' }
+/**
+ * The browser bar takes the colour of the surface under it: the ground (bg-app) from 768px, where the page is paper
+ * inset on it, and the pane (bg-pane) on phones, which have no ground showing at the top.
+ */
+const themeColors = {
+  wide: { light: '#f2f1ee', dark: '#141413' },
+  phone: { light: '#fbfbfa', dark: '#1c1c1b' },
+}
+
+/** The colour for one theme-color meta, read from its media query (index.html qualifies each by width and scheme). */
+export function themeColorFor(media: string, theme: ThemePreference): string {
+  const width = media.includes('max-width') ? 'phone' : 'wide'
+  const scheme = theme === 'system' ? (media.includes('dark') ? 'dark' : 'light') : theme
+  return themeColors[width][scheme]
+}
 
 /** `system` leaves the media query in charge; explicit choices pin `data-theme`. */
 export function applyTheme(theme: ThemePreference): void {
   const root = document.documentElement
   if (theme === 'system') root.removeAttribute('data-theme')
   else root.dataset.theme = theme
-  for (const meta of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) {
-    const scheme = meta.media.includes('dark') ? 'dark' : 'light'
-    meta.content = themeColors[theme === 'system' ? scheme : theme]
-  }
+  for (const meta of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) meta.content = themeColorFor(meta.media, theme)
 }

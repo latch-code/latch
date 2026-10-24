@@ -109,7 +109,7 @@ async function enrollShell(page: Page, testHost: TestHost, name: string) {
   const fingerprint = request.preview.lines.find(line => line.label === '设备指纹')?.value
   expect(fingerprint).toMatch(/^[A-Z2-7]{4}( [A-Z2-7]{4}){4}$/)
   await page.getByText(fingerprint!).first().waitFor()
-  await page.screenshot({ path: 'test-results/native-desktop-enrollment.png' })
+  await page.screenshot({ path: 'test-results/native-desktop-enrollment.png', animations: 'disabled' })
   testHost.presence.approveNext()
   await page.locator('.app-shell[data-connection="connected"]').waitFor()
   return fingerprint!
@@ -285,7 +285,7 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
       await waitFor(async () =>
         (await host.bridge.detail(longTask.id)).messages.some(message => message.role === 'tool' && message.state === 'running'),
       )
-      await page.screenshot({ path: 'test-results/native-desktop.png' })
+      await page.screenshot({ path: 'test-results/native-desktop.png', animations: 'disabled' })
 
       // High-risk approval: allowed only after the local confirmation.
       const { sessionId } = await host.bridge.createTask({
@@ -301,7 +301,8 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
       const confirmation = await testHost.presence.waitForRequest(15_000)
       expect(confirmation.preview.action).toBe('approval.r2')
       await page.getByRole('dialog', { name: '请在本机确认' }).waitFor()
-      await page.screenshot({ path: 'test-results/native-desktop-confirmation.png' })
+      // The dialog scales and fades in; finish that animation so the capture shows the dialog itself.
+      await page.screenshot({ path: 'test-results/native-desktop-confirmation.png', animations: 'disabled' })
       expect(marks.ran).toBe(0)
       testHost.presence.approveNext()
       await waitFor(() => marks.ran === 1)

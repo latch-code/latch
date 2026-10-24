@@ -53,9 +53,9 @@
   },
   "overrides": [
     {
-      // Browser client and isomorphic packages. tsconfig.web.json cannot keep Node out on its own:
+      // Browser client, its design system and isomorphic packages. tsconfig.web.json cannot keep Node out on its own:
       // dependency typings (@types/qrcode, undici-types) load Node's globals into the browser program.
-      "files": ["apps/web/src/**", "packages/protocol/**"],
+      "files": ["apps/web/src/**", "packages/ui/src/**", "packages/protocol/**"],
       "rules": {
         "no-restricted-globals": [
           "error",
@@ -86,6 +86,7 @@
         "packages/core/**",
         "packages/harness-acp/**",
         "packages/testkit/**",
+        "packages/ui/test/**",
         "scripts/**",
         "tests/**",
         "e2e/**",

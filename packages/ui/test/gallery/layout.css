@@ -1,0 +1,400 @@
+/* Layout of the gallery page: sections in a responsive grid of paper cards on the ground. */
+body {
+  background: var(--bg-app);
+}
+.gallery {
+  display: grid;
+  gap: var(--sp-24);
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: var(--sp-32) var(--sp-24) var(--sp-48);
+}
+.gallery-header h1 {
+  font-size: var(--fs-title);
+  line-height: var(--lh-title);
+  font-weight: 600;
+}
+.gallery-header p {
+  color: var(--text-3);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label-para);
+}
+.gallery-grid {
+  columns: 2 600px;
+  column-gap: var(--sp-24);
+}
+.gallery-section {
+  display: grid;
+  gap: var(--sp-8);
+  min-width: 0;
+  margin-bottom: var(--sp-24);
+  break-inside: avoid;
+}
+/* Only the section's own heading: the primitives' titles inside it (dialogs, sheets, the error card) keep their type. */
+.gallery-section > h2 {
+  color: var(--text-2);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+  font-weight: 500;
+}
+.gallery-card {
+  display: grid;
+  gap: var(--sp-16);
+  padding: var(--sp-16);
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-pane);
+  overflow: hidden;
+}
+.gallery-row {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  align-items: start;
+  gap: var(--sp-12);
+}
+.gallery-label {
+  padding-top: var(--sp-4);
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.gallery-items {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-12) var(--sp-16);
+  min-width: 0;
+}
+.gallery-cell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: start;
+  gap: var(--sp-4);
+  margin: 0;
+  min-width: 0;
+}
+.gallery-sample {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  max-width: 100%;
+}
+.gallery-cell figcaption {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.gallery-icons,
+.gallery-inline,
+.gallery-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-8);
+  color: var(--icon);
+}
+.gallery-inline {
+  color: var(--text-2);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+}
+.gallery-err {
+  color: var(--err-text);
+}
+.gallery-warn {
+  color: var(--warn-text);
+}
+.gallery-accent {
+  color: var(--accent);
+}
+.gallery-send .ui-icon-button {
+  color: var(--on-accent);
+}
+.gallery-send .ui-icon-button::before {
+  background-color: var(--accent);
+}
+.gallery-tint {
+  padding: var(--sp-8);
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
+}
+.gallery-tint[data-tint='warn'] {
+  background: var(--warn-bg);
+  box-shadow: inset 0 0 0 1px var(--warn-border);
+}
+.gallery-tint[data-tint='err'] {
+  background: var(--err-bg);
+  box-shadow: inset 0 0 0 1px var(--err-border);
+}
+/* The inspector's value column; its guide sits just outside the content edge, where a picker's text lines up. */
+.gallery-column {
+  display: grid;
+  justify-items: start;
+  width: 160px;
+  margin-inline-start: var(--sp-8);
+  box-shadow: -1px 0 0 var(--line-subtle);
+}
+.gallery-setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-12);
+  width: 300px;
+  min-height: 56px;
+  padding: 0 var(--sp-16);
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+  corner-shape: var(--corner-shape);
+  color: var(--text-1);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.gallery-phone-row,
+.gallery-sheet-card {
+  display: grid;
+  width: min(100%, 358px);
+  overflow: hidden;
+  border-radius: var(--r-12);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-pane);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.gallery-phone {
+  width: min(100%, 390px);
+}
+.gallery-rows {
+  display: grid;
+  width: min(100%, 520px);
+}
+.gallery-choice {
+  display: grid;
+  gap: var(--sp-16);
+  width: min(100%, 480px);
+}
+/*
+ * A sample cell sizes to its content, so a list or a dialog surface in one takes a width of its own. A dialog or a
+ * layer drawn in place keeps its own width where there is room and is held to the card's content width on phones,
+ * so it is shown whole.
+ */
+.gallery-sample > .gallery-choice {
+  width: 280px;
+  max-width: 100%;
+}
+.gallery-sample:has(> .ui-dialog-surface, > .ui-popover) {
+  width: 100%;
+}
+.gallery-sample > :is(.ui-dialog-surface, .ui-popover) {
+  max-width: 100%;
+}
+/* The content of a generic popover: a tile, two lines and a link. */
+.gallery-popover {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--sp-12);
+  padding: var(--sp-8);
+}
+.gallery-popover-text {
+  display: grid;
+  min-width: 0;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.gallery-popover-title {
+  color: var(--text-1);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+  font-weight: 500;
+}
+.gallery-page-loading {
+  display: grid;
+  width: 240px;
+  height: 64px;
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-sunken);
+}
+.gallery-skeleton {
+  display: grid;
+  gap: var(--sp-12);
+}
+.gallery-ground,
+.gallery-raised {
+  padding: var(--sp-12);
+  border-radius: var(--r-12);
+  corner-shape: var(--corner-shape);
+}
+.gallery-ground {
+  background: var(--bg-app);
+}
+.gallery-raised {
+  background: var(--bg-raised);
+  box-shadow: var(--sh-float);
+}
+.gallery-section .ui-notice {
+  max-width: 100%;
+}
+.gallery-sheet-text {
+  color: var(--text-2);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label-para);
+}
+@media (max-width: 767.98px) {
+  .gallery {
+    padding: var(--sp-24) var(--sp-16) var(--sp-40);
+  }
+  .gallery-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--sp-6);
+  }
+  .gallery-card {
+    padding: var(--sp-12);
+  }
+}
+
+/* A few session rows on the ground. */
+.gallery-relay {
+  display: grid;
+  gap: var(--sp-2);
+  width: 260px;
+  margin: 0;
+  padding: var(--sp-8);
+  list-style: none;
+  border-radius: var(--r-12);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-app);
+}
+.gallery-relay > li {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  height: 36px;
+  padding: 0 var(--sp-8);
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
+  color: var(--text-2);
+  font-size: var(--fs-list-title);
+  line-height: var(--lh-list-title);
+}
+.gallery-relay > li > span:first-child {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gallery-relay > li[aria-current] {
+  background: var(--bg-selected-solid);
+  color: var(--text-1);
+  font-weight: 500;
+}
+/* Frames held in the middle of a motion, for review: the warm band halfway, the ripple at its brightest, the digits
+ * halfway down, the comet drawing in as the dot lands. */
+.gallery-frame-sweep .ui-waiting-pill::before {
+  animation: none;
+  background-position: 50% 0;
+}
+.gallery-frame-ripple .ui-count-ripple > rect {
+  animation: none;
+  opacity: 1;
+  transform: scale(1.3);
+}
+.gallery-frame-roll .ui-count-roll > span {
+  animation: none;
+  transform: translateY(calc(-0.5 * var(--lh-micro)));
+}
+.gallery-frame-settle .ui-status-leaving {
+  animation: none;
+  opacity: 1;
+  transform: scale(0.7);
+}
+.gallery-frame-settle .ui-status-dot {
+  animation: none;
+  opacity: 1;
+  transform: scale(1.4);
+}
+/* The cross-fade of a process row about 60ms in: the comet half gone, the icon half in at 90%, the words 2px low. */
+.gallery-frame-glyph .ui-status-glyph-leaving {
+  animation: none;
+  opacity: 0.5;
+}
+.gallery-frame-glyph .ui-status-glyph-current {
+  animation: none;
+  opacity: 0.5;
+  scale: 0.9;
+}
+.gallery-frame-glyph .ui-status-words {
+  animation: none;
+  opacity: 0.5;
+  translate: 0 2px;
+}
+/* A process row of the session details: glyph, title and the state's words. */
+.gallery-process {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-8);
+  width: 200px;
+  color: var(--text-1);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+}
+.gallery-process > .ui-status-glyph {
+  width: 16px;
+  color: var(--icon);
+}
+.gallery-process > span:nth-child(2) {
+  flex: 1;
+}
+.gallery-process > .ui-status-words {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.gallery-process > .ui-status-words.gallery-err {
+  color: var(--err-text);
+}
+/* A column of the ground as wide as a sidebar's rows, for the rows drawn on it. */
+.gallery-column {
+  display: grid;
+  width: 240px;
+  padding: var(--sp-8);
+}
+/* A selected list row, as the page draws one: the opaque neutral selection, never blue. */
+.gallery-selected-row {
+  display: inline-flex;
+  align-items: center;
+  height: 36px;
+  padding: 0 var(--sp-8);
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-selected-solid);
+  color: var(--text-1);
+  font-size: var(--fs-list-title);
+  line-height: var(--lh-list-title);
+  font-weight: 500;
+}
+/* A sidebar on the ground beside a sheet of paper, with the resize handle straddling the paper's edge. */
+.gallery-columns {
+  position: relative;
+  display: flex;
+  width: 160px;
+  height: 96px;
+  padding: var(--sp-8) var(--sp-8) var(--sp-8) 0;
+  background: var(--bg-app);
+}
+.gallery-column-side {
+  width: 64px;
+}
+.gallery-column-paper {
+  flex: 1;
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-pane);
+}
+.gallery-columns > .ui-resize-handle {
+  top: var(--sp-8);
+  bottom: var(--sp-8);
+  left: 61px;
+}

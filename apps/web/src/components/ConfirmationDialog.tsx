@@ -2,10 +2,9 @@ import { CircleCheck, Fingerprint } from 'lucide-react'
 import { useViewport } from '../breakpoints.ts'
 import { useConfirmationState } from '../core/confirmations.ts'
 import { useCountdown } from '../hooks/useCountdown.ts'
-import { ICON_STROKE, Spinner } from '../icons.tsx'
 import { currentShell } from '../core/shell.ts'
 import { Modal, ModalHeader } from './overlays.tsx'
-import { InlineAlert } from './ui.tsx'
+import { Button, ICON_STROKE, InlineNotice, Loading, StatusDot } from '@latch/ui'
 
 const TITLE = '请在本机确认'
 
@@ -46,9 +45,9 @@ export function ConfirmationDialog() {
         <div className="presence-subject">
           <span className="presence-icon" aria-hidden="true">
             {view.phase === 'sending' ? (
-              <CircleCheck size={20} strokeWidth={ICON_STROKE} />
+              <CircleCheck size={20} strokeWidth={ICON_STROKE[20]} />
             ) : (
-              <Fingerprint size={20} strokeWidth={ICON_STROKE} />
+              <Fingerprint size={20} strokeWidth={ICON_STROKE[20]} />
             )}
           </span>
           <strong>{ticket.title}</strong>
@@ -60,30 +59,25 @@ export function ConfirmationDialog() {
         </div>
         {view.phase === 'waiting' && (
           <div className="presence-timer">
-            <span className="presence-pulse" aria-hidden="true" />
+            <StatusDot tone="warn" />
             <span role="timer">剩余 {seconds} 秒</span>
             <span className="countdown-track" aria-hidden="true">
               <i style={{ width: `${Math.round(fraction * 100)}%` }} />
             </span>
           </div>
         )}
-        {view.phase === 'sending' && (
-          <p className="loading-line" role="status">
-            <Spinner size={16} />
-            已确认，正在执行…
-          </p>
-        )}
-        {view.phase === 'failed' && <InlineAlert tone="error">{view.message}</InlineAlert>}
+        {view.phase === 'sending' && <Loading label="已确认，正在执行…" />}
+        {view.phase === 'failed' && <InlineNotice tone="error">{view.message}</InlineNotice>}
       </div>
       <footer className="modal-footer">
         {view.phase === 'failed' ? (
-          <button type="button" className="button secondary" onClick={actions.dismiss}>
+          <Button size="md" onClick={actions.dismiss}>
             关闭
-          </button>
+          </Button>
         ) : (
-          <button type="button" className="button secondary" disabled={view.phase === 'sending'} onClick={actions.cancel}>
+          <Button size="md" disabled={view.phase === 'sending'} onClick={actions.cancel}>
             取消
-          </button>
+          </Button>
         )}
       </footer>
     </Modal>

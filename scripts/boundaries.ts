@@ -41,6 +41,8 @@ export const PROJECTS: Readonly<Record<string, ProjectRule>> = {
   // packages without a test/ directory (tests/), which drive core through the Host's Standard driver.
   'harness-link': { dir: '.', dependencies: ['@latch/protocol', '@latch/sdk', '@latch/core'], devDependencies: ['@latch/host'] },
   '@latch/protocol': { dir: 'packages/protocol', env: 'isomorphic', dependencies: [] },
+  // The design system of the browser client: design tokens, the order of the cascade layers and the primitive components.
+  '@latch/ui': { dir: 'packages/ui', env: 'browser', dependencies: [] },
   '@latch/sdk': { dir: 'packages/sdk', env: 'node', dependencies: ['@latch/protocol'] },
   '@latch/core': { dir: 'packages/core', env: 'node', dependencies: ['@latch/protocol', '@latch/sdk'] },
   '@latch/testkit': { dir: 'packages/testkit', env: 'node', dependencies: ['@latch/protocol', '@latch/sdk', '@latch/core'], devOnly: true },
@@ -57,12 +59,12 @@ export const PROJECTS: Readonly<Record<string, ProjectRule>> = {
     dependencies: ['@latch/protocol', '@latch/sdk', '@latch/core', '@latch/harness-acp'],
     devDependencies: ['@latch/testkit'],
   },
-  // At run time the page uses only the protocol package. Its Vite config reads host.json through the Host's modules,
-  // and its tests compare the browser's security encodings with the Host's and with the shared vectors.
+  // At run time the page uses the protocol package and the design system. Its Vite config reads host.json through the
+  // Host's modules, and its tests compare the browser's security encodings with the Host's and with the shared vectors.
   '@latch/web': {
     dir: 'apps/web',
     env: 'browser',
-    dependencies: ['@latch/protocol'],
+    dependencies: ['@latch/protocol', '@latch/ui'],
     devDependencies: ['@latch/testkit', '@latch/host', '@latch/core'],
   },
   // The shell's tests renew a credential against a real Host.

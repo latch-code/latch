@@ -1,0 +1,29 @@
+{
+  "name": "@latch/ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Latch design system for the browser client: design tokens, the cascade layers and the primitive components with their styles",
+  "license": "Apache-2.0",
+  "sideEffects": [
+    "*.css"
+  ],
+  "exports": {
+    ".": "./src/index.ts",
+    "./tokens.css": "./src/tokens.css",
+    "./ui.css": "./src/ui.css"
+  },
+  "latch": {
+    "env": "browser"
+  },
+  "dependencies": {
+    "lucide-react": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "vitest-browser-react": "catalog:"
+  }
+}

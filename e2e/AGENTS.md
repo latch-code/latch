@@ -4,12 +4,12 @@
 
 | 路径 | 职责 |
 | --- | --- |
-| `*.e2e.ts` | 浏览器：登记、接管、流式界面、权限展示、扩展、布局、视觉截图（`visual.e2e.ts`）；桌面端壳：`desktop.e2e.ts`（`HARNESS_ELECTRON_E2E=1`，仅 macOS） |
+| `*.e2e.ts` | 浏览器：登记、接管、流式界面、权限展示、扩展、布局、侧栏的宽度、吸附与筛选胶囊（`sidebar.e2e.ts`）、视觉截图（`visual.e2e.ts`）；桌面端壳：`desktop.e2e.ts`（`HARNESS_ELECTRON_E2E=1`，仅 macOS） |
 | `helpers/host.ts`、`helpers/browser.ts` | `startTestHost`（经 `@latch/host` 绑定 testkit 的夹具，与 `apps/host/test/helpers/host.ts`、`apps/desktop/test/helpers/host.ts` 保持一致）；`enrollBrowser`、`connected` 与 `browserLaunchOptions` |
 | `helpers/layout.ts`、`helpers/visual.ts` | 控件可达、横向溢出与打开设置；视觉截图的视口、固定时钟、截图、索引与逐像素比较 |
 | `vitest.config.ts` | 文件依次运行，用例与钩子超时 120 秒 |
 
-运行环境 node；依赖都写在 devDependencies：workspace 包 host、protocol、sdk、testkit 与 `@playwright/test`。用例与运行器用根项目的同一份 Vitest，所以本项目不声明 `vitest`。
+运行环境 node；依赖都写在 devDependencies：workspace 包 host、protocol、sdk、testkit，`@playwright/test` 与 `vite`（视觉截图构建 `packages/ui/test/gallery` 的原语总览页）。用例与运行器用根项目的同一份 Vitest，所以本项目不声明 `vitest`。
 
 不变量：
 

@@ -9,10 +9,13 @@ export function useDrawer({
   enabled,
   navigation,
   inertWhenOpen,
+  shut = false,
 }: {
   enabled: boolean
   navigation: RefObject<HTMLElement | null>
   inertWhenOpen: Array<RefObject<HTMLElement | null>>
+  /** Wide layouts: the sidebar is collapsed, so it is inert as a closed drawer is. */
+  shut?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const initialFocus = useRef<HTMLElement | null>(null)
@@ -31,7 +34,7 @@ export function useDrawer({
     const others = inertWhenOpen.map(ref => ref.current).filter((element): element is HTMLElement => element !== null)
     const modalOpen = enabled && open
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    sidebar.inert = enabled && !open
+    sidebar.inert = enabled ? !open : shut
     for (const element of others) element.inert = modalOpen
     if (!modalOpen)
       return () => {
@@ -92,7 +95,7 @@ export function useDrawer({
         previousFocus.focus()
     }
     // The refs are stable for the shell's lifetime.
-  }, [open, enabled])
+  }, [open, enabled, shut])
 
   return { open, setOpen, show }
 }

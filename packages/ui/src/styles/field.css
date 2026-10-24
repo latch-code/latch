@@ -1,0 +1,175 @@
+/*
+ * Text fields hold a value in a well with a 1px ring; while focused they rise to the raised surface and take the
+ * focus ring and halo (always shown, not only for the keyboard). An error turns the ring red and puts the reason
+ * under the field. 32px on desktop, 44px with 16px text on phones.
+ */
+.ui-field {
+  display: grid;
+  gap: var(--sp-6);
+  min-width: 0;
+}
+.ui-field-label {
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
+}
+.ui-field-control {
+  display: grid;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+.ui-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: var(--sp-6) var(--sp-12);
+  border: 0;
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
+  background: var(--well);
+  box-shadow: var(--ring-field);
+  color: var(--text-1);
+  font-size: var(--fs-input);
+  line-height: var(--lh-input);
+  font-weight: 400;
+  transition:
+    background-color var(--d-fast) var(--ease-exit),
+    box-shadow var(--d-fast) var(--ease-exit);
+}
+textarea.ui-input {
+  min-height: 80px;
+  resize: vertical;
+}
+.ui-input::placeholder {
+  color: var(--text-3);
+}
+.ui-input:focus {
+  outline: none;
+  background: var(--bg-raised);
+  box-shadow: var(--ring-field-focus);
+}
+.ui-input[aria-invalid='true'] {
+  box-shadow: inset 0 0 0 1px var(--err-text);
+}
+.ui-input[aria-invalid='true']:focus {
+  box-shadow:
+    inset 0 0 0 1px var(--err-text),
+    0 0 0 3px var(--focus-halo);
+}
+.ui-input:disabled {
+  opacity: 0.45;
+}
+.ui-field-hint,
+.ui-field-error {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
+}
+.ui-field-error {
+  color: var(--err-text);
+}
+
+/* A search field in a page: the same well with a leading search glyph (6 from the text) and a 24px clear button. */
+.ui-search {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  height: 32px;
+  padding: 0 var(--sp-4) 0 var(--sp-12);
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
+  background: var(--well);
+  box-shadow: var(--ring-field);
+  color: var(--icon);
+  transition:
+    background-color var(--d-fast) var(--ease-exit),
+    box-shadow var(--d-fast) var(--ease-exit);
+}
+/* The ghost search, a row of a column on the ground with the geometry of its rows (36 high, a 16 glyph 8 from the
+ * start and 8 from the text): nothing at rest, the hover background (at once, leaving over --d-fast), and the raised
+ * well with its focus ring only while it has focus. */
+.ui-search[data-variant='ghost'] {
+  gap: var(--sp-8);
+  height: 36px;
+  padding-inline-start: var(--sp-8);
+  background: transparent;
+  box-shadow: none;
+}
+.ui-search[data-variant='ghost']:hover:not(:focus-within) {
+  background: var(--bg-hover);
+  transition-duration: 0s;
+}
+.ui-search:focus-within,
+.ui-search[data-variant='ghost']:focus-within {
+  background: var(--bg-raised);
+  box-shadow: var(--ring-field-focus);
+}
+.ui-search > input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-1);
+  font-size: var(--fs-input);
+  line-height: var(--lh-input);
+  outline: none;
+}
+.ui-search > input::placeholder {
+  color: var(--text-3);
+}
+.ui-search > input::-webkit-search-cancel-button {
+  display: none;
+}
+.ui-search > kbd {
+  margin-inline-end: var(--sp-4);
+}
+.ui-search-clear {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-6);
+  corner-shape: var(--corner-shape);
+  background: transparent;
+  color: var(--icon);
+}
+.ui-search-clear:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+/* On touch screens the 24px button keeps a transparent 44×44 target centred on it. */
+@media (pointer: coarse) {
+  .ui-search-clear {
+    position: relative;
+  }
+  .ui-search-clear::after {
+    content: '';
+    position: absolute;
+    top: calc(50% - 22px);
+    left: calc(50% - 22px);
+    width: 44px;
+    height: 44px;
+  }
+}
+
+@media (max-width: 767.98px) {
+  .ui-input,
+  .ui-search {
+    min-height: 44px;
+    border-radius: var(--r-12);
+    corner-shape: var(--corner-shape);
+  }
+  .ui-input {
+    padding-block: var(--sp-8);
+  }
+  .ui-search {
+    height: 44px;
+    padding-inline-end: var(--sp-8);
+  }
+}

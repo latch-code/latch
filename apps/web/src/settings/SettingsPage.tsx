@@ -2,7 +2,6 @@ import { useRef, useState, type KeyboardEvent } from 'react'
 import { Bot, ChevronLeft, ChevronRight, Folder, Info, MonitorSmartphone, Puzzle, SlidersHorizontal, Sparkles, X } from 'lucide-react'
 import type { AppSnapshot } from '@latch/protocol'
 import { useViewport } from '../breakpoints.ts'
-import { ICON_STROKE, type LucideIcon } from '../icons.tsx'
 import { deviceAccess, hostView, type DeviceAccess } from '../core/permissions.ts'
 import { currentShell } from '../core/shell.ts'
 import { DevModeChip } from '../components/DevModeChip.tsx'
@@ -15,6 +14,7 @@ import { LegacyProviderSettings } from './LegacyProviderSettings.tsx'
 import { PluginsSettings } from './PluginsSettings.tsx'
 import { ProvidersSettings } from './ProvidersSettings.tsx'
 import { WorkspacesSettings } from './WorkspacesSettings.tsx'
+import { ICON_STROKE, IconButton, type LucideIcon } from '@latch/ui'
 
 export type SettingsSection = 'general' | 'providers' | 'agents' | 'workspaces' | 'plugins' | 'devices' | 'about'
 /**
@@ -82,22 +82,17 @@ export function SettingsPage({
     <Modal label="设置" variant={phone ? 'page' : 'dialog'} className="settings-modal" onClose={onClose}>
       <header className="modal-header settings-header">
         {phone && active !== null && (
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="返回"
-            title="返回"
+          <IconButton
+            label="返回"
+            icon={ChevronLeft}
             onClick={() => {
               setChosen(null)
-            }}>
-            <ChevronLeft size={18} strokeWidth={ICON_STROKE} aria-hidden="true" />
-          </button>
+            }}
+          />
         )}
         <h2>{phone && current ? current.label : '设置'}</h2>
         {phone && hostView(snapshot)?.devMode && <DevModeChip />}
-        <button type="button" className="icon-button" aria-label="关闭" title="关闭" onClick={onClose}>
-          <X size={18} strokeWidth={ICON_STROKE} aria-hidden="true" />
-        </button>
+        <IconButton label="关闭" icon={X} onClick={onClose} />
       </header>
       <div className="settings-layout">
         <div
@@ -120,9 +115,9 @@ export function SettingsPage({
               onClick={() => {
                 setChosen(section.id)
               }}>
-              <section.icon size={16} strokeWidth={ICON_STROKE} aria-hidden="true" />
+              <section.icon size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
               <span>{section.label}</span>
-              {phone && <ChevronRight className="chevron" size={16} strokeWidth={ICON_STROKE} aria-hidden="true" />}
+              {phone && <ChevronRight className="chevron" size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />}
             </button>
           ))}
         </div>

@@ -1,0 +1,114 @@
+/*
+ * Inline notices and banners: 8px corners, 8px 12px inside, a tint with a 1px ring in the same tone (neutral is a
+ * tray with a line). The tone colours only the glyph and the title; the text stays text-2 at the caption's paragraph
+ * height. At most one xs action, raised white inside amber and red (data-tint).
+ */
+.ui-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  padding: var(--sp-8) var(--sp-12);
+  border: 1px solid var(--line);
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-sunken);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
+}
+.ui-notice[data-tone='warn'] {
+  border-color: var(--warn-border);
+  background: var(--warn-bg);
+}
+.ui-notice[data-tone='error'] {
+  border-color: var(--err-border);
+  background: var(--err-bg);
+}
+.ui-notice-body {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-8);
+  flex: 1;
+  min-width: 0;
+}
+/* (18 − 14) / 2: centred on the first line. */
+.ui-notice-glyph {
+  margin-top: var(--sp-2);
+  color: var(--icon);
+}
+.ui-notice[data-tone='warn'] :is(.ui-notice-glyph, .ui-notice-title) {
+  color: var(--warn-text);
+}
+.ui-notice[data-tone='error'] :is(.ui-notice-glyph, .ui-notice-title) {
+  color: var(--err-text);
+}
+.ui-notice-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.ui-notice-title {
+  margin-inline-end: var(--sp-6);
+  color: var(--text-1);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+  font-weight: 500;
+}
+.ui-notice-action {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  flex-shrink: 0;
+  min-height: 24px;
+}
+
+/* Toasts: the float surface as a 36px pill, 13/18 text after a 14px glyph in its tone. */
+.ui-toast {
+  --surface: var(--bg-raised);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-8);
+  max-width: min(420px, calc(100vw - 2 * var(--sp-16)));
+  min-height: 36px;
+  padding: var(--sp-8) var(--sp-16) var(--sp-8) var(--sp-12);
+  border-radius: var(--r-pill);
+  background: var(--bg-raised);
+  color: var(--text-1);
+  box-shadow: var(--sh-float);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+}
+.ui-toast-glyph {
+  color: var(--icon);
+}
+.ui-toast[data-tone='error'] .ui-toast-glyph {
+  color: var(--err-text);
+}
+
+/* Tooltips: 24px, 6px corners, 12/16 text-1 on the raised surface with the float shadow; they follow the theme. */
+.ui-tooltip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-height: 24px;
+  max-width: 320px;
+  padding: var(--sp-4) var(--sp-8);
+  border-radius: var(--r-6);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-raised);
+  color: var(--text-1);
+  box-shadow: var(--sh-float);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  pointer-events: none;
+}
+.ui-tooltip[popover] {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  border: 0;
+  overflow: visible;
+}
+.ui-tooltip[popover]:not(:popover-open) {
+  display: none;
+}

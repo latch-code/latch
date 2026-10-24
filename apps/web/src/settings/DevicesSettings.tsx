@@ -14,17 +14,17 @@ import {
 import { api, errorMessage, inlineError } from '../core/api.ts'
 import { withConfirmation } from '../core/confirmations.ts'
 import { dateTime, formatElapsed, looksLikePhone, relativeTime } from '../format.ts'
-import { ICON_STROKE, Spinner, type LucideIcon } from '../icons.tsx'
 import { DEV_MODE_TEXT, hostView, type DeviceAccess } from '../core/permissions.ts'
 import { DEVICE_NAME_INVALID_TEXT, LOCAL_ONLY_TEXT } from '../core/securityCopy.ts'
 import { ConfirmDialog, Modal, ModalHeader } from '../components/overlays.tsx'
-import { Badge, InlineAlert, useCopy } from '../components/ui.tsx'
+import { Badge, Button, Count, ICON_STROKE, InlineNotice, type LucideIcon, Spinner, StatusPill } from '@latch/ui'
+import { useCopy } from '../components/ui.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { useViewport } from '../breakpoints.ts'
 import { Loading, SectionHeading } from './common.tsx'
 
 const STATUS: Record<Device['status'], { label: string; tone: 'neutral' | 'warn' | 'err' | 'ok' }> = {
-  active: { label: '正常', tone: 'ok' },
+  active: { label: '正常', tone: 'neutral' },
   review: { label: '待复核（仅查看）', tone: 'warn' },
   revoked: { label: '已撤销', tone: 'err' },
   'legacy-pending': { label: '需重新确认', tone: 'warn' },
@@ -48,7 +48,7 @@ function deviceIcon(device: Pick<Device, 'listener' | 'name'>): LucideIcon {
 }
 
 function StatusBadge({ status }: { status: Device['status'] }) {
-  return <Badge tone={STATUS[status].tone}>{STATUS[status].label}</Badge>
+  return <StatusPill tone={STATUS[status].tone}>{STATUS[status].label}</StatusPill>
 }
 
 function ThisDevice({ device, devMode, onChanged }: { device: AppSnapshot['device']; devMode: boolean; onChanged: () => void }) {
@@ -80,7 +80,7 @@ function ThisDevice({ device, devMode, onChanged }: { device: AppSnapshot['devic
       <h4 id="this-device">此设备</h4>
       <div className="device-card">
         <span className="device-avatar is-large" aria-hidden="true">
-          <Icon size={18} strokeWidth={ICON_STROKE} />
+          <Icon size={16} strokeWidth={ICON_STROKE[16]} />
         </span>
         <div className="device-card-main">
           <form
@@ -102,12 +102,9 @@ function ThisDevice({ device, devMode, onChanged }: { device: AppSnapshot['devic
               />
               {nameInvalid && <small className="field-hint is-error">{DEVICE_NAME_INVALID_TEXT}</small>}
             </label>
-            <button
-              type="submit"
-              className="button secondary"
-              disabled={busy || !name.trim() || nameInvalid || name.trim() === device.name}>
-              {busy && <Spinner size={14} />}保存名称
-            </button>
+            <Button type="submit" disabled={busy || !name.trim() || nameInvalid || name.trim() === device.name} loading={busy}>
+              保存名称
+            </Button>
           </form>
           {saved && (
             <span className="settings-saved" role="status">
@@ -121,9 +118,8 @@ function ThisDevice({ device, devMode, onChanged }: { device: AppSnapshot['devic
             </div>
             <div>
               <dt>状态</dt>
-              <dd>
-                <StatusBadge status={device.status} />
-              </dd>
+              {/* A healthy device is the default state, so it is plain text; only a state to act on gets a pill. */}
+              <dd>{device.status === 'active' ? STATUS.active.label : <StatusBadge status={device.status} />}</dd>
             </div>
             {device.fingerprint && (
               <div>
@@ -143,26 +139,25 @@ function ThisDevice({ device, devMode, onChanged }: { device: AppSnapshot['devic
             </div>
           </dl>
           <div className="device-card-actions">
-            <button
-              type="button"
-              className="text-button danger-text"
+            <Button
+              variant="danger"
               onClick={() => {
                 setRevoking(true)
               }}>
               撤销此设备
-            </button>
+            </Button>
           </div>
         </div>
       </div>
       {devMode && (
         <p className="dev-note">
-          <span className="dev-chip" aria-hidden="true">
+          <Badge className="dev-chip" aria-hidden="true">
             开发版
-          </span>
+          </Badge>
           {DEV_MODE_TEXT}。此版本未经签名发布，能修改本机文件的程序也能修改 Host 与桌面端。
         </p>
       )}
-      {error && <InlineAlert tone="error">{error}</InlineAlert>}
+      {error && <InlineNotice tone="error">{error}</InlineNotice>}
       {revoking && (
         <ConfirmDialog
           title="撤销此设备"
@@ -243,22 +238,22 @@ function ScopeDialog({ device, local, onClose, onSaved }: { device: Device; loca
           ))}
         </fieldset>
         {blocked && <p className="settings-hint">{LOCAL_ONLY_TEXT}</p>}
-        {error && <InlineAlert tone="error">{error}</InlineAlert>}
+        {error && <InlineNotice tone="error">{error}</InlineNotice>}
       </div>
       <footer className="modal-footer">
-        <button type="button" className="button secondary" disabled={busy} onClick={onClose}>
+        <Button size="md" disabled={busy} onClick={onClose}>
           取消
-        </button>
-        <button
-          type="button"
-          className="button primary"
+        </Button>
+        <Button
+          size="md"
+          variant="primary"
           disabled={busy || blocked}
           onClick={() => {
             void submit()
-          }}>
-          {busy && <Spinner size={14} />}
+          }}
+          loading={busy}>
           {raising ? '授予权限（需要本机确认）' : '保存权限'}
-        </button>
+        </Button>
       </footer>
     </Modal>
   )
@@ -285,10 +280,10 @@ function RegisteredDevices({ currentId, local, onChanged }: { currentId: string;
   const live = shown.filter(device => device.status !== 'revoked').length
   return (
     <section className="settings-group" aria-labelledby="registered-devices">
-      <h4 id="registered-devices">已登记的设备 {devices && <span className="count">{live}</span>}</h4>
+      <h4 id="registered-devices">已登记的设备 {devices && <Count value={live} />}</h4>
       {devices === null ? (
         error ? (
-          <InlineAlert tone="error">{error}</InlineAlert>
+          <InlineNotice tone="error">{error}</InlineNotice>
         ) : (
           <Loading />
         )
@@ -301,12 +296,12 @@ function RegisteredDevices({ currentId, local, onChanged }: { currentId: string;
             return (
               <li key={device.id} className={`device-row${revoked ? ' is-revoked' : ''}`} data-device-id={device.id}>
                 <span className="device-avatar" aria-hidden="true">
-                  <Icon size={16} strokeWidth={ICON_STROKE} />
+                  <Icon size={16} strokeWidth={ICON_STROKE[16]} />
                 </span>
                 <div className="device-row-text">
                   <strong>
                     <span className="device-row-name">{device.name ? <VisibleText text={device.name} /> : '未命名设备'}</span>
-                    {self && <Badge tone="accent">本机</Badge>}
+                    {self && <Badge>本机</Badge>}
                     {device.status !== 'active' && <StatusBadge status={device.status} />}
                   </strong>
                   <span>
@@ -320,23 +315,21 @@ function RegisteredDevices({ currentId, local, onChanged }: { currentId: string;
                 {!revoked && !self && (
                   <div className="device-row-actions">
                     {device.status !== 'legacy-pending' && (
-                      <button
-                        type="button"
-                        className="text-button"
+                      <Button
+                        variant="ghost"
                         onClick={() => {
                           setEditing(device)
                         }}>
                         权限…
-                      </button>
+                      </Button>
                     )}
-                    <button
-                      type="button"
-                      className="text-button danger-text"
+                    <Button
+                      variant="danger"
                       onClick={() => {
                         setRevoking(device)
                       }}>
                       撤销
-                    </button>
+                    </Button>
                   </div>
                 )}
               </li>
@@ -344,7 +337,7 @@ function RegisteredDevices({ currentId, local, onChanged }: { currentId: string;
           })}
         </ul>
       )}
-      {error && devices !== null && <InlineAlert tone="error">{error}</InlineAlert>}
+      {error && devices !== null && <InlineNotice tone="error">{error}</InlineNotice>}
       {editing && (
         <ScopeDialog
           device={editing}
@@ -437,16 +430,16 @@ function PhonePairing({ phone }: { phone: boolean }) {
           生成一次性配对二维码，在手机上扫描后提交登记。二维码 10 分钟内有效，只能使用一次；对方提交后，仍需在这台电脑上核对指纹并确认。
         </p>
         {expired && <p className="settings-hint">上一个二维码已过期。</p>}
-        <button
-          type="button"
-          className="button primary"
-          disabled={busy}
+        <Button
+          variant="primary"
+          icon={QrCode}
+          loading={busy}
           onClick={() => {
             void create()
           }}>
-          {busy ? <Spinner size={14} /> : <QrCode size={16} strokeWidth={ICON_STROKE} aria-hidden="true" />}生成配对二维码
-        </button>
-        {error && <InlineAlert tone="error">{error}</InlineAlert>}
+          生成配对二维码
+        </Button>
+        {error && <InlineNotice tone="error">{error}</InlineNotice>}
       </div>
     )
   return (
@@ -463,42 +456,38 @@ function PhonePairing({ phone }: { phone: boolean }) {
         </p>
         <div className="pair-actions">
           {phone && typeof navigator.share === 'function' ? (
-            <button
-              type="button"
-              className="button primary"
+            <Button
+              variant="primary"
               onClick={() => {
                 void share(invitation.url)
-              }}>
-              <Share2 size={16} strokeWidth={ICON_STROKE} aria-hidden="true" />
+              }}
+              icon={Share2}>
               分享链接
-            </button>
+            </Button>
           ) : (
-            <button
-              type="button"
-              className="button secondary"
+            <Button
               onClick={() => {
                 void copy(invitation.url)
-              }}>
-              <Link size={16} strokeWidth={ICON_STROKE} aria-hidden="true" />
+              }}
+              icon={Link}>
               {copyState === 'copied' ? '已复制' : '复制链接'}
-            </button>
+            </Button>
           )}
-          <button
-            type="button"
-            className="text-button"
+          <Button
+            variant="link"
             disabled={busy}
             onClick={() => {
               void create()
             }}>
             重新生成
-          </button>
+          </Button>
         </div>
         {copyState === 'failed' && (
           <p className="settings-hint" role="alert">
             当前浏览器不允许复制。请在手机上扫描二维码。
           </p>
         )}
-        {error && <InlineAlert tone="error">{error}</InlineAlert>}
+        {error && <InlineNotice tone="error">{error}</InlineNotice>}
       </div>
     </div>
   )

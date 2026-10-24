@@ -6,10 +6,10 @@ import { withConfirmation } from '../core/confirmations.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { safeTarget } from '../core/securityCopy.ts'
 import { hostOf } from '../format.ts'
-import { ICON_STROKE, Spinner } from '../icons.tsx'
 import { ConfirmDialog } from '../components/overlays.tsx'
-import { Badge, InlineAlert, Switch } from '../components/ui.tsx'
-import { Avatar, Loading, SectionHeading } from './common.tsx'
+import { Badge, Button, Count, ICON_STROKE, IconButton, InlineNotice, StatusPill, Switch } from '@latch/ui'
+import { ProviderTile } from '../components/BrandTile.tsx'
+import { Loading, SectionHeading } from './common.tsx'
 
 interface ProvidersResponse {
   providers: ProviderSettings[]
@@ -42,7 +42,7 @@ function PresetGrid({ presets, onPick }: { presets: ProviderPreset[]; onPick: (p
           onClick={() => {
             onPick(preset)
           }}>
-          <Avatar name={preset.name} />
+          <ProviderTile provider={{ id: preset.id, kind: preset.kind, presetId: preset.id }} size={32} />
           <span className="preset-card-text">
             <strong>{preset.name}</strong>
             <span>{preset.baseURL ? (preset.kind === 'anthropic' ? kindLabels.anthropic : hostOf(preset.baseURL)) : '任意兼容地址'}</span>
@@ -275,12 +275,15 @@ function ProviderEditor({
         void save(event)
       }}>
       <div className="editor-heading">
-        <Avatar name={name || preset?.name || '?'} />
+        <ProviderTile
+          provider={{ id: provider?.id ?? preset?.id ?? 'custom', kind, presetId: provider ? provider.presetId : preset?.id }}
+          size={32}
+        />
         <div>
           <h4>{provider ? provider.name : `添加 ${preset?.name ?? '服务'}`}</h4>
           <span>{kindLabels[kind]}</span>
         </div>
-        {provider && <Switch label={`启用 ${provider.name}`} checked={enabled} onChange={setEnabled} />}
+        {provider && <Switch label={`启用 ${provider.name}`} checked={enabled} onCheckedChange={setEnabled} />}
       </div>
       <div className="form-grid">
         <label className={`field ${customKind ? '' : 'field-wide'}`}>
@@ -325,38 +328,38 @@ function ProviderEditor({
           <span>API Key{!requiresKey && <small>可选</small>}</span>
           {keyMode === 'keep' ? (
             <div className="key-state">
-              <KeyRound size={16} strokeWidth={ICON_STROKE} aria-hidden="true" />
+              <KeyRound size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
               <span>已保存（不回显）</span>
               {keyEditable && (
-                <button
-                  type="button"
-                  className="text-button"
+                <Button
+                  variant="ghost"
+                  size="xs"
                   onClick={() => {
                     setKeyMode('replace')
                   }}>
                   更换
-                </button>
+                </Button>
               )}
-              <button
-                type="button"
-                className="text-button danger-text"
+              <Button
+                variant="danger"
+                size="xs"
                 onClick={() => {
                   setKeyMode('clear')
                 }}>
                 移除
-              </button>
+              </Button>
             </div>
           ) : keyMode === 'clear' ? (
             <div className="key-state is-clearing">
               <span>保存后将移除已保存的密钥</span>
-              <button
-                type="button"
-                className="text-button"
+              <Button
+                variant="ghost"
+                size="xs"
                 onClick={() => {
                   setKeyMode('keep')
                 }}>
                 撤销
-              </button>
+              </Button>
             </div>
           ) : keyEditable ? (
             <div className="key-input">
@@ -372,20 +375,19 @@ function ProviderEditor({
                 }}
               />
               {provider?.hasKey && (
-                <button
-                  type="button"
-                  className="text-button"
+                <Button
+                  variant="link"
                   onClick={() => {
                     setKeyMode('keep')
                     setApiKey('')
                   }}>
                   保留原密钥
-                </button>
+                </Button>
               )}
             </div>
           ) : (
             <div className="key-state is-locked">
-              <LockKeyhole size={16} strokeWidth={ICON_STROKE} aria-hidden="true" />
+              <LockKeyhole size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
               <span>{provider?.hasKey ? '已保存（不回显）' : '未设置'}</span>
             </div>
           )}
@@ -394,21 +396,21 @@ function ProviderEditor({
         </div>
       </div>
       <div className="connection-check">
-        <button
-          type="button"
-          className="button secondary"
+        <Button
+          icon={RefreshCw}
           disabled={busy !== null}
+          loading={busy === 'check'}
           onClick={() => {
             void checkConnection()
           }}>
-          {busy === 'check' ? <Spinner size={14} /> : <RefreshCw size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />}检测连接
-        </button>
+          检测连接
+        </Button>
         {check && (
           <span className={`check-result ${check.ok ? 'is-ok' : 'is-error'}`} role="status">
             {check.ok ? (
-              <CircleCheck size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />
+              <CircleCheck size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
             ) : (
-              <CircleAlert size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />
+              <CircleAlert size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
             )}
             {check.ok ? `连接正常 · ${check.latencyMs} ms · ${check.count} 个模型` : check.message}
           </span>
@@ -417,17 +419,16 @@ function ProviderEditor({
       <section className="model-section" aria-labelledby="provider-models">
         <div className="model-section-heading">
           <h5 id="provider-models">
-            模型 <span className="count">{models.length}</span>
+            模型 <Count value={models.length} />
           </h5>
-          <button
-            type="button"
-            className="button secondary small"
+          <Button
             disabled={busy !== null}
             onClick={() => {
               void fetchModels()
-            }}>
-            {busy === 'fetch' && <Spinner size={14} />}获取模型
-          </button>
+            }}
+            loading={busy === 'fetch'}>
+            获取模型
+          </Button>
         </div>
         {models.length === 0 && <p className="settings-hint">尚未添加模型。获取服务的模型列表，或手动输入模型 ID。</p>}
         <ul className="model-list">
@@ -445,16 +446,14 @@ function ProviderEditor({
                 />
                 默认
               </label>
-              <button
-                type="button"
-                className="icon-button"
-                aria-label={`移除模型 ${model}`}
-                title="移除"
+              <IconButton
+                label={`移除模型 ${model}`}
+                tooltip="移除"
+                icon={Trash}
                 onClick={() => {
                   removeModel(model)
-                }}>
-                <Trash size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />
-              </button>
+                }}
+              />
             </li>
           ))}
         </ul>
@@ -478,14 +477,13 @@ function ProviderEditor({
               {shown.map(model => (
                 <li key={model} className="model-row is-available">
                   <code>{model}</code>
-                  <button
-                    type="button"
-                    className="text-button"
+                  <Button
+                    variant="link"
                     onClick={() => {
                       addModel(model)
                     }}>
                     添加
-                  </button>
+                  </Button>
                 </li>
               ))}
             </ul>
@@ -508,60 +506,56 @@ function ProviderEditor({
               }
             }}
           />
-          <button
-            type="button"
-            className="button secondary small"
+          <Button
             disabled={!manual.trim()}
             onClick={() => {
               addModel(manual)
               setManual('')
-            }}>
-            <Plus size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />
+            }}
+            icon={Plus}>
             添加
-          </button>
+          </Button>
         </div>
       </section>
       {egress && (
-        <InlineAlert
+        <InlineNotice
           tone="warn"
           action={
-            <button
-              type="button"
-              className="button secondary small"
+            <Button
+              size="xs"
               disabled={busy !== null}
               onClick={() => {
                 void allowEgress(egress.target)
               }}>
               允许 Host 访问 {egress.target}（需要本机确认）
-            </button>
+            </Button>
           }>
           Host 出站策略拒绝了这个地址。只有你信任该服务时才加入白名单。
-        </InlineAlert>
+        </InlineNotice>
       )}
-      {error && <InlineAlert tone="error">{error}</InlineAlert>}
-      {notice && !error && <InlineAlert tone="ok">{notice}</InlineAlert>}
+      {error && <InlineNotice tone="error">{error}</InlineNotice>}
+      {notice && !error && <InlineNotice tone="neutral">{notice}</InlineNotice>}
       <footer className="editor-footer">
         {provider && onDeleted && (
-          <button
-            type="button"
-            className="button ghost danger-text"
+          <Button
+            size="md"
+            variant="danger"
             disabled={busy !== null}
             onClick={() => {
               setConfirmDelete(true)
             }}>
             删除服务
-          </button>
+          </Button>
         )}
         <span className="editor-footer-spacer" />
         {onCancel && (
-          <button type="button" className="button secondary" disabled={busy !== null} onClick={onCancel}>
+          <Button size="md" disabled={busy !== null} onClick={onCancel}>
             取消
-          </button>
+          </Button>
         )}
-        <button type="submit" className="button primary" disabled={busy !== null}>
-          {busy === 'save' && <Spinner size={14} />}
+        <Button size="md" type="submit" variant={provider ? 'secondary' : 'primary'} disabled={busy !== null} loading={busy === 'save'}>
           {provider ? '保存' : '添加服务'}
-        </button>
+        </Button>
       </footer>
       {confirmDelete && provider && (
         <ConfirmDialog
@@ -639,20 +633,18 @@ export function ProvidersSettings({
       <>
         <SectionHeading title="模型服务" />
         {error ? (
-          <InlineAlert
+          <InlineNotice
             tone="error"
             action={
-              <button
-                type="button"
-                className="button secondary"
+              <Button
                 onClick={() => {
                   void load()
                 }}>
                 重试
-              </button>
+              </Button>
             }>
             {error}
-          </InlineAlert>
+          </InlineNotice>
         ) : (
           <Loading />
         )}
@@ -667,7 +659,7 @@ export function ProvidersSettings({
         onClick={() => {
           setSelection({ kind: 'presets' })
         }}>
-        <Plus size={16} strokeWidth={ICON_STROKE} aria-hidden="true" />
+        <Plus size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
         添加服务
       </button>
       {data.providers.length === 0 && <p className="settings-hint">还没有模型服务。添加一个后，内置 Harness 即可使用它。</p>}
@@ -681,15 +673,15 @@ export function ProvidersSettings({
               onClick={() => {
                 setSelection({ kind: 'provider', id: provider.id })
               }}>
-              <Avatar name={provider.name} />
+              <ProviderTile provider={provider} size={32} />
               <span className="provider-row-text">
                 <strong>{provider.name}</strong>
                 <span>
                   {hostOf(provider.baseURL)} · {provider.models.length} 个模型
                 </span>
               </span>
-              {defaultProvider === provider.id && <Badge tone="accent">默认</Badge>}
-              {!provider.enabled && <Badge>已停用</Badge>}
+              {defaultProvider === provider.id && <Badge>默认</Badge>}
+              {!provider.enabled && <StatusPill>已停用</StatusPill>}
             </button>
           </li>
         ))}
@@ -700,7 +692,7 @@ export function ProvidersSettings({
           <ul>
             {external.map(provider => (
               <li key={provider.id} className="provider-row is-static">
-                <Avatar name={provider.name} />
+                <ProviderTile provider={provider} size={32} />
                 <span className="provider-row-text">
                   <strong>{provider.name}</strong>
                   <span>{provider.kind === 'demo' ? '演示模型，回复由本地脚本生成' : '由插件提供'}</span>
@@ -744,7 +736,7 @@ export function ProvidersSettings({
   return (
     <>
       <SectionHeading title="模型服务" description="内置 Harness 通过这些服务调用模型。Agent 类 Harness 通常自带模型与登录。" />
-      {error && <InlineAlert tone="error">{error}</InlineAlert>}
+      {error && <InlineNotice tone="error">{error}</InlineNotice>}
       {phone ? (
         detail === null ? (
           list
@@ -756,7 +748,7 @@ export function ProvidersSettings({
               onClick={() => {
                 setSelection(selection?.kind === 'new' ? { kind: 'presets' } : null)
               }}>
-              <ChevronLeft size={16} strokeWidth={ICON_STROKE} aria-hidden="true" />
+              <ChevronLeft size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
               {selection?.kind === 'new' ? '选择服务' : '服务列表'}
             </button>
             {detail}

@@ -1,15 +1,7 @@
+import { DevMark } from '@latch/ui'
 import { DEV_MODE_TEXT } from '../core/permissions.ts'
 
-/** A neutral, always-present marker that this Host build is unsigned and locally modifiable. */
+/** The design system's development-build mark with this page's sentence; always present, never an alarm. */
 export function DevModeChip({ compact = false }: { compact?: boolean }) {
-  return (
-    <span
-      className={`dev-chip${compact ? ' is-compact' : ''}`}
-      data-testid="dev-mode"
-      role="note"
-      aria-label={DEV_MODE_TEXT}
-      title={DEV_MODE_TEXT}>
-      开发版
-    </span>
-  )
+  return <DevMark description={DEV_MODE_TEXT} data-testid="dev-mode" className={compact ? 'dev-chip is-compact' : 'dev-chip'} />
 }

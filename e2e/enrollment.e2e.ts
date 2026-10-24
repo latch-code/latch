@@ -10,6 +10,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { createOfflineTicket } from '@latch/host/auth'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost, type TestHostOptions } from './helpers/host.ts'
+import { openSettings } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/enrollment'
 const UI_DIR = resolve(process.env.HARNESS_E2E_UI_DIR ?? 'dist/web')
@@ -210,7 +211,9 @@ describe('device enrollment in the browser', () => {
     await captureSizes(page, 'legacy')
     await page.getByRole('button', { name: '在本机重新确认', exact: true }).click()
     await connected(page)
-    expect(await page.locator('.sidebar-footer').getByText('旧版浏览器', { exact: true }).count()).toBe(1)
+    // The device keeps its name; this device's name is in 设置 › 设备 (the sidebar names the Host's computer).
+    const settings = await openSettings(page, '设备')
+    expect(await settings.getByLabel('设备名称', { exact: true }).inputValue()).toBe('旧版浏览器')
   })
 
   it('offers the offline code when local confirmation is unavailable', async () => {

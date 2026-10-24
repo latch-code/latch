@@ -1,8 +1,9 @@
 import { chromium, type Browser, type BrowserContext, type Locator, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
+import { build, preview } from 'vite'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { AgentSettings, TaskDetail, TaskStatus } from '@latch/protocol'
 import type { HarnessPlugin, ModelDelta, ToolDefinition } from '@latch/sdk'
@@ -33,6 +34,7 @@ import {
 const PROVIDER = 'visual-model'
 const MODEL = { providerId: PROVIDER, model: 'fixture-large' }
 const DEVICE_NAMES: Record<VisualViewport['name'], string> = { desktop: '我的电脑', tablet: '我的平板', phone: '我的手机' }
+const HOST_NAME = 'MacBook Pro'
 
 // ---- Project files --------------------------------------------------------------------------------------------
 
@@ -307,6 +309,96 @@ async function shows(target: Page, value: string | RegExp): Promise<void> {
   await target.locator('.transcript').getByText(value).last().waitFor()
 }
 
+// ---- The gallery of primitives --------------------------------------------------------------------------------
+
+/**
+ * Builds the test-only gallery of @latch/ui (packages/ui/test/gallery) into a temporary directory with Vite and serves
+ * it on 127.0.0.1 at a free port. It is never part of dist/web.
+ */
+async function serveGallery(): Promise<{ url: string; close: () => Promise<void> }> {
+  const root = resolve('packages/ui/test/gallery')
+  const outDir = await mkdtemp(join(tmpdir(), 'latch-ui-gallery-'))
+  const quiet = { logLevel: 'warn', configFile: false } as const
+  try {
+    await build({
+      ...quiet,
+      root,
+      base: './',
+      build: {
+        outDir,
+        emptyOutDir: true,
+        rolldownOptions: {
+          // Icon modules carry a "use client" directive that has no meaning in a single-page bundle.
+          onwarn(warning, warn) {
+            if (warning.code !== 'MODULE_LEVEL_DIRECTIVE') warn(warning)
+          },
+        },
+      },
+    })
+    const server = await preview({ ...quiet, root, build: { outDir }, preview: { host: '127.0.0.1', port: 0 } })
+    const url = server.resolvedUrls?.local[0]
+    if (!url) throw new Error('The gallery server reported no address')
+    return {
+      url,
+      close: async () => {
+        await server.close()
+        await rm(outDir, { recursive: true, force: true })
+      },
+    }
+  } catch (error) {
+    await rm(outDir, { recursive: true, force: true })
+    throw error
+  }
+}
+
+/**
+ * Holds a pseudo-class (hover, focus-visible) on the first element `selector` finds, through the DevTools protocol, so a
+ * capture shows it: the recorder rests the pointer in the corner before every capture. Returns the release.
+ */
+async function forceState(page: Page, selector: string, states: string[]): Promise<() => Promise<void>> {
+  const session = await page.context().newCDPSession(page)
+  await session.send('DOM.enable')
+  await session.send('CSS.enable')
+  const { root } = await session.send('DOM.getDocument', { depth: -1 })
+  const { nodeId } = await session.send('DOM.querySelector', { nodeId: root.nodeId, selector })
+  if (!nodeId) throw new Error(`No element matches ${selector}`)
+  await session.send('CSS.forcePseudoState', { nodeId, forcedPseudoClasses: states })
+  return async () => {
+    await session.send('CSS.forcePseudoState', { nodeId, forcedPseudoClasses: [] })
+    await session.detach()
+  }
+}
+
+/** Waits until the shell's columns have finished moving (opening or shutting the sidebar slides its track). */
+async function shellSettled(target: Page): Promise<void> {
+  await target.waitForFunction(() => document.querySelector('.app-shell')?.getAnimations({ subtree: false }).length === 0)
+  await target.evaluate(() => new Promise(done => setTimeout(done, 260)))
+}
+
+/**
+ * Hover, press and keyboard focus cannot be held on a still page, so the gallery marks the samples that show them with
+ * `data-force="<pseudo-class>"` (and `data-force-at`, a selector inside the sample). The DevTools protocol forces that
+ * state on the element, and the real stylesheet draws it.
+ */
+async function forceGalleryStates(page: Page): Promise<void> {
+  const session = await page.context().newCDPSession(page)
+  await session.send('DOM.enable')
+  await session.send('CSS.enable')
+  const { root } = await session.send('DOM.getDocument', { depth: -1 })
+  const { nodeIds } = await session.send('DOM.querySelectorAll', { nodeId: root.nodeId, selector: '[data-force]' })
+  for (const nodeId of nodeIds) {
+    const { attributes } = await session.send('DOM.getAttributes', { nodeId })
+    const attribute = (name: string) => {
+      const index = attributes.indexOf(name)
+      return index >= 0 ? attributes[index + 1] : undefined
+    }
+    const state = attribute('data-force')
+    const { nodeId: target } = await session.send('DOM.querySelector', { nodeId, selector: attribute('data-force-at') ?? ':scope > *' })
+    if (!state || !target) throw new Error(`No element to force ${state ?? 'a state'} on`)
+    await session.send('CSS.forcePseudoState', { nodeId: target, forcedPseudoClasses: [state] })
+  }
+}
+
 describe('visual capture of the real product', () => {
   let projects: string
   let testHost: TestHost
@@ -327,6 +419,8 @@ describe('visual capture of the real product', () => {
       presenceMode: 'manual',
       // The Host's clock (credentials, enrollments, device activity) stands still at the page clock's instant.
       now: () => VISUAL_TIME,
+      // The computer's name in the sidebar's footer, the same on every machine.
+      hostName: HOST_NAME,
       workspaceRoot: join(projects, 'latch-app'),
     })
     host = testHost.host
@@ -411,7 +505,7 @@ describe('visual capture of the real product', () => {
     await target.locator('.drawer-backdrop').waitFor({ state: 'detached' })
     await target.locator(`[data-task-id="${id}"][aria-current="page"]`).waitFor({ state: 'attached' })
     await target.locator('.transcript-content').waitFor()
-    await target.locator('.transcript .loading-line').waitFor({ state: 'detached' })
+    await target.locator('.transcript .ui-loading').waitFor({ state: 'detached' })
     // The read marker is stored by an effect after the transcript renders; let it run before anything reloads the page.
     await target.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))))
   }
@@ -484,8 +578,20 @@ describe('visual capture of the real product', () => {
     const cancelled = await start(PROMPTS.cancelled)
     await allow(await pendingApproval(cancelled))
     await toolRunning(cancelled)
+    // The desktop page watches the run end: its tool row's comet cross-fades into the tool's icon and the words of the
+    // new state rise into place.
+    const watching = pages.get('desktop')!.page
+    await openSession(
+      watching,
+      VISUAL_VIEWPORTS.find(item => item.name === 'desktop')!,
+      cancelled,
+    )
+    await watching.locator('.tool-card .tool-card-icon .ui-comet').waitFor()
     await local.json(`tasks/${cancelled}/cancel`, { method: 'POST' })
     await settled(cancelled, 'cancelled')
+    await watching.locator('.tool-card-icon[data-shift] > .ui-status-glyph-leaving .ui-comet').waitFor({ state: 'attached' })
+    await watching.locator('.tool-card-state[data-shift]', { hasText: '已取消' }).waitFor()
+    await home(watching)
 
     const unread = await start(PROMPTS.unread, 'chat')
     await settled(unread, 'idle')
@@ -496,6 +602,14 @@ describe('visual capture of the real product', () => {
 
     const hidden = await start(PROMPTS.hidden)
     await pendingApproval(hidden)
+    // The first approval to arrive while the pages watch: the 待批准 row (the rail's button on tablets) appears with its
+    // count, which ripples once because the page saw it arrive.
+    await pages
+      .get('desktop')!
+      .page.locator('.approvals-row .ui-count', { hasText: '1' })
+      .locator('.ui-count-ripple')
+      .waitFor({ state: 'attached' })
+    await pages.get('tablet')!.page.locator('.rail .ui-count', { hasText: '1' }).locator('.ui-count-ripple').waitFor({ state: 'attached' })
     const r2 = await start(PROMPTS.r2)
     await pendingApproval(r2)
     expect((await detail(r2)).approvals[0].risk).toBe('R2')
@@ -519,8 +633,20 @@ describe('visual capture of the real product', () => {
     'captures every surface at $name width and keeps its controls reachable',
     async viewport => {
       const target = page(viewport)
-      // A person who has looked at every session but one: that one keeps its unread mark.
-      for (const seen of Object.values(sessions).filter(id => id !== sessions.unread)) await openSession(target, viewport, seen)
+      // A person who has looked at every session but one: that one keeps its unread mark. On the desktop, a session
+      // read while the page watches lets its row's dot sink as its time fades in.
+      const settles: Array<string | null> = []
+      for (const seen of Object.values(sessions).filter(id => id !== sessions.unread)) {
+        const row = target.locator(`#session-navigation [data-task-id="${seen}"]`)
+        const wasUnread = viewport.name === 'desktop' && (await row.locator('.ui-status-dot').count()) > 0
+        await openSession(target, viewport, seen)
+        if (wasUnread && (await row.locator('.ui-status-time').count()) > 0)
+          settles.push(await row.locator('.ui-status-slot').getAttribute('data-settle'))
+      }
+      if (viewport.name === 'desktop') {
+        expect(settles.length).toBeGreaterThan(0)
+        expect(new Set(settles)).toEqual(new Set(['dot-time']))
+      }
       await home(target)
       await expect
         .poll(() => target.locator('.session-item.is-unread [data-task-id]').evaluateAll(items => items.map(item => item.dataset.taskId)))
@@ -550,21 +676,38 @@ describe('visual capture of the real product', () => {
           await target.getByRole('menu', { name: menu, exact: true }).waitFor({ state: 'detached' })
         }
       }
-      const modes = target.getByRole('group', { name: '会话模式', exact: true })
-      await modes.getByRole('button', { name: '对话', exact: true }).click()
+      if (viewport.name === 'desktop') {
+        // ⋯ on the new-session page holds 同步最新状态, the only place it lives while the connection is healthy.
+        await target.locator('.topbar').getByRole('button', { name: '会话操作', exact: true }).click()
+        const more = target.getByRole('menu', { name: '会话操作', exact: true })
+        await reachable(more.getByRole('menuitem', { name: '同步最新状态', exact: true }))
+        await recorder.capture(target, viewport, 'new-session-more-menu', '⋯ open on the new-session page')
+        await target.keyboard.press('Escape')
+        await more.waitFor({ state: 'detached' })
+      }
+      const modes = target.getByRole('radiogroup', { name: '会话模式', exact: true })
+      await modes.getByRole('radio', { name: '对话', exact: true }).click()
       await recorder.capture(target, viewport, 'new-session-chat', 'chat mode')
-      await modes.getByRole('button', { name: 'Agent', exact: true }).click()
+      await modes.getByRole('radio', { name: 'Agent', exact: true }).click()
 
       // Sessions in each state.
       const sidebar = viewport.name === 'desktop' ? target.locator('#session-navigation') : undefined
       await openSession(target, viewport, sessions.running)
       await shows(target, '用例覆盖了省略密钥的情况，运行一次确认。')
       await reachable(target.getByRole('button', { name: '取消任务', exact: true }))
+      // Running work turns a comet in the run bar and on its tool row; the open session's own row leaves it out.
+      await target.locator('.run-bar .ui-comet').waitFor()
+      await target.locator('.tool-card .ui-comet').first().waitFor()
+      if (sidebar) expect(await sidebar.locator(`[data-task-id="${sessions.running}"] .ui-comet`).count()).toBe(0)
       await recorder.capture(target, viewport, 'session-running', 'tool running')
       if (sidebar) await recorder.capture(target, viewport, 'sidebar-running', 'running session selected', sidebar)
 
       await pages.get(viewport.name)!.context.setOffline(true)
-      await target.getByRole('button', { name: '离线', exact: true }).filter({ visible: true }).first().waitFor()
+      await target
+        .getByRole('button', { name: /^离线/ })
+        .filter({ visible: true })
+        .first()
+        .waitFor()
       await recorder.capture(target, viewport, 'session-offline', 'client offline while a tool runs')
       if (sidebar) await recorder.capture(target, viewport, 'sidebar-offline', 'offline', sidebar)
       await pages.get(viewport.name)!.context.setOffline(false)
@@ -572,6 +715,29 @@ describe('visual capture of the real product', () => {
 
       await openSession(target, viewport, sessions.done)
       await shows(target, /建议再补一条/)
+      if (sidebar) {
+        // Each row's status slot shows one thing: the running comet, the waiting pill, failed, unread or the time, which
+        // is also what a cancelled session shows.
+        const row = (id: string) => sidebar.locator(`[data-task-id="${id}"]`)
+        await row(sessions.running).locator('.ui-comet').waitFor()
+        for (const id of [sessions.r1, sessions.r2, sessions.hidden, sessions.advisory])
+          await row(id).locator('.ui-waiting-pill', { hasText: '待批准' }).waitFor()
+        await row(sessions.failed).locator('.ui-status-failed', { hasText: '失败' }).waitFor()
+        await row(sessions.cancelled).locator('.ui-status-time').waitFor()
+        await row(sessions.unread).locator('.ui-status-dot').waitFor()
+        await row(sessions.plan).locator('.ui-status-time').waitFor()
+        // The rows above the list are ghost rows: the open session's neutral selection is the column's only resting fill.
+        const fills = await sidebar
+          .locator('.search-field, .approvals-row')
+          .evaluateAll(items => items.map(item => getComputedStyle(item).backgroundColor))
+        expect(fills).toEqual(['rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 0)'])
+        expect(await sidebar.locator('.session-item.is-selected').evaluate(item => getComputedStyle(item).backgroundColor)).not.toBe(
+          'rgba(0, 0, 0, 0)',
+        )
+        // The footer names the computer the Host runs on, and says nothing about a healthy connection.
+        expect(await sidebar.locator('.host-name').innerText()).toBe(HOST_NAME)
+        expect(await sidebar.locator('.connection-badge').count()).toBe(0)
+      }
       await recorder.capture(target, viewport, 'session-done', 'done with tools and a diff')
       if (sidebar) await recorder.capture(target, viewport, 'sidebar-done', 'done session selected', sidebar)
 
@@ -597,6 +763,10 @@ describe('visual capture of the real product', () => {
 
       await openSession(target, viewport, sessions.cancelled)
       await target.locator('.topbar').getByText('已取消', { exact: true }).waitFor()
+      if (sidebar) {
+        // The top bar names it cancelled; its row shows its time.
+        await sidebar.locator(`[data-task-id="${sessions.cancelled}"]`).locator('.ui-status-time').waitFor()
+      }
       await recorder.capture(target, viewport, 'session-cancelled', 'cancelled')
       if (sidebar) await recorder.capture(target, viewport, 'sidebar-cancelled', 'cancelled session selected', sidebar)
 
@@ -605,7 +775,10 @@ describe('visual capture of the real product', () => {
       const r1 = target.locator('[data-approval-id]')
       await reachable(r1.getByRole('button', { name: '允许一次', exact: true }))
       await reachable(r1.getByRole('button', { name: '拒绝', exact: true }))
+      // The card waits for the person with the one amber pill in its header.
+      await target.locator('.tool-card', { has: r1 }).locator('.tool-card-header .ui-waiting-pill', { hasText: '待批准' }).waitFor()
       await recorder.capture(target, viewport, 'approval-r1', 'R1 waiting for approval')
+      if (sidebar) await recorder.capture(target, viewport, 'sidebar-waiting', 'session waiting for approval selected', sidebar)
 
       await openDetails(target, viewport)
       await recorder.capture(target, viewport, 'session-info', 'details of a session waiting for approval')
@@ -634,11 +807,134 @@ describe('visual capture of the real product', () => {
       if (viewport.name !== 'desktop') {
         await home(target)
         const drawer = await openDrawer(target)
-        for (const name of ['新建会话', '设置', '设备', '关闭会话列表']) await reachable(drawer.getByRole('button', { name, exact: true }))
+        for (const name of ['新建会话', '设置', '关闭会话列表']) await reachable(drawer.getByRole('button', { name, exact: true }))
+        // The phone's list draws its status slots at 16, the tablet's sliding sidebar at 12.
+        const size = viewport.name === 'phone' ? '16' : '12'
+        await drawer.locator(`[data-task-id="${sessions.running}"] .ui-comet[data-size="${size}"]`).waitFor()
         await noHorizontalOverflow(target, drawer)
         await recorder.capture(target, viewport, 'navigation', 'session list drawer')
         await drawer.getByRole('button', { name: '关闭会话列表', exact: true }).click()
         await target.locator('.drawer-backdrop').waitFor({ state: 'detached' })
+      }
+
+      // The session's own menu opens from its title; on phones the session's actions are in ⋯.
+      if (viewport.name !== 'phone') {
+        await openSession(target, viewport, sessions.done)
+        const title = target.locator('.topbar-title-button')
+        await reachable(title)
+        await title.click()
+        const menu = target.getByRole('menu', { name: /^会话：/ })
+        await menu.waitFor()
+        for (const name of ['重命名', '置顶', '归档', '导出 Markdown', '删除'])
+          await reachable(menu.getByRole('menuitem', { name, exact: true }))
+        await recorder.capture(target, viewport, 'session-menu', 'the title button opens the session menu')
+        await target.keyboard.press('Escape')
+        await menu.waitFor({ state: 'detached' })
+        if (viewport.name === 'desktop') {
+          // ⋯ holds the same actions and 同步最新状态.
+          await target.locator('.topbar').getByRole('button', { name: '会话操作', exact: true }).click()
+          const more = target.getByRole('menu', { name: '会话操作', exact: true })
+          for (const name of ['重命名', '置顶', '归档', '导出 Markdown', '删除', '同步最新状态'])
+            await reachable(more.getByRole('menuitem', { name, exact: true }))
+          await recorder.capture(target, viewport, 'session-more-menu', "the top bar's ⋯ menu open")
+          await target.keyboard.press('Escape')
+          await more.waitFor({ state: 'detached' })
+        }
+      }
+
+      if (sidebar) {
+        // A row under the pointer: the hover fill, and ⋯ in place of its status.
+        let release = await forceState(target, `#session-navigation .session-item:has([data-task-id="${sessions.failed}"])`, ['hover'])
+        await recorder.capture(target, viewport, 'sidebar-row-hover', 'a row under the pointer, ⋯ in place of its status', sidebar)
+        await release()
+
+        // A row's ⋯ menu, which takes the place of its status.
+        const unreadRow = sidebar.locator('.session-item', { has: target.locator(`[data-task-id="${sessions.unread}"]`) })
+        await unreadRow.hover()
+        const more = unreadRow.getByRole('button', { name: /^更多操作：/ })
+        await reachable(more)
+        await more.click()
+        const rowMenu = target.getByRole('menu', { name: /^会话操作：/ })
+        await rowMenu.waitFor()
+        for (const name of ['重命名', '置顶', '归档', '导出 Markdown', '删除'])
+          await reachable(rowMenu.getByRole('menuitem', { name, exact: true }))
+        await recorder.capture(target, viewport, 'sidebar-row-menu', "a row's ⋯ menu open", sidebar)
+        await target.keyboard.press('Escape')
+        await rowMenu.waitFor({ state: 'detached' })
+
+        // Search: the title filter with the filter pills under it.
+        const search = sidebar.getByRole('searchbox', { name: '搜索会话', exact: true })
+        await search.click()
+        const filters = sidebar.getByRole('group', { name: '筛选会话', exact: true })
+        for (const name of ['全部', '对话', 'Agent']) await reachable(filters.getByRole('button', { name, exact: true }))
+        await search.fill('发布')
+        await sidebar.locator(`[data-task-id="${sessions.done}"]`).waitFor({ state: 'detached' })
+        await sidebar.locator(`[data-task-id="${sessions.hidden}"]`).waitFor()
+        await shellSettled(target)
+        await recorder.capture(target, viewport, 'sidebar-search', 'searching titles, with the filter pills', sidebar)
+        await search.fill('')
+        await search.blur()
+        await sidebar.locator('.sidebar-filters:not([data-open])').waitFor({ state: 'attached' })
+
+        // A project group offers a new session in that project.
+        const group = sidebar.locator('.session-group', { hasText: 'latch-app' })
+        await group.locator('.session-group-head').hover()
+        await reachable(group.getByRole('button', { name: '在 latch-app 中新建会话', exact: true }))
+        release = await forceState(target, '#session-navigation .session-group[aria-label="latch-app"] .session-group-head', ['hover'])
+        await recorder.capture(target, viewport, 'sidebar-group-hover', "a project group's head under the pointer, with its +", sidebar)
+        await release()
+
+        // A pinned session leads the list in its own group.
+        await local.json(`tasks/${sessions.plan}`, { method: 'PATCH', body: { pinned: true } })
+        const pinnedGroup = sidebar.locator('.session-group[aria-label="置顶"]')
+        await pinnedGroup.locator(`[data-task-id="${sessions.plan}"]`).waitFor()
+        await expect.poll(() => sidebar.locator('[data-leaving]').count()).toBe(0)
+        await shellSettled(target)
+        await recorder.capture(target, viewport, 'sidebar-pinned', 'a pinned session in the group above the projects', sidebar)
+        await local.json(`tasks/${sessions.plan}`, { method: 'PATCH', body: { pinned: false } })
+        await pinnedGroup.waitFor({ state: 'detached' })
+        await expect.poll(() => sidebar.locator('[data-leaving]').count()).toBe(0)
+
+        // Shut: the column slides away and the top bar offers to open it again.
+        await sidebar.getByRole('button', { name: '收起侧栏', exact: true }).click()
+        await target.locator('.app-shell[data-sidebar="collapsed"]').waitFor()
+        const expand = target.getByRole('button', { name: '展开侧栏', exact: true })
+        await expect.poll(() => target.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('展开侧栏')
+        await reachable(expand)
+        await reachable(target.locator('.topbar').getByRole('button', { name: '新建会话', exact: true }))
+        await shellSettled(target)
+        await recorder.capture(target, viewport, 'sidebar-collapsed', 'the sidebar shut, opened again from the top bar')
+        await expand.click()
+        await target.locator('.app-shell[data-sidebar="open"]').waitFor()
+        await shellSettled(target)
+
+        // The resize handle on the sidebar's edge: its line under a held hover, and with keyboard focus.
+        const handle = target.getByRole('separator', { name: '调整侧栏宽度', exact: true })
+        await reachable(handle)
+        release = await forceState(target, '.sidebar-resize', ['hover'])
+        await target.evaluate(() => new Promise(done => setTimeout(done, 500)))
+        await recorder.capture(target, viewport, 'sidebar-resize-hover', 'the resize handle under the pointer')
+        await release()
+        release = await forceState(target, '.sidebar-resize', ['focus', 'focus-visible'])
+        await recorder.capture(target, viewport, 'sidebar-resize-focus', 'the resize handle with keyboard focus')
+        await release()
+
+        // Archived sessions: a quiet row at the end of the list opens them under their own filter.
+        await local.json(`tasks/${sessions.cancelled}`, { method: 'PATCH', body: { archived: true } })
+        const archivedRow = sidebar.getByRole('button', { name: '已归档的会话（1）', exact: true })
+        await reachable(archivedRow)
+        await expect.poll(() => sidebar.locator('[data-leaving]').count()).toBe(0)
+        await shellSettled(target)
+        await recorder.capture(target, viewport, 'sidebar-archived-row', 'the quiet 已归档 row at the end of the list', sidebar)
+        await archivedRow.click()
+        await sidebar.locator('[data-session-filter="archived"]').waitFor()
+        await sidebar.locator(`[data-task-id="${sessions.cancelled}"]`).waitFor()
+        await shellSettled(target)
+        await recorder.capture(target, viewport, 'sidebar-archived', 'the archived filter', sidebar)
+        await filters.getByRole('button', { name: '全部', exact: true }).click()
+        await local.json(`tasks/${sessions.cancelled}`, { method: 'PATCH', body: { archived: false } })
+        await sidebar.locator(`[data-task-id="${sessions.cancelled}"]`).waitFor()
+        await expect.poll(() => sidebar.locator('.archived-row').count()).toBe(0)
       }
 
       // Settings, section by section.
@@ -662,11 +958,56 @@ describe('visual capture of the real product', () => {
         await ready.waitFor()
         await noHorizontalOverflow(target, settings)
         await recorder.capture(target, viewport, surface, section)
+        if (surface === 'settings-providers') {
+          // Every model-service preset with its brand's icon (a custom service has the plug glyph).
+          await settings.getByRole('button', { name: '添加服务', exact: true }).click()
+          const presets = settings.locator('.preset-card')
+          await expect.poll(() => presets.count()).toBe(13)
+          expect(await presets.locator('.ui-tile').count()).toBe(13)
+          await noHorizontalOverflow(target, settings)
+          await recorder.capture(target, viewport, 'settings-provider-presets', 'choosing a model-service preset')
+        }
       }
       await settings.getByRole('button', { name: '关闭', exact: true }).click()
     },
     600_000,
   )
+
+  // ---- The primitives -----------------------------------------------------------------------------------------
+
+  it('captures the gallery of the design system primitives at each viewport', async () => {
+    const gallery = await serveGallery()
+    try {
+      for (const viewport of VISUAL_VIEWPORTS) {
+        const context = await visualContext(browser, viewport)
+        try {
+          const target = await context.newPage()
+          await target.goto(gallery.url)
+          const main = target.getByRole('main', { name: '@latch/ui' })
+          await main.waitFor()
+          await forceGalleryStates(target)
+          // The gallery is far taller than the viewport. Chrome paints an element that does not fit the viewport with
+          // `captureBeyondViewport`, which drops the touch emulation for that capture (Playwright switches it back on
+          // afterwards), so the phone and tablet captures would show the mouse sizes. The viewport grows to the whole
+          // page instead, which keeps the device's width, mobile emulation and touch.
+          const height = await target.evaluate(() => Math.ceil(document.documentElement.scrollHeight))
+          await target.setViewportSize({ width: viewport.width, height })
+          const box = await main.boundingBox()
+          expect(box && box.height <= height).toBe(true)
+          const switchTrack = await target
+            .getByRole('switch')
+            .first()
+            .evaluate(element => getComputedStyle(element, '::before').width)
+          expect(switchTrack).toBe(viewport.touch ? '44px' : '32px')
+          await recorder.capture(target, viewport, 'ui-gallery', 'every primitive in every state', main)
+        } finally {
+          await context.close()
+        }
+      }
+    } finally {
+      await gallery.close()
+    }
+  })
 
   // ---- Stability ----------------------------------------------------------------------------------------------
 

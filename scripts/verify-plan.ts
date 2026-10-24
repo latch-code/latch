@@ -102,6 +102,8 @@ function needsOf(path: string, projects: readonly TestProject[]): Need[] | undef
   }
   if (path.startsWith('packages/testkit/'))
     return ['knip', 'test', 'build', 'e2e', 'electron', ...(path.includes('/vectors/') ? (['encoding'] as const) : [])]
+  // The gallery of the design system's primitives is also a page that the visual capture builds and captures.
+  if (path.startsWith('packages/ui/test/gallery/')) return ['knip', 'project:@latch/ui', 'build', 'e2e']
   const project = projects.find(item => path.startsWith(`${item.dir}/`))
   if (project) return ['knip', `project:${project.name}`]
 
@@ -114,6 +116,8 @@ function needsOf(path: string, projects: readonly TestProject[]): Need[] | undef
       || path === 'apps/web/index.html'
     return ['knip', 'project:@latch/web', 'build', 'e2e', ...(page ? (['layout'] as const) : [])]
   }
+  // The design system restyles the whole page, so it calls for what a change to the page's own styles does.
+  if (path.startsWith('packages/ui/')) return ['knip', 'project:@latch/ui', 'project:@latch/web', 'build', 'e2e', 'layout']
   if (/^apps\/host\/scripts\/desktop[\w-]*\.ts$/u.test(path)) return ['knip', 'project:@latch/host', 'build', 'electron']
   if (path.startsWith('apps/host/') || path.startsWith('packages/')) return ['knip', 'test', 'build', 'e2e']
   if (path.startsWith('src/')) return ['knip', 'project:harness-link', 'build']

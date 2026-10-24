@@ -2,10 +2,11 @@ import type { ReactNode } from 'react'
 import type { AppSnapshot, TaskDetail, TaskSummary } from '@latch/protocol'
 import { findProvider, sessionHarness, usesDemoModel } from '../composerChoice.ts'
 import { basename, formatTokens, isActive, statusLabels, usageTitle } from '../format.ts'
-import { ICON_STROKE, Spinner, toolKind, toolKindIcons } from '../icons.tsx'
+import { toolKind, toolKindIcons } from '../icons.tsx'
 import { LEVEL_LABELS } from '../core/permissions.ts'
 import { PlanList, planProgress } from './PlanCard.tsx'
-import { Badge, CopyButton } from './ui.tsx'
+import { ICON_STROKE, StatusGlyph, StatusPill, StatusWords } from '@latch/ui'
+import { CopyButton } from './ui.tsx'
 
 const toolStates = {
   queued: '等待执行',
@@ -86,8 +87,8 @@ export function Inspector({
           {level && (
             <Row label="权限">
               <span className="inspector-permission">
-                <Badge tone={level === 'L3' ? 'warn' : 'neutral'}>{LEVEL_LABELS[level]}</Badge>
-                {(summary.permissionDrift || permission?.drift) && <Badge tone="err">权限模式已变化</Badge>}
+                <StatusPill tone={level === 'L3' ? 'warn' : 'neutral'}>{LEVEL_LABELS[level]}</StatusPill>
+                {(summary.permissionDrift || permission?.drift) && <StatusPill tone="err">权限模式已变化</StatusPill>}
                 {facts.length > 0 && (
                   <ul className="inspector-facts">
                     {facts.map(fact => (
@@ -140,18 +141,22 @@ export function Inspector({
           <ol className="timeline">
             {tools.map(tool => {
               const Icon = toolKindIcons[toolKind(tool)]
+              const state = tool.state ?? 'completed'
               return (
-                <li key={tool.id} className={`timeline-item state-${tool.state ?? 'completed'}`}>
+                <li key={tool.id} className={`timeline-item state-${state}`}>
                   <button
                     type="button"
                     onClick={() => {
                       onReveal(tool.id)
                     }}>
-                    <span className="timeline-icon" aria-hidden="true">
-                      {tool.state === 'running' ? <Spinner size={14} /> : <Icon size={14} strokeWidth={ICON_STROKE} />}
-                    </span>
+                    {/* A change of state seen live cross-fades the comet and the icon, and its words rise in. */}
+                    <StatusGlyph className="timeline-icon" running={state === 'running'}>
+                      <Icon size={14} strokeWidth={ICON_STROKE[14]} />
+                    </StatusGlyph>
                     <span className="timeline-title">{tool.tool?.title || tool.toolName || '工具调用'}</span>
-                    <span className="timeline-state">{toolStates[tool.state ?? 'completed']}</span>
+                    <StatusWords state={state} className="timeline-state">
+                      {toolStates[state]}
+                    </StatusWords>
                   </button>
                 </li>
               )

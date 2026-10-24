@@ -9,9 +9,9 @@ import {
   type ReactNode,
   type Ref,
 } from 'react'
-import { Check, X } from 'lucide-react'
+import { Check, CircleSlash, X } from 'lucide-react'
 import { useViewport } from '../breakpoints.ts'
-import { ICON_STROKE, Spinner, type LucideIcon } from '../icons.tsx'
+import { Button, ICON_STROKE, IconButton, InlineNotice, type LucideIcon } from '@latch/ui'
 
 /**
  * Native modal dialog: the browser makes the rest of the page inert and keeps
@@ -76,9 +76,7 @@ export function ModalHeader({
     <header className="modal-header">
       {leading}
       <h2>{title}</h2>
-      <button type="button" className="icon-button" aria-label={closeLabel} title={closeLabel} onClick={onClose}>
-        <X size={18} strokeWidth={ICON_STROKE} aria-hidden="true" />
-      </button>
+      <IconButton label={closeLabel} icon={X} onClick={onClose} />
     </header>
   )
 }
@@ -88,17 +86,44 @@ export interface MenuItem {
   label: string
   description?: string
   icon?: LucideIcon
+  /** A tile in place of the glyph, for example a harness's or a model service's. */
+  leading?: ReactNode
   tag?: ReactNode
   checked?: boolean
   disabled?: boolean
-  /** Shown instead of the description when the item is disabled. */
+  /** Why the item cannot be chosen; shown under it while it is disabled. */
   disabledReason?: string
   danger?: boolean
   onSelect: () => void
 }
+/**
+ * Title, tag and description of a menu or radio item. A disabled item dims its title and description and adds the
+ * reason in a row of its own, which stays at full strength so the person can read why.
+ */
+export function MenuItemText({ item }: { item: MenuItem }) {
+  const reason = item.disabled ? item.disabledReason : undefined
+  return (
+    <span className="menu-item-text">
+      <span className="menu-item-label">
+        {item.label}
+        {item.tag}
+      </span>
+      {item.description && <span className="menu-item-description">{item.description}</span>}
+      {reason && (
+        <span className="menu-item-reason">
+          <CircleSlash size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+          {reason}
+        </span>
+      )}
+    </span>
+  )
+}
+
 export interface MenuSection {
   id: string
   label?: string
+  /** A tile before the section's label, for example the model service its models come from. */
+  leading?: ReactNode
   items: MenuItem[]
 }
 export interface MenuTriggerProps {
@@ -145,6 +170,7 @@ export function Menu({
   const sheet = viewport === 'phone'
   const [open, setOpen] = useState(false)
   const [style, setStyle] = useState<CSSProperties>({ top: -9999, left: -9999, visibility: 'hidden' })
+  const [side, setSide] = useState<'top' | 'bottom'>('bottom')
   const triggerRef = useRef<HTMLButtonElement>(null)
   const popover = useRef<HTMLDivElement>(null)
   const sheetMenu = useRef<HTMLDivElement>(null)
@@ -175,6 +201,7 @@ export function Menu({
       const preferred = placement.endsWith('end') ? anchor.right - width : anchor.left
       const left = Math.min(Math.max(margin, preferred), Math.max(margin, innerWidth - width - margin))
       setStyle({ top, left, maxHeight: space })
+      setSide(up ? 'top' : 'bottom')
     }
     place()
     const outside = (event: Event) => {
@@ -231,6 +258,7 @@ export function Menu({
           <div className="menu-section" key={section.id} role="group" aria-label={section.label}>
             {section.label && (
               <div className="menu-section-label" aria-hidden="true">
+                {section.leading}
                 {section.label}
               </div>
             )}
@@ -248,19 +276,12 @@ export function Menu({
                   close()
                   item.onSelect()
                 }}>
-                {item.icon && <item.icon className="menu-item-icon" size={16} strokeWidth={ICON_STROKE} aria-hidden="true" />}
-                <span className="menu-item-text">
-                  <span className="menu-item-label">
-                    {item.label}
-                    {item.tag}
-                  </span>
-                  {(item.disabled && item.disabledReason ? item.disabledReason : item.description) && (
-                    <span className="menu-item-description">
-                      {item.disabled && item.disabledReason ? item.disabledReason : item.description}
-                    </span>
-                  )}
-                </span>
-                {selection && item.checked && <Check className="menu-item-check" size={16} strokeWidth={ICON_STROKE} aria-hidden="true" />}
+                {item.icon && <item.icon className="menu-item-icon" size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />}
+                {item.leading && <span className="menu-item-leading">{item.leading}</span>}
+                <MenuItemText item={item} />
+                {selection && item.checked && (
+                  <Check className="menu-item-check" size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+                )}
               </button>
             ))}
           </div>
@@ -280,7 +301,7 @@ export function Menu({
         'aria-expanded': open,
       })}
       {open && !sheet && (
-        <div ref={popover} className={`popover ${className}`} style={{ position: 'fixed', ...style }}>
+        <div ref={popover} className={`popover ${className}`} data-side={side} style={{ position: 'fixed', ...style }}>
           {content}
           {footer && <div className="menu-footer">{footer(() => close(false))}</div>}
         </div>
@@ -338,26 +359,22 @@ export function ConfirmDialog({
       <ModalHeader title={title} onClose={onClose} />
       <div className="modal-body">
         <p className="confirm-message">{message}</p>
-        {error && (
-          <p className="inline-alert inline-alert-error" role="alert">
-            {error}
-          </p>
-        )}
+        {error && <InlineNotice tone="error">{error}</InlineNotice>}
       </div>
       <footer className="modal-footer">
-        <button type="button" className="button secondary" disabled={busy} onClick={onClose}>
+        <Button size="md" disabled={busy} onClick={onClose}>
           取消
-        </button>
-        <button
-          type="button"
-          className={`button ${danger ? 'danger' : 'primary'}`}
+        </Button>
+        <Button
+          size="md"
+          variant={danger ? 'destroy' : 'primary'}
           disabled={busy}
           onClick={() => {
             void confirm()
-          }}>
-          {busy && <Spinner size={14} />}
+          }}
+          loading={busy}>
           {confirmLabel}
-        </button>
+        </Button>
       </footer>
     </Modal>
   )
@@ -427,20 +444,15 @@ export function PromptDialog({
               }}
             />
           </label>
-          {error && (
-            <p className="inline-alert inline-alert-error" role="alert">
-              {error}
-            </p>
-          )}
+          {error && <InlineNotice tone="error">{error}</InlineNotice>}
         </div>
         <footer className="modal-footer">
-          <button type="button" className="button secondary" disabled={busy} onClick={onClose}>
+          <Button size="md" disabled={busy} onClick={onClose}>
             取消
-          </button>
-          <button type="submit" className="button primary" disabled={busy || !value.trim()}>
-            {busy && <Spinner size={14} />}
+          </Button>
+          <Button size="md" type="submit" variant="primary" disabled={busy || !value.trim()} loading={busy}>
             {confirmLabel}
-          </button>
+          </Button>
         </footer>
       </form>
     </Modal>

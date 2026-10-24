@@ -1,10 +1,11 @@
 import { memo, useState } from 'react'
-import { Brain, ChevronRight, Info } from 'lucide-react'
-import type { Message, TokenUsage } from '@latch/protocol'
+import { Brain, ChevronRight, CircleX, Info } from 'lucide-react'
+import type { HarnessInfo, Message, TokenUsage } from '@latch/protocol'
 import { MessageContent } from '../MessageContent.tsx'
 import { usageText, usageTitle } from '../format.ts'
-import { ICON_STROKE } from '../icons.tsx'
-import { BrandMark, CopyButton } from './ui.tsx'
+import { HarnessTile } from './BrandTile.tsx'
+import { CopyButton } from './ui.tsx'
+import { ICON_STROKE } from '@latch/ui'
 
 /** Reported reasoning only; it follows the live reply and folds away once the answer starts. */
 export function Reasoning({ text, live }: { text: string; live: boolean }) {
@@ -19,9 +20,9 @@ export function Reasoning({ text, live }: { text: string; live: boolean }) {
         onClick={() => {
           setChoice(!open)
         }}>
-        <Brain size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />
+        <Brain size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
         {live ? '思考中…' : '思考过程'}
-        <ChevronRight className="chevron" size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />
+        <ChevronRight className="chevron" size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
       </button>
       {open && (
         <div className="reasoning-scroll">
@@ -37,6 +38,7 @@ export const MessageRow = memo(
     message,
     streaming = false,
     meta,
+    metaHarness,
     footer = true,
     usage = message.usage,
   }: {
@@ -44,6 +46,8 @@ export const MessageRow = memo(
     streaming?: boolean
     /** Shown once per turn on the first assistant block, e.g. the harness name. */
     meta?: string
+    /** The harness the turn came from, for the tile before `meta`; the built-in one shows Latch's icon. */
+    metaHarness?: Pick<HarnessInfo, 'id' | 'source'>
     /** Copy and usage; only the block that ends a turn shows them. An outcome always shows. */
     footer?: boolean
     /** Usage of the whole turn; defaults to this block's own. */
@@ -60,9 +64,13 @@ export const MessageRow = memo(
       )
     }
     if (message.role === 'system') {
+      // A note that reports a failure (a model-service error, an interrupted run, a stopped session) is red; any
+      // other note is neutral information.
+      const failed = message.state === 'failed'
+      const Icon = failed ? CircleX : Info
       return (
-        <article className="message message-system" data-message-id={message.id}>
-          <Info size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />
+        <article className={`message message-system${failed ? ' is-failed' : ''}`} data-message-id={message.id}>
+          <Icon size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
           <p>{message.text}</p>
         </article>
       )
@@ -81,7 +89,11 @@ export const MessageRow = memo(
         aria-label={streaming ? '正在生成的回复' : undefined}>
         {meta !== undefined && (
           <div className="assistant-meta">
-            <BrandMark size={16} />
+            {/* The turn's source, not the harness's state now: the tile never draws readiness here. */}
+            <HarnessTile
+              harness={metaHarness ? { id: metaHarness.id, source: metaHarness.source } : { id: 'standard', source: 'builtin' }}
+              size={16}
+            />
             <span>{meta}</span>
           </div>
         )}
@@ -112,6 +124,8 @@ export const MessageRow = memo(
   (a, b) =>
     a.streaming === b.streaming
     && a.meta === b.meta
+    && a.metaHarness?.id === b.metaHarness?.id
+    && a.metaHarness?.source === b.metaHarness?.source
     && a.footer === b.footer
     && a.message.id === b.message.id
     && a.message.text === b.message.text

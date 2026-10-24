@@ -316,7 +316,7 @@ function escapeHtml(text) {
 }
 
 function htmlErrorPage(message) {
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Latch</title><style>body{font:15px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;margin:48px;color:#1f2933;background:#fbfcfd}@media (prefers-color-scheme:dark){body{color:#e4e7eb;background:#111418}}</style></head><body><p>${escapeHtml(message)}</p></body></html>`
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Latch</title><style>body{font:15px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;margin:48px;color:#1d1c1a;background:#f2f1ee}@media (prefers-color-scheme:dark){body{color:#eae9e7;background:#141413}}</style></head><body><p>${escapeHtml(message)}</p></body></html>`
 }
 
 function unavailableResponse(pathname) {

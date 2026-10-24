@@ -16,6 +16,7 @@ import { TopBar } from '../src/components/TopBar.tsx'
 import { Transcript, renderedMessages, turnFooters } from '../src/components/Transcript.tsx'
 import { escapeHiddenCharacters, hasHiddenCharacters, VisibleText } from '../src/components/VisibleText.tsx'
 import { contentHash } from '../src/core/contentHash.ts'
+import type { ApprovalGate } from '../src/core/permissions.ts'
 import { revokeText } from '../src/settings/DevicesSettings.tsx'
 import { WorkspaceRow } from '../src/settings/WorkspacesSettings.tsx'
 
@@ -63,7 +64,7 @@ describe('tool cards', () => {
     expect(html).toContain('<code class="tool-card-name">write_file</code>')
     expect(html).toContain('无参数')
     expect(html).not.toContain('{}')
-    expect([...html.matchAll(/<button[^>]*class="button [^"]*"[^>]*>([^<]+)<\/button>/g)].map(match => match[1])).toEqual([
+    expect([...html.matchAll(/<button[^>]*class="ui-button"[^>]*>([^<]+)<\/button>/g)].map(match => match[1])).toEqual([
       '拒绝',
       '本会话始终允许',
       '允许一次',
@@ -88,7 +89,9 @@ describe('tool cards', () => {
     expect(html).toContain('<dt>path</dt>')
     expect(html).toContain('class="diff-stat-add">+1</span>')
     expect(html).toContain('class="diff-stat-remove">−1</span>')
-    expect(html.match(/<button[^>]*class="button [^"]*"[^>]*disabled=""/g)).toHaveLength(2)
+    // The chosen option runs; the other stays focusable but takes no click.
+    expect(html.match(/<button[^>]*class="ui-button"[^>]*aria-disabled="true"/g)).toHaveLength(1)
+    expect(html.match(/<button[^>]*class="ui-button"[^>]*aria-busy="true"/g)).toHaveLength(1)
   })
 
   it('renders an approval without a matching tool row as its own card without a message anchor', () => {
@@ -189,7 +192,36 @@ describe('approval cards', () => {
     expect(html).toContain(HIDDEN_CHARACTERS_TEXT)
     expect(html).toContain('title="a\\u{200B}.ts"')
     // No allow option looks like the default choice.
-    expect(html).not.toContain('class="button primary"')
+    expect(html).not.toContain('data-variant="primary"')
+  })
+
+  it('carries the waiting in the header pill alone, as text without an icon', () => {
+    const html = renderToStaticMarkup(createElement(ToolCard, { message: tool(), approval: approval({ risk: 'R1' }), onDecide: noop }))
+    expect(html).toContain('<span class="ui-status-pill ui-waiting-pill tool-card-waiting" data-tone="warn">待批准</span>')
+  })
+
+  it('keeps blue off a high-risk card: allowing is a secondary button led by a lock', () => {
+    const html = renderToStaticMarkup(
+      createElement(ToolCard, {
+        message: tool(),
+        approval: approval({ risk: 'R2' }),
+        onDecide: noop,
+        gateFor: (): ApprovalGate => ({
+          badge: { label: '高风险', tone: 'err' },
+          explicit: false,
+          options: [
+            { id: 'reject_once', label: '拒绝', kind: 'reject_once' },
+            { id: 'allow_once', label: '在本机确认后允许', kind: 'allow_once' },
+          ],
+        }),
+      }),
+    )
+    expect(html).toContain('class="tool-card tool-awaiting-approval has-approval is-r2"')
+    expect(html).not.toContain('data-variant="primary"')
+    expect(html).toMatch(/<button type="button" class="ui-button" data-variant="secondary" data-size="sm">拒绝<\/button>/)
+    expect(html).toMatch(
+      /<button type="button" class="ui-button" data-variant="secondary" data-size="sm" data-leading="">(?:(?!<\/button>).)*?<svg[^>]*lucide-lock-keyhole[^>]*>.*?<\/svg>在本机确认后允许<\/button>/,
+    )
   })
 
   it('never labels a write without previous text as a new file', () => {
@@ -204,7 +236,7 @@ describe('approval cards', () => {
       }),
     )
     expect(html).not.toContain('>新文件<')
-    expect(html).toContain(`<span class="badge badge-warn" title="${PREVIOUS_UNKNOWN_TEXT}">原内容未知</span>`)
+    expect(html).toContain(`<span class="ui-status-pill" data-tone="warn" title="${PREVIOUS_UNKNOWN_TEXT}">原内容未知</span>`)
     expect(html).toContain(`<p class="approval-warning" role="note">${PREVIOUS_UNKNOWN_TEXT}</p>`)
     expect(html).toContain('@@ +1,1 @@')
     expect(html).not.toContain('−0')
@@ -215,11 +247,11 @@ describe('approval cards', () => {
     const render = (diff: { previous?: 'none' | 'text' | 'unavailable'; oldText?: string }) =>
       renderToStaticMarkup(createElement(DiffView, { diffs: [{ path: 'a.txt', newText: 'x\n', ...diff }] }))
     const created = render({ previous: 'none' })
-    expect(created).toContain('<span class="badge badge-neutral">新文件</span>')
+    expect(created).toContain('<span class="ui-status-pill" data-tone="neutral">新文件</span>')
     expect(created).toContain('@@ -0,0 +1,1 @@')
-    expect(created).not.toContain('badge-warn')
+    expect(created).not.toContain('data-tone="warn"')
     const hidden = render({ previous: 'unavailable' })
-    expect(hidden).toContain(`<span class="badge badge-warn" title="${PREVIOUS_UNAVAILABLE_TEXT}">原内容未显示</span>`)
+    expect(hidden).toContain(`<span class="ui-status-pill" data-tone="warn" title="${PREVIOUS_UNAVAILABLE_TEXT}">原内容未显示</span>`)
     expect(hidden).toContain(`<p class="diff-note">${PREVIOUS_UNAVAILABLE_TEXT}</p>`)
     expect(hidden).toContain('@@ +1,1 @@')
     for (const html of [hidden, render({})]) expect(html).not.toContain('>新文件<')
@@ -243,6 +275,17 @@ describe('approval cards', () => {
     )
     expect(card).toContain(`<p class="approval-warning" role="note">${PREVIOUS_UNAVAILABLE_TEXT}</p>`)
     expect(card).not.toContain(PREVIOUS_UNKNOWN_TEXT)
+  })
+})
+
+describe('system notes', () => {
+  it('draws a note that reports a failure in red and any other note as neutral information', () => {
+    const failed = renderToStaticMarkup(
+      createElement(MessageRow, { message: { id: 'n1', role: 'system', text: '模型服务返回错误（HTTP 503）', state: 'failed' } }),
+    )
+    expect(failed).toMatch(/<article class="message message-system is-failed"[^>]*><svg[^>]*lucide-circle-x/)
+    const note = renderToStaticMarkup(createElement(MessageRow, { message: { id: 'n2', role: 'system', text: '已自动拒绝' } }))
+    expect(note).toMatch(/<article class="message message-system"[^>]*><svg[^>]*lucide-info/)
   })
 })
 
@@ -286,10 +329,15 @@ describe('plan', () => {
     { content: 'Read', status: 'completed' as const },
     { content: 'Write', status: 'in_progress' as const },
   ]
-  it('spins only while the session runs', () => {
-    expect(renderToStaticMarkup(createElement(PlanList, { plan, active: true }))).toContain(' spin"')
+  it('marks the step in progress with a still mark, which reads as unfinished once the session settles', () => {
+    // The running tool turns its comets on its own row and in the run bar; the plan adds none.
+    const running = renderToStaticMarkup(createElement(PlanList, { plan, active: true }))
+    expect(running).toContain('lucide-circle-dot')
+    expect(running).toContain('，进行中')
+    expect(running).not.toMatch(/ui-comet|ui-spinner/)
     const settled = renderToStaticMarkup(createElement(PlanList, { plan, active: false }))
-    expect(settled).not.toContain('spin')
+    expect(settled).toContain('class="plan-list is-settled"')
+    expect(settled).not.toMatch(/ui-comet|ui-spinner/)
     expect(settled).toContain('，未完成')
   })
 })
@@ -394,25 +442,65 @@ describe('phone run settings', () => {
 })
 
 describe('top bar', () => {
-  it('keeps the connection state as a named dot on phones', () => {
-    const base = {
-      summary: session(),
-      cancelling: false,
-      demo: false,
-      drawerOpen: false,
-      onNew: noop,
-      inspectorOpen: false,
-      onInspector: noop,
-      menu: [],
-      connection: 'offline' as const,
-      onRefresh: noop,
+  const topBar = {
+    summary: session(),
+    cancelling: false,
+    demo: false,
+    phone: false,
+    drawerOpen: false,
+    onNew: noop,
+    inspectorOpen: false,
+    onInspector: noop,
+    sessionMenu: [],
+    menu: [],
+    connection: 'connected' as const,
+    onRefresh: noop,
+  }
+
+  it('names an unhealthy connection in a status pill without a dot, on phones too', () => {
+    for (const phone of [true, false]) {
+      const html = renderToStaticMarkup(createElement(TopBar, { ...topBar, connection: 'offline' as const, phone }))
+      expect(html).toMatch(/<button[^>]*class="connection-pill connection-offline"[^>]*>离线<span class="connection-pill-retry">· 重试<svg/)
+      expect(html).not.toContain('<i aria-hidden="true"></i>')
     }
-    const phone = renderToStaticMarkup(createElement(TopBar, { ...base, phone: true }))
-    expect(phone).toMatch(
-      /<button[^>]*class="connection-pill connection-offline is-compact"[^>]*aria-label="离线"[^>]*><i aria-hidden="true"><\/i><svg/,
+    expect(renderToStaticMarkup(createElement(TopBar, topBar))).not.toContain('connection-pill')
+  })
+
+  it('names full access and leaves the default level, asking before each step, to the session details', () => {
+    const full = renderToStaticMarkup(createElement(TopBar, { ...topBar, level: 'L3' }))
+    expect(full).toMatch(
+      /<span class="ui-status-pill level-pill" data-tone="warn" title="完全访问（L3）"><svg[^>]*lucide-shield-alert[^>]*>.*<\/svg>完全访问<\/span>/,
     )
-    const desktop = renderToStaticMarkup(createElement(TopBar, { ...base, phone: false }))
-    expect(desktop).toMatch(/<i aria-hidden="true"><\/i>离线<svg/)
+    const asking = renderToStaticMarkup(createElement(TopBar, { ...topBar, level: 'L1' }))
+    expect(asking).not.toContain('逐项询问')
+    expect(asking).not.toContain('level-pill')
+  })
+
+  it('shows the state only when it is not the default, and where the session runs', () => {
+    const pill = (status: TaskSummary['status'], cancelling = false) =>
+      /class="ui-status-pill" data-tone="(\w+)">([^<]+)</u
+        .exec(renderToStaticMarkup(createElement(TopBar, { ...topBar, summary: session({ status }), cancelling })))
+        ?.slice(1)
+    expect(pill('running')).toBeUndefined()
+    expect(pill('idle')).toBeUndefined()
+    expect(pill('waiting-approval')).toBeUndefined()
+    expect(pill('failed')).toEqual(['err', '失败'])
+    expect(pill('cancelled')).toEqual(['neutral', '已取消'])
+    expect(pill('interrupted')).toEqual(['neutral', '已中断'])
+    expect(pill('running', true)).toEqual(['neutral', '正在取消'])
+    const html = renderToStaticMarkup(
+      createElement(TopBar, { ...topBar, harness: { id: 'codex', name: 'Codex', source: 'acp' as const }, project: 'latch-app' }),
+    )
+    expect(html).toContain('<span class="topbar-source-text">Codex · latch-app</span>')
+    expect(html).toMatch(/<span class="topbar-source"[^>]*><span class="ui-tile"/)
+  })
+
+  it('makes the title a button that opens the session menu, and offers to open a shut sidebar', () => {
+    const sessionMenu = [{ id: 'manage', items: [{ id: 'rename', label: '重命名', onSelect: noop }] }]
+    const html = renderToStaticMarkup(createElement(TopBar, { ...topBar, sessionMenu, sidebarCollapsed: true, onExpandSidebar: noop }))
+    expect(html).toMatch(/<h1[^>]*><button[^>]*aria-haspopup="menu"[^>]*class="topbar-title-button"><span class="topbar-title-text">/)
+    expect(html).toContain('aria-label="展开侧栏"')
+    expect(renderToStaticMarkup(createElement(TopBar, topBar))).not.toContain('展开侧栏')
   })
 })
 
@@ -485,7 +573,7 @@ describe('workspace settings', () => {
       ),
     )
     expect(html).toContain('class="workspace-row is-unavailable"')
-    expect(html).toContain('<span class="badge badge-warn">不可用</span>')
+    expect(html).toContain('<span class="ui-status-pill" data-tone="warn">不可用</span>')
     expect(html).toContain(`<span class="workspace-unavailable">${reason}</span>`)
     expect(html).toContain('>移除</button>')
     const usable = renderToStaticMarkup(

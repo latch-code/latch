@@ -1,0 +1,31 @@
+/* Icons keep their size in a squeezed row; they take the colour of the text around them unless a rule says otherwise. */
+.ui-icon {
+  flex-shrink: 0;
+}
+
+/*
+ * The spinner turns on its HTML box, not on the SVG, once every 900ms. Running work is ink (text-2); inside a button
+ * or a loading line it takes that text's colour. Reduced motion keeps it turning (base.css).
+ */
+.ui-spinner {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  color: var(--text-2);
+  animation: ui-spin 900ms linear infinite;
+}
+.ui-spinner > svg {
+  display: block;
+}
+@keyframes ui-spin {
+  to {
+    rotate: 360deg;
+  }
+}
+
+/* Shared entrances: fade, and fade while moving 4px from the side a layer opens from. */
+@keyframes ui-fade-in {
+  from {
+    opacity: 0;
+  }
+}

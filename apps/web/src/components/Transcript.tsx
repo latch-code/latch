@@ -1,4 +1,4 @@
-import type { Approval, Message, TaskDetail, TokenUsage } from '@latch/protocol'
+import type { Approval, HarnessInfo, Message, TaskDetail, TokenUsage } from '@latch/protocol'
 import { MessageRow } from './MessageRow.tsx'
 import { ToolCard, type ApprovalGateFor, type DecideHandler } from './ToolCard.tsx'
 
@@ -53,6 +53,7 @@ export function Transcript({
   onDecide,
   gateFor,
   harnessName,
+  harness,
   active = false,
 }: {
   detail: TaskDetail
@@ -62,6 +63,8 @@ export function Transcript({
   /** This device's approval buttons; omitted, every offered option is shown. */
   gateFor?: ApprovalGateFor
   harnessName: string
+  /** The session's harness, for the tile on each turn's source row. */
+  harness?: Pick<HarnessInfo, 'id' | 'source'>
   /** The session is running; its trailing turn is not finished. */
   active?: boolean
 }) {
@@ -106,6 +109,7 @@ export function Transcript({
             message={message}
             streaming={live && message.id === liveId}
             meta={showMeta ? harnessName : undefined}
+            metaHarness={showMeta ? harness : undefined}
             footer={footers.has(message.id)}
             usage={footers.get(message.id)}
           />

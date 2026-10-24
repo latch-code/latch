@@ -10,7 +10,8 @@
     "@latch/protocol": "workspace:*",
     "@latch/sdk": "workspace:*",
     "@latch/testkit": "workspace:*",
-    "@playwright/test": "catalog:"
+    "@playwright/test": "catalog:",
+    "vite": "catalog:"
   },
   "latch": {
     "env": "node"

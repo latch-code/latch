@@ -4,8 +4,7 @@ import type { FileDiff } from '@latch/protocol'
 import { CONTENT_HASH_LABEL, contentHash, hashable, knownContentHash } from '../core/contentHash.ts'
 import { diffLines, knowsOldSide, previousState, type PreviousState } from '../diff.ts'
 import { middleEllipsis } from '../format.ts'
-import { ICON_STROKE } from '../icons.tsx'
-import { Badge } from './ui.tsx'
+import { Button, ICON_STROKE, StatusPill } from '@latch/ui'
 import { escapeHiddenCharacters, VisibleText } from './VisibleText.tsx'
 
 /** Lines rendered before "显示全部"; long rewrites stay cheap until asked for. */
@@ -24,18 +23,18 @@ export const PREVIOUS_NOTES: Partial<Record<PreviousState, string>> = {
 }
 
 function PreviousBadge({ state }: { state: PreviousState }) {
-  if (state === 'none') return <Badge>{NEW_FILE_LABEL}</Badge>
+  if (state === 'none') return <StatusPill>{NEW_FILE_LABEL}</StatusPill>
   if (state === 'unavailable')
     return (
-      <Badge tone="warn" title={PREVIOUS_UNAVAILABLE_TEXT}>
+      <StatusPill tone="warn" title={PREVIOUS_UNAVAILABLE_TEXT}>
         {PREVIOUS_UNAVAILABLE_LABEL}
-      </Badge>
+      </StatusPill>
     )
   if (state === 'unknown')
     return (
-      <Badge tone="warn" title={PREVIOUS_UNKNOWN_TEXT}>
+      <StatusPill tone="warn" title={PREVIOUS_UNKNOWN_TEXT}>
         {PREVIOUS_UNKNOWN_LABEL}
-      </Badge>
+      </StatusPill>
     )
   return null
 }
@@ -96,16 +95,16 @@ function DiffFile({ diff, initiallyOpen }: { diff: FileDiff; initiallyOpen: bool
         onClick={() => {
           setOpen(!open)
         }}>
-        <FileDiffIcon size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />
+        <FileDiffIcon size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
         <span className="diff-path" title={path}>
           <VisibleText text={middleEllipsis(diff.path, 64)} />
         </span>
         <PreviousBadge state={previous} />
         <span className="diff-stat">
-          <span className="diff-stat-add">+{view.added}</span>
-          {previous === 'text' && <span className="diff-stat-remove">−{view.removed}</span>}
+          <span className={view.added ? 'diff-stat-add' : 'diff-stat-zero'}>+{view.added}</span>
+          {previous === 'text' && <span className={view.removed ? 'diff-stat-remove' : 'diff-stat-zero'}>−{view.removed}</span>}
         </span>
-        <ChevronRight className="chevron" size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />
+        <ChevronRight className="chevron" size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
       </button>
       {open && <ContentHashLine text={diff.newText} />}
       {open && (
@@ -151,14 +150,14 @@ function DiffFile({ diff, initiallyOpen }: { diff: FileDiff; initiallyOpen: bool
             </div>
           )}
           {!all && total > VISIBLE_LINES && (
-            <button
-              type="button"
-              className="text-button diff-more"
+            <Button
+              variant="link"
+              className="diff-more"
               onClick={() => {
                 setAll(true)
               }}>
               显示全部 {total} 行
-            </button>
+            </Button>
           )}
         </div>
       )}
