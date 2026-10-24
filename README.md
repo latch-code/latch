@@ -1,4 +1,4 @@
-<p align="center"><img src="public/icon.png" width="96" height="96" alt="Latch"></p>
+<p align="center"><img src="apps/web/public/icon.png" width="96" height="96" alt="Latch"></p>
 
 <h1 align="center">Latch</h1>
 
@@ -238,17 +238,19 @@ pnpm stop -- --force                    # 仍有会话在运行或等待审批�
 ## 开发
 
 ```sh
-pnpm typecheck                 # tsc -b，分浏览器、Host、桌面端与测试四个环境检查
-pnpm lint                      # oxlint，目前只报告
+pnpm check:quick               # 格式、lint、类型、依赖边界与 Agent 说明的检查，几秒内完成
+pnpm check                     # 再加 knip 与单元测试
+pnpm typecheck                 # tsc -b，分同构包、插件 SDK、core、浏览器、Host、桌面端与测试检查
+pnpm lint                      # oxlint；导入边界、循环导入与运行环境的全局变量是错误，其余只报告
 pnpm fmt                       # oxfmt 格式化；pnpm fmt:check 只检查
 pnpm test                      # Vitest 单元与集成测试
 pnpm build
 pnpm test:e2e                  # Vitest + Playwright，使用 dist/web
 HARNESS_BROWSER_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' pnpm test:e2e
-HARNESS_ELECTRON_E2E=1 pnpm exec vitest run --config vitest.e2e.config.ts tests/desktop.e2e.ts
+HARNESS_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desktop.e2e.ts
 ```
 
-Git 钩子与 `git blame` 的忽略列表需要在每个克隆中手动设置一次，见 [AGENTS.md](AGENTS.md)「命令」。
+Git 钩子与 `git blame` 的忽略列表需要在每个克隆中手动设置一次，见 [docs/TESTING.md](docs/TESTING.md#git-钩子)。
 
 测试只使用临时目录、本地假模型服务与假 ACP Agent，不调用付费模型。手动查看界面时请用独立的数据目录、工作区与端口：`pnpm start:demo -- --port <空闲端口> --data-dir <临时数据目录> --workspace <临时工作区>`，结束后 `pnpm stop -- --data-dir <同一数据目录>`。
 

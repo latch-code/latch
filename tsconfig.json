@@ -3,8 +3,12 @@
 {
   "files": [],
   "references": [
+    { "path": "./tsconfig.isomorphic.json" },
+    { "path": "./tsconfig.sdk.json" },
+    { "path": "./tsconfig.core.json" },
     { "path": "./tsconfig.web.json" },
     { "path": "./tsconfig.host.json" },
+    { "path": "./tsconfig.strip.json" },
     { "path": "./tsconfig.desktop.json" },
     { "path": "./tsconfig.tests.json" }
   ]

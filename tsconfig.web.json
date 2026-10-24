@@ -1,5 +1,5 @@
-// Browser client and the isomorphic shared code: DOM, no Node globals. Some dependency typings still
-// reference Node's types, so `.oxlintrc.json` also flags Node globals and modules here.
+// Browser client (apps/web/src): DOM, no Node globals. Some dependency typings still reference Node's types, so
+// `.oxlintrc.json` also flags Node globals and modules here.
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
@@ -8,5 +8,5 @@
     "types": ["vite/client"],
     "tsBuildInfoFile": "./node_modules/.cache/typescript/web.tsbuildinfo"
   },
-  "include": ["src/client", "src/shared"]
+  "include": ["apps/web/src"]
 }

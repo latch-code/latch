@@ -1,0 +1,29 @@
+{
+  "name": "@latch/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Latch web client: the React page the Host serves at /link/, which the desktop shell shows as well; built into the repository root's dist/web",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@latch/protocol": "workspace:*",
+    "lucide-react": "catalog:",
+    "qrcode": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "react-markdown": "catalog:",
+    "remark-gfm": "catalog:"
+  },
+  "devDependencies": {
+    "@latch/core": "workspace:*",
+    "@latch/host": "workspace:*",
+    "@latch/testkit": "workspace:*",
+    "@types/qrcode": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "vite": "catalog:"
+  },
+  "latch": {
+    "env": "browser"
+  }
+}

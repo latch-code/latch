@@ -1,4 +1,5 @@
-// Host, plugins, scripts and tool configs: Node ESM, no DOM.
+// Node ESM without the DOM: the Host (apps/host), the ACP driver (packages/harness-acp), the repository's scripts and
+// tool configs, the web client's Vite config among them.
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
@@ -6,5 +7,14 @@
     "types": ["node"],
     "tsBuildInfoFile": "./node_modules/.cache/typescript/host.tsbuildinfo"
   },
-  "include": ["src/host", "src/core", "src/plugins", "src/shared", "scripts", "*.config.ts"]
+  "include": [
+    "apps/host/src",
+    "apps/host/scripts",
+    "packages/harness-acp/src",
+    "src/plugin-sdk.ts",
+    "src/harness-sdk.ts",
+    "scripts",
+    "*.config.ts",
+    "apps/web/vite.config.ts"
+  ]
 }

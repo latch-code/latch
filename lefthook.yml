@@ -13,7 +13,8 @@ pre-commit:
     - name: format
       run: pnpm exec oxfmt --check --no-error-on-unmatched-pattern {staged_files}
       fail_text: Run `pnpm fmt` and stage the result.
-    # Lint rules only warn for now; --quiet prints just the errors that block the commit.
+    # Only the boundary rules (imports, cycles, environment globals) are lint errors for now; --quiet prints just the
+    # errors, which block the commit.
     - name: lint
       glob: '*.{ts,tsx,js,jsx,cjs,mjs}'
       run: pnpm exec oxlint --quiet {staged_files}

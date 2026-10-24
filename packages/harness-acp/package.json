@@ -1,0 +1,24 @@
+{
+  "name": "@latch/harness-acp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Latch ACP harness driver: runs open-source agents over the Agent Client Protocol, with each agent's permission profile, the launch fingerprint and session storage",
+  "license": "Apache-2.0",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@latch/core": "workspace:*",
+    "@latch/protocol": "workspace:*",
+    "@latch/sdk": "workspace:*",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@latch/testkit": "workspace:*"
+  },
+  "latch": {
+    "env": "node"
+  }
+}

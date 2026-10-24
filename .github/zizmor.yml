@@ -1,0 +1,7 @@
+# Any zizmor finding fails `pnpm check:workflows`. Cache poisoning is also reported at the highest
+# severity: a cache written by one run and restored by another is a way for code from a pull request
+# to reach a later trusted run, so these workflows set `cache-mode: none` and use no cache.
+rules:
+  cache-poisoning:
+    remap:
+      severity: high

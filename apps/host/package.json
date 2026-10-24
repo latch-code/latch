@@ -1,0 +1,34 @@
+{
+  "name": "@latch/host",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Latch Host: the composition root that serves HTTP and SSE, keeps devices, keys, policy and the audit log, mounts the built-in plugins and harnesses, and the start, stop and latch commands",
+  "license": "Apache-2.0",
+  "exports": {
+    ".": "./src/server.ts",
+    "./auth": "./src/auth.ts",
+    "./crypto": "./src/crypto.ts",
+    "./host-state": "./src/host-state.ts",
+    "./paths": "./src/paths.ts",
+    "./plugins/standard": "./src/plugins/standard/index.ts",
+    "./desktop-host": "./scripts/desktop-host.ts"
+  },
+  "dependencies": {
+    "@latch/core": "workspace:*",
+    "@latch/harness-acp": "workspace:*",
+    "@latch/protocol": "workspace:*",
+    "@latch/sdk": "workspace:*",
+    "qrcode": "catalog:",
+    "undici": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@latch/testkit": "workspace:*",
+    "electron": "catalog:",
+    "esbuild": "catalog:"
+  },
+  "latch": {
+    "env": "node"
+  }
+}

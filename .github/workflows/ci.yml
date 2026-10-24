@@ -1,0 +1,101 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Jobs get only the scopes they list.
+permissions: {}
+
+# No job restores or saves the Actions cache: each run installs from the lockfile with the supply-chain
+# checks in force, and no run can leave files behind for a later one.
+cache-mode: none
+
+# A new push to a pull request cancels its previous run; each commit pushed to main gets a run of its own.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  static:
+    name: static
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up
+        uses: $/.github/actions/setup
+      - name: Supply chain
+        run: pnpm check:supply
+      - name: Format
+        run: pnpm fmt:check
+      - name: Lint
+        run: pnpm lint
+      - name: Type check
+        run: pnpm typecheck
+      - name: Workspace boundaries
+        run: pnpm check:boundaries
+      - name: Agent instructions and docs
+        run: pnpm check:agents
+      - name: Undeclared dependencies and unused code
+        run: pnpm knip
+      - name: Workflows
+        env:
+          # Read-only token for zizmor's online audits (impostor commits, known-vulnerable actions).
+          GH_TOKEN: ${{ github.token }}
+        run: pnpm check:workflows
+
+  unit:
+    name: unit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up
+        uses: $/.github/actions/setup
+      - name: Unit and integration tests
+        run: pnpm test
+
+  build:
+    name: build
+    # The macOS confirmation helper needs swiftc and codesign.
+    runs-on: macos-26
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up
+        uses: $/.github/actions/setup
+      - name: Build
+        run: pnpm build
+      # build:presence only logs a warning when it cannot build the helper; here it must exist and be signed.
+      - name: Check the confirmation helper
+        run: codesign --verify --strict dist/native/latch-presence
+      # The unit job runs on Linux, so the helper's --self-test against the shared vectors runs here.
+      - name: Self-test the confirmation helper
+        run: pnpm exec vitest run --config vitest.config.ts apps/host/test/presence.test.ts
+      # The Host build already fails on test code (apps/host/scripts/host-bundle.ts); this also covers dist/web and
+      # the helper.
+      - name: Check that no test code is in the build
+        run: |
+          status=0
+          grep -rnE 'createTestPresence|startHostFixture|latch-test\.localhost|(tests?|e2e)/(helpers|fixtures)|packages/testkit|@latch/testkit' dist/ || status=$?
+          if [ "$status" -ne 1 ]; then
+            echo "::error::dist/ contains test code, or grep failed (status $status)"
+            exit 1
+          fi

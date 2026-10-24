@@ -3,14 +3,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { APPROVAL_OPTIONS, HIGH_RISK_APPROVAL_OPTIONS, createRuntime } from '../src/core/runtime.ts'
-import { createSnapshotStore } from '../src/core/store.ts'
-import { AppError } from '../src/core/errors.ts'
-import type { RuntimeState } from '../src/core/store.ts'
-import type { ModelMessage, ModelProvider, ToolDefinition } from '../src/core/plugins.ts'
-import type { Bridge } from '../src/host/bridge.ts'
-import type { ModelRef, RiskLevel } from '../src/shared/types.ts'
-import { standardHarnessDriver } from '../src/plugins/standard-harness.ts'
+import type { ModelRef, RiskLevel } from '@latch/protocol'
+import { AppError, type ModelMessage, type ModelProvider, type ToolDefinition, type Bridge } from '@latch/sdk'
+import { APPROVAL_OPTIONS, HIGH_RISK_APPROVAL_OPTIONS, createRuntime, createSnapshotStore, type RuntimeState } from '@latch/core'
+import { standardHarnessDriver } from '@latch/host/plugins/standard'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => {

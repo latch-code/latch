@@ -1,0 +1,57 @@
+{
+  "$schema": "./node_modules/knip/schema-jsonc.json",
+  // `pnpm knip` fails on imports of packages a project does not declare (unlisted) and on imports that do not resolve;
+  // every other finding is only reported for now. Its second pass, --strict, checks each project's production code
+  // against that project's own `dependencies`: the default pass also accepts a package declared by the root, as Node
+  // does when it walks up to the root node_modules, so it alone would not catch a package that relies on the root.
+  "rules": {
+    "unlisted": "error",
+    "unresolved": "error",
+    "files": "warn",
+    "dependencies": "warn",
+    "devDependencies": "warn",
+    "optionalPeerDependencies": "warn",
+    "binaries": "warn",
+    "exports": "warn",
+    "types": "warn",
+    "nsExports": "warn",
+    "nsTypes": "warn",
+    "duplicates": "warn",
+    "enumMembers": "warn",
+    "namespaceMembers": "warn",
+    "catalog": "warn",
+    "catalogReferences": "warn"
+  },
+  "workspaces": {
+    ".": {
+      "entry": ["examples/*.mjs"],
+      // lefthook runs by hand once per clone (`pnpm exec lefthook install`), not from a script. qrcode and undici are
+      // imported only by workspace projects (qrcode by the Host and the web client, undici by the Host); the Host
+      // bundles in dist/ load them from the root's node_modules, so the root declares them too.
+      "ignoreDependencies": ["lefthook", "qrcode", "undici"],
+      // System commands that tests run.
+      "ignoreBinaries": ["mkfifo"]
+    },
+    "apps/desktop": {
+      // Electron loads these by path; the shell has no package exports.
+      "entry": ["src/main.cjs", "src/preload.cjs"]
+    },
+    "apps/host": {},
+    "apps/web": {
+      // Static analysis only: running vite.config.ts as a dev-server config would read the default data directory. The
+      // page's entry comes from index.html.
+      "vite": { "config": [] },
+      "entry": ["vite.config.ts"]
+    },
+    "e2e": {
+      // Vitest reads the include pattern of e2e/vitest.config.ts from the working directory, the repository root; knip
+      // reads it from the config's own directory and finds nothing, so the test files are entries here.
+      "entry": ["*.e2e.ts"]
+    },
+    "packages/core": {},
+    "packages/harness-acp": {},
+    "packages/protocol": {},
+    "packages/sdk": {},
+    "packages/testkit": {}
+  }
+}

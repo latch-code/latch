@@ -1,4 +1,6 @@
-// Vitest and Playwright tests: Node, plus DOM for code that runs in the page or renders components.
+// Vitest and Playwright tests (tests/, e2e/ and each project's test/) and the test kit they import (packages/testkit):
+// Node, plus DOM for code that runs in the page or renders components. The test kit returns fetch Responses typed as
+// the tests see them.
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
@@ -7,5 +9,5 @@
     "types": ["node"],
     "tsBuildInfoFile": "./node_modules/.cache/typescript/tests.tsbuildinfo"
   },
-  "include": ["tests"]
+  "include": ["tests", "e2e", "apps/host/test", "apps/web/test", "apps/desktop/test", "packages/harness-acp/test", "packages/testkit"]
 }

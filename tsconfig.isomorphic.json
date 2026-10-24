@@ -1,0 +1,14 @@
+// Packages that run in both the browser and Node ("latch": { "env": "isomorphic" }): only the ECMAScript library,
+// no DOM and no Node types, so code that needs either environment's globals does not type-check here.
+// erasableSyntaxOnly: workspace packages export TypeScript sources, and Node sometimes loads them with type stripping
+// alone (Vite externalizes them when it bundles vite.config.ts), which rejects enums, namespaces and parameter properties.
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "types": [],
+    "erasableSyntaxOnly": true,
+    "tsBuildInfoFile": "./node_modules/.cache/typescript/isomorphic.tsbuildinfo"
+  },
+  "include": ["packages/protocol"]
+}

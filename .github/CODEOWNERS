@@ -1,0 +1,24 @@
+# The owner reviews every change to files that run code on a developer's machine or in CI, or that
+# decide which code gets installed: Git hooks, package scripts and the install policy, the lockfile,
+# agent instructions and settings, workflows, and tool configuration that can load code.
+# Branch protection must require code-owner review for these entries to block a merge.
+
+/lefthook.yml           @Nirvana-Jie
+/.claude/               @Nirvana-Jie
+/.agents/               @Nirvana-Jie
+AGENTS.md               @Nirvana-Jie
+CLAUDE.md               @Nirvana-Jie
+/.github/               @Nirvana-Jie
+package.json            @Nirvana-Jie
+/pnpm-workspace.yaml    @Nirvana-Jie
+/pnpm-lock.yaml         @Nirvana-Jie
+/.npmrc                 @Nirvana-Jie
+/.pnpmfile.*            @Nirvana-Jie
+/.node-version          @Nirvana-Jie
+/scripts/               @Nirvana-Jie
+/apps/host/scripts/     @Nirvana-Jie
+/.oxlintrc.json         @Nirvana-Jie
+/knip.json              @Nirvana-Jie
+/*.config.ts            @Nirvana-Jie
+/apps/web/vite.config.ts @Nirvana-Jie
+/e2e/vitest.config.ts   @Nirvana-Jie

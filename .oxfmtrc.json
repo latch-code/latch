@@ -15,6 +15,6 @@
     // whose layout is part of the example (one JSON record per line, aligned columns).
     "**/*.md",
     // Shared security test vectors are read by TypeScript and Swift; keep the bytes as written.
-    "tests/vectors/"
+    "packages/testkit/vectors/"
   ]
 }

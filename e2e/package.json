@@ -1,0 +1,18 @@
+{
+  "name": "@latch/e2e",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Latch end-to-end tests: Vitest with Playwright as the driver, against a Host started in the test process, through a real browser and the Electron shell",
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "@latch/host": "workspace:*",
+    "@latch/protocol": "workspace:*",
+    "@latch/sdk": "workspace:*",
+    "@latch/testkit": "workspace:*",
+    "@playwright/test": "catalog:"
+  },
+  "latch": {
+    "env": "node"
+  }
+}

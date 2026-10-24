@@ -1,0 +1,13 @@
+// Core (packages/core): the Cordis registry, the Standard runtime, the snapshot store and node-kit. Node ES modules,
+// no DOM. erasableSyntaxOnly: see tsconfig.isomorphic.json (apps/web/vite.config.ts reaches node-kit through
+// host-state.ts).
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "erasableSyntaxOnly": true,
+    "tsBuildInfoFile": "./node_modules/.cache/typescript/core.tsbuildinfo"
+  },
+  "include": ["packages/core"]
+}

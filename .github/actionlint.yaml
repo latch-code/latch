@@ -1,0 +1,10 @@
+paths:
+  .github/workflows/**/*.{yml,yaml}:
+    # actionlint 1.7.12 predates two workflow features these files use. Remove each entry once the
+    # pinned actionlint understands it.
+    ignore:
+      # The workflow-level `cache-mode` key (generally available since 2026-09-10).
+      - 'unexpected key "cache-mode" for "workflow" section'
+      # The self-repository form `uses: $/<path>` (since 2026-07-30), which GitHub resolves at the
+      # commit being run instead of reading whatever is in the workspace.
+      - 'specifying action "\$/[^"]*" in invalid format because ref is missing'

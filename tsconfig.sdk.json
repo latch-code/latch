@@ -1,0 +1,15 @@
+// Plugin SDK (packages/sdk): Node ES modules, no DOM. isolatedDeclarations requires every export to state its type,
+// so declaration files can be generated one file at a time when the SDK is published. erasableSyntaxOnly: see
+// tsconfig.isomorphic.json.
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "declaration": true,
+    "isolatedDeclarations": true,
+    "erasableSyntaxOnly": true,
+    "tsBuildInfoFile": "./node_modules/.cache/typescript/sdk.tsbuildinfo"
+  },
+  "include": ["packages/sdk"]
+}

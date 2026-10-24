@@ -1,0 +1,22 @@
+{
+  "name": "@latch/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Latch core: the Cordis plugin registry, the Standard runtime and its snapshot store, and node-kit, the Node helpers the Host and harness drivers share",
+  "license": "Apache-2.0",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./node-kit": "./src/node-kit/index.ts"
+  },
+  "dependencies": {
+    "@latch/protocol": "workspace:*",
+    "@latch/sdk": "workspace:*",
+    "cordis": "catalog:",
+    "zod": "catalog:"
+  },
+  "latch": {
+    "env": "node"
+  }
+}

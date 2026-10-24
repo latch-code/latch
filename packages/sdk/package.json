@@ -1,0 +1,20 @@
+{
+  "name": "@latch/sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Latch plugin author surface: plugins, model providers, tools, harness drivers, the Bridge and AppError",
+  "license": "Apache-2.0",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./plugins": "./src/plugins.ts",
+    "./harness": "./src/harness.ts"
+  },
+  "dependencies": {
+    "@latch/protocol": "workspace:*"
+  },
+  "latch": {
+    "env": "node"
+  }
+}

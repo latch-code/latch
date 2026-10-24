@@ -1,0 +1,22 @@
+name: Set up Node.js and dependencies
+description: Installs the Node.js in .node-version, the pnpm pinned in package.json, and the locked dependencies.
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node.js
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version-file: .node-version
+        package-manager-cache: false
+
+    # Corepack, bundled with Node.js 24, downloads the pnpm named in packageManager and refuses it
+    # unless its sha512 matches the one pinned there.
+    - name: Enable pnpm
+      shell: bash
+      run: corepack enable pnpm
+
+    # A frozen install checks every locked version against the release-age and trust policy again.
+    - name: Install dependencies
+      shell: bash
+      run: pnpm install --frozen-lockfile

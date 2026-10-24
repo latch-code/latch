@@ -1,6 +1,6 @@
-// Electron main process and preload: CommonJS JavaScript checked against Node and Electron types, no DOM.
-// noImplicitAny is off because plain JavaScript parameters carry no annotations; JSDoc types are added
-// where inference needs them.
+// Electron main process and preload (apps/desktop/src): CommonJS JavaScript checked against Node and Electron types, no
+// DOM. noImplicitAny is off because plain JavaScript parameters carry no annotations; JSDoc types are added where
+// inference needs them.
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
@@ -13,5 +13,5 @@
     "noImplicitAny": false,
     "tsBuildInfoFile": "./node_modules/.cache/typescript/desktop.tsbuildinfo"
   },
-  "include": ["desktop"]
+  "include": ["apps/desktop/src"]
 }

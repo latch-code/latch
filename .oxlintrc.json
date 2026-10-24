@@ -1,6 +1,8 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  // Every rule is a warning for now, so `pnpm lint` reports findings without failing.
+  // Boundary rules are errors and fail `pnpm lint`: the import boundaries (no-restricted-imports), import cycles, and
+  // the globals and built-in modules each environment lacks. Every other rule is a warning for now: `pnpm lint`
+  // reports those findings without failing.
   "plugins": ["eslint", "typescript", "unicorn", "oxc", "import", "react"],
   "categories": { "correctness": "warn", "suspicious": "warn" },
   // Type-aware rules run through oxlint-tsgolint, which reads the environments of tsconfig.json.
@@ -8,18 +10,55 @@
   "rules": {
     // The automatic JSX runtime needs no React import.
     "react/react-in-jsx-scope": "off",
-    "import/no-cycle": "warn",
+    "import/no-cycle": "error",
     "typescript/no-misused-promises": "warn",
-    "typescript/switch-exhaustiveness-check": "warn"
+    "typescript/switch-exhaustiveness-check": "warn",
+    // Import boundaries fail `pnpm lint`. Cordis is reached only through @latch/core's PluginRegistry, so a Cordis
+    // upgrade touches one file; an override below exempts that file and its contract test. Test code (@latch/testkit
+    // and files under tests/ or a project's test/) is imported only from tests, which another override allows. The
+    // end-to-end tests (e2e/) are a workspace project without exports: no other project imports their files.
+    "no-restricted-imports": [
+      "error",
+      {
+        "paths": [
+          {
+            "name": "cordis",
+            "message": "只有 packages/core/src/registry.ts 导入 cordis，其他代码经 @latch/core 的 PluginRegistry 使用插件。"
+          },
+          {
+            "name": "@latch/testkit",
+            "message": "@latch/testkit 只供测试使用，只有测试（tests/、e2e/ 与各项目的 test/）导入它。"
+          }
+        ],
+        "patterns": [
+          {
+            "regex": "^\\.\\.?/(?:.*/)?(?:apps|packages|e2e)/",
+            "message": "workspace 项目只经包名与 package.json 的 exports 导入，不用相对路径进入 apps/、packages/ 或 e2e/。"
+          },
+          {
+            "regex": "^cordis/",
+            "message": "只有 packages/core/src/registry.ts 导入 cordis，其他代码经 @latch/core 的 PluginRegistry 使用插件。"
+          },
+          {
+            "regex": "^@latch/testkit/",
+            "message": "@latch/testkit 只供测试使用，只有测试（tests/、e2e/ 与各项目的 test/）导入它。"
+          },
+          {
+            "regex": "^\\.\\.?/(?:.*/)?tests?/",
+            "message": "tests/ 与各项目 test/ 中的文件只供测试使用，只有测试导入它们。"
+          }
+        ]
+      }
+    ]
   },
   "overrides": [
     {
-      // Browser client and isomorphic shared code. tsconfig.web.json cannot keep Node out on its own:
+      // Browser client and isomorphic packages. tsconfig.web.json cannot keep Node out on its own:
       // dependency typings (@types/qrcode, undici-types) load Node's globals into the browser program.
-      "files": ["src/client/**", "src/shared/**"],
+      "files": ["apps/web/src/**", "packages/protocol/**"],
       "rules": {
         "no-restricted-globals": [
-          "warn",
+          "error",
           { "name": "process", "message": "浏览器中没有 process。" },
           { "name": "Buffer", "message": "浏览器中没有 Buffer，用 Uint8Array 与 TextEncoder。" },
           { "name": "global", "message": "浏览器中没有 global，用 globalThis。" },
@@ -31,20 +70,262 @@
           { "name": "setImmediate", "message": "浏览器中没有 setImmediate，用 setTimeout 或 queueMicrotask。" },
           { "name": "clearImmediate", "message": "浏览器中没有 clearImmediate。" }
         ],
-        "import/no-nodejs-modules": "warn"
+        "import/no-nodejs-modules": "error"
       }
     },
     {
       // ES modules that run in Node. @types/node declares the CommonJS globals, but they do not exist here.
-      "files": ["src/host/**", "src/core/**", "src/plugins/**", "scripts/**", "tests/**", "examples/**", "*.config.ts"],
+      "files": [
+        "apps/host/**",
+        "apps/web/vite.config.ts",
+        "apps/web/test/**",
+        "apps/desktop/test/**",
+        "src/plugin-sdk.ts",
+        "src/harness-sdk.ts",
+        "packages/sdk/**",
+        "packages/core/**",
+        "packages/harness-acp/**",
+        "packages/testkit/**",
+        "scripts/**",
+        "tests/**",
+        "e2e/**",
+        "examples/**",
+        "*.config.ts"
+      ],
       "rules": {
         "no-restricted-globals": [
-          "warn",
+          "error",
           { "name": "require", "message": "ES 模块中没有 require，用 import 或 createRequire(import.meta.url)。" },
           { "name": "module", "message": "ES 模块中没有 module，用 export。" },
           { "name": "exports", "message": "ES 模块中没有 exports，用 export。" },
           { "name": "__dirname", "message": "ES 模块中没有 __dirname，用 import.meta.dirname。" },
           { "name": "__filename", "message": "ES 模块中没有 __filename，用 import.meta.filename。" }
+        ]
+      }
+    },
+    {
+      // Plugin directories (apps/host/src/plugins/<kind>/<id>/) use only @latch/sdk, @latch/protocol, installed
+      // packages, their own files and code their kind shares (a file directly in the kind directory, such as
+      // providers/http.ts). They never import the Host, another plugin directory, the core runtime or a harness driver:
+      // what they need from the Host reaches them through PluginContext and their options.
+      "files": ["apps/host/src/plugins/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "cordis",
+                "message": "只有 packages/core/src/registry.ts 导入 cordis，其他代码经 @latch/core 的 PluginRegistry 使用插件。"
+              },
+              {
+                "name": "@latch/testkit",
+                "message": "@latch/testkit 只供测试使用，只有测试（tests/、e2e/ 与各项目的 test/）导入它。"
+              }
+            ],
+            "patterns": [
+              {
+                "regex": "^\\.\\.?/(?:.*/)?(?:apps|packages|e2e)/",
+                "message": "workspace 项目只经包名与 package.json 的 exports 导入，不用相对路径进入 apps/、packages/ 或 e2e/。"
+              },
+              {
+                "regex": "^cordis/",
+                "message": "只有 packages/core/src/registry.ts 导入 cordis，其他代码经 @latch/core 的 PluginRegistry 使用插件。"
+              },
+              {
+                "regex": "^@latch/testkit/",
+                "message": "@latch/testkit 只供测试使用，只有测试（tests/、e2e/ 与各项目的 test/）导入它。"
+              },
+              {
+                "regex": "^\\.\\.?/(?:.*/)?tests?/",
+                "message": "tests/ 与各项目 test/ 中的文件只供测试使用，只有测试导入它们。"
+              },
+              {
+                "regex": "^@latch/(?:core|host|harness-acp)(?:/|$)",
+                "message": "插件目录只依赖 @latch/sdk 与 @latch/protocol；Host 经 PluginContext 与插件参数提供其余能力。"
+              },
+              {
+                "regex": "^\\.\\./(?:\\.\\./|[^/]+/)",
+                "message": "插件目录不导入 Host 或其他插件目录；同一种类的插件共用的代码放在种类目录下的文件中（如 providers/http.ts）。"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      // Kind-level shared files (such as providers/http.ts) are shared by every plugin of the kind, so they import
+      // none of those plugin directories either.
+      "files": ["apps/host/src/plugins/providers/*.ts", "apps/host/src/plugins/tools/*.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "cordis",
+                "message": "只有 packages/core/src/registry.ts 导入 cordis，其他代码经 @latch/core 的 PluginRegistry 使用插件。"
+              },
+              {
+                "name": "@latch/testkit",
+                "message": "@latch/testkit 只供测试使用，只有测试（tests/、e2e/ 与各项目的 test/）导入它。"
+              }
+            ],
+            "patterns": [
+              {
+                "regex": "^\\.\\.?/(?:.*/)?(?:apps|packages|e2e)/",
+                "message": "workspace 项目只经包名与 package.json 的 exports 导入，不用相对路径进入 apps/、packages/ 或 e2e/。"
+              },
+              {
+                "regex": "^cordis/",
+                "message": "只有 packages/core/src/registry.ts 导入 cordis，其他代码经 @latch/core 的 PluginRegistry 使用插件。"
+              },
+              {
+                "regex": "^@latch/testkit/",
+                "message": "@latch/testkit 只供测试使用，只有测试（tests/、e2e/ 与各项目的 test/）导入它。"
+              },
+              {
+                "regex": "^\\.\\.?/(?:.*/)?tests?/",
+                "message": "tests/ 与各项目 test/ 中的文件只供测试使用，只有测试导入它们。"
+              },
+              {
+                "regex": "^@latch/(?:core|host|harness-acp)(?:/|$)",
+                "message": "插件目录只依赖 @latch/sdk 与 @latch/protocol；Host 经 PluginContext 与插件参数提供其余能力。"
+              },
+              {
+                "regex": "^\\.(?:\\./|/[^/]+/)",
+                "message": "种类目录下的共用文件不导入 Host、其他种类或本种类的插件目录。"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      // The Standard harness wraps the core runtime as a driver, so it alone among the plugins uses @latch/core.
+      "files": ["apps/host/src/plugins/standard/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "cordis",
+                "message": "只有 packages/core/src/registry.ts 导入 cordis，其他代码经 @latch/core 的 PluginRegistry 使用插件。"
+              },
+              {
+                "name": "@latch/testkit",
+                "message": "@latch/testkit 只供测试使用，只有测试（tests/、e2e/ 与各项目的 test/）导入它。"
+              }
+            ],
+            "patterns": [
+              {
+                "regex": "^\\.\\.?/(?:.*/)?(?:apps|packages|e2e)/",
+                "message": "workspace 项目只经包名与 package.json 的 exports 导入，不用相对路径进入 apps/、packages/ 或 e2e/。"
+              },
+              {
+                "regex": "^cordis/",
+                "message": "只有 packages/core/src/registry.ts 导入 cordis，其他代码经 @latch/core 的 PluginRegistry 使用插件。"
+              },
+              {
+                "regex": "^@latch/testkit/",
+                "message": "@latch/testkit 只供测试使用，只有测试（tests/、e2e/ 与各项目的 test/）导入它。"
+              },
+              {
+                "regex": "^@latch/(?:host|harness-acp)(?:/|$)",
+                "message": "Standard 插件目录只依赖 @latch/core、@latch/sdk 与 @latch/protocol。"
+              },
+              {
+                "regex": "^\\.\\./",
+                "message": "插件目录不导入 Host 或其他插件目录。"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      // Tests, the only importers of @latch/testkit and of each other: the root's tests/, the end-to-end tests and each
+      // project's test/.
+      "files": ["tests/**", "e2e/**", "apps/*/test/**", "packages/*/test/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "cordis",
+                "message": "只有 packages/core/src/registry.ts 导入 cordis，其他代码经 @latch/core 的 PluginRegistry 使用插件。"
+              }
+            ],
+            "patterns": [
+              {
+                "regex": "^\\.\\.?/(?:.*/)?(?:apps|packages|e2e)/",
+                "message": "workspace 项目只经包名与 package.json 的 exports 导入，不用相对路径进入 apps/、packages/ 或 e2e/。"
+              },
+              {
+                "regex": "^cordis/",
+                "message": "只有 packages/core/src/registry.ts 导入 cordis，其他代码经 @latch/core 的 PluginRegistry 使用插件。"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      // The Cordis registry and its contract test, which drives a Cordis root directly. After the tests override, so
+      // that the contract test gets this one.
+      "files": ["packages/core/src/registry.ts", "tests/registry.test.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^\\.\\.?/(?:.*/)?(?:apps|packages|e2e)/",
+                "message": "workspace 项目只经包名与 package.json 的 exports 导入，不用相对路径进入 apps/、packages/ 或 e2e/。"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      // The web client's core (apps/web/src/core/) has no layout: it talks to the Host and keeps the client's copy of
+      // Host state, so it imports only its own files, React and @latch/protocol, never a component, an icon library or
+      // the rest of the page. Same `group` syntax as node-kit below.
+      "files": ["apps/web/src/core/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["*", "!react", "!@latch/protocol", "!@latch/protocol/*", "!./*", "!./**/*"],
+                "message": "apps/web/src/core 只导入本目录的文件、react 与 @latch/protocol，不依赖布局组件。"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      // node-kit uses only Node's built-in modules and its own files: Node loads it with type stripping alone (from
+      // apps/web/vite.config.ts), and importing @latch/core/node-kit must not load the registry, Cordis or another
+      // package. `group` takes .gitignore syntax: `*` matches every specifier, the `!` entries let `node:` modules
+      // (with or without a subpath) and paths below node-kit through.
+      "files": ["packages/core/src/node-kit/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["*", "!node:*", "!node:*/*", "!./*", "!./**/*"],
+                "message": "node-kit 只导入 node: 内置模块与 node-kit 目录内的文件。"
+              }
+            ]
+          }
         ]
       }
     }

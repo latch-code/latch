@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { redactSecrets } from '../src/host/redact.ts'
+import { redactSecrets } from '@latch/core/node-kit'
 
 const credential = `ldc1.dev_${'A'.repeat(22)}.${'b'.repeat(43)}`
 

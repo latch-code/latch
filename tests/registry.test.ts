@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from 'cordis'
-import { PluginRegistry } from '../src/core/registry.ts'
-import type { HarnessPlugin } from '../src/core/plugins.ts'
-import { standardHarnessDriver } from '../src/plugins/standard-harness.ts'
+import type { HarnessPlugin } from '@latch/sdk'
+import { PluginRegistry } from '@latch/core'
+import { standardHarnessDriver } from '@latch/host/plugins/standard'
 
 function plugin(dispose = vi.fn()): HarnessPlugin {
   return {

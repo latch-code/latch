@@ -1,0 +1,75 @@
+name: e2e-desktop
+
+on:
+  # Pull requests that touch the desktop shell, how it finds and talks to the Host (host.json, host.sock,
+  # credentials, the page's CSP), the Electron version, or this suite.
+  pull_request:
+    paths:
+      - 'apps/desktop/**'
+      - 'apps/host/scripts/desktop.ts'
+      - 'apps/host/scripts/desktop-host.ts'
+      - 'apps/host/src/host-state.ts'
+      - 'packages/core/src/node-kit/atomic.ts'
+      - 'apps/host/src/listeners.ts'
+      - 'apps/host/src/access.ts'
+      - 'apps/host/src/auth.ts'
+      - 'apps/host/src/http-util.ts'
+      - 'apps/web/src/core/credentials.ts'
+      - 'e2e/desktop.e2e.ts'
+      - 'e2e/helpers/**'
+      - 'e2e/package.json'
+      - 'e2e/vitest.config.ts'
+      - 'packages/testkit/**'
+      - '.node-version'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.github/actions/setup/**'
+      - '.github/workflows/e2e-desktop.yml'
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions: {}
+
+cache-mode: none
+
+# A new push to a pull request cancels its previous run; each commit pushed to main gets a run of its own.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  e2e-desktop:
+    name: e2e-desktop
+    runs-on: macos-26
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up
+        uses: $/.github/actions/setup
+      - name: Build
+        run: pnpm build
+      # The electron package downloads its binary on first use, checked against the checksums it ships.
+      # Doing it here makes a download problem fail this step instead of the first test.
+      - name: Download Electron
+        run: pnpm exec install-electron
+      # The suite uses --use-mock-keychain and a temporary --latch-user-data, never the runner's keychain.
+      - name: Electron end-to-end tests
+        env:
+          HARNESS_ELECTRON_E2E: '1'
+        run: pnpm exec vitest run --config e2e/vitest.config.ts e2e/desktop.e2e.ts
+      - name: Upload screenshots
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-desktop-test-results
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7
