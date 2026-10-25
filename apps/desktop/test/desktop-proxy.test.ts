@@ -1,4 +1,4 @@
-import { createPrivateKey, createPublicKey, randomBytes, randomUUID, verify, type KeyObject } from 'node:crypto'
+import { createHash, createPrivateKey, createPublicKey, randomBytes, randomUUID, verify, type KeyObject } from 'node:crypto'
 import { createServer, request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http'
 import { chmod, mkdir, mkdtemp, open, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
@@ -6,7 +6,15 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { BASE32_VECTORS, ENROLL_SIGNING_VECTOR, P256_VECTOR, RENEW_SIGNING_VECTOR } from '@latch/testkit'
+import {
+  BASE32_VECTORS,
+  CANONICAL_JSON_CASES,
+  CANONICAL_JSON_VECTOR,
+  ENROLL_SIGNING_VECTOR,
+  FOLDERS_SIGNING_VECTOR,
+  P256_VECTOR,
+  RENEW_SIGNING_VECTOR,
+} from '@latch/testkit'
 import { startTestHost } from './helpers/host.ts'
 
 const require = createRequire(import.meta.url)
@@ -21,6 +29,7 @@ interface CredentialStore {
   file: string
   current(): { deviceId: string; credential: string } | undefined
   sign(text: string): string
+  signFolders(body: Record<string, unknown>): string
   commit(input: { key: DeviceKey; deviceId: string; credential: string }): Promise<void>
   setCredential(credential: string): Promise<void>
   clear(): Promise<void>
@@ -43,6 +52,7 @@ interface DialogOptions {
 }
 interface ShellProxy {
   handle(request: Request): Promise<Response>
+  shellRequest(method: string, path: string, body?: unknown): Promise<{ status: number; json: unknown }>
   renew(): Promise<boolean>
   startRenewalTimer(timers?: { setTimer?(callback: () => void, ms: number): unknown; clearTimer?(timer: unknown): void }): () => void
   state(): { renewAfter: number; retryAt: number; pendingEnrollments: number }
@@ -66,9 +76,11 @@ const proxy = require('../src/proxy.cjs') as {
   isAppUrl(url: string): boolean
   externalUrl(url: string): string | undefined
   externalLinkDialog(url: string): DialogOptions
+  createDialogGate(): { enter(): boolean; leave(): void }
   createExternalOpener(options: {
     confirm(options: DialogOptions, parent?: unknown): Promise<{ response: number }>
     open(url: string): Promise<unknown>
+    gate?: { enter(): boolean; leave(): void }
     log?(text: string): void
   }): (url: string, parent?: unknown) => Promise<boolean>
   debugFlagProblems(argv: string[], env: Record<string, string | undefined>): string[]
@@ -95,6 +107,9 @@ const credentials = require('../src/credentials.cjs') as {
   deviceFingerprint(spki: Uint8Array): string
   enrollSigningText(hostId: string, id: string, nonce: string): string
   renewSigningText(hostId: string, deviceId: string, nonce: string): string
+  foldersSigningText(hostId: string, deviceId: string, nonce: string, bodyHash: string): string
+  canonicalJson(value: unknown): string
+  foldersBodyHash(body: Record<string, unknown>): string
   generateDeviceKey(): DeviceKey
   deviceKeyFrom(privateKey: KeyObject): DeviceKey
   secureStorageProblem(storage: Partial<SafeStorageLike>, platform?: string): string | undefined
@@ -511,6 +526,15 @@ describe('desktop shell policy', () => {
     }
     expect(asked).toHaveLength(2)
     expect(opened).toEqual([url])
+
+    // Another native dialog holding the shared gate (a folder picker) drops the link without asking.
+    const gate = proxy.createDialogGate()
+    const shared = proxy.createExternalOpener({ confirm: async () => ({ response: 0 }), open: async item => opened.push(item), gate })
+    expect(gate.enter()).toBe(true)
+    expect(await shared(url)).toBe(false)
+    gate.leave()
+    expect(await shared(url)).toBe(true)
+    expect(gate.enter()).toBe(true)
   })
 
   it('reports debugging switches from argv, NODE_OPTIONS and ELECTRON_RUN_AS_NODE', () => {
@@ -612,6 +636,35 @@ describe('desktop shell policy', () => {
       expect(proxy.classifyRoute(method, path)).toEqual({ kind: 'forward' })
     }
     expect(proxy.classifyRoute('GET', '/link/api/snapshot')).toEqual({ kind: 'forward' })
+  })
+
+  it('keeps the folder-add routes for main, however the page spells them', () => {
+    for (const [method, path] of [
+      ['POST', '/link/api/workspaces'],
+      ['POST', '/link/api/workspaces/'],
+      ['POST', '/link//api/workspaces'],
+      ['POST', '/link/api/Workspaces'],
+      ['POST', '/LINK/API/WORKSPACES'],
+      ['POST', '/link/api/%77orkspaces'],
+      ['post', '/link/api/workspaces'],
+      ['POST', '/link/api/folder-grants'],
+      ['GET', '/link/api/folder-grants'],
+      ['POST', '/link/api/Folder-Grants/'],
+      ['POST', '/link/api/folder%2Dgrants'],
+      ['POST', '/link/api/workspaces/shop/folders'],
+      ['PUT', '/link/api/workspaces/shop/folders'],
+      ['POST', '/link/api/workspaces/shop%2Ffolders'],
+      ['POST', '/link/api/Workspaces/shop/Folders/'],
+      ['POST', '/link/api/workspaces//shop//folders'],
+    ] as const)
+      expect(proxy.classifyRoute(method, path), `${method} ${path}`).toEqual({ kind: 'folders' })
+    for (const [method, path] of [
+      ['GET', '/link/api/workspaces'],
+      ['PATCH', '/link/api/workspaces/shop'],
+      ['DELETE', '/link/api/workspaces/shop'],
+      ['DELETE', '/link/api/workspaces/shop/folders/api'],
+    ] as const)
+      expect(proxy.classifyRoute(method, path), `${method} ${path}`).toEqual({ kind: 'forward' })
   })
 
   it('lets only static files and enrollment routes go to the Host without a credential', () => {
@@ -745,6 +798,40 @@ describe('desktop credential storage', () => {
     const fresh = credentials.generateDeviceKey()
     expect(fresh.publicKey).not.toBe(credentials.generateDeviceKey().publicKey)
     expect(verifyP1363(fresh.publicKey, enroll.text, fresh.sign(enroll.text))).toBe(true)
+  })
+
+  it('hashes and signs a folder add exactly as the shared canonical JSON and folder signing vectors say', () => {
+    for (const vector of [CANONICAL_JSON_VECTOR, ...CANONICAL_JSON_CASES]) {
+      expect(credentials.canonicalJson(vector.input)).toBe(vector.output)
+      expect(createHash('sha256').update(credentials.canonicalJson(vector.input), 'utf8').digest('hex')).toBe(vector.sha256)
+    }
+    const folders = FOLDERS_SIGNING_VECTOR.example
+    expect(credentials.canonicalJson(folders.body)).toBe(folders.canonicalBody)
+    expect(credentials.foldersBodyHash(folders.body)).toBe(folders.bodyHash)
+    expect(credentials.foldersSigningText(folders.hostId, folders.deviceId, folders.nonce, folders.bodyHash)).toBe(folders.text)
+    expect(verifyP1363(P256_VECTOR.spki, folders.text, folders.signature)).toBe(true)
+    const vectorKey = credentials.deviceKeyFrom(createPrivateKey({ key: P256_VECTOR.privateJwk, format: 'jwk' }))
+    expect(verifyP1363(P256_VECTOR.spki, folders.text, vectorKey.sign(folders.text))).toBe(true)
+    // What main cannot encode as the Host does is refused, never hashed some other way.
+    for (const value of [{ a: Number.NaN }, { a: () => {} }, [undefined], { a: new Date(0) }, { a: 1n }])
+      expect(() => credentials.canonicalJson(value)).toThrow()
+    expect(credentials.canonicalJson({ a: undefined, b: 1 })).toBe('{"b":1}')
+  })
+
+  it('signs a folder add body with the stored device, and refuses without a credential', async () => {
+    const store = await credentials.openCredentialStore({
+      directory: join(await directory(), 'latch-devices'),
+      hostId: HOST_ID,
+      safeStorage: fakeSafeStorage(),
+    })
+    const body = { nonce: 'BAUGBwgJCgsMDQ4PEBESEw', via: 'picker', paths: ['/Users/me/site'] }
+    expect(() => store.signFolders(body)).toThrow()
+    const key = credentials.generateDeviceKey()
+    const deviceId = id('dev')
+    await store.commit({ key, deviceId, credential: newCredential(deviceId) })
+    const text = credentials.foldersSigningText(HOST_ID, deviceId, body.nonce, credentials.foldersBodyHash(body))
+    expect(verifyP1363(key.publicKey, text, store.signFolders(body))).toBe(true)
+    expect(verifyP1363(key.publicKey, text, store.signFolders({ ...body, paths: ['/Users/me/other'] }))).toBe(false)
   })
 
   it('refuses to store credentials without secure storage', () => {
@@ -991,6 +1078,38 @@ describe('desktop shell proxy', () => {
     expect(context.host.seen).toHaveLength(0)
     expect((await context.request('/other')).status).toBe(404)
     expect(context.host.seen).toHaveLength(0)
+  })
+
+  it('answers renderer folder adds itself and lets only main’s own request reach the Host', async () => {
+    const context = await shell()
+    await enroll(context)
+    const before = context.host.seen.length
+    for (const path of [
+      '/link/api/workspaces',
+      '/link/api/Workspaces/',
+      '/link/api/folder-grants',
+      '/link/api/workspaces/shop%2Ffolders',
+    ]) {
+      const response = await context.request(path, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{"paths":["/"]}',
+      })
+      expect(response.status, path).toBe(403)
+      expect(await response.json()).toEqual({ error: 'shell-managed', message: '添加文件夹由 Latch 桌面端处理' })
+    }
+    expect(context.host.seen).toHaveLength(before)
+    expect((await context.request('/link/api/workspaces')).status).toBe(200)
+
+    const { credential } = context.store.current()!
+    expect(await context.handler.shellRequest('POST', '/link/api/folder-grants', {})).toEqual({
+      status: 200,
+      json: { ok: true, method: 'POST', body: '{}' },
+    })
+    const seen = context.host.seen.at(-1)!
+    expect(seen).toMatchObject({ method: 'POST', url: '/link/api/folder-grants' })
+    expect(seen.headers.authorization).toBe(`Latch-Device ${credential}`)
+    expect(seen.headers['content-type']).toBe('application/json')
   })
 
   it('forwards only public routes while the shell holds no credential', async () => {

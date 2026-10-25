@@ -25,6 +25,11 @@ export interface ComposerChoice {
 
 export const sameModel = (a: ModelRef | undefined, b: ModelRef | undefined) => a?.providerId === b?.providerId && a?.model === b?.model
 
+/** The built-in harness is 「Latch 内置」 wherever the page names it; others keep the name the Host gives them. */
+export const BUILTIN_HARNESS_NAME = 'Latch 内置'
+export const harnessName = (harness: Pick<HarnessInfo, 'source' | 'name'>): string =>
+  harness.source === 'builtin' ? BUILTIN_HARNESS_NAME : harness.name
+
 export function findHarness(catalog: HostCatalog | undefined, id: string | undefined): HarnessInfo | undefined {
   return catalog?.harnesses.find(harness => harness.id === (id ?? catalog.defaults.harnessId))
 }

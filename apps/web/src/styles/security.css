@@ -1,6 +1,13 @@
 /*
  * Device and permission chrome. Neutral by default; amber for pending or full-access
  * states; red only for real risk (R2 approvals, permission drift, audit rollback, revocation).
+ *
+ * Security surfaces carry data-secure: approval cards, the local confirmation, enrollment, phone pairing and the
+ * security banners. Inside them the tokens are locked (tokens.css), and their rules here mark !important what decides
+ * whether they can be seen and read: display, visibility, opacity at rest, colours, type sizes and fonts, and the
+ * transforms, filters and clipping that could hide or shrink them. Important rules of a layer win over styles outside
+ * the layers, important or not, and normal rules of later layers lose to them, so styles added to the page cannot
+ * hide, recolour or shrink these surfaces. The primitives inside them are pinned the same way (the end of this file).
  */
 
 /* Dev-build marker: the neutral small badge after the computer's name in the sidebar footer, never an alarm. */
@@ -10,21 +17,6 @@
 .dev-chip.is-compact {
   padding: 0 var(--sp-4);
   margin-bottom: var(--sp-4);
-}
-.settings-header .dev-chip {
-  margin-right: var(--sp-4);
-}
-.dev-note {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--sp-8);
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption-para);
-}
-/* (18 − 16) / 2: the small badge sits on the note's first line and never wraps. */
-.dev-note .dev-chip {
-  margin-top: 1px;
 }
 
 /* Session level */
@@ -45,38 +37,413 @@
   line-height: var(--lh-caption-para);
 }
 
-/* Approvals: badge in the heading, explanation and the reason allow is missing above the buttons. */
-.approval-heading .ui-status-pill {
-  margin-left: var(--sp-2);
+/*
+ * Approval card: the tool card's tray waiting for a decision. The header row carries the title (14/20, 600) and the
+ * state pill; under it the agent's reason, when it asked and the notes that change what allowing means; then the
+ * preview on paper behind a disclosure, one sentence on what allowing does and the button row (44): a lock with the
+ * reason where this device cannot allow, else the key hint while the card holds focus; ⋯, 拒绝 and the one blue
+ * 允许一次 on the right. A high-risk request turns the tray red and has no blue at all.
+ */
+.tool-card[data-secure] {
+  display: block !important;
+  opacity: 1 !important;
+  border-color: var(--line-subtle) !important;
+  background: var(--bg-sunken) !important;
+  color: var(--text-1) !important;
+  font-size: var(--fs-label) !important;
+  line-height: var(--lh-label-para) !important;
 }
-.approval-note {
-  color: var(--text-2);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label-para);
+.tool-card[data-secure].is-r2 {
+  border-color: var(--err-border) !important;
+  background: var(--err-bg) !important;
 }
-/* Why this device cannot allow: a lock and the reason, next to the buttons. */
-.approval-hint {
-  display: flex;
-  align-items: flex-start;
+.tool-card.has-approval .tool-card-header,
+.tool-card.has-approval .tool-card-header:hover {
+  display: flex !important;
+  background: transparent !important;
+  color: var(--text-1) !important;
+  font-size: var(--fs-label) !important;
+  line-height: var(--lh-label) !important;
+}
+.tool-card.has-approval .tool-card-title {
+  display: block !important;
+  color: var(--text-1) !important;
+  font-size: var(--fs-card-title) !important;
+  line-height: var(--lh-card-title) !important;
+  font-weight: 600 !important;
+}
+.tool-card.has-approval .tool-card-name {
+  display: block !important;
+  color: var(--text-3) !important;
+  font-family: var(--font-mono) !important;
+  font-size: var(--fs-mono-sm) !important;
+  line-height: var(--lh-mono-sm) !important;
+}
+.tool-card.has-approval .tool-card-state {
+  display: inline-flex !important;
+}
+/* Folds away by its height once the Host settled it: the rows of the slot close to 0fr, the content clipped. */
+.approval-slot {
+  display: grid !important;
+  grid-template-rows: 1fr;
+  transition:
+    grid-template-rows var(--d-base) var(--ease-exit),
+    opacity var(--d-fast) var(--ease-exit);
+}
+.approval-slot:not([data-leaving]) {
+  grid-template-rows: 1fr !important;
+  opacity: 1 !important;
+}
+.approval-slot[data-leaving] {
+  grid-template-rows: 0fr !important;
+  opacity: 0 !important;
+}
+/* It arrives by fading in, never by growing: the transcript keeps the reading position it was given. */
+@media (prefers-reduced-motion: no-preference) {
+  .approval-slot:not([data-leaving]) {
+    transition: opacity var(--d-base) var(--ease);
+  }
+  @starting-style {
+    [data-secure] > .approval-slot:not([data-leaving]) {
+      opacity: 0 !important;
+    }
+  }
+}
+.approval-slot-inner {
+  display: block !important;
+  min-height: 0;
+  overflow: clip;
+  overflow-clip-margin: var(--sp-6);
+}
+.approval-panel {
+  display: grid !important;
+  padding: 0 var(--sp-4) var(--sp-4);
+  opacity: 1 !important;
+  color: var(--text-1) !important;
+  font-size: var(--fs-label) !important;
+  line-height: var(--lh-label-para) !important;
+}
+.approval-notes {
+  display: grid !important;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-8) var(--sp-8);
+}
+.approval-reason {
+  display: block !important;
+  color: var(--text-2) !important;
+  font-size: var(--fs-label) !important;
+  line-height: var(--lh-label-para) !important;
+}
+.approval-meta {
+  display: block !important;
+  color: var(--text-3) !important;
+  font-size: var(--fs-meta) !important;
+  line-height: var(--lh-meta) !important;
+}
+/* The tone carries the note, so it stays caption-sized and regular beside the reason. */
+.approval-note,
+.approval-warning {
+  display: block !important;
+  color: var(--warn-text) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption-para) !important;
+}
+.tool-card.is-r2 .approval-warning {
+  color: var(--err-text) !important;
+}
+.approval-toggle {
+  display: inline-flex !important;
+  align-items: center;
+  justify-self: start;
   gap: var(--sp-6);
+  min-height: 28px;
+  padding: 0 var(--sp-8);
+  border: 0;
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
+  background: transparent !important;
+  color: var(--text-2) !important;
+  font-size: var(--fs-label) !important;
+  line-height: var(--lh-label) !important;
+  transition:
+    background-color var(--d-fast) var(--ease-exit),
+    color var(--d-fast) var(--ease-exit);
+}
+.approval-toggle:hover {
+  background: var(--bg-hover) !important;
+  color: var(--text-1) !important;
+  transition-duration: 0s;
+}
+.approval-toggle .chevron {
+  flex-shrink: 0;
+  color: var(--icon);
+  transition: transform var(--d-base) var(--ease);
+}
+.approval-toggle[aria-expanded='true'] .chevron {
+  transform: rotate(90deg);
+}
+/*
+ * The preview folds by its height; the head stays where it is and the paper grows down (180ms). Folding is quicker
+ * (120ms, exit curve), its content fading as it closes.
+ */
+.approval-preview {
+  display: grid !important;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--d-fast) var(--ease-exit);
+}
+.approval-preview[data-open] {
+  grid-template-rows: 1fr !important;
+  transition: grid-template-rows var(--d-base) var(--ease);
+}
+.approval-preview-inner {
+  display: grid !important;
+  gap: var(--sp-8);
+  min-height: 0;
+  overflow: clip;
+  overflow-clip-margin: var(--sp-6);
+  opacity: 0;
+  transition: opacity var(--d-fast) var(--ease-exit);
+}
+.approval-preview[data-open] > .approval-preview-inner {
+  padding-top: var(--sp-4);
+  opacity: 1 !important;
+  transition: opacity var(--d-fast) var(--ease) 40ms;
+}
+/* What the approval would do, on paper inside the tray. */
+.approval-preview .argument-list,
+.approval-preview .tool-pre,
+.approval-preview .muted-line {
   padding: var(--sp-8) var(--sp-12);
   border: 1px solid var(--line-subtle);
   border-radius: var(--r-8);
   corner-shape: var(--corner-shape);
-  background: var(--bg-pane);
-  color: var(--text-2);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label-para);
+  background: var(--bg-pane) !important;
+}
+.approval-preview .argument-list {
+  display: grid !important;
+}
+.approval-preview :is(.argument-list dt, .muted-line) {
+  display: block !important;
+  color: var(--text-3) !important;
+}
+.approval-preview .argument-list dt {
+  font-family: var(--font-mono) !important;
+  font-size: var(--fs-mono-sm) !important;
+  line-height: var(--lh-mono-sm) !important;
+}
+.approval-preview :is(.argument-list dd pre, .tool-pre) {
+  display: block !important;
+  color: var(--text-1) !important;
+  font-family: var(--font-mono) !important;
+  font-size: var(--fs-code) !important;
+  line-height: var(--lh-code) !important;
+}
+.approval-preview .muted-line {
+  font-size: var(--fs-label) !important;
+  line-height: var(--lh-label) !important;
+}
+/* The diff under review: its file, every line and its signs keep their colours and type. */
+.approval-preview .diff-file {
+  display: block !important;
+  background: var(--bg-pane) !important;
+}
+/* One sheet with no tray inside it and the lines straight under the hash line, so the first rows and the fold bar stay
+ * within 240. */
+.approval-preview .diff-file[data-open] {
+  padding-bottom: 0;
+}
+.approval-preview .diff-table {
+  padding: 0;
+}
+/* The file name leads and its folder follows, quieter, as in every diff. */
+.approval-preview .diff-path {
+  display: inline-flex !important;
+  color: var(--text-1) !important;
+  font-family: var(--font-mono) !important;
+  font-size: var(--fs-mono-sm) !important;
+  line-height: var(--lh-mono-sm) !important;
+}
+.approval-preview :is(.diff-path-name, .diff-path-folder) {
+  display: block !important;
+  font-family: inherit !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
+}
+.approval-preview .diff-path-name {
+  color: var(--text-1) !important;
+}
+.approval-preview .diff-path-folder {
+  color: var(--text-3) !important;
+}
+.approval-preview .diff-file-header {
+  background: var(--bg-sunken) !important;
+  color: var(--text-2) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption) !important;
+}
+.approval-preview .diff-stat {
+  font-family: var(--font-mono) !important;
+  font-size: var(--fs-mono-sm) !important;
+  line-height: var(--lh-mono-sm) !important;
+}
+.approval-preview :is(.diff-hunk-header, .diff-ln, .diff-sign) {
+  color: var(--text-3) !important;
+}
+.approval-preview .diff-hunk-header {
+  background: var(--bg-sunken) !important;
+}
+.approval-preview .diff-body {
+  display: block !important;
+  font-family: var(--font-mono) !important;
+  font-size: var(--fs-code) !important;
+  line-height: var(--lh-code) !important;
+}
+.approval-preview .diff-line {
+  display: grid !important;
+  color: var(--text-1) !important;
+}
+/* Every cell of a line reads at the line's code size and in its font. */
+.approval-preview :is(.diff-table, .diff-hunk, .diff-hunk-header, .diff-line, .diff-ln, .diff-sign, .diff-text) {
+  font-family: inherit !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
+}
+.approval-preview .diff-add {
+  background: var(--diff-add-bg) !important;
+}
+.approval-preview .diff-remove {
+  background: var(--diff-del-bg) !important;
+}
+.approval-preview .diff-text {
+  color: var(--text-1) !important;
+}
+.approval-preview .diff-add .diff-sign {
+  color: var(--ok-text) !important;
+}
+.approval-preview .diff-remove .diff-sign {
+  color: var(--err-text) !important;
+}
+.approval-preview .diff-fold {
+  display: block !important;
+  background: transparent !important;
+  color: var(--text-3) !important;
+  font-family: var(--font-sans) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption) !important;
+}
+.approval-preview .diff-fold:hover {
+  background: var(--bg-hover) !important;
+  color: var(--text-1) !important;
+}
+.approval-preview .diff-note {
+  display: block !important;
+  background: var(--warn-bg) !important;
+  color: var(--warn-text) !important;
+  font-family: var(--font-sans) !important;
+}
+.approval-preview .diff-hash {
+  display: flex !important;
+  color: var(--text-3) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption-para) !important;
+}
+.approval-preview .diff-hash code {
+  color: var(--text-2) !important;
+  font-family: var(--font-mono) !important;
+  font-size: var(--fs-mono-sm) !important;
+  line-height: var(--lh-mono-sm) !important;
+}
+/* A control, bidirectional or zero-width character, shown as \u{XXXX}. */
+[data-secure] .hidden-char {
+  display: inline !important;
+  background: var(--warn-bg) !important;
+  color: var(--warn-text) !important;
+  font-family: var(--font-mono) !important;
+}
+.approval-footnote {
+  display: block !important;
+  padding: var(--sp-8) var(--sp-8) 0;
+  color: var(--text-3) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption-para) !important;
+}
+.approval-uncertain,
+.approval-failure {
+  margin-top: var(--sp-8);
+}
+.approval-actions {
+  display: flex !important;
+  align-items: center;
+  gap: var(--sp-8);
+  min-height: 44px;
+  padding: var(--sp-8) var(--sp-4) var(--sp-4) var(--sp-8);
+}
+.approval-buttons {
+  display: flex !important;
+  align-items: center;
+  gap: var(--sp-8);
+  margin-left: auto;
+}
+.approval-actions > .ui-icon-button {
+  margin-left: auto;
+}
+.approval-actions > .ui-icon-button ~ .approval-buttons {
+  margin-left: 0;
+}
+/* Why this device cannot allow: a lock and the reason, where the key hint would be. */
+.approval-hint {
+  display: flex !important;
+  align-items: flex-start;
+  gap: var(--sp-6);
+  min-width: 0;
+  color: var(--text-2) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption-para) !important;
 }
 .approval-hint > svg {
   flex-shrink: 0;
-  margin-top: 3px;
+  margin-top: var(--sp-2);
   color: var(--icon);
 }
-/* High risk: the only tray that turns red. Its buttons are all secondary, raised white on the tint; no blue. */
-.tool-card.has-approval.is-r2 {
-  border-color: var(--err-border);
-  background: var(--err-bg);
+/* The shortcuts, shown only while the card holds focus. */
+.approval-keys {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  min-width: 0;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity var(--d-fast) var(--ease-exit);
+}
+.approval-panel:focus-within .approval-keys {
+  opacity: 1;
+  transition-timing-function: var(--ease);
+}
+@media (max-width: 767.98px) {
+  .approval-toggle {
+    min-height: 44px;
+  }
+  .approval-actions {
+    display: grid !important;
+    gap: var(--sp-8);
+    padding: var(--sp-8) var(--sp-4) var(--sp-4);
+  }
+  .approval-hint,
+  .approval-footnote {
+    font-size: var(--fs-meta) !important;
+    line-height: var(--lh-meta-para) !important;
+  }
+  .approval-buttons {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-left: 0;
+  }
+  .approval-actions[data-single] .approval-buttons {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* Composer that this device may watch but not type into: a dashed tray with no shadow, so it does not read as an
@@ -123,198 +490,276 @@
   flex-shrink: 0;
 }
 
-/* Local confirmation dialog */
-.presence-body {
-  gap: var(--sp-16);
+/*
+ * Local confirmation dock (the dialog primitive's dock placement), for actions that do not show the confirmation in
+ * place: a still state tile and the request's title, one line on what to do or what happened, the check code only in
+ * a browser, and one button. No countdown: the confirmation window times out on its own. Amber while it waits for the
+ * person, green once confirmed, red when the request did not run.
+ */
+.presence-dock[open] {
+  display: block !important;
+  opacity: 1 !important;
+  scale: 1 !important;
+  translate: 0 0 !important;
+  background: transparent !important;
+  color: var(--text-1) !important;
+  font-size: var(--fs-label) !important;
+  line-height: var(--lh-label-para) !important;
 }
-.presence-subject {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-12);
+@media (prefers-reduced-motion: no-preference) {
+  @starting-style {
+    .presence-dock[open] {
+      opacity: 0 !important;
+      translate: 0 var(--sp-12) !important;
+    }
+  }
 }
-.presence-subject strong {
-  font-size: var(--fs-title-sm);
-  line-height: var(--lh-title-sm);
-  font-weight: 600;
+.presence-dock .ui-dialog-surface {
+  display: flex !important;
+  background: var(--bg-raised) !important;
+  color: var(--text-1) !important;
+  font-size: var(--fs-label) !important;
+  line-height: var(--lh-label-para) !important;
+}
+.presence-dock .ui-dialog-body {
+  display: grid !important;
+}
+.presence-dock .ui-dialog-lead {
+  display: flex !important;
+}
+.presence-dock .ui-dialog-title {
+  display: block !important;
+  color: var(--text-1) !important;
+  font-size: var(--fs-title-sm) !important;
+  line-height: var(--lh-title-sm) !important;
+  font-weight: 600 !important;
+}
+.presence-dock .ui-dialog-actions {
+  display: flex !important;
+}
+.presence-dock .ui-dialog-icon {
+  display: grid !important;
+  background: transparent !important;
 }
 .presence-icon {
-  display: grid;
+  position: relative;
+  display: grid !important;
   place-items: center;
   width: 36px;
   height: 36px;
-  flex-shrink: 0;
   border-radius: var(--r-8);
   corner-shape: var(--corner-shape);
-  background: var(--bg-hover);
-  color: var(--text-2);
+  background: var(--fill) !important;
+  color: var(--text-2) !important;
 }
-[data-confirmation-phase='sending'] .presence-icon {
-  background: var(--ok-bg);
-  color: var(--ok-text);
+.presence-icon[data-tone='warn'] {
+  background: var(--warn-bg) !important;
+  color: var(--warn-text) !important;
 }
-.presence-text {
-  color: var(--text-2);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label-para);
+.presence-icon[data-tone='ok'] {
+  background: var(--ok-bg) !important;
+  color: var(--ok-text) !important;
 }
-.presence-inline {
-  white-space: nowrap;
-  color: var(--text-1);
-  font-size: var(--fs-mono);
+.presence-icon[data-tone='err'] {
+  background: var(--err-bg) !important;
+  color: var(--err-text) !important;
 }
-/* The check code: the one place for the large mono figures, spaced for reading character by character. */
+/* The enrollment page's wait: a halo leaves the tile every 1.6s; the still frame is the amber tile alone. */
+.enroll-status .presence-icon[data-tone='warn']::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  corner-shape: var(--corner-shape);
+  box-shadow: 0 0 0 1px var(--warn-border);
+  opacity: 0;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .enroll-status .presence-icon[data-tone='warn']::after {
+    animation: presence-halo 1.6s var(--ease) infinite;
+  }
+  .presence-icon > svg {
+    animation: presence-swap var(--d-fast) var(--ease);
+  }
+}
+@keyframes presence-halo {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.35);
+  }
+}
+@keyframes presence-swap {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+}
+.presence-body {
+  display: grid !important;
+  gap: var(--sp-12);
+  margin-top: var(--sp-4);
+}
+.presence-line {
+  display: block !important;
+  color: var(--text-2) !important;
+  font-size: var(--fs-label) !important;
+  line-height: var(--lh-label-para) !important;
+}
+/* The check code, only in a browser: the large mono figures, spaced for reading character by character. */
 .presence-code {
-  display: grid;
+  display: grid !important;
   justify-items: center;
   gap: var(--sp-6);
   padding: var(--sp-16);
   border: 1px solid var(--line-subtle);
   border-radius: var(--r-12);
   corner-shape: var(--corner-shape);
-  background: var(--bg-sunken);
+  background: var(--bg-sunken) !important;
 }
 .presence-code > span {
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
+  display: block !important;
+  color: var(--text-3) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption) !important;
   font-weight: 500;
 }
 .presence-code > code {
-  color: var(--text-1);
-  font-size: var(--fs-mono-display);
-  line-height: var(--lh-mono-display);
-  font-weight: 600;
-  letter-spacing: var(--ls-mono-display);
+  display: block !important;
+  color: var(--text-1) !important;
+  font-family: var(--font-mono) !important;
+  font-size: var(--fs-mono-display) !important;
+  line-height: var(--lh-mono-display) !important;
+  font-weight: 600 !important;
+  letter-spacing: var(--ls-mono-display) !important;
 }
-.presence-timer {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  align-items: center;
-  gap: var(--sp-8) var(--sp-12);
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-  font-variant-numeric: tabular-nums;
+.presence-track {
+  display: block !important;
+  height: 2px;
+  overflow: hidden;
+  border-radius: var(--r-2);
+  background: var(--warn-bg) !important;
 }
-.presence-timer .countdown-track {
-  grid-column: 1 / -1;
+.presence-track > i {
+  --fraction: 1;
+  display: block !important;
+  height: 100%;
+  background: var(--warn-dot) !important;
+  transform: scaleX(var(--fraction));
+  transform-origin: left center;
+  transition: transform 1s linear;
 }
 
-/* Devices */
-.device-card {
-  display: flex;
+/* Devices: pairing a phone, inside the 手机配对 group of 设置 › 设备 (a security surface). */
+[data-secure] .pair-section {
+  display: grid !important;
+  opacity: 1 !important;
+  color: var(--text-1) !important;
+  font-size: var(--fs-label) !important;
+  line-height: var(--lh-label-para) !important;
+}
+/*
+ * Pairing a phone: the intro and 生成配对二维码 (the section's one blue action); once created, the code on white (dark
+ * modules on light paper in both themes, so scanners read it), the three numbered steps, the time left and the link.
+ */
+.pair-empty {
+  display: grid !important;
+  justify-items: start;
+  gap: var(--sp-12);
+}
+.pair-empty p {
+  color: var(--text-2) !important;
+  font-size: var(--fs-label) !important;
+  line-height: var(--lh-label-para) !important;
+}
+.pair-empty .ui-notice {
+  justify-self: stretch;
+}
+.pair-ready {
+  display: flex !important;
+  gap: var(--sp-24);
   align-items: flex-start;
-  gap: var(--sp-16);
 }
-/* A device's glyph on a quiet tile: 28 in the list, 40 for this device. */
-.device-avatar {
-  display: grid;
+.pair-qr {
+  display: grid !important;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 200px;
+  height: 200px;
   flex-shrink: 0;
-  border-radius: var(--r-6);
+  padding: var(--sp-12);
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
   corner-shape: var(--corner-shape);
-  background: var(--bg-hover);
-  color: var(--text-2);
+  background: #ffffff !important;
 }
-/* An icon tile: round(40 × 0.225) = 9. */
-.device-avatar.is-large {
-  width: 40px;
-  height: 40px;
-  border-radius: 9px;
-  corner-shape: var(--corner-shape);
+.pair-qr img {
+  display: block !important;
+  width: 100%;
+  height: 100%;
+  opacity: 1 !important;
 }
-.device-card-main {
+.pair-steps {
   display: grid;
   gap: var(--sp-12);
   flex: 1;
   min-width: 0;
 }
-.device-facts {
-  display: grid;
-  border-top: 1px solid var(--line-subtle);
+.pair-steps ol {
+  list-style: none;
+  display: grid !important;
+  gap: var(--sp-8);
+  color: var(--text-2) !important;
+  font-size: var(--fs-label) !important;
+  line-height: var(--lh-label-para) !important;
 }
-.device-facts > div {
-  display: grid;
-  grid-template-columns: 88px minmax(0, 1fr);
-  gap: var(--sp-12);
-  align-items: center;
-  min-height: 36px;
-  padding: var(--sp-6) 0;
-  border-bottom: 1px solid var(--line-subtle);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label-para);
-}
-.device-facts dt {
-  color: var(--text-3);
-}
-.device-facts dd {
-  min-width: 0;
-  color: var(--text-1);
-  overflow-wrap: anywhere;
-}
-.fingerprint-inline {
-  color: var(--text-1);
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono-sm);
-  line-height: var(--lh-mono-sm);
-}
-.device-card-actions {
-  display: flex;
-  justify-content: flex-end;
-}
-.device-row {
+.pair-steps li {
+  display: flex !important;
   align-items: flex-start;
+  gap: var(--sp-8);
 }
-.device-row .device-avatar {
+/* (20 − 16) / 2: the number sits on the step's first line. */
+.pair-step-number {
+  display: grid !important;
+  place-items: center;
+  width: 16px;
+  height: 16px;
   margin-top: var(--sp-2);
+  flex-shrink: 0;
+  border-radius: var(--r-pill);
+  background: var(--fill) !important;
+  color: var(--text-2) !important;
+  font-size: var(--fs-micro) !important;
+  line-height: var(--lh-micro) !important;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
-.device-row.is-revoked {
-  background: var(--bg-sunken);
+.pair-expiry {
+  color: var(--text-3) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption) !important;
+  font-variant-numeric: tabular-nums;
 }
-.device-row.is-revoked .device-row-text strong {
-  color: var(--text-3);
-}
-.device-row-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.device-row-text .device-row-scopes {
-  white-space: normal;
-}
-.device-row-actions {
-  display: flex;
+.pair-actions {
+  display: flex !important;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--sp-8);
-  flex-shrink: 0;
-  align-self: center;
-}
-.pair-hint {
-  font-size: var(--fs-label);
-  line-height: var(--lh-label-para);
-  color: var(--text-2);
 }
 @media (max-width: 767.98px) {
-  .device-card {
-    gap: var(--sp-12);
-  }
-  .device-avatar.is-large {
-    display: none;
-  }
-  .device-card .inline-form {
-    flex-direction: column;
+  .pair-ready {
+    flex-direction: column-reverse;
     align-items: stretch;
   }
-  .device-row {
-    flex-wrap: wrap;
+  .pair-qr {
+    align-self: center;
   }
-  .device-row-actions {
-    width: 100%;
-    justify-content: flex-end;
-    padding-left: var(--sp-40);
+  .pair-actions .ui-button {
+    flex: 1;
+    min-height: 44px;
   }
 }
 
@@ -330,4 +775,354 @@
 }
 .field-hint.is-error {
   color: var(--err-text);
+}
+
+/*
+ * Every security surface and everything in it: shown (an ancestor outside it can still hide the whole page, never one
+ * part of it), unfiltered, unclipped and unshadowed, at the indent and case it was written in, and unmoved. Screen-
+ * reader text keeps its clipping; a dialog keeps the slide of its own transition while it closes.
+ */
+[data-secure] {
+  visibility: visible !important;
+  font-family: var(--font-sans) !important;
+  filter: none !important;
+  clip-path: none !important;
+  mix-blend-mode: normal !important;
+  text-indent: 0 !important;
+}
+[data-secure]:not(dialog) {
+  transform: none !important;
+}
+:where([data-secure] :not(.sr-only, svg, svg *, dialog)) {
+  opacity: 1 !important;
+  transform: none !important;
+}
+/*
+ * No part has a background of its own unless it is pinned below or is a layer (a popover, a tooltip, a sheet), so a
+ * background painted from outside cannot cover or tint the words.
+ */
+:where([data-secure] :not(svg, svg *, dialog, [popover], [popover] *, .ui-sheet *)) {
+  background-color: transparent !important;
+}
+:where([data-secure] :not(.sr-only, svg *)) {
+  visibility: inherit !important;
+  filter: none !important;
+  clip-path: none !important;
+  mix-blend-mode: normal !important;
+  text-indent: 0 !important;
+  text-shadow: none !important;
+  text-transform: none !important;
+}
+/* Words inside a pinned line take its colour and size. */
+[data-secure]
+  :is(
+    time,
+    .fingerprint > span,
+    .enroll-scope > span:not(.scope-check),
+    .diff-text > span:not(.hidden-char, .sr-only),
+    .diff-hash > span,
+    .ui-notice-text > :not(.ui-notice-title)
+  ) {
+  color: inherit !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
+}
+[data-secure] .diff-stat > span {
+  font-size: inherit !important;
+  line-height: inherit !important;
+}
+[data-secure] .diff-stat-add {
+  color: var(--ok-text) !important;
+}
+[data-secure] .diff-stat-remove {
+  color: var(--err-text) !important;
+}
+[data-secure] .diff-stat-zero {
+  color: var(--text-3) !important;
+}
+/* The boxes that hold the parts: each keeps its own display. */
+[data-secure] :is(.approval-notes, .argument-list, .ui-dialog-heading, .ui-field-control, .ui-check-text, .enroll-header) {
+  display: grid !important;
+}
+[data-secure] :is(.argument-list > div) {
+  display: grid !important;
+}
+[data-secure] :is(.argument-list dd, .diff-table, .diff-hunk, .diff-hunk-header, .diff-text, .diff-sign, .diff-ln) {
+  display: block !important;
+}
+[data-secure] :is(.diff-file-header, .diff-stat, .ui-notice-action) {
+  display: flex !important;
+}
+[data-secure] :is(.diff-stat > span, .diff-hash code, .diff-hash span) {
+  display: inline !important;
+}
+[data-secure] .ui-check {
+  display: inline-flex !important;
+}
+[data-secure] :is(.ui-checkbox, .ui-status-glyph, .ui-spinner) {
+  display: inline-grid !important;
+}
+[data-secure] :is(time, .fingerprint > span, .fingerprint-hash code, .enroll-scope > span:not(.scope-check), .enroll-timer) {
+  display: inline !important;
+}
+[data-secure] .diff-view {
+  display: grid !important;
+}
+/* The individual transforms, apart from transform: a minifier folds a block holding both into one transform. */
+:where([data-secure]:not(dialog, svg), [data-secure] :not(.sr-only, svg, svg *, dialog)) {
+  scale: none !important;
+  translate: none !important;
+  rotate: none !important;
+}
+/* What is hidden or dimmed on purpose stays so: the key hint until the card holds focus, a folded preview, a
+ * disabled field or menu item, and the countdown's remaining share. */
+[data-secure] .approval-keys {
+  opacity: 0 !important;
+}
+[data-secure] .approval-panel:focus-within .approval-keys {
+  opacity: 1 !important;
+}
+[data-secure] .approval-preview:not([data-open]) > .approval-preview-inner {
+  opacity: 0 !important;
+}
+[data-secure] :is(.ui-input, .ui-checkbox):disabled,
+[data-secure] .enroll-scopes:disabled .enroll-scope.is-choice,
+[data-secure] .ui-menu-item[aria-disabled='true'] :is(.ui-menu-item-lead, .ui-menu-item-label, .ui-menu-item-description) {
+  opacity: 0.45 !important;
+}
+[data-secure] .presence-track > i {
+  transform: scaleX(var(--fraction)) !important;
+}
+/*
+ * A diff line has three number cells: the old and the new number, shown from 768px, and the single column phones show
+ * instead (number, sign, text on one row). Selectors that outweigh the list above keep the cells a width does not use
+ * out of it.
+ */
+[data-secure] .diff-line > .diff-ln.diff-ln-one {
+  display: none !important;
+}
+@media (max-width: 767.98px) {
+  [data-secure] .diff-line > .diff-ln.diff-ln-old,
+  [data-secure] .diff-line > .diff-ln.diff-ln-new,
+  .tool-card.has-approval .tool-card-name {
+    display: none !important;
+  }
+  [data-secure] .diff-line > .diff-ln.diff-ln-one {
+    display: block !important;
+  }
+}
+
+/* The primitives inside a security surface, pinned like the surface itself. */
+[data-secure] .ui-button {
+  display: inline-flex !important;
+  min-height: 28px !important;
+  color: var(--text-1) !important;
+  font-family: var(--font-sans) !important;
+  font-size: var(--fs-label) !important;
+  line-height: var(--lh-label) !important;
+  font-weight: 500 !important;
+}
+[data-secure] .ui-button[data-size='xs'] {
+  min-height: 24px !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption) !important;
+}
+[data-secure] .ui-button[data-size='md'] {
+  min-height: 32px !important;
+}
+[data-secure] .ui-button[data-size='lg'] {
+  min-height: 44px !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui) !important;
+}
+[data-secure] .ui-button:not([aria-disabled='true']) {
+  opacity: 1 !important;
+}
+[data-secure] .ui-button[aria-disabled='true'] {
+  opacity: 0.45 !important;
+}
+[data-secure] .ui-button[data-variant='primary'] {
+  background: var(--accent) !important;
+  color: var(--on-accent) !important;
+}
+[data-secure] .ui-button[data-variant='primary']:hover:not([aria-disabled='true'], [aria-busy='true']) {
+  background: var(--accent-hover) !important;
+}
+[data-secure] .ui-button[data-variant='primary']:active:not([aria-disabled='true'], [aria-busy='true']) {
+  background: var(--accent-press) !important;
+}
+[data-secure] .ui-button[data-variant='secondary'] {
+  background: var(--fill) !important;
+}
+[data-secure] .ui-button[data-variant='secondary']:hover:not([aria-disabled='true'], [aria-busy='true']) {
+  background: var(--fill-hover) !important;
+}
+[data-secure] .ui-button[data-variant='secondary']:active:not([aria-disabled='true'], [aria-busy='true']) {
+  background: var(--fill-press) !important;
+}
+/* Inside amber or red the secondary button is raised white, as in the primitive. */
+:is([data-secure][data-tint], [data-secure] [data-tint]) .ui-button[data-variant='secondary'] {
+  background: var(--bg-raised) !important;
+}
+:is([data-secure][data-tint], [data-secure] [data-tint])
+  .ui-button[data-variant='secondary']:hover:not([aria-disabled='true'], [aria-busy='true']) {
+  background: linear-gradient(var(--bg-hover), var(--bg-hover)) var(--bg-raised) !important;
+}
+:is([data-secure][data-tint], [data-secure] [data-tint])
+  .ui-button[data-variant='secondary']:active:not([aria-disabled='true'], [aria-busy='true']) {
+  background: linear-gradient(var(--bg-press), var(--bg-press)) var(--bg-raised) !important;
+}
+[data-secure] .ui-button[data-variant='ghost'] {
+  background: transparent !important;
+  color: var(--text-2) !important;
+}
+[data-secure] .ui-button[data-variant='ghost']:hover:not([aria-disabled='true'], [aria-busy='true']) {
+  background: var(--bg-hover) !important;
+  color: var(--text-1) !important;
+}
+[data-secure] .ui-button[data-variant='ghost']:active:not([aria-disabled='true'], [aria-busy='true']) {
+  background: var(--bg-press) !important;
+}
+/* A link keeps the link colour and a destructive action its red; the text-1 above is for the filled buttons. */
+[data-secure] .ui-button[data-variant='link'] {
+  background: transparent !important;
+  color: var(--accent-text) !important;
+}
+[data-secure] .ui-button[data-variant='link']:hover:not([aria-disabled='true']) {
+  color: var(--accent-text-hover) !important;
+}
+[data-secure] .ui-button[data-variant='danger'] {
+  color: var(--err-text) !important;
+}
+[data-secure] .ui-button[data-variant='destroy'] {
+  color: var(--on-accent) !important;
+}
+[data-secure] .ui-icon-button {
+  display: inline-grid !important;
+  color: var(--icon) !important;
+}
+[data-secure] .ui-icon-button:not([aria-disabled='true']) {
+  opacity: 1 !important;
+}
+[data-secure] .ui-icon-button[aria-disabled='true'] {
+  opacity: 0.45 !important;
+}
+[data-secure] .ui-icon-button:is(:hover:not([aria-disabled='true']), [aria-pressed='true'], [aria-expanded='true']) {
+  color: var(--text-1) !important;
+}
+[data-secure] .ui-status-pill {
+  display: inline-flex !important;
+  height: 20px !important;
+  opacity: 1 !important;
+  background: var(--fill) !important;
+  color: var(--text-2) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption) !important;
+  font-weight: 500 !important;
+}
+[data-secure] .ui-status-pill[data-tone='warn'] {
+  background: var(--warn-bg) !important;
+  color: var(--warn-text) !important;
+}
+[data-secure] .ui-status-pill[data-tone='err'] {
+  background: var(--err-bg) !important;
+  color: var(--err-text) !important;
+}
+[data-secure] .ui-status-pill[data-tone='ok'] {
+  background: var(--ok-bg) !important;
+  color: var(--ok-text) !important;
+}
+:is(.ui-notice[data-secure], [data-secure] .ui-notice) {
+  display: flex !important;
+  opacity: 1 !important;
+  border-color: var(--line) !important;
+  background: var(--bg-sunken) !important;
+  color: var(--text-2) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption-para) !important;
+}
+:is(.ui-notice[data-secure], [data-secure] .ui-notice)[data-tone='warn'] {
+  border-color: var(--warn-border) !important;
+  background: var(--warn-bg) !important;
+}
+:is(.ui-notice[data-secure], [data-secure] .ui-notice)[data-tone='error'] {
+  border-color: var(--err-border) !important;
+  background: var(--err-bg) !important;
+}
+:is(.ui-notice[data-secure], [data-secure] .ui-notice) .ui-notice-title {
+  display: inline !important;
+  color: var(--text-1) !important;
+  font-size: var(--fs-label) !important;
+  line-height: var(--lh-label) !important;
+  font-weight: 500 !important;
+}
+:is(.ui-notice[data-secure], [data-secure] .ui-notice)[data-tone='warn'] :is(.ui-notice-title, .ui-notice-glyph) {
+  color: var(--warn-text) !important;
+}
+:is(.ui-notice[data-secure], [data-secure] .ui-notice)[data-tone='error'] :is(.ui-notice-title, .ui-notice-glyph) {
+  color: var(--err-text) !important;
+}
+:is(.ui-notice[data-secure], [data-secure] .ui-notice) .ui-notice-text {
+  display: block !important;
+  color: var(--text-2) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption-para) !important;
+}
+:is(.ui-notice[data-secure], [data-secure] .ui-notice) .ui-notice-body {
+  display: flex !important;
+}
+[data-secure] .ui-field {
+  display: grid !important;
+}
+[data-secure] .ui-field-label {
+  display: block !important;
+  color: var(--text-2) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption) !important;
+  font-weight: 500 !important;
+}
+[data-secure] .ui-input {
+  background-color: var(--well) !important;
+}
+[data-secure] .ui-input:focus {
+  background-color: var(--bg-raised) !important;
+}
+[data-secure] .ui-checkbox {
+  background-color: var(--bg-raised) !important;
+}
+[data-secure] .ui-checkbox:checked {
+  background-color: var(--accent) !important;
+}
+[data-secure] .ui-input {
+  display: block !important;
+  color: var(--text-1) !important;
+  font-size: var(--fs-input) !important;
+  line-height: var(--lh-input) !important;
+}
+[data-secure] :is(.ui-input, .ui-checkbox):not(:disabled) {
+  opacity: 1 !important;
+}
+[data-secure] :is(.ui-field-hint, .ui-field-error) {
+  display: block !important;
+  color: var(--text-3) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption-para) !important;
+}
+[data-secure] .ui-field-error {
+  color: var(--err-text) !important;
+}
+[data-secure] .ui-check-label {
+  display: block !important;
+  color: var(--text-1) !important;
+  font-size: var(--fs-label) !important;
+  line-height: var(--lh-label-para) !important;
+}
+[data-secure] .ui-menu-item {
+  display: grid !important;
+}
+[data-secure] .ui-menu-item:not([aria-disabled='true']) {
+  opacity: 1 !important;
+}
+[data-secure] .ui-menu-item-title {
+  color: var(--text-1) !important;
 }

@@ -40,9 +40,11 @@ function declarations(): Declaration[] {
           file,
           selector,
           property: part.slice(0, colon).trim(),
+          // The security layer pins some values with !important; the value is what the scales and tokens govern.
           value: part
             .slice(colon + 1)
             .replace(/\s+/gu, ' ')
+            .replace(/\s*!important$/u, '')
             .trim(),
         })
       }

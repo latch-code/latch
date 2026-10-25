@@ -1,51 +1,242 @@
-import type { Approval, HarnessInfo, Message, TaskDetail, TokenUsage } from '@latch/protocol'
-import { MessageRow } from './MessageRow.tsx'
+import { useEffect, useState, type ReactNode } from 'react'
+import { ChevronRight } from 'lucide-react'
+import type { Approval, HarnessInfo, Message, TaskDetail } from '@latch/protocol'
+import {
+  foldedRows,
+  foldSummary,
+  isLive,
+  liveMessageId,
+  renderedMessages,
+  resendWarning,
+  separators,
+  sideEffects,
+  toolRowId,
+  turnModel,
+  turnOutcome,
+  turnsOf,
+  type Turn,
+  type TurnOutcome,
+} from '../conversation.ts'
+import { MessageRow, SourceRow } from './MessageRow.tsx'
 import { ToolCard, type ApprovalGateFor, type DecideHandler } from './ToolCard.tsx'
+import { TurnFooter, type TurnRetry } from './TurnFooter.tsx'
+import { Collapse, ICON_STROKE, useLivePrevious } from '@latch/ui'
 
-export const liveMessageId = (detail: TaskDetail) => detail.liveMessageId ?? `live:${detail.summary.id}`
-export const isLive = (detail: TaskDetail) => detail.liveText.length > 0 || (detail.liveReasoning?.length ?? 0) > 0
-
-/** Committed messages plus the streaming reply under the ID it will keep once committed. */
-export function renderedMessages(detail: TaskDetail): Message[] {
-  const messages = [...detail.messages]
-  const id = liveMessageId(detail)
-  if (isLive(detail) && !messages.some(message => message.id === id)) {
-    messages.push({ id, role: 'assistant', text: detail.liveText, ...(detail.liveReasoning ? { reasoning: detail.liveReasoning } : {}) })
-  }
-  return messages
+/** What resending the latest turn takes, when this device may send now. */
+export interface RetryAccess {
+  /** The session is a full-access one: the confirmation says it will not ask before each step. */
+  fullAccess: boolean
+  onResend: (prompt: string) => void
 }
 
-export const toolRowId = (approval: Approval) => (approval.toolCallId ? `tool:${approval.toolCallId}` : undefined)
+interface RowContext {
+  detail: TaskDetail
+  approvals: ReadonlyMap<string, Approval>
+  busy: ReadonlyMap<string, string>
+  onDecide: DecideHandler
+  gateFor?: ApprovalGateFor
+  liveId: string
+  live: boolean
+  coarse: boolean
+}
+
+function Row({ message, context }: { message: Message; context: RowContext }) {
+  if (message.role === 'tool') {
+    const approval = context.approvals.get(message.id)
+    return (
+      <ToolCard
+        message={message}
+        approval={approval}
+        busy={approval ? context.busy.get(approval.id) : undefined}
+        onDecide={context.onDecide}
+        gateFor={context.gateFor}
+      />
+    )
+  }
+  const streaming = context.live && message.id === context.liveId
+  return (
+    <MessageRow
+      message={message}
+      streaming={streaming}
+      coarse={context.coarse}
+      liveReasoning={streaming ? { startedAt: context.detail.liveReasoningStartedAt, ms: context.detail.liveReasoningMs } : undefined}
+    />
+  )
+}
 
 /**
- * The last assistant block of each settled turn carries the turn's footer (copy and
- * summed usage); earlier blocks between tool calls stay compact. The trailing turn
- * of an active session has no footer yet.
+ * Consecutive tool rows sit together as a quiet timeline; prose and notes break it. A reply block stays out of the
+ * groups even while it only reasons, so it keeps its place in the tree when its text starts.
  */
-export function turnFooters(messages: Message[], active: boolean): Map<string, TokenUsage | undefined> {
-  const footers = new Map<string, TokenUsage | undefined>()
-  let last: string | undefined
-  let usage: TokenUsage | undefined
-  const close = () => {
-    if (last !== undefined) footers.set(last, usage)
-    last = undefined
-    usage = undefined
+function rowsWithGroups(messages: Message[], render: (message: Message) => ReactNode): ReactNode[] {
+  const out: ReactNode[] = []
+  let group: Message[] = []
+  const flush = () => {
+    if (group.length === 0) return
+    out.push(
+      <div className="process-group" key={`group:${group[0]?.id ?? ''}`}>
+        {group.map(render)}
+      </div>,
+    )
+    group = []
   }
   for (const message of messages) {
-    if (message.role === 'user') close()
-    else if (message.role === 'assistant') {
-      last = message.id
-      if (message.usage)
-        usage = {
-          inputTokens: (usage?.inputTokens ?? 0) + message.usage.inputTokens,
-          outputTokens: (usage?.outputTokens ?? 0) + message.usage.outputTokens,
-        }
+    if (message.role === 'tool') group.push(message)
+    else {
+      flush()
+      out.push(render(message))
     }
   }
-  if (!active) close()
-  return footers
+  flush()
+  return out
 }
 
+/**
+ * The process before an answer, folded into one row once the turn has settled: 「已处理 · 读取 4 个文件 · …」. It folds
+ * with motion only when the page watched the turn settle; reopening shows the rows as they were.
+ */
+function ProcessFold({ rows, settledLive, children }: { rows: Message[]; settledLive: boolean; children: ReactNode }) {
+  const [open, setOpen] = useState(settledLive)
+  useEffect(() => {
+    if (!settledLive) return undefined
+    // The rows are shown first and fold a frame later, so the fold is seen to happen.
+    const frame = requestAnimationFrame(() => {
+      setOpen(false)
+    })
+    return () => {
+      cancelAnimationFrame(frame)
+    }
+  }, [settledLive])
+  return (
+    <div className="process-fold" data-open={open ? '' : undefined}>
+      <button
+        type="button"
+        className="process-row fold-toggle"
+        aria-expanded={open}
+        onClick={() => {
+          setOpen(!open)
+        }}>
+        <span className="fold-summary">{foldSummary(rows)}</span>
+        <ChevronRight className="process-chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+      </button>
+      <Collapse
+        open={open}
+        onReveal={() => {
+          setOpen(true)
+        }}>
+        <div className="fold-rows">{children}</div>
+      </Collapse>
+    </div>
+  )
+}
+
+function TurnView({
+  turn,
+  harnessName,
+  harness,
+  providerName,
+  separator,
+  latest,
+  trailingLive,
+  outcome,
+  settledLive,
+  arrived,
+  runModel,
+  standalone,
+  liveFooter,
+  context: rowContext,
+  retry,
+  reportedContext,
+}: {
+  turn: Turn
+  context: RowContext
+  harnessName: string
+  harness?: Pick<HarnessInfo, 'id' | 'source'>
+  providerName?: (id: string) => string | undefined
+  separator?: { at: number; sameDay: boolean }
+  latest: boolean
+  trailingLive: boolean
+  outcome?: TurnOutcome
+  settledLive: boolean
+  /** The page saw this turn arrive: its prompt rises in. */
+  arrived: boolean
+  /** The model the run uses, for the source row of a running turn before its first step records one. */
+  runModel?: { model: string; providerId?: string }
+  standalone: Approval[]
+  liveFooter?: Parameters<typeof TurnFooter>[0]['live']
+  retry?: TurnRetry
+  reportedContext?: number
+}) {
+  const [tapped, setTapped] = useState(false)
+  const folded = trailingLive ? [] : foldedRows(turn, outcome)
+  const foldedIds = new Set(folded.map(message => message.id))
+  const rest = turn.replies.filter(message => !foldedIds.has(message.id))
+  const render = (message: Message) => <Row key={message.id} message={message} context={rowContext} />
+  const stamped = turnModel(turn)
+  const model = stamped?.model ? { model: stamped.model, providerId: stamped.providerId } : trailingLive ? runModel : undefined
+  const hasReply = turn.replies.length > 0 || trailingLive || standalone.length > 0
+  // The reply's source line and first block fade in when the page saw them appear, not after a load or a switch.
+  const replyBefore = useLivePrevious(hasReply)
+  const replyArrived = hasReply && (arrived || replyBefore === false)
+  return (
+    <div className="turn" data-turn={turn.key}>
+      {turn.user && <MessageRow message={turn.user} separator={separator} coarse={rowContext.coarse} arrived={arrived} />}
+      {hasReply && (
+        <div
+          className="turn-reply"
+          data-arrived={replyArrived ? '' : undefined}
+          data-shown={tapped ? '' : undefined}
+          onClick={
+            rowContext.coarse && !latest
+              ? event => {
+                  // On touch a tap on the reply shows its footer, a second tap hides it.
+                  if (!(event.target instanceof Element && event.target.closest('button, a, [tabindex], pre, summary'))) setTapped(!tapped)
+                }
+              : undefined
+          }>
+          <SourceRow
+            name={harnessName}
+            harness={harness}
+            model={model?.model}
+            provider={model?.providerId ? providerName?.(model.providerId) : undefined}
+          />
+          {folded.length > 0 && (
+            <ProcessFold rows={folded} settledLive={settledLive}>
+              {rowsWithGroups(folded, render)}
+            </ProcessFold>
+          )}
+          {rowsWithGroups(rest, render)}
+          {standalone.map(approval => (
+            <ToolCard
+              key={approval.id}
+              message={null}
+              approval={approval}
+              busy={rowContext.busy.get(approval.id)}
+              onDecide={rowContext.onDecide}
+              gateFor={rowContext.gateFor}
+            />
+          ))}
+          <TurnFooter
+            key={turn.key}
+            turn={turn}
+            live={trailingLive ? liveFooter : undefined}
+            outcome={outcome}
+            pinned={tapped || (latest && rowContext.coarse)}
+            settledLive={settledLive}
+            context={latest ? reportedContext : undefined}
+            retry={retry}
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * The conversation as turns: each prompt (with its time separator when one is due), then what answered it under one
+ * source line, the process before a settled answer folded into a row, and the turn's footer after its last row. The
+ * latest turn of a running session ends with the live line instead, after any approval card that has no tool row.
+ */
 export function Transcript({
   detail,
   approvals,
@@ -55,6 +246,11 @@ export function Transcript({
   harnessName,
   harness,
   active = false,
+  cancelling = false,
+  coarse = false,
+  providerName,
+  fallbackElapsed,
+  retry,
 }: {
   detail: TaskDetail
   approvals: Approval[]
@@ -65,13 +261,21 @@ export function Transcript({
   harnessName: string
   /** The session's harness, for the tile on each turn's source row. */
   harness?: Pick<HarnessInfo, 'id' | 'source'>
-  /** The session is running; its trailing turn is not finished. */
+  /** The session is running; its latest turn is not finished. */
   active?: boolean
+  /** A stop was requested from this page. */
+  cancelling?: boolean
+  /** Touch: no hover, so the newest turn's footer stays shown and a tap shows another's. */
+  coarse?: boolean
+  providerName?: (id: string) => string | undefined
+  /** An older Host's run: the time since this page saw it start. */
+  fallbackElapsed?: number
+  /** Present when this device may send now: the latest turn that failed or stopped offers 重新发送. */
+  retry?: RetryAccess
 }) {
   const messages = renderedMessages(detail)
-  const footers = turnFooters(messages, active)
-  const live = isLive(detail)
-  const liveId = liveMessageId(detail)
+  const turns = turnsOf(messages)
+  const marks = separators(messages)
   const byTool = new Map(
     approvals.flatMap(approval => {
       const id = toolRowId(approval)
@@ -83,41 +287,87 @@ export function Transcript({
     const id = toolRowId(approval)
     return id === undefined || !ids.has(id)
   })
-  let turnHasMeta = false
+  const rowContext: RowContext = {
+    detail,
+    approvals: byTool,
+    busy,
+    onDecide,
+    gateFor,
+    liveId: liveMessageId(detail),
+    live: isLive(detail),
+    coarse,
+  }
+  const trailingKey = active ? (turns.at(-1)?.key ?? 'empty') : null
+  // The turn the page watched run until the previous render: when it settles, its footer lingers and its process folds.
+  const previouslyLive = useLivePrevious(trailingKey)
+  // The latest turn before the last change the page saw happen ('' for none): a different latest turn arrived live.
+  const lastKey = turns.at(-1)?.key ?? ''
+  const previousLast = useLivePrevious(lastKey)
+  const runModel = detail.summary.model
+    ? { model: detail.summary.model, ...(detail.summary.providerId ? { providerId: detail.summary.providerId } : {}) }
+    : undefined
+  const liveFooter = {
+    detail,
+    harness: harnessName,
+    cancelling,
+    approvals: approvals.length,
+    ...(fallbackElapsed !== undefined ? { fallbackElapsed } : {}),
+  }
+  const reportedContext = detail.usageReport?.contextUsed
   return (
     <>
-      {messages.map(message => {
-        if (message.role === 'user') turnHasMeta = false
-        if (message.role === 'tool') {
-          const approval = byTool.get(message.id)
-          return (
-            <ToolCard
-              key={message.id}
-              message={message}
-              approval={approval}
-              busy={approval ? busy.get(approval.id) : undefined}
-              onDecide={onDecide}
-              gateFor={gateFor}
-            />
-          )
-        }
-        const showMeta = message.role === 'assistant' && !turnHasMeta
-        if (showMeta) turnHasMeta = true
+      {turns.map((turn, index) => {
+        const latest = index === turns.length - 1
+        const trailingLive = latest && active
+        const outcome = trailingLive ? undefined : turnOutcome(turn, latest ? detail.summary.status : undefined)
+        const settledLive = !trailingLive && trailingKey === null && previouslyLive === turn.key
+        const resend =
+          latest && !trailingLive && retry && turn.user && outcome !== 'completed'
+            ? {
+                warning: resendWarning(sideEffects(turn), retry.fullAccess),
+                onResend: () => {
+                  retry.onResend(turn.user!.text)
+                },
+              }
+            : undefined
         return (
-          <MessageRow
-            key={message.id}
-            message={message}
-            streaming={live && message.id === liveId}
-            meta={showMeta ? harnessName : undefined}
-            metaHarness={showMeta ? harness : undefined}
-            footer={footers.has(message.id)}
-            usage={footers.get(message.id)}
+          <TurnView
+            key={turn.key}
+            turn={turn}
+            context={rowContext}
+            harnessName={harnessName}
+            harness={harness}
+            providerName={providerName}
+            separator={turn.user ? marks.get(turn.user.id) : undefined}
+            latest={latest}
+            trailingLive={trailingLive}
+            outcome={outcome}
+            settledLive={settledLive}
+            arrived={latest && previousLast !== undefined && previousLast !== lastKey}
+            runModel={runModel}
+            standalone={latest ? standalone : []}
+            liveFooter={liveFooter}
+            retry={resend}
+            reportedContext={reportedContext}
           />
         )
       })}
-      {standalone.map(approval => (
-        <ToolCard key={approval.id} message={null} approval={approval} busy={busy.get(approval.id)} onDecide={onDecide} gateFor={gateFor} />
-      ))}
+      {turns.length === 0 && standalone.length > 0 && (
+        <div className="turn">
+          <div className="turn-reply">
+            {standalone.map(approval => (
+              <ToolCard
+                key={approval.id}
+                message={null}
+                approval={approval}
+                busy={busy.get(approval.id)}
+                onDecide={onDecide}
+                gateFor={gateFor}
+              />
+            ))}
+          </div>
+        </div>
+      )}
     </>
   )
 }

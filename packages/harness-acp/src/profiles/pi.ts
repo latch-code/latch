@@ -9,6 +9,8 @@ export const piProfile: HarnessProfile = {
     readback: 'none',
     notes: ['pi 执行工具前不请求审批'],
   },
+  // pi has no other folders to receive and does not limit the paths its tools use.
+  folderAccess: 'primary-unbounded',
   // What pi gates behind project trust: `.pi` settings, MCP servers, extensions, skills, prompts, themes and system
   // prompts, and `.agents/skills` in the session directory or above it. A trust decision can be saved for later runs.
   projectConfigPaths: ['.pi', '.agents/skills'],

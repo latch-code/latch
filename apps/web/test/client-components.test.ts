@@ -11,14 +11,18 @@ import { scrollMovesAnchor } from '../src/components/overlays.tsx'
 import { RunSettingsGroups } from '../src/components/Pickers.tsx'
 import { PlanList } from '../src/components/PlanCard.tsx'
 import { DiffView, PREVIOUS_UNAVAILABLE_TEXT, PREVIOUS_UNKNOWN_TEXT } from '../src/components/DiffView.tsx'
-import { HIDDEN_CHARACTERS_TEXT, ToolCard } from '../src/components/ToolCard.tsx'
+import { ApprovalStatuses, type ApprovalStatus } from '../src/components/ApprovalCard.tsx'
+import { ToolCard } from '../src/components/ToolCard.tsx'
 import { TopBar } from '../src/components/TopBar.tsx'
-import { Transcript, renderedMessages, turnFooters } from '../src/components/Transcript.tsx'
+import { Transcript } from '../src/components/Transcript.tsx'
+import { renderedMessages } from '../src/conversation.ts'
 import { escapeHiddenCharacters, hasHiddenCharacters, VisibleText } from '../src/components/VisibleText.tsx'
 import { contentHash } from '../src/core/contentHash.ts'
 import type { ApprovalGate } from '../src/core/permissions.ts'
+import { APPROVAL_COPY, CONFIRMATION_RESULT_TEXT } from '../src/core/securityCopy.ts'
+import { missingText } from '../src/settings/AgentsSettings.tsx'
 import { revokeText } from '../src/settings/DevicesSettings.tsx'
-import { WorkspaceRow } from '../src/settings/WorkspacesSettings.tsx'
+import { ProjectCard } from '../src/settings/WorkspacesSettings.tsx'
 
 const noop = () => {}
 afterEach(() => {
@@ -43,6 +47,24 @@ const tool = (extra: Partial<Message> = {}): Message => ({
   ...extra,
 })
 
+/** An approval card as the page renders it, with what this device's last choice left on it. */
+const approvalCard = (extra: Partial<Approval>, status?: ApprovalStatus, gate?: ApprovalGate) =>
+  renderToStaticMarkup(
+    createElement(
+      ApprovalStatuses.Provider,
+      { value: new Map(status ? [['ap1', status]] : []) },
+      createElement(ToolCard, {
+        message: tool(),
+        approval: approval(extra),
+        onDecide: noop,
+        ...(gate ? { gateFor: () => gate } : {}),
+      }),
+    ),
+  )
+/** The words on a card's buttons, in order. */
+const buttonLabels = (html: string) =>
+  [...html.matchAll(/<button[^>]*class="ui-button"[^>]*>(?:<svg.*?<\/svg>)?([^<]+)<\/button>/g)].map(match => match[1])
+
 describe('tool cards', () => {
   it('merges a pending approval into its tool card with the Host options, allow-once last', () => {
     const html = renderToStaticMarkup(
@@ -64,11 +86,11 @@ describe('tool cards', () => {
     expect(html).toContain('<code class="tool-card-name">write_file</code>')
     expect(html).toContain('无参数')
     expect(html).not.toContain('{}')
-    expect([...html.matchAll(/<button[^>]*class="ui-button"[^>]*>([^<]+)<\/button>/g)].map(match => match[1])).toEqual([
-      '拒绝',
-      '本会话始终允许',
-      '允许一次',
-    ])
+    // Two buttons at most: reject, then the blue allow once; the Host's other options wait behind ⋯.
+    expect([...html.matchAll(/<button[^>]*class="ui-button"[^>]*>([^<]+)<\/button>/g)].map(match => match[1])).toEqual(['拒绝', '允许一次'])
+    expect(html).toMatch(/<button[^>]*class="ui-button"[^>]*data-variant="primary"[^>]*>允许一次<\/button>/)
+    expect(html).toContain('aria-label="更多批准选项"')
+    expect(html).toContain('aria-haspopup="menu"')
   })
 
   it('offers allow once and reject when the driver sends no options', () => {
@@ -86,12 +108,54 @@ describe('tool cards', () => {
         approval: approval({ arguments: '{"path":"a.ts"}', tool: { diffs: [{ path: 'a.ts', oldText: 'x\n', newText: 'y\n' }] } }),
       }),
     )
-    expect(html).toContain('<dt>path</dt>')
+    // The diff's file header names the path, so it is not repeated as an argument.
+    expect(html).toContain('<span class="diff-path" title="a.ts"><span class="diff-path-name">a.ts</span></span>')
+    expect(html).not.toContain('<dt>path</dt>')
     expect(html).toContain('class="diff-stat-add">+1</span>')
     expect(html).toContain('class="diff-stat-remove">−1</span>')
     // The chosen option runs; the other stays focusable but takes no click.
     expect(html.match(/<button[^>]*class="ui-button"[^>]*aria-disabled="true"/g)).toHaveLength(1)
     expect(html.match(/<button[^>]*class="ui-button"[^>]*aria-busy="true"/g)).toHaveLength(1)
+  })
+
+  it("puts an opened card's changes in its paper and keeps a closed card's under its row, never a tray inside a tray", () => {
+    const diffs = [{ path: 'src/a.ts', oldText: 'x\n', newText: 'y\n', previous: 'text' as const }]
+    // A failure with output opens by itself: the changes are the paper's 变更, between 参数 and 输出.
+    const open = renderToStaticMarkup(
+      createElement(ToolCard, {
+        message: tool({
+          state: 'failed',
+          text: '退出码 1',
+          tool: { kind: 'edit', input: '{"path":"src/a.ts"}', output: '退出码 1', diffs },
+        }),
+        onDecide: noop,
+      }),
+    )
+    expect(open.match(/class="diff-view"/g)).toHaveLength(1)
+    const paper = open.slice(open.indexOf('class="tool-card-body"'))
+    expect(paper.indexOf('<h4>参数</h4>')).toBeLessThan(paper.indexOf('<h4>变更</h4>'))
+    expect(paper.indexOf('<h4>变更</h4>')).toBeLessThan(paper.indexOf('<h4>输出</h4>'))
+    expect(paper.indexOf('class="diff-view"')).toBeGreaterThan(paper.indexOf('<h4>变更</h4>'))
+    // Closed, the diff sits after the tray, outside it.
+    const closed = renderToStaticMarkup(
+      createElement(ToolCard, { message: tool({ state: 'completed', tool: { kind: 'edit', diffs } }), onDecide: noop }),
+    )
+    expect(closed.match(/class="diff-view"/g)).toHaveLength(1)
+    expect(closed).not.toContain('<h4>变更</h4>')
+    const tray = closed.indexOf('class="tool-tray"')
+    expect(closed.indexOf('class="diff-view"')).toBeGreaterThan(closed.indexOf('</button>', tray))
+    expect(closed.slice(tray, closed.indexOf('class="diff-view"'))).toMatch(/<\/div><\/div><\/div><div class="ui-collapse"/)
+  })
+
+  it('numbers a removed line by its old line in the single column phones keep', () => {
+    const html = renderToStaticMarkup(
+      createElement(DiffView, { diffs: [{ path: 'a.ts', oldText: 'a\nb\n', newText: 'a\nc\n', previous: 'text' }] }),
+    )
+    const removed = /<div class="diff-line diff-remove">(.*?)<\/div>/u.exec(html)?.[1] ?? ''
+    expect(removed).toContain('<span class="diff-ln diff-ln-new" aria-hidden="true"></span>')
+    expect(removed).toContain('<span class="diff-ln diff-ln-one" aria-hidden="true">2</span>')
+    const added = /<div class="diff-line diff-add">(.*?)<\/div>/u.exec(html)?.[1] ?? ''
+    expect(added).toContain('<span class="diff-ln diff-ln-one" aria-hidden="true">2</span>')
   })
 
   it('renders an approval without a matching tool row as its own card without a message anchor', () => {
@@ -109,7 +173,8 @@ describe('assistant messages', () => {
       createElement(MessageRow, { message: { id: 'm', role: 'assistant', text: '', reasoning: '想一想' }, streaming: true }),
     )
     expect(live).toContain('aria-label="正在生成的回复"')
-    expect(live).toContain('思考中…')
+    expect(live).toContain('正在思考')
+    expect(live).toMatch(/class="process-row thinking-toggle" aria-expanded="true"/)
     expect(live).toContain('想一想')
     const settled = renderToStaticMarkup(
       createElement(MessageRow, {
@@ -118,8 +183,12 @@ describe('assistant messages', () => {
     )
     expect(settled).not.toContain('正在生成的回复')
     expect(settled).toContain('思考过程')
-    expect(settled).not.toContain('想一想')
-    expect(settled).toContain('↑1.5k ↓20')
+    // Folded once the answer started; the body stays in the page for the browser's find.
+    expect(settled).toMatch(/class="process-row thinking-toggle" aria-expanded="false"/)
+    const timed = renderToStaticMarkup(
+      createElement(MessageRow, { message: { id: 'm', role: 'assistant', text: '答案', reasoning: '想一想', reasoningMs: 6200 } }),
+    )
+    expect(timed).toContain('思考了 6.2 秒')
     const plain = renderToStaticMarkup(createElement(MessageRow, { message: { id: 'm', role: 'assistant', text: '答案' } }))
     expect(plain).not.toContain('思考')
   })
@@ -163,8 +232,10 @@ describe('approval cards', () => {
       }),
     )
     expect(html.match(/Run ls/g)).toHaveLength(1)
-    expect(html).toContain('<dt>path</dt>')
+    // The diff names the file and shows its content, so neither is repeated as an argument.
+    expect(html).not.toContain('<dt>path</dt>')
     expect(html).not.toContain('<dt>content</dt>')
+    expect(html).not.toContain('内容见变更')
     expect(html.match(/SECRET_BODY/g)).toHaveLength(1)
     // With the approval open there is nothing else to expand.
     expect(html).toContain('<div class="tool-card-header">')
@@ -189,10 +260,88 @@ describe('approval cards', () => {
     )
     expect(html).not.toMatch(/[\u202A-\u202E\u2066-\u2069\u200B]/)
     for (const code of ['202E', '2066', '2069', '200B', '202D', '2067']) expect(html).toContain(`\\u{${code}}</span>`)
-    expect(html).toContain(HIDDEN_CHARACTERS_TEXT)
+    expect(html).toContain(APPROVAL_COPY.hiddenCharacters)
     expect(html).toContain('title="a\\u{200B}.ts"')
     // No allow option looks like the default choice.
     expect(html).not.toContain('data-variant="primary"')
+  })
+
+  const ALWAYS = [
+    { id: 'reject_once', label: '拒绝', kind: 'reject_once' },
+    { id: 'allow_once', label: '允许一次', kind: 'allow_once' },
+    { id: 'allow_always', label: '本会话始终允许', kind: 'allow_always' },
+  ] as const
+  it('keeps 本会话始终允许 out of reach when the content hides characters', () => {
+    const html = approvalCard({ risk: 'R1', reason: '写入 a\u200B.ts', options: [...ALWAYS] })
+    expect(html).toContain(APPROVAL_COPY.hiddenCharacters)
+    expect(html).not.toContain(`aria-label="${APPROVAL_COPY.more}"`)
+    expect(buttonLabels(html)).toEqual(['拒绝', '允许一次'])
+    expect(html).not.toContain('data-variant="primary"')
+    // A clean request still offers it.
+    expect(approvalCard({ risk: 'R1', options: [...ALWAYS] })).toContain(`aria-label="${APPROVAL_COPY.more}"`)
+  })
+
+  it('names the choice whose outcome is unknown and leaves 重试 as the one clear action', () => {
+    const html = approvalCard({ risk: 'R1', options: [...ALWAYS] }, { uncertain: { decision: 'reject', optionId: 'reject_once' } })
+    expect(html).toContain(APPROVAL_COPY.uncertainTitle('拒绝'))
+    expect(html).toContain('「拒绝」的结果未知')
+    expect(buttonLabels(html)).toEqual(['重试', '拒绝', '允许一次'])
+    expect(html).not.toContain('data-variant="primary"')
+    expect(html).not.toContain(`aria-label="${APPROVAL_COPY.more}"`)
+  })
+
+  it("shows an agent's options in the product's words", () => {
+    const html = approvalCard({ advisory: true, options: [{ id: 'r', label: 'Reject', kind: 'reject_once' }] }, undefined, {
+      kind: 'advisory',
+      badge: { label: APPROVAL_COPY.advisory, tone: 'warn' },
+      note: APPROVAL_COPY.advisoryNote,
+      explicit: true,
+      options: [
+        { id: 'r', label: 'Reject', kind: 'reject_once' },
+        { id: 'a', label: 'Allow', kind: 'allow_once' },
+      ],
+    })
+    expect(buttonLabels(html)).toEqual(['拒绝', '允许一次'])
+    // The agent's own words are only in the tooltip.
+    expect(html).toContain('class="ui-tooltip"><span>Reject</span>')
+    expect(html).not.toContain('>Reject</button>')
+  })
+
+  it('keeps a high-risk allow in its words while it waits, and leaves a failed confirmation in the card', () => {
+    const gate: ApprovalGate = {
+      kind: 'R2',
+      badge: { label: APPROVAL_COPY.highRisk, tone: 'err' },
+      explicit: false,
+      options: [
+        { id: 'reject_once', label: '拒绝', kind: 'reject_once' },
+        { id: 'allow_once', label: APPROVAL_COPY.allowLocal, kind: 'allow_once' },
+      ],
+      confirms: true,
+    }
+    const resting = approvalCard({ risk: 'R2' }, undefined, gate)
+    expect(resting).toContain(APPROVAL_COPY.localNote)
+    const waiting = approvalCard({ risk: 'R2' }, { confirming: 'waiting' }, gate)
+    expect(waiting).toContain(APPROVAL_COPY.waitingLocal)
+    expect(waiting).not.toContain(APPROVAL_COPY.localNote)
+    expect(buttonLabels(waiting)).toEqual(['拒绝', APPROVAL_COPY.allowLocal])
+    const failed = approvalCard({ risk: 'R2' }, { failure: { text: CONFIRMATION_RESULT_TEXT.denied, tone: 'error' } }, gate)
+    expect(failed).toMatch(/class="ui-notice approval-failure" data-tone="error"/)
+    expect(failed).toContain(CONFIRMATION_RESULT_TEXT.denied)
+    expect(buttonLabels(failed)).toEqual(['拒绝', APPROVAL_COPY.allowLocal])
+  })
+
+  it('keeps the preview short: a long diff shows its first rows and a fold bar for the rest', () => {
+    const newText = Array.from({ length: 18 }, (_, index) => `line ${index + 1}`).join('\n') + '\n'
+    const html = approvalCard({
+      risk: 'R1',
+      arguments: JSON.stringify({ path: 'docs/notes.md', content: newText }),
+      tool: { diffs: [{ path: 'docs/notes.md', oldText: '', newText }] },
+    })
+    expect(html).toContain('展开其余 12 行')
+    expect(html).toContain('line 6')
+    expect(html).not.toContain('line 7<')
+    // The rows that fit open by default on wider screens (this render has no viewport, so it is the desktop).
+    expect(html).toMatch(/class="approval-preview" id="[^"]+" data-open=""/)
   })
 
   it('carries the waiting in the header pill alone, as text without an icon', () => {
@@ -207,12 +356,14 @@ describe('approval cards', () => {
         approval: approval({ risk: 'R2' }),
         onDecide: noop,
         gateFor: (): ApprovalGate => ({
+          kind: 'R2',
           badge: { label: '高风险', tone: 'err' },
           explicit: false,
           options: [
             { id: 'reject_once', label: '拒绝', kind: 'reject_once' },
-            { id: 'allow_once', label: '在本机确认后允许', kind: 'allow_once' },
+            { id: 'allow_once', label: '在本机允许', kind: 'allow_once' },
           ],
+          confirms: true,
         }),
       }),
     )
@@ -220,7 +371,7 @@ describe('approval cards', () => {
     expect(html).not.toContain('data-variant="primary"')
     expect(html).toMatch(/<button type="button" class="ui-button" data-variant="secondary" data-size="sm">拒绝<\/button>/)
     expect(html).toMatch(
-      /<button type="button" class="ui-button" data-variant="secondary" data-size="sm" data-leading="">(?:(?!<\/button>).)*?<svg[^>]*lucide-lock-keyhole[^>]*>.*?<\/svg>在本机确认后允许<\/button>/,
+      /<button type="button" class="ui-button" data-variant="secondary" data-size="sm" data-leading="">(?:(?!<\/button>).)*?<svg[^>]*lucide-lock-keyhole[^>]*>.*?<\/svg>在本机允许<\/button>/,
     )
   })
 
@@ -299,12 +450,34 @@ describe('turn footers', () => {
     { id: 'next', role: 'assistant', text: '进行中' },
   ]
 
+  const render = (active: boolean) =>
+    renderToStaticMarkup(
+      createElement(Transcript, {
+        detail: {
+          summary: { id: 's', title: 't', status: active ? 'running' : 'idle', updatedAt: '' },
+          messages: turn,
+          approvals: [],
+          liveText: '',
+          cursor: 1,
+        },
+        approvals: [],
+        busy: new Map(),
+        onDecide: noop,
+        harnessName: 'Agent',
+        active,
+      }),
+    )
+
   it('gives only the block that ends a settled turn a footer, with the turn usage summed', () => {
-    expect([...turnFooters(turn, false)]).toEqual([
-      ['after', { inputTokens: 300, outputTokens: 30 }],
-      ['next', undefined],
-    ])
-    expect([...turnFooters(turn, true).keys()]).toEqual(['after'])
+    const settled = render(false)
+    expect(settled.match(/class="turn-footer[ "]/g)).toHaveLength(2)
+    expect(settled).toContain('>输入 300 tokens</span>')
+    expect(settled).toContain('>输出 30 tokens</span>')
+    // The latest turn of a running session ends with the live line instead.
+    const running = render(true)
+    expect(running.match(/class="turn-footer[ "]/g)).toHaveLength(2)
+    expect(running.match(/class="turn-footer is-live"/g)).toHaveLength(1)
+    expect(running).toContain('等待模型…')
   })
 
   it('renders no copy control between tool calls of one turn', () => {
@@ -318,9 +491,9 @@ describe('turn footers', () => {
     const html = renderToStaticMarkup(
       createElement(Transcript, { detail, approvals: [], busy: new Map(), onDecide: noop, harnessName: 'Agent' }),
     )
-    expect(html.match(/class="message-footer"/g)).toHaveLength(1)
+    expect(html.match(/class="turn-footer[ "]/g)).toHaveLength(1)
     expect(html.match(/aria-label="复制回复"/g)).toHaveLength(1)
-    expect(html).toContain('↑300 ↓30')
+    expect(html).toContain('>输入 300 tokens</span>')
   })
 })
 
@@ -388,11 +561,17 @@ describe('inspector', () => {
         snapshot: appSnapshot(),
         summary: session({ cwd: '/Users/me/personal/harness-link' }),
         detail: null,
+        local: false,
+        collapsed: new Set<string>(),
+        onToggleBlock: noop,
         onReveal: noop,
       }),
     )
-    expect(html).toContain('<span class="inspector-path-name">harness-link</span>')
-    expect(html).toContain('<span class="inspector-path-full">/Users/me/personal/harness-link</span>')
+    expect(html).toContain('<span class="info-path-name">harness-link</span>')
+    // The whole path until the line is measured (then it is cut in the middle to fit, see middleFit).
+    expect(html).toContain(
+      '<span class="middle-text info-path-full" title="/Users/me/personal/harness-link"><span aria-hidden="true">/Users/me/personal/harness-link</span><span class="sr-only">/Users/me/personal/harness-link</span></span>',
+    )
   })
 })
 
@@ -558,32 +737,53 @@ describe('content hash next to a write diff', () => {
   })
 })
 
+/** An adapter preset's detection: the adapter `found`, and the agent it connects to when `companion` is given. */
+const adapter = (found: boolean, companion?: boolean) => ({
+  command: 'pi-acp',
+  detected: { found, ...(companion === undefined ? {} : { companion: { command: 'pi', found: companion } }) },
+})
+
+describe('agent settings', () => {
+  it('names both programs when an adapter preset is missing one of them', () => {
+    const agent = adapter
+    expect(missingText(agent(true))).toBeUndefined()
+    expect(missingText(agent(false))).toBe('未找到命令 pi-acp')
+    expect(missingText(agent(true, true))).toBeUndefined()
+    expect(missingText(agent(true, false))).toBe('已找到适配器 pi-acp，还没找到 pi')
+    expect(missingText(agent(false, true))).toBe('已安装 pi，还差让 Latch 连接它的适配器 pi-acp')
+    expect(missingText(agent(false, false))).toBe('未找到 pi 和它的适配器 pi-acp')
+  })
+})
+
 describe('workspace settings', () => {
   it('lists a workspace the Host disabled with its reason and keeps the remove action', () => {
     const reason = '该目录位于受保护目录（如 .git）内，不能作为项目'
     const html = renderToStaticMarkup(
-      createElement(
-        'ul',
-        null,
-        createElement(WorkspaceRow, {
-          workspace: { id: 'w1', name: 'hooks', path: '/w/.git/hooks', unavailable: reason },
-          owner: true,
-          onRemove: noop,
-        }),
-      ),
+      createElement(ProjectCard, {
+        workspace: { id: 'w1', name: 'hooks', path: '/w/.git/hooks', unavailable: reason },
+        owner: true,
+        isDefault: false,
+        folders: null,
+        onRemove: noop,
+      }),
     )
-    expect(html).toContain('class="workspace-row is-unavailable"')
+    expect(html).toContain('class="settings-card project-card is-unavailable"')
     expect(html).toContain('<span class="ui-status-pill" data-tone="warn">不可用</span>')
     expect(html).toContain(`<span class="workspace-unavailable">${reason}</span>`)
-    expect(html).toContain('>移除</button>')
+    // Removing is in the project's ⋯ menu; a browser copies the folder's path instead of showing it in Finder.
+    expect(html).toContain('aria-label="hooks 的操作"')
+    expect(html).toContain('aria-label="复制路径"')
     const usable = renderToStaticMarkup(
-      createElement(
-        'ul',
-        null,
-        createElement(WorkspaceRow, { workspace: { id: 'w2', name: 'app', path: '/w/app' }, owner: false, onRemove: noop }),
-      ),
+      createElement(ProjectCard, {
+        workspace: { id: 'w2', name: 'app', path: '/w/app' },
+        owner: false,
+        isDefault: true,
+        folders: null,
+        onRemove: noop,
+      }),
     )
-    expect(usable).not.toMatch(/不可用|移除/)
+    expect(usable).not.toMatch(/不可用|的操作/)
+    expect(usable).toContain('默认')
   })
 })
 
@@ -613,5 +813,98 @@ describe('names and text in security UI', () => {
     expect(revokeText('Mac\u202Ekoob')).toBe('撤销「Mac\\u{202E}koob」？由它邀请配对的设备会降为仅查看，等待复核。')
     expect(revokeText('👨‍💻 Mac')).toBe('撤销「👨‍💻 Mac」？由它邀请配对的设备会降为仅查看，等待复核。')
     expect(revokeText('')).toContain('「未命名设备」')
+  })
+})
+
+/**
+ * The text of every element whose class list has `className`, tooltips left out: a small reader for the static markup
+ * of a component.
+ */
+function textsOf(html: string, className: string): string[] {
+  const found: string[] = []
+  const stack: Array<{ capture: boolean; tooltip: boolean; text: string }> = []
+  const empty = new Set(['img', 'br', 'input', 'link', 'meta', 'hr', 'path', 'rect', 'circle'])
+  for (const match of html.matchAll(/<(\/?)([a-z0-9]+)([^>]*?)(\/?)>|([^<]+)/gu)) {
+    const [, closing, tag = '', attributes = '', selfClosing, text] = match
+    if (text !== undefined) {
+      if (stack.some(frame => frame.tooltip)) continue
+      for (const frame of stack) if (frame.capture) frame.text += text
+      continue
+    }
+    if (closing) {
+      const frame = stack.pop()
+      if (frame?.capture) found.push(frame.text)
+      continue
+    }
+    if (selfClosing || empty.has(tag)) continue
+    const classes = /class="([^"]*)"/u.exec(attributes)?.[1]?.split(/\s+/u) ?? []
+    stack.push({ capture: classes.includes(className), tooltip: attributes.includes('role="tooltip"'), text: '' })
+  }
+  return found
+}
+
+/** Numbers left without a unit, after times of day, dates, money and the numerator of 「10 / 100 tokens」. */
+const bareNumbers = (text: string) =>
+  text
+    .replace(/\d{1,2}:\d{2}(?::\d{2})?/gu, '')
+    .replace(/(?:\d{4}年)?\d{1,2}月\d{1,2}日/gu, '')
+    .replace(/(?:US)?[$¥€£]\s?[\d.,]+/gu, '')
+    .replace(/[\d.,]+[kM]?\s*\/\s*(?=\d)/gu, '')
+    .replace(/[\d.,]+[kM]?\s*(?:tokens|秒|分|小时|个|条|次|轮|处|行|%)/gu, '')
+    .match(/\d+/gu) ?? []
+
+/** A local time on 24 October 2026, as the Host writes it. */
+const localIso = (minutes: number) => new Date(2026, 9, 24, 14, minutes).toISOString()
+
+const transcriptOf = (detail: TaskDetail, active: boolean) =>
+  renderToStaticMarkup(createElement(Transcript, { detail, approvals: [], busy: new Map(), onDecide: noop, harnessName: 'Latch', active }))
+
+describe('units', () => {
+  it('leaves no bare number in a footer, the live line or a row of the session information', () => {
+    const usage = { inputTokens: 12_431, outputTokens: 3100 }
+    const settled: TaskDetail = {
+      summary: session({ status: 'cancelled' }),
+      messages: [
+        { id: 'u1', role: 'user', text: '一', createdAt: localIso(1), turn: { endedAt: localIso(2), activeMs: 72_000, waitMs: 20_000 } },
+        { id: 'a1', role: 'assistant', text: '好', usage, completedAt: localIso(2) },
+        { id: 'u2', role: 'user', text: '二', createdAt: localIso(3) },
+        { id: 'a2', role: 'assistant', text: '部分', state: 'cancelled' },
+      ],
+      approvals: [],
+      liveText: '',
+      cursor: 1,
+      usageReport: { contextUsed: 74_210, contextSize: 200_000, cost: { amount: 0.04, currency: 'USD' }, at: localIso(3) },
+    }
+    const running: TaskDetail = {
+      summary: session({ status: 'running' }),
+      messages: [
+        { id: 'u', role: 'user', text: '一', createdAt: localIso(4) },
+        { id: 'a', role: 'assistant', text: '一', usage },
+      ],
+      approvals: [],
+      liveText: '二',
+      liveMessageId: 'live',
+      cursor: 1,
+      runStartedAt: localIso(4),
+      lastOutputAt: localIso(4),
+    }
+    const footers = [...textsOf(transcriptOf(settled, false), 'turn-facts'), ...textsOf(transcriptOf(running, true), 'turn-facts')]
+    expect(footers.join(' | ')).toMatch(/输入 12\.4k tokens.*输出 3\.1k tokens.*上下文 74\.2k tokens.*输出 3\.1k tokens/u)
+    const inspector = renderToStaticMarkup(
+      createElement(Inspector, {
+        snapshot: appSnapshot(),
+        summary: session({ createdAt: localIso(1), usage, cwd: '/work/app' }),
+        detail: settled,
+        local: false,
+        collapsed: new Set<string>(),
+        onToggleBlock: noop,
+        onReveal: noop,
+      }),
+    )
+    const rows = textsOf(inspector, 'info-value')
+    expect(rows.join(' | ')).toMatch(/12\.4k tokens.*3\.1k tokens.*74\.2k \/ 200k tokens/u)
+    for (const text of [...footers, ...rows]) expect({ text, bare: bareNumbers(text) }).toEqual({ text, bare: [] })
+    // The check itself finds a count without its unit.
+    expect(bareNumbers('输入 12.4k · 输出 3.1k tokens · 用时 72')).toEqual(['12', '4', '72'])
   })
 })

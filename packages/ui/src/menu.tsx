@@ -1,5 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type Ref, type RefObject } from 'react'
 import { Check, ChevronRight, ChevronsUpDown, CircleSlash, Lock, ShieldAlert } from 'lucide-react'
+import { Button } from './button.tsx'
 import { ChoiceList } from './choice.tsx'
 import { Sheet } from './dialog.tsx'
 import { Icon, Spinner, type LucideIcon } from './icon.tsx'
@@ -126,9 +127,10 @@ function itemsOf(container: HTMLElement): HTMLButtonElement[] {
 /**
  * The list of a menu, inside the layer that draws its surface (a raised layer, 12px corners and 4px inside, at least
  * 220 wide; the width a caller gives is the layer's outer width). Rows are 32 (48 with a description), radius 8; the
- * hover is instant. ↑/↓ move through every item (a disabled one too, which reads out its reason), Home and End go to
- * the ends, typing jumps to the next label that starts with the typed letters, Enter or Space chooses. Danger items
- * come last, after a separator.
+ * hover is instant. The leading slot is there only when something can fill it (a selection's check, an item's glyph);
+ * a menu of plain actions starts its text at the menu's padding. ↑/↓ move through every item (a disabled one too,
+ * which reads out its reason), Home and End go to the ends, typing jumps to the next label that starts with the typed
+ * letters, Enter or Space chooses. Danger items come last, after a separator.
  */
 export function MenuPanel({ label, header, sections, selection = false, footer, onChoose, onDismiss, panelRef, className }: PanelProps) {
   const id = useId()
@@ -138,6 +140,7 @@ export function MenuPanel({ label, header, sections, selection = false, footer, 
     ...visible.map(section => ({ ...section, items: section.items.filter(item => !item.danger) })),
     { id: `${id}-danger`, items: visible.flatMap(section => section.items.filter(item => item.danger)) },
   ].filter(section => section.items.length > 0)
+  const leads = selection || visible.some(section => section.items.some(item => item.icon !== undefined))
 
   const keydown = (event: KeyboardEvent<HTMLDivElement>) => {
     const items = itemsOf(event.currentTarget)
@@ -168,6 +171,7 @@ export function MenuPanel({ label, header, sections, selection = false, footer, 
     <div
       ref={panelRef}
       className={cx('ui-menu', className)}
+      data-no-lead={leads ? undefined : ''}
       role="menu"
       aria-label={headedName(label, header)}
       aria-describedby={header?.meta ? `${id}-meta` : undefined}
@@ -812,15 +816,24 @@ export function PermissionMenu<T extends string>({
 
 /**
  * A layer of content (a plan, details) pinned to a trigger the caller draws: same surface, placement and dismissal as
- * a menu, with focus moved to its first control. On phones it is a bottom sheet.
+ * a menu, with focus moved to its first control. On phones it is a bottom sheet titled `title` (the label by default)
+ * that only shows its content, so its one control is 完成 on the right.
  */
 export function Popover({
   label,
+  title,
   trigger,
   children,
   width = 320,
   ...placement
-}: LayerPlacement & { label: string; trigger: (props: MenuTriggerProps) => ReactNode; children: ReactNode; width?: number }) {
+}: LayerPlacement & {
+  label: string
+  /** The sheet's title on phones, for example the label with a count. */
+  title?: ReactNode
+  trigger: (props: MenuTriggerProps) => ReactNode
+  children: ReactNode
+  width?: number
+}) {
   const phone = useMediaQuery(PHONE_QUERY)
   const { trigger: triggerRef, layer, open, setOpen, close } = useLayer(placement)
   useEffect(() => {
@@ -847,7 +860,17 @@ export function Popover({
       {phone ? (
         <Sheet
           open={open}
-          title={label}
+          title={title ?? label}
+          cancelLabel={null}
+          action={
+            <Button
+              variant="secondary"
+              onClick={() => {
+                close(true)
+              }}>
+              完成
+            </Button>
+          }
           onClose={() => {
             close(true)
           }}>

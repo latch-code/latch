@@ -2,7 +2,7 @@ import { chmod, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { HostConfig, availableId, originOf, type ProviderRecord } from '../src/config.ts'
+import { HostConfig, availableId, folderIdFor, originOf, type ProviderRecord } from '../src/config.ts'
 
 const directories: string[] = []
 afterEach(async () => {
@@ -157,7 +157,7 @@ describe('HostConfig', () => {
     })
     await config.updateSettings(draft => {
       draft.defaults = { harnessId: 'standard', mode: 'agent', workspaceId: 'default', model: { providerId: 'openai', model: 'model-b' } }
-      draft.workspaces.push({ id: 'site', name: '站点', path: directory })
+      draft.workspaces.push({ id: 'site', name: '站点', path: directory, folders: [{ id: 'site', path: directory }] })
       draft.agents.push({
         id: 'codex',
         name: 'Codex',
@@ -337,5 +337,92 @@ describe('HostConfig', () => {
     expect(availableId('deepseek', ['deepseek', 'deepseek-2'])).toBe('deepseek-3')
     expect(availableId('智谱 GLM', [])).toBe('glm')
     expect(availableId('自定义', [])).toBe('item')
+  })
+
+  it('derives folder IDs from basenames, folded to ASCII and unique in the project', () => {
+    expect(folderIdFor('Shop API', [])).toBe('shop-api')
+    expect(folderIdFor('Café Ünïcode', [])).toBe('cafe-unicode')
+    expect(folderIdFor('设计稿', [])).toBe('folder')
+    expect(folderIdFor('--web--', [])).toBe('web')
+    expect(folderIdFor('web', ['web', 'web-2'])).toBe('web-3')
+    expect(folderIdFor('设计稿', ['folder'])).toBe('folder-2')
+    const long = folderIdFor('a'.repeat(40), [])
+    expect(long).toBe('a'.repeat(32))
+    expect(folderIdFor('a'.repeat(40), [long])).toBe(`${'a'.repeat(30)}-2`)
+  })
+})
+
+describe('saved projects', () => {
+  async function written(workspaces: unknown[]): Promise<string> {
+    const directory = await dataDir()
+    await writeFile(join(directory, 'settings.json'), JSON.stringify({ version: 1, workspaces }), { mode: 0o600 })
+    return directory
+  }
+
+  it('gives a project saved with one path that path as its only folder, and writes both forms back', async () => {
+    const directory = await written([{ id: 'site', name: 'Site', path: '/srv/My Site' }])
+    const config = await HostConfig.open(directory)
+    expect(config.settings().workspaces).toEqual([
+      { id: 'site', name: 'Site', path: '/srv/My Site', folders: [{ id: 'my-site', path: '/srv/My Site' }] },
+    ])
+    await config.updateSettings(draft => {
+      draft.workspaces[0]!.folders.push({ id: 'docs', path: '/srv/docs' })
+      draft.workspaces[0]!.glyph = 'globe'
+    })
+    const saved = JSON.parse(await readFile(join(directory, 'settings.json'), 'utf8')) as { workspaces: unknown[] }
+    // An older Host reads `path`, the primary folder, and drops what it does not know.
+    expect(saved.workspaces).toEqual([
+      {
+        id: 'site',
+        name: 'Site',
+        path: '/srv/My Site',
+        folders: [
+          { id: 'my-site', path: '/srv/My Site' },
+          { id: 'docs', path: '/srv/docs' },
+        ],
+        glyph: 'globe',
+      },
+    ])
+  })
+
+  it('drops an unknown glyph and keeps a hand-edited primary mismatch for the Host to disable', async () => {
+    const directory = await written([
+      { id: 'site', name: 'Site', path: '/srv/site', folders: [{ id: 'site', path: '/srv/site' }], glyph: 'rainbow' },
+      { id: 'odd', name: 'Odd', path: '/srv/odd', folders: [{ id: 'other', path: '/srv/other' }] },
+    ])
+    const config = await HostConfig.open(directory)
+    expect(config.settings().workspaces[0]).toEqual({
+      id: 'site',
+      name: 'Site',
+      path: '/srv/site',
+      folders: [{ id: 'site', path: '/srv/site' }],
+    })
+    expect(config.settings().workspaces[1]).toMatchObject({ path: '/srv/odd', folders: [{ id: 'other', path: '/srv/other' }] })
+  })
+
+  it.each([
+    [
+      'duplicate folder IDs',
+      [
+        { id: 'a', path: '/srv/a' },
+        { id: 'a', path: '/srv/b' },
+      ],
+      '文件夹标识不能重复',
+    ],
+    [
+      'the same folder twice',
+      [
+        { id: 'a', path: '/srv/a' },
+        { id: 'b', path: '/srv/a' },
+      ],
+      '同一项目中的文件夹不能重复',
+    ],
+    ['nine folders', Array.from({ length: 9 }, (_, index) => ({ id: `f${index}`, path: `/srv/${index}` })), '最多 8 个'],
+    ['no folders', [], '至少要有一个'],
+    ['a relative folder', [{ id: 'a', path: 'srv/a' }], '绝对路径'],
+    ['an invalid folder ID', [{ id: 'A', path: '/srv/a' }], '文件夹标识无效'],
+  ])('refuses a settings file with %s', async (_label, folders, message) => {
+    const directory = await written([{ id: 'site', name: 'Site', path: '/srv/a', folders }])
+    await expect(HostConfig.open(directory)).rejects.toMatchObject({ code: 'config-corrupt', message: expect.stringContaining(message) })
   })
 })

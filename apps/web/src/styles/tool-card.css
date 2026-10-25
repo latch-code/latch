@@ -1,45 +1,55 @@
 /*
- * Tool card: a tray on the paper (sunken, with a subtle line); its expanded body is a sheet of paper inside the tray.
- * Running state is ink; amber marks only what waits for the person, red only a failure or real risk.
+ * A tool call at rest is a process row (messages.css). Opened (or failed with output, which opens by itself), it is a
+ * card on the column's edges, like the diff trays and notices around it: a tray (sunken, a subtle line, 12 corners, 4
+ * inside) that fades in behind the row, whose 32 head keeps the row's words 8 in from the tray, holding a sheet of
+ * paper with the arguments, the changes and the output. Running state is ink; amber marks only what waits for the
+ * person, red only a failure or real risk.
  */
 .tool-card {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+}
+.tool-tray {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.tool-tray::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
   border: 1px solid var(--line-subtle);
   border-radius: var(--r-12);
   corner-shape: var(--corner-shape);
   background: var(--bg-sunken);
+  opacity: 0;
+  transition: opacity var(--d-fast-exit) var(--ease-exit);
 }
-.tool-card-header {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-8);
+/* The tray's line is drawn by the layer behind, so the head and the paper sit 1px further in. */
+.tool-card[data-open] > .tool-tray {
+  margin: var(--sp-4) 0;
+  padding: 1px calc(var(--sp-4) + 1px) calc(var(--sp-4) + 1px);
+}
+.tool-card[data-open] > .tool-tray::before {
+  opacity: 1;
+  transition: opacity var(--d-fast) var(--ease);
+}
+.tool-card[data-open] > .tool-tray > .tool-card-header {
   width: 100%;
   min-height: 32px;
-  padding: var(--sp-6) var(--sp-8) var(--sp-6) var(--sp-12);
-  border: 0;
-  border-radius: var(--r-12);
-  corner-shape: var(--corner-shape);
-  background: transparent;
-  color: var(--text-1);
-  text-align: left;
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  margin: 0;
+  padding: 0 var(--sp-8);
 }
-.tool-card-header:hover {
-  background: var(--bg-hover);
-}
-.tool-card-icon {
-  width: 16px;
-  color: var(--icon);
-}
+/* An approval card names the call by the tool's own title, on one line (its type is in security.css). */
 .tool-card-title {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
-  font-weight: 500;
 }
 .tool-card-name {
   min-width: 0;
@@ -56,26 +66,17 @@
   display: inline-flex;
   align-items: center;
   gap: var(--sp-4);
-  margin-left: auto;
   flex-shrink: 0;
   color: var(--text-3);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   white-space: nowrap;
 }
-.tool-card-state.state-running {
-  color: var(--text-2);
+.tool-card-state:empty {
+  display: none;
 }
 .tool-card-state.state-failed {
   color: var(--err-text);
-}
-.tool-card-header .chevron {
-  flex-shrink: 0;
-  color: var(--icon);
-  transition: transform var(--d-base) var(--ease);
-}
-.tool-card-header[aria-expanded='true'] .chevron {
-  transform: rotate(90deg);
 }
 @media (max-width: 767.98px) {
   .tool-card-name {
@@ -83,23 +84,32 @@
   }
 }
 
+/* The opened card's paper: the arguments, the changes and the output, 12 inside, sections 12 apart. */
 .tool-card-body {
   display: grid;
   gap: var(--sp-12);
-  margin: 0 var(--sp-4) var(--sp-4);
   padding: var(--sp-12);
   border: 1px solid var(--line-subtle);
   border-radius: var(--r-8);
   corner-shape: var(--corner-shape);
   background: var(--bg-pane);
-  animation: fade-in var(--d-base) var(--ease);
 }
 .tool-card-body h4 {
-  margin-bottom: var(--sp-6);
   color: var(--text-3);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   font-weight: 500;
+}
+.tool-card-body section > h4 {
+  margin-bottom: var(--sp-6);
+}
+.tool-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-8);
+  min-height: 24px;
+  margin-bottom: var(--sp-4);
 }
 .tool-pre {
   max-height: 240px;
@@ -114,6 +124,25 @@
   line-height: var(--lh-code);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+/* Output scrolls in its own box of at most 240; while the tool runs the box is laid out from its end, so it follows
+ * the newest lines until the reader scrolls up inside it. */
+.tool-output-scroll {
+  max-height: 240px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border-radius: var(--r-6);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-sunken);
+}
+.tool-output-scroll.is-live {
+  display: flex;
+  flex-direction: column-reverse;
+}
+.tool-output-scroll > .tool-pre {
+  max-height: none;
+  overflow: visible;
+  border-radius: 0;
 }
 .argument-list {
   display: grid;
@@ -144,54 +173,23 @@
   overflow-wrap: anywhere;
 }
 
-/*
- * A pending approval grows the tool card. The heading is ink; the amber status pill in the card's header is the only
- * sign that it waits for the person. An ordinary approval keeps the neutral tray; a high-risk one turns the tray red
- * and carries the red risk pill (security.css), so red always means the risk, never the waiting.
- */
-.tool-card.has-approval .tool-card-header:hover {
-  background: transparent;
+/* A pending approval is always the card: the tray is the card's own surface. */
+.tool-card.has-approval {
+  margin: var(--sp-4) 0;
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--r-12);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-sunken);
 }
-.approval-panel {
-  display: grid;
-  gap: var(--sp-8);
-  padding: 0 var(--sp-8) var(--sp-8) var(--sp-12);
-  animation: rise-in var(--d-base) var(--ease);
-}
-.approval-heading {
+.tool-card.has-approval > .tool-card-header {
   display: flex;
   align-items: center;
   gap: var(--sp-6);
-  color: var(--text-1);
-  font-size: var(--fs-card-title);
-  line-height: var(--lh-card-title);
-  font-weight: 600;
-}
-.approval-heading > svg {
-  flex-shrink: 0;
-  color: var(--icon);
-}
-.approval-heading time {
-  margin-left: auto;
+  min-height: 36px;
+  padding: var(--sp-4) var(--sp-8) var(--sp-4) var(--sp-12);
   color: var(--text-3);
-  font-weight: 400;
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-}
-.approval-reason {
-  color: var(--text-2);
   font-size: var(--fs-label);
-  line-height: var(--lh-label-para);
-}
-/* The colour carries the warning, so the line stays caption-sized and regular beside the consequence text. */
-.approval-warning {
-  color: var(--warn-text);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption-para);
-  font-weight: 400;
-}
-.tool-card.is-r2 .approval-warning {
-  color: var(--err-text);
+  line-height: var(--lh-label);
 }
 /* A control, bidirectional or zero-width character shown as \u{XXXX} instead of being applied. */
 .hidden-char {
@@ -203,84 +201,96 @@
   color: var(--warn-text);
   font-family: var(--font-mono);
 }
-/* What the approval would do, on paper inside the tray. */
-.approval-panel .argument-list,
-.approval-panel .tool-pre {
-  padding: var(--sp-8) var(--sp-12);
-  border: 1px solid var(--line-subtle);
+/* A diff an approval would apply, or the changes section of an opened tool card, is paper inside the card's tray, not
+ * a tray of its own. */
+:is(.approval-panel, .tool-card-body) .diff-view {
+  margin: 0;
+}
+:is(.approval-panel, .tool-card-body) .diff-file {
+  padding: 0;
+  border-color: var(--line-subtle);
   border-radius: var(--r-8);
   corner-shape: var(--corner-shape);
   background: var(--bg-pane);
 }
-.approval-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: var(--sp-8);
-}
-.approval-actions .ui-spinner {
-  color: currentColor;
-}
-@media (max-width: 767.98px) {
-  .approval-actions {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .approval-actions .ui-button {
-    min-height: 44px;
-    border-radius: var(--r-12);
-    corner-shape: var(--corner-shape);
-    font-size: var(--fs-ui);
-    line-height: var(--lh-ui);
-  }
-  /* With an odd number of choices the primary (last) one takes the full row. */
-  .approval-actions > :last-child:nth-child(odd) {
-    grid-column: 1 / -1;
-  }
+:is(.approval-panel, .tool-card-body) .diff-paper {
+  border: 0;
+  border-top: 1px solid var(--line-subtle);
+  border-radius: 0;
 }
 
-/* Diff: paper with a sunken header; rows are tinted, their text stays text-1, the signs take the tone. */
+/*
+ * A file's change, evidence that stays in view under its tool: a tray (sunken, subtle line, 12 corners, 4 inside) whose
+ * 32 head (8 inside, as an opened tool card's) names the file (the name in ink, its folder quieter), what the Host said
+ * about the previous file and the line counts; the diff is a sheet of paper inside the tray. Rows are tinted, their
+ * text stays text-1, the signs take the tone. Phones keep one line-number column: the new line's number, or the old
+ * one on a removed line.
+ */
 .diff-view {
   display: grid;
   gap: var(--sp-8);
   min-width: 0;
+  margin: var(--sp-8) 0 var(--sp-4);
 }
 .diff-file {
   min-width: 0;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: var(--r-8);
+  padding: 0 var(--sp-4);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--r-12);
   corner-shape: var(--corner-shape);
-  background: var(--bg-pane);
+  background: var(--bg-sunken);
+}
+.diff-file[data-open] {
+  padding-bottom: var(--sp-4);
 }
 .diff-file-header {
   display: flex;
   align-items: center;
-  gap: var(--sp-8);
+  gap: var(--sp-6);
   width: 100%;
   min-height: 32px;
-  padding: var(--sp-4) var(--sp-8);
+  padding: 0 var(--sp-8);
   border: 0;
-  background: var(--bg-sunken);
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
+  background: transparent;
   color: var(--text-2);
   text-align: left;
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
+}
+.diff-file-header:focus-visible {
+  outline: none;
+  box-shadow: var(--ring-focus-inset);
 }
 .diff-file-header > svg:first-child {
   flex-shrink: 0;
   color: var(--icon);
 }
 .diff-path {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--sp-6);
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-1);
   font-family: var(--font-mono);
   font-size: var(--fs-mono-sm);
   line-height: var(--lh-mono-sm);
+}
+.diff-path-name {
+  flex-shrink: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-1);
   font-weight: 500;
+}
+.diff-path-folder {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-3);
 }
 .diff-stat {
   display: flex;
@@ -310,6 +320,14 @@
 .diff-file-header[aria-expanded='true'] .chevron {
   transform: rotate(90deg);
 }
+.diff-paper {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-pane);
+}
 .diff-hash {
   display: flex;
   flex-wrap: wrap;
@@ -317,7 +335,7 @@
   gap: var(--sp-4) var(--sp-8);
   margin: 0;
   padding: var(--sp-6) var(--sp-8);
-  border-top: 1px solid var(--line-subtle);
+  border-bottom: 1px solid var(--line-subtle);
   color: var(--text-3);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
@@ -331,10 +349,10 @@
   color: var(--text-3);
 }
 .diff-body {
+  position: relative;
   max-height: 360px;
   overflow: auto;
   overscroll-behavior: contain;
-  border-top: 1px solid var(--line-subtle);
   font-family: var(--font-mono);
   font-size: var(--fs-code);
   line-height: var(--lh-code);
@@ -345,6 +363,7 @@
 }
 .diff-table {
   min-width: max-content;
+  padding: var(--sp-4) 0;
 }
 .diff-hunk-header {
   padding: var(--sp-2) var(--sp-8);
@@ -353,7 +372,7 @@
 }
 .diff-line {
   display: grid;
-  grid-template-columns: 40px 40px 16px minmax(0, 1fr);
+  grid-template-columns: 32px 32px 16px minmax(0, 1fr);
   white-space: pre;
 }
 .diff-ln {
@@ -396,78 +415,132 @@
   font-family: var(--font-sans);
   white-space: normal;
 }
+/* The fold bar under a long diff: 「展开其余 n 行」, centred, under a subtle line. */
 .diff-more {
-  margin: var(--sp-4) var(--sp-8) var(--sp-8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-top: 1px solid var(--line-subtle);
+  background: transparent;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.diff-more:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+.diff-ln-one {
+  display: none;
+}
+/* The fold bar of a short diff: the rest of its lines, one press away (28, centred, a subtle line above). */
+.diff-fold {
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 var(--sp-8);
+  border: 0;
+  border-top: 1px solid var(--line-subtle);
+  background: transparent;
+  color: var(--text-3);
   font-family: var(--font-sans);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  text-align: center;
+  transition:
+    background-color var(--d-fast) var(--ease-exit),
+    color var(--d-fast) var(--ease-exit);
+}
+.diff-fold:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
+  transition-duration: 0s;
+}
+.diff-fold:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
 }
 @media (max-width: 767.98px) {
   .diff-line {
     grid-template-columns: 32px 16px minmax(0, 1fr);
   }
-  .diff-ln-old {
+  .diff-fold {
+    min-height: 44px;
+  }
+  .diff-ln-old,
+  .diff-ln-new {
     display: none;
+  }
+  .diff-ln-one {
+    display: block;
   }
 }
 
-/* Plan: a resting card on the paper; the current step is the one in ink, finished steps fade back. */
-.plan-card {
-  border: 1px solid var(--line);
-  border-radius: var(--r-12);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-pane);
-}
-.plan-card-header {
-  display: flex;
+/* The plan: a chip in the bar above the input that opens the list. Nearer to now reads stronger: the step in progress
+ * is in ink at 500, steps to come are secondary ink, done steps the faintest. No progress bar. */
+.plan-chip {
+  display: inline-flex;
   align-items: center;
-  gap: var(--sp-8);
-  width: 100%;
-  min-height: 36px;
-  padding: 0 var(--sp-12);
+  gap: var(--sp-4);
+  height: 24px;
+  padding: 0 var(--sp-6) 0 var(--sp-8);
   border: 0;
-  border-radius: var(--r-12);
+  border-radius: var(--r-6);
   corner-shape: var(--corner-shape);
   background: transparent;
-  color: var(--text-1);
-  text-align: left;
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
-}
-.plan-card-header:hover {
-  background: var(--bg-hover);
-}
-.plan-card-header > svg:first-child {
-  flex-shrink: 0;
-  color: var(--icon);
-}
-.plan-card-title {
-  flex-shrink: 0;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
-}
-.plan-card-current {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-3);
+  transition:
+    background-color var(--d-fast) var(--ease-exit),
+    color var(--d-fast) var(--ease-exit);
 }
-.plan-card-header .progress {
-  margin-left: auto;
+.plan-chip:hover,
+.plan-chip[aria-expanded='true'] {
+  background: var(--bg-hover);
+  color: var(--text-1);
+  transition-duration: 0s;
 }
-.plan-card-header .chevron {
-  flex-shrink: 0;
+.plan-chip > svg {
   color: var(--icon);
-  transition: transform var(--d-base) var(--ease);
 }
-.plan-card-header[aria-expanded='true'] .chevron {
-  transform: rotate(90deg);
+.plan-popover {
+  display: grid;
+  gap: var(--sp-4);
+  padding: var(--sp-4) var(--sp-8) var(--sp-8);
 }
-.plan-card-body {
-  max-height: 220px;
-  overflow-y: auto;
-  padding: var(--sp-4) var(--sp-12) var(--sp-8);
-  border-top: 1px solid var(--line-subtle);
+.plan-popover-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 28px;
+  color: var(--text-2);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+  font-weight: 500;
+}
+/* In the phone sheet the title says 「计划 0/2」, so the list's own head is not repeated. */
+.ui-sheet-body .plan-popover-head {
+  display: none;
+}
+.plan-sheet-count {
+  color: var(--text-3);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.plan-popover-count {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
 }
 .plan-list {
   list-style: none;
@@ -477,11 +550,14 @@
   display: flex;
   align-items: flex-start;
   gap: var(--sp-8);
-  min-height: 32px;
-  padding: var(--sp-6) 0;
+  min-height: 28px;
+  padding: var(--sp-4) 0;
   color: var(--text-2);
   font-size: var(--fs-label);
   line-height: var(--lh-label-para);
+}
+.inspector .plan-entry {
+  padding: var(--sp-4) var(--sp-12);
 }
 .plan-icon {
   display: grid;

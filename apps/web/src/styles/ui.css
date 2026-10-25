@@ -267,3 +267,13 @@
     translate: 0 -4px;
   }
 }
+
+/* A path cut in the middle to fit its line (MiddleText); before it is measured, or when even its last segment does not
+ * fit, the end is cut. */
+.middle-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

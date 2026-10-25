@@ -22,6 +22,10 @@ class ControlledReply {
     this.push({ type: 'text', text })
   }
 
+  usage(inputTokens: number, outputTokens: number): void {
+    this.push({ type: 'usage', inputTokens, outputTokens })
+  }
+
   finish(): void {
     if (this.finished) return
     this.finished = true
@@ -222,6 +226,133 @@ describe('streamed messages in the real workspace', () => {
       const committed = (await host.bridge.detail(id)).messages.filter(message => message.role === 'assistant')
       expect(committed).toHaveLength(1)
       expect(committed[0]!.id).toBe(messageId)
+    } finally {
+      await context.close()
+    }
+  })
+
+  it('says what the run does at the end of its turn and settles it into the facts the Host recorded, the same after a reload', async () => {
+    const { context, page } = await open(1280, 820)
+    try {
+      const { id, reply } = await start(page, '检验回合脚部的进行与结算')
+      const footer = page.locator('.turn').last().locator('.turn-footer')
+      // Before any output the turn's live line waits for the model; the bar above the input has nothing to say.
+      await expect.poll(() => footer.getAttribute('class'), { interval: 20 }).toContain('is-live')
+      await expect.poll(() => footer.locator('[role="status"]').textContent(), { interval: 20 }).toContain('等待模型')
+      expect(await page.locator('.run-bar-collapse[data-state="open"]').count()).toBe(0)
+
+      reply.append('回合脚部的第一段正文。')
+      await liveRow(page, id)
+      // A phase holds at least 1.2s before the next one shows.
+      await expect.poll(() => footer.locator('[role="status"]').textContent(), { interval: 50, timeout: 5000 }).toContain('正在回复')
+      await expect.poll(() => footer.textContent(), { interval: 50, timeout: 5000 }).toMatch(/\d+ 秒/)
+      reply.usage(1234, 340)
+      reply.finish()
+      await expect.poll(async () => (await host.bridge.detail(id)).summary.status, { interval: 20 }).toBe('idle')
+
+      // Settled, the same element carries the turn's facts: when the reply was sent and its tokens, each with its unit;
+      // when the turn began and ended and how long it worked are in the time's tooltip.
+      await expect.poll(() => footer.getAttribute('class'), { interval: 20 }).not.toContain('is-live')
+      const facts = footer.locator('.turn-facts')
+      await expect.poll(() => facts.innerText(), { interval: 20 }).toMatch(/输入 1\.2k tokens\s*输出 340 tokens/)
+      const settled = (await facts.textContent()) ?? ''
+      // The working time is in the time's tooltip, not a segment of its own.
+      expect(await facts.innerText()).not.toContain('用时')
+      const sent = facts.locator('time')
+      expect(await sent.getAttribute('datetime')).toBe(
+        (await host.bridge.detail(id)).messages.find(message => message.role === 'user')?.turn?.endedAt,
+      )
+      await page.locator('.turn').last().locator('.turn-reply').hover()
+      await sent.hover()
+      await expect
+        .poll(() => page.getByRole('tooltip').filter({ visible: true }).textContent(), { interval: 50, timeout: 5000 })
+        .toMatch(/开始 · \d{2}:\d{2}:\d{2} 完成/)
+      await footer.getByRole('button', { name: '复制回复', exact: true }).waitFor({ state: 'attached' })
+      const recorded = (await host.bridge.detail(id)).messages.find(message => message.role === 'user')?.turn
+      expect(recorded).toEqual({ endedAt: expect.any(String), activeMs: expect.any(Number), waitMs: 0 })
+
+      // The page watched the turn settle, so the footer stays shown for a moment; after a reload it rests hidden on
+      // desktop until the pointer is on the turn, and reads the same.
+      await page.reload()
+      await connected(page)
+      await expect.poll(() => facts.textContent(), { interval: 20 }).toBe(settled)
+      expect(await footer.evaluate(element => getComputedStyle(element).opacity)).toBe('0')
+      await page.locator('.turn').last().locator('.turn-reply').hover()
+      await expect.poll(() => footer.evaluate(element => getComputedStyle(element).opacity), { interval: 20 }).toBe('1')
+    } finally {
+      await context.close()
+    }
+  })
+
+  it('raises a prompt the page saw arrive and fades its reply in, never after a reload, and at once under reduced motion', async () => {
+    const { context, page } = await open(1280, 820)
+    try {
+      const first = await start(page, '检验到达动效一')
+      first.reply.append('第一轮。')
+      first.reply.finish()
+      await expect.poll(async () => (await host.bridge.detail(first.id)).summary.status, { interval: 20 }).toBe('idle')
+      // CSS animations as they start, and each frame the elements that scripted animations move.
+      await page.evaluate(() => {
+        const root = document.documentElement
+        root.dataset.seen = ''
+        document.addEventListener('animationstart', event => {
+          root.dataset.seen += ` ${event.animationName}`
+        })
+        const watch = () => {
+          for (const animation of document.getAnimations()) {
+            if (animation instanceof CSSAnimation || animation instanceof CSSTransition) continue
+            const target = animation.effect instanceof KeyframeEffect ? animation.effect.target : null
+            if (target) root.dataset.seen += ` animate:${target.getAttribute('class') ?? ''}`
+          }
+          requestAnimationFrame(watch)
+        }
+        requestAnimationFrame(watch)
+      })
+      const seen = async () => (await page.evaluate(() => document.documentElement.dataset.seen ?? '')).trim().split(/\s+/)
+      const send = async (prompt: string) => {
+        const reply = new ControlledReply()
+        replies.set(prompt, reply)
+        await page.getByRole('textbox', { name: '继续对话' }).fill(prompt)
+        await page.getByRole('button', { name: '发送', exact: true }).click()
+        await page.locator('.message-user[data-arrived]').filter({ hasText: prompt }).waitFor()
+        reply.append('又一轮。')
+        await page.locator('.turn').last().locator('.turn-reply[data-arrived]').waitFor()
+        reply.finish()
+        await expect.poll(async () => (await host.bridge.detail(first.id)).summary.status, { interval: 20 }).toBe('idle')
+      }
+
+      await send('检验到达动效二')
+      await expect.poll(seen, { interval: 20 }).toEqual(expect.arrayContaining(['message-rise', 'message-fade']))
+
+      // Under reduced motion the prompt and its reply appear at once.
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+      await page.evaluate(() => {
+        document.documentElement.dataset.seen = ''
+      })
+      await send('检验到达动效三')
+      expect(await seen()).not.toEqual(expect.arrayContaining(['message-rise']))
+      expect(await seen()).not.toEqual(expect.arrayContaining(['message-fade']))
+      await page.emulateMedia({ reducedMotion: 'no-preference' })
+
+      // Switching to another session fades the conversation area in; nothing arrives, so nothing rises.
+      const other = await start(page, '检验切换会话的淡入')
+      other.reply.append('另一个会话。')
+      other.reply.finish()
+      await expect.poll(async () => (await host.bridge.detail(other.id)).summary.status, { interval: 20 }).toBe('idle')
+      await page.evaluate(() => {
+        document.documentElement.dataset.seen = ''
+      })
+      await page.locator(`[data-task-id="${first.id}"]`).click()
+      await page.locator(`[data-task-id="${first.id}"][aria-current="page"]`).waitFor({ state: 'attached' })
+      await page.locator('[data-message-id]').filter({ hasText: '第一轮。' }).waitFor()
+      await expect.poll(seen, { interval: 20 }).toEqual(expect.arrayContaining(['animate:transcript']))
+      expect(await page.locator('[data-arrived]').count()).toBe(0)
+
+      // A reload draws the conversation as it is, without arrivals.
+      await page.reload()
+      await connected(page)
+      await page.locator('[data-message-id]').filter({ hasText: '检验到达动效三' }).waitFor()
+      expect(await page.locator('[data-arrived]').count()).toBe(0)
     } finally {
       await context.close()
     }

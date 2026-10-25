@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { api, errorMessage } from '../core/api.ts'
-import { Button, InlineNotice } from '@latch/ui'
+import { Button, InlineNotice, TextField } from '@latch/ui'
 import { Loading, SectionHeading } from './common.tsx'
 
 /** `GET /provider` of a Host that predates multiple providers (its snapshot has no catalog). */
@@ -89,64 +89,54 @@ export function LegacyProviderSettings({ onChanged }: { onChanged: () => void })
     <>
       {heading}
       <form
-        className="settings-group"
+        className="settings-form"
         onSubmit={event => {
           void save(event)
         }}>
-        <div className="form-grid">
-          <label className="field field-wide">
-            <span>API 地址</span>
-            <input
-              type="url"
-              required
-              value={baseURL}
-              placeholder="https://api.example.com/v1"
-              spellCheck={false}
-              autoComplete="off"
-              disabled={busy}
-              onChange={event => {
-                setBaseURL(event.target.value)
-                setNotice('')
-              }}
-            />
-          </label>
-          <label className="field field-wide">
-            <span>模型 ID</span>
-            <input
-              required
-              value={model}
-              placeholder="服务提供方的模型名称"
-              spellCheck={false}
-              autoComplete="off"
-              disabled={busy}
-              onChange={event => {
-                setModel(event.target.value)
-                setNotice('')
-              }}
-            />
-          </label>
-          <label className="field field-wide">
-            <span>
-              API Key<small>可选</small>
-            </span>
-            <input
-              type="password"
-              value={apiKey}
-              placeholder="输入密钥"
-              autoComplete="new-password"
-              disabled={busy}
-              onChange={event => {
-                setApiKey(event.target.value)
-                setNotice('')
-              }}
-            />
-            <small className="field-hint">
-              {provider.hasKey
-                ? '已保存密钥，不会回显。此版本保存时会用这里的内容替换密钥：留空将移除原密钥，继续使用请重新输入。'
-                : '无需认证的本地服务可以留空。密钥只保存在执行端的私有目录。'}
-            </small>
-          </label>
-        </div>
+        <TextField
+          label="API 地址"
+          type="url"
+          required
+          value={baseURL}
+          placeholder="https://api.example.com/v1"
+          spellCheck={false}
+          autoComplete="off"
+          disabled={busy}
+          onChange={event => {
+            setBaseURL(event.target.value)
+            setNotice('')
+          }}
+        />
+        <TextField
+          label="模型 ID"
+          required
+          value={model}
+          placeholder="服务提供方的模型名称"
+          spellCheck={false}
+          autoComplete="off"
+          disabled={busy}
+          onChange={event => {
+            setModel(event.target.value)
+            setNotice('')
+          }}
+        />
+        <TextField
+          label="API Key（可选）"
+          type="password"
+          value={apiKey}
+          placeholder="输入密钥"
+          autoComplete="new-password"
+          disabled={busy}
+          hint={
+            provider.hasKey
+              ? '已保存密钥，不会回显。此版本保存时会用这里的内容替换密钥：留空将移除原密钥，继续使用请重新输入。'
+              : '无需认证的本地服务可以留空。密钥只保存在执行端的私有目录。'
+          }
+          onChange={event => {
+            setApiKey(event.target.value)
+            setNotice('')
+          }}
+        />
         <div className="settings-actions">
           <Button type="submit" disabled={busy || !baseURL.trim() || !model.trim()} loading={busy}>
             保存

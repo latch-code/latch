@@ -16,16 +16,31 @@ import type { AuditLog } from './audit.ts'
 import { hashDisplay as formatHash, randomId, randomNonce } from './crypto.ts'
 import type { PolicyStore } from './policy.ts'
 
-/** Class A needs biometrics when Touch ID is available; class B accepts the login password. */
-export const PRESENCE_ACTIONS: Readonly<Record<PresenceAction, { title: string; requireBiometric: boolean }>> = {
-  'device.enroll': { title: '登记新设备', requireBiometric: true },
-  'device.grant': { title: '授予设备权限', requireBiometric: true },
-  'task.start-l3': { title: '开启完全访问会话（L3）', requireBiometric: true },
+/**
+ * Class A needs biometrics when Touch ID is available; class B accepts the login password. The title is fixed wording
+ * per action. Only a policy change that adds one outbound address is titled by that address (targetTitle): the Host
+ * checked it as `host:port`, so nobody chose those words freely.
+ */
+export const PRESENCE_ACTIONS: Readonly<
+  Record<PresenceAction, { title: string; requireBiometric: boolean; target?: (target: string) => string }>
+> = {
+  'device.enroll': { title: '允许新设备连接', requireBiometric: true },
+  'device.grant': { title: '为设备增加权限', requireBiometric: true },
+  'task.start-l3': { title: '开启完全访问会话', requireBiometric: true },
   'task.mode-widen': { title: '放宽会话权限模式', requireBiometric: true },
-  'agent.define': { title: '保存 Agent 定义', requireBiometric: true },
-  'policy.change': { title: '修改本机安全策略', requireBiometric: true },
-  'provider.set-key': { title: '设置模型服务密钥', requireBiometric: false },
-  'approval.r2': { title: '批准高风险操作（R2）', requireBiometric: false },
+  'agent.define': { title: '保存 Agent 启动设置', requireBiometric: true },
+  'policy.change': { title: '放宽本机安全策略', requireBiometric: true, target: target => `允许 Host 访问 ${target}` },
+  'provider.set-key': { title: '保存模型服务密钥', requireBiometric: false },
+  'approval.r2': { title: '允许一次高风险操作', requireBiometric: false },
+}
+
+const TARGET = /^(?:\[[0-9a-fA-F:.]+\]|[A-Za-z0-9.-]+):\d{1,5}$/u
+
+/** The title of a request: the fixed wording, or the checked `host:port` it adds for the actions worded around one. */
+function targetTitle(action: PresenceAction, target: string | undefined): string {
+  const entry = PRESENCE_ACTIONS[action]
+  if (target === undefined || !entry.target || target.length > 260 || !TARGET.test(target)) return entry.title
+  return escapeSecurityText(target) === target ? entry.target(target) : entry.title
 }
 
 export const CONFIRMATION_LIFETIME_MS = 60_000
@@ -39,7 +54,7 @@ const STDOUT_LIMIT = 4096
 /** The shared security-text rule; the macOS helper's `visible()` applies the same one. */
 export { escapeSecurityText as escapePreviewText } from '@latch/protocol'
 
-export function buildPreview(input: Omit<PresencePreview, 'v' | 'nonce' | 'expiresAt' | 'title'> & { now: number }): {
+export function buildPreview(input: Omit<PresencePreview, 'v' | 'nonce' | 'expiresAt' | 'title'> & { now: number; target?: string }): {
   preview: PresencePreview
   previewHash: string
   hashDisplay: string
@@ -54,7 +69,7 @@ export function buildPreview(input: Omit<PresencePreview, 'v' | 'nonce' | 'expir
     v: 1,
     hostId: input.hostId,
     action: input.action,
-    title: PRESENCE_ACTIONS[input.action].title,
+    title: targetTitle(input.action, input.target),
     requester,
     lines: input.lines.map(line => ({ label: line.label, value: escapeSecurityText(line.value) })),
     warnings: [...input.warnings],
@@ -379,6 +394,8 @@ export class PresenceService {
     lines: PresencePreview['lines']
     warnings: string[]
     paramsHash: string
+    /** A checked `host:port` the request adds, for the title of the actions worded around one. */
+    target?: string
   }): Promise<ConfirmationRecord> {
     const availability = await this.backend.availability()
     if (availability.status !== 'available') throw new AppError(503, 'presence-unavailable', `本机确认不可用：${availability.message}`)
@@ -409,6 +426,7 @@ export class PresenceService {
       lines: input.lines,
       warnings: input.warnings,
       now,
+      ...(input.target === undefined ? {} : { target: input.target }),
     })
     if (waiting) this.abandon(waiting)
     const controller = new AbortController()

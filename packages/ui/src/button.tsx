@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, type ComponentProps, type MouseEvent, type Rea
 import { ChevronDown } from 'lucide-react'
 import { Icon, Spinner, type IconSize, type LucideIcon } from './icon.tsx'
 import { cx, mergeRefs } from './internal.ts'
+import { Swap } from './motion.tsx'
 import { Tooltip } from './tooltip.tsx'
 
 /**
@@ -151,6 +152,8 @@ type IconButtonProps = Omit<ComponentProps<'button'>, 'children' | 'disabled'> &
   shortcut?: string
   /** A count past the face's top-right corner; the label must say the same thing, since it is hidden from screen readers. */
   badge?: ReactNode
+  /** A change of glyph (copy turning into a check) swaps in: it scales up from 80% as it fades in. */
+  swap?: boolean
 }
 
 /**
@@ -168,11 +171,13 @@ export function IconButton({
   tooltip,
   shortcut,
   badge,
+  swap = false,
   type = 'button',
   className,
   onClick,
   ...props
 }: IconButtonProps) {
+  const glyph = <Icon icon={icon} size={ICON_GLYPH[size]} />
   return (
     <Tooltip content={tooltip ?? label} shortcut={shortcut} describe={tooltip !== undefined && tooltip !== label}>
       <button
@@ -185,7 +190,7 @@ export function IconButton({
         aria-pressed={pressed}
         aria-disabled={disabled || undefined}
         onClick={guard(disabled, onClick)}>
-        <Icon icon={icon} size={ICON_GLYPH[size]} />
+        {swap ? <Swap value={icon.displayName ?? String(icon)}>{glyph}</Swap> : glyph}
         {badge !== undefined && (
           <span className="ui-icon-button-badge" aria-hidden="true">
             {badge}

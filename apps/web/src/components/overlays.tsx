@@ -25,7 +25,7 @@ export function Modal({
   className = '',
 }: {
   label: string
-  variant?: 'dialog' | 'sheet' | 'side' | 'page'
+  variant?: 'dialog' | 'sheet' | 'page'
   onClose: () => void
   children: ReactNode
   className?: string
@@ -47,6 +47,8 @@ export function Modal({
       className={`modal modal-${variant} ${className}`}
       aria-label={label}
       onCancel={event => {
+        // React passes a nested dialog's Escape up the tree; only this dialog's own closes it.
+        if (event.target !== event.currentTarget) return
         event.preventDefault()
         onClose()
       }}

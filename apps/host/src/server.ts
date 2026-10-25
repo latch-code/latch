@@ -6,6 +6,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } 
 import { z } from 'zod'
 import {
   AGENT_PRESETS,
+  PROJECT_GLYPHS,
   PROVIDER_PRESETS,
   LISTENER_LABELS,
   SCOPE_LABELS,
@@ -18,6 +19,7 @@ import {
   type DataScope,
   type Device,
   type DeviceScope,
+  type FolderVia,
   type HarnessSource,
   type HostCatalog,
   type HostView,
@@ -35,10 +37,19 @@ import {
   type TaskSummary,
   type WorkspaceInfo,
 } from '@latch/protocol'
-import { AppError, type HarnessDriver, type HarnessSecurityEvent, type ToolRiskInput, type HarnessPlugin } from '@latch/sdk'
+import {
+  AppError,
+  type HarnessDriver,
+  type HarnessSecurityEvent,
+  type HostProject,
+  type ProjectFolder,
+  type ToolRiskInput,
+  type HarnessPlugin,
+  type SessionFolder,
+} from '@latch/sdk'
 import { PluginRegistry } from '@latch/core'
 import { canonicalJson, sha256Hex, redactSecrets } from '@latch/core/node-kit'
-import { createAcpAgentPlugin, resolveCommand, validateAgentDefinition } from '@latch/harness-acp'
+import { createAcpAgentPlugin, forgetCommandLookups, resolveCommand, validateAgentDefinition } from '@latch/harness-acp'
 import { AuditLog, type AuditActor, type StepupMethod } from './audit.ts'
 import { DeviceStore, EnrollmentService, type ConnectionContext, type DeviceScopeBase } from './auth.ts'
 import { hashDisplay } from './crypto.ts'
@@ -46,18 +57,23 @@ import { createEgressFetch, type LookupFunction } from './egress.ts'
 import { loadOrCreateHostIdentity } from './identity.ts'
 import {
   DENY_READ_HOME_PATHS,
+  PROJECT_FOLDER_LIMIT,
   canonicalPath,
+  checkFolderCandidate,
   checkPrivateFile,
-  checkWorkspaceCandidate,
+  checkProjectFolders,
   classifyDefaultWorkspace,
+  isPrintableText,
   latchCodeRoot,
   prepareRuntimeDir,
   resolveLatchPaths,
-  type WorkspaceGuardContext,
+  type FolderGuardContext,
+  type FolderProblem,
 } from './paths.ts'
+import { foldersHash, newProject, planFolders, reorderFolders, type FolderRefusal, type ProjectPrimary } from './projects.ts'
 import { PolicyStore, ceilingFor, isLowering, policyDiff, type Policy } from './policy.ts'
 import { PresenceService, createPresenceBackend, paramsHash, type PresenceBackend } from './presence.ts'
-import { classifyStandardCall } from './risk.ts'
+import { classifyStandardCall, targetFolder, type CallFolder } from './risk.ts'
 import {
   CLEARED_LEGACY_COOKIE,
   authFailure,
@@ -86,8 +102,19 @@ import {
   type ValidatedTls,
 } from './listeners.ts'
 import { MIME, UI_CSP, KIB, codeOf, errorText, isWithin, json, jsonBody, optionalJsonBody, overlaps, safeDecode } from './http-util.ts'
-import { HostConfig, PROVIDER_ID, availableId, originOf, type HostSettings, type ProviderRecord } from './config.ts'
+import {
+  FOLDER_ID,
+  HostConfig,
+  PROVIDER_ID,
+  availableId,
+  originOf,
+  type HostSettings,
+  type ProviderRecord,
+  type WorkspaceRecord,
+} from './config.ts'
 import { HarnessHub, type HubCreateInput } from './hub.ts'
+import { SessionFolders } from './session-folders.ts'
+import { writeProjectContext } from './project-context.ts'
 import type { HostInfo } from './host-state.ts'
 import {
   checkProvider,
@@ -134,6 +161,8 @@ const PRIVATE_ENTRIES = [
   'providers.json',
   'settings.json',
   'sessions-meta.json',
+  'session-folders.json',
+  'project-context.json',
   'host.json',
   'host.log',
   'host.lock',
@@ -142,7 +171,16 @@ const PRIVATE_ENTRIES = [
  * Names the Host writes next to private entries for a moment: atomic-write temp files (the `prefix` their writers pass to
  * `writeFileAtomic`, or the default `.<file name>-`) and a stale lock moved aside.
  */
-const TRANSIENT_PREFIXES = ['.host-', '.policy-', '.provider.json-', '.providers.json-', '.settings.json-', 'sessions-meta.json.']
+const TRANSIENT_PREFIXES = [
+  '.host-',
+  '.policy-',
+  '.provider.json-',
+  '.providers.json-',
+  '.settings.json-',
+  'sessions-meta.json.',
+  '.project-context.json-',
+  '.session-folders.json-',
+]
 const BLOCKED_REASON = '有完全访问会话正在运行，本机确认暂时只能用于拒绝。请等待其结束或取消后重试。'
 const L3_WARNINGS = [
   '该会话可以读写 Latch 数据和 Host 身份私钥，并可以冒用本机 Electron 在其他电脑上的身份。',
@@ -272,7 +310,41 @@ const agentUpdateSchema = z.object({
   env: z.record(envName, envValue.nullable()).optional(),
   enabled: z.boolean().optional(),
 })
-const workspaceSchema = z.object({ name: z.string().trim().min(1).max(80).optional(), path: z.string().min(1).max(4096) })
+const folderPathsSchema = z.array(z.string().min(1).max(4096)).min(1).max(PROJECT_FOLDER_LIMIT)
+const projectNameSchema = z.string().trim().min(1).max(80)
+/** Signed by the desktop app's main process; `signature` is checked and removed before this schema applies. */
+const projectCreateSchema = z
+  .object({
+    nonce: z.string().min(1).max(128),
+    via: z.enum(['picker', 'drop']),
+    paths: folderPathsSchema,
+    name: projectNameSchema.optional(),
+  })
+  .strict()
+/** 存为项目: the desktop saves a session's own folder as a new project's primary folder; the page sends no path. */
+const sessionProjectSchema = z
+  .object({
+    nonce: z.string().min(1).max(128),
+    via: z.literal('session'),
+    sessionId: z.string().min(1).max(256),
+  })
+  .strict()
+const folderAddSchema = z
+  .object({
+    nonce: z.string().min(1).max(128),
+    via: z.enum(['picker', 'drop']),
+    paths: folderPathsSchema,
+    replace: z.string().regex(FOLDER_ID).optional(),
+  })
+  .strict()
+const projectPatchSchema = z
+  .object({
+    name: projectNameSchema.optional(),
+    glyph: z.enum(PROJECT_GLYPHS).nullable().optional(),
+    order: z.array(z.string().regex(FOLDER_ID)).min(1).max(PROJECT_FOLDER_LIMIT).optional(),
+  })
+  .strict()
+  .refine(value => value.name !== undefined || value.glyph !== undefined || value.order !== undefined, '没有要修改的内容')
 const preferencesSchema = z.object({
   defaults: z.object({
     harnessId: z.string().regex(HARNESS_ID).optional(),
@@ -339,12 +411,22 @@ export interface ServerOptions {
   codeRoot?: string
   /** Tests: credentials, confirmations, enrollments. */
   now?: () => number
+  /** Tests: the times recorded on messages and runs and sent to clients as the Host's time. Default `Date.now`. */
+  clock?: () => number
   /** Tests: the computer's name in the snapshot; default the operating system's host name. */
   hostName?: string
   /** Tests: 'relaxed' multiplies every rate-limit bucket by 100. Production never sets it. */
   rateLimits?: 'default' | 'relaxed'
   /** Default `console.error('[Latch] ' + text)`; every line is redacted first. */
   log?: (text: string) => void
+  /**
+   * Each new Agent session outside a saved project works in a new folder of its own inside the start directory
+   * (`<yyyymmdd>-<4 hex>`, 0700). The start script sets it when the start directory is the Host's default, that is
+   * without `--workspace` or `HARNESS_WORKSPACE`; a start directory the owner chose is used as it is.
+   */
+  sessionFolders?: boolean
+  /** Tests: the four hex characters of a session folder's name; default random. */
+  sessionFolderSuffix?: () => string
 }
 
 export interface StartedHost {
@@ -445,11 +527,87 @@ async function markedFailed(auditFile: string, seq: number): Promise<boolean> {
   return false
 }
 
-/** Audit reason for a saved workspace that fails the registration rules at startup. */
-function disabledReason(error: AppError): 'overlap' | 'code-root' | 'protected' | 'invalid' {
-  if (error.code === 'workspace-code-root') return 'code-root'
-  if (error.code === 'workspace-overlap') return error.message.includes('受保护目录') ? 'protected' : 'overlap'
+type DisabledReason = 'overlap' | 'code-root' | 'protected' | 'invalid' | 'missing' | 'permission'
+
+/** Audit reason for a saved project that has become unusable. */
+function disabledReason(problem: FolderProblem): DisabledReason {
+  if (problem === 'overlap' || problem === 'code-root' || problem === 'protected' || problem === 'permission') return problem
+  if (problem === 'missing' || problem === 'not-directory') return 'missing'
   return 'invalid'
+}
+
+/** How long a project's folder states are reused for listings; session starts always check afresh. */
+const PROJECT_STATE_TTL = 5_000
+const START_DIRECTORY = '启动目录'
+
+interface FolderState {
+  id: string
+  path: string
+  problem?: FolderProblem
+  message?: string
+}
+
+interface ProjectState {
+  at: number
+  /** The folder list the state was computed for; an edited project is checked again. */
+  key: string
+  folders: FolderState[]
+  /** The first failure: its folder (absent for a settings entry that is itself invalid), audit reason and text. */
+  failure?: { index?: number; reason: DisabledReason; message: string }
+}
+
+function stateKey(record: WorkspaceRecord): string {
+  return canonicalJson({ path: record.path, folders: record.folders })
+}
+
+/** The folders a session was created with, as its driver recorded them; a session without them uses its `cwd` alone. */
+function sessionFolders(task: TaskSummary, workspaceRoot: string): string[] {
+  return task.folders?.length ? task.folders.map(folder => folder.path) : [task.cwd ?? workspaceRoot]
+}
+
+/** What a Standard call is classified against: the session's working directory and the folders it recorded. */
+type SessionScope = { cwd?: string; folders?: ReadonlyArray<ProjectFolder> }
+
+/** The session's folders with their IDs; one that recorded none has one, `default`, at its working directory (as the runtime). */
+function scopeFolders(session: SessionScope, workspaceRoot: string): ProjectFolder[] {
+  return session.folders?.length
+    ? session.folders.map(folder => ({ id: folder.id, path: folder.path }))
+    : [{ id: 'default', path: session.cwd ?? workspaceRoot }]
+}
+
+function workspaceChanged(): AppError {
+  return new AppError(409, 'workspace-changed', '这个会话使用的文件夹已不在项目中或找不到了，不能继续。请新建会话。')
+}
+
+function foldersRefused(refused: FolderRefusal[]): AppError {
+  return new AppError(409, 'workspace-folders-refused', '选择的文件夹都没有加入', { refused })
+}
+
+function unprintableName(): AppError {
+  return new AppError(400, 'workspace-folder-unprintable', '项目名称包含不可显示的字符')
+}
+
+function folderInUse(): AppError {
+  return new AppError(409, 'workspace-in-use', '有正在运行或等待批准的会话在使用这个文件夹，请先停止这些会话')
+}
+
+function folderGrantInvalid(): AppError {
+  return new AppError(403, 'folder-grant-invalid', '添加文件夹的请求没有通过桌面端校验，没有加入任何文件夹')
+}
+
+/** The same folders in the same order. */
+function sameFolders(a: ReadonlyArray<ProjectFolder>, b: ReadonlyArray<ProjectFolder>): boolean {
+  return a.length === b.length && a.every((folder, index) => folder.id === b[index]!.id && folder.path === b[index]!.path)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** Canonical forms of the paths that still resolve. */
+async function canonicalSet(paths: readonly string[]): Promise<Set<string>> {
+  const resolved = await Promise.all(paths.map(path => canonicalPath(path).catch(() => undefined)))
+  return new Set(resolved.filter((path): path is string => path !== undefined))
 }
 
 /**
@@ -496,9 +654,19 @@ function isPrivateEntry(name: string): boolean {
  */
 function guardDataDir(plugin: HarnessPlugin, dataDir: string, workspace: string): HarnessPlugin {
   const exposed = relative(dataDir, workspace).split(sep)[0] ?? ''
-  async function assertAllowed(root: string, args: Record<string, unknown>): Promise<void> {
-    // The tool itself rejects other input.
+  async function assertAllowed(
+    context: { workspaceRoot: string; workspaceFolders?: ReadonlyArray<SessionFolder> },
+    args: Record<string, unknown>,
+  ): Promise<void> {
+    // The tool itself rejects other input, a `folder` that names no session folder included.
     if (typeof args.path !== 'string' || isAbsolute(args.path)) return
+    const folders = context.workspaceFolders?.length
+      ? context.workspaceFolders
+      : [{ id: 'default', path: context.workspaceRoot, primary: true }]
+    const root = (
+      args.folder === undefined ? (folders.find(folder => folder.primary) ?? folders[0]) : folders.find(folder => folder.id === args.folder)
+    )?.path
+    if (root === undefined) return
     const data = await identityOf(dataDir)
     const entry = exposed ? await identityOf(join(dataDir, exposed)) : undefined
     let child: string | undefined
@@ -526,13 +694,13 @@ function guardDataDir(plugin: HarnessPlugin, dataDir: string, workspace: string)
             ...(tool.preview
               ? {
                   preview: async (args, context) => {
-                    await assertAllowed(context.workspaceRoot, args)
+                    await assertAllowed(context, args)
                     return tool.preview!(args, context)
                   },
                 }
               : {}),
             execute: async (args, context) => {
-              await assertAllowed(context.workspaceRoot, args)
+              await assertAllowed(context, args)
               return tool.execute(args, context)
             },
           }),
@@ -542,6 +710,7 @@ function guardDataDir(plugin: HarnessPlugin, dataDir: string, workspace: string)
 
 function agentSettings(agent: AgentRecord): AgentSettings {
   const path = resolveCommand(agent.command)
+  const companion = AGENT_PRESETS.find(preset => preset.id === agent.presetId)?.companion
   const verdict = validateAgentDefinition(agent)
   return {
     id: agent.id,
@@ -551,7 +720,10 @@ function agentSettings(agent: AgentRecord): AgentSettings {
     args: [...agent.args],
     envKeys: Object.keys(agent.env).sort(),
     enabled: agent.enabled,
-    detected: path ? { found: true, path } : { found: false },
+    detected: {
+      ...(path ? { found: true, path } : { found: false }),
+      ...(companion ? { companion: { command: companion, found: resolveCommand(companion) !== undefined } } : {}),
+    },
     verified: verdict.ok ? verdict.verified : false,
     ...(verdict.ok ? {} : { problem: verdict.error.message }),
   }
@@ -581,7 +753,8 @@ function parseArguments(text: string | undefined): Record<string, unknown> | und
 }
 
 /** The built-in file writer, as `<owner>:<tool>`; the risk classifier keys it the same way. */
-const BUILTIN_WRITE = 'workspace-files:write_file'
+const BUILTIN_FILES = 'workspace-files'
+const BUILTIN_WRITE = `${BUILTIN_FILES}:write_file`
 
 /**
  * Arguments as the R2 confirmation shows them. Only the built-in writer's string `content` becomes its size and hash:
@@ -617,6 +790,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
   assertLoopbackHost(options.host)
   if (options.provider) assertEnvBaseURL(options.provider.baseURL)
   const now = options.now ?? Date.now
+  const clock = options.clock ?? Date.now
+  const hostTime = () => new Date(clock()).toISOString()
   const sink = options.log ?? (text => console.error(`[Latch] ${text}`))
   const log = (text: string) => sink(redactSecrets(text))
   const startedAt = new Date().toISOString()
@@ -653,7 +828,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         notInside: [
           realDataDir,
           realWorkspace,
-          ...(await Promise.all(config.settings().workspaces.map(item => realpath(item.path).catch(() => item.path)))),
+          ...(await Promise.all(
+            config
+              .settings()
+              .workspaces.flatMap(item => item.folders)
+              .map(folder => realpath(folder.path).catch(() => folder.path)),
+          )),
         ],
       })
       tls = await validateTls(options.tls, now(), log)
@@ -690,7 +870,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
     const tlsKeyPath = options.tls ? resolve(options.tls.keyPath) : undefined
 
-    const workspaceGuard: Omit<WorkspaceGuardContext, 'existing'> = {
+    const workspaceGuard: FolderGuardContext = {
       dataDir: realDataDir,
       agentsDir,
       runtimeDir: runtime.runtimeDir,
@@ -699,6 +879,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       ...(tlsKeyPath ? { tlsKeyPath } : {}),
     }
     const defaultFlags = await classifyDefaultWorkspace(realWorkspace, { ...workspaceGuard, existing: [] })
+    /** Until the listeners are up: `workspace.disabled` records name the startup check as their actor. */
+    let starting = true
     if (defaultFlags.sensitive) throw new AppError(409, 'workspace-overlap', defaultFlags.sensitive.message)
     if (defaultFlags.insideData) log(`工作区位于数据目录内（${realWorkspace}）。迁出之前只能使用内置 Harness。`)
     if (defaultFlags.codeRoot)
@@ -706,6 +888,18 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     // Path spellings (case, firmlinks) differ between APIs; code-root decisions compare canonical forms only.
     const canonicalCodeRoot = await canonicalPath(codeRoot)
     const canonicalWorkspace = await canonicalPath(realWorkspace)
+    // Sessions keep their own folder while it stays directly inside the start directory, whatever this run makes.
+    const ownFolders = new SessionFolders({
+      dataDir,
+      root: workspaceRoot,
+      canonicalRoot: canonicalWorkspace,
+      clock,
+      now,
+      ...(options.sessionFolderSuffix ? { suffix: options.sessionFolderSuffix } : {}),
+      log,
+    })
+    await ownFolders.start()
+    const makeOwnFolders = options.sessionFolders === true
     const denyRead = await Promise.all(DENY_READ_HOME_PATHS.map(entry => realpath(join(home, entry)).catch(() => join(home, entry))))
     const guardedPaths = [
       ...(await protectedDataPaths(realDataDir, realWorkspace)),
@@ -744,24 +938,86 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       })
       log('settings.json 在 Latch 之外被修改过，已记入审计；其中的项目已重新检查。')
     }
-    /** Saved workspaces that fail the registration rules (minus the duplicate rule): kept in settings, unusable for this run. */
-    const disabledWorkspaces = new Map<string, AppError>()
-    for (const item of config.settings().workspaces) {
-      const verdict = await checkWorkspaceCandidate(item.path, { ...workspaceGuard, existing: [] }).catch(() => undefined)
-      if (verdict?.ok) continue
-      const error = verdict?.error ?? new AppError(400, 'workspace-invalid', '目录不存在或无法访问')
-      disabledWorkspaces.set(item.id, error)
-      log(`项目「${item.name}」未通过安全检查，本次运行已停用：${error.message}`)
-      // Disabling only removes access, so a failed record never keeps the workspace usable.
+    /**
+     * The last computed state of each saved project. A project is usable only while every folder passes R1–R7 and the
+     * folders still do not overlap; one that fails is kept in settings and listed with its reason.
+     */
+    const projectStates = new Map<string, ProjectState>()
+    /** Projects last seen unusable, so becoming unusable is audited once per transition. */
+    const unusableProjects = new Set<string>()
+
+    async function computeProjectState(record: WorkspaceRecord, readable: boolean): Promise<ProjectState> {
+      const folders: FolderState[] = []
+      let failure: ProjectState['failure']
+      if (record.invalid || record.folders[0]?.path !== record.path)
+        failure = { reason: 'invalid', message: '这个项目的主文件夹配置不一致，请在执行端重新选择主文件夹' }
+      for (const [index, folder] of record.folders.entries()) {
+        const verdict = await checkFolderCandidate(folder.path, workspaceGuard, { readable }).catch(() => undefined)
+        const problem: FolderProblem | undefined = verdict === undefined ? 'invalid' : verdict.ok ? undefined : verdict.problem
+        const message = verdict === undefined ? '无法检查这个文件夹' : verdict.ok ? undefined : verdict.error.message
+        folders.push({ id: folder.id, path: folder.path, ...(problem ? { problem, message } : {}) })
+        if (problem && !failure)
+          failure = { index, reason: disabledReason(problem), message: `文件夹「${basename(folder.path) || folder.path}」：${message}` }
+      }
+      if (!failure && record.folders.length > 1) {
+        const project = await checkProjectFolders(
+          record.folders.map(folder => folder.path),
+          { existing: [] },
+        ).catch(() => undefined)
+        if (!project?.ok) {
+          const index = project?.index ?? 0
+          const path = record.folders[index]?.path ?? record.path
+          failure = {
+            index,
+            reason: 'overlap',
+            message: `文件夹「${basename(path) || path}」：${project?.error.message ?? '无法检查这个文件夹'}`,
+          }
+        }
+      }
+      return { at: now(), key: stateKey(record), folders, ...(failure ? { failure } : {}) }
+    }
+
+    /**
+     * A project's folder states: reused for up to 5 s for listings; `fresh` (session start, edits) checks again, and
+     * `readable` adds R10. A project that turns unusable is logged and audited (`workspace.disabled`, record only).
+     */
+    async function projectState(record: WorkspaceRecord, check: { fresh?: boolean; readable?: boolean } = {}): Promise<ProjectState> {
+      const cached = projectStates.get(record.id)
+      if (!check.fresh && !check.readable && cached && cached.key === stateKey(record) && now() - cached.at < PROJECT_STATE_TTL)
+        return cached
+      const state = await computeProjectState(record, check.readable ?? false)
+      projectStates.set(record.id, state)
+      if (!state.failure) {
+        unusableProjects.delete(record.id)
+        return state
+      }
+      if (unusableProjects.has(record.id)) return state
+      unusableProjects.add(record.id)
+      log(`项目「${record.name}」暂不可用：${state.failure.message}`)
+      // Disabling only removes access, so a failed record never keeps the project usable.
       await audit
         .append({
           action: 'workspace.disabled',
-          actor: startupActor,
-          target: item.id,
-          detail: { workspaceId: item.id, reason: disabledReason(error) },
+          actor: starting ? startupActor : { listener: 'host' },
+          target: record.id,
+          detail: {
+            workspaceId: record.id,
+            reason: state.failure.reason,
+            ...(state.failure.index !== undefined ? { folderIndex: state.failure.index } : {}),
+          },
         })
         .catch(cause => log(`审计记录写入失败（workspace.disabled）：${errorText(cause)}`))
+      return state
     }
+
+    /** Recomputes every saved project now, e.g. at startup and after a settings write. */
+    async function refreshProjects(): Promise<void> {
+      const ids = new Set(config.settings().workspaces.map(record => record.id))
+      for (const id of projectStates.keys()) if (!ids.has(id)) projectStates.delete(id)
+      for (const id of unusableProjects) if (!ids.has(id)) unusableProjects.delete(id)
+      for (const record of config.settings().workspaces) await projectState(record, { fresh: true })
+    }
+    await refreshProjects()
 
     const savedLegacy = config.provider(LEGACY_PROVIDER_ID)
     /**
@@ -865,12 +1121,50 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (caller.connection.listener !== 'unix') throw localOnly()
     }
 
+    /** The desktop app on this computer: a device enrolled on host.sock, calling over host.sock. */
+    function requireDesktop(caller: DeviceCaller): void {
+      if (caller.connection.listener !== 'unix' || caller.device.listener !== 'unix') throw localOnly()
+    }
+
+    /**
+     * The body of a folder add, which only the desktop app's main process can sign: a nonce from `POST /folder-grants`
+     * (single use, consumed here whatever follows) and the device's signature over the canonical body without
+     * `signature`. A page or an older desktop proxy that forwards renderer requests cannot produce it.
+     */
+    async function signedFolderBody(req: IncomingMessage, caller: DeviceCaller): Promise<Record<string, unknown>> {
+      const raw = await jsonBody(req, CONFIG_BODY_LIMIT)
+      if (!isRecord(raw)) throw folderGrantInvalid()
+      const { signature, ...body } = raw
+      let bodyHash: string
+      try {
+        bodyHash = sha256Hex(canonicalJson(body))
+      } catch {
+        throw folderGrantInvalid()
+      }
+      devices.verifyFolderGrant({ deviceId: caller.device.id, nonce: body.nonce, bodyHash, signature })
+      return body
+    }
+
     /** Re-checks a caller after an await: a queued or slow request may outlive a revocation or a scope change. */
     function recheck(caller: Caller, scope?: DeviceScope): void {
       if (!caller.device) return
       const current = devices.get(caller.device.id)
       if (!current || !devices.isActive(current.id)) throw authFailure('device-revoked')
       if (scope && !current.scopes.includes(scope)) throw scopeRequired(scope)
+    }
+
+    let projectChanges = Promise.resolve()
+    /** A start cannot enter a project between a removal's in-use check and its committed settings write. */
+    function projectOperation<T>(caller: Caller, scope: DeviceScope, operation: () => Promise<T>): Promise<T> {
+      const result = projectChanges.then(() => {
+        recheck(caller, scope)
+        return operation()
+      })
+      projectChanges = result.then(
+        () => {},
+        () => {},
+      )
+      return result
     }
 
     /** Serializes configuration changes; each re-checks the caller first. */
@@ -921,6 +1215,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       params: Record<string, unknown>,
       lines: PreviewLine[],
       warnings: string[] = [],
+      target?: string,
     ): Promise<StepupMethod> {
       requireUnix(caller)
       requireDevice(caller)
@@ -936,6 +1231,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         lines,
         warnings,
         requester: { deviceId: caller.device.id, deviceName: caller.device.name, listener: 'unix', remoteAddress: UNIX_ADDRESS },
+        ...(target === undefined ? {} : { target }),
       })
       throw stepupRequired(publicTicket(record))
     }
@@ -1135,8 +1431,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     function keyLines(record: Pick<ProviderRecord, 'id' | 'name'>, origin: string): PreviewLine[] {
       return [
         { label: '模型服务', value: `${record.name}（${record.id}）` },
-        { label: '地址', value: origin },
-        { label: '密钥', value: '已提供（不显示）' },
+        { label: '密钥只发往', value: origin },
+        { label: '密钥', value: '已填写（不显示）' },
       ]
     }
 
@@ -1183,26 +1479,35 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return owner !== undefined && `${owner}:${toolName}` === BUILTIN_WRITE
     }
 
+    /** Whether a Standard call goes to one of the built-in file tools, whose `folder` argument names a session folder. */
+    function isBuiltinFileTool(toolName: string): boolean {
+      return toolOwner(toolName) === BUILTIN_FILES
+    }
+
     /**
-     * The session root in canonical form and whether it overlaps the code root. The per-call answer is never weaker than
+     * A folder root in canonical form and whether it overlaps the code root. The per-call answer is never weaker than
      * the startup classification; a directory that cannot be resolved counts as overlapping, the stricter answer.
      */
-    async function workspaceOf(cwd: string | undefined): Promise<{ codeRoot: boolean; root?: string }> {
+    async function folderOf(path: string): Promise<{ codeRoot: boolean; root?: string }> {
       try {
-        const root = await canonicalPath(cwd ?? workspaceRoot)
+        const root = await canonicalPath(path)
         return { codeRoot: (defaultFlags.codeRoot && root === canonicalWorkspace) || overlaps(root, canonicalCodeRoot), root }
       } catch {
         return { codeRoot: true }
       }
     }
 
-    async function classifyCall(input: { toolName: string; arguments: Record<string, unknown>; cwd?: string }) {
+    async function callFolders(session: SessionScope): Promise<CallFolder[]> {
+      return Promise.all(scopeFolders(session, workspaceRoot).map(async folder => ({ id: folder.id, ...(await folderOf(folder.path)) })))
+    }
+
+    async function classifyCall(input: { toolName: string; arguments: Record<string, unknown> } & SessionScope) {
       return classifyStandardCall({
         pluginId: toolOwner(input.toolName),
         toolName: input.toolName,
         args: input.arguments,
         demo: options.demo,
-        workspace: await workspaceOf(input.cwd),
+        folders: await callFolders(input),
       })
     }
 
@@ -1251,12 +1556,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           driver.create({
             dataDir: driver.id === STANDARD ? join(dataDir, 'sessions') : join(dataDir, 'harnesses', driver.id),
             workspaceRoot,
-            workspaces: () => workspaces().map(workspace => workspace.path),
+            workspaces: usablePrimaries,
+            ...(driver.projectFolders === 'all' ? { projects: usableProjects } : {}),
             registry,
             providerId: defaultProviderId,
             defaultModel: savedDefaultModel,
             tmpRoot: runtime.tmpRoot,
             securityEvent,
+            clock,
             ...(source === 'builtin' ? { classifyToolCall } : {}),
           }),
       })
@@ -1429,97 +1736,402 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       })
     }
 
-    function guardContext(): WorkspaceGuardContext {
-      return { ...workspaceGuard, existing: savedWorkspaces().map(item => ({ id: item.id, name: item.name, path: item.path })) }
-    }
-
-    /** Every workspace in settings. One disabled for this run carries the reason, so it can still be listed and removed. */
-    function savedWorkspaces(): WorkspaceInfo[] {
+    /** The start directory and the other projects' primary folders: a new primary folder may equal none of them. */
+    function primaries(exceptId?: string): ProjectPrimary[] {
       return [
-        { id: 'default', name: '默认工作区', path: workspaceRoot },
-        ...config.settings().workspaces.map(item => {
-          const disabled = disabledWorkspaces.get(item.id)
-          return {
-            id: item.id,
-            name: item.name,
-            path: item.path,
-            ...(disabled ? { unavailable: `未通过安全检查，本次运行已停用：${disabled.message}` } : {}),
-          }
-        }),
+        { id: 'default', name: START_DIRECTORY, path: workspaceRoot },
+        ...config
+          .settings()
+          .workspaces.filter(record => record.id !== exceptId)
+          .map(record => ({ id: record.id, name: record.name, path: record.folders[0].path })),
       ]
     }
 
-    /** Workspaces sessions may use. */
-    function workspaces(): WorkspaceInfo[] {
-      return savedWorkspaces().filter(item => item.unavailable === undefined)
+    function savedProject(id: string | undefined): WorkspaceRecord | undefined {
+      return id === undefined ? undefined : config.settings().workspaces.find(record => record.id === id)
     }
 
-    function workspaceDisabled(workspace: WorkspaceInfo, error: AppError): AppError {
-      return new AppError(409, 'workspace-disabled', `项目「${workspace.name}」未通过安全检查，暂不可用：${error.message}`)
+    function requireProject(id: string): WorkspaceRecord {
+      const record = savedProject(id)
+      if (!record) throw new AppError(404, 'workspace-not-found', '找不到该项目')
+      return record
     }
 
-    /** Refuses a saved workspace that is disabled for this run or no longer passes the registration rules. */
-    async function assertWorkspaceUsable(workspace: WorkspaceInfo): Promise<void> {
-      if (workspace.id === 'default') return
-      const disabled = disabledWorkspaces.get(workspace.id)
-      if (disabled) throw workspaceDisabled(workspace, disabled)
-      // The directory layout may have changed since startup.
-      const verdict = await checkWorkspaceCandidate(workspace.path, { ...workspaceGuard, existing: [] })
-      if (!verdict.ok) throw workspaceDisabled(workspace, verdict.error)
+    /** Whether other devices may start sessions in a project under the current policy. */
+    function remoteStartable(id: string): boolean {
+      const remote = policy.get().remote
+      return remote.allowRemoteStart && levelAtMost('L1', remote.maxLevel) && (remote.workspaces === null || remote.workspaces.includes(id))
     }
 
-    /** New turns in a session whose directory belongs to a disabled workspace are refused. */
-    async function assertSessionWorkspace(sessionId: string): Promise<void> {
-      if (!disabledWorkspaces.size) return
-      const cwd = (await hub!.listTasks()).find(task => task.id === sessionId)?.cwd
-      // An unresolvable directory is refused by the driver itself.
-      const root = await canonicalPath(cwd ?? workspaceRoot).catch(() => undefined)
-      if (root === undefined || root === canonicalWorkspace) return
-      for (const workspace of savedWorkspaces()) {
-        const error = disabledWorkspaces.get(workspace.id)
-        if (error && root === (await canonicalPath(workspace.path).catch(() => undefined))) throw workspaceDisabled(workspace, error)
+    function startInfo(): WorkspaceInfo {
+      return {
+        id: 'default',
+        name: START_DIRECTORY,
+        path: workspaceRoot,
+        folders: [{ id: 'default', path: workspaceRoot }],
+        remoteStart: remoteStartable('default'),
+        ...(defaultFlags.codeRoot ? { codeRoot: true as const } : {}),
       }
     }
 
-    async function addWorkspace(caller: Caller, input: z.infer<typeof workspaceSchema>): Promise<WorkspaceInfo> {
-      if (!isAbsolute(input.path) || input.path.includes('\0')) throw new AppError(400, 'workspace-invalid', '请填写项目目录的绝对路径')
-      const verdict = await checkWorkspaceCandidate(input.path, guardContext())
-      if (!verdict.ok) throw verdict.error
-      const path = verdict.realPath
-      // An ID the policy still names is never handed to another directory: re-adding under it would widen remote access without a confirmed policy change.
-      const taken = [...savedWorkspaces().map(item => item.id), ...(policy.get().remote.workspaces ?? [])]
-      const workspace = { id: availableId(input.name ?? basename(path), taken), name: input.name ?? (basename(path) || path), path }
+    function projectInfo(record: WorkspaceRecord, state: ProjectState): WorkspaceInfo {
+      return {
+        id: record.id,
+        name: record.name,
+        path: record.path,
+        ...(state.failure ? { unavailable: state.failure.message } : {}),
+        folders: state.folders.map(folder => ({
+          id: folder.id,
+          path: folder.path,
+          ...(folder.message ? { unavailable: folder.message } : {}),
+        })),
+        ...(record.glyph ? { glyph: record.glyph } : {}),
+        remoteStart: remoteStartable(record.id),
+        ...(state.folders.some(folder => folder.problem === 'code-root') ? { codeRoot: true as const } : {}),
+      }
+    }
+
+    /** The start directory, then every saved project; an unusable one carries its reason, so it can still be edited and removed. */
+    async function projectInfos(): Promise<WorkspaceInfo[]> {
+      const infos = [startInfo()]
+      for (const record of config.settings().workspaces) infos.push(projectInfo(record, await projectState(record)))
+      return infos
+    }
+
+    /** As last checked, for synchronous callers; a project never checked yet counts as unusable. */
+    function lastSeenUsable(record: WorkspaceRecord | undefined): boolean {
+      if (!record) return false
+      const state = projectStates.get(record.id)
+      return state !== undefined && state.key === stateKey(record) && !state.failure
+    }
+
+    /**
+     * Directories a session may start or continue in: the drivers' own second check against the Host's list. Sessions'
+     * own folders lie directly inside the start directory, so listing them grants nothing the start directory does not;
+     * they come last, so a project made from one starts its sessions under the project's spelling of the path.
+     */
+    function usablePrimaries(): string[] {
+      return [
+        workspaceRoot,
+        ...config
+          .settings()
+          .workspaces.filter(record => lastSeenUsable(record))
+          .flatMap(record => record.folders.map(folder => folder.path)),
+        ...ownFolders.paths(hub?.sessionFolders() ?? []),
+      ]
+    }
+
+    /** The start directory and the usable saved projects with their folders, for drivers that take every folder. */
+    function usableProjects(): HostProject[] {
+      return [
+        { id: 'default', folders: [{ id: 'default', path: workspaceRoot }] },
+        ...config
+          .settings()
+          .workspaces.filter(record => lastSeenUsable(record))
+          .map(record => ({ id: record.id, folders: record.folders.map(folder => ({ id: folder.id, path: folder.path })) })),
+      ]
+    }
+
+    function workspaceDisabled(record: WorkspaceRecord, state: ProjectState): AppError {
+      return new AppError(409, 'workspace-disabled', `项目「${record.name}」暂不可用：${state.failure?.message ?? ''}`)
+    }
+
+    /** Session start: every folder passes R1–R7 and R10 now and the folders still do not overlap. */
+    async function assertWorkspaceUsable(record: WorkspaceRecord): Promise<void> {
+      const state = await projectState(record, { fresh: true, readable: true })
+      if (state.failure) throw workspaceDisabled(record, state)
+    }
+
+    async function sessionTask(sessionId: string): Promise<TaskSummary | undefined> {
+      return (await hub!.listTasks()).find(task => task.id === sessionId)
+    }
+
+    /** Whether every folder a session recorded still resolves to a folder of `record`. */
+    async function foldersStillIn(task: TaskSummary, record: WorkspaceRecord): Promise<boolean> {
+      const current = await canonicalSet(record.folders.map(folder => folder.path))
+      for (const path of sessionFolders(task, workspaceRoot)) {
+        const canonical = await canonicalPath(path).catch(() => undefined)
+        if (canonical === undefined || !current.has(canonical)) return false
+      }
+      return true
+    }
+
+    /**
+     * New turns and option changes in an existing session. A session started in a saved project needs every folder it
+     * recorded to still be a folder of that project (else 409 `workspace-changed`) and the project to be usable (409
+     * `workspace-disabled`). A session in a folder of its own needs that folder still directly inside the start directory
+     * (else `workspace-changed`). A session from before projects had several folders is refused while its directory is
+     * the primary folder of an unusable project.
+     */
+    async function assertSessionWorkspace(sessionId: string): Promise<void> {
+      const task = await sessionTask(sessionId)
+      if (task?.sessionFolder && !(await ownFolders.verify(task.cwd))) throw workspaceChanged()
+      if (!task || task.workspaceId === 'default') return
+      if (task.workspaceId !== undefined) {
+        const record = savedProject(task.workspaceId)
+        if (!record || !(await foldersStillIn(task, record))) throw workspaceChanged()
+        const state = await projectState(record)
+        if (state.failure) throw workspaceDisabled(record, state)
+        return
+      }
+      // An unresolvable directory is refused by the driver itself.
+      const root = await canonicalPath(task.cwd ?? workspaceRoot).catch(() => undefined)
+      if (root === undefined || root === canonicalWorkspace) return
+      for (const record of config.settings().workspaces) {
+        const state = await projectState(record)
+        if (state.failure && (await canonicalSet(record.folders.map(folder => folder.path))).has(root))
+          throw workspaceDisabled(record, state)
+      }
+    }
+
+    /**
+     * Whether a running or waiting session of `record` uses one of `paths`: a session started in the project, by the
+     * folders it recorded; one from before projects had several folders, by its directory against the primary folder.
+     */
+    async function sessionsUsing(record: WorkspaceRecord, paths: readonly string[]): Promise<boolean> {
+      const targets = await canonicalSet(paths)
+      for (const task of await hub!.listTasks()) {
+        if (task.status !== 'running' && task.status !== 'waiting-approval') continue
+        if (task.workspaceId === record.id) {
+          for (const path of sessionFolders(task, workspaceRoot)) {
+            if (paths.includes(path) || targets.has((await canonicalPath(path).catch(() => undefined)) ?? '')) return true
+          }
+        } else if (task.workspaceId === undefined && task.cwd !== undefined) {
+          // Such a session uses only its directory, which was the project's primary folder when it started.
+          if (paths.includes(task.cwd) || targets.has((await canonicalPath(task.cwd).catch(() => undefined)) ?? '')) return true
+        }
+      }
+      return false
+    }
+
+    /**
+     * A new project from the desktop's native picker or a confirmed drop (or `pnpm latch project add`). Each path passes
+     * R1–R10 and the project rules in order; the first accepted one is the primary folder. Audited before it is saved.
+     */
+    async function createProject(
+      caller: DeviceCaller,
+      input: z.infer<typeof projectCreateSchema>,
+    ): Promise<{ workspace: WorkspaceInfo; refused: FolderRefusal[] }> {
+      if (input.name !== undefined && !isPrintableText(input.name)) throw unprintableName()
+      const plan = await planFolders({ current: [], paths: input.paths, primaries: primaries(), guard: workspaceGuard })
+      if (plan.added.length === 0) throw foldersRefused(plan.refused)
+      const record = newProject({ ...(input.name !== undefined ? { name: input.name } : {}), folders: plan.folders, taken: takenIds() })
+      return { workspace: await saveNewProject(caller, record, input.via), refused: plan.refused }
+    }
+
+    /** An ID the policy still names is never handed to another project: reusing it would widen remote access without a confirmed policy change. */
+    function takenIds(): string[] {
+      return ['default', ...config.settings().workspaces.map(item => item.id), ...(policy.get().remote.workspaces ?? [])]
+    }
+
+    /** Granting: the project is on record before it is saved, and a failed save marks the record as never committed. */
+    async function saveNewProject(caller: DeviceCaller, record: WorkspaceRecord, via: FolderVia): Promise<WorkspaceInfo> {
       const seq = await audited({
         action: 'workspace.added',
         actor: actorOf(caller),
-        target: workspace.id,
-        detail: { workspaceId: workspace.id, pathHash: sha256Hex(path) },
+        target: record.id,
+        detail: {
+          workspaceId: record.id,
+          pathHash: sha256Hex(record.path),
+          folderCount: record.folders.length,
+          foldersHash: foldersHash(record.folders),
+          via,
+        },
       })
       try {
         await writeSettings(caller, draft => {
-          draft.workspaces.push(workspace)
+          draft.workspaces.push(record)
         })
       } catch (error) {
         auditFailed(seq, caller)
         throw error
       }
-      return workspace
+      return projectInfo(record, await projectState(record, { fresh: true }))
+    }
+
+    /**
+     * 存为项目 from the desktop: the folder the Host made for a session becomes the primary folder of a new project, named
+     * after the session, after the same checks as a picked folder. The page names the session, never a path. The session
+     * keeps the project it started in (the start directory): a session's project is fixed when it is created.
+     */
+    async function saveSessionProject(
+      caller: DeviceCaller,
+      input: z.infer<typeof sessionProjectSchema>,
+    ): Promise<{ workspace: WorkspaceInfo; refused: FolderRefusal[] }> {
+      const task = await sessionTask(input.sessionId)
+      if (!task) throw new AppError(404, 'task-not-found', '找不到该会话')
+      if (!task.sessionFolder || task.workspaceId !== 'default' || !task.cwd || !(await ownFolders.verify(task.cwd)))
+        throw new AppError(409, 'session-folder-none', '这个会话没有自己的文件夹，或文件夹已不在启动目录中，不能存为项目')
+      const plan = await planFolders({ current: [], paths: [task.cwd], primaries: primaries(), guard: workspaceGuard })
+      if (plan.added.length === 0) throw foldersRefused(plan.refused)
+      // What is saved is the real path the rules were checked on: it must still be the folder directly inside the start
+      // directory that the owner confirmed, not wherever a link put in its place meanwhile points.
+      if ((await canonicalPath(dirname(plan.folders[0].path)).catch(() => undefined)) !== canonicalWorkspace)
+        throw new AppError(409, 'session-folder-none', '这个会话没有自己的文件夹，或文件夹已不在启动目录中，不能存为项目')
+      const title = Array.from(task.title.trim()).slice(0, 80).join('').trim()
+      const record = newProject({
+        ...(title && isPrintableText(title) ? { name: title } : {}),
+        idBase: basename(plan.folders[0].path),
+        folders: plan.folders,
+        taken: takenIds(),
+      })
+      return { workspace: await saveNewProject(caller, record, 'session'), refused: [] }
+    }
+
+    /** More folders for a saved project, or (`replace`) one path in place of a folder, keeping its ID and position. */
+    async function addFolders(
+      caller: DeviceCaller,
+      id: string,
+      input: z.infer<typeof folderAddSchema>,
+    ): Promise<{ workspace: WorkspaceInfo; refused: FolderRefusal[] }> {
+      if (id === 'default') throw new AppError(409, 'workspace-default', '启动目录只能包含一个文件夹。要组合多个文件夹，请新建项目。')
+      const record = requireProject(id)
+      if (input.replace !== undefined) {
+        const replaced = record.folders.find(folder => folder.id === input.replace)
+        if (!replaced) throw new AppError(404, 'workspace-folder-not-found', '找不到该文件夹')
+        if (await sessionsUsing(record, [replaced.path])) throw folderInUse()
+      }
+      const plan = await planFolders({
+        current: record.folders,
+        paths: input.paths,
+        ...(input.replace !== undefined ? { replace: input.replace } : {}),
+        primaries: primaries(record.id),
+        guard: workspaceGuard,
+      })
+      if (plan.added.length === 0) throw foldersRefused(plan.refused)
+      const seqs: number[] = []
+      const failed = () => {
+        for (const seq of seqs) auditFailed(seq, caller)
+      }
+      try {
+        for (const folder of plan.added) {
+          const seq = await audited({
+            action: 'workspace.folder-added',
+            actor: actorOf(caller),
+            target: record.id,
+            detail: {
+              workspaceId: record.id,
+              folderId: folder.id,
+              pathHash: sha256Hex(folder.path),
+              via: input.via,
+              replacesFolder: input.replace !== undefined,
+            },
+          })
+          if (seq !== undefined) seqs.push(seq)
+        }
+        await writeSettings(caller, draft => {
+          const target = draft.workspaces.find(item => item.id === record.id)
+          if (!target) throw new AppError(404, 'workspace-not-found', '找不到该项目')
+          target.folders = plan.folders
+          target.path = plan.folders[0].path
+          if (input.replace === record.folders[0]?.id) delete target.invalid
+        })
+      } catch (error) {
+        failed()
+        throw error
+      }
+      const updated = requireProject(record.id)
+      return { workspace: projectInfo(updated, await projectState(updated, { fresh: true })), refused: plan.refused }
+    }
+
+    /** Rename, glyph and folder order (which sets the primary folder): the folder set stays the same. Audited first. */
+    async function patchProject(caller: DeviceCaller, id: string, input: z.infer<typeof projectPatchSchema>): Promise<WorkspaceInfo> {
+      if (id === 'default') throw new AppError(409, 'workspace-default', '启动目录由 Host 的启动参数决定，不能修改')
+      if (input.name !== undefined && !isPrintableText(input.name)) throw unprintableName()
+      const record = requireProject(id)
+      const folders = input.order ? reorderFolders(record.folders, input.order) : record.folders
+      const renamed = input.name !== undefined && input.name !== record.name
+      const glyphChanged = input.glyph !== undefined && (input.glyph ?? undefined) !== record.glyph
+      const primaryChanged = folders[0].id !== record.folders[0].id
+      const reordered = folders.some((folder, index) => folder.id !== record.folders[index].id)
+      if (!renamed && !glyphChanged && !reordered) return projectInfo(record, await projectState(record))
+      if (primaryChanged) {
+        const verdict = await checkProjectFolders([folders[0].path], { existing: primaries(record.id) })
+        if (!verdict.ok) throw verdict.error
+      }
+      const seq = await audited({
+        action: 'workspace.changed',
+        actor: actorOf(caller),
+        target: record.id,
+        detail: { workspaceId: record.id, renamed, glyphChanged, primaryChanged, reordered },
+      })
+      try {
+        if (primaryChanged) {
+          const previous = await canonicalPath(record.path)
+          const owners = await Promise.all(
+            [workspaceRoot, ...config.settings().workspaces.map(item => item.path)].map(path => canonicalPath(path).catch(() => undefined)),
+          )
+          if (owners.filter(path => path === previous).length === 1) {
+            for (const task of await hub!.listTasks()) {
+              if (task.workspaceId === undefined && task.cwd && (await canonicalPath(task.cwd).catch(() => undefined)) === previous) {
+                await hub!.recordWorkspace(task.id, record.id)
+              }
+            }
+          }
+        }
+        await writeSettings(caller, draft => {
+          const target = draft.workspaces.find(item => item.id === record.id)
+          if (!target) throw new AppError(404, 'workspace-not-found', '找不到该项目')
+          if (renamed) target.name = input.name!
+          if (glyphChanged) {
+            if (input.glyph) target.glyph = input.glyph
+            else delete target.glyph
+          }
+          target.folders = folders
+          target.path = folders[0].path
+        })
+      } catch (error) {
+        auditFailed(seq, caller)
+        throw error
+      }
+      const updated = requireProject(record.id)
+      return projectInfo(updated, await projectState(updated, { fresh: true }))
+    }
+
+    /** Lowering: never blocked by the audit log. The last folder cannot go; the next one becomes primary when the first goes. */
+    async function removeFolder(caller: DeviceCaller, id: string, folderId: string, res: ServerResponse): Promise<WorkspaceInfo> {
+      if (id === 'default') throw new AppError(409, 'workspace-default', '启动目录只能包含一个文件夹，不能移除')
+      const record = requireProject(id)
+      const index = record.folders.findIndex(folder => folder.id === folderId)
+      if (index < 0) throw new AppError(404, 'workspace-folder-not-found', '找不到该文件夹')
+      if (record.folders.length === 1) throw new AppError(409, 'workspace-last-folder', '项目至少要有一个文件夹')
+      const folder = record.folders[index]
+      if (await sessionsUsing(record, [folder.path])) throw folderInUse()
+      const folders = record.folders.filter((_, position) => position !== index)
+      if (index === 0) {
+        const verdict = await checkProjectFolders([folders[0].path], { existing: primaries(record.id) })
+        if (!verdict.ok) throw verdict.error
+      }
+      await audited(
+        {
+          action: 'workspace.folder-removed',
+          actor: actorOf(caller),
+          target: record.id,
+          detail: { workspaceId: record.id, folderId: folder.id, pathHash: sha256Hex(folder.path) },
+        },
+        res,
+      )
+      await writeSettings(caller, draft => {
+        const target = draft.workspaces.find(item => item.id === record.id)
+        if (!target) throw new AppError(404, 'workspace-not-found', '找不到该项目')
+        target.folders = folders
+        target.path = folders[0].path
+      })
+      const updated = requireProject(record.id)
+      return projectInfo(updated, await projectState(updated, { fresh: true }))
     }
 
     async function removeWorkspace(caller: Caller, id: string, res: ServerResponse): Promise<void> {
-      if (id === 'default') throw new AppError(409, 'workspace-default', '默认工作区不能移除')
-      const workspace = config.settings().workspaces.find(item => item.id === id)
-      if (!workspace) throw new AppError(404, 'workspace-not-found', '找不到该项目')
-      const real = await realpath(workspace.path).catch(() => workspace.path)
-      for (const task of await hub!.listTasks()) {
-        if (
-          (task.status === 'running' || task.status === 'waiting-approval')
-          && task.cwd
-          && (task.cwd === workspace.path || (await realpath(task.cwd).catch(() => task.cwd)) === real)
-        ) {
-          throw new AppError(409, 'workspace-in-use', '有会话正在该项目中运行，请结束后再移除')
-        }
-      }
+      if (id === 'default') throw new AppError(409, 'workspace-default', '启动目录不能移除')
+      const record = requireProject(id)
+      if (
+        await sessionsUsing(
+          record,
+          record.folders.map(folder => folder.path),
+        )
+      )
+        throw new AppError(409, 'workspace-in-use', '有会话正在该项目中运行，请结束后再移除')
+      const real = await realpath(record.path).catch(() => record.path)
       await audited(
         { action: 'workspace.removed', actor: actorOf(caller), target: id, detail: { workspaceId: id, pathHash: sha256Hex(real) } },
         res,
@@ -1528,8 +2140,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         draft.workspaces = draft.workspaces.filter(item => item.id !== id)
         if (draft.defaults.workspaceId === id) delete draft.defaults.workspaceId
       })
-      // A later registration under this ID has passed the rules afresh.
-      disabledWorkspaces.delete(id)
+      // A later project under this ID is checked afresh.
+      projectStates.delete(id)
+      unusableProjects.delete(id)
     }
 
     function modelAvailable(ref: ModelRef): boolean {
@@ -1577,7 +2190,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return {
         harnessId: defaultHarnessId(),
         mode: saved.mode ?? 'agent',
-        workspaceId: saved.workspaceId && workspaces().some(item => item.id === saved.workspaceId) ? saved.workspaceId : 'default',
+        workspaceId:
+          saved.workspaceId && saved.workspaceId !== 'default' && lastSeenUsable(savedProject(saved.workspaceId))
+            ? saved.workspaceId
+            : 'default',
         ...(model ? { model } : {}),
       }
     }
@@ -1585,8 +2201,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     async function savePreferences(caller: Caller, input: z.infer<typeof preferencesSchema>['defaults']): Promise<void> {
       if (input.harnessId !== undefined && !hub!.has(input.harnessId))
         throw new AppError(400, 'harness-unavailable', `Harness ${input.harnessId} 未启用`)
-      if (input.workspaceId !== undefined && !workspaces().some(item => item.id === input.workspaceId))
-        throw new AppError(400, 'workspace-unavailable', '找不到该项目')
+      if (input.workspaceId !== undefined && input.workspaceId !== 'default') {
+        const record = savedProject(input.workspaceId)
+        if (!record || (await projectState(record)).failure) throw new AppError(400, 'workspace-unavailable', '找不到该项目，或它暂不可用')
+      }
       if (input.model) assertModel(input.model)
       await writeSettings(caller, draft => {
         if (input.harnessId !== undefined) draft.defaults.harnessId = input.harnessId
@@ -1597,24 +2215,26 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       })
     }
 
-    function catalog(): HostCatalog {
+    async function catalog(): Promise<HostCatalog> {
       return {
         harnesses: hub!.drivers(),
         providers: registry.providers().map(provider => summarizeProvider(provider, providerKindOf(provider.id))),
-        // Disabled workspaces are listed with their reason for settings; session pickers skip any entry marked unavailable.
-        workspaces: savedWorkspaces(),
+        // Unusable projects are listed with their reason for settings; session pickers skip any entry marked unavailable.
+        workspaces: await projectInfos(),
         defaults: sessionDefaults(),
+        projectFolders: { max: PROJECT_FOLDER_LIMIT },
+        ...(makeOwnFolders ? { sessionFolders: true as const } : {}),
       }
     }
 
     // ---- Approvals -------------------------------------------------------------------------------
 
     /** Builtin: the Host classifier's risk, never lower than the runtime's. Others: advisory R2. */
-    async function decorate(approval: Approval, source: HarnessSource | undefined, cwd: string | undefined): Promise<Approval> {
+    async function decorate(approval: Approval, source: HarnessSource | undefined, session: SessionScope | undefined): Promise<Approval> {
       const { risk: reported, advisory: _advisory, ...rest } = approval
       if (source !== 'builtin') return { ...rest, advisory: true, risk: 'R2' }
       const args = parseArguments(approval.arguments)
-      const classified = args ? (await classifyCall({ toolName: approval.toolName, arguments: args, ...(cwd ? { cwd } : {}) })).risk : 'R2'
+      const classified = args ? (await classifyCall({ toolName: approval.toolName, arguments: args, ...session })).risk : 'R2'
       const risk = maxRisk(maxRisk(classified, reported ?? 'R1'), 'R1')
       return { ...rest, risk: risk === 'R2' ? 'R2' : 'R1' }
     }
@@ -1625,7 +2245,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         approvals.map(async approval => {
           const task = byId.get(approval.sessionId)
           const harnessId = task?.harnessId ?? (await hub!.harnessOf(approval.sessionId).catch(() => undefined))
-          return decorate(approval, harnessId ? hub!.sourceOf(harnessId) : undefined, task?.cwd)
+          return decorate(approval, harnessId ? hub!.sourceOf(harnessId) : undefined, task)
         }),
       )
     }
@@ -1633,7 +2253,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     async function decoratedDetail(sessionId: string): Promise<TaskDetail> {
       const detail = await hub!.detail(sessionId)
       const source = hub!.sourceOf(detail.summary.harnessId ?? '')
-      return { ...detail, approvals: await Promise.all(detail.approvals.map(approval => decorate(approval, source, detail.summary.cwd))) }
+      return { ...detail, approvals: await Promise.all(detail.approvals.map(approval => decorate(approval, source, detail.summary))) }
     }
 
     function settled(approvalId: string, caller: DeviceCaller): AppError {
@@ -1660,12 +2280,21 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     /**
      * Target realpath, content hashes and risk reason of a Standard call, for the R2 confirmation. Content hashes describe
      * the built-in writer's file only: another tool's `content` or diff is that tool's own, and its arguments show it whole.
+     * A built-in file tool's relative path is resolved in the folder its `folder` argument names (the primary folder
+     * without one); in a session of several folders that folder is a fact of its own, or `null` when the session has no
+     * such folder. Other tools' paths are resolved in the working directory.
      */
-    async function approvalFacts(approval: Approval, args: Record<string, unknown> | undefined, cwd: string | undefined) {
+    async function approvalFacts(approval: Approval, args: Record<string, unknown> | undefined, session: SessionScope | undefined) {
+      const cwd = session?.cwd
       const realCwd = await realpath(cwd ?? workspaceRoot).catch(() => cwd ?? workspaceRoot)
+      const folders = scopeFolders(session ?? {}, workspaceRoot)
+      const fileTool = isBuiltinFileTool(approval.toolName)
+      const targeted = fileTool ? targetFolder(args ?? {}, folders) : undefined
+      const base = fileTool ? (targeted ? await realpath(targeted.path).catch(() => targeted.path) : undefined) : realCwd
+      const folder = fileTool && folders.length > 1 ? (base ?? null) : undefined
       let target: string | undefined
-      if (args && typeof args.path === 'string' && args.path && !isAbsolute(args.path)) {
-        const joined = resolve(realCwd, args.path)
+      if (base !== undefined && args && typeof args.path === 'string' && args.path && !isAbsolute(args.path)) {
+        const joined = resolve(base, args.path)
         target = await realpath(dirname(joined)).then(
           parent => join(parent, basename(joined)),
           () => joined,
@@ -1675,9 +2304,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const newTextHash = builtinWrite && args && typeof args.content === 'string' ? sha256Hex(args.content) : undefined
       const oldText = builtinWrite ? approval.tool?.diffs?.[0]?.oldText : undefined
       const oldTextHash = typeof oldText === 'string' ? sha256Hex(oldText) : undefined
-      const reason = args
-        ? (await classifyCall({ toolName: approval.toolName, arguments: args, ...(cwd ? { cwd } : {}) })).reason
-        : undefined
+      const reason = args ? (await classifyCall({ toolName: approval.toolName, arguments: args, ...session })).reason : undefined
       const previewHash = sha256Hex(
         canonicalJson({
           approvalId: approval.id,
@@ -1685,12 +2312,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           toolName: approval.toolName,
           arguments: args ?? approval.arguments,
           cwd: realCwd,
+          ...(folder !== undefined ? { folder } : {}),
           target,
           newTextHash,
           oldTextHash,
         }),
       )
-      return { realCwd, target, newTextHash, oldTextHash, reason, previewHash, builtinWrite }
+      return { realCwd, folder, target, newTextHash, oldTextHash, reason, previewHash, builtinWrite }
     }
 
     async function decideApproval(req: IncomingMessage, res: ServerResponse, caller: Caller, approvalId: string): Promise<void> {
@@ -1735,8 +2363,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const found = await hub!.findApproval(approvalId)
       if (!found) throw settled(approvalId, caller)
       const source = hub!.sourceOf(found.harnessId)
-      const detailCwd = (await hub!.listTasks()).find(task => task.id === found.approval.sessionId)?.cwd
-      const approval = await decorate(found.approval, source, detailCwd)
+      const session = (await hub!.listTasks()).find(task => task.id === found.approval.sessionId)
+      const approval = await decorate(found.approval, source, session)
       const option = input.optionId ? approval.options?.find(item => item.id === input.optionId) : undefined
       if (input.optionId && !option) {
         throw approval.advisory
@@ -1765,12 +2393,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (input.decision === 'allow') {
         assertSessionCeiling(caller, level)
         await assertRemoteSession(caller, approval.sessionId)
+        // Allowing a call acts in the session's folders, so they must still be folders of its project, as for new input.
+        await assertSessionWorkspace(approval.sessionId)
       }
       if (input.decision === 'allow' && optionKind === 'allow_always' && (approval.advisory || approval.risk === 'R2')) {
         throw new AppError(403, 'approval-always-unavailable', '高风险操作不提供“始终允许”')
       }
       if (input.decision === 'allow' && approval.risk === 'R2' && !approval.advisory) {
-        const facts = await approvalFacts(approval, args, detailCwd)
+        const facts = await approvalFacts(approval, args, session)
         previewHash = facts.previewHash
         // Host-derived facts come first and the model-chosen arguments last. Only the built-in writer's file content appears
         // as its size and hash; other arguments, and unparsable argument text, appear whole and escaped.
@@ -1778,6 +2408,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           { label: '会话', value: approval.sessionId },
           { label: '工具', value: approval.toolName },
           { label: '工作目录', value: facts.realCwd },
+          ...(facts.folder !== undefined ? [{ label: '文件夹', value: facts.folder ?? '（不是这个会话的文件夹）' }] : []),
           ...(facts.target ? [{ label: '目标路径', value: facts.target }] : []),
           ...(facts.newTextHash ? [{ label: '新内容哈希', value: hashDisplay(facts.newTextHash) }] : []),
           ...(facts.oldTextHash ? [{ label: '原内容哈希', value: hashDisplay(facts.oldTextHash) }] : []),
@@ -1897,12 +2528,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           const signature = JSON.stringify([detail.summary, detail.approvals])
           const summaryChanged = summaries.get(sessionId) !== signature
           summaries.set(sessionId, signature)
+          const sentAt = hostTime()
           const event: TaskStateEvent = {
             type: 'task-state',
             instanceId,
             revision: globalRevision,
             sessionId,
-            detail: { ...detail, sync: { instanceId, revision: globalRevision } },
+            detail: { ...detail, sync: { instanceId, revision: globalRevision, hostTime: sentAt } },
+            hostTime: sentAt,
           }
           for (const [res, stream] of streams) {
             if (stream.sessionId === sessionId) send(res, event)
@@ -2344,12 +2977,18 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         })
       } else {
         // The preview is a diff against `baseHash`, so the confirmation binds it; the store writes only on that base (409 policy-changed).
+        // A change that only adds one outbound address is titled by that address.
+        const added = next.hostEgressAllow.filter(entry => !previous.hostEgressAllow.includes(entry))
+        const removed = previous.hostEgressAllow.filter(entry => !next.hostEgressAllow.includes(entry))
+        const onlyAddress = diff.every(line => line.path === 'hostEgressAllow') && added.length === 1 && removed.length === 0
         const stepup = await confirm(
           req,
           caller,
           'policy.change',
           { baseHash, nextHash: sha256Hex(canonicalJson(next)) },
           diff.map(line => ({ label: line.path, value: `${line.before} → ${line.after}` })),
+          [],
+          onlyAddress ? added[0] : undefined,
         )
         written = await serial(caller, 'admin', () => policy.update(next, actorOf(caller), stepup, baseHash))
       }
@@ -2389,7 +3028,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     /**
      * The harness and project lists that limit remote starts also limit what a remote device may continue: new input,
-     * option changes and allowing a call. A session whose directory no longer matches a listed project counts as outside.
+     * option changes and allowing a call. A session started in a project needs that project listed, usable and still
+     * holding every folder the session recorded; a folder shared with an unlisted project never makes its sessions
+     * match. A session in a folder of its own counts as one in the start directory. A session from before projects had
+     * several folders needs its directory to be a listed project's primary folder. Anything that does not match counts
+     * as outside.
      */
     async function assertRemoteSession(caller: Caller, sessionId: string): Promise<void> {
       if (caller.connection.listener === 'unix') return
@@ -2397,12 +3040,27 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (remote.harnesses === null && remote.workspaces === null) return
       if (remote.harnesses !== null && !remote.harnesses.includes(await hub!.harnessOf(sessionId))) throw ceilingExceeded([])
       if (remote.workspaces === null) return
-      const task = (await hub!.listTasks()).find(item => item.id === sessionId)
-      const root = task && (await canonicalPath(task.cwd ?? workspaceRoot).catch(() => undefined))
-      for (const workspace of savedWorkspaces()) {
-        if (!remote.workspaces.includes(workspace.id)) continue
-        const path = workspace.id === 'default' ? canonicalWorkspace : await canonicalPath(workspace.path).catch(() => undefined)
-        if (root !== undefined && root === path) return
+      const task = await sessionTask(sessionId)
+      if (!task) throw ceilingExceeded([])
+      if (task.workspaceId !== undefined) {
+        if (!remote.workspaces.includes(task.workspaceId)) throw ceilingExceeded([])
+        if (task.workspaceId === 'default') {
+          const root = await canonicalPath(task.cwd ?? workspaceRoot).catch(() => undefined)
+          if (root !== undefined && root === canonicalWorkspace) return
+          // A session's own folder lies directly inside the start directory, which the policy lists.
+          if (task.sessionFolder && (await ownFolders.verify(task.cwd))) return
+          throw ceilingExceeded([])
+        }
+        const record = savedProject(task.workspaceId)
+        if (record && !(await projectState(record)).failure && (await foldersStillIn(task, record))) return
+        throw ceilingExceeded([])
+      }
+      const root = await canonicalPath(task.cwd ?? workspaceRoot).catch(() => undefined)
+      if (root === undefined) throw ceilingExceeded([])
+      if (remote.workspaces.includes('default') && root === canonicalWorkspace) return
+      for (const record of config.settings().workspaces) {
+        if (!remote.workspaces.includes(record.id)) continue
+        if (root === (await canonicalPath(record.path).catch(() => undefined))) return
       }
       throw ceilingExceeded([])
     }
@@ -2413,110 +3071,188 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return level
     }
 
+    /**
+     * A session in the folder made for its request. The folder stays once a session was created in it; a start that
+     * created none removes it again while it is empty.
+     */
+    async function createInOwnFolder(task: HubCreateInput, requestId: string): Promise<{ sessionId: string }> {
+      try {
+        await ownFolders.starting(requestId)
+        const created = await hub!.createTask(task)
+        ownFolders.created(requestId)
+        return created
+      } catch (error) {
+        await ownFolders.release(requestId, error instanceof AppError && error.status >= 400 && error.status < 500 && error.status !== 408)
+        throw error
+      }
+    }
+
     async function createTask(req: IncomingMessage, res: ServerResponse, caller: Caller): Promise<void> {
       requireScope(caller, 'run')
       const input = createTaskSchema.parse(await jsonBody(req, TASK_BODY_LIMIT))
-      recheck(caller, 'run')
-      const harnessId = input.harnessId ?? defaultHarnessId()
-      const harness = hub!.info(harnessId)
-      if (!harness || !hub!.has(harnessId)) throw new AppError(409, 'harness-unavailable', `Harness ${harnessId} 未启用`)
-      if (harness.status !== 'ready') throw new AppError(409, 'harness-unavailable', harness.statusMessage ?? `${harness.name} 当前不可用`)
-      if (input.mode && !harness.modes.includes(input.mode)) throw new AppError(400, 'mode-unsupported', `${harness.name} 不支持该会话模式`)
-      if (input.model && harness.models !== 'host')
-        throw new AppError(400, 'model-unsupported', `${harness.name} 自行管理模型，不能指定模型服务`)
-      if (input.model) assertModel(input.model)
-      const workspaceId = input.workspaceId ?? 'default'
-      const chosen = input.workspaceId === undefined ? undefined : savedWorkspaces().find(item => item.id === input.workspaceId)
-      if (input.workspaceId !== undefined && !chosen) throw new AppError(400, 'workspace-unavailable', '找不到所选项目')
-      if (chosen) await assertWorkspaceUsable(chosen)
-      // Only what the client chose reaches the driver; defaults stay the driver's decision.
-      const task: HubCreateInput = {
-        prompt: input.prompt,
-        requestId: input.requestId,
-        harnessId,
-        ...(input.mode ? { mode: input.mode } : {}),
-        ...(input.model ? { model: input.model } : {}),
-        ...(chosen ? { cwd: chosen.path } : {}),
-      }
-      if (hub!.levelOf(harnessId) === 'L1') {
-        assertStandardCeiling(caller, { harnessId, workspaceId })
-        json(res, await hub!.createTask(task), 201)
-        return
-      }
-      assertSessionCeiling(caller, 'L3')
-      if (workspaceId === 'default' && defaultFlags.insideData)
-        throw new AppError(409, 'workspace-inside-data', '该工作区位于数据目录内，迁出之前只能使用内置 Harness')
-      if (workspaceId === 'default' && defaultFlags.codeRoot)
-        throw new AppError(409, 'workspace-code-root', '该目录与 Latch 程序目录重叠，不能作为项目')
-      const cwd = await realpath(chosen?.path ?? workspaceRoot)
-      const promptHash = sha256Hex(input.prompt)
-      const preview = await hub!.launchPreviewOf(harnessId, cwd)
-      let launchHash: string
-      let lines: PreviewLine[]
-      if (preview) {
-        launchHash = preview.launchHash
-        lines = [
-          { label: 'Harness', value: `${harness.name}（${harnessId}）` },
-          { label: '命令', value: preview.command },
-          { label: '参数', value: JSON.stringify(preview.args) },
-          { label: '环境变量名', value: preview.envNames.join('、') || '（无）' },
-          { label: '工作目录', value: preview.cwd },
-          { label: '定义状态', value: preview.verified ? '已验证的预设' : '未验证的定义' },
-          { label: '模式读回', value: preview.readback === 'mode' ? '可读回' : '无法读回' },
-          { label: '审批', value: preview.approvals === 'prompts' ? '会请求审批' : '不请求审批' },
-          ...preview.notes.map(note => ({ label: '说明', value: note })),
-          { label: '启动指纹', value: hashDisplay(launchHash) },
-          { label: '首条输入', value: hashDisplay(promptHash) },
+      await projectOperation(caller, 'run', async () => {
+        recheck(caller, 'run')
+        const harnessId = input.harnessId ?? defaultHarnessId()
+        const harness = hub!.info(harnessId)
+        if (!harness || !hub!.has(harnessId)) throw new AppError(409, 'harness-unavailable', `Harness ${harnessId} 未启用`)
+        if (harness.status !== 'ready')
+          throw new AppError(409, 'harness-unavailable', harness.statusMessage ?? `${harness.name} 当前不可用`)
+        if (input.mode && !harness.modes.includes(input.mode))
+          throw new AppError(400, 'mode-unsupported', `${harness.name} 不支持该会话模式`)
+        if (input.model && harness.models !== 'host')
+          throw new AppError(400, 'model-unsupported', `${harness.name} 自行管理模型，不能指定模型服务`)
+        if (input.model) assertModel(input.model)
+        const workspaceId = input.workspaceId ?? 'default'
+        const chosen = workspaceId === 'default' ? undefined : savedProject(workspaceId)
+        if (workspaceId !== 'default' && !chosen) throw new AppError(400, 'workspace-unavailable', '找不到所选项目')
+        if (chosen) await assertWorkspaceUsable(chosen)
+        const folderCount = chosen?.folders.length ?? 1
+        const limit = harness.projectFolders?.access === 'all' ? harness.projectFolders.max : undefined
+        if (limit !== undefined && folderCount > limit)
+          throw new AppError(
+            409,
+            'harness-folder-limit',
+            `${harness.name} 最多使用 ${limit} 个文件夹，这个项目有 ${folderCount} 个，会话没有开始`,
+          )
+        // While the start directory is the Host's default, an Agent session outside a saved project gets a new folder of
+        // its own there; 只对话 sessions read and write no files and never get one.
+        const mode = input.mode ?? (harness.modes.includes('agent') ? 'agent' : harness.modes[0])
+        const ownFolder = makeOwnFolders && !chosen && mode === 'agent'
+        // A request's folder is its device's: another device naming the same request ID gets one of its own.
+        const folderRequest = `${caller.device.id}:${input.requestId}`
+        // The session starts in the project's primary folder. Only what the client chose reaches the driver as `cwd`;
+        // without a choice the start directory stays the driver's default.
+        const task: HubCreateInput = {
+          prompt: input.prompt,
+          requestId: input.requestId,
+          harnessId,
+          workspaceId,
+          ...(input.mode ? { mode: input.mode } : {}),
+          ...(input.model ? { model: input.model } : {}),
+          ...(chosen ? { cwd: chosen.folders[0].path } : input.workspaceId === 'default' ? { cwd: workspaceRoot } : {}),
+        }
+        if (hub!.levelOf(harnessId) === 'L1') {
+          assertStandardCeiling(caller, { harnessId, workspaceId })
+          if (ownFolder) {
+            const own = await ownFolders.allocate(folderRequest)
+            json(res, await createInOwnFolder({ ...task, cwd: own.path, sessionFolder: own.name }, folderRequest), 201)
+            return
+          }
+          // Every folder of the project, in order; the hub passes them on only to a driver that takes them all.
+          const folders = task.cwd === undefined ? undefined : chosen ? chosen.folders : [{ id: 'default', path: workspaceRoot }]
+          json(res, await hub!.createTask(folders ? { ...task, folders: folders.map(({ id, path }) => ({ id, path })) } : task), 201)
+          return
+        }
+        assertSessionCeiling(caller, 'L3')
+        if (workspaceId === 'default' && defaultFlags.insideData)
+          throw new AppError(409, 'workspace-inside-data', '该工作区位于数据目录内，迁出之前只能使用内置 Harness')
+        if (workspaceId === 'default' && defaultFlags.codeRoot)
+          throw new AppError(409, 'workspace-code-root', '该目录与 Latch 程序目录重叠，不能作为项目')
+        // Made before the confirmation, which shows it; the confirmed retry of this request gets the same folder.
+        const own = ownFolder ? await ownFolders.allocate(folderRequest) : undefined
+        const cwd = await realpath(own?.path ?? chosen?.folders[0].path ?? workspaceRoot)
+        // As for L1; the local confirmation below lists the ones the driver says it passes to the agent.
+        const folders =
+          task.cwd === undefined || own
+            ? undefined
+            : chosen
+              ? chosen.folders.map(({ id, path }) => ({ id, path }))
+              : [{ id: 'default', path: workspaceRoot }]
+        const promptHash = sha256Hex(input.prompt)
+        const preview = await hub!.launchPreviewOf(harnessId, cwd, folders ? { workspaceId, folders } : undefined)
+        // The folders the agent receives besides its working directory: shown, bound to the confirmation and audited.
+        const passed = [
+          ...new Set([
+            ...(harness.projectFolders?.access === 'all' ? (folders?.slice(1).map(folder => folder.path) ?? []) : []),
+            ...(preview?.folders ?? []),
+          ]),
         ]
-      } else {
-        const plugin = harnessPlugin(harnessId)
-        const pluginId = plugin?.id ?? harnessId
-        const version = plugin?.version ?? ''
-        launchHash = sha256Hex(canonicalJson({ harnessId, pluginId, version }))
-        lines = [
-          { label: 'Harness', value: `${harness.name}（${harnessId}）` },
-          { label: '命令', value: `第三方 Harness 插件 ${pluginId}@${version}` },
-          { label: '工作目录', value: cwd },
-          { label: '定义状态', value: '未验证的定义' },
-          { label: '模式读回', value: '无法读回' },
-          { label: '审批', value: '由插件决定，Latch 无法核实' },
-          { label: '启动指纹', value: hashDisplay(launchHash) },
-          { label: '首条输入', value: hashDisplay(promptHash) },
-        ]
-      }
-      const stepup = await confirm(
-        req,
-        caller,
-        'task.start-l3',
-        { harnessId, cwd, requestId: input.requestId, promptHash, launchHash },
-        lines,
-        L3_WARNINGS,
-      )
-      recheck(caller, 'run')
-      // The policy may have been lowered while the confirmation was open.
-      assertSessionCeiling(caller, 'L3')
-      if (chosen) await assertWorkspaceUsable(chosen)
-      // The intent is on record before the driver can spawn anything; the session id exists only once it has, so the
-      // record naming it is a commit that may fail without stopping a session the intent already covers.
-      const intent = await audited({ action: 'task.l3.start-requested', actor: actorOf(caller), stepup, detail: { harnessId, launchHash } })
-      let created: { sessionId: string }
-      try {
-        created = await hub!.createTask({ ...task, expectedLaunchHash: launchHash })
-      } catch (error) {
-        auditFailed(intent, caller)
-        throw error
-      }
-      await audited(
-        {
-          action: 'task.l3.started',
+        const foldersAudited = passed.length ? { folderCount: passed.length + 1 } : {}
+        let launchHash: string
+        let lines: PreviewLine[]
+        if (preview) {
+          launchHash = preview.launchHash
+          lines = [
+            { label: 'Harness', value: `${harness.name}（${harnessId}）` },
+            { label: '命令', value: preview.command },
+            { label: '参数', value: JSON.stringify(preview.args) },
+            { label: '环境变量名', value: preview.envNames.join('、') || '（无）' },
+            { label: '工作目录', value: preview.cwd },
+            ...passed.map(path => ({ label: '其他文件夹', value: path })),
+            { label: '定义状态', value: preview.verified ? '已验证的预设' : '未验证的定义' },
+            { label: '模式读回', value: preview.readback === 'mode' ? '可读回' : '无法读回' },
+            { label: '审批', value: preview.approvals === 'prompts' ? '会请求审批' : '不请求审批' },
+            ...preview.notes.map(note => ({ label: '说明', value: note })),
+            { label: '启动指纹', value: hashDisplay(launchHash) },
+            { label: '首条输入', value: hashDisplay(promptHash) },
+          ]
+        } else {
+          const plugin = harnessPlugin(harnessId)
+          const pluginId = plugin?.id ?? harnessId
+          const version = plugin?.version ?? ''
+          launchHash = sha256Hex(canonicalJson({ harnessId, pluginId, version, ...(passed.length ? { folders: passed } : {}) }))
+          lines = [
+            { label: 'Harness', value: `${harness.name}（${harnessId}）` },
+            { label: '命令', value: `第三方 Harness 插件 ${pluginId}@${version}` },
+            { label: '工作目录', value: cwd },
+            ...passed.map(path => ({ label: '其他文件夹', value: path })),
+            { label: '定义状态', value: '未验证的定义' },
+            { label: '模式读回', value: '无法读回' },
+            { label: '审批', value: '由插件决定，Latch 无法核实' },
+            { label: '启动指纹', value: hashDisplay(launchHash) },
+            { label: '首条输入', value: hashDisplay(promptHash) },
+          ]
+        }
+        const stepup = await confirm(
+          req,
+          caller,
+          'task.start-l3',
+          { harnessId, cwd, requestId: input.requestId, promptHash, launchHash, ...(passed.length ? { folders: passed } : {}) },
+          lines,
+          L3_WARNINGS,
+        )
+        recheck(caller, 'run')
+        // The policy may have been lowered while the confirmation was open.
+        assertSessionCeiling(caller, 'L3')
+        if (chosen) {
+          // The project may have been edited meanwhile: the session starts only in the primary folder that was confirmed.
+          const current = savedProject(chosen.id)
+          if (!current || (await realpath(current.folders[0].path).catch(() => undefined)) !== cwd) throw workspaceChanged()
+          // A harness that takes every folder starts only with the folders that were confirmed.
+          if (harness.projectFolders?.access === 'all' && !sameFolders(current.folders, chosen.folders)) throw workspaceChanged()
+          await assertWorkspaceUsable(current)
+        }
+        if (own && (!(await ownFolders.verify(own.path)) || (await realpath(own.path).catch(() => undefined)) !== cwd))
+          throw workspaceChanged()
+        // The intent is on record before the driver can spawn anything; the session id exists only once it has, so the
+        // record naming it is a commit that may fail without stopping a session the intent already covers.
+        const intent = await audited({
+          action: 'task.l3.start-requested',
           actor: actorOf(caller),
-          target: created.sessionId,
           stepup,
-          detail: { sessionId: created.sessionId, harnessId, launchHash },
-        },
-        res,
-      )
-      json(res, created, 201)
+          detail: { harnessId, launchHash, ...foldersAudited },
+        })
+        let created: { sessionId: string }
+        try {
+          created = own
+            ? await createInOwnFolder({ ...task, cwd: own.path, sessionFolder: own.name, expectedLaunchHash: launchHash }, folderRequest)
+            : await hub!.createTask({ ...task, ...(folders ? { folders } : {}), expectedLaunchHash: launchHash })
+        } catch (error) {
+          auditFailed(intent, caller)
+          throw error
+        }
+        await audited(
+          {
+            action: 'task.l3.started',
+            actor: actorOf(caller),
+            target: created.sessionId,
+            stepup,
+            detail: { sessionId: created.sessionId, harnessId, launchHash, ...foldersAudited },
+          },
+          res,
+        )
+        json(res, created, 201)
+      })
     }
 
     async function handleTask(
@@ -2592,11 +3328,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         }
         const detail = await hub!.detail(id)
         const harness = hub!.info(detail.summary.harnessId ?? '')
+        // A wider mode applies in every folder the harness received, e.g. Codex may then write in all of them.
+        const others = detail.summary.folderAccess === 'all' ? (detail.summary.folders ?? []).slice(1) : []
         const stepup = await confirm(req, caller, 'task.mode-widen', { sessionId: id, configId: input.configId, value: input.value }, [
           { label: '会话', value: detail.summary.title || id },
           { label: 'Harness', value: harness ? `${harness.name}（${harness.id}）` : (detail.summary.harnessId ?? '') },
           { label: '当前模式', value: detail.config?.find(option => option.id === input.configId)?.currentValue ?? '' },
           { label: '新模式', value: input.value },
+          ...others.map(folder => ({ label: '其他文件夹', value: folder.path })),
         ])
         recheck(caller, 'run')
         assertSessionCeiling(caller, hub!.levelOf(await hub!.harnessOf(id)))
@@ -2871,6 +3610,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
       if (path === '/link/api/agents' && method === 'GET') {
         requireScope(caller, 'admin')
+        // Reading the agent settings is a re-check: the next catalog looks for every command again.
+        forgetCommandLookups()
         json(res, { agents: config.settings().agents.map(agentSettings), presets: AGENT_PRESETS })
         return true
       }
@@ -2977,19 +3718,66 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         json(res, { deleted: true })
         return true
       }
+      if (path === '/link/api/folder-grants' && method === 'POST') {
+        requireScope(caller, 'admin')
+        requireDesktop(caller)
+        const grant = devices.folderGrant(caller.device.id, caller.credentialHash)
+        json(res, { nonce: grant.nonce, expiresAt: new Date(grant.expiresAt).toISOString() })
+        return true
+      }
       if (path === '/link/api/workspaces' && method === 'POST') {
         requireScope(caller, 'admin')
-        const input = workspaceSchema.parse(await jsonBody(req))
-        const workspace = await serial(caller, 'admin', () => addWorkspace(caller, input))
+        requireDesktop(caller)
+        const signed = await signedFolderBody(req, caller)
+        let result: { workspace: WorkspaceInfo; refused: FolderRefusal[] }
+        if (signed.via === 'session') {
+          const input = sessionProjectSchema.parse(signed)
+          result = await projectOperation(caller, 'admin', () => serial(caller, 'admin', () => saveSessionProject(caller, input)))
+        } else {
+          const input = projectCreateSchema.parse(signed)
+          result = await projectOperation(caller, 'admin', () => serial(caller, 'admin', () => createProject(caller, input)))
+        }
         refresh()
-        json(res, { workspace }, 201)
+        json(res, result, 201)
+        return true
+      }
+      const foldersMatch = path.match(/^\/link\/api\/workspaces\/([^/]+)\/folders$/)
+      if (foldersMatch && method === 'POST') {
+        requireScope(caller, 'admin')
+        requireDesktop(caller)
+        const id = safeDecode(foldersMatch[1]!)
+        const input = folderAddSchema.parse(await signedFolderBody(req, caller))
+        const result = await projectOperation(caller, 'admin', () => serial(caller, 'admin', () => addFolders(caller, id, input)))
+        refresh()
+        json(res, result)
+        return true
+      }
+      const folderMatch = path.match(/^\/link\/api\/workspaces\/([^/]+)\/folders\/([^/]+)$/)
+      if (folderMatch && method === 'DELETE') {
+        requireScope(caller, 'admin')
+        const id = safeDecode(folderMatch[1]!)
+        const folderId = safeDecode(folderMatch[2]!)
+        const workspace = await projectOperation(caller, 'admin', () =>
+          serial(caller, 'admin', () => removeFolder(caller, id, folderId, res)),
+        )
+        refresh()
+        json(res, { workspace })
         return true
       }
       const workspaceMatch = path.match(/^\/link\/api\/workspaces\/([^/]+)$/)
+      if (workspaceMatch && method === 'PATCH') {
+        requireScope(caller, 'admin')
+        const id = safeDecode(workspaceMatch[1]!)
+        const input = projectPatchSchema.parse(await jsonBody(req))
+        const workspace = await projectOperation(caller, 'admin', () => serial(caller, 'admin', () => patchProject(caller, id, input)))
+        refresh()
+        json(res, { workspace })
+        return true
+      }
       if (workspaceMatch && method === 'DELETE') {
         requireScope(caller, 'admin')
         const id = safeDecode(workspaceMatch[1]!)
-        await serial(caller, 'admin', () => removeWorkspace(caller, id, res))
+        await projectOperation(caller, 'admin', () => serial(caller, 'admin', () => removeWorkspace(caller, id, res)))
         refresh()
         json(res, { deleted: true })
         return true
@@ -3076,8 +3864,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           hostName: options.hostName ?? hostname(),
           harness: { id: defaultId, name: hub!.info(defaultId)?.name ?? defaultId },
           execution,
-          catalog: catalog(),
+          catalog: await catalog(),
           version: LATCH_VERSION,
+          hostTime: hostTime(),
         }
         json(res, snapshot)
         return
@@ -3144,7 +3933,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
       if (path === '/link/api/workspaces' && method === 'GET') {
         requireScope(caller, 'view')
-        json(res, { workspaces: savedWorkspaces() })
+        json(res, { workspaces: await projectInfos() })
         return
       }
       if (await handleDevices(req, res, caller, path, method)) return
@@ -3287,7 +4076,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         devMode: true,
       },
     })
+    starting = false
 
+    await writeProjectContext(dataDir, {
+      workspaceRoot: realWorkspace,
+      agentsDir,
+      codeRoot: resolve(codeRoot),
+      ...(tlsKeyPath ? { tlsKeyPath } : {}),
+    })
     return {
       hostId,
       hostId8,

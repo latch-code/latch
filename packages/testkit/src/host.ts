@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { Agent, fetch as undiciFetch } from 'undici'
 import type { ConfirmationTicket, Device, DeviceScope, EnrollmentView, InvitationView } from '@latch/protocol'
-import { enrollSigningText, renewSigningText, testDeviceKey, type TestDeviceKey } from './crypto.ts'
+import { enrollSigningText, foldersBodyHash, foldersSigningText, renewSigningText, testDeviceKey, type TestDeviceKey } from './crypto.ts'
 import { createTestPresence, type TestPresence } from './presence.ts'
 import { makeTestTls } from './tls.ts'
 
@@ -78,6 +78,33 @@ export interface TestDevice {
   /** Performs the request; on 403 stepup-required with a confirmation, approves via presence and retries with the header. */
   confirmed(path: string, init?: TestRequestInit): Promise<Response>
   renew(): Promise<void>
+  /**
+   * Adds folders the way the desktop app's main process does: a nonce from `folder-grants`, then a body signed with
+   * this device's key. Without `projectId` it creates a project. `sign` may alter what is signed, to test refusals.
+   */
+  addFolders(input: AddFoldersInput): Promise<Response>
+  /** 存为项目 the way the desktop app's main process does it: a new project from the session's own folder, signed. */
+  saveSessionFolder(input: SaveSessionFolderInput): Promise<Response>
+}
+
+export interface SaveSessionFolderInput {
+  sessionId: string
+  /** Tests: the body that is hashed and signed, when it should differ from the one sent. */
+  signedBody?: (body: Record<string, unknown>) => Record<string, unknown>
+  /** Tests: a nonce to use instead of a fresh one. */
+  nonce?: string
+}
+
+export interface AddFoldersInput {
+  paths: string[]
+  projectId?: string
+  name?: string
+  replace?: string
+  via?: 'picker' | 'drop'
+  /** Tests: the body that is hashed and signed, when it should differ from the one sent. */
+  signedBody?: (body: Record<string, unknown>) => Record<string, unknown>
+  /** Tests: a nonce to use instead of a fresh one. */
+  nonce?: string
 }
 
 export interface HostFixture<H extends FixtureHost = FixtureHost> {
@@ -266,6 +293,27 @@ export async function startHostFixture<H extends FixtureHost>(
         const status = await settleConfirmation(body.confirmation.id, id => testDevice.request(`confirmations/${id}`))
         if (status !== 'approved') throw new Error(`confirmation ${status}`)
         return testDevice.request(path, { ...init, confirmation: body.confirmation.id })
+      },
+      async addFolders(input) {
+        const nonce = input.nonce ?? (await testDevice.json<{ nonce: string }>('folder-grants', { method: 'POST', body: {} })).nonce
+        const body: Record<string, unknown> = {
+          nonce,
+          via: input.via ?? 'picker',
+          paths: input.paths,
+          ...(input.name !== undefined ? { name: input.name } : {}),
+          ...(input.replace !== undefined ? { replace: input.replace } : {}),
+        }
+        const signed = input.signedBody ? input.signedBody(body) : body
+        const signature = key.sign(foldersSigningText(host.hostId, state.device.id, nonce, foldersBodyHash(signed)))
+        const path = input.projectId ? `workspaces/${encodeURIComponent(input.projectId)}/folders` : 'workspaces'
+        return testDevice.request(path, { method: 'POST', body: { ...body, signature } })
+      },
+      async saveSessionFolder(input) {
+        const nonce = input.nonce ?? (await testDevice.json<{ nonce: string }>('folder-grants', { method: 'POST', body: {} })).nonce
+        const body: Record<string, unknown> = { nonce, via: 'session', sessionId: input.sessionId }
+        const signed = input.signedBody ? input.signedBody(body) : body
+        const signature = key.sign(foldersSigningText(host.hostId, state.device.id, nonce, foldersBodyHash(signed)))
+        return testDevice.request('workspaces', { method: 'POST', body: { ...body, signature } })
       },
       async renew() {
         const { nonce } = await testDevice.json<{ nonce: string }>('credentials/challenge', { method: 'POST', body: {} })

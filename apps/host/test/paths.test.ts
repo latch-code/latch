@@ -8,7 +8,9 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   DENY_READ_HOME_PATHS,
   canonicalPath,
+  checkFolderCandidate,
   checkPrivateFile,
+  checkProjectFolders,
   checkWorkspaceCandidate,
   classifyDefaultWorkspace,
   findCodeRoot,
@@ -94,6 +96,32 @@ describe('resolveLatchPaths', () => {
     expect(legacy.warnings).toEqual(['工作区位于数据目录内（/d/workspace）。迁出之前只能使用内置 Harness。'])
     expect(resolveLatchPaths({ ...base, env: {} })).toMatchObject({ workspaceRoot: '/home/me/Latch/workspace', workspaceSource: 'default' })
     expect(resolveLatchPaths({ ...base, env: { HARNESS_AGENTS_DIR: '/agents' } }).agentsDir).toBe('/agents')
+  })
+
+  it("never picks a start directory inside Latch's code: a legacy workspace there gives way to ~/Latch/workspace", () => {
+    const base = { home: '/home/me', platform: 'linux' as const, codeRoot: '/src/harness-link' }
+    const inRepo = (path: string) => path.startsWith('/src/harness-link/.runtime')
+    // The legacy ./.runtime data directory in the repository: it stays the data directory, the start directory moves.
+    const legacy = resolveLatchPaths({ ...base, cwd: '/src/harness-link', env: {}, exists: inRepo })
+    expect(legacy).toMatchObject({
+      dataDir: '/src/harness-link/.runtime',
+      dataDirSource: 'legacy-runtime',
+      workspaceRoot: '/home/me/Latch/workspace',
+      workspaceSource: 'default',
+    })
+    expect(legacy.warnings[1]).toBe(
+      '数据目录内的旧工作区 /src/harness-link/.runtime/workspace 位于 Latch 程序目录中，不再作为启动目录；启动目录改为 /home/me/Latch/workspace。原目录中的文件没有移动。',
+    )
+    expect(
+      resolveLatchPaths({ ...base, cwd: '/w', env: { HARNESS_DATA_DIR: '/src/harness-link/.runtime' }, exists: inRepo }).workspaceRoot,
+    ).toBe('/home/me/Latch/workspace')
+    // A directory the owner names is kept, wherever it is; a legacy workspace elsewhere is still used.
+    expect(
+      resolveLatchPaths({ ...base, cwd: '/w', env: {}, workspace: '/src/harness-link/.runtime/workspace', exists: inRepo }),
+    ).toMatchObject({ workspaceRoot: '/src/harness-link/.runtime/workspace', workspaceSource: 'flag' })
+    expect(
+      resolveLatchPaths({ ...base, cwd: '/w', env: { HARNESS_DATA_DIR: '/d' }, exists: path => path === '/d/workspace' }),
+    ).toMatchObject({ workspaceRoot: '/d/workspace', workspaceSource: 'legacy-data' })
   })
 })
 
@@ -652,5 +680,127 @@ describe('checkPrivateFile', () => {
     await expect(checkPrivateFile(good, { ...rule, uid: uid + 1 })).rejects.toEqual(failure)
     await expect(checkPrivateFile(join(root, 'missing.pem'), rule)).rejects.toEqual(failure)
     await expect(checkPrivateFile(root, rule)).rejects.toEqual(failure)
+  })
+})
+
+describe('project folders', () => {
+  const darwin = process.platform === 'darwin'
+
+  function setup() {
+    const root = temp()
+    for (const path of [
+      'home/.ssh',
+      'home/projects/a/lib',
+      'home/projects/b',
+      'home/projects/c,d',
+      'home/repo/.git',
+      'data',
+      'runtime',
+      'code',
+    ])
+      mkdirSync(join(root, path), { recursive: true })
+    writeFileSync(join(root, 'home', 'projects', 'file.txt'), 'x')
+    const home = join(root, 'home')
+    return {
+      root,
+      home,
+      projects: join(home, 'projects'),
+      guard: {
+        home,
+        dataDir: join(root, 'data'),
+        agentsDir: join(root, 'agents'),
+        runtimeDir: join(root, 'runtime'),
+        codeRoot: join(root, 'code'),
+      },
+    }
+  }
+
+  const text = (verdict: Awaited<ReturnType<typeof checkFolderCandidate>>) =>
+    verdict.ok ? `ok ${verdict.realPath}` : `${verdict.problem} ${verdict.error.status} ${verdict.error.code} ${verdict.error.message}`
+
+  it('applies R1–R7 to every folder, R8 and R9 to added ones, and R10 when asked', async () => {
+    const { root, projects, guard } = setup()
+    const added = (path: string) => checkFolderCandidate(path, guard, { added: true }).then(text)
+    const stored = (path: string) => checkFolderCandidate(path, guard).then(text)
+    expect(await added(join(projects, 'a'))).toBe(`ok ${join(projects, 'a')}`)
+    expect(await added('relative/a')).toBe('invalid 400 workspace-invalid 请使用文件夹的绝对路径')
+    expect(await added(join(projects, 'missing'))).toBe('missing 400 workspace-invalid 找不到这个文件夹')
+    expect(await added(join(projects, 'file.txt'))).toBe('not-directory 400 workspace-invalid 这个路径不是文件夹')
+    expect(await added(guard.dataDir)).toBe('overlap 409 workspace-overlap 该目录与 Latch 的数据目录重叠，不能作为项目')
+    expect(await added(guard.codeRoot)).toBe('code-root 409 workspace-code-root 该目录与 Latch 程序目录重叠，不能作为项目')
+    expect(await added(join(root, 'home', 'repo', '.git'))).toBe(
+      'protected 409 workspace-overlap 该目录位于受保护目录（如 .git）内，不能作为项目',
+    )
+    expect(await added(join(root, 'home', '.ssh'))).toMatch(/^overlap 409 workspace-overlap/u)
+
+    // R9 and R8 bind folders added from now on; a folder saved before keeps working.
+    expect(await added(join(projects, 'c,d'))).toBe('chars 400 workspace-folder-chars 文件夹路径不能包含逗号、* 或 ?')
+    expect(await stored(join(projects, 'c,d'))).toBe(`ok ${join(projects, 'c,d')}`)
+    const bidi = join(projects, 'x\u202Etxt.exe')
+    mkdirSync(bidi)
+    expect(await added(bidi)).toBe('unprintable 400 workspace-folder-unprintable 文件夹路径包含不可显示的字符')
+    expect(await stored(bidi)).toBe(`ok ${bidi}`)
+    const link = join(root, 'link,to-b')
+    symlinkSync(join(projects, 'b'), link)
+    // The realpath is what is stored and passed on, so R9 judges it, not the spelling picked.
+    expect(await added(link)).toBe(`ok ${join(projects, 'b')}`)
+
+    // A stored folder must still be the directory at that path: one now reached through a link is not the one granted.
+    rmSync(join(projects, 'b'), { recursive: true })
+    mkdirSync(join(root, 'moved'))
+    symlinkSync(join(root, 'moved'), join(projects, 'b'))
+    expect(await stored(join(projects, 'b'))).toBe('missing 400 workspace-invalid 找不到这个文件夹')
+
+    const failing = (code: string) => async () => {
+      throw Object.assign(new Error(code), { code })
+    }
+    const permission = darwin ? 'macOS 没有允许 Latch Host 访问这个文件夹' : 'Latch Host 没有权限读取这个文件夹'
+    for (const code of ['EPERM', 'EACCES'])
+      expect(await checkFolderCandidate(join(projects, 'a'), guard, { readable: true, opendir: failing(code) }).then(text)).toBe(
+        `permission 409 workspace-permission ${permission}`,
+      )
+    expect(await checkFolderCandidate(join(projects, 'a'), guard, { readable: true, opendir: failing('ENOENT') }).then(text)).toBe(
+      'missing 400 workspace-invalid 找不到这个文件夹',
+    )
+    // Without `readable`, R10 does not run (no privacy prompt while nobody is at the computer).
+    expect(await checkFolderCandidate(join(projects, 'a'), guard, { opendir: failing('EPERM') }).then(text)).toBe(
+      `ok ${join(projects, 'a')}`,
+    )
+    expect(await checkFolderCandidate(join(projects, 'a'), guard, { readable: true }).then(text)).toBe(`ok ${join(projects, 'a')}`)
+  })
+
+  it('keeps the folders of one project apart and its primary folder unique, up to 8 folders', async () => {
+    const { root, projects } = setup()
+    const check = async (paths: string[], existing: Array<{ id: string; name: string; path: string }> = []) => {
+      const verdict = await checkProjectFolders(paths, { existing })
+      return verdict.ok ? 'ok' : `${verdict.index} ${verdict.error.code} ${verdict.error.message}`
+    }
+    const [a, b, lib] = [join(projects, 'a'), join(projects, 'b'), join(projects, 'a', 'lib')]
+    const overlap = 'workspace-folder-overlap 同一项目中的文件夹不能相同，也不能相互包含'
+    expect(await check([a, b])).toBe('ok')
+    expect(await check([a, lib])).toBe(`1 ${overlap}`)
+    expect(await check([lib, b, a])).toBe(`2 ${overlap}`)
+    expect(await check([a, a])).toBe(`1 ${overlap}`)
+    symlinkSync(a, join(root, 'alias'))
+    expect(await check([b, join(root, 'alias')])).toBe('ok')
+    expect(await check([a, join(root, 'alias')])).toBe(`1 ${overlap}`)
+    if (darwin) {
+      expect(await check([a, `/System/Volumes/Data${a}`])).toBe(`1 ${overlap}`)
+      if ((await canonicalPath(a.toUpperCase()).catch(() => undefined)) !== undefined)
+        expect(await check([a, a.toUpperCase()])).toBe(`1 ${overlap}`)
+    }
+
+    // The primary folder is nobody else's primary folder; an additional folder may be shared.
+    const others = [
+      { id: 'default', name: '启动目录', path: join(projects, 'c,d') },
+      { id: 'shop', name: 'Shop', path: b },
+    ]
+    expect(await check([b, a], others)).toBe('0 workspace-exists 该文件夹已是项目「Shop」的主文件夹')
+    expect(await check([join(projects, 'c,d')], others)).toBe('0 workspace-exists 该文件夹是 Host 的启动目录，不能作为项目的主文件夹')
+    expect(await check([a, b], others)).toBe('ok')
+
+    const many = Array.from({ length: 9 }, (_, index) => join(root, `p${index}`))
+    expect(await check(many)).toBe('8 workspace-folder-limit 一个项目最多 8 个文件夹')
+    expect(await check([])).toBe('0 workspace-last-folder 项目至少要有一个文件夹')
   })
 })

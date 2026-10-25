@@ -56,6 +56,7 @@ it('labels tool kinds and previews a write as a diff against the current file', 
   const root = await directory()
   const tools = await mount()
   expect([...tools.values()].map(tool => [tool.name, tool.kind])).toEqual([
+    ['list_folders', 'search'],
     ['list_files', 'search'],
     ['read_file', 'read'],
     ['write_file', 'edit'],
@@ -112,6 +113,106 @@ it('denies every tool access to protected paths, including when the workspace co
   const nested = contextFor(join(dataDir, 'auth'))
   await expect(tools.get('list_files')!.execute({ path: '.' }, nested)).rejects.toThrow(denied)
   expect(() => createWorkspacePlugin({ protectedPaths: ['relative/data'] })).toThrow('absolute')
+})
+
+describe('a session of several folders', () => {
+  async function project() {
+    const parent = await directory()
+    const app = join(parent, 'app')
+    const web = join(parent, 'web')
+    await mkdir(app)
+    await mkdir(web)
+    const folders = [
+      { id: 'app', path: app, primary: true },
+      { id: 'web', path: web, primary: false },
+    ]
+    const context = {
+      sessionId: 'test',
+      callId: 'test',
+      workspaceRoot: app,
+      workspaceFolders: folders,
+      signal: new AbortController().signal,
+    }
+    return { parent, app, web, folders, context }
+  }
+
+  it('lists the folders by ID and directory name, never by absolute path', async () => {
+    const { parent, context } = await project()
+    const tools = await mount()
+    const { text } = await tools.get('list_folders')!.execute({}, context)
+    expect(JSON.parse(text)).toEqual([
+      { folder: 'app', name: 'app', primary: true },
+      { folder: 'web', name: 'web', primary: false },
+    ])
+    expect(text).not.toContain(parent)
+    expect(text).not.toContain('/')
+    await expect(tools.get('list_folders')!.execute({ folder: 'web' }, context)).rejects.toThrow()
+    // A driver that passes no folders has one: the working directory.
+    expect(JSON.parse((await tools.get('list_folders')!.execute({}, contextFor(context.workspaceRoot))).text)).toEqual([
+      { folder: 'default', name: 'app', primary: true },
+    ])
+    for (const tool of ['list_files', 'read_file', 'write_file']) expect(tools.get(tool)!.description).toContain('list_folders')
+  })
+
+  it('works in the folder the folder argument names, and in the primary folder without one', async () => {
+    const { app, web, context } = await project()
+    const tools = await mount()
+    expect(await tools.get('write_file')!.execute({ path: 'index.html', content: 'web page', folder: 'web' }, context)).toEqual({
+      text: '已写入「web」中的 index.html（8 字节）',
+    })
+    expect(await readFile(join(web, 'index.html'), 'utf8')).toBe('web page')
+    await tools.get('write_file')!.execute({ path: 'main.ts', content: 'app code' }, context)
+    expect(await readFile(join(app, 'main.ts'), 'utf8')).toBe('app code')
+    await expect(access(join(web, 'main.ts'))).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await tools.get('read_file')!.execute({ path: 'index.html', folder: 'web' }, context)).toEqual({ text: 'web page' })
+    expect(await tools.get('read_file')!.execute({ path: 'main.ts', folder: 'app' }, context)).toEqual({ text: 'app code' })
+    expect((await tools.get('list_files')!.execute({ path: '.', folder: 'web' }, context)).text).toBe('file	index.html')
+    const preview = await tools.get('write_file')!.preview!(
+      { path: 'index.html', content: 'new page', folder: 'web' },
+      { workspaceRoot: app, workspaceFolders: context.workspaceFolders, signal: context.signal },
+    )
+    expect(preview).toEqual({
+      title: '写入「web」中的 index.html',
+      diffs: [{ path: 'index.html', oldText: 'web page', newText: 'new page', previous: 'text' }],
+    })
+  })
+
+  it('refuses a folder outside the session and paths escaping the targeted folder', async () => {
+    const { app, web, context } = await project()
+    await writeFile(join(app, 'secret.txt'), 'app only')
+    const tools = await mount()
+    for (const folder of ['unknown', 'APP', 'default'])
+      await expect(tools.get('read_file')!.execute({ path: 'secret.txt', folder }, context)).rejects.toThrow('list_folders')
+    await expect(tools.get('read_file')!.execute({ path: '../app/secret.txt', folder: 'web' }, context)).rejects.toThrow('超出')
+    await expect(tools.get('read_file')!.execute({ path: join(app, 'secret.txt'), folder: 'web' }, context)).rejects.toThrow('相对路径')
+    await expect(tools.get('write_file')!.execute({ path: '../app/planted.txt', content: 'x', folder: 'web' }, context)).rejects.toThrow(
+      '超出',
+    )
+    await expect(tools.get('read_file')!.execute({ path: 'secret.txt', folder: 7 }, context)).rejects.toThrow()
+    await symlink(app, join(web, 'to-app'))
+    await expect(tools.get('read_file')!.execute({ path: 'to-app/secret.txt', folder: 'web' }, context)).rejects.toThrow('符号链接')
+    await expect(tools.get('write_file')!.execute({ path: 'to-app/planted.txt', content: 'x', folder: 'web' }, context)).rejects.toThrow(
+      '符号链接',
+    )
+    await expect(access(join(app, 'planted.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('denies protected paths inside any folder', async () => {
+    const { web, context } = await project()
+    const dataDir = join(web, '.runtime')
+    await mkdir(dataDir)
+    await writeFile(join(dataDir, 'providers.json'), 'secret')
+    const tools = await mount({ protectedPaths: [dataDir] })
+    const denied = '私有数据目录'
+    await expect(tools.get('read_file')!.execute({ path: '.runtime/providers.json', folder: 'web' }, context)).rejects.toThrow(denied)
+    await expect(tools.get('list_files')!.execute({ path: '.runtime', folder: 'web' }, context)).rejects.toThrow(denied)
+    await expect(tools.get('write_file')!.execute({ path: '.runtime/new.txt', content: 'x', folder: 'web' }, context)).rejects.toThrow(
+      denied,
+    )
+    expect((await tools.get('list_files')!.execute({ path: '.', folder: 'web' }, context)).text).toBe(
+      'protected (not accessible)\t.runtime',
+    )
+  })
 })
 
 it.skipIf(process.platform === 'win32')('refuses non-regular files without blocking on a FIFO', async () => {

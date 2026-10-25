@@ -1,7 +1,7 @@
 /**
- * Project configuration a harness loads when it starts, looked up in the session directory and every directory above
- * it, along both the path the agent is given and its real path. Its digest is part of the launch fingerprint, so the
- * local confirmation covers it and a later change stops the session.
+ * Project configuration a harness loads when it starts, looked up in the session directory, in every other folder the
+ * agent receives, and in every directory above them, along both the path the agent is given and its real path. Its
+ * digest is part of the launch fingerprint, so the local confirmation covers it and a later change stops the session.
  */
 import { constants, type Stats } from 'node:fs'
 import { lstat, open, readdir, readlink, realpath, stat, type FileHandle } from 'node:fs/promises'
@@ -10,7 +10,7 @@ import { dirname, join, resolve } from 'node:path'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import type { ProjectConfigManaged } from './profiles/index.ts'
 
-/** Per fingerprint: entries visited, bytes read, and directory levels below a configuration directory. */
+/** Per fingerprint, shared by all its folders: entries visited, bytes read, and levels below a configuration directory. */
 export const PROJECT_CONFIG_LIMITS = { entries: 2_000, bytes: 8 * 1024 * 1024, depth: 16 } as const
 
 /** Opening never waits on a FIFO or takes a terminal; the flags do not exist on Windows. */
@@ -57,12 +57,13 @@ async function readAll(handle: FileHandle, size: number): Promise<Buffer> {
 }
 
 /**
- * Fingerprints `paths` (files, or directories with everything below them) wherever they appear from `cwd` up to the
- * root. Directories are walked without following symbolic links; a linked file is read, a linked directory is not.
+ * Fingerprints `paths` (files, or directories with everything below them) wherever they appear from `cwd` (or each of
+ * several folders, the session directory first) up to the root; a directory shared by several is read once.
+ * Directories are walked without following symbolic links; a linked file is read, a linked directory is not.
  * The user's home directory is skipped: harnesses keep their own user-level data there (`~/.codex`, `~/.opencode`).
  */
 export async function fingerprintProjectConfig(
-  cwd: string,
+  cwd: string | readonly string[],
   paths: readonly string[],
   managed: ProjectConfigManaged = {},
   home: string = process.env.HOME || homedir(),
@@ -164,15 +165,17 @@ export async function fingerprintProjectConfig(
 
   const homes = new Set([resolve(home), await realpath(home).catch(() => resolve(home))])
   const seen = new Set<string>()
-  const literal = resolve(cwd)
-  for (const start of new Set([literal, await realpath(literal).catch(() => literal)])) {
-    for (let directory = start; ; directory = dirname(directory)) {
-      const identity = await realpath(directory).catch(() => directory)
-      if (!seen.has(identity) && !homes.has(directory) && !homes.has(identity)) {
-        for (const name of paths) await visit(join(directory, name), name, 0)
+  for (const root of typeof cwd === 'string' ? [cwd] : cwd) {
+    const literal = resolve(root)
+    for (const start of new Set([literal, await realpath(literal).catch(() => literal)])) {
+      for (let directory = start; ; directory = dirname(directory)) {
+        const identity = await realpath(directory).catch(() => directory)
+        if (!seen.has(identity) && !homes.has(directory) && !homes.has(identity)) {
+          for (const name of paths) await visit(join(directory, name), name, 0)
+        }
+        seen.add(identity)
+        if (dirname(directory) === directory) break
       }
-      seen.add(identity)
-      if (dirname(directory) === directory) break
     }
   }
 

@@ -9,24 +9,22 @@ body {
 }
 
 /*
- * Shell: desktop sidebar | conversation | inspector; drawer below 1024px; rail on tablets. The window is the ground; the
- * sidebar and rail sit on it without a divider, and from 768px the conversation is a sheet of paper inset by
- * --shell-inset, with the inline inspector continuing the same sheet. From 1024px the page sets --sidebar-width (0
- * while the sidebar is shut) and --sidebar-open-width (the width its content keeps): opening and shutting slide the
- * track (180ms) while the content stays as wide as it was and is clipped, and a drag moves nothing but the track.
+ * Shell: sidebar | conversation | 会话信息; drawer below 1024px; rail on tablets. The window is the ground; the sidebar,
+ * the rail and the column of session information sit on it without a divider, and from 768px the conversation is a
+ * sheet of paper inset by --shell-inset. The page sets --sidebar-width from 1024px (the inset while the sidebar is shut)
+ * with --sidebar-open-width (the width its content keeps), and --inspector-width (the inset while the column is closed)
+ * with --inspector-open-width: opening and shutting slide the tracks (180ms) while the content stays as wide as it was
+ * and is clipped, and a drag moves nothing but its track.
  */
 .app-shell {
   position: relative;
   display: grid;
-  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr) var(--inspector-width);
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
   background: var(--bg-app);
   transition: grid-template-columns var(--d-base) var(--ease);
-}
-.app-shell.has-inspector {
-  grid-template-columns: var(--sidebar-width) minmax(0, 1fr) var(--inspector-width);
 }
 .app-shell[data-resizing] {
   transition: none;
@@ -72,18 +70,17 @@ body {
 }
 @media (min-width: 768px) {
   .workspace {
-    margin: var(--shell-inset) var(--shell-inset) var(--shell-inset) 0;
+    position: relative;
+    margin: var(--shell-inset) 0;
     overflow: clip;
     border: 1px solid var(--line);
     border-radius: var(--r-12);
     corner-shape: var(--corner-shape);
   }
-  .app-shell.has-inspector .workspace {
-    margin-right: 0;
-    border-right: 0;
-    border-start-end-radius: 0;
-    border-end-end-radius: 0;
-  }
+}
+/* The rest of the main column; it has no box of its own, so the page layout is unchanged. */
+.workspace-view {
+  display: contents;
 }
 
 .rail {
@@ -115,9 +112,8 @@ body {
 }
 
 @media (max-width: 1023.98px) {
-  .app-shell,
-  .app-shell.has-inspector {
-    grid-template-columns: 56px minmax(0, 1fr);
+  .app-shell {
+    grid-template-columns: 56px minmax(0, 1fr) var(--inspector-width);
   }
   .sidebar {
     position: fixed;
@@ -145,8 +141,7 @@ body {
 }
 
 @media (max-width: 767.98px) {
-  .app-shell,
-  .app-shell.has-inspector {
+  .app-shell {
     grid-template-columns: minmax(0, 1fr);
   }
   .sidebar {
@@ -370,20 +365,24 @@ body {
   outline: none;
   box-shadow: var(--ring-focus-inset);
 }
+/* The column: its first line 16 under the top bar, clear of the 16px fade; turns space themselves (messages.css). */
 .transcript-content {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-20);
   width: 100%;
   max-width: calc(var(--content-width) + 2 * var(--gutter));
   margin: 0 auto;
-  padding: var(--sp-24) var(--gutter) var(--sp-32);
+  padding: var(--sp-16) var(--gutter) var(--sp-32);
 }
 .transcript-empty {
   color: var(--text-3);
   text-align: center;
   padding: var(--sp-48) 0;
 }
+/*
+ * 「回到最新」: a floating pill 12 above the input. It rises 8px as it fades in (180ms) and fades out as the reader
+ * arrives (120ms). While a turn runs it carries the comet, the phase and the time so far, at most 280 wide.
+ */
 .jump-latest {
   position: absolute;
   left: 50%;
@@ -393,6 +392,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: var(--sp-6);
+  max-width: min(280px, calc(100% - 2 * var(--gutter)));
   height: 32px;
   padding: 0 var(--sp-16) 0 var(--sp-12);
   border: 0;
@@ -403,7 +403,37 @@ body {
   font-size: var(--fs-label);
   line-height: var(--lh-label);
   font-weight: 500;
-  animation: rise-in var(--d-base) var(--ease);
+  white-space: nowrap;
+  animation: jump-in var(--d-base) var(--ease);
+}
+.jump-latest.is-live {
+  padding: 0 var(--sp-12);
+  color: var(--text-2);
+}
+.jump-latest[data-leaving] {
+  opacity: 0;
+  transition: opacity var(--d-fast) var(--ease-exit);
+}
+.jump-latest-phase {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.jump-latest-time {
+  flex-shrink: 0;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 359.98px) {
+  .jump-latest-phase {
+    display: none;
+  }
+}
+@keyframes jump-in {
+  from {
+    opacity: 0;
+    translate: 0 8px;
+  }
 }
 .composer-dock {
   flex-shrink: 0;
@@ -445,38 +475,123 @@ body {
   }
 }
 
-/* Inspector: inside the paper, after a subtle divider. */
-.inspector-pane {
-  display: flex;
-  flex-direction: column;
+/*
+ * 会话信息 beside the paper: a column on the ground, its blocks 8 from the paper, from the window and from each other.
+ * Its content keeps the open width and is clipped while the column slides shut; its edge toward the paper is the
+ * resize handle from 1024px.
+ */
+.inspector-column {
   min-width: 0;
   min-height: 0;
-  margin: var(--shell-inset) var(--shell-inset) var(--shell-inset) 0;
-  overflow: clip;
-  border: 1px solid var(--line);
-  border-left-color: var(--line-subtle);
-  border-start-end-radius: var(--r-12);
-  border-end-end-radius: var(--r-12);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-pane);
+  overflow: hidden;
 }
-.pane-header {
+.inspector-column-inner {
+  width: var(--inspector-open-width);
+  height: 100%;
+  padding: var(--shell-inset);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.inspector-column-inner::-webkit-scrollbar {
+  display: none;
+}
+.app-shell:not([data-inspector]) .inspector-column {
+  visibility: hidden;
+  transition: visibility 0s linear var(--d-base);
+}
+.inspector-resize {
+  top: var(--shell-inset);
+  bottom: var(--shell-inset);
+  right: calc(var(--inspector-width) - 3px);
+}
+@media (max-width: 767.98px) {
+  .inspector-column {
+    display: none;
+  }
+}
+
+/*
+ * The page of 会话信息 (phones, and tablets too narrow for the column): pushed over the conversation from the right
+ * (240ms), which moves a quarter to the left beneath it; going back reverses it (180ms). The same blocks sit on the
+ * ground under a header with the way back.
+ */
+.info-page {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-app);
+  animation: page-in var(--d-slow) var(--ease);
+}
+.info-page[data-leaving] {
+  animation: page-out var(--d-slow-exit) var(--ease-exit) forwards;
+}
+.workspace-view > * {
+  transition: translate var(--d-slow) var(--ease);
+}
+.workspace[data-info-page] .workspace-view > * {
+  translate: -24% 0;
+}
+.info-page-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  height: var(--topbar-height);
-  padding: 0 var(--sp-8) 0 var(--sp-16);
+  gap: var(--sp-8);
   flex-shrink: 0;
+  height: var(--topbar-height);
+  padding: 0 var(--sp-12) 0 var(--sp-8);
 }
-.pane-header h2 {
+.info-page-title {
+  display: grid;
+  min-width: 0;
+}
+.info-page-title h2 {
+  color: var(--text-1);
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
   font-weight: 500;
 }
-.inspector-pane > .inspector {
+.info-page-title span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.info-page-body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  padding: var(--sp-8) var(--sp-16) var(--sp-24);
+  overscroll-behavior: contain;
+  padding: var(--sp-8) var(--sp-16) calc(var(--sp-24) + env(safe-area-inset-bottom));
+}
+.info-page-body > .inspector {
+  max-width: 560px;
+  margin: 0 auto;
+  gap: var(--sp-12);
+}
+@media (max-width: 767.98px) {
+  .info-page-head {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr) 44px;
+    padding: env(safe-area-inset-top) var(--sp-4) 0;
+    height: calc(var(--topbar-height) + env(safe-area-inset-top));
+  }
+  .info-page-title {
+    text-align: center;
+  }
+}
+@keyframes page-in {
+  from {
+    translate: 100% 0;
+  }
+}
+@keyframes page-out {
+  to {
+    translate: 100% 0;
+  }
 }
 
 /* The toast (the design system's floating pill) sits at the bottom centre of the window. */

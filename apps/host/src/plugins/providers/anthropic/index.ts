@@ -185,13 +185,14 @@ export function createAnthropicPlugin(config: AnthropicConfig): HarnessPlugin {
       }
 
       const blocks = new Map<number, Block>()
-      const usage = { input: 0, cacheWrite: 0, cacheRead: 0, output: 0, reported: false }
+      const usage = { input: 0, cacheWrite: 0, cacheRead: 0, output: 0, reported: false, cacheReported: false }
       const recordUsage = (value: z.infer<typeof usageSchema> | null | undefined) => {
         if (!value) return
         // message_delta counts are cumulative, so later values replace earlier ones.
         if (value.input_tokens != null) usage.input = value.input_tokens
         if (value.cache_creation_input_tokens != null) usage.cacheWrite = value.cache_creation_input_tokens
         if (value.cache_read_input_tokens != null) usage.cacheRead = value.cache_read_input_tokens
+        if (value.cache_creation_input_tokens != null || value.cache_read_input_tokens != null) usage.cacheReported = true
         if (value.output_tokens != null) usage.output = value.output_tokens
         usage.reported = true
       }
@@ -304,7 +305,14 @@ export function createAnthropicPlugin(config: AnthropicConfig): HarnessPlugin {
         }
         completed.push({ id: call.id, name: call.name, arguments: args })
       }
-      if (usage.reported) yield { type: 'usage', inputTokens: usage.input + usage.cacheWrite + usage.cacheRead, outputTokens: usage.output }
+      // Input counts the cached tokens too; the parts say how many were read from and written to the cache.
+      if (usage.reported)
+        yield {
+          type: 'usage',
+          inputTokens: usage.input + usage.cacheWrite + usage.cacheRead,
+          outputTokens: usage.output,
+          ...(usage.cacheReported ? { cacheReadTokens: usage.cacheRead, cacheWriteTokens: usage.cacheWrite } : {}),
+        }
       for (const call of completed) yield { type: 'tool-call', call }
       yield { type: 'finish', reason: finish }
     },

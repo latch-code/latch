@@ -24,8 +24,12 @@ import {
   type Bridge,
   type CreateTaskInput,
   type DecideOptions,
+  type HostProject,
+  type ProjectFolder,
   type PromptOptions,
+  type SessionFolder,
 } from '@latch/sdk'
+import { isoTime, ReasoningTimer, RunClock } from './node-kit/timing.ts'
 import { createSnapshotStore, emptyRuntimeState } from './store.ts'
 import type { RuntimeState, RuntimeStore, StoredTask } from './store.ts'
 
@@ -35,6 +39,12 @@ export interface RuntimeOptions {
   workspaceRoot: string
   /** Directories a session may use as `cwd`, compared by real path. Defaults to `[workspaceRoot]`. */
   workspaces?: () => string[]
+  /**
+   * Projects a session may use now, with their folders (`default` is the start directory). A session created with
+   * `workspaceId` and `folders` needs them to match a listed project, and keeps them: later input and allowed calls
+   * need every folder to still be a folder of that project. Without it such sessions cannot be created.
+   */
+  projects?: () => HostProject[]
   registry: RuntimeRegistry
   /** Provider of sessions that have not chosen one. */
   providerId: string | (() => string)
@@ -51,6 +61,8 @@ export interface RuntimeOptions {
   tmpRoot?: string
   /** Alternate backends must atomically commit state and receipts, with one writer. */
   store?: RuntimeStore
+  /** Milliseconds since the epoch for every recorded time. Default `Date.now`. */
+  clock?: () => number
 }
 
 export const APPROVAL_OPTIONS: readonly ApprovalOption[] = Object.freeze([
@@ -64,6 +76,8 @@ export const HIGH_RISK_APPROVAL_OPTIONS: readonly ApprovalOption[] = Object.free
 )
 
 const RISK_LEVELS: ReadonlySet<unknown> = new Set<RiskLevel>(['R0', 'R1', 'R2'])
+/** The ID of the one folder of a session that recorded no folders: its working directory. */
+const SINGLE_FOLDER_ID = 'default'
 
 type Decision = { decision: 'allow' | 'reject' | 'cancel'; always?: boolean }
 type Preview = Pick<ToolDetail, 'title' | 'diffs'>
@@ -78,10 +92,18 @@ interface Run {
   id: string
   sessionId: string
   mode: TaskMode
-  /** Model ID sent to the provider for every step of this run. */
+  /** Model ID sent to the provider for every step of this run, and the service that provides it. */
   model: string
+  providerId: string
+  /** The user message that started the run; it carries the turn's times once the run settles. */
+  userMessageId: string
+  clock: RunClock
+  /** The last change of visible output, in clock milliseconds. */
+  lastOutputAt?: number
   /** The session's working directory, passed to tools. */
   cwd: string
+  /** The session's folders, frozen when it was created; `[0]` is at `cwd`. */
+  folders: ProjectFolder[]
   controller: AbortController
   lease: CapabilityLease
   done: Promise<void>
@@ -94,6 +116,9 @@ interface LiveStep {
   text: string
   reasoning: string
   usage?: TokenUsage
+  /** When the step began (the provider was called), in clock milliseconds. */
+  createdAt: number
+  reasoningTimer: ReasoningTimer
 }
 /**
  * `persist` pins the provider on the session. Sessions without a stored provider follow the
@@ -111,9 +136,6 @@ const MAX_PREVIEW = 1_000_000
 
 function digest(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex')
-}
-function now(): string {
-  return new Date().toISOString()
 }
 function assertPrompt(prompt: string, requestId: string): void {
   if (!prompt.trim() || prompt.length > 1_000_000) throw new AppError(400, 'invalid-prompt', '请输入不超过 1 MB 的任务内容')
@@ -155,11 +177,22 @@ function safeCall(call: ToolCall): ToolCall {
 function tokens(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0
 }
-function addUsage(total: TokenUsage | undefined, delta: { inputTokens: unknown; outputTokens: unknown }): TokenUsage {
-  return {
+const PARTS = ['cacheReadTokens', 'cacheWriteTokens', 'reasoningTokens'] as const
+type UsageDelta = { inputTokens: unknown; outputTokens: unknown } & { [part in (typeof PARTS)[number]]?: unknown }
+/**
+ * Adds a step's usage to a total. A part (cache read, cache write, reasoning) stays only while every step added so far
+ * reported it, so the part never claims to cover tokens it does not.
+ */
+function addUsage(total: TokenUsage | undefined, delta: UsageDelta): TokenUsage {
+  const sum: TokenUsage = {
     inputTokens: (total?.inputTokens ?? 0) + tokens(delta.inputTokens),
     outputTokens: (total?.outputTokens ?? 0) + tokens(delta.outputTokens),
   }
+  for (const part of PARTS) {
+    const reported = typeof delta[part] === 'number' && Number.isFinite(delta[part])
+    if (reported && (total === undefined || total[part] !== undefined)) sum[part] = (total?.[part] ?? 0) + tokens(delta[part])
+  }
+  return sum
 }
 const PREVIOUS: ReadonlySet<unknown> = new Set(['none', 'text', 'unavailable'])
 /** Plugin previews are trusted code but still bounded before they are persisted and shown. */
@@ -195,12 +228,21 @@ function previewOf(value: unknown): Preview | undefined {
 async function canonical(path: string): Promise<string> {
   return realpath(path).catch(() => resolve(path))
 }
+/** The folders a session works in: the ones it recorded, or its working directory alone. */
+function foldersOf(summary: TaskSummary, cwd: string): ProjectFolder[] {
+  return summary.folders?.length
+    ? summary.folders.map(folder => ({ id: folder.id, path: folder.path }))
+    : [{ id: SINGLE_FOLDER_ID, path: cwd }]
+}
+function toolFolders(run: Run): SessionFolder[] {
+  return run.folders.map((folder, index) => ({ id: folder.id, path: folder.path, primary: index === 0 }))
+}
 
 function toolMessage(task: StoredTask, call: ToolCall): Message | undefined {
   return task.messages.find(message => message.id === `tool:${call.id}`)
 }
 
-function recordResult(task: StoredTask, call: ToolCall, text: string, isError: boolean, cancelled = false): void {
+function recordResult(task: StoredTask, call: ToolCall, at: string, text: string, isError: boolean, cancelled = false): void {
   task.history.push({ role: 'tool', content: text, toolCallId: call.id, isError })
   const previous = toolMessage(task, call)
   const message: Message = {
@@ -210,6 +252,9 @@ function recordResult(task: StoredTask, call: ToolCall, text: string, isError: b
     text,
     state: cancelled ? 'cancelled' : isError ? 'failed' : 'completed',
     tool: { ...(previous?.tool ?? { title: call.name, input: JSON.stringify(call.arguments, null, 2) }), output: text },
+    ...(previous?.createdAt ? { createdAt: previous.createdAt } : { createdAt: at }),
+    ...(previous?.startedAt ? { startedAt: previous.startedAt } : {}),
+    completedAt: at,
   }
   if (previous) Object.assign(previous, message)
   else task.messages.push(message)
@@ -217,7 +262,7 @@ function recordResult(task: StoredTask, call: ToolCall, text: string, isError: b
 }
 
 /** Balance unanswered calls without retrying an operation whose side effects are unknown. */
-function closeBatch(task: StoredTask, cancelled: boolean): void {
+function closeBatch(task: StoredTask, cancelled: boolean, at: string): void {
   const batch = task.batch
   if (!batch) return
   for (const call of batch.calls) {
@@ -226,6 +271,7 @@ function closeBatch(task: StoredTask, cancelled: boolean): void {
     recordResult(
       task,
       call,
+      at,
       unknown
         ? 'TOOL_OUTCOME_UNKNOWN: 执行未取得已确认结果。请先核对实际副作用；系统不会自动重放此操作。'
         : 'TOOL_NOT_STARTED: 本次运行已结束，工具没有开始执行。',
@@ -236,12 +282,17 @@ function closeBatch(task: StoredTask, cancelled: boolean): void {
   delete task.batch
 }
 
+function workspaceChanged(): AppError {
+  return new AppError(409, 'workspace-changed', '这个会话使用的文件夹已不在项目中或找不到了，不能继续。请新建会话。')
+}
+
 export function createRuntime(options: RuntimeOptions): Bridge {
   return new HarnessRuntime(options)
 }
 
 class HarnessRuntime implements Bridge {
   private readonly options: RuntimeOptions
+  private readonly clock: () => number
   private state = emptyRuntimeState()
   private readonly store: RuntimeStore
   private readonly workspaceRoot: string
@@ -258,11 +309,26 @@ class HarnessRuntime implements Bridge {
 
   constructor(options: RuntimeOptions) {
     this.options = options
+    this.clock = options.clock ?? Date.now
     this.store = options.store ?? createSnapshotStore(options.dataDir)
     this.workspaceRoot = resolve(options.workspaceRoot)
     this.maxSteps = options.maxSteps ?? 12
     if (!Number.isSafeInteger(this.maxSteps) || this.maxSteps < 1 || this.maxSteps > 100)
       throw new Error('maxSteps must be between 1 and 100')
+  }
+
+  private now(): string {
+    return isoTime(this.clock())
+  }
+
+  /** Records a phase of the run's live projection and when it began. */
+  private phase(run: Run, activity: Omit<NonNullable<TaskDetail['activity']>, 'since'>): void {
+    run.activity = { ...activity, since: this.now() }
+  }
+
+  /** Visible output changed: text, reasoning, a tool's state or a new message. */
+  private output(run: Run): void {
+    run.lastOutputAt = this.clock()
   }
 
   start(): Promise<void> {
@@ -277,16 +343,19 @@ class HarnessRuntime implements Bridge {
           changed = true
         }
         if (task.summary.status !== 'running' && task.summary.status !== 'waiting-approval' && !task.approval && !task.batch) continue
-        closeBatch(task, false)
+        const at = this.now()
+        closeBatch(task, false, at)
         delete task.approval
         task.summary.status = 'interrupted'
-        task.summary.updatedAt = now()
+        task.summary.updatedAt = at
         task.revision++
+        // The turn did not settle, so its user message gets no times: its duration is unknown.
         task.messages.push({
           id: randomUUID(),
           role: 'system',
           text: '上次运行被中断。旧审批已失效；请核对工具副作用后再明确发起后续任务。',
           state: 'failed',
+          createdAt: at,
         })
         changed = true
       }
@@ -350,7 +419,7 @@ class HarnessRuntime implements Bridge {
       const task = this.task(draft, id)
       operation(task)
       task.revision++
-      task.summary.updatedAt = now()
+      task.summary.updatedAt = this.now()
     }, id)
   }
 
@@ -362,6 +431,60 @@ class HarnessRuntime implements Bridge {
       if ((await canonical(candidate)) === target) return resolve(candidate)
     }
     return undefined
+  }
+
+  /**
+   * The project and folders a new session records. `workspaceId` must name a listed project whose primary folder is
+   * at `cwd`; `folders[0]` must be that primary folder and every folder one of the project's (same ID and real path).
+   * Undefined when the input names no project; null when it names one that does not match, or the Host lists none.
+   */
+  private async projectOf(
+    input: CreateTaskInput,
+    cwd: string | undefined,
+  ): Promise<{ workspaceId: string; folders: ProjectFolder[] } | null | undefined> {
+    if (input.workspaceId === undefined && input.folders === undefined) return undefined
+    const requested: unknown = input.folders
+    if (cwd === undefined || input.cwd === undefined || typeof input.workspaceId !== 'string') return null
+    if (!Array.isArray(requested) || requested.length === 0 || requested.length > 64) return null
+    const project = this.options.projects?.().find(item => item.id === input.workspaceId)
+    if (!project?.folders.length || (await canonical(project.folders[0]!.path)) !== (await canonical(cwd))) return null
+    const folders: ProjectFolder[] = []
+    for (const [index, folder] of (requested as unknown[]).entries()) {
+      const { id, path } = (folder ?? {}) as { id?: unknown; path?: unknown }
+      if (typeof id !== 'string' || typeof path !== 'string' || !isAbsolute(path) || path.includes('\0')) return null
+      if (folders.some(item => item.id === id)) return null
+      const listed = project.folders.find(item => item.id === id)
+      if (!listed || (index === 0 && listed !== project.folders[0])) return null
+      if ((await canonical(path)) !== (await canonical(listed.path))) return null
+      folders.push({ id, path: index === 0 ? cwd : resolve(listed.path) })
+    }
+    return { workspaceId: project.id, folders }
+  }
+
+  /**
+   * Whether a session may still work in what it recorded. A session with folders needs its project listed and every
+   * one of its folders still a folder of that project (same ID and real path); a different primary folder now does
+   * not matter. A session without folders needs its directory to be listed.
+   */
+  private async stillAllowed(summary: TaskSummary): Promise<boolean> {
+    if (summary.folders === undefined) return (await this.workspaceFor(summary.cwd)) !== undefined
+    const project = summary.workspaceId === undefined ? undefined : this.options.projects?.().find(item => item.id === summary.workspaceId)
+    if (!project) return false
+    for (const folder of summary.folders) {
+      const listed = project.folders.find(item => item.id === folder.id)
+      if (!listed || (await canonical(listed.path)) !== (await canonical(folder.path))) return false
+    }
+    return true
+  }
+
+  /** `stillAllowed` without touching the disk, for decisions that must be claimed synchronously. */
+  private stillListed(summary: TaskSummary): boolean {
+    if (summary.folders === undefined) return true // Its directory was checked when the run began; tools refuse a vanished one.
+    const project = summary.workspaceId === undefined ? undefined : this.options.projects?.().find(item => item.id === summary.workspaceId)
+    return (
+      project !== undefined
+      && summary.folders.every(folder => project.folders.some(item => item.id === folder.id && resolve(item.path) === resolve(folder.path)))
+    )
   }
 
   private defaultSelection(): Selection {
@@ -386,6 +509,7 @@ class HarnessRuntime implements Bridge {
     const active = task.summary.status === 'running' || task.summary.status === 'waiting-approval'
     const live = this.live.get(sessionId)
     const visibleLive = active && live && !task.messages.some(message => message.id === live.id) ? live : undefined
+    const run = active ? this.runs.get(sessionId) : undefined
     return structuredClone({
       summary: task.summary,
       messages: task.messages,
@@ -393,8 +517,10 @@ class HarnessRuntime implements Bridge {
       liveText: visibleLive?.text ?? '',
       cursor: task.revision,
       ...(visibleLive ? { liveMessageId: visibleLive.id } : {}),
-      ...(visibleLive?.reasoning ? { liveReasoning: visibleLive.reasoning } : {}),
-      ...(active && this.runs.get(sessionId)?.activity ? { activity: this.runs.get(sessionId)!.activity } : {}),
+      ...(visibleLive?.reasoning ? { liveReasoning: visibleLive.reasoning, ...visibleLive.reasoningTimer.live() } : {}),
+      ...(run?.activity ? { activity: run.activity } : {}),
+      ...(run ? run.clock.live() : {}),
+      ...(run?.lastOutputAt !== undefined ? { lastOutputAt: isoTime(run.lastOutputAt) } : {}),
     })
   }
 
@@ -406,13 +532,19 @@ class HarnessRuntime implements Bridge {
     const model = input.model === undefined ? undefined : modelRef(input.model)
     if (input.cwd !== undefined && typeof input.cwd !== 'string') throw new AppError(400, 'workspace-unavailable', '项目目录无效')
     const cwd = input.cwd === undefined ? this.workspaceRoot : await this.workspaceFor(input.cwd)
+    const scope = await this.projectOf(input, cwd)
     const key = digest(['create', input.requestId])
-    // Selection keys join the hash only when given, so receipts written before they existed still match.
+    const requestedFolders: unknown = input.folders
+    // Selection keys join the hash only when given, and folders only when there are several, so receipts written before
+    // they existed still match.
     const payloadHash = digest({
       prompt: input.prompt,
       mode,
       ...(model ? { model } : {}),
       ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
+      ...(Array.isArray(requestedFolders) && requestedFolders.length > 1
+        ? { folders: (requestedFolders as Array<Partial<ProjectFolder> | null>).map(folder => ({ id: folder?.id, path: folder?.path })) }
+        : {}),
     })
     let run: Run | undefined
     try {
@@ -435,21 +567,26 @@ class HarnessRuntime implements Bridge {
           return { sessionId: receipt.taskId }
         }
         if (cwd === undefined) throw new AppError(400, 'workspace-unavailable', '所选项目目录不是此节点允许的工作区')
+        if (scope === null) throw new AppError(400, 'workspace-unavailable', '所选项目的文件夹与此节点登记的不一致')
         const selection: Selection = model ? { ...model, source: 'request', persist: true } : this.defaultSelection()
-        run = this.allocateRun(`task-${randomUUID()}`, mode, selection, cwd)
+        const folders = scope?.folders ?? [{ id: SINGLE_FOLDER_ID, path: cwd }]
+        run = this.allocateRun(`task-${randomUUID()}`, mode, selection, cwd, folders)
         const sessionId = run.sessionId
+        const at = isoTime(run.clock.startedAt)
         draft.tasks[sessionId] = {
           summary: {
             id: sessionId,
             title: input.prompt.trim().replace(/\s+/g, ' ').slice(0, 80),
             status: 'running',
-            updatedAt: now(),
+            updatedAt: at,
+            createdAt: at,
             cwd,
+            ...(scope ? { workspaceId: scope.workspaceId, folders: scope.folders } : {}),
             model: run.model,
             mode,
             ...(selection.persist ? { providerId: selection.providerId } : {}),
           },
-          messages: [{ id: randomUUID(), role: 'user', text: input.prompt }],
+          messages: [{ id: run.userMessageId, role: 'user', text: input.prompt, createdAt: at }],
           history: [{ role: 'user', content: input.prompt }],
           revision: 1,
         }
@@ -470,9 +607,10 @@ class HarnessRuntime implements Bridge {
     const model = options.model === undefined ? undefined : modelRef(options.model)
     const key = digest(['prompt', sessionId, requestId])
     const payloadHash = digest(model ? { prompt, model } : prompt)
-    // A session's cwd never changes, so the asynchronous check can precede the commit.
-    const recorded = Object.hasOwn(this.state.tasks, sessionId) ? this.state.tasks[sessionId]!.summary.cwd : undefined
-    const workspace = await this.workspaceFor(recorded)
+    // A session's cwd and folders never change, so the asynchronous check can precede the commit.
+    const summary = Object.hasOwn(this.state.tasks, sessionId) ? this.state.tasks[sessionId]!.summary : undefined
+    const recorded = summary?.cwd
+    const allowed = summary !== undefined && (await this.stillAllowed(summary))
     let run: Run | undefined
     try {
       await this.commit(draft => {
@@ -482,9 +620,7 @@ class HarnessRuntime implements Bridge {
           if (receipt.payloadHash !== payloadHash) throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同输入')
           return
         }
-        if (workspace === undefined || recorded === undefined) {
-          throw new AppError(409, 'workspace-changed', '该任务属于另一个工作区。请切回原工作区继续，或在当前工作区创建新任务。')
-        }
+        if (!allowed || recorded === undefined) throw workspaceChanged()
         if (this.runs.has(sessionId) || task.summary.status === 'running' || task.summary.status === 'waiting-approval') {
           throw new AppError(409, 'task-running', '任务仍在运行，请等待完成或先取消')
         }
@@ -493,13 +629,14 @@ class HarnessRuntime implements Bridge {
           : task.summary.providerId
             ? { providerId: task.summary.providerId, model: task.summary.model, source: 'session', persist: true }
             : { ...this.defaultSelection(), persist: false }
-        run = this.allocateRun(sessionId, task.summary.mode ?? 'agent', selection, recorded)
+        run = this.allocateRun(sessionId, task.summary.mode ?? 'agent', selection, recorded, foldersOf(task.summary, recorded))
+        const at = isoTime(run.clock.startedAt)
         task.history.push({ role: 'user', content: prompt })
-        task.messages.push({ id: randomUUID(), role: 'user', text: prompt })
+        task.messages.push({ id: run.userMessageId, role: 'user', text: prompt, createdAt: at })
         task.summary.status = 'running'
         task.summary.model = run.model
         if (selection.persist) task.summary.providerId = selection.providerId
-        task.summary.updatedAt = now()
+        task.summary.updatedAt = at
         task.revision++
         draft.receipts[key] = { taskId: sessionId, payloadHash }
       }, sessionId)
@@ -518,12 +655,12 @@ class HarnessRuntime implements Bridge {
         throw new AppError(409, 'task-running', '任务仍在运行，请先取消或等待完成后再删除')
       }
       delete draft.tasks[sessionId]
-      draft.tombstones = { ...draft.tombstones, [sessionId]: { deletedAt: now() } }
+      draft.tombstones = { ...draft.tombstones, [sessionId]: { deletedAt: this.now() } }
     })
     this.live.delete(sessionId)
   }
 
-  private allocateRun(sessionId: string, mode: TaskMode, selection: Selection, cwd: string): Run {
+  private allocateRun(sessionId: string, mode: TaskMode, selection: Selection, cwd: string, folders: ProjectFolder[]): Run {
     if (this.closed) throw new AppError(503, 'runtime-closed', '运行节点已关闭')
     // Chat runs never use tools, so they must not pin tool plugins either.
     const lease = this.options.registry.acquire(selection.providerId, { tools: mode === 'agent' })
@@ -539,17 +676,22 @@ class HarnessRuntime implements Bridge {
     const done = new Promise<void>(resolve => {
       resolveDone = resolve
     })
+    const clock = new RunClock(this.clock)
     const run: Run = {
       id: randomUUID(),
       sessionId,
       mode,
       model,
+      providerId: selection.providerId,
+      userMessageId: randomUUID(),
+      clock,
       cwd,
+      folders,
       controller: new AbortController(),
       lease,
       done,
       resolveDone,
-      activity: { phase: 'model' },
+      activity: { phase: 'model', since: isoTime(clock.startedAt) },
     }
     // Reserve ownership before persistence publishes the new running task.
     this.runs.set(sessionId, run)
@@ -580,7 +722,7 @@ class HarnessRuntime implements Bridge {
     this.task(this.state, sessionId)
     const run = this.runs.get(sessionId)
     if (!run) return
-    run.activity = { phase: 'cancelling', ...(run.activity?.toolName ? { toolName: run.activity.toolName } : {}) }
+    this.phase(run, { phase: 'cancelling', ...(run.activity?.toolName ? { toolName: run.activity.toolName } : {}) })
     this.notify(sessionId)
     run.controller.abort(new Error('User cancelled'))
     // The result is acknowledged only after the provider/tool actually settles.
@@ -603,6 +745,11 @@ class HarnessRuntime implements Bridge {
       const allows = option.kind === 'allow_once' || option.kind === 'allow_always'
       if (allows !== (decision === 'allow')) throw new AppError(400, 'invalid-decision', '审批决定与所选选项不一致')
       always = option.kind === 'allow_always'
+    }
+    // Allowing a call in folders that left the project would act on a grant the owner withdrew.
+    if (decision === 'allow') {
+      const task = Object.hasOwn(this.state.tasks, pending.value.sessionId) ? this.state.tasks[pending.value.sessionId] : undefined
+      if (!task || !this.stillListed(task.summary)) throw workspaceChanged()
     }
     pending.claimed = true // Claim synchronously, before any awaiting caller can compete.
     pending.resolve({ decision, always })
@@ -631,7 +778,13 @@ class HarnessRuntime implements Bridge {
   private async preview(run: Run, call: ToolCall, tool: ToolDefinition): Promise<Preview | undefined> {
     if (!tool.preview) return undefined
     try {
-      return previewOf(await tool.preview(structuredClone(call.arguments), { workspaceRoot: run.cwd, signal: run.controller.signal }))
+      return previewOf(
+        await tool.preview(structuredClone(call.arguments), {
+          workspaceRoot: run.cwd,
+          workspaceFolders: toolFolders(run),
+          signal: run.controller.signal,
+        }),
+      )
     } catch {
       return undefined
     }
@@ -647,6 +800,7 @@ class HarnessRuntime implements Bridge {
         arguments: structuredClone(call.arguments),
         cwd: run.cwd,
         sessionId: run.sessionId,
+        folders: structuredClone(run.folders),
       })
     } catch {
       level = 'R2'
@@ -672,7 +826,7 @@ class HarnessRuntime implements Bridge {
           ? '这是高风险操作，每次执行前都需要你确认，不能设为始终允许。'
           : '该工具可能修改工作区或产生外部副作用，需要你确认本次操作。',
       arguments: JSON.stringify(call.arguments, null, 2),
-      requestedAt: now(),
+      requestedAt: this.now(),
       options: structuredClone([...(risk === 'R2' ? HIGH_RISK_APPROVAL_OPTIONS : APPROVAL_OPTIONS)]),
       tool: {
         ...(tool.kind ? { kind: tool.kind } : {}),
@@ -694,8 +848,11 @@ class HarnessRuntime implements Bridge {
     this.pending.set(value.id, pending)
     signal.addEventListener('abort', abort, { once: true })
     if (signal.aborted) abort()
+    // The wait is measured from the moment the approval is published until it is answered or withdrawn.
+    run.clock.openWait(value.id)
     try {
-      if (!signal.aborted) run.activity = { phase: 'approval', toolName: call.name }
+      if (!signal.aborted) this.phase(run, { phase: 'approval', toolName: call.name })
+      this.output(run)
       await this.change(run.sessionId, task => {
         task.approval = value
         task.summary.status = 'waiting-approval'
@@ -710,6 +867,7 @@ class HarnessRuntime implements Bridge {
     } finally {
       signal.removeEventListener('abort', abort)
       this.pending.delete(value.id)
+      run.clock.closeWait(value.id)
       await this.change(run.sessionId, task => {
         delete task.approval
         task.summary.status = 'running'
@@ -724,8 +882,9 @@ class HarnessRuntime implements Bridge {
     const signal = run.controller.signal
     signal.throwIfAborted()
     if (!tool) {
+      this.output(run)
       await this.change(run.sessionId, task =>
-        recordResult(task, call, `UNKNOWN_TOOL: 工具 ${call.name} 在本次运行的插件版本中不存在。`, true),
+        recordResult(task, call, this.now(), `UNKNOWN_TOOL: 工具 ${call.name} 在本次运行的插件版本中不存在。`, true),
       )
       return
     }
@@ -741,19 +900,22 @@ class HarnessRuntime implements Bridge {
         const { decision } = await this.approval(run, call, tool, preview, risk)
         signal.throwIfAborted()
         if (decision !== 'allow') {
+          this.output(run)
           await this.change(run.sessionId, task =>
-            recordResult(task, call, 'APPROVAL_REJECTED: 用户拒绝了本次工具调用，未执行该操作。', true),
+            recordResult(task, call, this.now(), 'APPROVAL_REJECTED: 用户拒绝了本次工具调用，未执行该操作。', true),
           )
           return
         }
       }
     }
-    run.activity = { phase: 'tool', toolName: call.name }
+    this.phase(run, { phase: 'tool', toolName: call.name })
+    this.output(run)
     await this.change(run.sessionId, task => {
       task.batch?.started.push(call.id)
       const message = toolMessage(task, call)
       if (message) {
         message.state = 'running'
+        message.startedAt = this.now()
         if (preview) message.tool = { ...message.tool, ...preview }
       }
     })
@@ -764,6 +926,7 @@ class HarnessRuntime implements Bridge {
         sessionId: run.sessionId,
         callId: call.id,
         workspaceRoot: run.cwd,
+        workspaceFolders: toolFolders(run),
         signal,
       })
       if (!result || typeof result.text !== 'string') throw new Error('Tool returned an invalid result')
@@ -771,12 +934,25 @@ class HarnessRuntime implements Bridge {
       const text = signal.aborted
         ? 'TOOL_CANCELLED: 工具已响应取消。已经发生的副作用不会自动撤销，请核对工作区。'
         : `TOOL_ERROR: ${error instanceof Error ? error.message : String(error)}`
-      await this.change(run.sessionId, task => recordResult(task, call, text, true, signal.aborted))
+      this.output(run)
+      await this.change(run.sessionId, task => recordResult(task, call, this.now(), text, true, signal.aborted))
       signal.throwIfAborted()
       return
     }
     // A completed result remains true even if cancellation raced its completion.
-    await this.change(run.sessionId, task => recordResult(task, call, result.text, false))
+    this.output(run)
+    await this.change(run.sessionId, task => recordResult(task, call, this.now(), result.text, false))
+  }
+
+  /** The times and model of an assistant step's message. */
+  private stepTimes(run: Run, step: LiveStep, completedAt: string, reasoningMs: number | undefined): Partial<Message> {
+    return {
+      createdAt: isoTime(step.createdAt),
+      completedAt,
+      ...(reasoningMs !== undefined ? { reasoningMs } : {}),
+      model: run.model,
+      providerId: run.providerId,
+    }
   }
 
   private async drive(run: Run): Promise<void> {
@@ -788,8 +964,14 @@ class HarnessRuntime implements Bridge {
       const tools = new Map(availableTools.map(tool => [tool.name, tool]))
       for (let step = 0; step < this.maxSteps; step++) {
         signal.throwIfAborted()
-        const live: LiveStep = { id: randomUUID(), text: '', reasoning: '' }
-        run.activity = { phase: 'model' }
+        const live: LiveStep = {
+          id: randomUUID(),
+          text: '',
+          reasoning: '',
+          createdAt: this.clock(),
+          reasoningTimer: new ReasoningTimer(this.clock),
+        }
+        this.phase(run, { phase: 'model' })
         this.live.set(run.sessionId, live)
         this.notify(run.sessionId)
         const task = this.task(this.state, run.sessionId)
@@ -804,6 +986,9 @@ class HarnessRuntime implements Bridge {
             live[delta.type === 'text' ? 'text' : 'reasoning'] += delta.text
             if (live.text.length + live.reasoning.length > MAX_OUTPUT)
               throw new AppError(502, 'response-too-large', '模型输出超过本次运行限制')
+            if (delta.type === 'reasoning') live.reasoningTimer.reasoning()
+            else live.reasoningTimer.text()
+            this.output(run)
             this.notify(run.sessionId)
           } else if (delta.type === 'tool-call') {
             if (run.mode === 'chat')
@@ -818,6 +1003,9 @@ class HarnessRuntime implements Bridge {
         signal.throwIfAborted()
         if (!finished) throw new AppError(502, 'provider-incomplete', '模型连接结束时未收到完成事件，未派发本次工具调用')
         const { id, text, reasoning, usage } = live
+        const completedAt = this.now()
+        const reasoningMs = live.reasoningTimer.end()
+        this.output(run)
         await this.change(run.sessionId, current => {
           // Reasoning is shown to the user but never replayed to the model.
           current.history.push({ role: 'assistant', content: text, ...(calls.length ? { toolCalls: calls } : {}) })
@@ -829,6 +1017,7 @@ class HarnessRuntime implements Bridge {
               state: 'completed',
               ...(reasoning ? { reasoning } : {}),
               ...(usage ? { usage } : {}),
+              ...this.stepTimes(run, live, completedAt, reasoningMs),
             })
           }
           if (usage) current.summary.usage = addUsage(current.summary.usage, usage)
@@ -844,6 +1033,7 @@ class HarnessRuntime implements Bridge {
                 text: input,
                 state: 'queued',
                 tool: { ...(kind ? { kind } : {}), title: call.name, input },
+                createdAt: completedAt,
               })
             }
           }
@@ -863,8 +1053,10 @@ class HarnessRuntime implements Bridge {
       // Present only while the step's output is uncommitted; the step commit removes it.
       const partial = this.live.get(run.sessionId)
       try {
+        const at = this.now()
+        const reasoningMs = partial?.reasoningTimer.end()
         await this.change(run.sessionId, task => {
-          closeBatch(task, signal.aborted)
+          closeBatch(task, signal.aborted, at)
           delete task.approval
           if (partial && (partial.text || partial.reasoning) && !task.messages.some(message => message.id === partial.id)) {
             if (partial.text) task.history.push({ role: 'assistant', content: partial.text })
@@ -875,11 +1067,14 @@ class HarnessRuntime implements Bridge {
               state: signal.aborted ? 'cancelled' : 'failed',
               ...(partial.reasoning ? { reasoning: partial.reasoning } : {}),
               ...(partial.usage ? { usage: partial.usage } : {}),
+              ...this.stepTimes(run, partial, at, reasoningMs),
             })
           }
           if (partial?.usage) task.summary.usage = addUsage(task.summary.usage, partial.usage)
           task.summary.status = signal.aborted ? 'cancelled' : status
-          if (failure) task.messages.push({ id: randomUUID(), role: 'system', text: failure, state: 'failed' })
+          if (failure) task.messages.push({ id: randomUUID(), role: 'system', text: failure, state: 'failed', createdAt: at })
+          const prompt = task.messages.find(message => message.id === run.userMessageId)
+          if (prompt) prompt.turn = run.clock.turn()
         })
       } finally {
         this.live.delete(run.sessionId)

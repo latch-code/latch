@@ -39,12 +39,32 @@ export interface ProjectConfigManaged {
   reduce?: Readonly<Record<string, (text: string) => unknown>>
 }
 
+/**
+ * How the harness receives the folders of a project besides the session directory. `acp`: the ACP
+ * `additionalDirectories` field of session/new, session/load and session/resume, only when the agent advertises it.
+ * `args`: `flag <real path>` once per folder after the definition's arguments, at most `maxExtra` folders.
+ */
+type ProfileFolders =
+  | {
+      readonly via: 'acp'
+      /** Configuration the harness loads from every folder it receives, fingerprinted with `projectConfigPaths`. */
+      readonly configPaths: readonly string[]
+    }
+  | { readonly via: 'args'; readonly flag: '--include-directories'; readonly maxExtra: number }
+
 export interface HarnessProfile {
   /** Equals `AgentPreset.id`. */
   readonly presetId: string
   /** Part of the launch fingerprint; bump it when the profile's behaviour changes. */
   readonly version: 1
   readonly permission: AcpPermissionProfile
+  /**
+   * Set: the driver takes every folder of a project and passes the others this way; the folders it passes are part of
+   * the launch fingerprint, so sessions of one folder are unaffected. Absent: sessions get the session directory only.
+   */
+  readonly folders?: ProfileFolders
+  /** What clients are told about the folders a harness without `folders` never receives. Absent: `primary`. */
+  readonly folderAccess?: 'primary' | 'primary-asks' | 'primary-unbounded'
   /**
    * Files or directories the harness loads as configuration when it finds them in the session directory or a
    * directory above it. Their contents are part of the launch fingerprint; a directory counts with everything below it.

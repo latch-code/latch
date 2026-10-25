@@ -1,156 +1,30 @@
 import { memo, useId, useState } from 'react'
-import { ChevronRight, LockKeyhole, ShieldAlert } from 'lucide-react'
+import { ChevronRight, CircleDashed, CircleSlash, TriangleAlert } from 'lucide-react'
 import type { Approval, FileDiff, Message, ToolDetail } from '@latch/protocol'
-import { previousState } from '../diff.ts'
-import { argumentView, relativeTime } from '../format.ts'
-import { toolKind, toolKindIcons, toolStateIcons } from '../icons.tsx'
+import { hasDiffs, toolDuration, toolLabel } from '../conversation.ts'
+import { hostNow, useTicker } from '../core/hostClock.ts'
+import { formatDuration } from '../format.ts'
+import { toolKind, toolKindIcons } from '../icons.tsx'
 import { approvalActions, type ApprovalGate } from '../core/permissions.ts'
-import { DiffView, PREVIOUS_NOTES } from './DiffView.tsx'
-import { Button, ICON_STROKE, StatusGlyph, StatusPill, StatusWords, WaitingPill } from '@latch/ui'
-import { hasHiddenCharacters, VisibleText } from './VisibleText.tsx'
+import { ApprovalPill, ApprovalSlot, approvalHidesText, type DecideHandler } from './ApprovalCard.tsx'
+import { ArgumentList } from './ArgumentList.tsx'
+import { DiffView } from './DiffView.tsx'
+import { CopyButton } from './ui.tsx'
+import { Collapse, ICON_STROKE, StatusGlyph, StatusWords, WaitingPill } from '@latch/ui'
+import { VisibleText } from './VisibleText.tsx'
 
 type ToolState = NonNullable<Message['state']>
-const stateLabels: Record<ToolState, string> = {
-  queued: '等待执行',
+/** Words for the states a row names; a running or finished tool says it through its verb and duration instead. */
+const stateWords: Partial<Record<ToolState, string>> = {
   'awaiting-approval': '待批准',
-  running: '执行中',
-  completed: '完成',
   failed: '失败',
   cancelled: '已取消',
 }
 
-export type DecideHandler = (approval: Approval, decision: 'allow' | 'reject', optionId: string | undefined) => void
+export type { DecideHandler } from './ApprovalCard.tsx'
 /** This device's buttons for an approval; the default keeps every offered option (a Host without device scopes). */
 export type ApprovalGateFor = (approval: Approval) => ApprovalGate
 const plainGate: ApprovalGateFor = approval => approvalActions(approval, null, null)
-
-/** `covered`: argument values another view already shows in full, such as a diff's new file text. */
-export function ArgumentList({ text, covered = [] }: { text?: string; covered?: string[] }) {
-  const view = argumentView(text)
-  if (view.kind === 'empty') return <p className="muted-line">无参数</p>
-  if (view.kind === 'text')
-    return (
-      <pre className="tool-pre">
-        <VisibleText text={view.text} />
-      </pre>
-    )
-  const entries = view.entries.filter(([, value]) => !covered.includes(value))
-  if (entries.length === 0) return <p className="muted-line">内容见变更</p>
-  return (
-    <dl className="argument-list">
-      {entries.map(([key, value]) => (
-        <div key={key}>
-          <dt>
-            <VisibleText text={key} />
-          </dt>
-          <dd>
-            <pre>
-              <VisibleText text={value} />
-            </pre>
-          </dd>
-        </div>
-      ))}
-    </dl>
-  )
-}
-
-export const HIDDEN_CHARACTERS_TEXT = '内容包含不可见或改变显示方向的字符，已用 \\u{…} 标出。请仔细核对后再决定。'
-
-/** Whether any text the approver reviews hides characters (see VisibleText). */
-function approvalHidesText(approval: Approval, title: string, diffs: FileDiff[]): boolean {
-  return (
-    [title, approval.toolName, approval.reason, approval.tool?.input ?? approval.arguments].some(text => hasHiddenCharacters(text))
-    || diffs.some(diff => hasHiddenCharacters(diff.path) || hasHiddenCharacters(diff.newText) || hasHiddenCharacters(diff.oldText))
-  )
-}
-
-function ApprovalPanel({
-  approval,
-  gate,
-  title,
-  diffs,
-  busy,
-  onDecide,
-}: {
-  approval: Approval
-  gate: ApprovalGate
-  title: string
-  diffs: FileDiff[]
-  busy: string | undefined
-  onDecide: DecideHandler
-}) {
-  const options = [...gate.options].sort(
-    (a, b) =>
-      Number(a.kind.startsWith('allow')) - Number(b.kind.startsWith('allow'))
-      || Number(a.kind === 'allow_once') - Number(b.kind === 'allow_once'),
-  )
-  const hidden = approvalHidesText(approval, title, diffs)
-  // The gate's high-risk path (R2, or a current Host that sent no risk). Its card carries no blue: allowing opens the
-  // local confirmation, which is where the strong visual belongs.
-  const highRisk = gate.badge?.tone === 'err'
-  // One line per kind of previous content the reviewer cannot see.
-  const previousNotes = (['unavailable', 'unknown'] as const)
-    .filter(state => diffs.some(diff => previousState(diff) === state))
-    .map(state => PREVIOUS_NOTES[state]!)
-  return (
-    <section
-      className="approval-panel"
-      data-approval-id={approval.id}
-      data-risk={approval.advisory ? 'advisory' : approval.risk}
-      aria-label="待批准操作">
-      <div className="approval-heading">
-        <ShieldAlert size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-        <span>需要你批准</span>
-        {gate.badge && <StatusPill tone={gate.badge.tone}>{gate.badge.label}</StatusPill>}
-        <time dateTime={approval.requestedAt}>{relativeTime(approval.requestedAt)}</time>
-      </div>
-      {gate.note && <p className="approval-note">{gate.note}</p>}
-      {hidden && (
-        <p className="approval-warning" role="note">
-          {HIDDEN_CHARACTERS_TEXT}
-        </p>
-      )}
-      {previousNotes.map(note => (
-        <p key={note} className="approval-warning" role="note">
-          {note}
-        </p>
-      ))}
-      {approval.reason && approval.reason !== title && (
-        <p className="approval-reason">
-          <VisibleText text={approval.reason} />
-        </p>
-      )}
-      <ArgumentList text={approval.tool?.input ?? approval.arguments} covered={diffs.map(diff => diff.newText)} />
-      <DiffView diffs={diffs} />
-      {gate.hint && (
-        <p className="approval-hint">
-          <LockKeyhole size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-          {gate.hint}
-        </p>
-      )}
-      <div className="approval-actions">
-        {options.map(option => {
-          const allow = option.kind.startsWith('allow')
-          const pressed = busy === option.id
-          // Hidden characters leave no allow option as the default-looking choice.
-          return (
-            <Button
-              key={option.id}
-              variant={option.kind === 'allow_once' && !hidden && !highRisk ? 'primary' : 'secondary'}
-              icon={highRisk && allow ? LockKeyhole : undefined}
-              loading={pressed}
-              disabled={busy !== undefined && !pressed}
-              onClick={() => {
-                onDecide(approval, allow ? 'allow' : 'reject', gate.explicit ? option.id : undefined)
-              }}>
-              {option.label}
-            </Button>
-          )
-        })}
-      </div>
-    </section>
-  )
-}
 
 const sameDiffs = (a: FileDiff[] | undefined, b: FileDiff[] | undefined) =>
   a === b
@@ -169,11 +43,40 @@ const sameTool = (a: ToolDetail | undefined, b: ToolDetail | undefined) =>
     && a.title === b.title
     && a.input === b.input
     && a.output === b.output
+    && a.locations?.join('\n') === b.locations?.join('\n')
     && sameDiffs(a.diffs, b.diffs))
 
+/** How long the tool ran, ticking every second while it runs and frozen once it settles; nothing under a second. */
+function ToolTime({ message }: { message: Message }) {
+  useTicker(message.state === 'running' ? 'second' : false)
+  const duration = toolDuration(message, hostNow())
+  const text = duration ? formatDuration(duration.ms, duration.live) : undefined
+  if (!text) return null
+  return <span className="process-time">{text}</span>
+}
+
 /**
- * One tool call. A pending approval for this call grows the same card instead of
- * repeating the tool, so the decision sits next to what it authorizes.
+ * Live output keeps its newest lines in view while it streams without writing a scroll position: the box is laid out
+ * from its end (column-reverse), so it stays at the bottom until the reader scrolls up inside it, and stays where the
+ * reader left it after that.
+ */
+function ToolOutput({ text, running }: { text: string; running: boolean }) {
+  return (
+    <div className={`tool-output-scroll ${running ? 'is-live' : ''}`}>
+      <pre className="tool-pre tool-output">
+        <VisibleText text={text} />
+      </pre>
+    </div>
+  )
+}
+
+/**
+ * One tool call. At rest it is a quiet row of the process: the kind's icon (the comet while it runs), what it does in
+ * the tense of its state with its object, the tool's ID, how long it ran and, when it did not simply finish, its
+ * state. Opening it (or a failure with output, which opens by itself) turns the row into a card on the column's edges,
+ * a tray holding a sheet of paper with its arguments, its changes and its output. A pending approval for the call
+ * grows the same card, so the decision sits next to what it authorizes. While the card is closed, a tool's file changes
+ * stay in view under its row as evidence, never inside another tray.
  */
 export const ToolCard = memo(
   function ToolCard({
@@ -189,106 +92,148 @@ export const ToolCard = memo(
     onDecide: DecideHandler
     gateFor?: ApprovalGateFor
   }) {
-    const [expanded, setExpanded] = useState(false)
     const bodyId = useId()
     const state: ToolState = message?.state ?? (approval ? 'awaiting-approval' : 'completed')
     const tool = message?.tool ?? approval?.tool
     const toolName = message?.toolName ?? approval?.toolName ?? ''
     const title = tool?.title || toolName || '工具调用'
+    const label = toolLabel({ tool, toolName, state })
     const KindIcon = toolKindIcons[toolKind({ tool, toolName })]
-    const StateIcon = toolStateIcons[state]
     const diffs = tool?.diffs ?? approval?.tool?.diffs ?? []
     const output = message?.tool?.output ?? message?.text ?? ''
-    // While an approval is open its panel shows the arguments and diff; the body adds only output.
+    const failedWithOutput = state === 'failed' && output.trim().length > 0
+    const [choice, setChoice] = useState<boolean | null>(null)
+    const open = approval ? true : (choice ?? failedWithOutput)
+    // While an approval is open its panel shows the arguments and diff; otherwise the diff stays under the row.
+    const evidence = !approval && message !== null && hasDiffs(message)
     const showOutput = message !== null && state !== 'awaiting-approval' && state !== 'queued'
-    const hasBody = !approval || showOutput
-    // A state change the page saw happen: the comet and the result icon cross-fade and the state's words rise in.
+    const gate = approval ? gateFor(approval) : undefined
+    const hidden = approval !== undefined && approvalHidesText(approval, title, diffs)
+    const glyph =
+      state === 'failed' ? (
+        <TriangleAlert className="process-failed" size={14} strokeWidth={ICON_STROKE[14]} />
+      ) : state === 'cancelled' ? (
+        <CircleSlash size={14} strokeWidth={ICON_STROKE[14]} />
+      ) : state === 'queued' ? (
+        <CircleDashed size={14} strokeWidth={ICON_STROKE[14]} />
+      ) : (
+        <KindIcon size={14} strokeWidth={ICON_STROKE[14]} />
+      )
+    // A state change the page saw happen: the comet and the result icon cross-fade and the new words rise in.
     const heading = (
       <>
-        <StatusGlyph className="tool-card-icon" running={state === 'running'} size={14}>
-          <KindIcon size={16} strokeWidth={ICON_STROKE[16]} />
+        <StatusGlyph className="tool-card-icon process-slot" running={state === 'running'} state={state}>
+          {glyph}
         </StatusGlyph>
-        <span className="tool-card-title">
-          <VisibleText text={title} />
-        </span>
-        {toolName && toolName !== title && (
+        {/* An approval card names the call by the tool's own title, the text the approver weighs; a row says what it does. */}
+        {approval ? (
+          <span className="tool-card-title">
+            <VisibleText text={title} />
+          </span>
+        ) : (
+          <StatusWords state={label.verb ? state : 'title'} className="process-label">
+            {label.verb && <span className="process-verb">{label.verb}</span>}
+            <span className={label.mono ? 'process-object is-mono' : 'process-object'}>
+              <VisibleText text={label.object} />
+            </span>
+          </StatusWords>
+        )}
+        {toolName && toolName !== (approval ? title : label.object) && (
           <code className="tool-card-name">
             <VisibleText text={toolName} />
           </code>
         )}
-        <StatusWords state={state} className={`tool-card-state state-${state}`}>
-          {state === 'awaiting-approval' ? (
-            <WaitingPill className="tool-card-waiting">{stateLabels[state]}</WaitingPill>
-          ) : (
-            <>
-              {state !== 'running' && state !== 'completed' && <StateIcon size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />}
-              {stateLabels[state]}
-            </>
-          )}
-        </StatusWords>
+        <span className="process-fill" />
+        <span className="process-end">
+          {message && <ToolTime message={message} />}
+          <StatusWords state={state} className={`tool-card-state state-${state}`}>
+            {state === 'awaiting-approval' ? (
+              gate ? (
+                <ApprovalPill gate={gate} hidden={hidden} className="tool-card-waiting" />
+              ) : (
+                <WaitingPill className="tool-card-waiting">{stateWords[state]}</WaitingPill>
+              )
+            ) : (
+              stateWords[state]
+            )}
+          </StatusWords>
+        </span>
       </>
     )
-    const risk =
-      approval === undefined
-        ? ''
-        : approval.advisory
-          ? ' is-advisory'
-          : approval.risk === 'R1'
-            ? ''
-            : approval.risk === 'R2'
-              ? ' is-r2'
-              : ''
+    // The tray turns red only for a high-risk request, a current Host's request without a risk included.
+    const risk = gate === undefined ? '' : gate.kind === 'advisory' ? ' is-advisory' : gate.badge?.tone === 'err' ? ' is-r2' : ''
     return (
       <article
         className={`tool-card tool-${state} ${approval ? 'has-approval' : ''}${risk}`}
+        data-open={open ? '' : undefined}
         data-tint={risk === ' is-r2' ? 'err' : undefined}
+        data-secure={approval ? '' : undefined}
+        data-approval-id={approval?.id}
+        data-risk={approval?.advisory ? 'advisory' : approval?.risk}
         {...(message ? { 'data-message-id': message.id } : {})}>
-        {hasBody ? (
-          <button
-            type="button"
-            className="tool-card-header"
-            aria-expanded={expanded}
-            aria-controls={bodyId}
-            onClick={() => {
-              setExpanded(!expanded)
-            }}>
-            {heading}
-            <ChevronRight className="chevron" size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-          </button>
-        ) : (
+        {approval ? (
           <div className="tool-card-header">{heading}</div>
-        )}
-        {expanded && hasBody && (
-          <div className="tool-card-body" id={bodyId}>
-            {!approval && (
-              <section>
-                <h4>参数</h4>
-                <ArgumentList text={tool?.input} covered={diffs.map(diff => diff.newText)} />
-              </section>
-            )}
-            {!approval && diffs.length > 0 && (
-              <section>
-                <h4>变更</h4>
-                <DiffView diffs={diffs} />
-              </section>
-            )}
-            {showOutput && (
-              <section>
-                <h4>输出</h4>
-                {output ? (
-                  <pre className="tool-pre tool-output">
-                    <VisibleText text={output} />
-                  </pre>
-                ) : (
-                  <p className="muted-line">{state === 'running' ? '执行中，结果返回后显示。' : '没有输出'}</p>
+        ) : (
+          <div className="tool-tray">
+            <button
+              type="button"
+              className="tool-card-header"
+              aria-expanded={open}
+              aria-controls={bodyId}
+              title={title !== label.object ? title : undefined}
+              onClick={() => {
+                setChoice(!open)
+              }}>
+              {heading}
+              <ChevronRight className="process-chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+            </button>
+            <Collapse
+              id={bodyId}
+              open={open}
+              lazy
+              onReveal={() => {
+                setChoice(true)
+              }}>
+              <div className="tool-card-body">
+                <section>
+                  <h4>参数</h4>
+                  <ArgumentList text={tool?.input} covered={diffs.map(diff => diff.newText)} />
+                </section>
+                {evidence && (
+                  <section>
+                    <h4>变更</h4>
+                    <DiffView diffs={diffs} />
+                  </section>
                 )}
-              </section>
-            )}
+                {showOutput && (
+                  <section>
+                    <div className="tool-section-head">
+                      <h4>输出</h4>
+                      {output && <CopyButton text={output} label="复制输出" size="xs" />}
+                    </div>
+                    {output ? (
+                      <ToolOutput text={output} running={state === 'running'} />
+                    ) : (
+                      <p className="muted-line">{state === 'running' ? '执行中，结果返回后显示。' : '没有输出'}</p>
+                    )}
+                  </section>
+                )}
+              </div>
+            </Collapse>
           </div>
         )}
-        {approval && (
-          <ApprovalPanel approval={approval} gate={gateFor(approval)} title={title} diffs={diffs} busy={busy} onDecide={onDecide} />
+        {/* Closed, the changes stay in view under the row; open, they are the paper's 变更 and this one folds away. */}
+        {evidence && (
+          <Collapse
+            open={!open}
+            lazy
+            onReveal={() => {
+              setChoice(false)
+            }}>
+            <DiffView diffs={diffs} />
+          </Collapse>
         )}
+        <ApprovalSlot approval={approval} gate={gate} title={title} diffs={diffs} hidden={hidden} busy={busy} onDecide={onDecide} />
       </article>
     )
   },
@@ -304,5 +249,8 @@ export const ToolCard = memo(
         && a.message.text === b.message.text
         && a.message.state === b.message.state
         && a.message.toolName === b.message.toolName
+        && a.message.createdAt === b.message.createdAt
+        && a.message.startedAt === b.message.startedAt
+        && a.message.completedAt === b.message.completedAt
         && sameTool(a.message.tool, b.message.tool))),
 )

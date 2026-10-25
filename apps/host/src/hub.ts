@@ -10,14 +10,23 @@ import {
   type CreateTaskInput,
   type DecideOptions,
   type LaunchPreview,
+  type ProjectFolder,
   type PromptOptions,
   type SetConfigOptions,
 } from '@latch/sdk'
 import { writeFileAtomic } from '@latch/core/node-kit'
+import { SESSION_FOLDER_NAME } from './session-folders.ts'
 
-/** `harnessId` is Host-only: the hub strips it before the driver sees the input. */
+/**
+ * `harnessId` is Host-only. `workspaceId` and `folders` reach only drivers that declare `projectFolders: 'all'`; the
+ * hub strips them for every other driver, which then works in `cwd` alone.
+ */
 export interface HubCreateInput extends CreateTaskInput {
   harnessId?: string
+  /** The project the Host expanded `cwd` from; kept in the Host's session metadata. */
+  workspaceId?: string
+  /** The name of the folder the Host made for this session alone in its start directory (`cwd`); never sent to the driver. */
+  sessionFolder?: string
 }
 
 /** Host-level session metadata; it applies to every harness. `title: null` removes an override. */
@@ -75,6 +84,13 @@ const metaSchema = z.object({
         title: z.string().min(1).max(200).optional(),
         pinned: z.literal(true).optional(),
         archived: z.literal(true).optional(),
+        /** The project the session was started in; written once, right after the driver created it. */
+        workspaceId: z
+          .string()
+          .regex(/^[a-z0-9][a-z0-9_-]{0,63}$/u)
+          .optional(),
+        /** The name of the folder the Host made for the session in its start directory; written with `workspaceId`. */
+        sessionFolder: z.string().regex(SESSION_FOLDER_NAME).optional(),
       }),
     )
     .max(100_000),
@@ -87,6 +103,22 @@ const MAX_DETAIL_APPROVALS = 1024
 const PLUGIN_NOTE = '第三方 Harness 插件，Latch 无法核实其执行范围'
 
 /** Builtin runs under Latch's own approvals (L1); ACP agents and plugin harnesses run unsandboxed (L3). */
+const PRIMARY_ACCESS = new Set<unknown>(['primary', 'primary-asks', 'primary-unbounded'])
+
+/** What clients are told about a project's other folders: `all` only for a driver that receives them all. */
+function folderInfo(driver: HarnessDriver): Pick<HarnessInfo, 'projectFolders'> {
+  const declared: unknown = driver.folderAccess
+  const { access, max } = (typeof declared === 'object' && declared !== null ? declared : {}) as { access?: unknown; max?: unknown }
+  if (driver.projectFolders === 'all')
+    return {
+      projectFolders: {
+        access: 'all',
+        ...(access === 'all' && Number.isSafeInteger(max) && (max as number) >= 1 ? { max: max as number } : {}),
+      },
+    }
+  return PRIMARY_ACCESS.has(access) ? { projectFolders: { access: access as 'primary' | 'primary-asks' | 'primary-unbounded' } } : {}
+}
+
 function levelFor(source: HarnessSource): 'L1' | 'L3' {
   return source === 'builtin' ? 'L1' : 'L3'
 }
@@ -131,6 +163,13 @@ class SessionMetaStore {
 
   get(sessionId: string): StoredMeta | undefined {
     return this.entries.get(sessionId)
+  }
+
+  /** The names of the folders the Host made for sessions it still has metadata for. */
+  sessionFolders(): string[] {
+    const names: string[] = []
+    for (const meta of this.entries.values()) if (meta.sessionFolder) names.push(meta.sessionFolder)
+    return names
   }
 
   /** Publishes in memory only after the rename, so a failed write leaves the previous state visible. */
@@ -313,10 +352,18 @@ export class HarnessHub implements Bridge {
   }
 
   /** What a new L3 session would launch; undefined for drivers that cannot describe it (third-party plugins). */
-  async launchPreviewOf(harnessId: string, cwd: string): Promise<LaunchPreview | undefined> {
+  /** The project's folders reach only a driver that declares `projectFolders: 'all'`, as in `createTask`. */
+  async launchPreviewOf(
+    harnessId: string,
+    cwd: string,
+    project?: { workspaceId: string; folders: ReadonlyArray<ProjectFolder> },
+  ): Promise<LaunchPreview | undefined> {
     const member = this.member(harnessId)
     if (!member) throw new AppError(409, 'harness-unavailable', `Harness ${harnessId} 当前不可用`)
-    return member.bridge.launchPreview ? member.bridge.launchPreview({ cwd }) : undefined
+    if (!member.bridge.launchPreview) return undefined
+    return member.bridge.launchPreview(
+      member.driver.projectFolders === 'all' && project ? { cwd, workspaceId: project.workspaceId, folders: project.folders } : { cwd },
+    )
   }
 
   info(id: string): HarnessInfo | undefined {
@@ -380,15 +427,33 @@ export class HarnessHub implements Bridge {
   }
 
   async createTask(input: HubCreateInput): Promise<{ sessionId: string }> {
-    const { harnessId, ...task } = input
+    const { harnessId, workspaceId, folders, sessionFolder, ...rest } = input
     const id = harnessId ?? this.options.defaultId()
     const entry = this.entries.get(id)
     if (!entry?.bridge) throw new AppError(409, 'harness-unavailable', `Harness ${id} 当前不可用`)
+    const task: CreateTaskInput =
+      entry.driver.projectFolders === 'all' && workspaceId !== undefined && folders !== undefined ? { ...rest, workspaceId, folders } : rest
     const result = await this.accept(entry as Member, bridge => bridge.createTask(task))
     if (!this.claim(id, result.sessionId)) {
       throw new AppError(502, 'session-id-collision', `Harness ${id} 返回的会话标识已属于另一个 Harness`)
     }
+    // Without it the session is grouped and matched by its directory, as sessions from before projects had several folders.
+    if (workspaceId)
+      await this.meta
+        .update(result.sessionId, current => ({ ...current, workspaceId, ...(sessionFolder ? { sessionFolder } : {}) }))
+        .catch(error => this.log(`会话 ${result.sessionId} 的项目记录写入失败：${message(error)}`))
     return result
+  }
+
+  /** The names of the folders the Host made for sessions, from the session metadata. */
+  sessionFolders(): string[] {
+    return this.meta.sessionFolders()
+  }
+
+  /** Preserve a legacy session's uniquely identified project before its primary folder changes. */
+  async recordWorkspace(sessionId: string, workspaceId: string): Promise<void> {
+    await this.route(sessionId)
+    await this.meta.update(sessionId, current => (current.workspaceId === undefined ? { ...current, workspaceId } : current))
   }
 
   async prompt(sessionId: string, prompt: string, requestId: string, options?: PromptOptions): Promise<void> {
@@ -587,15 +652,19 @@ export class HarnessHub implements Bridge {
   }
 
   private present(harnessId: string, summary: TaskSummary): TaskSummary {
-    const { pinned: _pinned, archived: _archived, level: _level, ...rest } = summary
+    // Only the Host makes a session's own folder: a driver's claim is dropped.
+    const { pinned: _pinned, archived: _archived, level: _level, sessionFolder: _sessionFolder, ...rest } = summary
     const meta = this.meta.get(summary.id)
     return {
       ...rest,
       harnessId,
       level: this.levelOf(harnessId),
+      ...(this.entries.get(harnessId)?.driver.projectFolders !== 'all' ? { folderAccess: 'primary' as const } : {}),
       ...(meta?.title ? { title: meta.title } : {}),
       ...(meta?.pinned ? { pinned: true } : {}),
       ...(meta?.archived ? { archived: true } : {}),
+      ...(meta?.workspaceId ? { workspaceId: meta.workspaceId } : {}),
+      ...(meta?.sessionFolder ? { sessionFolder: true as const } : {}),
     }
   }
 
@@ -632,6 +701,7 @@ export class HarnessHub implements Bridge {
       modes: [...capabilities.modes],
       models: capabilities.models,
       level: levelFor(entry.source),
+      ...folderInfo(driver),
     }
   }
 

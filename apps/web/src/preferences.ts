@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react'
+import { parseInspectorPreference, type InspectorPreference } from './inspectorLayout.ts'
 import { parseSidebarPreference, type SidebarPreference } from './sidebarLayout.ts'
 
 /** Per-viewer conveniences. Browser storage can be missing or throw; every read has a default. */
@@ -8,14 +9,19 @@ export interface Preferences {
   theme: ThemePreference
   /** Desktop only; touch keyboards always insert a newline on Enter. */
   sendKey: SendKey
-  /** Whether the desktop inspector pane is open. */
-  inspector: boolean
+  /** The session-information column: open per class of window, its dragged width and the blocks folded (local only). */
+  inspector: InspectorPreference
   /** The sidebar's dragged width and whether it is shut, per breakpoint class (local only, never sent to the Host). */
   sidebar: SidebarPreference
 }
 
 const KEY = 'harness-link.preferences'
-const defaults: Preferences = { theme: 'system', sendKey: 'enter', inspector: false, sidebar: { width: {}, collapsed: {} } }
+const defaults: Preferences = {
+  theme: 'system',
+  sendKey: 'enter',
+  inspector: { open: {}, width: {}, collapsed: [] },
+  sidebar: { width: {}, collapsed: {} },
+}
 
 export function storageGet(key: string): string | null {
   try {
@@ -42,7 +48,7 @@ export function parsePreferences(raw: string | null): Preferences {
     return {
       theme: item.theme === 'light' || item.theme === 'dark' ? item.theme : 'system',
       sendKey: item.sendKey === 'mod-enter' ? 'mod-enter' : 'enter',
-      inspector: item.inspector === true,
+      inspector: parseInspectorPreference(item.inspector),
       sidebar: parseSidebarPreference(item.sidebar),
     }
   } catch {

@@ -10,7 +10,7 @@ Latch 在你的电脑（执行端）上运行一个 Host。Host 持有会话、�
 
 - **Harness**：内置的 Standard 执行循环，或通过 [Agent Client Protocol](https://agentclientprotocol.com)（ACP）接入的开源 Agent（Codex、pi、OpenCode、DeepSeek Harness、Gemini CLI、Qwen Code、goose）。
 - **模型**：OpenAI 兼容接口或 Anthropic 原生接口的模型服务，会话中可切换。
-- **项目目录**：Host 登记过的工作目录之一。
+- **项目**：一个或多个文件夹，第一个是主文件夹，新会话在其中启动；Host 启动时的工作目录是「启动目录」。
 
 Provider、Tool 与 Harness 都是 [Cordis](https://github.com/cordiverse/cordis) 插件，可以用本地模块扩展。
 
@@ -46,7 +46,7 @@ pnpm desktop    # 启动 Host 并打开 Latch 桌面端（推荐）
 
 设备凭据每 24 小时自动续期，从登记起 30 天后失效，届时需要重新登记确认。
 
-登记完成后，在「设置 → 模型服务」添加服务，或在桌面端「设置 → Agent」启用已安装的 ACP Agent。密钥、Agent 定义等需要本机确认的设置只能在桌面端完成（见「桌面端」）。
+登记完成后，在「设置 → 模型服务」添加服务，或在桌面端「设置 → Agent 成员」启用已安装的 ACP Agent。密钥、Agent 定义等需要本机确认的设置只能在桌面端完成（见「桌面端」）。
 
 **本机确认组件。** Touch ID 与登录密码确认由 `dist/native/latch-presence` 完成：
 
@@ -67,6 +67,7 @@ pnpm desktop    # 启动 Host 并打开 Latch 桌面端（推荐）
 - 页面从 `latch://app/link/` 加载，所有请求由 Electron 主进程经 `host.sock` 转发；页面本身不能建立网络连接，也接触不到设备密钥与凭据。
 - 设备密钥与凭据由主进程用系统安全存储加密，保存在 `<userData>/latch-devices/<hostId>.json`（macOS 为 `~/Library/Application Support/Latch/Desktop/latch-devices/`）。没有可用的安全存储时桌面端拒绝启动。
 - 页面里的外部链接只有在原生对话框中确认完整地址后，才交给系统浏览器打开。
+- 「设置 → 项目」用系统的文件夹选择器新建项目（可以一次选几个文件夹），也可以从访达拖入文件夹，再在系统对话框中确认；页面不发送路径，由桌面端用设备密钥签名后提交。「在访达中显示」只在访达中选中已登记的文件夹，不打开它。向已有项目添加文件夹、调整顺序、重新选择与「存为项目」的页面尚未实现（客户端界面正在改版）；在此之前可以在 Host 停止时用 `pnpm latch project add-folder`。
 - 关闭窗口不会停止 Host，用 `pnpm stop` 停止。
 
 需要本机确认的操作只能在执行端电脑上的桌面端发起：设置模型服务密钥、保存 Agent 定义（命令、参数、环境变量）、新建 ACP 会话、放宽会话权限模式、批准高风险（R2）操作、授予设备权限、放宽安全策略（包括出站白名单）。本机浏览器和手机都不能发起本机确认，唯一的例外是登记设备本身。
@@ -122,7 +123,7 @@ pnpm desktop -- --tailnet \
 
 **ACP Agent** 是与 Host 同权限运行的本机代码，Latch 不提供操作系统沙箱：
 
-- 在运行 Host 的电脑上安装并登录 Agent，再在桌面端「设置 → Agent」选择预设或填写自定义命令，保存需要本机确认。Latch 不下载、不安装 Agent，也不代为登录。
+- 在运行 Host 的电脑上安装并登录 Agent，再在桌面端「设置 → Agent 成员」选择预设或填写自定义命令，保存需要本机确认。Latch 不下载、不安装 Agent，也不代为登录。
 - 新建会话时，确认窗口显示完整命令、参数、环境变量名、工作目录、项目中找到的 Agent 配置与启动指纹；之后定义或这些项目配置变化，会话就不能继续。
 - 启动前 Latch 把 Agent 设到预设规定的权限模式，每轮输入前读回核对，发现 Agent 自行放宽时停止会话，并隐藏会持久保存授权的「始终允许 / 始终拒绝」类选项。pi 与 DeepSeek Harness 无法读回模式，pi 执行工具前也不请求审批。
 - Agent 进程只继承 `PATH`、`HOME`、`LANG`、`TERM`、`USER`、`SHELL`、`LC_*`，每个会话有私有临时目录，代理变量被清空。Agent 需要的 API Key 等变量请写在 Agent 定义里；`PATH`、`HOME`、代理、`NODE_OPTIONS`、`HARNESS_*`、`npm_*`、`DYLD_*`、`LD_*`、`GIT_CONFIG_*` 等由 Latch 管理的变量不能在定义中设置。
@@ -153,10 +154,18 @@ pnpm desktop -- --tailnet \
 | `device invite [--scopes …] [--code-file <路径>]` | 运行中，已配置 HTTPS | 生成手机配对二维码 |
 | `device enroll --offline [--code-file <路径>] [--port <端口>]` | 已停止 | 生成一次性离线登记码（15 分钟） |
 | `provider set-key <服务 ID>` | 已停止 | 保存模型服务密钥，绑定到当前服务地址 |
+| `project list [--json]` | 已停止 | 列出项目与其中的文件夹 |
+| `project add <路径…> [--name <名称>] [--yes]` | 已停止 | 用这些文件夹新建项目，第一个通过检查的是主文件夹 |
+| `project add-folder <项目 ID> <路径…> [--yes]` | 已停止 | 把文件夹加入项目 |
+| `project remove <项目 ID> [--yes]`、`project remove-folder <项目 ID> <文件夹 ID> [--yes]` | 已停止 | 移除项目或其中一个文件夹，文件不删除 |
 | `presence status` | 任意 | 本机确认是否可用 |
 | `presence repin` | 已停止 | 重新登记本机确认组件的签名（仅 macOS） |
 | `presence test` | 任意 | 显示一次示例本机确认 |
 | `audit verify` | 任意 | 只读校验审计记录的哈希链 |
+
+项目与文件夹只能在 Host 所在的电脑上添加：在 Latch 桌面端用系统的文件夹选择器（或把文件夹拖进来，再在系统对话框中确认），或在 Host 停止时用 `pnpm latch project`。命令按「数据与工作区」中的规则逐个检查文件夹，列出真实路径并在终端询问 `y/N`（非交互环境需要 `--yes`），先写审计再保存；Host 运行时拒绝（「Host 正在运行。请在 Latch 桌面端添加，或先停止 Host。」）。重命名、调整顺序、移除文件夹与移除项目不扩大权限，Host 接受任何有「管理此 Host」权限的设备发起；页面目前只提供移除项目。
+
+离线项目命令沿用上次 Host 实际使用的启动目录、Agent 安装目录与 TLS 私钥位置。首次启动之前添加文件夹，需给项目命令加 `--workspace <启动目录>`（或设置 `HARNESS_WORKSPACE`）；之后改变启动参数，应先用新参数成功启动并停止 Host，再执行项目命令。
 
 配对链接与离线登记码默认只打印到终端。非交互环境必须用 `--code-file <路径>`，内容只写入本次新建的 0600 文件：
 
@@ -185,15 +194,19 @@ pnpm desktop -- --tailnet \
 2. 当前目录下已存在的 `.runtime`（旧版本的位置，继续使用并打印迁移提示；迁移时停止 Host、移动目录，再用 `--data-dir` 指定）；
 3. 平台默认：macOS `~/Library/Application Support/Latch/Host`，Linux `${XDG_DATA_HOME:-~/.local/share}/latch/host`。
 
-**启动工作区**：`--workspace` → `HARNESS_WORKSPACE` → 数据目录内已存在的 `workspace`（旧布局，迁出之前只能使用 Standard）→ `~/Latch/workspace`。其他项目目录在「设置 → 项目」登记。
+**启动目录**：`--workspace` → `HARNESS_WORKSPACE` → 数据目录内已存在的 `workspace`（旧布局，迁出之前只能使用 Standard；位于 Latch 程序目录内时不再使用）→ `~/Latch/workspace`（需要时创建）。启动目录只包含这一个文件夹；其他项目在 Latch 桌面端「设置 → 项目」新建，或用 `pnpm latch project` 添加，每个项目最多 8 个文件夹。
 
-以下位置既不能作为启动工作区（Host 拒绝启动），也不能登记为项目：
+**会话自己的文件夹**：没有指定 `--workspace` 或 `HARNESS_WORKSPACE` 时，每个不在项目中的新 Agent 会话在启动目录中得到一个新文件夹（如 `~/Latch/workspace/20261025-a1b2`，权限 0700），在其中工作，会话之间的文件不再互相覆盖；「只对话」会话不读写文件，没有文件夹。指定了启动目录时照旧在其中工作。删除会话不删除它的文件夹。把会话的文件夹「存为项目」由 Latch 桌面端完成，只能在 Host 所在的电脑上进行，之后的新会话就能在这个项目中开始；页面中的入口尚未实现（客户端界面正在改版）。
+
+以下位置既不能作为启动目录（Host 拒绝启动），也不能加入项目：
 
 - 主目录本身；包含或位于敏感目录（`~/.ssh`、`~/.aws`、`~/.gnupg`、`~/.kube`、`~/.docker`、`~/Library/Keychains`，以及 `~/.codex`、`~/.gemini` 等 Agent 配置目录）的位置；包含 TLS 私钥的目录。
 - 主目录下的隐藏目录、`~/.config`、`~/.local`、`~/bin`，以及 macOS 的整个 `~/Library`（数据目录内的旧布局工作区除外）。
 - 与运行目录或 Agent 安装目录重叠的位置。
 
-登记项目时另外拒绝：与数据目录重叠、登录时自动启动的目录（如 `~/Library/LaunchAgents`）、与 Latch 程序目录重叠、位于 `.git`、`node_modules` 等受保护目录内的目录，以及已登记过的目录。启动工作区与 Latch 程序目录重叠时 Host 仍会启动，但 Standard 的每次写入都按 R2 处理，ACP Agent 不可用。已保存的项目在每次启动时重新检查，不再符合规则的在本次运行中停用，可在设置中移除。
+加入项目的每个文件夹另外拒绝：与数据目录重叠、登录时自动启动的目录（如 `~/Library/LaunchAgents`）、与 Latch 程序目录重叠、位于 `.git`、`node_modules` 等受保护目录内的目录；路径含不可显示的字符（控制字符、换行、双向控制与零宽字符），或含逗号、`*`、`?`（部分 Agent 把它们当作分隔符或通配符）；Host 无法打开的文件夹（macOS 的「隐私与安全性」没有允许时）。同一项目中的文件夹不能相同或相互包含；主文件夹不能是启动目录或另一个项目的主文件夹，其他文件夹可以同时属于几个项目。启动目录与 Latch 程序目录重叠时 Host 仍会启动，但 Standard 的每次写入都按 R2 处理，ACP Agent 不可用。
+
+已保存的项目每次列出时重新检查（结果保留 5 秒），新建会话时立即检查：任何一个文件夹找不到、不再符合规则或无法打开，整个项目就不能新建会话，已有会话也不能继续，直到文件夹回到原处，或在项目中把它换成另一个文件夹。会话创建时记下它的项目与文件夹，之后加入的文件夹只用于新会话；它用到的文件夹被移出项目或替换后，会话不能继续。
 
 完整的路径规则与数据目录内容见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 的「路径与项目目录」与「持久化与恢复」。
 
@@ -222,7 +235,10 @@ pnpm stop -- --force                    # 仍有会话在运行或等待审批�
 - **明文局域网接入已移除。** `--lan`、`--tailnet`、`--tls-host` 或非回环 `--host` 都必须同时提供证书、私钥与公开地址，否则拒绝启动。
 - **`GET /link/api/health` 只返回 `{"ok":true}`。** Host 实例信息只在 `host.sock` 上提供。
 - **`HARNESS_DESKTOP_URL` 已移除。** 桌面端只通过 `host.json` 与 `host.sock` 连接 Host，启动器会丢弃这个变量。
-- **默认位置变化。** 新安装的数据目录与工作区使用上文的平台默认位置；当前目录已有的 `.runtime` 与其中的 `workspace` 仍会被使用。
+- **默认位置变化。** 新安装的数据目录与启动目录使用上文的平台默认位置；当前目录已有的 `.runtime` 仍会被使用，其中的 `workspace` 只在不位于 Latch 程序目录内时仍作为启动目录，否则启动目录改为 `~/Latch/workspace`（原目录中的文件不移动，启动时打印提示）。
+- **会话有自己的文件夹。** 使用默认启动目录时，不在项目中的 Agent 会话不再共用启动目录，而是各自使用其中新建的文件夹；已有会话不受影响。
+- **只能在 Host 电脑上添加项目。** 本机浏览器、手机与其他电脑不能再新建项目或添加文件夹（403 `local-only`），旧页面的路径输入框随之失效；改用 Latch 桌面端或 Host 停止时的 `pnpm latch project`。「默认工作区」改称「启动目录」。
+- **回退到旧版本 Host** 时，它只读取每个项目的主文件夹，并在下一次写入设置时丢弃其他文件夹与图标；在自己文件夹中工作的会话不能继续；它也无法打开记录了新审计动作（如 `workspace.folder-added`）的审计记录。
 - **升级前创建的 ACP 会话只能查看和删除**，因为它们没有经过本机确认；请新建会话。
 - 执行 `pnpm build` 后，仍在运行的旧 Host 会直接提供新页面，页面提示「此 Host 仍是旧版本，重启 Host 后启用设备确认。」，重启 Host 即可。
 

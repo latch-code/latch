@@ -10,6 +10,7 @@ import {
   Copy,
   Download,
   Ellipsis,
+  Fingerprint,
   Folder,
   Lock,
   PanelRight,
@@ -33,6 +34,7 @@ import {
   Button,
   Checkbox,
   ChoiceList,
+  Collapse,
   Comet,
   Count,
   DemoMark,
@@ -44,6 +46,7 @@ import {
   FilterPills,
   Icon,
   IconButton,
+  ICON_STROKE,
   InlineNotice,
   Kbd,
   LiveChanges,
@@ -60,6 +63,7 @@ import {
   SegmentedControl,
   Sheet,
   SheetSurface,
+  Shimmer,
   Skeleton,
   Spinner,
   StatusDot,
@@ -67,6 +71,7 @@ import {
   StatusPill,
   StatusSlot,
   StatusWords,
+  Swap,
   Switch,
   SwitchRow,
   Tabs,
@@ -273,6 +278,9 @@ function Buttons() {
         </Cell>
         <Cell caption="开">
           <IconButton label="会话信息" icon={PanelRight} pressed />
+        </Cell>
+        <Cell caption="菜单打开">
+          <IconButton label="更多批准选项" icon={Ellipsis} aria-haspopup="menu" aria-expanded />
         </Cell>
         <Cell caption="焦点" force="focus-visible">
           <IconButton label="设置" icon={Settings} />
@@ -590,6 +598,19 @@ function Pickers() {
             />
           </div>
         </Cell>
+        <Cell caption="动作菜单 · 无图标">
+          <div className="ui-popover">
+            <MenuPanel
+              label="更多批准选项"
+              sections={[
+                {
+                  id: 'more',
+                  items: [{ id: 'always', label: '本会话始终允许', description: '只在这个会话里有效', onSelect: () => {} }],
+                },
+              ]}
+            />
+          </div>
+        </Cell>
       </Row>
     </Section>
   )
@@ -871,6 +892,7 @@ function Choices() {
 
 function LiveLayers() {
   const [dialog, setDialog] = useState(false)
+  const [dock, setDock] = useState(false)
   const [sheet, setSheet] = useState(false)
   return (
     <>
@@ -880,6 +902,33 @@ function LiveLayers() {
         }}>
         打开对话框
       </Button>
+      <Button
+        onClick={() => {
+          setDock(true)
+        }}>
+        打开停靠框
+      </Button>
+      <Dialog
+        open={dock}
+        onClose={() => {
+          setDock(false)
+        }}
+        placement="dock"
+        secure
+        bare
+        icon={<Fingerprint size={20} strokeWidth={ICON_STROKE[20]} aria-hidden="true" />}
+        title="为设备增加权限"
+        footer={
+          <Button
+            size="md"
+            onClick={() => {
+              setDock(false)
+            }}>
+            取消
+          </Button>
+        }>
+        已打开确认窗口。核对窗口里的内容，然后用 Touch ID 或登录密码确认。
+      </Dialog>
       <Button
         onClick={() => {
           setSheet(true)
@@ -982,6 +1031,34 @@ function Layers() {
             移除后新会话不能再选它，项目目录里的文件不受影响。
           </DialogSurface>
         </Cell>
+        <Cell caption="停靠 400 · 状态图块">
+          <DialogSurface
+            bare
+            placement="dock"
+            icon={<Fingerprint size={20} strokeWidth={ICON_STROKE[20]} aria-hidden="true" />}
+            title="为设备增加权限"
+            footer={
+              <Button variant="secondary" size="md">
+                取消
+              </Button>
+            }>
+            已打开确认窗口。核对窗口里的内容，然后用 Touch ID 或登录密码确认。
+          </DialogSurface>
+        </Cell>
+        <Cell caption="停靠 · 没有执行">
+          <DialogSurface
+            bare
+            placement="dock"
+            icon={<X size={20} strokeWidth={ICON_STROKE[20]} aria-hidden="true" />}
+            title="为设备增加权限"
+            footer={
+              <Button variant="secondary" size="md">
+                关闭
+              </Button>
+            }>
+            操作没有执行。本机确认没有通过。
+          </DialogSurface>
+        </Cell>
       </Row>
       <Row label="弹层">
         <Cell caption="内容弹层 · 失败磁贴">
@@ -1050,6 +1127,14 @@ function Layers() {
           </SheetSurface>
         </div>
         <div className="gallery-phone">
+          <SheetSurface title="计划 1/2" cancelLabel={null} action={<Button variant="secondary">完成</Button>}>
+            <ol className="gallery-sheet-card">
+              <li>读取设置页的保存逻辑</li>
+              <li>修复空密钥被清除的问题</li>
+            </ol>
+          </SheetSurface>
+        </div>
+        <div className="gallery-phone">
           <SheetSurface title="运行设置" action={<Button variant="secondary">完成</Button>} onClose={() => {}}>
             <div className="gallery-sheet-card">
               <ValuePicker variant="row" label="模型" value="fixture-large" options={MODELS} onValueChange={() => {}} />
@@ -1085,7 +1170,7 @@ function Notices() {
       <InlineNotice tone="warn" title="连接已中断，正在重连…" action={<Button size="xs">重试</Button>}>
         已显示的内容都在，重连后会补齐这一轮的输出。
       </InlineNotice>
-      <InlineNotice tone="error" title="审计记录被回滚" action={<Button size="xs">已核对</Button>} onClose={() => {}}>
+      <InlineNotice tone="error" title="审计记录被回滚" secure action={<Button size="xs">已核对</Button>} onClose={() => {}}>
         上次看到的记录不在了，请在执行端核对。
       </InlineNotice>
       <InlineNotice title="此 Host 仍是旧版本">重启 Host 后启用设备确认。</InlineNotice>
@@ -1488,6 +1573,68 @@ function Live() {
   )
 }
 
+/** A disclosure with its header, as a tool row or a session-info block draws one. */
+function Disclosure({ initial }: { initial: boolean }) {
+  const [open, setOpen] = useState(initial)
+  return (
+    <div className="gallery-disclosure">
+      <button
+        type="button"
+        className="gallery-disclosure-header"
+        aria-expanded={open}
+        onClick={() => {
+          setOpen(!open)
+        }}>
+        <Icon icon={open ? ChevronDown : ChevronRight} size={14} />
+        运行测试
+      </button>
+      <Collapse
+        open={open}
+        onReveal={() => {
+          setOpen(true)
+        }}>
+        <p className="gallery-disclosure-body">pnpm test · 116 项通过</p>
+      </Collapse>
+    </div>
+  )
+}
+
+function Motion() {
+  return (
+    <Section title="动效">
+      <Row label="展开">
+        <Cell caption="收起（页内查找可达）">
+          <Disclosure initial={false} />
+        </Cell>
+        <Cell caption="展开">
+          <Disclosure initial />
+        </Cell>
+      </Row>
+      <Row label="替换">
+        <Cell caption="复制 → 已复制：缩放淡入">
+          <Replay before={false} after>
+            {copied => <IconButton label={copied ? '已复制' : '复制'} icon={copied ? Check : Copy} swap />}
+          </Replay>
+        </Cell>
+        <Cell caption="文字：原地淡入">
+          <Replay before="live" after="settled">
+            {value => (
+              <Swap value={value} effect="fade">
+                {value === 'live' ? '正在思考' : '思考了 6 秒'}
+              </Swap>
+            )}
+          </Replay>
+        </Cell>
+      </Row>
+      <Row label="进行中的文字">
+        <Cell caption="光带扫过（减少动效时静止）">
+          <Shimmer>正在思考</Shimmer>
+        </Cell>
+      </Row>
+    </Section>
+  )
+}
+
 function Focus() {
   return (
     <Section title="焦点">
@@ -1529,6 +1676,7 @@ export function Gallery() {
         <Notices />
         <States />
         <Live />
+        <Motion />
         <Tiles />
         <Resize />
         <Icons />

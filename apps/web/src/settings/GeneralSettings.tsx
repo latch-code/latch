@@ -1,176 +1,196 @@
 import { useState } from 'react'
 import type { AppSnapshot, HostCatalog, ModelRef, SessionDefaults, TaskMode } from '@latch/protocol'
 import { api, errorMessage } from '../core/api.ts'
-import { defaultModel, findHarness, startableWorkspaces } from '../composerChoice.ts'
+import { defaultModel, findHarness, harnessName, startableWorkspaces } from '../composerChoice.ts'
+import { basename } from '../format.ts'
 import { setPreference, usePreferences, type SendKey, type ThemePreference } from '../preferences.ts'
-import { Button, ChoiceList, InlineNotice, SegmentedControl } from '@latch/ui'
-import { SectionHeading } from './common.tsx'
+import { HarnessTile, ProviderTile } from '../components/BrandTile.tsx'
+import { ChoiceList, InlineNotice, SegmentedControl, ValuePicker, type PickerGroup } from '@latch/ui'
+import { SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
 
-const encodeModel = (ref: ModelRef | undefined) => (ref ? JSON.stringify([ref.providerId, ref.model]) : '')
+const encodeModel = (ref: ModelRef | undefined) => (ref ? JSON.stringify([ref.providerId, ref.model]) : undefined)
 function decodeModel(value: string): ModelRef | undefined {
   try {
-    const [providerId, model] = JSON.parse(value) as [string, string]
-    return { providerId, model }
+    const parsed: unknown = JSON.parse(value)
+    if (!Array.isArray(parsed)) return undefined
+    const [providerId, model] = parsed as unknown[]
+    return typeof providerId === 'string' && typeof model === 'string' ? { providerId, model } : undefined
   } catch {
     return undefined
   }
 }
+const MODE_LABELS: Record<TaskMode, string> = { chat: '对话', agent: 'Agent' }
+/** What the chosen way does, as the row's one sentence. */
+const MODE_EFFECTS: Record<TaskMode, string> = { chat: '不读写文件、不运行命令', agent: '会读写项目文件、运行命令（按权限询问）' }
 
-/** Host-wide defaults that a new session starts from on every device. */
-function SessionDefaultsForm({ catalog, onChanged }: { catalog: HostCatalog; onChanged: () => void }) {
-  const [draft, setDraft] = useState<SessionDefaults>(() => ({
-    ...catalog.defaults,
-    ...(catalog.defaults.model ? {} : { model: defaultModel(catalog) }),
-  }))
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const [saved, setSaved] = useState(false)
+/** What the Host stores: a mode the harness offers, a startable project, and a model only for a harness that uses the Host's. */
+function normalized(catalog: HostCatalog, draft: SessionDefaults): SessionDefaults {
   const harness = findHarness(catalog, draft.harnessId)
+  const modes: TaskMode[] = harness?.modes.length ? harness.modes : ['chat', 'agent']
+  const workspaces = startableWorkspaces(catalog)
+  const workspaceId = workspaces.some(item => item.id === draft.workspaceId) ? draft.workspaceId : (workspaces[0]?.id ?? draft.workspaceId)
+  return {
+    harnessId: draft.harnessId,
+    mode: modes.includes(draft.mode) ? draft.mode : modes[0],
+    workspaceId,
+    ...(harness?.models === 'host' && draft.model ? { model: draft.model } : {}),
+  }
+}
+
+/**
+ * Host-wide defaults that a new session starts from on every device, one picker per row. A choice applies at once,
+ * as every settings value does; the row goes back to the Host's value if the Host refuses it.
+ */
+function SessionDefaultsGroup({ catalog, onChanged }: { catalog: HostCatalog; onChanged: () => void }) {
+  const stored = (): SessionDefaults => ({ ...catalog.defaults, ...(catalog.defaults.model ? {} : { model: defaultModel(catalog) }) })
+  const [draft, setDraft] = useState<SessionDefaults>(stored)
+  const [error, setError] = useState('')
+  // A change of the Host's defaults (this device's, once refreshed, or another device's) replaces the draft.
+  const basis = JSON.stringify(catalog.defaults)
+  const [seen, setSeen] = useState(basis)
+  if (seen !== basis) {
+    setSeen(basis)
+    setDraft(stored())
+  }
+  const harness = findHarness(catalog, draft.harnessId)
+  const shown = normalized(catalog, draft)
   const modes: TaskMode[] = harness?.modes.length ? harness.modes : ['chat', 'agent']
   // The Host already answers a disabled saved default with the default workspace, so disabled ones are never offered.
   const workspaces = startableWorkspaces(catalog)
-  const workspaceId = workspaces.some(item => item.id === draft.workspaceId) ? draft.workspaceId : (workspaces[0]?.id ?? draft.workspaceId)
-  const update = (patch: Partial<SessionDefaults>) => {
-    setDraft(previous => ({ ...previous, ...patch }))
-    setSaved(false)
-  }
-  const save = async () => {
-    setBusy(true)
+
+  const commit = async (patch: Partial<SessionDefaults>) => {
+    const next = { ...draft, ...patch }
+    setDraft(next)
     setError('')
     try {
-      const mode = modes.includes(draft.mode) ? draft.mode : modes[0]!
-      await api('preferences', {
-        method: 'PUT',
-        body: {
-          defaults: {
-            harnessId: draft.harnessId,
-            mode,
-            workspaceId,
-            ...(harness?.models === 'host' && draft.model ? { model: draft.model } : {}),
-          },
-        },
-      })
-      setSaved(true)
+      await api('preferences', { method: 'PUT', body: { defaults: normalized(catalog, next) } })
       onChanged()
     } catch (cause) {
       setError(errorMessage(cause))
-    } finally {
-      setBusy(false)
+      setDraft(stored())
     }
   }
+
+  const modelGroups: Array<PickerGroup<string>> = catalog.providers.map(provider => ({
+    id: provider.id,
+    label: provider.name,
+    options: (provider.models.length ? provider.models : [provider.defaultModel]).filter(Boolean).map(model => ({
+      value: encodeModel({ providerId: provider.id, model })!,
+      label: model,
+    })),
+  }))
+  const modelCount = modelGroups.reduce((sum, group) => sum + group.options.length, 0)
+  const provider = shown.model ? catalog.providers.find(item => item.id === shown.model?.providerId) : undefined
+
   return (
-    <section className="settings-group">
-      <h4>新会话默认值</h4>
-      <p className="settings-hint">每台设备会记住自己上次的选择；首次使用或选择失效时采用这里的默认值。</p>
-      <div className="form-grid">
-        <label className="field">
-          <span>Harness</span>
-          <select
-            value={draft.harnessId}
-            onChange={event => {
-              update({ harnessId: event.target.value })
-            }}>
-            {catalog.harnesses.map(item => (
-              <option key={item.id} value={item.id} disabled={item.status !== 'ready'}>
-                {item.name}
-                {item.status !== 'ready' ? '（不可用）' : ''}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field">
-          <span>模式</span>
-          <select
-            value={modes.includes(draft.mode) ? draft.mode : modes[0]}
-            onChange={event => {
-              update({ mode: event.target.value as TaskMode })
-            }}>
-            {modes.map(mode => (
-              <option key={mode} value={mode}>
-                {mode === 'chat' ? '对话' : 'Agent'}
-              </option>
-            ))}
-          </select>
-        </label>
+    <>
+      <SettingsGroup title="新会话默认值" caption="对所有设备生效。每台设备会记住自己上次的选择；首次使用或选择失效时采用这里的默认值。">
+        <SettingsRow
+          title="Agent"
+          description="新会话由谁来执行"
+          trailing={
+            <ValuePicker
+              label="Agent"
+              value={shown.harnessId}
+              bleed="end"
+              leading={harness ? <HarnessTile harness={harness} size={16} /> : undefined}
+              options={catalog.harnesses.map(item => ({
+                value: item.id,
+                label: harnessName(item),
+                disabledReason: item.status === 'ready' ? undefined : item.statusMessage || '暂不可用',
+              }))}
+              onValueChange={value => {
+                void commit({ harnessId: value })
+              }}
+            />
+          }
+        />
+        <SettingsRow
+          title="方式"
+          description={MODE_EFFECTS[shown.mode]}
+          trailing={
+            <ValuePicker
+              label="方式"
+              value={shown.mode}
+              bleed="end"
+              options={modes.map(mode => ({ value: mode, label: MODE_LABELS[mode] }))}
+              onValueChange={value => {
+                void commit({ mode: value })
+              }}
+            />
+          }
+        />
         {harness?.models === 'host' && (
-          <label className="field">
-            <span>模型</span>
-            <select
-              value={encodeModel(draft.model)}
-              onChange={event => {
-                update({ model: decodeModel(event.target.value) })
-              }}>
-              {!draft.model && <option value="">未选择</option>}
-              {catalog.providers.map(provider => (
-                <optgroup key={provider.id} label={provider.name}>
-                  {(provider.models.length ? provider.models : [provider.defaultModel]).map(model => (
-                    <option key={model} value={encodeModel({ providerId: provider.id, model })}>
-                      {model}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-          </label>
+          <SettingsRow
+            title="模型"
+            description="Latch 内置使用执行端的模型服务"
+            trailing={
+              <ValuePicker
+                label="模型"
+                value={encodeModel(shown.model)}
+                placeholder="选择模型"
+                bleed="end"
+                searchable={modelCount > 8}
+                leading={provider ? <ProviderTile provider={provider} size={16} /> : undefined}
+                groups={modelGroups}
+                onValueChange={value => {
+                  const model = decodeModel(value)
+                  if (model) void commit({ model })
+                }}
+              />
+            }
+          />
         )}
-        <label className="field">
-          <span>项目</span>
-          <select
-            value={workspaceId}
-            onChange={event => {
-              update({ workspaceId: event.target.value })
-            }}>
-            {workspaces.map(item => (
-              <option key={item.id} value={item.id}>
-                {item.name}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      <div className="settings-actions">
-        {saved && (
-          <span className="settings-saved" role="status">
-            已保存
-          </span>
-        )}
-        <Button
-          disabled={busy}
-          onClick={() => {
-            void save()
-          }}
-          loading={busy}>
-          保存默认值
-        </Button>
-      </div>
+        <SettingsRow
+          title="项目"
+          description="新会话在哪个目录中工作"
+          trailing={
+            <ValuePicker
+              label="项目"
+              value={shown.workspaceId}
+              bleed="end"
+              options={workspaces.map(item => ({
+                value: item.id,
+                label: item.id === 'default' ? '启动目录' : item.name || basename(item.path),
+              }))}
+              onValueChange={value => {
+                void commit({ workspaceId: value })
+              }}
+            />
+          }
+        />
+      </SettingsGroup>
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
-    </section>
+    </>
   )
 }
 
 export function GeneralSettings({ snapshot, admin, onChanged }: { snapshot: AppSnapshot; admin: boolean; onChanged: () => void }) {
   const preferences = usePreferences()
-  const owner = admin
   return (
     <>
       <SectionHeading title="通用" description="外观与发送方式只影响这台设备。" />
-      <section className="settings-group">
-        <h4>外观</h4>
-        <SegmentedControl<ThemePreference>
-          label="外观"
-          value={preferences.theme}
-          onValueChange={value => {
-            setPreference('theme', value)
-          }}
-          options={[
-            { value: 'system', label: '跟随系统' },
-            { value: 'light', label: '浅色' },
-            { value: 'dark', label: '深色' },
-          ]}
+      <SettingsGroup title="外观">
+        <SettingsRow
+          title="主题"
+          description="跟随系统时随系统的浅色与深色切换"
+          trailing={
+            <SegmentedControl<ThemePreference>
+              label="外观"
+              value={preferences.theme}
+              onValueChange={value => {
+                setPreference('theme', value)
+              }}
+              options={[
+                { value: 'system', label: '跟随系统' },
+                { value: 'light', label: '浅色' },
+                { value: 'dark', label: '深色' },
+              ]}
+            />
+          }
         />
-      </section>
-      <section className="settings-group">
-        <h4>发送消息</h4>
+      </SettingsGroup>
+      <SettingsGroup title="发送消息" bare caption="触屏设备上 Enter 始终换行，点按发送按钮发送；⌘/Ctrl + Enter 在任何设备上都会发送。">
         <ChoiceList<SendKey>
           label="发送消息"
           value={preferences.sendKey}
@@ -182,9 +202,8 @@ export function GeneralSettings({ snapshot, admin, onChanged }: { snapshot: AppS
             { value: 'mod-enter', title: '⌘/Ctrl + Enter 发送', description: 'Enter 换行，适合输入长段落' },
           ]}
         />
-        <p className="settings-hint">触屏设备上 Enter 始终换行，点按发送按钮发送；⌘/Ctrl + Enter 在任何设备上都会发送。</p>
-      </section>
-      {owner && snapshot.catalog && <SessionDefaultsForm catalog={snapshot.catalog} onChanged={onChanged} />}
+      </SettingsGroup>
+      {admin && snapshot.catalog && <SessionDefaultsGroup catalog={snapshot.catalog} onChanged={onChanged} />}
     </>
   )
 }

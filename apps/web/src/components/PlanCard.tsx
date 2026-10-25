@@ -1,12 +1,11 @@
-import { useState } from 'react'
-import { Check, ChevronRight, Circle, CircleDot, ListChecks } from 'lucide-react'
+import { ChevronDown, Circle, CircleCheck, CircleDot } from 'lucide-react'
 import type { PlanEntry } from '@latch/protocol'
-import { ICON_STROKE, StatusGlyph } from '@latch/ui'
+import { ICON_STROKE, Popover, StatusGlyph, type MenuTriggerProps } from '@latch/ui'
 
 /**
  * `active`: the session is still running, so the step in progress is drawn in ink; once it settles that step reads as
- * unfinished. The step in progress is a still mark: the running tool already turns its comets on its row and in the
- * run bar. A step whose state changes while the page watches cross-fades its mark.
+ * unfinished. The step in progress is a still mark: the running tool already turns its comet on its row. Nearer to now
+ * reads stronger: done steps are the faintest. A step whose state changes while the page watches cross-fades its mark.
  */
 export function PlanList({ plan, active }: { plan: PlanEntry[]; active: boolean }) {
   return (
@@ -15,7 +14,7 @@ export function PlanList({ plan, active }: { plan: PlanEntry[]; active: boolean 
         <li key={index} className={`plan-entry plan-${entry.status}`}>
           <StatusGlyph className="plan-icon" state={entry.status}>
             {entry.status === 'completed' ? (
-              <Check size={14} strokeWidth={ICON_STROKE[14]} />
+              <CircleCheck size={14} strokeWidth={ICON_STROKE[14]} />
             ) : entry.status === 'in_progress' ? (
               <CircleDot size={14} strokeWidth={ICON_STROKE[14]} />
             ) : (
@@ -34,38 +33,50 @@ export function PlanList({ plan, active }: { plan: PlanEntry[]; active: boolean 
 
 export function planProgress(plan: PlanEntry[]) {
   const done = plan.filter(entry => entry.status === 'completed').length
-  return { done, total: plan.length, ratio: plan.length ? done / plan.length : 0 }
+  return { done, total: plan.length }
 }
 
-/** The running harness's latest plan, pinned above the composer while the run lasts and collapsed by default. */
-export function PlanCard({ plan }: { plan: PlanEntry[] }) {
-  const [open, setOpen] = useState(false)
-  const { done, total, ratio } = planProgress(plan)
-  const current = plan.find(entry => entry.status === 'in_progress')
-  return (
-    <section className={`plan-card ${open ? 'is-open' : ''}`} aria-label="计划">
-      <button
-        type="button"
-        className="plan-card-header"
-        aria-expanded={open}
-        onClick={() => {
-          setOpen(!open)
-        }}>
-        <ListChecks size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-        <span className="plan-card-title">
-          计划 · {done}/{total}
+/** The chip that opens the plan, for `n` of `total` steps done. */
+const planTrigger = (done: number, total: number) =>
+  function PlanTrigger(props: MenuTriggerProps) {
+    return (
+      <button {...props} type="button" className="plan-chip" aria-label={`计划 ${done}/${total}`}>
+        <span>
+          计划 {done}/{total}
         </span>
-        {!open && current && <span className="plan-card-current">{current.content}</span>}
-        <span className="progress" aria-hidden="true">
-          <i style={{ width: `${Math.round(ratio * 100)}%` }} />
-        </span>
-        <ChevronRight className="chevron" size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+        <ChevronDown size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
       </button>
-      {open && (
-        <div className="plan-card-body">
-          <PlanList plan={plan} active />
-        </div>
-      )}
-    </section>
+    )
+  }
+
+/**
+ * The running harness's latest plan as a chip in the run bar, 「计划 2/4」; it opens the whole list in a 320-wide layer
+ * headed 「计划」 with its count (on phones a bottom sheet whose title carries the count, so the list has no head of its
+ * own there).
+ */
+export function PlanChip({ plan }: { plan: PlanEntry[] }) {
+  const { done, total } = planProgress(plan)
+  return (
+    <Popover
+      label="计划"
+      title={
+        <>
+          计划 <span className="plan-sheet-count">{`${done}/${total}`}</span>
+        </>
+      }
+      side="top"
+      align="end"
+      width={320}
+      trigger={planTrigger(done, total)}>
+      <div className="plan-popover">
+        <p className="plan-popover-head">
+          <span>计划</span>
+          <span className="plan-popover-count">
+            {done}/{total}
+          </span>
+        </p>
+        <PlanList plan={plan} active />
+      </div>
+    </Popover>
   )
 }

@@ -2,16 +2,18 @@ import { execFile } from 'node:child_process'
 import { constants } from 'node:fs'
 import { lstat, open, readFile, realpath, unlink, type FileHandle } from 'node:fs/promises'
 import { connect } from 'node:net'
+import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { createInterface } from 'node:readline/promises'
 import { promisify } from 'node:util'
 import QRCode from 'qrcode'
 import { LISTENER_LABELS, SCOPE_LABELS, type Device, type DeviceScope, type InvitationView } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
-import { sha256Hex, redactSecrets } from '@latch/core/node-kit'
+import { canonicalJson, sha256Hex, redactSecrets } from '@latch/core/node-kit'
 import { AuditLog, verifyAuditFile, type AuditActor } from '../src/audit.ts'
 import { createOfflineTicket } from '../src/auth.ts'
-import { HostConfig, originOf } from '../src/config.ts'
+import { HostConfig, originOf, type WorkspaceRecord } from '../src/config.ts'
 import {
   acquireDataDirLock,
   processAlive,
@@ -24,8 +26,18 @@ import {
   type HostState,
 } from '../src/host-state.ts'
 import { loadOrCreateHostIdentity } from '../src/identity.ts'
-import { latchCodeRoot, resolveLatchPaths } from '../src/paths.ts'
+import {
+  PROJECT_FOLDER_LIMIT,
+  canonicalPath,
+  checkProjectFolders,
+  isPrintableText,
+  latchCodeRoot,
+  resolveLatchPaths,
+  runtimeDirPath,
+} from '../src/paths.ts'
 import { policySchema, PolicyStore, type Policy } from '../src/policy.ts'
+import { foldersHash, newProject, planFolders } from '../src/projects.ts'
+import { readProjectContext } from '../src/project-context.ts'
 import { buildPreview, createPresenceBackend, presenceHelperPath, PRESENCE_ACTIONS, type PresenceBackend } from '../src/presence.ts'
 
 export interface CliIO {
@@ -33,6 +45,8 @@ export interface CliIO {
   stderr: { write(text: string): unknown }
   /** Reads one secret line: without echo on a terminal, else the whole of stdin. */
   readSecret(prompt: string): Promise<string>
+  /** Asks a yes/no question on an interactive terminal; absent elsewhere. */
+  confirm?(prompt: string): Promise<boolean>
   env: NodeJS.ProcessEnv
   cwd: string
 }
@@ -49,6 +63,8 @@ const STATUS_LABELS: Record<Device['status'], string> = {
 }
 const SCOPES = new Set<string>(Object.keys(SCOPE_LABELS))
 const RUNNING = 'Host 正在运行，请先停止（pnpm stop）'
+const PROJECT_RUNNING = 'Host 正在运行。请在 Latch 桌面端添加，或先停止 Host。'
+const PROJECT_REMOVE_RUNNING = 'Host 正在运行。请在 Latch 的「设置 → 项目」中移除，或先停止 Host。'
 const OFFLINE_WARNING = '离线登记依赖本机此刻没有恶意的同用户进程。只在无法使用本机确认时使用。'
 const UNPINNED = '本机确认组件尚未登记。请先在这台电脑上打开一次 Latch，或停止 Host 后重试。'
 
@@ -61,6 +77,15 @@ const USAGE = `用法：pnpm latch <命令> [--data-dir <目录>]
   device enroll --offline [--code-file <路径>] [--port <端口>]
                                            生成一次性离线登记码（Host 已停止）
   provider set-key <服务 ID>                从标准输入读取并保存模型服务密钥（Host 已停止）
+  project list [--json]                    列出项目与其中的文件夹（Host 已停止）
+  project add <路径…> [--name <名称>] [--yes]
+                                           用这些文件夹新建项目，第一个是主文件夹（Host 已停止）
+  project add-folder <项目 ID> <路径…> [--yes]
+                                           把文件夹加入项目（Host 已停止）
+  project remove <项目 ID> [--yes]          移除项目，文件夹中的文件不删除（Host 已停止）
+  project remove-folder <项目 ID> <文件夹 ID> [--yes]
+                                           从项目中移除一个文件夹（Host 已停止）
+  项目命令沿用上次 Host 的启动目录；首次启动前需加 --workspace <启动目录>。
   presence status                          查看本机确认是否可用
   presence repin                           重新登记本机确认组件的签名（Host 已停止）
   presence test                            显示一次示例本机确认（人工检查）
@@ -70,7 +95,7 @@ const USAGE = `用法：pnpm latch <命令> [--data-dir <目录>]
 function parseArgs(argv: string[]): { positional: string[]; flags: Map<string, string | true> } {
   const positional: string[] = []
   const flags = new Map<string, string | true>()
-  const valued = new Set(['--data-dir', '--scopes', '--code-file', '--port'])
+  const valued = new Set(['--data-dir', '--scopes', '--code-file', '--port', '--name', '--workspace'])
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index]!
     if (!arg.startsWith('--')) {
@@ -122,17 +147,17 @@ async function runningHost(dataDir: string): Promise<{ state: HostState; info: H
  * A live process recorded in host.json, or anything answering on its socket, counts as a running Host. A host.json this
  * build cannot read proves nothing, so only a recorded pid that is gone lets the command go ahead.
  */
-async function refuseRunningHost(dataDir: string): Promise<void> {
+async function refuseRunningHost(dataDir: string, running = RUNNING): Promise<void> {
   const state = await readHostState(dataDir)
   if (state) {
-    if (processAlive(state.pid) || (await connectable(state.socketPath))) throw new CliError(RUNNING)
+    if (processAlive(state.pid) || (await connectable(state.socketPath))) throw new CliError(running)
     return
   }
   const recorded = await readRecordedPid(dataDir)
   if (!recorded.present) return
   if (recorded.pid === undefined)
     throw new CliError(`无法识别 ${join(dataDir, 'host.json')}，不能确认 Host 已停止。确认没有 Host 在运行后删除该文件再重试。`)
-  if (processAlive(recorded.pid)) throw new CliError(RUNNING)
+  if (processAlive(recorded.pid)) throw new CliError(running)
 }
 
 /**
@@ -140,10 +165,18 @@ async function refuseRunningHost(dataDir: string): Promise<void> {
  * Host holds it (including before it has written host.json). A Host that runs without the lock is still found through
  * host.json: by its pid and socket, or, in the previous build's format, by the pid it records.
  */
-async function lockStopped(dataDir: string): Promise<DataDirLock> {
-  const lock = await acquireDataDirLock(dataDir, 'cli')
+async function lockStopped(dataDir: string, running = RUNNING): Promise<DataDirLock> {
+  let lock: DataDirLock
   try {
-    await refuseRunningHost(dataDir)
+    lock = await acquireDataDirLock(dataDir, 'cli')
+  } catch (error) {
+    // A Host holding the lock is running or starting; the command says what to do instead.
+    if (running !== RUNNING && error instanceof AppError && error.code === 'data-dir-locked' && error.details?.role === 'host')
+      throw new CliError(running)
+    throw error
+  }
+  try {
+    await refuseRunningHost(dataDir, running)
   } catch (error) {
     await lock.release()
     throw error
@@ -512,6 +545,34 @@ export async function runLatch(argv: string[], io: CliIO): Promise<number> {
       }
       return 0
     }
+    if (key === 'project list') {
+      const lock = await lockStopped(dataDir, PROJECT_RUNNING)
+      try {
+        const { workspaces } = (await HostConfig.open(dataDir)).settings()
+        if (flags.has('--json')) out(JSON.stringify(workspaces, null, 2))
+        else if (workspaces.length === 0) out('还没有项目。用 pnpm latch project add <路径…> 新建，或在 Latch 桌面端新建。')
+        else
+          out(
+            table([
+              ['ID', '名称', '文件夹'],
+              ...workspaces.flatMap(record =>
+                record.folders.map((folder, index) => [
+                  index === 0 ? record.id : '',
+                  index === 0 ? record.name : '',
+                  `${folder.path}${index === 0 ? '（主文件夹）' : ''}`,
+                ]),
+              ),
+            ]),
+          )
+      } finally {
+        await lock.release()
+      }
+      return 0
+    }
+    if (key === 'project add' || key === 'project add-folder')
+      return (await addProjectFolders(key === 'project add-folder', rest, flags, dataDir, io, out)) ? 0 : 1
+    if (key === 'project remove' || key === 'project remove-folder')
+      return (await removeProjectFolder(key === 'project remove-folder', rest, flags, dataDir, io, out)) ? 0 : 1
     if (key === 'presence status') {
       const state = await readHostState(dataDir)
       const info = state && (await verifyHostState(state))
@@ -602,6 +663,301 @@ export async function runLatch(argv: string[], io: CliIO): Promise<number> {
   }
 }
 
+/** `remote.workspaces` of a stopped Host's policy: IDs a new project never takes. Absent file: the default, no list. */
+async function remoteProjectIds(dataDir: string): Promise<string[]> {
+  let text: string
+  try {
+    text = await readFile(join(dataDir, 'policy.json'), 'utf8')
+  } catch (error) {
+    if (codeOf(error) === 'ENOENT') return []
+    throw new CliError('无法读取安全策略文件 policy.json')
+  }
+  try {
+    return policySchema.parse(JSON.parse(text)).remote.workspaces ?? []
+  } catch {
+    throw new CliError('无法读取安全策略文件 policy.json')
+  }
+}
+
+async function offlineProjectContext(dataDir: string, flags: Map<string, string | true>, io: CliIO) {
+  const recorded = await readProjectContext(dataDir)
+  const explicit = flags.get('--workspace') ?? io.env.HARNESS_WORKSPACE
+  if (!recorded && typeof explicit !== 'string') {
+    throw new CliError('没有已记录的 Host 启动目录。请先用原参数启动并停止 Host，或提供 --workspace <启动目录>。')
+  }
+  if (
+    recorded
+    && typeof explicit === 'string'
+    && (await canonicalPath(resolve(io.cwd, explicit))) !== (await canonicalPath(recorded.workspaceRoot))
+  ) {
+    throw new CliError('--workspace 与上次 Host 的启动目录不同，请先用新的启动参数成功启动并停止 Host。')
+  }
+  const located = resolveLatchPaths({
+    dataDir,
+    env: io.env,
+    cwd: io.cwd,
+    workspace: recorded?.workspaceRoot ?? (explicit as string),
+  })
+  return {
+    workspaceRoot: located.workspaceRoot,
+    agentsDir: recorded?.agentsDir ?? resolve(located.agentsDir),
+    codeRoot: recorded?.codeRoot ?? latchCodeRoot(),
+    ...(recorded?.tlsKeyPath ? { tlsKeyPath: recorded.tlsKeyPath } : {}),
+  }
+}
+
+/**
+ * `project add` and `project add-folder`, while the Host is stopped: the same folder rules (R1–R10 and the project rules)
+ * and the same audit as the desktop app's native picker, with `via: 'cli'`. The owner sees the realpaths and confirms
+ * on a terminal, or passes `--yes`.
+ */
+async function addProjectFolders(
+  adding: boolean,
+  rest: string[],
+  flags: Map<string, string | true>,
+  dataDir: string,
+  io: CliIO,
+  out: (text: string) => void,
+): Promise<boolean> {
+  const projectId = adding ? rest[0] : undefined
+  const inputs = adding ? rest.slice(1) : rest
+  if (adding && !projectId) throw new CliError('请提供项目 ID')
+  if (projectId === 'default') throw new CliError('启动目录只能包含一个文件夹。要组合多个文件夹，请新建项目。')
+  if (inputs.length === 0) throw new CliError('请提供至少一个文件夹路径')
+  if (inputs.length > PROJECT_FOLDER_LIMIT) throw new CliError(`一次最多添加 ${PROJECT_FOLDER_LIMIT} 个文件夹`)
+  const nameFlag = flags.get('--name')
+  if (adding && nameFlag !== undefined) throw new CliError('add-folder 不接受 --name；重命名请在设置中进行')
+  const name = typeof nameFlag === 'string' ? nameFlag.trim() : undefined
+  if (name !== undefined && (name.length === 0 || name.length > 80 || !isPrintableText(name)))
+    throw new CliError('名称需为 1–80 个字，且不能包含不可显示的字符')
+  const ask = io.stdout.isTTY ? io.confirm : undefined
+  if (!ask && !flags.has('--yes')) throw new CliError('添加文件夹需要确认：在终端中运行，或加上 --yes')
+
+  const lock = await lockStopped(dataDir, PROJECT_RUNNING)
+  try {
+    const config = await HostConfig.open(dataDir)
+    const settings = config.settings()
+    const record = adding ? settings.workspaces.find(item => item.id === projectId) : undefined
+    if (adding && !record) throw new CliError(`找不到项目 ${projectId}`)
+    const context = await offlineProjectContext(dataDir, flags, io)
+    const identity = await loadOrCreateHostIdentity(dataDir)
+    const guard = {
+      dataDir: await realpath(dataDir),
+      agentsDir: context.agentsDir,
+      runtimeDir: await runtimeDirPath(identity.hostId8),
+      home: homedir(),
+      codeRoot: context.codeRoot,
+      ...(context.tlsKeyPath ? { tlsKeyPath: context.tlsKeyPath } : {}),
+    }
+    const primaries = [
+      { id: 'default', name: '启动目录', path: context.workspaceRoot },
+      ...settings.workspaces
+        .filter(item => item.id !== projectId)
+        .map(item => ({ id: item.id, name: item.name, path: item.folders[0].path })),
+    ]
+    const plan = await planFolders({
+      current: record?.folders ?? [],
+      paths: inputs.map(path => resolve(io.cwd, path)),
+      primaries,
+      guard,
+    })
+    for (const refusal of plan.refused) io.stderr.write(`没有加入 ${refusal.path}：${refusal.message}\n`)
+    if (plan.added.length === 0) throw new CliError('选择的文件夹都没有加入')
+    const created = record
+      ? undefined
+      : newProject({
+          ...(name !== undefined ? { name } : {}),
+          folders: plan.folders,
+          taken: ['default', ...settings.workspaces.map(item => item.id), ...(await remoteProjectIds(dataDir))],
+        })
+    out(record ? `将把这些文件夹加入项目「${record.name}」（${record.id}）：` : `将用这些文件夹新建项目「${created!.name}」：`)
+    for (const folder of plan.added) out(`  ${folder.path}${folder === plan.folders[0] ? '（主文件夹）' : ''}`)
+    out('Latch 内置不经询问就能读取其中的文件，读到的内容会发给模型服务。')
+    if (!flags.has('--yes') && !(await ask!('确认添加？[y/N] '))) {
+      out('已取消，没有改动。')
+      return false
+    }
+    // A Host that runs without the lock may have started while the owner was reading.
+    await refuseRunningHost(dataDir, PROJECT_RUNNING)
+    const audit = await AuditLog.open(join(dataDir, 'audit'))
+    try {
+      const seqs: number[] = []
+      const failed = async () => {
+        for (const refSeq of seqs) await audit.append({ action: 'action.failed', actor: CLI_ACTOR, detail: { refSeq } }).catch(() => {})
+      }
+      try {
+        if (created) {
+          seqs.push(
+            (
+              await audit.append({
+                action: 'workspace.added',
+                actor: CLI_ACTOR,
+                target: created.id,
+                stepup: 'offline',
+                detail: {
+                  workspaceId: created.id,
+                  pathHash: sha256Hex(created.path),
+                  folderCount: created.folders.length,
+                  foldersHash: foldersHash(created.folders),
+                  via: 'cli',
+                },
+              })
+            ).seq,
+          )
+        } else {
+          for (const folder of plan.added) {
+            seqs.push(
+              (
+                await audit.append({
+                  action: 'workspace.folder-added',
+                  actor: CLI_ACTOR,
+                  target: record!.id,
+                  stepup: 'offline',
+                  detail: {
+                    workspaceId: record!.id,
+                    folderId: folder.id,
+                    pathHash: sha256Hex(folder.path),
+                    via: 'cli',
+                    replacesFolder: false,
+                  },
+                })
+              ).seq,
+            )
+          }
+        }
+        await config.updateSettings(
+          draft => {
+            if (created) {
+              draft.workspaces.push(created)
+              return
+            }
+            const target: WorkspaceRecord | undefined = draft.workspaces.find(item => item.id === record!.id)
+            if (!target) throw new CliError(`找不到项目 ${record!.id}`)
+            target.folders = plan.folders
+            target.path = plan.folders[0].path
+          },
+          // The baseline the next Host start compares settings.json with, as the Host records its own writes.
+          async (next, commit) => {
+            const before = sha256Hex(canonicalJson(config.settings()))
+            const after = sha256Hex(canonicalJson(next))
+            if (before !== after)
+              await audit.append({ action: 'settings.changed', actor: CLI_ACTOR, detail: { before, after } }).catch(() => {})
+            await commit()
+          },
+        )
+      } catch (error) {
+        await failed()
+        throw error
+      }
+    } finally {
+      await audit.close()
+    }
+    out(created ? `已新建项目「${created.name}」（${created.id}）。` : `已把 ${plan.added.length} 个文件夹加入「${record!.name}」。`)
+    return true
+  } finally {
+    await lock.release()
+  }
+}
+
+/**
+ * `project remove` and `project remove-folder`, while the Host is stopped. Removing only lowers access, so a failed
+ * audit record is reported and the removal still happens, as on the Host. The files stay where they are.
+ */
+async function removeProjectFolder(
+  folder: boolean,
+  rest: string[],
+  flags: Map<string, string | true>,
+  dataDir: string,
+  io: CliIO,
+  out: (text: string) => void,
+): Promise<boolean> {
+  const [projectId, folderId] = rest
+  if (!projectId) throw new CliError('请提供项目 ID')
+  if (folder && !folderId) throw new CliError('请提供文件夹 ID（pnpm latch project list --json 中的 folders[].id）')
+  if (projectId === 'default') throw new CliError('启动目录由 Host 的启动参数决定，不能移除')
+  const ask = io.stdout.isTTY ? io.confirm : undefined
+  if (!ask && !flags.has('--yes')) throw new CliError('移除需要确认：在终端中运行，或加上 --yes')
+  const lock = await lockStopped(dataDir, PROJECT_REMOVE_RUNNING)
+  try {
+    const config = await HostConfig.open(dataDir)
+    const settings = config.settings()
+    const record = settings.workspaces.find(item => item.id === projectId)
+    if (!record) throw new CliError(`找不到项目 ${projectId}`)
+    const index = folder ? record.folders.findIndex(item => item.id === folderId) : -1
+    if (folder && index < 0) throw new CliError(`项目「${record.name}」中没有文件夹 ${folderId}`)
+    if (folder && record.folders.length === 1) throw new CliError('项目至少要有一个文件夹；要移除整个项目，请用 project remove')
+    const folders = record.folders.filter((_, position) => position !== index)
+    if (index === 0) {
+      // The next folder becomes primary; it may not be another project's primary folder or the start directory.
+      const others = [
+        { id: 'default', name: '启动目录', path: (await offlineProjectContext(dataDir, flags, io)).workspaceRoot },
+        ...settings.workspaces
+          .filter(item => item.id !== record.id)
+          .map(item => ({ id: item.id, name: item.name, path: item.folders[0].path })),
+      ]
+      const verdict = await checkProjectFolders([folders[0].path], { existing: others })
+      if (!verdict.ok) throw new CliError(verdict.error.message)
+    }
+    out(folder ? `将从项目「${record.name}」中移除 ${record.folders[index].path}。` : `将移除项目「${record.name}」（${record.id}）。`)
+    out('文件夹中的文件不会被删除；用到它的已有会话不能继续。')
+    if (!flags.has('--yes') && !(await ask!('确认移除？[y/N] '))) {
+      out('已取消，没有改动。')
+      return false
+    }
+    await refuseRunningHost(dataDir, PROJECT_REMOVE_RUNNING)
+    const audit = await AuditLog.open(join(dataDir, 'audit'))
+    try {
+      const removed = folder ? record.folders[index] : undefined
+      const pathHash = sha256Hex(removed ? removed.path : await realpath(record.path).catch(() => record.path))
+      await audit
+        .append(
+          removed
+            ? {
+                action: 'workspace.folder-removed',
+                actor: CLI_ACTOR,
+                target: record.id,
+                stepup: 'offline',
+                detail: { workspaceId: record.id, folderId: removed.id, pathHash },
+              }
+            : {
+                action: 'workspace.removed',
+                actor: CLI_ACTOR,
+                target: record.id,
+                stepup: 'offline',
+                detail: { workspaceId: record.id, pathHash },
+              },
+        )
+        .catch(() => io.stderr.write('审计记录写入失败；移除只收回权限，照常进行。\n'))
+      await config.updateSettings(
+        draft => {
+          if (!removed) {
+            draft.workspaces = draft.workspaces.filter(item => item.id !== record.id)
+            if (draft.defaults.workspaceId === record.id) delete draft.defaults.workspaceId
+            return
+          }
+          const target = draft.workspaces.find(item => item.id === record.id)
+          if (!target) throw new CliError(`找不到项目 ${record.id}`)
+          target.folders = folders
+          target.path = folders[0].path
+        },
+        async (next, commit) => {
+          const before = sha256Hex(canonicalJson(config.settings()))
+          const after = sha256Hex(canonicalJson(next))
+          if (before !== after)
+            await audit.append({ action: 'settings.changed', actor: CLI_ACTOR, detail: { before, after } }).catch(() => {})
+          await commit()
+        },
+      )
+    } finally {
+      await audit.close()
+    }
+    out(folder ? '已移除这个文件夹。' : '已移除项目。')
+    return true
+  } finally {
+    await lock.release()
+  }
+}
+
 /** One line from a terminal without echo, or all of piped stdin. */
 function readSecret(prompt: string): Promise<string> {
   const stdin = process.stdin
@@ -645,11 +1001,23 @@ function readSecret(prompt: string): Promise<string> {
   })
 }
 
+/** A y/N question on the terminal; anything but y or yes is no. */
+async function confirm(prompt: string): Promise<boolean> {
+  if (!process.stdin.isTTY) return false
+  const readline = createInterface({ input: process.stdin, output: process.stderr })
+  try {
+    return /^(y|yes)$/iu.test((await readline.question(prompt)).trim())
+  } finally {
+    readline.close()
+  }
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   process.exitCode = await runLatch(process.argv.slice(2), {
     stdout: process.stdout,
     stderr: process.stderr,
     readSecret,
+    confirm,
     env: process.env,
     cwd: process.cwd(),
   })

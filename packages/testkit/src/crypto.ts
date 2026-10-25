@@ -1,4 +1,4 @@
-import { createPublicKey, generateKeyPairSync, sign, type KeyObject } from 'node:crypto'
+import { createHash, createPublicKey, generateKeyPairSync, sign, type KeyObject } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
@@ -25,6 +25,20 @@ export interface SecurityVectors {
   signing: {
     enroll: { format: string; example: { hostId: string; enrollmentId: string; nonce: string; text: string; signature: string } }
     renew: { format: string; example: { hostId: string; deviceId: string; nonce: string; text: string; signature: string } }
+    folders: {
+      format: string
+      bodyHash: string
+      example: {
+        hostId: string
+        deviceId: string
+        nonce: string
+        body: Record<string, unknown>
+        canonicalBody: string
+        bodyHash: string
+        text: string
+        signature: string
+      }
+    }
   }
 }
 
@@ -42,6 +56,7 @@ export const HASH_DISPLAY_VECTORS = SECURITY_VECTORS.hashDisplay
 export const ESCAPE_PREVIEW_VECTORS = SECURITY_VECTORS.escapePreviewText
 export const ENROLL_SIGNING_VECTOR = SECURITY_VECTORS.signing.enroll
 export const RENEW_SIGNING_VECTOR = SECURITY_VECTORS.signing.renew
+export const FOLDERS_SIGNING_VECTOR = SECURITY_VECTORS.signing.folders
 
 export function enrollSigningText(hostId: string, enrollmentId: string, nonce: string): string {
   return `latch-enroll-v1\n${hostId}\n${enrollmentId}\n${nonce}`
@@ -49,6 +64,27 @@ export function enrollSigningText(hostId: string, enrollmentId: string, nonce: s
 
 export function renewSigningText(hostId: string, deviceId: string, nonce: string): string {
   return `latch-renew-v1\n${hostId}\n${deviceId}\n${nonce}`
+}
+
+export function foldersSigningText(hostId: string, deviceId: string, nonce: string, bodyHash: string): string {
+  return `latch-folders-v1\n${hostId}\n${deviceId}\n${nonce}\n${bodyHash}`
+}
+
+/** Canonical JSON of plain JSON data (keys sorted by code unit), as the Host hashes a folder-add body. */
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
+  if (value !== null && typeof value === 'object') {
+    const members = Object.entries(value)
+      .filter(([, item]) => item !== undefined)
+      .toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    return `{${members.map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
+/** The `bodyHash` of `foldersSigningText`: SHA-256 of the canonical body without `signature`. */
+export function foldersBodyHash(body: Record<string, unknown>): string {
+  return createHash('sha256').update(canonical(body), 'utf8').digest('hex')
 }
 
 export interface TestDeviceKey {

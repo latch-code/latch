@@ -202,12 +202,21 @@
     --r-16: 16px;
     --r-pill: 999px;
 
-    /* Motion: one curve in, one curve out, three durations. Pressing only darkens a step; nothing moves or scales. */
+    /* Motion: one curve in, one curve out, three durations, and an exit for each at about 70% of it. Pressing only
+     * darkens a step; nothing moves or scales. The stagger delays content behind the box that opens for it; the
+     * shimmer is one pass of a live label's light; the hint delay holds back what hovering reveals. Scripts read the
+     * same values from MOTION (motion.tsx), which a test keeps equal to these. */
     --ease: cubic-bezier(0.2, 0, 0, 1);
     --ease-exit: cubic-bezier(0.4, 0, 1, 1);
     --d-fast: 120ms;
     --d-base: 180ms;
     --d-slow: 240ms;
+    --d-fast-exit: 90ms;
+    --d-base-exit: 140ms;
+    --d-slow-exit: 180ms;
+    --d-stagger: 40ms;
+    --d-shimmer: 1.6s;
+    --delay-hint: 300ms;
 
     /* Layout. The content paper is inset from the window by --shell-inset on every side but the sidebar's. From
      * 1024px the page sets the sidebar's width (it can be dragged, and is 0 while shut) and the width its content
@@ -215,6 +224,7 @@
     --sidebar-width: 300px;
     --sidebar-open-width: var(--sidebar-width);
     --inspector-width: 320px;
+    --inspector-open-width: var(--inspector-width);
     --content-width: 760px;
     --gutter: 32px;
     --topbar-height: 48px;
@@ -414,5 +424,307 @@
     --diff-add-tok: rgba(76, 199, 106, 0.22);
     --diff-del-bg: rgba(255, 123, 114, 0.1);
     --diff-del-tok: rgba(255, 123, 114, 0.22);
+  }
+
+  /*
+   * Security surfaces (data-secure: approval cards, the local confirmation, enrollment, pairing and security banners)
+   * lock the tokens they read. Important declarations of the first layer win over every later layer and over styles
+   * outside the layers, important or not, so a later declaration of a token (on the root, an ancestor or the element
+   * itself) cannot change what these surfaces show. The values repeat the theme's (packages/ui/test/tokens.test.ts
+   * checks that they match); layout, motion and the contextual --surface stay free.
+   */
+  :where([data-secure], [data-secure] *) {
+    --font-sans:
+      -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text', 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI',
+      'Noto Sans SC', sans-serif !important;
+    --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace !important;
+    --text-1: #1d1c1a !important;
+    --text-2: #444442 !important;
+    --text-3: #605f5d !important;
+    --icon: #7c7c7a !important;
+    --text-disabled: #adacaa !important;
+    --bg-app: #f2f1ee !important;
+    --bg-pane: #fbfbfa !important;
+    --bg-raised: #ffffff !important;
+    --bg-sunken: #f6f5f3 !important;
+    --well: rgba(29, 28, 26, 0.04) !important;
+    --bg-hover: rgba(29, 28, 26, 0.04) !important;
+    --bg-press: rgba(29, 28, 26, 0.07) !important;
+    --fill: rgba(29, 28, 26, 0.06) !important;
+    --fill-hover: rgba(29, 28, 26, 0.09) !important;
+    --fill-press: rgba(29, 28, 26, 0.12) !important;
+    --track-off: rgba(29, 28, 26, 0.18) !important;
+    --bg-selected-solid: #dfdedc !important;
+    --bubble-user: rgba(29, 28, 26, 0.05) !important;
+    --scrim: rgba(20, 20, 19, 0.32) !important;
+    --tile-plate: #ffffff !important;
+    --tile-ring: rgba(29, 28, 26, 0.1) !important;
+    --comet: var(--text-2) !important;
+    --comet-track: rgba(29, 28, 26, 0.12) !important;
+    --sweep: rgba(245, 165, 36, 0.2) !important;
+    --ripple-ink: rgba(232, 150, 15, 0.55) !important;
+    --kbd-ring: rgba(29, 28, 26, 0.12) !important;
+    --brand-ring: transparent !important;
+    --line: rgba(29, 28, 26, 0.1) !important;
+    --line-subtle: rgba(29, 28, 26, 0.06) !important;
+    --line-strong: rgba(29, 28, 26, 0.16) !important;
+    --sh-raised: 0 0 0 1px rgba(29, 28, 26, 0.08), 0 1px 2px rgba(29, 28, 26, 0.06) !important;
+    --sh-float: 0 0 0 1px rgba(29, 28, 26, 0.08), 0 2px 4px -1px rgba(29, 28, 26, 0.06), 0 12px 32px -6px rgba(29, 28, 26, 0.14) !important;
+    --sh-composer: 0 0 0 1px rgba(29, 28, 26, 0.1), 0 1px 2px rgba(29, 28, 26, 0.04), 0 8px 24px -12px rgba(29, 28, 26, 0.16) !important;
+    --sh-composer-focus:
+      0 0 0 1px rgba(29, 28, 26, 0.16), 0 1px 2px rgba(29, 28, 26, 0.04), 0 8px 24px -12px rgba(29, 28, 26, 0.16) !important;
+    --sh-modal:
+      0 0 0 1px rgba(29, 28, 26, 0.08), 0 2px 6px -2px rgba(29, 28, 26, 0.08), 0 24px 56px -12px rgba(29, 28, 26, 0.28) !important;
+    --accent: #2461e0 !important;
+    --accent-hover: #1d53c8 !important;
+    --accent-press: #1846aa !important;
+    --accent-text: #1f55c7 !important;
+    --accent-text-hover: #1846aa !important;
+    --on-accent: #ffffff !important;
+    --focus: #2461e0 !important;
+    --focus-halo: rgba(36, 97, 224, 0.16) !important;
+    --warn-text: #9a5300 !important;
+    --warn-bg: #fff6e5 !important;
+    --warn-border: rgba(217, 119, 6, 0.3) !important;
+    --warn-dot: #e8960f !important;
+    --warn-fill: #f5a524 !important;
+    --on-warn-fill: #1e2230 !important;
+    --err-text: #b42318 !important;
+    --err-bg: #fef1f0 !important;
+    --err-border: rgba(217, 45, 32, 0.28) !important;
+    --err-solid: #d92d20 !important;
+    --ok-text: #176b31 !important;
+    --ok-bg: #eef8f1 !important;
+    --ok-border: rgba(26, 127, 55, 0.24) !important;
+    --ok-solid: #1f9145 !important;
+    --diff-add-bg: rgba(26, 127, 55, 0.08) !important;
+    --diff-add-tok: rgba(26, 127, 55, 0.2) !important;
+    --diff-del-bg: rgba(180, 35, 24, 0.07) !important;
+    --diff-del-tok: rgba(180, 35, 24, 0.16) !important;
+    --ring-focus-inset: inset 0 0 0 2px var(--focus) !important;
+    --ring-field: inset 0 0 0 1px var(--line) !important;
+    --ring-field-focus: inset 0 0 0 1px var(--focus), 0 0 0 3px var(--focus-halo) !important;
+    --ring-switch-off: inset 0 0 0 1px var(--icon) !important;
+    --fs-micro: 11px !important;
+    --lh-micro: 14px !important;
+    --fs-caption: 12px !important;
+    --lh-caption: 16px !important;
+    --lh-caption-para: 18px !important;
+    --fs-meta: 12px !important;
+    --lh-meta: 16px !important;
+    --lh-meta-para: 18px !important;
+    --fs-label: 13px !important;
+    --lh-label: 18px !important;
+    --lh-label-para: 20px !important;
+    --fs-ui: 14px !important;
+    --lh-ui: 20px !important;
+    --lh-ui-para: 22px !important;
+    --fs-list-title: 14px !important;
+    --lh-list-title: 20px !important;
+    --fs-body: 15px !important;
+    --lh-body: 26px !important;
+    --fs-input: 13px !important;
+    --lh-input: 18px !important;
+    --fs-card-title: 14px !important;
+    --lh-card-title: 20px !important;
+    --fs-title-sm: 15px !important;
+    --lh-title-sm: 22px !important;
+    --fs-title: 18px !important;
+    --lh-title: 26px !important;
+    --fs-display: 24px !important;
+    --lh-display: 32px !important;
+    --fs-mono-sm: 12px !important;
+    --lh-mono-sm: 18px !important;
+    --fs-code: 12px !important;
+    --lh-code: 20px !important;
+    --fs-mono: 13px !important;
+    --lh-mono: 20px !important;
+    --fs-mono-display: 24px !important;
+    --lh-mono-display: 32px !important;
+    --ls-mono-display: 0.08em !important;
+    --sp-2: 2px !important;
+    --sp-4: 4px !important;
+    --sp-6: 6px !important;
+    --sp-8: 8px !important;
+    --sp-12: 12px !important;
+    --sp-16: 16px !important;
+    --sp-20: 20px !important;
+    --sp-24: 24px !important;
+    --sp-32: 32px !important;
+    --sp-40: 40px !important;
+    --sp-48: 48px !important;
+    --sp-64: 64px !important;
+    --bleed: 6px !important;
+    --r-2: 2px !important;
+    --r-4: 4px !important;
+    --r-6: 6px !important;
+    --r-8: 8px !important;
+    --r-12: 12px !important;
+    --r-16: 16px !important;
+    --r-pill: 999px !important;
+  }
+
+  @media (max-width: 767.98px) {
+    :where([data-secure], [data-secure] *) {
+      --fs-meta: 13px !important;
+      --lh-meta: 18px !important;
+      --lh-meta-para: 20px !important;
+      --fs-label: 14px !important;
+      --lh-label: 20px !important;
+      --lh-label-para: 22px !important;
+      --fs-ui: 15px !important;
+      --lh-ui: 22px !important;
+      --lh-ui-para: 24px !important;
+      --fs-list-title: 16px !important;
+      --lh-list-title: 22px !important;
+      --fs-body: 16px !important;
+      --lh-body: 27px !important;
+      --fs-input: 16px !important;
+      --lh-input: 24px !important;
+      --fs-card-title: 16px !important;
+      --lh-card-title: 22px !important;
+      --fs-title-sm: 16px !important;
+      --lh-title-sm: 22px !important;
+      --fs-title: 17px !important;
+      --lh-title: 24px !important;
+      --fs-display: 22px !important;
+      --lh-display: 30px !important;
+      --fs-mono: 14px !important;
+      --lh-mono: 20px !important;
+    }
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) :where([data-secure], [data-secure] *) {
+      --text-1: #eae9e7 !important;
+      --text-2: #c2c1bf !important;
+      --text-3: #999896 !important;
+      --icon: #828180 !important;
+      --text-disabled: #535251 !important;
+      --bg-app: #141413 !important;
+      --bg-pane: #1c1c1b !important;
+      --bg-raised: #252423 !important;
+      --bg-sunken: #181716 !important;
+      --well: rgba(0, 0, 0, 0.24) !important;
+      --bg-hover: rgba(234, 233, 231, 0.05) !important;
+      --bg-press: rgba(234, 233, 231, 0.08) !important;
+      --fill: rgba(234, 233, 231, 0.07) !important;
+      --fill-hover: rgba(234, 233, 231, 0.1) !important;
+      --fill-press: rgba(234, 233, 231, 0.13) !important;
+      --track-off: rgba(234, 233, 231, 0.2) !important;
+      --bg-selected-solid: #2e2e2d !important;
+      --bubble-user: rgba(234, 233, 231, 0.07) !important;
+      --scrim: rgba(0, 0, 0, 0.56) !important;
+      --tile-plate: #2e2e2d !important;
+      --tile-ring: rgba(234, 233, 231, 0.1) !important;
+      --comet-track: rgba(234, 233, 231, 0.12) !important;
+      --sweep: rgba(255, 214, 140, 0.12) !important;
+      --ripple-ink: rgba(245, 182, 66, 0.35) !important;
+      --kbd-ring: rgba(234, 233, 231, 0.14) !important;
+      --brand-ring: rgba(234, 233, 231, 0.12) !important;
+      --line: rgba(234, 233, 231, 0.1) !important;
+      --line-subtle: rgba(234, 233, 231, 0.06) !important;
+      --line-strong: rgba(234, 233, 231, 0.16) !important;
+      --sh-raised: 0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.05) !important;
+      --sh-float:
+        0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.05), 0 12px 32px -6px rgba(0, 0, 0, 0.56) !important;
+      --sh-composer:
+        0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.04), 0 8px 24px -12px rgba(0, 0, 0, 0.6) !important;
+      --sh-composer-focus: 0 0 0 1px rgba(234, 233, 231, 0.14), 0 8px 24px -12px rgba(0, 0, 0, 0.5) !important;
+      --sh-modal:
+        0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.05), 0 24px 56px -12px rgba(0, 0, 0, 0.64) !important;
+      --accent: #2461e0 !important;
+      --accent-hover: #2f6be8 !important;
+      --accent-press: #1d53c8 !important;
+      --accent-text: #8db2ff !important;
+      --accent-text-hover: #a9c4ff !important;
+      --on-accent: #ffffff !important;
+      --focus: #8db2ff !important;
+      --focus-halo: rgba(141, 178, 255, 0.24) !important;
+      --warn-text: #f5b642 !important;
+      --warn-bg: rgba(245, 182, 66, 0.1) !important;
+      --warn-border: rgba(245, 182, 66, 0.3) !important;
+      --warn-dot: #f5b642 !important;
+      --warn-fill: #f5b642 !important;
+      --on-warn-fill: #1e2230 !important;
+      --err-text: #ff8a80 !important;
+      --err-bg: rgba(255, 123, 114, 0.1) !important;
+      --err-border: rgba(255, 123, 114, 0.3) !important;
+      --err-solid: #d92d20 !important;
+      --ok-text: #5ccb7a !important;
+      --ok-bg: rgba(76, 199, 106, 0.1) !important;
+      --ok-border: rgba(76, 199, 106, 0.28) !important;
+      --ok-solid: #4cc76a !important;
+      --diff-add-bg: rgba(76, 199, 106, 0.1) !important;
+      --diff-add-tok: rgba(76, 199, 106, 0.22) !important;
+      --diff-del-bg: rgba(255, 123, 114, 0.1) !important;
+      --diff-del-tok: rgba(255, 123, 114, 0.22) !important;
+    }
+  }
+
+  :root[data-theme='dark'] :where([data-secure], [data-secure] *) {
+    --text-1: #eae9e7 !important;
+    --text-2: #c2c1bf !important;
+    --text-3: #999896 !important;
+    --icon: #828180 !important;
+    --text-disabled: #535251 !important;
+    --bg-app: #141413 !important;
+    --bg-pane: #1c1c1b !important;
+    --bg-raised: #252423 !important;
+    --bg-sunken: #181716 !important;
+    --well: rgba(0, 0, 0, 0.24) !important;
+    --bg-hover: rgba(234, 233, 231, 0.05) !important;
+    --bg-press: rgba(234, 233, 231, 0.08) !important;
+    --fill: rgba(234, 233, 231, 0.07) !important;
+    --fill-hover: rgba(234, 233, 231, 0.1) !important;
+    --fill-press: rgba(234, 233, 231, 0.13) !important;
+    --track-off: rgba(234, 233, 231, 0.2) !important;
+    --bg-selected-solid: #2e2e2d !important;
+    --bubble-user: rgba(234, 233, 231, 0.07) !important;
+    --scrim: rgba(0, 0, 0, 0.56) !important;
+    --tile-plate: #2e2e2d !important;
+    --tile-ring: rgba(234, 233, 231, 0.1) !important;
+    --comet-track: rgba(234, 233, 231, 0.12) !important;
+    --sweep: rgba(255, 214, 140, 0.12) !important;
+    --ripple-ink: rgba(245, 182, 66, 0.35) !important;
+    --kbd-ring: rgba(234, 233, 231, 0.14) !important;
+    --brand-ring: rgba(234, 233, 231, 0.12) !important;
+    --line: rgba(234, 233, 231, 0.1) !important;
+    --line-subtle: rgba(234, 233, 231, 0.06) !important;
+    --line-strong: rgba(234, 233, 231, 0.16) !important;
+    --sh-raised: 0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.05) !important;
+    --sh-float:
+      0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.05), 0 12px 32px -6px rgba(0, 0, 0, 0.56) !important;
+    --sh-composer:
+      0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.04), 0 8px 24px -12px rgba(0, 0, 0, 0.6) !important;
+    --sh-composer-focus: 0 0 0 1px rgba(234, 233, 231, 0.14), 0 8px 24px -12px rgba(0, 0, 0, 0.5) !important;
+    --sh-modal:
+      0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.05), 0 24px 56px -12px rgba(0, 0, 0, 0.64) !important;
+    --accent: #2461e0 !important;
+    --accent-hover: #2f6be8 !important;
+    --accent-press: #1d53c8 !important;
+    --accent-text: #8db2ff !important;
+    --accent-text-hover: #a9c4ff !important;
+    --on-accent: #ffffff !important;
+    --focus: #8db2ff !important;
+    --focus-halo: rgba(141, 178, 255, 0.24) !important;
+    --warn-text: #f5b642 !important;
+    --warn-bg: rgba(245, 182, 66, 0.1) !important;
+    --warn-border: rgba(245, 182, 66, 0.3) !important;
+    --warn-dot: #f5b642 !important;
+    --warn-fill: #f5b642 !important;
+    --on-warn-fill: #1e2230 !important;
+    --err-text: #ff8a80 !important;
+    --err-bg: rgba(255, 123, 114, 0.1) !important;
+    --err-border: rgba(255, 123, 114, 0.3) !important;
+    --err-solid: #d92d20 !important;
+    --ok-text: #5ccb7a !important;
+    --ok-bg: rgba(76, 199, 106, 0.1) !important;
+    --ok-border: rgba(76, 199, 106, 0.28) !important;
+    --ok-solid: #4cc76a !important;
+    --diff-add-bg: rgba(76, 199, 106, 0.1) !important;
+    --diff-add-tok: rgba(76, 199, 106, 0.22) !important;
+    --diff-del-bg: rgba(255, 123, 114, 0.1) !important;
+    --diff-del-tok: rgba(255, 123, 114, 0.22) !important;
   }
 }

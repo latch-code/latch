@@ -4,7 +4,7 @@ import { resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openSection, openSettings, reachable } from './helpers/layout.ts'
+import { noHorizontalOverflow, openSection, openSettings, reachable, closeSettings } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/design'
 const VIEWPORTS = [
@@ -119,9 +119,8 @@ describe('responsive workspace controls', () => {
       await switches.first().waitFor()
       for (let index = 0; index < (await switches.count()); index++) await reachable(switches.nth(index), { allowDisabled: true })
       await noHorizontalOverflow(page, settings)
-      await reachable(settings.getByRole('button', { name: '关闭', exact: true }))
       await capture(page, `${label}-plugin-settings`)
-      await settings.getByRole('button', { name: '关闭', exact: true }).click()
+      await closeSettings(settings)
 
       const devices = await openSettings(page, '设备')
       await reachable(devices.getByRole('button', { name: '撤销此设备', exact: true }))
@@ -130,7 +129,7 @@ describe('responsive workspace controls', () => {
       if (width < 768) await devices.getByTestId('dev-mode').waitFor()
       await noHorizontalOverflow(page, devices)
       await capture(page, `${label}-devices`)
-      await devices.getByRole('button', { name: '关闭', exact: true }).click()
+      await closeSettings(devices)
       await reachable(composer)
       expect((await testHost.host.bridge.listTasks()).length).toBe(0)
       await rm(`${OUTPUT}/${label}-failure.png`, { force: true })

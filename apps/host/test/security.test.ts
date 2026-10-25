@@ -144,7 +144,7 @@ describe('Host process', () => {
     expect(lines).toHaveLength(4)
     expect(lines[0]).toBe('Latch 0.1.0 · 演示模型 / 真实工具')
     expect(lines[1]).toMatch(/^打开 http:\/\/h-[a-z2-7]{52}\.localhost:\d+\/link\/ ，请在本机确认。$/u)
-    expect(lines[2]).toBe(`工作区：${workspace}`)
+    expect(lines[2]).toBe(`启动目录：${workspace}`)
     expect(lines[3]).toBe(`手机接入：https://${tls.hostname}:${tlsPort}/link/（在电脑上的 Latch 桌面端生成配对二维码）`)
 
     const state = (await readHostState(dataDir))!

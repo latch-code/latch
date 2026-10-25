@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, open, readFile, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
-import type { Message, PlanEntry, SessionConfigOption, TaskSummary } from '@latch/protocol'
+import type { Message, PlanEntry, SessionConfigOption, TaskSummary, UsageReport } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { writeFileAtomic } from '@latch/core/node-kit'
 import type { ConfigSource } from './mapping.ts'
@@ -31,6 +31,12 @@ export interface AcpRecord {
   drift?: { at: string; observed: string }
   /** Preset whose permission profile applied when the session was created. */
   profilePresetId?: string
+  /**
+   * The real paths of the folders the agent receives besides `cwd`, in order, and how (`folderVia`). Both are part of
+   * the confirmed launch; absent when the session passes no other folder.
+   */
+  folders?: string[]
+  folderVia?: 'acp' | 'args'
 }
 
 export interface AcpTask {
@@ -38,6 +44,8 @@ export interface AcpTask {
   messages: Message[]
   plan?: PlanEntry[]
   config?: SessionConfigOption[]
+  /** The agent's latest report of its context window and cost. */
+  usageReport?: UsageReport
   revision: number
   acp: AcpRecord
 }
@@ -56,7 +64,13 @@ export interface AcpState {
   receipts: Record<string, AcpReceipt>
 }
 
-const usage = z.object({ inputTokens: z.number(), outputTokens: z.number() })
+const usage = z.object({
+  inputTokens: z.number(),
+  outputTokens: z.number(),
+  cacheReadTokens: z.number().optional(),
+  cacheWriteTokens: z.number().optional(),
+  reasoningTokens: z.number().optional(),
+})
 const toolDetail = z.object({
   kind: z.enum(['read', 'edit', 'delete', 'move', 'search', 'execute', 'think', 'fetch', 'other']).optional(),
   title: z.string().optional(),
@@ -83,6 +97,15 @@ const message = z.object({
   reasoning: z.string().optional(),
   tool: toolDetail.optional(),
   usage: usage.optional(),
+  createdAt: z.string().optional(),
+  startedAt: z.string().optional(),
+  completedAt: z.string().optional(),
+  reasoningMs: z.number().nonnegative().optional(),
+  model: z.string().optional(),
+  providerId: z.string().optional(),
+  turn: z
+    .object({ endedAt: z.string().optional(), activeMs: z.number().nonnegative().optional(), waitMs: z.number().nonnegative().optional() })
+    .optional(),
 })
 const stateSchema = z.object({
   version: z.literal(1),
@@ -93,12 +116,16 @@ const stateSchema = z.object({
         id: z.string(),
         title: z.string(),
         updatedAt: z.string(),
+        createdAt: z.string().optional(),
         status: z.enum(['idle', 'running', 'waiting-approval', 'cancelled', 'failed', 'interrupted']),
         cwd: z.string().optional(),
         model: z.string().optional(),
         mode: z.enum(['chat', 'agent']).optional(),
         usage: usage.optional(),
         permissionDrift: z.literal(true).optional(),
+        workspaceId: z.string().optional(),
+        folders: z.array(z.object({ id: z.string(), path: z.string() })).optional(),
+        folderAccess: z.enum(['all', 'primary']).optional(),
       }),
       messages: z.array(message),
       plan: z
@@ -122,6 +149,14 @@ const stateSchema = z.object({
           }),
         )
         .optional(),
+      usageReport: z
+        .object({
+          contextUsed: z.number().nonnegative().optional(),
+          contextSize: z.number().nonnegative().optional(),
+          cost: z.object({ amount: z.number().nonnegative().finite(), currency: z.string().regex(/^[A-Z]{3}$/u) }).optional(),
+          at: z.string(),
+        })
+        .optional(),
       revision: z.number().int().nonnegative(),
       acp: z.object({
         acpSessionId: z.string().optional(),
@@ -141,6 +176,8 @@ const stateSchema = z.object({
         expectedMode: z.string().optional(),
         drift: z.object({ at: z.string(), observed: z.string() }).optional(),
         profilePresetId: z.string().optional(),
+        folders: z.array(z.string()).optional(),
+        folderVia: z.enum(['acp', 'args']).optional(),
       }),
     }),
   ),

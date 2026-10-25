@@ -7,9 +7,39 @@ export interface ModelRef {
   providerId: string
   model: string
 }
+/**
+ * Tokens a model step used. `inputTokens` counts all input (cached input included) and `outputTokens` all output
+ * (reasoning included), so older clients still compare them; the optional parts say how much of each was a cache read,
+ * a cache write or reasoning, when the provider reported it.
+ */
 export interface TokenUsage {
   inputTokens: number
   outputTokens: number
+  /** Part of `inputTokens` read from the provider's prompt cache. */
+  cacheReadTokens?: number
+  /** Part of `inputTokens` written to the provider's prompt cache. */
+  cacheWriteTokens?: number
+  /** Part of `outputTokens` spent on reasoning. */
+  reasoningTokens?: number
+}
+
+/** What a turn took, recorded by the Host on the user message that opened it. Times are ISO strings. */
+export interface TurnStats {
+  /** When the turn settled; absent when it never did (a Host restart interrupted it). */
+  endedAt?: string
+  /** Working time: from the prompt to `endedAt`, without the time spent waiting for approvals. */
+  activeMs?: number
+  /** Time during the turn when at least one approval waited for a person. */
+  waitMs?: number
+}
+
+/** What an agent reported about its context window and cost; never estimated by Latch. */
+export interface UsageReport {
+  contextUsed?: number
+  contextSize?: number
+  cost?: { amount: number; currency: string }
+  /** When the agent last reported it. */
+  at: string
 }
 
 export interface TaskSummary {
@@ -17,6 +47,8 @@ export interface TaskSummary {
   title: string
   status: TaskStatus
   updatedAt: string
+  /** When the session was created; absent on sessions created before the Host recorded it. */
+  createdAt?: string
   cwd?: string
   model?: string
   /** Missing on historical tasks; those retain the original Agent behavior. */
@@ -34,6 +66,17 @@ export interface TaskSummary {
   level?: 'L1' | 'L3'
   /** The harness changed its own permission mode; the session no longer accepts input. */
   permissionDrift?: true
+  /** The project the session was started in (`default` for the start directory). Absent on sessions from before projects had several folders. */
+  workspaceId?: string
+  /** The session's folders, frozen when it was created; `[0]` is `cwd`. Absent: the session uses `cwd` only. */
+  folders?: Array<{ id: string; path: string }>
+  /** Whether the harness received every folder of the project or only the primary one. */
+  folderAccess?: 'all' | 'primary'
+  /**
+   * The Host made `cwd` for this session alone, inside its default start directory (`workspaceId` is `default`): an
+   * Agent session outside a saved project. The desktop can save it as a project's primary folder.
+   */
+  sessionFolder?: true
 }
 
 export type ToolKind = 'read' | 'edit' | 'delete' | 'move' | 'search' | 'execute' | 'think' | 'fetch' | 'other'
@@ -68,6 +111,24 @@ export interface Message {
   reasoning?: string
   tool?: ToolDetail
   usage?: TokenUsage
+  /**
+   * Host-recorded times, all optional (older Hosts, plugin drivers and history recorded before them have none). User:
+   * when the prompt was accepted. Assistant: when the step began. Tool: when the call was recorded. System: when it was
+   * written.
+   */
+  createdAt?: string
+  /** Tool only: when it began to run, after any approval. */
+  startedAt?: string
+  /** Assistant: when the step finished. Tool: when it settled. */
+  completedAt?: string
+  /** Assistant: how long the model reasoned in this step, from its first reasoning to its first text or the step's end. */
+  reasoningMs?: number
+  /** Assistant: the model that answered this step, as the harness names it. */
+  model?: string
+  /** Assistant, built-in harness: the model service of `model`. */
+  providerId?: string
+  /** User: what the turn this message opened took. */
+  turn?: TurnStats
 }
 
 export type ApprovalOptionKind = 'allow_once' | 'allow_always' | 'reject_once' | 'reject_always'
@@ -117,18 +178,35 @@ export interface TaskDetail {
   approvals: Approval[]
   liveText: string
   cursor: number
-  /** Optional live projection; external HarnessDrivers may omit it. */
-  activity?: { phase: 'model' | 'tool' | 'approval' | 'cancelling'; toolName?: string }
+  /**
+   * Optional live projection; external HarnessDrivers may omit it. `starting`: an agent's process and session are being
+   * prepared and nothing has been sent yet. `since`: when this phase began.
+   */
+  activity?: { phase: 'starting' | 'model' | 'tool' | 'approval' | 'cancelling'; toolName?: string; since?: string }
   /** Retained as the assistant message ID when this streamed reply settles. */
   liveMessageId?: string
   /** Reasoning streamed for the live reply; settles into `Message.reasoning`. */
   liveReasoning?: string
+  /** When the live reply's reasoning began; with `liveReasoningMs` once its text has started. */
+  liveReasoningStartedAt?: string
+  liveReasoningMs?: number
+  /** While a run is live: when it began and the approval wait it has accumulated; `runWaitingSince` while one is open. */
+  runStartedAt?: string
+  runWaitMs?: number
+  runWaitingSince?: string
+  /** While a run is live: the last change of visible output (text, reasoning, a tool, the plan, a new message). */
+  lastOutputAt?: string
+  /** The agent's latest report of its context window and cost. */
+  usageReport?: UsageReport
   /** Latest plan reported by the harness. */
   plan?: PlanEntry[]
   /** Options the harness lets the user change for this session. */
   config?: SessionConfigOption[]
-  /** Transport version within one Host lifetime, not a durable replay cursor. */
-  sync?: { instanceId: string; revision: number }
+  /**
+   * Transport version within one Host lifetime, not a durable replay cursor. `hostTime`: the Host's clock when it sent
+   * a streamed state, which the client uses to measure live times on the Host's clock.
+   */
+  sync?: { instanceId: string; revision: number; hostTime?: string }
   /** Who enforces this session's permissions and what Latch could verify. */
   permission?: SessionPermission
 }
@@ -305,7 +383,15 @@ export interface HarnessInfo {
   models: 'host' | 'agent'
   /** L1: builtin, Latch asks per risky call. L3: ACP or plugin harness, unsandboxed. */
   level?: 'L1' | 'L3'
+  /**
+   * Which folders of a project the harness receives. `all`: every folder (at most `max`); `primary`: the primary folder
+   * only; `primary-asks`: the primary folder, and it asks before using others; `primary-unbounded`: the primary folder,
+   * and it does not limit which directories it reads. Absent: an older Host, or `primary`.
+   */
+  projectFolders?: { access: ProjectFolderAccess; max?: number }
 }
+
+export type ProjectFolderAccess = 'all' | 'primary' | 'primary-asks' | 'primary-unbounded'
 
 export type ProviderKind = 'openai-compatible' | 'anthropic'
 /** Browser-safe provider listing. It never contains credentials. */
@@ -318,12 +404,51 @@ export interface ProviderSummary {
   defaultModel: string
 }
 
+/** Neutral project glyphs (Lucide names); a project never has a colour. */
+export const PROJECT_GLYPHS = [
+  'folder',
+  'code',
+  'globe',
+  'server',
+  'smartphone',
+  'book-open',
+  'database',
+  'flask-conical',
+  'pen-tool',
+  'wrench',
+] as const
+export type ProjectGlyph = (typeof PROJECT_GLYPHS)[number]
+
+/**
+ * How a folder was added: the desktop's native picker, a Finder drop it confirmed natively, `pnpm latch project`, or a
+ * session's own folder that the desktop saved as a project after a native confirmation.
+ */
+export type FolderVia = 'picker' | 'drop' | 'cli' | 'session'
+
+export interface WorkspaceFolder {
+  /** Stable within the project across reorders and re-selection; never shown. */
+  id: string
+  /** Realpath. */
+  path: string
+  /** Chinese reason this folder cannot be used now, e.g. 找不到这个文件夹. */
+  unavailable?: string
+}
+
+/** A project: a name and 1–8 ordered folders. `id: 'default'` is the Host's start directory (启动目录). */
 export interface WorkspaceInfo {
   id: string
   name: string
+  /** The primary folder (`folders[0].path`), where new sessions start. */
   path: string
-  /** Chinese reason this saved workspace cannot be used on this run; it can still be removed. */
+  /** Chinese reason the project cannot start sessions now (the first failing folder); it can still be edited and removed. */
   unavailable?: string
+  /** Ordered; `[0]` is the primary folder. Absent from older Hosts. */
+  folders?: WorkspaceFolder[]
+  glyph?: ProjectGlyph
+  /** Other devices may start sessions in this project under the current policy. */
+  remoteStart?: boolean
+  /** The project lies in Latch's program directory: every Latch 内置 write asks for local approval, and ACP agents cannot start there. */
+  codeRoot?: true
 }
 
 export interface SessionDefaults {
@@ -339,6 +464,10 @@ export interface HostCatalog {
   providers: ProviderSummary[]
   workspaces: WorkspaceInfo[]
   defaults: SessionDefaults
+  /** Present when the Host supports projects of several folders, added from the desktop only; `max` folders per project. */
+  projectFolders?: { max: number }
+  /** Agent sessions outside a saved project each get a new folder of their own inside the start directory. */
+  sessionFolders?: true
 }
 
 export interface AppSnapshot {
@@ -356,6 +485,8 @@ export interface AppSnapshot {
   execution?: { ready: boolean; providerId?: string; modelConfigurationRequired?: boolean }
   catalog?: HostCatalog
   version?: string
+  /** The Host's clock when it answered. */
+  hostTime?: string
 }
 
 export interface ChangeEvent {
@@ -371,6 +502,8 @@ export interface TaskStateEvent {
   revision: number
   sessionId: string
   detail: TaskDetail
+  /** The Host's clock when it sent the event. */
+  hostTime?: string
 }
 
 /** Owner-only provider configuration as returned to the browser. */
@@ -411,8 +544,11 @@ export interface AgentSettings {
   args: string[]
   envKeys: string[]
   enabled: boolean
-  /** Result of resolving `command` on the Host's PATH. */
-  detected: { found: boolean; path?: string }
+  /**
+   * Result of resolving `command` on the Host's PATH and install directories; with a preset that names a companion
+   * (the agent an adapter connects to), whether that was found too. Older Hosts send no `companion`.
+   */
+  detected: { found: boolean; path?: string; companion?: { command: string; found: boolean } }
   /** Matches a preset's command and arguments exactly. */
   verified: boolean
   /** Chinese reason the definition cannot run, e.g. a reserved env name. */

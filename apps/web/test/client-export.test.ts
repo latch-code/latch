@@ -51,12 +51,12 @@ describe('Markdown export', () => {
     const markdown = transcriptMarkdown(detail(), { harness: 'Standard', exportedAt: new Date('2026-10-23T08:00:00.000Z') })
     expect(
       markdown.startsWith(
-        '# 修复登录问题\n\n- Harness：Standard\n- 模型：deepseek-chat\n- 模式：Agent\n- 项目：`/work/app`\n- 用量：↑1.2k ↓350 tokens\n- 导出于：',
+        '# 修复登录问题\n\n- Harness：Standard\n- 模型：deepseek-chat\n- 模式：Agent\n- 项目：`/work/app`\n- 用量：输入 1.2k tokens · 输出 350 tokens\n- 导出于：',
       ),
     ).toBe(true)
     expect(markdown).toContain('## 你\n\n登录按钮没反应')
     expect(markdown).toContain('## 助手\n\n<details>\n<summary>思考过程</summary>\n\n> 检查事件绑定\n> 再看网络请求')
-    expect(markdown).toContain('_用量：↑1.2k ↓350_')
+    expect(markdown).toContain('_用量：输入 1.2k tokens · 输出 350 tokens_')
     expect(markdown).toContain('<summary>工具：写入 &lt;src/login.ts&gt;（已完成）</summary>')
     expect(markdown).toContain('工具名：`write_file`')
     expect(markdown).toContain('```diff\n--- a/src/login.ts\n+++ b/src/login.ts\n@@ -1,2 +1,2 @@\n a\n-b\n+c\n```')

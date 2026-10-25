@@ -80,7 +80,11 @@ export function parseTaskState(data: string): TaskStateEvent | undefined {
       || typeof event.detail.liveText !== 'string'
     )
       return
-    return { ...event, detail: { ...event.detail, sync: { instanceId: event.instanceId, revision: event.revision! } } } as TaskStateEvent
+    const hostTime = typeof event.hostTime === 'string' ? event.hostTime : undefined
+    return {
+      ...event,
+      detail: { ...event.detail, sync: { instanceId: event.instanceId, revision: event.revision!, ...(hostTime ? { hostTime } : {}) } },
+    } as TaskStateEvent
   } catch {
     return
   }

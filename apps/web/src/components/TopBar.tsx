@@ -40,6 +40,7 @@ export function TopBar({
   onApprovals,
   inspectorOpen,
   onInspector,
+  inspectorRef,
   sessionMenu,
   menu,
   connection,
@@ -66,8 +67,11 @@ export function TopBar({
   /** While the sidebar is shut, what waits for the person stays one click away here. */
   approvals?: number
   onApprovals?: () => void
+  /** 会话信息 is shown, as the column beside the paper or as a page in the conversation's place. */
   inspectorOpen: boolean
   onInspector: () => void
+  /** The toggle, which takes focus back when the page of 会话信息 closes. */
+  inspectorRef?: RefObject<HTMLButtonElement | null>
   /** Rename, pin, archive, export and delete: the title button's menu. */
   sessionMenu: MenuSection[]
   /** ⋯: the session's actions and 同步最新状态. */
@@ -164,7 +168,7 @@ export function TopBar({
           </StatusPill>
         )}
         {phone && <IconButton label="新建会话" icon={SquarePen} onClick={onNew} />}
-        {summary && !phone && <IconButton label="会话详情" icon={PanelRight} pressed={inspectorOpen} onClick={onInspector} />}
+        {summary && <IconButton ref={inspectorRef} label="会话信息" icon={PanelRight} pressed={inspectorOpen} onClick={onInspector} />}
         {menu.length > 0 && (
           <Menu
             label="会话操作"

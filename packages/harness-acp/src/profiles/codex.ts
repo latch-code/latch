@@ -14,6 +14,8 @@ export const codexProfile: HarnessProfile = {
     readback: 'mode',
     notes: [],
   },
+  // codex-acp trusts every folder it receives and loads its `.agents/skills`; in workspace-write mode they are writable too.
+  folders: { via: 'acp', configPaths: ['.codex', '.agents/skills'] },
   // A trusted project's own config.toml, hooks, agents and exec policies, from the session directory up to its root.
   projectConfigPaths: ['.codex'],
 }

@@ -11,6 +11,7 @@
     "./crypto": "./src/crypto.ts",
     "./host-state": "./src/host-state.ts",
     "./paths": "./src/paths.ts",
+    "./policy": "./src/policy.ts",
     "./plugins/standard": "./src/plugins/standard/index.ts",
     "./desktop-host": "./scripts/desktop-host.ts"
   },

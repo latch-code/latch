@@ -4,7 +4,7 @@
 
 | 路径 | 职责 |
 | --- | --- |
-| `src/core/` | 无布局的客户端核心：`api.ts`、fetch 事件流 `eventStream.ts`、同步与版本门禁 `useHarness.ts` 与 `projection.ts`、阅读位置 `useReadingPosition.ts`、凭据续期 `credentials.ts`、设备密钥 `deviceKey.ts`、登记 `enrollment.ts`、安全文案 `securityCopy.ts`、权限显示 `permissions.ts`、本机确认 `confirmations.ts`、审计回滚检查 `auditCheckpoint.ts`、审批 `approvalDecision.ts`、内容哈希 `contentHash.ts`、桌面端接口 `shell.ts` |
+| `src/core/` | 无布局的客户端核心：`api.ts`、fetch 事件流 `eventStream.ts`、同步与版本门禁 `useHarness.ts` 与 `projection.ts`、阅读位置 `useReadingPosition.ts`、凭据续期 `credentials.ts`、设备密钥 `deviceKey.ts`、登记 `enrollment.ts`、安全文案 `securityCopy.ts`、权限显示 `permissions.ts`、权限上限 `ceilings.ts`、本机确认 `confirmations.ts`、审计回滚检查 `auditCheckpoint.ts`、审批 `approvalDecision.ts`、内容哈希 `contentHash.ts`、Host 时钟与走秒 `hostClock.ts`、桌面端接口 `shell.ts` |
 | `src/` | 界面：`main.tsx` → `App.tsx` → `Workspace.tsx`，`components/`、`settings/`、`hooks/`、`styles/`（入口 `index.css`，令牌与原语的样式来自 `@latch/ui`）；Harness 与模型服务的图标 `brands.ts` 与 `assets/brands/` |
 | `index.html`、`public/`、`vite.config.ts` | 页面入口；图标与 manifest；Vite 配置与 `pnpm dev:web` 的开发代理 |
 | `test/` | `pnpm test --project @latch/web` |
@@ -21,5 +21,6 @@
 - 样式表都进入层叠层，只读 `@latch/ui` 定义的令牌，规则见 `packages/ui/AGENTS.md`（`test/styles.test.ts#reads only tokens that @latch/ui defines`）。按钮、图标按钮、开关、分段控件、胶囊、计数、提示、加载、Toast 等用 `@latch/ui` 的原语，不在页面里另画一份；页面只在 app 层按位置调整它们。
 - Harness 与模型服务的图标只用 `src/assets/brands/` 中原样复制的文件（来源与许可证写在根 `NOTICE`），以 `?no-inline` 导入，只经 `<img>` 或 CSS 遮罩使用；每个预设都有图标，没有图标的用中性图形，从不用字母（`test/brands.test.ts#gives every harness preset its brand icon`）。
 - 新字段对旧 Host 可选，缺少时降级（`test/client-legacy.test.ts#offers only settings the Host can serve, with the single-provider form for model setup`）；共享编码与 Host、测试向量一致（`test/client-security.test.ts#builds the exact enroll and renew texts`）。
+- 桌面文件夹操作需 `folders.protocolVersion === 1`；旧壳同名接口不证明支持签名请求（`test/shell-folders.test.ts`）。
 
 改布局后在手机、平板、桌面宽度与深色模式下检查（`e2e/design.e2e.ts`）。改动前先读 [docs/STREAMING.md](../../docs/STREAMING.md)（事件流、消息身份、阅读位置）与 [docs/DESIGN.md](../../docs/DESIGN.md)。

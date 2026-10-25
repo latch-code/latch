@@ -47,12 +47,18 @@
   box-shadow: var(--sh-composer-focus);
 }
 
+/* The bar on top of the input while a session runs, only when it has something to act on: approvals out of view
+ * (amber), the stop's states and the plan chip. It folds away with the disclosure's motion when it has nothing. */
+.run-bar-collapse {
+  border-radius: var(--r-16) var(--r-16) 0 0;
+  corner-shape: var(--corner-shape);
+}
 .run-bar {
   display: flex;
   align-items: center;
   gap: var(--sp-8);
   min-height: 32px;
-  padding: 0 var(--sp-8) 0 var(--sp-12);
+  padding: 0 var(--sp-6) 0 var(--sp-12);
   border-bottom: 1px solid var(--line-subtle);
   border-radius: var(--r-16) var(--r-16) 0 0;
   corner-shape: var(--corner-shape);
@@ -67,6 +73,9 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.run-bar-status {
+  font-weight: 500;
+}
 .run-bar.is-waiting {
   border-bottom-color: var(--warn-border);
   background: var(--warn-bg);
@@ -77,14 +86,14 @@
   color: var(--warn-text);
   flex-shrink: 0;
 }
-.run-bar-time {
+.run-bar-end {
+  display: flex;
   margin-left: auto;
-  flex-shrink: 0;
-  color: var(--text-3);
-  font-variant-numeric: tabular-nums;
 }
 .run-bar-action {
-  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
   min-height: 28px;
   padding: 0 var(--sp-4);
   border: 0;
@@ -96,10 +105,19 @@
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+.run-bar.is-waiting .run-bar-action {
+  margin-left: auto;
+}
+.run-bar.is-waiting .run-bar-end {
+  margin-left: 0;
+}
 @media (pointer: coarse) {
   .run-bar-action {
     min-height: 36px;
     padding: 0 var(--sp-8);
+  }
+  .run-bar {
+    min-height: 36px;
   }
 }
 

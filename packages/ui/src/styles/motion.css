@@ -1,0 +1,63 @@
+/*
+ * Motion that explains a change: a disclosure that opens downward under its header, an icon that swaps in, and
+ * something that leaves. Height moves only through the grid row (0fr to 1fr) and everything else only through opacity
+ * and transform, so nothing laid out above a disclosure moves. Reduced motion makes every one of them instant
+ * (base.css).
+ */
+
+/* A disclosure's body: the grid row opens over 180ms on the entry curve and closes over 140ms on the exit curve; the
+ * content fades in 40ms behind the box and fades out first. */
+.ui-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  min-width: 0;
+  transition: grid-template-rows var(--d-base-exit) var(--ease-exit);
+}
+.ui-collapse[data-state='open'] {
+  grid-template-rows: 1fr;
+  transition: grid-template-rows var(--d-base) var(--ease);
+}
+.ui-collapse-inner {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity var(--d-fast-exit) var(--ease-exit);
+}
+.ui-collapse[data-state='open'] > .ui-collapse-inner {
+  opacity: 1;
+  transition: opacity var(--d-fast) var(--ease) var(--d-stagger);
+}
+/* Open and still: focus rings and rows that reach past the column are no longer clipped. */
+.ui-collapse[data-settled] > .ui-collapse-inner {
+  overflow: visible;
+}
+
+/* Swapped content scales in from 80% as it fades in (a copy icon turning into a check). */
+.ui-swap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.ui-swap[data-effect='fade'] {
+  display: inline;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .ui-swap[data-swapped] {
+    animation: ui-swap-in var(--d-fast) var(--ease);
+  }
+  .ui-swap[data-swapped][data-effect='fade'] {
+    animation-name: ui-swap-fade;
+  }
+}
+@keyframes ui-swap-in {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+}
+@keyframes ui-swap-fade {
+  from {
+    opacity: 0;
+  }
+}

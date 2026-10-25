@@ -1,13 +1,16 @@
 import { constants } from 'node:fs'
 import { mkdir, readdir, realpath, lstat, open, rename, unlink, stat } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { z } from 'zod'
 import type { FileDiff } from '@latch/protocol'
-import type { HarnessPlugin } from '@latch/sdk'
+import type { HarnessPlugin, SessionFolder } from '@latch/sdk'
 
-const pathInput = z.object({ path: z.string().min(1).max(1024) }).strict()
+const pathInput = z.object({ path: z.string().min(1).max(1024), folder: z.string().min(1).max(64).optional() }).strict()
 const writeInput = pathInput.extend({ content: z.string().max(65536) })
+const noInput = z.object({}).strict()
+const FOLDERS_HINT = 'The project may have several folders: call list_folders and pass `folder`; without it the primary folder is used.'
+const FOLDER_PARAMETER = { type: 'string', description: 'Folder ID from list_folders. Default: the primary folder.' }
 const READ_LIMIT = 131072
 const SYMLINK_REFUSED = '工作区工具不访问符号链接'
 // Windows has no O_NOFOLLOW; the identity checks below still apply there.
@@ -24,6 +27,34 @@ export interface WorkspacePluginOptions {
 }
 
 type Hooks = WorkspacePluginOptions['hooks']
+
+interface FolderContext {
+  workspaceRoot: string
+  workspaceFolders?: ReadonlyArray<SessionFolder>
+}
+
+/** The session's folders; a driver that passes none has one, its working directory. */
+function foldersOf(context: FolderContext): ReadonlyArray<SessionFolder> {
+  return context.workspaceFolders?.length ? context.workspaceFolders : [{ id: 'default', path: context.workspaceRoot, primary: true }]
+}
+
+/** The folder a call works in: the one `folder` names, or the primary folder. Paths are relative to it. */
+function targetFolder(context: FolderContext, id: string | undefined): { folder: SessionFolder; several: boolean } {
+  const folders = foldersOf(context)
+  const folder = id === undefined ? (folders.find(item => item.primary) ?? folders[0]) : folders.find(item => item.id === id)
+  if (!folder) throw new Error(`这个会话没有 ID 为 ${JSON.stringify(id)} 的文件夹，请调用 list_folders 查看`)
+  return { folder, several: folders.length > 1 }
+}
+
+/** The name a folder is shown by: its directory name, never its absolute path. */
+function folderName(folder: SessionFolder): string {
+  return basename(folder.path) || folder.id
+}
+
+/** `<verb> <path>`, naming the folder it is in when the session has several. */
+function describe(verb: string, path: string, target: { folder: SessionFolder; several: boolean }): string {
+  return target.several ? `${verb}「${folderName(target.folder)}」中的 ${path}` : `${verb} ${path}`
+}
 
 function codeOf(error: unknown): unknown {
   return error instanceof Error && 'code' in error ? error.code : undefined
@@ -185,19 +216,39 @@ export function createWorkspacePlugin(options: WorkspacePluginOptions = {}): Har
   return {
     id: 'workspace-files',
     name: '工作区文件',
-    version: '1.1.0',
-    description: '列出、读取和编辑当前工作区文件；每次写入需要审批，节点私有数据不可访问。',
+    version: '1.2.0',
+    description: '列出、读取和编辑项目各文件夹中的文件；每次写入需要审批，节点私有数据不可访问。',
     activate(ctx) {
       ctx.registerTool({
-        name: 'list_files',
-        description: 'List up to 200 entries in a workspace directory. Use path "." for the root.',
-        parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'], additionalProperties: false },
+        name: 'list_folders',
+        description:
+          "List the folders of this session's project: each folder's ID, its directory name, and whether it is the primary folder. Pass an ID as `folder` to list_files, read_file and write_file.",
+        parameters: { type: 'object', properties: {}, additionalProperties: false },
         requiresApproval: false,
         kind: 'search',
         async execute(args, context) {
-          const { path } = pathInput.parse(args)
+          noInput.parse(args)
           context.signal.throwIfAborted()
-          const directory = await workspacePath(context.workspaceRoot, path, guard)
+          // Directory names only: absolute paths of the owner's computer never reach the model from here.
+          const folders = foldersOf(context).map(folder => ({ folder: folder.id, name: folderName(folder), primary: folder.primary }))
+          return { text: JSON.stringify(folders, null, 2) }
+        },
+      })
+      ctx.registerTool({
+        name: 'list_files',
+        description: `List up to 200 entries in a directory of a project folder. Use path "." for the folder itself. ${FOLDERS_HINT}`,
+        parameters: {
+          type: 'object',
+          properties: { path: { type: 'string' }, folder: FOLDER_PARAMETER },
+          required: ['path'],
+          additionalProperties: false,
+        },
+        requiresApproval: false,
+        kind: 'search',
+        async execute(args, context) {
+          const { path, folder } = pathInput.parse(args)
+          context.signal.throwIfAborted()
+          const directory = await workspacePath(targetFolder(context, folder).folder.path, path, guard)
           const entries = (await readdir(directory, { withFileTypes: true })).slice(0, 200)
           const hidden = guard.empty ? new Set<string>() : await guard.identities()
           const lines: string[] = []
@@ -214,22 +265,27 @@ export function createWorkspacePlugin(options: WorkspacePluginOptions = {}): Har
       })
       ctx.registerTool({
         name: 'read_file',
-        description: 'Read a UTF-8 file within the workspace (up to 128 KiB).',
-        parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'], additionalProperties: false },
+        description: `Read a UTF-8 file in a project folder (up to 128 KiB); path is relative to the folder. ${FOLDERS_HINT}`,
+        parameters: {
+          type: 'object',
+          properties: { path: { type: 'string' }, folder: FOLDER_PARAMETER },
+          required: ['path'],
+          additionalProperties: false,
+        },
         requiresApproval: false,
         kind: 'read',
         async execute(args, context) {
-          const { path } = pathInput.parse(args)
+          const { path, folder } = pathInput.parse(args)
           context.signal.throwIfAborted()
-          return { text: await readRegular(context.workspaceRoot, path, guard, context.signal, hooks) }
+          return { text: await readRegular(targetFolder(context, folder).folder.path, path, guard, context.signal, hooks) }
         },
       })
       ctx.registerTool({
         name: 'write_file',
-        description: 'Create or replace a UTF-8 workspace file. The user approves the exact path and content before writing.',
+        description: `Create or replace a UTF-8 file in a project folder; path is relative to the folder. The user approves the exact path and content before writing. ${FOLDERS_HINT}`,
         parameters: {
           type: 'object',
-          properties: { path: { type: 'string' }, content: { type: 'string' } },
+          properties: { path: { type: 'string' }, content: { type: 'string' }, folder: FOLDER_PARAMETER },
           required: ['path', 'content'],
           additionalProperties: false,
         },
@@ -237,11 +293,12 @@ export function createWorkspacePlugin(options: WorkspacePluginOptions = {}): Har
         kind: 'edit',
         async preview(args, context) {
           const input = writeInput.parse(args)
-          const target = await workspacePath(context.workspaceRoot, input.path, guard)
+          const folder = targetFolder(context, input.folder)
+          const target = await workspacePath(folder.folder.path, input.path, guard)
           let oldText: string | undefined
           // A missing, oversized, non-regular, or swapped file has no previous text to show.
           try {
-            oldText = await readRegular(context.workspaceRoot, input.path, guard, context.signal, undefined)
+            oldText = await readRegular(folder.folder.path, input.path, guard, context.signal, undefined)
           } catch (error) {
             if (context.signal.aborted) throw error
           }
@@ -255,12 +312,13 @@ export function createWorkspacePlugin(options: WorkspacePluginOptions = {}): Har
                   (error: unknown) => (codeOf(error) === 'ENOENT' ? ('none' as const) : ('unavailable' as const)),
                 )
           const diff: FileDiff = { path: input.path, ...(oldText !== undefined ? { oldText } : {}), newText: input.content, previous }
-          return { title: `写入 ${input.path}`, diffs: [diff] }
+          return { title: describe('写入', input.path, folder), diffs: [diff] }
         },
         async execute(args, context) {
           const input = writeInput.parse(args)
-          await writeRegular(context.workspaceRoot, input.path, input.content, guard, context.signal, hooks)
-          return { text: `已写入 ${input.path}（${Buffer.byteLength(input.content)} 字节）` }
+          const folder = targetFolder(context, input.folder)
+          await writeRegular(folder.folder.path, input.path, input.content, guard, context.signal, hooks)
+          return { text: `${describe('已写入', input.path, folder)}（${Buffer.byteLength(input.content)} 字节）` }
         },
       })
     },

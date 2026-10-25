@@ -21,10 +21,11 @@ import {
   type CreateTaskInput,
   type DecideOptions,
   type LaunchPreview,
+  type ProjectFolder,
   type PromptOptions,
   type SetConfigOptions,
 } from '@latch/sdk'
-import { sha256Hex } from '@latch/core/node-kit'
+import { isoTime, ReasoningTimer, RunClock, sha256Hex } from '@latch/core/node-kit'
 import { redactor, resolveCommand } from './command.ts'
 import { AgentConnection, ConnectionClosed, ConnectionStopping, RequestTimeout, type ExitInfo } from './connection.ts'
 import { agentEnvironment } from './environment.ts'
@@ -46,7 +47,15 @@ import {
   toolMessage,
   type ToolState,
 } from './mapping.ts'
-import { classifyMode, filterPermissionOptions, isVisibleOption, launchHash, selectProfile, type ProfileSelection } from './permission.ts'
+import {
+  classifyMode,
+  filterPermissionOptions,
+  isVisibleOption,
+  launchHash,
+  selectProfile,
+  type LaunchFolders,
+  type ProfileSelection,
+} from './permission.ts'
 import type { AcpPermissionProfile } from './profiles/index.ts'
 import { fingerprintProjectConfig, PROJECT_CONFIG_LIMITS, type ProjectConfig } from './project-config.ts'
 import {
@@ -56,6 +65,7 @@ import {
   infoUpdate,
   initializeResult,
   modeUpdate,
+  usageUpdate,
   permissionRequest,
   planUpdate,
   promptResult,
@@ -69,7 +79,7 @@ import {
   type RpcId,
   type ToolFields,
 } from './protocol.ts'
-import { createAcpStore, emptyAcpState, type AcpState, type AcpStore, type AcpTask } from './store.ts'
+import { createAcpStore, emptyAcpState, type AcpRecord, type AcpState, type AcpStore, type AcpTask } from './store.ts'
 import type { AgentHealth, AgentRecord, ResolvedOptions } from './types.ts'
 
 export const CLIENT_VERSION = '0.1.0'
@@ -81,7 +91,7 @@ interface Live {
   key: string
   connection: AgentConnection
   initialized: boolean
-  capabilities: { resume: boolean; load: boolean; delete: boolean }
+  capabilities: { resume: boolean; load: boolean; delete: boolean; additionalDirectories: boolean }
   authMethods: Array<{ name: string; description?: string }>
   agentVersion?: string
   /** ACP session → Latch task. Updates for unbound sessions, including a session/load replay, are discarded. */
@@ -96,6 +106,9 @@ interface Segment {
   text: string
   reasoning: string
   acpMessageId?: string
+  /** When its first chunk arrived, in clock milliseconds. */
+  createdAt: number
+  reasoningTimer: ReasoningTimer
 }
 
 interface Run {
@@ -108,6 +121,12 @@ interface Run {
   sent: boolean
   cancelRequested: boolean
   activity: NonNullable<TaskDetail['activity']>
+  /** From the prompt to the turn's end, with the approval wait. */
+  clock: RunClock
+  /** The user message of this turn, once recorded; it carries the turn's times when the turn ends. */
+  userMessageId?: string
+  /** The last change of visible output, in clock milliseconds. */
+  lastOutputAt?: number
   segment?: Segment
   graceTimer?: NodeJS.Timeout
   /** System notes appended once the turn settles, after its last reply. */
@@ -146,6 +165,23 @@ interface Launch {
 interface Confirmed {
   launchHash?: string
   definitionHash?: string
+  /** The other folders the agent receives, which the launch covers. */
+  folders?: LaunchFolders
+}
+
+/** A launch shown in a local confirmation: its definition part, and the folders it passes (`''` for none). */
+interface Previewed {
+  definitionHash: string
+  folders: string
+}
+
+/** The project a new session works in, as it records it. */
+interface Scope {
+  workspaceId: string
+  /** Every folder of the session in order, as the Host registered them; `[0]` is at `cwd`. */
+  folders: ProjectFolder[]
+  /** The folders the agent receives besides `cwd`; absent when there are none. */
+  passed?: LaunchFolders
 }
 
 /** A mode change Latch requested and is waiting on; the agent's reports meanwhile are measured against `allowed`. */
@@ -161,9 +197,6 @@ const UNREPORTED_MODE = '未报告'
 
 function digest(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex')
-}
-function now(): string {
-  return new Date().toISOString()
 }
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -189,6 +222,34 @@ function definitionChanged(): AppError {
 
 function permissionDrift(): AppError {
   return new AppError(409, 'permission-drift', '该会话检测到权限模式漂移，已停止接收输入。请新建会话。')
+}
+
+function workspaceChanged(): AppError {
+  return new AppError(409, 'workspace-changed', '这个会话使用的文件夹已不在项目中或找不到了，不能继续。请新建会话。')
+}
+
+function scopeUnavailable(): AppError {
+  return new AppError(400, 'workspace-unavailable', '所选项目的文件夹与此节点登记的不一致')
+}
+
+/** How the folders a launch passes are compared: in order, with how they are passed. */
+function foldersKey(folders: LaunchFolders | undefined): string {
+  return folders?.paths.length ? JSON.stringify([folders.via, folders.paths]) : ''
+}
+
+/** The folders a session's stored launch passes, as `Confirmed` carries them. */
+function storedFolders(acp: AcpRecord): LaunchFolders | undefined {
+  return acp.folderVia && acp.folders?.length ? { via: acp.folderVia, paths: [...acp.folders] } : undefined
+}
+
+/** What the owner confirmed for a session, from its stored record. */
+function confirmedOf(acp: AcpRecord): Confirmed {
+  const folders = storedFolders(acp)
+  return { launchHash: acp.launchHash, definitionHash: acp.definitionHash, ...(folders ? { folders } : {}) }
+}
+
+function isObject(value: unknown): boolean {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 /** Stops waiting on `promise` once `signal` aborts; the work itself continues for other waiters. */
@@ -237,6 +298,7 @@ export class AcpBridge implements Bridge {
   private readonly redact: (text: string) => string
   private readonly selection: ProfileSelection
   private readonly profile?: AcpPermissionProfile
+  private readonly clock: () => number
   private readonly runs = new Map<string, Run>()
   private readonly permissions = new Map<string, Permission>()
   private readonly tools = new Map<string, { seq: number; calls: Map<string, ToolState> }>()
@@ -259,8 +321,10 @@ export class AcpBridge implements Bridge {
   private readonly changes = new Map<string, Set<ModeChange>>()
   /** Tasks whose recorded mode dates from an earlier process and has not been reported by the current one. */
   private readonly unconfirmed = new Set<string>()
-  /** Launch fingerprint → its definition part, for launches recently shown in a local confirmation. */
-  private readonly previews = new Map<string, string>()
+  /** Launch fingerprint → its definition part and folders, for launches recently shown in a local confirmation. */
+  private readonly previews = new Map<string, Previewed>()
+  /** New sessions whose agent is started, to learn whether it takes their folders, before they are recorded. */
+  private readonly creating = new Map<string, { payloadHash: string; promise: Promise<{ sessionId: string }> }>()
   private started?: Promise<void>
   private closing?: Promise<void>
   private closed = false
@@ -283,6 +347,17 @@ export class AcpBridge implements Bridge {
     this.redact = redactor(agent.env)
     this.selection = selectProfile(agent)
     this.profile = this.selection.profile?.permission
+    this.clock = options.clock ?? Date.now
+  }
+
+  private now(): string {
+    return isoTime(this.clock())
+  }
+
+  /** Moves a turn to a phase; `since` changes only when the phase or its tool does. */
+  private phase(run: Run, phase: NonNullable<TaskDetail['activity']>['phase'], toolName?: string): void {
+    if (run.activity.phase === phase && run.activity.toolName === toolName && run.activity.since) return
+    run.activity = { phase, ...(toolName !== undefined ? { toolName } : {}), since: this.now() }
   }
 
   start(): Promise<void> {
@@ -295,11 +370,13 @@ export class AcpBridge implements Bridge {
         if (task.summary.status !== 'running' && task.summary.status !== 'waiting-approval') continue
         for (const item of task.messages) settleToolMessage(item)
         task.summary.status = 'interrupted'
+        // The turn did not settle, so its user message gets no times: its duration is unknown.
         task.messages.push({
           id: randomUUID(),
           role: 'system',
           text: '上次运行被中断。旧审批已失效；请核对工具副作用后再明确发起后续任务。',
           state: 'failed',
+          createdAt: this.now(),
         })
         this.touch(task)
         changed = true
@@ -324,6 +401,7 @@ export class AcpBridge implements Bridge {
       await this.stopAll()
       await Promise.allSettled([...this.spawning.values()])
       await this.stopAll()
+      await Promise.allSettled([...this.creating.values()].map(entry => entry.promise))
       await Promise.allSettled([...this.forgetting.values()])
       await Promise.all(runs.map(run => run.done))
       await Promise.allSettled([...this.inflight.values()].map(entry => entry.promise))
@@ -360,23 +438,26 @@ export class AcpBridge implements Bridge {
       liveText: segment?.text ?? '',
       cursor: task.revision,
       ...(segment ? { liveMessageId: segment.id } : {}),
-      ...(segment?.reasoning ? { liveReasoning: segment.reasoning } : {}),
-      ...(active && run ? { activity: run.activity } : {}),
+      ...(segment?.reasoning ? { liveReasoning: segment.reasoning, ...segment.reasoningTimer.live() } : {}),
+      ...(active && run ? { activity: run.activity, ...run.clock.live() } : {}),
+      ...(active && run?.lastOutputAt !== undefined ? { lastOutputAt: isoTime(run.lastOutputAt) } : {}),
+      ...(task.usageReport ? { usageReport: task.usageReport } : {}),
       ...(task.plan ? { plan: task.plan } : {}),
       ...(task.config?.length ? { config: task.config } : {}),
       permission: this.permissionView(task),
     })
   }
 
-  async launchPreview(input: { cwd: string }): Promise<LaunchPreview> {
+  async launchPreview(input: { cwd: string; workspaceId?: string; folders?: ReadonlyArray<ProjectFolder> }): Promise<LaunchPreview> {
     await this.ready()
     // The agent is given the registered path; configuration is looked up along it and along its real path.
     const given = await this.workspace(input.cwd)
     const cwd = await realpath(given)
-    const project = await this.projectConfig(given)
-    const launch = this.currentLaunch(project)
+    const passed = (await this.scopeOf(input, given))?.passed
+    const project = await this.projectConfig(given, passed)
+    const launch = this.currentLaunch(project, passed)
     this.previews.delete(launch.hash)
-    this.previews.set(launch.hash, launch.definitionHash)
+    this.previews.set(launch.hash, { definitionHash: launch.definitionHash, folders: foldersKey(passed) })
     for (const [hash] of this.previews) {
       if (this.previews.size <= PREVIEWS) break
       this.previews.delete(hash)
@@ -395,11 +476,13 @@ export class AcpBridge implements Bridge {
       args: [...this.agent.args],
       envNames: Object.keys(env).sort(),
       cwd,
+      ...(passed ? { folders: [...passed.paths] } : {}),
       ...(this.selection.preset ? { presetId: this.selection.preset.id } : {}),
       verified: this.selection.verified,
       approvals: this.profile?.approvals ?? 'prompts',
       readback: this.profile?.readback ?? 'none',
-      notes: [...this.permissionNotes(), ...this.projectNotes(project, [given, cwd])],
+      // Configuration in the other folders is named by its full path, so it never reads as the session directory's.
+      notes: [...this.permissionNotes(), ...this.folderNotes(passed), ...this.projectNotes(project, [given, cwd])],
     }
   }
 
@@ -413,15 +496,19 @@ export class AcpBridge implements Bridge {
       throw new AppError(409, 'l3-confirmation-missing', '此会话没有经过本机确认，不能启动。')
     }
     const cwd = await this.workspace(input.cwd)
-    // Read before the receipt check: nothing may wait between that check and the reservation below.
-    const project = await this.projectConfig(cwd)
+    const scope = await this.scopeOf(input, cwd)
+    // Read before the receipt check: nothing may wait between that check and the reservation below, except for a start
+    // that `creating` keeps to one per request.
+    const project = await this.projectConfig(cwd, scope?.passed)
     this.assertOpen()
     const key = digest(['create', input.requestId])
+    // Folders join the hash only when there are several, so receipts written before they existed still match.
     const payloadHash = digest({
       prompt: input.prompt,
       mode,
       ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
       ...(input.model ? { model: input.model } : {}),
+      ...(scope && scope.folders.length > 1 ? { folders: (input.folders ?? []).map(({ id, path }) => ({ id, path })) } : {}),
     })
     const receipt = this.state.receipts[key]
     if (receipt) {
@@ -430,22 +517,69 @@ export class AcpBridge implements Bridge {
       await this.flush()
       return { sessionId: receipt.taskId }
     }
-    const launch = this.currentLaunch(project)
-    if (launch.hash !== input.expectedLaunchHash) {
-      throw this.previews.get(input.expectedLaunchHash) === launch.definitionHash ? this.projectConfigChanged() : definitionChanged()
+    const pending = this.creating.get(key)
+    if (pending) {
+      if (pending.payloadHash !== payloadHash) throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同任务内容')
+      return pending.promise
     }
+    const launch = this.currentLaunch(project, scope?.passed)
+    if (launch.hash !== input.expectedLaunchHash) throw this.launchRefusal(input.expectedLaunchHash, launch, scope?.passed)
     const sessionId = `task-${randomUUID()}`
-    const run = this.reserve(sessionId, 1, input.prompt)
+    const create = { sessionId, prompt: input.prompt, key, payloadHash, cwd, launch, ...(scope ? { scope } : {}) }
+    if (scope?.passed?.via !== 'acp') return this.record(create)
+    // Whether the agent takes the other folders is known only once it has started, so it starts before the session
+    // exists; held, so that no other start stops it as idle meanwhile.
+    const passed = scope.passed
+    this.enter(this.holds, sessionId)
+    const promise = (async () => {
+      try {
+        const live = await this.ensureProcess(sessionId, cwd, {
+          launchHash: launch.hash,
+          definitionHash: launch.definitionHash,
+          folders: passed,
+        })
+        if (!live.capabilities.additionalDirectories) throw this.foldersUnsupported(true)
+        return await this.record(create)
+      } catch (error) {
+        if (!Object.hasOwn(this.state.tasks, sessionId)) await this.discardProcess(sessionId)
+        throw error
+      } finally {
+        this.leave(this.holds, sessionId)
+      }
+    })().finally(() => this.creating.delete(key))
+    this.creating.set(key, { payloadHash, promise })
+    return promise
+  }
+
+  /** Records a new session with its creation receipt and starts its first turn. */
+  private async record(create: {
+    sessionId: string
+    prompt: string
+    key: string
+    payloadHash: string
+    cwd: string
+    launch: Launch
+    scope?: Scope
+  }): Promise<{ sessionId: string }> {
+    const { sessionId, prompt, cwd, launch, scope } = create
+    this.assertOpen()
+    const run = this.reserve(sessionId, 1, prompt)
+    const at = isoTime(run.clock.startedAt)
+    run.userMessageId = randomUUID()
     this.state.tasks[sessionId] = {
       summary: {
         id: sessionId,
-        title: input.prompt.trim().replace(/\s+/g, ' ').slice(0, 80),
+        title: prompt.trim().replace(/\s+/g, ' ').slice(0, 80),
         status: 'running',
-        updatedAt: now(),
+        updatedAt: at,
+        createdAt: at,
         cwd,
         mode: 'agent',
+        ...(scope
+          ? { workspaceId: scope.workspaceId, folders: scope.folders.map(({ id, path }) => ({ id, path })), folderAccess: 'all' as const }
+          : {}),
       },
-      messages: [{ id: randomUUID(), role: 'user', text: input.prompt }],
+      messages: [{ id: run.userMessageId, role: 'user', text: prompt, createdAt: at }],
       revision: 1,
       acp: {
         cwd,
@@ -453,9 +587,10 @@ export class AcpBridge implements Bridge {
         launchHash: launch.hash,
         definitionHash: launch.definitionHash,
         ...(this.selection.profile ? { profilePresetId: this.selection.profile.presetId } : {}),
+        ...(scope?.passed ? { folders: [...scope.passed.paths], folderVia: scope.passed.via } : {}),
       },
     }
-    this.state.receipts[key] = { taskId: sessionId, payloadHash, kind: 'create' }
+    this.state.receipts[create.key] = { taskId: sessionId, payloadHash: create.payloadHash, kind: 'create' }
     this.tools.set(sessionId, { seq: 1, calls: new Map() })
     this.mark()
     this.notify(sessionId)
@@ -492,7 +627,7 @@ export class AcpBridge implements Bridge {
       const task = this.task(sessionId)
       this.assertUsable(task)
       await this.assertWorkspace(task)
-      await this.assertLaunch(task.acp.cwd, task.acp)
+      await this.assertLaunch(task.acp.cwd, confirmedOf(task.acp))
       this.assertOpen()
       answered = repeated()
     }
@@ -511,7 +646,8 @@ export class AcpBridge implements Bridge {
         const current = this.task(sessionId)
         this.assertUsable(current)
         current.acp.turnSeq = run.seq
-        current.messages.push({ id: randomUUID(), role: 'user', text: prompt })
+        run.userMessageId = randomUUID()
+        current.messages.push({ id: run.userMessageId, role: 'user', text: prompt, createdAt: isoTime(run.clock.startedAt) })
         current.summary.status = 'running'
         this.touch(current)
         this.state.receipts[key] = { taskId: sessionId, payloadHash, kind: 'prompt' }
@@ -574,7 +710,8 @@ export class AcpBridge implements Bridge {
     ) {
       throw new AppError(409, 'task-running', '任务仍在运行，请等待完成或先取消')
     }
-    const { acpSessionId, cwd, deletable, launchHash, definitionHash } = task.acp
+    const { acpSessionId, cwd, deletable } = task.acp
+    const recorded = structuredClone(task)
     delete this.state.tasks[sessionId]
     for (const [key, receipt] of Object.entries(this.state.receipts)) {
       if (receipt.taskId !== sessionId) continue
@@ -587,7 +724,7 @@ export class AcpBridge implements Bridge {
     this.mark()
     await this.flush()
     this.notify(sessionId)
-    this.forget(sessionId, acpSessionId, cwd, deletable === true, { launchHash, definitionHash })
+    this.forget(sessionId, acpSessionId, cwd, deletable === true, confirmedOf(recorded.acp), () => this.stillListed(recorded))
   }
 
   async classifyConfigChange(sessionId: string, configId: string, value: string): Promise<ConfigChangeClass> {
@@ -607,7 +744,7 @@ export class AcpBridge implements Bridge {
     if (typeof value !== 'string' || !option.options.some(item => item.value === value))
       throw new AppError(400, 'config-value-invalid', '设置值不在可选范围内')
     this.assertUsable(task)
-    await this.assertLaunch(task.acp.cwd, task.acp)
+    await this.assertLaunch(task.acp.cwd, confirmedOf(task.acp))
     const mode = this.isModeOption(task, option)
     if (mode) {
       const change = classifyMode(this.profile, this.expectedMode(task) ?? option.currentValue, value)
@@ -695,7 +832,7 @@ export class AcpBridge implements Bridge {
 
   private touch(task: AcpTask): void {
     task.revision++
-    task.summary.updatedAt = now()
+    task.summary.updatedAt = this.now()
   }
 
   private openApprovals(taskId: string): Approval[] {
@@ -754,11 +891,78 @@ export class AcpBridge implements Bridge {
   }
 
   private async assertWorkspace(task: AcpTask): Promise<void> {
-    try {
-      await this.workspace(task.acp.cwd)
-    } catch {
-      throw new AppError(409, 'workspace-changed', '该会话所属的项目目录已不在 Host 的项目列表中。请重新添加该目录，或新建会话。')
+    if (!(await this.stillListed(task))) throw workspaceChanged()
+  }
+
+  /**
+   * Whether a session may still work where it started. One that recorded folders needs its project in `projects()`
+   * with each of them (same ID and real path, and for the folders the agent receives the real path it was given); a
+   * different primary folder now does not matter. One without folders needs its directory among `workspaces()`.
+   */
+  private async stillListed(task: AcpTask): Promise<boolean> {
+    const { workspaceId, folders } = task.summary
+    if (folders === undefined)
+      return this.workspace(task.acp.cwd).then(
+        () => true,
+        () => false,
+      )
+    const project = workspaceId === undefined ? undefined : this.options.projects?.().find(item => item.id === workspaceId)
+    if (!project || !folders.length) return false
+    const passed = task.acp.folders ?? []
+    for (const [index, folder] of folders.entries()) {
+      const listed = project.folders.find(item => item.id === folder.id)
+      const real = listed && (await realpath(listed.path).catch(() => undefined))
+      if (!real || real !== (await realpath(folder.path).catch(() => undefined))) return false
+      if (index > 0 && task.acp.folderVia !== undefined && passed[index - 1] !== real) return false
     }
+    return true
+  }
+
+  /**
+   * The project a new session records, for a harness that takes a project's folders. `workspaceId` must name a project
+   * in `projects()` whose primary folder is at `cwd`; `folders[0]` must be that folder and every folder one of the
+   * project's (same ID and real path). Undefined when the input names no project or the profile takes no folders.
+   */
+  private async scopeOf(input: { workspaceId?: unknown; folders?: unknown }, cwd: string): Promise<Scope | undefined> {
+    const take = this.selection.profile?.folders
+    if (!take || (input.workspaceId === undefined && input.folders === undefined)) return undefined
+    const requested = input.folders
+    if (typeof input.workspaceId !== 'string' || !Array.isArray(requested) || !requested.length || requested.length > 64)
+      throw scopeUnavailable()
+    const project = this.options.projects?.().find(item => item.id === input.workspaceId)
+    const primary = await realpath(cwd).catch(() => undefined)
+    if (!project?.folders.length || !primary || (await realpath(project.folders[0]!.path).catch(() => undefined)) !== primary)
+      throw scopeUnavailable()
+    const folders: ProjectFolder[] = []
+    const paths: string[] = []
+    for (const [index, folder] of (requested as unknown[]).entries()) {
+      const { id, path } = (isObject(folder) ? folder : {}) as { id?: unknown; path?: unknown }
+      if (typeof id !== 'string' || typeof path !== 'string' || !isAbsolute(path) || path.includes('\0')) throw scopeUnavailable()
+      const listed = project.folders.find(item => item.id === id)
+      if (!listed || folders.some(item => item.id === id) || (index === 0 && id !== project.folders[0]!.id)) throw scopeUnavailable()
+      const real = await realpath(path).catch(() => undefined)
+      if (!real || real !== (await realpath(listed.path).catch(() => undefined))) throw scopeUnavailable()
+      if (index === 0) {
+        folders.push({ id, path: cwd })
+        continue
+      }
+      // ACP asks clients to leave out the session directory and repeats; folders of one project never are either.
+      if (real === primary || paths.includes(real)) throw scopeUnavailable()
+      folders.push({ id, path: resolve(listed.path) })
+      paths.push(real)
+    }
+    if (take.via === 'args') {
+      if (paths.length > take.maxExtra)
+        throw new AppError(
+          409,
+          'harness-folder-limit',
+          `${this.agent.name} 最多使用 ${take.maxExtra + 1} 个文件夹，这个项目有 ${folders.length} 个，会话没有开始`,
+        )
+      // The harness splits the value on commas, so such a path would name other directories.
+      if (paths.some(path => path.includes(',')))
+        throw new AppError(400, 'workspace-folder-chars', '文件夹路径不能包含逗号、* 或 ?：部分 Agent 会把它们当作分隔符或通配符。')
+    }
+    return { workspaceId: project.id, folders, ...(paths.length ? { passed: { via: take.via, paths } } : {}) }
   }
 
   // ---- permission profile ---------------------------------------------------------------------------------------
@@ -776,11 +980,53 @@ export class AcpBridge implements Bridge {
     )
   }
 
-  /** The configuration the profile names, found from `cwd` upwards; undefined when the profile names none. */
-  private async projectConfig(cwd: string): Promise<ProjectConfig | undefined> {
+  /**
+   * The configuration the profile names, found from `cwd` and from each folder in `passed` upwards; undefined when the
+   * profile names none. With other folders the profile's own folder configuration counts in all of them.
+   */
+  private async projectConfig(cwd: string, passed?: LaunchFolders): Promise<ProjectConfig | undefined> {
     const profile = this.selection.profile
-    if (!profile?.projectConfigPaths?.length) return undefined
-    return fingerprintProjectConfig(cwd, profile.projectConfigPaths, profile.projectConfigManaged)
+    const names = new Set(profile?.projectConfigPaths ?? [])
+    if (passed && profile?.folders?.via === 'acp') for (const name of profile.folders.configPaths) names.add(name)
+    if (!names.size) return undefined
+    return fingerprintProjectConfig(passed ? [cwd, ...passed.paths] : cwd, [...names], profile?.projectConfigManaged)
+  }
+
+  /** What the confirmation says about the other folders the agent receives. */
+  private folderNotes(passed: LaunchFolders | undefined): string[] {
+    const take = this.selection.profile?.folders
+    if (!passed || !take) return []
+    const name = this.agent.name
+    const how =
+      take.via === 'acp'
+        ? `经 ACP 的 additionalDirectories 传给 ${name}；它的当前版本没有声明支持时，会话不会开始`
+        : `以 ${take.flag} 参数传给 ${name}，排在定义的参数之后`
+    return [`其他 ${passed.paths.length} 个文件夹${how}。文件夹范围由 ${name} 自己执行，不是隔离`]
+  }
+
+  /** Why a new session's launch is not the confirmed one: its definition, the folders it passes, or the project configuration. */
+  private launchRefusal(expected: string, launch: Launch, passed: LaunchFolders | undefined): AppError {
+    const previewed = this.previews.get(expected)
+    if (!previewed || previewed.definitionHash !== launch.definitionHash) return definitionChanged()
+    return previewed.folders === foldersKey(passed) ? this.projectConfigChanged() : workspaceChanged()
+  }
+
+  private foldersUnsupported(starting: boolean): AppError {
+    const name = this.agent.name
+    return new AppError(
+      409,
+      'agent-folders-unsupported',
+      starting
+        ? `${name} 的当前版本没有声明支持多个文件夹，会话没有开始。请更新它，或使用只有一个文件夹的项目。`
+        : `${name} 的当前版本没有声明支持多个文件夹，本轮没有发送。请更新它，或在只有一个文件夹的项目中新建会话。`,
+    )
+  }
+
+  /** Arguments that pass the other folders, after the definition's own. */
+  private folderArgs(passed: LaunchFolders | undefined): string[] {
+    const take = this.selection.profile?.folders
+    if (passed?.via !== 'args' || take?.via !== 'args') return []
+    return passed.paths.flatMap(path => [take.flag, path])
   }
 
   private projectNotes(project: ProjectConfig | undefined, roots: string[]): string[] {
@@ -796,7 +1042,7 @@ export class AcpBridge implements Bridge {
    * What a new process would launch now. The resolved path is part of the fingerprint, and so is the digest of
    * `project`; without project configuration both hashes are the definition's.
    */
-  private currentLaunch(project?: ProjectConfig): Launch {
+  private currentLaunch(project?: ProjectConfig, passed?: LaunchFolders): Launch {
     const command = resolveCommand(this.agent.command)
     if (!command)
       throw new AppError(
@@ -812,7 +1058,14 @@ export class AcpBridge implements Bridge {
       profileVersion: 1 as const,
     }
     const definitionHash = launchHash(definition)
-    const hash = project?.digest ? launchHash({ ...definition, projectConfig: project.digest }) : definitionHash
+    const hash =
+      project?.digest || passed
+        ? launchHash({
+            ...definition,
+            ...(project?.digest ? { projectConfig: project.digest } : {}),
+            ...(passed ? { folders: passed } : {}),
+          })
+        : definitionHash
     return { command, hash, definitionHash }
   }
 
@@ -821,10 +1074,10 @@ export class AcpBridge implements Bridge {
       throw new AppError(409, 'l3-confirmation-missing', '此会话创建于安全升级之前，不能继续。请新建会话（需要本机确认）。')
   }
 
-  /** The launch of a session in `cwd`, unless it is no longer the one the owner confirmed. */
+  /** The launch of a session in `cwd` with the folders it passes, unless it is no longer the one the owner confirmed. */
   private async assertLaunch(cwd: string, confirmed: Confirmed): Promise<Launch> {
     this.assertConfirmed(confirmed)
-    const launch = this.currentLaunch(await this.projectConfig(cwd))
+    const launch = this.currentLaunch(await this.projectConfig(cwd, confirmed.folders), confirmed.folders)
     if (launch.hash === confirmed.launchHash) return launch
     // A session confirmed before project configuration counted stored only the definition's fingerprint.
     throw launch.definitionHash === (confirmed.definitionHash ?? confirmed.launchHash) ? this.projectConfigChanged() : definitionChanged()
@@ -836,7 +1089,7 @@ export class AcpBridge implements Bridge {
    */
   private assertUsable(task: AcpTask): void {
     if (task.acp.drift) throw permissionDrift()
-    this.assertConfirmed(task.acp)
+    this.assertConfirmed(confirmedOf(task.acp))
     if (this.currentLaunch().definitionHash !== (task.acp.definitionHash ?? task.acp.launchHash)) throw definitionChanged()
   }
 
@@ -973,7 +1226,7 @@ export class AcpBridge implements Bridge {
 
   private drift(task: AcpTask, expected: string | undefined, observed: string): void {
     const taskId = task.summary.id
-    task.acp.drift = { at: now(), observed: clip(observed, 64) }
+    task.acp.drift = { at: this.now(), observed: clip(observed, 64) }
     task.summary.permissionDrift = true
     // Rejected before the cancel, which would answer them as cancelled.
     for (const permission of [...this.permissions.values()]) {
@@ -1067,13 +1320,16 @@ export class AcpBridge implements Bridge {
     const done = new Promise<void>(resolve => {
       resolveDone = resolve
     })
+    const clock = new RunClock(this.clock)
+    // Until session/prompt is written the agent's process and session are being prepared.
     const run: Run = {
       taskId,
       seq,
       prompt,
       sent: false,
       cancelRequested: false,
-      activity: { phase: 'model' },
+      activity: { phase: 'starting', since: isoTime(clock.startedAt) },
+      clock,
       notes: [],
       done,
       resolveDone,
@@ -1111,6 +1367,8 @@ export class AcpBridge implements Bridge {
       run.acpSessionId = binding.acpSessionId
       this.holdIdle(binding.live)
       run.sent = true
+      this.phase(run, 'model')
+      this.notify(run.taskId)
       const result = await binding.live.connection.request('session/prompt', {
         sessionId: binding.acpSessionId,
         prompt: [{ type: 'text', text: run.prompt }],
@@ -1215,10 +1473,11 @@ export class AcpBridge implements Bridge {
     }
     const task = this.state.tasks[run.taskId]
     if (task) {
+      const at = this.now()
       if (run.segment) this.settleSegment(run, task, status === 'idle' ? 'completed' : status === 'cancelled' ? 'cancelled' : 'failed')
       const tools = this.tools.get(run.taskId)
       if (tools?.seq === run.seq) {
-        for (const state of tools.calls.values()) if (settleTool(state)) this.upsert(task, toolMessage(state))
+        for (const state of tools.calls.values()) if (settleTool(state, at)) this.upsert(task, toolMessage(state))
       }
       task.summary.status = status
       for (const note of notes) {
@@ -1227,8 +1486,11 @@ export class AcpBridge implements Bridge {
           role: 'system',
           text: note,
           ...(status === 'failed' || status === 'interrupted' ? { state: 'failed' as const } : {}),
+          createdAt: at,
         })
       }
+      const prompt = run.userMessageId === undefined ? undefined : task.messages.find(item => item.id === run.userMessageId)
+      if (prompt) prompt.turn = run.clock.turn()
       this.touch(task)
       this.mark()
     }
@@ -1243,7 +1505,7 @@ export class AcpBridge implements Bridge {
   private requestCancel(run: Run, withGrace: boolean): void {
     if (!run.cancelRequested) {
       run.cancelRequested = true
-      run.activity = { phase: 'cancelling', ...(run.activity.toolName ? { toolName: run.activity.toolName } : {}) }
+      this.phase(run, 'cancelling', run.activity.toolName)
       if (run.sent && run.live && run.acpSessionId) run.live.connection.notify('session/cancel', { sessionId: run.acpSessionId })
       // Nothing reached the agent yet: withdraw the session setup instead of waiting for it.
       else if (!run.sent)
@@ -1350,7 +1612,7 @@ export class AcpBridge implements Bridge {
       connection = AgentConnection.spawn(
         {
           command,
-          args: this.agent.args,
+          args: [...this.agent.args, ...this.folderArgs(confirmed.folders)],
           cwd,
           env: agentEnvironment({
             resolvedCommand: command,
@@ -1377,7 +1639,7 @@ export class AcpBridge implements Bridge {
       key,
       connection,
       initialized: false,
-      capabilities: { resume: false, load: false, delete: false },
+      capabilities: { resume: false, load: false, delete: false, additionalDirectories: false },
       authMethods: [],
       sessions: new Map(),
       lastUsed: Date.now(),
@@ -1413,6 +1675,7 @@ export class AcpBridge implements Bridge {
         resume: capabilities?.sessionCapabilities?.resume != null,
         load: capabilities?.loadSession === true,
         delete: capabilities?.sessionCapabilities?.delete != null,
+        additionalDirectories: isObject(capabilities?.sessionCapabilities?.additionalDirectories),
       }
       live.authMethods = (result.data.authMethods ?? []).slice(0, 16).map(method => ({
         name: clip(this.redact(method.name), 200),
@@ -1484,13 +1747,16 @@ export class AcpBridge implements Bridge {
   }
 
   private async bind(taskId: string, signal: AbortSignal): Promise<Binding> {
-    const { cwd, launchHash, definitionHash } = this.task(taskId).acp
+    const task = this.task(taskId)
+    const { cwd } = task.acp
     const running = this.lives.get(taskId)
     if (running) this.holdIdle(running)
     let live: Live | undefined
     let quiet = false
     try {
-      live = await abortable(this.ensureProcess(taskId, cwd, { launchHash, definitionHash }), signal)
+      // A session's folders are checked before every start, resume or load of its agent: they change what it receives.
+      if (task.summary.folders !== undefined) await this.assertWorkspace(task)
+      live = await abortable(this.ensureProcess(taskId, cwd, confirmedOf(task.acp)), signal)
       this.holdIdle(live)
       const current = this.task(taskId).acp.acpSessionId
       // Mode reports while a session is set up and first checked are its starting point, not drift. A bound session
@@ -1518,19 +1784,26 @@ export class AcpBridge implements Bridge {
     const cwd = task.acp.cwd
     const current = task.acp.acpSessionId
     if (current && live.sessions.get(current) === taskId) return { live, acpSessionId: current }
+    // ACP wants the whole list again for every new, resumed or loaded session: omitting it would drop the folders.
+    const passed = storedFolders(task.acp)
+    const directories = passed?.via === 'acp' ? { additionalDirectories: [...passed.paths] } : {}
+    if (passed?.via === 'acp' && !live.capabilities.additionalDirectories) {
+      void live.connection.stop('stop', this.limits.stopGraceMs)
+      throw this.foldersUnsupported(false)
+    }
     let acpSessionId: string
     let result: unknown
     if (!current) {
-      result = await setup('session/new', { cwd, mcpServers: [] })
+      result = await setup('session/new', { cwd, mcpServers: [], ...directories })
       const id = sessionState.safeParse(result)
       if (!id.success || !id.data.sessionId) throw new AppError(502, 'agent-protocol', `${this.agent.name} 未返回有效的会话标识`)
       acpSessionId = id.data.sessionId
     } else if (live.capabilities.resume) {
-      result = await setup('session/resume', { sessionId: current, cwd, mcpServers: [] })
+      result = await setup('session/resume', { sessionId: current, cwd, mcpServers: [], ...directories })
       acpSessionId = current
     } else if (live.capabilities.load) {
       // The replay arrives before the response while the session is still unbound, so it is discarded.
-      result = await setup('session/load', { sessionId: current, cwd, mcpServers: [] })
+      result = await setup('session/load', { sessionId: current, cwd, mcpServers: [], ...directories })
       acpSessionId = current
     } else {
       throw new AppError(409, 'harness-session-lost', '该 Harness 不支持恢复会话，请新建会话')
@@ -1616,7 +1889,14 @@ export class AcpBridge implements Bridge {
    * starting a process only for the launch the owner confirmed and only in a project the Host still lists, then stops
    * the process and removes its TMPDIR. Otherwise, or after a failure, only the agent's own copy is left behind.
    */
-  private forget(key: string, acpSessionId: string | undefined, cwd: string, deletable: boolean, confirmed: Confirmed): void {
+  private forget(
+    key: string,
+    acpSessionId: string | undefined,
+    cwd: string,
+    deletable: boolean,
+    confirmed: Confirmed,
+    listed: () => Promise<boolean>,
+  ): void {
     const work: Promise<void> = (async () => {
       try {
         await this.spawning.get(key)?.catch(() => undefined)
@@ -1637,16 +1917,11 @@ export class AcpBridge implements Bridge {
               ))
         )
           return
-        // Agents can run code from their working directory at start-up; a project the owner removed gets none.
-        if (
-          !live
-          && !(await this.workspace(cwd).then(
-            () => true,
-            () => false,
-          ))
-        ) {
+        // Agents can run code from their working directory, and the other folders they receive, at start-up; a project
+        // the owner removed, or one that lost a session's folder, gets none.
+        if (!live && !(await listed())) {
           this.limits.log(
-            `已删除 ${this.agent.name} 会话在 Latch 中的记录。该会话的项目目录已不在 Host 的项目列表中，未启动 ${this.agent.name} 删除它自己保存的会话副本。`,
+            `已删除 ${this.agent.name} 会话在 Latch 中的记录。该会话使用的文件夹已不在 Host 的项目列表中，未启动 ${this.agent.name} 删除它自己保存的会话副本。`,
           )
           return
         }
@@ -1666,6 +1941,14 @@ export class AcpBridge implements Bridge {
       if (this.forgetting.get(key) === work) this.forgetting.delete(key)
     })
     this.forgetting.set(key, work)
+  }
+
+  /** Stops the process started for a session that was never recorded, and removes its temporary directory. */
+  private async discardProcess(key: string): Promise<void> {
+    await this.spawning.get(key)?.catch(() => undefined)
+    const live = this.lives.get(key)
+    if (live) await live.connection.stop('stop', this.limits.stopGraceMs).catch(() => {})
+    await rm(this.tmpDirFor(key), { recursive: true, force: true }).catch(() => {})
   }
 
   private async within(promise: Promise<unknown>, ms: number): Promise<void> {
@@ -1734,6 +2017,7 @@ export class AcpBridge implements Bridge {
         const parsed = planUpdate.safeParse(update)
         if (!parsed.success) return
         task.plan = planEntries(parsed.data.entries)
+        if (run) run.lastOutputAt = this.clock()
         break
       }
       case 'session_info_update': {
@@ -1762,7 +2046,21 @@ export class AcpBridge implements Bridge {
         this.reportConfig(task, parsed.data.configOptions)
         break
       }
-      // user_message_chunk, available_commands_update, usage_update and unknown kinds carry nothing Latch shows.
+      case 'usage_update': {
+        // A report about the session, not output: it does not move lastOutputAt.
+        const parsed = usageUpdate.safeParse(update)
+        if (!parsed.success) return
+        const { used, size, cost } = parsed.data
+        if (used === undefined && size === undefined && !cost) return
+        task.usageReport = {
+          ...(used !== undefined ? { contextUsed: used } : {}),
+          ...(size !== undefined ? { contextSize: size } : {}),
+          ...(cost ? { cost: { amount: cost.amount, currency: cost.currency } } : {}),
+          at: this.now(),
+        }
+        break
+      }
+      // user_message_chunk, available_commands_update and unknown kinds carry nothing Latch shows.
       default:
         return
     }
@@ -1786,11 +2084,24 @@ export class AcpBridge implements Bridge {
       segment = undefined
     }
     if (!segment)
-      segment = run.segment = { id: this.messageId(task, acpMessageId), text: '', reasoning: '', ...(acpMessageId ? { acpMessageId } : {}) }
+      segment = run.segment = {
+        id: this.messageId(task, acpMessageId),
+        text: '',
+        reasoning: '',
+        ...(acpMessageId ? { acpMessageId } : {}),
+        createdAt: this.clock(),
+        reasoningTimer: new ReasoningTimer(this.clock),
+      }
     else if (acpMessageId && !segment.acpMessageId) segment.acpMessageId = acpMessageId
-    if (kind === 'text') segment.text = append(segment.text, piece)
-    else segment.reasoning = append(segment.reasoning, piece)
-    if (!run.cancelRequested && run.activity.phase !== 'approval') run.activity = { phase: 'model' }
+    if (kind === 'text') {
+      segment.text = append(segment.text, piece)
+      segment.reasoningTimer.text()
+    } else {
+      segment.reasoning = append(segment.reasoning, piece)
+      segment.reasoningTimer.reasoning()
+    }
+    run.lastOutputAt = this.clock()
+    if (!run.cancelRequested && run.activity.phase !== 'approval') this.phase(run, 'model')
     this.notify(task.summary.id)
   }
 
@@ -1798,12 +2109,18 @@ export class AcpBridge implements Bridge {
     const segment = run.segment
     run.segment = undefined
     if (!segment || (!segment.text && !segment.reasoning)) return
+    const reasoningMs = segment.reasoningTimer.end()
+    const model = modelName(task.config)
     task.messages.push({
       id: segment.id,
       role: 'assistant',
       text: segment.text,
       state,
       ...(segment.reasoning ? { reasoning: segment.reasoning } : {}),
+      createdAt: isoTime(segment.createdAt),
+      completedAt: this.now(),
+      ...(reasoningMs !== undefined ? { reasoningMs } : {}),
+      ...(model ? { model: clip(model, 200) } : {}),
     })
     this.touch(task)
     this.mark()
@@ -1817,7 +2134,7 @@ export class AcpBridge implements Bridge {
     let target =
       open && last?.id === open.id && (!acpMessageId || !open.acpMessageId || open.acpMessageId === acpMessageId) ? last : undefined
     if (!target) {
-      target = { id: this.messageId(task, acpMessageId), role: 'assistant', text: '', state: 'completed' }
+      target = { id: this.messageId(task, acpMessageId), role: 'assistant', text: '', state: 'completed', createdAt: this.now() }
       task.messages.push(target)
       this.stray.set(taskId, { id: target.id, ...(acpMessageId ? { acpMessageId } : {}) })
     }
@@ -1853,11 +2170,12 @@ export class AcpBridge implements Bridge {
   private applyTool(task: AcpTask, run: Run | undefined, fields: ToolFields, created: boolean): void {
     if (created && run?.segment) this.settleSegment(run, task, 'completed')
     const state = this.toolState(task, fields.toolCallId)
-    mergeTool(state, fields)
+    mergeTool(state, fields, this.now())
     this.upsert(task, toolMessage(state))
+    if (run) run.lastOutputAt = this.clock()
     if (run && !run.cancelRequested && !this.openApprovals(task.summary.id).length) {
-      if (state.status === 'in_progress') run.activity = { phase: 'tool', toolName: toolLabel(state) }
-      else if (state.status === 'completed' || state.status === 'failed') run.activity = { phase: 'model' }
+      if (state.status === 'in_progress') this.phase(run, 'tool', toolLabel(state))
+      else if (state.status === 'completed' || state.status === 'failed') this.phase(run, 'model')
     }
     this.touch(task)
     this.mark()
@@ -1875,7 +2193,7 @@ export class AcpBridge implements Bridge {
     if (!taskId || !task || !run?.sent || run.live !== live || run.cancelRequested || this.closed) return Promise.resolve(CANCELLED_OUTCOME)
     if (run.segment) this.settleSegment(run, task, 'completed')
     const state = this.toolState(task, parsed.data.toolCall.toolCallId)
-    mergeTool(state, parsed.data.toolCall)
+    mergeTool(state, parsed.data.toolCall, this.now())
     if (filtered.autoReject) {
       // Persistent or unknown choices only: nothing Latch could offer, so the request is refused at once.
       this.upsert(task, toolMessage(state))
@@ -1883,6 +2201,7 @@ export class AcpBridge implements Bridge {
         id: randomUUID(),
         role: 'system',
         text: `已自动拒绝：${this.agent.name} 只提供会持久保存的选项或未知选项，Latch 不提供。`,
+        createdAt: this.now(),
       })
       this.touch(task)
       this.mark()
@@ -1898,7 +2217,7 @@ export class AcpBridge implements Bridge {
       toolCallId: state.id.slice('tool:'.length),
       reason: clip(state.title || `${this.agent.name} 请求执行一项操作`, 1000),
       ...(state.rawInput !== undefined ? { arguments: clip(pretty(state.rawInput), TOOL_TEXT_LIMIT) } : {}),
-      requestedAt: now(),
+      requestedAt: this.now(),
       options: filtered.visible.map(option => ({
         id: option.optionId,
         label: clip(option.name, 200),
@@ -1924,7 +2243,9 @@ export class AcpBridge implements Bridge {
       })
       this.upsert(task, toolMessage(state))
       task.summary.status = 'waiting-approval'
-      run.activity = { phase: 'approval', toolName: approval.toolName }
+      run.clock.openWait(approval.id)
+      run.lastOutputAt = this.clock()
+      this.phase(run, 'approval', approval.toolName)
       this.touch(task)
       this.mark()
       this.notify(taskId)
@@ -1938,12 +2259,13 @@ export class AcpBridge implements Bridge {
     if (result instanceof Error) permission.fail(result)
     else permission.answer(result)
     const task = this.state.tasks[permission.taskId]
+    this.runs.get(permission.taskId)?.clock.closeWait(permission.approval.id)
     if (task) {
       this.upsert(task, toolMessage(permission.tool))
       const run = this.runs.get(permission.taskId)
       if (!this.openApprovals(permission.taskId).length) {
         if (task.summary.status === 'waiting-approval') task.summary.status = 'running'
-        if (run && !run.cancelRequested) run.activity = { phase: 'model' }
+        if (run && !run.cancelRequested) this.phase(run, 'model')
       }
       this.touch(task)
       this.mark()

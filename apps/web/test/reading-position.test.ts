@@ -285,3 +285,20 @@ it('reveals the requested row when its session becomes ready, or the latest outp
   expect(f.geometry.top).toBe(800)
   expect(f.controller.isFollowing).toBe(true)
 })
+
+it('keeps the anchor when reasoning folds above it', () => {
+  const f = fixture()
+  f.controller.sync('a', true, f.viewport)
+  f.controller.input(-1, f.viewport)
+  f.userScroll(530)
+  f.settle()
+  // A thinking row above the anchor folds as the answer starts: every frame of the fold shrinks the rows above.
+  for (const step of [40, 40, 40]) {
+    for (const row of f.rows) if (row.top >= 300) row.top -= step
+    f.geometry.extent -= step
+    f.controller.layout(f.viewport)
+  }
+  expect(f.geometry.top).toBe(410)
+  expect(f.viewport.anchor()).toEqual({ messageId: 'message-5', offset: -30 })
+  expect(f.controller.isFollowing).toBe(false)
+})

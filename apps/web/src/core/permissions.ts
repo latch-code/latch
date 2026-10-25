@@ -9,6 +9,7 @@ import type {
   SessionPermission,
   TaskSummary,
 } from '@latch/protocol'
+import { APPROVAL_COPY } from './securityCopy.ts'
 import type { LatchShell } from './shell.ts'
 
 /**
@@ -73,20 +74,15 @@ export function harnessGate(
   return { allowed: false, reason: LOCAL_ONLY_HARNESS }
 }
 
-export const APPROVAL_COPY = {
-  R1: '普通操作',
-  R2: '高风险',
-  advisory: '提示，不是安全边界',
-  advisoryNote: '该会话为完全访问（L3），Harness 的询问只是提示；拒绝会转达给它，但不能阻止它执行其他操作。',
-  noStandard: '此设备没有「批准普通操作」权限',
-  noElevated: '此设备没有「批准高风险操作」权限',
-  hostDesktop: '高风险操作只能在执行端电脑上用 Latch 桌面端批准',
-  advisoryRemote: '只有执行端电脑上的 Latch 桌面端可以回应完全访问会话的询问',
-  confirmAllow: '在本机确认后允许',
-} as const
-
 export interface ApprovalGate {
-  badge?: { label: string; tone: 'neutral' | 'warn' | 'err' }
+  /**
+   * The kind of request: an ordinary step of the built-in harness (R1), a high-risk one (R2, also a current Host that
+   * sent no risk), a full-access agent's question (advisory, which the Host treats as R2), or any request from a Host
+   * of the previous build (legacy: plain allow and reject).
+   */
+  kind: 'R1' | 'R2' | 'advisory' | 'legacy'
+  /** The card's state pill: amber while it waits, red for a high-risk request. */
+  badge?: { label: string; tone: 'warn' | 'err' }
   /** Explanation shown on advisory (L3) prompts. */
   note?: string
   /** Buttons to show; reject options are always present. */
@@ -95,6 +91,8 @@ export interface ApprovalGate {
   explicit: boolean
   /** Why allowing is not offered on this device. */
   hint?: string
+  /** Allowing opens the local confirmation (Touch ID or the login password on this computer). */
+  confirms?: boolean
 }
 
 /** Allow once and reject for drivers that offer no explicit options; these send no optionId. */
@@ -113,7 +111,7 @@ const isAllow = (option: ApprovalOption) => option.kind.startsWith('allow')
 export function approvalActions(approval: Approval, device: CurrentDevice | null, shell: LatchShell | null): ApprovalGate {
   const explicit = approval.options !== undefined && approval.options.length > 0
   const offered = explicit ? approval.options! : FALLBACK_OPTIONS
-  if (device === null) return { options: offered, explicit }
+  if (device === null) return { kind: 'legacy', badge: { label: APPROVAL_COPY.waiting, tone: 'warn' }, options: offered, explicit }
   const scopes = new Set(device.scopes)
   const local = isLocalDevice(device, shell)
   const rejects = offered.filter(option => !isAllow(option))
@@ -121,6 +119,7 @@ export function approvalActions(approval: Approval, device: CurrentDevice | null
   if (approval.advisory) {
     const allowed = local && scopes.has('run')
     return {
+      kind: 'advisory',
       badge: { label: APPROVAL_COPY.advisory, tone: 'warn' },
       note: APPROVAL_COPY.advisoryNote,
       explicit,
@@ -131,16 +130,23 @@ export function approvalActions(approval: Approval, device: CurrentDevice | null
   if (approval.risk === 'R1') {
     const allowed = scopes.has('approve:standard')
     return {
-      badge: { label: APPROVAL_COPY.R1, tone: 'neutral' },
+      kind: 'R1',
+      badge: { label: APPROVAL_COPY.waiting, tone: 'warn' },
       explicit,
       options: allowed ? offered : rejects,
       ...(allowed ? {} : { hint: APPROVAL_COPY.noStandard }),
     }
   }
-  const badge = { label: APPROVAL_COPY.R2, tone: 'err' as const }
-  if (!local) return { badge, explicit, options: rejects, hint: APPROVAL_COPY.hostDesktop }
-  if (!scopes.has('approve:elevated')) return { badge, explicit, options: rejects, hint: APPROVAL_COPY.noElevated }
-  return { badge, explicit, options: [...rejects, ...allowOnce.map(option => ({ ...option, label: APPROVAL_COPY.confirmAllow }))] }
+  const badge = { label: APPROVAL_COPY.highRisk, tone: 'err' as const }
+  if (!local) return { kind: 'R2', badge, explicit, options: rejects, hint: APPROVAL_COPY.hostDesktop }
+  if (!scopes.has('approve:elevated')) return { kind: 'R2', badge, explicit, options: rejects, hint: APPROVAL_COPY.noElevated }
+  return {
+    kind: 'R2',
+    badge,
+    explicit,
+    options: [...rejects, ...allowOnce.map(option => ({ ...option, label: APPROVAL_COPY.allowLocal }))],
+    confirms: true,
+  }
 }
 
 export type ComposerGate = { kind: 'open' } | { kind: 'read-only'; text: string } | { kind: 'stopped' }

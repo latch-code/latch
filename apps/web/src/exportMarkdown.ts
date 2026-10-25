@@ -1,6 +1,6 @@
 import type { FileDiff, Message, TaskDetail } from '@latch/protocol'
 import { diffLines, knowsOldSide, previousState } from './diff.ts'
-import { dateTime, usageText } from './format.ts'
+import { dateTime, tokenText } from './format.ts'
 
 const toolStates: Record<NonNullable<Message['state']>, string> = {
   queued: '等待执行',
@@ -124,7 +124,7 @@ export function transcriptMarkdown(detail: TaskDetail, meta: { harness?: string;
     summary.model && `模型：${summary.model}`,
     `模式：${summary.mode === 'chat' ? '对话' : 'Agent'}`,
     summary.cwd && `项目：${code(summary.cwd)}`,
-    summary.usage && `用量：${usageText(summary.usage)} tokens`,
+    summary.usage && `用量：${tokenText(summary.usage)}`,
     `导出于：${dateTime((meta.exportedAt ?? new Date()).toISOString())}`,
   ].filter((fact): fact is string => typeof fact === 'string' && fact.length > 0)
   const out = [`# ${summary.title.trim() || '未命名会话'}`, '', ...facts.map(fact => `- ${fact}`), '']
@@ -146,9 +146,11 @@ export function transcriptMarkdown(detail: TaskDetail, meta: { harness?: string;
           '',
         )
       if (message.text) out.push(inertMarkdown(message.text), '')
-      if (message.state === 'cancelled') out.push('_已停止，保留了部分回复。_', '')
-      else if (message.state === 'failed') out.push('_回复中断，保留了部分内容。_', '')
-      if (message.usage) out.push(`_用量：${usageText(message.usage)}_`, '')
+      // Say what was kept only when something was.
+      const kept = message.text.trim().length > 0
+      if (message.state === 'cancelled') out.push(kept ? '_已停止，保留了部分回复。_' : '_已停止。_', '')
+      else if (message.state === 'failed') out.push(kept ? '_回复中断，保留了部分内容。_' : '_回复中断。_', '')
+      if (message.usage) out.push(`_用量：${tokenText(message.usage)}_`, '')
     } else if (message.role === 'tool') out.push(...toolBlock(message))
     else
       out.push(

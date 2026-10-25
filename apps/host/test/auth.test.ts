@@ -758,7 +758,7 @@ describe('enrollment', () => {
       hashDisplay: expect.stringMatching(/^[0-9a-f]{4}(-[0-9a-f]{4}){3}$/u),
     })
     const { preview } = await context.presence.waitForRequest()
-    expect(preview.title).toBe('登记新设备')
+    expect(preview.title).toBe('允许新设备连接')
     expect(preview.requester).toEqual({ deviceName: '我的浏览器', listener: 'loopback-tcp', remoteAddress: '127.0.0.1' })
     expect(preview.lines).toEqual([
       { label: '设备名称', value: '我的浏览器' },

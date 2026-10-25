@@ -1,5 +1,11 @@
 import type { Approval, ModelRef, TaskDetail, TaskMode, TaskSummary } from '@latch/protocol/types'
 
+/** One folder of a project: its ID inside the project (stable across reorders) and its absolute path. */
+export interface ProjectFolder {
+  id: string
+  path: string
+}
+
 export interface CreateTaskInput {
   prompt: string
   requestId: string
@@ -8,6 +14,17 @@ export interface CreateTaskInput {
   model?: ModelRef
   /** Absolute working directory chosen from the Host's workspaces. Absent means the driver default. */
   cwd?: string
+  /**
+   * Drivers that declare `projectFolders: 'all'`, with `cwd`: the project the session starts in (`default` for the
+   * start directory). Others never receive it.
+   */
+  workspaceId?: string
+  /**
+   * Drivers that declare `projectFolders: 'all'`, with `cwd` and `workspaceId`: every folder of that project in order;
+   * `[0].path` is `cwd` (the primary folder). The driver checks them against `projects()` and keeps them for the
+   * session's lifetime. Others never receive it and use `cwd` alone.
+   */
+  folders?: ReadonlyArray<ProjectFolder>
   /** L3 drivers: the launch fingerprint the owner confirmed. ACP refuses when absent (409 l3-confirmation-missing) or different (409 agent-definition-changed). */
   expectedLaunchHash?: string
 }
@@ -38,6 +55,8 @@ export interface LaunchPreview {
   /** Names only, sorted; values never leave the Host. */
   envNames: string[]
   cwd: string
+  /** Folders besides `cwd` the agent receives, as ordered absolute paths. Absent or empty: `cwd` only. */
+  folders?: string[]
   presetId?: string
   verified: boolean
   approvals: 'prompts' | 'none'
@@ -62,6 +81,6 @@ export interface Bridge {
   setConfig?(sessionId: string, configId: string, value: string, options?: SetConfigOptions): Promise<void>
   /** Optional. How a config change relates to the session's expected permission mode. */
   classifyConfigChange?(sessionId: string, configId: string, value: string): Promise<ConfigChangeClass>
-  /** Optional, L3 drivers. What a new session in `cwd` would launch. */
-  launchPreview?(input: { cwd: string }): Promise<LaunchPreview>
+  /** Optional, L3 drivers. What a new session in `cwd` would launch; `workspaceId` and `folders` as in `CreateTaskInput`. */
+  launchPreview?(input: { cwd: string; workspaceId?: string; folders?: ReadonlyArray<ProjectFolder> }): Promise<LaunchPreview>
 }

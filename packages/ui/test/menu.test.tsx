@@ -11,6 +11,7 @@ import {
   MenuFooterNote,
   MenuPanel,
   PermissionMenu,
+  Popover,
   ValuePicker,
   type PermissionLevel,
 } from '../src/index.ts'
@@ -369,6 +370,39 @@ describe('menu rows', () => {
     expect((await edges('工具栏权限')).start).toBe(0)
   })
 
+  it('reserves the leading slot only when a check or a glyph can fill it', async () => {
+    const screen = await render(
+      <div>
+        <div className="ui-popover">
+          <MenuPanel
+            label="更多批准选项"
+            sections={[
+              { id: 'more', items: [{ id: 'always', label: '本会话始终允许', description: '只在这个会话里有效', onSelect: () => {} }] },
+            ]}
+            footer={<MenuFooterLink onClick={() => {}}>管理…</MenuFooterLink>}
+          />
+        </div>
+        <div className="ui-popover">
+          <MenuPanel
+            label="会话"
+            sections={[{ id: 'actions', items: [{ id: 'rename', label: '重命名', icon: Pencil, onSelect: () => {} }] }]}
+          />
+        </div>
+      </div>,
+    )
+    const [plain, glyphs] = Array.from(screen.container.querySelectorAll<HTMLElement>('.ui-menu'))
+    const item = plain.querySelector<HTMLElement>('.ui-menu-item')!
+    const padding = parseFloat(getComputedStyle(item).paddingLeft)
+    // A plain action starts at the item's padding, and so does the footer link under it.
+    expect(left(plain.querySelector('.ui-menu-item-title'))).toBeCloseTo(item.getBoundingClientRect().left + padding, 0)
+    expect(left(plain.querySelector('.ui-menu-footer-text'))).toBeCloseTo(left(plain.querySelector('.ui-menu-item-title')) ?? 0, 0)
+    expect(getComputedStyle(plain.querySelector('.ui-menu-item-lead')!).display).toBe('none')
+    // With a glyph the slot stays, 16 wide and 8 before the title.
+    const lead = glyphs.querySelector<HTMLElement>('.ui-menu-item-lead')!
+    expect(lead.getBoundingClientRect().width).toBe(16)
+    expect(left(glyphs.querySelector('.ui-menu-item-title'))).toBeCloseTo(lead.getBoundingClientRect().right + 8, 0)
+  })
+
   it("starts its footer rows on the titles' column, and draws a destructive item and its glyph in one red", async () => {
     const screen = await render(
       <div>
@@ -503,6 +537,32 @@ describe('action menu', () => {
 })
 
 describe('on phones', () => {
+  it('shows a popover as a sheet titled with its title that only shows, so it closes with 完成 and has no 取消', async () => {
+    await page.viewport(390, 844)
+    try {
+      const screen = await render(
+        <Popover
+          label="计划"
+          title="计划 1/2"
+          trigger={props => (
+            <button {...props} type="button">
+              计划
+            </button>
+          )}>
+          <p>读取设置页的保存逻辑</p>
+        </Popover>,
+      )
+      await userEvent.click(screen.getByRole('button', { name: '计划' }))
+      const sheet = screen.getByRole('dialog', { name: '计划 1/2' })
+      await expect.element(sheet).toBeVisible()
+      expect(sheet.element().querySelector('.ui-sheet-cancel')).toBeNull()
+      await userEvent.click(screen.getByRole('button', { name: '完成' }))
+      await expect.element(screen.getByRole('dialog', { name: '计划 1/2' })).not.toBeInTheDocument()
+    } finally {
+      await page.viewport(1280, 800)
+    }
+  })
+
   it('turns a value picker into a bottom sheet with a single-choice list', async () => {
     await page.viewport(390, 844)
     try {

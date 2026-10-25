@@ -20,6 +20,8 @@ export const geminiProfile: HarnessProfile = {
     systemSettings: SYSTEM_SETTINGS,
     notes: [],
   },
+  // Every ACP session of a process uses its arguments; Gemini CLI splits the value on commas and documents 5 directories.
+  folders: { via: 'args', flag: '--include-directories', maxExtra: 4 },
   // Workspace settings, commands and extensions; `.gemini/.env` is looked up from the session directory upwards.
   projectConfigPaths: ['.gemini'],
   /** Rewrites the file before every spawn (0600, replaced by rename so a planted symlink is replaced, not followed). */

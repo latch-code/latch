@@ -1,34 +1,74 @@
-.settings-modal.modal-dialog {
-  width: min(960px, calc(100vw - 48px));
-  height: min(680px, calc(100dvh - 48px));
+/*
+ * Full-page settings. A modal page over the whole window, so the conversation behind it keeps its state: from 768px the
+ * section navigation is on the ground where the session list was (the sidebar's own width from 1024px) and the section
+ * is a sheet of paper inset by --shell-inset; on phones the section list is the root page and a section, and each page
+ * inside it, is pushed over the level before. The page fades in (120ms) over the conversation and fades out (90ms)
+ * when left; there is no scrim, so the two cross-fade. A section, or a page inside one, fades in from 4px lower.
+ */
+.settings-page::backdrop {
+  background: transparent;
 }
-.settings-modal > .modal-surface {
+.settings-page.modal-page > .modal-surface {
+  background: var(--bg-app);
+  animation: fade-in var(--d-fast) var(--ease);
+}
+.settings-page.is-leaving {
+  pointer-events: none;
+  /* Exits take three quarters of an entrance: 90ms. */
+  animation: settings-leave calc(var(--d-fast) * 0.75) var(--ease-exit) both;
+}
+@keyframes settings-leave {
+  to {
+    opacity: 0;
+  }
+}
+.settings-layout {
+  --settings-nav-width: 240px;
+  display: grid;
+  grid-template-columns: var(--settings-nav-width) minmax(0, 1fr);
   height: 100%;
+  min-height: 0;
 }
-.settings-header {
-  padding-left: var(--sp-20);
-}
-.modal-page.settings-modal .settings-header {
-  padding: calc(var(--sp-8) + env(safe-area-inset-top)) var(--sp-8) var(--sp-8) var(--sp-12);
-}
-/* Full-page settings on phones: one sheet of paper, header included. */
-.modal-page.settings-modal > .modal-surface {
-  background: var(--bg-pane);
+@media (min-width: 1024px) {
+  .settings-layout {
+    --settings-nav-width: var(--sidebar-open-width);
+  }
 }
 
-.settings-layout {
-  display: grid;
-  grid-template-columns: 220px minmax(0, 1fr);
-  flex: 1;
+.settings-nav-pane {
+  /* Counts on the ground are cut out of the ground. */
+  --surface: var(--bg-app);
+  display: flex;
+  flex-direction: column;
   min-height: 0;
+  padding: 0 var(--sp-8) var(--sp-8);
+  overflow-y: auto;
+}
+/* The head row lines up with the paper's top edge and with the session list's head it replaces. */
+.settings-nav-head {
+  display: flex;
+  align-items: center;
+  height: 48px;
+  flex-shrink: 0;
+  margin-top: var(--shell-inset);
+}
+.settings-return {
+  gap: var(--sp-6);
+}
+.settings-return > .ui-icon {
+  color: var(--icon);
+}
+.settings-nav-label {
+  padding: var(--sp-12) var(--sp-8) var(--sp-4);
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
 }
 .settings-nav {
   display: grid;
   align-content: start;
   gap: var(--sp-2);
-  padding: var(--sp-12);
-  background: var(--bg-app);
-  overflow-y: auto;
 }
 /*
  * The selected section is the neutral selection of a list row, with its text and icon in ink; the selection changes
@@ -39,7 +79,7 @@
   align-items: center;
   gap: var(--sp-8);
   width: 100%;
-  height: 36px;
+  height: 32px;
   padding: 0 var(--sp-8);
   border: 0;
   border-radius: var(--r-8);
@@ -51,7 +91,7 @@
   line-height: var(--lh-label);
   transition: background-color var(--d-fast) var(--ease);
 }
-.settings-nav > button > svg {
+.settings-nav > button > .ui-icon {
   color: var(--icon);
   flex-shrink: 0;
 }
@@ -71,57 +111,261 @@
   /* The button just clicked is still under the pointer: its selection fades in too. */
   transition-duration: var(--d-fast);
 }
-.settings-nav > button[aria-selected='true'] > svg {
+.settings-nav > button[aria-selected='true'] > .ui-icon {
   color: var(--text-1);
 }
-/* The section content is paper beside the ground-coloured navigation, so its cards and fields sit on paper as they
- * do everywhere else; the dialog's raised frame and header stay around both. */
+
 .settings-panel {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  margin: var(--shell-inset) var(--shell-inset) var(--shell-inset) 0;
+  overflow: clip;
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-pane);
+}
+.settings-scroll {
+  flex: 1;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: var(--sp-24) var(--sp-32) var(--sp-32);
+}
+.settings-content {
   display: grid;
-  gap: var(--sp-20);
   align-content: start;
-  background: var(--bg-pane);
+  gap: var(--sp-24);
+  width: 100%;
+  max-width: calc(720px + 2 * var(--gutter));
+  margin: 0 auto;
+  padding: var(--sp-48) var(--gutter);
+}
+.settings-subpage {
+  display: grid;
+  align-content: start;
+  gap: var(--sp-24);
+  min-width: 0;
+}
+.settings-enter {
+  animation: settings-enter var(--d-fast) var(--ease);
+}
+@keyframes settings-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-enter {
+    animation-name: fade-in;
+  }
+}
+.settings-back {
+  justify-self: start;
+  margin: calc(-1 * var(--sp-24)) 0 calc(-1 * var(--sp-8)) calc(-1 * var(--sp-8));
+}
+.settings-back > .ui-icon {
+  color: var(--icon);
 }
 
+/*
+ * Phones: the section list is the root page; a section slides over it from the right while the list moves 24% left, and
+ * each page inside a section slides over the section the same way (240ms), with its own bar and back. Going back runs
+ * the same slide in reverse. A level that is covered is hidden once the slide ends, so it leaves the reading order.
+ */
+.settings-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  flex-shrink: 0;
+  min-height: 52px;
+  padding: calc(var(--sp-4) + env(safe-area-inset-top)) var(--sp-8) var(--sp-4);
+  border-bottom: 1px solid var(--line-subtle);
+  background: var(--bg-pane);
+}
+.settings-bar h2 {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-title-sm);
+  line-height: var(--lh-title-sm);
+  font-weight: 600;
+}
+.settings-bar .dev-chip {
+  margin-right: var(--sp-8);
+}
+/* The waiting count sits right after the way back to the conversation, cut out of the bar. */
+.settings-bar-count {
+  --surface: var(--bg-pane);
+  display: inline-flex;
+  margin-inline-start: calc(-1 * var(--sp-8));
+}
+.settings-levels {
+  display: none;
+}
 @media (max-width: 767.98px) {
-  .settings-layout {
-    display: flex;
-    flex-direction: column;
-  }
-  .settings-nav {
-    flex: 1;
-    padding: var(--sp-12) var(--sp-16);
-    border-right: 0;
-    gap: 0;
+  .settings-page.modal-page > .modal-surface {
     background: var(--bg-pane);
   }
-  .settings-nav > button {
-    height: 52px;
+  .settings-layout {
+    position: relative;
+    display: block;
+    overflow: hidden;
+  }
+  .settings-nav-pane,
+  .settings-panel,
+  .settings-level {
+    position: absolute;
+    inset: 0;
+    background: var(--bg-pane);
+    transition:
+      transform var(--d-slow) var(--ease),
+      visibility 0s linear var(--d-slow);
+  }
+  .settings-nav-pane {
+    padding: 0;
+  }
+  .settings-panel {
+    margin: 0;
+    border: 0;
     border-radius: 0;
-    box-shadow: inset 0 -1px 0 var(--line-subtle);
+    transform: translateX(100%);
+    visibility: hidden;
+  }
+  .settings-layout[data-level='section'] > .settings-nav-pane,
+  .settings-layout[data-level='page'] > .settings-nav-pane,
+  .settings-layout[data-level='page'] > .settings-panel {
+    transform: translateX(-24%);
+    visibility: hidden;
+  }
+  .settings-layout[data-level='section'] > .settings-panel {
+    transform: none;
+    visibility: visible;
+    transition-delay: 0s;
+  }
+  .settings-layout[data-level='root'] > .settings-nav-pane {
+    visibility: visible;
+    transition-delay: 0s;
+  }
+  .settings-levels {
+    display: block;
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .settings-level {
+    display: flex;
+    flex-direction: column;
+    pointer-events: auto;
+    transform: none;
+    visibility: visible;
+    transition-delay: 0s;
+  }
+  @starting-style {
+    .settings-level {
+      transform: translateX(100%);
+    }
+  }
+  .settings-level[data-state='under'] {
+    transform: translateX(-24%);
+    visibility: hidden;
+    transition-delay: 0s, var(--d-slow);
+  }
+  .settings-level[data-state='leaving'] {
+    transform: translateX(100%);
+    visibility: hidden;
+    transition-delay: 0s, var(--d-slow);
+  }
+  .settings-nav {
+    gap: 0;
+    margin: var(--sp-16);
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: var(--r-12);
+    corner-shape: var(--corner-shape);
+  }
+  .settings-nav > button {
+    position: relative;
+    gap: var(--sp-12);
+    height: 52px;
+    padding: 0 var(--sp-16);
+    border-radius: 0;
+    color: var(--text-1);
     font-size: var(--fs-ui);
     line-height: var(--lh-ui);
-    padding: 0 var(--sp-4);
+  }
+  .settings-nav > button + button::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: calc(var(--sp-16) + 20px + var(--sp-12));
+    height: 1px;
+    background: var(--line-subtle);
   }
   .settings-nav > button > .chevron {
     margin-left: auto;
   }
   .settings-nav > button[aria-selected='true'] {
     background: transparent;
-    color: var(--text-1);
     font-weight: 400;
   }
-  .settings-panel {
-    flex: 1;
+  .settings-nav > button[aria-selected='true'] > .ui-icon:not(.chevron) {
+    color: var(--icon);
+  }
+  .settings-content {
+    gap: var(--sp-20);
     padding: var(--sp-16) var(--sp-16) calc(var(--sp-32) + env(safe-area-inset-bottom));
+  }
+  /* The bar names the section or the page, so a page head keeps only its paragraph and action. */
+  .settings-content .settings-heading h2 {
+    display: none;
+  }
+  .settings-content .settings-heading:not(:has(p)):not(:has(> :nth-child(2))) {
+    display: none;
+  }
+}
+/* Reduced motion: levels cross-fade (120ms) instead of sliding. */
+@media (max-width: 767.98px) and (prefers-reduced-motion: reduce) {
+  .settings-nav-pane,
+  .settings-panel,
+  .settings-level {
+    transition:
+      opacity var(--d-fast) var(--ease),
+      visibility 0s linear var(--d-fast);
+  }
+  .settings-panel,
+  .settings-layout[data-level='section'] > .settings-nav-pane,
+  .settings-layout[data-level='page'] > .settings-nav-pane,
+  .settings-layout[data-level='page'] > .settings-panel,
+  .settings-level[data-state='under'],
+  .settings-level[data-state='leaving'] {
+    transform: none;
+    opacity: 0;
+  }
+  .settings-layout[data-level='section'] > .settings-panel,
+  .settings-layout[data-level='root'] > .settings-nav-pane,
+  .settings-level {
+    opacity: 1;
+  }
+  .settings-level[data-state='under'],
+  .settings-level[data-state='leaving'] {
+    opacity: 0;
+    transition-delay: 0s, var(--d-fast);
+  }
+  @starting-style {
+    .settings-level {
+      transform: none;
+      opacity: 0;
+    }
   }
 }
 
+/* The page head: an 18/26 title, a 13/20 paragraph (at most 560 wide) and one page action on the right. */
 .settings-heading {
   display: flex;
   align-items: flex-start;
@@ -135,47 +379,386 @@
 .settings-heading > :not(:first-child) {
   flex-shrink: 0;
 }
-.settings-heading h3 {
+.settings-heading h2 {
   font-size: var(--fs-title);
   line-height: var(--lh-title);
   font-weight: 600;
 }
 .settings-heading p {
+  max-width: 560px;
   margin-top: var(--sp-4);
   color: var(--text-3);
   font-size: var(--fs-label);
   line-height: var(--lh-label-para);
-  max-width: 60ch;
-}
-.modal-page .settings-heading h3 {
-  display: none;
 }
 
+/* Groups: a heading with meta on the right, 8 above the card; a caption 8 under it; 32 between groups. */
 .settings-group {
   display: grid;
-  gap: var(--sp-12);
-  padding-top: var(--sp-4);
+  gap: var(--sp-8);
+  min-width: 0;
 }
 .settings-group + .settings-group {
-  padding-top: var(--sp-20);
-  border-top: 1px solid var(--line-subtle);
+  margin-top: var(--sp-8);
 }
-.settings-group h4 {
+.settings-group-head {
   display: flex;
   align-items: center;
-  gap: var(--sp-8);
+  justify-content: space-between;
+  gap: var(--sp-12);
+  min-height: 24px;
+  padding: 0 var(--sp-4);
+}
+.settings-group-head h3 {
   color: var(--text-2);
   font-size: var(--fs-label);
   line-height: var(--lh-label);
   font-weight: 500;
 }
+.settings-group-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-8);
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.settings-group-meta > .ui-button {
+  margin-inline-end: calc(-1 * var(--sp-4));
+}
+.settings-caption {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-6);
+  padding: 0 var(--sp-4);
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
+}
+.settings-caption > .ui-icon {
+  flex-shrink: 0;
+  margin-top: var(--sp-2);
+  color: var(--icon);
+}
+.settings-empty,
 .settings-hint {
   color: var(--text-3);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
 }
-.settings-group > .ui-segmented {
-  justify-self: start;
+
+/* Cards: paper, a 1px line, 12px corners; the rows inside are clipped to them. */
+.settings-card {
+  display: grid;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-pane);
+}
+.settings-card.is-danger {
+  border-color: var(--err-border);
+}
+.settings-card-body {
+  display: grid;
+  gap: var(--sp-8);
+  padding: var(--sp-16);
+}
+
+/*
+ * Rows: at least 56, 16 inside, 12 between the parts; one trailing element on the card's 16px line. The separator
+ * starts at the text (past a leading tile), and the first row has none above it.
+ */
+.settings-row {
+  --row-rule: var(--sp-16);
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-12);
+  width: 100%;
+  min-height: 56px;
+  padding: var(--sp-8) var(--sp-16);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: start;
+}
+.settings-row[data-leading] {
+  --row-rule: calc(var(--sp-16) + 32px + var(--sp-12));
+}
+.settings-row + .settings-row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: var(--row-rule);
+  height: 1px;
+  background: var(--line-subtle);
+}
+.settings-row-lead {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-self: center;
+}
+/* One column that never grows past the row: a line that does not wrap (a path, a command) gives way instead. */
+.settings-row-text {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  flex: 1;
+  min-width: 0;
+}
+.settings-row-title {
+  color: var(--text-1);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  overflow-wrap: anywhere;
+}
+.settings-row-title[data-record] {
+  font-weight: 500;
+}
+.settings-row-name {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-4) var(--sp-8);
+  min-width: 0;
+}
+/* A row's one sentence of state or consequence, 12/16; captions under a card keep the 18 paragraph line. */
+.settings-row-description {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  overflow-wrap: anywhere;
+}
+.settings-row-end {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-8);
+  flex-shrink: 0;
+  margin-inline-start: auto;
+}
+.settings-row-value {
+  color: var(--text-3);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+}
+.settings-mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono-sm);
+  line-height: var(--lh-mono-sm);
+}
+.settings-row-value.settings-mono {
+  color: var(--text-1);
+}
+/* A start flag inside a sentence stays whole on its line. */
+.settings-flag {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono-sm);
+  line-height: var(--lh-mono-sm);
+  white-space: nowrap;
+}
+/* One line that keeps its end: the head gives way with an ellipsis, the tail (the last path parts) always shows. */
+.middle-ellipsis {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+.middle-ellipsis-head {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.middle-ellipsis-tail {
+  flex: none;
+}
+/* Why a row cannot be used: the 12px circle-slash and one line in text-2, never dimmed with the row. */
+.settings-row-reason {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-4);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.settings-row-reason > .ui-icon {
+  flex-shrink: 0;
+  margin-top: var(--sp-2);
+  color: var(--icon);
+}
+/*
+ * A picker at a row's end reaches 6px past the card's line, so its arrow lines up with the chevrons of nav rows. A long
+ * value gives way before the row's title does, and ends in an ellipsis before the arrow.
+ */
+.settings-row-end > .ui-value-picker[data-bleed='end'] {
+  max-width: min(280px, 40vw);
+}
+.settings-row-end > .ui-value-picker .ui-value-picker-value {
+  grid-template-columns: minmax(0, max-content);
+}
+/* Text that does not wrap is as wide as its whole line at the least, so it is capped at its track to be clipped. */
+.settings-row-end > .ui-value-picker .ui-value-picker-text {
+  max-width: 100%;
+}
+/* On a phone a segmented control takes its own line under the row's text. */
+@media (max-width: 767.98px) {
+  .settings-row:has(> .settings-row-end > .ui-segmented) {
+    flex-wrap: wrap;
+  }
+  .settings-row-end:has(> .ui-segmented) {
+    width: 100%;
+  }
+  .settings-row-end > .ui-segmented {
+    flex: 1;
+  }
+}
+/* Offline or unavailable: the tile dims and the name turns text-2; the state is said in the description. */
+.settings-row[data-dim] .settings-row-lead {
+  opacity: 0.45;
+}
+.settings-row[data-dim] .settings-row-title {
+  color: var(--text-2);
+}
+
+/* Rows that come and go fold their height (0fr ↔ 1fr) and fade; the separator follows the fold that holds a row. */
+.settings-folds {
+  display: grid;
+}
+.settings-fold {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition:
+    grid-template-rows var(--d-base) var(--ease),
+    opacity var(--d-base) var(--ease);
+}
+.settings-fold-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+.settings-fold[data-leaving] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition-duration: var(--d-fast);
+  transition-timing-function: var(--ease-exit);
+}
+@starting-style {
+  .settings-folds[data-ready] > .settings-fold {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+.settings-fold + .settings-fold > .settings-fold-inner > .settings-row::before,
+.settings-row + .settings-folds > .settings-fold:first-child > .settings-fold-inner > .settings-row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: var(--row-rule);
+  height: 1px;
+  background: var(--line-subtle);
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-fold {
+    transition-property: opacity;
+  }
+}
+
+/* Nav rows: the whole row is the button, hover fills it edge to edge; the value is quiet and the chevron in icon ink. */
+.settings-row[data-nav] {
+  cursor: pointer;
+  transition: background-color var(--d-fast) var(--ease-exit);
+}
+.settings-row[data-nav]:hover {
+  background: var(--bg-hover);
+  transition-duration: 0s;
+}
+.settings-row[data-nav]:active {
+  background: var(--bg-press);
+}
+.settings-row[data-nav]:focus-visible,
+.settings-row-main:focus-visible {
+  outline: none;
+  box-shadow: var(--ring-focus-inset);
+}
+.settings-row-chevron {
+  color: var(--icon);
+}
+/* A row that opens its object from its text and keeps a switch at its end: the hover fills the whole row. */
+.settings-row-main {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-12);
+  flex: 1;
+  min-width: 0;
+  margin: calc(-1 * var(--sp-8)) 0 calc(-1 * var(--sp-8)) calc(-1 * var(--sp-16));
+  padding: var(--sp-8) 0 var(--sp-8) var(--sp-16);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  text-align: start;
+}
+.settings-row:has(> .settings-row-main) {
+  transition: background-color var(--d-fast) var(--ease-exit);
+}
+.settings-row:has(> .settings-row-main:hover) {
+  background: var(--bg-hover);
+  transition-duration: 0s;
+}
+/* A row whose lead is a checkbox: the whole row is its label. */
+.settings-row[data-check] {
+  cursor: pointer;
+}
+.settings-row[data-check] .settings-row-lead {
+  width: 32px;
+  justify-content: center;
+}
+/* Switch rows from the design system take the row's geometry inside a card. */
+.ui-switch-row.settings-row {
+  padding-block: var(--sp-8);
+}
+/* A form in a row: the field grows, its button sits on the input's line. */
+.settings-form-row {
+  align-items: flex-end;
+  padding-block: var(--sp-12);
+}
+.settings-form-row > .ui-field {
+  flex: 1;
+  min-width: 0;
+}
+.settings-icon-tile {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 7px;
+  corner-shape: var(--corner-shape);
+  background: var(--bg-hover);
+  color: var(--text-2);
+}
+
+/* 电脑: a ceiling's read-only value, with the amber shield only on 完全访问. */
+.ceiling-value {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+  color: var(--text-1);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+}
+.ceiling-risk {
+  color: var(--warn-text);
+}
+
+/* Forms on a settings page or in a dialog: fields one above the other, actions at the end. */
+.settings-form {
+  display: grid;
+  gap: var(--sp-16);
 }
 .settings-actions {
   display: flex;
@@ -183,16 +766,10 @@
   justify-content: flex-end;
   gap: var(--sp-12);
 }
-/* Saving is a local action: the quiet note and the value updating in place are the feedback, never green. */
-.settings-saved {
-  color: var(--text-3);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
-}
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--sp-12) var(--sp-16);
+  gap: var(--sp-16);
 }
 .form-grid .field-wide {
   grid-column: 1 / -1;
@@ -201,160 +778,16 @@
   .form-grid {
     grid-template-columns: minmax(0, 1fr);
   }
-}
-.inline-form {
-  display: flex;
-  align-items: flex-end;
-  gap: var(--sp-8);
-}
-.inline-form .field {
-  flex: 1;
-}
-.back-link {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-4);
-  justify-self: start;
-  height: 32px;
-  padding: 0 var(--sp-8) 0 var(--sp-2);
-  border: 0;
-  border-radius: var(--r-6);
-  corner-shape: var(--corner-shape);
-  background: none;
-  color: var(--text-2);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
-  font-weight: 500;
-}
-.back-link:hover {
-  background: var(--bg-hover);
-}
-.empty-panel {
-  display: grid;
-  justify-items: start;
-  gap: var(--sp-12);
-  padding: var(--sp-20);
-  border: 1px dashed var(--line-strong);
-  border-radius: var(--r-12);
-  corner-shape: var(--corner-shape);
-  color: var(--text-2);
-}
-
-/* Providers: list–detail */
-.list-detail {
-  display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
-  gap: var(--sp-20);
-  align-items: start;
-}
-@media (max-width: 1023.98px) {
-  .list-detail {
-    grid-template-columns: 200px minmax(0, 1fr);
+  .settings-form-row {
+    flex-direction: column;
+    align-items: stretch;
   }
 }
-.provider-list {
-  display: grid;
-  gap: var(--sp-8);
-}
-.provider-list ul {
-  list-style: none;
-  display: grid;
-  gap: var(--sp-2);
-}
-.provider-list-label {
-  margin-top: var(--sp-8);
-  padding: 0 var(--sp-8);
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-  font-weight: 500;
-}
-.provider-add {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-8);
-  height: 36px;
-  padding: 0 var(--sp-12);
-  border: 1px dashed var(--line-strong);
-  border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
-  background: transparent;
-  color: var(--text-2);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
-  font-weight: 500;
-  transition: background-color var(--d-fast) var(--ease);
-}
-.provider-add:hover {
-  background: var(--bg-hover);
-  color: var(--text-1);
-  transition-duration: 0s;
-}
-.provider-add.is-selected {
-  border-style: solid;
-  border-color: transparent;
-  background: var(--bg-selected-solid);
-  color: var(--text-1);
-  transition-duration: var(--d-fast);
-}
-.provider-row {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-12);
-  width: 100%;
-  min-height: 48px;
-  padding: var(--sp-6) var(--sp-8);
-  border: 0;
-  border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
-  background: transparent;
-  text-align: left;
-  transition: background-color var(--d-fast) var(--ease);
-}
-/* As in the other lists: a hover shows at once, and a selection (the row just clicked too) fades in over 120ms. */
-button.provider-row:hover {
-  background: var(--bg-hover);
-  transition-duration: 0s;
-}
-.provider-row.is-selected,
-button.provider-row.is-selected {
-  background: var(--bg-selected-solid);
-  transition-duration: var(--d-fast);
-}
-.provider-row-text {
-  display: grid;
-  flex: 1;
-  min-width: 0;
-}
-.provider-row-text strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
-  font-weight: 500;
-}
-.provider-row-text span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-}
-.provider-presets {
-  display: grid;
-  gap: var(--sp-12);
-}
-.provider-presets h4 {
-  color: var(--text-2);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
-  font-weight: 500;
-}
+
+/* Model services */
 .preset-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: var(--sp-8);
 }
 .preset-card {
@@ -364,14 +797,19 @@ button.provider-row.is-selected {
   min-height: 56px;
   padding: var(--sp-8) var(--sp-12);
   border: 1px solid var(--line);
-  border-radius: var(--r-8);
+  border-radius: var(--r-12);
   corner-shape: var(--corner-shape);
   background: var(--bg-pane);
   text-align: left;
+  transition: background-color var(--d-fast) var(--ease-exit);
 }
 .preset-card:hover {
-  border-color: var(--line-strong);
-  background: linear-gradient(var(--bg-hover), var(--bg-hover)) var(--bg-pane);
+  background: var(--bg-hover);
+  transition-duration: 0s;
+}
+.preset-card:focus-visible {
+  outline: none;
+  box-shadow: var(--ring-focus-inset);
 }
 .preset-card-text {
   display: grid;
@@ -379,6 +817,7 @@ button.provider-row.is-selected {
   min-width: 0;
 }
 .preset-card-text strong {
+  color: var(--text-1);
   font-size: var(--fs-label);
   line-height: var(--lh-label);
   font-weight: 500;
@@ -391,235 +830,89 @@ button.provider-row.is-selected {
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
+.provider-presets {
+  display: grid;
+  gap: var(--sp-20);
+}
 
-.provider-editor,
-.agent-editor {
-  display: grid;
+/* Fields inside a card (the add forms): one above the other, 16 apart, on the card's 16 inset. */
+.settings-fields {
   gap: var(--sp-16);
-  min-width: 0;
 }
-.editor-heading {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-12);
-}
-.editor-heading > div {
-  flex: 1;
-  min-width: 0;
-  display: grid;
-}
-.editor-heading h4 {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--fs-title-sm);
-  line-height: var(--lh-title-sm);
-  font-weight: 600;
-}
-.editor-heading span {
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-}
-.editor-footer {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-8);
-  padding-top: var(--sp-16);
-  border-top: 1px solid var(--line-subtle);
-}
-.editor-footer-spacer {
-  flex: 1;
-}
-.key-state {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--sp-8);
-  min-height: 32px;
-  padding: 0 var(--sp-12);
-  border: 1px solid var(--line-subtle);
-  border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-sunken);
-  color: var(--text-2);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
-  font-weight: 400;
-}
-.key-state > span {
-  flex: 1;
-}
-.key-state > svg {
-  color: var(--icon);
-}
-.key-state.is-clearing {
-  border-color: var(--err-border);
-  background: var(--err-bg);
-  color: var(--err-text);
-}
-.key-input {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-8);
-}
-.connection-check {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--sp-12);
+.settings-card-body + .settings-row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: var(--row-rule);
+  height: 1px;
+  background: var(--line-subtle);
 }
 .check-result {
   display: inline-flex;
-  align-items: center;
-  gap: var(--sp-6);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  align-items: flex-start;
+  gap: var(--sp-4);
 }
-.check-result.is-ok {
+.check-result > .ui-icon {
+  flex-shrink: 0;
+  margin-top: var(--sp-2);
+}
+.check-result.is-ok > .ui-icon {
   color: var(--ok-text);
 }
 .check-result.is-error {
   color: var(--err-text);
 }
-.model-section {
-  display: grid;
-  gap: var(--sp-8);
-  padding-top: var(--sp-16);
-  border-top: 1px solid var(--line-subtle);
-}
-.model-section-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-8);
-}
-.model-section-heading h5 {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-6);
-  color: var(--text-2);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
-  font-weight: 500;
-}
-.model-list {
-  list-style: none;
-  display: grid;
-  gap: var(--sp-2);
-  max-height: 280px;
-  overflow-y: auto;
-}
-.model-row {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-12);
-  min-height: 36px;
-  padding: var(--sp-2) var(--sp-4) var(--sp-2) var(--sp-12);
-  border-radius: var(--r-6);
-  corner-shape: var(--corner-shape);
-}
-.model-row:hover {
-  background: var(--bg-hover);
-}
-.model-row code {
-  flex: 1;
+/* A model: its radio chooses the default, its ID in mono stays on one line. */
+.model-id {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--fs-mono);
-  line-height: var(--lh-mono);
+  color: var(--text-1);
 }
-.model-row.is-available code {
-  color: var(--text-2);
+.model-row .settings-row-name {
+  flex-wrap: nowrap;
 }
-.model-default {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-4);
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-}
-.model-default input {
-  accent-color: var(--accent);
-}
-.model-available {
-  display: grid;
-  gap: var(--sp-6);
-  padding: var(--sp-8);
-  border: 1px solid var(--line-subtle);
-  border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-sunken);
-}
-.model-available-heading {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-8);
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-  font-weight: 500;
-}
-.model-available-heading input {
-  flex: 1;
-  min-height: 28px;
-  padding: var(--sp-2) var(--sp-8);
-  font-size: var(--fs-input);
-  line-height: var(--lh-input);
-}
-.model-manual {
-  display: flex;
-  gap: var(--sp-8);
-}
-.model-manual input {
-  flex: 1;
-}
-
-/* Agents */
-.agent-list,
-.plugin-list,
-.workspace-list,
-.device-list,
-.env-list {
-  list-style: none;
-  display: grid;
-  gap: var(--sp-8);
-}
-.agent-row {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--sp-16);
-  padding: var(--sp-16);
-  border: 1px solid var(--line);
-  border-radius: var(--r-12);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-pane);
-}
-.agent-row-main {
-  display: grid;
-  gap: var(--sp-6);
+.model-add > .ui-input {
   flex: 1;
   min-width: 0;
 }
-.agent-row-heading {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--sp-8);
+.model-filter > .ui-search {
+  flex: 1;
 }
-.agent-row-heading strong {
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui);
-  font-weight: 500;
+.model-available {
+  display: grid;
+  max-height: calc(56px * 8);
+  overflow-y: auto;
 }
-.agent-row-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-8);
-  flex-shrink: 0;
+.model-filter + .model-available > .settings-row:first-child::before,
+.model-available > .settings-row + .settings-row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: var(--row-rule);
+  height: 1px;
+  background: var(--line-subtle);
+}
+
+/* Agent members */
+.agent-row,
+.agent-preset {
+  align-items: flex-start;
+}
+.agent-row > .settings-row-end,
+.agent-preset > .settings-row-end {
+  align-self: center;
+}
+.agent-row .settings-row-lead,
+.agent-preset .settings-row-lead {
+  align-self: flex-start;
+}
+.agent-row .settings-row-text,
+.agent-preset .settings-row-text {
+  gap: var(--sp-2);
 }
 .agent-command {
   display: block;
@@ -631,384 +924,164 @@ button.provider-row.is-selected {
   font-size: var(--fs-mono-sm);
   line-height: var(--lh-mono-sm);
 }
-/* Detection: ready is the default state and stays neutral; only a problem takes amber. */
+/*
+ * Detection, one line: ready is the default state and stays neutral, its path in mono keeping its end in view; only a
+ * problem takes amber, and its words may wrap.
+ */
 .detect {
-  display: inline-flex;
+  display: flex;
   align-items: flex-start;
-  gap: var(--sp-6);
+  gap: var(--sp-4);
+  min-width: 0;
   font-size: var(--fs-caption);
-  line-height: var(--lh-caption-para);
-  overflow-wrap: anywhere;
+  line-height: var(--lh-caption);
 }
-.detect > svg {
+.detect > .ui-icon {
   flex-shrink: 0;
   margin-top: var(--sp-2);
 }
 .detect.is-ok {
   color: var(--text-3);
 }
+.detect.is-ok > .ui-icon {
+  color: var(--icon);
+}
 .detect.is-warn {
   color: var(--warn-text);
+  overflow-wrap: anywhere;
 }
-.agent-env {
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
+.detect-label {
+  flex-shrink: 0;
 }
-@media (max-width: 767.98px) {
-  .agent-row {
-    flex-direction: column;
-    gap: var(--sp-12);
-  }
-  .agent-row-actions {
-    align-self: stretch;
-    justify-content: space-between;
-  }
-}
-.agent-presets {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: var(--sp-12);
-}
-.agent-preset {
-  display: grid;
-  gap: var(--sp-8);
-  align-content: start;
-  padding: var(--sp-16);
-  border: 1px solid var(--line);
-  border-radius: var(--r-12);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-pane);
-}
-.agent-preset.is-custom {
-  border-style: dashed;
-  border-color: var(--line-strong);
-}
-.agent-preset-heading {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-8);
-}
-.agent-preset-heading strong {
-  flex: 1;
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui);
-  font-weight: 500;
-}
-.agent-preset p {
-  color: var(--text-2);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label-para);
+.detect-path {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono-sm);
+  line-height: var(--lh-mono-sm);
 }
 .agent-install {
   display: flex;
   align-items: center;
-  gap: var(--sp-6);
+  flex-wrap: wrap;
+  gap: var(--sp-4) var(--sp-12);
   min-width: 0;
-  padding: var(--sp-4) var(--sp-4) var(--sp-4) var(--sp-8);
+  margin-top: var(--sp-4);
+}
+.agent-install-command {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  min-width: 0;
+  max-width: 100%;
+  padding: 0 0 0 var(--sp-8);
   border-radius: var(--r-6);
   corner-shape: var(--corner-shape);
   background: var(--bg-sunken);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-  color: var(--text-3);
 }
-.agent-install code {
-  flex: 1;
+.agent-install-command code {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-1);
-  font-size: var(--fs-mono-sm);
-  line-height: var(--lh-mono-sm);
-}
-.agent-preset-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-8);
-}
-.env-section {
-  display: grid;
-  gap: var(--sp-8);
-}
-.env-section h5 {
-  color: var(--text-2);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
-  font-weight: 500;
-}
-.env-section h5 small {
-  margin-left: var(--sp-6);
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  font-weight: 400;
-}
-.env-list li {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-12);
-  min-height: 36px;
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
-}
-.env-list li > span {
-  flex: 1;
-  color: var(--text-3);
-}
-.env-list li.is-removed code {
-  text-decoration: line-through;
-  color: var(--text-3);
-}
-.env-new input {
-  flex: 1;
-}
-.env-section > .ui-button {
-  justify-self: start;
-}
-
-/* Projects */
-.workspace-row,
-.device-row {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-12);
-  padding: var(--sp-12) var(--sp-16);
-  border: 1px solid var(--line);
-  border-radius: var(--r-12);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-pane);
-}
-.workspace-row > svg {
-  color: var(--icon);
-  flex-shrink: 0;
-}
-.workspace-row-text,
-.device-row-text {
-  display: grid;
-  flex: 1;
-  min-width: 0;
-}
-.workspace-row-text strong,
-.device-row-text strong {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-8);
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui);
-  font-weight: 500;
-}
-.workspace-row-text span,
-.device-row-text span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption-para);
-}
-.workspace-row-text span {
   font-family: var(--font-mono);
   font-size: var(--fs-mono-sm);
   line-height: var(--lh-mono-sm);
 }
-.workspace-row.is-unavailable > svg {
-  color: var(--warn-text);
-}
-.workspace-row-text .workspace-unavailable {
-  overflow: visible;
-  color: var(--warn-text);
-  font-family: var(--font-sans);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption-para);
-  white-space: normal;
-}
-
-/* Plugins */
-.plugin-group {
-  display: grid;
-  gap: var(--sp-8);
-}
-.plugin-group h4 {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-8);
-  color: var(--text-2);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
-  font-weight: 500;
-}
-.plugin-group h4 > svg {
-  color: var(--icon);
-}
-.plugin-row {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--sp-16);
-  padding: var(--sp-12) var(--sp-16);
-  border: 1px solid var(--line);
-  border-radius: var(--r-12);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-pane);
-}
-.plugin-row-main {
-  display: grid;
-  gap: var(--sp-6);
+/* A new variable in the add form: its name and its value side by side, then the remove button. */
+.env-row > .ui-input {
   flex: 1;
   min-width: 0;
 }
-.plugin-row-heading {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--sp-8);
+@media (max-width: 767.98px) {
+  .env-row {
+    flex-wrap: wrap;
+  }
+  .env-row > .ui-input {
+    flex-basis: calc(100% - 44px - var(--sp-12));
+  }
 }
-.plugin-row-heading strong {
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui);
-  font-weight: 500;
+
+/*
+ * Projects: each project is a card of its own (its head row, then its folder), 12 apart. While folders are dragged over
+ * the page in the desktop app, a dashed card over it says what dropping does; it fades in (120ms).
+ */
+.projects {
+  position: relative;
+  display: grid;
+  align-content: start;
+  gap: var(--sp-24);
+  min-width: 0;
+}
+.project-cards {
+  gap: var(--sp-12);
+}
+.project-card.is-unavailable .folder-row .settings-row-lead {
+  opacity: 0.45;
+}
+.workspace-unavailable,
+.folder-missing {
+  color: var(--warn-text);
+}
+.project-drop {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-12);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-pane);
+  color: var(--text-2);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+  pointer-events: none;
+  animation: fade-in var(--d-fast) var(--ease);
+}
+.folder-refused {
+  display: grid;
+  gap: var(--sp-4);
+}
+.folder-refused-line {
+  display: grid;
+  min-width: 0;
+}
+.folder-refused-line > code {
+  overflow-wrap: anywhere;
+}
+
+/* Plugins */
+.plugin-row {
+  align-items: flex-start;
+}
+.plugin-row > .settings-row-end {
+  align-self: center;
 }
 .plugin-version {
   color: var(--text-3);
   font-family: var(--font-mono);
   font-size: var(--fs-mono-sm);
   line-height: var(--lh-mono-sm);
-}
-.plugin-row-main p {
-  color: var(--text-2);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label-para);
-}
-.capability-chips {
-  list-style: none;
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-4);
-}
-/* Capabilities are attributes, so they are small neutral pills. */
-.capability-chips li {
-  display: inline-flex;
-  align-items: center;
-  height: 20px;
-  padding: 0 var(--sp-8);
-  border-radius: var(--r-pill);
-  background: var(--fill);
-  color: var(--text-2);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
+  font-weight: 400;
 }
 .plugin-lock {
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption-para);
+  color: var(--icon);
 }
 
 /* Devices */
-.pair-section .pair-empty {
-  display: grid;
-  justify-items: start;
-  gap: var(--sp-12);
-}
-.pair-section .pair-empty p {
-  color: var(--text-2);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label-para);
-}
-.pair-ready {
-  display: flex;
-  gap: var(--sp-20);
+.device-row {
   align-items: flex-start;
 }
-.pair-qr {
-  display: grid;
-  place-items: center;
-  width: 200px;
-  height: 200px;
-  flex-shrink: 0;
-  padding: var(--sp-8);
-  border: 1px solid var(--line);
-  border-radius: var(--r-12);
-  corner-shape: var(--corner-shape);
-  /* Scanners need dark modules on light paper, in the dark theme too. */
-  background: #ffffff;
+.device-row > .settings-row-lead,
+.device-row > .settings-row-end {
+  align-self: center;
 }
-.pair-qr img {
-  width: 100%;
-  height: 100%;
+.device-row.is-revoked {
+  background: var(--bg-sunken);
 }
-.pair-steps {
-  display: grid;
-  gap: var(--sp-12);
-  flex: 1;
+.device-row-name {
   min-width: 0;
-}
-.pair-steps ol {
-  padding-left: 1.2em;
-  display: grid;
-  gap: var(--sp-4);
-  color: var(--text-2);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label-para);
-}
-.pair-expiry {
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-  font-variant-numeric: tabular-nums;
-}
-.pair-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--sp-8) var(--sp-12);
-}
-@media (max-width: 767.98px) {
-  .pair-ready {
-    flex-direction: column-reverse;
-  }
-  .pair-qr {
-    align-self: center;
-  }
-  .pair-actions .ui-button {
-    flex: 1;
-    min-height: 44px;
-  }
-}
-
-/* About */
-.about-card {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-16);
-}
-.about-card > div {
-  display: grid;
-}
-.about-card strong {
-  font-size: var(--fs-title);
-  line-height: var(--lh-title);
-  font-weight: 600;
-}
-.about-card span {
-  color: var(--text-3);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
-}
-.about-list {
-  display: grid;
-  gap: var(--sp-12);
-}
-.about-list > div {
-  display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
-  gap: var(--sp-12);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label-para);
-}
-.about-list dt {
-  color: var(--text-3);
-}
-.about-list dd {
-  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

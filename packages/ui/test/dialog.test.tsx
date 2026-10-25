@@ -39,6 +39,34 @@ function Project({ onClose }: { onClose?: () => void }) {
   )
 }
 
+/** A docked security surface, open from the start. */
+function Dock() {
+  const [open, setOpen] = useState(true)
+  return (
+    <Dialog
+      open={open}
+      onClose={() => {
+        setOpen(false)
+      }}
+      placement="dock"
+      secure
+      bare
+      icon={<span data-testid="tile" />}
+      title="允许一次高风险操作"
+      footer={
+        <Button
+          size="md"
+          onClick={() => {
+            setOpen(false)
+          }}>
+          取消
+        </Button>
+      }>
+      已打开系统确认窗口。
+    </Dialog>
+  )
+}
+
 describe('dialog', () => {
   it('opens on its first input, keeps Tab inside, closes on Escape and gives focus back to its opener', async () => {
     const closed = vi.fn()
@@ -85,6 +113,27 @@ describe('dialog', () => {
     expect(surface.querySelector<HTMLElement>('.ui-dialog-header')!.offsetHeight).toBe(56)
     expect(surface.querySelector<HTMLElement>('.ui-dialog-footer')!.offsetHeight).toBe(64)
     expect(getComputedStyle(surface.querySelector('.ui-dialog-body')!).paddingTop).toBe('24px')
+  })
+
+  it('docks 400 wide above the bottom edge with its state tile, and marks a security surface', async () => {
+    const screen = await render(<Dock />)
+    const dialog = screen.getByRole('dialog', { name: '允许一次高风险操作' })
+    await expect.element(dialog).toBeVisible()
+    const element = dialog.element()
+    expect(element.dataset.placement).toBe('dock')
+    expect(element.dataset.secure).toBe('')
+    await vi.waitFor(() => {
+      expect(getComputedStyle(element).translate).toMatch(/^(?:none|0px)$/u)
+    })
+    const surface = element.querySelector<HTMLElement>('.ui-dialog-surface')!
+    expect(getComputedStyle(surface).width).toBe('400px')
+    expect(Math.round(innerHeight - surface.getBoundingClientRect().bottom)).toBe(24)
+    const tile = element.querySelector<HTMLElement>('.ui-dialog-icon')!
+    expect([tile.offsetWidth, tile.offsetHeight]).toEqual([36, 36])
+    expect(tile.querySelector('[data-testid="tile"]')).not.toBeNull()
+    expect(getComputedStyle(element.querySelector('.ui-dialog-body')!).paddingTop).toBe('20px')
+    await userEvent.keyboard('{Escape}')
+    await expect.element(screen.getByRole('dialog', { name: '允许一次高风险操作' })).not.toBeInTheDocument()
   })
 })
 

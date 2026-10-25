@@ -1,5 +1,5 @@
 /*
- * Native <dialog> variants: centered dialog, phone bottom sheet, right side sheet, full page. Every modal is raised
+ * Native <dialog> variants: centered dialog, phone bottom sheet, full page. Every modal is raised
  * material with the modal shadow over the scrim.
  */
 .modal {
@@ -66,23 +66,6 @@
 @keyframes sheet-in {
   from {
     transform: translateY(24px);
-    opacity: 0;
-  }
-}
-
-.modal-side {
-  width: min(420px, 90vw);
-  height: 100dvh;
-  max-height: 100dvh;
-  margin: 0 0 0 auto;
-}
-.modal-side > .modal-surface {
-  height: 100%;
-  animation: side-in var(--d-slow) var(--ease);
-}
-@keyframes side-in {
-  from {
-    transform: translateX(24px);
     opacity: 0;
   }
 }

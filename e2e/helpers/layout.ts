@@ -42,8 +42,9 @@ export async function noHorizontalOverflow(page: Page, region?: Locator): Promis
 
 /**
  * Navigation may be persistent (desktop sidebar, tablet rail) or behind a drawer
- * (phones); tests do not select a breakpoint. Returns the opened settings dialog,
- * on its 设备 section when `section` is 设备 (devices are reached through settings).
+ * (phones); tests do not select a breakpoint. Returns the opened settings page (a
+ * modal page named 设置), on its 设备 section when `section` is 设备 (devices are
+ * reached through settings).
  */
 export async function openSettings(page: Page, section: '设置' | '设备' = '设置'): Promise<Locator> {
   // A closing drawer may remain visually visible while becoming inert. Use
@@ -66,10 +67,52 @@ export async function openSettings(page: Page, section: '设置' | '设备' = '�
   return dialog
 }
 
-/** Phones push into a section; return to the section list before choosing another. */
+/**
+ * Phones push a section over the section list and each page inside a section over the section: goes back, one level at
+ * a time with each level's own back button, until the section list shows.
+ */
+async function backToSections(settings: Locator): Promise<void> {
+  const layout = settings.locator('.settings-layout')
+  await backToSection(settings)
+  if ((await layout.getAttribute('data-level')) === 'section') await settings.getByRole('button', { name: '返回', exact: true }).click()
+}
+
+/**
+ * Leaves the pages open inside a section for the section itself: on a phone with each page's own back button, elsewhere
+ * with the way back above the page.
+ */
+export async function backToSection(settings: Locator): Promise<void> {
+  const layout = settings.locator('.settings-layout')
+  const open = settings.locator('.settings-level:not([data-state="leaving"])')
+  while ((await layout.getAttribute('data-level')) === 'page') {
+    const before = await open.count()
+    await settings.locator('.settings-level[data-state="top"] .settings-bar').getByRole('button').first().click()
+    await expect.poll(() => open.count()).toBeLessThan(before)
+  }
+  const back = settings.locator('.settings-back')
+  while ((await back.count()) > 0) {
+    const label = await back.textContent()
+    await back.click()
+    await expect.poll(async () => (await back.count()) === 0 || (await back.textContent()) !== label).toBe(true)
+  }
+}
+
+/** Opens a section; on a phone, from the section list. */
 export async function openSection(settings: Locator, name: string): Promise<void> {
   const tab = settings.getByRole('tab', { name, exact: true })
-  if (!(await tab.isVisible())) await settings.getByRole('button', { name: '返回', exact: true }).click()
+  await backToSections(settings)
   await reachable(tab)
   await tab.click()
+}
+
+/**
+ * Leaves settings for the conversation through 「返回会话」 (its name also says how many approvals wait there), which
+ * a phone shows on the section list. The page fades out before it goes.
+ */
+export async function closeSettings(settings: Locator): Promise<void> {
+  await backToSections(settings)
+  const button = settings.getByRole('button', { name: /^返回会话/ })
+  await reachable(button)
+  await button.click()
+  await settings.waitFor({ state: 'detached' })
 }

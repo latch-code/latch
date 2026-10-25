@@ -1,52 +1,328 @@
-import type { ReactNode } from 'react'
-import type { AppSnapshot, TaskDetail, TaskSummary } from '@latch/protocol'
-import { findProvider, sessionHarness, usesDemoModel } from '../composerChoice.ts'
-import { basename, formatTokens, isActive, statusLabels, usageTitle } from '../format.ts'
-import { toolKind, toolKindIcons } from '../icons.tsx'
-import { LEVEL_LABELS } from '../core/permissions.ts'
+import { useEffect, useState, type ReactNode } from 'react'
+import {
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  Bot,
+  CalendarClock,
+  ChevronDown,
+  ChevronRight,
+  CircleDollarSign,
+  Cpu,
+  FileText,
+  Folder,
+  Gauge,
+  Laptop,
+  LockKeyhole,
+  Shield,
+  ShieldAlert,
+  SlidersHorizontal,
+  Timer,
+} from 'lucide-react'
+import {
+  AGENT_PRESETS,
+  type AgentSettings,
+  type AppSnapshot,
+  type Message,
+  type ModelRef,
+  type SessionConfigOption,
+  type TaskDetail,
+  type TaskSummary,
+} from '@latch/protocol'
+import { presetOf } from '../brands.ts'
+import { findProvider, sameModel, sessionHarness, usesDemoModel } from '../composerChoice.ts'
+import { turnsOf } from '../conversation.ts'
+import { api } from '../core/api.ts'
+import { parseDuration, parseTime, useTicker } from '../core/hostClock.ts'
+import { diffLines } from '../diff.ts'
+import { absoluteTime, basename, exactTokens, formatDuration, formatTokens, messageTime, tokenAmount, tokenLines } from '../format.ts'
+import { HarnessTile, ProviderTile } from './BrandTile.tsx'
 import { PlanList, planProgress } from './PlanCard.tsx'
-import { ICON_STROKE, StatusGlyph, StatusPill, StatusWords } from '@latch/ui'
-import { CopyButton } from './ui.tsx'
+import { CopyButton, MiddleText } from './ui.tsx'
+import { Badge, Collapse, ICON_STROKE, StatusPill, Tooltip, ValuePicker, type LucideIcon, type PickerGroup } from '@latch/ui'
+import { VisibleText } from './VisibleText.tsx'
 
-const toolStates = {
-  queued: '等待执行',
-  'awaiting-approval': '待批准',
-  running: '执行中',
-  completed: '完成',
-  failed: '失败',
-  cancelled: '已取消',
-} as const
+/** The blocks, in their order; each folds from its header and the choice is remembered on this device. */
+export type InfoBlock = 'agent' | 'environment' | 'permission' | 'usage' | 'plan' | 'changes'
 
-function Row({ label, children }: { label: string; children: ReactNode }) {
+function Block({
+  id,
+  title,
+  meta,
+  collapsed,
+  onToggle,
+  children,
+}: {
+  id: InfoBlock
+  title: string
+  meta?: ReactNode
+  collapsed: boolean
+  onToggle: (id: InfoBlock, collapsed: boolean) => void
+  children: ReactNode
+}) {
+  const open = !collapsed
   return (
-    <div className="inspector-row">
-      <dt>{label}</dt>
-      <dd>{children}</dd>
+    <section className="info-block" data-block={id} data-open={open ? '' : undefined} aria-label={title}>
+      <header className="info-block-head">
+        <button
+          type="button"
+          className="info-block-title"
+          aria-expanded={open}
+          onClick={() => {
+            onToggle(id, open)
+          }}>
+          {title}
+          <ChevronDown className="info-block-chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+        </button>
+        {meta !== undefined && <span className="info-block-meta">{meta}</span>}
+      </header>
+      <Collapse
+        open={open}
+        onReveal={() => {
+          onToggle(id, false)
+        }}>
+        <div className="info-block-body">{children}</div>
+      </Collapse>
+    </section>
+  )
+}
+
+/** A row of a block: a 16px icon, the label in hint ink and the value in ink. */
+function Row({
+  icon: Icon,
+  label,
+  tone,
+  two,
+  children,
+}: {
+  icon: LucideIcon
+  label: string
+  tone?: 'warn'
+  two?: boolean
+  children: ReactNode
+}) {
+  return (
+    <div className={`info-row ${two ? 'is-two' : ''}`}>
+      <span className={`info-icon ${tone === 'warn' ? 'is-warn' : ''}`} aria-hidden="true">
+        <Icon size={16} strokeWidth={ICON_STROKE[16]} />
+      </span>
+      <span className="info-key">{label}</span>
+      <span className="info-value">{children}</span>
     </div>
   )
 }
 
-/** Session facts, the full plan and the tool timeline; clicking a tool reveals it in the transcript. */
+const modelKey = (model: ModelRef) => `${model.providerId}\u0000${model.model}`
+const MODE_CATEGORY = 'mode'
+
+/** The changes of the session's tools, one row per file: lines added and removed over every diff, and the last tool. */
+function fileChanges(messages: Message[]): Array<{ path: string; added: number; removed: number; known: boolean; toolId: string }> {
+  const files = new Map<string, { path: string; added: number; removed: number; known: boolean; toolId: string }>()
+  for (const message of messages) {
+    if (message.role !== 'tool') continue
+    for (const diff of message.tool?.diffs ?? []) {
+      const view = diffLines(diff.oldText, diff.newText)
+      const entry = files.get(diff.path) ?? { path: diff.path, added: 0, removed: 0, known: true, toolId: message.id }
+      entry.added += view.added
+      entry.removed += view.removed
+      // A removal count is only known when the Host showed the previous text, as in the diff itself.
+      entry.known &&= diff.previous === 'text'
+      entry.toolId = message.id
+      files.set(diff.path, entry)
+    }
+  }
+  return [...files.values()]
+}
+
+function splitPath(path: string): { folder: string; name: string } {
+  const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+  return at < 0 ? { folder: '', name: path } : { folder: path.slice(0, at + 1), name: path.slice(at + 1) }
+}
+
+/**
+ * The command an added agent runs, for an administrator: the Host lists agent definitions only to admin devices, so
+ * others never ask. It is read once per agent while the block is shown; a failed read leaves it out.
+ */
+function useAgentCommand(harnessId: string | undefined): AgentSettings | undefined {
+  const [found, setFound] = useState<{ id: string; agent: AgentSettings } | null>(null)
+  useEffect(() => {
+    if (harnessId === undefined) return undefined
+    let active = true
+    void api<{ agents: AgentSettings[] }>('agents')
+      .then(data => {
+        const agent = data.agents.find(item => item.id === harnessId)
+        if (active && agent) setFound({ id: harnessId, agent })
+      })
+      .catch(() => {
+        /* The source line keeps ACP and the licence. */
+      })
+    return () => {
+      active = false
+    }
+  }, [harnessId])
+  return found !== null && found.id === harnessId ? found.agent : undefined
+}
+
+/** What the session's model and options are, and how this device may change them. */
+export interface InfoControls {
+  /** The model for the next prompt (a host-model harness); the switch applies from the next message. */
+  model?: { value?: ModelRef; current?: ModelRef; onChange: (model: ModelRef | undefined) => void }
+  /** The harness's own options (an agent's model and mode); a widening mode asks for a local confirmation. */
+  config: SessionConfigOption[]
+  busy: string | null
+  onConfig: (configId: string, value: string) => void | Promise<void>
+  /** Why this device sees the values but cannot change them. */
+  locked?: string
+}
+
+/**
+ * 会话信息: independent blocks, each a card that folds from its header. Agent (the harness, its model, its mode and how
+ * the session talks to it), 环境 (the computer and the project), 权限 (who enforces the session's permissions, with the
+ * facts behind it), 用量, 计划 and 变更 (the files the session's tools changed, each opening its tool in the
+ * conversation). A block with nothing to show is left out.
+ */
 export function Inspector({
   snapshot,
   summary,
   detail,
+  local,
+  admin = false,
+  controls,
+  collapsed,
+  onToggleBlock,
   onReveal,
 }: {
   snapshot: AppSnapshot
   summary: TaskSummary
   detail: TaskDetail | null
+  /** This page runs in the desktop shell on the Host's own computer. */
+  local: boolean
+  /** This device administers the Host: the Agent block names the command an added agent runs. */
+  admin?: boolean
+  controls?: InfoControls
+  collapsed: ReadonlySet<string>
+  onToggleBlock: (id: InfoBlock, collapsed: boolean) => void
   onReveal: (messageId: string) => void
 }) {
+  const [factsOpen, setFactsOpen] = useState(false)
+  const now = useTicker('minute')
   const catalog = snapshot.catalog
   const harness = sessionHarness(catalog, summary)
-  const provider = findProvider(catalog, summary.providerId)
-  const tools = detail?.messages.filter(message => message.role === 'tool') ?? []
-  const plan = detail?.plan ?? []
-  const progress = planProgress(plan)
-  const usage = summary.usage
-  const permission = detail?.summary.id === summary.id ? detail.permission : undefined
+  const harnessName = harness?.name ?? snapshot.harness?.name ?? 'Latch'
+  const own = detail?.summary.id === summary.id ? detail : null
+  const permission = own?.permission
   const level = permission?.level ?? summary.level
+  const drift = summary.permissionDrift || permission?.drift
+  const preset =
+    harness?.source === 'acp' ? presetOf(harness.id, Object.fromEntries(AGENT_PRESETS.map(item => [item.id, item]))) : undefined
+  const license = AGENT_PRESETS.find(item => item.id === preset)?.license
+  const definition = useAgentCommand(admin && harness?.source === 'acp' ? harness.id : undefined)
+  const commandLine = definition ? [definition.command, ...definition.args].join(' ') : undefined
+  const source =
+    harness?.source === 'acp' ? (
+      <>
+        ACP
+        {definition && (
+          <>
+            {' · '}
+            <Tooltip content={commandLine}>
+              <code className="info-who-command" tabIndex={0}>
+                {basename(definition.command)}
+              </code>
+            </Tooltip>
+          </>
+        )}
+        {license && ` · ${license}`}
+      </>
+    ) : harness?.source === 'plugin' ? (
+      '插件'
+    ) : (
+      '内置'
+    )
+  const config = controls?.config ?? own?.config ?? []
+  const modeOption = config.find(option => option.category === MODE_CATEGORY || option.id === MODE_CATEGORY)
+  const modelOption = config.find(option => option.category === 'model')
+  const otherOptions = config.filter(option => option !== modeOption && option !== modelOption)
+  const locked = controls?.locked
+  const busy = controls?.busy ?? null
+  const optionPicker = (option: SessionConfigOption) =>
+    controls && !locked ? (
+      <ValuePicker
+        label={option.name}
+        size="xs"
+        bleed="both"
+        chevron="hover"
+        width={280}
+        value={option.currentValue}
+        disabled={busy !== null}
+        options={option.options.map(item => ({ value: item.value, label: item.name, description: item.description }))}
+        onValueChange={value => controls.onConfig(option.id, value)}
+      />
+    ) : (
+      (option.options.find(item => item.value === option.currentValue)?.name ?? option.currentValue)
+    )
+  const hostModels = harness?.models === 'host' && (catalog?.providers.length ?? 0) > 0
+  const modelControl = controls?.model
+  const provider = findProvider(catalog, summary.providerId)
+  let modelValue: ReactNode
+  if (modelOption) modelValue = optionPicker(modelOption)
+  else if (hostModels && modelControl && !locked && catalog) {
+    const groups: Array<PickerGroup<string>> = catalog.providers.map(item => ({
+      id: item.id,
+      label: item.name,
+      options: (item.models.length ? item.models : [item.defaultModel]).filter(Boolean).map(model => ({
+        value: modelKey({ providerId: item.id, model }),
+        label: model,
+        tag: item.kind === 'demo' ? <Badge tone="warn">演示</Badge> : undefined,
+      })),
+    }))
+    const value = modelControl.value ?? modelControl.current
+    modelValue = (
+      <ValuePicker
+        label="模型"
+        size="xs"
+        bleed="both"
+        chevron="hover"
+        searchable
+        width={320}
+        value={value ? modelKey(value) : undefined}
+        groups={groups}
+        leading={provider && value ? <ProviderTile provider={provider} size={16} /> : undefined}
+        onValueChange={key => {
+          const [providerId = '', model = ''] = key.split('\u0000')
+          const next = { providerId, model }
+          modelControl.onChange(sameModel(next, modelControl.current) ? undefined : next)
+        }}
+      />
+    )
+  } else if (summary.model) modelValue = summary.model
+  else if (harness?.models === 'agent') modelValue = '由 Agent 管理'
+  else if (usesDemoModel(snapshot, summary.harnessId, summary.providerId)) modelValue = '演示模型'
+  else modelValue = '默认模型'
+  const pendingModel =
+    modelControl?.value && modelControl.current && !sameModel(modelControl.value, modelControl.current) ? modelControl.value : undefined
+
+  // 用量
+  const usage = summary.usage
+  const report = own?.usageReport
+  const turns = own ? turnsOf(own.messages) : []
+  const timed = turns.flatMap(turn => {
+    const active = parseDuration(turn.user?.turn?.activeMs)
+    return active === undefined || turn.user?.turn?.endedAt === undefined ? [] : [active]
+  })
+  const worked = timed.length ? formatDuration(timed.reduce((sum, value) => sum + value, 0)) : undefined
+  const created = parseTime(summary.createdAt)
+  const agentReported = harness?.source === 'acp'
+  const [inputLine, outputLine] = usage ? tokenLines(usage) : []
+  const contextRatio =
+    typeof report?.contextUsed === 'number' && typeof report.contextSize === 'number' && report.contextSize > 0
+      ? Math.min(1, report.contextUsed / report.contextSize)
+      : undefined
+
+  // 计划 and 变更
+  const plan = own?.plan ?? []
+  const progress = planProgress(plan)
+  const changes = own ? fileChanges(own.messages) : []
+
   const facts = permission
     ? [
         permission.enforcer === 'LATCH' ? 'Latch 在执行有风险的工具调用前询问' : 'Latch 不限制该 Harness 的执行范围',
@@ -62,108 +338,208 @@ export function Inspector({
         ...permission.notes,
       ]
     : []
+  const block = (id: InfoBlock) => ({ id, collapsed: collapsed.has(id), onToggle: onToggleBlock })
+
   return (
     <div className="inspector">
-      <section className="inspector-section" aria-labelledby="inspector-overview">
-        <h3 id="inspector-overview">概览</h3>
-        <dl>
-          <Row label="状态">{statusLabels[summary.status]}</Row>
-          <Row label="Harness">{harness?.name ?? snapshot.harness?.name ?? '默认'}</Row>
-          <Row label="模型">
-            {summary.model ? (
-              <>
-                {summary.model}
-                {provider && <span className="inspector-sub">{provider.name}</span>}
-              </>
-            ) : harness?.models === 'agent' ? (
-              '由 Agent 管理'
-            ) : usesDemoModel(snapshot, summary.harnessId, summary.providerId) ? (
-              '演示模型'
-            ) : (
-              '默认模型'
-            )}
+      <Block {...block('agent')} title="Agent">
+        <div className="info-who">
+          <HarnessTile harness={harness ? { id: harness.id, source: harness.source } : { id: 'standard', source: 'builtin' }} size={32} />
+          <span className="info-who-text">
+            <span className="info-who-name">{harnessName}</span>
+            <span className="info-who-source">{source}</span>
+          </span>
+        </div>
+        <Row icon={Cpu} label="模型">
+          {modelValue}
+        </Row>
+        {pendingModel && <p className="info-note">下一条消息起使用 {pendingModel.model}</p>}
+        {modeOption && (
+          <Row icon={SlidersHorizontal} label="模式">
+            {optionPicker(modeOption)}
           </Row>
-          <Row label="模式">{summary.mode === 'chat' ? '对话' : 'Agent'}</Row>
-          {level && (
-            <Row label="权限">
-              <span className="inspector-permission">
-                <StatusPill tone={level === 'L3' ? 'warn' : 'neutral'}>{LEVEL_LABELS[level]}</StatusPill>
-                {(summary.permissionDrift || permission?.drift) && <StatusPill tone="err">权限模式已变化</StatusPill>}
-                {facts.length > 0 && (
-                  <ul className="inspector-facts">
-                    {facts.map(fact => (
-                      <li key={fact}>{fact}</li>
-                    ))}
-                  </ul>
+        )}
+        <Row icon={Bot} label="方式">
+          {summary.mode === 'chat' ? '对话' : 'Agent'}
+        </Row>
+        {otherOptions.map(option => (
+          <Row key={option.id} icon={SlidersHorizontal} label={option.name}>
+            {optionPicker(option)}
+          </Row>
+        ))}
+        {locked && (config.length > 0 || hostModels) && (
+          <p className="info-note">
+            <LockKeyhole size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+            {locked}
+          </p>
+        )}
+      </Block>
+
+      <Block {...block('environment')} title="环境">
+        <Row icon={Laptop} label="电脑">
+          <span className="info-text">{snapshot.hostName}</span>
+          {local && <Badge>本机</Badge>}
+        </Row>
+        {summary.cwd && (
+          <Row icon={Folder} label="项目" two>
+            <span className="info-path">
+              <span className="info-path-name">{basename(summary.cwd)}</span>
+              <span className="info-path-line">
+                <MiddleText text={summary.cwd} className="info-path-full" />
+                <CopyButton text={summary.cwd} label="复制路径" size="xs" />
+              </span>
+            </span>
+          </Row>
+        )}
+      </Block>
+
+      {level && (
+        <Block {...block('permission')} title="权限">
+          <Row icon={level === 'L3' ? ShieldAlert : Shield} tone={level === 'L3' ? 'warn' : undefined} label="级别">
+            <span className="info-text">{level === 'L3' ? '完全访问' : '逐项询问'}</span>
+            {drift && <StatusPill tone="err">权限模式已变化</StatusPill>}
+          </Row>
+          {facts.length > 0 && (
+            <>
+              <button
+                type="button"
+                className="info-disclosure"
+                aria-expanded={factsOpen}
+                onClick={() => {
+                  setFactsOpen(!factsOpen)
+                }}>
+                <span className="info-icon" aria-hidden="true">
+                  <ChevronRight className="info-disclosure-chevron" size={12} strokeWidth={ICON_STROKE[12]} />
+                </span>
+                权限说明
+              </button>
+              <Collapse
+                open={factsOpen}
+                onReveal={() => {
+                  setFactsOpen(true)
+                }}>
+                <ul className="inspector-facts">
+                  {facts.map(fact => (
+                    <li key={fact}>{fact}</li>
+                  ))}
+                </ul>
+              </Collapse>
+            </>
+          )}
+        </Block>
+      )}
+
+      {(usage || worked || created !== undefined || report) && (
+        <Block {...block('usage')} title="用量">
+          {usage && (
+            <Row icon={ArrowDownToLine} label="输入">
+              <Tooltip content={agentReported ? `${inputLine}，由 Agent 报告` : inputLine}>
+                <span className="info-number" tabIndex={0}>
+                  {tokenAmount(usage.inputTokens)}
+                </span>
+              </Tooltip>
+            </Row>
+          )}
+          {usage && (
+            <Row icon={ArrowUpFromLine} label="输出">
+              <Tooltip content={agentReported ? `${outputLine}，由 Agent 报告` : outputLine}>
+                <span className="info-number" tabIndex={0}>
+                  {tokenAmount(usage.outputTokens)}
+                </span>
+              </Tooltip>
+            </Row>
+          )}
+          {typeof report?.contextUsed === 'number' && (
+            <Row icon={Gauge} label="上下文" two={contextRatio !== undefined}>
+              <span className="info-meter">
+                <Tooltip
+                  content={`Agent 报告当前上下文已用 ${exactTokens(report.contextUsed)}${typeof report.contextSize === 'number' ? ` / ${exactTokens(report.contextSize)}` : ''} tokens`}>
+                  <span className={`info-number ${contextRatio !== undefined && contextRatio >= 0.8 ? 'is-warn' : ''}`} tabIndex={0}>
+                    {typeof report.contextSize === 'number'
+                      ? `${formatTokens(report.contextUsed)} / ${tokenAmount(report.contextSize)}`
+                      : tokenAmount(report.contextUsed)}
+                    {contextRatio !== undefined && contextRatio >= 0.8 && ' · 接近上限'}
+                  </span>
+                </Tooltip>
+                {contextRatio !== undefined && (
+                  <span className={`info-track ${contextRatio >= 0.8 ? 'is-warn' : ''}`} aria-hidden="true">
+                    <i style={{ transform: `scaleX(${contextRatio})` }} />
+                  </span>
                 )}
               </span>
             </Row>
           )}
-          {summary.cwd && (
-            <Row label="项目">
-              <span className="inspector-path">
-                <span className="inspector-path-name">{basename(summary.cwd)}</span>
-                <span className="inspector-path-full">{summary.cwd}</span>
-              </span>
-              <CopyButton text={summary.cwd} label="复制路径" />
-            </Row>
-          )}
-          {usage && (
-            <Row label="用量">
-              <span title={usageTitle(usage)}>
-                输入 {formatTokens(usage.inputTokens)} · 输出 {formatTokens(usage.outputTokens)}
+          {report?.cost && (
+            <Row icon={CircleDollarSign} label="费用" two>
+              <span className="info-path">
+                <span className="info-number">
+                  {report.cost.amount > 0 && report.cost.amount < 0.01
+                    ? '<$0.01'
+                    : new Intl.NumberFormat('zh-CN', { style: 'currency', currency: report.cost.currency }).format(report.cost.amount)}
+                </span>
+                <span className="info-caption">由 Agent 报告，不是账单</span>
               </span>
             </Row>
           )}
-        </dl>
-      </section>
-      {plan.length > 0 && (
-        <section className="inspector-section" aria-labelledby="inspector-plan">
-          <h3 id="inspector-plan">
-            计划{' '}
-            <span className="inspector-count">
-              {progress.done}/{progress.total}
-            </span>
-          </h3>
-          <span className="progress" aria-hidden="true">
-            <i style={{ width: `${Math.round(progress.ratio * 100)}%` }} />
-          </span>
-          <PlanList plan={plan} active={isActive(summary.status)} />
-        </section>
+          {worked && (
+            <Row icon={Timer} label="用时">
+              <span className="info-number">
+                {worked} · {timed.length} 轮
+              </span>
+            </Row>
+          )}
+          {created !== undefined && (
+            <Row icon={CalendarClock} label="开始于">
+              <Tooltip content={absoluteTime(created)}>
+                <time className="info-number" dateTime={new Date(created).toISOString()} tabIndex={0}>
+                  {messageTime(created, now)}
+                </time>
+              </Tooltip>
+            </Row>
+          )}
+        </Block>
       )}
-      <section className="inspector-section" aria-labelledby="inspector-tools">
-        <h3 id="inspector-tools">工具时间线 {tools.length > 0 && <span className="inspector-count">{tools.length}</span>}</h3>
-        {detail === null ? (
-          <p className="muted-line">正在读取…</p>
-        ) : tools.length === 0 ? (
-          <p className="muted-line">尚无工具调用</p>
-        ) : (
-          <ol className="timeline">
-            {tools.map(tool => {
-              const Icon = toolKindIcons[toolKind(tool)]
-              const state = tool.state ?? 'completed'
+
+      {plan.length > 0 && (
+        <Block {...block('plan')} title="计划" meta={`${progress.done}/${progress.total}`}>
+          <PlanList plan={plan} active={summary.status === 'running' || summary.status === 'waiting-approval'} />
+        </Block>
+      )}
+
+      {changes.length > 0 && (
+        <Block {...block('changes')} title="变更" meta={`${changes.length} 个文件`}>
+          <ul className="info-changes">
+            {changes.map(change => {
+              const { folder, name } = splitPath(change.path)
               return (
-                <li key={tool.id} className={`timeline-item state-${state}`}>
+                <li key={change.path}>
                   <button
                     type="button"
+                    className="info-change"
+                    title={change.path}
                     onClick={() => {
-                      onReveal(tool.id)
+                      onReveal(change.toolId)
                     }}>
-                    {/* A change of state seen live cross-fades the comet and the icon, and its words rise in. */}
-                    <StatusGlyph className="timeline-icon" running={state === 'running'}>
-                      <Icon size={14} strokeWidth={ICON_STROKE[14]} />
-                    </StatusGlyph>
-                    <span className="timeline-title">{tool.tool?.title || tool.toolName || '工具调用'}</span>
-                    <StatusWords state={state} className="timeline-state">
-                      {toolStates[state]}
-                    </StatusWords>
+                    <span className="info-icon" aria-hidden="true">
+                      <FileText size={14} strokeWidth={ICON_STROKE[14]} />
+                    </span>
+                    <span className="info-change-path">
+                      {folder && (
+                        <span className="info-change-folder">
+                          <VisibleText text={folder} />
+                        </span>
+                      )}
+                      <VisibleText text={name} />
+                    </span>
+                    <span className={change.added ? 'diff-stat-add' : 'diff-stat-zero'}>+{change.added}</span>
+                    {change.known && <span className={change.removed ? 'diff-stat-remove' : 'diff-stat-zero'}>−{change.removed}</span>}
                   </button>
                 </li>
               )
             })}
-          </ol>
-        )}
-      </section>
+          </ul>
+        </Block>
+      )}
     </div>
   )
 }

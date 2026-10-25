@@ -6,14 +6,18 @@ import {
   CANONICAL_JSON_CASES,
   CANONICAL_JSON_VECTOR,
   ENROLL_SIGNING_VECTOR,
+  FOLDERS_SIGNING_VECTOR,
   HASH_DISPLAY_VECTORS,
   P256_VECTOR,
   RENEW_SIGNING_VECTOR,
   SECURITY_VECTORS,
   enrollSigningText,
+  foldersBodyHash,
+  foldersSigningText as testkitFoldersSigningText,
   renewSigningText,
   testDeviceKey,
 } from '@latch/testkit'
+import { foldersSigningText } from '../src/auth.ts'
 import {
   BASE32_ALPHABET,
   base32,
@@ -84,6 +88,28 @@ describe('shared vectors', () => {
     expect(renewSigningText(renew.hostId, renew.deviceId, renew.nonce)).toBe(renew.text)
     expect(verifyP256(key, renew.text, renew.signature)).toBe(true)
     expect(verifyP256(key, renew.text, enroll.signature)).toBe(false)
+  })
+
+  it('documents the folders signing text over the canonical body hash, and the example signature verifies', () => {
+    const { key } = parseP256Spki(P256_VECTOR.spki)
+    const folders = FOLDERS_SIGNING_VECTOR.example
+    expect(canonicalJson(folders.body)).toBe(folders.canonicalBody)
+    expect(sha256Hex(canonicalJson(folders.body))).toBe(folders.bodyHash)
+    expect(foldersBodyHash(folders.body)).toBe(folders.bodyHash)
+    expect(folders.body.nonce).toBe(folders.nonce)
+    expect(foldersSigningText(folders.hostId, folders.deviceId, folders.nonce, folders.bodyHash)).toBe(folders.text)
+    expect(testkitFoldersSigningText(folders.hostId, folders.deviceId, folders.nonce, folders.bodyHash)).toBe(folders.text)
+    expect(folders.text).toBe(`latch-folders-v1\n${P256_VECTOR.hostId}\n${folders.deviceId}\n${folders.nonce}\n${folders.bodyHash}`)
+    expect(verifyP256(key, folders.text, folders.signature)).toBe(true)
+    // A different body or a renewal text never carries a folder signature.
+    const other = foldersSigningText(
+      folders.hostId,
+      folders.deviceId,
+      folders.nonce,
+      sha256Hex(canonicalJson({ ...folders.body, paths: ['/'] })),
+    )
+    expect(verifyP256(key, other, folders.signature)).toBe(false)
+    expect(verifyP256(key, RENEW_SIGNING_VECTOR.example.text, folders.signature)).toBe(false)
   })
 })
 

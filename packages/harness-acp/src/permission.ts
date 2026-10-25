@@ -63,9 +63,16 @@ export function validateAgentDefinition(record: AgentRecord): { ok: true; verifi
   return { ok: true, verified: selectProfile(record).verified }
 }
 
+/** The folders a session passes to its agent besides the session directory: how, and their real paths in order. */
+export interface LaunchFolders {
+  via: 'acp' | 'args'
+  paths: string[]
+}
+
 /**
  * Fingerprint of what a session launches. Values enter only as one digest, so the preview can show it without them.
  * `projectConfig` is the digest of the project configuration found; without one the fingerprint is the definition's.
+ * `folders` counts only when it names at least one folder, so a session of one folder keeps the fingerprint it had.
  */
 export function launchHash(input: {
   resolvedCommand: string
@@ -74,6 +81,7 @@ export function launchHash(input: {
   presetId?: string
   profileVersion: 1
   projectConfig?: string
+  folders?: LaunchFolders
 }): string {
   return sha256Hex(
     canonicalJson({
@@ -85,6 +93,7 @@ export function launchHash(input: {
       presetId: input.presetId,
       profileVersion: input.profileVersion,
       projectConfig: input.projectConfig,
+      ...(input.folders?.paths.length ? { folders: { via: input.folders.via, paths: input.folders.paths } } : {}),
     }),
   )
 }

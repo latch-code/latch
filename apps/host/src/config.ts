@@ -1,8 +1,16 @@
 import { randomUUID } from 'node:crypto'
 import { chmod, mkdir, open, readFile, rename, stat, unlink } from 'node:fs/promises'
-import { isAbsolute, join, resolve } from 'node:path'
+import { basename, isAbsolute, join, resolve } from 'node:path'
 import { z } from 'zod'
-import { PROVIDER_PRESETS, type AgentRecord, type ModelRef, type ProviderKind, type TaskMode } from '@latch/protocol'
+import {
+  PROJECT_GLYPHS,
+  PROVIDER_PRESETS,
+  type AgentRecord,
+  type ModelRef,
+  type ProjectGlyph,
+  type ProviderKind,
+  type TaskMode,
+} from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { syncDirectory } from '@latch/core/node-kit'
 
@@ -20,10 +28,25 @@ export interface ProviderRecord {
   defaultModel: string
 }
 
+export interface WorkspaceFolderRecord {
+  id: string
+  /** Realpath without macOS alias prefixes. */
+  path: string
+}
+
+/**
+ * A saved project. `path` mirrors `folders[0].path` (the primary folder) for older Hosts, which read only `path`; a file
+ * where the two differ was edited by hand, and the Host disables that project for the run.
+ */
 export interface WorkspaceRecord {
   id: string
   name: string
   path: string
+  /** 1–8, ordered; `[0]` is the primary folder. Entries saved before projects had several folders get one on load. */
+  folders: WorkspaceFolderRecord[]
+  glyph?: ProjectGlyph
+  /** A hand-edited path/folder mismatch stays disabled until the primary folder is explicitly selected again. */
+  invalid?: true
 }
 
 export interface HostSettings {
@@ -37,6 +60,32 @@ export interface HostSettings {
 
 /** Provider, agent and stored-workspace IDs. Provider IDs double as plugin IDs. */
 export const PROVIDER_ID = /^[a-z0-9][a-z0-9_-]{0,47}$/
+
+/** Folder IDs inside one project; the Standard tools and the desktop address folders by them. */
+export const FOLDER_ID = /^[a-z0-9][a-z0-9-]{0,31}$/
+
+/**
+ * A folder ID from its basename: folded to ASCII (NFKD without combining marks, lower case, anything else a hyphen,
+ * runs collapsed and trimmed), `folder` when nothing is left, then `-2`, `-3`… until it is not in `taken`.
+ */
+export function folderIdFor(name: string, taken: Iterable<string>): string {
+  const used = new Set(taken)
+  const slug =
+    name
+      .normalize('NFKD')
+      .replace(/\p{M}/gu, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/gu, '-')
+      .replace(/^-+|-+$/gu, '')
+      .slice(0, 32)
+      .replace(/-+$/u, '') || 'folder'
+  if (!used.has(slug)) return slug
+  for (let suffix = 2; ; suffix++) {
+    const tail = `-${suffix}`
+    const candidate = `${slug.slice(0, 32 - tail.length).replace(/-+$/u, '')}${tail}`
+    if (!used.has(candidate)) return candidate
+  }
+}
 
 /** Slug of `base` that matches `PROVIDER_ID` and is not in `taken`. */
 export function availableId(base: string, taken: Iterable<string>): string {
@@ -136,14 +185,35 @@ const providersSchema = storedProvidersSchema.superRefine((providers, context) =
 const providersFileSchema = z.object({ version: z.literal(1), providers: storedProvidersSchema })
 const legacyProviderSchema = z.object({ baseURL: z.string(), apiKey: z.string(), model: z.string() })
 
-const workspaceSchema = z.object({
-  id: id('项目标识').refine(value => value !== 'default', '项目标识 default 保留给启动工作区'),
-  name,
-  path: z
-    .string()
-    .max(4096, '项目路径过长')
-    .refine(value => isAbsolute(value) && noControl(value), '项目路径必须是绝对路径'),
-})
+const folderPath = z
+  .string()
+  .max(4096, '项目路径过长')
+  .refine(value => isAbsolute(value) && noControl(value), '项目路径必须是绝对路径')
+const folderSchema = z.object({ id: z.string().regex(FOLDER_ID, '文件夹标识无效'), path: folderPath })
+const workspaceSchema = z
+  .object({
+    id: id('项目标识').refine(value => value !== 'default', '项目标识 default 保留给启动目录'),
+    name,
+    path: folderPath,
+    folders: z.array(folderSchema).min(1, '项目至少要有一个文件夹').max(8, '一个项目最多 8 个文件夹').optional(),
+    // An unknown glyph (a newer Host's, or a hand edit) is dropped rather than making the whole file unreadable.
+    glyph: z.enum(PROJECT_GLYPHS).optional().catch(undefined),
+    invalid: z.literal(true).optional(),
+  })
+  .superRefine((value, context) => {
+    if (!value.folders) return
+    if (new Set(value.folders.map(folder => folder.id)).size !== value.folders.length)
+      context.addIssue({ code: 'custom', path: ['folders'], message: '文件夹标识不能重复' })
+    if (new Set(value.folders.map(folder => folder.path)).size !== value.folders.length)
+      context.addIssue({ code: 'custom', path: ['folders'], message: '同一项目中的文件夹不能重复' })
+  })
+  .transform(({ glyph, folders, ...rest }): WorkspaceRecord => ({
+    ...rest,
+    // Saved before projects had several folders: the one directory becomes the primary folder.
+    folders: folders ?? [{ id: folderIdFor(basename(rest.path), []), path: rest.path }],
+    ...(rest.invalid || (folders && folders[0]?.path !== rest.path) ? { invalid: true as const } : {}),
+    ...(glyph ? { glyph } : {}),
+  }))
 const agentSchema = z.object({
   // The built-in harness owns `standard`; agent IDs become harness IDs.
   id: id('Agent 标识').refine(value => value !== 'standard', 'Agent 标识 standard 已被内置 Harness 使用'),

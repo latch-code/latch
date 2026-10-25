@@ -12,6 +12,8 @@ export const qwenProfile: HarnessProfile = {
     readback: 'mode',
     notes: ['恢复会话会恢复旧模式，Latch 每轮前重新设置'],
   },
+  // As in Gemini CLI: the process arguments apply to its ACP sessions, and the value is split on commas.
+  folders: { via: 'args', flag: '--include-directories', maxExtra: 4 },
   // Workspace settings, commands, agents and extensions, as in Gemini CLI from which Qwen Code derives.
   projectConfigPaths: ['.qwen'],
 }

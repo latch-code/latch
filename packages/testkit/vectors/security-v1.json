@@ -341,6 +341,25 @@
         "text": "latch-renew-v1\nfpi3wdcevcl4gct2ucmrzxry3adc7zcb3zinud2gqjjuj5qc5atq\ndev_IiIiIiIiIiIiIiIiIiIiIg\nAQIDBAUGBwgJCgsMDQ4PEA",
         "signature": "CILda8RyBilMtCG3Bv2pntLiGXSIKCqcQCrY9GyBSRe42ycbbpEuh8TEBsfRrrwjnmT70cpPTZjQGE0p-wApDg"
       }
+    },
+    "folders": {
+      "format": "latch-folders-v1\n<hostId>\n<deviceId>\n<nonce>\n<bodyHash>",
+      "bodyHash": "SHA-256 (lowercase hex) of the UTF-8 canonicalJson of the request body without its signature member",
+      "example": {
+        "hostId": "fpi3wdcevcl4gct2ucmrzxry3adc7zcb3zinud2gqjjuj5qc5atq",
+        "deviceId": "dev_IiIiIiIiIiIiIiIiIiIiIg",
+        "nonce": "BAUGBwgJCgsMDQ4PEBESEw",
+        "body": {
+          "nonce": "BAUGBwgJCgsMDQ4PEBESEw",
+          "via": "picker",
+          "paths": ["/Users/me/code/shop-api", "/Users/me/文档/设计稿"],
+          "name": "Shop"
+        },
+        "canonicalBody": "{\"name\":\"Shop\",\"nonce\":\"BAUGBwgJCgsMDQ4PEBESEw\",\"paths\":[\"/Users/me/code/shop-api\",\"/Users/me/文档/设计稿\"],\"via\":\"picker\"}",
+        "bodyHash": "7754b77bf0489c65cccd34de6dd7882815750c6f930b89d86e61cebb78b67e20",
+        "text": "latch-folders-v1\nfpi3wdcevcl4gct2ucmrzxry3adc7zcb3zinud2gqjjuj5qc5atq\ndev_IiIiIiIiIiIiIiIiIiIiIg\nBAUGBwgJCgsMDQ4PEBESEw\n7754b77bf0489c65cccd34de6dd7882815750c6f930b89d86e61cebb78b67e20",
+        "signature": "kD1naFrowEoSAN2O4u9QycaV-db5FGrZ9xFj12v0z6RRzUs2OPCJILREMX3EueTtM0xI6B6UbvUs6gd2Kb027w"
+      }
     }
   }
 }

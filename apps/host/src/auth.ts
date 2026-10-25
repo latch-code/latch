@@ -28,6 +28,9 @@ export const ROTATION_GRACE = 60_000
 /** A renewed credential that is never presented is dropped after this long. */
 export const PENDING_LIFETIME = 10 * 60_000
 export const CHALLENGE_TTL = 60_000
+/** A nonce for one signed folder add from the desktop app. */
+export const FOLDER_GRANT_TTL = 60_000
+const MAX_FOLDER_GRANTS = 4
 export const LAST_SEEN_PERSIST = 5 * 60_000
 const PRUNE_AFTER = 90 * 24 * 60 * 60_000
 export const ENROLLMENT_LIFETIME = 120_000
@@ -37,6 +40,14 @@ const MAX_PENDING_ENROLLMENTS = 32
 const MAX_INVITATIONS = 32
 const MAX_OFFLINE_TICKETS = 8
 const SIGNATURE_ATTEMPTS = 3
+
+/**
+ * What the desktop app's main process signs to add folders: the Host, the device, a nonce from
+ * `POST /folder-grants`, and the SHA-256 (hex) of `canonicalJson` of the request body without `signature`.
+ */
+export function foldersSigningText(hostId: string, deviceId: string, nonce: string, bodyHash: string): string {
+  return `latch-folders-v1\n${hostId}\n${deviceId}\n${nonce}\n${bodyHash}`
+}
 
 export const ALL_SCOPES: readonly DeviceScope[] = ['view', 'run', 'approve:standard', 'approve:elevated', 'admin', 'secrets']
 /** Grantable only to devices enrolled over host.sock until a remote step-up exists. */
@@ -270,6 +281,7 @@ export class DeviceStore {
   private state: DevicesFile
   private queue: Promise<unknown> = Promise.resolve()
   private readonly challenges = new Map<string, { deviceId: string; expiresAt: number }>()
+  private readonly folderGrants = new Map<string, { deviceId: string; expiresAt: number }>()
   private readonly lastPersistedSeen = new Map<string, number>()
   /** The revocation log may end in an unterminated fragment that could not be repaired yet; fixed before the next append. */
   private revocationsTorn = false
@@ -836,6 +848,41 @@ export class DeviceStore {
   }
 
   /**
+   * In memory, single use, 60 s, at most four outstanding per device: the nonce of one folder add, which the desktop
+   * app's main process signs (`foldersSigningText`) together with the request body.
+   */
+  folderGrant(deviceId: string, credentialHash?: string): { nonce: string; expiresAt: number } {
+    const device = this.find(deviceId)
+    if (!device || !this.usable(device)) throw unauthorized()
+    const now = this.now()
+    this.refuseRotatedOut(device, credentialHash, now)
+    for (const [nonce, entry] of this.folderGrants) if (entry.expiresAt < now) this.folderGrants.delete(nonce)
+    const mine = [...this.folderGrants].filter(([, entry]) => entry.deviceId === deviceId)
+    for (const [nonce] of mine.slice(0, Math.max(0, mine.length - (MAX_FOLDER_GRANTS - 1)))) this.folderGrants.delete(nonce)
+    const nonce = randomNonce()
+    const expiresAt = now + FOLDER_GRANT_TTL
+    this.folderGrants.set(nonce, { deviceId, expiresAt })
+    return { nonce, expiresAt }
+  }
+
+  /**
+   * Consumes the nonce and checks the device's signature over the body hash. A missing, reused, expired or foreign
+   * nonce or a bad signature refuses the whole request, and the nonce is gone either way.
+   */
+  verifyFolderGrant(input: { deviceId: string; nonce: unknown; bodyHash: string; signature: unknown }): void {
+    const invalid = new AppError(403, 'folder-grant-invalid', '添加文件夹的请求没有通过桌面端校验，没有加入任何文件夹')
+    const nonce = typeof input.nonce === 'string' ? input.nonce : undefined
+    const grant = nonce === undefined ? undefined : this.folderGrants.get(nonce)
+    if (nonce === undefined || !grant) throw invalid
+    this.folderGrants.delete(nonce)
+    if (grant.deviceId !== input.deviceId || grant.expiresAt < this.now()) throw invalid
+    const device = this.find(input.deviceId)
+    if (!device || !this.usable(device) || !device.publicKey || typeof input.signature !== 'string') throw invalid
+    const { key } = parseP256Spki(device.publicKey)
+    if (!verifyP256(key, foldersSigningText(this.hostId, device.id, nonce, input.bodyHash), input.signature)) throw invalid
+  }
+
+  /**
    * Issues a new credential as `pending`; the presented one stays current until the new one is first used, and a
    * later renewal replaces a pending one. `credentialHash` is the SHA-256 of the credential the request presented.
    */
@@ -1016,6 +1063,7 @@ export class DeviceStore {
     device.revokedAt = now
     device.revokedReason = reason
     for (const [nonce, entry] of this.challenges) if (entry.deviceId === device.id) this.challenges.delete(nonce)
+    for (const [nonce, entry] of this.folderGrants) if (entry.deviceId === device.id) this.folderGrants.delete(nonce)
     // The cascade below is not logged separately: replaying this line on open derives it again.
     let logged = true
     try {

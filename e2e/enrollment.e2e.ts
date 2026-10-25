@@ -11,6 +11,7 @@ import { createOfflineTicket } from '@latch/host/auth'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost, type TestHostOptions } from './helpers/host.ts'
 import { openSettings } from './helpers/layout.ts'
+import { expectUnmovedByInjectedStyles } from './helpers/security.ts'
 
 const OUTPUT = 'test-results/enrollment'
 const UI_DIR = resolve(process.env.HARNESS_E2E_UI_DIR ?? 'dist/web')
@@ -84,6 +85,11 @@ async function captureSizes(page: Page, name: string): Promise<void> {
         }),
     )
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true)
+    // The page's buttons are lg (44) on phones and md (32) from 768 up.
+    const heights = await page
+      .locator('.enroll-form .ui-button, .enroll-waiting .ui-button')
+      .evaluateAll(buttons => buttons.map(button => button.getBoundingClientRect().height))
+    for (const height of heights) expect(height).toBe(size.label === 'phone' ? 44 : 32)
     await page.screenshot({ path: `${OUTPUT}/${name}-${size.label}.png`, fullPage: true, animations: 'disabled' })
   }
   if (original) await page.setViewportSize(original)
@@ -132,6 +138,12 @@ describe('device enrollment in the browser', () => {
     const shown = (await page.locator('.fingerprint span').allTextContents()).join(' ')
     expect(request.preview.lines.find(line => line.label === '设备指纹')?.value).toBe(shown)
     expect(request.preview.lines.find(line => line.label === '设备名称')?.value).toBe('验收浏览器')
+    // The five groups read as three and two, so no group stands alone on a line.
+    const tops = await page
+      .locator('.fingerprint > span')
+      .evaluateAll(spans => spans.map(span => Math.round(span.getBoundingClientRect().top)))
+    expect(tops).toEqual([tops[0], tops[0], tops[0], tops[3], tops[3]])
+    expect(tops[3]).toBeGreaterThan(tops[0])
     await captureSizes(page, 'waiting')
     testHost.presence.denyNext()
     await page.getByText('本机拒绝了此设备。', { exact: true }).waitFor()
@@ -143,6 +155,42 @@ describe('device enrollment in the browser', () => {
     await connected(page)
     expect(await page.evaluate(() => document.cookie)).toBe('')
     expect(await page.evaluate(() => JSON.stringify(localStorage)).then(text => /ldc1\./.test(text))).toBe(false)
+  })
+
+  it('keeps the enrollment page as it is under styles added to the page', async () => {
+    const testHost = await host({ presenceMode: 'manual' })
+    const page = await (await context()).newPage()
+    await page.goto(`${testHost.host.loopbackOrigin}/link/`)
+    await page.getByRole('heading', { name: '连接到 Latch', exact: true }).waitFor()
+    const name = page.getByLabel('设备名称', { exact: true })
+    await name.fill('样式核对')
+    await name.blur()
+    await expectUnmovedByInjectedStyles(page, [
+      '.enroll-card',
+      '.enroll-header h1',
+      '.enroll-description',
+      '.enroll-card .ui-field-label',
+      '.enroll-card .ui-input',
+      '.enroll-scopes legend',
+      '.enroll-scope',
+      '.enroll-card .ui-check-label',
+      '.enroll-card .ui-button',
+    ])
+    await page.getByRole('button', { name: '请求本机确认', exact: true }).click()
+    await testHost.presence.waitForRequest()
+    await page.getByRole('heading', { name: '等待本机确认', exact: true }).waitFor()
+    await expectUnmovedByInjectedStyles(page, [
+      '.enroll-status h2',
+      '.enroll-timer',
+      '.enroll-compare',
+      '.fingerprint-label',
+      '.fingerprint',
+      '.fingerprint > span',
+      '.enroll-waiting .ui-button',
+    ])
+    testHost.presence.denyNext()
+    await page.getByText('本机拒绝了此设备。', { exact: true }).waitFor()
+    await expectUnmovedByInjectedStyles(page, ['.enroll-card .ui-notice', '.enroll-card .ui-notice-text'])
   })
 
   it('renews an expiring credential without leaving the workspace', async () => {
@@ -222,6 +270,9 @@ describe('device enrollment in the browser', () => {
     await page.goto(`${testHost.host.loopbackOrigin}/link/`)
     await page.getByText(/^本机确认不可用：.*pnpm latch device enroll --offline/).waitFor()
     expect(await page.getByRole('button', { name: '请求本机确认', exact: true }).count()).toBe(0)
+    // The intro points to the offline code; nothing on the page promises Touch ID.
+    await page.getByText('这台设备会生成自己的密钥，再用离线登记码完成登记。', { exact: true }).waitFor()
+    expect(await page.getByText(/Touch ID/).count()).toBe(0)
     await captureSizes(page, 'unavailable')
     const { code } = await createOfflineTicket(join(testHost.dataDir, 'auth'))
     await page.getByLabel('离线登记码', { exact: true }).fill(code)

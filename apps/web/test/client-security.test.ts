@@ -16,7 +16,13 @@ import {
   type CheckpointStorage,
 } from '../src/core/auditCheckpoint.ts'
 import { resolveChoice, startBlock } from '../src/composerChoice.ts'
-import { ConfirmationError, withConfirmation, type ConfirmationPresenter, type ConfirmationView } from '../src/core/confirmations.ts'
+import {
+  ConfirmationError,
+  withConfirmation,
+  type ConfirmationActions,
+  type ConfirmationPresenter,
+  type ConfirmationView,
+} from '../src/core/confirmations.ts'
 import { contentHash, hashable, hashDisplay } from '../src/core/contentHash.ts'
 import {
   createRenewer,
@@ -358,7 +364,7 @@ const labels = (gate: ReturnType<typeof approvalActions>) => gate.options.map(op
 
 describe('approval gating', () => {
   it.each([
-    ['R1 with approve:standard', approval({ risk: 'R1' }), device(), null, ['允许一次', '本会话始终允许', '拒绝'], undefined, '普通操作'],
+    ['R1 with approve:standard', approval({ risk: 'R1' }), device(), null, ['允许一次', '本会话始终允许', '拒绝'], undefined, '待批准'],
     [
       'R1 without approve:standard',
       approval({ risk: 'R1' }),
@@ -366,7 +372,7 @@ describe('approval gating', () => {
       null,
       ['拒绝'],
       '此设备没有「批准普通操作」权限',
-      '普通操作',
+      '待批准',
     ],
     [
       'R2 from a browser',
@@ -391,7 +397,7 @@ describe('approval gating', () => {
       approval({ risk: 'R2' }),
       device({ listener: 'unix', scopes: allScopes }),
       desktop,
-      ['拒绝', '在本机确认后允许'],
+      ['拒绝', '在本机允许'],
       undefined,
       '高风险',
     ],
@@ -411,7 +417,7 @@ describe('approval gating', () => {
       null,
       ['拒绝'],
       '只有执行端电脑上的 Latch 桌面端可以回应完全访问会话的询问',
-      '提示，不是安全边界',
+      '仅提示',
     ],
     [
       'advisory on the desktop',
@@ -420,7 +426,7 @@ describe('approval gating', () => {
       desktop,
       ['拒绝', '允许一次'],
       undefined,
-      '提示，不是安全边界',
+      '仅提示',
     ],
     [
       'a unix device outside the desktop shell is not local',
@@ -733,17 +739,25 @@ describe('local confirmation', () => {
     new ApiError(403, 'stepup-required', '需要在本机确认', { stepup: { where: 'this-device' }, confirmation: ticket('pending') })
   function presenter() {
     const views: ConfirmationView['phase'][] = []
-    let actions: { cancel: () => void; dismiss: () => void } | undefined
+    const shown: ConfirmationView[] = []
+    let actions: ConfirmationActions | undefined
     const value: ConfirmationPresenter = {
       show: (view, next) => {
         views.push(view.phase)
+        shown.push(view)
         actions = next
       },
       close: () => {
         views.push('closed' as never)
       },
     }
-    return { value, views, cancel: () => actions?.cancel() }
+    return {
+      value,
+      views,
+      shown,
+      cancel: () => actions?.cancel(),
+      dismiss: () => actions?.dismiss(),
+    }
   }
   const instant = () => Promise.resolve()
 
@@ -769,25 +783,50 @@ describe('local confirmation', () => {
   })
 
   it.each([
-    ['denied', '本机拒绝了此操作。'],
-    ['expired', '确认已超时，操作未执行。'],
-    ['error', '本机确认未完成，操作未执行。'],
+    ['denied', '操作没有执行。本机确认没有通过。'],
+    ['expired', '操作没有执行。60 秒内没有完成确认。'],
+    ['error', '操作没有执行。本机确认没有完成。'],
   ] as const)('stops on %s and keeps the dialog with the message', async (status, message) => {
     const ui = presenter()
     const sends = vi.fn(async (confirmation?: string) => {
       if (!confirmation) throw stepup()
       return 'never'
     })
+    // The call settles at once, so whatever asked is ready again; the outcome stays shown until it is closed, and the
+    // request is not sent again.
     const error = await withConfirmation(sends, {
       presenter: ui.value,
       api: (async () => ({ confirmation: ticket(status) })) as never,
       sleep: instant,
     }).catch((cause: unknown) => cause)
     expect(error).toBeInstanceOf(ConfirmationError)
-    expect((error as ConfirmationError).message).toBe(message)
-    expect((error as ConfirmationError).handled).toBe(true)
+    expect(error).toMatchObject({ message, reason: status, handled: true })
     expect(sends).toHaveBeenCalledTimes(1)
     expect(ui.views.at(-1)).toBe('failed')
+    expect(ui.shown.at(-1)).toMatchObject({ phase: 'failed', message, reason: status })
+    ui.dismiss()
+    expect(ui.views.at(-1)).toBe('closed')
+  })
+
+  it.each([
+    ['cooldown', new ApiError(429, 'presence-cooldown', 'x', { retryAfter: 240 })],
+    ['busy', new ApiError(409, 'presence-busy', 'x')],
+    ['blocked', new ApiError(409, 'presence-blocked', 'x')],
+  ] as const)('explains a Host that cannot start a confirmation (%s) in the dialog, not the form', async (reason, refusal) => {
+    const ui = presenter()
+    const error = await withConfirmation(
+      async () => {
+        throw refusal
+      },
+      { presenter: ui.value },
+    ).catch((cause: unknown) => cause)
+    expect(error).toBeInstanceOf(ConfirmationError)
+    expect(error).toMatchObject({ reason, handled: true })
+    const view = ui.shown.at(-1)
+    expect(view).toMatchObject({ phase: 'paused', reason })
+    if (reason === 'cooldown') expect(view?.phase === 'paused' && view.until! - Date.now()).toBeGreaterThan(230_000)
+    ui.dismiss()
+    expect(ui.views.at(-1)).toBe('closed')
   })
 
   it('cancels the ticket on the Host when the dialog is cancelled', async () => {

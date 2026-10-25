@@ -5,6 +5,7 @@ import { browserRenewal, RenewalScheduler } from './credentials.ts'
 import type { EnrolledResult } from './enrollment.ts'
 import { connectEventStream, type EventStreamConnection } from './eventStream.ts'
 import { hostView } from './permissions.ts'
+import { observeHostTime } from './hostClock.ts'
 import { mergeTaskSnapshot, parseTaskState, ProjectionGuard, type ProjectionTicket } from './projection.ts'
 import type { EnrollmentReason } from './securityCopy.ts'
 import { currentShell } from './shell.ts'
@@ -145,6 +146,7 @@ export function useHarness() {
           request.current = controller
           try {
             const next = await api<AppSnapshot>('snapshot', { signal: controller.signal })
+            observeHostTime(next.hostTime)
             if (!alive.current || !guard.current.current(ticket)) continue
             guard.current.bind(next.instanceId)
             signedOut.current = false
@@ -354,6 +356,7 @@ export function useHarness() {
         if (disposed) return
         if (message.event === 'task-state') {
           const event = parseTaskState(message.data)
+          observeHostTime(event?.detail.sync?.hostTime)
           if (!event || !guard.current.accept(ticket, event.detail, 'stream')) return
           publishDetail(event.detail)
           if (latestSnapshot.current) publishSnapshot(mergeTaskSnapshot(latestSnapshot.current, event.detail), false)

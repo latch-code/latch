@@ -76,6 +76,8 @@ export interface ApiOptions {
   rateRetried?: boolean
   /** Only the status matters (a renewal's cookie arrives with the headers), so a 2xx body is not read. */
   discardBody?: boolean
+  /** Reads the headers of a 2xx response, for example `x-latch-audit` on a change that lowered permissions. */
+  onHeaders?: (headers: Headers) => void
 }
 
 const MAX_AUTOMATIC_WAIT_SECONDS = 5
@@ -122,10 +124,14 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
       signal: controller.signal,
     })
     if (!response.ok) failure = await failureOf(response)
-    else if (response.status === 204 || options.discardBody) {
-      void response.body?.cancel().catch(() => {})
-      return undefined as T
-    } else return (await response.json()) as T
+    else {
+      options.onHeaders?.(response.headers)
+      if (response.status === 204 || options.discardBody) {
+        void response.body?.cancel().catch(() => {})
+        return undefined as T
+      }
+      return (await response.json()) as T
+    }
   } catch (error) {
     if (controller.signal.reason instanceof ApiTimeoutError) throw controller.signal.reason
     throw error
@@ -159,6 +165,12 @@ export function errorMessage(error: unknown): string {
     ? error.message
     : '连接暂时不可用，请检查网络后重试。'
 }
+
+/**
+ * A change that reduces permissions still applies when the Host cannot write its audit log; the Host then answers
+ * `x-latch-audit: failed`, and the page says so with the catalog text.
+ */
+export const auditFailed = (headers: Headers) => headers.get('x-latch-audit') === 'failed'
 
 /** Inline text for a failure, or '' when the message is already shown elsewhere (the confirmation dialog). */
 export function inlineError(error: unknown): string {

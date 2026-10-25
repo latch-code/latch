@@ -60,6 +60,8 @@ export const opencodeProfile: HarnessProfile = {
       'OpenCode 启动时会加载项目 .opencode 目录中的插件；在不信任的项目中使用会运行其中的代码',
     ],
   },
+  // OpenCode 1.x takes no other folders over ACP; `external_directory: 'ask'` above asks before it leaves the session directory.
+  folderAccess: 'primary-asks',
   // Searched from the session directory upwards, like OpenCode; `.opencode` loads after the rules above.
   projectConfigPaths: ['opencode.json', 'opencode.jsonc', '.opencode'],
   // At every start OpenCode installs its plugin package into each `.opencode` directory (package.json, bun.lock,

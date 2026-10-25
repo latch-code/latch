@@ -212,12 +212,15 @@ async function main(): Promise<void> {
     egressAllow.push(baseEntry)
     console.error(`[Latch] 已允许 Host 访问 HARNESS_BASE_URL 指定的 ${baseEntry}`)
   }
+  // A start directory the Host chose gets a folder per Agent session; one the owner named is used as it is.
+  const sessionFolders = paths.workspaceSource === 'default' || paths.workspaceSource === 'legacy-data'
   const demo = argv.includes('--demo')
   const providerId = option('--provider')
   const harnessId = option('--harness')
   const server = await startServer({
     dataDir: paths.dataDir,
     workspaceRoot: paths.workspaceRoot,
+    sessionFolders,
     agentsDir: paths.agentsDir,
     uiDir: resolve(codeRoot, 'dist/web'),
     port,
@@ -270,7 +273,8 @@ async function main(): Promise<void> {
   })
   console.log(`Latch ${LATCH_VERSION} · ${demo ? '演示模型 / 真实工具' : '通用模型接口'}`)
   console.log(`打开 ${server.loopbackOrigin}/link/ ，请在本机确认。`)
-  console.log(`工作区：${paths.workspaceRoot}`)
+  console.log(`启动目录：${paths.workspaceRoot}`)
+  if (sessionFolders) console.log('不在项目中的 Agent 会话各自使用启动目录中新建的一个文件夹。')
   console.log(
     server.tlsOrigin
       ? `手机接入：${server.tlsOrigin}/link/（在电脑上的 Latch 桌面端生成配对二维码）`

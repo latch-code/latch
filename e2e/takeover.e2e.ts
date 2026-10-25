@@ -221,7 +221,9 @@ describe('desktop to phone takeover', () => {
     await desktop.getByRole('tab', { name: '插件', exact: true }).click()
     await desktop.getByRole('switch').first().waitFor()
     await desktop.screenshot({ path: 'test-results/desktop-plugins.png', fullPage: true, animations: 'disabled' })
-    await desktop.getByRole('button', { name: '关闭', exact: true }).click()
+    await desktop.getByRole('button', { name: /^返回会话/ }).click()
+    // Settings fades out before the conversation takes input again.
+    await desktop.getByRole('dialog', { name: '设置', exact: true }).waitFor({ state: 'detached' })
   })
 
   it('renders the built-in streaming demonstration as readable Markdown on both devices', async () => {

@@ -1,20 +1,22 @@
 import { useLayoutEffect, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
-import { ArrowUp, LockKeyhole, ShieldAlert } from 'lucide-react'
+import { ArrowUp, LockKeyhole, RotateCcw, ShieldAlert } from 'lucide-react'
 import type { PlanEntry } from '@latch/protocol'
 import type { PendingSubmission } from '../core/api.ts'
-import { formatElapsed } from '../format.ts'
 import type { SendKey } from '../preferences.ts'
-import { PlanCard } from './PlanCard.tsx'
-import { Button, Comet, ICON_STROKE, InlineNotice, Spinner } from '@latch/ui'
+import { PlanChip } from './PlanCard.tsx'
+import { Button, Collapse, ICON_STROKE, InlineNotice, Spinner } from '@latch/ui'
 
+/**
+ * What a running session's bar above the input carries: only what can be acted on. What the run is doing and for how
+ * long is said in the conversation (the latest turn's live line), so the bar has no running label.
+ */
 export interface RunState {
-  label: string
-  /** Milliseconds since this page saw the run start; absent when unknown. */
-  elapsed?: number
   approvals: number
   onRevealApprovals: () => void
   cancel: 'idle' | 'cancelling' | 'uncertain'
   onCancel: () => void
+  /** The harness's latest plan, as a chip that opens the list. */
+  plan?: PlanEntry[]
 }
 
 const isMac = () => typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
@@ -43,7 +45,6 @@ export function Composer({
   coarse,
   controls,
   run,
-  plan,
   readOnly,
   notice,
 }: {
@@ -64,7 +65,6 @@ export function Composer({
   coarse: boolean
   controls: ReactNode
   run?: RunState
-  plan?: PlanEntry[]
   /** This device may watch, reject and cancel but not type: the text replaces the input. */
   readOnly?: string
   /** A note under the input about what sending will involve, such as a local confirmation. */
@@ -99,42 +99,13 @@ export function Composer({
           <Button onClick={onRetry}>重试这次提交</Button>
         </div>
       )}
-      {plan && plan.length > 0 && <PlanCard plan={plan} />}
       <form
         className={`composer ${run ? 'is-running' : ''}`}
         onSubmit={event => {
           event.preventDefault()
           if (sendable) onSubmit()
         }}>
-        {run && (
-          <div className={`run-bar ${run.approvals > 0 ? 'is-waiting' : ''}`}>
-            {run.approvals > 0 ? (
-              <>
-                <ShieldAlert size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-                <span role="status">{run.approvals} 项待批准</span>
-                <button type="button" className="run-bar-action" onClick={run.onRevealApprovals}>
-                  查看
-                </button>
-              </>
-            ) : (
-              <>
-                <Comet />
-                <span role="status">
-                  {run.cancel === 'cancelling'
-                    ? '正在取消，等待执行端确认'
-                    : run.cancel === 'uncertain'
-                      ? '取消结果尚未确认，可重试'
-                      : run.label}
-                </span>
-                {run.elapsed !== undefined && (
-                  <span className="run-bar-time" aria-hidden="true">
-                    {formatElapsed(run.elapsed)}
-                  </span>
-                )}
-              </>
-            )}
-          </div>
-        )}
+        <RunBar run={run} />
         {readOnly !== undefined ? (
           <p className="composer-readonly" role="note">
             <LockKeyhole size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
@@ -180,5 +151,52 @@ export function Composer({
         </p>
       )}
     </div>
+  )
+}
+
+/**
+ * The bar on top of the input while a session runs, when it has something to act on: the plan chip, approvals out of
+ * view (amber, 「1 项待批准 · 查看」) and the stop's own states. With nothing to say it folds away (its height animates
+ * with the disclosure, which the reading position follows as a resize).
+ */
+function RunBar({ run }: { run?: RunState }) {
+  const approvals = run?.approvals ?? 0
+  const stopping = run?.cancel === 'cancelling'
+  const uncertain = run?.cancel === 'uncertain'
+  const plan = run?.plan?.length ? run.plan : undefined
+  const shown = run !== undefined && (approvals > 0 || stopping || uncertain || plan !== undefined)
+  return (
+    <Collapse open={shown} className="run-bar-collapse">
+      <div className={`run-bar ${approvals > 0 && !stopping && !uncertain ? 'is-waiting' : ''}`}>
+        {approvals > 0 && !stopping && !uncertain ? (
+          <>
+            <ShieldAlert size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+            <span role="status">{approvals} 项待批准</span>
+            <button type="button" className="run-bar-action" onClick={run?.onRevealApprovals}>
+              查看
+            </button>
+          </>
+        ) : stopping ? (
+          <span role="status" className="run-bar-status">
+            正在停止…
+          </span>
+        ) : uncertain ? (
+          <>
+            <span role="status" className="run-bar-status">
+              停止结果尚未确认
+            </span>
+            <button type="button" className="run-bar-action" onClick={run?.onCancel}>
+              <RotateCcw size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+              重试
+            </button>
+          </>
+        ) : null}
+        {plan && (
+          <span className="run-bar-end">
+            <PlanChip plan={plan} />
+          </span>
+        )}
+      </div>
+    </Collapse>
   )
 }

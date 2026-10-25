@@ -1,6 +1,6 @@
 # @latch/host
 
-Host 的组合根：监听入口与 HTTP/SSE、设备与本机确认、策略、审计、出站、路径、HarnessHub、模型服务、内置插件，以及启动、停止、`pnpm latch`、桌面启动器与构建脚本。不负责浏览器界面、Electron 壳与 ACP Driver。
+Host 的组合根：持有会话、执行权限、密钥、设备与审计，组合插件和监听入口。浏览器界面、Electron 壳与 ACP Driver 由各自项目负责。
 
 | 路径 | 职责 |
 | --- | --- |
@@ -20,7 +20,8 @@ Host 的组合根：监听入口与 HTTP/SSE、设备与本机确认、策略、
 - 出站只经注入的 `fetch`：内置模型协议只用 Host 传入的出站策略 `fetch`；密钥只发往保存时绑定的 `keyOrigin`，地址的源改变后视为没有密钥（`test/providers.test.ts#uses a saved key only at the origin it was saved for`）。
 - Standard 风险由 Host 判定：`classifyStandardCall` 决定 R0/R1/R2，插件声明的 `requiresApproval` 不能降低风险，未列出的工具（含第三方插件工具）为 R2，分级器抛错或返回未知值按 R2 处理（`test/risk.test.ts#makes unlisted and third-party tools R2 regardless of what they declare`）。
 - 插件目录只用 `@latch/sdk`、`@latch/protocol`、本目录与种类目录下的共用文件，不导入 Host 或其他插件目录；只有 `standard` 用 `@latch/core`（`.oxlintrc.json`）。
-- 程序目录是仓库根：`latchCodeRoot()` 越过各项目的 `package.json` 找到名为 `harness-link` 的根，`dist/`、`native/macos/` 与 `apps/desktop/` 都按它定位（`test/paths.test.ts#returns the repository root from latchCodeRoot() in a process started in each workspace project`）。
+- 程序目录由 `latchCodeRoot()` 定位仓库根，不随进程的项目目录变化；规则与离线项目校验的启动上下文见 [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md#路径与项目目录)。
+- 项目变更与会话启动串行，但不阻塞设备撤销和策略收紧；主文件夹换序保留旧会话目录，重试沿用已持久化的自有目录（`test/project-regressions.test.ts`）。
 - 产物在仓库根的 `dist/`；Host 构建遇到测试代码即失败（`test/security.test.ts#fails a Host bundle that reaches the end-to-end tests under e2e/, helpers included`）。
 - `src/paths.ts`、`host-state.ts` 只用可擦除语法（`tsconfig.strip.json`）：`apps/web/vite.config.ts` 经 `@latch/host/paths`、`host-state` 让 Node 只剥离类型加载它们。
 

@@ -1,4 +1,11 @@
-import { isAcceptableDeviceName, SCOPE_LABELS, type ApiFailure, type DeviceScope } from '@latch/protocol'
+import {
+  isAcceptableDeviceName,
+  SCOPE_LABELS,
+  type ApiFailure,
+  type ApprovalOptionKind,
+  type DeviceScope,
+  type PresenceAction,
+} from '@latch/protocol'
 
 /**
  * Security-related text comes from this catalog, chosen by the Host's error
@@ -30,7 +37,186 @@ export const ENROLLMENT_REASON_TEXT: Partial<Record<EnrollmentReason, string>> =
 }
 
 export const HOST_DESKTOP_TEXT = '此操作需要在执行端电脑上用 Latch 桌面端确认。'
+/** A change that reduced permissions applied while the Host could not write its audit log (`x-latch-audit: failed`). */
+export const AUDIT_NOT_RECORDED_TEXT = '修改已生效，但执行端没有写入审计记录。请检查执行端数据目录所在磁盘的空间与权限。'
 export const LOCAL_ONLY_TEXT = '此操作只能在执行端电脑上用 Latch 桌面端进行'
+
+/**
+ * Approval cards: the state pill of each kind of request, the notes under the title, the footnotes that say what
+ * allowing does, and the reasons that replace an allow button this device does not get.
+ */
+export const APPROVAL_COPY = {
+  waiting: '待批准',
+  highRisk: '高风险',
+  advisory: '仅提示',
+  check: '需要核对',
+  advisoryNote: '完全访问会话中，Agent 的询问只是提示：拒绝会转达给它，但不能阻止它执行其他操作。',
+  hiddenCharacters: '内容包含不可见或改变显示方向的字符，已用 \\u{…} 标出。请仔细核对后再决定。',
+  onceNote: '只允许这一次，之后的同类操作仍会询问。',
+  localNote: '允许后要在这台电脑上用 Touch ID 或登录密码确认。',
+  /** While the local confirmation is open, in place of the footnote: the button keeps its words and its width. */
+  waitingLocal: '等待本机确认：在弹出的确认窗口中核对内容，再用 Touch ID 或登录密码确认。',
+  confirmedLocal: '已在本机确认，正在执行…',
+  allowLocal: '在本机允许',
+  allowLocalTooltip: '需要在这台电脑上用 Touch ID 或登录密码确认',
+  more: '更多批准选项',
+  moreSheet: '更多选项',
+  alwaysNote: '只在这个会话里有效',
+  moreBusy: '正在提交另一个选择',
+  noStandard: '此设备没有「批准普通操作」权限',
+  noElevated: '此设备没有「批准高风险操作」权限',
+  hostDesktop: '高风险操作只能在执行端电脑上用 Latch 桌面端批准',
+  advisoryRemote: '只有执行端电脑上的 Latch 桌面端可以回应完全访问会话的询问',
+  /** The choice whose outcome is unknown, by the label of its button. */
+  uncertainTitle: (choice: string) => `「${choice}」的结果未知`,
+  uncertain: '可重试同一选择，不会重复提交。',
+  retry: '重试',
+} as const
+
+/**
+ * The words of an agent's options, by their kind: an agent names its options in its own language (「Reject」), and
+ * the card shows the product's words, with the agent's own in the tooltip. 本会话始终允许 only reaches a card from
+ * the built-in harness.
+ */
+export const APPROVAL_OPTION_LABELS: Record<ApprovalOptionKind, string> = {
+  reject_once: '拒绝',
+  allow_once: '允许一次',
+  reject_always: '始终拒绝',
+  allow_always: '本会话始终允许',
+}
+
+/**
+ * The local confirmation dock, the fallback for actions that do not show the confirmation in place yet. The check
+ * code is shown only in a browser, where the person compares it with the window on another computer; in the desktop
+ * app the confirmation window on this computer is the one to read.
+ */
+export const CONFIRMATION_COPY = {
+  label: '本机确认',
+  waiting: '已打开确认窗口。核对窗口里的内容，然后用 Touch ID 或登录密码确认。',
+  browser: '请到运行 Latch 的电脑上，核对确认窗口里的内容和下面的核对码。',
+  code: '核对码',
+  confirmed: '已在本机确认，正在',
+  cooldownTitle: '本机确认已暂停',
+  cooldown: '连续拒绝了 3 次。为防止误触批准，暂时不再弹出确认窗口。',
+  /** How long the pause still lasts, 「4:05 后可以重试。」. */
+  cooldownWait: (wait: string) => `${wait} 后可以重试。`,
+  cooldownOver: '现在可以重试。',
+  busyTitle: '另一个确认还没完成',
+  busy: '先在已经打开的确认窗口中完成或取消它。',
+  blockedTitle: '暂时不能确认',
+  blocked: '完全访问会话正在运行。为防止 Agent 冒用你的确认，停止它或等它结束后再试。',
+  cancel: '取消',
+  close: '关闭',
+  ok: '好',
+} as const
+
+/** What the request does once the local confirmation passes, for 「已在本机确认，正在…」. */
+export const CONFIRMATION_VERBS: Record<PresenceAction, string> = {
+  'device.enroll': '登记设备',
+  'device.grant': '更新权限',
+  'task.start-l3': '开启会话',
+  'task.mode-widen': '切换模式',
+  'agent.define': '保存 Agent',
+  'policy.change': '更新策略',
+  'provider.set-key': '保存密钥',
+  'approval.r2': '执行',
+}
+
+/**
+ * Why a local confirmation ended without the request running; the card or the dock shows it and the caller gets it as
+ * the error. A denial covers every way the confirmation did not pass: 不允许 in the window, a failed or cancelled
+ * Touch ID or password prompt, or the system cancelling it.
+ */
+export const CONFIRMATION_RESULT_TEXT = {
+  denied: '操作没有执行。本机确认没有通过。',
+  expired: '操作没有执行。60 秒内没有完成确认。',
+  cancelled: '操作没有执行。确认已取消。',
+  error: '操作没有执行。本机确认没有完成。',
+} as const
+
+/** Whole minutes and seconds of a wait, 「4:05」. */
+export function waitText(seconds: number): string {
+  const whole = Math.max(0, Math.ceil(seconds))
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`
+}
+
+/** The enrollment page. */
+export const ENROLLMENT_COPY = {
+  title: '连接到 Latch',
+  local: '这台设备会生成自己的密钥。提交后，请在运行 Latch 的电脑上核对指纹，并用 Touch ID 或登录密码确认。',
+  /** The intro while local confirmation is unavailable: the offline code is the way in. */
+  offline: '这台设备会生成自己的密钥，再用离线登记码完成登记。',
+  /** Why only the offline code is accepted, with the Host's reason (trailing full stops removed). */
+  unavailable: (reason: string) =>
+    `本机确认不可用：${reason || '未知原因'}。停止 Host 后，在运行 Latch 的电脑上运行 pnpm latch device enroll --offline，把生成的离线登记码填在下面。`,
+  invited: '已收到配对邀请。提交后，请在运行 Latch 的电脑上核对指纹并确认。',
+  invitationRequired:
+    '手机或其他电脑需要配对邀请。请在电脑上的 Latch 桌面端「设备」页生成配对二维码，或在电脑上运行 pnpm latch device invite。',
+  name: '设备名称',
+  namePlaceholder: '例如：我的手机',
+  scopes: '此设备的权限',
+  submit: '请求本机确认',
+  waiting: '等待本机确认',
+  /** The seconds left on the enrollment request. */
+  remaining: (seconds: number) => `剩余 ${seconds} 秒`,
+  cancel: '取消',
+  retry: '重试',
+  fingerprint: '设备指纹',
+  compare: '请确认电脑上显示的指纹与下面完全一致：',
+  hash: '核对码',
+  completing: '正在完成登记…',
+  connecting: '正在连接执行端…',
+  confirmFailed: '登记已完成，但还没能读取执行端状态。',
+  denied: '本机拒绝了此设备。',
+  expired: '本机确认已超时，请重新提交。',
+  offlineField: '离线登记码',
+  offlineSubmit: '使用离线登记码',
+  unsupported: '此浏览器无法在当前地址安全地保存设备密钥。请使用最新版 Chrome、Edge、Firefox 或 Safari，或使用 Latch 桌面端。',
+  mismatch: '服务器返回的指纹与本机计算的不一致，已停止登记。',
+  legacyTitle: '此设备需要在本机重新确认',
+  legacyBody: 'Latch 已升级设备凭据，旧的登录状态不再有效。请提交确认请求，并在运行 Latch 的电脑上核对指纹。',
+  legacySubmit: '在本机重新确认',
+  oldHost: '此 Host 版本过旧，请在电脑上重启 Latch。',
+  admin: '管理此 Host（模型服务、插件、项目和设备）',
+} as const
+
+/** The scopes as the enrollment page lists them: the device scopes, with what viewing and managing cover. */
+const ENROLLMENT_SCOPE_LABELS: Record<DeviceScope, string> = {
+  ...SCOPE_LABELS,
+  view: '查看会话',
+  admin: ENROLLMENT_COPY.admin,
+}
+/** What a browser always gets; 管理此 Host is its one choice. */
+export const BROWSER_SCOPES: readonly string[] = (['view', 'run', 'approve:standard'] as const).map(scope => ENROLLMENT_SCOPE_LABELS[scope])
+/** The desktop app enrolls on the Host's own socket and receives every scope. */
+export const DESKTOP_SCOPES: readonly string[] = (['view', 'run', 'approve:standard', 'approve:elevated', 'admin', 'secrets'] as const).map(
+  scope => ENROLLMENT_SCOPE_LABELS[scope],
+)
+
+/** Pairing a phone from 设置 › 设备. */
+export const PAIRING_COPY = {
+  intro: '生成一次性配对二维码，在手机上扫描后提交登记。二维码 10 分钟内有效，只能使用一次；对方提交后，仍需在这台电脑上核对指纹并确认。',
+  expired: '上一个二维码已过期。',
+  create: '生成配对二维码',
+  steps: [
+    '在手机上扫描二维码，或打开配对链接。',
+    '在手机上提交登记请求。',
+    '在这台电脑上核对两边显示的指纹，并用 Touch ID 或登录密码确认。',
+  ],
+  qrFailed: '二维码生成失败，可复制配对链接。',
+  copyBlocked: '当前浏览器不允许复制。请在手机上扫描二维码。',
+  needsTls: '手机接入需要 HTTPS。请用 --tls-cert、--tls-key 和 --public-origin 启动 Host（例如用 tailscale cert 生成的证书）。',
+  needsDesktop: '配对二维码只能在执行端电脑上的 Latch 桌面端生成，或运行 pnpm latch device invite。',
+  needsAdmin: '此设备没有「管理此 Host」权限',
+  /** The time an invitation has left, then that it works once: 「剩余 9:41 · 仅可使用一次」. */
+  remaining: (time: string) => `剩余 ${time} · 仅可使用一次`,
+  qrAlt: '手机配对二维码',
+  shareTitle: 'Latch 配对链接',
+  share: '分享链接',
+  copy: '复制链接',
+  copied: '已复制',
+  regenerate: '重新生成',
+} as const
 
 /** Session banners for a session that no longer accepts input. */
 export const SESSION_STOP_TEXT = {
@@ -52,6 +238,7 @@ const FIXED: Record<string, string> = {
   'legacy-reconfirm': '此设备需要在本机重新确认',
   'local-only': LOCAL_ONLY_TEXT,
   'ceiling-exceeded': '超出此设备可用的权限上限',
+  'policy-changed': '安全策略刚被修改过，这次更改没有应用。请查看最新的设置后重试。',
   'presence-unavailable': '本机确认不可用',
   'presence-busy': '本机正在等待另一项确认，请先完成或取消',
   'presence-blocked': '有完全访问会话正在运行，本机确认暂时只能用于拒绝。请等待其结束或取消后重试。',

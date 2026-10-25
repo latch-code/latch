@@ -10,12 +10,15 @@ if (typeof electron === 'string' || !electron.app) {
   process.exit(1)
 }
 
-const { app, BrowserWindow, dialog, nativeImage, nativeTheme, protocol, safeStorage, session, shell } = electron
+const { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, protocol, safeStorage, session, shell } = electron
+const { realpath, stat } = require('node:fs/promises')
 const { join, resolve } = require('node:path')
 const { readHostStateFile, inspectHostState } = require('./host.cjs')
 const { openCredentialStore, secureStorageProblem } = require('./credentials.cjs')
+const { createFolderActions, isTrustedSender } = require('./folders.cjs')
 const {
   HTML_CSP,
+  createDialogGate,
   createExternalOpener,
   createShellProxy,
   debugFlagProblems,
@@ -99,8 +102,14 @@ function createWindow({ width = 1250, height = 850, preload = true } = {}) {
   })
 }
 
+/** The window that shows the page; folder actions answer only its own top-level page. */
+let mainWindow
+const refusedFolders = { status: 'failed', code: 'shell-refused' }
+const trusted = event => isTrustedSender(event, mainWindow?.webContents)
+
 function openWindow() {
-  void createWindow().loadURL(APP_URL)
+  mainWindow = createWindow()
+  void mainWindow.loadURL(APP_URL)
 }
 
 /** Shows a local error page served by the latch scheme (the renderer may load nothing else), then quits on close. */
@@ -129,9 +138,12 @@ async function hardenSession(target) {
   await target.setProxy({ mode: 'direct' })
 }
 
+// One native dialog at a time: the external-link confirmation and the folder dialogs share it.
+const dialogGate = createDialogGate()
 const openExternal = createExternalOpener({
   confirm: (options, parent) => (parent ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options)),
   open: url => shell.openExternal(url),
+  gate: dialogGate,
   log,
 })
 
@@ -148,6 +160,37 @@ app.on('web-contents-created', (_event, contents) => {
   contents.on('will-frame-navigate', guard)
   contents.on('will-attach-webview', event => event.preventDefault())
 })
+
+/**
+ * `latchShell.folders`: the native open panel, dropped folders after a native confirmation, a session's own folder
+ * saved as a project after a native confirmation, and showing a project's folder in Finder. Main adds folders to the
+ * Host itself, through `shellRequest` (the renderer's own requests to the add routes get 403 shell-managed) and signed
+ * with the device key; the page never sends a path for these. Every call from anything but the main window's own page
+ * is refused.
+ */
+function handleFolders(proxy, store) {
+  const actions = createFolderActions({
+    request: (method, path, body) => proxy.shellRequest(method, path, body),
+    sign: body => store.signFolders(body),
+    pick: options => (mainWindow ? dialog.showOpenDialog(mainWindow, options) : dialog.showOpenDialog(options)),
+    confirm: options => (mainWindow ? dialog.showMessageBox(mainWindow, options) : dialog.showMessageBox(options)),
+    show: path => {
+      shell.showItemInFolder(path)
+    },
+    async inspect(path) {
+      const real = await realpath(path)
+      return { real, directory: (await stat(real)).isDirectory() }
+    },
+    home: () => app.getPath('home'),
+    focused: () => mainWindow !== undefined && !mainWindow.isDestroyed() && mainWindow.isFocused(),
+    gate: dialogGate,
+    log,
+  })
+  ipcMain.handle('latch:folders:pick', (event, input) => (trusted(event) ? actions.pickFolders(input) : refusedFolders))
+  ipcMain.handle('latch:folders:drop', (event, input) => (trusted(event) ? actions.dropFolders(input) : refusedFolders))
+  ipcMain.handle('latch:folders:reveal', (event, input) => (trusted(event) ? actions.revealFolder(input) : refusedFolders))
+  ipcMain.handle('latch:folders:save-session', (event, input) => (trusted(event) ? actions.saveSessionFolder(input) : refusedFolders))
+}
 
 async function start() {
   await hardenSession(session.defaultSession)
@@ -193,6 +236,7 @@ async function start() {
     },
   })
   protocol.handle('latch', request => proxy.handle(request))
+  handleFolders(proxy, store)
   if (store.current()) await proxy.renew()
   proxy.startRenewalTimer()
   ready = true

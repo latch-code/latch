@@ -1,21 +1,4 @@
-import {
-  ArrowLeftRight,
-  Brain,
-  Check,
-  CircleSlash,
-  Clock,
-  FilePen,
-  FileSearch,
-  Globe,
-  LoaderCircle,
-  Search,
-  ShieldAlert,
-  Terminal,
-  Trash,
-  TriangleAlert,
-  Wrench,
-  X,
-} from 'lucide-react'
+import { ArrowLeftRight, Brain, FilePen, FileSearch, Globe, Search, Terminal, Trash, Wrench, X } from 'lucide-react'
 import type { Message, ToolKind } from '@latch/protocol'
 import type { LucideIcon } from '@latch/ui'
 
@@ -42,15 +25,6 @@ export function toolKind(message: Pick<Message, 'tool' | 'toolName'>): ToolKind 
   if (/fetch|http|web|url/.test(name)) return 'fetch'
   if (/delete|remove/.test(name)) return 'delete'
   return 'other'
-}
-
-export const toolStateIcons: Record<NonNullable<Message['state']>, LucideIcon> = {
-  queued: Clock,
-  'awaiting-approval': ShieldAlert,
-  running: LoaderCircle,
-  completed: Check,
-  failed: TriangleAlert,
-  cancelled: CircleSlash,
 }
 
 export { X as CloseIcon }

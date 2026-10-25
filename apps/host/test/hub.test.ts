@@ -369,6 +369,53 @@ describe('harness hub isolation and lifecycle', () => {
     ])
   })
 
+  it('reports which folders of a project each driver receives, and passes them only to one that takes them all', async () => {
+    const { hub: value } = await hub()
+    const previews = new Map<string, ReturnType<typeof vi.fn>>()
+    for (const [id, extra] of [
+      ['all', { projectFolders: 'all' }],
+      ['capped', { projectFolders: 'all', folderAccess: { access: 'all', max: 5 } }],
+      ['zero', { projectFolders: 'all', folderAccess: { access: 'all', max: 0 } }],
+      ['asks', { folderAccess: { access: 'primary-asks' } }],
+      ['claims', { folderAccess: { access: 'all', max: 5 } }],
+      ['plain', {}],
+    ] as Array<[string, Partial<HarnessDriver>]>) {
+      const launchPreview = vi.fn(async ({ cwd }: { cwd: string }) => ({
+        launchHash: 'a'.repeat(64),
+        command: '/bin/agent',
+        args: [],
+        envNames: [],
+        cwd,
+        verified: false,
+        approvals: 'prompts' as const,
+        readback: 'none' as const,
+        notes: [],
+      }))
+      previews.set(id, launchPreview)
+      await value.attach(driver(id, extra), mount(external([], [], { launchPreview }).bridge, { source: 'acp' }))
+    }
+    expect(Object.fromEntries(value.drivers().map(info => [info.id, info.projectFolders ?? null]))).toEqual({
+      all: { access: 'all' },
+      capped: { access: 'all', max: 5 },
+      zero: { access: 'all' },
+      asks: { access: 'primary-asks' },
+      // Only a driver that receives every folder is shown as using them.
+      claims: null,
+      plain: null,
+    })
+    const project = {
+      workspaceId: 'proj',
+      folders: [
+        { id: 'api', path: '/w/api' },
+        { id: 'web', path: '/w/web' },
+      ],
+    }
+    await value.launchPreviewOf('capped', '/w/api', project)
+    expect(previews.get('capped')).toHaveBeenCalledWith({ cwd: '/w/api', ...project })
+    await value.launchPreviewOf('asks', '/w/api', project)
+    expect(previews.get('asks')).toHaveBeenCalledWith({ cwd: '/w/api' })
+  })
+
   it('closes every driver in reverse order, releases every lease, and reports cleanup failures', async () => {
     const order: string[] = []
     const first = external([], [], {

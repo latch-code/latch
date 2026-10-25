@@ -285,6 +285,65 @@ describe('streamed task state', () => {
     expect(current.sync!.revision).toBeGreaterThanOrEqual(settled.revision)
   })
 
+  it('stamps snapshots and streamed task states with the Host clock, which also times the runs', async () => {
+    const dataDir = await directory()
+    const T0 = Date.parse('2026-10-24T06:00:00.000Z')
+    let time = T0
+    const finish = deferred()
+    // The reply waits for the subscription: the run starts before POST /tasks answers (the Host records the session's
+    // project after the driver created it), so an unguarded first chunk can stream before anyone listens.
+    const subscribed = deferred()
+    const provider: ModelProvider = {
+      id: 'clocked',
+      name: 'Clocked fixture',
+      model: 'clocked',
+      async *stream({ signal }) {
+        await subscribed.promise
+        time += 2000
+        yield { type: 'text', text: '一' }
+        await finish.promise
+        signal.throwIfAborted()
+        yield { type: 'finish', reason: 'stop' }
+      },
+    }
+    const { device } = await testHost({
+      dataDir,
+      demo: false,
+      providerId: 'clocked',
+      clock: () => time,
+      plugins: [
+        {
+          id: 'clocked',
+          name: 'Clocked fixture',
+          version: '1',
+          description: 'Deterministic clock fixture',
+          activate(ctx) {
+            ctx.registerProvider(provider)
+          },
+        },
+      ],
+    })
+    cleanups.push(async () => {
+      subscribed.resolve()
+      finish.resolve()
+    })
+    expect((await device.json<{ hostTime?: string }>('snapshot')).hostTime).toBe(new Date(T0).toISOString())
+    const { sessionId } = await device.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { prompt: 'clock', requestId: randomUUID() },
+    })
+    const received = await events(device, `?sessionId=${sessionId}`)
+    subscribed.resolve()
+    await vi.waitFor(() => expect(received.some(event => event.type === 'task-state' && event.detail.liveText === '一')).toBe(true))
+    const live = received.findLast((event): event is TaskStateEvent => event.type === 'task-state' && event.detail.liveText === '一')!
+    expect(live.hostTime).toBe(new Date(T0 + 2000).toISOString())
+    expect(live.detail.sync?.hostTime).toBe(live.hostTime)
+    expect(live.detail).toMatchObject({ runStartedAt: new Date(T0).toISOString(), lastOutputAt: new Date(T0 + 2000).toISOString() })
+    // A plain detail request carries no time, so two devices reading the same state get the same body.
+    expect((await device.json<TaskDetail>(`tasks/${sessionId}`)).sync).not.toHaveProperty('hostTime')
+    finish.resolve()
+  })
+
   it('reports queued, approval, executing and cancelling phases without claiming a cancelled tool has finished early', async () => {
     const dataDir = await directory()
     const entered = deferred()
@@ -325,7 +384,7 @@ describe('streamed task state', () => {
     const { sessionId } = await bridge.createTask({ prompt: 'write', requestId: 'states' })
     await vi.waitFor(async () => expect((await bridge.detail(sessionId)).summary.status).toBe('waiting-approval'))
     const approval = await bridge.detail(sessionId)
-    expect(approval.activity).toEqual({ phase: 'approval', toolName: 'write' })
+    expect(approval.activity).toEqual({ phase: 'approval', toolName: 'write', since: expect.any(String) })
     expect(approval.messages.filter(message => message.role === 'tool').map(message => message.state)).toEqual([
       'awaiting-approval',
       'queued',

@@ -82,7 +82,8 @@ a:hover {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
-[hidden] {
+/* Content hidden until the browser's find reaches it (a closed disclosure) keeps its box; everything else hidden goes. */
+[hidden]:not([hidden='until-found']) {
   display: none !important;
 }
 

@@ -12,4 +12,6 @@ export const gooseProfile: HarnessProfile = {
     readback: 'mode',
     notes: [],
   },
+  // goose has no other folders to receive and does not limit the paths its tools use.
+  folderAccess: 'primary-unbounded',
 }

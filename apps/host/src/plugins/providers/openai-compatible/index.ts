@@ -66,7 +66,13 @@ const chunkSchema = z.object({
     )
     .optional(),
   usage: z
-    .object({ prompt_tokens: z.number().int().nonnegative(), completion_tokens: z.number().int().nonnegative() })
+    .object({
+      prompt_tokens: z.number().int().nonnegative(),
+      completion_tokens: z.number().int().nonnegative(),
+      // Optional parts some services report; a gateway that sends them malformed just loses the part.
+      prompt_tokens_details: z.object({ cached_tokens: z.number().int().nonnegative().nullish() }).nullish().catch(undefined),
+      completion_tokens_details: z.object({ reasoning_tokens: z.number().int().nonnegative().nullish() }).nullish().catch(undefined),
+    })
     .nullable()
     .optional(),
   error: z.unknown().optional(),
@@ -153,7 +159,7 @@ export function createOpenAIPlugin(config: OpenAIConfig): HarnessPlugin {
 
       const calls = new Map<number, { id: string; name: string; arguments: string }>()
       let finish: 'stop' | 'tool-calls' | undefined
-      let usage: { inputTokens: number; outputTokens: number } | undefined
+      let usage: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; reasoningTokens?: number } | undefined
       for await (const payload of sseData(response.body, signal)) {
         signal.throwIfAborted()
         if (payload.trim() === '[DONE]') break
@@ -169,7 +175,16 @@ export function createOpenAIPlugin(config: OpenAIConfig): HarnessPlugin {
         if (chunk.error != null) throw new ProviderError(redacted(errorMessage(chunk.error)), 'upstream-error')
         if (chunk.choices === undefined && chunk.usage == null)
           throw new ProviderError('模型流事件缺少 choices 或 usage。', 'invalid-chunk')
-        if (chunk.usage) usage = { inputTokens: chunk.usage.prompt_tokens, outputTokens: chunk.usage.completion_tokens }
+        if (chunk.usage) {
+          const cached = chunk.usage.prompt_tokens_details?.cached_tokens
+          const reasoning = chunk.usage.completion_tokens_details?.reasoning_tokens
+          usage = {
+            inputTokens: chunk.usage.prompt_tokens,
+            outputTokens: chunk.usage.completion_tokens,
+            ...(cached != null ? { cacheReadTokens: cached } : {}),
+            ...(reasoning != null ? { reasoningTokens: reasoning } : {}),
+          }
+        }
         for (const choice of chunk.choices ?? []) {
           if (choice.index !== 0) throw new ProviderError('模型服务返回了未请求的多个候选。', 'invalid-choice')
           const delta = choice.delta

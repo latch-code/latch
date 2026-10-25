@@ -8,6 +8,7 @@ ACP HarnessDriver：每个启用的 Agent 定义一个 Driver（`createAcpAgentP
 
 - 子进程环境只来自 `agentEnvironment`：白名单继承、代理置空，移除 `NODE_OPTIONS`、`HARNESS_*`、`npm_*`、`DYLD_*`、`LD_*`（不区分大小写）（`test/acp.test.ts#applies the definition, then the profile, then the forced values, and removes loader and npm variables`）。
 - 会话只启动与本机确认时 `launchHash` 一致的进程（`test/acp.test.ts#starts a session only with the launch fingerprint the owner confirmed`）；指纹覆盖命令、参数、定义的环境变量、预设、profile 版本与 profile 列出的项目配置（`test/acp.test.ts#fingerprints the command, arguments, variable names and values, preset and profile version`）。
+- 只有 profile 声明了 `folders` 的预设收到项目的其他文件夹（Codex 经 ACP `additionalDirectories`，只在 Agent 声明支持时；Gemini CLI、Qwen Code 经 `--include-directories`）；它们计入 `launchHash`，没有其他文件夹时指纹不变（`test/acp.test.ts#gives Codex the full list of other folders over ACP on new, resumed and loaded sessions`、`test/acp.test.ts#never passes other folders to OpenCode, DeepSeek Harness, pi or goose`）。
 - 权限行为只写在 `src/profiles/`；改变 profile 行为时提高其 `version`，它计入 `launchHash`。Agent 放宽自己的权限模式时停止该轮（`test/acp.test.ts#cancels the turn, rejects pending asks and stops input when the agent widens its own mode`）。
 - 取消须等进程真实结算（`test/acp.test.ts#answers open permissions as cancelled and waits for the prompt to settle`）。
 - 新的持久化字段以可选字段加入 `src/store.ts` 的 zod schema，旧文件照常读取。

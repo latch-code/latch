@@ -7,8 +7,16 @@ import { randomUUID } from 'node:crypto'
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs'
 
 const env = process.env
-/** Comma list: resume, load, delete. */
-const caps = new Set((env.FAKE_ACP_CAPS ?? '').split(',').filter(Boolean))
+/** The content of FAKE_ACP_CAPS_FILE when set, so a later process of the same definition can advertise other capabilities. */
+const capsFile = (() => {
+  try {
+    return env.FAKE_ACP_CAPS_FILE ? readFileSync(env.FAKE_ACP_CAPS_FILE, 'utf8').trim() : undefined
+  } catch {
+    return undefined
+  }
+})()
+/** Comma list: resume, load, delete, dirs (sessionCapabilities.additionalDirectories). */
+const caps = new Set((capsFile ?? env.FAKE_ACP_CAPS ?? '').split(',').filter(Boolean))
 const stateFile = env.FAKE_ACP_STATE
 const logFile = env.FAKE_ACP_LOG
 const END = { stopReason: 'end_turn' }
@@ -59,6 +67,7 @@ const save = () => {
 
 log('start', {
   cwd: process.cwd(),
+  argv: process.argv.slice(2),
   harnessEnv: Object.keys(env).filter(key => key.startsWith('HARNESS_')),
   secret: env.FAKE_SECRET ?? null,
   tmpdir: env.TMPDIR ?? null,
@@ -247,7 +256,11 @@ async function handle(method, params) {
         protocolVersion: Number(env.FAKE_ACP_PROTOCOL ?? 1),
         agentCapabilities: {
           loadSession: caps.has('load'),
-          sessionCapabilities: { ...(caps.has('resume') ? { resume: {} } : {}), ...(caps.has('delete') ? { delete: {} } : {}) },
+          sessionCapabilities: {
+            ...(caps.has('resume') ? { resume: {} } : {}),
+            ...(caps.has('delete') ? { delete: {} } : {}),
+            ...(caps.has('dirs') ? { additionalDirectories: {} } : {}),
+          },
         },
         authMethods: env.FAKE_ACP_AUTH ? [{ id: 'fake-login', name: 'Fake login', description: 'Run `fake login` in a terminal' }] : [],
         agentInfo: { name: 'Fake ACP', ...(version === 'none' ? {} : { version }) },
@@ -445,6 +458,17 @@ const scenarios = {
     tool({ toolCallId: 'call_1', status: 'completed', content: [text(`ran with ${result.outcome.optionId}`)] }, 'tool_call_update')
     say('allowed')
     return END
+  },
+  // A plan, then the same question as `permission`: a running session that waits for an answer with a plan in hand.
+  'plan-ask': args => {
+    update(args.sessionId, {
+      sessionUpdate: 'plan',
+      entries: [
+        { content: 'List the project root', status: 'in_progress' },
+        { content: 'Summarise the layout', status: 'pending' },
+      ],
+    })
+    return scenarios.permission(args)
   },
   'persistent-only': options([
     { optionId: 'always', name: 'Always allow', kind: 'allow_always' },

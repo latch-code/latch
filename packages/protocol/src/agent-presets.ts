@@ -9,6 +9,11 @@ export interface AgentPreset {
   description: string
   /** Shown when the command is missing. Latch never installs or downloads agents itself. */
   install?: string
+  /**
+   * The agent an adapter command connects to, which must be installed as well (pi for pi-acp). The Host looks for it
+   * the same way, so the page can say which of the two is missing.
+   */
+  companion?: string
 }
 
 export const AGENT_PRESETS: AgentPreset[] = [
@@ -30,7 +35,8 @@ export const AGENT_PRESETS: AgentPreset[] = [
     license: 'MIT',
     homepage: 'https://github.com/svkozak/pi-acp',
     description: '通过 ACP 适配器运行 pi。pi 执行工具前不请求审批，Latch 不会显示审批。',
-    install: 'npm i -g pi-acp（需要已安装 pi）',
+    install: 'npm i -g pi-acp',
+    companion: 'pi',
   },
   {
     id: 'opencode',

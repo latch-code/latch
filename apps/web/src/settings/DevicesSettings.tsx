@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import QRCode from 'qrcode'
-import { Globe, Laptop, Link, Monitor, QrCode, Share2, Smartphone } from 'lucide-react'
+import { Ban, Globe, KeyRound, Laptop, Monitor, Smartphone } from 'lucide-react'
 import {
   escapeSecurityText,
   isAcceptableDeviceName,
@@ -9,19 +8,18 @@ import {
   type AppSnapshot,
   type Device,
   type DeviceScope,
-  type InvitationView,
 } from '@latch/protocol'
 import { api, errorMessage, inlineError } from '../core/api.ts'
 import { withConfirmation } from '../core/confirmations.ts'
-import { dateTime, formatElapsed, looksLikePhone, relativeTime } from '../format.ts'
+import { dateTime, looksLikePhone, relativeTime } from '../format.ts'
 import { DEV_MODE_TEXT, hostView, type DeviceAccess } from '../core/permissions.ts'
 import { DEVICE_NAME_INVALID_TEXT, LOCAL_ONLY_TEXT } from '../core/securityCopy.ts'
 import { ConfirmDialog, Modal, ModalHeader } from '../components/overlays.tsx'
-import { Badge, Button, Count, ICON_STROKE, InlineNotice, type LucideIcon, Spinner, StatusPill } from '@latch/ui'
-import { useCopy } from '../components/ui.tsx'
+import { Badge, Button, InlineNotice, type LucideIcon, Menu, StatusPill, TextField } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { useViewport } from '../breakpoints.ts'
-import { Loading, SectionHeading } from './common.tsx'
+import { IconTile, Loading, moreButton, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
+import { PairingSection } from './PhonePairing.tsx'
 
 const STATUS: Record<Device['status'], { label: string; tone: 'neutral' | 'warn' | 'err' | 'ok' }> = {
   active: { label: '正常', tone: 'neutral' },
@@ -55,18 +53,14 @@ function ThisDevice({ device, devMode, onChanged }: { device: AppSnapshot['devic
   const [name, setName] = useState(device.name)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [saved, setSaved] = useState(false)
-  const [revoking, setRevoking] = useState(false)
   const nameInvalid = name.trim() !== '' && !isAcceptableDeviceName(name.trim())
   const save = async (event: FormEvent) => {
     event.preventDefault()
     if (!name.trim() || nameInvalid || name.trim() === device.name) return
     setBusy(true)
     setError('')
-    setSaved(false)
     try {
       await api('devices/current', { method: 'PATCH', body: { name: name.trim() } })
-      setSaved(true)
       onChanged()
     } catch (cause) {
       setError(errorMessage(cause))
@@ -74,71 +68,66 @@ function ThisDevice({ device, devMode, onChanged }: { device: AppSnapshot['devic
       setBusy(false)
     }
   }
-  const Icon = deviceIcon(device)
   return (
-    <section className="settings-group" aria-labelledby="this-device">
-      <h4 id="this-device">此设备</h4>
-      <div className="device-card">
-        <span className="device-avatar is-large" aria-hidden="true">
-          <Icon size={16} strokeWidth={ICON_STROKE[16]} />
-        </span>
-        <div className="device-card-main">
-          <form
-            className="inline-form"
-            onSubmit={event => {
-              void save(event)
-            }}>
-            <label className="field">
-              <span>设备名称</span>
-              <input
-                value={name}
-                maxLength={80}
-                autoComplete="off"
-                aria-invalid={nameInvalid}
-                onChange={event => {
-                  setName(event.target.value)
-                  setSaved(false)
-                }}
-              />
-              {nameInvalid && <small className="field-hint is-error">{DEVICE_NAME_INVALID_TEXT}</small>}
-            </label>
-            <Button type="submit" disabled={busy || !name.trim() || nameInvalid || name.trim() === device.name} loading={busy}>
-              保存名称
-            </Button>
-          </form>
-          {saved && (
-            <span className="settings-saved" role="status">
-              已保存
-            </span>
-          )}
-          <dl className="device-facts">
-            <div>
-              <dt>连接方式</dt>
-              <dd>{LISTENER_LABELS[device.listener]}</dd>
-            </div>
-            <div>
-              <dt>状态</dt>
-              {/* A healthy device is the default state, so it is plain text; only a state to act on gets a pill. */}
-              <dd>{device.status === 'active' ? STATUS.active.label : <StatusBadge status={device.status} />}</dd>
-            </div>
-            {device.fingerprint && (
-              <div>
-                <dt>设备指纹</dt>
-                <dd>
-                  <code className="fingerprint-inline">{device.fingerprint}</code>
-                </dd>
-              </div>
-            )}
-            <div>
-              <dt>权限</dt>
-              <dd>{scopeText(device.scopes)}</dd>
-            </div>
-            <div>
-              <dt>登记有效期</dt>
-              <dd>{dateTime(device.credentialExpiresAt) || '—'}</dd>
-            </div>
-          </dl>
-          <div className="device-card-actions">
+    <>
+      <SettingsGroup
+        title="此设备"
+        caption={devMode ? `${DEV_MODE_TEXT}。此版本未经签名发布，能修改本机文件的程序也能修改 Host 与桌面端。` : undefined}>
+        <form
+          className="settings-row settings-form-row"
+          onSubmit={event => {
+            void save(event)
+          }}>
+          <TextField
+            label="设备名称"
+            value={name}
+            maxLength={80}
+            autoComplete="off"
+            error={nameInvalid ? DEVICE_NAME_INVALID_TEXT : undefined}
+            onChange={event => {
+              setName(event.target.value)
+            }}
+          />
+          <Button type="submit" disabled={busy || !name.trim() || nameInvalid || name.trim() === device.name} loading={busy}>
+            保存名称
+          </Button>
+        </form>
+        <SettingsRow title="连接方式" trailing={<span className="settings-row-value">{LISTENER_LABELS[device.listener]}</span>} />
+        <SettingsRow
+          title="状态"
+          trailing={
+            // A healthy device is the default state, so it is plain text; only a state to act on gets a pill.
+            device.status === 'active' ? (
+              <span className="settings-row-value">{STATUS.active.label}</span>
+            ) : (
+              <StatusBadge status={device.status} />
+            )
+          }
+        />
+        {device.fingerprint && (
+          <SettingsRow title="设备指纹" trailing={<code className="settings-row-value settings-mono">{device.fingerprint}</code>} />
+        )}
+        <SettingsRow title="权限" description={scopeText(device.scopes)} />
+        <SettingsRow
+          title="登记有效期"
+          trailing={<span className="settings-row-value">{dateTime(device.credentialExpiresAt) || '—'}</span>}
+        />
+      </SettingsGroup>
+      {error && <InlineNotice tone="error">{error}</InlineNotice>}
+    </>
+  )
+}
+
+/** Revoking this device: the page's last group, outlined in red. */
+function RevokeThisDevice({ device, onChanged }: { device: AppSnapshot['device']; onChanged: () => void }) {
+  const [revoking, setRevoking] = useState(false)
+  return (
+    <>
+      <SettingsGroup danger>
+        <SettingsRow
+          title="撤销此设备"
+          description="撤销立即生效；这台设备要重新登记并在执行端确认后才能再连接"
+          trailing={
             <Button
               variant="danger"
               onClick={() => {
@@ -146,18 +135,9 @@ function ThisDevice({ device, devMode, onChanged }: { device: AppSnapshot['devic
               }}>
               撤销此设备
             </Button>
-          </div>
-        </div>
-      </div>
-      {devMode && (
-        <p className="dev-note">
-          <Badge className="dev-chip" aria-hidden="true">
-            开发版
-          </Badge>
-          {DEV_MODE_TEXT}。此版本未经签名发布，能修改本机文件的程序也能修改 Host 与桌面端。
-        </p>
-      )}
-      {error && <InlineNotice tone="error">{error}</InlineNotice>}
+          }
+        />
+      </SettingsGroup>
       {revoking && (
         <ConfirmDialog
           title="撤销此设备"
@@ -171,13 +151,13 @@ function ThisDevice({ device, devMode, onChanged }: { device: AppSnapshot['devic
             try {
               await api('devices/current', { method: 'DELETE' })
             } catch (cause) {
-              throw new Error(errorMessage(cause))
+              throw new Error(errorMessage(cause), { cause })
             }
             onChanged()
           }}
         />
       )}
-    </section>
+    </>
   )
 }
 
@@ -279,63 +259,81 @@ function RegisteredDevices({ currentId, local, onChanged }: { currentId: string;
   const shown = devices === null ? [] : [...devices].sort((a, b) => order(a) - order(b) || b.lastSeenAt.localeCompare(a.lastSeenAt))
   const live = shown.filter(device => device.status !== 'revoked').length
   return (
-    <section className="settings-group" aria-labelledby="registered-devices">
-      <h4 id="registered-devices">已登记的设备 {devices && <Count value={live} />}</h4>
+    <>
       {devices === null ? (
-        error ? (
-          <InlineNotice tone="error">{error}</InlineNotice>
-        ) : (
-          <Loading />
-        )
+        <SettingsGroup title="已登记的设备" bare>
+          {error ? <InlineNotice tone="error">{error}</InlineNotice> : <Loading />}
+        </SettingsGroup>
       ) : (
-        <ul className="device-list">
+        <SettingsGroup title="已登记的设备" meta={`${live} 台`}>
           {shown.map(device => {
-            const Icon = deviceIcon(device)
             const self = device.id === currentId
             const revoked = device.status === 'revoked'
             return (
-              <li key={device.id} className={`device-row${revoked ? ' is-revoked' : ''}`} data-device-id={device.id}>
-                <span className="device-avatar" aria-hidden="true">
-                  <Icon size={16} strokeWidth={ICON_STROKE[16]} />
+              <div
+                key={device.id}
+                className={`settings-row device-row${revoked ? ' is-revoked' : ''}`}
+                data-leading=""
+                data-dim={revoked ? '' : undefined}
+                data-device-id={device.id}>
+                <span className="settings-row-lead">
+                  <IconTile icon={deviceIcon(device)} />
                 </span>
-                <div className="device-row-text">
-                  <strong>
+                <span className="settings-row-text">
+                  <span className="settings-row-title settings-row-name" data-record="">
                     <span className="device-row-name">{device.name ? <VisibleText text={device.name} /> : '未命名设备'}</span>
                     {self && <Badge>本机</Badge>}
                     {device.status !== 'active' && <StatusBadge status={device.status} />}
-                  </strong>
-                  <span>
+                  </span>
+                  <span className="settings-row-description">
                     {LISTENER_LABELS[device.listener]} ·{' '}
                     {revoked
                       ? `撤销于 ${relativeTime(device.revokedAt ?? '') || '未知时间'}`
                       : `最近使用 ${relativeTime(device.lastSeenAt) || '未知'}`}
                   </span>
-                  {!revoked && <span className="device-row-scopes">{scopeText(device.scopes)}</span>}
-                </div>
+                  {!revoked && <span className="settings-row-description">{scopeText(device.scopes)}</span>}
+                </span>
                 {!revoked && !self && (
-                  <div className="device-row-actions">
-                    {device.status !== 'legacy-pending' && (
-                      <Button
-                        variant="ghost"
-                        onClick={() => {
-                          setEditing(device)
-                        }}>
-                        权限…
-                      </Button>
-                    )}
-                    <Button
-                      variant="danger"
-                      onClick={() => {
-                        setRevoking(device)
-                      }}>
-                      撤销
-                    </Button>
-                  </div>
+                  <span className="settings-row-end">
+                    <Menu
+                      label={`${deviceLabel(device.name)} 的操作`}
+                      align="end"
+                      sections={[
+                        {
+                          id: 'device',
+                          items: [
+                            ...(device.status !== 'legacy-pending'
+                              ? [
+                                  {
+                                    id: 'scopes',
+                                    label: '调整权限…',
+                                    icon: KeyRound,
+                                    onSelect: () => {
+                                      setEditing(device)
+                                    },
+                                  },
+                                ]
+                              : []),
+                            {
+                              id: 'revoke',
+                              label: '撤销设备…',
+                              icon: Ban,
+                              danger: true,
+                              onSelect: () => {
+                                setRevoking(device)
+                              },
+                            },
+                          ],
+                        },
+                      ]}
+                      trigger={moreButton(`${deviceLabel(device.name)} 的操作`)}
+                    />
+                  </span>
                 )}
-              </li>
+              </div>
             )
           })}
-        </ul>
+        </SettingsGroup>
       )}
       {error && devices !== null && <InlineNotice tone="error">{error}</InlineNotice>}
       {editing && (
@@ -364,132 +362,14 @@ function RegisteredDevices({ currentId, local, onChanged }: { currentId: string;
             try {
               await api(`devices/${encodeURIComponent(revoking.id)}`, { method: 'DELETE' })
             } catch (cause) {
-              throw new Error(errorMessage(cause))
+              throw new Error(errorMessage(cause), { cause })
             }
             onChanged()
             await load()
           }}
         />
       )}
-    </section>
-  )
-}
-
-/** A one-time invitation for a phone over the Host's HTTPS entry; it grants nothing until confirmed on this computer. */
-function PhonePairing({ phone }: { phone: boolean }) {
-  const [invitation, setInvitation] = useState<InvitationView | null>(null)
-  const [qr, setQr] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const [now, setNow] = useState(() => Date.now())
-  const { state: copyState, copy } = useCopy(2500)
-  const remaining = invitation === null ? 0 : Date.parse(invitation.expiresAt) - now
-  const expired = invitation !== null && remaining <= 0
-  useEffect(() => {
-    if (invitation === null) return
-    let active = true
-    setQr('')
-    void QRCode.toDataURL(invitation.url, { width: 400, margin: 1, color: { dark: '#0f172a', light: '#ffffff' } })
-      .then(value => {
-        if (active) setQr(value)
-      })
-      .catch(() => {
-        if (active) setError('二维码生成失败，可复制配对链接。')
-      })
-    const timer = window.setInterval(() => {
-      setNow(Date.now())
-    }, 1000)
-    return () => {
-      active = false
-      clearInterval(timer)
-    }
-  }, [invitation])
-  const create = async () => {
-    setBusy(true)
-    setError('')
-    try {
-      setInvitation((await api<{ invitation: InvitationView }>('pairings', { method: 'POST', body: {} })).invitation)
-      setNow(Date.now())
-    } catch (cause) {
-      setError(errorMessage(cause))
-    } finally {
-      setBusy(false)
-    }
-  }
-  const share = async (url: string) => {
-    try {
-      await navigator.share({ title: 'Latch 配对链接', url })
-    } catch (cause) {
-      if (!(cause instanceof DOMException && cause.name === 'AbortError')) void copy(url)
-    }
-  }
-  if (invitation === null || expired)
-    return (
-      <div className="pair-empty">
-        <p>
-          生成一次性配对二维码，在手机上扫描后提交登记。二维码 10 分钟内有效，只能使用一次；对方提交后，仍需在这台电脑上核对指纹并确认。
-        </p>
-        {expired && <p className="settings-hint">上一个二维码已过期。</p>}
-        <Button
-          variant="primary"
-          icon={QrCode}
-          loading={busy}
-          onClick={() => {
-            void create()
-          }}>
-          生成配对二维码
-        </Button>
-        {error && <InlineNotice tone="error">{error}</InlineNotice>}
-      </div>
-    )
-  return (
-    <div className="pair-ready">
-      <div className="pair-qr">{qr ? <img src={qr} alt="手机配对二维码" width={200} height={200} /> : <Spinner size={20} />}</div>
-      <div className="pair-steps">
-        <ol>
-          <li>在手机上扫描二维码，或打开配对链接。</li>
-          <li>在手机上提交登记请求。</li>
-          <li>在这台电脑上核对两边显示的指纹，并用 Touch ID 或登录密码确认。</li>
-        </ol>
-        <p className="pair-expiry" role="timer">
-          剩余 {formatElapsed(remaining)} · 仅可使用一次
-        </p>
-        <div className="pair-actions">
-          {phone && typeof navigator.share === 'function' ? (
-            <Button
-              variant="primary"
-              onClick={() => {
-                void share(invitation.url)
-              }}
-              icon={Share2}>
-              分享链接
-            </Button>
-          ) : (
-            <Button
-              onClick={() => {
-                void copy(invitation.url)
-              }}
-              icon={Link}>
-              {copyState === 'copied' ? '已复制' : '复制链接'}
-            </Button>
-          )}
-          <Button
-            variant="link"
-            disabled={busy}
-            onClick={() => {
-              void create()
-            }}>
-            重新生成
-          </Button>
-        </div>
-        {copyState === 'failed' && (
-          <p className="settings-hint" role="alert">
-            当前浏览器不允许复制。请在手机上扫描二维码。
-          </p>
-        )}
-        {error && <InlineNotice tone="error">{error}</InlineNotice>}
-      </div>
-    </div>
+    </>
   )
 }
 
@@ -505,13 +385,6 @@ export function DevicesSettings({
   onChanged: () => void
 }) {
   const host = hostView(snapshot)
-  const pairing = !host?.tls
-    ? '手机接入需要 HTTPS。请用 --tls-cert、--tls-key 和 --public-origin 启动 Host（例如用 tailscale cert 生成的证书）。'
-    : !access.local
-      ? '配对二维码只能在执行端电脑上的 Latch 桌面端生成，或运行 pnpm latch device invite。'
-      : !access.admin
-        ? '此设备没有「管理此 Host」权限'
-        : null
   return (
     <>
       <SectionHeading
@@ -520,10 +393,8 @@ export function DevicesSettings({
       />
       <ThisDevice device={snapshot.device} devMode={host?.devMode === true} onChanged={onChanged} />
       {access.admin && <RegisteredDevices currentId={snapshot.device.id} local={access.local} onChanged={onChanged} />}
-      <section className="settings-group pair-section" aria-labelledby="phone-pairing">
-        <h4 id="phone-pairing">手机配对</h4>
-        {pairing === null ? <PhonePairing phone={phone} /> : <p className="settings-hint pair-hint">{pairing}</p>}
-      </section>
+      <PairingSection tls={Boolean(host?.tls)} access={access} phone={phone} />
+      <RevokeThisDevice device={snapshot.device} onChanged={onChanged} />
     </>
   )
 }

@@ -114,10 +114,18 @@ function giveBack(element: HTMLElement | null) {
 }
 
 export type DialogSize = 'confirm' | 'form' | 'wide'
+/**
+ * center: in the middle of the window. dock: 400 wide, 24px above the window's bottom edge, rising 12px as it fades
+ * in and dropping 8px as it goes; for a short status that follows an action, such as the local confirmation, so it
+ * covers as little of what the person was looking at as it can.
+ */
+export type DialogPlacement = 'center' | 'dock'
 
 interface DialogContent {
   title: ReactNode
   subtitle?: ReactNode
+  /** A bare dialog's 36px tile before the title: the state of what it reports. */
+  icon?: ReactNode
   /** At most two md buttons: the secondary first, the primary last. */
   footer?: ReactNode
   /** The footer's left side: a note, a link or a ghost button. */
@@ -137,16 +145,34 @@ export function Dialog({
   open,
   onClose,
   size = 'confirm',
+  placement = 'center',
   dismissible = true,
+  secure = false,
   className,
   ...content
-}: DialogContent & { open: boolean; onClose: () => void; size?: DialogSize; dismissible?: boolean; className?: string }) {
+}: DialogContent & {
+  open: boolean
+  onClose: () => void
+  size?: DialogSize
+  placement?: DialogPlacement
+  dismissible?: boolean
+  /** A security surface: the tokens are locked inside it and its look is pinned (tokens.css, the page's security layer). */
+  secure?: boolean
+  className?: string
+}) {
   const ref = useRef<HTMLDialogElement>(null)
   const titleId = useId()
   const modal = useModal(ref, open, onClose, dismissible)
   return (
-    <dialog ref={ref} className={cx('ui-dialog', className)} data-size={size} aria-labelledby={titleId} {...modal}>
-      <DialogSurface {...content} size={size} titleId={titleId} onClose={onClose} />
+    <dialog
+      ref={ref}
+      className={cx('ui-dialog', className)}
+      data-size={size}
+      data-placement={placement === 'dock' ? 'dock' : undefined}
+      data-secure={secure ? '' : undefined}
+      aria-labelledby={titleId}
+      {...modal}>
+      <DialogSurface {...content} size={size} placement={placement} titleId={titleId} onClose={onClose} />
     </dialog>
   )
 }
@@ -155,23 +181,41 @@ export function Dialog({
 export function DialogSurface({
   title,
   subtitle,
+  icon,
   footer,
   note,
   children,
   closeLabel = '关闭',
   bare = false,
   size = 'confirm',
+  placement = 'center',
   titleId,
   onClose,
-}: DialogContent & { size?: DialogSize; titleId?: string; onClose?: () => void }) {
+}: DialogContent & { size?: DialogSize; placement?: DialogPlacement; titleId?: string; onClose?: () => void }) {
+  const heading = (
+    <>
+      <h2 id={titleId} className="ui-dialog-title">
+        {title}
+      </h2>
+      {subtitle && <p className="ui-dialog-subtitle">{subtitle}</p>}
+    </>
+  )
   return (
-    <div className="ui-dialog-surface" data-size={size} data-bare={bare ? '' : undefined}>
+    <div
+      className="ui-dialog-surface"
+      data-size={size}
+      data-placement={placement === 'dock' ? 'dock' : undefined}
+      data-bare={bare ? '' : undefined}>
       {bare ? (
         <div className="ui-dialog-body">
-          <h2 id={titleId} className="ui-dialog-title">
-            {title}
-          </h2>
-          {subtitle && <p className="ui-dialog-subtitle">{subtitle}</p>}
+          {icon ? (
+            <div className="ui-dialog-lead">
+              <span className="ui-dialog-icon">{icon}</span>
+              <div className="ui-dialog-heading">{heading}</div>
+            </div>
+          ) : (
+            heading
+          )}
           {children}
           {footer && <div className="ui-dialog-actions">{footer}</div>}
         </div>
@@ -204,8 +248,8 @@ type Detent = 'medium' | 'large'
 
 interface SheetContent {
   title: ReactNode
-  /** Left of the title: closes the sheet. */
-  cancelLabel?: string
+  /** Left of the title: closes the sheet. Null leaves it out, for a sheet that only shows something and closes with 完成. */
+  cancelLabel?: string | null
   /** Right of the title: a primary button (aria-disabled until it can act), or a secondary 完成 that only closes. */
   action?: ReactNode
   children?: ReactNode
@@ -301,9 +345,13 @@ export function SheetSurface({
       <div className="ui-sheet-top" {...handle} onPointerCancel={handle?.onPointerUp}>
         <span className="ui-sheet-grabber" aria-hidden="true" />
         <header className="ui-sheet-header">
-          <Button variant="ghost" className="ui-sheet-cancel" onClick={onClose}>
-            {cancelLabel}
-          </Button>
+          {cancelLabel === null ? (
+            <span aria-hidden="true" />
+          ) : (
+            <Button variant="ghost" className="ui-sheet-cancel" onClick={onClose}>
+              {cancelLabel}
+            </Button>
+          )}
           <h2 id={titleId} className="ui-sheet-title">
             {title}
           </h2>

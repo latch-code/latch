@@ -9,4 +9,6 @@ export const dshProfile: HarnessProfile = {
     readback: 'none',
     notes: ['无法读回权限模式'],
   },
+  // DeepSeek Harness refuses additionalDirectories and keeps to the session directory.
+  folderAccess: 'primary',
 }

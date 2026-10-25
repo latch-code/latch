@@ -183,6 +183,36 @@ describe('OpenAI-compatible streaming provider', () => {
     })
   })
 
+  it('reports cached input and reasoning output as parts of the usage, and drops parts a gateway malforms', async () => {
+    let usage: unknown
+    const endpoint = await listen((_request, response) => {
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.end(frame(chunk({ content: '好' }, 'stop')) + frame({ choices: [], usage }) + 'data: [DONE]\n\n')
+    })
+    const provider = await openaiAt(endpoint)
+    const usageOf = async (reported: unknown) => {
+      usage = reported
+      const deltas = await collect(provider.stream({ messages: [message], tools: [], signal: freshSignal() }))
+      return deltas.find(delta => delta.type === 'usage')
+    }
+    expect(
+      await usageOf({
+        prompt_tokens: 120,
+        completion_tokens: 40,
+        prompt_tokens_details: { cached_tokens: 100 },
+        completion_tokens_details: { reasoning_tokens: 25 },
+      }),
+    ).toEqual({ type: 'usage', inputTokens: 120, outputTokens: 40, cacheReadTokens: 100, reasoningTokens: 25 })
+    expect(
+      await usageOf({
+        prompt_tokens: 120,
+        completion_tokens: 40,
+        prompt_tokens_details: { cached_tokens: 'many' },
+        completion_tokens_details: null,
+      }),
+    ).toEqual({ type: 'usage', inputTokens: 120, outputTokens: 40 })
+  })
+
   it('aborts a stalled upstream stream and closes its connection', async () => {
     let closed = false
     let receivedResolve: () => void = () => {
@@ -404,7 +434,8 @@ describe('Anthropic Messages streaming provider', () => {
       { type: 'reasoning', text: '先读文件' },
       { type: 'text', text: '开' },
       { type: 'text', text: '始' },
-      { type: 'usage', inputTokens: 28, outputTokens: 42 },
+      // Input counts the cached tokens too; the parts say how many were cache reads and writes.
+      { type: 'usage', inputTokens: 28, outputTokens: 42, cacheReadTokens: 5, cacheWriteTokens: 3 },
       { type: 'tool-call', call: { id: 'toolu_a', name: 'write_report', arguments: { content: '你好' } } },
       { type: 'tool-call', call: { id: 'toolu_b', name: 'long_task', arguments: {} } },
       { type: 'finish', reason: 'tool-calls' },

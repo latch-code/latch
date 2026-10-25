@@ -121,21 +121,39 @@ function externalLinkDialog(url) {
 }
 
 /**
+ * One native dialog at a time across the shell: the external-link confirmation, the folder picker and the dropped
+ * folders' confirmation share one gate, so the page cannot stack dialogs or slip one in while the owner reads another.
+ */
+function createDialogGate() {
+  let open = false
+  return {
+    /** False while another dialog holds the gate. */
+    enter() {
+      if (open) return false
+      open = true
+      return true
+    },
+    leave() {
+      open = false
+    },
+  }
+}
+
+/**
  * Electron reports window.open without saying whether the user asked for it, so a link reaches the system
  * browser (outside the renderer's network confinement) only after the owner confirms the full URL.
- * One confirmation at a time; links requested while it is open are dropped.
+ * One confirmation at a time; links requested while it (or another native dialog sharing `gate`) is open are dropped.
  * @param {object} options
  * @param {(dialogOptions: Electron.MessageBoxOptions, parent?: Electron.BaseWindow) => Promise<{ response: number }>} options.confirm
  *   e.g. dialog.showMessageBox
  * @param {(url: string) => Promise<unknown>} options.open  e.g. shell.openExternal
+ * @param {ReturnType<typeof createDialogGate>} [options.gate]  shared with the folder dialogs
  * @param {(message: string) => void} [options.log]
  */
-function createExternalOpener({ confirm, open, log = () => {} }) {
-  let asking = false
+function createExternalOpener({ confirm, open, gate = createDialogGate(), log = () => {} }) {
   return async function openExternal(raw, parent) {
     const url = externalUrl(raw)
-    if (url === undefined || asking) return false
-    asking = true
+    if (url === undefined || !gate.enter()) return false
     try {
       const { response } = await confirm(externalLinkDialog(url), parent)
       if (response !== 0) return false
@@ -145,7 +163,7 @@ function createExternalOpener({ confirm, open, log = () => {} }) {
       log(`无法打开链接：${error instanceof Error ? error.message : '未知错误'}`)
       return false
     } finally {
-      asking = false
+      gate.leave()
     }
   }
 }
@@ -213,6 +231,17 @@ function isPublicRoute(method, pathname, normalized) {
   return (method === 'GET' || method === 'DELETE') && ENROLLMENT_PATH.test(pathname)
 }
 
+/**
+ * The routes that add folders to projects (new project, add or re-select a folder, and their nonce). Only main calls
+ * them, after a native picker or confirmation and with its own signature; the page asks main through
+ * `latchShell.folders`. `lower` is the decoded, slash-collapsed, lower-case path.
+ */
+function isFolderAddRoute(method, lower) {
+  if (lower === '/link/api/folder-grants' || lower.startsWith('/link/api/folder-grants/')) return true
+  if (/^\/link\/api\/workspaces\/[^/]+\/folders$/.test(lower)) return true
+  return lower === '/link/api/workspaces' && String(method).toUpperCase() === 'POST'
+}
+
 /** Route detection works on a decoded, slash-collapsed, case-folded path so encodings cannot slip past it. */
 function classifyRoute(method, pathname) {
   let decoded = pathname
@@ -224,6 +253,7 @@ function classifyRoute(method, pathname) {
   decoded = decoded.replace(/\/{2,}/g, '/').replace(/(.)\/+$/, '$1')
   const lower = decoded.toLowerCase()
   if (lower === '/link/api/credentials' || lower.startsWith('/link/api/credentials/')) return { kind: 'credentials' }
+  if (isFolderAddRoute(method, lower)) return { kind: 'folders' }
   if (lower === '/link/api/enrollments' && method === 'POST') return { kind: 'enroll' }
   const complete = /^\/link\/api\/enrollments\/([^/]+)\/complete$/i.exec(decoded)
   if (complete) return { kind: 'complete', enrollmentId: complete[1] }
@@ -642,7 +672,8 @@ function createShellProxy(options) {
     return streamedResponse(result, method)
   }
 
-  async function handle(request) {
+  /** @param {'renderer' | 'shell'} origin  `shell`: main's own call (folder adds), which the renderer cannot make */
+  async function dispatch(request, origin) {
     const target = upstreamTarget(request.url)
     if (!target) {
       await discardRequestBody(request)
@@ -654,6 +685,13 @@ function createShellProxy(options) {
         await discardRequestBody(request)
         return errorResponse(403, 'shell-managed', '设备凭据由 Latch 桌面端管理')
       }
+      if (route.kind === 'folders') {
+        if (origin !== 'shell') {
+          await discardRequestBody(request)
+          return errorResponse(403, 'shell-managed', '添加文件夹由 Latch 桌面端处理')
+        }
+        return await forward(request, target, { kind: 'forward' })
+      }
       if (route.kind === 'enroll') return await enroll(request)
       if (route.kind === 'complete') return await complete(request, route.enrollmentId)
       return await forward(request, target, route)
@@ -662,6 +700,32 @@ function createShellProxy(options) {
       log(`转发请求失败：${error instanceof Error ? error.message : '未知错误'}`)
       return unavailableResponse(target.pathname)
     }
+  }
+
+  /** The `latch:` scheme handler: everything the renderer requests. */
+  function handle(request) {
+    return dispatch(request, 'renderer')
+  }
+
+  /**
+   * A Host API call of main's own, with the shell's credential (renewed and retried like a renderer request). Only
+   * main can make it, so it alone reaches the folder-add routes. Resolves `{ status, json }`; `json` is undefined
+   * when the answer is not JSON.
+   * @param {string} method
+   * @param {string} path  e.g. /link/api/workspaces
+   * @param {unknown} [body]  sent as JSON
+   */
+  async function shellRequest(method, path, body) {
+    const response = await dispatch(
+      new Request(`${APP_ORIGIN}${path}`, {
+        method,
+        headers: body === undefined ? { accept: 'application/json' } : { accept: 'application/json', 'content-type': 'application/json' },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      }),
+      'shell',
+    )
+    const json = await response.json().catch(() => undefined)
+    return { status: response.status, json }
   }
 
   /** Renews when due: checks at least every 12 h, and again once a failed attempt's wait has passed. */
@@ -686,6 +750,7 @@ function createShellProxy(options) {
 
   return {
     handle,
+    shellRequest,
     renew,
     startRenewalTimer,
     /** Test and diagnostics view; never contains keys or credentials. */
@@ -709,6 +774,7 @@ module.exports = {
   isAppUrl,
   externalUrl,
   externalLinkDialog,
+  createDialogGate,
   createExternalOpener,
   debugFlagProblems,
   unexpectedArguments,

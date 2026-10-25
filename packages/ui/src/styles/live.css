@@ -137,7 +137,21 @@
   pointer-events: none;
 }
 
+/* A short live label (正在思考): the still frame is the label in hint ink. */
+.ui-shimmer {
+  color: var(--text-3);
+}
+
 @media (prefers-reduced-motion: no-preference) {
+  /* A narrow light crosses the label's words from left to right once every 1.6s: the gradient behind the clipped text
+   * moves, nothing else does. */
+  .ui-shimmer {
+    background: linear-gradient(90deg, var(--text-3) 35%, var(--text-1) 50%, var(--text-3) 65%) 100% 0 / 250% 100% no-repeat;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: ui-shimmer var(--d-shimmer) linear infinite;
+  }
   /* Every comet turns once every 2.4s, in one shared phase (the delay set at mount). */
   .ui-comet-drift {
     animation: ui-comet-turn 2.4s linear infinite;
@@ -394,5 +408,13 @@
   from {
     opacity: 0;
     translate: 0 4px;
+  }
+}
+@keyframes ui-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
   }
 }

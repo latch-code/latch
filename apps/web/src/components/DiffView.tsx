@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ChevronRight, FileDiff as FileDiffIcon } from 'lucide-react'
+import { ChevronRight, FileText } from 'lucide-react'
 import type { FileDiff } from '@latch/protocol'
 import { CONTENT_HASH_LABEL, contentHash, hashable, knownContentHash } from '../core/contentHash.ts'
 import { diffLines, knowsOldSide, previousState, type PreviousState } from '../diff.ts'
 import { middleEllipsis } from '../format.ts'
-import { Button, ICON_STROKE, StatusPill } from '@latch/ui'
+import { Collapse, ICON_STROKE, StatusPill } from '@latch/ui'
 import { escapeHiddenCharacters, VisibleText } from './VisibleText.tsx'
 
 /** Lines rendered before "显示全部"; long rewrites stay cheap until asked for. */
@@ -76,18 +76,39 @@ function ContentHashLine({ text }: { text: string }) {
   )
 }
 
-function DiffFile({ diff, initiallyOpen }: { diff: FileDiff; initiallyOpen: boolean }) {
+/** A path's folder (with its trailing slash) and its file name, so the name leads and the folder stays quiet. */
+function splitPath(path: string): { folder: string; name: string } {
+  const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+  return at < 0 ? { folder: '', name: path } : { folder: path.slice(0, at + 1), name: path.slice(at + 1) }
+}
+
+/** The rows (hunk headers and lines) a diff of `diff` has. */
+export function diffRows(diff: FileDiff): number {
+  return diffLines(diff.oldText, diff.newText).hunks.reduce((sum, hunk) => sum + hunk.lines.length + 1, 0)
+}
+
+/**
+ * One file's change: a tray whose 32px head names the file (its folder quieter), what the Host said about the previous
+ * file, and the added and removed line counts; the diff itself is a sheet of paper inside the tray that opens and
+ * closes under the head.
+ */
+function DiffFile({ diff, initiallyOpen, fold }: { diff: FileDiff; initiallyOpen: boolean; fold: number | undefined }) {
   const view = useMemo(() => diffLines(diff.oldText, diff.newText), [diff.oldText, diff.newText])
   const previous = previousState(diff)
   const oldSide = knowsOldSide(previous)
   const note = PREVIOUS_NOTES[previous]
   const [open, setOpen] = useState(initiallyOpen)
+  const [unfolded, setUnfolded] = useState(false)
   const [all, setAll] = useState(false)
   const total = view.hunks.reduce((sum, hunk) => sum + hunk.lines.length + 1, 0)
+  const folded = fold !== undefined && !unfolded && total > fold
   const path = escapeHiddenCharacters(diff.path)
-  let budget = all ? Infinity : VISIBLE_LINES
+  const shown = middleEllipsis(diff.path, 64)
+  const { folder, name } = splitPath(shown)
+  let budget = folded ? fold : all ? Infinity : VISIBLE_LINES
+  let shownLines = 0
   return (
-    <section className="diff-file">
+    <section className="diff-file" data-open={open ? '' : undefined}>
       <button
         type="button"
         className="diff-file-header"
@@ -95,83 +116,114 @@ function DiffFile({ diff, initiallyOpen }: { diff: FileDiff; initiallyOpen: bool
         onClick={() => {
           setOpen(!open)
         }}>
-        <FileDiffIcon size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+        <FileText size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
         <span className="diff-path" title={path}>
-          <VisibleText text={middleEllipsis(diff.path, 64)} />
+          <span className="diff-path-name">
+            <VisibleText text={name} />
+          </span>
+          {folder && (
+            <span className="diff-path-folder">
+              <VisibleText text={folder} />
+            </span>
+          )}
         </span>
         <PreviousBadge state={previous} />
         <span className="diff-stat">
           <span className={view.added ? 'diff-stat-add' : 'diff-stat-zero'}>+{view.added}</span>
           {previous === 'text' && <span className={view.removed ? 'diff-stat-remove' : 'diff-stat-zero'}>−{view.removed}</span>}
         </span>
-        <ChevronRight className="chevron" size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+        <ChevronRight className="chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
       </button>
-      {open && <ContentHashLine text={diff.newText} />}
-      {open && (
-        <div className="diff-body" role="region" tabIndex={0} aria-label={`${path} 的变更`}>
-          {note && <p className="diff-note">{note}</p>}
-          {view.hunks.length === 0 ? (
-            <p className="diff-empty">内容没有变化</p>
-          ) : (
-            <div className="diff-table">
-              {view.hunks.map((hunk, index) => {
-                if (budget <= 0) return null
-                budget--
-                const lines = hunk.lines.slice(0, Math.max(0, budget))
-                budget -= lines.length
-                return (
-                  <div className="diff-hunk" key={index}>
-                    <div className="diff-hunk-header">
-                      {oldSide
-                        ? `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`
-                        : `@@ +${hunk.newStart},${hunk.newLines} @@`}
-                    </div>
-                    {lines.map((line, row) => (
-                      <div key={row} className={`diff-line diff-${line.kind}`}>
-                        <span className="diff-ln diff-ln-old" aria-hidden="true">
-                          {line.oldLine ?? ''}
-                        </span>
-                        <span className="diff-ln" aria-hidden="true">
-                          {line.newLine ?? ''}
-                        </span>
-                        <span className="diff-sign" aria-hidden="true">
-                          {line.kind === 'add' ? '+' : line.kind === 'remove' ? '−' : ' '}
-                        </span>
-                        <span className="diff-text">
-                          {line.kind === 'add' && <span className="sr-only">新增：</span>}
-                          {line.kind === 'remove' && <span className="sr-only">删除：</span>}
-                          {line.text ? <VisibleText text={line.text} /> : ' '}
-                        </span>
+      <Collapse
+        open={open}
+        lazy
+        onReveal={() => {
+          setOpen(true)
+        }}>
+        <div className="diff-paper">
+          <ContentHashLine text={diff.newText} />
+          <div className="diff-body" role="region" tabIndex={0} aria-label={`${path} 的变更`}>
+            {note && <p className="diff-note">{note}</p>}
+            {view.hunks.length === 0 ? (
+              <p className="diff-empty">内容没有变化</p>
+            ) : (
+              <div className="diff-table">
+                {view.hunks.map((hunk, index) => {
+                  if (budget <= 0) return null
+                  budget--
+                  const lines = hunk.lines.slice(0, Math.max(0, budget))
+                  budget -= lines.length
+                  shownLines += lines.length
+                  return (
+                    <div className="diff-hunk" key={index}>
+                      <div className="diff-hunk-header">
+                        {oldSide
+                          ? `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`
+                          : `@@ +${hunk.newStart},${hunk.newLines} @@`}
                       </div>
-                    ))}
-                  </div>
-                )
-              })}
-            </div>
+                      {lines.map((line, row) => (
+                        <div key={row} className={`diff-line diff-${line.kind}`}>
+                          <span className="diff-ln diff-ln-old" aria-hidden="true">
+                            {line.oldLine ?? ''}
+                          </span>
+                          <span className="diff-ln diff-ln-new" aria-hidden="true">
+                            {line.newLine ?? ''}
+                          </span>
+                          <span className="diff-ln diff-ln-one" aria-hidden="true">
+                            {line.newLine ?? line.oldLine ?? ''}
+                          </span>
+                          <span className="diff-sign" aria-hidden="true">
+                            {line.kind === 'add' ? '+' : line.kind === 'remove' ? '−' : ' '}
+                          </span>
+                          <span className="diff-text">
+                            {line.kind === 'add' && <span className="sr-only">新增：</span>}
+                            {line.kind === 'remove' && <span className="sr-only">删除：</span>}
+                            {line.text ? <VisibleText text={line.text} /> : ' '}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+          {folded && (
+            <button
+              type="button"
+              className="diff-fold"
+              onClick={() => {
+                setUnfolded(true)
+              }}>
+              展开其余 {view.hunks.reduce((sum, hunk) => sum + hunk.lines.length, 0) - shownLines} 行
+            </button>
           )}
-          {!all && total > VISIBLE_LINES && (
-            <Button
-              variant="link"
+          {!folded && !all && total > VISIBLE_LINES && (
+            <button
+              type="button"
               className="diff-more"
               onClick={() => {
                 setAll(true)
               }}>
-              显示全部 {total} 行
-            </Button>
+              展开其余 {total - VISIBLE_LINES} 行
+            </button>
           )}
         </div>
-      )}
+      </Collapse>
     </section>
   )
 }
 
-/** Unified, line-based diff of the files a tool changes or proposes to change. */
-export function DiffView({ diffs }: { diffs: FileDiff[] }) {
+/**
+ * Unified, line-based diff of the files a tool changes or proposes to change. `fold`: the rows a file shows before a
+ * fold bar 「展开其余 N 行」 (an approval's preview keeps its paper short); without it a file shows up to 400.
+ */
+export function DiffView({ diffs, fold }: { diffs: FileDiff[]; fold?: number }) {
   if (diffs.length === 0) return null
   return (
     <div className="diff-view">
       {diffs.map((diff, index) => (
-        <DiffFile key={`${diff.path}:${index}`} diff={diff} initiallyOpen={diffs.length === 1} />
+        <DiffFile key={`${diff.path}:${index}`} diff={diff} initiallyOpen={diffs.length === 1} fold={fold} />
       ))}
     </div>
   )

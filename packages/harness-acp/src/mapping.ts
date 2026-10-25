@@ -63,16 +63,26 @@ export interface ToolState {
   awaiting: number
   /** Latch's verdict for a call the agent left unfinished when its turn ended. */
   final?: { state: 'cancelled' | 'failed'; note: string }
+  /** When Latch first saw the call, when the agent reported it in progress, and when it settled (ISO). */
+  createdAt?: string
+  startedAt?: string
+  completedAt?: string
 }
 
-export function mergeTool(state: ToolState, fields: ToolFields): void {
+/** Merges an update into the call; `at` stamps when it was first seen, began to run and settled. */
+export function mergeTool(state: ToolState, fields: ToolFields, at: string): void {
+  state.createdAt ??= at
   if (fields.title != null) state.title = fields.title
   if (fields.name != null) state.name = fields.name
   if (fields.kind != null) state.kind = fields.kind
   if (fields.status != null) {
     state.status = fields.status
+    if (fields.status === 'in_progress') state.startedAt ??= at
     // A report the agent sends after the turn ended still describes what happened.
-    if (fields.status === 'completed' || fields.status === 'failed') delete state.final
+    if (fields.status === 'completed' || fields.status === 'failed') {
+      delete state.final
+      state.completedAt ??= at
+    }
   }
   if (fields.rawInput !== undefined) state.rawInput = fields.rawInput
   if (fields.rawOutput !== undefined) state.rawOutput = fields.rawOutput
@@ -80,11 +90,15 @@ export function mergeTool(state: ToolState, fields: ToolFields): void {
   if (fields.locations != null) state.locations = fields.locations.slice(0, 256)
 }
 
-/** Marks a call the turn left unfinished. Returns whether anything changed. */
-export function settleTool(state: ToolState): boolean {
+/**
+ * Marks a call the turn left unfinished. Returns whether anything changed. A call that was running ends with the turn
+ * at `at`; one that never started has no end time, so it shows no duration.
+ */
+export function settleTool(state: ToolState, at: string): boolean {
   if (state.final || state.status === 'completed' || state.status === 'failed') return false
   state.awaiting = 0
   state.final = state.status === 'in_progress' ? { state: 'failed', note: OUTCOME_UNKNOWN } : { state: 'cancelled', note: NOT_STARTED }
+  if (state.status === 'in_progress') state.completedAt ??= at
   return true
 }
 
@@ -162,6 +176,9 @@ export function toolMessage(state: ToolState): Message {
     state: toolMessageState(state),
     text: tool.output ?? tool.input ?? tool.title ?? '',
     tool,
+    ...(state.createdAt ? { createdAt: state.createdAt } : {}),
+    ...(state.startedAt ? { startedAt: state.startedAt } : {}),
+    ...(state.completedAt ? { completedAt: state.completedAt } : {}),
   }
 }
 

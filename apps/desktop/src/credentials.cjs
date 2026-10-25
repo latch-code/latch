@@ -40,6 +40,44 @@ function enrollSigningText(hostId, enrollmentId, nonce) {
 function renewSigningText(hostId, deviceId, nonce) {
   return `latch-renew-v1\n${hostId}\n${deviceId}\n${nonce}`
 }
+/** What main signs for a folder add: the nonce from `POST /folder-grants` and the hash of the body it sends. */
+function foldersSigningText(hostId, deviceId, nonce, bodyHash) {
+  return `latch-folders-v1\n${hostId}\n${deviceId}\n${nonce}\n${bodyHash}`
+}
+
+/**
+ * The Host's canonicalJson (`packages/core/src/node-kit/digest.ts`) for the plain JSON main builds itself: object keys
+ * sorted by UTF-16 code unit, no whitespace, primitives as JSON.stringify writes them, undefined members dropped.
+ * Anything else throws rather than hashing something the Host would encode differently.
+ */
+function canonicalJson(value) {
+  if (value === null) return 'null'
+  if (typeof value === 'boolean') return value ? 'true' : 'false'
+  if (typeof value === 'string') return JSON.stringify(value)
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new TypeError('canonicalJson: non-finite number')
+    return JSON.stringify(value)
+  }
+  if (Array.isArray(value)) {
+    return `[${value
+      .map(item => {
+        if (item === undefined) throw new TypeError('canonicalJson: undefined array element')
+        return canonicalJson(item)
+      })
+      .join(',')}]`
+  }
+  if (typeof value !== 'object' || ![Object.prototype, null].includes(Object.getPrototypeOf(value)))
+    throw new TypeError('canonicalJson: not plain JSON')
+  const members = Object.keys(value)
+    .sort()
+    .flatMap(key => (value[key] === undefined ? [] : [`${JSON.stringify(key)}:${canonicalJson(value[key])}`]))
+  return `{${members.join(',')}}`
+}
+
+/** The `bodyHash` of `foldersSigningText`: SHA-256 (lowercase hex) of the canonical body without `signature`. */
+function foldersBodyHash(body) {
+  return crypto.createHash('sha256').update(canonicalJson(body), 'utf8').digest('hex')
+}
 
 function deviceKeyFrom(privateKey) {
   if (privateKey.asymmetricKeyType !== 'ec' || privateKey.asymmetricKeyDetails?.namedCurve !== 'prime256v1') {
@@ -186,6 +224,14 @@ async function openCredentialStore({
       if (!record) throw new Error('没有设备密钥')
       return record.key.sign(text)
     },
+    /**
+     * The signature of a folder add body (with its `nonce`, without `signature`) by this shell's device, read from one
+     * record so the device ID and the key always belong together.
+     */
+    signFolders(body) {
+      const current = requireCredential()
+      return current.key.sign(foldersSigningText(hostId, current.deviceId, body.nonce, foldersBodyHash(body)))
+    },
     /** Replaces key and credential after a completed enrollment (each enrollment uses a fresh key). */
     commit({ key, deviceId, credential }) {
       if (!DEVICE_ID.test(deviceId) || !CREDENTIAL.test(credential) || !credential.startsWith(`ldc1.${deviceId}.`)) {
@@ -227,6 +273,9 @@ module.exports = {
   deviceFingerprint,
   enrollSigningText,
   renewSigningText,
+  foldersSigningText,
+  canonicalJson,
+  foldersBodyHash,
   generateDeviceKey,
   deviceKeyFrom,
   secureStorageProblem,

@@ -47,6 +47,8 @@ const policyChange = z.strictObject({
 const deviceOnly = z.strictObject({ deviceId })
 const ticket = z.strictObject({ ticketId: prefixed('chl') })
 const workspaceChange = z.strictObject({ workspaceId: opaqueId, pathHash: hex64 })
+const folderId = z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/u)
+const folderVia = z.enum(['picker', 'drop', 'cli'])
 
 /** Strict detail schema per action. */
 export const AUDIT_DETAIL = {
@@ -111,8 +113,8 @@ export const AUDIT_DETAIL = {
   }),
   'approval.stale': z.strictObject({ approvalId: opaqueId }),
   /** Written before a full-access session is spawned; nothing is spawned without it. */
-  'task.l3.start-requested': z.strictObject({ harnessId: opaqueId, launchHash: hex64 }),
-  'task.l3.started': z.strictObject({ sessionId: opaqueId, harnessId: opaqueId, launchHash: hex64 }),
+  'task.l3.start-requested': z.strictObject({ harnessId: opaqueId, launchHash: hex64, folderCount: count.optional() }),
+  'task.l3.started': z.strictObject({ sessionId: opaqueId, harnessId: opaqueId, launchHash: hex64, folderCount: count.optional() }),
   'task.l3.start-failed': z.strictObject({ harnessId: opaqueId, launchHash: hex64 }),
   'task.cancelled': z.strictObject({ sessionId: opaqueId }),
   'task.mode.widened': z.strictObject({ sessionId: opaqueId, toHash: hex64 }),
@@ -122,10 +124,41 @@ export const AUDIT_DETAIL = {
   'agent.deleted': z.strictObject({ agentId: opaqueId }),
   'provider.secret.set': z.strictObject({ providerId: opaqueId, originHash: hex64 }),
   'provider.secret.cleared': z.strictObject({ providerId: opaqueId, reason: z.enum(['origin-changed', 'manual', 'deleted']) }),
-  'workspace.added': workspaceChange,
+  /**
+   * A new project; `pathHash` is its primary folder's, `foldersHash` the canonical list of all its folders. `session`:
+   * a session's own folder that the desktop saved as a project.
+   */
+  'workspace.added': z.strictObject({
+    workspaceId: opaqueId,
+    pathHash: hex64,
+    folderCount: count.optional(),
+    foldersHash: hex64.optional(),
+    via: z.enum([...folderVia.options, 'session']).optional(),
+  }),
   'workspace.removed': workspaceChange,
-  /** A saved workspace that fails the registration rules at startup; unavailable for this run, kept in settings. */
-  'workspace.disabled': z.strictObject({ workspaceId: opaqueId, reason: z.enum(['overlap', 'code-root', 'protected', 'invalid']) }),
+  /** A folder joined a project, or (`replacesFolder`) took the place of one of its folders, keeping its ID. */
+  'workspace.folder-added': z.strictObject({
+    workspaceId: opaqueId,
+    folderId,
+    pathHash: hex64,
+    via: folderVia,
+    replacesFolder: z.boolean(),
+  }),
+  'workspace.folder-removed': z.strictObject({ workspaceId: opaqueId, folderId, pathHash: hex64 }),
+  /** A rename, a new glyph or a new folder order; the folder set is unchanged. */
+  'workspace.changed': z.strictObject({
+    workspaceId: opaqueId,
+    renamed: z.boolean(),
+    glyphChanged: z.boolean(),
+    primaryChanged: z.boolean(),
+    reordered: z.boolean(),
+  }),
+  /** A saved project that became unusable (a folder failing the rules, missing or unreadable); it stays in settings. */
+  'workspace.disabled': z.strictObject({
+    workspaceId: opaqueId,
+    reason: z.enum(['overlap', 'code-root', 'protected', 'invalid', 'missing', 'permission']),
+    folderIndex: count.optional(),
+  }),
   /** A settings write by the Host, with the canonical hashes before and after. */
   'settings.changed': z.strictObject({ before: z.union([hex64, z.literal('')]), after: hex64 }),
   'settings.changed-outside': z.strictObject({ expected: z.union([hex64, z.literal('')]), actual: hex64 }),

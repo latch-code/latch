@@ -154,6 +154,16 @@
   place-items: center;
   color: var(--icon);
 }
+/* A menu of plain actions (no check, no glyph) has no leading slot: its text starts at the menu's padding. */
+.ui-menu[data-no-lead] .ui-menu-item {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.ui-menu[data-no-lead] .ui-menu-footer-link {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.ui-menu[data-no-lead] :is(.ui-menu-item, .ui-menu-footer-link) > .ui-menu-item-lead {
+  display: none;
+}
 /* A glyph is the icon colour at rest and text-1 while its item is hovered, highlighted or pressed. */
 .ui-menu-item:is(:hover, :focus-visible, :active):not([aria-disabled='true'], [data-danger]) .ui-menu-item-lead {
   color: var(--text-1);

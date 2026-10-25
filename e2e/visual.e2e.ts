@@ -5,12 +5,13 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { build, preview } from 'vite'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type { AgentSettings, TaskDetail, TaskStatus } from '@latch/protocol'
-import type { HarnessPlugin, ModelDelta, ToolDefinition } from '@latch/sdk'
+import type { AgentSettings, AppSnapshot, Approval, TaskDetail, TaskStatus } from '@latch/protocol'
+import { AppError, type HarnessPlugin, type ModelDelta, type ToolDefinition } from '@latch/sdk'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openSection, openSettings, reachable } from './helpers/layout.ts'
+import { backToSection, noHorizontalOverflow, openSection, openSettings, reachable, closeSettings } from './helpers/layout.ts'
+import { expectUnmovedByInjectedStyles } from './helpers/security.ts'
 import {
   VISUAL_DIFF_OUTPUT,
   VISUAL_OUTPUT,
@@ -106,22 +107,11 @@ const runTests: ToolDefinition = {
   requiresApproval: true,
   parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'], additionalProperties: false },
   async execute(args, { signal }) {
-    if (args.command === FAILING_COMMAND) throw new Error('2 个测试未通过：tests/release.test.ts')
-    await new Promise<void>((done, fail) => {
-      const release = () => {
-        held.delete(release)
-        done()
-      }
-      held.add(release)
-      signal.addEventListener(
-        'abort',
-        () => {
-          held.delete(release)
-          fail(signal.reason)
-        },
-        { once: true },
-      )
-    })
+    if (args.command === FAILING_COMMAND) {
+      advance(1800)
+      throw new Error('2 个测试未通过：tests/release.test.ts')
+    }
+    await hold(signal)
     return { text: '12 项测试通过。' }
   },
 }
@@ -134,6 +124,35 @@ const text = (value: string): ModelDelta => ({ type: 'text', text: value })
 const toolTurn: ModelDelta = { type: 'finish', reason: 'tool-calls' }
 const stop: ModelDelta = { type: 'finish', reason: 'stop' }
 
+/**
+ * The Host's clock for the times it records on runs and messages. It starts a minute after the page's frozen clock
+ * (sessions changed after a device enrolled count as unread there) and moves only where the scripted model streams or
+ * the scenario waits for a person, so every time, duration and live counter on screen comes out the same on every run.
+ */
+let hostClock = VISUAL_TIME + 60_000
+const advance = (ms: number) => {
+  hostClock += ms
+}
+
+/** Holds a stream until the test releases or cancels it, as a long step does. */
+function hold(signal: AbortSignal): Promise<void> {
+  return new Promise<void>((done, fail) => {
+    const release = () => {
+      held.delete(release)
+      done()
+    }
+    held.add(release)
+    signal.addEventListener(
+      'abort',
+      () => {
+        held.delete(release)
+        fail(signal.reason)
+      },
+      { once: true },
+    )
+  })
+}
+
 const PROMPTS = {
   done: '修复设置页保存后密钥被清空的问题',
   running: '运行设置页的回归测试',
@@ -143,6 +162,7 @@ const PROMPTS = {
   r2: '在提交前检查里加上类型检查',
   hidden: '更新发布说明的版本号',
   unread: '总结今天完成的工作',
+  thinking: '评估会话恢复的两种做法',
 } as const
 
 /** Each prompt's model turns, one per tool result after the prompt; an Error makes that turn fail. */
@@ -221,11 +241,35 @@ const visualPlugin: HarnessPlugin = {
       async *stream({ messages, signal }) {
         signal.throwIfAborted()
         const last = messages.findLastIndex(message => message.role === 'user')
+        if (messages[last]?.content === PROMPTS.thinking) {
+          // Reasoning that is still going on when the page looks.
+          advance(800)
+          yield { type: 'reasoning', text: 'resume 不重放历史，返回更快；load 会把整段对话重放一遍。要看客户端是否保存了完整记录。' }
+          advance(14_000)
+          await hold(signal)
+          return
+        }
         const script = SCRIPTS[messages[last]?.content ?? '']
         const turn = script?.[messages.slice(last + 1).filter(message => message.role === 'tool').length]
         if (turn === undefined) throw new Error(`No scripted turn for ${messages[last]?.content}`)
-        if (turn instanceof Error) throw turn
-        yield* turn
+        if (turn instanceof Error) {
+          advance(2400)
+          throw turn
+        }
+        // Each step takes its time on the Host's clock: a model's first words after a moment, the answer some seconds
+        // after its reasoning began.
+        let reasoning = false
+        for (const delta of turn) {
+          if (delta.type === 'reasoning') {
+            advance(600)
+            reasoning = true
+          } else if (delta.type === 'text') {
+            advance(reasoning ? 6000 : 1200)
+            reasoning = false
+          } else if (delta.type === 'tool-call') advance(400)
+          else if (delta.type === 'finish') advance(300)
+          yield delta
+        }
       },
     })
   },
@@ -264,6 +308,7 @@ async function claimProjects(): Promise<string> {
 
 interface Sessions {
   plan: string
+  thinking: string
   done: string
   failed: string
   cancelled: string
@@ -284,24 +329,32 @@ async function openDrawer(target: Page): Promise<Locator> {
   return drawer
 }
 
-/** Session details: a pane beside the transcript on desktop, a sheet from the session menu elsewhere. */
+/**
+ * 会话信息: the column beside the paper on the desktop, where it is open by default from 1440px; on tablets as narrow
+ * as the reference one and on phones, a page that takes the conversation's place.
+ */
 async function openDetails(target: Page, viewport: VisualViewport): Promise<void> {
-  if (viewport.name === 'desktop') {
-    await target.getByRole('button', { name: '会话详情', exact: true }).click()
-    await target.getByRole('complementary', { name: '会话详情', exact: true }).waitFor()
-  } else {
-    await target.getByRole('button', { name: '会话操作', exact: true }).click()
-    await target.getByRole('menuitem', { name: '会话详情', exact: true }).click()
-    await target.getByRole('dialog', { name: '会话详情', exact: true }).waitFor()
-  }
-  await target.locator('.inspector').getByText('正在读取…').waitFor({ state: 'detached' })
+  const toggle = target.locator('.topbar').getByRole('button', { name: '会话信息', exact: true })
+  if ((await toggle.getAttribute('aria-pressed')) !== 'true') await toggle.click()
+  if (viewport.name === 'desktop')
+    await target.getByRole('complementary', { name: '会话信息', exact: true }).locator('.inspector').waitFor()
+  else await target.getByRole('region', { name: '会话信息', exact: true }).locator('.inspector').waitFor()
+  await settleMotion(target)
 }
 
 async function closeDetails(target: Page, viewport: VisualViewport): Promise<void> {
-  // The desktop pane is a per-device preference, so it is closed again for the surfaces after it.
-  if (viewport.name === 'desktop') await target.getByRole('button', { name: '收起会话详情', exact: true }).click()
-  else await target.keyboard.press('Escape')
-  await target.locator('.inspector').waitFor({ state: 'detached' })
+  // The desktop column stays open, as it is by default at that width.
+  if (viewport.name === 'desktop') return
+  await target.getByRole('button', { name: viewport.name === 'phone' ? '返回' : '返回对话', exact: true }).click()
+  await target.locator('.info-page').waitFor({ state: 'detached' })
+}
+
+/** Waits until nothing on the page is moving but the live indicators, which keep turning by design. */
+async function settleMotion(target: Page): Promise<void> {
+  await target.waitForFunction(() =>
+    document.getAnimations().every(animation => animation.playState !== 'running' || animation.effect?.getTiming().iterations === Infinity),
+  )
+  await target.evaluate(() => new Promise(done => setTimeout(done, 260)))
 }
 
 /** The given message of a settled session is on screen. */
@@ -399,6 +452,10 @@ async function forceGalleryStates(page: Page): Promise<void> {
   }
 }
 
+/** Approvals as a Host of the previous build sent them: no risk, no options of its own, no advisory flag. */
+const previousBuild = (approvals: Approval[]): Approval[] =>
+  approvals.map(({ risk: _risk, options: _options, advisory: _advisory, ...rest }) => rest)
+
 describe('visual capture of the real product', () => {
   let projects: string
   let testHost: TestHost
@@ -408,6 +465,8 @@ describe('visual capture of the real product', () => {
   let sessions: Sessions
   const recorder = new VisualRecorder()
   const pages = new Map<VisualViewport['name'], { context: BrowserContext; page: Page }>()
+  /** One device per width without 管理此 Host, for the read-only settings. */
+  const readOnlyPages = new Map<VisualViewport['name'], { context: BrowserContext; page: Page }>()
 
   beforeAll(async () => {
     projects = await claimProjects()
@@ -419,6 +478,8 @@ describe('visual capture of the real product', () => {
       presenceMode: 'manual',
       // The Host's clock (credentials, enrollments, device activity) stands still at the page clock's instant.
       now: () => VISUAL_TIME,
+      // The times recorded on runs and messages follow the scripted clock above.
+      clock: () => hostClock,
       // The computer's name in the sidebar's footer, the same on every machine.
       hostName: HOST_NAME,
       workspaceRoot: join(projects, 'latch-app'),
@@ -431,8 +492,9 @@ describe('visual capture of the real product', () => {
   afterAll(async () => {
     await recorder.writeIndex()
     // Assigned only once the scenario has been built.
-    if (local && sessions) await local.request(`tasks/${sessions.running}/cancel`, { method: 'POST' }).catch(() => {})
-    for (const { context } of pages.values()) await context.close().catch(() => {})
+    if (local && sessions)
+      for (const id of [sessions.running, sessions.thinking]) await local.request(`tasks/${id}/cancel`, { method: 'POST' }).catch(() => {})
+    for (const { context } of [...pages.values(), ...readOnlyPages.values()]) await context.close().catch(() => {})
     await browser?.close()
     await testHost?.close()
     if (projects) await rm(projects, { recursive: true, force: true })
@@ -510,6 +572,70 @@ describe('visual capture of the real product', () => {
     await target.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))))
   }
 
+  /**
+   * The ceilings of 设置 › 电脑 as a browser that manages the Host sees them: the local ladder (everything below the
+   * current 完全访问 can be chosen), the remote ladder (raising shows why it is not possible here) and the list page of
+   * agents other devices may use. Nothing is changed.
+   */
+  async function captureCeilings(target: Page, viewport: VisualViewport, settings: Locator): Promise<void> {
+    for (const [surface, name, description] of [
+      ['settings-computer-local-menu', '在这台电脑上发起', 'the ceiling for sessions started on this computer'],
+      ['settings-computer-remote-menu', '从手机和其他电脑发起', 'the ceiling for other devices; raising is not possible here'],
+    ] as const) {
+      await settings.getByRole('button', { name: new RegExp(`^${name}：`) }).click()
+      const layer =
+        viewport.name === 'phone'
+          ? target.getByRole('dialog', { name, exact: true })
+          : target.getByRole('menu', { name: new RegExp(`^${name}：`) })
+      await layer.waitFor()
+      for (const item of await layer.getByRole(viewport.name === 'phone' ? 'radio' : 'menuitemradio').all())
+        await reachable(item, { allowDisabled: true })
+      await recorder.capture(target, viewport, surface, description)
+      await target.keyboard.press('Escape')
+      await layer.waitFor({ state: 'hidden' })
+    }
+    // The list pages: a page of its own, pushed with its own bar on phones and with a way back above it elsewhere.
+    for (const [surface, row, all, description] of [
+      ['settings-computer-agents', /^其他设备可用的 Agent/, '全部 Agent', 'the agents other devices may use'],
+      ['settings-computer-workspaces', /^其他设备可用的项目/, '全部项目', 'the projects other devices may use'],
+    ] as const) {
+      await settings.getByRole('button', { name: row }).click()
+      const list = viewport.name === 'phone' ? settings.locator('.settings-level[data-state="top"]') : settings
+      // A browser cannot widen the list: the switch is locked with its reason when only some are allowed.
+      await reachable(list.getByRole('switch', { name: all, exact: true }), { allowDisabled: true })
+      const back = list.getByRole('button', { name: viewport.name === 'phone' ? '返回电脑' : '电脑', exact: true })
+      await reachable(back)
+      await noHorizontalOverflow(target, settings)
+      await recorder.capture(target, viewport, surface, description)
+      await back.click()
+      await settings.getByRole('button', { name: /^在这台电脑上发起：/ }).waitFor()
+      await expect.poll(() => settings.locator('.settings-layout').getAttribute('data-level')).not.toBe('page')
+    }
+
+    // A lowering the Host applied without writing its audit log: the change stays, and the page says so in red.
+    const audit = host.security.audit
+    const append = audit.append.bind(audit)
+    audit.append = () => Promise.reject(new AppError(503, 'audit-unavailable', '审计记录写入失败，操作未执行'))
+    try {
+      const remoteStart = settings.getByRole('switch', { name: '允许其他设备在这里新建会话', exact: true })
+      await remoteStart.click()
+      await expect.poll(() => host.security.policy.get().remote.allowRemoteStart).toBe(false)
+      await settings.getByText(/没有写入审计记录/).waitFor()
+    } finally {
+      audit.append = append
+    }
+    await noHorizontalOverflow(target, settings)
+    await recorder.capture(target, viewport, 'settings-computer-audit-failed', 'a lowering applied without an audit record')
+    // Back as it was. A full-access session waits by now, so the Host's local confirmation would refuse the raise; the
+    // test sets it the way the offline command does, while the Host is stopped.
+    const current = host.security.policy.get()
+    await host.security.policy.update(
+      { ...current, remote: { ...current.remote, allowRemoteStart: true } },
+      { listener: 'cli', via: 'cli' },
+      'offline',
+    )
+  }
+
   // ---- Phase 1: enrollment and the first run --------------------------------------------------------------
 
   it('captures enrollment, the wait for local confirmation and the first run at each viewport', async () => {
@@ -533,11 +659,35 @@ describe('visual capture of the real product', () => {
       await reachable(target.getByRole('button', { name: '取消', exact: true }))
       await recorder.capture(target, viewport, 'enrollment-waiting', 'waiting for local confirmation')
 
+      // Refused on the Host computer: the form comes back with the outcome above it.
+      testHost.presence.denyNext()
+      await target.getByText('本机拒绝了此设备。', { exact: true }).waitFor()
+      await reachable(target.getByRole('button', { name: '请求本机确认', exact: true }))
+      await recorder.capture(target, viewport, 'enrollment-denied', 'refused on the Host computer')
+
+      await target.getByRole('button', { name: '请求本机确认', exact: true }).click()
+      await testHost.presence.waitForRequest()
+      await target.getByRole('heading', { name: '等待本机确认', exact: true }).waitFor()
       testHost.presence.approveNext()
       await connected(target)
       await target.getByText('会话会保存在这里').first().waitFor({ state: 'attached' })
       await reachable(target.getByRole('textbox', { name: '新会话消息', exact: true }))
       await recorder.capture(target, viewport, 'new-session-first-run', 'no sessions')
+
+      // A second device at this width without 管理此 Host, enrolled now: once a full-access session waits, the Host's
+      // local confirmation serves only rejections, enrollment included.
+      const readOnlyContext = await visualContext(browser, viewport)
+      const readOnly = await readOnlyContext.newPage()
+      readOnlyPages.set(viewport.name, { context: readOnlyContext, page: readOnly })
+      await readOnly.goto(`${host.loopbackOrigin}/link/`)
+      await readOnly.getByRole('heading', { name: '连接到 Latch', exact: true }).waitFor()
+      const readOnlyName = readOnly.getByLabel('设备名称', { exact: true })
+      await readOnlyName.fill(`只读的${DEVICE_NAMES[viewport.name].replace(/^我的/, '')}`)
+      await readOnlyName.blur()
+      await readOnly.getByRole('button', { name: '请求本机确认', exact: true }).click()
+      await testHost.presence.waitForRequest()
+      testHost.presence.approveNext()
+      await connected(readOnly)
     }
   })
 
@@ -545,13 +695,28 @@ describe('visual capture of the real product', () => {
 
   it('drives sessions into every state through the Host API', async () => {
     local = await testHost.enroll({ listener: 'unix', name: '本机桌面端' })
-    await local.json('workspaces', { method: 'POST', body: { path: join(projects, 'website'), name: 'website' } })
+    // Projects are added from the desktop app, which signs the request in its main process.
+    expect((await local.addFolders({ paths: [join(projects, 'website')], name: 'website' })).status).toBe(201)
     const saved = await local.confirmed('agents', {
       method: 'POST',
       body: { name: '本地 ACP Agent', command: process.execPath, args: [FAKE_ACP_AGENT], env: {} },
     })
     expect(saved.status).toBe(201)
     const { agent }: { agent: AgentSettings } = await saved.json()
+    // A saved model service with a key, for its page in settings. The key is a test value; it never leaves the Host.
+    const provider = await local.confirmed('providers', {
+      method: 'POST',
+      body: {
+        name: 'DeepSeek',
+        kind: 'openai-compatible',
+        presetId: 'deepseek',
+        baseURL: 'https://api.deepseek.com/v1',
+        apiKey: 'visual-fixture-key',
+        models: ['deepseek-chat', 'deepseek-reasoner'],
+        defaultModel: 'deepseek-chat',
+      },
+    })
+    expect(provider.status).toBe(201)
 
     // A full-access session on the ACP agent: thinking, a tool with a diff, then a plan with usage.
     const plan = await startAgent(agent.id, 'think')
@@ -568,7 +733,10 @@ describe('visual capture of the real product', () => {
     await local.json(`tasks/${plan}`, { method: 'PATCH', body: { title: '梳理会话恢复的实现' } })
 
     const done = await start(PROMPTS.done)
-    await allow(await pendingApproval(done))
+    const write = await pendingApproval(done)
+    // The person takes a while to look at the change; the turn's working time leaves the wait out.
+    advance(35_000)
+    await allow(write)
     await settled(done, 'idle')
 
     const failed = await start(PROMPTS.failed)
@@ -596,6 +764,9 @@ describe('visual capture of the real product', () => {
     const unread = await start(PROMPTS.unread, 'chat')
     await settled(unread, 'idle')
 
+    const thinking = await start(PROMPTS.thinking, 'chat')
+    await expect.poll(async () => (await detail(thinking)).liveReasoning?.length ?? 0, { timeout: 20_000 }).toBeGreaterThan(0)
+
     const running = await start(PROMPTS.running)
     await allow(await pendingApproval(running))
     await toolRunning(running)
@@ -619,11 +790,11 @@ describe('visual capture of the real product', () => {
 
     // The full-access agent asks; in a browser that question is advisory. It comes last: while a full-access session
     // waits, the Host's local confirmation serves only rejections.
-    const advisory = await startAgent(agent.id, 'permission')
+    const advisory = await startAgent(agent.id, 'plan-ask')
     await pendingApproval(advisory)
     await local.json(`tasks/${advisory}`, { method: 'PATCH', body: { title: '列出项目根目录' } })
 
-    sessions = { plan, done, failed, cancelled, unread, running, hidden, r2, r1, advisory }
+    sessions = { plan, thinking, done, failed, cancelled, unread, running, hidden, r2, r1, advisory }
     for (const { page: target } of pages.values()) await target.locator(`[data-task-id="${running}"]`).waitFor({ state: 'attached' })
   })
 
@@ -695,10 +866,16 @@ describe('visual capture of the real product', () => {
       await openSession(target, viewport, sessions.running)
       await shows(target, '用例覆盖了省略密钥的情况，运行一次确认。')
       await reachable(target.getByRole('button', { name: '取消任务', exact: true }))
-      // Running work turns a comet in the run bar and on its tool row; the open session's own row leaves it out.
-      await target.locator('.run-bar .ui-comet').waitFor()
+      // Running work turns the comet on its tool row and the turn ends with the live line, which says how long the run
+      // has worked; the bar above the input says nothing then, and the open session's own row leaves its comet out.
       await target.locator('.tool-card .ui-comet').first().waitFor()
+      await target
+        .locator('.turn-footer.is-live')
+        .getByText(/^已运行 /)
+        .waitFor()
+      expect(await target.locator('.run-bar-collapse[data-state="open"]').count()).toBe(0)
       if (sidebar) expect(await sidebar.locator(`[data-task-id="${sessions.running}"] .ui-comet`).count()).toBe(0)
+      await settleMotion(target)
       await recorder.capture(target, viewport, 'session-running', 'tool running')
       if (sidebar) await recorder.capture(target, viewport, 'sidebar-running', 'running session selected', sidebar)
 
@@ -708,10 +885,21 @@ describe('visual capture of the real product', () => {
         .filter({ visible: true })
         .first()
         .waitFor()
+      // The banner at the top of the conversation unfolds like a disclosure.
+      await target.locator('.ui-collapse[data-settled] > .ui-collapse-inner > .banner-region').first().waitFor()
+      await settleMotion(target)
       await recorder.capture(target, viewport, 'session-offline', 'client offline while a tool runs')
       if (sidebar) await recorder.capture(target, viewport, 'sidebar-offline', 'offline', sidebar)
       await pages.get(viewport.name)!.context.setOffline(false)
       await connected(target)
+
+      // Reasoning still streaming: the thinking row says so with its light and its seconds, the live line keeps only
+      // how long the run has worked.
+      await openSession(target, viewport, sessions.thinking)
+      await target.locator('.thinking.is-live').getByText('正在思考', { exact: true }).waitFor()
+      await target.locator('.thinking.is-live .process-time').waitFor()
+      await settleMotion(target)
+      await recorder.capture(target, viewport, 'session-thinking', 'reasoning streams')
 
       await openSession(target, viewport, sessions.done)
       await shows(target, /建议再补一条/)
@@ -738,28 +926,89 @@ describe('visual capture of the real product', () => {
         expect(await sidebar.locator('.host-name').innerText()).toBe(HOST_NAME)
         expect(await sidebar.locator('.connection-badge').count()).toBe(0)
       }
+      // The process before the answer has folded into one row; the write's diff stays in view as evidence.
+      const fold = target.locator('.fold-toggle')
+      await fold.getByText(/^已处理 · 思考 6 秒 · 读取 1 个文件/).waitFor()
+      await target.locator('.diff-view').getByText('省略表示保留').first().waitFor()
       await recorder.capture(target, viewport, 'session-done', 'done with tools and a diff')
       if (sidebar) await recorder.capture(target, viewport, 'sidebar-done', 'done session selected', sidebar)
 
-      // The write's diff, as a reader opens it.
-      const write = target.locator('.tool-card-header', { hasText: '写入 src/settings.ts' })
+      // The settled turn's footer: when the reply was sent and its tokens, each count with its unit; the time's tooltip
+      // says when the turn began and ended and how long it worked, the approval wait left out.
+      const lastReply = target.locator('.turn:last-child .turn-reply')
+      const facts = lastReply.locator('.turn-footer .turn-facts')
+      await facts.getByText(/^输入 [\d.]+k? tokens$/).waitFor({ state: 'attached' })
+      await facts.getByText(/^输出 [\d.]+k? tokens$/).waitFor({ state: 'attached' })
+      expect(await facts.getByText(/^用时 /).count()).toBe(0)
+      if (viewport.touch) await lastReply.locator('.turn-footer[data-pinned]').waitFor()
+      else {
+        const release = await forceState(target, '.turn:last-child .turn-reply', ['hover'])
+        await settleMotion(target)
+        await recorder.capture(target, viewport, 'session-footer', 'the turn footer under the pointer')
+        await release()
+        // The time's tooltip, opened from the keyboard so it stays while the pointer rests in the corner for the capture.
+        await target.keyboard.press('Shift')
+        await facts.locator('time').focus()
+        await target
+          .getByRole('tooltip')
+          .filter({ visible: true })
+          .getByText(/开始 · .* 完成 · 用时 /)
+          .waitFor()
+        await settleMotion(target)
+        await recorder.capture(target, viewport, 'session-footer-time', "the reply's time with its start, end and working time")
+        await facts.locator('time').blur()
+      }
+
+      // Opening the fold shows the rows as they were.
+      await reachable(fold)
+      await fold.click()
+      await target.locator('.process-fold[data-open] .ui-collapse[data-settled]').waitFor()
+      await settleMotion(target)
+      await recorder.capture(target, viewport, 'session-done-fold', 'the folded process opened')
+
+      // The write's diff stays in view; its row opens the card with the call's arguments and output.
+      const write = target.locator('.tool-card', { has: target.locator('.diff-view') }).locator('.tool-card-header')
       await reachable(write)
       await write.click()
-      await target.locator('.tool-card-body').filter({ hasText: '省略表示保留' }).waitFor()
+      await target.locator('.tool-card[data-open] .tool-card-body').getByText('输出', { exact: true }).waitFor()
       await write.scrollIntoViewIfNeeded()
-      await recorder.capture(target, viewport, 'session-diff', 'done session with its diff expanded')
+      await settleMotion(target)
+      await recorder.capture(target, viewport, 'session-diff', 'done session with its diff and its tool card open')
 
       await openSession(target, viewport, sessions.plan)
       await shows(target, 'planned')
       await recorder.capture(target, viewport, 'session-plan', 'full-access session done with a plan')
       await openDetails(target, viewport)
-      await recorder.capture(target, viewport, 'session-plan-info', 'details with the plan and the tool timeline')
+      await recorder.capture(
+        target,
+        viewport,
+        'session-plan-info',
+        'session information with the plan, the usage the agent reported and the changes',
+      )
+      // Each block folds from its header, and this device remembers it.
+      const usageBlock = target.locator('.info-block[data-block="usage"]').last()
+      await usageBlock.getByRole('button', { name: '用量', exact: true }).click()
+      await usageBlock.locator('.ui-collapse[data-state="closed"]').waitFor({ state: 'attached' })
+      await settleMotion(target)
+      await recorder.capture(target, viewport, 'session-info-folded', 'a block of the session information folded')
+      await usageBlock.getByRole('button', { name: '用量', exact: true }).click()
+      await usageBlock.locator('.ui-collapse[data-settled]').waitFor()
       await closeDetails(target, viewport)
 
       await openSession(target, viewport, sessions.failed)
       await target.locator('.topbar').getByText('失败', { exact: true }).waitFor()
       await recorder.capture(target, viewport, 'session-failed', 'failed')
       if (sidebar) await recorder.capture(target, viewport, 'sidebar-failed', 'failed session selected', sidebar)
+
+      // A failed latest turn offers to send its prompt again; a command it ran may run again, so it asks first.
+      const resend = target.locator('.turn:last-child .turn-footer').getByRole('button', { name: '重新发送', exact: true })
+      if (!viewport.touch) await target.locator('.turn:last-child .turn-reply').hover()
+      await reachable(resend)
+      await resend.click()
+      await target.getByText(/^上一次已经执行了 1 个操作：运行 1 条命令。/).waitFor()
+      await settleMotion(target)
+      await recorder.capture(target, viewport, 'session-failed-retry', 'resending a failed turn asks first')
+      await target.locator('.turn-retry-confirm').getByRole('button', { name: '取消', exact: true }).click()
 
       await openSession(target, viewport, sessions.cancelled)
       await target.locator('.topbar').getByText('已取消', { exact: true }).waitFor()
@@ -776,12 +1025,103 @@ describe('visual capture of the real product', () => {
       await reachable(r1.getByRole('button', { name: '允许一次', exact: true }))
       await reachable(r1.getByRole('button', { name: '拒绝', exact: true }))
       // The card waits for the person with the one amber pill in its header.
-      await target.locator('.tool-card', { has: r1 }).locator('.tool-card-header .ui-waiting-pill', { hasText: '待批准' }).waitFor()
+      await r1.locator('.tool-card-header .ui-waiting-pill', { hasText: '待批准' }).waitFor()
       await recorder.capture(target, viewport, 'approval-r1', 'R1 waiting for approval')
       if (sidebar) await recorder.capture(target, viewport, 'sidebar-waiting', 'session waiting for approval selected', sidebar)
+      if (viewport.name === 'desktop') {
+        // Each line of the open preview reads both numbers, sign and text on one row; the phones' single column stays out.
+        const rows = await r1.locator('.approval-preview .diff-line').evaluateAll(lines =>
+          lines.map(line => ({
+            one: getComputedStyle(line.querySelector('.diff-ln-one')!).display,
+            height: line.getBoundingClientRect().height,
+            lineHeight: parseFloat(getComputedStyle(line).lineHeight),
+          })),
+        )
+        expect(rows.length).toBeGreaterThan(0)
+        for (const row of rows) expect(row).toEqual({ one: 'none', height: row.lineHeight, lineHeight: row.lineHeight })
+        // The card and the diff under review keep their look under styles added to the page.
+        await expectUnmovedByInjectedStyles(target, [
+          '[data-approval-id] .tool-card-title',
+          '[data-approval-id] .approval-reason',
+          '[data-approval-id] .approval-footnote',
+          '[data-approval-id] .diff-fold',
+          '[data-approval-id] .diff-path',
+          '[data-approval-id] .diff-path-name',
+          '[data-approval-id] .diff-path-folder',
+          '[data-approval-id] .diff-line',
+          '[data-approval-id] .diff-text',
+          '[data-approval-id] .diff-hash code',
+          '[data-approval-id] .ui-button',
+        ])
+      }
+
+      // The rest of the Host's choices sit behind ⋯ (a bottom sheet of 更多选项 on phones).
+      const choices =
+        viewport.name === 'phone'
+          ? r1.getByRole('button', { name: '更多选项', exact: true })
+          : r1.getByRole('button', { name: '更多批准选项', exact: true })
+      await reachable(choices)
+      await choices.click()
+      await target.getByRole('menuitem', { name: /本会话始终允许/ }).waitFor()
+      await recorder.capture(target, viewport, 'approval-r1-more', 'the other approval choices open')
+      await target.keyboard.press('Escape')
+      await target.getByRole('menuitem', { name: /本会话始终允许/ }).waitFor({ state: 'hidden' })
+
+      // The preview folds from its default: open on wider screens (it fits in 240 with its fold bar), folded on phones.
+      const toggle = r1.locator('.approval-toggle')
+      await reachable(toggle)
+      await toggle.click()
+      await expect.poll(() => toggle.getAttribute('aria-expanded')).toBe(viewport.name === 'phone' ? 'true' : 'false')
+      if (viewport.name === 'phone') {
+        // The paper stays short: the first rows of the diff and a fold bar for the rest.
+        await reachable(r1.getByRole('button', { name: '展开其余 13 行', exact: true }))
+        const paper = await r1.locator('.approval-preview .diff-file').boundingBox()
+        expect(paper && paper.height <= 240).toBe(true)
+        // Each line reads number, sign, text on one row: one line-number column on phones.
+        const lines = await r1.locator('.approval-preview .diff-line').evaluateAll(rows =>
+          rows.map(row => ({
+            old: getComputedStyle(row.querySelector('.diff-ln-old')!).display,
+            height: row.getBoundingClientRect().height,
+            lineHeight: parseFloat(getComputedStyle(row).lineHeight),
+          })),
+        )
+        expect(lines.length).toBeGreaterThan(0)
+        for (const line of lines) expect(line).toEqual({ old: 'none', height: line.lineHeight, lineHeight: line.lineHeight })
+      }
+      await recorder.capture(target, viewport, 'approval-r1-preview', 'the preview toggled from its default')
+
+      // With the keyboard on the card, its shortcuts show next to the buttons (not on touch screens).
+      if (!viewport.touch) {
+        await r1.getByRole('button', { name: '允许一次', exact: true }).focus()
+        await expect.poll(() => r1.locator('.approval-keys').evaluate(element => getComputedStyle(element).opacity)).toBe('1')
+        await recorder.capture(target, viewport, 'approval-r1-keys', 'the card holds focus and shows its shortcuts')
+      }
+
+      // A decision whose answer never arrived: the card offers to send the same choice again.
+      await target.route('**/link/api/approvals/**', route => route.abort('connectionreset'))
+      await r1.getByRole('button', { name: '拒绝', exact: true }).click()
+      await r1.getByText('「拒绝」的结果未知', { exact: true }).waitFor()
+      // 重试 is the one clear action: no blue, nothing behind ⋯.
+      expect(await r1.locator('.ui-button[data-variant="primary"]').count()).toBe(0)
+      expect(await r1.locator('.approval-more').count()).toBe(0)
+      await reachable(r1.getByRole('button', { name: '重试', exact: true }))
+      await recorder.capture(target, viewport, 'approval-uncertain', 'the outcome of a decision is unknown')
+      await target.unroute('**/link/api/approvals/**')
 
       await openDetails(target, viewport)
-      await recorder.capture(target, viewport, 'session-info', 'details of a session waiting for approval')
+      await recorder.capture(target, viewport, 'session-info', 'session information of a session waiting for approval')
+      if (viewport.name === 'desktop') {
+        // The column's edge toward the paper resizes it: its line under a held hover, and with keyboard focus.
+        const edge = target.getByRole('separator', { name: '调整会话信息宽度', exact: true })
+        await reachable(edge)
+        let release = await forceState(target, '.inspector-resize', ['hover'])
+        await target.evaluate(() => new Promise(done => setTimeout(done, 500)))
+        await recorder.capture(target, viewport, 'inspector-resize-hover', 'the edge of the session information under the pointer')
+        await release()
+        release = await forceState(target, '.inspector-resize', ['focus', 'focus-visible'])
+        await recorder.capture(target, viewport, 'inspector-resize-focus', 'the edge of the session information with keyboard focus')
+        await release()
+      }
       await closeDetails(target, viewport)
 
       await openSession(target, viewport, sessions.r2)
@@ -795,13 +1135,67 @@ describe('visual capture of the real product', () => {
       const hidden = target.locator('[data-approval-id]')
       await hidden.getByText(/^内容包含不可见或改变显示方向的字符/).waitFor()
       await reachable(hidden.getByRole('button', { name: '允许一次', exact: true }))
+      // Nothing broader than allowing once is one tap away from content that may read as something else.
+      expect(await hidden.locator('.approval-more').count()).toBe(0)
+      expect(await hidden.locator('.ui-button[data-variant="primary"]').count()).toBe(0)
       await recorder.capture(target, viewport, 'approval-hidden', 'R1 whose content hides characters')
 
       await openSession(target, viewport, sessions.advisory)
       const advisory = target.locator('[data-approval-id]')
-      await advisory.getByText('提示，不是安全边界', { exact: true }).waitFor()
-      await reachable(advisory.getByRole('button', { name: 'Reject', exact: true }))
+      await advisory.getByText('仅提示', { exact: true }).waitFor()
+      // The agent's own words for its option stay in the tooltip; the button reads in the product's words.
+      await reachable(advisory.getByRole('button', { name: '拒绝', exact: true }))
       await recorder.capture(target, viewport, 'approval-advisory', 'full-access question shown as advisory')
+
+      // The agent's plan is a chip in the bar above the input; it opens the list.
+      const planChip = target.getByRole('button', { name: '计划 0/2', exact: true })
+      await reachable(planChip)
+      await planChip.click()
+      await target.getByText('List the project root', { exact: true }).last().waitFor()
+      await settleMotion(target)
+      await recorder.capture(target, viewport, 'session-plan-popover', "the plan chip's list open")
+      await target.keyboard.press('Escape')
+
+      // The ordinary request on a device without 批准普通操作: the lock and the reason stand where allowing was, and the
+      // card still waits for someone (待批准). The snapshot is the Host's own, less that one scope.
+      await target.route('**/link/api/snapshot', async route => {
+        const response = await route.fetch()
+        const snapshot: AppSnapshot = await response.json()
+        snapshot.device.scopes = snapshot.device.scopes.filter(scope => scope !== 'approve:standard')
+        await route.fulfill({ response, json: snapshot })
+      })
+      await openSession(target, viewport, sessions.r1)
+      const locked = target.locator('[data-approval-id]')
+      await locked.getByText('此设备没有「批准普通操作」权限', { exact: true }).waitFor()
+      expect(await locked.getByRole('button', { name: /允许/ }).count()).toBe(0)
+      await locked.locator('.tool-card-header .ui-waiting-pill', { hasText: '待批准' }).waitFor()
+      await reachable(locked.getByRole('button', { name: '拒绝', exact: true }))
+      await recorder.capture(target, viewport, 'approval-r1-locked', 'R1 on a device without 批准普通操作')
+      await target.unroute('**/link/api/snapshot')
+
+      // A Host of the previous build: no device rights or risk in what it sends, so the card offers plain 拒绝 and
+      // 允许一次 under the legacy-Host banner.
+      await target.route('**/link/api/snapshot', async route => {
+        const response = await route.fetch()
+        const body: AppSnapshot = await response.json()
+        const { host: _host, ...snapshot } = body
+        await route.fulfill({ response, json: { ...snapshot, approvals: previousBuild(snapshot.approvals) } })
+      })
+      await target.route(`**/link/api/tasks/${sessions.r1}`, async route => {
+        if (route.request().method() !== 'GET') return route.fallback()
+        const response = await route.fetch()
+        const current: TaskDetail = await response.json()
+        await route.fulfill({ response, json: { ...current, approvals: previousBuild(current.approvals) } })
+      })
+      await openSession(target, viewport, sessions.r1)
+      const legacy = target.locator('[data-approval-id]')
+      await target.getByText('此 Host 仍是旧版本，重启 Host 后启用设备确认。', { exact: true }).waitFor()
+      await reachable(legacy.getByRole('button', { name: '允许一次', exact: true }))
+      await reachable(legacy.getByRole('button', { name: '拒绝', exact: true }))
+      expect(await legacy.locator('.approval-more').count()).toBe(0)
+      await recorder.capture(target, viewport, 'approval-legacy', 'a Host of the previous build: plain allow and reject')
+      await target.unroute(`**/link/api/tasks/${sessions.r1}`)
+      await target.unroute('**/link/api/snapshot')
 
       // Navigation: the drawer on phones and tablets.
       if (viewport.name !== 'desktop') {
@@ -947,8 +1341,9 @@ describe('visual capture of the real product', () => {
       await settings.getByRole('heading', { name: '新会话默认值' }).waitFor()
       await recorder.capture(target, viewport, 'settings-general', 'general')
       for (const [surface, section, ready] of [
+        ['settings-computer', '电脑', settings.getByRole('button', { name: /^在这台电脑上发起：/ })],
         ['settings-providers', '模型服务', settings.getByText('本地模型服务').first()],
-        ['settings-agents', 'Agent', settings.getByText('本地 ACP Agent').first()],
+        ['settings-agents', 'Agent 成员', settings.getByText('本地 ACP Agent').first()],
         ['settings-workspaces', '项目', settings.getByText('website').first()],
         ['settings-plugins', '插件', settings.getByRole('switch').first()],
         ['settings-devices', '设备', settings.getByText('本机桌面端').first()],
@@ -958,19 +1353,81 @@ describe('visual capture of the real product', () => {
         await ready.waitFor()
         await noHorizontalOverflow(target, settings)
         await recorder.capture(target, viewport, surface, section)
+        if (surface === 'settings-computer') await captureCeilings(target, viewport, settings)
+        const top = () => (viewport.name === 'phone' ? settings.locator('.settings-level[data-state="top"]') : settings)
         if (surface === 'settings-providers') {
+          // A saved service's page: its connection, key, models and the red group, every value in a card.
+          await settings.getByRole('button', { name: /^DeepSeek/ }).click()
+          await reachable(top().getByRole('switch', { name: '启用', exact: true }))
+          await reachable(top().getByRole('button', { name: '检测连接', exact: true }))
+          await reachable(top().getByRole('button', { name: '获取模型', exact: true }))
+          await reachable(top().getByRole('radio', { name: '默认使用 deepseek-reasoner', exact: true }))
+          await reachable(top().getByRole('button', { name: '删除', exact: true }))
+          await noHorizontalOverflow(target, settings)
+          await recorder.capture(target, viewport, 'settings-provider', 'a saved model service')
+          await backToSection(settings)
           // Every model-service preset with its brand's icon (a custom service has the plug glyph).
           await settings.getByRole('button', { name: '添加服务', exact: true }).click()
-          const presets = settings.locator('.preset-card')
+          const presets = top().locator('.preset-card')
           await expect.poll(() => presets.count()).toBe(13)
           expect(await presets.locator('.ui-tile').count()).toBe(13)
           await noHorizontalOverflow(target, settings)
           await recorder.capture(target, viewport, 'settings-provider-presets', 'choosing a model-service preset')
+          // Adding one: fields in cards, the check, the models and 添加服务 at the end; a browser cannot set keys.
+          await top()
+            .getByRole('button', { name: /^OpenAI/ })
+            .click()
+          for (const control of [
+            top().getByLabel('名称', { exact: true }),
+            top().getByLabel('API 地址', { exact: true }),
+            top().getByRole('button', { name: '检测连接', exact: true }),
+            top().getByLabel('手动添加模型 ID', { exact: true }),
+            top().getByRole('button', { name: '添加服务', exact: true }),
+          ])
+            await reachable(control, { allowDisabled: true })
+          await top().getByText('设置密钥需要在执行端电脑上用 Latch 桌面端确认。', { exact: true }).waitFor()
+          await noHorizontalOverflow(target, settings)
+          await recorder.capture(target, viewport, 'settings-provider-add', 'adding a model service from a preset')
+          await backToSection(settings)
+        }
+        if (surface === 'settings-agents') {
+          // An agent's page: 启用, its definition read-only in a browser, detection with the path and the red group.
+          await settings.getByRole('button', { name: '编辑 本地 ACP Agent', exact: true }).click()
+          await reachable(top().getByRole('switch', { name: '启用', exact: true }))
+          await reachable(top().getByRole('button', { name: '重新检测', exact: true }))
+          await reachable(top().getByRole('button', { name: '复制命令路径', exact: true }))
+          await reachable(top().getByRole('button', { name: '删除', exact: true }))
+          await noHorizontalOverflow(target, settings)
+          await recorder.capture(target, viewport, 'settings-agent', 'an added agent')
+          await backToSection(settings)
         }
       }
-      await settings.getByRole('button', { name: '关闭', exact: true }).click()
+      await closeSettings(settings)
     },
     600_000,
+  )
+
+  // ---- A device that cannot manage the Host ------------------------------------------------------------------
+
+  it.each(VISUAL_VIEWPORTS)(
+    'captures 设置 › 电脑 read-only for a device without 管理此 Host at $name width',
+    async viewport => {
+      const target = readOnlyPages.get(viewport.name)!.page
+      await target.goto(`${host.loopbackOrigin}/link/`)
+      await connected(target)
+      {
+        const settings = await openSettings(target, '设置')
+        await openSection(settings, '电脑')
+        await settings.getByRole('heading', { name: '权限上限', exact: true }).waitFor()
+        // The ceilings are values here, with no picker; the caption says who can change them.
+        expect(await settings.getByRole('button', { name: /^在这台电脑上发起：/ }).count()).toBe(0)
+        await settings.getByText('只有能管理此 Host 的设备可以修改上限。', { exact: true }).waitFor()
+        await noHorizontalOverflow(target, settings)
+        await recorder.capture(target, viewport, 'settings-computer-readonly', 'the ceilings for a device that cannot manage the Host')
+        await closeSettings(settings)
+      }
+    },
+    120_000,
   )
 
   // ---- The primitives -----------------------------------------------------------------------------------------

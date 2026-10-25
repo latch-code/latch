@@ -10,18 +10,21 @@
 }
 /* A resting sheet of paper on the ground: a line, no shadow, no decorative tint. */
 .enroll-card {
-  display: grid;
+  display: grid !important;
   gap: var(--sp-20);
   width: min(440px, 100%);
   padding: var(--sp-32);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line) !important;
   border-radius: var(--r-12);
   corner-shape: var(--corner-shape);
-  background: var(--bg-pane);
-  animation: rise-in var(--d-base) var(--ease);
+  background: var(--bg-pane) !important;
+  color: var(--text-1) !important;
+  font-size: var(--fs-label) !important;
+  line-height: var(--lh-label-para) !important;
+  opacity: 1 !important;
 }
 .enroll-header {
-  display: grid;
+  display: grid !important;
   gap: var(--sp-8);
   justify-items: start;
 }
@@ -29,14 +32,17 @@
   margin-bottom: var(--sp-6);
 }
 .enroll-header h1 {
-  font-size: var(--fs-display);
-  line-height: var(--lh-display);
-  font-weight: 600;
+  display: block !important;
+  color: var(--text-1) !important;
+  font-size: var(--fs-display) !important;
+  line-height: var(--lh-display) !important;
+  font-weight: 600 !important;
 }
 .enroll-description {
-  color: var(--text-2);
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui-para);
+  display: block !important;
+  color: var(--text-2) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui-para) !important;
 }
 .enroll-loading {
   min-height: 44px;
@@ -46,7 +52,7 @@
 }
 
 .enroll-form {
-  display: grid;
+  display: grid !important;
   gap: var(--sp-16);
 }
 /* Desktop fields and the form's actions are 32 (md), like a dialog footer; phones raise both to 44 (ui.css and below). */
@@ -54,6 +60,59 @@
   justify-self: center;
 }
 
+/* What the device may do: the fixed permissions with a neutral check, then 管理此 Host as the one real choice. */
+.enroll-scopes {
+  display: grid !important;
+  gap: var(--sp-2);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.enroll-scopes legend {
+  display: block !important;
+  margin-bottom: var(--sp-6);
+  padding: 0;
+  color: var(--text-2) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption) !important;
+  font-weight: 500;
+}
+.enroll-scope {
+  display: flex !important;
+  align-items: center;
+  gap: var(--sp-12);
+  min-height: 32px;
+  padding: var(--sp-4) 0;
+  color: var(--text-2) !important;
+  font-size: var(--fs-label) !important;
+  line-height: var(--lh-label) !important;
+}
+.enroll-scope.is-choice {
+  color: var(--text-1) !important;
+}
+.enroll-scopes:disabled .enroll-scope.is-choice {
+  opacity: 0.45;
+}
+/* A permission that is always granted: a fixed check, neutral because nothing was chosen. */
+.scope-check {
+  display: grid !important;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  border-radius: var(--r-4);
+  corner-shape: var(--corner-shape);
+  background: var(--fill) !important;
+  color: var(--text-2) !important;
+}
+@media (pointer: coarse) {
+  .enroll-scope {
+    min-height: 44px;
+  }
+}
+
+/* The device permission dialog of 设置 › 设备: one checkbox per permission. */
 .scope-list {
   display: grid;
   gap: var(--sp-2);
@@ -80,21 +139,6 @@
   font-size: var(--fs-label);
   line-height: var(--lh-label);
 }
-.scope-item.is-fixed {
-  color: var(--text-2);
-}
-/* A permission that is always granted: a fixed check, neutral because nothing was chosen. */
-.scope-check {
-  display: grid;
-  place-items: center;
-  width: 16px;
-  height: 16px;
-  flex-shrink: 0;
-  border-radius: var(--r-4);
-  corner-shape: var(--corner-shape);
-  background: var(--fill);
-  color: var(--text-2);
-}
 .scope-item input[type='checkbox'] {
   width: 16px;
   height: 16px;
@@ -117,93 +161,86 @@ label.scope-item {
 
 /* Waiting for the Host's local confirmation: pending reads amber, like an approval. */
 .enroll-waiting {
-  display: grid;
+  display: grid !important;
   gap: var(--sp-16);
 }
 .enroll-status {
-  display: flex;
+  display: flex !important;
   align-items: center;
-  gap: var(--sp-8);
+  gap: var(--sp-12);
 }
 .enroll-status h2 {
+  display: block !important;
   flex: 1;
-  font-size: var(--fs-title-sm);
-  line-height: var(--lh-title-sm);
-  font-weight: 600;
+  color: var(--text-1) !important;
+  font-size: var(--fs-title-sm) !important;
+  line-height: var(--lh-title-sm) !important;
+  font-weight: 600 !important;
 }
 .enroll-timer {
-  color: var(--text-3);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  color: var(--warn-text) !important;
+  font-size: var(--fs-label) !important;
+  line-height: var(--lh-label) !important;
   font-variant-numeric: tabular-nums;
 }
 .enroll-compare {
-  color: var(--text-2);
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui-para);
+  display: block !important;
+  color: var(--text-2) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui-para) !important;
 }
 
 /* The fingerprint is the one large text on the page, because it is what the person compares. */
 .fingerprint-block {
-  display: grid;
+  display: grid !important;
   justify-items: center;
   gap: var(--sp-8);
   padding: var(--sp-16);
   border: 1px solid var(--line-subtle);
   border-radius: var(--r-12);
   corner-shape: var(--corner-shape);
-  background: var(--bg-sunken);
+  background: var(--bg-sunken) !important;
 }
 .fingerprint-label {
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
+  display: block !important;
+  color: var(--text-3) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption) !important;
   font-weight: 500;
 }
+/* Five groups read as three and two at every width, so no group is left alone on a line. */
 .fingerprint {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid !important;
+  grid-template-columns: repeat(3, auto);
   justify-content: center;
   gap: var(--sp-4) var(--sp-12);
   max-width: 100%;
-  color: var(--text-1);
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono-display);
-  line-height: var(--lh-mono-display);
-  font-weight: 600;
-  letter-spacing: var(--ls-mono-display);
+  color: var(--text-1) !important;
+  font-family: var(--font-mono) !important;
+  font-size: var(--fs-mono-display) !important;
+  line-height: var(--lh-mono-display) !important;
+  font-weight: 600 !important;
+  letter-spacing: var(--ls-mono-display) !important;
   font-variant-numeric: tabular-nums;
 }
 .fingerprint-hash {
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
+  display: block !important;
+  color: var(--text-3) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption) !important;
 }
 .fingerprint-hash code {
-  color: var(--text-2);
-  font-size: var(--fs-mono-sm);
-  line-height: var(--lh-mono-sm);
+  color: var(--text-2) !important;
+  font-family: var(--font-mono) !important;
+  font-size: var(--fs-mono-sm) !important;
+  line-height: var(--lh-mono-sm) !important;
 }
-/* The countdown: a 2px amber line on a pressed track. */
-.countdown-track {
-  display: block;
-  height: 2px;
-  overflow: hidden;
-  border-radius: var(--r-2);
-  background: var(--bg-press);
-}
-.countdown-track > i {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--warn-dot);
-  transition: width 1s linear;
-}
-
 @media (max-width: 767.98px) {
   .enroll-form .ui-button[data-block],
   .enroll-waiting .ui-button[data-block] {
     min-height: 44px;
+    font-size: var(--fs-ui);
+    line-height: var(--lh-ui);
   }
   .enroll-page {
     align-items: start;

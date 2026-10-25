@@ -38,7 +38,18 @@ export interface RuntimeStore {
 }
 
 const callSchema = z.object({ id: z.string(), name: z.string(), arguments: z.record(z.string(), z.unknown()) })
-const usageSchema = z.object({ inputTokens: z.number().nonnegative(), outputTokens: z.number().nonnegative() })
+const usageSchema = z.object({
+  inputTokens: z.number().nonnegative(),
+  outputTokens: z.number().nonnegative(),
+  cacheReadTokens: z.number().nonnegative().optional(),
+  cacheWriteTokens: z.number().nonnegative().optional(),
+  reasoningTokens: z.number().nonnegative().optional(),
+})
+const turnSchema = z.object({
+  endedAt: z.string().optional(),
+  activeMs: z.number().nonnegative().optional(),
+  waitMs: z.number().nonnegative().optional(),
+})
 // Every persisted field must be listed: z.object drops unknown keys on load.
 const toolDetailSchema = z.object({
   kind: z.enum(['read', 'edit', 'delete', 'move', 'search', 'execute', 'think', 'fetch', 'other']).optional(),
@@ -66,6 +77,13 @@ const messageSchema = z.object({
   reasoning: z.string().optional(),
   tool: toolDetailSchema.optional(),
   usage: usageSchema.optional(),
+  createdAt: z.string().optional(),
+  startedAt: z.string().optional(),
+  completedAt: z.string().optional(),
+  reasoningMs: z.number().nonnegative().optional(),
+  model: z.string().optional(),
+  providerId: z.string().optional(),
+  turn: turnSchema.optional(),
 })
 const historySchema = z.object({
   role: z.enum(['system', 'user', 'assistant', 'tool']),
@@ -83,6 +101,7 @@ const stateSchema = z.object({
         id: z.string(),
         title: z.string(),
         updatedAt: z.string(),
+        createdAt: z.string().optional(),
         cwd: z.string().optional(),
         model: z.string().optional(),
         mode: z.enum(['chat', 'agent']).optional(),
@@ -92,6 +111,8 @@ const stateSchema = z.object({
         pinned: z.boolean().optional(),
         archived: z.boolean().optional(),
         usage: usageSchema.optional(),
+        workspaceId: z.string().optional(),
+        folders: z.array(z.object({ id: z.string(), path: z.string() })).optional(),
       }),
       messages: z.array(messageSchema),
       history: z.array(historySchema),

@@ -139,6 +139,20 @@ describe('buttons', () => {
     })
   })
 
+  it('shows the trigger of an open menu as a neutral press, like a toggle that is on', async () => {
+    const screen = await render(
+      <>
+        <IconButton label="更多" icon={Settings} aria-haspopup="menu" aria-expanded />
+        <IconButton label="收起" icon={Settings} aria-haspopup="menu" aria-expanded={false} />
+      </>,
+    )
+    const open = screen.getByRole('button', { name: '更多' }).element()
+    const closed = screen.getByRole('button', { name: '收起' }).element()
+    expect(style(open, '::before').backgroundColor).toBe('rgba(29, 28, 26, 0.07)')
+    expect(getComputedStyle(open).color).toBe(getComputedStyle(document.documentElement).color)
+    expect(style(closed, '::before').backgroundColor).toBe('rgba(0, 0, 0, 0)')
+  })
+
   it('keeps a 44px target around a box a dense row keeps small, and sets a count past the corner on the surface', async () => {
     const screen = await render(
       <IconButton label="2 项待批准" icon={Settings} style={{ minWidth: 0, minHeight: 0 }} badge={<Count value={2} tone="warn" />} />,

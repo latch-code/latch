@@ -1,57 +1,29 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
-import { Check, KeyRound, RefreshCw } from 'lucide-react'
+import { Check, Fingerprint as FingerprintGlyph, KeyRound, RefreshCw } from 'lucide-react'
 import { acceptableName, enrollmentName, pendingInvitation, useEnrollment, type EnrolledResult } from '../core/enrollment.ts'
+import { useViewport } from '../breakpoints.ts'
 import { useCountdown } from '../hooks/useCountdown.ts'
-import { DEVICE_NAME_INVALID_TEXT, ENROLLMENT_REASON_TEXT } from '../core/securityCopy.ts'
+import { BROWSER_SCOPES, DESKTOP_SCOPES, DEVICE_NAME_INVALID_TEXT, ENROLLMENT_COPY, ENROLLMENT_REASON_TEXT } from '../core/securityCopy.ts'
 import type { AuthState } from '../core/useHarness.ts'
-import { Button, ICON_STROKE, InlineNotice, Loading, StatusDot } from '@latch/ui'
+import { Button, Checkbox, ICON_STROKE, InlineNotice, Loading, TextField, type ButtonSize } from '@latch/ui'
 import { BrandMark } from './ui.tsx'
 
-const COPY = {
-  title: '连接到 Latch',
-  local: '这台设备会生成自己的密钥。提交后，请在运行 Latch 的电脑上核对指纹，并用 Touch ID 或登录密码确认。',
-  invited: '已收到配对邀请。提交后，请在运行 Latch 的电脑上核对指纹并确认。',
-  invitationRequired:
-    '手机或其他电脑需要配对邀请。请在电脑上的 Latch 桌面端「设备」页生成配对二维码，或在电脑上运行 pnpm latch device invite。',
-  submit: '请求本机确认',
-  waiting: '等待本机确认',
-  fingerprint: '设备指纹',
-  compare: '请确认电脑上显示的指纹与下面完全一致：',
-  completing: '正在完成登记…',
-  confirmFailed: '登记已完成，但还没能读取执行端状态。',
-  denied: '本机拒绝了此设备。',
-  expired: '本机确认已超时，请重新提交。',
-  offlineField: '离线登记码',
-  offlineSubmit: '使用离线登记码',
-  unsupported: '此浏览器无法在当前地址安全地保存设备密钥。请使用最新版 Chrome、Edge、Firefox 或 Safari，或使用 Latch 桌面端。',
-  mismatch: '服务器返回的指纹与本机计算的不一致，已停止登记。',
-  legacyTitle: '此设备需要在本机重新确认',
-  legacyBody: 'Latch 已升级设备凭据，旧的登录状态不再有效。请提交确认请求，并在运行 Latch 的电脑上核对指纹。',
-  legacySubmit: '在本机重新确认',
-  oldHost: '此 Host 版本过旧，请在电脑上重启 Latch。',
-  admin: '管理此 Host（模型服务、插件、项目和设备）',
-} as const
+const COPY = ENROLLMENT_COPY
 
-const FIXED_SCOPES = ['查看会话', '发起和继续会话', '批准普通操作']
-/** The desktop shell enrolls on the Host's own socket and receives every scope. */
-const DESKTOP_SCOPES = [
-  '查看会话',
-  '发起和继续会话',
-  '批准普通操作',
-  '批准高风险操作',
-  '管理此 Host（模型服务、插件、项目和设备）',
-  '设置密钥',
-]
-
+/** The Host's reason, without the full stop the sentence around it supplies. */
 function unavailableText(message: string | undefined): string {
-  const reason = (message ?? '').trim().replace(/[。.]+$/, '')
-  return `本机确认不可用：${reason || '未知原因'}。可以停止 Host 后运行 pnpm latch device enroll --offline，再在下方填写离线登记码。`
+  return COPY.unavailable((message ?? '').trim().replace(/[。.]+$/, ''))
+}
+
+/** Buttons on this page: lg (44) on phones, md (32) from 768 up. */
+function useButtonSize(): ButtonSize {
+  return useViewport() === 'phone' ? 'lg' : 'md'
 }
 
 function Shell({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
   return (
     <div className="enroll-page">
-      <main className="enroll-card" aria-labelledby="enroll-title">
+      <main className="enroll-card" data-secure="" aria-labelledby="enroll-title">
         <header className="enroll-header">
           <BrandMark size={44} />
           <h1 id="enroll-title">{title}</h1>
@@ -98,13 +70,13 @@ export function ConnectScreen({ error, onRetry }: { error: string; onRetry: () =
           tone="warn"
           action={
             <Button variant="link" onClick={onRetry}>
-              重试
+              {COPY.retry}
             </Button>
           }>
           {error}
         </InlineNotice>
       ) : (
-        <Loading className="enroll-loading" label="正在连接执行端…" />
+        <Loading className="enroll-loading" label={COPY.connecting} />
       )}
     </Shell>
   )
@@ -122,7 +94,7 @@ function Fingerprint({ value, hash }: { value: string; hash?: string }) {
       </code>
       {hash && (
         <span className="fingerprint-hash">
-          核对码 <code>{hash}</code>
+          {COPY.hash} <code>{hash}</code>
         </span>
       )}
     </div>
@@ -141,22 +113,25 @@ function Waiting({
   onCancel: () => void
 }) {
   const { seconds, fraction } = useCountdown(expiresAt, 120)
+  const size = useButtonSize()
   return (
     <section className="enroll-waiting" aria-labelledby="enroll-waiting-title">
       <div className="enroll-status">
-        <StatusDot tone="warn" />
+        <span className="presence-icon" data-tone="warn" aria-hidden="true">
+          <FingerprintGlyph size={20} strokeWidth={ICON_STROKE[20]} />
+        </span>
         <h2 id="enroll-waiting-title">{COPY.waiting}</h2>
         <span className="enroll-timer" role="timer">
-          剩余 {seconds} 秒
+          {COPY.remaining(seconds)}
         </span>
       </div>
       <p className="enroll-compare">{COPY.compare}</p>
       <Fingerprint value={fingerprint} hash={hash} />
-      <span className="countdown-track" aria-hidden="true">
-        <i style={{ width: `${Math.round(fraction * 100)}%` }} />
+      <span className="presence-track" aria-hidden="true">
+        <i style={{ '--fraction': String(fraction) }} />
       </span>
-      <Button size="md" block onClick={onCancel}>
-        取消
+      <Button size={size} block onClick={onCancel}>
+        {COPY.cancel}
       </Button>
     </section>
   )
@@ -172,14 +147,17 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
   const [admin, setAdmin] = useState<boolean | null>(null)
   const [offlineCode, setOfflineCode] = useState('')
   const [showOffline, setShowOffline] = useState(false)
+  const size = useButtonSize()
   const reason = ENROLLMENT_REASON_TEXT[auth.reason]
   const title = legacy ? COPY.legacyTitle : COPY.title
-  const description = legacy ? COPY.legacyBody : invited ? COPY.invited : COPY.local
+  const presenceDown = info?.presence.status === 'unavailable'
+  // Without local confirmation the offline code is the way in, so the intro does not promise Touch ID.
+  const description = legacy ? COPY.legacyBody : invited ? COPY.invited : presenceDown ? COPY.offline : COPY.local
 
   if (step.kind === 'loading')
     return (
       <Shell title={title}>
-        <Loading className="enroll-loading" label="正在连接执行端…" />
+        <Loading className="enroll-loading" label={COPY.connecting} />
       </Shell>
     )
   if (step.kind === 'old-host')
@@ -199,7 +177,7 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
               onClick={() => {
                 void enrollment.reload()
               }}>
-              重试
+              {COPY.retry}
             </Button>
           }>
           {step.message}
@@ -246,7 +224,7 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
               onClick={() => {
                 void enrollment.retryConfirm()
               }}>
-              重试
+              {COPY.retry}
             </Button>
           }>
           {COPY.confirmFailed}
@@ -255,7 +233,6 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
       </Shell>
     )
 
-  const presenceDown = info?.presence.status === 'unavailable'
   const offlineOffered = presenceDown || info?.offlineCodeAccepted === true
   const offlineOnly = presenceDown
   const adminChecked = admin ?? (info?.firstDevice === true && !invited)
@@ -279,30 +256,22 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
         onSubmit={event => {
           send(event, offlineOnly)
         }}>
-        <label className="field">
-          <span>设备名称</span>
-          <input
-            value={name}
-            onChange={event => {
-              setName(event.target.value)
-            }}
-            placeholder={acceptableName(legacyName) ?? '例如：我的手机'}
-            autoComplete="off"
-            maxLength={80}
-            disabled={busy}
-            aria-invalid={chosenName === null}
-            aria-describedby={chosenName === null ? 'enroll-name-error' : undefined}
-          />
-          {chosenName === null && (
-            <small id="enroll-name-error" className="field-hint is-error">
-              {DEVICE_NAME_INVALID_TEXT}
-            </small>
-          )}
-        </label>
-        <fieldset className="scope-list" disabled={busy}>
-          <legend>此设备的权限</legend>
-          {(electron ? DESKTOP_SCOPES : FIXED_SCOPES).map(label => (
-            <div key={label} className="scope-item is-fixed">
+        <TextField
+          label={COPY.name}
+          value={name}
+          onChange={event => {
+            setName(event.target.value)
+          }}
+          placeholder={acceptableName(legacyName) ?? COPY.namePlaceholder}
+          autoComplete="off"
+          maxLength={80}
+          disabled={busy}
+          error={chosenName === null ? DEVICE_NAME_INVALID_TEXT : undefined}
+        />
+        <fieldset className="enroll-scopes" disabled={busy}>
+          <legend>{COPY.scopes}</legend>
+          {(electron ? DESKTOP_SCOPES : BROWSER_SCOPES).map(label => (
+            <div key={label} className="enroll-scope">
               <span className="scope-check" aria-hidden="true">
                 <Check size={12} strokeWidth={ICON_STROKE[12]} />
               </span>
@@ -310,38 +279,34 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
             </div>
           ))}
           {!electron && (
-            <label className="scope-item">
-              <input
-                type="checkbox"
-                checked={adminChecked}
-                onChange={event => {
-                  setAdmin(event.target.checked)
-                }}
-              />
-              <span>{COPY.admin}</span>
-            </label>
+            <Checkbox
+              className="enroll-scope is-choice"
+              label={COPY.admin}
+              checked={adminChecked}
+              onChange={event => {
+                setAdmin(event.target.checked)
+              }}
+            />
           )}
         </fieldset>
         {offlineOffered && (offlineOnly || showOffline) && (
-          <label className="field">
-            <span>{COPY.offlineField}</span>
-            <input
-              value={offlineCode}
-              onChange={event => {
-                setOfflineCode(event.target.value)
-              }}
-              placeholder="lpo1-…"
-              autoComplete="off"
-              spellCheck={false}
-              disabled={busy}
-            />
-          </label>
+          <TextField
+            label={COPY.offlineField}
+            value={offlineCode}
+            onChange={event => {
+              setOfflineCode(event.target.value)
+            }}
+            placeholder="lpo1-…"
+            autoComplete="off"
+            spellCheck={false}
+            disabled={busy}
+          />
         )}
         {offlineOnly ? (
           <Button
             type="submit"
             variant="primary"
-            size="md"
+            size={size}
             block
             icon={KeyRound}
             loading={busy}
@@ -353,7 +318,7 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
             <Button
               type="submit"
               variant="primary"
-              size="md"
+              size={size}
               block
               icon={outcome ? RefreshCw : undefined}
               loading={busy}
@@ -363,7 +328,7 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
             {offlineOffered
               && (showOffline ? (
                 <Button
-                  size="md"
+                  size={size}
                   block
                   disabled={busy || chosenName === null || !offlineCode.trim()}
                   onClick={event => {
@@ -374,6 +339,7 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
               ) : (
                 <Button
                   variant="link"
+                  size={size}
                   className="enroll-offline-toggle"
                   onClick={() => {
                     setShowOffline(true)

@@ -77,11 +77,19 @@ export function useSubmission({
     }
   }, [pendingKey])
 
-  const submit = async (retry?: PendingSubmission): Promise<void> => {
-    if (sendingRef.current || (!retry && !draft.trim())) return
+  /**
+   * Sends the draft, retries a pending submission with its own requestId, or (`resend`) sends a prompt of the open
+   * session again as a new turn with a new requestId, leaving the draft alone.
+   */
+  const submit = async (retry?: PendingSubmission, resend?: string): Promise<void> => {
+    if (sendingRef.current || (!retry && resend === undefined && !draft.trim())) return
+    if (resend !== undefined && (selectedId === null || !resend.trim())) return
     const override = selectedId === null ? undefined : overrides[selectedId]
     const submission: PendingSubmission =
       retry
+      ?? (resend !== undefined && selectedId !== null
+        ? { requestId: newRequestId(), prompt: resend, sessionId: selectedId, ...(override ? { model: override } : {}) }
+        : undefined)
       ?? (selectedId === null
         ? {
             requestId: newRequestId(),
@@ -114,7 +122,8 @@ export function useSubmission({
       onSent(sessionId, submission)
       writePending(pendingKey, null)
       setPending(null)
-      setDraft('')
+      // A resent prompt never came from the composer, so whatever is being drafted stays.
+      if (resend === undefined) setDraft('')
       if (submission.sessionId !== undefined)
         setOverrides(previous => {
           const next = { ...previous }
@@ -146,6 +155,7 @@ export function useSubmission({
     choice,
     updateChoice,
     submit,
+    resend: (prompt: string) => submit(undefined, prompt),
     override: selectedId === null ? undefined : overrides[selectedId],
     setOverride: (sessionId: string, model: ModelRef | undefined) =>
       setOverrides(previous => {

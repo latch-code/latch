@@ -1,18 +1,19 @@
 import { spawnSync } from 'node:child_process'
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { delimiter, isAbsolute, join } from 'node:path'
+import { delimiter, dirname, isAbsolute, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { isReservedAgentEnvName, type TaskDetail } from '@latch/protocol'
-import type { HarnessDriver, HarnessSecurityEvent, HarnessPlugin, Bridge } from '@latch/sdk'
+import type { HarnessDriver, HarnessSecurityEvent, HarnessPlugin, Bridge, HostProject, ProjectFolder } from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { AgentConnection, ConnectionStopping } from '../src/connection.ts'
 import { agentEnvironment } from '../src/environment.ts'
-import { createAcpAgentPlugin, resolveCommand, type AcpAgentOptions, type AgentRecord } from '../src/index.ts'
+import { createAcpAgentPlugin, forgetCommandLookups, resolveCommand, type AcpAgentOptions, type AgentRecord } from '../src/index.ts'
 import { classifyMode, filterPermissionOptions, launchHash, selectProfile, validateAgentDefinition } from '../src/permission.ts'
 import { profileFor } from '../src/profiles/index.ts'
 import { fingerprintProjectConfig, PROJECT_CONFIG_LIMITS } from '../src/project-config.ts'
+import { initializeResult } from '../src/protocol.ts'
 import { AgentHealth } from '../src/types.ts'
 
 const FAST: AcpAgentOptions = { cancelGraceMs: 300, stopGraceMs: 200, restartDelayMs: 0, requestTimeoutMs: 5_000 }
@@ -57,6 +58,14 @@ async function activate(plugin: HarnessPlugin): Promise<HarnessDriver> {
     for (const dispose of disposers.reverse()) await dispose()
   })
   return drivers[0]
+}
+
+/** An executable file (a shell script that does nothing) at `directory/command`, made with its directories. */
+async function installCommand(directory: string, command: string): Promise<string> {
+  await mkdir(directory, { recursive: true })
+  await writeFile(join(directory, command), '#!/bin/sh\n')
+  await chmod(join(directory, command), 0o755)
+  return join(directory, command)
 }
 
 /** Sets Host environment variables for one test. */
@@ -104,12 +113,13 @@ async function setup(env: Record<string, string> = {}, options: AcpAgentOptions 
       }),
     )
   const driver = await build(record)
-  async function openWith(target: HarnessDriver, workspaces?: () => string[]): Promise<Bridge> {
+  async function openWith(target: HarnessDriver, workspaces?: () => string[], projects?: () => HostProject[]): Promise<Bridge> {
     const bridge = target.create({
       dataDir,
       workspaceRoot: workspace,
       tmpRoot,
       ...(workspaces ? { workspaces } : {}),
+      ...(projects ? { projects } : {}),
       providerId: 'unused',
       registry: {
         acquire() {
@@ -127,7 +137,16 @@ async function setup(env: Record<string, string> = {}, options: AcpAgentOptions 
     bridge.createTask = async input =>
       'expectedLaunchHash' in input
         ? create(input)
-        : create({ ...input, expectedLaunchHash: (await bridge.launchPreview!({ cwd: input.cwd ?? workspace })).launchHash })
+        : create({
+            ...input,
+            expectedLaunchHash: (
+              await bridge.launchPreview!({
+                cwd: input.cwd ?? workspace,
+                ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId } : {}),
+                ...(input.folders ? { folders: input.folders } : {}),
+              })
+            ).launchHash,
+          })
     return bridge
   }
   return {
@@ -142,7 +161,7 @@ async function setup(env: Record<string, string> = {}, options: AcpAgentOptions 
     async agentSessions(): Promise<Record<string, unknown>> {
       return JSON.parse(await readFile(stateFile, 'utf8').catch(() => '{}')) as Record<string, unknown>
     },
-    open: (workspaces?: () => string[]) => openWith(driver, workspaces),
+    open: (workspaces?: () => string[], projects?: () => HostProject[]) => openWith(driver, workspaces, projects),
     /** The same data directory under a changed definition. */
     async redefine(changes: Partial<AgentRecord>): Promise<Bridge> {
       return openWith(await build({ ...record, ...changes }))
@@ -226,6 +245,91 @@ describe('ACP driver registration and readiness', () => {
     expect(present.status?.()).toEqual({ status: 'ready' })
     // Pickers show a short command line; the full paths stay in the agent settings.
     expect(present.description).toBe('通过 ACP 运行 node fake-acp-agent.mjs；模型、登录与工具权限由该 Harness 自身管理。')
+  })
+
+  it('finds commands in the global bin directories of Node version and package managers in the home directory', async () => {
+    const home = await realpath(await mkdtemp(join(tmpdir(), 'latch-acp-home-')))
+    cleanups.push(() => rm(home, { recursive: true, force: true }))
+    const custom = join(home, 'custom-fnm')
+    const pnpmHome = join(home, 'pnpm-home')
+    hostEnv({ HOME: home, PATH: '/usr/bin:/bin', FNM_DIR: '', PNPM_HOME: '' })
+    const install = installCommand
+    const layouts: Array<[string, string]> = [
+      [join(home, '.local/share/fnm/aliases/default/bin'), 'agent-fnm'],
+      [join(home, '.volta/bin'), 'agent-volta'],
+      [join(home, '.asdf/shims'), 'agent-asdf'],
+      [join(home, '.local/share/mise/shims'), 'agent-mise'],
+      [join(home, 'Library/pnpm'), 'agent-pnpm'],
+      [join(home, '.yarn/bin'), 'agent-yarn'],
+    ]
+    for (const [directory, command] of layouts) {
+      expect(resolveCommand(command)).toBeUndefined()
+      await install(directory, command)
+      expect(resolveCommand(command)).toBe(join(directory, command))
+    }
+
+    // fnm's and pnpm's directories may be moved by a variable, which counts only as an absolute path.
+    const moved = await install(join(custom, 'aliases/default/bin'), 'agent-fnm-moved')
+    const pnpmMoved = await install(pnpmHome, 'agent-pnpm-moved')
+    hostEnv({ FNM_DIR: 'custom-fnm', PNPM_HOME: 'pnpm-home' })
+    expect(resolveCommand('agent-fnm-moved')).toBeUndefined()
+    expect(resolveCommand('agent-pnpm-moved')).toBeUndefined()
+    hostEnv({ FNM_DIR: custom, PNPM_HOME: pnpmHome })
+    expect(resolveCommand('agent-fnm-moved')).toBe(moved)
+    expect(resolveCommand('agent-pnpm-moved')).toBe(pnpmMoved)
+
+    // nvm's default alias, followed through aliases such as lts/*, names the version whose bin is searched.
+    const nvm = join(home, '.nvm')
+    await install(join(nvm, 'versions/node/v20.11.1/bin'), 'agent-nvm-old')
+    const newest = await install(join(nvm, 'versions/node/v22.12.0/bin'), 'agent-nvm')
+    await install(join(nvm, 'versions/node/v22.3.0/bin'), 'agent-nvm-older')
+    await mkdir(join(nvm, 'alias/lts'), { recursive: true })
+    await writeFile(join(nvm, 'alias/default'), 'lts/*\n')
+    await writeFile(join(nvm, 'alias/lts/*'), 'lts/jod\n')
+    await writeFile(join(nvm, 'alias/lts/jod'), 'v22\n')
+    expect(resolveCommand('agent-nvm')).toBe(newest)
+    expect(resolveCommand('agent-nvm-old')).toBeUndefined()
+    expect(resolveCommand('agent-nvm-older')).toBeUndefined()
+    await writeFile(join(nvm, 'alias/default'), '20\n')
+    expect(resolveCommand('agent-nvm-old')).toBe(join(nvm, 'versions/node/v20.11.1/bin/agent-nvm-old'))
+    await writeFile(join(nvm, 'alias/default'), '../../versions/node/v22.12.0\n')
+    expect(resolveCommand('agent-nvm')).toBeUndefined()
+
+    // A file that is not executable, and a directory with the command's name, are not commands.
+    await writeFile(join(home, '.volta/bin/not-executable'), 'x')
+    await mkdir(join(home, '.yarn/bin/a-directory'))
+    expect(resolveCommand('not-executable')).toBeUndefined()
+    expect(resolveCommand('a-directory')).toBeUndefined()
+  })
+
+  it('says which part of an adapter preset is missing, and looks again after a re-check', async () => {
+    const home = await realpath(await mkdtemp(join(tmpdir(), 'latch-acp-home-')))
+    cleanups.push(() => rm(home, { recursive: true, force: true }))
+    const bin = join(home, '.volta/bin')
+    await mkdir(bin, { recursive: true })
+    hostEnv({ HOME: home, PATH: '/usr/bin:/bin' })
+    const driver = await activate(
+      createAcpAgentPlugin({ id: 'pi', name: 'pi', presetId: 'pi', command: 'pi-acp', args: [], env: {}, enabled: true }),
+    )
+    const install = (command: string) => installCommand(bin, command)
+    expect(driver.status?.()).toEqual({ status: 'unavailable', statusMessage: '未找到 pi 和它的适配器 pi-acp。安装：npm i -g pi-acp' })
+    await install('pi')
+    // The lookup is cached for a few seconds; a re-check drops it.
+    forgetCommandLookups()
+    expect(driver.status?.()).toEqual({
+      status: 'unavailable',
+      statusMessage: '已安装 pi，还差让 Latch 连接它的适配器 pi-acp。安装：npm i -g pi-acp',
+    })
+    await install('pi-acp')
+    expect(driver.status?.().status).toBe('unavailable')
+    forgetCommandLookups()
+    expect(driver.status?.()).toEqual({ status: 'ready' })
+    await rm(join(bin, 'pi'))
+    forgetCommandLookups()
+    expect(driver.status?.()).toEqual({
+      status: 'unavailable',
+      statusMessage: '已找到适配器 pi-acp，还没找到 pi',
+    })
   })
 
   it('refuses definitions that set variables Latch manages', () => {
@@ -1002,6 +1106,426 @@ describe('ACP project configuration', () => {
   })
 })
 
+describe('ACP project folders', () => {
+  const CODEX = { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: 'read-only,workspace-write', FAKE_ACP_INITIAL_MODE: 'read-only' }
+  const GEMINI = { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: 'plan,default,autoEdit,yolo', FAKE_ACP_INITIAL_MODE: 'default' }
+  const QWEN = { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: QWEN_MODES, FAKE_ACP_INITIAL_MODE: 'default' }
+  const CHANGED = {
+    status: 409,
+    code: 'workspace-changed',
+    message: '这个会话使用的文件夹已不在项目中或找不到了，不能继续。请新建会话。',
+  }
+  const stoppedIdle = (fixture: Awaited<ReturnType<typeof setup>>, count = 1) =>
+    vi.waitFor(
+      async () => expect((await fixture.log()).filter(entry => entry.event === 'stdin-end').length).toBeGreaterThanOrEqual(count),
+      {
+        timeout: 5_000,
+        interval: 20,
+      },
+    )
+
+  /**
+   * A project `proj` of folders under the fixture's root (the first is its primary folder), beside the start directory,
+   * as the Host lists them; tests edit `listed` to move, replace or drop folders.
+   */
+  async function project(fixture: Awaited<ReturnType<typeof setup>>, names = ['api', 'web', 'docs']) {
+    const folders: ProjectFolder[] = []
+    for (const name of names) {
+      const path = join(fixture.root, name)
+      await mkdir(path, { recursive: true })
+      folders.push({ id: name, path })
+    }
+    const listed: HostProject[] = [
+      { id: 'default', folders: [{ id: 'default', path: fixture.workspace }] },
+      { id: 'proj', folders: [...folders] },
+    ]
+    return {
+      folders,
+      /** Real paths, in the same order. */
+      reals: await Promise.all(folders.map(folder => realpath(folder.path))),
+      listed,
+      projects: () => structuredClone(listed),
+      workspaces: () => listed.map(item => item.folders[0]!.path),
+      input: { cwd: folders[0]!.path, workspaceId: 'proj', folders },
+    }
+  }
+
+  it('reads additionalDirectories as a session capability without failing on other shapes', () => {
+    const parse = (sessionCapabilities: unknown) =>
+      initializeResult.parse({ protocolVersion: 1, agentCapabilities: { sessionCapabilities } }).agentCapabilities?.sessionCapabilities
+    expect(parse({ resume: {}, additionalDirectories: {} })).toEqual({ resume: {}, additionalDirectories: {} })
+    expect(parse({ additionalDirectories: null })).toEqual({ additionalDirectories: null })
+    expect(parse({ resume: {} })).toEqual({ resume: {} })
+    expect(parse('everything')).toBeUndefined()
+  })
+
+  it('declares which presets take a project folders and what clients are told about the others', async () => {
+    const declared = async (presetId?: string) => {
+      const driver = await activate(
+        createAcpAgentPlugin({
+          id: `agent-${presetId ?? 'custom'}`,
+          name: 'Agent',
+          ...(presetId ? { presetId } : {}),
+          command: 'latch-no-such-agent',
+          args: [],
+          env: {},
+          enabled: true,
+        }),
+      )
+      return { projectFolders: driver.projectFolders, folderAccess: driver.folderAccess }
+    }
+    expect(await declared('codex')).toEqual({ projectFolders: 'all', folderAccess: { access: 'all' } })
+    for (const presetId of ['gemini', 'qwen'])
+      expect(await declared(presetId)).toEqual({ projectFolders: 'all', folderAccess: { access: 'all', max: 5 } })
+    expect(await declared('opencode')).toEqual({ projectFolders: undefined, folderAccess: { access: 'primary-asks' } })
+    expect(await declared('dsh')).toEqual({ projectFolders: undefined, folderAccess: { access: 'primary' } })
+    for (const presetId of ['pi', 'goose'])
+      expect(await declared(presetId)).toEqual({ projectFolders: undefined, folderAccess: { access: 'primary-unbounded' } })
+    expect(await declared()).toEqual({ projectFolders: undefined, folderAccess: undefined })
+  })
+
+  it('fingerprints the folders a session passes only when there are some', () => {
+    const input = {
+      resolvedCommand: '/usr/bin/agent',
+      args: ['acp'],
+      definitionEnv: { A: '1' },
+      presetId: 'codex',
+      profileVersion: 1 as const,
+    }
+    const base = launchHash(input)
+    expect(launchHash({ ...input, folders: { via: 'acp', paths: [] } })).toBe(base)
+    const two = launchHash({ ...input, folders: { via: 'acp', paths: ['/w/web', '/w/docs'] } })
+    expect(two).toBe(
+      sha256Hex(
+        canonicalJson({
+          v: 1,
+          command: '/usr/bin/agent',
+          args: ['acp'],
+          envNames: ['A'],
+          envValues: sha256Hex(canonicalJson({ A: '1' })),
+          presetId: 'codex',
+          profileVersion: 1,
+          folders: { via: 'acp', paths: ['/w/web', '/w/docs'] },
+        }),
+      ),
+    )
+    for (const folders of [
+      { via: 'args' as const, paths: ['/w/web', '/w/docs'] },
+      { via: 'acp' as const, paths: ['/w/docs', '/w/web'] },
+      { via: 'acp' as const, paths: ['/w/web'] },
+    ])
+      expect(launchHash({ ...input, folders })).not.toBe(two)
+  })
+
+  it('gives Codex the full list of other folders over ACP on new, resumed and loaded sessions', async () => {
+    for (const restore of ['resume', 'load']) {
+      const fixture = await preset('codex', { ...CODEX, FAKE_ACP_CAPS: `dirs,${restore}` }, { idleMs: 80 })
+      const scope = await project(fixture)
+      const bridge = await fixture.open(scope.workspaces, scope.projects)
+      const others = scope.reals.slice(1)
+
+      const preview = await bridge.launchPreview!(scope.input)
+      expect(preview).toMatchObject({ cwd: scope.reals[0], args: [FAKE_ACP_AGENT], folders: others })
+      expect(preview.notes).toContain(
+        '其他 2 个文件夹经 ACP 的 additionalDirectories 传给 Fake；它的当前版本没有声明支持时，会话不会开始。文件夹范围由 Fake 自己执行，不是隔离',
+      )
+      // The definition's own fingerprint does not move; the launch with folders does.
+      const launched = {
+        resolvedCommand: process.execPath,
+        args: [FAKE_ACP_AGENT],
+        definitionEnv: fixture.record.env,
+        presetId: 'codex',
+        profileVersion: 1 as const,
+      }
+      const definition = launchHash(launched)
+      expect((await bridge.launchPreview!({ cwd: scope.folders[0]!.path })).launchHash).toBe(definition)
+      expect(preview.launchHash).toBe(launchHash({ ...launched, folders: { via: 'acp', paths: others } }))
+
+      const { sessionId } = await bridge.createTask({ prompt: 'echo one', requestId: rid(), ...scope.input })
+      expect((await settled(bridge, sessionId)).summary).toMatchObject({
+        status: 'idle',
+        cwd: scope.folders[0]!.path,
+        workspaceId: 'proj',
+        folders: scope.folders,
+        folderAccess: 'all',
+      })
+      const stored = JSON.parse(await readFile(join(fixture.dataDir, 'acp.json'), 'utf8')).tasks[sessionId].acp
+      expect(stored).toMatchObject({ folders: others, folderVia: 'acp', launchHash: preview.launchHash, definitionHash: definition })
+      expect(received(await fixture.log(), 'session/new')[0]!.params).toEqual({
+        cwd: scope.folders[0]!.path,
+        mcpServers: [],
+        additionalDirectories: others,
+      })
+
+      // Once its idle process stopped, and again after a restart, the session is restored with the same list.
+      await stoppedIdle(fixture)
+      await bridge.prompt(sessionId, 'echo two', rid())
+      await settled(bridge, sessionId)
+      await bridge.close()
+      const restarted = await fixture.open(scope.workspaces, scope.projects)
+      await restarted.prompt(sessionId, 'echo three', rid())
+      expect(assistants(await settled(restarted, sessionId)).at(-1)?.text).toBe('echo: echo three')
+      const restored = received(await fixture.log(), `session/${restore}`)
+      expect(restored).toHaveLength(2)
+      for (const entry of restored)
+        expect(entry.params).toEqual({
+          sessionId: expect.any(String),
+          cwd: scope.folders[0]!.path,
+          mcpServers: [],
+          additionalDirectories: others,
+        })
+    }
+  })
+
+  it('fingerprints the Codex configuration and skills in every folder it receives', async () => {
+    const fixture = await preset('codex', { ...CODEX, FAKE_ACP_CAPS: 'dirs' })
+    const scope = await project(fixture)
+    const bridge = await fixture.open(scope.workspaces, scope.projects)
+    const primaryOnly = { cwd: scope.folders[0]!.path }
+    const alone = (await bridge.launchPreview!(primaryOnly)).launchHash
+    const base = await bridge.launchPreview!(scope.input)
+
+    // codex-acp loads the skills of every folder it receives; they are named by their full path.
+    const skill = join(scope.reals[1]!, '.agents', 'skills', 'deploy')
+    await mkdir(skill, { recursive: true })
+    await writeFile(join(skill, 'SKILL.md'), '# deploy')
+    const skilled = await bridge.launchPreview!(scope.input)
+    expect(skilled.launchHash).not.toBe(base.launchHash)
+    expect(skilled.notes.at(-1)).toContain(join(skill, 'SKILL.md'))
+    const settings = join(scope.reals[2]!, '.codex')
+    await mkdir(settings)
+    await writeFile(join(settings, 'config.toml'), '')
+    const configured = await bridge.launchPreview!(scope.input)
+    expect(configured.launchHash).not.toBe(skilled.launchHash)
+    expect(configured.notes.at(-1)).toContain(join(settings, 'config.toml'))
+    // A session of the primary folder alone looks only along that folder, as before.
+    expect((await bridge.launchPreview!(primaryOnly)).launchHash).toBe(alone)
+
+    const { sessionId } = await bridge.createTask({ prompt: 'echo one', requestId: rid(), ...scope.input })
+    expect((await settled(bridge, sessionId)).summary.status).toBe('idle')
+    await writeFile(join(skill, 'SKILL.md'), '# deploy, changed')
+    await expect(bridge.prompt(sessionId, 'echo two', rid())).rejects.toMatchObject({ status: 409, code: 'project-config-changed' })
+  })
+
+  it('does not start a session of several folders when the agent does not advertise them, and stops its process', async () => {
+    const capsFile = join(await mkdtemp(join(tmpdir(), 'latch-acp-caps-')), 'caps')
+    cleanups.push(() => rm(dirname(capsFile), { recursive: true, force: true }))
+    await writeFile(capsFile, 'resume')
+    const fixture = await preset('codex', { ...CODEX, FAKE_ACP_CAPS_FILE: capsFile }, { idleMs: 80 })
+    const scope = await project(fixture, ['api', 'web'])
+    const bridge = await fixture.open(scope.workspaces, scope.projects)
+    await expect(bridge.createTask({ prompt: 'echo', requestId: rid(), ...scope.input })).rejects.toMatchObject({
+      status: 409,
+      code: 'agent-folders-unsupported',
+      message: 'Fake 的当前版本没有声明支持多个文件夹，会话没有开始。请更新它，或使用只有一个文件夹的项目。',
+    })
+    expect(await bridge.listTasks()).toEqual([])
+    let log = await fixture.log()
+    expect(received(log, 'initialize')).toHaveLength(1)
+    expect(received(log, 'session/new')).toEqual([])
+    await vi.waitFor(() => expect(alive(log.find(entry => entry.event === 'start')!.pid)).toBe(false), { timeout: 5_000, interval: 20 })
+    await vi.waitFor(async () => expect(await readdir(fixture.tmpRoot)).toEqual([]), { timeout: 5_000, interval: 20 })
+
+    // A project of one folder needs nothing from the agent.
+    const single = { cwd: fixture.workspace, workspaceId: 'default', folders: [{ id: 'default', path: fixture.workspace }] }
+    const alone = await bridge.createTask({ prompt: 'echo alone', requestId: rid(), ...single })
+    expect((await settled(bridge, alone.sessionId)).summary).toMatchObject({
+      status: 'idle',
+      workspaceId: 'default',
+      folders: single.folders,
+    })
+    expect(received(await fixture.log(), 'session/new')[0]!.params).toEqual({ cwd: fixture.workspace, mcpServers: [] })
+
+    // An agent that stops advertising them after a restart gets no turn, and its process is stopped.
+    await writeFile(capsFile, 'dirs,resume')
+    const { sessionId } = await bridge.createTask({ prompt: 'echo one', requestId: rid(), ...scope.input })
+    await settled(bridge, sessionId)
+    await stoppedIdle(fixture, 3)
+    await writeFile(capsFile, 'resume')
+    await expect(bridge.prompt(sessionId, 'echo two', rid())).rejects.toMatchObject({
+      status: 409,
+      code: 'agent-folders-unsupported',
+      message: 'Fake 的当前版本没有声明支持多个文件夹，本轮没有发送。请更新它，或在只有一个文件夹的项目中新建会话。',
+    })
+    log = await fixture.log()
+    expect(received(log, 'session/resume')).toEqual([])
+    expect(userTexts(await bridge.detail(sessionId))).toEqual(['echo one'])
+    const last = log.filter(entry => entry.event === 'start').at(-1)!.pid
+    await vi.waitFor(() => expect(alive(last)).toBe(false), { timeout: 5_000, interval: 20 })
+  })
+
+  it('starts the agent of a new session of several folders once per request', async () => {
+    const fixture = await preset('codex', { ...CODEX, FAKE_ACP_CAPS: 'dirs' })
+    const scope = await project(fixture)
+    const bridge = await fixture.open(scope.workspaces, scope.projects)
+    const expectedLaunchHash = (await bridge.launchPreview!(scope.input)).launchHash
+    const input = { prompt: 'echo once', requestId: rid(), ...scope.input, expectedLaunchHash }
+    const [first, again, other] = await Promise.allSettled([
+      bridge.createTask(input),
+      bridge.createTask(input),
+      bridge.createTask({ ...input, prompt: 'echo other' }),
+    ])
+    expect(first).toMatchObject({ status: 'fulfilled' })
+    expect(again).toEqual(first)
+    expect(other).toMatchObject({ status: 'rejected', reason: { status: 409, code: 'request-conflict' } })
+    const { sessionId } = (first as PromiseFulfilledResult<{ sessionId: string }>).value
+    await settled(bridge, sessionId)
+    expect(await bridge.createTask(input)).toEqual({ sessionId })
+    expect((await fixture.log()).filter(entry => entry.event === 'start')).toHaveLength(1)
+  })
+
+  it('passes Gemini CLI and Qwen Code one --include-directories per other folder after the definition arguments', async () => {
+    for (const [presetId, env, name] of [
+      ['gemini', GEMINI, 'Gemini CLI'],
+      ['qwen', QWEN, 'Qwen Code'],
+    ] as const) {
+      const fixture = await preset(presetId, env)
+      const scope = await project(fixture)
+      const bridge = await fixture.open(scope.workspaces, scope.projects)
+      const others = scope.reals.slice(1)
+      const preview = await bridge.launchPreview!(scope.input)
+      expect(preview).toMatchObject({ args: [FAKE_ACP_AGENT], folders: others })
+      expect(preview.notes, name).toContain(
+        '其他 2 个文件夹以 --include-directories 参数传给 Fake，排在定义的参数之后。文件夹范围由 Fake 自己执行，不是隔离',
+      )
+      const { sessionId } = await bridge.createTask({ prompt: 'echo', requestId: rid(), ...scope.input })
+      expect((await settled(bridge, sessionId)).summary).toMatchObject({ status: 'idle', folders: scope.folders, folderAccess: 'all' })
+      const log = await fixture.log()
+      expect(log.find(entry => entry.event === 'start')!.argv).toEqual([
+        '--include-directories',
+        others[0],
+        '--include-directories',
+        others[1],
+      ])
+      expect(received(log, 'session/new')[0]!.params).toEqual({ cwd: scope.folders[0]!.path, mcpServers: [] })
+      const stored = JSON.parse(await readFile(join(fixture.dataDir, 'acp.json'), 'utf8')).tasks[sessionId].acp
+      expect(stored).toMatchObject({ folders: others, folderVia: 'args' })
+
+      // Configuration the harness loads from the other folders is named by its full path and fingerprinted.
+      const settings = join(scope.folders[2]!.path, `.${presetId}`)
+      await mkdir(settings)
+      await writeFile(join(settings, 'settings.json'), '{}')
+      const configured = await bridge.launchPreview!(scope.input)
+      expect(configured.launchHash).not.toBe(preview.launchHash)
+      expect(configured.notes.at(-1)).toContain(join(others[1]!, `.${presetId}`, 'settings.json'))
+      await expect(bridge.prompt(sessionId, 'echo again', rid())).rejects.toMatchObject({ status: 409, code: 'project-config-changed' })
+    }
+
+    // At most four other folders, refused before anything starts.
+    const fixture = await preset('gemini', GEMINI)
+    const scope = await project(fixture, ['a', 'b', 'c', 'd', 'e', 'f'])
+    const bridge = await fixture.open(scope.workspaces, scope.projects)
+    const limit = { status: 409, code: 'harness-folder-limit', message: 'Fake 最多使用 5 个文件夹，这个项目有 6 个，会话没有开始' }
+    await expect(bridge.launchPreview!(scope.input)).rejects.toMatchObject(limit)
+    await expect(
+      bridge.createTask({ prompt: 'echo', requestId: rid(), ...scope.input, expectedLaunchHash: 'f'.repeat(64) }),
+    ).rejects.toMatchObject(limit)
+    const five = { ...scope.input, folders: scope.folders.slice(0, 5) }
+    expect((await bridge.launchPreview!(five)).folders).toEqual(scope.reals.slice(1, 5))
+    expect(await fixture.log()).toEqual([])
+  })
+
+  it('never passes other folders to OpenCode, DeepSeek Harness, pi or goose', async () => {
+    for (const [presetId, env] of [
+      ['opencode', { FAKE_ACP_CONFIG: 'legacy' }],
+      ['dsh', {}],
+      ['pi', {}],
+      ['goose', { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: 'chat,approve,auto', FAKE_ACP_INITIAL_MODE: 'approve' }],
+    ] as const) {
+      // Even when the agent advertises them, and when folders reach the driver anyway.
+      const fixture = await preset(presetId, { ...env, FAKE_ACP_CAPS: 'dirs' })
+      expect(fixture.driver.projectFolders, presetId).toBeUndefined()
+      const scope = await project(fixture)
+      const bridge = await fixture.open(scope.workspaces, scope.projects)
+      const preview = await bridge.launchPreview!(scope.input)
+      expect(preview.folders, presetId).toBeUndefined()
+      expect(preview.launchHash, presetId).toBe((await bridge.launchPreview!({ cwd: scope.folders[0]!.path })).launchHash)
+      const { sessionId } = await bridge.createTask({ prompt: 'echo', requestId: rid(), ...scope.input })
+      const { summary } = await settled(bridge, sessionId)
+      expect(summary.status, presetId).toBe('idle')
+      expect([summary.workspaceId, summary.folders, summary.folderAccess], presetId).toEqual([undefined, undefined, undefined])
+      const log = await fixture.log()
+      expect(log.find(entry => entry.event === 'start')!.argv, presetId).toEqual([])
+      expect(received(log, 'session/new')[0]!.params, presetId).toEqual({ cwd: scope.folders[0]!.path, mcpServers: [] })
+    }
+  })
+
+  it('refuses folders that are not the ones the Host lists for the project', async () => {
+    const fixture = await preset('codex', { ...CODEX, FAKE_ACP_CAPS: 'dirs' })
+    const scope = await project(fixture)
+    const bridge = await fixture.open(scope.workspaces, scope.projects)
+    const [api, web, docs] = scope.folders as [ProjectFolder, ProjectFolder, ProjectFolder]
+    for (const input of [
+      { ...scope.input, workspaceId: 'other' },
+      { ...scope.input, workspaceId: 'default' },
+      { ...scope.input, folders: [] },
+      { ...scope.input, folders: [web, api, docs] },
+      { ...scope.input, folders: [api, { id: 'web', path: fixture.workspace }] },
+      { ...scope.input, folders: [api, { id: 'ghost', path: web.path }] },
+      { ...scope.input, folders: [api, web, web] },
+      { ...scope.input, folders: [api, { id: 'web', path: 'relative/web' }] },
+    ]) {
+      await expect(bridge.launchPreview!(input)).rejects.toMatchObject({ status: 400, code: 'workspace-unavailable' })
+      await expect(
+        bridge.createTask({ prompt: 'echo', requestId: rid(), ...input, expectedLaunchHash: 'f'.repeat(64) }),
+      ).rejects.toMatchObject({
+        status: 400,
+        code: 'workspace-unavailable',
+      })
+    }
+    expect(await fixture.log()).toEqual([])
+  })
+
+  it('stops input once a folder leaves the project, is replaced or is gone, whatever the primary folder is now', async () => {
+    const fixture = await preset('codex', { ...CODEX, FAKE_ACP_CAPS: 'dirs,resume,delete' }, { idleMs: 80 })
+    const scope = await project(fixture)
+    const bridge = await fixture.open(scope.workspaces, scope.projects)
+    const { sessionId } = await bridge.createTask({ prompt: 'echo one', requestId: rid(), ...scope.input })
+    await settled(bridge, sessionId)
+    await stoppedIdle(fixture)
+    const listed = scope.listed[1]!
+    const [api, web, docs] = scope.folders as [ProjectFolder, ProjectFolder, ProjectFolder]
+
+    // Another primary folder, and a folder added later, do not move the session.
+    const extra = join(fixture.root, 'extra')
+    await mkdir(extra)
+    listed.folders = [web, api, docs, { id: 'extra', path: extra }]
+    await bridge.prompt(sessionId, 'echo two', rid())
+    await settled(bridge, sessionId)
+    expect(received(await fixture.log(), 'session/resume').at(-1)!.params?.additionalDirectories).toEqual(scope.reals.slice(1))
+    await stoppedIdle(fixture, 2)
+
+    listed.folders = [api, web]
+    await expect(bridge.prompt(sessionId, 'echo removed', rid())).rejects.toMatchObject(CHANGED)
+    const elsewhere = join(fixture.root, 'elsewhere')
+    await mkdir(elsewhere)
+    listed.folders = [api, web, { id: 'docs', path: elsewhere }]
+    await expect(bridge.prompt(sessionId, 'echo replaced', rid())).rejects.toMatchObject(CHANGED)
+    scope.listed.splice(1, 1)
+    await expect(bridge.prompt(sessionId, 'echo unlisted', rid())).rejects.toMatchObject(CHANGED)
+    scope.listed.push({ id: 'proj', folders: [api, web, docs] })
+    await bridge.prompt(sessionId, 'echo three', rid())
+    await settled(bridge, sessionId)
+    await stoppedIdle(fixture, 3)
+
+    await rm(docs.path, { recursive: true })
+    await expect(bridge.prompt(sessionId, 'echo gone', rid())).rejects.toMatchObject(CHANGED)
+    await expect(bridge.setConfig!(sessionId, 'model', 'large')).rejects.toMatchObject(CHANGED)
+    expect(userTexts(await bridge.detail(sessionId))).toEqual(['echo one', 'echo two', 'echo three'])
+    expect(received(await fixture.log(), 'session/resume')).toHaveLength(2)
+
+    // Deleting it starts no agent to delete its own copy: that agent would receive a folder the project lost.
+    await bridge.remove!(sessionId)
+    await vi.waitFor(() => expect(fixture.diagnostics.join('\n')).toContain('未启动 Fake 删除它自己保存的会话副本'), {
+      timeout: 5_000,
+      interval: 20,
+    })
+    const log = await fixture.log()
+    expect(log.filter(entry => entry.event === 'start')).toHaveLength(3)
+    expect(received(log, 'session/delete')).toEqual([])
+  })
+})
+
 describe('ACP permission mode', () => {
   const qwen = (env: Record<string, string> = {}, options: AcpAgentOptions = {}) =>
     preset('qwen', { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: QWEN_MODES, FAKE_ACP_INITIAL_MODE: 'default', ...env }, options)
@@ -1425,6 +1949,9 @@ describe('ACP turn mapping', () => {
         locations: ['/w/a.txt:3'],
         diffs: [{ path: '/w/a.txt', oldText: 'old\n', newText: 'new\n', previous: 'text' }],
       },
+      createdAt: expect.any(String),
+      startedAt: expect.any(String),
+      completedAt: expect.any(String),
     })
     expect(assistants(detail).map(message => message.text)).toEqual(['before', 'after'])
 
@@ -1515,7 +2042,7 @@ describe('ACP approvals', () => {
       advisory: true,
     })
     expect(tool(waiting, 'tool:1:call_1')?.state).toBe('awaiting-approval')
-    expect(waiting.activity).toEqual({ phase: 'approval', toolName: 'execute' })
+    expect(waiting.activity).toEqual({ phase: 'approval', toolName: 'execute', since: expect.any(String) })
     expect(bridge.approvals()).toEqual([approval])
 
     await expect(bridge.decide(approval.id, 'reject', { optionId: 'allow' })).rejects.toMatchObject({
@@ -2239,5 +2766,61 @@ describe('ACP request identity and removal', () => {
     await bridge.close()
     const reopened = await fixture.open()
     await expect(reopened.createTask({ prompt: 'count 200', requestId })).rejects.toMatchObject({ status: 410 })
+  })
+})
+
+const ms = (value: string | undefined) => Date.parse(value ?? '')
+
+describe('ACP times and usage reports', () => {
+  it('records reply, reasoning and tool times, and a turn without its approval wait', async () => {
+    const bridge = await (await setup()).open()
+    const { sessionId } = await bridge.createTask({ prompt: 'think', requestId: rid() })
+    const thought = await settled(bridge, sessionId)
+    const [user, answer] = thought.messages
+    expect(user).toMatchObject({ role: 'user', createdAt: expect.any(String), turn: { endedAt: expect.any(String), waitMs: 0 } })
+    expect(answer).toMatchObject({ role: 'assistant', text: 'answer', reasoning: 'pondering deeply', reasoningMs: expect.any(Number) })
+    expect(ms(answer?.createdAt)).toBeLessThanOrEqual(ms(answer?.completedAt))
+    expect(ms(user?.createdAt)).toBeLessThanOrEqual(ms(answer?.createdAt))
+    expect(user?.turn?.activeMs).toBe(ms(user?.turn?.endedAt) - ms(user?.createdAt))
+
+    await bridge.prompt(sessionId, 'tool', rid())
+    const row = tool(await settled(bridge, sessionId), 'tool:2:call_1')
+    expect(row).toMatchObject({
+      state: 'completed',
+      createdAt: expect.any(String),
+      startedAt: expect.any(String),
+      completedAt: expect.any(String),
+    })
+    expect(ms(row?.createdAt)).toBeLessThanOrEqual(ms(row?.startedAt))
+    expect(ms(row?.startedAt)).toBeLessThanOrEqual(ms(row?.completedAt))
+
+    await bridge.prompt(sessionId, 'permission', rid())
+    const waiting = await until(bridge, sessionId, detail => detail.approvals.length === 1)
+    expect(waiting).toMatchObject({
+      runStartedAt: expect.any(String),
+      runWaitingSince: expect.any(String),
+      activity: { phase: 'approval', since: waiting.runWaitingSince },
+    })
+    await new Promise(done => setTimeout(done, 60))
+    expect(await bridge.decide(waiting.approvals[0]?.id ?? '', 'allow')).toBe(true)
+    const done = await settled(bridge, sessionId)
+    const prompt = done.messages.findLast(message => message.role === 'user')
+    expect(prompt?.turn?.waitMs).toBeGreaterThanOrEqual(50)
+    expect(prompt?.turn?.activeMs).toBe(ms(prompt?.turn?.endedAt) - ms(prompt?.createdAt) - (prompt?.turn?.waitMs ?? 0))
+    expect(done).not.toHaveProperty('runStartedAt')
+  })
+
+  it('maps the agent usage report and keeps it across restarts', async () => {
+    const fixture = await setup()
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'plan', requestId: rid() })
+    const detail = await settled(bridge, sessionId)
+    expect(detail.usageReport).toEqual({ contextUsed: 10, contextSize: 100, at: expect.any(String) })
+    expect(detail.summary.createdAt).toEqual(expect.any(String))
+    await bridge.close()
+    const reopened = await fixture.open()
+    const restored = await reopened.detail(sessionId)
+    expect(restored.usageReport).toEqual(detail.usageReport)
+    expect(restored.messages).toEqual(detail.messages)
   })
 })

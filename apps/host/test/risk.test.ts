@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { DEMO_TOOLS, R0_TOOLS, classifyStandardCall, type StandardCallInput } from '../src/risk.ts'
+import { DEMO_TOOLS, R0_TOOLS, classifyStandardCall, type CallFolder, type StandardCallInput } from '../src/risk.ts'
+
+const PRIMARY: CallFolder = { id: 'app', root: '/Users/me/projects/app', codeRoot: false }
 
 function call(
   pluginId: string | undefined,
@@ -7,12 +9,18 @@ function call(
   args: unknown = {},
   options: Partial<StandardCallInput> = {},
 ): StandardCallInput {
-  return { pluginId, toolName, args, demo: false, workspace: { codeRoot: false }, ...options }
+  return { pluginId, toolName, args, demo: false, folders: [PRIMARY], ...options }
+}
+
+/** A session with one folder at `root`. */
+function single(root: string | undefined, codeRoot = false): Partial<StandardCallInput> {
+  return { folders: [{ id: 'default', ...(root !== undefined ? { root } : {}), codeRoot }] }
 }
 
 describe('classifyStandardCall', () => {
   it('keeps the read-only built-in tools at R0', () => {
-    expect(R0_TOOLS).toEqual(['workspace-files:list_files', 'workspace-files:read_file'])
+    expect(R0_TOOLS).toEqual(['workspace-files:list_folders', 'workspace-files:list_files', 'workspace-files:read_file'])
+    expect(classifyStandardCall(call('workspace-files', 'list_folders'))).toEqual({ risk: 'R0' })
     expect(classifyStandardCall(call('workspace-files', 'list_files', { path: '.' }))).toEqual({ risk: 'R0' })
     expect(classifyStandardCall(call('workspace-files', 'read_file', { path: '.git/config' }))).toEqual({ risk: 'R0' })
   })
@@ -36,10 +44,22 @@ describe('classifyStandardCall', () => {
     expect(classifyStandardCall(call('workspace-files', 'write_file', args))).toEqual(expected)
   })
 
-  it('makes every write R2 when the workspace overlaps the code root', () => {
-    expect(classifyStandardCall(call('workspace-files', 'write_file', { path: 'src/app.ts' }, { workspace: { codeRoot: true } }))).toEqual({
+  it('makes every write R2 when the workspace overlaps the code root or cannot be resolved', () => {
+    expect(classifyStandardCall(call('workspace-files', 'write_file', { path: 'src/app.ts' }, single('/repo', true)))).toEqual({
       risk: 'R2',
       reason: 'code-root',
+    })
+    expect(classifyStandardCall(call('workspace-files', 'write_file', { path: 'src/app.ts' }, single(undefined, true)))).toEqual({
+      risk: 'R2',
+      reason: 'code-root',
+    })
+    // A folder without a root was not resolved, whatever its flag says.
+    expect(classifyStandardCall(call('workspace-files', 'write_file', { path: 'src/app.ts' }, single(undefined)))).toEqual({
+      risk: 'R2',
+      reason: 'code-root',
+    })
+    expect(classifyStandardCall(call('workspace-files', 'read_file', { path: 'src/app.ts' }, single(undefined, true)))).toEqual({
+      risk: 'R0',
     })
   })
 
@@ -52,26 +72,87 @@ describe('classifyStandardCall', () => {
     ['/repo/node_modules/pkg', 'index.js'],
     ['/Users/me/.cargo', 'config.toml'],
   ])('makes writes R2 when the workspace root %s is itself protected (%s)', (root, path) => {
-    expect(classifyStandardCall(call('workspace-files', 'write_file', { path }, { workspace: { codeRoot: false, root } }))).toEqual({
+    expect(classifyStandardCall(call('workspace-files', 'write_file', { path }, single(root)))).toEqual({
       risk: 'R2',
       reason: 'protected-path',
     })
   })
 
   it('keeps ordinary writes R1 under an ordinary root, and reads R0 under any root', () => {
-    const workspace = { codeRoot: false, root: '/Users/me/projects/app' }
-    expect(classifyStandardCall(call('workspace-files', 'write_file', { path: 'src/app.ts' }, { workspace }))).toEqual({ risk: 'R1' })
-    expect(classifyStandardCall(call('workspace-files', 'write_file', { path: '.pnpmfile.cjs' }, { workspace }))).toEqual({
+    const workspace = single('/Users/me/projects/app')
+    expect(classifyStandardCall(call('workspace-files', 'write_file', { path: 'src/app.ts' }, workspace))).toEqual({ risk: 'R1' })
+    expect(classifyStandardCall(call('workspace-files', 'write_file', { path: '.pnpmfile.cjs' }, workspace))).toEqual({
       risk: 'R2',
       reason: 'protected-path',
     })
-    expect(
-      classifyStandardCall(call('workspace-files', 'read_file', { path: 'HEAD' }, { workspace: { codeRoot: false, root: '/repo/.git' } })),
-    ).toEqual({ risk: 'R0' })
+    expect(classifyStandardCall(call('workspace-files', 'read_file', { path: 'HEAD' }, single('/repo/.git')))).toEqual({ risk: 'R0' })
     // A root that is not absolute cannot be judged, so it counts as protected.
-    expect(
-      classifyStandardCall(call('workspace-files', 'write_file', { path: 'a.txt' }, { workspace: { codeRoot: false, root: 'repo' } })),
-    ).toEqual({ risk: 'R2', reason: 'protected-path' })
+    expect(classifyStandardCall(call('workspace-files', 'write_file', { path: 'a.txt' }, single('repo')))).toEqual({
+      risk: 'R2',
+      reason: 'protected-path',
+    })
+  })
+
+  describe('in a session of several folders', () => {
+    const folders: CallFolder[] = [
+      PRIMARY,
+      { id: 'web', root: '/Users/me/projects/web', codeRoot: false },
+      { id: 'hooks', root: '/Users/me/projects/app-git/.git', codeRoot: false },
+      { id: 'latch', root: '/Users/me/latch/apps', codeRoot: true },
+      { id: 'gone', codeRoot: true },
+    ]
+    const classify = (toolName: string, args: unknown) => classifyStandardCall(call('workspace-files', toolName, args, { folders }))
+
+    it('reads any folder at R0 and lists the folders at R0', () => {
+      expect(classify('list_folders', {})).toEqual({ risk: 'R0' })
+      for (const folder of folders) {
+        expect(classify('read_file', { path: '.env', folder: folder.id })).toEqual({ risk: 'R0' })
+        expect(classify('list_files', { path: '.', folder: folder.id })).toEqual({ risk: 'R0' })
+      }
+      expect(classify('read_file', { path: 'README.md' })).toEqual({ risk: 'R0' })
+    })
+
+    it('asks R1 for an ordinary write in any folder, the primary one without a folder argument', () => {
+      expect(classify('write_file', { path: 'src/app.ts' })).toEqual({ risk: 'R1' })
+      expect(classify('write_file', { path: 'src/app.ts', folder: 'app' })).toEqual({ risk: 'R1' })
+      expect(classify('write_file', { path: 'src/index.html', folder: 'web' })).toEqual({ risk: 'R1' })
+    })
+
+    it.each([
+      [{ path: 'a.txt', folder: 'unknown' }, 'outside-workspace'],
+      [{ path: 'a.txt', folder: 'APP' }, 'outside-workspace'],
+      [{ path: 'a.txt', folder: 7 }, 'outside-workspace'],
+      [{ path: 'a.txt', folder: null }, 'outside-workspace'],
+      [{ path: '../app/a.txt', folder: 'web' }, 'outside-workspace'],
+      [{ path: '/Users/me/projects/web/a.txt', folder: 'web' }, 'outside-workspace'],
+      [{ path: '', folder: 'web' }, 'outside-workspace'],
+      [{ path: 'package.json', folder: 'web' }, 'protected-path'],
+      [{ path: '.github/workflows/ci.yml', folder: 'web' }, 'protected-path'],
+      [{ path: 'config', folder: 'hooks' }, 'protected-path'],
+      [{ path: 'notes.md', folder: 'latch' }, 'code-root'],
+      [{ path: 'notes.md', folder: 'gone' }, 'code-root'],
+    ])('makes write_file %j R2 (%s)', (args, reason) => {
+      expect(classify('write_file', args)).toEqual({ risk: 'R2', reason })
+    })
+
+    it('makes a read or listing of a folder outside the session R2', () => {
+      expect(classify('read_file', { path: 'a.txt', folder: 'unknown' })).toEqual({ risk: 'R2', reason: 'outside-workspace' })
+      expect(classify('list_files', { path: '.', folder: 3 })).toEqual({ risk: 'R2', reason: 'outside-workspace' })
+    })
+
+    it('protects paths by the targeted folder only', () => {
+      // `.git` above the hooks folder makes everything in it protected, but not the other folders.
+      expect(classify('write_file', { path: 'notes.md', folder: 'hooks' })).toEqual({ risk: 'R2', reason: 'protected-path' })
+      expect(classify('write_file', { path: 'notes.md', folder: 'web' })).toEqual({ risk: 'R1' })
+    })
+
+    it('fails closed for a session without folders', () => {
+      for (const toolName of ['list_files', 'read_file', 'write_file'])
+        expect(classifyStandardCall(call('workspace-files', toolName, { path: 'a.txt' }, { folders: [] }))).toEqual({
+          risk: 'R2',
+          reason: 'outside-workspace',
+        })
+    })
   })
 
   it('honours demo tools only in demo mode', () => {

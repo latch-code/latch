@@ -21,6 +21,7 @@ export function InlineNotice({
   action,
   onClose,
   closeLabel = '关闭',
+  secure = false,
   className,
 }: {
   tone?: NoticeTone
@@ -29,12 +30,15 @@ export function InlineNotice({
   action?: ReactNode
   onClose?: () => void
   closeLabel?: string
+  /** A security banner: the tokens are locked inside it and its look is pinned (tokens.css, the page's security layer). */
+  secure?: boolean
   className?: string
 }) {
   return (
     <div
       className={cx('ui-notice', className)}
       data-tone={tone}
+      data-secure={secure ? '' : undefined}
       data-tint={tone === 'warn' ? 'warn' : tone === 'error' ? 'err' : undefined}
       role={tone === 'error' ? 'alert' : 'status'}>
       <div className="ui-notice-body">

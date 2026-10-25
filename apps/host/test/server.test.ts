@@ -1,8 +1,8 @@
 import { createServer, request as httpRequest } from 'node:http'
 import { createHash, randomUUID } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rename as move, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   escapeSecurityText,
@@ -225,6 +225,14 @@ async function pendingApproval(t: TestHost, sessionId: string): Promise<Approval
     .poll(async () => (await t.host.bridge.detail(sessionId)).approvals.map(item => item.id), { timeout: 10_000 })
     .toEqual([approval.id])
   return approval
+}
+
+/** A project created the way the desktop app does it: over host.sock, with a body its device key signed. */
+async function addProject(desktop: TestDevice, paths: string[], name?: string) {
+  const response = await desktop.addFolders({ paths, ...(name !== undefined ? { name } : {}) })
+  const result = await body<{ workspace: WorkspaceInfo; refused: Array<{ path: string; code: string; message: string }> }>(response)
+  if (response.status !== 201) throw new HttpFailure(response.status, result)
+  return result
 }
 
 async function settled(t: TestHost, sessionId: string) {
@@ -495,7 +503,7 @@ describe('enrollment and credentials', () => {
     expect((await t.raw('loopback-tcp', 'api/snapshot')).status).toBe(401)
     const device = await t.enroll({ name: '我的浏览器', scopes: [...ADMIN] })
     expect(device.cookie).toMatch(new RegExp(`^latch_${t.host.hostId8}=ldc1\\.dev_`))
-    expect(t.presence.requests.at(-1)!.preview).toMatchObject({ action: 'device.enroll', title: '登记新设备' })
+    expect(t.presence.requests.at(-1)!.preview).toMatchObject({ action: 'device.enroll', title: '允许新设备连接' })
     expect(t.presence.requests.at(-1)!.preview.lines).toContainEqual({ label: '设备指纹', value: device.device.fingerprint })
     const snapshot = await device.json<AppSnapshot>('snapshot')
     expect(snapshot.device).toMatchObject({
@@ -917,7 +925,7 @@ describe('scopes', () => {
       body: { scopes: ['view', 'run', 'approve:standard'] },
     })
     expect(raised.status).toBe(200)
-    expect(t.presence.requests.at(-1)!.preview).toMatchObject({ action: 'device.grant', title: '授予设备权限' })
+    expect(t.presence.requests.at(-1)!.preview).toMatchObject({ action: 'device.grant', title: '为设备增加权限' })
     expect(t.presence.requests.at(-1)!.preview.lines).toContainEqual({ label: '新增权限', value: '批准普通操作' })
 
     expect(await body(await admin.request(`devices/${admin.id}`, { method: 'DELETE' }))).toMatchObject({ error: 'current-device' })
@@ -957,7 +965,7 @@ describe('scopes', () => {
     const stream = await phone.request('events')
     const reader = stream.body!.getReader()
     expect(new TextDecoder().decode((await reader.read()).value)).toContain('event: refresh')
-    const pending = halfRequest(t, 'workspaces', admin.cookie!, { path: t.root }, 'POST')
+    const pending = halfRequest(t, 'preferences', admin.cookie!, { defaults: { mode: 'chat' } }, 'PUT')
     const revokePhone = halfRequest(t, 'tasks', phone.cookie!, { prompt: 'x', requestId: randomUUID(), mode: 'chat' })
     await new Promise(done => setTimeout(done, 50))
     await admin.json(`devices/${phone.id}`, { method: 'DELETE' })
@@ -965,7 +973,7 @@ describe('scopes', () => {
     revokePhone.finish()
     expect(await revokePhone.response).toBe(401)
     pending.finish()
-    expect([201, 409]).toContain(await pending.response)
+    expect(await pending.response).toBe(200)
   })
 })
 
@@ -1022,7 +1030,7 @@ describe('approvals and risk', () => {
     const allowed = await desktop.confirmed(`approvals/${next.id}`, { method: 'POST', body: { decision: 'allow' } })
     expect(allowed.status).toBe(200)
     const preview = t.presence.requests.at(-1)!.preview
-    expect(preview).toMatchObject({ action: 'approval.r2', title: '批准高风险操作（R2）' })
+    expect(preview).toMatchObject({ action: 'approval.r2', title: '允许一次高风险操作' })
     expect(preview.lines).toContainEqual({ label: '风险原因', value: '受保护路径' })
     expect(preview.lines).toContainEqual({ label: '目标路径', value: join(await realpath(t.workspaceRoot), '.git', 'config') })
     await settled(t, second)
@@ -1266,10 +1274,7 @@ describe('approvals and risk', () => {
     const t = await testHost()
     const browser = await t.enroll({ scopes: [...ADMIN] })
     const desktop = await t.enroll({ listener: 'unix' })
-    await browser.json('workspaces', {
-      method: 'POST',
-      body: { name: 'proj', path: await realpath(await temporaryDirectory('latch-project-')) },
-    })
+    await addProject(desktop, [await realpath(await temporaryDirectory('latch-project-'))], 'proj')
     const inProject = await startTask(browser, '生成需要审批的报告', { workspaceId: 'proj' })
     const approval = await pendingApproval(t, inProject)
     await browser.json('policy', { method: 'PATCH', body: { remote: { workspaces: ['default'] } } })
@@ -1323,6 +1328,42 @@ describe('approvals and risk', () => {
   })
 })
 
+describe('agent settings', () => {
+  it('reports the adapter and the agent it connects to separately, and looks again on every read', async () => {
+    const home = await temporaryDirectory('latch-agent-home-')
+    const bin = join(home, '.volta', 'bin')
+    await mkdir(bin, { recursive: true })
+    const saved = { HOME: process.env.HOME, PATH: process.env.PATH }
+    process.env.HOME = home
+    process.env.PATH = '/usr/bin:/bin'
+    cleanups.push(async () => {
+      process.env.HOME = saved.HOME
+      process.env.PATH = saved.PATH
+    })
+    const install = async (command: string) => {
+      await writeFile(join(bin, command), '#!/bin/sh\n')
+      await chmod(join(bin, command), 0o755)
+    }
+    const t = await testHost({ agentPlugin: (agent: AgentRecord) => createAcpAgentPlugin(agent) })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const created = await desktop.confirmed('agents', {
+      method: 'POST',
+      body: { id: 'pi', name: 'pi', presetId: 'pi', command: 'pi-acp', args: [], env: {} },
+    })
+    expect(created.status).toBe(201)
+    const detected = async () => (await desktop.json<{ agents: AgentSettings[] }>('agents')).agents[0].detected
+    const harness = async () => (await desktop.json<AppSnapshot>('snapshot')).catalog!.harnesses.find(item => item.id === 'pi')!
+    expect(await detected()).toEqual({ found: false, companion: { command: 'pi', found: false } })
+    expect((await harness()).statusMessage).toBe('未找到 pi 和它的适配器 pi-acp。安装：npm i -g pi-acp')
+    await install('pi')
+    expect(await detected()).toEqual({ found: false, companion: { command: 'pi', found: true } })
+    await install('pi-acp')
+    // Reading the settings is the re-check: the catalog that follows does not show the earlier lookup.
+    expect(await detected()).toEqual({ found: true, path: join(bin, 'pi-acp'), companion: { command: 'pi', found: true } })
+    expect((await harness()).status).toBe('ready')
+  })
+})
+
 describe('full-access (L3) sessions', () => {
   async function acpHost() {
     const t = await testHost({ agentPlugin: (agent: AgentRecord) => createAcpAgentPlugin(agent, { stopGraceMs: 100, cancelGraceMs: 500 }) })
@@ -1338,7 +1379,7 @@ describe('full-access (L3) sessions', () => {
     expect(await body(await browser.request('agents', { method: 'POST', body: definition }))).toMatchObject({ error: 'local-only' })
     const created = await desktop.confirmed('agents', { method: 'POST', body: definition })
     expect(created.status).toBe(201)
-    expect(t.presence.requests.at(-1)!.preview).toMatchObject({ action: 'agent.define', title: '保存 Agent 定义' })
+    expect(t.presence.requests.at(-1)!.preview).toMatchObject({ action: 'agent.define', title: '保存 Agent 启动设置' })
     return { t, desktop, browser }
   }
 
@@ -1348,7 +1389,7 @@ describe('full-access (L3) sessions', () => {
     expect(await body(await browser.request('tasks', { method: 'POST', body: request }))).toMatchObject({ error: 'local-only' })
     const sessionId = await startTask(desktop, 'permission', { harnessId: 'fake' })
     const preview = t.presence.requests.at(-1)!.preview
-    expect(preview).toMatchObject({ action: 'task.start-l3', title: '开启完全访问会话（L3）' })
+    expect(preview).toMatchObject({ action: 'task.start-l3', title: '开启完全访问会话' })
     expect(preview.lines.find(line => line.label === '命令')!.value).toBe(await realpath(process.execPath))
     expect(preview.warnings).toContain('Harness 自己发起的询问只是提示，不是安全边界。')
     const started = (await auditRecords(t)).find(record => record.action === 'task.l3.started')
@@ -1512,6 +1553,96 @@ describe('full-access (L3) sessions', () => {
     expect(lines.findIndex(line => line.label === '说明')).toBeLessThan(lines.findIndex(line => line.label === '启动指纹'))
   })
 
+  it('lists the other folders an agent receives in the start confirmation, binds and audits them', async () => {
+    const t = await testHost({ agentPlugin: (agent: AgentRecord) => createAcpAgentPlugin(agent, { stopGraceMs: 100, cancelGraceMs: 500 }) })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const agentLog = join(t.root, 'agent.log')
+    const define = async (id: string, presetId: string, env: Record<string, string>) => {
+      const variables = { FAKE_ACP_STATE: join(t.root, `${id}-state.json`), FAKE_ACP_LOG: agentLog, ...env }
+      const created = await desktop.confirmed('agents', {
+        method: 'POST',
+        body: { id, name: id, presetId, command: process.execPath, args: [FAKE_ACP_AGENT], env: variables },
+      })
+      expect(created.status).toBe(201)
+    }
+    await define('codex-fake', 'codex', {
+      FAKE_ACP_CONFIG: 'options',
+      FAKE_ACP_MODES: 'read-only,workspace-write',
+      FAKE_ACP_INITIAL_MODE: 'read-only',
+      FAKE_ACP_CAPS: 'dirs',
+    })
+    await define('gemini-fake', 'gemini', {
+      FAKE_ACP_CONFIG: 'options',
+      FAKE_ACP_MODES: 'plan,default,autoEdit,yolo',
+      FAKE_ACP_INITIAL_MODE: 'default',
+    })
+    await define('dsh-fake', 'dsh', {})
+    const { harnesses } = (await desktop.json<AppSnapshot>('snapshot')).catalog!
+    expect(
+      Object.fromEntries(['codex-fake', 'gemini-fake', 'dsh-fake'].map(id => [id, harnesses.find(item => item.id === id)?.projectFolders])),
+    ).toEqual({
+      'codex-fake': { access: 'all' },
+      'gemini-fake': { access: 'all', max: 5 },
+      'dsh-fake': { access: 'primary' },
+    })
+
+    const paths = await Promise.all(['api', 'web'].map(async name => realpath(await temporaryDirectory(`latch-${name}-`))))
+    const { workspace } = await addProject(desktop, paths, 'proj')
+    const sessionId = await startTask(desktop, 'echo hi', { harnessId: 'codex-fake', workspaceId: workspace.id })
+    const { lines } = t.presence.requests.at(-1)!.preview
+    expect(lines).toContainEqual({ label: '工作目录', value: paths[0] })
+    expect(lines.filter(line => line.label === '其他文件夹')).toEqual([{ label: '其他文件夹', value: paths[1] }])
+    await settled(t, sessionId)
+    const records = await auditRecords(t)
+    expect(records.find(record => record.action === 'task.l3.start-requested')!.detail).toMatchObject({ folderCount: 2 })
+    expect(records.find(record => record.action === 'task.l3.started')!.detail).toMatchObject({ sessionId, folderCount: 2 })
+    expect((await t.host.bridge.detail(sessionId)).summary).toMatchObject({
+      workspaceId: workspace.id,
+      folders: workspace.folders!.map(({ id, path }) => ({ id, path })),
+      folderAccess: 'all',
+    })
+    const log = (await readFile(agentLog, 'utf8'))
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line) as { event: string; method?: string; params?: Record<string, unknown> })
+    expect(log.find(entry => entry.event === 'recv' && entry.method === 'session/new')!.params).toMatchObject({
+      cwd: paths[0],
+      additionalDirectories: [paths[1]],
+    })
+
+    // A wider mode applies in every folder the agent received (Codex may then write in all of them), so the
+    // confirmation lists them too.
+    const widened = await desktop.confirmed(`tasks/${sessionId}/config`, {
+      method: 'POST',
+      body: { configId: 'mode', value: 'workspace-write' },
+    })
+    expect(await body(widened)).toEqual({ accepted: true })
+    const widen = t.presence.requests.at(-1)!.preview
+    expect(widen.action).toBe('task.mode-widen')
+    expect(widen.lines).toContainEqual({ label: '新模式', value: 'workspace-write' })
+    expect(widen.lines.filter(line => line.label === '其他文件夹')).toEqual([{ label: '其他文件夹', value: paths[1] }])
+
+    // A harness that keeps to the primary folder starts there with nothing else.
+    const primaryOnly = await startTask(desktop, 'echo dsh', { harnessId: 'dsh-fake', workspaceId: workspace.id })
+    expect(t.presence.requests.at(-1)!.preview.lines.some(line => line.label === '其他文件夹')).toBe(false)
+    await settled(t, primaryOnly)
+    expect((await t.host.bridge.detail(primaryOnly)).summary).toMatchObject({ cwd: paths[0], workspaceId: workspace.id })
+    expect((await t.host.bridge.detail(primaryOnly)).summary.folders).toBeUndefined()
+    expect((await auditRecords(t)).findLast(record => record.action === 'task.l3.started')!.detail.folderCount).toBeUndefined()
+
+    // Beyond what the harness takes nothing is confirmed or started.
+    const many = await Promise.all(['a', 'b', 'c', 'd', 'e', 'f'].map(async name => realpath(await temporaryDirectory(`latch-${name}-`))))
+    const big = (await addProject(desktop, many, 'big')).workspace
+    const asked = t.presence.requests.length
+    const refused = await desktop.request('tasks', {
+      method: 'POST',
+      body: { prompt: 'echo', requestId: randomUUID(), mode: 'agent', harnessId: 'gemini-fake', workspaceId: big.id },
+    })
+    expect(refused.status).toBe(409)
+    expect(await body(refused)).toMatchObject({ error: 'harness-folder-limit' })
+    expect(t.presence.requests).toHaveLength(asked)
+  })
+
   it('lets admins rename or disable an agent without confirmation but not change what it runs', async () => {
     const { t, desktop, browser } = await acpHost()
     const renamed = await browser.json<{ agent: AgentSettings }>('agents/fake', { method: 'PUT', body: { name: 'Renamed agent' } })
@@ -1559,8 +1690,9 @@ describe('providers', () => {
     expect(settings).toMatchObject({ hasKey: true, keyOrigin: new URL(model.baseURL).origin })
     expect(JSON.stringify(settings)).not.toContain('secret-1')
     const preview = t.presence.requests.at(-1)!.preview
-    expect(preview).toMatchObject({ action: 'provider.set-key', title: '设置模型服务密钥' })
-    expect(preview.lines).toContainEqual({ label: '密钥', value: '已提供（不显示）' })
+    expect(preview).toMatchObject({ action: 'provider.set-key', title: '保存模型服务密钥' })
+    expect(preview.lines).toContainEqual({ label: '密钥', value: '已填写（不显示）' })
+    expect(preview.lines).toContainEqual({ label: '密钥只发往', value: new URL(model.baseURL).origin })
     expect(JSON.stringify(preview)).not.toContain('secret-1')
     await callProvider(t, 'local-lab')
     expect(model.calls.at(-1)).toEqual({ model: 'alpha', authorization: 'Bearer secret-1' })
@@ -1726,62 +1858,64 @@ describe('providers', () => {
 })
 
 describe('workspaces, policy and audit', () => {
-  it("adds projects outside Latch's own directories only, audited", async () => {
+  it("adds projects outside Latch's own directories only, from the desktop, audited", async () => {
     const codeRoot = await realpath(await temporaryDirectory('latch-code-'))
     const t = await testHost({ codeRoot })
-    const admin = await t.enroll({ scopes: [...ADMIN] })
-    const runner = await t.enroll()
+    const desktop = await t.enroll({ listener: 'unix' })
+    const viewer = await t.enroll({ listener: 'unix', scopes: ['view', 'run'] })
     const project = await realpath(await temporaryDirectory('latch-project-'))
-    const created = await admin.json<{ workspace: { id: string; path: string } }>('workspaces', {
-      method: 'POST',
-      body: { name: 'Demo project', path: project },
+    const created = await addProject(desktop, [project], 'Demo project')
+    expect(created).toEqual({
+      workspace: {
+        id: 'demo-project',
+        name: 'Demo project',
+        path: project,
+        folders: [{ id: expect.stringMatching(/^latch-project-/u), path: project }],
+        remoteStart: true,
+      },
+      refused: [],
     })
-    expect(created.workspace).toEqual({ id: 'demo-project', name: 'Demo project', path: project })
-    expect(await body(await admin.request('workspaces', { method: 'POST', body: { path: project } }))).toMatchObject({
-      error: 'workspace-exists',
+    const refusal = async (path: string) => body(await desktop.addFolders({ paths: [path] }))
+    expect(await refusal(project)).toMatchObject({
+      error: 'workspace-folders-refused',
+      refused: [{ path: project, code: 'workspace-exists' }],
     })
-    expect(await body(await admin.request('workspaces', { method: 'POST', body: { path: join(t.dataDir, 'auth') } }))).toMatchObject({
-      error: 'workspace-overlap',
-    })
-    expect(await body(await admin.request('workspaces', { method: 'POST', body: { path: t.root } }))).toMatchObject({
-      error: 'workspace-overlap',
-    })
-    expect(await body(await admin.request('workspaces', { method: 'POST', body: { path: codeRoot } }))).toMatchObject({
-      error: 'workspace-code-root',
-    })
-    expect((await admin.request('workspaces', { method: 'POST', body: { path: 'relative/path' } })).status).toBe(400)
-    expect(await body(await runner.request('workspaces', { method: 'POST', body: { path: project } }))).toMatchObject({
-      error: 'scope-required',
-    })
+    expect(await refusal(join(t.dataDir, 'auth'))).toMatchObject({ refused: [{ code: 'workspace-overlap' }] })
+    expect(await refusal(t.root)).toMatchObject({ refused: [{ code: 'workspace-overlap' }] })
+    expect(await refusal(codeRoot)).toMatchObject({ refused: [{ code: 'workspace-code-root' }] })
+    expect(await refusal('relative/path')).toMatchObject({ refused: [{ code: 'workspace-invalid' }] })
+    for (const path of ['folder-grants', 'workspaces'])
+      expect(await body(await viewer.request(path, { method: 'POST', body: {} }))).toMatchObject({ error: 'scope-required' })
     expect((await auditRecords(t)).find(record => record.action === 'workspace.added')).toMatchObject({
-      detail: { workspaceId: 'demo-project', pathHash: createHash('sha256').update(project).digest('hex') },
+      detail: {
+        workspaceId: 'demo-project',
+        pathHash: createHash('sha256').update(project).digest('hex'),
+        folderCount: 1,
+        foldersHash: sha256Hex(canonicalJson([project])),
+        via: 'picker',
+      },
     })
 
-    const task = await admin.json<{ sessionId: string }>('tasks', {
+    const task = await desktop.json<{ sessionId: string }>('tasks', {
       method: 'POST',
       body: { prompt: 'hello', requestId: randomUUID(), mode: 'chat', workspaceId: 'demo-project' },
     })
     await settled(t, task.sessionId)
-    expect((await t.host.bridge.detail(task.sessionId)).summary.cwd).toBe(project)
-    expect((await admin.request('workspaces/default', { method: 'DELETE' })).status).toBe(409)
-    expect((await admin.request('workspaces/demo-project', { method: 'DELETE' })).status).toBe(200)
+    expect((await t.host.bridge.detail(task.sessionId)).summary).toMatchObject({ cwd: project, workspaceId: 'demo-project' })
+    expect((await desktop.request('workspaces/default', { method: 'DELETE' })).status).toBe(409)
+    expect((await desktop.request('workspaces/demo-project', { method: 'DELETE' })).status).toBe(200)
   })
 
   it('never reuses a workspace ID the remote policy names, so re-adding a directory cannot widen remote starts', async () => {
     const t = await testHost()
     const admin = await t.enroll({ scopes: [...ADMIN] })
+    const desktop = await t.enroll({ listener: 'unix' })
     const allowed = await realpath(await temporaryDirectory('latch-project-'))
     const elsewhere = await realpath(await temporaryDirectory('latch-elsewhere-'))
-    expect(
-      (await admin.json<{ workspace: { id: string } }>('workspaces', { method: 'POST', body: { name: 'proj', path: allowed } })).workspace
-        .id,
-    ).toBe('proj')
+    expect((await addProject(desktop, [allowed], 'proj')).workspace.id).toBe('proj')
     await admin.json('policy', { method: 'PATCH', body: { remote: { workspaces: ['proj'] } } })
     expect((await admin.request('workspaces/proj', { method: 'DELETE' })).status).toBe(200)
-    const readded = await admin.json<{ workspace: { id: string } }>('workspaces', {
-      method: 'POST',
-      body: { name: 'proj', path: elsewhere },
-    })
+    const readded = await addProject(desktop, [elsewhere], 'proj')
     expect(readded.workspace.id).not.toBe('proj')
     const start = (workspaceId: string) =>
       admin.request('tasks', { method: 'POST', body: { prompt: 'hi', requestId: randomUUID(), mode: 'chat', workspaceId } })
@@ -1796,7 +1930,7 @@ describe('workspaces, policy and audit', () => {
     await mkdir(project, { recursive: true })
     const first = await testHost({ dataDir })
     const admin = await first.enroll({ scopes: [...ADMIN] })
-    await admin.json('workspaces', { method: 'POST', body: { name: 'project', path: await realpath(project) } })
+    await addProject(await first.enroll({ listener: 'unix' }), [await realpath(project)], 'project')
     const { sessionId } = await admin.json<{ sessionId: string }>('tasks', {
       method: 'POST',
       body: { prompt: 'hello', requestId: randomUUID(), mode: 'chat', workspaceId: 'project' },
@@ -1816,8 +1950,8 @@ describe('workspaces, policy and audit', () => {
     const reasons = (list: WorkspaceInfo[]) => list.map(item => [item.id, item.unavailable])
     const expected = [
       ['default', undefined],
-      ['project', '未通过安全检查，本次运行已停用：该目录与 Latch 程序目录重叠，不能作为项目'],
-      ['home', expect.stringMatching(/^未通过安全检查，本次运行已停用：/u)],
+      ['project', '文件夹「project」：该目录与 Latch 程序目录重叠，不能作为项目'],
+      ['home', expect.stringMatching(/^文件夹「[^」]+」：/u)],
     ]
     expect(reasons(snapshot.catalog!.workspaces)).toEqual(expected)
     expect(snapshot.catalog!.defaults.workspaceId).toBe('default')
@@ -1837,9 +1971,10 @@ describe('workspaces, policy and audit', () => {
     ).toMatchObject({ error: 'workspace-disabled' })
     const disabled = (await auditRecords(t)).filter(record => record.action === 'workspace.disabled').map(record => record.detail)
     expect(disabled).toEqual([
-      { workspaceId: 'project', reason: 'code-root' },
-      { workspaceId: 'home', reason: 'overlap' },
+      { workspaceId: 'project', reason: 'code-root', folderIndex: 0 },
+      { workspaceId: 'home', reason: 'overlap', folderIndex: 0 },
     ])
+    expect(snapshot.catalog!.workspaces.find(item => item.id === 'project')).toMatchObject({ codeRoot: true })
     expect((await device.request('workspaces/home', { method: 'DELETE' })).status).toBe(200)
   })
 
@@ -1849,10 +1984,7 @@ describe('workspaces, policy and audit', () => {
     const outside = async (t: TestHost) => (await auditRecords(t)).filter(record => record.action === 'settings.changed-outside')
     const first = await testHost({ dataDir })
     const admin = await first.enroll({ scopes: [...ADMIN] })
-    await admin.json('workspaces', {
-      method: 'POST',
-      body: { name: 'project', path: await realpath(await temporaryDirectory('latch-project-')) },
-    })
+    await addProject(await first.enroll({ listener: 'unix' }), [await realpath(await temporaryDirectory('latch-project-'))], 'project')
     expect((await admin.request('plugins/safe-tools', { method: 'POST', body: { enabled: false } })).status).toBe(200)
     const written = (await auditRecords(first)).filter(record => record.action === 'settings.changed')
     expect(written).toHaveLength(2)
@@ -1878,7 +2010,7 @@ describe('workspaces, policy and audit', () => {
     const root = await temporaryDirectory()
     const dataDir = join(root, 'data')
     const first = await testHost({ dataDir })
-    const admin = await first.enroll({ scopes: [...ADMIN] })
+    const desktop = await first.enroll({ listener: 'unix' })
     const config = first.host.config
     const update = config.updateSettings.bind(config)
     vi.spyOn(config, 'updateSettings').mockImplementationOnce((mutate, beforePublish) =>
@@ -1888,10 +2020,7 @@ describe('workspaces, policy and audit', () => {
         }),
       ),
     )
-    const added = await admin.request('workspaces', {
-      method: 'POST',
-      body: { name: 'project', path: await realpath(await temporaryDirectory('latch-project-')) },
-    })
+    const added = await desktop.addFolders({ paths: [await realpath(await temporaryDirectory('latch-project-'))], name: 'project' })
     expect(added.status).toBe(500)
     const records = await auditRecords(first)
     const write = records.find(record => record.action === 'settings.changed')!
@@ -1962,7 +2091,7 @@ describe('workspaces, policy and audit', () => {
       error: 'local-only',
     })
     expect((await desktop.confirmed('policy', { method: 'PATCH', body: { remote: { maxLevel: 'L1' } } })).status).toBe(200)
-    expect(t.presence.requests.at(-1)!.preview).toMatchObject({ action: 'policy.change', title: '修改本机安全策略' })
+    expect(t.presence.requests.at(-1)!.preview).toMatchObject({ action: 'policy.change', title: '放宽本机安全策略' })
     expect((await admin.request('tasks', { method: 'POST', body: { prompt: 'hi', requestId: randomUUID(), mode: 'chat' } })).status).toBe(
       201,
     )
@@ -2182,6 +2311,7 @@ describe('workspaces, policy and audit', () => {
   it('refuses privilege-granting actions when the audit log fails and still applies revocations', async () => {
     const t = await testHost()
     const admin = await t.enroll({ scopes: [...ADMIN] })
+    const desktop = await t.enroll({ listener: 'unix' })
     const phone = await t.enroll()
     vi.spyOn(t.host.security.audit, 'append').mockRejectedValue(new AppError(503, 'audit-unavailable', '审计记录写入失败，操作未执行'))
     const { testDeviceKey } = await import('@latch/testkit')
@@ -2191,9 +2321,10 @@ describe('workspaces, policy and audit', () => {
     })
     expect(enrollment.status).toBe(503)
     expect(await body(enrollment)).toMatchObject({ error: 'audit-unavailable' })
-    expect(
-      await body(await admin.request('workspaces', { method: 'POST', body: { path: await temporaryDirectory('latch-project-') } })),
-    ).toMatchObject({ error: 'audit-unavailable' })
+    expect(await body(await desktop.addFolders({ paths: [await temporaryDirectory('latch-project-')] }))).toMatchObject({
+      error: 'audit-unavailable',
+    })
+    expect(t.host.config.settings().workspaces).toEqual([])
     const revoked = await admin.request(`devices/${phone.id}`, { method: 'DELETE' })
     expect(revoked.status).toBe(200)
     expect(revoked.headers.get('x-latch-audit')).toBe('failed')
@@ -2428,5 +2559,851 @@ describe('sessions, plugins and the change stream', () => {
       .map(block => JSON.parse(block.split('data: ')[1]!) as { detail: TaskDetail })
     expect(states.at(-1)!.detail.summary).toMatchObject({ title: '推送标题', harnessId: 'standard' })
     expect(states.at(-1)!.detail.permission).toEqual({ level: 'L1', enforcer: 'LATCH', notes: [] })
+  })
+})
+
+describe('projects of several folders', () => {
+  /** Real directories under one temp root, by name. */
+  async function folders(...names: string[]): Promise<{ root: string; paths: Record<string, string> }> {
+    const root = await realpath(await temporaryDirectory('latch-folders-'))
+    const paths: Record<string, string> = {}
+    for (const name of names) {
+      paths[name] = join(root, name)
+      await mkdir(paths[name], { recursive: true })
+    }
+    return { root, paths }
+  }
+
+  async function projectOf(device: TestDevice, id: string): Promise<WorkspaceInfo> {
+    const { workspaces } = await device.json<{ workspaces: WorkspaceInfo[] }>('workspaces')
+    return workspaces.find(item => item.id === id)!
+  }
+
+  it('adds folders only from the desktop app over host.sock, with a fresh nonce signed over the exact body', async () => {
+    let clock = Date.now()
+    const t = await testHost({ tls: true, now: () => clock })
+    const browser = await t.enroll({ scopes: [...ADMIN] })
+    const phone = await t.enroll({ listener: 'tls', scopes: [...ADMIN] })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const other = await t.enroll({ listener: 'unix', name: 'Other desktop' })
+    const { paths } = await folders('api', 'web', 'docs')
+    const localOnly = { error: 'local-only' }
+    for (const device of [browser, phone]) {
+      expect(await body(await device.request('folder-grants', { method: 'POST', body: {} }))).toMatchObject(localOnly)
+      // The older page's form posts a typed path; it cannot add anything any more.
+      expect(await body(await device.request('workspaces', { method: 'POST', body: { path: paths.api } }))).toMatchObject(localOnly)
+      expect(await body(await device.request('workspaces/x/folders', { method: 'POST', body: { paths: [paths.api] } }))).toMatchObject(
+        localOnly,
+      )
+    }
+    const invalid = { error: 'folder-grant-invalid' }
+    // Unsigned, as a renderer request forwarded by an older desktop proxy would be.
+    expect(await body(await desktop.request('workspaces', { method: 'POST', body: { path: paths.api } }))).toMatchObject(invalid)
+    expect(await body(await desktop.addFolders({ paths: [paths.api], nonce: 'never-granted' }))).toMatchObject(invalid)
+    // A nonce granted to another device.
+    const foreign = await other.json<{ nonce: string; expiresAt: string }>('folder-grants', { method: 'POST', body: {} })
+    expect(new Date(foreign.expiresAt).getTime()).toBe(clock + 60_000)
+    expect(await body(await desktop.addFolders({ paths: [paths.api], nonce: foreign.nonce }))).toMatchObject(invalid)
+    // A signature over a different body: the paths that would be added are not the ones the main process signed.
+    expect(
+      await body(await desktop.addFolders({ paths: [paths.api], signedBody: signed => ({ ...signed, paths: [paths.web] }) })),
+    ).toMatchObject(invalid)
+    // Expired.
+    const late = await desktop.json<{ nonce: string }>('folder-grants', { method: 'POST', body: {} })
+    clock += 61_000
+    expect(await body(await desktop.addFolders({ paths: [paths.api], nonce: late.nonce }))).toMatchObject(invalid)
+    expect(t.host.config.settings().workspaces).toEqual([])
+    expect((await auditRecords(t)).some(record => record.action === 'workspace.added')).toBe(false)
+
+    // At most four outstanding nonces per device: a fifth drops the oldest.
+    const grants = []
+    for (let index = 0; index < 5; index++)
+      grants.push((await desktop.json<{ nonce: string }>('folder-grants', { method: 'POST', body: {} })).nonce)
+    expect(await body(await desktop.addFolders({ paths: [paths.api], nonce: grants[0] }))).toMatchObject(invalid)
+    const created = await desktop.addFolders({ paths: [paths.api, paths.web], name: '商城', via: 'drop', nonce: grants[4] })
+    expect(created.status).toBe(201)
+    expect(await body(created)).toMatchObject({
+      workspace: {
+        id: expect.any(String),
+        name: '商城',
+        path: paths.api,
+        folders: [
+          { id: 'api', path: paths.api },
+          { id: 'web', path: paths.web },
+        ],
+      },
+      refused: [],
+    })
+    // Single use.
+    expect(await body(await desktop.addFolders({ paths: [paths.docs], nonce: grants[4] }))).toMatchObject(invalid)
+    expect((await auditRecords(t)).filter(record => record.action === 'workspace.added').map(record => record.detail)).toEqual([
+      expect.objectContaining({ folderCount: 2, via: 'drop' }),
+    ])
+  })
+
+  it('reports each path that did not join, adds to a project in order and never to the start directory', async () => {
+    const t = await testHost()
+    const desktop = await t.enroll({ listener: 'unix' })
+    const { root, paths } = await folders('api/lib', 'web', 'docs', 'more/m1', 'more/m2', 'more/m3', 'more/m4', 'more/m5', 'more/m6')
+    const created = await addProject(desktop, [join(root, 'api'), paths['api/lib'], paths.web, join(root, 'missing')], 'Shop')
+    expect(created.workspace.folders).toEqual([
+      { id: 'api', path: join(root, 'api') },
+      { id: 'web', path: paths.web },
+    ])
+    expect(created.refused).toEqual([
+      { path: paths['api/lib'], code: 'workspace-folder-overlap', message: '同一项目中的文件夹不能相同，也不能相互包含' },
+      { path: join(root, 'missing'), code: 'workspace-invalid', message: '找不到这个文件夹' },
+    ])
+    const id = created.workspace.id
+    const added = await desktop.addFolders({ projectId: id, paths: [paths.docs, paths.web] })
+    expect(added.status).toBe(200)
+    expect(await body(added)).toMatchObject({
+      workspace: { folders: [{ id: 'api' }, { id: 'web' }, { id: 'docs', path: paths.docs }] },
+      refused: [{ path: paths.web, code: 'workspace-folder-overlap' }],
+    })
+    const many = ['m1', 'm2', 'm3', 'm4', 'm5', 'm6'].map(name => paths[`more/${name}`]!)
+    expect(await body(await desktop.addFolders({ projectId: id, paths: many }))).toMatchObject({
+      workspace: { folders: expect.toSatisfy((list: unknown[]) => list.length === 8) },
+      refused: [{ path: many[5], code: 'workspace-folder-limit' }],
+    })
+    expect(await body(await desktop.addFolders({ projectId: id, paths: [join(root, 'more')] }))).toMatchObject({
+      error: 'workspace-folders-refused',
+      refused: [{ code: 'workspace-folder-limit' }],
+    })
+    expect(await body(await desktop.addFolders({ projectId: 'default', paths: [paths.docs] }))).toMatchObject({
+      error: 'workspace-default',
+    })
+    expect(await body(await desktop.addFolders({ projectId: 'nope', paths: [paths.docs] }))).toMatchObject({ error: 'workspace-not-found' })
+    const records = (await auditRecords(t)).filter(record => record.action === 'workspace.folder-added').map(record => record.detail)
+    expect(records[0]).toEqual({
+      workspaceId: id,
+      folderId: 'docs',
+      pathHash: sha256Hex(paths.docs),
+      via: 'picker',
+      replacesFolder: false,
+    })
+    expect(records).toHaveLength(6)
+
+    const snapshot = await desktop.json<AppSnapshot>('snapshot')
+    expect(snapshot.catalog!.projectFolders).toEqual({ max: 8 })
+    expect(snapshot.catalog!.workspaces[0]).toEqual({
+      id: 'default',
+      name: '启动目录',
+      path: t.workspaceRoot,
+      folders: [{ id: 'default', path: t.workspaceRoot }],
+      remoteStart: true,
+    })
+    await desktop.json('policy', { method: 'PATCH', body: { remote: { allowRemoteStart: false } } })
+    expect((await projectOf(desktop, id)).remoteStart).toBe(false)
+  })
+
+  it('audits folder grants first and saves nothing when that fails, while removals proceed and say the record is missing', async () => {
+    const t = await testHost()
+    const desktop = await t.enroll({ listener: 'unix' })
+    const browser = await t.enroll({ scopes: [...ADMIN] })
+    const { paths } = await folders('api', 'web', 'docs')
+    const { workspace } = await addProject(desktop, [paths.api, paths.web])
+    const append = t.host.security.audit.append.bind(t.host.security.audit)
+    const failing = vi.spyOn(t.host.security.audit, 'append').mockImplementation(async event => {
+      if (event.action.startsWith('workspace.')) throw new AppError(503, 'audit-unavailable', '审计记录写入失败，操作未执行')
+      return append(event)
+    })
+    expect(await body(await desktop.addFolders({ projectId: workspace.id, paths: [paths.docs] }))).toMatchObject({
+      error: 'audit-unavailable',
+    })
+    expect(await body(await browser.request(`workspaces/${workspace.id}`, { method: 'PATCH', body: { name: 'x' } }))).toMatchObject({
+      error: 'audit-unavailable',
+    })
+    expect(t.host.config.settings().workspaces[0]!.folders).toHaveLength(2)
+    const removed = await browser.request(`workspaces/${workspace.id}/folders/web`, { method: 'DELETE' })
+    expect(removed.status).toBe(200)
+    expect(removed.headers.get('x-latch-audit')).toBe('failed')
+    expect(t.host.config.settings().workspaces[0]!.folders.map(folder => folder.id)).toEqual(['api'])
+    const dropped = await browser.request(`workspaces/${workspace.id}`, { method: 'DELETE' })
+    expect(dropped.status).toBe(200)
+    expect(dropped.headers.get('x-latch-audit')).toBe('failed')
+    expect(t.host.config.settings().workspaces).toEqual([])
+    failing.mockRestore()
+  })
+
+  it('renames, sets a glyph and reorders from any admin device, within the project rules', async () => {
+    const t = await testHost()
+    const desktop = await t.enroll({ listener: 'unix' })
+    const browser = await t.enroll({ scopes: [...ADMIN] })
+    const { paths } = await folders('api', 'web', 'docs', 'other')
+    const shop = (await addProject(desktop, [paths.api, paths.web, paths.docs], 'Shop')).workspace
+    await addProject(desktop, [paths.other, paths.docs], 'Other')
+    const patch = (input: unknown, id = shop.id) => browser.request(`workspaces/${id}`, { method: 'PATCH', body: input })
+    expect(await body(await patch({ name: '商城', glyph: 'globe', order: ['web', 'api', 'docs'] }))).toMatchObject({
+      workspace: { name: '商城', glyph: 'globe', path: paths.web, folders: [{ id: 'web' }, { id: 'api' }, { id: 'docs' }] },
+    })
+    expect(t.host.config.settings().workspaces[0]).toMatchObject({
+      path: paths.web,
+      folders: [{ id: 'web' }, { id: 'api' }, { id: 'docs' }],
+    })
+    expect((await auditRecords(t)).filter(record => record.action === 'workspace.changed').map(record => record.detail)).toEqual([
+      { workspaceId: shop.id, renamed: true, glyphChanged: true, primaryChanged: true, reordered: true },
+    ])
+    expect((await body(await patch({ glyph: null }))).workspace).not.toHaveProperty('glyph')
+    expect(await body(await patch({ name: 'a\u202Eb' }))).toMatchObject({ error: 'workspace-folder-unprintable' })
+    expect(await body(await patch({ order: ['web', 'api'] }))).toMatchObject({ error: 'workspace-order-invalid' })
+    // docs is Other's other folder (allowed), not its primary folder; Other's primary may not become Shop's.
+    expect(await body(await patch({ order: ['docs', 'web', 'api'] }))).toMatchObject({ workspace: { path: paths.docs } })
+    expect(await body(await patch({ order: ['docs', 'other'] }, 'other'))).toMatchObject({ error: 'workspace-exists' })
+    expect(await body(await patch({ name: 'x' }, 'default'))).toMatchObject({ error: 'workspace-default' })
+    expect(await body(await patch({}))).toMatchObject({ error: 'invalid-input' })
+  })
+
+  it('keeps a primary folder saved before commas were refused out of the other positions', async () => {
+    const root = await realpath(await temporaryDirectory())
+    const dataDir = join(root, 'data')
+    const comma = join(root, 'a,b')
+    const plain = join(root, 'plain')
+    await mkdir(comma)
+    await mkdir(plain)
+    await mkdir(dataDir, { mode: 0o700 })
+    await writeFile(join(dataDir, 'settings.json'), JSON.stringify({ version: 1, workspaces: [{ id: 'old', name: 'Old', path: comma }] }), {
+      mode: 0o600,
+    })
+    const t = await testHost({ dataDir })
+    const desktop = await t.enroll({ listener: 'unix' })
+    expect((await projectOf(desktop, 'old')).unavailable).toBeUndefined()
+    expect(await body(await desktop.addFolders({ projectId: 'old', paths: [plain] }))).toMatchObject({ workspace: { path: comma } })
+    expect(await body(await desktop.request('workspaces/old', { method: 'PATCH', body: { order: ['plain', 'a-b'] } }))).toMatchObject({
+      error: 'workspace-folder-chars',
+    })
+  })
+
+  it('records the project on its sessions, replaces a folder in place and stops the sessions that used it', async () => {
+    const t = await testHost()
+    const desktop = await t.enroll({ listener: 'unix' })
+    const { paths } = await folders('api', 'web', 'api-new')
+    const { workspace } = await addProject(desktop, [paths.api, paths.web])
+    const start = (workspaceId: string) =>
+      desktop.json<{ sessionId: string }>('tasks', {
+        method: 'POST',
+        body: { prompt: 'hello', requestId: randomUUID(), mode: 'chat', workspaceId },
+      })
+    const { sessionId } = await start(workspace.id)
+    await settled(t, sessionId)
+    expect((await t.host.bridge.detail(sessionId)).summary).toMatchObject({ cwd: paths.api, workspaceId: workspace.id })
+    const meta = JSON.parse(await readFile(join(t.dataDir, 'sessions-meta.json'), 'utf8')) as { sessions: unknown[] }
+    expect(meta.sessions).toContainEqual({ id: sessionId, workspaceId: workspace.id })
+    const inDefault = await start('default')
+    await settled(t, inDefault.sessionId)
+    expect((await t.host.bridge.detail(inDefault.sessionId)).summary.workspaceId).toBe('default')
+
+    const replaced = await desktop.addFolders({ projectId: workspace.id, paths: [paths['api-new']], replace: 'api' })
+    expect(await body(replaced)).toMatchObject({
+      workspace: { path: paths['api-new'], folders: [{ id: 'api', path: paths['api-new'] }, { id: 'web' }] },
+      refused: [],
+    })
+    expect((await auditRecords(t)).filter(record => record.action === 'workspace.folder-added').map(record => record.detail)).toEqual([
+      { workspaceId: workspace.id, folderId: 'api', pathHash: sha256Hex(paths['api-new']), via: 'picker', replacesFolder: true },
+    ])
+    const prompt = (id: string) =>
+      desktop.request(`tasks/${id}/prompt`, { method: 'POST', body: { prompt: 'again', requestId: randomUUID() } })
+    expect(await body(await prompt(sessionId))).toMatchObject({ error: 'workspace-changed' })
+    expect((await prompt(inDefault.sessionId)).status).toBe(200)
+    await settled(t, inDefault.sessionId)
+    const fresh = await start(workspace.id)
+    await settled(t, fresh.sessionId)
+    expect((await t.host.bridge.detail(fresh.sessionId)).summary.cwd).toBe(paths['api-new'])
+  })
+
+  it('refuses removing a folder or project that a waiting session uses, and the last folder', async () => {
+    const t = await testHost({ demo: false, providerId: 'scripted', plugins: [scripted('write_file', { path: 'a.txt', content: 'x' })] })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const { paths } = await folders('api', 'web')
+    const { workspace } = await addProject(desktop, [paths.api, paths.web])
+    const sessionId = await startTask(desktop, 'write a file', { workspaceId: workspace.id })
+    const approval = await pendingApproval(t, sessionId)
+    const remove = (path: string) => desktop.request(path, { method: 'DELETE' })
+    expect(await body(await remove(`workspaces/${workspace.id}/folders/api`))).toMatchObject({ error: 'workspace-in-use' })
+    expect(await body(await remove(`workspaces/${workspace.id}`))).toMatchObject({ error: 'workspace-in-use' })
+    // A Standard session records every folder of its project, so none of them may go while it waits.
+    expect(await body(await remove(`workspaces/${workspace.id}/folders/web`))).toMatchObject({ error: 'workspace-in-use' })
+    await desktop.json(`approvals/${approval.id}`, { method: 'POST', body: { decision: 'reject' } })
+    await settled(t, sessionId)
+    expect((await remove(`workspaces/${workspace.id}/folders/web`)).status).toBe(200)
+    expect(await body(await remove(`workspaces/${workspace.id}/folders/api`))).toMatchObject({ error: 'workspace-last-folder' })
+    expect(await body(await remove(`workspaces/${workspace.id}/folders/nope`))).toMatchObject({ error: 'workspace-folder-not-found' })
+    expect((await remove(`workspaces/${workspace.id}`)).status).toBe(200)
+    expect((await auditRecords(t)).filter(record => record.action === 'workspace.folder-removed').map(record => record.detail)).toEqual([
+      { workspaceId: workspace.id, folderId: 'web', pathHash: sha256Hex(paths.web) },
+    ])
+  })
+
+  /** A model that calls the given tools one after another, then answers "done". */
+  function steps(calls: Array<{ name: string; arguments: Record<string, unknown> }>): HarnessPlugin {
+    const provider: ModelProvider = {
+      id: 'scripted',
+      name: 'Scripted',
+      model: 'scripted',
+      async *stream({ messages }) {
+        const next = calls[messages.filter(message => message.role === 'tool').length]
+        if (next) yield { type: 'tool-call', call: { id: `call-${randomUUID()}`, ...next } }
+        else yield { type: 'text', text: 'done' }
+        yield { type: 'finish', reason: next ? 'tool-calls' : 'stop' }
+      },
+    }
+    return { id: 'scripted', name: 'Scripted', version: '1', description: 'fixture', activate: ctx => ctx.registerProvider(provider) }
+  }
+
+  it('gives a Latch 内置 session every folder of its project: it lists them by name and writes in the second at R1', async () => {
+    const t = await testHost({
+      demo: false,
+      providerId: 'scripted',
+      plugins: [
+        steps([
+          { name: 'list_folders', arguments: {} },
+          { name: 'write_file', arguments: { path: 'index.html', content: '<p>shop</p>', folder: 'web' } },
+        ]),
+      ],
+    })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const { root, paths } = await folders('api', 'web')
+    const { workspace } = await addProject(desktop, [paths.api, paths.web], 'Shop')
+    const snapshot = await desktop.json<AppSnapshot>('snapshot')
+    expect(snapshot.catalog!.harnesses.find(item => item.id === 'standard')!.projectFolders).toEqual({ access: 'all' })
+    const sessionId = await startTask(desktop, 'build the page', { workspaceId: workspace.id })
+    const approval = await pendingApproval(t, sessionId)
+    expect(approval).toMatchObject({ risk: 'R1', toolName: 'write_file', tool: { title: '写入「web」中的 index.html' } })
+    const detail = await t.host.bridge.detail(sessionId)
+    expect(detail.summary).toMatchObject({
+      cwd: paths.api,
+      workspaceId: workspace.id,
+      folders: [
+        { id: 'api', path: paths.api },
+        { id: 'web', path: paths.web },
+      ],
+    })
+    const listing = detail.messages.find(message => message.toolName === 'list_folders')!
+    expect(JSON.parse(listing.text)).toEqual([
+      { folder: 'api', name: 'api', primary: true },
+      { folder: 'web', name: 'web', primary: false },
+    ])
+    expect(listing.text).not.toContain(root)
+    await desktop.json(`approvals/${approval.id}`, { method: 'POST', body: { decision: 'allow', optionId: 'allow_once' } })
+    await settled(t, sessionId)
+    expect(await readFile(join(paths.web, 'index.html'), 'utf8')).toBe('<p>shop</p>')
+    await expect(stat(join(paths.api, 'index.html'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('names the folder in an R2 confirmation and resolves the target in it, or says it is not one of the session', async () => {
+    const t = await testHost({
+      demo: false,
+      providerId: 'scripted',
+      plugins: [
+        steps([
+          { name: 'write_file', arguments: { path: 'package.json', content: '{}', folder: 'web' } },
+          { name: 'write_file', arguments: { path: 'a.txt', content: 'x', folder: 'nope' } },
+        ]),
+      ],
+    })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const { paths } = await folders('api', 'web')
+    const { workspace } = await addProject(desktop, [paths.api, paths.web])
+    const sessionId = await startTask(desktop, 'set up the web package', { workspaceId: workspace.id })
+    const allow = async () => {
+      const approval = await pendingApproval(t, sessionId)
+      expect(approval.risk).toBe('R2')
+      expect((await desktop.confirmed(`approvals/${approval.id}`, { method: 'POST', body: { decision: 'allow' } })).status).toBe(200)
+      return t.presence.requests.at(-1)!.preview.lines
+    }
+    const protectedWrite = await allow()
+    expect(protectedWrite.slice(2, 5)).toEqual([
+      { label: '工作目录', value: paths.api },
+      { label: '文件夹', value: paths.web },
+      { label: '目标路径', value: join(paths.web, 'package.json') },
+    ])
+    expect(protectedWrite).toContainEqual({ label: '风险原因', value: '受保护路径' })
+    await expect.poll(() => readFile(join(paths.web, 'package.json'), 'utf8').catch(() => ''), { timeout: 10_000 }).toBe('{}')
+    const unknown = await allow()
+    expect(unknown.map(line => line.label)).not.toContain('目标路径')
+    expect(unknown).toContainEqual({ label: '文件夹', value: '（不是这个会话的文件夹）' })
+    expect(unknown).toContainEqual({ label: '风险原因', value: '工作区外路径' })
+    await settled(t, sessionId)
+    const result = (await t.host.bridge.detail(sessionId)).messages.filter(message => message.toolName === 'write_file').at(-1)!
+    expect(result).toMatchObject({ state: 'failed' })
+    expect(result.text).toContain('list_folders')
+  })
+
+  it('refuses to allow a waiting call once a folder of the session is missing, and still lets it be rejected', async () => {
+    const t = await testHost({
+      demo: false,
+      providerId: 'scripted',
+      plugins: [steps([{ name: 'write_file', arguments: { path: 'a.txt', content: 'x', folder: 'web' } }])],
+    })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const { root, paths } = await folders('api', 'web')
+    const { workspace } = await addProject(desktop, [paths.api, paths.web])
+    const sessionId = await startTask(desktop, 'write', { workspaceId: workspace.id })
+    const approval = await pendingApproval(t, sessionId)
+    await move(paths.web, join(root, 'moved'))
+    const decide = (decision: string) => desktop.request(`approvals/${approval.id}`, { method: 'POST', body: { decision } })
+    expect(await body(await decide('allow'))).toMatchObject({ error: 'workspace-changed' })
+    expect((await decide('reject')).status).toBe(200)
+    await settled(t, sessionId)
+    await expect(stat(join(root, 'moved', 'a.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('notices a missing folder within the cache window, refuses new sessions at once, and recovers', async () => {
+    let clock = Date.now()
+    const t = await testHost({ now: () => clock })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const { root, paths } = await folders('api', 'web')
+    const { workspace } = await addProject(desktop, [paths.api, paths.web])
+    const start = () =>
+      desktop.request('tasks', { method: 'POST', body: { prompt: 'x', requestId: randomUUID(), mode: 'chat', workspaceId: workspace.id } })
+    await move(paths.web, join(root, 'moved'))
+    // Listings reuse the last check for up to 5 s; a session start always checks again.
+    expect((await projectOf(desktop, workspace.id)).unavailable).toBeUndefined()
+    expect(await body(await start())).toMatchObject({ error: 'workspace-disabled' })
+    clock += 6_000
+    expect(await projectOf(desktop, workspace.id)).toMatchObject({
+      unavailable: '文件夹「web」：找不到这个文件夹',
+      folders: [{ id: 'api' }, { id: 'web', unavailable: '找不到这个文件夹' }],
+    })
+    const snapshot = await desktop.json<AppSnapshot>('snapshot')
+    expect(snapshot.catalog!.workspaces.find(item => item.id === workspace.id)?.unavailable).toBe('文件夹「web」：找不到这个文件夹')
+    await move(join(root, 'moved'), paths.web)
+    clock += 6_000
+    expect((await projectOf(desktop, workspace.id)).unavailable).toBeUndefined()
+    expect((await start()).status).toBe(201)
+    // Audited once per change to unusable.
+    expect((await auditRecords(t)).filter(record => record.action === 'workspace.disabled').map(record => record.detail)).toEqual([
+      { workspaceId: workspace.id, reason: 'missing', folderIndex: 1 },
+    ])
+  })
+
+  it('disables a project whose path no longer mirrors its primary folder after a hand edit, and keeps it listed', async () => {
+    const dataDir = join(await temporaryDirectory(), 'data')
+    const { paths } = await folders('api', 'web')
+    const first = await testHost({ dataDir })
+    const { workspace } = await addProject(await first.enroll({ listener: 'unix' }), [paths.api, paths.web])
+    await first.close()
+    const file = join(dataDir, 'settings.json')
+    const settings = JSON.parse(await readFile(file, 'utf8')) as { workspaces: Array<{ id: string; path: string }> }
+    settings.workspaces.find(item => item.id === workspace.id)!.path = paths.web
+    await writeFile(file, JSON.stringify(settings), { mode: 0o600 })
+
+    // Only a hand edit produces this; the Host fails closed for the run rather than guess which folder is primary.
+    const t = await testHost({ dataDir })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const reason = '这个项目的主文件夹配置不一致，请在执行端重新选择主文件夹'
+    expect(await projectOf(desktop, workspace.id)).toMatchObject({ path: paths.web, unavailable: reason })
+    expect(
+      await body(
+        await desktop.request('tasks', {
+          method: 'POST',
+          body: { prompt: 'x', requestId: randomUUID(), mode: 'chat', workspaceId: workspace.id },
+        }),
+      ),
+    ).toMatchObject({ error: 'workspace-disabled', message: expect.stringContaining(reason) })
+    expect((await auditRecords(t)).filter(record => record.action === 'workspace.disabled').map(record => record.detail)).toEqual([
+      { workspaceId: workspace.id, reason: 'invalid' },
+    ])
+    expect((await desktop.request(`workspaces/${workspace.id}`, { method: 'DELETE' })).status).toBe(200)
+  })
+
+  it.skipIf(process.getuid?.() === 0)('refuses a folder the Host cannot open, at add and at session start', async () => {
+    const t = await testHost()
+    const desktop = await t.enroll({ listener: 'unix' })
+    const { paths } = await folders('api', 'locked', 'later')
+    cleanups.push(async () => {
+      await chmod(paths.locked, 0o700)
+      await chmod(paths.later, 0o700)
+    })
+    await chmod(paths.locked, 0o000)
+    const created = await addProject(desktop, [paths.api, paths.locked, paths.later])
+    expect(created.refused).toEqual([{ path: paths.locked, code: 'workspace-permission', message: expect.any(String) }])
+    await chmod(paths.later, 0o000)
+    // Listings never open folders (no privacy prompt while nobody is at the computer); a session start does.
+    expect((await projectOf(desktop, created.workspace.id)).unavailable).toBeUndefined()
+    expect(
+      await body(
+        await desktop.request('tasks', {
+          method: 'POST',
+          body: { prompt: 'x', requestId: randomUUID(), mode: 'chat', workspaceId: created.workspace.id },
+        }),
+      ),
+    ).toMatchObject({ error: 'workspace-disabled', message: expect.stringContaining('文件夹「later」：') })
+  })
+
+  it("holds remote devices to the listed project's folders, never to a folder it shares with an unlisted one", async () => {
+    const t = await testHost()
+    const browser = await t.enroll({ scopes: [...ADMIN] })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const { paths } = await folders('a', 'shared', 'b')
+    const listed = (await addProject(desktop, [paths.a, paths.shared], 'Listed')).workspace
+    const unlisted = (await addProject(desktop, [paths.shared, paths.b], 'Unlisted')).workspace
+    const start = async (workspaceId: string) => {
+      const { sessionId } = await desktop.json<{ sessionId: string }>('tasks', {
+        method: 'POST',
+        body: { prompt: 'hi', requestId: randomUUID(), mode: 'chat', workspaceId },
+      })
+      await settled(t, sessionId)
+      return sessionId
+    }
+    const inListed = await start(listed.id)
+    const inUnlisted = await start(unlisted.id)
+    // A session from before projects had several folders: no project recorded, matched by its directory alone.
+    const legacy = (
+      await t.host.bridge.createTask({ prompt: 'hi', requestId: randomUUID(), mode: 'chat', cwd: paths.a, harnessId: 'standard' })
+    ).sessionId
+    const legacyShared = (
+      await t.host.bridge.createTask({ prompt: 'hi', requestId: randomUUID(), mode: 'chat', cwd: paths.shared, harnessId: 'standard' })
+    ).sessionId
+    await settled(t, legacy)
+    await settled(t, legacyShared)
+    expect((await t.host.bridge.detail(legacy)).summary.workspaceId).toBeUndefined()
+    await browser.json('policy', { method: 'PATCH', body: { remote: { workspaces: [listed.id] } } })
+    const prompt = async (id: string) => {
+      const response = await browser.request(`tasks/${id}/prompt`, { method: 'POST', body: { prompt: 'again', requestId: randomUUID() } })
+      if (response.ok) await settled(t, id)
+      return response.status === 200 ? 'ok' : ((await body(response)) as { error: string }).error
+    }
+    expect(await prompt(inListed)).toBe('ok')
+    expect(await prompt(inUnlisted)).toBe('ceiling-exceeded')
+    expect(await prompt(legacy)).toBe('ok')
+    expect(await prompt(legacyShared)).toBe('ceiling-exceeded')
+    // A listed project that lost a folder the session recorded no longer covers it.
+    await desktop.addFolders({ projectId: listed.id, paths: [paths.b], replace: 'a' })
+    expect(await prompt(inListed)).toBe('ceiling-exceeded')
+  })
+
+  it("flags a start directory inside Latch's program directory, which the Host never picks on its own", async () => {
+    const root = await realpath(await temporaryDirectory())
+    await mkdir(join(root, 'repo'))
+    const t = await testHost({ workspaceRoot: join(root, 'repo'), codeRoot: root })
+    const desktop = await t.enroll({ listener: 'unix' })
+    expect(await projectOf(desktop, 'default')).toEqual({
+      id: 'default',
+      name: '启动目录',
+      path: join(root, 'repo'),
+      folders: [{ id: 'default', path: join(root, 'repo') }],
+      remoteStart: true,
+      codeRoot: true,
+    })
+  })
+
+  it('refuses to start while the TLS key lies inside any folder of a project', async () => {
+    const root = await realpath(await temporaryDirectory())
+    const dataDir = join(root, 'data')
+    const { paths } = await folders('api', 'secrets')
+    const tls = await makeTestTls(join(paths.secrets, 'tls'))
+    const first = await testHost({ dataDir })
+    await addProject(await first.enroll({ listener: 'unix' }), [paths.api, paths.secrets])
+    await first.close()
+    const port = await freeTcpPort()
+    await expect(
+      startTestHost({
+        dataDir,
+        tls: { host: '127.0.0.1', port, certPath: tls.certPath, keyPath: tls.keyPath, publicOrigin: `https://${tls.hostname}:${port}` },
+      }),
+    ).rejects.toMatchObject({ code: 'private-file-insecure' })
+  })
+})
+
+describe('sessions in folders of their own', () => {
+  const OWN = /^\d{8}-[0-9a-f]{4}$/u
+
+  /** The session folders the Host made in the start directory. */
+  async function ownFolders(t: TestHost): Promise<string[]> {
+    return (await readdir(t.workspaceRoot)).filter(name => OWN.test(name)).toSorted()
+  }
+
+  async function summaryOf(t: TestHost, sessionId: string): Promise<TaskSummary> {
+    return (await t.host.bridge.detail(sessionId)).summary
+  }
+
+  async function prompt(device: TestDevice, t: TestHost, sessionId: string): Promise<string> {
+    const response = await device.request(`tasks/${sessionId}/prompt`, {
+      method: 'POST',
+      body: { prompt: 'again', requestId: randomUUID() },
+    })
+    if (response.ok) await settled(t, sessionId)
+    return response.ok ? 'ok' : ((await body(response)) as { error: string }).error
+  }
+
+  it('gives each Agent session outside a project a new 0700 folder in the default start directory, and never a 只对话 session', async () => {
+    const t = await testHost({ sessionFolders: true })
+    const browser = await t.enroll({ scopes: [...ADMIN] })
+    const desktop = await t.enroll({ listener: 'unix' })
+    expect((await browser.json<AppSnapshot>('snapshot')).catalog).toMatchObject({ sessionFolders: true })
+
+    // Two report sessions no longer write into one shared folder.
+    const sessions = [
+      await startTask(browser, '生成需要审批的报告'),
+      await startTask(browser, '生成需要审批的报告', { workspaceId: 'default' }),
+    ]
+    for (const sessionId of sessions) {
+      const approval = await pendingApproval(t, sessionId)
+      expect((await browser.request(`approvals/${approval.id}`, { method: 'POST', body: { decision: 'allow' } })).status).toBe(200)
+      await settled(t, sessionId)
+    }
+    const names = await ownFolders(t)
+    expect(names).toHaveLength(2)
+    for (const [index, sessionId] of sessions.entries()) {
+      const summary = await summaryOf(t, sessionId)
+      expect(summary).toMatchObject({ workspaceId: 'default', sessionFolder: true })
+      expect(summary.folders).toBeUndefined()
+      expect(names).toContain(summary.cwd!.slice(t.workspaceRoot.length + 1))
+      expect(summary.cwd).toBe(join(t.workspaceRoot, summary.cwd!.slice(t.workspaceRoot.length + 1)))
+      expect((await stat(summary.cwd!)).mode & 0o777).toBe(0o700)
+      expect(await readdir(join(summary.cwd!, 'artifacts'))).toEqual([`report-${sessionId}.txt`])
+      const snapshot = await browser.json<AppSnapshot>('snapshot')
+      expect(snapshot.tasks.find(task => task.id === sessionId)).toMatchObject({ sessionFolder: true, cwd: summary.cwd })
+      expect(index === 0 || summary.cwd !== (await summaryOf(t, sessions[0]!)).cwd).toBe(true)
+    }
+    expect(await readdir(t.workspaceRoot)).toEqual(expect.not.arrayContaining(['artifacts']))
+
+    // 只对话 reads and writes no files: it works where it did before and gets no folder.
+    const chat = await desktop.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { prompt: 'hi', requestId: randomUUID(), mode: 'chat' },
+    })
+    await settled(t, chat.sessionId)
+    expect(await summaryOf(t, chat.sessionId)).not.toHaveProperty('sessionFolder')
+    // A saved project's sessions start in its primary folder, as before.
+    const project = await realpath(await temporaryDirectory('latch-project-'))
+    const { workspace } = await addProject(desktop, [project], 'Shop')
+    const inProject = await startTask(desktop, 'hello', { workspaceId: workspace.id })
+    await settled(t, inProject)
+    expect(await summaryOf(t, inProject)).toMatchObject({ cwd: project, workspaceId: workspace.id })
+    expect(await summaryOf(t, inProject)).not.toHaveProperty('sessionFolder')
+    expect(await ownFolders(t)).toEqual(names)
+    // A session continues in its folder.
+    expect(await prompt(browser, t, sessions[0]!)).toBe('ok')
+  })
+
+  it('keeps a start directory the owner named, as before', async () => {
+    const t = await testHost()
+    const browser = await t.enroll({ scopes: [...ADMIN] })
+    expect((await browser.json<AppSnapshot>('snapshot')).catalog).not.toHaveProperty('sessionFolders')
+    const sessionId = await startTask(browser, 'hello')
+    await settled(t, sessionId)
+    const explicit = await startTask(browser, 'hello', { workspaceId: 'default' })
+    await settled(t, explicit)
+    for (const id of [sessionId, explicit]) {
+      expect((await summaryOf(t, id)).cwd).toBe(t.workspaceRoot)
+      expect(await summaryOf(t, id)).not.toHaveProperty('sessionFolder')
+    }
+    expect(await ownFolders(t)).toEqual([])
+  })
+
+  it('never reuses an existing entry and gives a retried request its folder again', async () => {
+    const suffixes = ['abcd', 'abcd', 'beef', 'cafe']
+    const t = await testHost({
+      sessionFolders: true,
+      clock: () => new Date(2026, 9, 25, 12).getTime(),
+      sessionFolderSuffix: () => suffixes.shift() ?? 'ffff',
+    })
+    const browser = await t.enroll({ scopes: [...ADMIN] })
+    await mkdir(join(t.workspaceRoot, '20261025-abcd'))
+    await writeFile(join(t.workspaceRoot, '20261025-abcd', 'mine.txt'), 'the owner made this')
+    const request = { prompt: 'hello', requestId: randomUUID(), mode: 'agent' }
+    const first = await browser.json<{ sessionId: string }>('tasks', { method: 'POST', body: request })
+    await settled(t, first.sessionId)
+    expect((await summaryOf(t, first.sessionId)).cwd).toBe(join(t.workspaceRoot, '20261025-beef'))
+    expect(await readdir(join(t.workspaceRoot, '20261025-abcd'))).toEqual(['mine.txt'])
+    // The same request again: the same session, and no new folder.
+    expect(await browser.json('tasks', { method: 'POST', body: request })).toEqual(first)
+    expect(await ownFolders(t)).toEqual(['20261025-abcd', '20261025-beef'])
+    // The driver refuses the start (a different prompt under a used request ID): the session's folder stays.
+    expect(await body(await browser.request('tasks', { method: 'POST', body: { ...request, prompt: 'other' } }))).toMatchObject({
+      error: 'request-conflict',
+    })
+    expect(await ownFolders(t)).toEqual(['20261025-abcd', '20261025-beef'])
+    // Another device naming the same request ID never gets that session's folder; its own goes when the driver refuses.
+    const other = await t.enroll({ scopes: [...ADMIN] })
+    expect(await body(await other.request('tasks', { method: 'POST', body: request }))).toMatchObject({ error: 'request-conflict' })
+    expect(await ownFolders(t)).toEqual(['20261025-abcd', '20261025-beef'])
+    // A refused start makes no folder at all.
+    expect(
+      await body(
+        await browser.request('tasks', {
+          method: 'POST',
+          body: { prompt: 'hello', requestId: randomUUID(), mode: 'agent', model: { providerId: 'missing', model: 'x' } },
+        }),
+      ),
+    ).toMatchObject({ error: expect.any(String) })
+    expect(await ownFolders(t)).toEqual(['20261025-abcd', '20261025-beef'])
+  })
+
+  it('removes the empty folder of a start that created no session: at once when the driver refuses, later when unconfirmed', async () => {
+    const { plugin, createTask } = launchedHarness()
+    let clock = Date.now()
+    const t = await testHost({ sessionFolders: true, plugins: [plugin], now: () => clock })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const start = (requestId = randomUUID()) =>
+      desktop.request('tasks', { method: 'POST', body: { prompt: 'start', requestId, mode: 'agent', harnessId: 'launched' } })
+    createTask.mockRejectedValueOnce(new AppError(409, 'agent-definition-changed', 'Agent 定义已变化'))
+    expect(
+      (
+        await desktop.confirmed('tasks', {
+          method: 'POST',
+          body: { prompt: 'x', requestId: randomUUID(), mode: 'agent', harnessId: 'launched' },
+        })
+      ).status,
+    ).toBe(409)
+    expect(createTask).toHaveBeenCalledTimes(1)
+    expect(createTask.mock.calls[0]![0]).toMatchObject({ cwd: expect.stringMatching(/\/\d{8}-[0-9a-f]{4}$/u) })
+    expect(await ownFolders(t)).toEqual([])
+
+    // The confirmation is shown with the folder; one denied leaves it until the request expires.
+    t.presence.mode = 'deny'
+    const asked = await start()
+    expect(asked.status).toBe(403)
+    const [waiting] = await ownFolders(t)
+    expect(t.presence.requests.at(-1)!.preview.lines.find(line => line.label === '工作目录')!.value).toBe(
+      await realpath(join(t.workspaceRoot, waiting!)),
+    )
+    clock += 11 * 60_000
+    t.presence.mode = 'approve'
+    const response = await desktop.confirmed('tasks', {
+      method: 'POST',
+      body: { prompt: 'y', requestId: randomUUID(), mode: 'agent', harnessId: 'launched' },
+    })
+    expect(response.status).toBe(201)
+    const folders = await ownFolders(t)
+    expect(folders).toHaveLength(1)
+    expect(folders).not.toContain(waiting)
+    expect(createTask.mock.calls.at(-1)![0]).toMatchObject({ cwd: join(t.workspaceRoot, folders[0]!) })
+  })
+
+  it('keeps a session in its folder across restarts and stops it once the folder is gone or replaced by a link', async () => {
+    const root = await realpath(await temporaryDirectory())
+    const dirs = { dataDir: join(root, 'data'), workspaceRoot: join(root, 'workspace') }
+    const first = await testHost({ ...dirs, sessionFolders: true })
+    const sessionId = await startTask(await first.enroll({ scopes: [...ADMIN] }), 'hello')
+    await settled(first, sessionId)
+    const cwd = (await summaryOf(first, sessionId)).cwd!
+    await first.close()
+    // A restart with a start directory the owner names keeps the sessions already in their folders inside it.
+    const second = await testHost({ ...dirs })
+    const browser = await second.enroll({ scopes: [...ADMIN] })
+    expect(await summaryOf(second, sessionId)).toMatchObject({ cwd, workspaceId: 'default', sessionFolder: true })
+    expect(await prompt(browser, second, sessionId)).toBe('ok')
+    await move(cwd, join(root, 'moved'))
+    await symlink(join(root, 'moved'), cwd)
+    expect(await prompt(browser, second, sessionId)).toBe('workspace-changed')
+    await rm(cwd)
+    expect(await prompt(browser, second, sessionId)).toBe('workspace-changed')
+    await move(join(root, 'moved'), cwd)
+    expect(await prompt(browser, second, sessionId)).toBe('ok')
+  })
+
+  it('counts a session in its own folder as one in the start directory for remote devices', async () => {
+    const t = await testHost({ sessionFolders: true })
+    const browser = await t.enroll({ scopes: [...ADMIN] })
+    const sessionId = await startTask(browser, 'hello')
+    await settled(t, sessionId)
+    await browser.json('policy', { method: 'PATCH', body: { remote: { workspaces: ['default'] } } })
+    expect(await prompt(browser, t, sessionId)).toBe('ok')
+    await browser.json('policy', { method: 'PATCH', body: { remote: { workspaces: [] } } })
+    expect(await prompt(browser, t, sessionId)).toBe('ceiling-exceeded')
+  })
+
+  it('starts a full-access agent in a folder of its own, the same one before and after the local confirmation', async () => {
+    const t = await testHost({
+      sessionFolders: true,
+      agentPlugin: (agent: AgentRecord) => createAcpAgentPlugin(agent, { stopGraceMs: 100, cancelGraceMs: 500 }),
+    })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const state = join(t.root, 'acp-state.json')
+    const created = await desktop.confirmed('agents', {
+      method: 'POST',
+      body: { id: 'fake', name: 'Fake agent', command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_STATE: state } },
+    })
+    expect(created.status).toBe(201)
+    const sessionId = await startTask(desktop, 'hello', { harnessId: 'fake' })
+    await settled(t, sessionId)
+    const [name] = await ownFolders(t)
+    expect(await ownFolders(t)).toEqual([name])
+    const real = await realpath(join(t.workspaceRoot, name!))
+    const preview = t.presence.requests.at(-1)!.preview
+    expect(preview).toMatchObject({ action: 'task.start-l3' })
+    expect(preview.lines.find(line => line.label === '工作目录')!.value).toBe(real)
+    expect(preview.lines.some(line => line.label === '其他文件夹')).toBe(false)
+    expect(await summaryOf(t, sessionId)).toMatchObject({ workspaceId: 'default', sessionFolder: true })
+    const recorded = Object.values(JSON.parse(await readFile(state, 'utf8')) as Record<string, { cwd: string }>).map(item => item.cwd)
+    expect(recorded.map(path => basename(path))).toEqual([name])
+    expect(await prompt(desktop, t, sessionId)).toBe('ok')
+  })
+
+  it('saves a session folder as a project only from the desktop, signed, audited first, and once', async () => {
+    const t = await testHost({ sessionFolders: true, tls: true })
+    const browser = await t.enroll({ scopes: [...ADMIN] })
+    const phone = await t.enroll({ listener: 'tls', scopes: [...ADMIN] })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const sessionId = await startTask(browser, 'Landing page 改版')
+    await settled(t, sessionId)
+    const cwd = (await summaryOf(t, sessionId)).cwd!
+    const name = basename(cwd)
+    const save = { nonce: 'x', via: 'session', sessionId }
+    for (const device of [browser, phone])
+      expect(await body(await device.request('workspaces', { method: 'POST', body: save }))).toMatchObject({ error: 'local-only' })
+    const invalid = { error: 'folder-grant-invalid' }
+    expect(await body(await desktop.request('workspaces', { method: 'POST', body: save }))).toMatchObject(invalid)
+    const other = await startTask(browser, 'hello')
+    await settled(t, other)
+    // The main process signed another session than the one the request names.
+    expect(
+      await body(await desktop.saveSessionFolder({ sessionId, signedBody: signed => ({ ...signed, sessionId: other }) })),
+    ).toMatchObject(invalid)
+    // A path in place of the session is not part of this request.
+    expect(await body(await desktop.saveSessionFolder({ sessionId, signedBody: signed => ({ ...signed, paths: [cwd] }) }))).toMatchObject(
+      invalid,
+    )
+    expect(t.host.config.settings().workspaces).toEqual([])
+
+    const audit = t.host.security.audit
+    const append = audit.append.bind(audit)
+    const failing = vi
+      .spyOn(audit, 'append')
+      .mockImplementation(event =>
+        event.action === 'workspace.added'
+          ? Promise.reject(new AppError(503, 'audit-unavailable', '审计记录写入失败，操作未执行'))
+          : append(event),
+      )
+    expect(await body(await desktop.saveSessionFolder({ sessionId }))).toMatchObject({ error: 'audit-unavailable' })
+    expect(t.host.config.settings().workspaces).toEqual([])
+    failing.mockRestore()
+
+    const saved = await desktop.saveSessionFolder({ sessionId })
+    expect(saved.status).toBe(201)
+    const real = await realpath(cwd)
+    expect(await body(saved)).toMatchObject({
+      workspace: { id: name, name: 'Landing page 改版', path: real, folders: [{ id: name, path: real }] },
+      refused: [],
+    })
+    expect((await auditRecords(t)).filter(record => record.action === 'workspace.added').map(record => record.detail)).toEqual([
+      { workspaceId: name, pathHash: sha256Hex(real), folderCount: 1, foldersHash: sha256Hex(canonicalJson([real])), via: 'session' },
+    ])
+    // The session keeps the project it started in, and new sessions in the project start in its folder.
+    expect(await summaryOf(t, sessionId)).toMatchObject({ workspaceId: 'default', sessionFolder: true, cwd })
+    expect(await prompt(browser, t, sessionId)).toBe('ok')
+    const inProject = await startTask(browser, 'hello', { workspaceId: name })
+    await settled(t, inProject)
+    expect(await summaryOf(t, inProject)).toMatchObject({ workspaceId: name, cwd: real })
+    expect(await summaryOf(t, inProject)).not.toHaveProperty('sessionFolder')
+
+    // Once: the folder is a project's primary folder now.
+    expect(await body(await desktop.saveSessionFolder({ sessionId }))).toMatchObject({
+      error: 'workspace-folders-refused',
+      refused: [{ path: cwd, code: 'workspace-exists' }],
+    })
+    // Sessions without a folder of their own, and sessions that do not exist.
+    const chat = await desktop.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { prompt: 'hi', requestId: randomUUID(), mode: 'chat' },
+    })
+    await settled(t, chat.sessionId)
+    for (const id of [chat.sessionId, inProject])
+      expect(await body(await desktop.saveSessionFolder({ sessionId: id }))).toMatchObject({ error: 'session-folder-none' })
+    expect(await body(await desktop.saveSessionFolder({ sessionId: 'task-missing' }))).toMatchObject({ error: 'task-not-found' })
+    expect(t.host.config.settings().workspaces.map(record => record.id)).toEqual([name])
   })
 })

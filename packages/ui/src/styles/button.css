@@ -216,11 +216,11 @@
 .ui-icon-button:active:not([aria-disabled='true'])::before {
   background-color: var(--bg-press);
 }
-/* A toggle that is on: a neutral press, never blue. */
-.ui-icon-button[aria-pressed='true'] {
+/* A toggle that is on, or a trigger whose menu is open: a neutral press, never blue. */
+.ui-icon-button:is([aria-pressed='true'], [aria-expanded='true']) {
   color: var(--text-1);
 }
-.ui-icon-button[aria-pressed='true']::before {
+.ui-icon-button:is([aria-pressed='true'], [aria-expanded='true'])::before {
   background-color: var(--bg-press);
 }
 .ui-icon-button:focus-visible {

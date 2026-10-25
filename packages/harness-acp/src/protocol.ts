@@ -31,7 +31,11 @@ export const initializeResult = z.object({
   agentCapabilities: z
     .object({
       loadSession: z.boolean().nullish(),
-      sessionCapabilities: z.object({ resume: z.unknown().optional(), delete: z.unknown().optional() }).nullish().catch(undefined),
+      // Each capability counts when present; additionalDirectories only as an object, as ACP defines it.
+      sessionCapabilities: z
+        .object({ resume: z.unknown().optional(), delete: z.unknown().optional(), additionalDirectories: z.unknown().optional() })
+        .nullish()
+        .catch(undefined),
     })
     .nullish()
     .catch(undefined),
@@ -112,6 +116,15 @@ export const planUpdate = z.object({
 export const modeUpdate = z.object({ currentModeId: z.string() })
 export const configUpdate = z.object({ configOptions: z.array(z.unknown()) })
 export const infoUpdate = z.object({ title: optionalText })
+/** The agent's context window and, when it knows, its cost; fields it leaves out or sends malformed are dropped. */
+export const usageUpdate = z.object({
+  used: z.number().nonnegative().finite().optional().catch(undefined),
+  size: z.number().positive().finite().optional().catch(undefined),
+  cost: z
+    .object({ amount: z.number().nonnegative().finite(), currency: z.string().regex(/^[A-Z]{3}$/u) })
+    .nullish()
+    .catch(undefined),
+})
 
 /** Any string: kinds Latch does not know are filtered out rather than failing the whole request. */
 export const permissionKind = z.string().max(256)

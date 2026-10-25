@@ -115,8 +115,10 @@ describe('composer choice', () => {
     const html = renderToStaticMarkup(
       createElement(GeneralSettings, { snapshot: snapshot({ catalog: disabled }), admin: true, onChanged: () => {} }),
     )
-    const project = /<span>项目<\/span><select>(.*?)<\/select>/.exec(html)?.[1]
-    expect(project).toBe('<option value="default" selected="">默认工作区</option>')
+    // The only project left to offer, the start directory (named so in settings): the picker shows it as plain text,
+    // without a menu of others.
+    const project = /<span class="sr-only">项目：<\/span>(.*?)<\/span><\/span><\/span>/.exec(html)?.[1]
+    expect(project).toBe('<span class="ui-value-picker-value"><span class="ui-value-picker-text" data-shown="">启动目录')
     expect(html).not.toContain('docs')
   })
 

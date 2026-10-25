@@ -1,15 +1,79 @@
-import { accessSync, constants, statSync } from 'node:fs'
+import { accessSync, constants, readdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, isAbsolute, join } from 'node:path'
 
 /** Install locations that a GUI-launched Host often lacks on PATH. */
 const EXTRA_DIRECTORIES = ['/opt/homebrew/bin', '/usr/local/bin', '~/.npm-global/bin', '~/.local/bin', '~/.bun/bin']
 
+/** An nvm alias names a version or another alias; only these characters, and never a parent directory. */
+const NVM_ALIAS = /^(?!.*\.\.)[\w*./-]{1,64}$/u
+
+/** A version as nvm writes it (v24, 24.1, v24.1.0); `node` and `stable` mean the newest installed. */
+function nvmVersion(installed: string[], wanted: string): string | undefined {
+  // Numeric collation orders v22.12.0 after v22.3.0.
+  const newest = installed.filter(name => /^v\d+\.\d+\.\d+$/u.test(name)).toSorted((a, b) => b.localeCompare(a, 'en', { numeric: true }))
+  if (wanted === 'node' || wanted === 'stable') return newest[0]
+  const prefix = `v${wanted.replace(/^v/u, '')}`
+  return newest.find(name => name === prefix || name.startsWith(`${prefix}.`))
+}
+
+/** nvm's default: `~/.nvm/alias/default`, followed through aliases such as lts/*, to `versions/node/<v>/bin`. */
+function nvmDefault(home: string): string[] {
+  const root = join(home, '.nvm')
+  let name = 'default'
+  for (let depth = 0; depth < 4 && NVM_ALIAS.test(name); depth++) {
+    let value: string
+    try {
+      value = readFileSync(join(root, 'alias', name), 'utf8').trim()
+    } catch {
+      value = name
+    }
+    if (/^v?\d+(?:\.\d+){0,2}$/u.test(value) || value === 'node' || value === 'stable') {
+      let installed: string[]
+      try {
+        installed = readdirSync(join(root, 'versions', 'node'))
+      } catch {
+        return []
+      }
+      const version = nvmVersion(installed, value)
+      return version ? [join(root, 'versions', 'node', version, 'bin')] : []
+    }
+    if (value === name) return []
+    name = value
+  }
+  return []
+}
+
+/** A directory named by a variable, only as an absolute path. */
+const absolute = (value: string | undefined) => (value && isAbsolute(value) ? [value] : [])
+
+/**
+ * The global bin directories of the Node version and package managers in the person's home (fnm, nvm, Volta, asdf,
+ * mise, pnpm and Yarn), which a Host started from the desktop does not have on PATH. A directory named by a variable
+ * counts only when the variable holds an absolute path.
+ */
+function managerDirectories(home: string, env: NodeJS.ProcessEnv): string[] {
+  const fnm = absolute(env.FNM_DIR)[0] ?? join(home, '.local', 'share', 'fnm')
+  return [
+    join(fnm, 'aliases', 'default', 'bin'),
+    ...nvmDefault(home),
+    join(home, '.volta', 'bin'),
+    join(home, '.asdf', 'shims'),
+    join(home, '.local', 'share', 'mise', 'shims'),
+    ...absolute(env.PNPM_HOME),
+    join(home, 'Library', 'pnpm'),
+    join(home, '.yarn', 'bin'),
+  ]
+}
+
 /** Absolute install directories searched after PATH; the agent's PATH lists them too. */
 export function extraDirectories(): string[] {
   if (process.platform === 'win32') return []
   const home = homedir()
-  return EXTRA_DIRECTORIES.map(directory => (directory.startsWith('~/') ? join(home, directory.slice(2)) : directory))
+  return [
+    ...EXTRA_DIRECTORIES.map(directory => (directory.startsWith('~/') ? join(home, directory.slice(2)) : directory)),
+    ...managerDirectories(home, process.env),
+  ]
 }
 
 function searchDirectories(): string[] {

@@ -152,6 +152,71 @@ describe('design tokens', () => {
     }
   })
 
+  it('locks every themed token inside security surfaces to the value of its theme', () => {
+    /** The declarations of every block whose selector is exactly `selector`, in order. */
+    const blocks = (selector: string) =>
+      [...tokens.matchAll(new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')} \\{([^{}]*)\\}`, 'gu'))].map(
+        match =>
+          new Map(
+            [...match[1].matchAll(/(--[\w-]+)\s*:\s*([^;]+);/gu)].map(item => [
+              item[1],
+              item[2]
+                .replace(/\s+/gu, ' ')
+                .replace(/ ?!important$/u, '')
+                .trim(),
+            ]),
+          ),
+      )
+    const scope = ':where([data-secure], [data-secure] *)'
+    const [lockLight, lockPhone] = blocks(scope)
+    const [lockSystem] = blocks(`:root:not([data-theme='light']) ${scope}`)
+    const [lockChosen] = blocks(`:root[data-theme='dark'] ${scope}`)
+    // Layout, motion and the surface under an element stay free; every other token is locked.
+    const free =
+      /^--(?:sidebar-width|sidebar-open-width|inspector-width|inspector-open-width|content-width|gutter|topbar-height|shell-inset|touch|ease|ease-exit|d-[a-z-]+|delay-[a-z-]+|surface)$/u
+    const expected = (theme: Map<string, string>) => [...theme].filter(([name]) => !free.test(name))
+    expect([...(lockLight ?? [])]).toEqual(expected(block(':root')))
+    expect([...(lockSystem ?? [])]).toEqual(expected(block(":root[data-theme='dark']")))
+    expect([...(lockChosen ?? [])]).toEqual([...(lockSystem ?? [])])
+    // The phone sizes: the second :root block that sets the label size.
+    const phone = blocks(':root').filter(theme => theme.has('--fs-label'))[1]
+    expect(phone?.get('--fs-label')).toBe('14px')
+    expect([...(lockPhone ?? [])]).toEqual(expected(phone ?? new Map()))
+    // Every lock is important, so it holds against later layers and against styles outside the layers.
+    const scoped = tokens.slice(tokens.indexOf(scope))
+    expect(scoped.match(/--[\w-]+\s*:[^;]+;/gu)?.every(item => item.includes('!important'))).toBe(true)
+  })
+
+  it('keeps the locked tokens when a later style declares them, outside the layers and on the element', () => {
+    const surface = document.createElement('div')
+    surface.dataset.secure = ''
+    const inner = document.createElement('span')
+    surface.append(inner)
+    document.body.append(surface)
+    const before = ['--accent', '--err-bg', '--text-1', '--fs-label', '--font-mono'].map(name =>
+      getComputedStyle(inner).getPropertyValue(name),
+    )
+    const injected = document.createElement('style')
+    injected.textContent = `
+      :root { --accent: rgb(0, 200, 0) !important; --err-bg: transparent !important; --text-1: transparent; --fs-label: 1px }
+      * { --font-mono: serif !important; --text-1: transparent !important }
+      [data-secure], [data-secure] span { --accent: rgb(0, 200, 0) !important; --fs-label: 1px !important }
+      @layer app { span { --err-bg: transparent !important } }`
+    document.head.append(injected)
+    try {
+      const after = ['--accent', '--err-bg', '--text-1', '--fs-label', '--font-mono'].map(name =>
+        getComputedStyle(inner).getPropertyValue(name),
+      )
+      expect(after).toEqual(before)
+      expect(before[0]?.trim()).toBe('#2461e0')
+      // Outside a security surface the same injection does take effect: the lock is only where it is needed.
+      expect(getComputedStyle(document.body).getPropertyValue('--accent').trim()).toBe('rgb(0, 200, 0)')
+    } finally {
+      injected.remove()
+      surface.remove()
+    }
+  })
+
   it('sets the rounded-rectangle corner shape only where the browser supports it', () => {
     const outside = tokens.replace(/@supports \(corner-shape: superellipse\(1\.2\)\) \{[^{}]*\{[^{}]*\}\s*\}/u, '')
     expect(outside).not.toBe(tokens)

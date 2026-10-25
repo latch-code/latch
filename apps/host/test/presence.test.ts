@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
-import { escapeSecurityText, isAcceptableDeviceName, type PresenceOutcome } from '@latch/protocol'
+import { escapeSecurityText, isAcceptableDeviceName, type PresenceAction, type PresenceOutcome } from '@latch/protocol'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import {
   ESCAPE_PREVIEW_VECTORS,
@@ -63,6 +63,9 @@ function auditActions(dataDir: string): Array<{ action: string; detail: Record<s
 const hostId = P256_VECTOR.hostId
 const deviceId = `dev_${'C'.repeat(22)}`
 const requester = { deviceId, deviceName: '桌面', listener: 'unix' as const, remoteAddress: '本机 host.sock' }
+/** The title a preview for `action` gets, with an optional `host:port` it adds. */
+const title = (action: PresenceAction, target?: string) =>
+  buildPreview({ hostId, action, now: 0, requester, lines: [], warnings: [], ...(target === undefined ? {} : { target }) }).preview.title
 
 async function service(backend: PresenceBackend, options: { now?: () => number; blocked?: () => Promise<string | undefined> } = {}) {
   const { audit, dataDir } = await auditLog()
@@ -184,7 +187,7 @@ describe('preview text and hashing', () => {
       v: 1,
       hostId,
       action: 'device.enroll',
-      title: '登记新设备',
+      title: '允许新设备连接',
       requester: { deviceName: '手机\\u{202E}', listener: 'loopback-tcp', remoteAddress: '::1' },
       lines: [{ label: '设备名称', value: '手机\\u{202E}evil\\u{000A}' }],
       warnings: ['只有在你正在登记这台设备、并且两边显示的指纹完全一致时才确认。'],
@@ -196,6 +199,22 @@ describe('preview text and hashing', () => {
     // Equal input hashes equally; any change to what is shown changes the hash.
     expect(sha256Hex(canonicalJson(structuredClone(built.preview)))).toBe(built.previewHash)
     expect(sha256Hex(canonicalJson({ ...built.preview, lines: [{ label: '设备名称', value: '手机' }] }))).not.toBe(built.previewHash)
+  })
+
+  it('titles a policy change by the one checked address it adds and keeps fixed wording everywhere else', () => {
+    expect(title('policy.change', '127.0.0.1:11434')).toBe('允许 Host 访问 127.0.0.1:11434')
+    expect(title('policy.change', '[::1]:8080')).toBe('允许 Host 访问 [::1]:8080')
+    // Anything that is not a plain `host:port` keeps the fixed title; the rows still carry the whole value, escaped.
+    for (const text of ['evil.example', 'http://a:1', 'a:1/x', 'a b:1', 'a\u202E:1', `${'a'.repeat(260)}:1`]) {
+      expect(title('policy.change', text), text).toBe('放宽本机安全策略')
+    }
+    // Names an admin device chose never enter a title.
+    for (const action of ['provider.set-key', 'agent.define', 'task.start-l3', 'device.enroll', 'approval.r2'] as const) {
+      expect(title(action, '127.0.0.1:11434')).toBe(title(action))
+    }
+    expect(title('provider.set-key')).toBe('保存模型服务密钥')
+    expect(title('agent.define')).toBe('保存 Agent 启动设置')
+    expect(title('task.start-l3')).toBe('开启完全访问会话')
   })
 
   it('refuses previews larger than 64 KiB', () => {
@@ -231,12 +250,12 @@ describe('PresenceService', () => {
     const backend = createTestPresence({ method: 'password' })
     const { presence } = await service(backend)
     const record = await presence.request(request())
-    expect(record).toMatchObject({ id: expect.stringMatching(/^cfm_/u), action: 'approval.r2', title: '批准高风险操作（R2）' })
+    expect(record).toMatchObject({ id: expect.stringMatching(/^cfm_/u), action: 'approval.r2', title: '允许一次高风险操作' })
     await expect(record.settled).resolves.toMatchObject({ result: 'approved' })
     expect(presence.get(record.id, deviceId)).toEqual({
       id: record.id,
       action: 'approval.r2',
-      title: '批准高风险操作（R2）',
+      title: '允许一次高风险操作',
       status: 'approved',
       hashDisplay: record.hashDisplay,
       expiresAt: record.expiresAt,

@@ -833,7 +833,10 @@ describe('sessions with chosen models, workspaces, and structured output', () =>
     const approval = bridge.approvals()[0]!
     expect(approval.options).toEqual(APPROVAL_OPTIONS)
     expect(approval.tool).toEqual({ kind: 'edit', title: '写入 example', diffs })
-    expect(preview).toHaveBeenCalledWith({ text: 'example' }, { workspaceRoot: dataDir, signal: expect.any(AbortSignal) })
+    expect(preview).toHaveBeenCalledWith(
+      { text: 'example' },
+      { workspaceRoot: dataDir, workspaceFolders: [{ id: 'default', path: dataDir, primary: true }], signal: expect.any(AbortSignal) },
+    )
     const waiting = await bridge.detail(sessionId)
     expect(waiting.approvals[0]).toEqual(approval)
     expect(waiting.messages.find(message => message.role === 'tool')).toMatchObject({
@@ -850,6 +853,9 @@ describe('sessions with chosen models, workspaces, and structured output', () =>
       text: 'note saved',
       state: 'completed',
       tool: { kind: 'edit', title: '写入 example', input, diffs, output: 'note saved' },
+      createdAt: expect.any(String),
+      startedAt: expect.any(String),
+      completedAt: expect.any(String),
     })
   })
 
@@ -979,10 +985,35 @@ describe('sessions with chosen models, workspaces, and structured output', () =>
             providerId: 'p',
             pinned: true,
             archived: false,
-            usage: { inputTokens: 1, outputTokens: 2 },
+            usage: { inputTokens: 1, outputTokens: 2, cacheReadTokens: 1, cacheWriteTokens: 0, reasoningTokens: 1 },
+            createdAt: requestedAt,
+            workspaceId: 'shop',
+            folders: [
+              { id: 'api', path: '/workspace' },
+              { id: 'web', path: '/web' },
+            ],
           },
           messages: [
-            { id: 'a', role: 'assistant', text: '', state: 'completed', reasoning: 'why', usage: { inputTokens: 1, outputTokens: 2 } },
+            {
+              id: 'u',
+              role: 'user',
+              text: 'go',
+              createdAt: requestedAt,
+              turn: { endedAt: requestedAt, activeMs: 1200, waitMs: 300 },
+            },
+            {
+              id: 'a',
+              role: 'assistant',
+              text: '',
+              state: 'completed',
+              reasoning: 'why',
+              usage: { inputTokens: 1, outputTokens: 2, cacheReadTokens: 1 },
+              createdAt: requestedAt,
+              completedAt: requestedAt,
+              reasoningMs: 900,
+              model: 'm',
+              providerId: 'p',
+            },
             {
               id: 'tool:c',
               role: 'tool',
@@ -990,6 +1021,9 @@ describe('sessions with chosen models, workspaces, and structured output', () =>
               text: '{}',
               state: 'awaiting-approval',
               tool: { kind: 'edit', title: '写入 a.txt', input: '{}', output: 'done', locations: ['a.txt'], diffs },
+              createdAt: requestedAt,
+              startedAt: requestedAt,
+              completedAt: requestedAt,
             },
           ],
           history: [{ role: 'assistant', content: '', toolCalls: [call] }],
@@ -1030,6 +1064,217 @@ describe('sessions with chosen models, workspaces, and structured output', () =>
   })
 })
 
+describe('sessions in a project of several folders', () => {
+  interface Folder {
+    id: string
+    path: string
+  }
+
+  async function project() {
+    const dataDir = await directory()
+    const home = await directory()
+    const api = await directory()
+    const web = await directory()
+    const docs = await directory()
+    let shop: Folder[] = [
+      { id: 'api', path: api },
+      { id: 'web', path: web },
+    ]
+    let listed = true
+    const projects = () => [{ id: 'default', folders: [{ id: 'default', path: home }] }, ...(listed ? [{ id: 'shop', folders: shop }] : [])]
+    const workspaces = () => [home, ...(listed ? [shop[0]!.path] : [])]
+    return {
+      dataDir,
+      home,
+      api,
+      web,
+      docs,
+      projects,
+      workspaces,
+      setFolders(next: Folder[]) {
+        shop = next
+      },
+      setListed(next: boolean) {
+        listed = next
+      },
+    }
+  }
+
+  function recordingTool(seen: Array<Parameters<ToolDefinition['execute']>[1]>, requiresApproval = false): ToolDefinition {
+    return tool(async (_args, context) => {
+      seen.push(context)
+      return { text: 'ok' }
+    }, requiresApproval)
+  }
+
+  it('freezes the folders when the session starts, and stops input once one of them leaves the project', async () => {
+    const p = await project()
+    const contexts: Array<Parameters<ToolDefinition['execute']>[1]> = []
+    const classify = vi.fn(async () => 'R0' as const)
+    const backend = registry(toolProvider('write_note'), [recordingTool(contexts)])
+    const bridge = own(
+      createRuntime({
+        dataDir: p.dataDir,
+        workspaceRoot: p.home,
+        workspaces: p.workspaces,
+        projects: p.projects,
+        registry: backend,
+        providerId: 'fixture',
+        classifyToolCall: classify,
+      }),
+    )
+    const folders = [
+      { id: 'api', path: p.api },
+      { id: 'web', path: p.web },
+    ]
+    const { sessionId } = await bridge.createTask({ prompt: 'work', requestId: 'shop', cwd: p.api, workspaceId: 'shop', folders })
+    await waitStatus(bridge, sessionId, 'idle')
+    expect((await bridge.detail(sessionId)).summary).toMatchObject({ cwd: p.api, workspaceId: 'shop', folders })
+    const expected = [
+      { id: 'api', path: p.api, primary: true },
+      { id: 'web', path: p.web, primary: false },
+    ]
+    expect(contexts.at(-1)).toMatchObject({ workspaceRoot: p.api, workspaceFolders: expected })
+    expect(classify).toHaveBeenLastCalledWith(expect.objectContaining({ cwd: p.api, folders }))
+
+    // A folder added to the project is for new sessions; a new primary folder does not move this one.
+    p.setFolders([
+      { id: 'web', path: p.web },
+      { id: 'api', path: p.api },
+      { id: 'docs', path: p.docs },
+    ])
+    await bridge.prompt(sessionId, 'more', 'more')
+    await waitStatus(bridge, sessionId, 'idle')
+    expect(contexts.at(-1)).toMatchObject({ workspaceRoot: p.api, workspaceFolders: expected })
+    expect((await bridge.detail(sessionId)).summary.folders).toEqual(folders)
+
+    // Removed, replaced, or the whole project gone: the session no longer accepts input.
+    p.setFolders([{ id: 'api', path: p.api }])
+    await expect(bridge.prompt(sessionId, 'removed', 'removed')).rejects.toMatchObject({ status: 409, code: 'workspace-changed' })
+    p.setFolders([
+      { id: 'api', path: p.api },
+      { id: 'web', path: p.docs },
+    ])
+    await expect(bridge.prompt(sessionId, 'replaced', 'replaced')).rejects.toMatchObject({ status: 409, code: 'workspace-changed' })
+    p.setFolders(folders)
+    p.setListed(false)
+    await expect(bridge.prompt(sessionId, 'gone', 'gone')).rejects.toMatchObject({ status: 409, code: 'workspace-changed' })
+    p.setListed(true)
+    await bridge.prompt(sessionId, 'back', 'back')
+    await waitStatus(bridge, sessionId, 'idle')
+    expect(backend.acquire).toHaveBeenCalledTimes(3)
+  })
+
+  it('refuses folders that do not match a listed project, before leasing anything', async () => {
+    const p = await project()
+    const backend = registry(textProvider())
+    const options = { dataDir: p.dataDir, workspaceRoot: p.home, workspaces: p.workspaces, registry: backend, providerId: 'fixture' }
+    const bridge = own(createRuntime({ ...options, projects: p.projects }))
+    const api = { id: 'api', path: p.api }
+    const web = { id: 'web', path: p.web }
+    const refused: Array<Partial<Parameters<Bridge['createTask']>[0]>> = [
+      { cwd: p.api, workspaceId: 'shop', folders: [web, api] },
+      { cwd: p.web, workspaceId: 'shop', folders: [web] },
+      { cwd: p.api, workspaceId: 'shop', folders: [api, { id: 'web', path: p.docs }] },
+      { cwd: p.api, workspaceId: 'shop', folders: [api, { id: 'docs', path: p.docs }] },
+      { cwd: p.api, workspaceId: 'shop', folders: [api, api] },
+      { cwd: p.api, workspaceId: 'shop', folders: [api, { id: 'web', path: 'web' }] },
+      { cwd: p.api, workspaceId: 'shop', folders: [] },
+      { cwd: p.api, workspaceId: 'other', folders: [api] },
+      { cwd: p.api, folders: [api] },
+      { cwd: p.api, workspaceId: 'shop' },
+      { workspaceId: 'shop', folders: [api] },
+      { cwd: p.home, workspaceId: 'shop', folders: [api] },
+    ]
+    for (const [index, input] of refused.entries()) {
+      await expect(bridge.createTask({ prompt: 'work', requestId: `refused-${index}`, ...input })).rejects.toMatchObject({
+        status: 400,
+        code: 'workspace-unavailable',
+      })
+    }
+    // Without the Host's project list, no session can take folders.
+    const unlisted = own(createRuntime({ ...options, dataDir: await directory() }))
+    await expect(
+      unlisted.createTask({ prompt: 'work', requestId: 'unlisted', cwd: p.api, workspaceId: 'shop', folders: [api] }),
+    ).rejects.toMatchObject({ status: 400, code: 'workspace-unavailable' })
+    expect(backend.acquire).not.toHaveBeenCalled()
+    // A subset of the project's folders, primary first, is a valid set.
+    const { sessionId } = await bridge.createTask({ prompt: 'work', requestId: 'subset', cwd: p.api, workspaceId: 'shop', folders: [api] })
+    await waitStatus(bridge, sessionId, 'idle')
+    expect((await bridge.detail(sessionId)).summary).toMatchObject({ workspaceId: 'shop', folders: [api] })
+  })
+
+  it('keeps receipts of single-folder sessions as they were and binds several folders into the receipt', async () => {
+    const p = await project()
+    const bridge = own(
+      createRuntime({
+        dataDir: p.dataDir,
+        workspaceRoot: p.home,
+        workspaces: p.workspaces,
+        projects: p.projects,
+        registry: registry(textProvider()),
+        providerId: 'fixture',
+      }),
+    )
+    const api = { id: 'api', path: p.api }
+    const web = { id: 'web', path: p.web }
+    const single = await bridge.createTask({
+      prompt: 'one',
+      requestId: 'single',
+      cwd: p.home,
+      workspaceId: 'default',
+      folders: [{ id: 'default', path: p.home }],
+    })
+    const stored = JSON.parse(await readFile(join(p.dataDir, 'runtime.json'), 'utf8')) as RuntimeState
+    const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
+    expect(Object.values(stored.receipts)).toContainEqual({
+      taskId: single.sessionId,
+      payloadHash: hash({ prompt: 'one', mode: 'agent', cwd: p.home }),
+    })
+    // The same request from a client or Host that did not send the folders is the same request.
+    expect(await bridge.createTask({ prompt: 'one', requestId: 'single', cwd: p.home })).toEqual(single)
+
+    const several = await bridge.createTask({ prompt: 'two', requestId: 'several', cwd: p.api, workspaceId: 'shop', folders: [api, web] })
+    expect(await bridge.createTask({ prompt: 'two', requestId: 'several', cwd: p.api, workspaceId: 'shop', folders: [api, web] })).toEqual(
+      several,
+    )
+    await expect(
+      bridge.createTask({ prompt: 'two', requestId: 'several', cwd: p.api, workspaceId: 'shop', folders: [api] }),
+    ).rejects.toMatchObject({
+      code: 'request-conflict',
+    })
+  })
+
+  it('refuses to allow a waiting call once the folders left the project, and still lets it be rejected', async () => {
+    const p = await project()
+    const execute = vi.fn(async () => ({ text: 'saved' }))
+    const bridge = own(
+      createRuntime({
+        dataDir: p.dataDir,
+        workspaceRoot: p.home,
+        workspaces: p.workspaces,
+        projects: p.projects,
+        registry: registry(toolProvider('write_note'), [tool(execute)]),
+        providerId: 'fixture',
+        classifyToolCall: async () => 'R1',
+      }),
+    )
+    const folders = [
+      { id: 'api', path: p.api },
+      { id: 'web', path: p.web },
+    ]
+    const { sessionId } = await bridge.createTask({ prompt: 'write', requestId: 'waiting', cwd: p.api, workspaceId: 'shop', folders })
+    await waitStatus(bridge, sessionId, 'waiting-approval')
+    const approval = bridge.approvals()[0]!
+    p.setFolders([{ id: 'api', path: p.api }])
+    await expect(bridge.decide(approval.id, 'allow')).rejects.toMatchObject({ status: 409, code: 'workspace-changed' })
+    expect(bridge.approvals()).toHaveLength(1)
+    expect(await bridge.decide(approval.id, 'reject')).toBe(true)
+    await waitStatus(bridge, sessionId, 'idle')
+    expect(execute).not.toHaveBeenCalled()
+  })
+})
+
 describe('Host risk classification', () => {
   function classifiedRuntime(
     dataDir: string,
@@ -1057,7 +1302,13 @@ describe('Host risk classification', () => {
     const { sessionId } = await bridge.createTask({ prompt: 'write', requestId: 'r0' })
     await waitStatus(bridge, sessionId, 'idle')
     expect(execute).toHaveBeenCalledTimes(1)
-    expect(classify).toHaveBeenCalledWith({ toolName: 'write_note', arguments: { text: 'example' }, cwd: dataDir, sessionId })
+    expect(classify).toHaveBeenCalledWith({
+      toolName: 'write_note',
+      arguments: { text: 'example' },
+      cwd: dataDir,
+      sessionId,
+      folders: [{ id: 'default', path: dataDir }],
+    })
     expect((await bridge.detail(sessionId)).messages.find(message => message.role === 'tool')?.state).toBe('completed')
   })
 
@@ -1205,5 +1456,119 @@ describe('Host risk classification', () => {
     const { sessionId } = await bridge.createTask({ prompt: 'write', requestId: 'driver' })
     await waitStatus(bridge, sessionId, 'waiting-approval')
     expect(bridge.approvals()[0]).toMatchObject({ risk: 'R2', options: HIGH_RISK_APPROVAL_OPTIONS })
+  })
+})
+
+describe('times and usage the runtime records', () => {
+  const T0 = Date.parse('2026-10-24T06:00:00.000Z')
+  const at = (ms: number) => new Date(T0 + ms).toISOString()
+
+  it('records when each step and tool ran, how long the model reasoned, and the turn without its approval wait', async () => {
+    const dataDir = await directory()
+    let time = T0
+    const provider: ModelProvider = {
+      id: 'fixture',
+      name: 'Fixture provider',
+      model: 'fixture-model',
+      async *stream({ messages }) {
+        if (messages.at(-1)?.role === 'tool') {
+          time += 1000
+          yield { type: 'text', text: '完成' }
+          time += 500
+          yield { type: 'usage', inputTokens: 300, outputTokens: 20, cacheReadTokens: 200 }
+          yield { type: 'finish', reason: 'stop' }
+          return
+        }
+        time += 1000
+        yield { type: 'reasoning', text: '先想一想' }
+        time += 4000
+        yield { type: 'text', text: '先写下来' }
+        time += 1000
+        yield { type: 'tool-call', call: { id: 'call-1', name: 'write_note', arguments: { text: 'example' } } }
+        yield { type: 'usage', inputTokens: 100, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 80, reasoningTokens: 4 }
+        yield { type: 'finish', reason: 'tool-calls' }
+      },
+    }
+    const execute = vi.fn(async () => {
+      time += 2000
+      return { text: 'note saved' }
+    })
+    const bridge = own(
+      createRuntime({
+        dataDir,
+        workspaceRoot: dataDir,
+        registry: registry(provider, [tool(execute)]),
+        providerId: 'fixture',
+        clock: () => time,
+      }),
+    )
+    const { sessionId } = await bridge.createTask({ prompt: 'write a note', requestId: 'timed' })
+    await waitStatus(bridge, sessionId, 'waiting-approval')
+    const waiting = await bridge.detail(sessionId)
+    expect(waiting).toMatchObject({
+      runStartedAt: at(0),
+      runWaitMs: 0,
+      runWaitingSince: at(6000),
+      activity: { phase: 'approval', toolName: 'write_note', since: at(6000) },
+      lastOutputAt: at(6000),
+    })
+    time += 30_000
+    expect(await bridge.decide(bridge.approvals()[0]?.id ?? '', 'allow')).toBe(true)
+    await waitStatus(bridge, sessionId, 'idle')
+
+    const detail = await bridge.detail(sessionId)
+    expect(detail.summary).toMatchObject({ createdAt: at(0), usage: { inputTokens: 400, outputTokens: 30, cacheReadTokens: 200 } })
+    // Cache writes and reasoning were reported by one step only, so the session total does not claim them.
+    expect(detail.summary.usage).not.toHaveProperty('cacheWriteTokens')
+    expect(detail.summary.usage).not.toHaveProperty('reasoningTokens')
+    const [user, first, toolRow, last] = detail.messages
+    expect(user).toMatchObject({ role: 'user', createdAt: at(0), turn: { endedAt: at(39_500), activeMs: 9500, waitMs: 30_000 } })
+    expect(first).toMatchObject({
+      role: 'assistant',
+      createdAt: at(0),
+      completedAt: at(6000),
+      reasoningMs: 4000,
+      model: 'fixture-model',
+      providerId: 'fixture',
+      usage: { inputTokens: 100, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 80, reasoningTokens: 4 },
+    })
+    expect(toolRow).toMatchObject({ role: 'tool', createdAt: at(6000), startedAt: at(36_000), completedAt: at(38_000) })
+    expect(last).toMatchObject({ role: 'assistant', createdAt: at(38_000), completedAt: at(39_500), model: 'fixture-model' })
+    expect(last).not.toHaveProperty('reasoningMs')
+    // Settled, the run's live projection is gone.
+    expect(detail).not.toHaveProperty('runStartedAt')
+    expect(detail).not.toHaveProperty('activity')
+  })
+
+  it('leaves the turn of a run that a restart interrupted without times', async () => {
+    const dataDir = await directory()
+    const store = createSnapshotStore(dataDir)
+    await store.load()
+    await store.commit({
+      version: 1,
+      tasks: {
+        'task-1': {
+          summary: { id: 'task-1', title: 't', status: 'running', updatedAt: at(0), createdAt: at(0), mode: 'chat' },
+          messages: [{ id: 'u', role: 'user', text: 'hello', createdAt: at(0) }],
+          history: [{ role: 'user', content: 'hello' }],
+          revision: 1,
+        },
+      },
+      receipts: {},
+    })
+    await store.close()
+    const bridge = own(
+      createRuntime({
+        dataDir,
+        workspaceRoot: dataDir,
+        registry: registry(textProvider()),
+        providerId: 'fixture',
+        clock: () => T0 + 60_000,
+      }),
+    )
+    const detail = await bridge.detail('task-1')
+    expect(detail.summary.status).toBe('interrupted')
+    expect(detail.messages[0]).not.toHaveProperty('turn')
+    expect(detail.messages.at(-1)).toMatchObject({ role: 'system', state: 'failed', createdAt: at(60_000) })
   })
 })

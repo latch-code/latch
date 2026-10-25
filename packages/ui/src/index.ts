@@ -7,6 +7,7 @@ export { SearchField, TextAreaField, TextField } from './field.tsx'
 export { ICON_STROKE, Icon, Spinner, type IconSize, type LucideIcon } from './icon.tsx'
 export { Comet, StatusGlyph, StatusSlot, StatusWords, WaitingPill, type CometSize, type SlotStatus } from './live.tsx'
 export { DemoMark, DevMark } from './marks.tsx'
+export { Collapse, MOTION, Shimmer, Swap, usePresence } from './motion.tsx'
 export {
   Menu,
   MenuFooterLink,

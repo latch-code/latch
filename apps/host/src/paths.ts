@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
-import { lstat, mkdir, realpath, stat } from 'node:fs/promises'
+import { lstat, mkdir, opendir, realpath, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep, win32 } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -29,7 +29,28 @@ function platformData(platform: NodeJS.Platform, home: string, env: NodeJS.Proce
   return path.join(xdg, 'latch', leaf.toLowerCase())
 }
 
-/** Data, workspace and agent-install directories, from flags, environment, a legacy `./.runtime`, or platform defaults. */
+/** Realpath when the path exists, else the path itself. */
+function realOrSelf(path: string): string {
+  try {
+    return realpathSync.native(path)
+  } catch {
+    return path
+  }
+}
+
+function codeRootOrUndefined(): string | undefined {
+  try {
+    return latchCodeRoot()
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Data, workspace and agent-install directories, from flags, environment, a legacy `./.runtime`, or platform defaults.
+ * The Host never picks a start directory inside Latch's own code: a legacy `<data>/workspace` there gives way to
+ * `~/Latch/workspace`. A directory named by `--workspace` or `HARNESS_WORKSPACE` is the owner's choice and kept.
+ */
 export function resolveLatchPaths(input: {
   dataDir?: string
   workspace?: string
@@ -38,6 +59,8 @@ export function resolveLatchPaths(input: {
   home?: string
   platform?: NodeJS.Platform
   exists?: (path: string) => boolean
+  /** Tests; default `latchCodeRoot()`. */
+  codeRoot?: string
 }): LatchPaths {
   const platform = input.platform ?? process.platform
   const path = pathApi(platform)
@@ -67,19 +90,28 @@ export function resolveLatchPaths(input: {
 
   let workspaceRoot: string
   let workspaceSource: LatchPaths['workspaceSource']
+  const legacyWorkspace = path.join(dataDir, 'workspace')
+  const legacyExists = !input.workspace && !input.env.HARNESS_WORKSPACE && exists(legacyWorkspace)
+  const codeRoot = legacyExists ? (input.codeRoot ?? codeRootOrUndefined()) : undefined
+  const legacyInCode =
+    codeRoot !== undefined && (isInsidePath(realOrSelf(legacyWorkspace), codeRoot) || isInsidePath(codeRoot, realOrSelf(legacyWorkspace)))
   if (input.workspace) {
     workspaceRoot = path.resolve(input.cwd, input.workspace)
     workspaceSource = 'flag'
   } else if (input.env.HARNESS_WORKSPACE) {
     workspaceRoot = path.resolve(input.cwd, input.env.HARNESS_WORKSPACE)
     workspaceSource = 'env'
-  } else if (exists(path.join(dataDir, 'workspace'))) {
-    workspaceRoot = path.join(dataDir, 'workspace')
+  } else if (legacyExists && !legacyInCode) {
+    workspaceRoot = legacyWorkspace
     workspaceSource = 'legacy-data'
     warnings.push(`工作区位于数据目录内（${workspaceRoot}）。迁出之前只能使用内置 Harness。`)
   } else {
     workspaceRoot = path.join(home, 'Latch', 'workspace')
     workspaceSource = 'default'
+    if (legacyExists)
+      warnings.push(
+        `数据目录内的旧工作区 ${legacyWorkspace} 位于 Latch 程序目录中，不再作为启动目录；启动目录改为 ${workspaceRoot}。原目录中的文件没有移动。`,
+      )
   }
 
   const agentsDir = input.env.HARNESS_AGENTS_DIR
@@ -119,6 +151,31 @@ function darwinUserTemp(): string {
   })
 }
 
+/** The per-user parent of the runtime directory, when the platform names one; otherwise the Host uses `/tmp/latch-<uid>`. */
+function runtimeParent(platform: NodeJS.Platform, getconf?: () => string): string | undefined {
+  let parent: string | undefined
+  if (platform === 'darwin') {
+    try {
+      parent = (getconf ?? darwinUserTemp)().trim() || undefined
+    } catch {
+      parent = undefined
+    }
+    parent ||= process.env.TMPDIR || undefined
+  }
+  if (!parent && platform === 'linux' && process.env.XDG_RUNTIME_DIR && isAbsolute(process.env.XDG_RUNTIME_DIR))
+    parent = process.env.XDG_RUNTIME_DIR
+  return parent
+}
+
+/**
+ * Where `prepareRuntimeDir` puts the runtime directory, without creating or checking anything: for checks made while
+ * the Host is stopped (`pnpm latch project`).
+ */
+export async function runtimeDirPath(hostId8: string): Promise<string> {
+  const parent = runtimeParent(process.platform) ?? `/tmp/latch-${process.getuid?.() ?? 0}`
+  return join(await realpath(parent).catch(() => parent), `latch-${hostId8}`)
+}
+
 /**
  * Per-user runtime directory holding `host.sock` and per-session temporary directories.
  * The socket is protected only by this directory's ownership and mode; any process of the same user can connect.
@@ -137,17 +194,7 @@ export async function prepareRuntimeDir(input: {
   if (!/^[a-z2-7]{8}$/u.test(input.hostId8)) throw new TypeError('prepareRuntimeDir: invalid hostId8')
   const uid = input.uid ?? process.getuid()
 
-  let parent = input.parent
-  if (!parent && platform === 'darwin') {
-    try {
-      parent = (input.getconf ?? darwinUserTemp)().trim() || undefined
-    } catch {
-      parent = undefined
-    }
-    parent ||= process.env.TMPDIR || undefined
-  }
-  if (!parent && platform === 'linux' && process.env.XDG_RUNTIME_DIR && isAbsolute(process.env.XDG_RUNTIME_DIR))
-    parent = process.env.XDG_RUNTIME_DIR
+  let parent = input.parent ?? runtimeParent(platform, input.getconf)
   if (!parent) {
     // /tmp itself is world-writable (sticky); the per-user directory below it must not be.
     parent = `/tmp/latch-${uid}`
@@ -377,10 +424,6 @@ function samePath(a: Located, b: Located): boolean {
   return a.key === b.key || (a.self !== undefined && a.self === b.self)
 }
 
-function overlap(message: string): WorkspaceVerdict {
-  return { ok: false, error: new AppError(409, 'workspace-overlap', message) }
-}
-
 const SENSITIVE_MESSAGE = '该目录包含或位于敏感目录（如 ~/.ssh），不能作为项目'
 const HOME_CONFIG_MESSAGE = '主目录下的隐藏目录、配置目录和系统目录不能作为项目'
 const HOME_MESSAGE = '不能把主目录整体作为项目'
@@ -408,6 +451,45 @@ async function touchesHomeConfig(candidate: Located, home: Located): Promise<boo
   return false
 }
 
+type RuleProblem = 'overlap' | 'code-root' | 'protected'
+
+function overlapFailure(message: string): { error: AppError; problem: RuleProblem } {
+  return { error: new AppError(409, 'workspace-overlap', message), problem: 'overlap' }
+}
+
+/** Registration rules 2–7 on an existing directory, in their fixed order. */
+async function ruleFailure(
+  candidate: Located,
+  context: FolderGuardContext,
+): Promise<{ error: AppError; problem: RuleProblem } | undefined> {
+  const reserved: Array<[string, string]> = [
+    [context.dataDir, '数据目录'],
+    [context.agentsDir, 'Agent 安装目录'],
+    [context.runtimeDir, '运行目录'],
+  ]
+  for (const [directory, label] of reserved) {
+    if (overlapping(candidate, await locate(directory))) return overlapFailure(reservedMessage(label))
+  }
+
+  const home = await locate(context.home)
+  if (samePath(candidate, home)) return overlapFailure(HOME_MESSAGE)
+
+  for (const entry of [...DENY_READ_HOME_PATHS, ...AUTOSTART_HOME_PATHS]) {
+    if (overlapping(candidate, await locate(join(home.real, entry)))) return overlapFailure(SENSITIVE_MESSAGE)
+  }
+  if (context.tlsKeyPath && within(await locate(context.tlsKeyPath), candidate)) return overlapFailure(SENSITIVE_MESSAGE)
+  if (touchesAliasRoot(candidate)) return overlapFailure(SENSITIVE_MESSAGE)
+  if (await touchesHomeConfig(candidate, home)) return overlapFailure(HOME_CONFIG_MESSAGE)
+
+  if (overlapping(candidate, await locate(context.codeRoot))) {
+    return { error: new AppError(409, 'workspace-code-root', '该目录与 Latch 程序目录重叠，不能作为项目'), problem: 'code-root' }
+  }
+  if (hasProtectedComponent(candidate.real)) {
+    return { error: new AppError(409, 'workspace-overlap', '该目录位于受保护目录（如 .git）内，不能作为项目'), problem: 'protected' }
+  }
+  return undefined
+}
+
 /**
  * Rules for registering a project directory, evaluated on realpaths in a fixed order. Overlaps are judged by
  * spelling and by filesystem identity, so aliases of a reserved or sensitive directory are refused too.
@@ -422,36 +504,150 @@ export async function checkWorkspaceCandidate(path: string, context: WorkspaceGu
   }
   const candidate = await locate(path)
   if (candidate.self === undefined) return invalid
-
-  const reserved: Array<[string, string]> = [
-    [context.dataDir, '数据目录'],
-    [context.agentsDir, 'Agent 安装目录'],
-    [context.runtimeDir, '运行目录'],
-  ]
-  for (const [directory, label] of reserved) {
-    if (overlapping(candidate, await locate(directory))) return overlap(reservedMessage(label))
-  }
-
-  const home = await locate(context.home)
-  if (samePath(candidate, home)) return overlap(HOME_MESSAGE)
-
-  for (const entry of [...DENY_READ_HOME_PATHS, ...AUTOSTART_HOME_PATHS]) {
-    if (overlapping(candidate, await locate(join(home.real, entry)))) return overlap(SENSITIVE_MESSAGE)
-  }
-  if (context.tlsKeyPath && within(await locate(context.tlsKeyPath), candidate)) return overlap(SENSITIVE_MESSAGE)
-  if (touchesAliasRoot(candidate)) return overlap(SENSITIVE_MESSAGE)
-  if (await touchesHomeConfig(candidate, home)) return overlap(HOME_CONFIG_MESSAGE)
-
-  if (overlapping(candidate, await locate(context.codeRoot))) {
-    return { ok: false, error: new AppError(409, 'workspace-code-root', '该目录与 Latch 程序目录重叠，不能作为项目') }
-  }
-  if (hasProtectedComponent(candidate.real)) return overlap('该目录位于受保护目录（如 .git）内，不能作为项目')
+  const failure = await ruleFailure(candidate, context)
+  if (failure) return { ok: false, error: failure.error }
   for (const item of context.existing) {
     if (samePath(await locate(item.path), candidate)) {
       return { ok: false, error: new AppError(409, 'workspace-exists', `该目录已添加为项目「${item.name}」`) }
     }
   }
   return { ok: true, realPath: candidate.real }
+}
+
+/** Folders per project, the primary one included. */
+export const PROJECT_FOLDER_LIMIT = 8
+const MAX_PATH_BYTES = 4096
+
+/**
+ * R8: text that a dialog, a log line or an argument list could not show as it is: C0 and C1 controls, DEL, the line
+ * and paragraph separators, bidi controls and zero-width characters.
+ */
+const UNPRINTABLE = /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060\u2066-\u2069\ufeff]/u
+/** R9: separators and wildcards some agents split folder lists on or expand (Gemini CLI and Qwen Code split on commas). */
+const AGENT_SPECIAL = /[,*?]/u
+
+export function isPrintableText(text: string): boolean {
+  return typeof text === 'string' && !UNPRINTABLE.test(text)
+}
+
+/** Whether a path may be passed to an agent as one more folder (R9). */
+export function isAgentSafePath(path: string): boolean {
+  return !AGENT_SPECIAL.test(path)
+}
+
+export type FolderGuardContext = Omit<WorkspaceGuardContext, 'existing'>
+export type FolderProblem = 'invalid' | 'missing' | 'not-directory' | 'permission' | 'unprintable' | 'chars' | RuleProblem
+export type FolderVerdict = { ok: true; realPath: string } | { ok: false; error: AppError; problem: FolderProblem }
+
+export interface FolderCheckOptions {
+  /**
+   * A folder being added (create, add, re-select): R8 and R9 apply and the verdict carries its realpath. Otherwise the
+   * path is a stored folder, which must still be at its own realpath: a folder now reached through a link is not the
+   * one the owner chose.
+   */
+  added?: boolean
+  /** R10, at add and at session start only: the Host can open the folder (macOS privacy settings may forbid it). */
+  readable?: boolean
+  /** Tests. */
+  opendir?: (path: string) => Promise<{ close(): Promise<void> }>
+}
+
+const FOLDER_MISSING = '找不到这个文件夹'
+const NOT_A_FOLDER = '这个路径不是文件夹'
+
+function deniedByPermissions(error: unknown): boolean {
+  const code = error instanceof Error && 'code' in error ? error.code : undefined
+  return code === 'EPERM' || code === 'EACCES'
+}
+
+function folderFailure(problem: FolderProblem, status: number, code: string, message: string): FolderVerdict {
+  return { ok: false, problem, error: new AppError(status, code, message) }
+}
+
+function permissionFailure(): FolderVerdict {
+  const message = process.platform === 'darwin' ? 'macOS 没有允许 Latch Host 访问这个文件夹' : 'Latch Host 没有权限读取这个文件夹'
+  return folderFailure('permission', 409, 'workspace-permission', message)
+}
+
+/**
+ * Rules R1–R10 for one folder of a project, on realpaths: R1–R7 are `checkWorkspaceCandidate`'s rules 1–7 (absolute,
+ * an existing directory, no overlap with Latch's or the owner's sensitive directories, not the code root, no protected
+ * component), R8–R9 apply to folders being added, and R10 when `readable` is set.
+ */
+export async function checkFolderCandidate(
+  path: string,
+  context: FolderGuardContext,
+  options: FolderCheckOptions = {},
+): Promise<FolderVerdict> {
+  if (typeof path !== 'string' || !isAbsolute(path) || path.includes('\u0000'))
+    return folderFailure('invalid', 400, 'workspace-invalid', '请使用文件夹的绝对路径')
+  if (Buffer.byteLength(path) > MAX_PATH_BYTES) return folderFailure('invalid', 400, 'workspace-invalid', '文件夹路径过长')
+  const unprintable = () => folderFailure('unprintable', 400, 'workspace-folder-unprintable', '文件夹路径包含不可显示的字符')
+  if (options.added && !isPrintableText(path)) return unprintable()
+  const missing = () => folderFailure('missing', 400, 'workspace-invalid', FOLDER_MISSING)
+  try {
+    if (!(await stat(await realpath(path))).isDirectory()) return folderFailure('not-directory', 400, 'workspace-invalid', NOT_A_FOLDER)
+  } catch (error) {
+    return deniedByPermissions(error) ? permissionFailure() : missing()
+  }
+  const candidate = await locate(path)
+  if (candidate.self === undefined) return missing()
+  if (options.added) {
+    if (!isPrintableText(candidate.real)) return unprintable()
+    if (!isAgentSafePath(candidate.real)) return folderFailure('chars', 400, 'workspace-folder-chars', '文件夹路径不能包含逗号、* 或 ?')
+    if (Buffer.byteLength(candidate.real) > MAX_PATH_BYTES) return folderFailure('invalid', 400, 'workspace-invalid', '文件夹路径过长')
+  } else if (candidate.key !== pathKey(path)) {
+    return missing()
+  }
+  const failure = await ruleFailure(candidate, context)
+  if (failure) return { ok: false, ...failure }
+  if (options.readable) {
+    try {
+      await (await (options.opendir ?? opendir)(candidate.real)).close()
+    } catch (error) {
+      return deniedByPermissions(error) ? permissionFailure() : missing()
+    }
+  }
+  return { ok: true, realPath: candidate.real }
+}
+
+export type ProjectVerdict = { ok: true } | { ok: false; error: AppError; index: number }
+
+/**
+ * Rules for a project's folder list, in order: 1–8 folders; no two folders are the same directory or contain each
+ * other (by spelling, case-fold and filesystem identity); the primary folder (`paths[0]`) is not the primary folder of
+ * a project in `existing` (pass the start directory and the other projects; leave it empty when the primary is not
+ * changing). `index` is the folder that breaks the rule.
+ */
+export async function checkProjectFolders(
+  paths: readonly string[],
+  context: { existing: ReadonlyArray<{ id: string; name: string; path: string }> },
+): Promise<ProjectVerdict> {
+  if (paths.length === 0) return { ok: false, index: 0, error: new AppError(409, 'workspace-last-folder', '项目至少要有一个文件夹') }
+  if (paths.length > PROJECT_FOLDER_LIMIT)
+    return {
+      ok: false,
+      index: PROJECT_FOLDER_LIMIT,
+      error: new AppError(409, 'workspace-folder-limit', `一个项目最多 ${PROJECT_FOLDER_LIMIT} 个文件夹`),
+    }
+  const located = await Promise.all(paths.map(path => locate(path)))
+  for (let index = 1; index < located.length; index++) {
+    for (let before = 0; before < index; before++) {
+      if (overlapping(located[index], located[before]))
+        return {
+          ok: false,
+          index,
+          error: new AppError(409, 'workspace-folder-overlap', '同一项目中的文件夹不能相同，也不能相互包含'),
+        }
+    }
+  }
+  for (const item of context.existing) {
+    if (!samePath(await locate(item.path), located[0])) continue
+    const message =
+      item.id === 'default' ? '该文件夹是 Host 的启动目录，不能作为项目的主文件夹' : `该文件夹已是项目「${item.name}」的主文件夹`
+    return { ok: false, index: 0, error: new AppError(409, 'workspace-exists', message) }
+  }
+  return { ok: true }
 }
 
 export interface DefaultWorkspaceFlags {

@@ -12,6 +12,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Device } from '@latch/protocol'
 import { verifyAuditFile } from '../src/audit.ts'
 import { HostConfig } from '../src/config.ts'
+import { writeProjectContext } from '../src/project-context.ts'
+import { latchCodeRoot } from '../src/paths.ts'
 import { acquireDataDirLock, bootTime, readDataDirLock, writeHostState } from '../src/host-state.ts'
 import { defaultPolicy } from '../src/policy.ts'
 import { runLatch, type CliIO } from '../scripts/latch.ts'
@@ -34,7 +36,7 @@ async function temporaryDirectory() {
   return directory
 }
 
-function cli(options: { tty?: boolean; secret?: string; cwd?: string } = {}) {
+function cli(options: { tty?: boolean; secret?: string; cwd?: string; answer?: boolean } = {}) {
   const output = { stdout: '', stderr: '' }
   const io: CliIO = {
     stdout: {
@@ -49,6 +51,7 @@ function cli(options: { tty?: boolean; secret?: string; cwd?: string } = {}) {
       },
     },
     readSecret: async () => options.secret ?? '',
+    ...(options.answer !== undefined ? { confirm: async () => options.answer! } : {}),
     env: {},
     cwd: options.cwd ?? tmpdir(),
   }
@@ -186,6 +189,40 @@ async function snapshot(directory: string): Promise<Record<string, string>> {
 }
 
 describe('latch CLI', () => {
+  it('uses the last Host startup context for offline folder checks and requires an explicit start directory before the first boot', async () => {
+    const root = await realpath(await temporaryDirectory())
+    const start = join(root, 'actual-start')
+    const agents = join(root, 'actual-agents')
+    const code = join(root, 'actual-code')
+    const tls = join(root, 'tls')
+    await Promise.all([start, agents, code, tls].map(path => mkdir(path)))
+    const dataDir = join(root, 'data')
+    const t = await startTestHost({ dataDir, workspaceRoot: start, agentsDir: agents, codeRoot: code })
+    cleanups.push(() => t.close())
+    await t.close()
+    const attempts = [start, agents, code]
+    for (const path of attempts) {
+      const attempt = cli({ cwd: root })
+      expect(await attempt.latch('project', 'add', path, '--yes', '--data-dir', dataDir)).toBe(1)
+      expect(attempt.output.stderr).toContain('没有加入')
+    }
+    const keyPath = join(tls, 'key.pem')
+    await writeFile(keyPath, 'fixture path only')
+    await writeProjectContext(dataDir, { workspaceRoot: start, agentsDir: agents, codeRoot: code, tlsKeyPath: keyPath })
+    const blocked = cli({ cwd: root })
+    expect(await blocked.latch('project', 'add', tls, '--yes', '--data-dir', dataDir)).toBe(1)
+    expect(blocked.output.stderr).toContain('没有加入')
+    const mismatched = cli({ cwd: root })
+    expect(await mismatched.latch('project', 'add', start, '--yes', '--workspace', tls, '--data-dir', dataDir)).toBe(1)
+    expect(mismatched.output.stderr).toContain('--workspace 与上次 Host 的启动目录不同')
+    expect((await HostConfig.open(dataDir)).settings().workspaces).toEqual([])
+    const fresh = await stoppedDataDir()
+    const missing = cli({ cwd: root })
+    expect(await missing.latch('project', 'add', tls, '--yes', '--data-dir', fresh)).toBe(1)
+    expect(missing.output.stderr).toContain('--workspace <启动目录>')
+    expect(await cli({ cwd: root }).latch('project', 'add', tls, '--yes', '--workspace', start, '--data-dir', fresh)).toBe(0)
+  })
+
   it('lists and revokes devices over host.sock while the Host runs', async () => {
     const t = await runningHost()
     const phone = await t.enroll({ name: '测试手机' })
@@ -684,6 +721,89 @@ describe('latch CLI', () => {
       await expect(lstat(join(target, 'code.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
     }
     await expect(lstat(join(dataDir, 'auth', 'offline-enrollments.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('adds projects and folders only while the Host is stopped, with the same rules and audit, and the Host takes them up', async () => {
+    const dataDir = await stoppedDataDir()
+    const root = await realpath(await temporaryDirectory())
+    for (const name of ['api', 'api/lib', 'web', 'docs']) await mkdir(join(root, name), { recursive: true })
+    await writeProjectContext(dataDir, { workspaceRoot: join(root, 'start'), agentsDir: join(root, 'agents'), codeRoot: latchCodeRoot() })
+    const { output, latch } = cli({ cwd: root })
+    expect(await latch('project', 'add', 'api', 'api/lib', 'web', '--name', 'Shop', '--data-dir', dataDir)).toBe(1)
+    expect(output.stderr).toBe('添加文件夹需要确认：在终端中运行，或加上 --yes\n')
+
+    const declined = cli({ cwd: root, tty: true, answer: false })
+    expect(await declined.latch('project', 'add', 'api', '--data-dir', dataDir)).toBe(1)
+    expect(declined.output.stdout).toContain('已取消，没有改动。')
+    expect((await HostConfig.open(dataDir)).settings().workspaces).toEqual([])
+
+    const added = cli({ cwd: root, tty: true, answer: true })
+    expect(await added.latch('project', 'add', 'api', 'api/lib', 'web', '--name', 'Shop', '--data-dir', dataDir)).toBe(0)
+    expect(added.output.stderr).toBe(`没有加入 ${join(root, 'api', 'lib')}：同一项目中的文件夹不能相同，也不能相互包含\n`)
+    expect(added.output.stdout).toContain(`将用这些文件夹新建项目「Shop」：\n  ${join(root, 'api')}（主文件夹）\n  ${join(root, 'web')}\n`)
+    expect(added.output.stdout).toContain('已新建项目「Shop」（shop）。')
+    const more = cli({ cwd: root })
+    expect(await more.latch('project', 'add-folder', 'shop', 'docs', join(root, 'missing'), '--yes', '--data-dir', dataDir)).toBe(0)
+    expect(more.output.stderr).toBe(`没有加入 ${join(root, 'missing')}：找不到这个文件夹\n`)
+    expect(await cli({ cwd: root }).latch('project', 'add-folder', 'default', 'docs', '--yes', '--data-dir', dataDir)).toBe(1)
+    expect(await cli({ cwd: root }).latch('project', 'add-folder', 'nope', 'docs', '--yes', '--data-dir', dataDir)).toBe(1)
+    const listed = cli({ cwd: root })
+    expect(await listed.latch('project', 'list', '--json', '--data-dir', dataDir)).toBe(0)
+    expect(JSON.parse(listed.output.stdout)).toEqual([
+      {
+        id: 'shop',
+        name: 'Shop',
+        path: join(root, 'api'),
+        folders: [
+          { id: 'api', path: join(root, 'api') },
+          { id: 'web', path: join(root, 'web') },
+          { id: 'docs', path: join(root, 'docs') },
+        ],
+      },
+    ])
+    const records = await auditActions(dataDir)
+    const projects = records.filter(record => record.action.startsWith('workspace.'))
+    expect(projects.map(record => [record.action, record.actor, record.stepup])).toEqual([
+      ['workspace.added', { listener: 'cli', via: 'cli' }, 'offline'],
+      ['workspace.folder-added', { listener: 'cli', via: 'cli' }, 'offline'],
+    ])
+    expect((projects[0] as unknown as { detail: Record<string, unknown> }).detail).toMatchObject({ folderCount: 2, via: 'cli' })
+    expect(records.filter(record => record.action === 'settings.changed')).toHaveLength(2)
+
+    // Removing lowers access: the same command family, the same audit, files untouched.
+    expect(await cli({ cwd: root }).latch('project', 'remove-folder', 'shop', 'docs', '--data-dir', dataDir)).toBe(1)
+    expect(await cli({ cwd: root }).latch('project', 'remove-folder', 'shop', 'docs', '--yes', '--data-dir', dataDir)).toBe(0)
+    expect(await cli({ cwd: root }).latch('project', 'remove-folder', 'shop', 'nope', '--yes', '--data-dir', dataDir)).toBe(1)
+    expect(await cli({ cwd: root }).latch('project', 'remove', 'default', '--yes', '--data-dir', dataDir)).toBe(1)
+    expect((await HostConfig.open(dataDir)).settings().workspaces[0]!.folders.map(folder => folder.id)).toEqual(['api', 'web'])
+    await mkdir(join(root, 'docs'), { recursive: true })
+    expect(await cli({ cwd: root }).latch('project', 'add-folder', 'shop', 'docs', '--yes', '--data-dir', dataDir)).toBe(0)
+    expect((await auditActions(dataDir)).filter(record => record.action === 'workspace.folder-removed')).toHaveLength(1)
+
+    // A Host that holds the lock while it starts, and one that runs, are both refused.
+    const starting = await acquireDataDirLock(dataDir, 'host')
+    const early = cli({ cwd: root })
+    expect(await early.latch('project', 'add-folder', 'shop', 'docs', '--yes', '--data-dir', dataDir)).toBe(1)
+    expect(early.output.stderr).toBe('Host 正在运行。请在 Latch 桌面端添加，或先停止 Host。\n')
+    await starting.release()
+
+    // The Host starts with them and sees no change made outside Latch.
+    const t = await runningHost({ dataDir })
+    expect((await auditActions(dataDir)).some(record => record.action === 'settings.changed-outside')).toBe(false)
+    expect(t.host.config.settings().workspaces[0]!.folders).toHaveLength(3)
+    const refused = cli({ cwd: root })
+    expect(await refused.latch('project', 'add', 'web', '--yes', '--data-dir', dataDir)).toBe(1)
+    expect(refused.output.stderr).toBe('Host 正在运行。请在 Latch 桌面端添加，或先停止 Host。\n')
+    expect(await refused.latch('project', 'list', '--data-dir', dataDir)).toBe(1)
+    expect(await refused.latch('project', 'remove', 'shop', '--yes', '--data-dir', dataDir)).toBe(1)
+    expect(refused.output.stderr).toContain('Host 正在运行。请在 Latch 的「设置 → 项目」中移除，或先停止 Host。')
+    await t.close()
+    // runningHost recorded this test process in host.json; once the Host is closed the record goes too.
+    await rm(join(dataDir, 'host.json'))
+    const gone = cli({ cwd: root, tty: true, answer: true })
+    expect(await gone.latch('project', 'remove', 'shop', '--data-dir', dataDir)).toBe(0)
+    expect((await HostConfig.open(dataDir)).settings().workspaces).toEqual([])
+    expect((await auditActions(dataDir)).some(record => record.action === 'workspace.removed')).toBe(true)
   })
 
   it('verifies the audit chain and reports a tampered line', async () => {

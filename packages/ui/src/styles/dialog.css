@@ -38,6 +38,42 @@
     scale: 0.98;
   }
 }
+/* The dock: 24px above the bottom edge, rising 12px as it fades in over 240ms and dropping 8px as it goes. */
+.ui-dialog[data-placement='dock'] {
+  margin: auto auto var(--sp-24);
+  scale: 1;
+  translate: 0 var(--sp-8);
+  transition:
+    opacity var(--d-base) var(--ease-exit),
+    translate var(--d-base) var(--ease-exit),
+    display var(--d-base) allow-discrete,
+    overlay var(--d-base) allow-discrete;
+}
+.ui-dialog[data-placement='dock'][open] {
+  translate: 0 0;
+  transition:
+    opacity var(--d-slow) var(--ease),
+    translate var(--d-slow) var(--ease),
+    display var(--d-slow) allow-discrete,
+    overlay var(--d-slow) allow-discrete;
+}
+@starting-style {
+  .ui-dialog[data-placement='dock'][open] {
+    opacity: 0;
+    translate: 0 var(--sp-12);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ui-dialog[data-placement='dock'],
+  .ui-dialog[data-placement='dock'][open] {
+    translate: 0 0;
+  }
+}
+@media (max-width: 767.98px) {
+  .ui-dialog[data-placement='dock'] {
+    margin-bottom: var(--sp-16);
+  }
+}
 .ui-dialog::backdrop,
 .ui-sheet::backdrop {
   background: var(--scrim);
@@ -122,6 +158,30 @@
 .ui-dialog-surface[data-bare] .ui-dialog-body {
   display: grid;
   gap: var(--sp-8);
+}
+.ui-dialog-surface[data-placement='dock'] {
+  width: min(400px, calc(100vw - 2 * var(--sp-16)));
+}
+.ui-dialog-surface[data-placement='dock'][data-bare] .ui-dialog-body {
+  padding: var(--sp-20) var(--sp-24);
+}
+/* A bare dialog's state tile beside its title: 36px, 8px corners. */
+.ui-dialog-lead {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-12);
+  min-width: 0;
+}
+.ui-dialog-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
+  background: var(--fill);
+  color: var(--text-2);
 }
 .ui-dialog-footer,
 .ui-dialog-actions {
