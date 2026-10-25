@@ -6,6 +6,7 @@ import { hostNow, parseDuration, parseTime, useTicker } from '../core/hostClock.
 import { absoluteTime, formatDuration, messageTime, separatorLabel } from '../format.ts'
 import { HarnessTile } from './BrandTile.tsx'
 import { CopyButton } from './ui.tsx'
+import { VisibleText } from './VisibleText.tsx'
 import { Collapse, ICON_STROKE, Shimmer, Swap, Tooltip } from '@latch/ui'
 
 /** Times of the live reply's reasoning, which the Host reports on the detail while it streams. */
@@ -165,7 +166,21 @@ function UserMessage({
           <TimeLabel at={separator.at} separator sameDay={separator.sameDay} />
         </p>
       )}
-      <div className="user-bubble">{message.text}</div>
+      <div className="user-bubble">
+        {message.forkContext && (
+          <details className="fork-context">
+            <summary>
+              以下是会话「
+              <VisibleText text={message.forkContext.title} />
+              」到第 {message.forkContext.turn} 轮为止的记录
+            </summary>
+            <pre>
+              <VisibleText text={message.text.slice(0, message.forkContext.prefixLength)} />
+            </pre>
+          </details>
+        )}
+        {message.text.slice(message.forkContext?.prefixLength ?? 0)}
+      </div>
       <div className="message-meta">
         {at !== undefined && <TimeLabel at={at} />}
         <CopyButton text={message.text} label="复制消息" size="xs" />
@@ -245,6 +260,7 @@ export const MessageRow = memo(
     && a.liveReasoning?.ms === b.liveReasoning?.ms
     && a.message.id === b.message.id
     && a.message.text === b.message.text
+    && a.message.forkContext === b.message.forkContext
     && a.message.state === b.message.state
     && a.message.role === b.message.role
     && a.message.reasoning === b.message.reasoning

@@ -552,7 +552,16 @@ export class AcpBridge implements Bridge {
     const launch = this.currentLaunch(project, scope?.passed)
     if (launch.hash !== input.expectedLaunchHash) throw this.launchRefusal(input.expectedLaunchHash, launch, scope?.passed)
     const sessionId = `task-${randomUUID()}`
-    const create = { sessionId, prompt: input.prompt, key, payloadHash, cwd, launch, ...(scope ? { scope } : {}) }
+    const create = {
+      sessionId,
+      prompt: input.prompt,
+      requestId: input.requestId,
+      key,
+      payloadHash,
+      cwd,
+      launch,
+      ...(scope ? { scope } : {}),
+    }
     if (scope?.passed?.via !== 'acp') return this.record(create)
     // Whether the agent takes the other folders is known only once it has started, so it starts before the session
     // exists; held, so that no other start stops it as idle meanwhile.
@@ -582,6 +591,7 @@ export class AcpBridge implements Bridge {
     prompt: string
     key: string
     payloadHash: string
+    requestId: string
     cwd: string
     launch: Launch
     scope?: Scope
@@ -605,7 +615,7 @@ export class AcpBridge implements Bridge {
           : {}),
         runId: run.id,
       },
-      messages: [{ id: run.userMessageId, role: 'user', text: prompt, createdAt: at }],
+      messages: [{ id: run.userMessageId, role: 'user', text: prompt, requestId: create.requestId, createdAt: at }],
       revision: 1,
       acp: {
         cwd,
@@ -673,7 +683,7 @@ export class AcpBridge implements Bridge {
         this.assertUsable(current)
         current.acp.turnSeq = run.seq
         run.userMessageId = randomUUID()
-        current.messages.push({ id: run.userMessageId, role: 'user', text: prompt, createdAt: isoTime(run.clock.startedAt) })
+        current.messages.push({ id: run.userMessageId, role: 'user', text: prompt, requestId, createdAt: isoTime(run.clock.startedAt) })
         current.summary.status = 'running'
         current.summary.runId = run.id
         this.touch(current)

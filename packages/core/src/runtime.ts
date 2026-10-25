@@ -626,7 +626,7 @@ class HarnessRuntime implements Bridge {
             runId: run.id,
             ...(run.lease.skills?.length ? { skills: run.lease.skills.map(skill => skill.id) } : {}),
           },
-          messages: [{ id: run.userMessageId, role: 'user', text: input.prompt, createdAt: at }],
+          messages: [{ id: run.userMessageId, role: 'user', text: input.prompt, requestId: input.requestId, createdAt: at }],
           history: [{ role: 'user', content: input.prompt }],
           ...(skillContext(run.lease) ? { skillContext: skillContext(run.lease) } : {}),
           revision: 1,
@@ -673,7 +673,7 @@ class HarnessRuntime implements Bridge {
         run = this.allocateRun(sessionId, task.summary.mode ?? 'agent', selection, recorded, foldersOf(task.summary, recorded))
         const at = isoTime(run.clock.startedAt)
         task.history.push({ role: 'user', content: prompt })
-        task.messages.push({ id: run.userMessageId, role: 'user', text: prompt, createdAt: at })
+        task.messages.push({ id: run.userMessageId, role: 'user', text: prompt, requestId, createdAt: at })
         task.summary.status = 'running'
         task.summary.runId = run.id
         task.skillContext = skillContext(run.lease)

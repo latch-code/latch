@@ -39,6 +39,8 @@ export interface ResolvedFile {
   ext: string
   size: number
   mtimeMs: number
+  /** Descriptor identity and nanosecond timestamps, for content validators and cache tags. */
+  identity?: string
   /** The file's first bytes (at most 64 KiB), for the content checks. */
   head: Uint8Array
   /** Its name or content suggests it holds a secret. */
@@ -258,6 +260,7 @@ async function resolveCandidate(candidate: string, roots: readonly FileRoot[], o
         ext: extensionOf(name),
         size: Number(info.size),
         mtimeMs: Number(info.mtimeMs),
+        identity: `${info.dev}:${info.ino}:${info.size}:${info.mtimeNs}:${info.ctimeNs}`,
         head,
         secret: isSecretPath(relativePath, head) || hasSecretContent(head),
       },

@@ -87,6 +87,7 @@ export class AgentConnection {
   private partLength = 0
   private stderr: Buffer[] = []
   private stderrLength = 0
+  private stderrDiagnostic?: string
   private queue: string[] = []
   private queued = 0
   private blocked = false
@@ -194,10 +195,12 @@ export class AgentConnection {
     return this.exited
   }
 
-  stderrTail(): string {
-    const text = this.spec.redact(Buffer.concat(this.stderr).toString('utf8')).trim()
-    if (text.length <= STDERR_TAIL) return text
-    const tail = text.slice(-STDERR_TAIL)
+  stderrTail(limit = STDERR_TAIL): string {
+    const text = this.info
+      ? (this.stderrDiagnostic ?? this.info.stderr)
+      : this.spec.redact(Buffer.concat(this.stderr).toString('utf8')).trim()
+    if (text.length <= limit) return text
+    const tail = text.slice(-limit)
     const newline = tail.indexOf('\n')
     return `…${newline >= 0 && newline < tail.length - 1 ? tail.slice(newline + 1) : tail}`
   }
@@ -373,6 +376,7 @@ export class AgentConnection {
       this.partLength = 0
       this.onLine(line)
     }
+    this.stderrDiagnostic = this.stderrTail(4096)
     this.info = {
       code: this.exitCode,
       signal: this.exitSignal,

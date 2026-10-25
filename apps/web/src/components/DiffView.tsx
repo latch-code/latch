@@ -5,6 +5,8 @@ import { diffLines, knowsOldSide, previousState, type PreviousState } from '../d
 import { middleEllipsis } from '../format.ts'
 import { Collapse, ICON_STROKE, StatusPill } from '@latch/ui'
 import { escapeHiddenCharacters, VisibleText } from './VisibleText.tsx'
+import { useHighlightedTokens, SyntaxLine } from '../preview/HighlightedCode.tsx'
+import { languageForPath } from '../preview/highlight-protocol.ts'
 
 /** Lines rendered before "显示全部"; long rewrites stay cheap until asked for. */
 const VISIBLE_LINES = 400
@@ -58,6 +60,9 @@ function DiffFile({ diff, initiallyOpen, fold }: { diff: FileDiff; initiallyOpen
   const oldSide = knowsOldSide(previous)
   const note = PREVIOUS_NOTES[previous]
   const [open, setOpen] = useState(initiallyOpen)
+  const language = languageForPath(diff.path)
+  const oldTokens = useHighlightedTokens(diff.oldText ?? '', language, open)
+  const newTokens = useHighlightedTokens(diff.newText, language, open)
   const [unfolded, setUnfolded] = useState(false)
   const [all, setAll] = useState(false)
   const total = view.hunks.reduce((sum, hunk) => sum + hunk.lines.length + 1, 0)
@@ -131,7 +136,16 @@ function DiffFile({ diff, initiallyOpen, fold }: { diff: FileDiff; initiallyOpen
                           <span className="diff-text">
                             {line.kind === 'add' && <span className="sr-only">新增：</span>}
                             {line.kind === 'remove' && <span className="sr-only">删除：</span>}
-                            {line.text ? <VisibleText text={line.text} /> : ' '}
+                            {line.text ? (
+                              <SyntaxLine
+                                text={line.text}
+                                tokens={
+                                  line.kind === 'remove' ? oldTokens?.[(line.oldLine ?? 1) - 1] : newTokens?.[(line.newLine ?? 1) - 1]
+                                }
+                              />
+                            ) : (
+                              ' '
+                            )}
                           </span>
                         </div>
                       ))}

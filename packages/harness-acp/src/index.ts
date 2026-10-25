@@ -7,6 +7,7 @@ import { selectProfile, validateAgentDefinition } from './permission.ts'
 import type { HarnessProfile } from './profiles/index.ts'
 import { AgentHealth, resolveOptions, type AcpAgentOptions, type AgentRecord } from './types.ts'
 
+export { agentProbePreview, probeAgent } from './probe.ts'
 export { resolveCommand } from './command.ts'
 export { launchHash, selectProfile, validateAgentDefinition } from './permission.ts'
 export type { AcpAgentOptions, AgentRecord } from './types.ts'

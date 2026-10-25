@@ -53,6 +53,7 @@ export interface SessionGroup {
   tasks: TaskSummary[]
   /** The saved project the group stands for, where a new session can start. */
   workspaceId?: string
+  project?: WorkspaceInfo
 }
 
 const trimPath = (path: string) => path.replace(/[\\/]+$/u, '') || path
@@ -61,27 +62,36 @@ const within = (path: string, root: string) => {
   return inner === outer || inner.startsWith(`${outer}/`) || inner.startsWith(`${outer}\\`)
 }
 
-/**
- * The saved project a session ran in: the deepest one holding its working directory. A session that does not record
- * its directory ran in the start directory (the `default` project) where the Host has one.
- */
+/** Recorded project identity wins over overlapping paths; legacy sessions use the deepest primary. */
 export function projectOf(task: TaskSummary, workspaces: readonly WorkspaceInfo[]): WorkspaceInfo | undefined {
-  if (task.cwd === undefined) return workspaces.find(workspace => workspace.id === 'default')
-  const cwd = task.cwd
-  return workspaces
-    .filter(workspace => within(cwd, workspace.path))
-    .toSorted((a, b) => trimPath(b.path).length - trimPath(a.path).length)[0]
+  if (task.mode === 'chat') return undefined
+  if (task.workspaceId !== undefined && task.workspaceId !== 'default') return workspaces.find(project => project.id === task.workspaceId)
+  const saved = workspaces.filter(project => project.id !== 'default')
+  if (task.workspaceId === 'default') {
+    return task.cwd === undefined
+      ? undefined
+      : saved.find(project => (project.folders ?? [{ path: project.path }]).some(folder => trimPath(folder.path) === trimPath(task.cwd!)))
+  }
+  if (task.cwd === undefined) return undefined
+  return saved.filter(project => within(task.cwd!, project.path)).toSorted((a, b) => trimPath(b.path).length - trimPath(a.path).length)[0]
 }
 
-/**
- * Pinned first, then a group per project, each newest first; the groups follow their latest session, and sessions
- * outside every saved project come last under 其他目录. A Host that does not list its projects (`workspaces`
- * undefined) groups by working directory instead.
- */
-export function groupSessions(tasks: TaskSummary[], workspaces: readonly WorkspaceInfo[] | undefined): SessionGroup[] {
+/** Pinned first, saved projects by their latest session, then conversations outside a project. */
+export function groupSessions(
+  tasks: TaskSummary[],
+  workspaces: readonly WorkspaceInfo[] | undefined,
+  options: { includeEmpty?: boolean } = {},
+): SessionGroup[] {
   const pinned: SessionGroup = { id: 'pinned', label: '置顶', tasks: [] }
-  const other: SessionGroup = { id: 'other', label: workspaces === undefined ? '会话' : '其他目录', tasks: [] }
+  const other: SessionGroup = { id: 'other', label: workspaces === undefined ? '会话' : '对话', tasks: [] }
   const projects = new Map<string, SessionGroup>()
+  const makeProject = (project: WorkspaceInfo): SessionGroup => ({
+    id: `project:${project.id}`,
+    label: project.name || basename(project.path),
+    tasks: [],
+    project,
+    ...(project.unavailable === undefined ? { workspaceId: project.id } : {}),
+  })
   for (const task of tasks.toSorted(byRecency)) {
     if (task.pinned) {
       pinned.tasks.push(task)
@@ -103,18 +113,17 @@ export function groupSessions(tasks: TaskSummary[], workspaces: readonly Workspa
       continue
     }
     const id = `project:${project.id}`
-    const group = projects.get(id) ?? {
-      id,
-      // The start directory's own name (默认工作区) says less than its folder's.
-      label: project.id === 'default' ? basename(project.path) : project.name || basename(project.path),
-      tasks: [],
-      ...(project.unavailable === undefined ? { workspaceId: project.id } : {}),
-    }
+    const group = projects.get(id) ?? makeProject(project)
     group.tasks.push(task)
     projects.set(id, group)
   }
-  // Tasks were added newest first, so each group's first task is its latest and the map keeps that order.
-  return [pinned, ...projects.values(), other].filter(group => group.tasks.length > 0)
+  if (options.includeEmpty)
+    for (const project of workspaces ?? []) {
+      if (project.id !== 'default' && !projects.has(`project:${project.id}`)) projects.set(`project:${project.id}`, makeProject(project))
+    }
+  return [pinned, ...projects.values(), other].filter(
+    group => group.tasks.length > 0 || (options.includeEmpty && group.project !== undefined),
+  )
 }
 
 /**

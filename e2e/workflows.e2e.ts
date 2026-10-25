@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
 import { chromium } from '@playwright/test'
 import { describe, expect, it } from 'vitest'
+import type { HarnessPlugin } from '@latch/sdk'
+import { closeSettings, openSection, openSettings } from './helpers/layout.ts'
 import type { TaskDetail } from '@latch/protocol'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
@@ -80,6 +82,66 @@ describe('session search and workbench navigation', () => {
         expect((await owner.json<{ tasks: unknown[] }>('snapshot')).tasks).toEqual([])
         await context.close()
       }
+    } finally {
+      await browser.close()
+      await host.close()
+    }
+  })
+  it('filters abbreviated model names, remembers choices, hides models locally and shows reported period usage', async () => {
+    const plugin: HarnessPlugin = {
+      id: 'workflow-models',
+      description: '只在测试中提供模型和计数。',
+      name: '测试模型',
+      version: '1',
+      activate(context) {
+        context.registerProvider({
+          id: 'workflow-models',
+          name: '测试模型',
+          model: 'gpt-5.0-mini',
+          models: Array.from({ length: 10 }, (_, i) => `gpt-5.${i}-mini`),
+          async *stream() {
+            yield { type: 'text', text: '完成' }
+            yield { type: 'usage', inputTokens: 123, outputTokens: 45, cacheReadTokens: 10 }
+            yield { type: 'finish', reason: 'stop' }
+          },
+        })
+      },
+    }
+    const host = await startTestHost({ uiDir: resolve('dist/web'), plugins: [plugin] }),
+      browser = await chromium.launch(browserLaunchOptions())
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      const created = await owner.json<{ sessionId: string }>('tasks', {
+        method: 'POST',
+        body: { prompt: '本地测试', requestId: randomUUID(), model: { providerId: 'workflow-models', model: 'gpt-5.1-mini' } },
+      })
+      await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${created.sessionId}`)).summary.status).toBe('idle')
+      const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' }),
+        page = await context.newPage()
+      await enrollBrowser(page, host, { name: '模型列表' })
+      const settings = await openSettings(page)
+      await openSection(settings, '通用')
+      await settings.getByRole('button', { name: '管理显示的模型', exact: true }).click()
+      const visible = settings.getByRole('switch', { name: 'gpt-5.0-mini', exact: true })
+      await visible.click()
+      expect(await visible.getAttribute('aria-checked')).toBe('false')
+      await settings.locator('.usage-table').waitFor()
+      expect(await settings.locator('.usage-table').textContent()).toContain('123')
+      await settings.getByRole('radio', { name: '最近 30 天', exact: true }).click()
+      await settings.locator('.usage-table').waitFor()
+      expect(await settings.locator('.usage-table').textContent()).toContain('未报告')
+      await page.screenshot({ path: 'test-results/workflow-model-usage.png', fullPage: true })
+      await closeSettings(settings)
+      await page.keyboard.press('Alt+n')
+      await page.locator('.model-picker:visible').click()
+      await page.getByRole('searchbox', { name: '搜索模型', exact: true }).fill('gpt5m')
+      expect(await page.getByRole('menuitemradio', { name: /gpt-5.0-mini/u }).count()).toBe(0)
+      await page.getByRole('menuitemradio', { name: /gpt-5.1-mini/u }).click()
+      await page.locator('.model-picker:visible').click()
+      await page.getByText('最近使用', { exact: true }).waitFor()
+      await page.getByRole('menuitem', { name: /显示隐藏的模型/u }).click()
+      await page.getByRole('menuitemradio', { name: /gpt-5.0-mini/u }).waitFor()
+      await context.close()
     } finally {
       await browser.close()
       await host.close()

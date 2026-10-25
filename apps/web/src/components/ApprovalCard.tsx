@@ -222,7 +222,7 @@ function ApprovalPanel({
     status?.noting && !running
       ? DECISION_COPY.noteCard
       : status?.confirming === 'waiting'
-        ? CONFIRMATION_COPY.waiting
+        ? CONFIRMATION_COPY.waitingShell
         : status?.confirming === 'sending'
           ? APPROVAL_COPY.confirmedLocal
           : allow === undefined

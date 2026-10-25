@@ -1,3 +1,7 @@
+import { createHash } from 'node:crypto'
+import { cp, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
+import { build as bundle } from 'esbuild'
 import { resolve } from 'node:path'
 import { defineConfig, type ProxyOptions, type UserConfig } from 'vite'
 import { readHostState } from '@latch/host/host-state'
@@ -52,11 +56,70 @@ async function hostProxy(): Promise<ProxyOptions> {
   }
 }
 
+export async function buildOfficeFrame(directory = resolve('dist/web/preview-frame')): Promise<void> {
+  const result = await bundle({
+    entryPoints: [fileURLToPath(new URL('./src/preview/office-frame.ts', import.meta.url))],
+    bundle: true,
+    format: 'iife',
+    platform: 'browser',
+    target: 'es2023',
+    minify: true,
+    write: false,
+    legalComments: 'none',
+  })
+  const script = result.outputFiles[0]!.text.replace(/<\/script/giu, '<\\/script')
+  const scriptHash = `sha256-${createHash('sha256').update(script).digest('base64')}`
+  const tokens = await readFile(fileURLToPath(import.meta.resolve('@latch/ui/tokens.css')), 'utf8')
+  const styles =
+    'html,body{margin:0;min-height:100%;background:var(--bg-app);color:var(--text-1);font-family:var(--font-sans)}#document{min-height:100vh;box-sizing:border-box;padding:var(--sp-12)}[data-latch-notes]{font-size:var(--fs-label);line-height:var(--lh-label-para);color:var(--text-1);padding:var(--sp-12);background:var(--bg-pane);position:relative}[data-latch-notes] p{white-space:pre-wrap}section.docx{margin-inline:auto;max-width:100%;box-sizing:border-box}#document[data-fit=false] section.docx{max-width:none}.docx-wrapper{padding:var(--sp-8)!important;background:var(--bg-app)!important}'
+  await mkdir(directory, { recursive: true })
+  await writeFile(
+    resolve(directory, 'office.html'),
+    `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${tokens}${styles}</style></head><body><main id="document"></main><script>${script}</script></body></html>`,
+  )
+  await writeFile(resolve(directory, 'office.json'), JSON.stringify({ file: 'office.html', scriptHash }))
+  const pdfDirectory = fileURLToPath(new URL('./', import.meta.resolve('pdfjs-dist/package.json')))
+  await cp(resolve(pdfDirectory, 'cmaps'), resolve(directory, '../preview-assets/pdf/cmaps'), { recursive: true })
+  await cp(resolve(pdfDirectory, 'standard_fonts'), resolve(directory, '../preview-assets/pdf/fonts'), { recursive: true })
+}
+
+export async function buildDiagramFrame(directory = resolve('dist/web/preview-frame')): Promise<void> {
+  const result = await bundle({
+    entryPoints: [fileURLToPath(new URL('./src/preview/diagram-frame.ts', import.meta.url))],
+    bundle: true,
+    format: 'iife',
+    platform: 'browser',
+    target: 'es2023',
+    minify: true,
+    write: false,
+    legalComments: 'none',
+  })
+  const script = result.outputFiles[0]!.text.replace(/<\/script/giu, '<\\/script')
+  const scriptHash = `sha256-${createHash('sha256').update(script).digest('base64')}`
+  await mkdir(directory, { recursive: true })
+  await writeFile(
+    resolve(directory, 'diagram.html'),
+    `<!doctype html><html><head><meta charset="utf-8"></head><body><main id="diagram"></main><script>${script}</script></body></html>`,
+  )
+  await writeFile(resolve(directory, 'diagram.json'), JSON.stringify({ file: 'diagram.html', scriptHash }))
+}
+
 export default defineConfig(async ({ command }): Promise<UserConfig> => ({
   // The page lives in this directory, whichever working directory Vite starts in; the Host serves the build from the
   // repository root's dist/web, the path every Host build reads.
+  plugins: [
+    {
+      name: 'latch-office-frame',
+      apply: 'build',
+      closeBundle: async () => {
+        await buildOfficeFrame()
+        await buildDiagramFrame()
+      },
+    },
+  ],
   root: import.meta.dirname,
   base: '/link/',
+  worker: { format: 'es' },
   build: {
     outDir: resolve(import.meta.dirname, '../../dist/web'),
     emptyOutDir: true,

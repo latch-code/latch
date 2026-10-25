@@ -6,7 +6,7 @@ import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { AUDIT_FILE_TYPES } from './files/kinds.ts'
 
-export type StepupMethod = 'none' | 'lpc-local' | 'offline'
+export type StepupMethod = 'none' | 'lpc-local' | 'shell-local' | 'offline'
 export interface AuditActor {
   deviceId?: string
   listener: ListenerClass | 'host' | 'cli'
@@ -32,6 +32,7 @@ const presenceAction = z.enum([
   'task.start-l3',
   'task.mode-widen',
   'agent.define',
+  'agent.probe',
   'policy.change',
   'provider.set-key',
   'provider.confirm-origin',
@@ -57,6 +58,7 @@ const fileAction = z.strictObject({ sessionId: opaqueId, pathHash: hex64, type: 
 
 /** Strict detail schema per action. */
 export const AUDIT_DETAIL = {
+  'presence.launch-trusted': z.strictObject({ keyHash: hex64 }),
   'host.started': z.strictObject({
     hostId: z.string().regex(/^[a-z2-7]{52}$/u),
     version: z.string().regex(/^[0-9A-Za-z.+-]{1,64}$/u),
@@ -133,6 +135,8 @@ export const AUDIT_DETAIL = {
   'task.mode.widened': z.strictObject({ sessionId: opaqueId, toHash: hex64 }),
   'task.permission-drift': z.strictObject({ sessionId: opaqueId, observedHash: hex64 }),
   'task.approval-auto-rejected': z.strictObject({ sessionId: opaqueId, reason: z.enum(['persistent-only', 'unknown-kind']) }),
+  'agent.probe.requested': z.strictObject({ agentId: opaqueId, launchHash: hex64 }),
+  'agent.probed': z.strictObject({ agentId: opaqueId, launchHash: hex64, status: z.enum(['ready', 'authentication-required', 'failed']) }),
   'agent.defined': z.strictObject({ agentId: opaqueId, definitionHash: hex64, created: z.boolean() }),
   'agent.deleted': z.strictObject({ agentId: opaqueId }),
   'provider.secret.set': z.strictObject({ providerId: opaqueId, originHash: hex64 }),
@@ -184,6 +188,7 @@ export const AUDIT_DETAIL = {
   'file.reveal': fileAction,
   'file.quicklook': fileAction,
   'file.open': fileAction,
+  'file.view': fileAction.extend({ bytes: count }),
   /** Best-effort follow-up when an action audited before taking effect then failed to commit. */
   'action.failed': z.strictObject({ refSeq: z.number().int().min(1) }),
 } as const
@@ -204,7 +209,7 @@ const recordSchema = z.strictObject({
   actor: actorSchema,
   action: z.enum(actions),
   target: z.union([opaqueId, z.literal('')]),
-  stepup: z.enum(['none', 'lpc-local', 'offline']),
+  stepup: z.enum(['none', 'lpc-local', 'shell-local', 'offline']),
   detail: z.record(z.string(), z.unknown()),
   prev: hex64,
   hash: hex64,

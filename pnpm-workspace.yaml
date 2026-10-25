@@ -72,6 +72,19 @@ allowBuilds:
 catalogMode: strict
 savePrefix: ''
 catalog:
+  '@shikijs/core': 4.5.0
+  '@shikijs/engine-javascript': 4.5.0
+  '@shikijs/langs-precompiled': 4.5.0
+  katex: 0.19.0
+  remark-math: 6.0.0
+  mermaid: 12.2.0
+  '@aiden0z/pptx-renderer': 1.3.0
+  '@tanstack/react-virtual': 3.14.21
+  docx-preview: 0.4.1
+  fflate: 0.8.3
+  numfmt: 4.0.1
+  papaparse: 5.7.0
+  pdfjs-dist: 6.4.299
   '@playwright/test': 1.64.1
   '@types/node': 22.20.5
   '@types/qrcode': 1.5.6
@@ -101,3 +114,6 @@ catalog:
   vitest-browser-react: 2.3.0
   yaml: 2.9.1
   zod: 4.4.3
+
+overrides:
+  'micromark-extension-math>katex': 'catalog:'

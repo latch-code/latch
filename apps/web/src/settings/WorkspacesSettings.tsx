@@ -1,49 +1,71 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react'
 import { Folder, FolderOpen, FolderPlus, Trash } from 'lucide-react'
-import type { AppSnapshot, WorkspaceInfo } from '@latch/protocol'
+import { escapeSecurityText, type AppSnapshot, type WorkspaceFolder, type WorkspaceInfo } from '@latch/protocol'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { api, errorMessage } from '../core/api.ts'
 import { describeFailure } from '../core/securityCopy.ts'
 import { currentShell, revealLabel, shellFolders, type FolderResult, type ShellFolders } from '../core/shell.ts'
 import { basename } from '../format.ts'
+import { ProjectIcon, projectFolders } from '../projects.tsx'
 import { CodeRootNotice } from '../components/CodeRootNotice.tsx'
 import { ConfirmDialog } from '../components/overlays.tsx'
 import { Badge, Button, IconButton, InlineNotice, Menu, StatusPill } from '@latch/ui'
 import { CopyButton } from '../components/ui.tsx'
-import { FoldRows, IconTile, Loading, MiddleEllipsis, moreButton, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
+import { FoldRows, IconTile, Loading, MiddleEllipsis, moreButton, NavRow, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
+import { ProjectEditor } from './ProjectEditor.tsx'
+import { SettingsPages } from './navigation.tsx'
 
 const LOCKED_CAPTION = '新建项目要在运行 Latch 的电脑上用桌面端完成。'
 const RESTART_CAPTION = '重新启动 Latch 桌面端后，可以在这里新建项目。'
 
 /** A folder's row: its name, its full path keeping the end in view, and one way to find it (Finder here, else copy). */
-function FolderRow({ workspace, folders }: { workspace: WorkspaceInfo; folders: ShellFolders | null }) {
+function FolderRow({
+  workspace,
+  folders,
+  folder,
+  primary = false,
+}: {
+  workspace: WorkspaceInfo
+  folders: ShellFolders | null
+  folder?: WorkspaceFolder
+  primary?: boolean
+}) {
   const [failed, setFailed] = useState(false)
   const label = revealLabel(currentShell()?.platform)
   return (
     <SettingsRow
       className="folder-row"
+      dim={folder?.unavailable !== undefined}
       leading={<IconTile icon={FolderOpen} />}
-      title={basename(workspace.path)}
+      title={
+        <span className="settings-row-name">
+          {escapeSecurityText(basename(folder?.path ?? workspace.path))}
+          {primary && <Badge>主文件夹</Badge>}
+        </span>
+      }
       description={
-        failed ? (
-          <span className="folder-missing">找不到这个文件夹 · {workspace.path}</span>
+        failed || folder?.unavailable ? (
+          <span className="folder-missing">
+            {folder?.unavailable ? escapeSecurityText(folder.unavailable) : '找不到这个文件夹'} ·{' '}
+            {escapeSecurityText(folder?.path ?? workspace.path)}
+          </span>
         ) : (
-          <MiddleEllipsis text={workspace.path} className="settings-mono" />
+          <MiddleEllipsis text={escapeSecurityText(folder?.path ?? workspace.path)} className="settings-mono" />
         )
       }
       trailing={
-        folders ? (
+        folders && !folder?.unavailable ? (
           <IconButton
             label={label}
             icon={FolderOpen}
             onClick={() => {
-              void folders.reveal(workspace.id).then(result => {
+              void folders.reveal(workspace.id, folder?.id).then(result => {
                 setFailed(result.status === 'failed' && result.code === 'missing')
               })
             }}
           />
         ) : (
-          <CopyButton text={workspace.path} label="复制路径" />
+          <CopyButton text={folder?.path ?? workspace.path} label="复制路径" />
         )
       }
     />
@@ -61,63 +83,91 @@ export function ProjectCard({
   isDefault,
   folders,
   onRemove,
+  onEdit,
 }: {
   workspace: WorkspaceInfo
   owner: boolean
   isDefault: boolean
   folders: ShellFolders | null
   onRemove: (workspace: WorkspaceInfo) => void
+  onEdit?: () => void
 }) {
   const disabled = workspace.unavailable !== undefined
   const name = workspace.name || basename(workspace.path)
+  const members = projectFolders(workspace)
   return (
     <div className={`settings-card project-card${disabled ? ' is-unavailable' : ''}`}>
-      <SettingsRow
-        className="project-head"
-        leading={<IconTile icon={Folder} />}
-        record
-        dim={disabled}
-        title={
-          <span className="settings-row-name">
-            {name}
-            {isDefault && <Badge>默认</Badge>}
-            {disabled && <StatusPill tone="warn">不可用</StatusPill>}
-          </span>
-        }
-        description={
-          disabled ? (
-            <span className="workspace-unavailable">{workspace.unavailable || '此项目本次未通过检查，不能用于新会话。'}</span>
-          ) : isDefault ? (
-            '新会话默认在这里启动'
-          ) : undefined
-        }
-        trailing={
-          owner ? (
-            <Menu
-              label={`${name} 的操作`}
-              align="end"
-              sections={[
-                {
-                  id: 'project',
-                  items: [
-                    {
-                      id: 'remove',
-                      label: '移除项目…',
-                      icon: Trash,
-                      danger: true,
-                      onSelect: () => {
-                        onRemove(workspace)
+      {onEdit ? (
+        <NavRow
+          leading={<ProjectIcon project={workspace} />}
+          record
+          dim={disabled}
+          label={`管理项目：${escapeSecurityText(name)}`}
+          title={
+            <span className="settings-row-name">
+              {escapeSecurityText(name)}
+              {isDefault && <Badge>默认</Badge>}
+              {disabled && <StatusPill tone="warn">不可用</StatusPill>}
+            </span>
+          }
+          description={
+            workspace.unavailable
+            ?? (members.length > 1
+              ? `${members.length} 个文件夹 · 主文件夹 ${escapeSecurityText(basename(workspace.path))}`
+              : escapeSecurityText(workspace.path))
+          }
+          onClick={onEdit}
+        />
+      ) : (
+        <SettingsRow
+          className="project-head"
+          leading={<IconTile icon={Folder} />}
+          record
+          dim={disabled}
+          title={
+            <span className="settings-row-name">
+              {name}
+              {isDefault && <Badge>默认</Badge>}
+              {disabled && <StatusPill tone="warn">不可用</StatusPill>}
+            </span>
+          }
+          description={
+            disabled ? (
+              <span className="workspace-unavailable">{workspace.unavailable || '此项目本次未通过检查，不能用于新会话。'}</span>
+            ) : isDefault ? (
+              '新会话默认在这里启动'
+            ) : undefined
+          }
+          trailing={
+            owner ? (
+              <Menu
+                label={`${name} 的操作`}
+                align="end"
+                sections={[
+                  {
+                    id: 'project',
+                    items: [
+                      {
+                        id: 'remove',
+                        label: '移除项目…',
+                        icon: Trash,
+                        danger: true,
+                        onSelect: () => {
+                          onRemove(workspace)
+                        },
                       },
-                    },
-                  ],
-                },
-              ]}
-              trigger={moreButton(`${name} 的操作`)}
-            />
-          ) : undefined
-        }
-      />
-      <FolderRow workspace={workspace} folders={folders} />
+                    ],
+                  },
+                ]}
+                trigger={moreButton(`${name} 的操作`)}
+              />
+            ) : undefined
+          }
+        />
+      )}
+      {members.map((folder, index) => (
+        <FolderRow key={folder.id} workspace={workspace} folder={folder} primary={onEdit !== undefined && index === 0} folders={folders} />
+      ))}
       {workspace.codeRoot && <CodeRootNotice workspace={workspace} className="project-code-root" />}
     </div>
   )
@@ -165,10 +215,14 @@ export function WorkspacesSettings({
   snapshot,
   access,
   onChanged,
+  initialProjectId,
+  onComputer,
 }: {
   snapshot: AppSnapshot
   access: Pick<DeviceAccess, 'admin'>
   onChanged: () => void
+  initialProjectId?: string
+  onComputer?: () => void
 }) {
   const owner = access.admin
   const folders = owner ? shellFolders() : null
@@ -177,6 +231,7 @@ export function WorkspacesSettings({
   const [error, setError] = useState('')
   const [removing, setRemoving] = useState<WorkspaceInfo | null>(null)
   const [picking, setPicking] = useState(false)
+  const [editing, setEditing] = useState<string | null>(initialProjectId ?? null)
   const [refused, setRefused] = useState<Extract<FolderResult, { status: 'added' }> | null>(null)
   const [drag, setDrag] = useState<'none' | 'over' | 'files'>('none')
   const depth = useRef(0)
@@ -198,6 +253,7 @@ export function WorkspacesSettings({
       if (result.added.length > 0) {
         onChanged()
         void load()
+        if (snapshot.catalog?.projectFolders) setEditing(result.added[0]!.workspaceId)
       }
       setRefused(result.refused.length > 0 ? result : null)
     } else if (result.status === 'failed') setError('没有添加项目：桌面端无法完成这次操作，请重试。')
@@ -259,9 +315,15 @@ export function WorkspacesSettings({
     </Button>
   ) : undefined
   const caption = folders ? undefined : desktop && owner ? RESTART_CAPTION : LOCKED_CAPTION
-  return (
+  const main = (
     <div className="projects" data-drop={drag === 'none' ? undefined : drag} {...dropZone}>
-      <SectionHeading title="项目" description="新会话在所选项目的文件夹中启动。" action={addAction} />
+      <SectionHeading
+        title="项目"
+        description={
+          snapshot.catalog?.projectFolders ? '项目由一个或多个文件夹组成，新会话在主文件夹中启动。' : '新会话在所选项目的文件夹中启动。'
+        }
+        action={addAction}
+      />
       {workspaces === null ? (
         error ? (
           <InlineNotice tone="error">{error}</InlineNotice>
@@ -308,6 +370,7 @@ export function WorkspacesSettings({
                     isDefault={workspace.id === defaultId}
                     folders={folders}
                     onRemove={setRemoving}
+                    {...(snapshot.catalog?.projectFolders ? { onEdit: () => setEditing(workspace.id) } : {})}
                   />
                 )}
               </FoldRows>
@@ -372,5 +435,34 @@ export function WorkspacesSettings({
         />
       )}
     </div>
+  )
+  const project = editing === null ? undefined : workspaces?.find(workspace => workspace.id === editing && workspace.id !== 'default')
+  return (
+    <SettingsPages
+      main={main}
+      levels={
+        project
+          ? [
+              {
+                key: project.id,
+                title: project.name || basename(project.path),
+                onBack: () => setEditing(null),
+                content: (
+                  <ProjectEditor
+                    project={project}
+                    snapshot={snapshot}
+                    owner={owner}
+                    shell={folders}
+                    reload={load}
+                    onChanged={onChanged}
+                    onRemoved={() => setEditing(null)}
+                    {...(onComputer ? { onComputer } : {})}
+                  />
+                ),
+              },
+            ]
+          : []
+      }
+    />
   )
 }

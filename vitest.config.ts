@@ -29,6 +29,7 @@ export default defineConfig({
             enabled: true,
             headless: true,
             provider: playwright({
+              contextOptions: { colorScheme: 'light' },
               launchOptions: process.env.HARNESS_BROWSER_PATH ? { executablePath: process.env.HARNESS_BROWSER_PATH } : {},
             }),
             instances: [{ browser: 'chromium', name: '@latch/ui' }],

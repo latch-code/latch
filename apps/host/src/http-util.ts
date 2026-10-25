@@ -67,6 +67,7 @@ export function codeOf(error: unknown): string | undefined {
 export const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript',
+  '.mjs': 'text/javascript',
   '.css': 'text/css',
   '.svg': 'image/svg+xml',
   '.json': 'application/json',
@@ -77,4 +78,4 @@ export const MIME: Record<string, string> = {
 }
 
 export const UI_CSP =
-  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'"
+  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; media-src 'self' blob:; connect-src 'self'; worker-src 'self'; frame-src 'self' blob:; object-src 'none'; require-trusted-types-for 'script'; trusted-types latch-runtime; frame-ancestors 'none'; base-uri 'none'"

@@ -21,9 +21,18 @@ type RevealResult = { status: 'shown' } | { status: 'busy' } | { status: 'failed
 export interface ShellFolders {
   /** Signed multi-folder requests; absent from shells that post the old unsigned path body. */
   protocolVersion?: 1
-  pick: () => Promise<FolderResult>
-  drop: (files: readonly File[]) => Promise<FolderResult>
-  reveal: (workspaceId: string) => Promise<RevealResult>
+  pick: (workspaceId?: string, replaceFolderId?: string) => Promise<FolderResult>
+  drop: { (files: readonly File[]): Promise<FolderResult>; (workspaceId: string, files: readonly File[]): Promise<FolderResult> }
+  reveal: (workspaceId: string, folderId?: string) => Promise<RevealResult>
+  saveSessionFolder?: (sessionId: string) => Promise<FolderResult>
+}
+
+export type ShellConfirmationResult = { status: 'confirmed' | 'cancelled' | 'busy' } | { status: 'failed'; code: string }
+
+export interface ShellConfirmations {
+  protocolVersion: 1
+  /** Main reads all displayed content from the Host and returns no proof to the page. */
+  confirm(id: string): Promise<ShellConfirmationResult>
 }
 
 /** What main answers when asked to open this Host's page in the default browser. */
@@ -112,6 +121,7 @@ export interface LatchShell {
   platform: string
   /** Shells from before folder support do not have it. */
   folders?: ShellFolders
+  confirmations?: ShellConfirmations
   /**
    * 「在这台电脑的浏览器中打开」: main makes a one-time invitation and opens the browser with it; the page never sees
    * the invitation. Absent in shells from before this action.
@@ -141,6 +151,11 @@ export function currentShell(): LatchShell | null {
   if (typeof window === 'undefined') return null
   const shell = window.latchShell
   return shell !== undefined && shell !== null && shell.kind === 'electron' ? shell : null
+}
+
+export function shellConfirmations(): ShellConfirmations | null {
+  const confirmations = currentShell()?.confirmations
+  return confirmations?.protocolVersion === 1 && typeof confirmations.confirm === 'function' ? confirmations : null
 }
 
 /** The shell's folder actions, only when every one of them is there (an older shell has none). */

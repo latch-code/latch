@@ -41,6 +41,7 @@ export function useSubmission({
   const catalog = snapshot.catalog
   const pendingKey = `harness-link.pending.${location.origin}.${deviceId}`
   const [draft, setDraft] = useState('')
+  const [fork, setFork] = useState<(NonNullable<PendingSubmission['forkOf']> & { title?: string }) | null>(null)
   const [pending, setPending] = useState<PendingSubmission | null>(null)
   const [sending, setSending] = useState(false)
   const sendingRef = useRef(false)
@@ -63,6 +64,7 @@ export function useSubmission({
     setPending(restored)
     if (restored === null) return
     setDraft(restored.prompt)
+    setFork(restored.forkOf ?? null)
     if (restored.sessionId === undefined) {
       setStored(previous => ({
         ...previous,
@@ -95,6 +97,7 @@ export function useSubmission({
             requestId: newRequestId(),
             prompt: draft.trim(),
             mode: choice.mode,
+            ...(fork ? { forkOf: { taskId: fork.taskId, upToMessageId: fork.upToMessageId } } : {}),
             ...(choice.harnessId ? { harnessId: choice.harnessId } : {}),
             ...(choice.workspaceId ? { workspaceId: choice.workspaceId } : {}),
             ...(choice.model ? { model: choice.model } : {}),
@@ -124,6 +127,7 @@ export function useSubmission({
       setPending(null)
       // A resent prompt never came from the composer, so whatever is being drafted stays.
       if (resend === undefined) setDraft('')
+      if (submission.sessionId === undefined) setFork(null)
       if (submission.sessionId !== undefined)
         setOverrides(previous => {
           const next = { ...previous }
@@ -148,6 +152,8 @@ export function useSubmission({
   return {
     draft,
     setDraft,
+    fork,
+    setFork,
     pending,
     sending,
     error,

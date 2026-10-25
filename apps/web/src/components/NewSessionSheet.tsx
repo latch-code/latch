@@ -1,3 +1,5 @@
+import { projectScopeCaption } from '../projects.tsx'
+import { VisibleText } from './VisibleText.tsx'
 import { useEffect, useRef, type ReactNode } from 'react'
 import { FlaskConical, LockKeyhole } from 'lucide-react'
 import type { AppSnapshot } from '@latch/protocol'
@@ -87,6 +89,8 @@ export function NewSessionSheet({
           </div>
           {catalog && choice.mode !== 'chat' && (
             <ProjectPicker
+              access={access}
+              harness={harness}
               variant="row"
               catalog={catalog}
               value={choice.workspaceId}
@@ -123,6 +127,21 @@ export function NewSessionSheet({
         </p>
       )}
       {present && setup}
+      {present
+        && choice.mode !== 'chat'
+        && projectScopeCaption(
+          catalog?.workspaces.find(item => item.id === choice.workspaceId),
+          harness,
+        ) && (
+          <p className="composer-notice">
+            <VisibleText
+              text={projectScopeCaption(
+                catalog?.workspaces.find(item => item.id === choice.workspaceId),
+                harness,
+              )!}
+            />
+          </p>
+        )}
       {present && composer}
       {present && suggestions}
     </Sheet>

@@ -4,6 +4,7 @@ import type { TokenUsage } from './types.ts'
 export interface HostFeatures {
   promptTemplates?: true
   fileSearch?: true
+  filePreview?: true
   search?: true
   sessionBatch?: true
   fork?: true
@@ -52,4 +53,15 @@ export interface UsageSummary {
   }>
   unattributedMessages: number
   truncated: boolean
+}
+
+/** A bounded initialize-only diagnostic; a successful handshake does not verify login or model access. */
+export interface AgentProbeResult {
+  status: 'ready' | 'authentication-required' | 'failed'
+  agent?: { name?: string; version?: string }
+  capabilities: { images: boolean; resume: boolean; load: boolean; additionalDirectories: boolean }
+  authMethods: Array<{ name: string; description?: string }>
+  diagnostic?: string
+  checkedAt: string
+  launchHash: string
 }

@@ -140,9 +140,16 @@ describe('design tokens', () => {
 
   it('paints the ground flat: no gradient anywhere in the tokens, and the page shows bg-app alone', () => {
     expect(tokens).not.toMatch(/gradient\(|--ground/u)
-    for (const element of [document.documentElement, document.body]) {
-      const style = getComputedStyle(element)
-      expect([style.backgroundImage, style.backgroundColor]).toEqual(['none', 'rgb(242, 241, 238)'])
+    const previous = document.documentElement.dataset.theme
+    document.documentElement.dataset.theme = 'light'
+    try {
+      for (const element of [document.documentElement, document.body]) {
+        const style = getComputedStyle(element)
+        expect([style.backgroundImage, style.backgroundColor]).toEqual(['none', 'rgb(242, 241, 238)'])
+      }
+    } finally {
+      if (previous === undefined) delete document.documentElement.dataset.theme
+      else document.documentElement.dataset.theme = previous
     }
   })
 
@@ -279,4 +286,15 @@ describe('design tokens', () => {
     expect(outside).not.toBe(tokens)
     expect(outside).not.toMatch(/--corner-shape\s*:/u)
   })
+})
+
+it('keeps syntax ink low in chroma and readable on document and code backgrounds', () => {
+  for (const theme of Object.values(themes())) {
+    for (const role of ['plain', 'keyword', 'string', 'comment', 'number', 'function', 'constant', 'punctuation']) {
+      const value = colour(theme.get(`--syn-${role}`))
+      expect(chroma(value), role).toBeLessThanOrEqual(0.06)
+      for (const background of ['--bg-pane', '--bg-sunken'])
+        expect(contrast(value, colour(theme.get(background))), role).toBeGreaterThanOrEqual(4.5)
+    }
+  }
 })

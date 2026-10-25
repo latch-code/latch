@@ -74,12 +74,14 @@ export function SettingsPage({
   snapshot,
   access: given,
   initial,
+  initialProjectId,
   onClose,
   onChanged,
 }: {
   snapshot: AppSnapshot
   access?: DeviceAccess
   initial?: SettingsSection
+  initialProjectId?: string
   onClose: () => void
   onChanged: () => void
 }) {
@@ -262,7 +264,15 @@ export function SettingsPage({
                         <LegacyProviderSettings onChanged={onChanged} />
                       ))}
                     {panel === 'agents' && <AgentsSettings snapshot={snapshot} access={access} onChanged={onChanged} />}
-                    {panel === 'workspaces' && <WorkspacesSettings snapshot={snapshot} access={access} onChanged={onChanged} />}
+                    {panel === 'workspaces' && (
+                      <WorkspacesSettings
+                        snapshot={snapshot}
+                        access={access}
+                        onChanged={onChanged}
+                        initialProjectId={initialProjectId}
+                        onComputer={() => open('computer')}
+                      />
+                    )}
                     {panel === 'plugins' && <PluginsSettings onManage={open} />}
                     {panel === 'devices' && <DevicesSettings snapshot={snapshot} access={access} phone={phone} onChanged={onChanged} />}
                     {panel === 'about' && <AboutSettings snapshot={snapshot} />}

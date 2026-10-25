@@ -13,6 +13,8 @@ export interface HandleEntry {
   sessionId: string
   rootId: string
   relativePath: string
+  /** A desktop reader explicitly chose to display a secret file. Never sufficient on a remote listener. */
+  allowSecret?: true
 }
 
 export type HandleLookup = { ok: true; entry: HandleEntry } | { ok: false; reason: 'expired' | 'foreign' }
@@ -37,6 +39,7 @@ export class FileHandles {
         && value.rootId === entry.rootId
         && value.relativePath === entry.relativePath
       ) {
+        if (entry.allowSecret) value.allowSecret = true
         this.touch(handle, value, time)
         return handle
       }

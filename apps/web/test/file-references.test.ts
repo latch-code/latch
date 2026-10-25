@@ -68,6 +68,28 @@ describe('references that are not links', () => {
   })
 })
 
+describe('folder-qualified references', () => {
+  it('batches by frozen root identity and never reuses the primary answer for another folder', async () => {
+    vi.useFakeTimers()
+    const batches: Array<{ paths: string[]; root?: string }> = []
+    const known = new KnownFiles('task-1', async (_session, paths, root) => {
+      batches.push({ paths, root })
+      return { status: 'ok', known: root === 'web' ? paths : [] }
+    })
+    known.want('report.md', 'api')
+    known.want('report.md', 'web')
+    await vi.runAllTimersAsync()
+    expect(batches).toEqual([
+      { paths: ['report.md'], root: 'api' },
+      { paths: ['report.md'], root: 'web' },
+    ])
+    expect(known.isFile('report.md', 'api')).toBe(false)
+    expect(known.isFile('report.md', 'web')).toBe(true)
+    expect(known.isFile('report.md')).toBe(false)
+    known.close()
+  })
+})
+
 describe('asking main which references are files', () => {
   it('asks once for everything gathered together, never twice for the same reference, 64 at a time', async () => {
     vi.useFakeTimers()

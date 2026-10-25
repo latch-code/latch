@@ -113,6 +113,8 @@ export function NewSessionControls({
     <>
       <Fading show={projects}>
         <ProjectPicker
+          access={access}
+          harness={harness}
           catalog={catalog}
           value={choice.workspaceId}
           disabled={disabled}

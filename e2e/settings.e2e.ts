@@ -346,7 +346,7 @@ describe('adding a model service', () => {
  * (confirmed with what it runs) clears that.
  */
 describe('an agent that has not started yet', () => {
-  it('saves without a confirmation and says 还没有启动过 until a session starts with it', async () => {
+  it('saves without a confirmation and says 还没有开启过会话 until a session starts with it', async () => {
     const testHost = await startTestHost({ uiDir: resolve(process.env.HARNESS_E2E_UI_DIR ?? 'dist/web') })
     const browser = await chromium.launch(browserLaunchOptions())
     try {
@@ -368,7 +368,7 @@ describe('an agent that has not started yet', () => {
       const settings = await openSettings(page, '设置')
       await openSection(settings, 'Agent 成员')
       const row = settings.locator(`[data-agent-id="${agent.id}"]`)
-      await row.getByText('还没有启动过', { exact: true }).waitFor()
+      await row.getByText('还没有开启过会话', { exact: true }).waitFor()
       for (const scheme of ['light', 'dark'] as const) {
         await page.emulateMedia({ colorScheme: scheme })
         await page.screenshot({ path: `test-results/settings-agent-not-started-${scheme}.png`, animations: 'disabled' })
@@ -395,7 +395,7 @@ describe('an agent that has not started yet', () => {
         .toBe(0)
       await backToSection(settings)
       await row.waitFor()
-      expect(await row.getByText('还没有启动过', { exact: true }).count()).toBe(0)
+      expect(await row.getByText('还没有开启过会话', { exact: true }).count()).toBe(0)
       await context.close()
     } finally {
       await browser.close()

@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useId, useState, type FormEvent } from 'react'
 import { CircleAlert, CircleCheck, ExternalLink, Plus, RefreshCw, ShieldCheck, ShieldQuestion, X } from 'lucide-react'
-import type { AgentSettings, AppSnapshot, AgentPreset, HarnessInfo } from '@latch/protocol'
+import type { AgentSettings, AppSnapshot, AgentPreset, HarnessInfo, TaskSummary } from '@latch/protocol'
 import { api, errorMessage, inlineError } from '../core/api.ts'
 import { InlineConfirm } from '../components/InlineConfirm.tsx'
 import { withConfirmation } from '../core/confirmations.ts'
 import { LEVEL_LABELS, type DeviceAccess } from '../core/permissions.ts'
 import { LOCAL_ONLY_TEXT } from '../core/securityCopy.ts'
-import { hostOf } from '../format.ts'
+import { dateTime, hostOf } from '../format.ts'
 import { ConfirmDialog } from '../components/overlays.tsx'
 import {
   Badge,
@@ -26,6 +26,7 @@ import { CopyButton } from '../components/ui.tsx'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { IconTile, Loading, MiddleEllipsis, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
 import { FieldDialog } from './dialogs.tsx'
+import { AgentProbe, probeResultTitle } from './AgentProbe.tsx'
 import { SettingsPages, type SettingsLevel } from './navigation.tsx'
 
 interface AgentsResponse {
@@ -40,7 +41,7 @@ const DEFINE_ON_DESKTOP = `启动命令、参数和环境变量：${LOCAL_ONLY_T
 /** Saving a definition asks for nothing; every full-access start is confirmed on this computer with what it runs. */
 const SAVE_NOTE = '保存不需要确认；每次用它开始会话，都会在这台电脑上确认要运行的命令。'
 /** A definition no full-access session has started with yet (`started: false`; older Hosts do not say). */
-const NOT_STARTED = '还没有启动过'
+const NOT_STARTED = '还没有开启过会话'
 const NOT_STARTED_NOTE = '开始会话时，会在这台电脑上确认它要运行的命令、参数和环境变量名。'
 const lines = (text: string) =>
   text
@@ -560,6 +561,8 @@ function AgentPage({
   harness,
   definable,
   checking,
+  probe,
+  probeDisabledReason,
   onRecheck,
   onSaved,
   onDeleted,
@@ -569,6 +572,8 @@ function AgentPage({
   harness?: HarnessInfo
   definable: boolean
   checking: boolean
+  probe: boolean
+  probeDisabledReason?: string
   onRecheck: () => void
   onSaved: () => void
   onDeleted: () => void
@@ -733,6 +738,7 @@ function AgentPage({
         />
         {preset && <InstallRows preset={preset} />}
       </SettingsGroup>
+      {probe && <AgentProbe agent={agent} disabled={busy} disabledReason={probeDisabledReason} onSaved={onSaved} />}
       <SettingsGroup danger>
         <SettingsRow
           title="删除 Agent"
@@ -802,12 +808,22 @@ function AgentPage({
   )
 }
 
+/** Counts only sessions already visible in this device's snapshot. */
+export function agentUsage(tasks: readonly TaskSummary[], agentId: string): { count: number; lastUsedAt?: string } {
+  const sessions = tasks.filter(task => task.harnessId === agentId)
+  const latest = sessions
+    .filter(task => Number.isFinite(Date.parse(task.updatedAt)))
+    .toSorted((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0]
+  return { count: sessions.length, ...(latest ? { lastUsedAt: latest.updatedAt } : {}) }
+}
+
 /** One added agent: the row opens its page; the switch turns it on or off from any admin device. */
 function AgentRow({
   agent,
   preset,
   harness,
   busy,
+  usage,
   onOpen,
   onToggle,
 }: {
@@ -815,6 +831,7 @@ function AgentRow({
   preset?: AgentPreset
   harness?: HarnessInfo
   busy: boolean
+  usage?: ReturnType<typeof agentUsage>
   onOpen: () => void
   onToggle: () => void
 }) {
@@ -843,6 +860,16 @@ function AgentRow({
             <span className="detect is-warn">
               <Icon icon={CircleAlert} size={12} />
               <span>{agent.problem}</span>
+            </span>
+          )}
+          {agent.lastProbe && (
+            <span className="settings-row-description">
+              上次测试：{probeResultTitle(agent.lastProbe)} · {agent.lastProbe.status === 'ready' ? '登录未验证' : '查看详情'}
+            </span>
+          )}
+          {usage && (
+            <span className="settings-row-description">
+              当前可见 {usage.count} 个会话{usage.lastUsedAt && ` · 最近会话：${dateTime(usage.lastUsedAt)}`}
             </span>
           )}
           {agent.envKeys.length > 0 && <span className="settings-row-description">环境变量：{agent.envKeys.join('、')}</span>}
@@ -971,6 +998,11 @@ export function AgentsSettings({
               preset={data.presets.find(item => item.id === agent.presetId)}
               harness={snapshot.catalog?.harnesses.find(item => item.id === agent.id)}
               busy={busy !== null}
+              usage={
+                Array.isArray(snapshot.device.scopes) && snapshot.device.scopes.includes('view')
+                  ? agentUsage(snapshot.tasks, agent.id)
+                  : undefined
+              }
               onOpen={() => {
                 setEditing({ kind: 'agent', id: agent.id })
               }}
@@ -1025,6 +1057,22 @@ export function AgentsSettings({
           harness={snapshot.catalog?.harnesses.find(item => item.id === agent.id)}
           definable={definable}
           checking={checking}
+          probe={snapshot.catalog?.features?.agentProbe === true}
+          probeDisabledReason={
+            !access.local
+              ? '测试启动只能在运行 Latch 的电脑上，通过桌面端进行。'
+              : !snapshot.device.scopes?.includes('admin')
+                ? '此设备没有管理此 Host 的权限。'
+                : !snapshot.device.scopes?.includes('run')
+                  ? '此设备没有发起和继续会话的权限。'
+                  : !snapshot.host?.policy.allowL3
+                    ? '这台电脑尚未允许完全访问，请先到设置 › 电脑开启。'
+                    : snapshot.host.presence.status !== 'available'
+                      ? '本机认证不可用，请先到设置 › 电脑检查确认组件。'
+                      : !agent.detected.found
+                        ? '先安装或配置 Agent 命令，再测试启动。'
+                        : undefined
+          }
           onRecheck={() => {
             void recheck()
           }}

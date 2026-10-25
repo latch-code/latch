@@ -2,6 +2,7 @@ import { useLayoutEffect, useSyncExternalStore } from 'react'
 import type { BlockingTask, ConfirmationTicket, PresenceAction } from '@latch/protocol'
 import { api as defaultApi, ApiError, ClientError, type ApiOptions } from './api.ts'
 import { blockedDetail } from './blocking.ts'
+import { shellConfirmations, type ShellConfirmationResult } from './shell.ts'
 import { CONFIRMATION_RESULT_TEXT, describeFailure, HOST_DESKTOP_TEXT } from './securityCopy.ts'
 
 /**
@@ -56,6 +57,7 @@ export interface ConfirmationOptions {
   /** Where the states are shown; the active inline card unless the caller provides its own presenter. */
   presenter?: ConfirmationPresenter
   api?: <T>(path: string, options?: ApiOptions) => Promise<T>
+  nativeConfirm?: (id: string) => Promise<ShellConfirmationResult>
   pollMs?: number
   sleep?: (ms: number, wake: AbortSignal) => Promise<void>
 }
@@ -147,6 +149,21 @@ export async function withConfirmation<T>(send: (confirmation?: string) => Promi
     throw new ConfirmationError(CONFIRMATION_RESULT_TEXT.cancelled, 'cancelled', true)
   }
   presenter.show({ phase: 'waiting', ticket }, actions)
+  if (ticket.confirmationMethod === 'shell-local') {
+    const confirm = options.nativeConfirm ?? shellConfirmations()?.confirm
+    let outcome: ShellConfirmationResult
+    try {
+      outcome = confirm ? await confirm(ticket.id) : { status: 'failed', code: 'confirmation-shell-unavailable' }
+    } catch {
+      outcome = { status: 'failed', code: 'confirmation-failed' }
+    }
+    if (cancelled.signal.aborted) stop()
+    if (outcome.status !== 'confirmed') {
+      actions.cancel()
+      if (outcome.status === 'cancelled') stop()
+      fail('error', describeFailure(409, outcome.status === 'failed' ? outcome.code : 'presence-busy', ''))
+    }
+  }
 
   while (ticket.status === 'pending') {
     await sleep(pollMs, cancelled.signal)

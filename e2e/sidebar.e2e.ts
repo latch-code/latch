@@ -157,11 +157,13 @@ describe('resizable sidebar', () => {
     await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('收起侧栏')
     await page.getByRole('button', { name: '收起侧栏', exact: true }).click()
     await page.locator('.app-shell[data-sidebar="collapsed"]').waitFor()
-    // ⌘K (Ctrl K) opens a shut column on its search.
+    // The global command palette opens without changing the remembered sidebar state.
     await page.keyboard.press('Control+k')
-    await page.locator('.app-shell[data-sidebar="open"]').waitFor()
-    await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('搜索会话')
-    await page.getByRole('button', { name: '收起侧栏', exact: true }).click()
+    const palette = page.getByRole('dialog', { name: '命令面板', exact: true })
+    await palette.waitFor()
+    await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('搜索会话、项目和命令')
+    await page.keyboard.press('Escape')
+    await palette.waitFor({ state: 'detached' })
     await page.locator('.app-shell[data-sidebar="collapsed"]').waitFor()
     // From the window's edge, the shut column is dragged open.
     await drag(250)

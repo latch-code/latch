@@ -31,6 +31,7 @@ export const initializeResult = z.object({
   agentCapabilities: z
     .object({
       loadSession: z.boolean().nullish(),
+      promptCapabilities: z.object({ image: z.boolean().nullish() }).nullish().catch(undefined),
       // Each capability counts when present; additionalDirectories only as an object, as ACP defines it.
       sessionCapabilities: z
         .object({ resume: z.unknown().optional(), delete: z.unknown().optional(), additionalDirectories: z.unknown().optional() })

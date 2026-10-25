@@ -78,6 +78,10 @@ export interface ApiOptions {
   discardBody?: boolean
   /** Reads the headers of a 2xx response, for example `x-latch-audit` on a change that lowered permissions. */
   onHeaders?: (headers: Headers) => void
+  /** Adjudicated file bytes use the same authentication, abort and renewal path as JSON. */
+  response?: 'bytes'
+  range?: { start: number; end?: number }
+  ifMatch?: string
 }
 
 const MAX_AUTOMATIC_WAIT_SECONDS = 5
@@ -115,6 +119,8 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
     const headers: Record<string, string> = { Accept: 'application/json' }
     if (options.body !== undefined) headers['Content-Type'] = 'application/json'
     if (options.confirmation !== undefined) headers['x-latch-confirmation'] = options.confirmation
+    if (options.range) headers.Range = `bytes=${options.range.start}-${options.range.end ?? ''}`
+    if (options.ifMatch) headers['if-match'] = options.ifMatch
     const response = await fetch(`/link/api/${path}`, {
       method: options.method ?? 'GET',
       credentials: 'same-origin',
@@ -130,7 +136,7 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
         void response.body?.cancel().catch(() => {})
         return undefined as T
       }
-      return (await response.json()) as T
+      return (options.response === 'bytes' ? await response.arrayBuffer() : await response.json()) as T
     }
   } catch (error) {
     if (controller.signal.reason instanceof ApiTimeoutError) throw controller.signal.reason
@@ -158,6 +164,22 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
     return api<T>(path, { ...options, rateRetried: true })
   }
   throw failure
+}
+
+export function fileBytes(handle: string, start?: number, end?: number, signal?: AbortSignal, etag?: string): Promise<ArrayBuffer> {
+  if (
+    !/^[A-Za-z0-9_-]{22}$/u.test(handle)
+    || (start !== undefined && (!Number.isSafeInteger(start) || start < 0))
+    || (end !== undefined && (!Number.isSafeInteger(end) || end < (start ?? 0)))
+  )
+    return Promise.reject(new ClientError('文件读取范围不可用。', 'file-range'))
+  return api<ArrayBuffer>(`files/${handle}`, {
+    response: 'bytes',
+    ...(etag && /^"[a-f0-9]{32}"$/u.test(etag) ? { ifMatch: etag } : {}),
+    timeoutMs: 60_000,
+    ...(start !== undefined || end !== undefined ? { range: { start: start ?? 0, ...(end === undefined ? {} : { end }) } } : {}),
+    ...(signal ? { signal } : {}),
+  })
 }
 
 export function errorMessage(error: unknown): string {
@@ -196,6 +218,7 @@ export interface PendingSubmission {
   harnessId?: string
   model?: ModelRef
   workspaceId?: string
+  forkOf?: { taskId: string; upToMessageId: string }
 }
 
 function modelRef(value: unknown): ModelRef | undefined {
@@ -216,6 +239,8 @@ export function readPending(key: string): PendingSubmission | null {
       if (item[field] !== undefined && typeof item[field] !== 'string') return null
     if (item.mode !== undefined && item.mode !== 'chat' && item.mode !== 'agent') return null
     if (item.model !== undefined && modelRef(item.model) === undefined) return null
+    const fork = item.forkOf as { taskId?: unknown; upToMessageId?: unknown } | undefined
+    if (fork !== undefined && (!fork || typeof fork.taskId !== 'string' || typeof fork.upToMessageId !== 'string')) return null
     const model = modelRef(item.model)
     return {
       requestId: item.requestId,
@@ -225,6 +250,7 @@ export function readPending(key: string): PendingSubmission | null {
       ...(typeof item.harnessId === 'string' ? { harnessId: item.harnessId } : {}),
       ...(typeof item.workspaceId === 'string' ? { workspaceId: item.workspaceId } : {}),
       ...(model ? { model } : {}),
+      ...(fork ? { forkOf: { taskId: fork.taskId as string, upToMessageId: fork.upToMessageId as string } } : {}),
     }
   } catch {
     return null
@@ -251,6 +277,7 @@ export function submissionRequest(submission: PendingSubmission): { path: string
       ...(submission.harnessId ? { harnessId: submission.harnessId } : {}),
       ...(model ? { model } : {}),
       ...(submission.workspaceId ? { workspaceId: submission.workspaceId } : {}),
+      ...(submission.forkOf ? { forkOf: submission.forkOf } : {}),
     },
   }
 }

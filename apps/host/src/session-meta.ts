@@ -2,6 +2,7 @@ import { mkdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { AppError } from '@latch/sdk'
+import type { TaskSummary } from '@latch/protocol'
 import { writeFileAtomic } from '@latch/core/node-kit'
 import { SESSION_FOLDER_NAME } from './session-folders.ts'
 
@@ -64,6 +65,16 @@ const metaSchema = z.object({
           .regex(/^[a-z0-9][a-z0-9_-]{0,63}$/u)
           .optional(),
         sessionFolder: z.string().regex(SESSION_FOLDER_NAME).optional(),
+        forkOf: z
+          .object({
+            taskId: z.string().min(1).max(256),
+            upToMessageId: z.string().min(1).max(256),
+            title: z.string().max(80),
+            turn: z.number().int().nonnegative(),
+            prefixLength: z.number().int().min(1).max(201_000),
+            truncated: z.literal(true).optional(),
+          })
+          .optional(),
         receipts: z.array(z.unknown()).max(MAX_RECEIPTS).optional(),
       }),
     )
@@ -80,6 +91,7 @@ export interface StoredMeta {
   archived?: true
   workspaceId?: string
   sessionFolder?: string
+  forkOf?: TaskSummary['forkOf']
 }
 
 interface Entry {

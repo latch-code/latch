@@ -1392,6 +1392,7 @@ describe('visual capture of the real product', () => {
       const fold = target.locator('.fold-toggle')
       await fold.getByText(/^已处理 · 思考 6 秒 · 读取 1 个文件/).waitFor()
       await target.locator('.diff-view').getByText('省略表示保留').first().waitFor()
+      await settleMotion(target)
       await recorder.capture(target, viewport, 'session-done', 'done with tools and a diff')
       if (sidebar) await recorder.capture(target, viewport, 'sidebar-done', 'done session selected', sidebar)
 
@@ -1525,6 +1526,7 @@ describe('visual capture of the real product', () => {
         )
         expect(rows.length).toBeGreaterThan(0)
         for (const row of rows) expect(row).toEqual({ one: 'none', height: row.lineHeight, lineHeight: row.lineHeight })
+        expect(await r1.locator('.diff-path').getAttribute('title')).toBe('docs/notes.md')
         // The card and the diff under review keep their look under styles added to the page.
         await expectUnmovedByInjectedStyles(target, [
           '[data-approval-id] .tool-card-title',
@@ -1533,7 +1535,6 @@ describe('visual capture of the real product', () => {
           '[data-approval-id] .diff-fold',
           '[data-approval-id] .diff-path',
           '[data-approval-id] .diff-path-name',
-          '[data-approval-id] .diff-path-folder',
           '[data-approval-id] .diff-line',
           '[data-approval-id] .diff-text',
           '[data-approval-id] .ui-button',
@@ -1804,10 +1805,10 @@ describe('visual capture of the real product', () => {
         await sidebar.locator('.sidebar-filters:not([data-open])').waitFor({ state: 'attached' })
 
         // A project group offers a new session in that project.
-        const group = sidebar.locator('.session-group', { hasText: 'latch-app' })
-        await group.locator('.session-group-head').hover()
-        await reachable(group.getByRole('button', { name: '在 latch-app 中新建会话', exact: true }))
-        release = await forceState(target, '#session-navigation .session-group[aria-label="latch-app"] .session-group-head', ['hover'])
+        const group = sidebar.locator('.session-group[aria-label="website"]')
+        await group.locator('.project-group-heading').hover()
+        await reachable(group.getByRole('button', { name: '在 website 中新建会话', exact: true }))
+        release = await forceState(target, '#session-navigation .session-group[aria-label="website"] .project-group-heading', ['hover'])
         await recorder.capture(target, viewport, 'sidebar-group-hover', "a project group's head under the pointer, with its +", sidebar)
         await release()
 
@@ -2041,6 +2042,7 @@ describe('visual capture of the real product', () => {
     ]
     for (const [surface, drive] of again) {
       await drive()
+      await settleMotion(target)
       for (const theme of ['light', 'dark'] as const) {
         await target.emulateMedia({ colorScheme: theme })
         const file = captureName(surface, viewport.name, theme)

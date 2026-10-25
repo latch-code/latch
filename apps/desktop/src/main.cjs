@@ -31,6 +31,7 @@ const { dirname, join, resolve } = require('node:path')
 const { readHostStateFile, inspectHostState, readBody, socketRequest } = require('./host.cjs')
 const { openCredentialStore, secureStorageProblem } = require('./credentials.cjs')
 const { createFolderActions, isTrustedSender } = require('./folders.cjs')
+const { createConfirmationActions } = require('./confirmations.cjs')
 const {
   createNotifications,
   readPreferences: readNotificationPreferences,
@@ -59,7 +60,8 @@ const {
   createShellProxy,
   debugFlagProblems,
   htmlErrorPage,
-  isAllowedRendererRequest,
+  isAllowedRendererDetails,
+  isPreviewFrameUrl,
   isAppSender,
   isAppUrl,
   unexpectedArguments,
@@ -94,6 +96,18 @@ app.setPath('userData', resolve(argument('latch-user-data') ?? join(app.getPath(
 const hostStatePath = argument('latch-host-state')
 
 protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'latch-frame',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: false,
+      stream: false,
+      corsEnabled: false,
+      allowServiceWorkers: false,
+      bypassCSP: false,
+    },
+  },
   {
     scheme: 'latch',
     privileges: {
@@ -173,7 +187,7 @@ async function hardenSession(target) {
   target.setDevicePermissionHandler(() => false)
   // The renderer has no network of its own; every Host connection goes through main.
   target.webRequest.onBeforeRequest((details, callback) => {
-    callback({ cancel: !isAllowedRendererRequest(details.url, { packaged: app.isPackaged }) })
+    callback({ cancel: !isAllowedRendererDetails(details, { packaged: app.isPackaged }) })
   })
   await target.setProxy({ mode: 'direct' })
 }
@@ -197,7 +211,11 @@ app.on('web-contents-created', (_event, contents) => {
   }
   contents.on('will-navigate', guard)
   contents.on('will-redirect', guard)
-  contents.on('will-frame-navigate', guard)
+  contents.on('will-frame-navigate', event => {
+    if (event.isMainFrame) {
+      if (!isAppUrl(event.url)) event.preventDefault()
+    } else if (!isPreviewFrameUrl(event.url)) event.preventDefault()
+  })
   contents.on('will-attach-webview', event => event.preventDefault())
 })
 
@@ -482,7 +500,22 @@ async function start() {
     },
   })
   protocol.handle('latch', request => proxy.handle(request))
+  protocol.handle('latch-frame', request => proxy.previewFrame(request))
   handleFolders(proxy, store)
+  const confirmations = createConfirmationActions({
+    request: (method, path, body) => proxy.shellRequest(method, path, body),
+    sign: (id, hash) => store.signConfirmation(id, hash),
+    identity: () => {
+      const current = store.current()
+      return current ? { hostId: store.hostId, deviceId: current.deviceId } : undefined
+    },
+    focused: () => Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused()),
+    gate: dialogGate,
+    confirm: options => dialog.showMessageBox(mainWindow, options),
+  })
+  ipcMain.handle('latch:confirmations:confirm', (event, id) =>
+    trusted(event) ? confirmations.confirm(id) : { status: 'failed', code: 'shell-refused' },
+  )
   // The renderer may only trigger this; main makes the invitation and gives it to the default browser.
   const openInBrowser = createBrowserOpener({
     invite: () => proxy.browserInvitation(),

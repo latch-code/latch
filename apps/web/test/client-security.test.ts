@@ -5,7 +5,7 @@ import type { Approval, AppSnapshot, ConfirmationTicket, CurrentDevice, DeviceSc
 import { sha256Hex } from '@latch/core/node-kit'
 import { SECURITY_VECTORS_FILE } from '@latch/testkit'
 import { hashDisplay as hostHashDisplay } from '@latch/host/crypto'
-import { api, ApiError, ApiTimeoutError, ClientError, isUncertain, setAuthHooks } from '../src/core/api.ts'
+import { api, fileBytes, ApiError, ApiTimeoutError, ClientError, isUncertain, setAuthHooks } from '../src/core/api.ts'
 import { choiceKind, DecisionRequests, rejectionNoteFor, settledOutcome } from '../src/core/approvalDecision.ts'
 import { cancelAnswer, CancelRequests } from '../src/core/cancelRequest.ts'
 import {
@@ -413,7 +413,7 @@ describe('approval gating', () => {
       approval({ risk: 'R2' }),
       device({ listener: 'unix', scopes: allScopes }),
       desktop,
-      ['拒绝', '用 Touch ID 允许'],
+      ['拒绝', '在本机允许'],
       undefined,
       '高风险',
     ],
@@ -694,6 +694,34 @@ describe('error copy', () => {
 })
 
 describe('api()', () => {
+  it('renews a file byte read once and keeps its exact range and same-origin credentials', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'renewal-required' }), { status: 401 }))
+      .mockResolvedValueOnce(new Response(new Uint8Array([1, 2, 3]), { status: 206 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const renew = vi.fn(async () => true)
+    const clear = setAuthHooks({ renew })
+    try {
+      expect(Array.from(new Uint8Array(await fileBytes('A'.repeat(22), 4, 6)))).toEqual([1, 2, 3])
+      expect(renew).toHaveBeenCalledOnce()
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      for (const [path, init] of fetchMock.mock.calls) {
+        expect(path).toBe(`/link/api/files/${'A'.repeat(22)}`)
+        expect(init).toMatchObject({ method: 'GET', credentials: 'same-origin', cache: 'no-store', headers: { Range: 'bytes=4-6' } })
+      }
+    } finally {
+      clear()
+    }
+  })
+
+  it('refuses a file path or invalid byte range before making a request', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(fileBytes('../private', 0)).rejects.toBeInstanceOf(ClientError)
+    await expect(fileBytes('A'.repeat(22), 10, 9)).rejects.toBeInstanceOf(ClientError)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
   const json = (status: number, body: unknown) =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 
@@ -791,6 +819,38 @@ describe('local confirmation', () => {
     }
   }
   const instant = () => Promise.resolve()
+
+  it('opens main’s native sheet for the ticket and still waits for the Host before retrying', async () => {
+    const ui = presenter()
+    const nativeConfirm = vi.fn(async () => ({ status: 'confirmed' as const }))
+    const sends = vi.fn(async (confirmation?: string) => {
+      if (!confirmation)
+        throw new ApiError(403, 'stepup-required', 'x', { confirmation: { ...ticket('pending'), confirmationMethod: 'shell-local' } })
+      return 'done'
+    })
+    const api = vi.fn(async () => ({ confirmation: { ...ticket('approved'), confirmationMethod: 'shell-local' } }))
+    expect(await withConfirmation(sends, { presenter: ui.value, nativeConfirm, api: api as never, sleep: instant })).toBe('done')
+    expect(nativeConfirm).toHaveBeenCalledExactlyOnceWith('cfm_1')
+    expect(api).toHaveBeenCalledTimes(1)
+    expect(sends.mock.calls).toEqual([[], ['cfm_1']])
+  })
+
+  it.each(['cancelled', 'busy', 'failed'] as const)('never resends when main returns %s', async status => {
+    const ui = presenter()
+    const sends = vi.fn(async () => {
+      throw new ApiError(403, 'stepup-required', 'x', { confirmation: { ...ticket('pending'), confirmationMethod: 'shell-local' } })
+    })
+    const api = vi.fn(async () => ({}))
+    await expect(
+      withConfirmation(sends, {
+        presenter: ui.value,
+        api: api as never,
+        nativeConfirm: async () => (status === 'failed' ? { status, code: 'confirmation-failed' } : { status }),
+      }),
+    ).rejects.toBeInstanceOf(ConfirmationError)
+    expect(sends).toHaveBeenCalledTimes(1)
+    expect(api).toHaveBeenCalledWith('confirmations/cfm_1', { method: 'DELETE' })
+  })
 
   it('polls until approved, then resends with the ticket id', async () => {
     const statuses: ConfirmationTicket['status'][] = ['pending', 'approved']

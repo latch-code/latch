@@ -3,12 +3,13 @@
 // main adds the device credential and keeps keys, signatures and credentials out of the renderer. The credential
 // routes and the file routes (which answer with real paths) are main's own: the renderer gets 403 shell-managed.
 // The exported helpers are pure so they can be unit-tested without Electron.
+const { createHash } = require('node:crypto')
 const { socketRequest, readBody } = require('./host.cjs')
 const { generateDeviceKey, enrollSigningText, renewSigningText } = require('./credentials.cjs')
 
 const APP_ORIGIN = 'latch://app'
 const HTML_CSP =
-  "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+  "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self'; connect-src 'self'; manifest-src 'self'; frame-src latch-frame: blob:; worker-src 'self'; object-src 'none'; require-trusted-types-for 'script'; trusted-types latch-runtime; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 /** API bodies are JSON of at most 256 KiB; buffering them lets a request be replayed once after renewal. */
 const REQUEST_BODY_LIMIT = 1024 * 1024
 const JSON_RESPONSE_LIMIT = 1024 * 1024
@@ -87,6 +88,40 @@ function isAllowedRendererRequest(raw, { packaged }) {
   }
   if (url.protocol === 'latch:') return true
   return url.protocol === 'devtools:' && !packaged
+}
+
+/** Only fixed document bootstraps can load as subframes. */
+function isPreviewFrameUrl(raw) {
+  try {
+    const url = new URL(raw)
+    return (
+      url.protocol === 'latch-frame:'
+      && url.hostname === 'preview'
+      && !url.port
+      && !url.username
+      && !url.password
+      && !url.search
+      && /^\/(?:office|diagram)\.html$/u.test(url.pathname)
+    )
+  } catch {
+    return false
+  }
+}
+
+function isAllowedRendererDetails(details, options) {
+  if (isPreviewFrameUrl(details.url)) return details.resourceType === 'subFrame'
+  if (details.resourceType === 'subFrame') return false
+  if (details.frame?.parent) return ['image', 'font', 'media'].includes(details.resourceType) && /^(?:blob:|data:)/u.test(details.url)
+  if (details.initiatorOrigin === 'null') return false
+  try {
+    const url = new URL(details.url)
+    if (isAppUrl(url.href) && url.pathname.startsWith('/link/api/')) {
+      return details.frame !== undefined && details.frame !== null && details.frame.parent === null && isAppUrl(details.frame.url)
+    }
+  } catch {
+    return false
+  }
+  return isAllowedRendererRequest(details.url, options)
 }
 
 /** Navigation and redirects stay inside `latch://app/`. */
@@ -329,11 +364,15 @@ function classifyRoute(method, pathname) {
   const lower = decoded.toLowerCase()
   if (lower === '/link/api/credentials' || lower.startsWith('/link/api/credentials/')) return { kind: 'credentials' }
   if (isFolderAddRoute(method, lower)) return { kind: 'folders' }
+  if (/^\/link\/api\/confirmations\/.+\/shell(?:\/|$)/.test(lower)) return { kind: 'shell-confirmations' }
   // Sleep, wake and coming stops are reported by main itself (lifecycle.cjs), never on the page's behalf.
   if (lower === '/link/api/host/state' || lower.startsWith('/link/api/host/state/')) return { kind: 'host-state' }
   // A session ID with an encoded slash decodes into more than one segment, so any depth under /tasks/ counts.
-  if (lower === '/link/api/files' || lower.startsWith('/link/api/files/') || /^\/link\/api\/tasks\/.+\/files(?:\/|$)/.test(lower))
-    return { kind: 'shell-files' }
+  if (lower === '/link/api/files' || lower.startsWith('/link/api/files/') || /^\/link\/api\/tasks\/.+\/files(?:\/|$)/.test(lower)) {
+    const content = (method === 'GET' || method === 'HEAD') && /^\/link\/api\/files\/[A-Za-z0-9_-]{22}(?:\/meta)?$/.test(decoded)
+    const reference = method === 'POST' && /^\/link\/api\/tasks\/[^/]+\/files\/(?:resolve|search)$/.test(decoded)
+    if (!content && !reference) return { kind: 'shell-files' }
+  }
   if (lower === '/link/api/enrollments' && method === 'POST') return { kind: 'enroll' }
   const complete = /^\/link\/api\/enrollments\/([^/]+)\/complete$/i.exec(decoded)
   if (complete) return { kind: 'complete', enrollmentId: complete[1] }
@@ -773,7 +812,9 @@ function createShellProxy(options) {
     const send = () => {
       // The credential can be gone by now: revoked or expired during renewal, or a concurrent self-revoke.
       if (used === undefined && !route.public) throw new ProxyError(401, 'unauthorized', NOT_ENROLLED)
-      return upstream(request.method, target.path, forwardRequestHeaders(request.headers, used), body)
+      const headers = forwardRequestHeaders(request.headers, used)
+      headers['x-latch-shell-confirmation'] = '1'
+      return upstream(request.method, target.path, headers, body)
     }
     let result = await send()
     if (result.response.statusCode === 401) {
@@ -808,8 +849,12 @@ function createShellProxy(options) {
     return streamedResponse(result, method)
   }
 
-  /** @param {'renderer' | 'shell'} origin  `shell`: main's own call (folder adds), which the renderer cannot make */
+  /** @param {'renderer' | 'shell'} origin  Main alone can reach native actions and signed folder registration. */
   async function dispatch(request, origin) {
+    if (origin !== 'shell' && request.headers.get('origin') === 'null') {
+      await discardRequestBody(request)
+      return errorResponse(403, 'untrusted-frame', '文档预览不能访问工作台接口')
+    }
     const target = upstreamTarget(request.url)
     if (!target) {
       await discardRequestBody(request)
@@ -836,6 +881,13 @@ function createShellProxy(options) {
         if (origin !== 'shell') {
           await discardRequestBody(request)
           return errorResponse(403, 'shell-managed', '添加文件夹由 Latch 桌面端处理')
+        }
+        return await forward(request, target, { kind: 'forward' })
+      }
+      if (route.kind === 'shell-confirmations') {
+        if (origin !== 'shell') {
+          await discardRequestBody(request)
+          return errorResponse(403, 'shell-managed', '本机确认由 Latch 桌面端处理')
         }
         return await forward(request, target, { kind: 'forward' })
       }
@@ -895,8 +947,40 @@ function createShellProxy(options) {
     }
   }
 
+  /** Public bootstrap only; no credentials, caller headers or caller-controlled upstream path. */
+  async function previewFrame(request) {
+    if (!isPreviewFrameUrl(request.url) || !['GET', 'HEAD'].includes(request.method)) return errorResponse(404, 'not-found', '页面不存在')
+    const name = new URL(request.url).pathname.slice(1)
+    try {
+      const result = await upstream('GET', `/link/preview-frame/${name}`, {}, undefined)
+      const bytes = await readBody(result.response, 32 * 1024 * 1024)
+      const hash = result.response.headers['x-latch-frame-hash']
+      const scripts = [...bytes.toString('utf8').matchAll(/<script>([\s\S]*?)<\/script>/gu)]
+      if (
+        result.response.statusCode !== 200
+        || typeof hash !== 'string'
+        || !/^sha256-[A-Za-z0-9+/]{43}=$/u.test(hash)
+        || scripts.length !== 1
+        || `sha256-${createHash('sha256').update(scripts[0][1]).digest('base64')}` !== hash
+      )
+        return errorResponse(404, 'preview-unavailable', '文档预览器不可用')
+      return new Response(request.method === 'HEAD' ? null : bytes, {
+        headers: {
+          'content-type': 'text/html; charset=utf-8',
+          'cache-control': 'no-store',
+          'x-content-type-options': 'nosniff',
+          'referrer-policy': 'no-referrer',
+          'content-security-policy': `sandbox allow-scripts; default-src 'none'; script-src '${hash}'; style-src 'unsafe-inline'; img-src blob: data:; font-src blob: data:; media-src blob: data:; worker-src 'none'; frame-src 'none'; object-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors latch://app`,
+        },
+      })
+    } catch {
+      return errorResponse(404, 'preview-unavailable', '文档预览器不可用')
+    }
+  }
+
   return {
     handle,
+    previewFrame,
     shellRequest,
     renew,
     browserInvitation,
@@ -921,6 +1005,8 @@ module.exports = {
   EXTERNAL_URL_LIMIT,
   ProxyError,
   isAllowedRendererRequest,
+  isAllowedRendererDetails,
+  isPreviewFrameUrl,
   isAppUrl,
   externalUrl,
   externalLinkDialog,

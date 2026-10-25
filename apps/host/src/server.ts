@@ -1,3 +1,5 @@
+import { readPreviewFrame, WORKER_CSP } from './preview-frames.ts'
+import { forkSeed } from './forks.ts'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
 export { loadPluginPackage } from './plugin-packages.ts'
@@ -150,6 +152,8 @@ import { RUN_ID, type ApprovalRecord, type StoredReceipt } from './session-meta.
 import { sendNotFoundPage } from './not-found.ts'
 import { SessionFolders } from './session-folders.ts'
 import { writeProjectContext } from './project-context.ts'
+import { AgentProbes } from './agent-probes.ts'
+import { LaunchTrust, launchTrustKey } from './launch-trust.ts'
 import type { HostInfo } from './host-state.ts'
 import { HostLifecycle, hostStateInputSchema } from './lifecycle.ts'
 import { TrafficMeter, type FrameKind, type StreamMeter } from './traffic.ts'
@@ -174,6 +178,7 @@ import { createWorkspacePlugin } from './plugins/tools/workspace-files/index.ts'
 import { PromptTemplateStore } from './prompt-templates.ts'
 import { createSessionRoutes } from './session-routes.ts'
 import { createFileRoutes } from './files/index.ts'
+import { FileReferenceStore } from './files/reference-store.ts'
 
 export type { TlsListenerOptions } from './listeners.ts'
 
@@ -208,6 +213,7 @@ const PRIVATE_ENTRIES = [
   'sessions-meta.json',
   'session-folders.json',
   'project-context.json',
+  'launch-trust.json',
   'host.json',
   'host.log',
   'host.lock',
@@ -225,6 +231,7 @@ const TRANSIENT_PREFIXES = [
   '.settings.json-',
   'sessions-meta.json.',
   '.project-context.json-',
+  '.launch-trust.json-',
   '.session-folders.json-',
   '.desktop-launch-',
 ]
@@ -263,6 +270,11 @@ const promptSchema = z.object({
   model: modelRefSchema.optional(),
 })
 const createTaskSchema = promptSchema.extend({
+  prompt: z.string().trim().max(16_000).default(''),
+  forkOf: z
+    .object({ taskId: z.string().min(1).max(256), upToMessageId: z.string().min(1).max(256) })
+    .strict()
+    .optional(),
   mode: z.enum(['chat', 'agent']).optional(),
   harnessId: z.string().regex(HARNESS_ID).optional(),
   workspaceId: z.string().min(1).max(64).optional(),
@@ -834,6 +846,7 @@ function agentSettings(agent: AgentRecord): AgentSettings {
     verified: verdict.ok ? verdict.verified : false,
     ...(verdict.ok ? {} : { problem: verdict.error.message }),
     ...(agent.startedHash === undefined ? {} : { started: agent.startedHash === definitionHash(agent) }),
+    ...(agent.probedDefinitionHash === definitionHash(agent) && agent.lastProbe ? { lastProbe: structuredClone(agent.lastProbe) } : {}),
   }
 }
 
@@ -927,6 +940,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     startupCleanup.push(() => devices.close())
     const runtime = await prepareRuntimeDir({ hostId8, ...(options.runtimeParent ? { parent: options.runtimeParent } : {}) })
     const config = await HostConfig.open(dataDir)
+    const launchTrust = await LaunchTrust.open(dataDir)
     // Key material, Agent definitions and the Host identity stay out of Time Machine backups; sessions, the audit log
     // and the policy are backed up as usual.
     await excludeFromBackup([authDir, join(dataDir, 'identity'), ...BACKUP_EXCLUDED_CONFIG_FILES.map(file => join(dataDir, file))], { log })
@@ -1224,6 +1238,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     const harnessHub = await HarnessHub.open({ dataDir, defaultId: defaultHarnessId, log, now })
     hub = harnessHub
+    const fileReferences = await FileReferenceStore.open(dataDir)
     const fileRoutes = createFileRoutes({
       protectedPaths: guardedPaths,
       home,
@@ -1250,14 +1265,17 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       },
       recheck: (caller, scope) => {
         recheck(caller as Caller, scope)
-        if (!caller.device || devices.get(caller.device.id)?.dataScope !== 'all')
-          throw new AppError(403, 'file-scope', '这台设备的数据范围不包括会话文件夹中的文件')
+        if (!caller.device || devices.get(caller.device.id)?.dataScope !== caller.device.dataScope)
+          throw new AppError(403, 'file-scope', '这台设备的数据范围已变化，请重新打开文件')
       },
+      sessionDetail: id => harnessHub.detail(id),
+      referencePaths: async (id, roots) => fileReferences.references(id, await harnessHub.detail(id), roots, home),
       actorOf: caller => actorOf(caller as Caller),
       ...(options.fileHooks ? { hooks: options.fileHooks } : {}),
     })
     const templateStore = await PromptTemplateStore.open(dataDir)
     const sessionRoutes = createSessionRoutes<Caller>({
+      now,
       templates: templateStore,
       changed: () => refresh(),
       list: () => harnessHub.listTasks(),
@@ -1265,6 +1283,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       patch: (id, patch) => harnessHub.updateMeta(id, patch),
       remove: async id => {
         await harnessHub.remove(id)
+        fileRoutes.forgetSession(id)
+        await fileReferences.remove(id).catch(() => log('未能清理已删除会话的文件引用记录'))
         summaries.delete(id)
         refresh()
       },
@@ -1294,6 +1314,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     let eventTimer: ReturnType<typeof setTimeout> | undefined
     let flushing = false
     let changes: Promise<void> = Promise.resolve()
+    const agentProbes = new AgentProbes({ root: runtime.tmpRoot, dataDir, now })
+    startupCleanup.push(() => agentProbes.close())
     let closing = false
     let shutdown: Promise<void> | undefined
     let listeners: ListenerSet | undefined
@@ -1418,21 +1440,44 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       lines: PreviewLine[],
       warnings: string[] = [],
       target?: string,
+      launchKey?: string,
     ): Promise<StepupMethod> {
       requireLocal(caller)
       requireDevice(caller)
       const hash = paramsHash(action, params)
       const header = req.headers['x-latch-confirmation']
       if (typeof header === 'string' && header) {
-        presence.consume(header, { action, requesterDeviceId: caller.device.id, paramsHash: hash })
-        return 'lpc-local'
+        const consumed = presence.consume(header, { action, requesterDeviceId: caller.device.id, paramsHash: hash })
+        if (consumed.stepup === 'shell-local' && action === 'task.start-l3' && (!launchKey || !launchTrust.has(launchKey)))
+          throw new AppError(409, 'confirmation-mismatch', '启动信任条件已变化，请重新确认')
+        if (action === 'task.start-l3' && launchKey && consumed.stepup === 'lpc-local' && !launchTrust.has(launchKey)) {
+          const seq = await audited({
+            action: 'presence.launch-trusted',
+            actor: actorOf(caller),
+            stepup: 'lpc-local',
+            detail: { keyHash: launchKey },
+          })
+          try {
+            await launchTrust.remember(launchKey)
+          } catch (error) {
+            auditFailed(seq, caller)
+            throw error
+          }
+        }
+        return consumed.stepup
       }
+      const shell =
+        req.headers['x-latch-shell-confirmation'] === '1'
+        && (action === 'approval.r2'
+          || action === 'task.mode-widen'
+          || (action === 'task.start-l3' && launchKey !== undefined && launchTrust.has(launchKey)))
       const record = await presence.request({
         action,
         paramsHash: hash,
         subject,
         lines,
         warnings,
+        ...(shell ? { confirmationMethod: 'shell-local' as const } : {}),
         requester: {
           deviceId: caller.device.id,
           deviceName: caller.device.name,
@@ -2667,7 +2712,16 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     async function catalog(): Promise<HostCatalog> {
       return {
         promptTemplatesVersion: templateStore.revision(),
-        features: { search: true, sessionBatch: true, promptTemplates: true },
+        features: {
+          agentProbe: true,
+          fork: true,
+          search: true,
+          sessionBatch: true,
+          promptTemplates: true,
+          usage: true,
+          fileSearch: true,
+          filePreview: true,
+        },
         harnesses: hub!.drivers(),
         providers: usableProviders().map(provider => summarizeProvider(provider, providerKindOf(provider.id))),
         unusableProviders: unusableProviders(),
@@ -2907,7 +2961,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ...(facts.oldTextHash ? [{ label: '原内容哈希', value: hashDisplay(facts.oldTextHash) }] : []),
           // The same words as the card's pill, from one mapping.
           ...(facts.reason ? [{ label: '风险原因', value: RISK_REASON_TEXT[facts.reason] }] : []),
-          { label: '参数', value: args ? canonicalJson(previewArguments(args, facts.builtinWrite)) : (approval.arguments ?? '') },
+          {
+            label: '参数',
+            value: args
+              ? canonicalJson(previewArguments(args, facts.builtinWrite && req.headers['x-latch-shell-confirmation'] !== '1'))
+              : (approval.arguments ?? ''),
+          },
         ]
         stepup = await confirm(
           req,
@@ -3766,9 +3825,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
      * A session in the folder made for its request. The folder stays once a session was created in it; a start that
      * created none removes it again while it is empty.
      */
-    async function createInOwnFolder(task: HubCreateInput, requestId: string): Promise<{ sessionId: string }> {
+    async function createInOwnFolder(task: HubCreateInput, requestId: string, before?: () => void): Promise<{ sessionId: string }> {
       try {
         await ownFolders.starting(requestId)
+        before?.()
         const created = await hub!.createTask(task)
         ownFolders.created(requestId)
         return created
@@ -3781,8 +3841,18 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     async function createTask(req: IncomingMessage, res: ServerResponse, caller: Caller): Promise<void> {
       requireScope(caller, 'run')
       const input = createTaskSchema.parse(await jsonBody(req, TASK_BODY_LIMIT))
+      if (!input.prompt && !input.forkOf) throw new AppError(400, 'invalid-prompt', '请输入任务内容')
       await projectOperation(caller, 'run', async () => {
         recheck(caller, 'run')
+        const fork = input.forkOf
+          ? await (async () => {
+              requireScope(caller, 'view')
+              const detail = await hub!.detail(input.forkOf!.taskId)
+              recheck(caller, 'view')
+              return { ...forkSeed(detail, input.forkOf!.upToMessageId), source: detail.summary }
+            })()
+          : undefined
+        const prompt = fork ? fork.text + (input.prompt || '请接着这个会话继续。') : input.prompt
         const harnessId = input.harnessId ?? defaultHarnessId()
         const harness = hub!.info(harnessId)
         if (!harness || !hub!.has(harnessId)) throw new AppError(409, 'harness-unavailable', `Harness ${harnessId} 未启用`)
@@ -3808,29 +3878,47 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         // While the start directory is the Host's default, an Agent session outside a saved project gets a new folder of
         // its own there; 只对话 sessions read and write no files and never get one.
         const mode = input.mode ?? (harness.modes.includes('agent') ? 'agent' : harness.modes[0])
-        const ownFolder = makeOwnFolders && !chosen && mode === 'agent'
+        const forkFolder =
+          !chosen && fork?.source.workspaceId === 'default' && fork.source.sessionFolder && mode === 'agent' ? fork.source.cwd : undefined
+        if (forkFolder && !(await ownFolders.verify(forkFolder))) throw workspaceChanged()
+        const ownFolder = makeOwnFolders && !chosen && mode === 'agent' && !forkFolder
         // A request's folder is its device's: another device naming the same request ID gets one of its own.
         const folderRequest = `${caller.device.id}:${input.requestId}`
         // The session starts in the project's primary folder. Only what the client chose reaches the driver as `cwd`;
         // without a choice the start directory stays the driver's default.
         const task: HubCreateInput = {
-          prompt: input.prompt,
+          prompt,
+          ...(fork ? { forkOf: fork.context, initialTitle: input.prompt || `从「${fork.context.title}」分叉` } : {}),
           requestId: input.requestId,
           harnessId,
           workspaceId,
           ...(input.mode ? { mode: input.mode } : {}),
           ...(input.model ? { model: input.model } : {}),
-          ...(chosen ? { cwd: chosen.folders[0].path } : input.workspaceId === 'default' ? { cwd: workspaceRoot } : {}),
+          ...(chosen
+            ? { cwd: chosen.folders[0].path }
+            : forkFolder
+              ? { cwd: forkFolder, sessionFolder: basename(forkFolder) }
+              : input.workspaceId === 'default'
+                ? { cwd: workspaceRoot }
+                : {}),
+        }
+        const checkStart = () => {
+          recheck(caller, 'run')
+          if (fork) recheck(caller, 'view')
+          if (hub!.levelOf(harnessId) === 'L1') assertStandardCeiling(caller, { harnessId, workspaceId })
+          else assertSessionCeiling(caller, 'L3')
         }
         if (hub!.levelOf(harnessId) === 'L1') {
           assertStandardCeiling(caller, { harnessId, workspaceId })
           if (ownFolder) {
             const own = await ownFolders.allocate(folderRequest)
-            json(res, await createInOwnFolder({ ...task, cwd: own.path, sessionFolder: own.name }, folderRequest), 201)
+            json(res, await createInOwnFolder({ ...task, cwd: own.path, sessionFolder: own.name }, folderRequest, checkStart), 201)
             return
           }
           // Every folder of the project, in order; the hub passes them on only to a driver that takes them all.
-          const folders = task.cwd === undefined ? undefined : chosen ? chosen.folders : [{ id: 'default', path: workspaceRoot }]
+          const folders =
+            task.cwd === undefined || forkFolder ? undefined : chosen ? chosen.folders : [{ id: 'default', path: workspaceRoot }]
+          checkStart()
           json(res, await hub!.createTask(folders ? { ...task, folders: folders.map(({ id, path }) => ({ id, path })) } : task), 201)
           return
         }
@@ -3841,15 +3929,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           throw new AppError(409, 'workspace-code-root', '该目录与 Latch 程序目录重叠，不能作为项目')
         // Made before the confirmation, which shows it; the confirmed retry of this request gets the same folder.
         const own = ownFolder ? await ownFolders.allocate(folderRequest) : undefined
-        const cwd = await realpath(own?.path ?? chosen?.folders[0].path ?? workspaceRoot)
+        const cwd = await realpath(own?.path ?? forkFolder ?? chosen?.folders[0].path ?? workspaceRoot)
         // As for L1; the local confirmation below lists the ones the driver says it passes to the agent.
         const folders =
-          task.cwd === undefined || own
+          task.cwd === undefined || own || forkFolder
             ? undefined
             : chosen
               ? chosen.folders.map(({ id, path }) => ({ id, path }))
               : [{ id: 'default', path: workspaceRoot }]
-        const promptHash = sha256Hex(input.prompt)
+        const promptHash = sha256Hex(prompt)
         const preview = await hub!.launchPreviewOf(harnessId, cwd, folders ? { workspaceId, folders } : undefined)
         // The folders the agent receives besides its working directory: shown, bound to the confirmation and audited.
         const passed = [
@@ -3935,6 +4023,26 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             { label: '首条输入', value: hashDisplay(promptHash) },
           ]
         }
+        // Only drivers reporting a definition/configuration fingerprint can reuse OS approval. A session's own
+        // fresh 0700 directory shares the start root's project identity; its complete launch hash stays unchanged.
+        let launchKey: string | undefined
+        const privateOwn = own
+          ? (await ownFolders.verify(own.path))
+            && (await lstat(own.path).then(
+              info =>
+                info.isDirectory()
+                && !info.isSymbolicLink()
+                && (info.mode & 0o777) === 0o700
+                && (typeof process.getuid !== 'function' || info.uid === process.getuid()),
+              () => false,
+            ))
+          : true
+        if (req.headers['x-latch-shell-confirmation'] === '1' && preview?.definitionHash && privateOwn) {
+          const roots = own
+            ? [canonicalWorkspace]
+            : await Promise.all((chosen?.folders.map(folder => folder.path) ?? [cwd]).map(path => canonicalPath(path)))
+          launchKey = launchTrustKey({ deviceId: caller.device.id, harnessId, launchHash, projectId: workspaceId, roots })
+        }
         const stepup = await confirm(
           req,
           caller,
@@ -3943,10 +4051,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           subject,
           lines,
           L3_WARNINGS,
+          undefined,
+          launchKey,
         )
         recheck(caller, 'run')
         // The policy may have been lowered while the confirmation was open.
         assertSessionCeiling(caller, 'L3')
+        if (fork) recheck(caller, 'view')
         if (chosen) {
           // The project may have been edited meanwhile: the session starts only in the primary folder that was confirmed.
           const current = savedProject(chosen.id)
@@ -3955,6 +4066,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           if (harness.projectFolders?.access === 'all' && !sameFolders(current.folders, chosen.folders)) throw workspaceChanged()
           await assertWorkspaceUsable(current)
         }
+        if (forkFolder && (!(await ownFolders.verify(forkFolder)) || (await realpath(forkFolder).catch(() => undefined)) !== cwd))
+          throw workspaceChanged()
         if (own && (!(await ownFolders.verify(own.path)) || (await realpath(own.path).catch(() => undefined)) !== cwd))
           throw workspaceChanged()
         // The intent is on record before the driver can spawn anything; the session id exists only once it has, so the
@@ -3967,8 +4080,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         })
         let created: { sessionId: string }
         try {
+          checkStart()
           created = own
-            ? await createInOwnFolder({ ...task, cwd: own.path, sessionFolder: own.name, expectedLaunchHash: launchHash }, folderRequest)
+            ? await createInOwnFolder(
+                { ...task, cwd: own.path, sessionFolder: own.name, expectedLaunchHash: launchHash },
+                folderRequest,
+                checkStart,
+              )
             : await hub!.createTask({ ...task, ...(folders ? { folders } : {}), expectedLaunchHash: launchHash })
         } catch (error) {
           auditFailed(intent, caller)
@@ -4459,6 +4577,96 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         json(res, { agent: agentSettings(record) }, 201)
         return true
       }
+      const probeMatch = path.match(/^\/link\/api\/agents\/([^/]+)\/probe$/)
+      if (probeMatch && method === 'POST') {
+        requireScope(caller, 'admin')
+        requireScope(caller, 'run')
+        assertSessionCeiling(caller, 'L3')
+        requireLocal(caller)
+        const input = z
+          .object({ requestId: z.string().min(1).max(256) })
+          .strict()
+          .parse(await jsonBody(req))
+        recheck(caller, 'admin')
+        const id = safeDecode(probeMatch[1]!)
+        const agent = config.settings().agents.find(agent => agent.id === id)
+        if (!agent) throw new AppError(404, 'agent-not-found', '找不到该 Agent')
+        const hash = definitionHash(agent)
+        const attempt = await agentProbes.prepare({ agent, definitionHash: hash, deviceId: caller.device!.id, requestId: input.requestId })
+        const assertCurrent = () => {
+          if (closing) throw new AppError(503, 'host-closing', '运行节点正在关闭')
+          recheck(caller, 'admin')
+          recheck(caller, 'run')
+          assertSessionCeiling(caller, 'L3')
+          const latest = config.settings().agents.find(agent => agent.id === id)
+          if (!latest || definitionHash(latest) !== hash)
+            throw new AppError(409, 'agent-definition-changed', 'Agent 定义已变化，请重新测试。')
+        }
+        if (attempt.flight) {
+          const result = await attempt.flight
+          assertCurrent()
+          json(res, result)
+          return true
+        }
+        const preview = attempt.preview
+        const stepup = await confirm(
+          req,
+          caller,
+          'agent.probe',
+          { agentId: id, requestId: input.requestId, launchHash: preview.launchHash, cwd: preview.cwd },
+          {
+            form: 'agent.probe',
+            slots: {
+              harness: agent.name,
+              program: programText(preview.command, home),
+              args: argumentsText(preview.args),
+              env: envNamesText(preview.definitionEnvNames ?? []),
+            },
+          },
+          [
+            { label: 'Agent', value: agent.name },
+            { label: '命令', value: preview.command },
+            { label: '参数', value: argumentsText(preview.args) },
+            { label: '环境变量名', value: envNamesText(preview.envNames) },
+            { label: '工作目录', value: preview.cwd },
+            { label: '启动指纹', value: hashDisplay(preview.launchHash) },
+          ],
+          ['只进行 ACP initialize 握手，不发送提示词；程序是可信本机代码，可以访问这台电脑上的数据。'],
+        )
+        const result = await agentProbes.run(
+          attempt,
+          async () => {
+            assertCurrent()
+            await audited({
+              action: 'agent.probe.requested',
+              actor: actorOf(caller),
+              target: id,
+              stepup,
+              detail: { agentId: id, launchHash: preview.launchHash },
+            })
+          },
+          async result => {
+            assertCurrent()
+            await audited({
+              action: 'agent.probed',
+              actor: actorOf(caller),
+              target: id,
+              stepup,
+              detail: { agentId: id, launchHash: result.launchHash, status: result.status },
+            })
+            await writeSettings(caller, draft => {
+              const latest = draft.agents.find(agent => agent.id === id)
+              if (latest && definitionHash(latest) === hash) {
+                latest.lastProbe = result
+                latest.probedDefinitionHash = hash
+              }
+            })
+            refresh()
+          },
+        )
+        json(res, result)
+        return true
+      }
       const agentMatch = path.match(/^\/link\/api\/agents\/([^/]+)$/)
       if (agentMatch && method === 'PUT') {
         requireScope(caller, 'admin')
@@ -4482,7 +4690,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         }
         const changed = definitionHash(next) !== definitionHash(current)
         // A new definition has not started yet; its first full-access start is confirmed with what it runs.
-        if (changed) next.startedHash = null
+        if (changed) {
+          next.startedHash = null
+          delete next.lastProbe
+          delete next.probedDefinitionHash
+        }
         const hash = changed ? (requireLocal(caller), checkAgent(next)) : undefined
         const record = await serial(caller, 'admin', async () => {
           const latest = config.settings().agents.find(agent => agent.id === id)
@@ -4770,6 +4982,29 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         await decideApproval(req, res, caller, safeDecode(approval[1]!))
         return
       }
+      const shellConfirmation = path.match(/^\/link\/api\/confirmations\/([^/]+)\/shell$/)
+      if (shellConfirmation && (method === 'GET' || method === 'POST')) {
+        requireDevice(caller)
+        requireLocal(caller)
+        recheck(caller)
+        const id = safeDecode(shellConfirmation[1]!)
+        limits.confirmationPoll.take(id)
+        const content = presence.shellPreview(id, caller.device.id)
+        if (method === 'GET') {
+          json(res, content)
+          return
+        }
+        const proof = z
+          .object({ previewHash: z.string().regex(/^[a-f0-9]{64}$/u), signature: z.string().min(1).max(256) })
+          .strict()
+          .parse(await jsonBody(req))
+        recheck(caller)
+        if (proof.previewHash !== content.previewHash)
+          throw new AppError(409, 'confirmation-mismatch', '确认内容与本次请求不一致，请重新确认')
+        devices.verifyConfirmation({ deviceId: caller.device.id, confirmationId: id, ...proof })
+        json(res, { confirmation: await presence.completeShell(id, caller.device.id, proof.previewHash, true) })
+        return
+      }
       const confirmation = path.match(/^\/link\/api\/confirmations\/([^/]+)$/)
       if (confirmation && (method === 'GET' || method === 'DELETE')) {
         requireDevice(caller)
@@ -4849,6 +5084,20 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       // A navigation to an address that is no page (a file name in a reply opened as a link) gets a page, not JSON.
       if (!path.startsWith('/link/')) return sendNotFoundPage(res, method)
       const relativePath = safeDecode(path.slice('/link/'.length)) || 'index.html'
+      if (relativePath.startsWith('preview-frame/')) {
+        const match = /^preview-frame\/(office|diagram)\.html$/u.exec(relativePath)
+        if (!match) throw new AppError(404, 'not-found', '页面不存在')
+        const frame = await readPreviewFrame(resolve(options.uiDir), match[1]!)
+        res.removeHeader('x-frame-options')
+        res.writeHead(200, {
+          'content-type': 'text/html; charset=utf-8',
+          'content-security-policy': frame.csp,
+          'x-latch-frame-hash': frame.hash,
+          'cache-control': 'no-store',
+        })
+        res.end(method === 'HEAD' ? undefined : frame.data)
+        return
+      }
       const root = resolve(options.uiDir)
       const file = resolve(root, relativePath)
       if (!file.startsWith(root + sep)) throw new AppError(403, 'invalid-path', '文件路径无效')
@@ -4860,7 +5109,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (codeOf(error) === 'ENOENT' || codeOf(error) === 'EISDIR' || codeOf(error) === 'ENOTDIR') return sendNotFoundPage(res, method)
         throw error
       }
-      res.setHeader('content-security-policy', UI_CSP)
+      res.setHeader('content-security-policy', /\.worker(?:\.min)?-[A-Za-z0-9_-]+\.m?js$/u.test(relativePath) ? WORKER_CSP : UI_CSP)
       res.writeHead(200, {
         'content-type': MIME[extname(file)] ?? 'application/octet-stream',
         'cache-control': relativePath.startsWith('assets/') ? 'public, max-age=31536000, immutable' : 'no-cache',
@@ -4976,6 +5225,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           const failures: unknown[] = []
           for (const dispose of [
             () => changes,
+            () => agentProbes.close(),
             () => harnessHub.close(),
             () => registry.close(),
             () => started.close(),

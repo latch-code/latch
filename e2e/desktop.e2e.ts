@@ -41,6 +41,11 @@ interface PageShell {
 }
 
 /** What the test records in main instead of showing the link dialog or opening the system browser. */
+interface NativeSheets {
+  asked: Array<Record<string, unknown>>
+  finish?: (response: number) => void
+}
+
 interface ExternalLinks {
   asked: Array<Record<string, unknown>>
   opened: string[]
@@ -314,6 +319,7 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
           return {
             ...shell,
             folders: Object.keys(shell.folders as object),
+            confirmations: Object.keys(shell.confirmations as object),
             files: Object.keys(shell.files as object),
             notifications: Object.keys(shell.notifications as object),
             openInBrowser: typeof shell.openInBrowser,
@@ -325,6 +331,7 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
         devMode: true,
         platform: 'darwin',
         folders: ['protocolVersion', 'pick', 'drop', 'reveal', 'saveSessionFolder'],
+        confirmations: ['protocolVersion', 'confirm'],
         openInBrowser: 'function',
         lifecycle: { get: 'function', setLoginItem: 'function', setKeepAwake: 'function', restartHost: 'function', subscribe: 'function' },
         files: ['inspect', 'known', 'reveal', 'quickLook', 'open'],
@@ -404,11 +411,21 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
 
       // window.open from script reaches the system browser only after the owner confirms the full URL.
       // Main's native dialog and shell are recorded here instead of being shown or opened.
-      await application.evaluate(({ dialog, shell }) => {
+      await application.evaluate(({ dialog, shell, BrowserWindow }) => {
+        // Headless automation does not own macOS focus; production focus checks are covered by unit tests.
+        BrowserWindow.prototype.isFocused = () => true
         const links: ExternalLinks = { asked: [], opened: [], answer: 1 }
-        Object.assign(globalThis, { externalLinks: links })
+        const nativeSheets: NativeSheets = { asked: [] }
+        Object.assign(globalThis, { externalLinks: links, nativeSheets })
         dialog.showMessageBox = (async (...args: unknown[]) => {
-          links.asked.push(args.at(-1) as Record<string, unknown>)
+          const options = args.at(-1) as Record<string, unknown>
+          if (options.title === 'Latch · 本机确认') {
+            nativeSheets.asked.push(options)
+            return new Promise<{ response: number; checkboxChecked: boolean }>(resolve => {
+              nativeSheets.finish = response => resolve({ response, checkboxChecked: false })
+            })
+          }
+          links.asked.push(options)
           return { response: links.answer, checkboxChecked: false }
         }) as typeof dialog.showMessageBox
         shell.openExternal = async (url: string) => {
@@ -580,15 +597,18 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
       await page.getByText(R2_PROMPT).first().click()
       await page.getByText('高风险').first().waitFor()
       const card = page.locator('[data-approval-id]')
-      const allow = card.getByRole('button', { name: '用 Touch ID 允许', exact: true })
+      const allow = card.getByRole('button', { name: '在本机允许', exact: true })
       const resting = (await allow.boundingBox())!.width
       await allow.click()
-      const confirmation = await testHost.presence.waitForRequest(15_000)
-      expect(confirmation.preview.action).toBe('approval.r2')
+      const nativeSheets = () => application!.evaluate(() => (globalThis as unknown as { nativeSheets: NativeSheets }).nativeSheets.asked)
+      await waitFor(async () => (await nativeSheets()).length === 1)
+      const confirmation = { preview: { reason: (await nativeSheets())[0]!.message as string } }
+      expect((await nativeSheets())[0]).toMatchObject({ defaultId: 0, cancelId: 0, buttons: ['取消', '允许'] })
+      expect((await nativeSheets())[0]!.detail).toContain(MARK_TOOL)
       // No dock: the button keeps its words and width while it waits; the card says Touch ID waits and shows the very
       // sentence the system sheet shows, with the Host's details behind it.
-      await card.locator('.ui-button[aria-busy="true"]', { hasText: '用 Touch ID 允许' }).waitFor()
-      await card.getByText('等待 Touch ID…', { exact: true }).waitFor()
+      await card.locator('.ui-button[aria-busy="true"]', { hasText: '在本机允许' }).waitFor()
+      await card.getByText('等待本机确认…', { exact: true }).waitFor()
       await card.locator('.confirm-sheet-text', { hasText: confirmation.preview.reason }).waitFor()
       expect(confirmation.preview.reason).toMatch(/^批准/u)
       await card.getByRole('button', { name: '确认详情', exact: true }).waitFor()
@@ -606,22 +626,17 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
       ])
       // A denial returns the buttons at once with the reason in the card; nothing ran.
       expect(marks.ran).toBe(0)
-      testHost.presence.denyNext()
-      await card.locator('.approval-failure', { hasText: '操作没有执行。本机确认没有通过。' }).waitFor()
+      await application.evaluate(() => (globalThis as unknown as { nativeSheets: NativeSheets }).nativeSheets.finish?.(0))
       await card.locator('.ui-button[aria-busy="true"]').waitFor({ state: 'detached' })
       expect(await card.locator('.ui-button[aria-disabled="true"]').count()).toBe(0)
       await captureThemes(page, 'native-desktop-confirmation-denied')
-      await expectUnmovedByInjectedStyles(page, [
-        '[data-approval-id] .approval-failure',
-        '[data-approval-id] .approval-failure .ui-notice-text',
-      ])
+      expect(marks.ran).toBe(0)
       // Allowing again from the card asks for a new confirmation of the same request.
       expect(marks.ran).toBe(0)
       await allow.click()
-      const again = await testHost.presence.waitForRequest(15_000)
-      expect(again.preview.action).toBe('approval.r2')
+      await waitFor(async () => (await nativeSheets()).length === 2)
       await card.locator('.approval-failure').waitFor({ state: 'detached' })
-      testHost.presence.approveNext()
+      await application.evaluate(() => (globalThis as unknown as { nativeSheets: NativeSheets }).nativeSheets.finish?.(1))
       await waitFor(() => marks.ran === 1)
       await waitFor(async () => (await host.bridge.detail(sessionId)).summary.status === 'idle')
 
@@ -1045,6 +1060,8 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
         })
       await computer.getByRole('tab', { name: '项目', exact: true }).click()
       await computer.getByRole('button', { name: '新建项目…', exact: true }).click()
+      await computer.locator('.project-editor').waitFor()
+      await computer.getByRole('button', { name: '项目', exact: true }).click()
       const projectCard = computer.locator('.project-card', { hasText: 'picked-project' })
       await projectCard.waitFor()
       expect(host.security.audit.lastOf('workspace.added')).toMatchObject({
@@ -1063,7 +1080,7 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
       const { workspaces } = await helper.json<{ workspaces: WorkspaceInfo[] }>('workspaces')
       const project = workspaces.find(item => item.id === 'picked-project')!
       expect(project.folders?.map(folder => folder.path)).toEqual([await realpath(picked), await realpath(pickedDocs)])
-      await projectCard.getByRole('button', { name: '在访达中显示', exact: true }).click()
+      await projectCard.getByRole('button', { name: '在访达中显示', exact: true }).first().click()
       await waitFor(async () => (await folderRecord()).shown.length === 1)
       expect((await folderRecord()).shown).toEqual([await realpath(picked)])
       // Any folder of a project by its ID, at most twice a second; an ID the Host does not know shows nothing, and the
@@ -1287,6 +1304,127 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
     } finally {
       await application?.close()
       await counter.close()
+      await testHost.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('tests an Agent handshake from its settings, keeps login claims precise and displays redacted diagnostics', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'latch-electron-probe-'))
+    const testHost = await startTestHost({ demo: true, uiDir: resolve('dist/web'), presenceMode: 'manual' })
+    const { host } = testHost
+    let application: ElectronApplication | undefined
+    try {
+      await writeHostState(testHost.dataDir, {
+        version: 2,
+        pid: process.pid,
+        hostId: host.hostId,
+        instanceId: host.instanceId,
+        socketPath: host.socketPath,
+        loopbackOrigin: host.loopbackOrigin,
+        tlsOrigin: null,
+        startedAt: new Date().toISOString(),
+        dataDir: testHost.dataDir,
+      })
+      await mkdir('test-results', { recursive: true })
+      application = await _electron.launch({
+        args: [
+          resolve('apps/desktop/src/main.cjs'),
+          `--latch-host-state=${join(testHost.dataDir, 'host.json')}`,
+          `--latch-user-data=${join(root, 'electron')}`,
+          '--use-mock-keychain',
+        ],
+        cwd: process.cwd(),
+        env: shellEnvironment(),
+        timeout: 30_000,
+      })
+      const page = await application.firstWindow()
+      page.setDefaultTimeout(20_000)
+      await enrollShell(page, testHost, 'Agent 诊断桌面端')
+      const created = await page.evaluate(
+        async definition =>
+          (
+            await fetch('latch://app/link/api/agents', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify(definition),
+            })
+          ).status,
+        {
+          id: 'probe-fixture',
+          name: 'Probe fixture',
+          command: process.execPath,
+          args: [FAKE_ACP_AGENT],
+          env: { FAKE_ACP_CAPS: 'images,resume,dirs', FAKE_ACP_AUTH: 'new' },
+        },
+      )
+      expect(created).toBe(201)
+      const settings = await openSettings(page)
+      await settings.getByRole('tab', { name: 'Agent 成员', exact: true }).click()
+      await settings.getByRole('button', { name: '编辑 Probe fixture', exact: true }).click()
+      const probe = settings.locator('.settings-group', { has: page.getByRole('heading', { name: '测试启动', exact: true }) })
+      for (const [width, height] of [
+        [1440, 1000],
+        [768, 1024],
+        [390, 844],
+      ]) {
+        await application.evaluate(
+          ({ BrowserWindow }, size) => {
+            const window = BrowserWindow.getAllWindows()[0]!
+            window.setMinimumSize(320, 480)
+            window.setContentSize(size.width, size.height)
+          },
+          { width: width!, height: height! },
+        )
+        await expect.poll(() => page.evaluate(() => innerWidth)).toBe(width)
+        await probe.getByRole('button', { name: '测试启动', exact: true }).click()
+        const request = await testHost.presence.waitForRequest(15_000)
+        expect(request.preview.action).toBe('agent.probe')
+        await probe.locator('.inline-confirm[data-confirmation-phase="waiting"]').waitFor()
+        await probe.getByText(request.preview.reason, { exact: true }).waitFor()
+        await probe.scrollIntoViewIfNeeded()
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true)
+        await captureThemes(page, `agent-probe-waiting-${width}`)
+        testHost.presence.approveNext()
+        await probe.getByText('启动握手成功', { exact: true }).waitFor()
+        await probe.getByText('登录状态与模型访问尚未验证。', { exact: true }).waitFor()
+        await probe.getByText('声明支持：图片、恢复会话、附加文件夹', { exact: true }).waitFor()
+        expect(await probe.getByText('需要先登录', { exact: true }).count()).toBe(0)
+        await probe.locator('.inline-confirm').waitFor({ state: 'detached' })
+      }
+      await captureThemes(page, 'agent-probe-ready-phone')
+      await application.evaluate(({ BrowserWindow }) => {
+        BrowserWindow.getAllWindows()[0]!.setContentSize(1440, 1000)
+      })
+      const secret = 'test-only-probe-diagnostic-value'
+      const changed = await page.evaluate(
+        async body =>
+          (
+            await fetch('latch://app/link/api/agents/probe-fixture', {
+              method: 'PUT',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify(body),
+            })
+          ).status,
+        { env: { FAKE_ACP_INIT_ERROR: '1', FAKE_SECRET: secret } },
+      )
+      expect(changed).toBe(200)
+      await settings.getByRole('button', { name: '重新检测', exact: true }).click()
+      await probe.getByText('尚未测试启动', { exact: true }).waitFor()
+      await probe.getByRole('button', { name: '测试启动', exact: true }).click()
+      const failure = await testHost.presence.waitForRequest(15_000)
+      expect(failure.preview.action).toBe('agent.probe')
+      testHost.presence.approveNext()
+      await probe.getByText('测试启动失败', { exact: true }).waitFor()
+      await probe.getByRole('button', { name: '复制诊断', exact: true }).waitFor()
+      expect(await probe.innerText()).not.toContain(secret)
+      expect(await probe.locator('pre').innerText()).toContain('[redacted]')
+      await probe.locator('.inline-confirm').waitFor({ state: 'detached' })
+      await probe.scrollIntoViewIfNeeded()
+      await captureThemes(page, 'agent-probe-failed-desktop')
+      expect(await host.bridge.listTasks()).toHaveLength(0)
+    } finally {
+      await application?.close()
       await testHost.close()
       await rm(root, { recursive: true, force: true })
     }

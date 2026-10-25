@@ -22,6 +22,7 @@ import { FileReferences } from './FileReferences.tsx'
 import { MessageRow, SourceRow } from './MessageRow.tsx'
 import { ToolCard, type ApprovalGateFor, type DecideHandler } from './ToolCard.tsx'
 import { TurnFooter, type TurnRetry } from './TurnFooter.tsx'
+import { transcriptMarkdown } from '../exportMarkdown.ts'
 import { Collapse, ICON_STROKE, useLivePrevious } from '@latch/ui'
 
 /** What resending the latest turn takes, when this device may send now. */
@@ -149,6 +150,7 @@ function TurnView({
   context: rowContext,
   retry,
   reportedContext,
+  actions,
 }: {
   turn: Turn
   context: RowContext
@@ -168,6 +170,7 @@ function TurnView({
   liveFooter?: Parameters<typeof TurnFooter>[0]['live']
   retry?: TurnRetry
   reportedContext?: number
+  actions?: Parameters<typeof TurnFooter>[0]['actions']
 }) {
   const [tapped, setTapped] = useState(false)
   const folded = trailingLive ? [] : foldedRows(turn, outcome)
@@ -227,6 +230,7 @@ function TurnView({
             settledLive={settledLive}
             context={latest ? reportedContext : undefined}
             retry={retry}
+            actions={actions}
           />
         </div>
       )}
@@ -253,6 +257,8 @@ export function Transcript({
   providerName,
   fallbackElapsed,
   retry,
+  onFork,
+  onCopyError,
 }: {
   detail: TaskDetail
   approvals: Approval[]
@@ -274,6 +280,8 @@ export function Transcript({
   fallbackElapsed?: number
   /** Present when this device may send now: the latest turn that failed or stopped offers 重新发送. */
   retry?: RetryAccess
+  onFork?: (upToMessageId: string) => void
+  onCopyError?: (error: unknown) => void
 }) {
   const messages = renderedMessages(detail)
   const turns = turnsOf(messages)
@@ -316,8 +324,11 @@ export function Transcript({
     ...(fallbackElapsed !== undefined ? { fallbackElapsed } : {}),
   }
   const reportedContext = detail.usageReport?.contextUsed
-  const { id: sessionId, cwd } = detail.summary
-  const fileSession = useMemo(() => ({ id: sessionId, ...(cwd ? { folder: cwd } : {}) }), [sessionId, cwd])
+  const { id: sessionId, cwd, folders } = detail.summary
+  const fileSession = useMemo(
+    () => ({ id: sessionId, ...(cwd ? { folder: cwd } : {}), ...(folders ? { folders } : {}) }),
+    [sessionId, cwd, folders],
+  )
   return (
     <FileSession.Provider value={fileSession}>
       <FileReferences sessionId={sessionId} active={active}>
@@ -354,6 +365,30 @@ export function Transcript({
               liveFooter={liveFooter}
               retry={resend}
               reportedContext={reportedContext}
+              actions={
+                !trailingLive
+                  ? {
+                      ...(onFork
+                        ? {
+                            onFork: () => {
+                              const end = turn.replies.at(-1) ?? turn.user
+                              if (end) onFork(end.id)
+                            },
+                          }
+                        : {}),
+                      onCopy: () => {
+                        const end = turn.replies.at(-1) ?? turn.user
+                        const index = detail.messages.findIndex(message => message.id === end?.id)
+                        void (async () => {
+                          if (!navigator.clipboard?.writeText) throw new Error('此浏览器不能复制，请手动选择记录')
+                          await navigator.clipboard.writeText(
+                            transcriptMarkdown({ ...detail, messages: detail.messages.slice(0, index + 1), liveText: '' }),
+                          )
+                        })().catch(error => onCopyError?.(error))
+                      },
+                    }
+                  : undefined
+              }
             />
           )
         })}

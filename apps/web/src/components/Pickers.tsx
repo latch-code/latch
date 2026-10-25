@@ -1,7 +1,16 @@
 import { useState, type ReactNode } from 'react'
 import { ChevronsUpDown, Folder, FolderPlus, Plus, SlidersHorizontal, Sparkles, Undo2 } from 'lucide-react'
-import type { HostCatalog, ModelRef, SessionConfigOption, TaskMode } from '@latch/protocol'
-import { findProvider, sameModel, startableWorkspaces } from '../composerChoice.ts'
+import type { HarnessInfo, HostCatalog, ModelRef, SessionConfigOption, TaskMode } from '@latch/protocol'
+import { findProvider, startableWorkspaces } from '../composerChoice.ts'
+import {
+  fuzzyModelMatch,
+  getModelPreferences,
+  modelKey,
+  rememberModel,
+  useModelPreferences,
+  type ModelPreferences,
+} from '../modelPreferences.ts'
+import { PROJECT_ICONS, ProjectIcon, projectFolders } from '../projects.tsx'
 import { basename, middleEllipsis } from '../format.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { ProviderTile } from './BrandTile.tsx'
@@ -23,24 +32,40 @@ import {
 } from '@latch/ui'
 
 /** A model as one value of a picker. */
-const modelKey = (model: ModelRef) => `${model.providerId}\u0000${model.model}`
 const modelOf = (key: string): ModelRef => {
   const [providerId = '', model = ''] = key.split('\u0000')
   return { providerId, model }
 }
 
 /** The models of every service, grouped under the service's tile and name; the demo model carries its mark. */
-function modelGroups(catalog: HostCatalog): Array<PickerGroup<string>> {
-  return catalog.providers.map(provider => ({
+function modelGroups(
+  catalog: HostCatalog,
+  preferences?: ModelPreferences,
+  current?: ModelRef,
+  showHidden = false,
+): Array<PickerGroup<string>> {
+  const hidden = new Set(preferences?.hidden),
+    selected = current && modelKey(current)
+  const groups: Array<PickerGroup<string>> = catalog.providers.map(provider => ({
     id: provider.id,
     label: provider.name,
     media: <ProviderTile provider={provider} size={16} />,
-    options: (provider.models.length ? provider.models : [provider.defaultModel]).filter(Boolean).map(model => ({
-      value: modelKey({ providerId: provider.id, model }),
-      label: model,
-      tag: provider.kind === 'demo' ? <DemoMark compact /> : model === provider.defaultModel ? <Badge>默认</Badge> : undefined,
-    })),
+    options: (provider.models.length ? provider.models : [provider.defaultModel])
+      .filter(Boolean)
+      .map(model => ({
+        value: modelKey({ providerId: provider.id, model }),
+        label: model,
+        description: provider.name,
+        tag: provider.kind === 'demo' ? <DemoMark compact /> : model === provider.defaultModel ? <Badge>默认</Badge> : undefined,
+      }))
+      .filter(option => showHidden || !hidden.has(option.value) || selected === option.value),
   }))
+  const recent = (preferences?.recent ?? []).flatMap(key => groups.flatMap(group => group.options).filter(option => option.value === key))
+  const keys = new Set(recent.map(option => option.value))
+  return [
+    ...(recent.length ? [{ id: '~recent', label: '最近使用', options: recent }] : []),
+    ...groups.map(group => ({ ...group, options: group.options.filter(option => !keys.has(option.value)) })),
+  ].filter(group => group.options.length)
 }
 
 /** A model switch chosen for an existing session that its next message will carry. */
@@ -82,7 +107,9 @@ export function ModelPicker({
   disabled?: boolean
 }) {
   const [adding, setAdding] = useState(false)
-  const groups = modelGroups(catalog)
+  const [showHidden, setShowHidden] = useState(false)
+  const modelPreferences = useModelPreferences()
+  const groups = modelGroups(catalog, modelPreferences, value, showHidden)
   const count = groups.reduce((sum, group) => sum + group.options.length, 0)
   const provider = value ? findProvider(catalog, value.providerId) : undefined
   return (
@@ -93,7 +120,8 @@ export function ModelPicker({
       value={value ? modelKey(value) : undefined}
       valueText={pending && value ? pendingModelText(value.model) : undefined}
       groups={groups}
-      searchable={count > 8 && !adding}
+      searchable={(count > 8 || showHidden) && !adding}
+      searchMatch={(option, query) => fuzzyModelMatch(`${option.label} ${option.description ?? ''}`, query)}
       width={adding ? 360 : undefined}
       leading={provider ? <ProviderTile provider={provider} size={16} /> : Sparkles}
       className={`${variant === 'row' ? 'new-sheet-row ' : ''}model-picker${pending ? ' is-pending' : ''}`}
@@ -102,10 +130,16 @@ export function ModelPicker({
         if (!open) setAdding(false)
       }}
       onValueChange={key => {
+        rememberModel(key)
         onChange(modelOf(key))
       }}
       footer={
         <>
+          {modelPreferences.hidden.length > 0 && (
+            <MenuFooterLink onClick={() => setShowHidden(!showHidden)}>
+              {showHidden ? '收起隐藏的模型' : `显示隐藏的模型（${modelPreferences.hidden.length}）`}
+            </MenuFooterLink>
+          )}
           {pending && (
             <MenuFooterLink icon={Undo2} chevron={false} closes onClick={pending.onReset}>
               {resetModelLabel(pending.current)}
@@ -139,6 +173,7 @@ export function ModelPicker({
             }}
             onManage={onManage}
             onSaved={model => {
+              rememberModel(modelKey(model))
               onChange(model)
               onAdded?.()
             }}
@@ -189,6 +224,8 @@ function ModelAddPanel({
  */
 export function ProjectPicker({
   catalog,
+  harness,
+  access,
   variant,
   value,
   onChange,
@@ -197,6 +234,8 @@ export function ProjectPicker({
   disabled,
 }: {
   catalog: HostCatalog
+  harness?: HarnessInfo
+  access?: Pick<DeviceAccess, 'local' | 'legacy'>
   variant?: 'row'
   value?: string
   onChange: (id: string) => void
@@ -205,12 +244,26 @@ export function ProjectPicker({
   onCreate?: () => void
   disabled?: boolean
 }) {
-  const workspaces = startableWorkspaces(catalog)
+  const workspaces = catalog.workspaces
   const start = workspaces.find(workspace => workspace.id === 'default')
   const option = (workspace: (typeof workspaces)[number], label: string) => ({
     value: workspace.id,
     label,
-    description: middleEllipsis(workspace.path, 44),
+    description:
+      projectFolders(workspace).length > 1
+        ? `${projectFolders(workspace).length} 个文件夹 · ${projectFolders(workspace)
+            .map(folder => basename(folder.path))
+            .join('、')}`
+        : middleEllipsis(workspace.path, 44),
+    media: <ProjectIcon project={workspace} size={16} />,
+    disabledReason:
+      workspace.unavailable
+      ?? (access && !access.local && !access.legacy && workspace.remoteStart === false ? '其他设备不能在这个项目中发起会话' : undefined)
+      ?? (harness?.projectFolders?.access === 'all'
+      && harness.projectFolders.max !== undefined
+      && projectFolders(workspace).length > harness.projectFolders.max
+        ? `${harness.name} 最多使用 ${harness.projectFolders.max} 个文件夹`
+        : undefined),
     tag: workspace.codeRoot ? (
       <Badge tone="warn">{CODE_ROOT_COPY.badge}</Badge>
     ) : workspace.id === catalog.defaults.workspaceId ? (
@@ -231,7 +284,11 @@ export function ProjectPicker({
       variant={variant}
       label="项目"
       className={variant === 'row' ? 'new-sheet-row' : undefined}
-      leading={Folder}
+      leading={
+        workspaces.find(item => item.id === value)?.glyph
+          ? (PROJECT_ICONS[workspaces.find(item => item.id === value)!.glyph!]?.icon ?? Folder)
+          : Folder
+      }
       placeholder="选择项目"
       header={{ title: '项目' }}
       width={320}
@@ -304,17 +361,19 @@ export function ModeSwitch({ value, onChange, disabled }: { value: TaskMode; onC
 // ---- The phone's run-settings sheet --------------------------------------------------------------------------
 
 export function modelSections(catalog: HostCatalog, value: ModelRef | undefined, onChange: (model: ModelRef) => void): MenuSection[] {
-  return catalog.providers.map(provider => ({
-    id: provider.id,
-    label: provider.name,
-    leading: <ProviderTile provider={provider} size={16} />,
-    items: (provider.models.length ? provider.models : [provider.defaultModel]).filter(Boolean).map(model => ({
-      id: `${provider.id}/${model}`,
-      label: model,
-      checked: sameModel(value, { providerId: provider.id, model }),
-      tag: provider.kind === 'demo' ? <Badge tone="warn">演示</Badge> : model === provider.defaultModel ? <Badge>默认</Badge> : undefined,
+  return modelGroups(catalog, getModelPreferences(), value).map(group => ({
+    id: group.id,
+    label: group.label,
+    leading: group.media,
+    items: group.options.map(option => ({
+      id: option.value,
+      label: option.label,
+      description: option.description,
+      tag: option.tag,
+      checked: value !== undefined && option.value === modelKey(value),
       onSelect: () => {
-        onChange({ providerId: provider.id, model })
+        rememberModel(option.value)
+        onChange(modelOf(option.value))
       },
     })),
   }))

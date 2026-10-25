@@ -261,7 +261,21 @@ const workspaceSchema = z
     ...(rest.invalid || (folders && folders[0]?.path !== rest.path) ? { invalid: true as const } : {}),
     ...(glyph ? { glyph } : {}),
   }))
+const agentProbeSchema = z.object({
+  status: z.enum(['ready', 'authentication-required', 'failed']),
+  agent: z.object({ name: z.string().max(200).optional(), version: z.string().max(100).optional() }).optional(),
+  capabilities: z.object({ images: z.boolean(), resume: z.boolean(), load: z.boolean(), additionalDirectories: z.boolean() }),
+  authMethods: z.array(z.object({ name: z.string().max(200), description: z.string().max(500).optional() })).max(16),
+  diagnostic: z.string().max(4096).optional(),
+  checkedAt: z.string().datetime(),
+  launchHash: z.string().regex(/^[a-f0-9]{64}$/u),
+})
 const agentSchema = z.object({
+  lastProbe: agentProbeSchema.optional(),
+  probedDefinitionHash: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/u)
+    .optional(),
   // The built-in harness owns `standard`; agent IDs become harness IDs.
   id: id('Agent 标识').refine(value => value !== 'standard', 'Agent 标识 standard 已被内置 Harness 使用'),
   name,

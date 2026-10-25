@@ -6,14 +6,27 @@
   "description": "Latch web client: the React page the Host serves at /link/, which the desktop shell shows as well; built into the repository root's dist/web",
   "license": "Apache-2.0",
   "dependencies": {
+    "@aiden0z/pptx-renderer": "catalog:",
     "@latch/protocol": "workspace:*",
     "@latch/ui": "workspace:*",
+    "@shikijs/core": "catalog:",
+    "@shikijs/engine-javascript": "catalog:",
+    "@shikijs/langs-precompiled": "catalog:",
+    "@tanstack/react-virtual": "catalog:",
+    "docx-preview": "catalog:",
+    "fflate": "catalog:",
+    "katex": "catalog:",
     "lucide-react": "catalog:",
+    "mermaid": "catalog:",
+    "numfmt": "catalog:",
+    "papaparse": "catalog:",
+    "pdfjs-dist": "catalog:",
     "qrcode": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
     "react-markdown": "catalog:",
-    "remark-gfm": "catalog:"
+    "remark-gfm": "catalog:",
+    "remark-math": "catalog:"
   },
   "devDependencies": {
     "@latch/core": "workspace:*",
@@ -22,6 +35,7 @@
     "@types/qrcode": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
+    "esbuild": "catalog:",
     "vite": "catalog:"
   },
   "latch": {

@@ -22,7 +22,7 @@ const REPLY = [
 const LONG_NAME = 'deck-final.pptx'
 const ELSEWHERE = '在运行 Latch 的 Mac 上用桌面端可以快速查看和打开。'
 
-describe('file references in a reply', () => {
+describe('file references with an older Host without content preview', () => {
   let testHost: TestHost
   let browser: Browser
   let sessionId: string
@@ -77,6 +77,13 @@ describe('file references in a reply', () => {
     })
     context.setDefaultTimeout(15_000)
     const page = await context.newPage()
+    // Keep the older catalog contract while the real Host handles registration and sessions.
+    await page.route('**/link/api/snapshot', async route => {
+      const response = await route.fetch()
+      const snapshot = await response.json()
+      if (snapshot.catalog?.features) delete snapshot.catalog.features.filePreview
+      await route.fulfill({ response, json: snapshot })
+    })
     await enrollBrowser(page, testHost, { name: `文件引用 ${colorScheme} ${width}` })
     // Tablets use a navigation drawer; phones start on the session list.
     if (width >= 768 && width < 1024) {

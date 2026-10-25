@@ -10,6 +10,8 @@ import {
   Cpu,
   FileText,
   Folder,
+  FolderOpen,
+  FolderPlus,
   Gauge,
   Laptop,
   LockKeyhole,
@@ -31,7 +33,10 @@ import {
 import { presetOf } from '../brands.ts'
 import { findProvider, harnessName as harnessNameOf, sameModel, sessionHarness, usesDemoModel } from '../composerChoice.ts'
 import { appliedDiffs, turnsOf } from '../conversation.ts'
-import { api } from '../core/api.ts'
+import { api, errorMessage } from '../core/api.ts'
+import { currentShell, revealLabel, shellFolders } from '../core/shell.ts'
+import { projectOf } from '../sessions.ts'
+import { folderAccessText, projectFolders, projectName } from '../projects.tsx'
 import { parseDuration, parseTime, useTicker } from '../core/hostClock.ts'
 import { diffLines } from '../diff.ts'
 import { absoluteTime, basename, exactTokens, formatDuration, formatTokens, messageTime, tokenAmount, tokenLines } from '../format.ts'
@@ -41,7 +46,18 @@ import { InlineConfirm } from './InlineConfirm.tsx'
 import { PlanList, planProgress } from './PlanCard.tsx'
 import { modelFromKey, modelGroups, modelKey } from './pickerOptions.tsx'
 import { CopyButton, MiddleText } from './ui.tsx'
-import { Badge, Button, Collapse, ICON_STROKE, StatusPill, Tooltip, ValuePicker, type LucideIcon } from '@latch/ui'
+import {
+  Badge,
+  Button,
+  Collapse,
+  ICON_STROKE,
+  IconButton,
+  InlineNotice,
+  StatusPill,
+  Tooltip,
+  ValuePicker,
+  type LucideIcon,
+} from '@latch/ui'
 import { VisibleText } from './VisibleText.tsx'
 
 /** The blocks, in their order; each folds from its header and the choice is remembered on this device. */
@@ -197,6 +213,9 @@ export function Inspector({
   onToggleBlock,
   onReveal,
   onNewProject,
+  onProjectsChanged,
+  onEditProject,
+  onSource,
 }: {
   snapshot: AppSnapshot
   summary: TaskSummary
@@ -211,11 +230,44 @@ export function Inspector({
   onReveal: (messageId: string) => void
   /** Where this device can make a project: the way out of a start directory inside Latch's program directory. */
   onNewProject?: () => void
+  onProjectsChanged?: () => void
+  onEditProject?: (id: string) => void
+  onSource?: (sessionId: string) => void
 }) {
   const [factsOpen, setFactsOpen] = useState(false)
+  const [savingProject, setSavingProject] = useState(false)
+  const [folderError, setFolderError] = useState('')
+  useEffect(() => {
+    setFolderError('')
+  }, [summary.id])
   const now = useTicker('minute')
   const catalog = snapshot.catalog
   const harness = sessionHarness(catalog, summary)
+  const project = catalog ? projectOf(summary, catalog.workspaces) : undefined
+  const frozenFolders = summary.folders?.length ? summary.folders : summary.cwd ? [{ id: 'default', path: summary.cwd }] : []
+  const folderShell = local && admin ? shellFolders() : null
+  const allFolders = harness?.projectFolders?.access === 'all'
+  const saveSessionProject =
+    folderShell?.saveSessionFolder && summary.sessionFolder && !project
+      ? async () => {
+          setSavingProject(true)
+          setFolderError('')
+          try {
+            const result = await folderShell.saveSessionFolder!(summary.id)
+            if (result.status === 'added') {
+              onProjectsChanged?.()
+              const id = result.added[0]?.workspaceId
+              if (id) onEditProject?.(id)
+              if (result.refused.length) setFolderError('没有保存这个会话的文件夹，请在项目设置中重试。')
+            } else if (result.status === 'busy') setFolderError('另一个系统对话框还没结束。')
+            else if (result.status === 'failed') setFolderError('没有保存这个会话的文件夹，请同步后重试。')
+          } catch (cause) {
+            setFolderError(errorMessage(cause))
+          } finally {
+            setSavingProject(false)
+          }
+        }
+      : undefined
   const harnessName = harness ? harnessNameOf(harness) : (snapshot.harness?.name ?? 'Latch')
   const own = detail?.summary.id === summary.id ? detail : null
   const permission = own?.permission
@@ -395,17 +447,84 @@ export function Inspector({
           <span className="info-text">{snapshot.hostName}</span>
           {local && <Badge>本机</Badge>}
         </Row>
-        {summary.cwd && (
-          <Row icon={Folder} label="项目" two>
-            <span className="info-path">
-              <span className="info-path-name">{basename(summary.cwd)}</span>
-              <span className="info-path-line">
-                <MiddleText text={summary.cwd} className="info-path-full" />
-                <CopyButton text={summary.cwd} label="复制路径" size="xs" />
-              </span>
+        {summary.forkOf && (
+          <Row icon={Folder} label="分叉自">
+            <Button
+              aria-label="返回来源会话"
+              size="xs"
+              variant="ghost"
+              disabled={!onSource}
+              onClick={() => onSource?.(summary.forkOf!.taskId)}>
+              「<VisibleText text={summary.forkOf.title} />」
+            </Button>
+          </Row>
+        )}
+        {summary.mode !== 'chat' && project && (
+          <Row icon={Folder} label="项目">
+            <span className="info-text">
+              <VisibleText text={projectName(project)} />
             </span>
           </Row>
         )}
+        {summary.mode !== 'chat'
+          && frozenFolders.map((folder, index) => {
+            const currentFolder = project
+              ? projectFolders(project).find(item => item.id === folder.id && item.path === folder.path)
+              : undefined
+            const removed = project !== undefined && summary.folders !== undefined && currentFolder === undefined
+            const missing = currentFolder?.unavailable
+            return (
+              <Row
+                key={folder.id}
+                icon={Folder}
+                label={project ? (index === 0 ? '主文件夹' : '文件夹') : summary.sessionFolder ? '这个会话的文件夹' : '启动目录'}
+                two>
+                <span className="info-path" data-unused={index > 0 && !allFolders ? '' : undefined}>
+                  <span className="info-path-name">
+                    <VisibleText text={basename(folder.path)} />
+                    {missing ? <Badge tone="warn">找不到</Badge> : removed ? <Badge>已移出项目</Badge> : null}
+                  </span>
+                  <span className="info-path-line">
+                    <MiddleText text={folder.path} className="info-path-full" />
+                    {folderShell && project && currentFolder && !missing && (
+                      <IconButton
+                        label={revealLabel(currentShell()?.platform)}
+                        icon={FolderOpen}
+                        size="xs"
+                        onClick={() => {
+                          void folderShell
+                            .reveal(project.id, currentFolder.id)
+                            .then(result => {
+                              if (result.status === 'failed') setFolderError('找不到这个文件夹，请同步后重试。')
+                            })
+                            .catch(cause => setFolderError(errorMessage(cause)))
+                        }}
+                      />
+                    )}
+                    <CopyButton text={folder.path} label="复制路径" size="xs" />
+                  </span>
+                </span>
+              </Row>
+            )
+          })}
+        {summary.mode !== 'chat' && frozenFolders.length > 1 && harness && !allFolders && (
+          <p className="info-note">
+            {harness.name}：{folderAccessText(harness, frozenFolders.length)}
+          </p>
+        )}
+        {saveSessionProject && (
+          <Button
+            variant="ghost"
+            size="xs"
+            icon={FolderPlus}
+            loading={savingProject}
+            onClick={() => {
+              void saveSessionProject()
+            }}>
+            存为项目…
+          </Button>
+        )}
+        {folderError && <InlineNotice tone="error">{folderError}</InlineNotice>}
         {codeRoot && <CodeRootNotice workspace={codeRoot} className="info-code-root" {...(onNewProject ? { onNewProject } : {})} />}
       </Block>
 

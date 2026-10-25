@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { RotateCcw } from 'lucide-react'
+import { Ellipsis, GitFork, Copy, RotateCcw } from 'lucide-react'
 import type { TaskDetail } from '@latch/protocol'
 import {
   liveFacts,
@@ -19,7 +19,8 @@ import { hostNow, useTicker } from '../core/hostClock.ts'
 import { exactTokens, formatDuration, tokenAmount, tokenLines, tokenParts } from '../format.ts'
 import { TimeLabel } from './MessageRow.tsx'
 import { CopyButton } from './ui.tsx'
-import { Button, Collapse, Shimmer, Swap, Tooltip } from '@latch/ui'
+import { Menu } from './overlays.tsx'
+import { Button, Collapse, IconButton, Shimmer, Swap, Tooltip } from '@latch/ui'
 
 /** A fact of the footer with its details in a tooltip; it takes keyboard focus so the details are reachable. */
 function Fact({ tip, className, children }: { tip?: ReactNode; className?: string; children: ReactNode }) {
@@ -166,6 +167,7 @@ export function TurnFooter({
   settledLive = false,
   context,
   retry,
+  actions,
 }: {
   turn: Turn
   live?: { detail: TaskDetail; harness: string; cancelling: boolean; approvals: number; fallbackElapsed?: number }
@@ -177,6 +179,7 @@ export function TurnFooter({
   /** The context an agent last reported, for the newest turn of a session without per-turn tokens. */
   context?: number
   retry?: TurnRetry
+  actions?: { onFork?: () => void; onCopy: () => void }
 }) {
   // A turn the page watched settle keeps its footer shown for 3s; the change is taken during the render that sees it.
   const [watched, setWatched] = useState(settledLive)
@@ -215,6 +218,24 @@ export function TurnFooter({
           )}
         </Swap>
         {!live && text && <CopyButton text={text} label="复制回复" size="xs" />}
+        {!live && actions && (
+          <Menu
+            label="这一轮的操作"
+            placement="top-end"
+            sections={[
+              {
+                id: 'turn-actions',
+                items: [
+                  ...(actions.onFork
+                    ? [{ id: 'fork', label: '从这里分叉', leading: <GitFork size={14} />, onSelect: actions.onFork }]
+                    : []),
+                  { id: 'copy-history', label: '复制到这里为止的记录', leading: <Copy size={14} />, onSelect: actions.onCopy },
+                ],
+              },
+            ]}
+            trigger={props => <IconButton {...props} icon={Ellipsis} size="xs" label="这一轮的更多操作" />}
+          />
+        )}
         {!live && retry && (
           <Button
             size="xs"

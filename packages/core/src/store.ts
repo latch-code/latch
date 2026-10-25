@@ -82,6 +82,7 @@ const messageSchema = z.object({
   id: z.string(),
   role: z.enum(['system', 'user', 'assistant', 'tool']),
   text: z.string(),
+  requestId: z.string().optional(),
   toolName: z.string().optional(),
   state: z.enum(['queued', 'awaiting-approval', 'running', 'completed', 'failed', 'cancelled']).optional(),
   reasoning: z.string().optional(),

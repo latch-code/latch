@@ -56,6 +56,11 @@ export function foldersSigningText(hostId: string, deviceId: string, nonce: stri
   return `latch-folders-v1\n${hostId}\n${deviceId}\n${nonce}\n${bodyHash}`
 }
 
+/** A native sheet's proof: domain-separated, bound to this Host, device, ticket and full Host preview. */
+export function confirmationSigningText(hostId: string, deviceId: string, confirmationId: string, previewHash: string): string {
+  return `latch-confirm-v1\n${hostId}\n${deviceId}\n${confirmationId}\n${previewHash}`
+}
+
 export const ALL_SCOPES: readonly DeviceScope[] = ['view', 'run', 'approve:standard', 'approve:elevated', 'admin', 'secrets']
 /** Grantable only to devices enrolled over host.sock until a remote step-up exists. */
 export const UNIX_ONLY_SCOPES: readonly DeviceScope[] = ['approve:elevated', 'secrets']
@@ -895,6 +900,15 @@ export class DeviceStore {
     if (!device || !this.usable(device) || !device.publicKey || typeof input.signature !== 'string') throw invalid
     const { key } = parseP256Spki(device.publicKey)
     if (!verifyP256(key, foldersSigningText(this.hostId, device.id, nonce, input.bodyHash), input.signature)) throw invalid
+  }
+
+  verifyConfirmation(input: { deviceId: string; confirmationId: string; previewHash: string; signature: string }): void {
+    const invalid = new AppError(403, 'confirmation-signature-invalid', '本机确认没有通过桌面端签名校验')
+    const device = this.find(input.deviceId)
+    if (!device || !this.usable(device) || !isLocalListener(device.listener) || !device.publicKey) throw invalid
+    const { key } = parseP256Spki(device.publicKey)
+    if (!verifyP256(key, confirmationSigningText(this.hostId, device.id, input.confirmationId, input.previewHash), input.signature))
+      throw invalid
   }
 
   /**

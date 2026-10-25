@@ -11,6 +11,7 @@
     "@latch/sdk": "workspace:*",
     "@latch/testkit": "workspace:*",
     "@playwright/test": "catalog:",
+    "fflate": "catalog:",
     "vite": "catalog:"
   },
   "latch": {

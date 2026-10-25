@@ -2938,5 +2938,6 @@ describe('ACP times and usage reports', () => {
     const restored = await reopened.detail(sessionId)
     expect(restored.usageReport).toEqual(detail.usageReport)
     expect(restored.messages).toEqual(detail.messages)
+    expect(restored.messages.find(message => message.role === 'user')?.requestId).toEqual(expect.any(String))
   })
 })

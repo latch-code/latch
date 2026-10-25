@@ -1,3 +1,4 @@
+import { strToU8, zipSync } from 'fflate'
 import { _electron, type ElectronApplication, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
@@ -94,7 +95,20 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
       await mkdir(join(workspace, 'out'), { recursive: true })
       await writeFile(join(workspace, 'out', 'deck.pptx'), Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0, 0, 0]))
       await writeFile(join(workspace, 'out', 'paper.pdf'), '%PDF-1.7\n')
-      await writeFile(join(workspace, 'letter.docx'), Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0, 0, 0]))
+      await writeFile(
+        join(workspace, 'letter.docx'),
+        zipSync({
+          '[Content_Types].xml': strToU8(
+            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>',
+          ),
+          '_rels/.rels': strToU8(
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="doc" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>',
+          ),
+          'word/document.xml': strToU8(
+            '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Desktop document</w:t></w:r></w:p><w:sectPr/></w:body></w:document>',
+          ),
+        }),
+      )
       await writeFile(join(workspace, 'page.html'), '<p>x</p>')
       await writeFile(join(workspace, '.env'), `KEY=1\n${PEM_HEADER}\n`)
       await writeFile(join(workspace, '..', 'outside.md'), '# outside')
@@ -177,7 +191,7 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
       let menu = menuOf('deck.pptx')
       const open = async (name: string) => {
         menu = menuOf(name)
-        await chip(name).click()
+        await chip(name).click({ button: 'right' })
         await menu.waitFor()
       }
       const close = async () => {
@@ -229,14 +243,11 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
       await waitFor(async () => (await record()).shown.length === 1)
       expect((await record()).shown).toEqual([deck])
 
-      // A double click (Finder's way to open a file) leaves the menu open with what is offered, never busy.
-      menu = menuOf('paper.pdf')
+      // The primary double click opens the in-app preview, and never invokes a native action.
       await chip('paper.pdf').dblclick()
-      await menu.getByRole('menuitem', { name: '快速查看', exact: true }).waitFor()
-      await new Promise(done => setTimeout(done, 300))
-      expect(await menu.isVisible()).toBe(true)
-      expect(await menu.locator('.ui-menu-footer-note').count()).toBe(0)
-      await close()
+      await page.getByRole('region', { name: '文件预览', exact: true }).waitFor()
+      expect((await record()).previewed).toHaveLength(1)
+      await page.getByRole('button', { name: '关闭文件', exact: true }).click()
 
       // So does a Word document.
       await open('letter.docx')
@@ -288,7 +299,7 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
 
       // A Host slower than 400 ms: the menu opens with 「正在检查…」 and fills in when the answer comes.
       menu = menuOf('slow.md')
-      await chip('slow.md').click()
+      await chip('slow.md').click({ button: 'right' })
       await menu.waitFor()
       await menu.getByText('正在检查…').waitFor()
       expect(await items()).toEqual(['复制路径'])
@@ -313,16 +324,70 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
       // Main takes the next native action at least 500 ms after this one.
       await new Promise(done => setTimeout(done, 600))
 
-      // The page cannot reach the file routes itself, and the bridge passes nothing it does not check.
+      // A real Office preview loads only the public latch-frame bootstrap and cannot borrow the main bridge.
+      await chip('letter.docx').click()
+      const frame = page.frameLocator('iframe[title="文档预览"]')
+      await frame.getByText('Desktop document', { exact: true }).waitFor()
+      const documentFrame = page.frames().find(frame => frame.url().startsWith('latch-frame://preview/office.html'))!
+      expect(documentFrame).toBeDefined()
+      expect(await documentFrame.evaluate(() => typeof Reflect.get(globalThis, 'latchShell'))).toBe('undefined')
+      expect(
+        await documentFrame.evaluate(() => {
+          try {
+            void parent.document.body
+            return false
+          } catch {
+            return true
+          }
+        }),
+      ).toBe(true)
+      expect(
+        await documentFrame.evaluate(async () => {
+          try {
+            await fetch('latch://app/link/api/snapshot')
+            return false
+          } catch {
+            return true
+          }
+        }),
+      ).toBe(true)
+      await captureThemes(page, 'native-desktop-document-frame')
+      await page.getByRole('button', { name: '关闭文件', exact: true }).click()
+
+      // Preview bytes pass through Host adjudication; native actions remain in main.
       const direct = await page.evaluate(async id => {
         const response = await fetch(`/link/api/tasks/${id}/files/resolve`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ paths: ['out/deck.pptx'] }),
         })
-        return { status: response.status, body: await response.json() }
+        const body = (await response.json()) as { files: Array<{ file: { handle: string } }> }
+        const handle = body.files[0]!.file.handle
+        const bytes = await fetch(`/link/api/files/${handle}`, { headers: { range: 'bytes=0-3' } })
+        const local = await fetch(`/link/api/files/${handle}/local`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ sessionId: id, action: 'open' }),
+        })
+        return {
+          status: response.status,
+          bytes: Array.from(new Uint8Array(await bytes.arrayBuffer())),
+          range: bytes.headers.get('content-range'),
+          contentStatus: bytes.status,
+          attachment: bytes.headers.get('content-disposition')?.startsWith('attachment;'),
+          nativeStatus: local.status,
+          native: await local.json(),
+        }
       }, sessionId)
-      expect(direct).toEqual({ status: 403, body: { error: 'shell-managed', message: '文件操作由 Latch 桌面端管理' } })
+      expect(direct).toEqual({
+        status: 200,
+        contentStatus: 206,
+        bytes: [80, 75, 3, 4],
+        range: 'bytes 0-3/8',
+        attachment: true,
+        nativeStatus: 403,
+        native: { error: 'shell-managed', message: '文件操作由 Latch 桌面端管理' },
+      })
       const bridge = await page.evaluate(async id => {
         const shell: { files: Record<string, (...args: unknown[]) => Promise<unknown>> } = Reflect.get(globalThis, 'latchShell')
         return {

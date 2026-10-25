@@ -4,7 +4,7 @@
 // folders and what may be done with it, records the action in the audit log, and only then tells main the real path.
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { z } from 'zod'
-import { isLocalListener, type Device, type DeviceScope, type ListenerClass } from '@latch/protocol'
+import { isLocalListener, type Device, type DeviceScope, type ListenerClass, type TaskDetail } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { sha256Hex } from '@latch/core/node-kit'
 import { authFailure, localOnly, scopeRequired, type RateLimiter } from '../access.ts'
@@ -12,11 +12,17 @@ import type { AuditActor, AuditLog } from '../audit.ts'
 import { KIB, json, jsonBody, safeDecode } from '../http-util.ts'
 import { FileHandles, HANDLE } from './handles.ts'
 import { auditType } from './kinds.ts'
+import { canTruncate, contentLimit, fileEtag, fileFormat, imageDimensions } from './metadata.ts'
+import { isReferenced, isReferenceListed, sessionReferences } from './references.ts'
+import { openContent, sendContent } from './read.ts'
+import { FileReadQuota } from './quota.ts'
+import { searchFiles } from './search.ts'
 import {
   ProtectedPaths,
   fileVerdicts,
   resolveRecorded,
   resolveReference,
+  type ResolvedFile,
   type FileRoot,
   type ResolveOptions,
   type ResolveStatus,
@@ -31,7 +37,10 @@ export type FileAction = (typeof FILE_ACTIONS)[number]
 
 const resolveSchema = z.strictObject({
   paths: z.array(z.string().min(1).max(4096)).min(1).max(RESOLVE_LIMIT),
+  rootId: z.string().min(1).max(32).optional(),
+  showSecret: z.boolean().optional(),
 })
+const searchSchema = z.strictObject({ q: z.string().max(512), limit: z.number().int().min(1).max(100).default(100) })
 const actSchema = z.strictObject({
   sessionId: z.string().min(1).max(256),
   action: z.enum(FILE_ACTIONS),
@@ -74,6 +83,9 @@ export interface FileRoutesOptions {
   /** Throws when the device was revoked, lost the scope or no longer has the data scope all while the request waited. */
   recheck(caller: FileCaller, scope: DeviceScope): void
   actorOf(caller: FileCaller): AuditActor
+  /** Persisted session history supplies the references a work-scope device may read. */
+  sessionDetail?(sessionId: string): Promise<TaskDetail>
+  referencePaths?(sessionId: string, roots: readonly FileRoot[]): Promise<ReadonlySet<string>>
   /** Test seam only; the Host never sets it. */
   hooks?: ResolveOptions['hooks']
 }
@@ -86,11 +98,40 @@ function admit(caller: FileCaller, scope: DeviceScope): asserts caller is FileCa
   if (caller.device.dataScope !== 'all') throw new AppError(403, 'file-scope', '这台设备的数据范围不包括会话文件夹中的文件')
 }
 
+function admitRead(caller: FileCaller): asserts caller is FileCaller & { device: Device } {
+  if (!caller.device) throw authFailure('unauthorized')
+  if (!caller.device.scopes.includes('view')) throw scopeRequired('view')
+}
+
 const scopeOf = (action: FileAction): DeviceScope => (action === 'open' ? 'run' : 'view')
 
 export function createFileRoutes(options: FileRoutesOptions) {
   const handles = new FileHandles(options.now)
   const guard = new ProtectedPaths(options.protectedPaths)
+  const quota = new FileReadQuota(options.now)
+  const audited = new Map<string, number>()
+
+  async function referencesOf(sessionId: string, roots: readonly FileRoot[]): Promise<ReadonlySet<string>> {
+    if (options.referencePaths) return options.referencePaths(sessionId, roots)
+    return options.sessionDetail ? sessionReferences(await options.sessionDetail(sessionId), roots, options.home) : new Set()
+  }
+
+  async function auditRead(caller: FileCaller & { device: Device }, sessionId: string, file: ResolvedFile, limit: number): Promise<void> {
+    if (isLocalListener(caller.connection.listener)) return
+    const key = JSON.stringify([caller.device.id, sessionId, file.rootId, file.relativePath])
+    const now = options.now()
+    for (const [id, until] of audited) if (until <= now) audited.delete(id)
+    if (audited.has(key)) return
+    options.recheck(caller, 'view')
+    await options.audit.append({
+      action: 'file.view',
+      actor: options.actorOf(caller),
+      target: sessionId,
+      detail: { sessionId, pathHash: sha256Hex(file.realPath), type: auditType(file.ext), bytes: Math.min(file.size, limit) },
+    })
+    if (audited.size >= 4096) audited.delete(audited.keys().next().value!)
+    audited.set(key, now + 15 * 60 * 1000)
+  }
 
   async function rootsOf(sessionId: string): Promise<FileRoot[]> {
     const roots = await options.sessionRoots(sessionId)
@@ -108,18 +149,24 @@ export function createFileRoutes(options: FileRoutesOptions) {
 
   /** `POST /tasks/:id/files/resolve { paths }`: what each reference names, with a handle for each regular file. */
   async function resolveFiles(req: IncomingMessage, res: ServerResponse, caller: FileCaller, sessionId: string): Promise<void> {
-    admit(caller, 'view')
+    if (options.sessionDetail) admitRead(caller)
+    else admit(caller, 'view')
     const input = resolveSchema.parse(await jsonBody(req, 320 * KIB))
     options.limiter.take(caller.device.id)
     const roots = await rootsOf(sessionId)
+    const references = caller.device.dataScope === 'work' && options.sessionDetail ? await referencesOf(sessionId, roots) : undefined
     const resolveOptions: ResolveOptions = {
-      roots,
+      roots: input.rootId ? roots.filter(root => root.id === input.rootId) : roots,
       protectedPaths: guard,
       home: options.home,
       ...(options.hooks ? { hooks: options.hooks } : {}),
     }
     const files = []
     for (const path of [...new Set(input.paths)]) {
+      if (references && !isReferenceListed(path, references, resolveOptions.roots, options.home)) {
+        files.push({ input: path, status: 'not-referenced', code: 'file-not-referenced' })
+        continue
+      }
       const result = await resolveReference(path, resolveOptions)
       const position = {
         ...(result.line === undefined ? {} : { line: result.line }),
@@ -130,7 +177,17 @@ export function createFileRoutes(options: FileRoutesOptions) {
         continue
       }
       const { file } = result
+      if (references && !isReferenced(references, file)) {
+        files.push({ input: path, status: 'not-referenced', code: 'file-not-referenced', ...position })
+        continue
+      }
       const verdicts = fileVerdicts(file)
+      const local = isLocalListener(caller.connection.listener)
+      const format = fileFormat(file)
+      const limit = contentLimit(format.kind, local)
+      const secretAllowed = local && input.showSecret === true
+      const canRead = (!file.secret || secretAllowed) && (file.size <= limit || canTruncate(format.kind))
+      if (options.sessionDetail && canRead) await auditRead(caller, sessionId, file, limit)
       const refused = Object.fromEntries(
         Object.entries(verdicts).flatMap(([action, verdict]) => (verdict.ok ? [] : [[action, verdict.code]])),
       )
@@ -139,14 +196,40 @@ export function createFileRoutes(options: FileRoutesOptions) {
         status: 'ok',
         ...position,
         file: {
-          handle: handles.issue({ deviceId: caller.device.id, sessionId, rootId: file.rootId, relativePath: file.relativePath }),
+          handle: handles.issue({
+            deviceId: caller.device.id,
+            sessionId,
+            rootId: file.rootId,
+            relativePath: file.relativePath,
+            ...(secretAllowed ? { allowSecret: true as const } : {}),
+          }),
           name: file.name,
           root: file.rootId,
           path: file.relativePath,
           ext: file.ext,
           size: file.size,
           secret: file.secret,
-          actions: { reveal: verdicts.reveal.ok, quicklook: verdicts.quicklook.ok, open: verdicts.open.ok },
+          ...(options.sessionDetail
+            ? {
+                ...format,
+                mtime: file.mtimeMs,
+                etag: fileEtag(file),
+                limit,
+                ...(file.size > limit && canTruncate(format.kind) ? { truncated: true } : {}),
+                ...(format.kind === 'image' ? imageDimensions(file.head, format.mime) : {}),
+              }
+            : {}),
+          actions: {
+            reveal: local && verdicts.reveal.ok,
+            quicklook: local && verdicts.quicklook.ok,
+            open: local && verdicts.open.ok,
+            ...(options.sessionDetail
+              ? {
+                  download: canRead && file.size <= limit,
+                  preview: canRead && (file.size <= limit || canTruncate(format.kind)) && format.kind !== 'binary',
+                }
+              : {}),
+          },
           ...(Object.keys(refused).length ? { refused } : {}),
         },
       })
@@ -191,13 +274,116 @@ export function createFileRoutes(options: FileRoutesOptions) {
       target: input.sessionId,
       detail: { sessionId: input.sessionId, pathHash: sha256Hex(result.file.realPath), type: auditType(result.file.ext) },
     })
+    await rootsOf(input.sessionId)
     options.recheck(caller, scope)
     json(res, { file: { path: result.file.realPath, name: result.file.name, ext: result.file.ext } })
+  }
+
+  async function read(req: IncomingMessage, res: ServerResponse, caller: FileCaller, handle: string, meta: boolean): Promise<void> {
+    admitRead(caller)
+    options.limiter.take(caller.device.id)
+    if (!HANDLE.test(handle)) throw new AppError(400, 'file-invalid', '这不是有效的文件句柄')
+    const found = handles.use(handle, caller.device.id)
+    if (!found.ok)
+      throw new AppError(
+        found.reason === 'foreign' ? 403 : 410,
+        found.reason === 'foreign' ? 'file-handle-foreign' : 'file-handle-expired',
+        '文件已不可用，请重新打开',
+      )
+    const lease = quota.begin(caller.device.id, isLocalListener(caller.connection.listener))
+    try {
+      const entry = found.entry
+      const roots = await rootsOf(entry.sessionId)
+      const result = await resolveRecorded(entry.rootId, entry.relativePath, {
+        roots,
+        protectedPaths: guard,
+        home: options.home,
+        ...(options.hooks ? { hooks: options.hooks } : {}),
+      })
+      if (result.status !== 'ok') {
+        const failure = STATUS_CODE[result.status]
+        throw new AppError(failure.status, failure.code, failure.message)
+      }
+      const file = result.file
+      if (caller.device.dataScope === 'work' && (!options.sessionDetail || !isReferenced(await referencesOf(entry.sessionId, roots), file)))
+        throw new AppError(403, 'file-not-referenced', '这台设备只能查看本会话提到过的文件')
+      const local = isLocalListener(caller.connection.listener)
+      const allowSecret = local && entry.allowSecret === true
+      const format = fileFormat(file)
+      const limit = contentLimit(format.kind, local)
+      options.recheck(caller, 'view')
+      if (meta) {
+        const fd = await openContent(file, true)
+        await fd.close()
+        options.recheck(caller, 'view')
+        json(res, {
+          file: {
+            handle,
+            name: file.name,
+            root: file.rootId,
+            path: file.relativePath,
+            ext: file.ext,
+            ...format,
+            size: file.size,
+            mtime: file.mtimeMs,
+            etag: fileEtag(file),
+            secret: file.secret,
+            limit,
+            ...(format.kind === 'image' ? imageDimensions(file.head, format.mime) : {}),
+          },
+        })
+        return
+      }
+      if (file.secret && !allowSecret) throw new AppError(403, 'file-secret', '这个文件可能含密钥，只在运行 Latch 的电脑上确认显示')
+      const dimensions = format.kind === 'image' ? imageDimensions(file.head, format.mime) : undefined
+      if (dimensions && dimensions.width * dimensions.height > (local ? 100_000_000 : 50_000_000))
+        throw new AppError(413, 'file-too-large', '图片像素过多，无法在这里预览')
+      if (file.size > limit && !canTruncate(format.kind)) throw new AppError(413, 'file-too-large', '文件超过这台设备的预览上限')
+      await auditRead(caller, entry.sessionId, file, limit)
+      await sendContent(req, res, file, {
+        mime: format.mime,
+        limit,
+        allowSecret,
+        recheck: async () => {
+          options.recheck(caller, 'view')
+          await rootsOf(entry.sessionId)
+          options.recheck(caller, 'view')
+        },
+        consume: lease.consume,
+      })
+    } finally {
+      lease.release()
+    }
+  }
+
+  async function search(req: IncomingMessage, res: ServerResponse, caller: FileCaller, sessionId: string): Promise<void> {
+    admitRead(caller)
+    if (caller.device.dataScope !== 'all') throw new AppError(403, 'file-scope', '这台设备只能打开本会话提到过的文件，不能搜索文件夹')
+    const input = searchSchema.parse(await jsonBody(req))
+    options.limiter.take(caller.device.id)
+    const roots = await rootsOf(sessionId)
+    const result = await searchFiles(roots, guard, input.q, input.limit, () => res.destroyed)
+    options.recheck(caller, 'view')
+    json(res, result)
   }
 
   return {
     /** Answers the file routes; false for any other path, which the caller goes on to route. */
     async handle(req: IncomingMessage, res: ServerResponse, caller: FileCaller, path: string, method: string): Promise<boolean> {
+      if (options.sessionDetail) {
+        const content = /^\/link\/api\/files\/([^/]+)(\/meta)?$/u.exec(path)
+        if (content && (method === 'GET' || method === 'HEAD')) {
+          await read(req, res, caller, safeDecode(content[1]!), content[2] !== undefined)
+          return true
+        }
+        const searchRoute = /^\/link\/api\/tasks\/([^/]+)\/files\/search$/u.exec(path)
+        if (searchRoute && method === 'POST') {
+          const sessionId = safeDecode(searchRoute[1]!)
+          if (sessionId.length > 256) throw new AppError(400, 'invalid-session', '会话标识过长')
+          await search(req, res, caller, sessionId)
+          return true
+        }
+      }
       const resolveRoute = /^\/link\/api\/tasks\/([^/]+)\/files\/resolve$/u.exec(path)
       if (resolveRoute && method === 'POST') {
         const sessionId = safeDecode(resolveRoute[1]!)

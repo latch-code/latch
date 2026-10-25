@@ -24,6 +24,8 @@ export interface HubCreateInput extends CreateTaskInput {
   workspaceId?: string
   /** The name of the folder the Host made for this session alone in its start directory (`cwd`); never sent to the driver. */
   sessionFolder?: string
+  forkOf?: TaskSummary['forkOf']
+  initialTitle?: string
 }
 
 /** Host-level session metadata; it applies to every harness. `title: null` removes an override. */
@@ -345,11 +347,21 @@ export class HarnessHub implements Bridge {
     const member = await this.route(sessionId)
     const detail = await member.bridge.detail(sessionId)
     for (const approval of detail.approvals) this.rememberApproval(approval.id, member.driver.id)
-    return { ...detail, summary: this.present(member.driver.id, detail.summary), permission: this.permission(member, detail.permission) }
+    const fork = this.meta.get(sessionId)?.forkOf
+    const firstUser = detail.messages.findIndex(message => message.role === 'user')
+    const messages = fork
+      ? detail.messages.map((message, index) => (index === firstUser ? { ...message, forkContext: fork } : message))
+      : detail.messages
+    return {
+      ...detail,
+      messages,
+      summary: this.present(member.driver.id, detail.summary),
+      permission: this.permission(member, detail.permission),
+    }
   }
 
   async createTask(input: HubCreateInput): Promise<{ sessionId: string }> {
-    const { harnessId, workspaceId, folders, sessionFolder, ...rest } = input
+    const { harnessId, workspaceId, folders, sessionFolder, forkOf, initialTitle, ...rest } = input
     const id = harnessId ?? this.options.defaultId()
     const entry = this.entries.get(id)
     if (!entry?.bridge) throw new AppError(409, 'harness-unavailable', `Harness ${id} 当前不可用`)
@@ -364,6 +376,12 @@ export class HarnessHub implements Bridge {
       await this.meta
         .update(result.sessionId, current => ({ ...current, workspaceId, ...(sessionFolder ? { sessionFolder } : {}) }))
         .catch(error => this.log(`会话 ${result.sessionId} 的项目记录写入失败：${message(error)}`))
+    if (forkOf)
+      await this.meta.update(result.sessionId, current => {
+        if (current.forkOf && (current.forkOf.taskId !== forkOf.taskId || current.forkOf.upToMessageId !== forkOf.upToMessageId))
+          throw new AppError(409, 'request-conflict', '同一个请求标识不能分叉自不同位置')
+        return current.forkOf ? current : { ...current, forkOf, ...(initialTitle ? { title: initialTitle.slice(0, 120) } : {}) }
+      })
     return result
   }
 
@@ -575,7 +593,7 @@ export class HarnessHub implements Bridge {
 
   private present(harnessId: string, summary: TaskSummary): TaskSummary {
     // Only the Host makes a session's own folder: a driver's claim is dropped.
-    const { pinned: _pinned, archived: _archived, level: _level, sessionFolder: _sessionFolder, runId, ...rest } = summary
+    const { pinned: _pinned, archived: _archived, level: _level, sessionFolder: _sessionFolder, forkOf: _forkOf, runId, ...rest } = summary
     const meta = this.meta.get(summary.id)
     return {
       ...rest,
@@ -588,6 +606,7 @@ export class HarnessHub implements Bridge {
       ...(meta?.pinned ? { pinned: true } : {}),
       ...(meta?.archived ? { archived: true } : {}),
       ...(meta?.workspaceId ? { workspaceId: meta.workspaceId } : {}),
+      ...(meta?.forkOf ? { forkOf: meta.forkOf } : {}),
       ...(meta?.sessionFolder ? { sessionFolder: true as const } : {}),
     }
   }

@@ -519,7 +519,7 @@ describe('approval cards', () => {
     expect(resting).toContain(APPROVAL_COPY.localNote)
     // An older Host's ticket has no sentence: the card still says it waits for Touch ID.
     const older = approvalCard({ risk: 'R2' }, { confirming: 'waiting' }, gate)
-    expect(older).toContain(CONFIRMATION_COPY.waiting)
+    expect(older).toContain(CONFIRMATION_COPY.waitingShell)
     expect(older).not.toContain(APPROVAL_COPY.localNote)
     expect(buttonLabels(older)).toEqual(['拒绝', APPROVAL_COPY.allowLocal])
     // With the ticket: the sentence the system sheet shows, 取消 and the Host's details, in the card itself.

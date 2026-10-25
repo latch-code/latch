@@ -81,6 +81,13 @@ contextBridge.exposeInMainWorld(
     kind: 'electron',
     devMode: true,
     platform: process.platform,
+    confirmations: Object.freeze({
+      protocolVersion: 1,
+      confirm: id =>
+        typeof id === 'string' && /^cfm_[A-Za-z0-9_-]{22}$/.test(id)
+          ? ipcRenderer.invoke('latch:confirmations:confirm', id)
+          : Promise.resolve(INVALID),
+    }),
     folders: Object.freeze({
       protocolVersion: 1,
       /** No project: a new project. A project: more folders for it; with a folder, that folder chosen again. */

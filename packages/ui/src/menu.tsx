@@ -570,6 +570,8 @@ export interface ValuePickerProps<T extends string> extends LayerPlacement {
   width?: number
   /** A search row on top of the menu, for long lists such as models. */
   searchable?: boolean
+  /** Optional domain-specific match; the default is a literal substring. */
+  searchMatch?: (option: PickerOption<T>, query: string) => boolean
   disabled?: boolean
   /** The tooltip of a disabled picker (also read as its description): why it cannot change. */
   disabledReason?: string
@@ -616,6 +618,7 @@ export function ValuePicker<T extends string>({
   valueText: shownText,
   width,
   searchable = false,
+  searchMatch,
   disabled = false,
   disabledReason,
   variant = 'inline',
@@ -718,7 +721,12 @@ export function ValuePicker<T extends string>({
 
   const visibleGroups =
     searchable && query
-      ? all.map(group => ({ ...group, options: group.options.filter(option => option.label.toLowerCase().includes(query.toLowerCase())) }))
+      ? all.map(group => ({
+          ...group,
+          options: group.options.filter(option =>
+            searchMatch ? searchMatch(option, query) : option.label.toLowerCase().includes(query.toLowerCase()),
+          ),
+        }))
       : all
   const sections: MenuSection[] = visibleGroups.map(group => ({
     id: group.id,

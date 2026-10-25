@@ -888,3 +888,21 @@ describe('a layer whose content changes', () => {
     expect(document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)).toBe(last)
   })
 })
+
+it('lets a value picker use a domain-specific search without changing labels', async () => {
+  const screen = await render(
+    <ValuePicker
+      label="模型模糊搜索"
+      value={undefined}
+      options={MODELS}
+      onValueChange={() => {}}
+      searchable
+      searchMatch={(option, query) => option.value.startsWith(query.slice(0, 1))}
+    />,
+  )
+  await screen.getByRole('button', { name: /模型模糊搜索/u }).click()
+  await page.getByRole('searchbox').fill('bm')
+  await expect.element(page.getByRole('menuitemradio', { name: 'beta-mini', exact: true })).toBeVisible()
+  await expect.element(page.getByRole('menuitemradio', { name: 'alpha-large', exact: true })).not.toBeInTheDocument()
+  await userEvent.keyboard('{Escape}{Escape}')
+})

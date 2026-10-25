@@ -14,13 +14,13 @@ import {
   type ShownToolState,
 } from '../conversation.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
-import { formatDuration } from '../format.ts'
+import { argumentView, formatDuration } from '../format.ts'
 import { toolKind, toolKindIcons } from '../icons.tsx'
 import { approvalActions, type ApprovalGate } from '../core/permissions.ts'
 import { ApprovalPill, ApprovalSlot, approvalHidesText, type DecideHandler } from './ApprovalCard.tsx'
 import { ArgumentList } from './ArgumentList.tsx'
 import { DiffView } from './DiffView.tsx'
-import { FileChip } from './FileChip.tsx'
+import { FileChip, FileRootContext } from './FileChip.tsx'
 import { toolFileTargets, useKnownFiles } from './FileReferences.tsx'
 import { CopyButton } from './ui.tsx'
 import { DecisionRecord, DecisionWords } from './DecisionRecord.tsx'
@@ -146,7 +146,10 @@ export const ToolCard = memo(
     const showOutput = message !== null && state !== 'awaiting-approval' && state !== 'queued'
     const gate = approval ? gateFor(approval) : undefined
     // In the desktop app, the files a finished tool read or wrote become path chips once the Host says they are files.
-    const files = useKnownFiles(message ? toolFileTargets(message) : [], state === 'completed' || state === 'failed')
+    const input = argumentView(tool?.input)
+    const folder = input.kind === 'entries' ? input.entries.find(([key]) => key === 'folder')?.[1] : undefined
+    const rootId = folder && /^[A-Za-z0-9_-]{1,32}$/u.test(folder) ? folder : undefined
+    const files = useKnownFiles(message ? toolFileTargets(message) : [], state === 'completed' || state === 'failed', rootId)
     const hidden = approval !== undefined && approvalHidesText(approval, title, diffs)
     const glyph =
       shown === 'failed' ? (
@@ -215,91 +218,93 @@ export const ToolCard = memo(
     // The tray turns red only for a high-risk request, a current Host's request without a risk included.
     const risk = gate === undefined ? '' : gate.kind === 'advisory' ? ' is-advisory' : gate.badge?.tone === 'err' ? ' is-r2' : ''
     return (
-      <article
-        ref={card}
-        className={`tool-card tool-${shown} ${approval ? 'has-approval' : ''}${risk}`}
-        data-open={open ? '' : undefined}
-        data-tint={risk === ' is-r2' ? 'err' : undefined}
-        data-secure={approval ? '' : undefined}
-        data-approval-id={approval?.id}
-        data-risk={approval?.advisory ? 'advisory' : approval?.risk}
-        {...(message ? { 'data-message-id': message.id } : {})}>
-        {approval ? (
-          <div className="tool-card-header">{heading}</div>
-        ) : (
-          <div className="tool-tray">
-            <button
-              type="button"
-              className="tool-card-header"
-              aria-expanded={open}
-              aria-controls={bodyId}
-              title={tooltip || undefined}
-              onClick={() => {
-                setChoice(!open)
-              }}>
-              {heading}
-              <ChevronRight className="process-chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
-            </button>
+      <FileRootContext.Provider value={rootId}>
+        <article
+          ref={card}
+          className={`tool-card tool-${shown} ${approval ? 'has-approval' : ''}${risk}`}
+          data-open={open ? '' : undefined}
+          data-tint={risk === ' is-r2' ? 'err' : undefined}
+          data-secure={approval ? '' : undefined}
+          data-approval-id={approval?.id}
+          data-risk={approval?.advisory ? 'advisory' : approval?.risk}
+          {...(message ? { 'data-message-id': message.id } : {})}>
+          {approval ? (
+            <div className="tool-card-header">{heading}</div>
+          ) : (
+            <div className="tool-tray">
+              <button
+                type="button"
+                className="tool-card-header"
+                aria-expanded={open}
+                aria-controls={bodyId}
+                title={tooltip || undefined}
+                onClick={() => {
+                  setChoice(!open)
+                }}>
+                {heading}
+                <ChevronRight className="process-chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+              </button>
+              <Collapse
+                id={bodyId}
+                open={open}
+                lazy
+                onReveal={() => {
+                  setChoice(true)
+                }}>
+                <div className="tool-card-body">
+                  {files.length > 0 && (
+                    <section>
+                      <h4>文件</h4>
+                      <p className="tool-files">
+                        {files.map(path => (
+                          <FileChip key={path} path={path} />
+                        ))}
+                      </p>
+                    </section>
+                  )}
+                  <section>
+                    <h4>参数</h4>
+                    <ArgumentList text={tool?.input} covered={evidence ? diffs.map(diff => diff.newText) : []} />
+                  </section>
+                  {evidence && (
+                    <section>
+                      <h4>变更</h4>
+                      <DiffView diffs={diffs} />
+                    </section>
+                  )}
+                  {showOutput && (
+                    <section>
+                      <div className="tool-section-head">
+                        <h4>输出</h4>
+                        {output && <CopyButton text={output} label="复制输出" size="xs" />}
+                      </div>
+                      {output ? (
+                        <ToolOutput text={output} running={state === 'running'} />
+                      ) : (
+                        <p className="muted-line">{state === 'running' ? '执行中，结果返回后显示。' : '没有输出'}</p>
+                      )}
+                    </section>
+                  )}
+                </div>
+              </Collapse>
+            </div>
+          )}
+          {/* A call the agent reports as run after it was not allowed: one line under the row says so. */}
+          {contradicted && <DecisionRecord decision={contradicted} />}
+          {/* Closed, the changes stay in view under the row; open, they are the paper's 变更 and this one folds away. */}
+          {evidence && (
             <Collapse
-              id={bodyId}
-              open={open}
+              open={!open}
               lazy
               onReveal={() => {
-                setChoice(true)
+                setChoice(false)
               }}>
-              <div className="tool-card-body">
-                {files.length > 0 && (
-                  <section>
-                    <h4>文件</h4>
-                    <p className="tool-files">
-                      {files.map(path => (
-                        <FileChip key={path} path={path} />
-                      ))}
-                    </p>
-                  </section>
-                )}
-                <section>
-                  <h4>参数</h4>
-                  <ArgumentList text={tool?.input} covered={evidence ? diffs.map(diff => diff.newText) : []} />
-                </section>
-                {evidence && (
-                  <section>
-                    <h4>变更</h4>
-                    <DiffView diffs={diffs} />
-                  </section>
-                )}
-                {showOutput && (
-                  <section>
-                    <div className="tool-section-head">
-                      <h4>输出</h4>
-                      {output && <CopyButton text={output} label="复制输出" size="xs" />}
-                    </div>
-                    {output ? (
-                      <ToolOutput text={output} running={state === 'running'} />
-                    ) : (
-                      <p className="muted-line">{state === 'running' ? '执行中，结果返回后显示。' : '没有输出'}</p>
-                    )}
-                  </section>
-                )}
-              </div>
+              <DiffView diffs={diffs} />
             </Collapse>
-          </div>
-        )}
-        {/* A call the agent reports as run after it was not allowed: one line under the row says so. */}
-        {contradicted && <DecisionRecord decision={contradicted} />}
-        {/* Closed, the changes stay in view under the row; open, they are the paper's 变更 and this one folds away. */}
-        {evidence && (
-          <Collapse
-            open={!open}
-            lazy
-            onReveal={() => {
-              setChoice(false)
-            }}>
-            <DiffView diffs={diffs} />
-          </Collapse>
-        )}
-        <ApprovalSlot approval={approval} gate={gate} title={title} diffs={diffs} hidden={hidden} busy={busy} onDecide={onDecide} />
-      </article>
+          )}
+          <ApprovalSlot approval={approval} gate={gate} title={title} diffs={diffs} hidden={hidden} busy={busy} onDecide={onDecide} />
+        </article>
+      </FileRootContext.Provider>
     )
   },
   (a, b) =>

@@ -29,5 +29,7 @@ export function isSecretPath(relativePath: string, head: Uint8Array): boolean {
 
 /** By content: a text file whose first bytes hold a credential itself (a private key, a service key, Latch's own). */
 export function hasSecretContent(head: Uint8Array): boolean {
-  return matchesFamily('text', head) && containsSecret(new TextDecoder('utf-8', { fatal: false }).decode(head))
+  if (!matchesFamily('text', head)) return false
+  const encoding = head[0] === 0xff && head[1] === 0xfe ? 'utf-16le' : head[0] === 0xfe && head[1] === 0xff ? 'utf-16be' : 'utf-8'
+  return containsSecret(new TextDecoder(encoding, { fatal: false }).decode(head))
 }

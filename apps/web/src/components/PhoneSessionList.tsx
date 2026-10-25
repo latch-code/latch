@@ -1,4 +1,5 @@
-import { memo, useMemo, useRef, useState, type PointerEvent, type ReactNode, type RefObject } from 'react'
+import { ProjectGroupHeading, ProjectsHeading, type ProjectNavigationActions } from './ProjectNavigation.tsx'
+import { Fragment, memo, useMemo, useRef, useState, type PointerEvent, type ReactNode, type RefObject } from 'react'
 import { ChevronRight, Inbox, Laptop, Plus, RefreshCw, Search, Settings, SquarePen } from 'lucide-react'
 import type { AppSnapshot, TaskSummary } from '@latch/protocol'
 import { BUILTIN_HARNESS_NAME } from '../composerChoice.ts'
@@ -149,8 +150,10 @@ function PhoneGroup({
   now,
   onSelect,
   onNewIn,
+  onEditProject,
+  onProjectsChanged,
   onHold,
-}: {
+}: ProjectNavigationActions & {
   group: SessionGroup
   snapshot: AppSnapshot
   context: string
@@ -168,20 +171,30 @@ function PhoneGroup({
   const workspaceId = group.workspaceId
   return (
     <section className="phone-group" aria-label={group.label} data-flip-id={`group:${group.id}`} data-flip-scope="">
-      <div className="phone-group-head">
-        <h2 className="phone-group-label">{group.label}</h2>
-        {workspaceId !== undefined && onNewIn && (
-          <IconButton
-            className="phone-group-new"
-            size="xs"
-            label={`在 ${group.label} 中新建会话`}
-            icon={Plus}
-            onClick={() => {
-              onNewIn(workspaceId)
-            }}
-          />
-        )}
-      </div>
+      {group.project ? (
+        <ProjectGroupHeading
+          project={group.project}
+          onNew={workspaceId && onNewIn ? () => onNewIn(workspaceId) : undefined}
+          onEditProject={onEditProject}
+          onProjectsChanged={onProjectsChanged}
+        />
+      ) : (
+        <div className="phone-group-head">
+          <h2 className="phone-group-label">{group.label}</h2>
+          {workspaceId !== undefined && onNewIn && (
+            <IconButton
+              className="phone-group-new"
+              size="xs"
+              label={`在 ${group.label} 中新建会话`}
+              icon={Plus}
+              onClick={() => {
+                onNewIn(workspaceId)
+              }}
+            />
+          )}
+        </div>
+      )}
+
       <ul className="phone-card">
         {rows.map(({ item: task, leaving }) => (
           <PhoneRow
@@ -227,13 +240,16 @@ export function PhoneSessionList({
   onSelect,
   onNew,
   onNewIn,
+  onCreateProject,
+  onEditProject,
+  onProjectsChanged,
   onApprovals,
   onSettings,
   onRefresh,
   sessionMenu,
   now,
   banners,
-}: {
+}: ProjectNavigationActions & {
   snapshot: AppSnapshot
   searchResults?: import('react').ReactNode
   archiveBatch?: import('react').ReactNode
@@ -272,7 +288,8 @@ export function PhoneSessionList({
     searchButton.current?.focus({ preventScroll: true })
   }
   const visible = filterSessions(snapshot.tasks, filter, search)
-  const groups = groupSessions(visible, snapshot.catalog?.workspaces)
+  const projectSections = snapshot.catalog?.projectFolders !== undefined && !search && filter === 'all'
+  const groups = groupSessions(visible, snapshot.catalog?.workspaces, { includeEmpty: projectSections })
   const approvals = snapshot.approvals.length
   // The card shows only while something waits, so its count is told the value it rose from.
   const approvalsBefore = useLivePrevious(approvals)
@@ -354,23 +371,36 @@ export function PhoneSessionList({
               )}
             </div>
           ) : (
-            groups.map(group => (
-              <PhoneGroup
-                key={group.id}
-                group={group}
-                snapshot={snapshot}
-                context={context}
-                settled={remeasure}
-                selectedId={selectedId}
-                heldId={heldTask?.id}
-                isUnread={isUnread}
-                cancelling={cancelling}
-                now={now}
-                onSelect={onSelect}
-                onNewIn={onNewIn}
-                onHold={setHeld}
-              />
+            groups.map((group, index) => (
+              <Fragment key={group.id}>
+                {projectSections && group.id !== 'pinned' && (index === 0 || groups[index - 1]?.id === 'pinned') && (
+                  <ProjectsHeading
+                    empty={!snapshot.catalog?.workspaces.some(item => item.id !== 'default')}
+                    onCreateProject={onCreateProject}
+                  />
+                )}
+                <PhoneGroup
+                  key={group.id}
+                  group={group}
+                  snapshot={snapshot}
+                  context={context}
+                  settled={remeasure}
+                  selectedId={selectedId}
+                  heldId={heldTask?.id}
+                  isUnread={isUnread}
+                  cancelling={cancelling}
+                  now={now}
+                  onSelect={onSelect}
+                  onNewIn={onNewIn}
+                  onHold={setHeld}
+                  onEditProject={onEditProject}
+                  onProjectsChanged={onProjectsChanged}
+                />
+              </Fragment>
             ))
+          )}
+          {projectSections && groups.every(group => group.id === 'pinned') && (
+            <ProjectsHeading empty={!snapshot.catalog?.workspaces.some(item => item.id !== 'default')} onCreateProject={onCreateProject} />
           )}
         </nav>
         <footer className="phone-list-foot">

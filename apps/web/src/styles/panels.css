@@ -117,3 +117,12 @@
   color: var(--text-2);
   font-weight: 500;
 }
+
+.info-path[data-unused] {
+  color: var(--text-3);
+}
+.info-path-name {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+}

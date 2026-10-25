@@ -429,6 +429,7 @@ let targetSlot = slot("target", 48, keepEnd: true)
 
 /// The same table as REASON_FORMS in apps/host/src/presence-reason.ts; the shared vectors pin both.
 let reasonForms: [String: ReasonForm] = [
+  "agent.probe": ReasonForm(actions: ["agent.probe"], segments: [.text("测试启动 "), harnessSlot, .text("（不发送提示词）：")] + command),
   "approval.write": ReasonForm(actions: ["approval.r2"], segments: [
     .text("批准写入 "), slot("path", 40, keepEnd: true), .text("（"), whySlot, .text("）"),
   ]),
@@ -597,12 +598,31 @@ func readRequestLine(limit: Int) -> Data {
 // MARK: - Self-test (no LocalAuthentication)
 
 enum SelfTest {
+  // The helper does not approve Electron sheets; it checks their separate signing domain against the shared vector.
+  static func confirmationSigning(_ root: JSONValue) -> Bool {
+    func decoded(_ value: String) -> Data? {
+      let base64 = value.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+      return Data(base64Encoded: base64 + String(repeating: "=", count: (4 - base64.count % 4) % 4))
+    }
+    guard let example = root["signing"]?["confirmations"]?["example"],
+          let hostId = example["hostId"]?.stringValue, let deviceId = example["deviceId"]?.stringValue,
+          let confirmationId = example["confirmationId"]?.stringValue, let previewHash = example["previewHash"]?.stringValue,
+          let expected = example["text"]?.stringValue,
+          let spki = root["p256"]?["spki"]?.stringValue, let publicData = decoded(spki), publicData.count >= 65,
+          let encodedSignature = example["signature"]?.stringValue, let signatureData = decoded(encodedSignature),
+          let key = try? P256.Signing.PublicKey(x963Representation: publicData.suffix(65)),
+          let signature = try? P256.Signing.ECDSASignature(rawRepresentation: signatureData) else { return false }
+    let text = ["latch-confirm-v1", hostId, deviceId, confirmationId, previewHash].joined(separator: "\n")
+    return Array(text.utf16) == Array(expected.utf16) && key.isValidSignature(signature, for: Data(text.utf8))
+  }
+
   static func run(path: String) -> Int32 {
     guard let data = FileManager.default.contents(atPath: path), let root = try? JSONParser.parse([UInt8](data)) else {
       FileHandle.standardOutput.write(Data("{\"v\":1,\"ok\":false,\"error\":\"vectors-unreadable\"}\n".utf8))
       return 1
     }
-    var ok = true
+    let confirmationSigningResult = confirmationSigning(root)
+    var ok = confirmationSigningResult
     var canonicalResults: [String] = []
     var cases: [JSONValue] = []
     if let single = root["canonicalJson"] { cases.append(single) }
@@ -678,7 +698,7 @@ enum SelfTest {
         requestResults.append("\"\(outcome)\"")
       }
     } else { ok = false }
-    let line = "{\"v\":1,\"ok\":\(ok),\"canonicalJson\":[\(canonicalResults.joined(separator: ","))],\"previewHash\":[\(previewResults.joined(separator: ","))],\"escapePreviewText\":[\(escapeResults.joined(separator: ","))],\"presenceReason\":[\(reasonResults.joined(separator: ","))],\"presenceRequest\":[\(requestResults.joined(separator: ","))]}\n"
+    let line = "{\"v\":1,\"ok\":\(ok),\"confirmationSigning\":\(confirmationSigningResult),\"canonicalJson\":[\(canonicalResults.joined(separator: ","))],\"previewHash\":[\(previewResults.joined(separator: ","))],\"escapePreviewText\":[\(escapeResults.joined(separator: ","))],\"presenceReason\":[\(reasonResults.joined(separator: ","))],\"presenceRequest\":[\(requestResults.joined(separator: ","))]}\n"
     FileHandle.standardOutput.write(Data(line.utf8))
     return ok ? 0 : 1
   }

@@ -1,3 +1,4 @@
+import { FileOpenContext } from '../preview/fileContext.ts'
 import { createContext, useContext, useEffect, useRef, useState, type MutableRefObject, type ReactNode } from 'react'
 import { AppWindow, Check, CircleAlert, Copy, Eye, FolderOpen, Info, Lock } from 'lucide-react'
 import {
@@ -21,7 +22,9 @@ export interface FileSessionInfo {
   id: string
   /** The session's working directory, which relative references start from. */
   folder?: string
+  folders?: Array<{ id: string; path: string }>
 }
+export const FileRootContext = createContext<string | undefined>(undefined)
 export const FileSession = createContext<FileSessionInfo | undefined>(undefined)
 
 /** How long the desktop menu waits for the Host's answer before it opens with 「正在检查…」. */
@@ -31,6 +34,9 @@ const TONE_ICON: Record<FileNote['tone'], LucideIcon> = { lock: Lock, info: Info
 interface ChipProps {
   /** The reference as the reader sees it (what the Host is asked about). */
   path: string
+  rootId?: string
+  onPreview?: () => void
+  actionPath?: string
   /** The link's own text; the path when there is none. */
   label?: ReactNode
   /** `![](…)`: the chip starts with 「图片」. */
@@ -49,7 +55,37 @@ interface ChipProps {
 export function FileChip(props: ChipProps) {
   const session = useContext(FileSession)
   const files = shellFiles()
-  return files && session ? <DesktopFileChip {...props} files={files} session={session} /> : <CopyFileChip {...props} />
+  const open = useContext(FileOpenContext)
+  const rootId = useContext(FileRootContext)
+  const position = /(?::([1-9]\d*)(?::\d+)?|#L([1-9]\d*)(?:C\d+)?)$/u.exec(props.path)
+  const line = position ? Math.min(10_000_000, Number(position[1] ?? position[2])) : undefined
+  const preview =
+    open && session
+      ? () =>
+          open({
+            sessionId: session.id,
+            reference: props.path,
+            ...(line ? { line } : {}),
+            ...((props.rootId ?? rootId) ? { rootId: props.rootId ?? rootId } : {}),
+          })
+      : undefined
+  const selectedRoot = props.rootId ?? rootId
+  const folder = selectedRoot
+    ? (session?.folders?.find(folder => folder.id === selectedRoot)?.path ?? (selectedRoot === 'default' ? session?.folder : undefined))
+    : session?.folder
+  const nativePath = folder ? absoluteReference(props.path, folder) : props.path
+  return files && session && (!selectedRoot || folder) ? (
+    <DesktopFileChip
+      {...props}
+      label={props.label ?? props.path}
+      actionPath={nativePath}
+      onPreview={preview}
+      files={files}
+      session={session}
+    />
+  ) : (
+    <CopyFileChip {...props} onPreview={preview} />
+  )
 }
 
 /** A path label: the folders shrink with an ellipsis, the file name stays whole. */
@@ -144,13 +180,22 @@ function ChipMenu({ name, checking = false, sections, note, copied, onOpen, trig
               data-file-chip=""
               aria-haspopup={menu['aria-haspopup']}
               aria-expanded={menu['aria-expanded']}
-              aria-label={spoken(props)}
+              aria-label={props.onPreview ? `预览文件：${spoken(props)}` : spoken(props)}
               onKeyDown={event => {
                 if (event.key !== 'ArrowDown' || menu['aria-expanded']) return
                 event.preventDefault()
                 open()
               }}
+              onContextMenu={event => {
+                if (!props.onPreview) return
+                event.preventDefault()
+                if (!menu['aria-expanded']) open()
+              }}
               onClick={event => {
+                if (props.onPreview) {
+                  if (event.detail <= 1) props.onPreview()
+                  return
+                }
                 // The second click of a double click (Finder's way to open a file) neither closes the menu nor asks again.
                 if (event.detail > 1) return
                 if (menu['aria-expanded']) menu.onClick()
@@ -237,7 +282,9 @@ function DesktopFileChip({ files, session, ...props }: ChipProps & { files: Shel
       opened = true
       trigger.current?.onClick()
     }, INSPECT_WAIT_MS)
-    const result = await files.inspect(session.id, props.path).catch((): FileInspection => ({ status: 'failed', code: 'shell-failed' }))
+    const result = await files
+      .inspect(session.id, props.actionPath ?? props.path)
+      .catch((): FileInspection => ({ status: 'failed', code: 'shell-failed' }))
     asking.current = false
     if (asked !== request.current) return
     clearTimeout(timer.current)
@@ -248,7 +295,10 @@ function DesktopFileChip({ files, session, ...props }: ChipProps & { files: Shel
   /** A refusal or failure reopens the menu with the reason at its foot; success shows itself. */
   const run = async (action: Action) => {
     const call = action === 'quickLook' ? files.quickLook : action === 'open' ? files.open : files.reveal
-    const result = await call(session.id, props.path).catch((): FileActionResult => ({ status: 'failed', code: 'shell-failed' }))
+    const result = await call(session.id, props.actionPath ?? props.path).catch((): FileActionResult => ({
+      status: 'failed',
+      code: 'shell-failed',
+    }))
     if (result.status === 'shown' || result.status === 'opened') return
     setOutcome(result.status === 'busy' ? fileNote('busy') : fileNote(result.code, context))
     if (trigger.current && !trigger.current['aria-expanded']) trigger.current.onClick()
@@ -279,7 +329,7 @@ function DesktopFileChip({ files, session, ...props }: ChipProps & { files: Shel
     },
     // On the computer that runs Latch the path to copy is the whole one, ready for Finder's 「前往文件夹」 or a terminal.
     copySection(() => {
-      void copy(absoluteReference(props.path, session.folder))
+      void copy(props.actionPath ?? absoluteReference(props.path, session.folder))
     }),
   ]
   return (

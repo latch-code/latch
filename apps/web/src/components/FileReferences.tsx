@@ -1,4 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { FileOpenContext } from '../preview/fileContext.ts'
+import { api } from '../core/api.ts'
 import type { Message } from '@latch/protocol'
 import { shellFiles, type FileKnownResult, type ShellFiles } from '../core/shell.ts'
 import { argumentView } from '../format.ts'
@@ -17,7 +19,14 @@ const GATHER_MS = 120
 const BUSY_RETRY_MS = 500
 const BUSY_RETRIES = 5
 
-type Known = NonNullable<ShellFiles['known']>
+type Known = (sessionId: string, paths: string[], rootId?: string) => ReturnType<NonNullable<ShellFiles['known']>>
+const apiKnown: Known = async (sessionId, paths, rootId) => {
+  const result = await api<{ files: Array<{ input: string; status: string }> }>(`tasks/${encodeURIComponent(sessionId)}/files/resolve`, {
+    method: 'POST',
+    body: { paths, ...(rootId ? { rootId } : {}) },
+  })
+  return { status: 'ok', known: result.files.filter(file => file.status === 'ok').map(file => file.input) }
+}
 
 /** The answers for one session: which references are files, asked in batches. */
 export class KnownFiles {
@@ -42,12 +51,13 @@ export class KnownFiles {
     }
   }
 
-  isFile(path: string): boolean {
-    return this.answers.get(path) === true
+  isFile(path: string, rootId?: string): boolean {
+    return this.answers.get(rootId ? `${rootId}\0${path}` : path) === true
   }
 
   /** Asks about a reference once, with the others gathered at the same time. */
-  want(path: string): void {
+  want(path: string, rootId?: string): void {
+    path = rootId ? `${rootId}\0${path}` : path
     if (this.closed || this.answers.has(path) || this.asking.has(path) || this.queued.has(path)) return
     if (this.answers.size + this.asking.size + this.queued.size >= TRACKED_LIMIT) return
     this.queued.add(path)
@@ -79,12 +89,18 @@ export class KnownFiles {
   }
 
   private async ask(): Promise<void> {
-    const batch = [...this.queued].slice(0, BATCH)
+    const first = [...this.queued][0] ?? ''
+    const rootId = first.includes('\0') ? first.slice(0, first.indexOf('\0')) : undefined
+    const batch = [...this.queued].filter(path => (rootId ? path.startsWith(`${rootId}\0`) : !path.includes('\0'))).slice(0, BATCH)
+    const paths = batch.map(path => (rootId ? path.slice(rootId.length + 1) : path))
     for (const path of batch) {
       this.queued.delete(path)
       this.asking.add(path)
     }
-    const result = await this.known(this.sessionId, batch).catch((): FileKnownResult => ({ status: 'failed', code: 'shell-failed' }))
+    const result = await this.known(this.sessionId, paths, rootId).catch((): FileKnownResult => ({
+      status: 'failed',
+      code: 'shell-failed',
+    }))
     for (const path of batch) this.asking.delete(path)
     if (this.closed) return
     if (result.status === 'busy' && this.busy < BUSY_RETRIES) {
@@ -97,7 +113,7 @@ export class KnownFiles {
     const found = new Set(result.status === 'ok' ? result.known : [])
     let changed = false
     for (const path of batch) {
-      const isFile = found.has(path)
+      const isFile = found.has(rootId ? path.slice(rootId.length + 1) : path)
       changed ||= isFile
       this.answers.set(path, isFile)
     }
@@ -117,7 +133,8 @@ export const KnownFilesContext = createContext<KnownFiles | null>(null)
  * references that named no file are asked about again.
  */
 export function FileReferences({ sessionId, active, children }: { sessionId: string; active: boolean; children: ReactNode }) {
-  const known = shellFiles()?.known
+  const preview = useContext(FileOpenContext)
+  const known = preview ? apiKnown : shellFiles()?.known
   const [store, setStore] = useState<KnownFiles | null>(null)
   useEffect(() => {
     if (typeof known !== 'function') return undefined
@@ -140,7 +157,7 @@ export function FileReferences({ sessionId, active, children }: { sessionId: str
  * The references among `paths` the Host says are files. `ask`: whether they may be asked about now (a reply that
  * stopped streaming, a tool that finished); until then nothing is sent.
  */
-export function useKnownFiles(paths: readonly string[], ask: boolean): string[] {
+export function useKnownFiles(paths: readonly string[], ask: boolean, rootId?: string): string[] {
   const store = useContext(KnownFilesContext)
   const subscribe = useCallback((listener: () => void) => store?.subscribe(listener) ?? (() => {}), [store])
   useSyncExternalStore(
@@ -151,9 +168,9 @@ export function useKnownFiles(paths: readonly string[], ask: boolean): string[] 
   const key = paths.join('\n')
   useEffect(() => {
     if (!store || !ask) return
-    for (const path of key ? key.split('\n') : []) store.want(path)
-  }, [store, ask, key])
-  return store ? paths.filter(path => store.isFile(path)) : []
+    for (const path of key ? key.split('\n') : []) store.want(path, rootId)
+  }, [store, ask, key, rootId])
+  return store ? paths.filter(path => store.isFile(path, rootId)) : []
 }
 
 const PATH_ARGUMENTS = ['path', 'file', 'file_path', 'filePath']

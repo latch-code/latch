@@ -248,13 +248,19 @@ function restored(sessionId) {
 async function handle(method, params) {
   switch (method) {
     case 'initialize':
+      if (env.FAKE_ACP_INIT_DELAY) await delay(Number(env.FAKE_ACP_INIT_DELAY))
+      if (env.FAKE_ACP_INIT_AUTH === '1') throw rpcError(-32000, 'Authentication required')
       if (env.FAKE_ACP_INIT_ERROR) {
-        process.stderr.write(`startup diagnostics ${env.FAKE_SECRET ?? ''}\n`)
+        const diagnostic = ['x'.repeat(Math.min(20000, Number(env.FAKE_ACP_INIT_DIAGNOSTIC_SIZE ?? 0))), env.FAKE_ACP_INIT_DIAGNOSTIC]
+          .filter(Boolean)
+          .join(' ')
+        process.stderr.write(`startup diagnostics ${diagnostic ? `${diagnostic} ` : ''}${env.FAKE_SECRET ?? ''}\n`)
         throw rpcError(-32603, `provider rejected API key ${env.FAKE_SECRET ?? ''}`)
       }
       return {
         protocolVersion: Number(env.FAKE_ACP_PROTOCOL ?? 1),
         agentCapabilities: {
+          promptCapabilities: { image: caps.has('images') },
           loadSession: caps.has('load'),
           sessionCapabilities: {
             ...(caps.has('resume') ? { resume: {} } : {}),

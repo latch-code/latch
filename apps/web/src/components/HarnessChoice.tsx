@@ -16,6 +16,7 @@ import { AgentPresetList, AgentSetupPanel } from './SetupPanels.tsx'
  */
 export function HarnessChoice({
   catalog,
+  workspaceId,
   value,
   onChange,
   access,
@@ -25,6 +26,7 @@ export function HarnessChoice({
   addRef,
 }: {
   catalog: HostCatalog
+  workspaceId?: string
   /** The chosen entry's key. */
   value: string | undefined
   onChange: (entry: HarnessEntry) => void
@@ -37,7 +39,7 @@ export function HarnessChoice({
   /** The 「添加 Agent」 tile, for a link elsewhere on the page that opens the same layer. */
   addRef?: RefObject<HTMLButtonElement | null>
 }) {
-  const entries = harnessEntries(catalog, access)
+  const entries = harnessEntries(catalog, access, workspaceId)
   const toAdd = presetsToAdd(catalog)
   const canAdd = !access.legacy && access.local && access.admin
   // The presets as the Host reports them, with what this computer has of each; until they arrive, the bare presets.

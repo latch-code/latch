@@ -244,7 +244,7 @@ export function Composer({
           if (sendable) submit()
         }}>
         <RunBar run={run} />
-        {(commands || templates?.length) && !locked && readOnly === undefined && (
+        {((commands?.length ?? 0) > 0 || (templates?.length ?? 0) > 0) && !locked && readOnly === undefined && (
           <SlashCommands
             draft={draft}
             commands={commands ?? []}

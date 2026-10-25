@@ -1,18 +1,33 @@
 import { createContext, memo, useContext, useEffect, useId, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react'
 import Markdown, { type Components, type Options, type UrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import remarkMath from 'remark-math'
+import { HighlightedCode } from './preview/HighlightedCode.tsx'
+import { MathFormula } from './preview/MathFormula.tsx'
+import { Diagram } from './preview/Diagram.tsx'
+import type { FrameInput } from './preview/types.ts'
+import { normalizeMathDelimiters, restrictInlineMath } from './preview/math.ts'
 import { Check, ChevronDown, ChevronUp, Copy } from 'lucide-react'
 import { ErrorBoundary } from './components/ErrorBoundary.tsx'
-import { FileChip } from './components/FileChip.tsx'
+import { FileChip, FileRootContext, FileSession } from './components/FileChip.tsx'
+import { FileOpenContext } from './preview/fileContext.ts'
+import { FileSandbox } from './preview/FileSandbox.tsx'
+import { resolveFileImage } from './preview/fileImages.ts'
 import { useKnownFiles } from './components/FileReferences.tsx'
 import { hasHiddenCharacters, VisibleText } from './components/VisibleText.tsx'
 import { codePathCandidate, linkTarget, namesPath, referenceText, urlScheme } from './fileReference.ts'
 import { exceedsMarkdownNesting, MAX_TREE_DEPTH, treeDepth } from './markdownNesting.ts'
 import { ICON_STROKE } from '@latch/ui'
 
-export interface MessageContentProps {
+export interface MarkdownFiles {
+  path?: string
+  onOpenFile?: (reference: string) => void
+  resolveImage?: (reference: string, signal: AbortSignal) => Promise<{ url: string; width?: number; height?: number }>
+}
+export interface MessageContentProps extends MarkdownFiles {
   text: string
   streaming?: boolean
+  renderFrame?: (input: FrameInput) => ReactNode
 }
 
 class TooDeep extends Error {}
@@ -24,9 +39,11 @@ function limitDepth() {
   }
 }
 
-const remarkPlugins = [remarkGfm, limitDepth]
+const remarkPlugins = [remarkGfm, remarkMath, restrictInlineMath, limitDepth]
+const MarkdownFileContext = createContext<MarkdownFiles>({})
 const relativeBase = 'https://markdown.invalid/'
 const relativeOrigin = new URL(relativeBase).origin
+const renderDocumentFrame = (input: FrameInput) => <FileSandbox {...input} />
 
 /**
  * Keep navigation within ordinary web links; never pass executable URL schemes. A `file:` URI, and a file name with a
@@ -51,7 +68,7 @@ const safeUrl: UrlTransform = (value, key) => {
 
 type CopyResult = { status: 'copied' | 'failed'; value: string } | null
 
-const CodeBlock = memo(function CodeBlock({ code, language }: { code: string; language?: string }) {
+const CodeBlock = memo(function CodeBlock({ code, language, closed = true }: { code: string; language?: string; closed?: boolean }) {
   const [expanded, setExpanded] = useState(false)
   const [copyResult, setCopyResult] = useState<CopyResult>(null)
   const [copying, setCopying] = useState(false)
@@ -114,7 +131,7 @@ const CodeBlock = memo(function CodeBlock({ code, language }: { code: string; la
       </div>
       <pre id={codeId} tabIndex={0} aria-label={language ? `${language} 代码` : '代码内容'}>
         <code>
-          <VisibleText text={code} />
+          <HighlightedCode code={code} language={language} enabled={closed} />
         </code>
       </pre>
       {isLong && (
@@ -153,6 +170,18 @@ function textOf(node: { type: string; value?: string; children?: unknown[] } | u
 
 /** Whether the reply stopped streaming: only then is its inline code asked about. */
 const ReplySettled = createContext(true)
+const SourceText = createContext('')
+const FrameRenderer = createContext<((input: FrameInput) => ReactNode) | undefined>(undefined)
+function ClosedCode({ code, language, start }: { code: string; language?: string; start?: number }) {
+  const renderFrame = useContext(FrameRenderer)
+  const source = useContext(SourceText),
+    settled = useContext(ReplySettled)
+  const block = start === undefined ? '' : source.slice(start)
+  const marker = /^ {0,3}(`{3,}|~{3,})[^\n]*\n/u.exec(block)?.[1]
+  const closed = settled || Boolean(marker && new RegExp(`\\n {0,3}${marker[0]}{${marker.length},}[^\S\n]*(?:\\n|$)`, 'u').test(block))
+  if (language === 'mermaid' && closed && renderFrame) return <Diagram key={code} source={code} renderFrame={renderFrame} />
+  return <CodeBlock code={code} language={language} closed={closed} />
+}
 
 /**
  * Inline code. In the desktop app, code that looks like a path (`deck.pptx`, `src/app.ts:12`) becomes a path chip
@@ -166,14 +195,91 @@ function InlineCode({ children, ...props }: ComponentProps<'code'>) {
   return candidate !== undefined && files.length > 0 ? <FileChip path={candidate} label={text} /> : <code {...props}>{children}</code>
 }
 
+function relativeFile(reference: string, path?: string): string | undefined {
+  if (!path || /^(?:[a-z][a-z0-9+.-]*:|\/)/iu.test(reference)) return reference
+  const parts = path.split('/').slice(0, -1)
+  for (const part of reference.split('/')) {
+    if (part === '..') {
+      if (!parts.length) return undefined
+      parts.pop()
+    } else if (part && part !== '.') parts.push(part)
+  }
+  return parts.join('/')
+}
+function MarkdownFile({
+  reference,
+  children,
+  image = false,
+  alt,
+}: {
+  reference: string
+  children?: ReactNode
+  image?: boolean
+  alt?: string
+}) {
+  const files = useContext(MarkdownFileContext),
+    path = relativeFile(reference, files.path),
+    [value, setValue] = useState<{ path: string; url: string; width?: number; height?: number }>()
+  useEffect(() => {
+    if (!image || !path || !files.resolveImage) return
+    const controller = new AbortController()
+    void files
+      .resolveImage(path, controller.signal)
+      .then(result => {
+        if (controller.signal.aborted) return
+        if (result.url.length > 4096) return
+        const url = new URL(result.url, location.href)
+        const here = new URL(location.href)
+        if (
+          !(url.protocol === 'blob:' && url.origin === location.origin)
+          && !(
+            url.protocol === here.protocol
+            && url.host === here.host
+            && /^\/link\/api\/files\/[A-Za-z0-9_-]{22}$/u.test(url.pathname)
+            && (!url.search || /^\?v=[a-f0-9]{32}$/u.test(url.search))
+            && !url.hash
+          )
+        )
+          return
+        if ([result.width, result.height].some(n => n !== undefined && (!Number.isFinite(n) || n <= 0 || n > 40_000))) return
+        setValue({ path, ...result })
+      })
+      .catch(() => {})
+    return () => controller.abort()
+  }, [image, path, files.resolveImage])
+  if (image && path && value?.path === path) {
+    const picture = (
+      <img className="message-local-image" src={value.url} alt={alt || '图片'} width={value.width} height={value.height} loading="lazy" />
+    )
+    return files.onOpenFile ? (
+      <button
+        type="button"
+        className="message-local-image-button"
+        aria-label={`预览图片：${alt || reference}`}
+        onClick={() => files.onOpenFile?.(path)}>
+        {picture}
+      </button>
+    ) : (
+      picture
+    )
+  }
+  if (path && files.onOpenFile)
+    return (
+      <button type="button" className="message-local-link" onClick={() => files.onOpenFile?.(path)}>
+        {children ?? alt ?? reference}
+      </button>
+    )
+  return <FileChip path={reference} label={children} image={image} alt={alt} />
+}
+
 // Component identities stay stable as tokens arrive, preserving code-block focus,
 // expanded state, and the reader's scroll position.
 const components: Components = {
   code({ node: _node, ...props }) {
+    if (props.className?.includes('math-inline')) return <MathFormula tex={String(props.children)} />
     return <InlineCode {...props} />
   },
-  // Images are never loaded: a URL the model chose would be fetched as soon as the reply renders, carrying whatever
-  // it encodes. A web image stays reachable as an ordinary link the reader opens; a file becomes a path chip.
+  // Network images stay explicit links. Only the parent can resolve a local reference to authorized bytes.
   img({ node: _node, src, alt }) {
     const label = alt?.trim() || '图片'
     if (src && /^https?:/i.test(src))
@@ -184,7 +290,7 @@ const components: Components = {
       )
     const path = src ? referenceText(src) : undefined
     return path ? (
-      <FileChip path={path} image {...(alt?.trim() ? { alt: alt.trim() } : {})} />
+      <MarkdownFile reference={path} image {...(alt?.trim() ? { alt: alt.trim() } : {})} />
     ) : (
       <span className="message-image">图片：{label}</span>
     )
@@ -195,7 +301,8 @@ const components: Components = {
     const code = codeNode.children.map(child => (child.type === 'text' ? child.value : '')).join('')
     const classNames = Array.isArray(codeNode.properties.className) ? codeNode.properties.className.join(' ') : ''
     const language = /(?:^|\s)language-([a-z\d_+#.-]{1,32})(?=\s|$)/i.exec(classNames)?.[1]
-    return <CodeBlock code={code} language={language} />
+    if (classNames.includes('math-display')) return <MathFormula tex={code.trimEnd()} block />
+    return <ClosedCode code={code} language={language} start={node?.position?.start.offset} />
   },
   table({ node: _node, ...props }) {
     return (
@@ -206,8 +313,31 @@ const components: Components = {
   },
 }
 
-export const MessageContent = memo(function MessageContent({ text, streaming = false }: MessageContentProps) {
+export const MessageContent = memo(function MessageContent({
+  text,
+  streaming = false,
+  renderFrame,
+  path,
+  onOpenFile,
+  resolveImage,
+}: MessageContentProps) {
   const id = useId()
+  const session = useContext(FileSession),
+    rootId = useContext(FileRootContext),
+    openFile = useContext(FileOpenContext)
+  const inherited = useMemo<MarkdownFiles>(
+    () =>
+      openFile && session
+        ? {
+            onOpenFile: reference => openFile({ sessionId: session.id, reference, ...(rootId ? { rootId } : {}) }),
+            resolveImage: (reference, signal) => resolveFileImage(session.id, reference, rootId, signal),
+          }
+        : {},
+    [openFile, session?.id, rootId],
+  )
+  const effectiveOpenFile = onOpenFile ?? inherited.onOpenFile
+  const effectiveImage = resolveImage ?? inherited.resolveImage
+  const normalized = useMemo(() => normalizeMathDelimiters(text), [text])
   // Footnote ids must be unique across messages in the same conversation.
   const remarkRehypeOptions = useMemo(() => ({ clobberPrefix: `${id}-`, footnoteLabel: '注释' }), [id])
   const messageComponents = useMemo<Components>(
@@ -219,6 +349,7 @@ export const MessageContent = memo(function MessageContent({ text, streaming = f
         if (!href) return <span>{children}</span>
         const target = linkTarget(href, `${id}-`)
         if (target.kind === 'path') {
+          if (onOpenFile) return <MarkdownFile reference={target.path}>{children}</MarkdownFile>
           const linkText = textOf(node).trim()
           if (!linkText) return <FileChip path={target.path} />
           // A label that is the path itself is drawn from its text, so its folders can give way to the file name.
@@ -245,20 +376,20 @@ export const MessageContent = memo(function MessageContent({ text, streaming = f
         return <h2 {...props} id={headingId === 'footnote-label' ? `${id}-footnote-label` : headingId} />
       },
     }),
-    [id],
+    [id, onOpenFile],
   )
 
   const rendered = useMemo(
     () =>
       renderMarkdown({
-        children: text,
+        children: normalized,
         remarkPlugins,
         remarkRehypeOptions,
         components: messageComponents,
         urlTransform: safeUrl,
         skipHtml: true,
       }),
-    [text, remarkRehypeOptions, messageComponents],
+    [normalized, remarkRehypeOptions, messageComponents],
   )
   const plain = <PlainText text={text} />
   return (
@@ -267,7 +398,15 @@ export const MessageContent = memo(function MessageContent({ text, streaming = f
         plain
       ) : (
         <ErrorBoundary resetKey={text} fallback={plain}>
-          <ReplySettled.Provider value={!streaming}>{rendered}</ReplySettled.Provider>
+          <ReplySettled.Provider value={!streaming}>
+            <SourceText.Provider value={normalized}>
+              <FrameRenderer.Provider value={renderFrame ?? (openFile && session ? renderDocumentFrame : undefined)}>
+                <MarkdownFileContext.Provider value={{ path, onOpenFile: effectiveOpenFile, resolveImage: effectiveImage }}>
+                  {rendered}
+                </MarkdownFileContext.Provider>
+              </FrameRenderer.Provider>
+            </SourceText.Provider>
+          </ReplySettled.Provider>
         </ErrorBoundary>
       )}
     </div>

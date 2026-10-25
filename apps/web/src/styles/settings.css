@@ -1107,3 +1107,68 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.project-editor {
+  display: grid;
+  gap: var(--sp-24);
+  min-width: 0;
+}
+.project-folder-list {
+  position: relative;
+}
+.project-folder {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.project-folder + .project-folder {
+  border-top: 1px solid var(--line);
+}
+.project-folder > .settings-row {
+  flex: 1;
+  min-width: 0;
+}
+.project-folder-grip {
+  flex-shrink: 0;
+  margin-left: var(--sp-4);
+  cursor: grab;
+}
+.project-folder[data-unavailable] .settings-row-lead {
+  opacity: 0.45;
+}
+
+.agent-probe-body:has(> .ui-collapse[data-state='closed']:only-child) {
+  display: none;
+}
+.agent-probe-meta {
+  color: var(--text-3);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label-para);
+}
+.agent-probe-meta > span {
+  margin-left: var(--sp-8);
+}
+.agent-probe-diagnostic {
+  display: grid;
+  gap: var(--sp-8);
+  min-width: 0;
+}
+.agent-probe-diagnostic-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-8);
+  color: var(--text-2);
+  font-size: var(--fs-label);
+}
+.agent-probe-output {
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
+}

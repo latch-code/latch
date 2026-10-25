@@ -472,6 +472,59 @@ describe('the system sheet reason', () => {
 })
 
 describe('PresenceService', () => {
+  it('keeps shell approval pending without calling the OS backend, binds its digest and consumes once as shell-local', async () => {
+    const backend = createTestPresence({ mode: 'manual' })
+    const { presence } = await service(backend)
+    const record = await presence.request({ ...request(), confirmationMethod: 'shell-local' })
+    expect(backend.requests).toEqual([])
+    expect(record.status).toBe('pending')
+    expect(presence.shellPreview(record.id, deviceId)).toMatchObject({
+      previewHash: record.previewHash,
+      preview: { nonce: expect.any(String), action: 'approval.r2' },
+    })
+    expect(() => presence.shellPreview(record.id, 'other')).toThrow(expect.objectContaining({ code: 'confirmation-not-found' }))
+    await expect(presence.completeShell(record.id, deviceId, '0'.repeat(64), true)).rejects.toMatchObject({ code: 'confirmation-mismatch' })
+    await expect(presence.completeShell(record.id, deviceId, record.previewHash, true)).resolves.toMatchObject({
+      status: 'approved',
+      confirmationMethod: 'shell-local',
+    })
+    await expect(record.settled).resolves.toMatchObject({ result: 'approved', method: 'shell', previewHash: record.previewHash })
+    expect(presence.consume(record.id, { action: record.action, requesterDeviceId: deviceId, paramsHash: record.paramsHash })).toEqual({
+      stepup: 'shell-local',
+      method: 'shell',
+    })
+    await expect(presence.completeShell(record.id, deviceId, record.previewHash, true)).rejects.toMatchObject({ code: 'confirmation-used' })
+  })
+
+  it('never downgrades enrollment or policy actions, nor remote or anonymous requesters, to a shell sheet', async () => {
+    const { presence } = await service(createTestPresence())
+    for (const action of ['device.enroll', 'device.grant', 'policy.change', 'provider.confirm-origin', 'agent.probe'] as const)
+      await expect(presence.request({ ...request(action), confirmationMethod: 'shell-local' })).rejects.toMatchObject({
+        code: 'confirmation-os-required',
+      })
+    await expect(
+      presence.request({ ...request(), requester: { ...requester, listener: 'loopback-tcp' }, confirmationMethod: 'shell-local' }),
+    ).rejects.toMatchObject({ code: 'confirmation-os-required' })
+    const record = await presence.request(request())
+    await record.settled
+    expect(() => presence.shellPreview(record.id, deviceId)).toThrow(expect.objectContaining({ code: 'confirmation-os-required' }))
+  })
+
+  it('expires and cancels shell sheets without allowing their late approval', async () => {
+    let now = 0
+    const { presence } = await service(createTestPresence(), { now: () => now })
+    const first = await presence.request({ ...request(), confirmationMethod: 'shell-local' })
+    now += 120_001
+    await expect(presence.completeShell(first.id, deviceId, first.previewHash, true)).rejects.toMatchObject({
+      code: 'confirmation-expired',
+    })
+    await expect(first.settled).resolves.toMatchObject({ result: 'timeout' })
+    const second = await presence.request({ ...request(), confirmationMethod: 'shell-local' })
+    presence.cancel(second.id, deviceId)
+    await expect(second.settled).resolves.toMatchObject({ result: 'cancelled' })
+    await expect(presence.completeShell(second.id, deviceId, second.previewHash, true)).rejects.toMatchObject({ code: 'confirmation-used' })
+  })
+
   it('approves once for exactly this binding, then refuses reuse', async () => {
     const backend = createTestPresence({ method: 'password' })
     const { presence } = await service(backend)
@@ -677,7 +730,7 @@ describe('PresenceService', () => {
     const backend = createTestPresence()
     const { presence } = await service(backend, { blocking: async () => blocking })
     // An agent with full access can already do these on this computer itself.
-    for (const action of ['approval.r2', 'task.start-l3', 'task.mode-widen'] as const) {
+    for (const action of ['approval.r2', 'task.start-l3', 'task.mode-widen', 'agent.probe'] as const) {
       const record = await presence.request(request(action, { action }))
       await expect(record.settled).resolves.toMatchObject({ result: 'approved' })
     }
@@ -696,8 +749,8 @@ describe('PresenceService', () => {
         .filter(([, value]) => value.duringFullAccess === 'proceed')
         .map(([action]) => action)
         .sort(),
-    ).toEqual(['approval.r2', 'task.mode-widen', 'task.start-l3'])
-    expect(backend.requests.map(item => item.preview.action)).toEqual(['approval.r2', 'task.start-l3', 'task.mode-widen'])
+    ).toEqual(['agent.probe', 'approval.r2', 'task.mode-widen', 'task.start-l3'])
+    expect(backend.requests.map(item => item.preview.action)).toEqual(['approval.r2', 'task.start-l3', 'task.mode-widen', 'agent.probe'])
     blocking = []
     await expect(presence.request(request('policy.change', { a: 1 }))).resolves.toBeTruthy()
   })
@@ -714,7 +767,7 @@ describe('PresenceService', () => {
     const backend = createTestPresence()
     const { presence } = await service(backend, { blocking: async () => running })
     // An R2 step, another agent's start and a wider mode ask for no more than the running agent can do itself.
-    for (const action of ['approval.r2', 'task.start-l3', 'task.mode-widen'] as const) {
+    for (const action of ['approval.r2', 'task.start-l3', 'task.mode-widen', 'agent.probe'] as const) {
       const record = await presence.request(request(action, { n: action }))
       await record.settled
     }
@@ -735,7 +788,13 @@ describe('PresenceService', () => {
     expect(Object.values(PRESENCE_ACTIONS).filter(action => action.duringFullAccess === 'refuse')).toHaveLength(5)
     running = []
     await expect(presence.request(request('policy.change'))).resolves.toBeTruthy()
-    expect(backend.requests.map(item => item.preview.action)).toEqual(['approval.r2', 'task.start-l3', 'task.mode-widen', 'policy.change'])
+    expect(backend.requests.map(item => item.preview.action)).toEqual([
+      'approval.r2',
+      'task.start-l3',
+      'task.mode-widen',
+      'agent.probe',
+      'policy.change',
+    ])
   })
 
   it('binds anonymous host.sock requests to the anonymous requester', async () => {
@@ -1056,6 +1115,7 @@ describe('macOS helper self-test', () => {
       })
       const result = JSON.parse(stdout.trim()) as {
         ok: boolean
+        confirmationSigning: boolean
         canonicalJson: Array<{ ok: boolean; sha256: string }>
         previewHash: Array<{ ok: boolean; previewHash: string; hashDisplay: string }>
         escapePreviewText: boolean[]
@@ -1072,6 +1132,7 @@ describe('macOS helper self-test', () => {
       expect(result.presenceReason).toEqual(PRESENCE_REASON_VECTORS.map(() => true))
       expect(result.presenceRequest).toEqual(PRESENCE_REQUEST_VECTORS.map(vector => vector.result))
       expect(result.presenceRequest).toContain('reason-mismatch')
+      expect(result.confirmationSigning).toBe(true)
       expect(result.ok).toBe(true)
     },
   )

@@ -1,6 +1,6 @@
 # @latch/protocol
 
-浏览器与 Host 共用的数据：浏览器 DTO（`src/types.ts`，含 `PluginInfo`，及只在 Host 使用的 `AgentRecord` 与本机确认的 `PresencePreview`）、模型服务预设 `src/presets.ts` 与 Agent 预设 `src/agent-presets.ts`、`escapeSecurityText` 与设备名称规则 `src/text.ts`、「这台电脑」的判定 `isLocalListener`（`src/listeners.ts`）、拒绝说明的规则 `rejectionNote`（`src/decision.ts`），以及高风险原因的文字 `RISK_REASON_TEXT`（`src/risk.ts`，审批卡与本机确认共用）。`src/ui.ts` 定义需求包面板与技能的展示数据，以及数据面板的有限文档校验；不做持久化或 I/O。
+浏览器与 Host 共用的数据：浏览器 DTO（`src/types.ts`，含 `PluginInfo`，及只在 Host 使用的 `AgentRecord` 与本机确认的 `PresencePreview`）、模型服务预设 `src/presets.ts` 与 Agent 预设 `src/agent-presets.ts`、`escapeSecurityText` 与设备名称规则 `src/text.ts`、「这台电脑」的判定 `isLocalListener`（`src/listeners.ts`）、拒绝说明的规则 `rejectionNote`（`src/decision.ts`），以及高风险原因的文字 `RISK_REASON_TEXT`（`src/risk.ts`，审批卡与本机确认共用）。`src/ui.ts` 定义需求包面板与技能的展示数据，以及数据面板的有限文档校验；`src/files.ts` 定义预览句柄元数据与打开目标。不做持久化或 I/O。
 
 运行环境 isomorphic：只用 ECMAScript 标准库，不导入 `node:*`，不用 DOM 或 Node 的全局变量（`tsconfig.isomorphic.json`、`.oxlintrc.json`）。没有依赖，不使用其他 workspace 包；模块没有副作用。入口 `@latch/protocol` 与只含类型和常量的 `@latch/protocol/types`。
 

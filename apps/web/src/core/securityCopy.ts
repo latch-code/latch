@@ -72,10 +72,10 @@ export const APPROVAL_COPY = {
   advisoryNote: '完全访问会话中，Agent 的询问只是提示：拒绝会转达给它，但不能阻止它执行其他操作。',
   hiddenCharacters: '内容包含不可见或改变显示方向的字符，已用 \\u{…} 标出。请仔细核对后再决定。',
   onceNote: '只允许这一次，之后的同类操作仍会询问。',
-  localNote: '允许后要在这台电脑上用 Touch ID 或登录密码确认。',
+  localNote: '允许后在这台电脑的系统表单中核对并确认。',
   confirmedLocal: '已在本机确认，正在执行…',
-  allowLocal: '用 Touch ID 允许',
-  allowLocalTooltip: '需要在这台电脑上用 Touch ID 或登录密码确认',
+  allowLocal: '在本机允许',
+  allowLocalTooltip: '需要在这台电脑的系统表单中确认',
   more: '更多批准选项',
   moreSheet: '更多选项',
   alwaysNote: '只在这个会话里有效',
@@ -152,6 +152,7 @@ export const APPROVAL_OPTION_LABELS: Record<ApprovalOptionKind, string> = {
 export const CONFIRMATION_COPY = {
   label: '本机确认',
   waiting: '等待 Touch ID…',
+  waitingShell: '等待本机确认…',
   /** Before the sheet's sentence, in the desktop app on the computer running Latch. */
   sheet: '系统表单会写：',
   /** A browser on the Host computer (development only): the sheet opens on this computer, outside the browser. */
@@ -159,7 +160,7 @@ export const CONFIRMATION_COPY = {
   check: '只在这句话就是你要做的事时确认，否则在表单里取消。',
   details: '确认详情',
   /** Under the details: where they come from and that the sheet does not show them. */
-  detailsNote: '这些内容来自 Host，只在 Latch 里显示；系统表单只写上面那句话。',
+  detailsNote: '这些内容来自 Host；请核对系统表单中显示的操作和详情。',
   confirmed: '已在本机确认，正在',
   cooldownTitle: '本机确认已暂停',
   cooldown: '连续拒绝了 3 次。为防止误触批准，暂时不再请求本机确认。',
@@ -204,6 +205,7 @@ export const PAIRING_WAITING_COPY = {
 /** What the request does once the local confirmation passes, for 「已在本机确认，正在…」. */
 export const CONFIRMATION_VERBS: Record<PresenceAction, string> = {
   'device.enroll': '登记设备',
+  'agent.probe': '测试启动',
   'device.grant': '更新权限',
   'task.start-l3': '开启会话',
   'task.mode-widen': '切换模式',
@@ -215,6 +217,7 @@ export const CONFIRMATION_VERBS: Record<PresenceAction, string> = {
 
 /** What a confirmation held back by a full-access session was for, in 「要等「…」结束，才能放宽安全策略。」. */
 export const BLOCKED_ACTION_TEXT: Record<PresenceAction, string> = {
+  'agent.probe': '测试启动 Agent',
   'device.enroll': '配对新设备',
   'device.grant': '为设备增加权限',
   'task.start-l3': '开启完全访问会话',
@@ -579,6 +582,9 @@ const FIXED: Record<string, string> = {
   'confirmation-mismatch': '确认内容与本次请求不一致，请重新确认',
   'confirmation-used': '该确认已使用',
   'confirmation-cancelled': '确认已取消，操作未执行。',
+  'confirmation-os-required': '这项操作需要系统认证，请重新发起确认。',
+  'confirmation-signature-invalid': '本机确认回执无效，操作未执行。',
+  'confirmation-shell-unavailable': '请在新版 Latch 桌面端完成这次本机确认。',
   'confirmation-failed': '本机确认组件出错，操作未执行。',
   'enrollment-denied': '本机拒绝了此设备。',
   'enrollment-not-found': '找不到该登记请求',

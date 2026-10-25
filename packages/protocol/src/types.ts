@@ -1,6 +1,6 @@
 import type { AgentPreset } from './agent-presets.ts'
 import type { SkillInfo, UiPanelInfo } from './ui.ts'
-import type { HostFeatures } from './features.ts'
+import type { AgentProbeResult, HostFeatures } from './features.ts'
 
 export type { SkillInfo, UiPanelInfo, UiPanelBlock, UiPanelDocument } from './ui.ts'
 export type { HostFeatures, SearchHit, SearchResults, SessionBatchResult } from './features.ts'
@@ -95,6 +95,8 @@ export interface TaskSummary {
    * so a cancel that arrives late cannot stop a run that began afterwards. Drivers that do not track runs omit it.
    */
   runId?: string
+  /** Host-generated provenance; files remain shared with the chosen project. */
+  forkOf?: { taskId: string; upToMessageId: string; title: string; turn: number; prefixLength: number; truncated?: true }
   /** Skills snapshotted for the current or latest Standard run. */
   skills?: string[]
 }
@@ -175,6 +177,10 @@ export interface Message {
   id: string
   role: 'user' | 'assistant' | 'tool' | 'system'
   text: string
+  /** User input request identity, kept across retries and restarts. */
+  requestId?: string
+  /** Host-only provenance for the first user message. */
+  forkContext?: NonNullable<TaskSummary['forkOf']>
   toolName?: string
   state?: 'queued' | 'awaiting-approval' | 'running' | 'completed' | 'failed' | 'cancelled'
   /** Assistant reasoning that the model or agent actually reported; never synthesized. */
@@ -350,6 +356,7 @@ export interface SessionPermission {
 export type PresenceAction =
   | 'device.enroll'
   | 'device.grant'
+  | 'agent.probe'
   | 'task.start-l3'
   | 'task.mode-widen'
   | 'policy.change'
@@ -372,6 +379,8 @@ export interface ConfirmationTicket {
   /** Fixed Chinese title per action. */
   title: string
   status: 'pending' | 'approved' | 'denied' | 'expired' | 'cancelled' | 'consumed' | 'error'
+  /** The Host chooses; absent on older Hosts, which always use OS authentication. */
+  confirmationMethod?: 'lpc-local' | 'shell-local'
   /** 'a1b2-c3d4-e5f6-0718'; no longer shown on the Host computer, which shows `reason` instead. */
   hashDisplay: string
   expiresAt: string
@@ -391,6 +400,7 @@ export interface ConfirmationTicket {
  * the macOS helper, which rebuilds the reason from the subject and refuses any difference.
  */
 export type PresenceReasonForm =
+  | 'agent.probe'
   | 'approval.write'
   | 'approval.tool'
   | 'key.save'
@@ -453,7 +463,7 @@ export type PresenceAvailability =
   | { status: 'unavailable'; reason: 'platform' | 'helper-missing' | 'helper-signature' | 'cdhash-mismatch' | 'disabled'; message: string }
 
 export type PresenceOutcome =
-  | { result: 'approved'; method: 'biometric' | 'password'; nonce: string; previewHash: string }
+  | { result: 'approved'; method: 'biometric' | 'password' | 'shell'; nonce: string; previewHash: string }
   | { result: 'denied' | 'cancelled' | 'timeout'; message?: string }
   | { result: 'error'; message?: string; failure?: 'biometry-lockout' }
 
@@ -767,6 +777,8 @@ export interface AgentRecord {
    * Absent on definitions saved before the Host recorded starts, which were confirmed when they were saved.
    */
   startedHash?: string | null
+  lastProbe?: AgentProbeResult
+  probedDefinitionHash?: string
 }
 
 /**
@@ -803,6 +815,8 @@ export interface AgentSettings {
    * first start does). Absent on older Hosts and for definitions saved before the Host recorded starts.
    */
   started?: boolean
+  /** Last handshake of this definition; not a promise about its current login state. */
+  lastProbe?: AgentProbeResult
 }
 
 export interface PluginInfo {

@@ -106,7 +106,9 @@ describe('independent harness runtime', () => {
     const restarted = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: restartedBackend, providerId: provider.id }))
     expect(await restarted.createTask({ prompt: 'hello', requestId: 'same-request' })).toEqual(first)
     expect(restartedBackend.acquire).not.toHaveBeenCalled()
-    expect((await restarted.detail(first.sessionId)).messages.filter(m => m.role === 'user')).toHaveLength(1)
+    const users = (await restarted.detail(first.sessionId)).messages.filter(m => m.role === 'user')
+    expect(users).toHaveLength(1)
+    expect(users[0]?.requestId).toBe('same-request')
   })
 
   it('admits one approval winner, executes once, and rebuilds repeated client snapshots without duplication', async () => {

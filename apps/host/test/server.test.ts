@@ -29,7 +29,7 @@ import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { renewSigningText, HttpFailure, type TestDevice, makeTestTls, FAKE_ACP_AGENT } from '@latch/testkit'
 import { createAcpAgentPlugin } from '@latch/harness-acp'
 import { AuditLog } from '../src/audit.ts'
-import { createOfflineTicket } from '../src/auth.ts'
+import { confirmationSigningText, createOfflineTicket } from '../src/auth.ts'
 import { HostConfig } from '../src/config.ts'
 import { hashDisplay } from '../src/crypto.ts'
 import { tlsListenerClass, validateTls } from '../src/listeners.ts'
@@ -1180,6 +1180,34 @@ describe('approvals and risk', () => {
     return t
   }
 
+  it('shows the full writer content from the Host in every native R2 sheet and executes only after its signed approval', async () => {
+    const t = await gitWrite()
+    const desktop = await t.enroll({ listener: 'unix' })
+    const sessionId = await startTask(desktop, 'write')
+    const approval = await pendingApproval(t, sessionId)
+    const path = `approvals/${approval.id}`
+    const headers = { 'x-latch-shell-confirmation': '1' }
+    const input = { decision: 'allow', requestId: randomUUID() }
+    const before = t.presence.requests.length
+    const { confirmation } = await body<{ confirmation: ConfirmationTicket }>(
+      await desktop.request(path, { method: 'POST', body: input, headers }),
+    )
+    expect(confirmation.confirmationMethod).toBe('shell-local')
+    expect(t.presence.requests).toHaveLength(before)
+    const content = await desktop.json<{ preview: PresencePreview; previewHash: string }>(`confirmations/${confirmation.id}/shell`)
+    expect(content.preview.lines.at(-1)).toEqual({ label: '参数', value: canonicalJson({ path: '.git/config', content: '[core]\n' }) })
+    await expect(readFile(join(t.workspaceRoot, '.git', 'config'))).rejects.toMatchObject({ code: 'ENOENT' })
+    const proof = {
+      previewHash: content.previewHash,
+      signature: desktop.key.sign(confirmationSigningText(t.host.hostId, desktop.id, confirmation.id, content.previewHash)),
+    }
+    expect((await desktop.request(`confirmations/${confirmation.id}/shell`, { method: 'POST', body: proof })).status).toBe(200)
+    expect((await desktop.request(path, { method: 'POST', body: input, headers, confirmation: confirmation.id })).status).toBe(200)
+    await settled(t, sessionId)
+    expect(await readFile(join(t.workspaceRoot, '.git', 'config'), 'utf8')).toBe('[core]\n')
+    expect((await auditRecords(t)).find(record => record.action === 'approval.decided')).toMatchObject({ stepup: 'shell-local' })
+  })
+
   it('lets a browser reject or cancel an R2 write, but allow it only from the desktop with local confirmation', async () => {
     const t = await gitWrite()
     const browser = await t.enroll({ scopes: [...ADMIN] })
@@ -1879,6 +1907,204 @@ describe('full-access (L3) sessions', () => {
     expect((await auditRecords(t)).find(record => record.action === 'agent.defined')).toMatchObject({ stepup: 'none' })
     return { t, desktop, browser, enrolled }
   }
+
+  it('requires OS approval once per device, exact launch and ordered project roots, then verifies a signed native sheet every time', async () => {
+    const fixture = launchedHarness()
+    fixture.launch.definitionHash = 'b'.repeat(64)
+    const t = await testHost({ plugins: [fixture.plugin] })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const browser = await t.enroll({ scopes: [...ADMIN] })
+    const headers = { 'x-latch-shell-confirmation': '1' }
+    const start = () => ({ prompt: 'start', requestId: randomUUID(), mode: 'agent', harnessId: 'launched' })
+    const firstBody = start()
+    const first = await desktop.confirmed('tasks', { method: 'POST', body: firstBody, headers })
+    expect(first.status).toBe(201)
+    expect((await stat(join(t.dataDir, 'launch-trust.json'))).mode & 0o777).toBe(0o600)
+    expect((await auditRecords(t)).find(record => record.action === 'presence.launch-trusted')).toMatchObject({ stepup: 'lpc-local' })
+    const other = await t.enroll({ listener: 'unix' })
+    const osCount = t.presence.requests.length
+    const nextBody = start()
+    const { confirmation } = await body<{ confirmation: ConfirmationTicket }>(
+      await desktop.request('tasks', { method: 'POST', body: nextBody, headers }),
+    )
+    expect(confirmation).toMatchObject({ status: 'pending', confirmationMethod: 'shell-local' })
+    expect(t.presence.requests).toHaveLength(osCount)
+    expect((await browser.request(`confirmations/${confirmation.id}/shell`)).status).toBe(403)
+    expect((await other.request(`confirmations/${confirmation.id}/shell`)).status).toBe(404)
+    const { previewHash } = await desktop.json<{ preview: PresencePreview; previewHash: string }>(`confirmations/${confirmation.id}/shell`)
+    const proof = {
+      previewHash,
+      signature: desktop.key.sign(confirmationSigningText(t.host.hostId, desktop.id, confirmation.id, previewHash)),
+    }
+    expect(
+      (
+        await desktop.request(`confirmations/${confirmation.id}/shell`, {
+          method: 'POST',
+          body: { ...proof, signature: other.key.sign(confirmationSigningText(t.host.hostId, desktop.id, confirmation.id, previewHash)) },
+        })
+      ).status,
+    ).toBe(403)
+    expect((await desktop.request('tasks', { method: 'POST', body: nextBody, headers, confirmation: confirmation.id })).status).toBe(409)
+    expect((await desktop.request(`confirmations/${confirmation.id}/shell`, { method: 'POST', body: proof })).status).toBe(200)
+    expect((await desktop.request(`confirmations/${confirmation.id}/shell`, { method: 'POST', body: proof })).status).toBe(409)
+    expect(
+      (
+        await desktop.request('tasks', {
+          method: 'POST',
+          body: { ...nextBody, prompt: 'different' },
+          headers,
+          confirmation: confirmation.id,
+        })
+      ).status,
+    ).toBe(409)
+    // A mismatched action body voids the ticket; a new native sheet is required.
+    const finalBody = start()
+    const final = await body<{ confirmation: ConfirmationTicket }>(
+      await desktop.request('tasks', { method: 'POST', body: finalBody, headers }),
+    )
+    const content = await desktop.json<{ previewHash: string }>(`confirmations/${final.confirmation.id}/shell`)
+    expect(
+      (
+        await desktop.request(`confirmations/${final.confirmation.id}/shell`, {
+          method: 'POST',
+          body: {
+            previewHash: content.previewHash,
+            signature: desktop.key.sign(confirmationSigningText(t.host.hostId, desktop.id, final.confirmation.id, content.previewHash)),
+          },
+        })
+      ).status,
+    ).toBe(200)
+    expect((await desktop.request('tasks', { method: 'POST', body: finalBody, headers, confirmation: final.confirmation.id })).status).toBe(
+      201,
+    )
+    expect((await auditRecords(t)).filter(record => record.action === 'task.l3.started').at(-1)).toMatchObject({ stepup: 'shell-local' })
+    const changedDevice = await body<{ confirmation: ConfirmationTicket }>(
+      await other.request('tasks', { method: 'POST', body: start(), headers }),
+    )
+    expect(changedDevice.confirmation.confirmationMethod).toBeUndefined()
+    await other.request(`confirmations/${changedDevice.confirmation.id}`, { method: 'DELETE' })
+    fixture.launch.launchHash = 'c'.repeat(64)
+    const changedLaunch = await body<{ confirmation: ConfirmationTicket }>(
+      await desktop.request('tasks', { method: 'POST', body: start(), headers }),
+    )
+    expect(changedLaunch.confirmation.confirmationMethod).toBeUndefined()
+  })
+
+  it('keeps private session folders eligible without weakening the complete ACP configuration fingerprint', async () => {
+    const t = await testHost({
+      sessionFolders: true,
+      agentPlugin: agent => createAcpAgentPlugin(agent, { stopGraceMs: 100, cancelGraceMs: 500 }),
+    })
+    const desktop = await t.enroll({ listener: 'unix' })
+    await desktop.json('agents', {
+      method: 'POST',
+      body: {
+        id: 'fake',
+        name: 'Fake',
+        presetId: 'codex',
+        command: process.execPath,
+        args: [FAKE_ACP_AGENT],
+        env: {
+          FAKE_ACP_STATE: join(t.root, 'state.json'),
+          FAKE_ACP_MODES: 'read-only,workspace-write,agent-full-access',
+          FAKE_ACP_INITIAL_MODE: 'read-only',
+          FAKE_ACP_CONFIG: 'options',
+        },
+      },
+    })
+    const headers = { 'x-latch-shell-confirmation': '1' }
+    const start = () => ({ prompt: 'hello', requestId: randomUUID(), mode: 'agent', harnessId: 'fake' })
+    const first = await desktop.confirmed('tasks', { method: 'POST', body: start(), headers })
+    expect(first.status).toBe(201)
+    const { sessionId } = await body<{ sessionId: string }>(first)
+    await settled(t, sessionId)
+    const next = start()
+    const { confirmation } = await body<{ confirmation: ConfirmationTicket }>(
+      await desktop.request('tasks', { method: 'POST', body: next, headers }),
+    )
+    expect(confirmation.confirmationMethod).toBe('shell-local')
+    const nativeContent = await desktop.json<{ previewHash: string }>(`confirmations/${confirmation.id}/shell`)
+    await desktop.json(`confirmations/${confirmation.id}/shell`, {
+      method: 'POST',
+      body: {
+        previewHash: nativeContent.previewHash,
+        signature: desktop.key.sign(confirmationSigningText(t.host.hostId, desktop.id, confirmation.id, nativeContent.previewHash)),
+      },
+    })
+    const waitingFolder = confirmation.lines!.find(line => line.label === '工作目录')!.value
+    await chmod(waitingFolder, 0o755)
+    expect(
+      await body(await desktop.request('tasks', { method: 'POST', body: next, headers, confirmation: confirmation.id })),
+    ).toMatchObject({ error: 'confirmation-mismatch' })
+    const permissionsChanged = await body<{ confirmation: ConfirmationTicket }>(
+      await desktop.request('tasks', { method: 'POST', body: next, headers }),
+    )
+    expect(permissionsChanged.confirmation.confirmationMethod).toBeUndefined()
+    await desktop.request(`confirmations/${permissionsChanged.confirmation.id}`, { method: 'DELETE' })
+    await chmod(waitingFolder, 0o700)
+    const names = await readdir(t.workspaceRoot)
+    expect(names).toHaveLength(2)
+    await mkdir(join(waitingFolder, '.codex'))
+    await writeFile(join(waitingFolder, '.codex', 'config.toml'), 'approval_policy="never"')
+    const child = await body<{ confirmation: ConfirmationTicket }>(await desktop.request('tasks', { method: 'POST', body: next, headers }))
+    expect(child.confirmation.confirmationMethod).toBeUndefined()
+    await desktop.request(`confirmations/${child.confirmation.id}`, { method: 'DELETE' })
+    await mkdir(join(t.workspaceRoot, '.codex'))
+    await writeFile(join(t.workspaceRoot, '.codex', 'config.toml'), 'approval_policy="on-request"')
+    const ancestor = await body<{ confirmation: ConfirmationTicket }>(
+      await desktop.request('tasks', { method: 'POST', body: start(), headers }),
+    )
+    expect(ancestor.confirmation.confirmationMethod).toBeUndefined()
+  })
+
+  it('confirms a mode widening in a signed native sheet before the ACP mode changes', async () => {
+    const { t, desktop } = await acpHost()
+    const sessionId = await startTask(desktop, 'hello', { harnessId: 'fake' })
+    await settled(t, sessionId)
+    const headers = { 'x-latch-shell-confirmation': '1' }
+    const path = `tasks/${sessionId}/config`
+    const input = { configId: 'mode', value: 'auto' }
+    const before = t.presence.requests.length
+    const { confirmation } = await body<{ confirmation: ConfirmationTicket }>(
+      await desktop.request(path, { method: 'POST', body: input, headers }),
+    )
+    expect(confirmation).toMatchObject({ action: 'task.mode-widen', confirmationMethod: 'shell-local' })
+    expect(t.presence.requests).toHaveLength(before)
+    expect((await auditRecords(t)).some(record => record.action === 'task.mode.widened')).toBe(false)
+    const content = await desktop.json<{ previewHash: string }>(`confirmations/${confirmation.id}/shell`)
+    await desktop.json(`confirmations/${confirmation.id}/shell`, {
+      method: 'POST',
+      body: {
+        previewHash: content.previewHash,
+        signature: desktop.key.sign(confirmationSigningText(t.host.hostId, desktop.id, confirmation.id, content.previewHash)),
+      },
+    })
+    expect((await desktop.request(path, { method: 'POST', body: input, headers, confirmation: confirmation.id })).status).toBe(200)
+    expect((await auditRecords(t)).find(record => record.action === 'task.mode.widened')).toMatchObject({ stepup: 'shell-local' })
+  })
+
+  it('does not persist launch trust or start a driver when its trust audit cannot be written', async () => {
+    const fixture = launchedHarness()
+    fixture.launch.definitionHash = 'b'.repeat(64)
+    const t = await testHost({ plugins: [fixture.plugin] })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const audit = t.host.security.audit
+    const append = audit.append.bind(audit)
+    vi.spyOn(audit, 'append').mockImplementation(event =>
+      event.action === 'presence.launch-trusted'
+        ? Promise.reject(new AppError(503, 'audit-unavailable', '审计记录写入失败'))
+        : append(event),
+    )
+    const headers = { 'x-latch-shell-confirmation': '1' }
+    const input = { prompt: 'start', requestId: randomUUID(), mode: 'agent', harnessId: 'launched' }
+    expect((await desktop.confirmed('tasks', { method: 'POST', body: input, headers })).status).toBe(503)
+    expect(fixture.createTask).not.toHaveBeenCalled()
+    await expect(stat(join(t.dataDir, 'launch-trust.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+    const { confirmation } = await body<{ confirmation: ConfirmationTicket }>(
+      await desktop.request('tasks', { method: 'POST', body: { ...input, requestId: randomUUID() }, headers }),
+    )
+    expect(confirmation.confirmationMethod).toBeUndefined()
+  })
 
   it('names the command in the system sheet only the first time a launch fingerprint starts', async () => {
     const { t, desktop } = await acpHost()

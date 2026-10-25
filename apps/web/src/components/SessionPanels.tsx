@@ -1,3 +1,6 @@
+import { FilePreview } from '../preview/FilePreview.tsx'
+import type { FileTab } from '../preview/useFileTabs.ts'
+import type { FileMetadata } from '@latch/protocol'
 import { useEffect, useId, useState, type ReactNode } from 'react'
 import {
   escapeSecurityText,
@@ -19,7 +22,21 @@ export function SessionPanels({
   children,
   canCompose = false,
   onCompose = () => {},
+  files = [],
+  activeFile,
+  onSelectFile,
+  onCloseFile,
+  onFileResolved,
+  onExpandFile,
+  local = false,
 }: {
+  files?: FileTab[]
+  activeFile?: FileTab
+  onSelectFile?(id?: string): void
+  onCloseFile?(id: string): void
+  onFileResolved?(id: string, file: FileMetadata): void
+  onExpandFile?(): void
+  local?: boolean
   panels?: UiPanelInfo[]
   summary: TaskSummary
   children: ReactNode
@@ -30,21 +47,44 @@ export function SessionPanels({
   const id = useId()
   const offered = panels.filter(panel => panel.harnessIds === undefined || panel.harnessIds.includes(summary.harnessId ?? 'standard'))
   const active = offered.find(panel => panel.id === selected)
-  if (offered.length === 0) return children
+  if (offered.length === 0 && files.length === 0) return children
   return (
     <div className="session-panels inspector">
       <Tabs
         label="会话面板"
         className="session-panel-tabs"
-        value={active?.id ?? 'session'}
+        value={activeFile ? `file:${activeFile.id}` : (active?.id ?? 'session')}
         options={[
           { value: 'session', label: '会话', controls: id },
+          ...files.map(tab => ({
+            value: `file:${tab.id}`,
+            label: escapeSecurityText(tab.file?.name ?? tab.target.reference.split(/[\\/]/u).at(-1) ?? tab.target.reference),
+            controls: id,
+          })),
           ...offered.map(panel => ({ value: panel.id, label: escapeSecurityText(panel.title), controls: id })),
         ]}
-        onValueChange={setSelected}
+        onValueChange={value => {
+          if (value.startsWith('file:')) onSelectFile?.(value.slice(5))
+          else {
+            onSelectFile?.(undefined)
+            setSelected(value)
+          }
+        }}
       />
-      <div role="tabpanel" id={id} aria-label={active?.title ?? '会话'}>
-        {active?.moduleHash ? (
+      <div role="tabpanel" id={id} aria-label={activeFile?.file?.name ?? active?.title ?? '会话'}>
+        {activeFile ? (
+          <FilePreview
+            key={activeFile.id}
+            tab={activeFile}
+            local={local}
+            folders={summary.folders}
+            cwd={summary.cwd}
+            onResolved={file => onFileResolved?.(activeFile.id, file)}
+            onCompose={canCompose ? onCompose : undefined}
+            onClose={() => onCloseFile?.(activeFile.id)}
+            onExpand={() => onExpandFile?.()}
+          />
+        ) : active?.moduleHash ? (
           <section className="plugin-panel" aria-label={active.title}>
             <p className="plugin-panel-caption">
               由 <VisibleText text={active.pluginName} /> 提供

@@ -130,6 +130,7 @@ export function publicTicket(record: ConfirmationTicket): ConfirmationTicket {
     status: record.status,
     hashDisplay: record.hashDisplay,
     expiresAt: record.expiresAt,
+    ...(record.confirmationMethod ? { confirmationMethod: record.confirmationMethod } : {}),
     ...(record.reason !== undefined ? { reason: record.reason } : {}),
     ...(record.form !== undefined ? { form: record.form } : {}),
     ...(record.lines ? { lines: record.lines.map(line => ({ label: line.label, value: line.value })) } : {}),

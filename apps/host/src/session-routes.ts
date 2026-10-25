@@ -4,6 +4,7 @@ import type { DeviceScope, SessionBatchResult, TaskDetail, TaskSummary } from '@
 import { AppError } from '@latch/sdk'
 import { json, jsonBody } from './http-util.ts'
 import { templateSchema, type PromptTemplateStore } from './prompt-templates.ts'
+import { reportedUsage } from './usage.ts'
 import { SessionSearch } from './search.ts'
 
 const searchSchema = z.strictObject({ q: z.string().trim().min(1).max(200), limit: z.number().int().min(1).max(30).default(30) })
@@ -12,6 +13,7 @@ const batchSchema = z.strictObject({
   ids: z.array(z.string().min(1).max(256)).min(1).max(100),
 })
 interface Options<Caller> {
+  now?: () => number
   templates: PromptTemplateStore
   changed(): void
   list(): Promise<TaskSummary[]>
@@ -24,10 +26,26 @@ interface Options<Caller> {
 }
 
 export function createSessionRoutes<Caller>(options: Options<Caller>) {
-  const search = new SessionSearch(options)
+  const search = new SessionSearch({ list: options.list, detail: options.detail })
+  let usageBusy = false
   let searchBusy = false
   return {
     async handle(req: IncomingMessage, res: ServerResponse, caller: Caller, path: string, method: string): Promise<boolean> {
+      if (path === '/link/api/usage' && method === 'POST') {
+        options.authorize(caller, 'view')
+        const input = z.strictObject({ days: z.union([z.literal(7), z.literal(30)]) }).parse(await jsonBody(req))
+        options.recheck(caller, 'view')
+        if (usageBusy) throw new AppError(429, 'rate-limited', '正在读取用量，请稍后再试。', { retryAfter: 1 })
+        usageBusy = true
+        try {
+          const result = await reportedUsage(options, input.days)
+          options.recheck(caller, 'view')
+          json(res, result)
+        } finally {
+          usageBusy = false
+        }
+        return true
+      }
       if (path === '/link/api/prompts' && method === 'GET') {
         options.authorize(caller, 'view')
         json(res, { templates: options.templates.list() })

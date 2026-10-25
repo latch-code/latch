@@ -991,3 +991,22 @@
     height: 44px;
   }
 }
+
+.fork-context {
+  margin-bottom: var(--sp-8);
+  color: var(--text-2);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label-para);
+}
+.fork-context summary {
+  cursor: pointer;
+}
+.fork-context pre {
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
+}

@@ -1,4 +1,5 @@
-import { memo, useEffect, useRef, useState, type RefObject } from 'react'
+import { ProjectGroupHeading, ProjectsHeading, type ProjectNavigationActions } from './ProjectNavigation.tsx'
+import { Fragment, memo, useEffect, useRef, useState, type RefObject } from 'react'
 import { Archive, Ellipsis, Inbox, Laptop, PanelLeft, Plus, Search, Settings, SquarePen, X } from 'lucide-react'
 import type { AppSnapshot, HarnessInfo, TaskSummary } from '@latch/protocol'
 import { sessionHarness } from '../composerChoice.ts'
@@ -130,8 +131,10 @@ function SessionGroupView({
   size,
   onSelect,
   onNewIn,
+  onEditProject,
+  onProjectsChanged,
   menu,
-}: {
+}: ProjectNavigationActions & {
   group: SessionGroup
   snapshot: AppSnapshot
   /** The filter and search the list shows; rows leave at once when it changes. */
@@ -151,20 +154,30 @@ function SessionGroupView({
   const workspaceId = group.workspaceId
   return (
     <section className="session-group" aria-label={group.label} data-flip-id={`group:${group.id}`} data-flip-scope="">
-      <div className="session-group-head">
-        <h3 className="session-group-label">{group.label}</h3>
-        {workspaceId !== undefined && onNewIn && (
-          <IconButton
-            className="session-group-new"
-            size="xs"
-            label={`在 ${group.label} 中新建会话`}
-            icon={Plus}
-            onClick={() => {
-              onNewIn(workspaceId)
-            }}
-          />
-        )}
-      </div>
+      {group.project ? (
+        <ProjectGroupHeading
+          project={group.project}
+          onNew={workspaceId && onNewIn ? () => onNewIn(workspaceId) : undefined}
+          onEditProject={onEditProject}
+          onProjectsChanged={onProjectsChanged}
+        />
+      ) : (
+        <div className="session-group-head">
+          <h3 className="session-group-label">{group.label}</h3>
+          {workspaceId !== undefined && onNewIn && (
+            <IconButton
+              className="session-group-new"
+              size="xs"
+              label={`在 ${group.label} 中新建会话`}
+              icon={Plus}
+              onClick={() => {
+                onNewIn(workspaceId)
+              }}
+            />
+          )}
+        </div>
+      )}
+
       <ul>
         {rows.map(({ item: task, leaving }) => (
           <SessionItem
@@ -205,6 +218,9 @@ export function Sidebar({
   onSelect,
   onNew,
   onNewIn,
+  onCreateProject,
+  onEditProject,
+  onProjectsChanged,
   newActive = false,
   onApprovals,
   drawer,
@@ -218,7 +234,7 @@ export function Sidebar({
   now,
   devMode = false,
   keepAwake,
-}: {
+}: ProjectNavigationActions & {
   snapshot: AppSnapshot
   searchResults?: import('react').ReactNode
   archiveBatch?: import('react').ReactNode
@@ -292,7 +308,8 @@ export function Sidebar({
     }
   }, [searching])
   const visible = filterSessions(snapshot.tasks, filter, search)
-  const groups = groupSessions(visible, snapshot.catalog?.workspaces)
+  const projectSections = snapshot.catalog?.projectFolders !== undefined && !search && filter === 'all'
+  const groups = groupSessions(visible, snapshot.catalog?.workspaces, { includeEmpty: projectSections })
   const approvals = snapshot.approvals.length
   // The row shows only while something waits, so its count is told the value it rose from.
   const approvalsBefore = useLivePrevious(approvals)
@@ -376,23 +393,36 @@ export function Sidebar({
             {snapshot.tasks.length === 0 && <span>在任何已连接设备上继续。</span>}
           </div>
         ) : (
-          groups.map(group => (
-            <SessionGroupView
-              key={group.id}
-              group={group}
-              snapshot={snapshot}
-              context={context}
-              settled={remeasure}
-              selectedId={selectedId}
-              isUnread={isUnread}
-              cancelling={cancelling}
-              now={now}
-              size={12}
-              onSelect={onSelect}
-              onNewIn={onNewIn}
-              menu={sessionMenu}
-            />
+          groups.map((group, index) => (
+            <Fragment key={group.id}>
+              {projectSections && group.id !== 'pinned' && (index === 0 || groups[index - 1]?.id === 'pinned') && (
+                <ProjectsHeading
+                  empty={!snapshot.catalog?.workspaces.some(item => item.id !== 'default')}
+                  onCreateProject={onCreateProject}
+                />
+              )}
+              <SessionGroupView
+                key={group.id}
+                group={group}
+                snapshot={snapshot}
+                context={context}
+                settled={remeasure}
+                selectedId={selectedId}
+                isUnread={isUnread}
+                cancelling={cancelling}
+                now={now}
+                size={12}
+                onSelect={onSelect}
+                onNewIn={onNewIn}
+                menu={sessionMenu}
+                onEditProject={onEditProject}
+                onProjectsChanged={onProjectsChanged}
+              />
+            </Fragment>
           ))
+        )}
+        {projectSections && groups.every(group => group.id === 'pinned') && (
+          <ProjectsHeading empty={!snapshot.catalog?.workspaces.some(item => item.id !== 'default')} onCreateProject={onCreateProject} />
         )}
         {searchResults}
         {archivedCount > 0 && filter !== 'archived' && !search && (

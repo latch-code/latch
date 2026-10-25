@@ -11,6 +11,7 @@ import {
   CANONICAL_JSON_CASES,
   CANONICAL_JSON_VECTOR,
   ENROLL_SIGNING_VECTOR,
+  CONFIRMATION_SIGNING_VECTOR,
   FOLDERS_SIGNING_VECTOR,
   P256_VECTOR,
   RENEW_SIGNING_VECTOR,
@@ -120,6 +121,7 @@ const credentials = require('../src/credentials.cjs') as {
   deviceFingerprint(spki: Uint8Array): string
   enrollSigningText(hostId: string, id: string, nonce: string): string
   renewSigningText(hostId: string, deviceId: string, nonce: string): string
+  confirmationSigningText(hostId: string, deviceId: string, confirmationId: string, previewHash: string): string
   foldersSigningText(hostId: string, deviceId: string, nonce: string, bodyHash: string): string
   canonicalJson(value: unknown): string
   foldersBodyHash(body: Record<string, unknown>): string
@@ -737,14 +739,18 @@ describe('desktop shell policy', () => {
       '/link/api/%66iles/x/local',
       '/LINK/API/Files/x/local',
       '/link/api//files/x/local',
-      '/link/api/tasks/task-1/files/resolve',
       '/link/api/tasks/task-1/files',
-      '/link/api/tasks/task-1/%66iles/resolve',
-      '/link/api/tasks/task-1//files/resolve',
       '/link/api/tasks/a%2Fb/files/resolve',
       '/link/api/tasks/a%2Fb%2Fc/%66iles/resolve',
     ])
       expect(proxy.classifyRoute('POST', path), path).toEqual({ kind: 'shell-files' })
+    for (const [method, path] of [
+      ['POST', '/link/api/tasks/task-1/files/resolve'],
+      ['POST', '/link/api/tasks/task-1/files/search'],
+      ['GET', '/link/api/files/AAAAAAAAAAAAAAAAAAAAAA'],
+      ['HEAD', '/link/api/files/AAAAAAAAAAAAAAAAAAAAAA/meta'],
+    ])
+      expect(proxy.classifyRoute(method, path), path).toEqual({ kind: 'forward' })
     expect(proxy.classifyRoute('POST', '/link/api/tasks/task-1/prompt')).toEqual({ kind: 'forward' })
     expect(proxy.classifyRoute('GET', '/link/api/tasks/files')).toEqual({ kind: 'forward' })
   })
@@ -776,6 +782,17 @@ describe('desktop shell policy', () => {
       ['DELETE', '/link/api/workspaces/shop/folders/api'],
     ] as const)
       expect(proxy.classifyRoute(method, path), `${method} ${path}`).toEqual({ kind: 'forward' })
+  })
+
+  it('reserves signed native confirmation routes for main in every spelling', () => {
+    for (const path of [
+      '/link/api/confirmations/cfm_1/shell',
+      '/link/api/Confirmations/cfm_1/Shell/',
+      '/link/api/confirmations/cfm_1%2Fshell',
+      '/link//api/confirmations/cfm_1/shell',
+      '/link/api/confirmations/cfm_1/%73hell',
+    ])
+      expect(proxy.classifyRoute('POST', path)).toEqual({ kind: 'shell-confirmations' })
   })
 
   it('lets only static files and enrollment routes go to the Host without a credential', () => {
@@ -916,6 +933,16 @@ describe('desktop credential storage', () => {
       expect(credentials.canonicalJson(vector.input)).toBe(vector.output)
       expect(createHash('sha256').update(credentials.canonicalJson(vector.input), 'utf8').digest('hex')).toBe(vector.sha256)
     }
+    const confirmation = CONFIRMATION_SIGNING_VECTOR.example
+    expect(
+      credentials.confirmationSigningText(
+        confirmation.hostId,
+        confirmation.deviceId,
+        confirmation.confirmationId,
+        confirmation.previewHash,
+      ),
+    ).toBe(confirmation.text)
+    expect(verifyP1363(P256_VECTOR.spki, confirmation.text, confirmation.signature)).toBe(true)
     const folders = FOLDERS_SIGNING_VECTOR.example
     expect(credentials.canonicalJson(folders.body)).toBe(folders.canonicalBody)
     expect(credentials.foldersBodyHash(folders.body)).toBe(folders.bodyHash)
@@ -1203,6 +1230,29 @@ describe('desktop shell proxy', () => {
     expect(context.host.seen).toHaveLength(0)
   })
 
+  it('blocks native approval routes in the renderer while main uses its credential and capability header', async () => {
+    const context = await shell()
+    await enroll(context)
+    const before = context.host.seen.length
+    for (const path of [
+      '/link/api/confirmations/cfm_1/shell',
+      '/link/api/Confirmations/cfm_1/Shell/',
+      '/link/api/confirmations/cfm_1%2Fshell',
+    ]) {
+      for (const method of ['GET', 'POST']) {
+        const response = await context.request(path, {
+          method,
+          ...(method === 'POST' ? { body: '{}', headers: { 'content-type': 'application/json' } } : {}),
+        })
+        expect(response.status).toBe(403)
+        expect(await response.json()).toMatchObject({ error: 'shell-managed' })
+      }
+    }
+    expect(context.host.seen).toHaveLength(before)
+    expect((await context.handler.shellRequest('GET', '/link/api/confirmations/cfm_1/shell')).status).toBe(200)
+    expect(context.host.seen.at(-1)!.headers['x-latch-shell-confirmation']).toBe('1')
+  })
+
   it('answers renderer folder adds itself and lets only main’s own request reach the Host', async () => {
     const context = await shell()
     await enroll(context)
@@ -1235,21 +1285,31 @@ describe('desktop shell proxy', () => {
     expect(seen.headers['content-type']).toBe('application/json')
   })
 
-  it('refuses the file routes to the renderer and forwards them, with the credential, only for main', async () => {
+  it('keeps native file actions in main while forwarding adjudicated preview routes to the Host', async () => {
     const context = await shell()
     await enroll(context)
     const { credential } = context.store.current()!
     const before = context.host.seen.length
-    for (const path of [
-      '/link/api/tasks/task-1/files/resolve',
-      '/link/api/files/AAAAAAAAAAAAAAAAAAAAAA/local',
-      '/link/api/%66iles/x/local',
-    ]) {
+    for (const path of ['/link/api/files/AAAAAAAAAAAAAAAAAAAAAA/local', '/link/api/%66iles/x/local']) {
       const response = await context.request(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
       expect(response.status, path).toBe(403)
       expect(await response.json()).toEqual({ error: 'shell-managed', message: '文件操作由 Latch 桌面端管理' })
     }
     expect(context.host.seen).toHaveLength(before)
+    const preview = await context.request('/link/api/tasks/task-1/files/resolve', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{"paths":["a.md"]}',
+    })
+    expect(preview.status).toBe(200)
+    const opaque = await context.request('/link/api/tasks/task-1/files/resolve', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: 'null' },
+      body: '{"paths":["a.md"]}',
+    })
+    expect(opaque.status).toBe(403)
+    expect(await opaque.json()).toMatchObject({ error: 'untrusted-frame' })
+    expect(context.host.seen).toHaveLength(before + 1)
     const own = await context.handler.handle(
       new Request('latch://app/link/api/tasks/task-1/files/resolve', {
         method: 'POST',

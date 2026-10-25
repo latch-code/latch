@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { Check, ChevronRight, Fingerprint } from 'lucide-react'
+import { Check, ChevronRight, Fingerprint, LockKeyhole } from 'lucide-react'
 import type { BlockingTask, ConfirmationTicket } from '@latch/protocol'
 import { Button, Collapse, ICON_STROKE, InlineNotice, MOTION } from '@latch/ui'
 import {
@@ -256,12 +256,20 @@ export function ConfirmationContent({ view, actions }: { view: ConfirmationView;
     <>
       <div className="confirm-status">
         <span className="presence-icon" data-tone={waiting ? 'warn' : 'ok'} aria-hidden="true">
-          {waiting ? <Fingerprint size={20} strokeWidth={ICON_STROKE[20]} /> : <Check size={20} strokeWidth={ICON_STROKE[20]} />}
+          {waiting ? (
+            ticket.confirmationMethod === 'shell-local' ? (
+              <LockKeyhole size={20} strokeWidth={ICON_STROKE[20]} />
+            ) : (
+              <Fingerprint size={20} strokeWidth={ICON_STROKE[20]} />
+            )
+          ) : (
+            <Check size={20} strokeWidth={ICON_STROKE[20]} />
+          )}
         </span>
         <div className="confirm-status-text">
           <strong className="confirm-title">{ticket.title}</strong>
           <span className="confirm-line" aria-live="polite">
-            {waiting ? COPY.waiting : `${COPY.confirmed}${verb}…`}
+            {waiting ? (ticket.confirmationMethod === 'shell-local' ? COPY.waitingShell : COPY.waiting) : `${COPY.confirmed}${verb}…`}
           </span>
         </div>
         <Button size="sm" disabled={!waiting} onClick={actions.cancel}>

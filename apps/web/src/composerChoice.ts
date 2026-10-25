@@ -72,16 +72,21 @@ const ENTRY_TEXT = {
  * Every harness the Host offers as choices, usable ones first and then those that cannot start here, each with why.
  * A harness that takes both ways of working is two entries, Agent first.
  */
-export function harnessEntries(catalog: HostCatalog, access: StartAccess = openAccess): HarnessEntry[] {
+export function harnessEntries(catalog: HostCatalog, access: StartAccess = openAccess, workspaceId?: string): HarnessEntry[] {
   const entries = catalog.harnesses.flatMap(harness => {
     const gate = harnessGate(harness, access)
     const fullAccess = !access.legacy && harnessLevel(harness) === 'L3'
     const unavailable = harness.status !== 'ready' ? harness.statusMessage || '暂不可用' : undefined
-    const disabledReason = unavailable ?? (gate.allowed ? undefined : gate.reason)
+    const project = catalog.workspaces.find(item => item.id === workspaceId)
+    const count = project?.folders?.length ?? 1
+    const max = harness.projectFolders?.access === 'all' ? harness.projectFolders.max : undefined
+    const folderReason = max !== undefined && count > max ? `这个项目有 ${count} 个文件夹，${harness.name} 最多使用 ${max} 个` : undefined
+    const disabledReason = unavailable ?? (gate.allowed ? folderReason : gate.reason)
     const modes: TaskMode[] = harness.modes.length ? (['agent', 'chat'] as const).filter(mode => harness.modes.includes(mode)) : ['agent']
     const both = modes.length > 1
     return modes.map(mode => {
-      const note = disabledReason
+      const reason = mode === 'chat' ? (unavailable ?? (gate.allowed ? undefined : gate.reason)) : disabledReason
+      const note = reason
         ? unavailable
           ? '不可用'
           : (gate.reason ?? LOCAL_ONLY_HARNESS)
@@ -102,7 +107,7 @@ export function harnessEntries(catalog: HostCatalog, access: StartAccess = openA
         label: harnessName(harness),
         ...(note ? { note } : {}),
         description: fullAccess && !disabledReason ? `${description}。${SETUP_COPY.fullAccessDetail}` : description,
-        ...(disabledReason ? { disabledReason } : {}),
+        ...(reason ? { disabledReason: reason } : {}),
         fullAccess,
       }
     })
@@ -122,7 +127,11 @@ export function presetsToAdd(catalog: HostCatalog | undefined): AgentPreset[] {
 /** The saved project a new session opened from `task` starts in: the one the task ran in, when it can still start. */
 export function projectFor(catalog: HostCatalog | undefined, task: TaskSummary | undefined): string | undefined {
   if (!catalog || !task) return undefined
-  const project = projectOf(task, catalog.workspaces)
+  const saved = projectOf(task, catalog.workspaces)
+  const start = catalog.workspaces.find(project => project.id === 'default')
+  const legacyStart =
+    task.workspaceId === undefined && (task.cwd === undefined || task.cwd === start?.path || task.cwd.startsWith(`${start?.path}/`))
+  const project = saved ?? (task.workspaceId === 'default' || legacyStart ? start : undefined)
   return project && project.unavailable === undefined ? project.id : undefined
 }
 
@@ -207,6 +216,16 @@ export function startBlock(snapshot: AppSnapshot, choice: ComposerChoice, access
   if (harness.status !== 'ready') return { kind: 'harness-unavailable', message: harness.statusMessage || `${harness.name} 暂不可用。` }
   if (!harnessGate(harness, access).allowed)
     return { kind: 'harness-unavailable', message: `${harness.name} 是完全访问（L3）Harness，只能在执行端电脑上用 Latch 桌面端开启。` }
+  if (choice.mode !== 'chat') {
+    const project = catalog.workspaces.find(item => item.id === choice.workspaceId)
+    if (project?.unavailable) return { kind: 'harness-unavailable', message: project.unavailable }
+    if (!access.local && !access.legacy && project?.remoteStart === false)
+      return { kind: 'harness-unavailable', message: '其他设备不能在这个项目中发起会话。' }
+    const count = project?.folders?.length ?? 1
+    const max = harness.projectFolders?.access === 'all' ? harness.projectFolders.max : undefined
+    if (max !== undefined && count > max)
+      return { kind: 'harness-unavailable', message: `这个项目有 ${count} 个文件夹，${harness.name} 最多使用 ${max} 个。` }
+  }
   if (harness.models === 'host' && !choice.model) {
     const held = heldBackService(catalog)
     return held

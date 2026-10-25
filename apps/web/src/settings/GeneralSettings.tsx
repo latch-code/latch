@@ -1,3 +1,5 @@
+import { UsageSettings } from './UsageSettings.tsx'
+import { ModelVisibilitySettings } from './ModelVisibilitySettings.tsx'
 import { PromptTemplatesSettings } from './PromptTemplatesSettings.tsx'
 import { NotificationSettings } from './NotificationSettings.tsx'
 import { useState } from 'react'
@@ -257,6 +259,8 @@ export function GeneralSettings({ snapshot, admin, onChanged }: { snapshot: AppS
     <>
       <SectionHeading title="通用" description="外观与发送方式只影响这台设备。" />
       <NotificationSettings />
+      {snapshot.catalog?.features?.usage && <UsageSettings catalog={snapshot.catalog} />}
+      {snapshot.catalog && <ModelVisibilitySettings catalog={snapshot.catalog} />}
       {admin && snapshot.catalog?.features?.promptTemplates && <PromptTemplatesSettings snapshot={snapshot} onChanged={onChanged} />}
       <SettingsGroup title="外观">
         <SettingsRow

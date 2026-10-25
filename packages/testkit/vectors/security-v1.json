@@ -337,6 +337,17 @@
     }
   ],
   "signing": {
+    "confirmations": {
+      "format": "latch-confirm-v1\n<hostId>\n<deviceId>\n<confirmationId>\n<previewHash>",
+      "example": {
+        "hostId": "fpi3wdcevcl4gct2ucmrzxry3adc7zcb3zinud2gqjjuj5qc5atq",
+        "deviceId": "dev_CCCCCCCCCCCCCCCCCCCCCC",
+        "confirmationId": "cfm_DDDDDDDDDDDDDDDDDDDDDD",
+        "previewHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "text": "latch-confirm-v1\nfpi3wdcevcl4gct2ucmrzxry3adc7zcb3zinud2gqjjuj5qc5atq\ndev_CCCCCCCCCCCCCCCCCCCCCC\ncfm_DDDDDDDDDDDDDDDDDDDDDD\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "signature": "f1J4nhasyF6KVc4FY9z968AHBLad0Mczje1JB7DLcurBYKPeNb6uPByoVHEjyefsfVAV6WR6e-q4nuHickoa-w"
+      }
+    },
     "encoding": "UTF-8 text, fields joined by \"\\n\", no trailing newline; ECDSA P-256 SHA-256, IEEE P1363 (64 bytes), base64url",
     "enroll": {
       "format": "latch-enroll-v1\n<hostId>\n<enrollmentId>\n<nonce>",
@@ -809,6 +820,19 @@
         }
       },
       "reason": "为设备「Zoe\u0301\u0301\u0301\u0301\\u{0301}\\u{0301}…」增加权限：管理此 Host"
+    },
+    {
+      "action": "agent.probe",
+      "subject": {
+        "form": "agent.probe",
+        "slots": {
+          "harness": "Codex",
+          "program": "/opt/homebrew/bin/codex-acp",
+          "args": "--probe",
+          "env": ""
+        }
+      },
+      "reason": "测试启动 Codex（不发送提示词）：/opt/homebrew/bin/codex-acp --probe"
     }
   ],
   "presenceRequest": [
@@ -1276,6 +1300,88 @@
         "previewHash": "e32dabdc08065d7a5d83965ece38fdad4f785c6e282f6d4941f50a3d35da0d06",
         "timeoutSeconds": 115,
         "requireBiometric": false
+      },
+      "result": "reason-mismatch"
+    },
+    {
+      "name": "probe-initialize-only",
+      "request": {
+        "v": 2,
+        "preview": {
+          "v": 2,
+          "hostId": "fpi3wdcevcl4gct2ucmrzxry3adc7zcb3zinud2gqjjuj5qc5atq",
+          "action": "agent.probe",
+          "title": "测试启动 Agent",
+          "reason": "测试启动 Codex（不发送提示词）：/opt/homebrew/bin/codex-acp --probe",
+          "subject": {
+            "form": "agent.probe",
+            "slots": {
+              "harness": "Codex",
+              "program": "/opt/homebrew/bin/codex-acp",
+              "args": "--probe",
+              "env": ""
+            }
+          },
+          "requester": {
+            "deviceId": "dev_CCCCCCCCCCCCCCCCCCCCCC",
+            "deviceName": "桌面",
+            "listener": "unix",
+            "remoteAddress": "本机 host.sock"
+          },
+          "lines": [
+            {
+              "label": "命令",
+              "value": "/opt/homebrew/bin/codex-acp"
+            }
+          ],
+          "warnings": [],
+          "nonce": "3e7D1xv_cMWsD_BcFpAScg",
+          "expiresAt": "1970-01-01T00:02:00.000Z"
+        },
+        "previewHash": "281052e7eb06334b53419b7e89b6421bc53cba4dada42395a277d56e4d40c501",
+        "timeoutSeconds": 115,
+        "requireBiometric": true
+      },
+      "result": "ok"
+    },
+    {
+      "name": "probe-wrong-reason",
+      "request": {
+        "v": 2,
+        "preview": {
+          "v": 2,
+          "hostId": "fpi3wdcevcl4gct2ucmrzxry3adc7zcb3zinud2gqjjuj5qc5atq",
+          "action": "agent.probe",
+          "title": "测试启动 Agent",
+          "reason": "不匹配的文字",
+          "subject": {
+            "form": "agent.probe",
+            "slots": {
+              "harness": "Codex",
+              "program": "/opt/homebrew/bin/codex-acp",
+              "args": "--probe",
+              "env": ""
+            }
+          },
+          "requester": {
+            "deviceId": "dev_CCCCCCCCCCCCCCCCCCCCCC",
+            "deviceName": "桌面",
+            "listener": "unix",
+            "remoteAddress": "本机 host.sock"
+          },
+          "lines": [
+            {
+              "label": "命令",
+              "value": "/opt/homebrew/bin/codex-acp"
+            }
+          ],
+          "warnings": [],
+          "nonce": "3e7D1xv_cMWsD_BcFpAScg",
+          "expiresAt": "1970-01-01T00:02:00.000Z"
+        },
+        "previewHash": "ab7f8db5027b80f47f5934b0a83877b397f717f475de2df00b52a22b3faae272",
+        "timeoutSeconds": 115,
+        "requireBiometric": true
       },
       "result": "reason-mismatch"
     }

@@ -406,12 +406,12 @@ describe('file routes', () => {
     return files[0]!.file!.handle
   }
 
-  it('answers only the desktop app on host.sock: the browser and phones get 403 local-only', async () => {
+  it('offers only referenced files to browsers while native actions remain on host.sock', async () => {
     const { t, desktop, sessionId } = await desktopSession()
     const browser = await t.enroll({ name: '浏览器', scopes: ['view', 'run', 'approve:standard', 'admin'] })
     const refused = await resolve(browser, sessionId, ['report.md'])
-    expect(refused.status).toBe(403)
-    expect(await refused.json()).toMatchObject({ error: 'local-only' })
+    expect(refused.status).toBe(200)
+    expect(await refused.json()).toMatchObject({ files: [{ status: 'not-referenced', code: 'file-not-referenced' }] })
     const handle = await handleOf(desktop, sessionId, 'report.md')
     const viaTcp = await act(browser, handle, sessionId, 'reveal')
     expect(viaTcp.status).toBe(403)
@@ -543,7 +543,7 @@ describe('file routes', () => {
     expect(await (await act(desktop, report, sessionId, 'reveal')).json()).toMatchObject({ error: 'file-missing' })
   })
 
-  it('needs the data scope all, view to show and preview, and run to open', async () => {
+  it('needs all-scope for native actions, view to reveal and run to open, while work resolves only references', async () => {
     const { t, desktop, sessionId } = await desktopSession()
     const limited = await t.enroll({ listener: 'unix', name: '受限桌面端' })
     const deck = await handleOf(limited, sessionId, 'out/deck.pptx')
@@ -556,8 +556,9 @@ describe('file routes', () => {
     const work = await desktop.request(`devices/${limited.id}`, { method: 'PATCH', body: { dataScope: 'work' } })
     expect(work.status).toBe(200)
     const scoped = await resolve(limited, sessionId, ['report.md'])
-    expect(scoped.status).toBe(403)
-    expect(await scoped.json()).toMatchObject({ error: 'file-scope' })
+    expect(scoped.status).toBe(200)
+    expect(await scoped.json()).toMatchObject({ files: [{ code: 'file-not-referenced' }] })
+    expect((await act(limited, deck, sessionId, 'reveal')).status).toBe(403)
   })
 
   it.each(['resolve', 'action'] as const)('rechecks a narrowed data scope while a file %s waits', async operation => {

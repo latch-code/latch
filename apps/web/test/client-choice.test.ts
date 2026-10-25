@@ -335,6 +335,43 @@ describe('harness entries', () => {
     expect(new Set(local.map(entry => entry.key)).size).toBe(local.length)
   })
 
+  it('applies multi-folder limits to Agent sessions while keeping chat independent of folders', () => {
+    const limited = catalog({
+      harnesses: [
+        {
+          id: 'standard',
+          name: 'Latch 内置',
+          source: 'builtin',
+          status: 'ready',
+          modes: ['agent', 'chat'],
+          models: 'host',
+          projectFolders: { access: 'all', max: 1 },
+        },
+      ],
+      workspaces: [
+        {
+          id: 'wide',
+          name: 'Wide',
+          path: '/work/api',
+          folders: [
+            { id: 'api', path: '/work/api' },
+            { id: 'web', path: '/work/web' },
+          ],
+        },
+      ],
+    })
+    const entries = harnessEntries(limited, { local: true, legacy: false }, 'wide')
+    expect(entries.find(entry => entry.mode === 'agent')?.disabledReason).toContain('最多使用 1 个')
+    expect(entries.find(entry => entry.mode === 'chat')?.disabledReason).toBeUndefined()
+    expect(
+      startBlock(
+        { catalog: limited } as AppSnapshot,
+        { harnessId: 'standard', workspaceId: 'wide', mode: 'agent' },
+        { local: true, legacy: false },
+      )?.message,
+    ).toContain('最多使用 1 个')
+  })
+
   it('offers only the presets no agent was added from yet', () => {
     expect(presetsToAdd(catalog()).map(preset => preset.id)).not.toContain('codex')
     expect(presetsToAdd(catalog()).map(preset => preset.id)).not.toContain('pi')

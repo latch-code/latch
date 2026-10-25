@@ -4,6 +4,7 @@ import {
   emptySeen,
   filterSessions,
   groupSessions,
+  projectOf,
   isUnread,
   markSeen,
   markUnread,
@@ -39,12 +40,10 @@ describe('session list', () => {
     )
     expect(groups.map(group => [group.id, group.label, group.tasks.map(item => item.id), group.workspaceId])).toEqual([
       ['pinned', '置顶', ['pinned-old'], undefined],
-      // The start directory is named after its folder; a session without a directory ran there.
-      ['project:default', 'latch-app', ['app-new', 'history', 'app-old'], 'default'],
       ['project:website', 'website', ['site'], 'website'],
       // The deepest saved project holds the session.
       ['project:docs', '文档', ['docs'], 'docs'],
-      ['other', '其他目录', ['elsewhere'], undefined],
+      ['other', '对话', ['app-new', 'elsewhere', 'history', 'app-old'], undefined],
     ])
   })
 
@@ -66,6 +65,35 @@ describe('session list', () => {
       ['dir:/srv/app', 'app', ['a', 'c']],
       ['other', '会话', ['b']],
     ])
+  })
+
+  it('keeps project identity when folders overlap and distinguishes private sessions from saved projects', () => {
+    const projects: WorkspaceInfo[] = [
+      ...workspaces,
+      {
+        id: 'shared',
+        name: 'shared',
+        path: '/shared',
+        folders: [
+          { id: 'root', path: '/shared' },
+          { id: 'extra', path: '/Users/me/code/website' },
+        ],
+      },
+      { id: 'saved', name: 'saved', path: '/Users/me/code/latch-app/20261025-abcd' },
+    ]
+    expect(projectOf(task('a', at(23), { workspaceId: 'website', cwd: '/shared' }), projects)?.id).toBe('website')
+    expect(projectOf(task('a', at(23), { workspaceId: 'removed', cwd: '/Users/me/code/website' }), projects)).toBeUndefined()
+    expect(projectOf(task('a', at(23), { workspaceId: 'default', cwd: '/Users/me/code/latch-app/20261025-abcd' }), projects)?.id).toBe(
+      'saved',
+    )
+    expect(
+      projectOf(task('a', at(23), { workspaceId: 'default', cwd: '/Users/me/code/latch-app/20261025-abcd/child' }), projects),
+    ).toBeUndefined()
+    expect(projectOf(task('a', at(23), { cwd: '/Users/me/code/website/subdir' }), projects)?.id).toBe('website')
+    expect(projectOf(task('a', at(23), { workspaceId: 'website', mode: 'chat' }), projects)).toBeUndefined()
+    const groups = groupSessions([], projects, { includeEmpty: true })
+    expect(groups.map(group => group.project?.id)).toEqual(['website', 'docs', 'shared', 'saved'])
+    expect(groups.every(group => group.tasks.length === 0)).toBe(true)
   })
 
   it('hides archived sessions except under their own filter and filters by mode and title', () => {
