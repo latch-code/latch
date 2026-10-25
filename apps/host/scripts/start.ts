@@ -168,6 +168,12 @@ async function refuseHostWithoutLock(dataDir: string): Promise<void> {
 async function main(): Promise<void> {
   const paths = resolveLatchPaths({ dataDir: option('--data-dir'), workspace: option('--workspace'), env, cwd: process.cwd() })
   const tls = tlsOptions()
+  const nativeHost = option('--native-host'),
+    nativePortText = option('--native-port')
+  if (nativePortText !== undefined && nativeHost === undefined) throw new StartupError('--native-port 需要 --native-host')
+  const nativePort = Number(nativePortText ?? '4319')
+  if (!Number.isInteger(nativePort) || nativePort < 0 || nativePort > 65535) throw new StartupError('原生连接端口无效')
+  const native = nativeHost === undefined ? undefined : { host: bindAddress(nativeHost), port: nativePort }
   const port = Number(option('--port') ?? env.HARNESS_PORT ?? '4317')
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new StartupError('端口无效')
   // Held from before the first read of the data dir until exit, so offline CLI commands and a second start see this
@@ -209,6 +215,7 @@ async function main(): Promise<void> {
     plugins,
     egressAllow,
     ...(tls ? { tls } : {}),
+    ...(native ? { native } : {}),
     ...(providerId ? { providerId } : {}),
     ...(harnessId ? { harnessId } : {}),
     // The key from the environment is used in memory only; it never reaches the disk.

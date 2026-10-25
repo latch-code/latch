@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import type { FileMetadata } from '@latch/protocol'
 export type OfficeKind = 'pptx' | 'docx' | 'xlsx'
-export type FrameKind = OfficeKind | 'mermaid'
+export type FrameKind = OfficeKind | 'mermaid' | 'html' | 'html-script'
 export interface GridCell {
   text: string
   formula?: string
@@ -21,9 +21,12 @@ export type FrameCommand =
   | { type: 'sheet-page'; sheet: number; start: number; count: number }
   | { type: 'page'; index: number }
   | { type: 'fit'; value: boolean }
+  | { type: 'zoom'; percent: number }
 export type FrameEvent =
   | { type: 'initialized' }
+  | { type: 'view'; fit: boolean; zoomPercent: number }
   | { type: 'diagram'; svg: string }
+  | { type: 'html'; blocked: number }
   | { type: 'rendered'; kind: OfficeKind; sheets?: SheetInfo[]; truncated?: boolean }
   | { type: 'error'; code: 'invalid-file' | 'file-too-large' | 'zip-refused' | 'render-failed' }
   | { type: 'page'; index: number; count: number }
@@ -60,14 +63,24 @@ export function isFrameCommand(value: unknown): value is FrameCommand {
       && integer(value.count, 1000)
       && Number(value.count) > 0
     )
+  if (value.type === 'zoom') return keys(value, ['type', 'percent']) && integer(value.percent, 400) && Number(value.percent) >= 10
   if (value.type === 'page') return keys(value, ['type', 'index']) && integer(value.index, 9999)
   return value.type === 'fit' && keys(value, ['type', 'value']) && typeof value.value === 'boolean'
 }
 export function isFrameEvent(value: unknown): value is FrameEvent {
   if (!plain(value)) return false
   switch (value.type) {
+    case 'html':
+      return keys(value, ['type', 'blocked']) && integer(value.blocked, 100_000)
     case 'diagram':
       return keys(value, ['type', 'svg']) && typeof value.svg === 'string' && value.svg.length <= 2_000_000
+    case 'view':
+      return (
+        keys(value, ['type', 'fit', 'zoomPercent'])
+        && typeof value.fit === 'boolean'
+        && integer(value.zoomPercent, 400)
+        && Number(value.zoomPercent) >= 10
+      )
     case 'initialized':
       return keys(value, ['type'])
     case 'error':

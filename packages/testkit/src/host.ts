@@ -57,6 +57,7 @@ export interface HostFixtureSetup {
 export interface TestRequestInit {
   method?: string
   body?: unknown
+  rawBody?: Uint8Array
   headers?: Record<string, string>
   /** Sent as `x-latch-confirmation`. */
   confirmation?: string
@@ -234,7 +235,11 @@ export async function startHostFixture<H extends FixtureHost>(
       headers,
       dispatcher,
       redirect: 'manual',
-      ...(init.body !== undefined ? { body: typeof init.body === 'string' ? init.body : JSON.stringify(init.body) } : {}),
+      ...(init.rawBody !== undefined
+        ? { body: init.rawBody }
+        : init.body !== undefined
+          ? { body: typeof init.body === 'string' ? init.body : JSON.stringify(init.body) }
+          : {}),
       ...(init.signal ? { signal: init.signal } : {}),
     }) as unknown as Promise<Response>
   }

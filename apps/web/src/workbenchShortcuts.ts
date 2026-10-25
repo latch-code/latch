@@ -13,6 +13,9 @@ export const workbenchBindings = [
   { action: 'previous', label: '上一个会话', desktop: '⌘[', browser: 'Alt [' },
   { action: 'next', label: '下一个会话', desktop: '⌘]', browser: 'Alt ]' },
   { action: 'help', label: '键盘快捷键', desktop: '⌘/', browser: 'Alt /' },
+  { action: 'file-search', label: '查找项目文件', desktop: '⌘P', browser: 'Alt P' },
+  { action: 'close-file', label: '关闭当前文件', desktop: '⌘W', browser: 'Alt W' },
+  { action: 'files', label: '切换文件标签', desktop: '⇧⌘E', browser: 'Alt Shift E' },
 ] as const
 /** Browser bindings avoid its new-window, close-tab, history and address-bar shortcuts. */
 export function workbenchShortcut(event: KeyStroke, desktop: boolean): WorkbenchAction | null {

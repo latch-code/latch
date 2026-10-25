@@ -60,7 +60,13 @@ export function WaitingEnrollments() {
               .split(' ')
               .flatMap((group, index) => (index === 0 ? [<span key={index}>{group}</span>] : [' ', <span key={index}>{group}</span>]))}
           </code>
-          <p className="pair-waiting-note">{item.status === 'approved' ? COPY.signing : COPY.compare}</p>
+          <p className="pair-waiting-note">
+            {item.status === 'approved'
+              ? COPY.signing
+              : item.listener === 'native-direct' || item.listener === 'native-relay'
+                ? COPY.nativeCompare
+                : COPY.compare}
+          </p>
         </div>
       ))}
     </>

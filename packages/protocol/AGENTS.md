@@ -15,3 +15,5 @@
 - 「这台电脑」只用 `isLocalListener` 判定，默认拒绝、只有 `unix` 为真；Host 与页面都调用它，不按入口类别另写本机判断。新增入口类别写进 `LISTENER_CLASSES`，逐个入口的用例随之覆盖它（`apps/host/test/auth.test.ts#this computer > counts only host.sock as this computer: every other listener needs its own invitation, refuses offline codes and cannot show a confirmation uninvited`）。
 
 改动后运行 `pnpm typecheck`、`pnpm test` 与 `pnpm test:e2e`。消息与快照见 [docs/STREAMING.md](../../docs/STREAMING.md)，代码地图见 [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md)。
+
+- `src/file-refs.ts` 定义显式相对引用；`src/attachments.ts` 仅定义有限的元数据、上传上下文与能力；`AttachmentRef` 不含内容或私有路径，新增字段须同步两个 Harness 的持久化 schema。

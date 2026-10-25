@@ -25,7 +25,9 @@
     "@latch/sdk": "workspace:*",
     "qrcode": "catalog:",
     "undici": "catalog:",
-    "zod": "catalog:"
+    "zod": "catalog:",
+    "@latch/link-wire": "workspace:*",
+    "@latch/link-client": "workspace:*"
   },
   "devDependencies": {
     "@latch/testkit": "workspace:*",

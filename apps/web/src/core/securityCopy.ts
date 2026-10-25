@@ -200,10 +200,12 @@ export const PAIRING_WAITING_COPY = {
   compare: '和这台设备屏幕上的指纹逐字核对。一致时在系统表单里用 Touch ID 允许，不一致就在表单里取消。',
   fingerprint: '设备指纹',
   signing: '已允许，等这台设备完成登记…',
+  nativeCompare: '在 Mac 弹出的系统窗口里输入手机显示的六位核对码，再完成身份确认。请勿在聊天或网页中填写核对码。',
 } as const
 
 /** What the request does once the local confirmation passes, for 「已在本机确认，正在…」. */
 export const CONFIRMATION_VERBS: Record<PresenceAction, string> = {
+  'device.enroll-native': '在 Mac 输入手机核对码并完成系统确认',
   'device.enroll': '登记设备',
   'agent.probe': '测试启动',
   'device.grant': '更新权限',
@@ -217,6 +219,7 @@ export const CONFIRMATION_VERBS: Record<PresenceAction, string> = {
 
 /** What a confirmation held back by a full-access session was for, in 「要等「…」结束，才能放宽安全策略。」. */
 export const BLOCKED_ACTION_TEXT: Record<PresenceAction, string> = {
+  'device.enroll-native': '在 Mac 输入手机核对码并完成系统确认',
   'agent.probe': '测试启动 Agent',
   'device.enroll': '配对新设备',
   'device.grant': '为设备增加权限',
@@ -363,8 +366,9 @@ export const PAIRING_COPY = {
   /** Without the Host's HTTPS entry: what is missing and what is not built yet, in words; the start options are folded. */
   notConfigured: '手机接入还没有配置。',
   /** 设置 › 电脑's phone access row when it is 未配置: where it is set up, never the start options. */
-  computerRow: '配置方法见 设置 › 设备 › 手机配对',
+  computerRow: '连接设置在 设置 › 设备 中',
   directPending: '同一网络下扫码直连尚未实现：它需要 Host 在局域网中宣告自己并固定身份，正在开发。',
+  browserHttpsOnly: '浏览器接入需要你提供的 HTTPS 证书；原生客户端使用上面的连接设置。',
   tlsDisclosure: '用自己的 HTTPS 证书配置（需要重启 Host）',
   tlsSteps:
     '为这台电脑准备一份 HTTPS 证书（例如用 Tailscale 的 tailscale cert 生成）。关闭窗口不会停止 Host：先在终端运行 pnpm stop，再用 pnpm desktop -- 加上这些参数启动：',
@@ -381,6 +385,70 @@ export const PAIRING_COPY = {
   copy: '复制链接',
   copied: '已复制',
   regenerate: '重新生成',
+} as const
+
+export const NATIVE_LINK_COPY = {
+  title: '连接手机',
+  app: '原生 App（开发预览）',
+  configured: '生成一次性二维码，在原生客户端中连接这台电脑。',
+  disabled: '选择局域网直连，或添加你自己的中继。',
+  configure: '设置连接',
+  direct: '同一网络下直连',
+  address: '这台电脑的地址',
+  port: '直连端口',
+  portHint: '填 0 自动选择可用端口；二维码使用实际端口。',
+  managed: '直连入口由 Host 的启动参数管理。',
+  noAddress: '当前没有可用的局域网地址；可以先配置自建中继。',
+  relay: (number: number) => `自建中继 ${number}`,
+  removeRelay: (number: number) => `移除自建中继 ${number}`,
+  remove: '移除',
+  relayUrl: '中继地址',
+  relayId: '节点身份',
+  spki: 'TLS 公钥指纹',
+  providedByOperator: '由中继部署者提供，32 位十六进制。',
+  registrationKey: '登记密钥',
+  keyKept: '已保存；留空保持原密钥。',
+  keyOptional: '私有中继需要；公开注册的节点可以留空。',
+  noKey: '这个节点不使用登记密钥',
+  addRelay: '添加自建中继',
+  relayPrivacy: '新的中继要在 Mac 上确认。中继可看到 IP、连接时间和数据量，无法读取会话正文。',
+  intro: '用原生客户端扫描二维码；在 Mac 的系统窗口中输入手机显示的六位码并确认。二维码 10 分钟有效，只能使用一次。',
+  steps: [
+    '在原生客户端中扫描二维码。',
+    '在 Mac 的系统窗口输入手机显示的六位码，并完成身份确认。',
+    '完成后在手机验证身份，查看正文与继续工作。',
+  ],
+  qrAlt: '原生客户端配对二维码',
+  qrFailed: '二维码生成失败，可以复制配对信息后粘贴到原生客户端。',
+  copy: '复制配对信息',
+  addressChanged: '局域网入口当前不可用。请核对地址和端口后重新保存，或通过已配置的中继连接。',
+  inputs: '手机输入',
+  inputsReady: '手机仍按各自登记的权限操作。暂停不会停止正在执行的会话。',
+  paused: '所有原生手机均只读，恢复需要在这台 Mac 上确认。',
+  pause: '暂停所有手机输入',
+  resume: '恢复手机输入',
+  relayStatus: {
+    connecting: '正在连接',
+    connected: '控制连接已建立；手机仍需独立验证 Host 身份',
+    waiting: '连接暂不可用，正在自动重试',
+    attention: '中继报告路由冲突，请核对节点配置',
+  },
+  attention: '需要检查',
+  browser: '浏览器配对（自己的 HTTPS 入口）',
+  expand: '展开',
+  collapse: '收起',
+  cancel: '取消',
+  save: '保存连接',
+  nativeInput: {
+    ready: '按登记权限输入',
+    paused: '输入已暂停，仅查看',
+    'verification-required': '30 天未验证，仅查看；在手机验证后恢复',
+    review: '待 Mac 复核，仅查看',
+    revoked: '已撤销',
+  },
+  bodyLocked: '正文已锁定，需在手机验证',
+  registeredScopes: (text: string) => `登记权限：${text}`,
+  bodyUntil: (time: string) => `正文验证至 ${time}`,
 } as const
 
 /**
@@ -471,6 +539,7 @@ const FILE_NOTES: Record<string, (context: FileNoteContext) => FileNote> = {
   'file-invalid': () => ({ text: '这不是有效的文件路径。', tone: 'alert' }),
   'file-changed': () => ({ text: '文件刚刚发生了变化，请重试。', tone: 'alert' }),
   'file-handle-expired': () => ({ text: '文件已不可用，请重新打开。', tone: 'alert' }),
+  'file-image-dimensions': () => ({ text: '无法确认图片尺寸，已停止解码。可以下载文件后查看。', tone: 'alert' }),
   'file-handle-foreign': () => ({ text: '文件已不可用，请重新打开。', tone: 'alert' }),
   'open-failed': () => ({ text: '没有找到能打开这个文件的应用。', tone: 'alert' }),
   'task-not-found': () => ({ text: '找不到这个会话。', tone: 'alert' }),
@@ -561,6 +630,8 @@ export type SessionStopCode = keyof typeof SESSION_STOP_TEXT
 export const isSessionStopCode = (code: string): code is SessionStopCode => code in SESSION_STOP_TEXT
 
 const FIXED: Record<string, string> = {
+  'file-image-dimensions': fileNote('file-image-dimensions').text,
+  'file-too-large': '文件或图片超过这台设备的预览上限，请在执行端电脑上查看。',
   unauthorized: '请先在本机确认这台设备',
   'renewal-required': '设备凭据需要续期',
   'credential-expired': ENROLLMENT_REASON_TEXT['credential-expired']!,
@@ -607,6 +678,14 @@ const FIXED: Record<string, string> = {
   'credential-store-failed': '无法安全保存设备凭据，登记未完成。',
   'browser-open-unsupported': '此系统上不能从桌面端直接打开浏览器，请运行 pnpm latch device invite --loopback。',
   'browser-open-failed': '无法在浏览器中打开 Latch，请重试。',
+  'native-not-configured': '请先在 设置 › 设备 › 连接手机 中设置连接方式。',
+  'native-config-changed': '手机连接配置已变化。请重新打开设置连接，再核对后保存。',
+  'native-relay-duplicate': '每个中继节点只能添加一次。',
+  'native-managed': '直连入口由启动参数管理，需要停止 Host 后修改参数。',
+  'native-address-unavailable': '原来的局域网地址已不可用，请重新选择当前地址。',
+  'native-listener-unavailable': '无法启用所选地址或端口，请核对网络后重试。',
+  'native-not-ready': '手机连接服务正在准备，请稍后重试。',
+  'native-verification-required': '请先在手机完成身份验证，再查看正文或操作。',
 }
 
 /** Prefix families in the catalog; an unlisted member still never shows server text. */
@@ -653,6 +732,14 @@ export function isCatalogCode(code: string): boolean {
 /** The text a page shows for a Host error. */
 export function describeFailure(status: number, code: string, message: string, details: Partial<ApiFailure> = {}): string {
   switch (code) {
+    case 'attachment-claimed':
+      return '附件已保留给另一条提交。请重试原提交，或移除附件后重新添加。'
+    case 'attachment-secret':
+      return '附件可能包含密钥。请检查内容，并明确确认后再添加。'
+    case 'file-reference-refused':
+      return '引用文件已不存在、不在当前会话文件夹内，或可能包含密钥。请重新选择。'
+    case 'attachment-publish-unknown':
+      return '会话已开始，附件记录尚未确认。请重试同一次提交。'
     case 'scope-required': {
       const label = scopeLabel(details.required)
       return label ? `此设备没有「${label}」权限` : '此设备没有执行此操作的权限'

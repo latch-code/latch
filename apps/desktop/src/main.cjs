@@ -38,6 +38,7 @@ const {
   writePreferences: writeNotificationPreferences,
 } = require('./notifications.cjs')
 const { createFileActions } = require('./files.cjs')
+const { createNetworkSink } = require('./network.cjs')
 const {
   LIFECYCLE_CHANNELS,
   createHostSupervisor,
@@ -189,7 +190,11 @@ async function hardenSession(target) {
   target.webRequest.onBeforeRequest((details, callback) => {
     callback({ cancel: !isAllowedRendererDetails(details, { packaged: app.isPackaged }) })
   })
-  await target.setProxy({ mode: 'direct' })
+  const sink = await createNetworkSink()
+  app.once('will-quit', () => {
+    void sink.close()
+  })
+  await target.setProxy(sink.proxy)
 }
 
 // One native dialog at a time: the external-link confirmation and the folder dialogs share it.
@@ -202,6 +207,7 @@ const openExternal = createExternalOpener({
 })
 
 app.on('web-contents-created', (_event, contents) => {
+  contents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp')
   contents.setWindowOpenHandler(({ url }) => {
     void openExternal(url, BrowserWindow.fromWebContents(contents) ?? undefined)
     return { action: 'deny' }

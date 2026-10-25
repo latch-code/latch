@@ -2,10 +2,11 @@
 //
 // Reads one JSON request line from stdin, recomputes the preview hash and the reason sentence itself, asks for Touch ID
 // or the login password through the system's own LocalAuthentication sheet with that sentence, and writes one JSON
-// result line to stdout. It draws no window of its own. It reads nothing but stdin (and, in --self-test mode, the
+// result line to stdout. Native pairing first collects a phone code in a local secure field. It reads nothing but stdin (and, in --self-test mode, the
 // vectors file named on the command line, checking canonical JSON, preview hashes, the display escaping, the reason
 // sentences and request validation), writes nothing but stdout, makes no network calls and ignores its environment.
 
+import AppKit
 import CryptoKit
 import Foundation
 import LocalAuthentication
@@ -326,7 +327,7 @@ func emitError(_ message: String) -> Never {
 // MARK: - Display text
 
 /// The Host's listener classes, the only requesters a preview may name.
-let listeners: Set<String> = ["unix", "loopback-tcp", "lan-tls", "tailnet-tls", "cli"]
+let listeners: Set<String> = ["unix", "loopback-tcp", "lan-tls", "tailnet-tls", "native-direct", "native-relay", "cli"]
 
 /// Combining marks kept in a row; later ones in the same run are escaped, so stacked marks cannot cover other lines.
 let maxCombiningRun = 4
@@ -447,6 +448,8 @@ let reasonForms: [String: ReasonForm] = [
   "policy.egress": ReasonForm(actions: ["policy.change"], segments: [.text("允许 Host 访问 "), slot("target", 64, keepEnd: true)]),
   "policy.egress-many": ReasonForm(actions: ["policy.change"], segments: [.text("允许 Host 访问 "), slot("count", 4), .text(" 个新地址")]),
   "policy.local": ReasonForm(actions: ["policy.change"], segments: [.text("把在这台电脑上发起的上限放宽到"), slot("level", 8)]),
+  "policy.native-input": ReasonForm(actions: ["policy.change"], segments: [.text("恢复所有原生手机的输入权限")]),
+  "policy.native-link": ReasonForm(actions: ["policy.change"], segments: [.text("更改手机连接："), slot("direct", 48), .text("，"), slot("count", 1), .text(" 个中继节点；新中继可看到连接时间与 IP")]),
   "policy.remote": ReasonForm(actions: ["policy.change"], segments: [.text("把从手机和其他电脑发起的上限放宽到"), slot("level", 8)]),
   "policy.remote-start": ReasonForm(actions: ["policy.change"], segments: [.text("允许其他设备在这台电脑上新建会话")]),
   "policy.remote-agents": ReasonForm(actions: ["policy.change"], segments: [.text("允许其他设备使用更多 Agent")]),
@@ -476,6 +479,9 @@ let reasonForms: [String: ReasonForm] = [
   "start.repeat": ReasonForm(actions: ["task.start-l3"], segments: [.text("开启完全访问会话："), harnessSlot, projectSlot, folderSlot]),
   "mode.widen": ReasonForm(actions: ["task.mode-widen"], segments: [
     .text("把会话「"), slot("session", 20), .text("」的权限模式放宽到 "), slot("mode", 24),
+  ]),
+  "device.enroll-native": ReasonForm(actions: ["device.enroll-native"], segments: [
+    .text("配对原生设备「"), slot("device", 20), .text("」，已在此 Mac 输入手机核对码，指纹 "), slot("fingerprint", 24),
   ]),
   "device.enroll": ReasonForm(actions: ["device.enroll"], segments: [
     .text("允许指纹 "), slot("fingerprint", 24), .text(" 的新设备「"), slot("device", 20), .text("」连接"),
@@ -535,6 +541,7 @@ struct Request {
   let reason: String
   let timeoutSeconds: Int
   let requireBiometric: Bool
+  let pairingCode: String?
 }
 
 struct Refusal: Error {
@@ -556,7 +563,11 @@ func strings(_ value: JSONValue?) -> [String]? {
 func parseRequest(_ bytes: [UInt8]) throws -> Request {
   let lineEnd = bytes.firstIndex(of: 0x0A) ?? bytes.count
   guard let root = try? JSONParser.parse(Array(bytes[..<lineEnd])) else { throw Refusal(code: "request-invalid") }
-  guard Set(root.keys) == ["v", "preview", "previewHash", "timeoutSeconds", "requireBiometric"], case .integer(2)? = root["v"],
+  let pairingCode = root["pairingCode"]?.stringValue
+  let requestKeys: Set<String> = pairingCode == nil
+    ? ["v", "preview", "previewHash", "timeoutSeconds", "requireBiometric"]
+    : ["v", "preview", "previewHash", "timeoutSeconds", "requireBiometric", "pairingCode"]
+  guard Set(root.keys) == requestKeys, case .integer(2)? = root["v"],
         let preview = root["preview"], case .object = preview, let previewHash = root["previewHash"]?.stringValue,
         case .integer(let timeout)? = root["timeoutSeconds"], (1...120).contains(timeout),
         case .bool(let requireBiometric)? = root["requireBiometric"] else { throw Refusal(code: "request-invalid") }
@@ -579,7 +590,11 @@ func parseRequest(_ bytes: [UInt8]) throws -> Request {
   }
   guard let reason = presenceReason(action: action, form: subject.form, slots: subject.slots) else { throw Refusal(code: "preview-invalid") }
   guard Array(reason.utf16) == given else { throw Refusal(code: "reason-mismatch") }
-  return Request(nonce: nonce, previewHash: previewHash, reason: reason, timeoutSeconds: Int(timeout), requireBiometric: requireBiometric)
+  let nativePairing = action == "device.enroll-native" && subject.form == "device.enroll-native"
+  if nativePairing {
+    guard let code = pairingCode, code.utf8.count == 6, code.utf8.allSatisfy({ (48...57).contains($0) }), requireBiometric else { throw Refusal(code: "pairing-code-required") }
+  } else if pairingCode != nil { throw Refusal(code: "pairing-code-unexpected") }
+  return Request(nonce: nonce, previewHash: previewHash, reason: reason, timeoutSeconds: Int(timeout), requireBiometric: requireBiometric, pairingCode: pairingCode)
 }
 
 /// Reads stdin until the first newline or end of input.
@@ -710,13 +725,17 @@ enum SelfTest {
 /// sentence is the step the person verifies. SIGTERM from the Host (cancelled or expired), the Host's exit and the
 /// helper's own timer all close the sheet.
 @MainActor
-final class Authentication {
+final class Authentication: NSObject {
   private let request: Request
   private let context = LAContext()
   private var sources: [DispatchSourceProtocol] = []
   private var finished = false
+  private var panel: NSPanel?
+  private lazy var codeField = NSSecureTextField()
+  private lazy var mismatch = NSTextField(labelWithString: " ")
+  private var codeFailures = 0
 
-  init(request: Request) { self.request = request }
+  init(request: Request) { self.request = request; super.init() }
 
   func start() {
     signal(SIGTERM, SIG_IGN)
@@ -735,6 +754,49 @@ final class Authentication {
       MainActor.assumeIsolated { self.finish(result: "timeout") }
     }
 
+    if request.pairingCode != nil { showPairingInput(); return }
+    authenticate()
+  }
+
+  private func showPairingInput() {
+    NSApp.setActivationPolicy(.accessory)
+    let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 380, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
+    panel.title = "Latch 设备配对"
+    panel.sharingType = .none
+    let title = NSTextField(labelWithString: "输入手机上显示的六位核对码")
+    title.font = .systemFont(ofSize: 15, weight: .semibold)
+    codeField.placeholderString = "六位核对码"
+    codeField.font = .monospacedDigitSystemFont(ofSize: 20, weight: .medium)
+    codeField.alignment = .center
+    let approve = NSButton(title: "继续", target: self, action: #selector(continuePairing))
+    approve.keyEquivalent = "\r"
+    let cancel = NSButton(title: "取消", target: self, action: #selector(cancelPairing))
+    cancel.keyEquivalent = "\u{1b}"
+    let buttons = NSStackView(views: [cancel, approve]); buttons.orientation = .horizontal
+    let stack = NSStackView(views: [title, codeField, mismatch, buttons]); stack.orientation = .vertical; stack.spacing = 14
+    stack.translatesAutoresizingMaskIntoConstraints = false
+    panel.contentView!.addSubview(stack)
+    NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo: panel.contentView!.leadingAnchor, constant: 24), stack.trailingAnchor.constraint(equalTo: panel.contentView!.trailingAnchor, constant: -24), stack.topAnchor.constraint(equalTo: panel.contentView!.topAnchor, constant: 24), codeField.widthAnchor.constraint(equalToConstant: 180)])
+    self.panel = panel
+    panel.center(); panel.makeKeyAndOrderFront(nil); panel.makeFirstResponder(codeField)
+    NSApp.activate(ignoringOtherApps: true)
+  }
+
+  @objc private func continuePairing() {
+    guard !finished, let expected = request.pairingCode else { return }
+    guard codeField.stringValue == expected else {
+      codeFailures += 1
+      codeField.stringValue = ""
+      if codeFailures >= 3 { finish(result: "denied"); return }
+      mismatch.stringValue = "核对码不一致，请查看手机后重试"
+      return
+    }
+    if request.pairingCode != nil { codeField.stringValue = ""; panel?.orderOut(nil); panel = nil }
+    authenticate()
+  }
+  @objc private func cancelPairing() { finish(result: "cancelled") }
+
+  private func authenticate() {
     var policy = LAPolicy.deviceOwnerAuthentication
     var method = "password"
     var probe: NSError?
@@ -770,6 +832,7 @@ final class Authentication {
     guard !finished else { return }
     finished = true
     context.invalidate()
+    if request.pairingCode != nil { codeField.stringValue = ""; panel?.orderOut(nil); panel = nil }
     var fields: [(String, String)] = [("nonce", request.nonce), ("previewHash", request.previewHash), ("result", result)]
     if let method, result == "approved" { fields.append(("method", method)) }
     if let error, result == "error" { fields.append(("error", error)) }
@@ -791,11 +854,15 @@ struct LatchPresence {
     } catch {
       emitError("request-invalid")
     }
+    if request.pairingCode != nil { _ = NSApplication.shared }
     let session = MainActor.assumeIsolated { () -> Authentication in
       let session = Authentication(request: request)
       session.start()
       return session
     }
-    withExtendedLifetime(session) { dispatchMain() }
+    withExtendedLifetime(session) {
+      if request.pairingCode != nil { MainActor.assumeIsolated { NSApplication.shared.run() } }
+      else { dispatchMain() }
+    }
   }
 }

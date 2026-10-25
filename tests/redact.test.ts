@@ -11,6 +11,10 @@ const githubToken = ['ghp', 'x'.repeat(36)].join('_')
 describe('redactSecrets', () => {
   it.each([
     [`credential ${credential} end`, 'credential [redacted] end'],
+    [`native QR LATCHPAIR1.${'a'.repeat(128)} end`, 'native QR [redacted] end'],
+    [`native window lnw1.${'W'.repeat(43)} end`, 'native window [redacted] end'],
+    [`native proof lnp1.${'P'.repeat(43)} end`, 'native proof [redacted] end'],
+    [`native book LATCHBOOK1.${'B'.repeat(128)} end`, 'native book [redacted] end'],
     ['invite lpi1-ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'invite [redacted]'],
     ['offline lpo1-ABCDEFGHIJKLMNOPQRSTUVWX23', 'offline [redacted]'],
     ['cookie: harness_link=abc-DEF_123; Path=/link', 'cookie: [redacted]; Path=/link'],
@@ -29,6 +33,12 @@ describe('redactSecrets', () => {
   it('leaves ordinary text alone', () => {
     const text = 'Latch 0.1.0 · 打开 http://h-abc.localhost:4317/link/ ，请在本机确认。 dev_123 latch_short=1 lpi1-short'
     expect(redactSecrets(text)).toBe(text)
+  })
+  it('classifies encoded native pairing payloads and app-open receipts as secrets', () => {
+    expect(containsSecret(`LATCHPAIR1.${'a'.repeat(128)}`)).toBe(true)
+    expect(containsSecret(`lnw1.${'W'.repeat(43)}`)).toBe(true)
+    expect(containsSecret(`lnp1.${'P'.repeat(43)}`)).toBe(true)
+    expect(containsSecret(`LATCHBOOK1.${'B'.repeat(128)}`)).toBe(true)
   })
 
   it.each([

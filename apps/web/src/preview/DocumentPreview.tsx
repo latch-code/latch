@@ -1,7 +1,7 @@
 import csvWorkerUrl from './csv.worker.ts?worker&url'
 import { trustedScriptUrl } from './runtime.ts'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowLeft, ArrowRight } from 'lucide-react'
+import { ArrowLeft, ArrowRight, X } from 'lucide-react'
 import { Button, IconButton, InlineNotice } from '@latch/ui'
 import { isFrameEvent, type DocumentPreviewProps, type FrameCommand, type GridCell, type SheetInfo } from './types.ts'
 import { SheetGrid } from './SheetGrid.tsx'
@@ -9,21 +9,31 @@ const PdfPreview = lazy(() => import('./PdfPreview.tsx'))
 type Pending = { resolve: (rows: GridCell[][]) => void; reject: () => void; timer: ReturnType<typeof setTimeout> }
 function OfficePreview({ file, versionKey, read, renderFrame }: DocumentPreviewProps) {
   const [data, setData] = useState<ArrayBuffer>(),
+    [loadedKey, setLoadedKey] = useState(''),
     [error, setError] = useState(''),
     [sheets, setSheets] = useState<SheetInfo[]>([]),
     [selected, setSelected] = useState(0),
     [page, setPage] = useState({ index: 0, count: 0 }),
     [fit, setFit] = useState(true),
     [truncated, setTruncated] = useState(false),
-    [changes, setChanges] = useState(false)
+    [changes, setChanges] = useState(false),
+    [link, setLink] = useState('')
+  const view = useRef({ pageIndex: 0, fit: true, zoomPercent: 100 })
+  const identity = `${file.root}\n${file.path}\n${file.attachmentId ?? ''}`
+  const loadKey = `${identity}\n${versionKey}\n${changes}`
   const channel = useRef<((command: FrameCommand) => void) | undefined>(undefined),
     pending = useRef(new Map<string, Pending>())
   useEffect(() => {
     const controller = new AbortController()
     setData(undefined)
+    setError('')
+    setLink('')
     void read(undefined, undefined, controller.signal).then(
       value => {
-        if (!controller.signal.aborted) setData(value)
+        if (!controller.signal.aborted) {
+          setLoadedKey(loadKey)
+          setData(value)
+        }
       },
       () => {
         if (!controller.signal.aborted) setError('文件暂时无法读取，请重新打开后重试。')
@@ -37,7 +47,7 @@ function OfficePreview({ file, versionKey, read, renderFrame }: DocumentPreviewP
       }
       pending.current.clear()
     }
-  }, [read, versionKey, changes])
+  }, [read, loadKey])
   const load = useCallback(
     (start: number, count: number, signal?: AbortSignal) =>
       new Promise<GridCell[][]>((resolve, reject) => {
@@ -87,7 +97,23 @@ function OfficePreview({ file, versionKey, read, renderFrame }: DocumentPreviewP
       }
       setTruncated(value.truncated === true)
     }
-    if (value.type === 'page') setPage({ index: value.index, count: value.count })
+    if (value.type === 'page') {
+      setPage({ index: value.index, count: value.count })
+      view.current.pageIndex = value.index
+    }
+    if (value.type === 'view') {
+      view.current.fit = value.fit
+      view.current.zoomPercent = value.zoomPercent
+      setFit(value.fit)
+    }
+    if (value.type === 'link') {
+      try {
+        const url = new URL(value.href)
+        if (['http:', 'https:'].includes(url.protocol) && !url.username && !url.password) setLink(url.href)
+      } catch {
+        /* Invalid links stay inert. */
+      }
+    }
     if (value.type === 'sheet-page') {
       const key = `${value.sheet}:${value.start}`,
         request = pending.current.get(key)
@@ -110,11 +136,27 @@ function OfficePreview({ file, versionKey, read, renderFrame }: DocumentPreviewP
     channel.current = send
   }, [])
   if (error) return <InlineNotice tone="error">{error}</InlineNotice>
-  if (!data) return <p role="status">正在读取文档…</p>
+  if (!data || loadedKey !== loadKey) return <p role="status">正在读取文档…</p>
   const sheet = sheets.find(item => item.id === selected)
   return (
-    <div className="document-preview">
-      <div className="document-preview-controls">
+    <div
+      className="document-preview"
+      onKeyDown={event => {
+        if (
+          !(event.metaKey || event.ctrlKey)
+          || !['+', '=', '-', '0'].includes(event.key)
+          || (event.target instanceof Element && event.target.closest('input,textarea,select,[contenteditable=true]'))
+        )
+          return
+        event.preventDefault()
+        event.stopPropagation()
+        channel.current?.(
+          event.key === '0'
+            ? { type: 'fit', value: true }
+            : { type: 'zoom', percent: Math.min(400, Math.max(10, view.current.zoomPercent + (event.key === '-' ? -10 : 10))) },
+        )
+      }}>
+      <div className="document-preview-controls document-paged-controls">
         {page.count > 0 && (
           <>
             <IconButton
@@ -137,6 +179,8 @@ function OfficePreview({ file, versionKey, read, renderFrame }: DocumentPreviewP
               variant="ghost"
               aria-pressed={fit}
               onClick={() => {
+                view.current.fit = !fit
+                if (!fit) view.current.zoomPercent = 100
                 setFit(!fit)
                 channel.current?.({ type: 'fit', value: !fit })
               }}>
@@ -156,13 +200,23 @@ function OfficePreview({ file, versionKey, read, renderFrame }: DocumentPreviewP
           </Button>
         )}
       </div>
+      <span className="document-preview-caption">只读预览，排版可能与原应用不同。</span>
+      {link && (
+        <InlineNotice>
+          文档链接：{new URL(link).hostname}{' '}
+          <Button size="xs" onClick={() => window.open(link, '_blank', 'noopener,noreferrer')}>
+            打开链接
+          </Button>
+          <IconButton size="xs" icon={X} label="关闭文档链接" onClick={() => setLink('')} />
+        </InlineNotice>
+      )}
       {truncated && <InlineNotice>文件较大，部分行、列或单元格内容未显示。</InlineNotice>}
       <div className={file.kind === 'xlsx' ? 'document-parser-frame' : 'document-frame'}>
         {renderFrame({
           kind: file.kind as 'pptx' | 'docx' | 'xlsx',
           data,
           versionKey: `${versionKey}:${changes}`,
-          options: { showChanges: changes, theme: document.documentElement.dataset.theme ?? 'light' },
+          options: { ...view.current, showChanges: changes, theme: document.documentElement.dataset.theme ?? 'light' },
           onMessage: message,
           onChannel,
         })}
@@ -299,15 +353,16 @@ function CsvPreview({ read, versionKey }: DocumentPreviewProps) {
   )
 }
 export function DocumentPreview(props: DocumentPreviewProps) {
+  const identity = `${props.file.root}\n${props.file.path}\n${props.file.attachmentId ?? ''}`
   if (props.file.secret || !props.file.actions.preview) return <InlineNotice>这个文件不能在应用内预览。</InlineNotice>
   if (props.file.kind === 'pdf')
     return (
       <Suspense fallback={<p role="status">正在加载 PDF…</p>}>
-        <PdfPreview key={props.versionKey} {...props} />
+        <PdfPreview key={identity} {...props} />
       </Suspense>
     )
-  if (props.file.kind === 'csv') return <CsvPreview key={props.versionKey} {...props} />
+  if (props.file.kind === 'csv') return <CsvPreview key={identity} {...props} />
   if (['pptx', 'docx', 'xlsx'].includes(props.file.kind) && props.file.size <= 50 * 1024 * 1024)
-    return <OfficePreview key={props.versionKey} {...props} />
+    return <OfficePreview key={identity} {...props} />
   return <InlineNotice>暂时无法预览这个文件。</InlineNotice>
 }

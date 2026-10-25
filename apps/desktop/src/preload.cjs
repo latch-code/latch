@@ -81,6 +81,7 @@ contextBridge.exposeInMainWorld(
     kind: 'electron',
     devMode: true,
     platform: process.platform,
+    previews: Object.freeze({ protocolVersion: 1, htmlScripts: true }),
     confirmations: Object.freeze({
       protocolVersion: 1,
       confirm: id =>

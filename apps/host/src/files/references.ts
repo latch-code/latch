@@ -1,5 +1,5 @@
 import { isAbsolute, normalize, relative, resolve, sep } from 'node:path'
-import type { TaskDetail } from '@latch/protocol'
+import { isFileMention, type TaskDetail } from '@latch/protocol'
 import { parseReference, type FileRoot, type ResolvedFile } from './resolve.ts'
 
 const PATH_KEYS = ['path', 'file', 'file_path', 'filePath']
@@ -46,8 +46,22 @@ export function sessionReferences(detail: TaskDetail, roots: readonly FileRoot[]
     ))
       add(match[1] ?? match[2] ?? match[3] ?? '', rootId)
   }
+  const outputRefs = (files: TaskDetail['messages'][number]['outputs']) => {
+    for (const ref of (files ?? []).slice(0, 1000)) {
+      if (!isFileMention({ root: ref.root, path: ref.path }) || budget < ref.path.length || found.size >= 10_000) continue
+      budget -= ref.path.length
+      if (roots.some(root => root.id === ref.root)) found.add(`${ref.root}\n${ref.path}`)
+    }
+  }
+  if (detail.fileChanges?.runId === detail.summary.runId) outputRefs(detail.fileChanges?.files)
   // Newest messages take precedence when a very long history reaches the bounded scan budget.
   for (const message of detail.messages.toReversed()) {
+    outputRefs(message.outputs)
+    for (const ref of (message.fileRefs ?? []).slice(0, 32)) {
+      if (!isFileMention(ref) || budget < ref.path.length || found.size >= 10_000) continue
+      budget -= ref.path.length
+      if (roots.some(root => root.id === ref.root)) found.add(`${ref.root}\n${ref.path}`)
+    }
     const input: Record<string, string> = JSON.parse(referenceInput(message.tool?.input) ?? '{}')
     const folder = input.folder
     for (const key of PATH_KEYS) if (input[key]) add(input[key], folder)

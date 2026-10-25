@@ -6,6 +6,7 @@ import { parseSidebarPreference, type SidebarPreference } from './sidebarLayout.
 export type ThemePreference = 'system' | 'light' | 'dark'
 export type SendKey = 'enter' | 'mod-enter'
 export interface Preferences {
+  autoOpenDocuments: boolean
   onboarding: 'auto' | 'show' | 'hidden'
   theme: ThemePreference
   /** Desktop only; touch keyboards always insert a newline on Enter. */
@@ -18,6 +19,7 @@ export interface Preferences {
 
 const KEY = 'harness-link.preferences'
 const defaults: Preferences = {
+  autoOpenDocuments: false,
   onboarding: 'auto',
   theme: 'system',
   sendKey: 'enter',
@@ -48,6 +50,7 @@ export function parsePreferences(raw: string | null): Preferences {
     if (typeof value !== 'object' || value === null) return { ...defaults }
     const item = value as Record<string, unknown>
     return {
+      autoOpenDocuments: item.autoOpenDocuments === true,
       onboarding: item.onboarding === 'show' || item.onboarding === 'hidden' ? item.onboarding : 'auto',
       theme: item.theme === 'light' || item.theme === 'dark' ? item.theme : 'system',
       sendKey: item.sendKey === 'mod-enter' ? 'mod-enter' : 'enter',

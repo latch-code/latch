@@ -1,6 +1,6 @@
 # @latch/e2e
 
-端到端用例：Vitest 内用 Playwright 驱动真实浏览器与 Electron，Host 由 `startTestHost` 在测试进程内启动。单元与集成用例不在这里，在各项目的 `test/` 与根 `tests/`。
+端到端用例：Vitest 内驱动真实浏览器、Electron 或原生链路，Host 由 `startTestHost` 在测试进程内启动。单模块用例在各项目的 `test/` 与根 `tests/`。
 
 | 路径 | 职责 |
 | --- | --- |
@@ -9,7 +9,9 @@
 | `helpers/layout.ts`、`helpers/motion.ts`、`helpers/visual.ts`、`helpers/security.ts` | 控件可达、横向溢出、回到手机的会话列表与打开、离开设置（含从分区里的页面一级级返回）；按令牌读出的过渡与动画；视觉截图的视口、固定时钟、截图、索引与逐像素比较；向页面注入样式并核对安全界面不变 |
 | `vitest.config.ts` | 文件依次运行，用例与钩子超时 120 秒 |
 
-运行环境 node；依赖都写在 devDependencies：workspace 包 host、protocol、sdk、testkit，`@playwright/test` 与 `vite`（视觉截图构建 `packages/ui/test/gallery` 的原语总览页）。用例与运行器用根项目的同一份 Vitest，所以本项目不声明 `vitest`。
+`desktop-native.e2e.ts` 检查 Mac 手机配置、系统确认接线、三宽浅深色和样式覆盖；只截无邀请的设置，生成的二维码不截图。
+
+运行环境 node；依赖都写在 devDependencies：host、protocol、sdk、testkit 与原生全链的 relay、link-client、link-wire；Playwright、vite 用于界面与原语总览。用例与运行器用根项目的同一份 Vitest，所以本项目不声明 `vitest`。
 
 不变量：
 

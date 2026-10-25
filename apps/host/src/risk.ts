@@ -25,7 +25,12 @@ export interface StandardCallInput {
 export type RiskReason = ApprovalRiskReason
 
 /** Read-only built-in tools; they never ask. */
-export const R0_TOOLS: readonly string[] = ['workspace-files:list_folders', 'workspace-files:list_files', 'workspace-files:read_file']
+export const R0_TOOLS: readonly string[] = [
+  'workspace-files:list_folders',
+  'workspace-files:list_files',
+  'workspace-files:read_file',
+  'user-questions:ask_user',
+]
 /** Bounded demo tools, honoured only while the Host runs with the explicit demo model. */
 export const DEMO_TOOLS: { R0: readonly string[]; R1: readonly string[] } = {
   R0: ['safe-tools:long_task'],

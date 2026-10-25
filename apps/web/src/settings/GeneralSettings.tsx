@@ -295,6 +295,17 @@ export function GeneralSettings({ snapshot, admin, onChanged }: { snapshot: AppS
           ]}
         />
       </SettingsGroup>
+      {snapshot.catalog?.features?.filePreview && (
+        <SettingsGroup title="文件预览">
+          <SwitchRow
+            className="settings-row"
+            title="运行结束后自动打开新生成的文档"
+            description="仅在文件列已经展开且宽度足够时打开，不移动输入焦点。只影响这台设备。"
+            checked={preferences.autoOpenDocuments}
+            onCheckedChange={enabled => setPreference('autoOpenDocuments', enabled)}
+          />
+        </SettingsGroup>
+      )}
       <BackgroundSettings />
       {admin && snapshot.catalog && <SessionDefaultsGroup catalog={snapshot.catalog} onChanged={onChanged} />}
     </>

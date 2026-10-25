@@ -76,7 +76,7 @@ export function createAcpAgentPlugin(agent: AgentRecord, options: AcpAgentOption
         name: record.name,
         version: CLIENT_VERSION,
         description,
-        capabilities: { modes: ['agent'], models: 'agent' },
+        capabilities: { modes: ['agent'], models: 'agent', attachments: { images: true, text: true, textBytes: 25 * 1024 * 1024 } },
         ...folderDeclaration(selectProfile(record).profile),
         status() {
           const preset = AGENT_PRESETS.find(item => item.id === record.presetId)

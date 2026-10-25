@@ -193,7 +193,12 @@ pnpm desktop -- --tailnet \
 | `--port <端口>` | `HARNESS_PORT` | `4317`（同时监听 `127.0.0.1` 与 `::1`） |
 | `--tls-cert`、`--tls-key`、`--public-origin` | `HARNESS_TLS_CERT`、`HARNESS_TLS_KEY`、`HARNESS_PUBLIC_ORIGIN` | 不启用 HTTPS |
 | `--tls-host <IP>`、`--lan`、`--tailnet`、`--tls-port` | `HARNESS_TLS_HOST`、`HARNESS_TLS_PORT` | 端口 `4318` |
+| `--native-host <具体 IP>`、`--native-port <端口>` | — | 原生直连默认关闭；启用后端口默认 `4319` |
 | `--plugin <目录或模块>`、`--harness <id>`、`--provider <id>`、`--demo` | — | — |
+
+桌面端「设置 → 设备 → 连接手机」提供原生开发预览：选择局域网地址、配置自建中继、生成非 URL 配对二维码，或暂停手机输入。新增连接观察方要经 Mac 系统确认，停用与移除直接生效。原生客户端扫码后，在 Mac 系统窗口输入手机六位核对码；网页不接收核对码，浏览器仍使用自己的 HTTPS 入口。
+
+原生入口使用固定 Host 根身份的 TLS 1.3 / HTTP/2，与浏览器入口分别配置。Mac 输入、配置界面与 Node 客户端已实现；手机 App、Secure Enclave / App Attest 和自动发现的实现与验收边界见 [docs/REMOTE.md](docs/REMOTE.md)。
 
 同时运行多个 Host 时，为每个 Host 使用不同的 `--data-dir` 与 `--port`。
 

@@ -156,6 +156,29 @@ async function fixture() {
 }
 
 describe('adjudicated file content', () => {
+  it('refuses pixel-heavy previews in metadata before loading and keeps unknown image headers as download-only', async () => {
+    const f = await fixture()
+    const image = Buffer.alloc(24)
+    image.set([137, 80, 78, 71, 13, 10, 26, 10])
+    image.writeUInt32BE(10_000, 16)
+    image.writeUInt32BE(6_000, 20)
+    await writeFile(join(f.workspace, 'large.png'), image)
+    await writeFile(join(f.workspace, 'unknown.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0xdb, 0, 4, 0, 0]))
+    const remote = await f.resolve('all', ['large.png', 'unknown.jpg'])
+    expect(remote.files[0]!.file).toMatchObject({
+      width: 10_000,
+      height: 6_000,
+      actions: { preview: false, download: false },
+      refused: { preview: 'file-too-large' },
+    })
+    expect(remote.files[1]!.file).toMatchObject({
+      actions: { preview: false, download: true },
+      refused: { preview: 'file-image-dimensions' },
+    })
+    const local = await f.resolve('desktop', ['large.png'])
+    expect(local.files[0]!.file).toMatchObject({ actions: { preview: true, download: true } })
+    expect((await f.request('all', `files/${remote.files[0]!.file!.handle}`)).status).toBe(413)
+  })
   it('limits work-scope readers to persisted message references and keeps local actions local', async () => {
     const f = await fixture()
     const answer = await f.resolve('work', ['report.md', 'unmentioned.txt', '.env'])

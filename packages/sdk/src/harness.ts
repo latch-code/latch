@@ -1,6 +1,6 @@
 import type { Bridge, ProjectFolder } from './bridge.ts'
-import type { RuntimeRegistry } from './plugins.ts'
-import type { HarnessInfo, ModelRef, RiskLevel } from '@latch/protocol/types'
+import type { AttachmentContent, RuntimeRegistry } from './plugins.ts'
+import type { AttachmentRef, FileChange, HarnessInfo, ModelRef, RiskLevel } from '@latch/protocol/types'
 
 export interface ToolRiskInput {
   toolName: string
@@ -23,8 +23,29 @@ export type HarnessSecurityEvent =
   | { type: 'permission-unverified'; sessionId: string }
   | { type: 'approval-auto-rejected'; sessionId: string; reason: 'persistent-only' | 'unknown-kind' }
 
+export interface FileTrackingResult {
+  files: FileChange[]
+  truncated?: true
+  unavailable?: true
+}
+export interface FileTrackingHandle {
+  /** Observes late writes for two seconds, then resolves once; repeated calls return the same result. */
+  finish(): Promise<FileTrackingResult>
+  /** Stops resources; a pending finish resolves early and reports incomplete observation. */
+  dispose(): void
+}
+export interface FileTrackingInput {
+  sessionId: string
+  runId: string
+  folders: ReadonlyArray<ProjectFolder>
+  onChange(result: FileTrackingResult): void
+}
+
 /** Host capabilities offered to a driver, without prescribing its loop or persistence. */
 export interface HarnessHostOptions {
+  trackFiles?: (input: FileTrackingInput) => Promise<FileTrackingHandle>
+  readAttachment?: (ref: AttachmentRef, signal?: AbortSignal) => Promise<AttachmentContent>
+  saveAttachment?: (input: { sessionId: string; mime: string; data: string }) => Promise<AttachmentRef>
   /** Private data directory assigned to the selected driver. */
   dataDir: string
   /** Default working directory for sessions created without `cwd`. */
@@ -60,7 +81,7 @@ export interface HarnessDriver {
   version: string
   description?: string
   /** Modes and model ownership shown to clients. Defaults: both modes, agent-managed models. */
-  capabilities?: Pick<HarnessInfo, 'modes' | 'models'>
+  capabilities?: Pick<HarnessInfo, 'modes' | 'models' | 'attachments'>
   /**
    * `all`: sessions receive every folder of their project (`CreateTaskInput.folders`) and the driver gets `projects()`.
    * Absent: sessions receive the primary folder only, as `cwd`.

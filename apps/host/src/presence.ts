@@ -50,6 +50,7 @@ export const PRESENCE_ACTIONS: Readonly<
   >
 > = {
   'device.enroll': { title: '允许新设备连接', requireBiometric: true, duringFullAccess: 'refuse' },
+  'device.enroll-native': { title: '配对原生设备', requireBiometric: true, duringFullAccess: 'proceed' },
   'agent.probe': { title: '测试启动 Agent', requireBiometric: true, duringFullAccess: 'proceed' },
   'device.grant': { title: '为设备增加权限', requireBiometric: true, duringFullAccess: 'refuse' },
   'task.start-l3': { title: '开启完全访问会话', requireBiometric: true, duringFullAccess: 'proceed' },
@@ -148,6 +149,7 @@ export interface PresenceBackend {
     previewHash: string
     hashDisplay: string
     requireBiometric: boolean
+    pairingCode?: string
     signal: AbortSignal
   }): Promise<PresenceOutcome>
 }
@@ -283,6 +285,7 @@ class MacHelperBackend implements PresenceBackend {
     previewHash: string
     hashDisplay: string
     requireBiometric: boolean
+    pairingCode?: string
     signal: AbortSignal
   }): Promise<PresenceOutcome> {
     if (request.signal.aborted) return { result: 'cancelled' }
@@ -297,6 +300,7 @@ class MacHelperBackend implements PresenceBackend {
       previewHash: request.previewHash,
       timeoutSeconds: HELPER_TIMEOUT_SECONDS,
       requireBiometric: request.requireBiometric,
+      ...(request.pairingCode !== undefined ? { pairingCode: request.pairingCode } : {}),
     })}\n`
     return await new Promise<PresenceOutcome>(resolve => {
       let child: ChildProcessLike
@@ -491,7 +495,16 @@ export class PresenceService {
     target?: string
     /** A refusal names the sessions holding it back only for a requester that may view sessions. */
     revealBlocking?: boolean
+    /** Private helper input; never copied into a public ticket or preview. */
+    pairingCode?: string
   }): Promise<ConfirmationRecord> {
+    const nativePairing = input.action === 'device.enroll-native' && input.subject.form === 'device.enroll-native'
+    if (
+      nativePairing
+        ? !/^[0-9]{6}$/u.test(input.pairingCode ?? '')
+        : input.pairingCode !== undefined || input.action === 'device.enroll-native' || input.subject.form === 'device.enroll-native'
+    )
+      throw new AppError(400, 'pairing-code-required', '原生配对需要在 Mac 输入核对码')
     const shell = input.confirmationMethod === 'shell-local'
     if (
       shell
@@ -590,6 +603,7 @@ export class PresenceService {
               previewHash,
               hashDisplay,
               requireBiometric: PRESENCE_ACTIONS[input.action].requireBiometric,
+              ...(input.pairingCode !== undefined ? { pairingCode: input.pairingCode } : {}),
               signal: controller.signal,
             })
       } catch (error) {

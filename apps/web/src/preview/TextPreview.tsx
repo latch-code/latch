@@ -18,6 +18,7 @@ export function TextPreview({
   const lines = useMemo(() => text.split('\n'), [text])
   const tokens = useHighlightedTokens(text, languageForPath(path ?? ''), !sensitive)
   const search = useRef<HTMLInputElement>(null)
+  const content = useRef<HTMLPreElement>(null)
   const requestedLine = useRef(line)
   const [start, setStart] = useState(Math.max(0, line - 1)),
     [query, setQuery] = useState(''),
@@ -33,6 +34,43 @@ export function TextPreview({
     const first = index < 0 ? lines.findIndex(value => value.toLocaleLowerCase().includes(query.toLocaleLowerCase())) : index
     if (first >= 0) setStart(first)
   }
+  useEffect(() => {
+    if (!content.current || !('highlights' in CSS) || typeof Highlight === 'undefined') return
+    const ranges: Range[] = []
+    if (query)
+      for (const code of content.current.querySelectorAll('code')) {
+        const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT),
+          nodes: Text[] = []
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) nodes.push(node as Text)
+        const text = nodes.map(node => node.data).join('')
+        const pattern = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'giu')
+        for (const match of text.matchAll(pattern)) {
+          if (ranges.length >= 1000) break
+          const begin = match.index,
+            end = begin + match[0].length
+          let offset = 0,
+            range: Range | undefined
+          for (const node of nodes) {
+            if (!range && begin < offset + node.length) {
+              range = document.createRange()
+              range.setStart(node, begin - offset)
+            }
+            if (range && end <= offset + node.length) {
+              range.setEnd(node, end - offset)
+              ranges.push(range)
+              break
+            }
+            offset += node.length
+          }
+        }
+        if (ranges.length >= 1000) break
+      }
+    const highlight = new Highlight(...ranges)
+    CSS.highlights.set('latch-file-find', highlight)
+    return () => {
+      if (CSS.highlights.get('latch-file-find') === highlight) CSS.highlights.delete('latch-file-find')
+    }
+  }, [query, start, text, tokens])
   return (
     <div
       className="text-preview"
@@ -49,7 +87,7 @@ export function TextPreview({
           label="查找文件内容"
           placeholder="查找"
           value={query}
-          onValueChange={setQuery}
+          onValueChange={value => setQuery(value.slice(0, 512))}
           onKeyDown={event => {
             if (event.key === 'Enter') find()
           }}
@@ -75,7 +113,7 @@ export function TextPreview({
           }}
         />
       </div>
-      <pre className="file-text" data-wrap={wrap ? '' : undefined} tabIndex={0}>
+      <pre ref={content} className="file-text" data-wrap={wrap ? '' : undefined} tabIndex={0}>
         {lines.slice(start, start + 200).map((text, index) => (
           <span className="file-text-line" key={start + index}>
             <span className="file-line-number" aria-hidden="true">

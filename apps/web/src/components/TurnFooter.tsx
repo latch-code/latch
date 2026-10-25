@@ -1,3 +1,4 @@
+import { FileOutputs, type FileOutputsProps } from './FileOutputs.tsx'
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { Ellipsis, GitFork, Copy, RotateCcw } from 'lucide-react'
 import type { TaskDetail } from '@latch/protocol'
@@ -45,7 +46,7 @@ function useHeldPhase(phase: LivePhase): LivePhase {
   })
   const key = JSON.stringify(phase)
   const shownKey = JSON.stringify(shown)
-  const urgent = phase.kind === 'approval' || phase.kind === 'cancelling'
+  const urgent = phase.kind === 'approval' || phase.kind === 'question' || phase.kind === 'cancelling'
   useEffect(() => {
     if (key === shownKey) return undefined
     const now = performance.now()
@@ -97,7 +98,7 @@ function LiveLine({
       {!rowIsLive && (
         <span role="status" aria-live="polite" className={`turn-phase phase-${phase.kind}`}>
           <Swap value={words} effect="fade">
-            {phase.kind === 'approval' ? words : <Shimmer>{words}</Shimmer>}
+            {phase.kind === 'approval' || phase.kind === 'question' ? words : <Shimmer>{words}</Shimmer>}
           </Swap>
         </span>
       )}
@@ -108,7 +109,7 @@ function LiveLine({
       )}
       {elapsed && (
         <span className="turn-fact" aria-hidden="true">
-          {rowIsLive || phase.kind === 'approval' ? `已运行 ${elapsed}` : elapsed}
+          {rowIsLive || phase.kind === 'approval' || phase.kind === 'question' ? `已运行 ${elapsed}` : elapsed}
         </span>
       )}
       {facts.tokens && <Fact tip={facts.tokensTitle}>{facts.tokens}</Fact>}
@@ -168,8 +169,10 @@ export function TurnFooter({
   context,
   retry,
   actions,
+  fileChanges,
 }: {
   turn: Turn
+  fileChanges?: TaskDetail['fileChanges']
   live?: { detail: TaskDetail; harness: string; cancelling: boolean; approvals: number; fallbackElapsed?: number }
   outcome?: TurnOutcome
   /** Always visible: the newest turn on a touch screen, or one the person tapped. */
@@ -200,91 +203,107 @@ export function TurnFooter({
   const [confirming, setConfirming] = useState(false)
   const text = turnText(turn)
   const visible = live !== undefined || pinned || lingering
+  const recorded = [...(turn.user ? [turn.user] : []), ...turn.replies].findLast(
+    message => message.outputs !== undefined || message.outputsTruncated || message.outputsUnavailable,
+  )
+  const outputs: FileOutputsProps | undefined = fileChanges
+    ? { ...fileChanges, pending: true }
+    : recorded
+      ? {
+          files: recorded.outputs ?? [],
+          pending: recorded.outputsPending,
+          truncated: recorded.outputsTruncated,
+          unavailable: recorded.outputsUnavailable,
+        }
+      : undefined
   return (
-    <div className={`turn-footer ${live ? 'is-live' : ''}`} data-pinned={visible ? '' : undefined}>
-      <div className="turn-footer-row">
-        <Swap value={live ? 'live' : 'settled'} effect="fade" className="turn-facts">
-          {live ? (
-            <LiveLine
-              detail={live.detail}
-              turn={turn}
-              harness={live.harness}
-              cancelling={live.cancelling}
-              approvals={live.approvals}
-              fallbackElapsed={live.fallbackElapsed}
+    <>
+      {outputs && <FileOutputs {...outputs} />}
+      <div className={`turn-footer ${live ? 'is-live' : ''}`} data-pinned={visible ? '' : undefined}>
+        <div className="turn-footer-row">
+          <Swap value={live ? 'live' : 'settled'} effect="fade" className="turn-facts">
+            {live ? (
+              <LiveLine
+                detail={live.detail}
+                turn={turn}
+                harness={live.harness}
+                cancelling={live.cancelling}
+                approvals={live.approvals}
+                fallbackElapsed={live.fallbackElapsed}
+              />
+            ) : (
+              <SettledFacts turn={turn} outcome={outcome} context={context} />
+            )}
+          </Swap>
+          {!live && text && <CopyButton text={text} label="复制回复" size="xs" />}
+          {!live && actions && (
+            <Menu
+              label="这一轮的操作"
+              placement="top-end"
+              sections={[
+                {
+                  id: 'turn-actions',
+                  items: [
+                    ...(actions.onFork
+                      ? [{ id: 'fork', label: '从这里分叉', leading: <GitFork size={14} />, onSelect: actions.onFork }]
+                      : []),
+                    { id: 'copy-history', label: '复制到这里为止的记录', leading: <Copy size={14} />, onSelect: actions.onCopy },
+                  ],
+                },
+              ]}
+              trigger={props => <IconButton {...props} icon={Ellipsis} size="xs" label="这一轮的更多操作" />}
             />
-          ) : (
-            <SettledFacts turn={turn} outcome={outcome} context={context} />
           )}
-        </Swap>
-        {!live && text && <CopyButton text={text} label="复制回复" size="xs" />}
-        {!live && actions && (
-          <Menu
-            label="这一轮的操作"
-            placement="top-end"
-            sections={[
-              {
-                id: 'turn-actions',
-                items: [
-                  ...(actions.onFork
-                    ? [{ id: 'fork', label: '从这里分叉', leading: <GitFork size={14} />, onSelect: actions.onFork }]
-                    : []),
-                  { id: 'copy-history', label: '复制到这里为止的记录', leading: <Copy size={14} />, onSelect: actions.onCopy },
-                ],
-              },
-            ]}
-            trigger={props => <IconButton {...props} icon={Ellipsis} size="xs" label="这一轮的更多操作" />}
-          />
-        )}
-        {!live && retry && (
-          <Button
-            size="xs"
-            variant="ghost"
-            icon={RotateCcw}
-            className="turn-retry"
-            onClick={() => {
-              if (retry.warning) setConfirming(true)
-              else retry.onResend()
-            }}>
-            重新发送
-          </Button>
+          {!live && retry && (
+            <Button
+              size="xs"
+              variant="ghost"
+              icon={RotateCcw}
+              className="turn-retry"
+              onClick={() => {
+                if (retry.warning) setConfirming(true)
+                else retry.onResend()
+              }}>
+              重新发送
+            </Button>
+          )}
+        </div>
+        {!live && retry?.warning && (
+          <Collapse open={confirming}>
+            <div
+              className="turn-retry-confirm"
+              role="group"
+              aria-label="重新发送"
+              onKeyDown={event => {
+                if (event.key === 'Escape') {
+                  event.stopPropagation()
+                  setConfirming(false)
+                }
+              }}>
+              <p>{retry.warning}</p>
+              <div className="turn-retry-actions">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => {
+                    setConfirming(false)
+                  }}>
+                  取消
+                </Button>
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={() => {
+                    setConfirming(false)
+                    retry.onResend()
+                  }}>
+                  重新发送
+                </Button>
+              </div>
+            </div>
+          </Collapse>
         )}
       </div>
-      {!live && retry?.warning && (
-        <Collapse open={confirming}>
-          <div
-            className="turn-retry-confirm"
-            role="group"
-            aria-label="重新发送"
-            onKeyDown={event => {
-              if (event.key === 'Escape') {
-                event.stopPropagation()
-                setConfirming(false)
-              }
-            }}>
-            <p>{retry.warning}</p>
-            <div className="turn-retry-actions">
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => {
-                  setConfirming(false)
-                }}>
-                取消
-              </Button>
-              <Button
-                size="sm"
-                variant="primary"
-                onClick={() => {
-                  setConfirming(false)
-                  retry.onResend()
-                }}>
-                重新发送
-              </Button>
-            </div>
-          </div>
-        </Collapse>
-      )}
-    </div>
+    </>
   )
 }

@@ -1,0 +1,429 @@
+import { constants } from 'node:fs'
+import { chmod, copyFile, lstat, mkdir, open, readFile, readdir, rename, rm } from 'node:fs/promises'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
+import { join } from 'node:path'
+import { z } from 'zod'
+import { isAttachmentRef, type AttachmentRef } from '@latch/protocol'
+import { AppError } from '@latch/sdk'
+import { canonicalJson, redactSecrets, syncDirectory, writeFileAtomic } from '@latch/core/node-kit'
+import { fileFormat, imageDimensions } from './files/metadata.ts'
+import { hasSecretContent, isSecretPath } from './files/secrets.ts'
+export const ATTACHMENT_TTL = 60 * 60_000
+export const ATTACHMENT_FILE_LIMIT = 25 * 1024 * 1024
+export const ATTACHMENT_REMOTE_LIMIT = 10 * 1024 * 1024
+export const ATTACHMENT_IMAGE_LIMIT = 5 * 1024 * 1024
+const ID = /^[A-Za-z0-9_-]{22}$/u
+const taskId = z
+  .string()
+  .regex(/^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}$/u)
+  .refine(value => value !== 'index.json')
+const entrySchema = z.strictObject({
+  ref: z.custom<AttachmentRef>(isAttachmentRef),
+  owner: z.string().min(1).max(256),
+  requestId: z.string().uuid(),
+  inputHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  createdAt: z.number().finite(),
+  taskId: taskId.optional(),
+  creationRequestId: z.string().uuid().optional(),
+  claim: z.strictObject({ requestId: z.string().uuid(), sessionId: taskId.optional() }).optional(),
+  secret: z.boolean(),
+})
+const indexSchema = z.strictObject({ version: z.literal(1), entries: z.record(z.string().regex(ID), entrySchema) })
+type Entry = z.infer<typeof entrySchema>
+export type AttachmentData = { ref: AttachmentRef; data: Uint8Array; text?: string }
+export interface AttachmentStoreOptions {
+  deferPrune?: boolean
+  now?: () => number
+  persist?: (path: string, text: string) => Promise<void>
+}
+/** Private immutable blobs. Public access is adjudicated separately by the authenticated attachment routes. */
+export class AttachmentStore {
+  private state: z.infer<typeof indexSchema> = { version: 1, entries: {} }
+  private serial: Promise<unknown> = Promise.resolve()
+  private uploads = new Map<string, { count: number; bytes: number }>()
+  private reservedBytes = 0
+  private leases = new Map<string, number>()
+  private failure = false
+  private readonly now: () => number
+  private readonly persist: (path: string, text: string) => Promise<void>
+  private constructor(
+    private readonly directory: string,
+    options: AttachmentStoreOptions,
+  ) {
+    this.now = options.now ?? Date.now
+    this.persist = options.persist ?? writeFileAtomic
+  }
+  static async open(dataDir: string, options: AttachmentStoreOptions = {}): Promise<AttachmentStore> {
+    const directory = join(dataDir, 'attachments'),
+      store = new AttachmentStore(directory, options)
+    await mkdir(directory, { recursive: true, mode: 0o700 })
+    await chmod(directory, 0o700)
+    await mkdir(join(directory, '_drafts'), { recursive: true, mode: 0o700 })
+    try {
+      store.state = indexSchema.parse(JSON.parse(await readFile(join(directory, 'index.json'), 'utf8')))
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
+        throw new AppError(503, 'attachments-unavailable', '附件索引无法验证，请修复存储后重启。')
+    }
+    if (!options.deferPrune) await store.prune()
+    return store
+  }
+  private path(entry: Entry): string {
+    return join(this.directory, entry.taskId ?? '_drafts', entry.ref.id)
+  }
+  private async commit(next: typeof this.state): Promise<void> {
+    if (this.failure) throw new AppError(503, 'attachments-unavailable', '附件存储暂时不可用，请重启后重试。')
+    try {
+      await this.persist(join(this.directory, 'index.json'), JSON.stringify(next) + '\n')
+      this.state = next
+    } catch {
+      this.failure = true
+      throw new AppError(503, 'attachments-unavailable', '附件存储失败，上传结果未知，请重启后重试。')
+    }
+  }
+  private mutate<T>(action: () => Promise<T>): Promise<T> {
+    const next = this.serial.then(action, action)
+    this.serial = next.catch(() => {})
+    return next
+  }
+  /** Rechecks authorization before and after every received chunk and before publication. */
+  async add(input: {
+    owner: string
+    requestId: string
+    name: string
+    size: number
+    remote: boolean
+    secretAcknowledged?: boolean
+    stream: AsyncIterable<Uint8Array>
+    recheck: () => void | Promise<void>
+    accept: (ref: AttachmentRef) => void | Promise<void>
+    audit?: (ref: AttachmentRef) => Promise<void>
+  }): Promise<AttachmentRef> {
+    if (this.failure) throw new AppError(503, 'attachments-unavailable', '附件存储暂时不可用，请重启后重试。')
+    const name = input.name.trim()
+    if (!name || name.length > 200 || /[\u0000-\u001f\u007f/\\]/u.test(name) || !z.string().uuid().safeParse(input.requestId).success)
+      throw new AppError(400, 'attachment-invalid', '附件名称或请求标识无效。')
+    const limit = input.remote ? ATTACHMENT_REMOTE_LIMIT : ATTACHMENT_FILE_LIMIT
+    if (!Number.isSafeInteger(input.size) || input.size <= 0 || input.size > limit)
+      throw new AppError(413, 'attachment-too-large', input.remote ? '每个文件最多 10 MB。' : '每个文件最多 25 MB。')
+    await this.prune()
+    await input.recheck()
+    const draft = Object.values(this.state.entries).filter(entry => !entry.taskId),
+      own = draft.filter(entry => entry.owner === input.owner),
+      active = this.uploads.get(input.owner) ?? { count: 0, bytes: 0 }
+    if (
+      [...this.uploads.values()].reduce((sum, item) => sum + item.count, 0) >= 8
+      || active.count >= 2
+      || this.reservedBytes + input.size + draft.reduce((sum, e) => sum + e.ref.size, 0) > 1024 * 1024 * 1024
+      || own.length + active.count >= 32
+      || own.reduce((sum, e) => sum + e.ref.size, 0) + active.bytes + input.size > 256 * 1024 * 1024
+    )
+      throw new AppError(429, 'attachment-quota', '草稿附件过多，请移除一些附件或稍后重试。')
+    this.uploads.set(input.owner, { count: active.count + 1, bytes: active.bytes + input.size })
+    this.reservedBytes += input.size
+    const temporary = join(this.directory, '_drafts', `.upload-${randomUUID()}`),
+      hash = createHash('sha256'),
+      head: Buffer[] = []
+    let fd: Awaited<ReturnType<typeof open>> | undefined
+    let size = 0,
+      headSize = 0
+    try {
+      fd = await open(temporary, 'wx', 0o600)
+      for await (const chunk of input.stream) {
+        await input.recheck()
+        size += chunk.byteLength
+        if (size > input.size || size > limit) throw new AppError(413, 'attachment-too-large', '附件超过声明的大小。')
+        hash.update(chunk)
+        if (headSize < 65536) {
+          const part = Buffer.from(chunk.subarray(0, 65536 - headSize))
+          head.push(part)
+          headSize += part.length
+        }
+        await fd.writeFile(chunk)
+        await input.recheck()
+      }
+      if (size !== input.size) throw new AppError(400, 'attachment-incomplete', '附件上传中断，草稿仍保留，请重试。')
+      await fd.sync()
+      await fd.close()
+      await input.recheck()
+      const first = Buffer.concat(head),
+        ext = name.includes('.') ? name.split('.').at(-1)!.toLowerCase() : '',
+        format = fileFormat({ head: first, ext })
+      if (format.kind !== 'image' && !['text', 'code', 'markdown', 'csv'].includes(format.kind))
+        throw new AppError(
+          415,
+          'attachment-type-unsupported',
+          format.kind === 'pdf' ? '尚未实现：需要在 Host 上解析 PDF。' : '当前 Agent 不接受这种附件。',
+        )
+      const image = format.kind === 'image'
+      if (image && (!['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(format.mime) || size > ATTACHMENT_IMAGE_LIMIT))
+        throw new AppError(415, 'attachment-image-unsupported', '图片仅支持 PNG、JPEG、GIF、WebP，每张最多 5 MB。')
+      const dims = image ? imageDimensions(first, format.mime) : undefined
+      if (image && (!dims || dims.width * dims.height > 40_000_000))
+        throw new AppError(415, 'attachment-image-invalid', '图片尺寸无法验证，或超过 4,000 万像素。')
+      const decoded = image ? undefined : this.decodeText(await readFile(temporary))
+      const secret = isSecretPath(name, first) || hasSecretContent(image ? first : new TextEncoder().encode(decoded!))
+      if (secret && !input.secretAcknowledged) throw new AppError(409, 'attachment-secret', '附件可能包含密钥，请确认后再添加。')
+      const ref: AttachmentRef = {
+        id: randomBytes(16).toString('base64url'),
+        name: redactSecrets(name),
+        mime: image ? (format.mime as AttachmentRef['mime']) : 'text/plain',
+        kind: image ? 'image' : 'text',
+        size,
+        sha256: hash.digest('hex'),
+        ...(dims ?? {}),
+      }
+      await input.accept(ref)
+      await input.recheck()
+      const inputHash = createHash('sha256')
+        .update(canonicalJson({ name, size, sha256: ref.sha256 }))
+        .digest('hex')
+      return await this.mutate(async () => {
+        const replay = Object.values(this.state.entries).find(entry => entry.owner === input.owner && entry.requestId === input.requestId)
+        if (replay) {
+          if (replay.inputHash !== inputHash) throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同附件。')
+          return structuredClone(replay.ref)
+        }
+        if (Object.keys(this.state.entries).length >= 50_000)
+          throw new AppError(429, 'attachment-quota', '附件数量已达上限，请清理旧会话。')
+        await input.recheck()
+        await input.audit?.(ref)
+        await input.recheck()
+        const entry: Entry = { ref, owner: input.owner, requestId: input.requestId, inputHash, createdAt: this.now(), secret }
+        await rename(temporary, this.path(entry))
+        await syncDirectory(join(this.directory, '_drafts'))
+        const next = structuredClone(this.state)
+        next.entries[ref.id] = entry
+        await this.commit(next)
+        return structuredClone(ref)
+      })
+    } finally {
+      await fd?.close().catch(() => {})
+      await rm(temporary, { force: true }).catch(() => {})
+      const current = this.uploads.get(input.owner)!
+      if (current.count <= 1) this.uploads.delete(input.owner)
+      else this.uploads.set(input.owner, { count: current.count - 1, bytes: current.bytes - input.size })
+      this.reservedBytes -= input.size
+    }
+  }
+  private expired(entry: Entry): boolean {
+    // A dispatched request with an unknown outcome is no longer an unsubmitted draft.
+    return (
+      !entry.taskId
+      && !entry.claim
+      && !entry.creationRequestId
+      && Math.max(entry.createdAt + ATTACHMENT_TTL, this.leases.get(entry.ref.id) ?? 0) <= this.now()
+    )
+  }
+  get(id: string): { ref: AttachmentRef; owner: string; taskId?: string; creationRequestId?: string; secret: boolean } | undefined {
+    const entry = this.state.entries[id]
+    if (!ID.test(id) || !entry || this.expired(entry)) return undefined
+    return structuredClone({
+      ref: entry.ref,
+      owner: entry.owner,
+      secret: entry.secret,
+      ...(entry.taskId ? { taskId: entry.taskId } : {}),
+      ...(entry.creationRequestId ? { creationRequestId: entry.creationRequestId } : {}),
+    })
+  }
+  refs(owner: string, ids: readonly string[], sessionId?: string, creationRequestId?: string): AttachmentRef[] {
+    if (this.failure) throw new AppError(503, 'attachments-unavailable', '附件存储暂时不可用，请重启后重试。')
+    if (ids.length > 8 || new Set(ids).size !== ids.length) throw new AppError(400, 'attachment-count', '每条消息最多 8 个不同附件。')
+    const refs = ids.map(id => {
+      const entry = this.get(id)
+      if (
+        !entry
+        || (entry.taskId
+          ? entry.taskId !== sessionId
+            && !(sessionId === undefined && entry.owner === owner && creationRequestId && entry.creationRequestId === creationRequestId)
+          : entry.owner !== owner)
+      )
+        throw new AppError(404, 'attachment-missing', '附件已过期或不属于这条消息，请重新添加。')
+      const stored = this.state.entries[id]!,
+        claim = stored.claim ?? (stored.creationRequestId ? { requestId: stored.creationRequestId } : undefined)
+      if (!stored.taskId && creationRequestId && claim && (claim.requestId !== creationRequestId || claim.sessionId !== sessionId))
+        throw new AppError(409, 'attachment-claimed', '附件已保留给另一条提交。请重试原提交，或移除附件后重新添加。')
+      return entry.ref
+    })
+    for (const ref of refs) if (!this.state.entries[ref.id]!.taskId) this.leases.set(ref.id, this.now() + ATTACHMENT_TTL)
+    return refs
+  }
+  hasDrafts(): boolean {
+    return Object.values(this.state.entries).some(entry => !entry.taskId)
+  }
+  async claim(owner: string, ids: readonly string[], requestId: string, sessionId?: string): Promise<void> {
+    await this.mutate(async () => {
+      this.refs(owner, ids, sessionId, requestId)
+      const next = structuredClone(this.state)
+      let changed = false
+      for (const id of ids) {
+        const entry = next.entries[id]!
+        if (entry.taskId) continue
+        const previous = entry.claim ?? (entry.creationRequestId ? { requestId: entry.creationRequestId } : undefined)
+        if (previous && (previous.requestId !== requestId || previous.sessionId !== sessionId))
+          throw new AppError(409, 'attachment-claimed', '附件已保留给另一条提交。请重试原提交，或移除附件后重新添加。')
+        if (entry.claim) continue
+        entry.claim = { requestId, ...(sessionId ? { sessionId } : {}) }
+        if (!sessionId) entry.creationRequestId = requestId
+        changed = true
+      }
+      if (changed) await this.commit(next)
+    })
+  }
+  async releaseClaim(owner: string, ids: readonly string[], requestId: string, sessionId?: string): Promise<void> {
+    await this.mutate(async () => {
+      const next = structuredClone(this.state)
+      let changed = false
+      for (const id of ids) {
+        const entry = next.entries[id]
+        if (!entry || entry.taskId || entry.owner !== owner || entry.claim?.requestId !== requestId || entry.claim.sessionId !== sessionId)
+          continue
+        delete entry.claim
+        if (entry.creationRequestId === requestId) delete entry.creationRequestId
+        changed = true
+      }
+      if (changed) await this.commit(next)
+    })
+  }
+  async bind(owner: string, ids: readonly string[], sessionId: string, creationRequestId?: string): Promise<void> {
+    taskId.parse(sessionId)
+    await this.mutate(async () => {
+      if (
+        ids.length > 8
+        || new Set(ids).size !== ids.length
+        || ids.some(id => {
+          const entry = this.state.entries[id]
+          return (
+            !entry
+            || (entry.taskId
+              ? entry.taskId !== sessionId
+              : entry.owner !== owner
+                || Boolean(
+                  entry.claim
+                  && (entry.claim.sessionId ? entry.claim.sessionId !== sessionId : entry.claim.requestId !== creationRequestId),
+                ))
+          )
+        })
+      )
+        throw new AppError(404, 'attachment-missing', '附件不可用。')
+      const next = structuredClone(this.state)
+      await mkdir(join(this.directory, sessionId), { recursive: true, mode: 0o700 })
+      for (const id of ids) {
+        const entry = next.entries[id]!
+        if (entry.taskId) continue
+        const original = this.path(entry)
+        entry.taskId = sessionId
+        delete entry.claim
+        if (creationRequestId) entry.creationRequestId = creationRequestId
+        await copyFile(original, this.path(entry), constants.COPYFILE_EXCL).catch(async error => {
+          if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+          const existing = await readFile(this.path(entry))
+          if (createHash('sha256').update(existing).digest('hex') !== entry.ref.sha256)
+            throw new AppError(409, 'attachment-changed', '附件内容已变化。')
+        })
+      }
+      for (const id of ids) {
+        const file = await open(this.path(next.entries[id]!), constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
+        try {
+          await file.sync()
+        } finally {
+          await file.close()
+        }
+      }
+      await syncDirectory(join(this.directory, sessionId))
+      await this.commit(next)
+      for (const id of ids) this.leases.delete(id)
+      for (const id of ids) await rm(join(this.directory, '_drafts', id), { force: true })
+    })
+  }
+  async read(ref: AttachmentRef): Promise<AttachmentData> {
+    const entry = this.state.entries[ref.id]
+    if (!entry || !isAttachmentRef(ref) || canonicalJson(entry.ref) !== canonicalJson(ref))
+      throw new AppError(404, 'attachment-missing', '附件不可用。')
+    const fd = await open(this.path(entry), constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)).catch(() => {
+      throw new AppError(409, 'attachment-changed', '附件内容已变化，请重新添加。')
+    })
+    try {
+      const info = await fd.stat()
+      if (!info.isFile() || info.size !== ref.size) throw new Error('attachment-changed')
+      const data = Buffer.alloc(ref.size)
+      let at = 0
+      while (at < data.length) {
+        const chunk = await fd.read(data, at, data.length - at, at)
+        if (!chunk.bytesRead) throw new Error('attachment-changed')
+        at += chunk.bytesRead
+      }
+      if ((await fd.stat()).size !== ref.size) throw new Error('attachment-changed')
+      if (createHash('sha256').update(data).digest('hex') !== ref.sha256) throw new Error('attachment-changed')
+      return { ref: structuredClone(entry.ref), data, ...(ref.kind === 'text' ? { text: this.decodeText(data) } : {}) }
+    } catch {
+      throw new AppError(409, 'attachment-changed', '附件内容已变化，请重新添加。')
+    } finally {
+      await fd.close()
+    }
+  }
+  private decodeText(data: Uint8Array): string {
+    try {
+      const encoding = data[0] === 0xff && data[1] === 0xfe ? 'utf-16le' : data[0] === 0xfe && data[1] === 0xff ? 'utf-16be' : 'utf-8'
+      const text = new TextDecoder(encoding, { fatal: true }).decode(data)
+      if (text.includes('\0')) throw new Error('binary')
+      return text
+    } catch {
+      throw new AppError(415, 'attachment-text-invalid', '附件不是有效文本。')
+    }
+  }
+  /** Restore an interrupted post-create binding before expired, unreferenced drafts can be removed. */
+  async recoverSession(sessionId: string, refs: readonly AttachmentRef[]): Promise<void> {
+    for (const ref of refs) {
+      const entry = this.state.entries[ref.id]
+      if (!entry || entry.taskId || canonicalJson(entry.ref) !== canonicalJson(ref)) continue
+      await this.bind(entry.owner, [ref.id], sessionId, entry.creationRequestId)
+    }
+  }
+  async remove(id: string, owner: string): Promise<void> {
+    await this.mutate(async () => {
+      const entry = this.state.entries[id]
+      if (!entry || entry.taskId || entry.owner !== owner) return
+      const next = structuredClone(this.state)
+      delete next.entries[id]
+      await this.commit(next)
+      this.leases.delete(id)
+      await rm(this.path(entry), { force: true })
+    })
+  }
+  async removeTask(sessionId: string): Promise<void> {
+    taskId.parse(sessionId)
+    await this.mutate(async () => {
+      const next = structuredClone(this.state)
+      for (const [id, entry] of Object.entries(next.entries)) if (entry.taskId === sessionId) delete next.entries[id]
+      await this.commit(next)
+      await rm(join(this.directory, taskId.parse(sessionId)), { recursive: true, force: true })
+    })
+  }
+  async prune(): Promise<void> {
+    await this.mutate(async () => {
+      const next = structuredClone(this.state),
+        removed: Entry[] = []
+      for (const [id, entry] of Object.entries(next.entries))
+        if (this.expired(entry)) {
+          removed.push(entry)
+          delete next.entries[id]
+        }
+      if (removed.length) await this.commit(next)
+      for (const entry of removed) {
+        this.leases.delete(entry.ref.id)
+        await rm(this.path(entry), { force: true })
+      }
+      for (const name of await readdir(join(this.directory, '_drafts'))) {
+        if (
+          !/^\.upload-[a-f0-9-]+$/u.test(name)
+          && !(ID.test(name) && (!this.state.entries[name] || this.state.entries[name]!.taskId !== undefined))
+        )
+          continue
+        const path = join(this.directory, '_drafts', name),
+          info = await lstat(path).catch(() => undefined)
+        if (info && info.mtimeMs + ATTACHMENT_TTL <= this.now()) await rm(path, { force: true })
+      }
+    })
+  }
+}

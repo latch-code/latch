@@ -32,6 +32,7 @@ export interface ProviderRecord {
   keyPath?: string
   enabled: boolean
   models: string[]
+  modelCapabilities?: Record<string, { vision?: boolean }>
   defaultModel: string
 }
 
@@ -203,6 +204,7 @@ const providerSchema = z
     keyOrigin: keyOrigin.optional(),
     keyPath: keyPath.optional(),
     enabled: z.boolean(),
+    modelCapabilities: z.record(modelId, z.strictObject({ vision: z.boolean().optional() })).optional(),
     models: z.array(modelId).min(1, '至少需要一个模型').max(1000, '模型数量过多'),
     defaultModel: modelId,
   })
@@ -264,7 +266,13 @@ const workspaceSchema = z
 const agentProbeSchema = z.object({
   status: z.enum(['ready', 'authentication-required', 'failed']),
   agent: z.object({ name: z.string().max(200).optional(), version: z.string().max(100).optional() }).optional(),
-  capabilities: z.object({ images: z.boolean(), resume: z.boolean(), load: z.boolean(), additionalDirectories: z.boolean() }),
+  capabilities: z.object({
+    embeddedContext: z.boolean().optional(),
+    images: z.boolean(),
+    resume: z.boolean(),
+    load: z.boolean(),
+    additionalDirectories: z.boolean(),
+  }),
   authMethods: z.array(z.object({ name: z.string().max(200), description: z.string().max(500).optional() })).max(16),
   diagnostic: z.string().max(4096).optional(),
   checkedAt: z.string().datetime(),

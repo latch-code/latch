@@ -12,3 +12,5 @@
 - 改接口时同步 [docs/PLUGIN-DEVELOPMENT.md](../../docs/PLUGIN-DEVELOPMENT.md) 的签名。
 
 测试在根项目 `tests/`（`pnpm test --project harness-link`）；改接口后运行 `pnpm typecheck`、`pnpm test` 与 `pnpm test:e2e`。
+
+- 附件在 Bridge/Message 里用元数据引用，在 Provider 输入里用经 Host 校验的 `AttachmentContent`；Harness 必须显式声明能力并在实际协商后复查，缺少 Host 读写接口时拒绝。

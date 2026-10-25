@@ -37,17 +37,27 @@ describe('document data boundaries', () => {
   })
   it('rejects extra fields, invalid indices, huge cell pages and prototype-shaped values on the bridge', () => {
     expect(isFrameCommand({ type: 'sheet-page', sheet: 0, start: 0, count: 1000 })).toBe(true)
+    expect(isFrameCommand({ type: 'zoom', percent: 125 })).toBe(true)
+    expect(isFrameEvent({ type: 'view', fit: false, zoomPercent: 125 })).toBe(true)
     for (const value of [
       { type: 'sheet-page', sheet: 0, start: 0, count: 1001 },
       { type: 'page', index: -1 },
       { type: 'fit', value: true, url: 'https://invalid.example/' },
       { type: 'page', index: NaN },
+      { type: 'zoom', percent: 401 },
+      { type: 'zoom', percent: 9 },
+      { type: 'zoom', percent: 100.5 },
+      { type: 'zoom', percent: 100, url: 'x' },
     ])
       expect(isFrameCommand(value)).toBe(false)
     expect(isFrameEvent({ type: 'sheet-page', sheet: 0, start: 0, rows: [[{ text: 'x', formula: '1+1' }]] })).toBe(true)
     expect(isFrameEvent({ type: 'sheet-page', sheet: 0, start: 0, rows: [[{ text: 'x'.repeat(32768) }]] })).toBe(false)
+    expect(isFrameEvent({ type: 'view', fit: true, zoomPercent: Infinity })).toBe(false)
     expect(isFrameEvent({ type: 'error', code: '<script>bad</script>' })).toBe(false)
     expect(isFrameEvent({ type: 'initialized', constructor: { prototype: { polluted: true } } })).toBe(false)
+    expect(isFrameEvent({ type: 'html', blocked: 4 })).toBe(true)
+    for (const blocked of [-1, 0.5, Number.POSITIVE_INFINITY, 100_001, '4']) expect(isFrameEvent({ type: 'html', blocked })).toBe(false)
+    expect(isFrameEvent({ type: 'html', blocked: 0, credential: 'unexpected' })).toBe(false)
   })
   it('parses quoted CSV as strings, supports UTF16/TSV, never evaluates formulas and marks bounded columns', () => {
     const value = parseCsv(strToU8('name,value\n"a,b","=HYPERLINK(1)"\n').buffer as ArrayBuffer)

@@ -78,7 +78,9 @@ export class FileReferenceStore {
     for (const message of detail.messages.toReversed()) {
       if (remaining <= 0 || references.size >= LIMIT) break
       const source = [message.text, message.tool?.input, message.tool?.output].filter(Boolean).join('\n')
-      const hash = sha256Hex(JSON.stringify([source, message.tool?.locations, message.tool?.diffs?.map(diff => diff.path)]))
+      const hash = sha256Hex(
+        JSON.stringify([source, message.fileRefs, message.outputs, message.tool?.locations, message.tool?.diffs?.map(diff => diff.path)]),
+      )
       const previous = seen.get(message.id)
       if (previous?.hash === hash && previous.offset >= source.length) continue
       const offset = previous?.hash === hash ? previous.offset : 0
@@ -111,6 +113,13 @@ export class FileReferenceStore {
       }
       remaining -= end - offset
       seen.set(message.id, { id: message.id, hash, offset: end })
+    }
+    if (detail.fileChanges?.runId === detail.summary.runId) {
+      const batch = sessionReferences({ ...detail, messages: [] }, roots, home)
+      for (const ref of batch) {
+        if (references.size >= LIMIT) break
+        references.add(ref)
+      }
     }
     state.references = [...references]
     state.seen = [...seen.values()].slice(-20_000)

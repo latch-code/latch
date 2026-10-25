@@ -49,6 +49,9 @@
       "entry": ["*.e2e.ts"]
     },
     "packages/core": {},
+    "packages/link-wire": {},
+    "packages/link-client": {},
+    "apps/relay": {},
     "packages/harness-acp": {},
     "packages/protocol": {},
     "packages/sdk": {},

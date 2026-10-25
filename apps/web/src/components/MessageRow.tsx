@@ -1,3 +1,5 @@
+import { MentionedText } from './MentionedText.tsx'
+import { MessageAttachments } from './MessageAttachments.tsx'
 import { memo, useState, type ReactNode } from 'react'
 import { ChevronRight, CircleX, Info, Lightbulb } from 'lucide-react'
 import type { HarnessInfo, Message } from '@latch/protocol'
@@ -146,6 +148,7 @@ function UserMessage({
   arrived: boolean
 }) {
   const at = parseTime(message.createdAt)
+  const queuedAt = parseTime(message.queuedAt)
   const [shown, setShown] = useState(false)
   return (
     <article
@@ -166,24 +169,29 @@ function UserMessage({
           <TimeLabel at={separator.at} separator sameDay={separator.sameDay} />
         </p>
       )}
-      <div className="user-bubble">
-        {message.forkContext && (
-          <details className="fork-context">
-            <summary>
-              以下是会话「
-              <VisibleText text={message.forkContext.title} />
-              」到第 {message.forkContext.turn} 轮为止的记录
-            </summary>
-            <pre>
-              <VisibleText text={message.text.slice(0, message.forkContext.prefixLength)} />
-            </pre>
-          </details>
-        )}
-        {message.text.slice(message.forkContext?.prefixLength ?? 0)}
-      </div>
+      {message.text && (
+        <div className="user-bubble">
+          {message.forkContext && (
+            <details className="fork-context">
+              <summary>
+                以下是会话「
+                <VisibleText text={message.forkContext.title} />
+                」到第 {message.forkContext.turn} 轮为止的记录
+              </summary>
+              <pre>
+                <VisibleText text={message.text.slice(0, message.forkContext.prefixLength)} />
+              </pre>
+            </details>
+          )}
+          <MentionedText text={message.text.slice(message.forkContext?.prefixLength ?? 0)} refs={message.fileRefs} />
+        </div>
+      )}
+      <MessageAttachments attachments={message.attachments} />
       <div className="message-meta">
-        {at !== undefined && <TimeLabel at={at} />}
-        <CopyButton text={message.text} label="复制消息" size="xs" />
+        {at !== undefined && (
+          <TimeLabel at={at} tip={queuedAt !== undefined ? () => `${absoluteTime(at)} · 排队于 ${absoluteTime(queuedAt)}` : undefined} />
+        )}
+        {message.text && <CopyButton text={message.text} label="复制消息" size="xs" />}
       </div>
     </article>
   )
@@ -242,6 +250,7 @@ export const MessageRow = memo(
             liveTimes={liveReasoning}
           />
         )}
+        <MessageAttachments attachments={message.attachments} />
         {message.text && (
           <div className="message-text">
             <MessageContent text={message.text} streaming={streaming} />
@@ -265,7 +274,10 @@ export const MessageRow = memo(
     && a.message.role === b.message.role
     && a.message.reasoning === b.message.reasoning
     && a.message.createdAt === b.message.createdAt
+    && a.message.queuedAt === b.message.queuedAt
     && a.message.completedAt === b.message.completedAt
     && a.message.reasoningMs === b.message.reasoningMs
-    && a.message.model === b.message.model,
+    && a.message.model === b.message.model
+    && a.message.attachments === b.message.attachments
+    && a.message.fileRefs === b.message.fileRefs,
 )

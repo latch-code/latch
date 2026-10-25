@@ -8,3 +8,8 @@ export * from './text.ts'
 export * from './types.ts'
 export * from './ui.ts'
 export * from './features.ts'
+export * from './questions.ts'
+export * from './attachments.ts'
+
+export { isFileMention, fileMentionContext, type FileMention } from './file-refs.ts'
+export { isFileChange } from './file-changes.ts'

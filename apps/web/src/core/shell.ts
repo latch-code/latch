@@ -111,6 +111,8 @@ export interface NotificationPreferences {
 
 /** What the Electron preload exposes; nothing else crosses into the renderer. */
 export interface LatchShell {
+  /** Opaque HTML frames with main-process network and WebRTC restrictions. */
+  previews?: { protocolVersion: 1; htmlScripts: true }
   notifications?: {
     get(): Promise<NotificationPreferences | undefined>
     set(value: Pick<NotificationPreferences, 'completion' | 'approval' | 'title'>): Promise<NotificationPreferences | undefined>

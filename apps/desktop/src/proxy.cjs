@@ -12,6 +12,7 @@ const HTML_CSP =
   "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self'; connect-src 'self'; manifest-src 'self'; frame-src latch-frame: blob:; worker-src 'self'; object-src 'none'; require-trusted-types-for 'script'; trusted-types latch-runtime; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 /** API bodies are JSON of at most 256 KiB; buffering them lets a request be replayed once after renewal. */
 const REQUEST_BODY_LIMIT = 1024 * 1024
+const UPLOAD_BODY_LIMIT = 25 * 1024 * 1024
 const JSON_RESPONSE_LIMIT = 1024 * 1024
 const RENEW_INTERVAL_MS = 24 * 60 * 60 * 1000
 const RENEW_CHECK_MS = 12 * 60 * 60 * 1000
@@ -101,7 +102,7 @@ function isPreviewFrameUrl(raw) {
       && !url.username
       && !url.password
       && !url.search
-      && /^\/(?:office|diagram)\.html$/u.test(url.pathname)
+      && /^\/(?:office|diagram|html|html-script)\.html$/u.test(url.pathname)
     )
   } catch {
     return false
@@ -363,6 +364,7 @@ function classifyRoute(method, pathname) {
   decoded = decoded.replace(/\/{2,}/g, '/').replace(/(.)\/+$/, '$1')
   const lower = decoded.toLowerCase()
   if (lower === '/link/api/credentials' || lower.startsWith('/link/api/credentials/')) return { kind: 'credentials' }
+  if (method === 'POST' && pathname === '/link/api/attachments') return { kind: 'attachment-upload' }
   if (isFolderAddRoute(method, lower)) return { kind: 'folders' }
   if (/^\/link\/api\/confirmations\/.+\/shell(?:\/|$)/.test(lower)) return { kind: 'shell-confirmations' }
   // Sleep, wake and coming stops are reported by main itself (lifecycle.cjs), never on the page's behalf.
@@ -800,6 +802,48 @@ function createShellProxy(options) {
     return bufferedResponse(result, 'POST')
   }
 
+  async function forwardUpload(request, target) {
+    if (!store.current()) {
+      await discardRequestBody(request)
+      return errorResponse(401, 'unauthorized', NOT_ENROLLED)
+    }
+    if (renewDue()) await renew()
+    const current = store.current()
+    if (!current) {
+      await discardRequestBody(request)
+      return errorResponse(401, 'unauthorized', NOT_ENROLLED)
+    }
+    const headers = forwardRequestHeaders(request.headers, current.credential)
+    headers['x-latch-shell-confirmation'] = '1'
+    const socketPath = await options.resolveSocket()
+    let result
+    try {
+      result = await socketRequest(socketPath, {
+        method: 'POST',
+        path: target.path,
+        headers,
+        bodyStream: request.body,
+        bodyLimit: UPLOAD_BODY_LIMIT,
+        timeoutMs: 60_000,
+        signal: request.signal,
+        check: () => {
+          if (store.current()?.deviceId !== current.deviceId) throw new ProxyError(401, 'unauthorized', NOT_ENROLLED)
+        },
+      })
+    } catch (error) {
+      if (error && typeof error === 'object' && Reflect.get(error, 'code') === 'body-too-large')
+        throw new ProxyError(413, 'body-too-large', '请求内容过长')
+      options.invalidateSocket?.()
+      throw error
+    }
+    if (result.response.statusCode !== 401) return finish(result, 'POST', { kind: 'forward' })
+    const failure = await bufferUpstream(result),
+      action = authFailureAction(401, failure.json)
+    if (action === 'renew' && (await renewUnlessWaiting())) return errorResponse(409, 'upload-retry', '连接凭据已更新，请重试上传。')
+    if (action === 'clear') await forget(current.credential)
+    return bufferedResponse(failure, 'POST')
+  }
+
   async function forward(request, target, route) {
     if (!route.public && !store.current()) {
       await discardRequestBody(request)
@@ -862,6 +906,7 @@ function createShellProxy(options) {
     }
     try {
       const route = classifyRoute(request.method, target.pathname)
+      if (route.kind === 'attachment-upload') return await forwardUpload(request, target)
       if (route.kind === 'credentials') {
         await discardRequestBody(request)
         return errorResponse(403, 'shell-managed', '设备凭据由 Latch 桌面端管理')
@@ -970,7 +1015,7 @@ function createShellProxy(options) {
           'cache-control': 'no-store',
           'x-content-type-options': 'nosniff',
           'referrer-policy': 'no-referrer',
-          'content-security-policy': `sandbox allow-scripts; default-src 'none'; script-src '${hash}'; style-src 'unsafe-inline'; img-src blob: data:; font-src blob: data:; media-src blob: data:; worker-src 'none'; frame-src 'none'; object-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors latch://app`,
+          'content-security-policy': `sandbox allow-scripts; default-src 'none'; script-src ${name === 'html-script.html' ? "'unsafe-inline' 'unsafe-eval'" : `'${hash}'`}; style-src 'unsafe-inline'; img-src blob: data:; font-src blob: data:; media-src blob: data:; worker-src 'none'; frame-src 'none'; object-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors latch://app`,
         },
       })
     } catch {
@@ -998,6 +1043,7 @@ module.exports = {
   OPEN_IN_BROWSER,
   BROWSER_INVITATION,
   REQUEST_BODY_LIMIT,
+  UPLOAD_BODY_LIMIT,
   RENEW_INTERVAL_MS,
   RENEW_CHECK_MS,
   RENEW_RETRY_MS,

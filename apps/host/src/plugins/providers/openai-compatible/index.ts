@@ -26,6 +26,7 @@ export interface OpenAIConfig {
   model: string
   /** Models a request may choose. Empty or absent accepts any requested model. */
   models?: string[]
+  modelCapabilities?: Record<string, { vision?: boolean }>
   /** Every request goes through it. The Host passes its egress-checked fetch; defaults to `globalThis.fetch`. */
   fetch?: FetchLike
 }
@@ -90,7 +91,17 @@ function messageOnWire(message: ModelMessage): Record<string, unknown> {
   }
   return {
     role: message.role,
-    content: message.content,
+    content:
+      message.role === 'user' && message.attachments?.length
+        ? [
+            ...(message.content ? [{ type: 'text', text: message.content }] : []),
+            ...message.attachments.map(part =>
+              part.type === 'text'
+                ? { type: 'text', text: `[附件：${part.name}]\n${part.text}` }
+                : { type: 'image_url', image_url: { url: `data:${part.mimeType};base64,${part.data}` } },
+            ),
+          ]
+        : message.content,
     ...(message.role === 'assistant' && message.toolCalls?.length
       ? {
           tool_calls: message.toolCalls.map(call => ({
@@ -117,10 +128,19 @@ export function createOpenAIPlugin(config: OpenAIConfig): HarnessPlugin {
     id,
     name: config.name ?? 'OpenAI 兼容接口',
     model: config.model,
+    ...(config.modelCapabilities ? { modelCapabilities: structuredClone(config.modelCapabilities) } : {}),
     ...(models ? { models } : {}),
     async *stream({ messages, tools, signal, model: requested }): AsyncIterable<ModelDelta> {
       signal.throwIfAborted()
+      const safeError = messages.some(message => message.attachments?.length)
+        ? (_text: string) => '模型服务无法处理本次附件请求。'
+        : redacted
       const model = selectModel(requested, config.model, models)
+      if (
+        messages.some(message => message.attachments?.some(part => part.type === 'image'))
+        && config.modelCapabilities?.[model]?.vision !== true
+      )
+        throw new ProviderError('当前模型不能看图片。', 'model-vision-unsupported')
       const response = await send(fetcher, endpoint, {
         method: 'POST',
         signal,
@@ -147,7 +167,7 @@ export function createOpenAIPlugin(config: OpenAIConfig): HarnessPlugin {
       })
       if (!response.ok)
         throw new ProviderError(
-          `模型服务 HTTP ${response.status}：${redacted(await readErrorBody(response))}`,
+          `模型服务 HTTP ${response.status}：${safeError(await readErrorBody(response))}`,
           'http-error',
           response.status,
         )
@@ -172,7 +192,7 @@ export function createOpenAIPlugin(config: OpenAIConfig): HarnessPlugin {
         const checked = chunkSchema.safeParse(parsed)
         if (!checked.success) throw new ProviderError('模型服务的流事件字段无效。', 'invalid-chunk')
         const chunk = checked.data
-        if (chunk.error != null) throw new ProviderError(redacted(errorMessage(chunk.error)), 'upstream-error')
+        if (chunk.error != null) throw new ProviderError(safeError(errorMessage(chunk.error)), 'upstream-error')
         if (chunk.choices === undefined && chunk.usage == null)
           throw new ProviderError('模型流事件缺少 choices 或 usage。', 'invalid-chunk')
         if (chunk.usage) {
@@ -192,7 +212,7 @@ export function createOpenAIPlugin(config: OpenAIConfig): HarnessPlugin {
           const reasoning = delta?.reasoning_content || delta?.reasoning
           if (finish !== undefined && (delta?.content || reasoning || delta?.tool_calls?.length))
             throw new ProviderError('模型在结束后继续发送内容。', 'invalid-chunk')
-          if (delta?.refusal) throw new ProviderError(`模型拒绝了请求：${redacted(delta.refusal)}`, 'model-refusal')
+          if (delta?.refusal) throw new ProviderError(`模型拒绝了请求：${safeError(delta.refusal)}`, 'model-refusal')
           if (reasoning) yield { type: 'reasoning', text: reasoning }
           if (delta?.content) yield { type: 'text', text: delta.content }
           for (const part of delta?.tool_calls ?? []) {

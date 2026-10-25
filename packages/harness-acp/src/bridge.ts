@@ -1,3 +1,7 @@
+import { RunFileTracking, recordFileOutputs } from '@latch/core/file-tracking'
+import { fileMentionContext, type FileMention } from '@latch/protocol'
+import { checkedAttachments, promptBlocks } from './attachments.ts'
+import type { AttachmentRef } from '@latch/protocol'
 import { createHash, randomUUID } from 'node:crypto'
 import { lstat, mkdir, realpath, rm } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
@@ -94,7 +98,14 @@ interface Live {
   key: string
   connection: AgentConnection
   initialized: boolean
-  capabilities: { resume: boolean; load: boolean; delete: boolean; additionalDirectories: boolean }
+  capabilities: {
+    resume: boolean
+    load: boolean
+    delete: boolean
+    additionalDirectories: boolean
+    images: boolean
+    embeddedContext: boolean
+  }
   authMethods: Array<{ name: string; description?: string }>
   agentVersion?: string
   /** ACP session → Latch task. Updates for unbound sessions, including a session/load replay, are discarded. */
@@ -120,6 +131,10 @@ interface Run {
   taskId: string
   seq: number
   prompt: string
+  attachments?: AttachmentRef[]
+  sensitiveOutput?: boolean
+  imageCount?: number
+  imageChain?: Promise<void>
   live?: Live
   acpSessionId?: string
   /** session/prompt was written; updates from now on belong to this turn. */
@@ -210,8 +225,8 @@ function codeOf(error: unknown): string | undefined {
   return error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : undefined
 }
 
-function assertPrompt(prompt: unknown, requestId: unknown): void {
-  if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 1_000_000)
+function assertPrompt(prompt: unknown, requestId: unknown, attachments?: AttachmentRef[]): void {
+  if (typeof prompt !== 'string' || (!prompt.trim() && !attachments?.length) || prompt.length > 1_000_000)
     throw new AppError(400, 'invalid-prompt', '请输入不超过 1 MB 的任务内容')
   if (typeof requestId !== 'string' || !requestId || requestId.length > 256)
     throw new AppError(400, 'invalid-request-id', '缺少有效的请求标识')
@@ -298,6 +313,7 @@ function selected(optionId: string): unknown {
  */
 export class AcpBridge implements Bridge {
   private state: AcpState = emptyAcpState()
+  private readonly fileTracking: RunFileTracking
   private readonly store: AcpStore
   private readonly workspaceRoot: string
   private readonly redact: (text: string) => string
@@ -348,6 +364,11 @@ export class AcpBridge implements Bridge {
     private readonly onClosed?: () => void,
   ) {
     this.store = createAcpStore(options.dataDir)
+    this.fileTracking = new RunFileTracking({
+      track: options.trackFiles,
+      current: (id, runId) => this.state.tasks[id]?.summary.runId === runId,
+      notify: id => this.notify(id),
+    })
     this.workspaceRoot = resolve(options.workspaceRoot)
     this.redact = redactor(agent.env)
     this.selection = selectProfile(agent)
@@ -372,6 +393,13 @@ export class AcpBridge implements Bridge {
       this.loaded = true
       let changed = false
       for (const task of Object.values(this.state.tasks)) {
+        for (const message of task.messages)
+          if (message.outputsPending) {
+            delete message.outputsPending
+            message.outputsTruncated = true
+            task.revision++
+            changed = true
+          }
         if (task.summary.status !== 'running' && task.summary.status !== 'waiting-approval') continue
         const at = this.now()
         for (const item of task.messages) settleToolMessage(item, at)
@@ -399,6 +427,7 @@ export class AcpBridge implements Bridge {
       this.closed = true
       this.lifetime.abort()
       await this.started?.catch(() => {})
+      this.fileTracking.dispose()
       const runs = [...this.runs.values()]
       for (const run of runs) this.requestCancel(run, false)
       if (runs.length)
@@ -412,6 +441,7 @@ export class AcpBridge implements Bridge {
       await Promise.all(runs.map(run => run.done))
       await Promise.allSettled([...this.inflight.values()].map(entry => entry.promise))
       await Promise.all([...this.runs.values()].map(run => run.done))
+      await this.fileTracking.close()
       if (this.loaded) await this.flush().catch(() => {})
       try {
         await this.store.close()
@@ -443,6 +473,9 @@ export class AcpBridge implements Bridge {
       approvals: this.openApprovals(sessionId),
       liveText: segment?.text ?? '',
       cursor: task.revision,
+      ...(this.fileTracking.projection(sessionId, task.summary.runId)
+        ? { fileChanges: this.fileTracking.projection(sessionId, task.summary.runId) }
+        : {}),
       ...(segment ? { liveMessageId: segment.id } : {}),
       ...(segment?.reasoning ? { liveReasoning: segment.reasoning, ...segment.reasoningTimer.live() } : {}),
       ...(active && run ? { activity: run.activity, ...run.clock.live() } : {}),
@@ -498,10 +531,14 @@ export class AcpBridge implements Bridge {
 
   async createTask(input: CreateTaskInput): Promise<{ sessionId: string }> {
     await this.ready()
-    assertPrompt(input.prompt, input.requestId)
+    assertPrompt(input.prompt, input.requestId, input.attachments)
+    const attachments = checkedAttachments(input.attachments)
+    const fileRefs = input.fileRefs ?? []
     const key = digest(['create', input.requestId])
     const payloadHash = digest({
       prompt: input.prompt,
+      ...(attachments.length ? { attachments } : {}),
+      ...(fileRefs.length ? { fileRefs } : {}),
       mode: input.mode ?? 'agent',
       ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
       ...(input.model ? { model: input.model } : {}),
@@ -520,7 +557,7 @@ export class AcpBridge implements Bridge {
 
   private async createTaskOnce(input: CreateTaskInput): Promise<{ sessionId: string }> {
     await this.ready()
-    assertPrompt(input.prompt, input.requestId)
+    assertPrompt(input.prompt, input.requestId, input.attachments)
     const mode = input.mode ?? 'agent'
     if (mode === 'chat') throw new AppError(400, 'mode-unsupported', `${this.agent.name} 只支持 Agent 模式`)
     if (mode !== 'agent') throw new AppError(400, 'invalid-mode', '对话模式必须是 chat 或 agent')
@@ -533,10 +570,14 @@ export class AcpBridge implements Bridge {
     // that `creating` keeps to one per request.
     const project = await this.projectConfig(cwd, scope?.passed)
     this.assertOpen()
+    const attachments = checkedAttachments(input.attachments)
+    const fileRefs = input.fileRefs ?? []
     const key = digest(['create', input.requestId])
     // Folders join the hash only when there are several, so receipts written before they existed still match.
     const payloadHash = digest({
       prompt: input.prompt,
+      ...(attachments.length ? { attachments } : {}),
+      ...(fileRefs.length ? { fileRefs } : {}),
       mode,
       ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
       ...(input.model ? { model: input.model } : {}),
@@ -555,6 +596,8 @@ export class AcpBridge implements Bridge {
     const create = {
       sessionId,
       prompt: input.prompt,
+      attachments,
+      fileRefs,
       requestId: input.requestId,
       key,
       payloadHash,
@@ -589,6 +632,8 @@ export class AcpBridge implements Bridge {
   private async record(create: {
     sessionId: string
     prompt: string
+    attachments?: AttachmentRef[]
+    fileRefs?: FileMention[]
     key: string
     payloadHash: string
     requestId: string
@@ -596,15 +641,22 @@ export class AcpBridge implements Bridge {
     launch: Launch
     scope?: Scope
   }): Promise<{ sessionId: string }> {
-    const { sessionId, prompt, cwd, launch, scope } = create
+    const { sessionId, prompt, cwd, launch, scope, attachments, fileRefs = [] } = create
     this.assertOpen()
-    const run = this.reserve(sessionId, 1, prompt)
+    let context: string
+    try {
+      context = fileMentionContext(prompt, fileRefs, scope?.folders ?? [{ id: 'default', path: cwd }])
+    } catch {
+      throw new AppError(400, 'file-reference-invalid', '文件引用无效。')
+    }
+    const run = this.reserve(sessionId, 1, context)
+    run.attachments = attachments
     const at = isoTime(run.clock.startedAt)
     run.userMessageId = randomUUID()
     this.state.tasks[sessionId] = {
       summary: {
         id: sessionId,
-        title: prompt.trim().replace(/\s+/g, ' ').slice(0, 80),
+        title: (prompt.trim().replace(/\s+/g, ' ') || attachments?.[0]?.name || '附件').slice(0, 80),
         status: 'running',
         updatedAt: at,
         createdAt: at,
@@ -615,7 +667,17 @@ export class AcpBridge implements Bridge {
           : {}),
         runId: run.id,
       },
-      messages: [{ id: run.userMessageId, role: 'user', text: prompt, requestId: create.requestId, createdAt: at }],
+      messages: [
+        {
+          id: run.userMessageId,
+          role: 'user',
+          text: prompt,
+          requestId: create.requestId,
+          createdAt: at,
+          ...(attachments?.length ? { attachments } : {}),
+          ...(fileRefs.length ? { fileRefs } : {}),
+        },
+      ],
       revision: 1,
       acp: {
         cwd,
@@ -642,9 +704,22 @@ export class AcpBridge implements Bridge {
 
   async prompt(sessionId: string, prompt: string, requestId: string, options: PromptOptions = {}): Promise<void> {
     await this.ready()
-    assertPrompt(prompt, requestId)
+    assertPrompt(prompt, requestId, options.attachments)
     const key = digest(['prompt', sessionId, requestId])
-    const payloadHash = digest(options.model ? { prompt, model: options.model } : prompt)
+    const attachments = checkedAttachments(options.attachments)
+    const fileRefs = options.fileRefs ?? []
+    const payloadHash = digest(
+      attachments.length || fileRefs.length
+        ? {
+            prompt,
+            ...(options.model ? { model: options.model } : {}),
+            ...(attachments.length ? { attachments } : {}),
+            ...(fileRefs.length ? { fileRefs } : {}),
+          }
+        : options.model
+          ? { prompt, model: options.model }
+          : prompt,
+    )
     const repeated = (): Promise<void> | undefined => {
       const receipt = this.state.receipts[key]
       if (receipt) {
@@ -672,7 +747,14 @@ export class AcpBridge implements Bridge {
     if (this.runs.has(sessionId) || task.summary.status === 'running' || task.summary.status === 'waiting-approval') {
       throw new AppError(409, 'task-running', '任务仍在运行，请等待完成或先取消')
     }
-    const run = this.reserve(sessionId, task.acp.turnSeq + 1, prompt)
+    let context: string
+    try {
+      context = fileMentionContext(prompt, fileRefs, task.summary.folders ?? [{ id: 'default', path: task.acp.cwd }])
+    } catch {
+      throw new AppError(400, 'file-reference-invalid', '文件引用无效。')
+    }
+    const run = this.reserve(sessionId, task.acp.turnSeq + 1, context)
+    run.attachments = attachments
     const promise = (async () => {
       try {
         // Reattach and confirm the mode before recording, so a refused turn leaves no side effects.
@@ -683,9 +765,19 @@ export class AcpBridge implements Bridge {
         this.assertUsable(current)
         current.acp.turnSeq = run.seq
         run.userMessageId = randomUUID()
-        current.messages.push({ id: run.userMessageId, role: 'user', text: prompt, requestId, createdAt: isoTime(run.clock.startedAt) })
+        current.messages.push({
+          id: run.userMessageId,
+          role: 'user',
+          text: prompt,
+          requestId,
+          ...(options.queuedAt ? { queuedAt: options.queuedAt } : {}),
+          ...(fileRefs.length ? { fileRefs } : {}),
+          createdAt: isoTime(run.clock.startedAt),
+          ...(attachments.length ? { attachments } : {}),
+        })
         current.summary.status = 'running'
         current.summary.runId = run.id
+        delete current.summary.runOutcome
         this.touch(current)
         this.state.receipts[key] = { taskId: sessionId, payloadHash, kind: 'prompt' }
         this.tools.set(sessionId, { seq: run.seq, calls: new Map() })
@@ -757,6 +849,7 @@ export class AcpBridge implements Bridge {
     }
     const { acpSessionId, cwd, deletable } = task.acp
     const recorded = structuredClone(task)
+    this.fileTracking.dispose(sessionId)
     delete this.state.tasks[sessionId]
     for (const [key, receipt] of Object.entries(this.state.receipts)) {
       if (receipt.taskId !== sessionId) continue
@@ -1408,6 +1501,17 @@ export class AcpBridge implements Bridge {
         status = 'cancelled'
         return
       }
+      const task = this.task(run.taskId)
+      if (task.summary.mode !== 'chat')
+        await this.fileTracking.start(
+          run.taskId,
+          run.id,
+          task.summary.folders?.length ? task.summary.folders : [{ id: 'default', path: task.acp.cwd }],
+        )
+      if (run.cancelRequested) {
+        status = 'cancelled'
+        return
+      }
       // Binding also confirms the permission mode, right before the prompt is written.
       const binding = await this.attach(run.taskId)
       if (run.cancelRequested) {
@@ -1417,17 +1521,23 @@ export class AcpBridge implements Bridge {
       run.live = binding.live
       run.acpSessionId = binding.acpSessionId
       this.holdIdle(binding.live)
+      const blocks = await promptBlocks(run.prompt, run.attachments ?? [], binding.live.capabilities, this.options.readAttachment)
+      if (run.cancelRequested) {
+        status = 'cancelled'
+        return
+      }
       run.sent = true
       this.phase(run, 'model')
       this.notify(run.taskId)
       const result = await binding.live.connection.request('session/prompt', {
         sessionId: binding.acpSessionId,
-        prompt: [{ type: 'text', text: run.prompt }],
+        prompt: blocks,
       })
       status = this.outcome(run, result, notes)
     } catch (error) {
       status = this.failure(run, error, notes)
     } finally {
+      await run.imageChain
       this.finishTurn(run, status, [...run.notes, ...notes])
     }
   }
@@ -1498,7 +1608,11 @@ export class AcpBridge implements Bridge {
         notes.push(`${this.agent.name} 找不到这个会话，请新建会话。`)
         return 'failed'
       }
-      notes.push(`${this.agent.name} 返回错误：${clip(this.redact(error.message), 1000)}`)
+      notes.push(
+        run.attachments?.length || run.sensitiveOutput
+          ? `${this.agent.name} 未能处理本轮附件请求。`
+          : `${this.agent.name} 返回错误：${clip(this.redact(error.message), 1000)}`,
+      )
       return 'failed'
     }
     notes.push(error instanceof AppError ? error.message : `${this.agent.name} 运行失败：${clip(this.redact(message(error)), 1000)}`)
@@ -1523,6 +1637,7 @@ export class AcpBridge implements Bridge {
       if (permission.taskId === run.taskId) this.closePermission(permission, CANCELLED_OUTCOME, this.unanswered())
     }
     const task = this.state.tasks[run.taskId]
+    let outputMessageId: string | undefined
     if (task) {
       const at = this.now()
       if (run.segment) this.settleSegment(run, task, status === 'idle' ? 'completed' : status === 'cancelled' ? 'cancelled' : 'failed')
@@ -1531,6 +1646,8 @@ export class AcpBridge implements Bridge {
         for (const state of tools.calls.values()) if (settleTool(state, at)) this.upsert(task, toolMessage(state))
       }
       task.summary.status = status
+      task.summary.runOutcome =
+        status === 'idle' ? 'completed' : status === 'cancelled' ? 'cancelled' : status === 'interrupted' ? 'interrupted' : 'failed'
       for (const note of notes) {
         task.messages.push({
           id: randomUUID(),
@@ -1542,12 +1659,36 @@ export class AcpBridge implements Bridge {
       }
       const prompt = run.userMessageId === undefined ? undefined : task.messages.find(item => item.id === run.userMessageId)
       if (prompt) prompt.turn = run.clock.turn()
+      const result = this.fileTracking.capture(run.id)
+      if (result) {
+        const turn = task.messages.slice(
+          Math.max(
+            0,
+            task.messages.findIndex(message => message.id === run.userMessageId),
+          ),
+        )
+        const target = turn.findLast(message => message.role === 'assistant') ?? turn.at(-1)
+        if (target) {
+          recordFileOutputs(target, result, true)
+          outputMessageId = target.id
+        }
+      }
       this.touch(task)
       this.mark()
     }
     if (this.runs.get(run.taskId) === run) this.runs.delete(run.taskId)
     this.notify(run.taskId)
     this.scheduleIdle(run.taskId)
+    this.fileTracking.finish(run.id, async result => {
+      const current = this.state.tasks[run.taskId]
+      const message = current?.messages.find(item => item.id === outputMessageId)
+      if (!current || !message) return
+      recordFileOutputs(message, result)
+      current.revision++
+      this.mark()
+      await this.flush()
+      this.notify(run.taskId)
+    })
     void this.flush()
       .catch(() => {})
       .finally(() => run.resolveDone())
@@ -1690,7 +1831,7 @@ export class AcpBridge implements Bridge {
       key,
       connection,
       initialized: false,
-      capabilities: { resume: false, load: false, delete: false, additionalDirectories: false },
+      capabilities: { resume: false, load: false, delete: false, additionalDirectories: false, images: false, embeddedContext: false },
       authMethods: [],
       sessions: new Map(),
       lastUsed: Date.now(),
@@ -1727,6 +1868,8 @@ export class AcpBridge implements Bridge {
         load: capabilities?.loadSession === true,
         delete: capabilities?.sessionCapabilities?.delete != null,
         additionalDirectories: isObject(capabilities?.sessionCapabilities?.additionalDirectories),
+        images: capabilities?.promptCapabilities?.image === true,
+        embeddedContext: capabilities?.promptCapabilities?.embeddedContext === true,
       }
       live.authMethods = (result.data.authMethods ?? []).slice(0, 16).map(method => ({
         name: clip(this.redact(method.name), 200),
@@ -1777,7 +1920,15 @@ export class AcpBridge implements Bridge {
     this.notify()
     if (info.stderr && (unexpected || !live.initialized)) {
       try {
-        this.limits.log(`Harness ${this.agent.id} 进程结束（${describeExit(info)}），stderr 末尾（已脱敏）：\n${info.stderr}`)
+        const sensitive =
+          this.runs.get(live.key)?.attachments?.length
+          || this.runs.get(live.key)?.sensitiveOutput
+          || this.state.tasks[live.key]?.messages.some(message => message.attachments?.length)
+        this.limits.log(
+          sensitive
+            ? `Harness ${this.agent.id} 进程结束（${describeExit(info)}）；含附件会话的错误输出未写入日志。`
+            : `Harness ${this.agent.id} 进程结束（${describeExit(info)}），stderr 末尾（已脱敏）：\n${info.stderr}`,
+        )
       } catch {
         /* Diagnostics never block cleanup. */
       }
@@ -2048,8 +2199,42 @@ export class AcpBridge implements Bridge {
     switch (update.sessionUpdate) {
       case 'agent_message_chunk':
       case 'agent_thought_chunk': {
+        if (run && update.content && typeof update.content === 'object' && Reflect.get(update.content, 'type') === 'image')
+          run.sensitiveOutput = true
         const parsed = chunkUpdate.safeParse(update)
         if (!parsed.success) return
+        if (parsed.data.content.type === 'image' && update.sessionUpdate === 'agent_message_chunk') {
+          if (!run || !this.options.saveAttachment) return
+          const data = parsed.data.content.data,
+            mime = parsed.data.content.mimeType
+          if (!data || !mime || (run.imageCount ?? 0) >= 8) {
+            run.notes.push('一张 Agent 图片未保存：内容无效或超过每轮 8 张上限。')
+            return
+          }
+          run.imageCount = (run.imageCount ?? 0) + 1
+          const createdAt = this.now(),
+            id = randomUUID()
+          run.imageChain = (run.imageChain ?? Promise.resolve()).then(async () => {
+            try {
+              const ref = await this.options.saveAttachment!({ sessionId: taskId, mime, data })
+              if (this.state.tasks[taskId] !== task) return
+              task.messages.push({
+                id,
+                role: 'assistant',
+                text: '',
+                state: run.cancelRequested ? 'cancelled' : 'completed',
+                createdAt,
+                attachments: [ref],
+              })
+              this.touch(task)
+              this.mark()
+              this.notify(taskId)
+            } catch {
+              run.notes.push('一张 Agent 图片未保存：图片类型、大小或附件存储不可用。')
+            }
+          })
+          return
+        }
         const piece = blockText(parsed.data.content)
         if (!piece) return
         const kind = update.sessionUpdate === 'agent_message_chunk' ? 'text' : 'reasoning'

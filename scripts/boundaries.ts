@@ -40,6 +40,13 @@ export const PROJECTS: Readonly<Record<string, ProjectRule>> = {
   // The root holds the compatibility entries of the plugin SDK (src/), the repository's scripts and the tests of the
   // packages without a test/ directory (tests/), which drive core through the Host's Standard driver.
   'harness-link': { dir: '.', dependencies: ['@latch/protocol', '@latch/sdk', '@latch/core'], devDependencies: ['@latch/host'] },
+  '@latch/link-wire': { dir: 'packages/link-wire', env: 'isomorphic', dependencies: [] },
+  '@latch/link-client': { dir: 'packages/link-client', env: 'node', dependencies: ['@latch/link-wire'] },
+  '@latch/relay': {
+    dir: 'apps/relay',
+    env: 'node',
+    dependencies: ['@latch/link-wire', '@latch/link-client'],
+  },
   '@latch/protocol': { dir: 'packages/protocol', env: 'isomorphic', dependencies: [] },
   // The design system of the browser client: design tokens, the order of the cascade layers and the primitive components.
   '@latch/ui': { dir: 'packages/ui', env: 'browser', dependencies: [] },
@@ -56,7 +63,7 @@ export const PROJECTS: Readonly<Record<string, ProjectRule>> = {
   '@latch/host': {
     dir: 'apps/host',
     env: 'node',
-    dependencies: ['@latch/protocol', '@latch/sdk', '@latch/core', '@latch/harness-acp'],
+    dependencies: ['@latch/protocol', '@latch/sdk', '@latch/core', '@latch/harness-acp', '@latch/link-wire', '@latch/link-client'],
     devDependencies: ['@latch/testkit'],
   },
   // At run time the page uses the protocol package and the design system. Its Vite config reads host.json through the
@@ -80,7 +87,15 @@ export const PROJECTS: Readonly<Record<string, ProjectRule>> = {
     dir: 'e2e',
     env: 'node',
     dependencies: [],
-    devDependencies: ['@latch/protocol', '@latch/sdk', '@latch/host', '@latch/testkit'],
+    devDependencies: [
+      '@latch/protocol',
+      '@latch/sdk',
+      '@latch/host',
+      '@latch/testkit',
+      '@latch/relay',
+      '@latch/link-client',
+      '@latch/link-wire',
+    ],
     devOnly: true,
   },
 }

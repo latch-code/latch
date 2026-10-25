@@ -1,3 +1,4 @@
+import { documentFixtures } from '@latch/testkit'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { createServer, type ViteDevServer } from 'vite'
@@ -5,61 +6,9 @@ import { chromium, type Browser, type Page } from '@playwright/test'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { strToU8, zipSync } from 'fflate'
 import { browserLaunchOptions } from './helpers/browser.ts'
-const NS = 'http://schemas.openxmlformats.org/'
-const zip = (files: Record<string, string>) =>
-  Array.from(zipSync(Object.fromEntries(Object.entries(files).map(([key, value]) => [key, strToU8(value)]))))
-const word = () =>
-  zip({
-    '[Content_Types].xml': `<Types xmlns="${NS}package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`,
-    '_rels/.rels': `<Relationships xmlns="${NS}package/2006/relationships"><Relationship Id="doc" Type="${NS}officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`,
-    'word/document.xml': `<w:document xmlns:w="${NS}wordprocessingml/2006/main" xmlns:r="${NS}officeDocument/2006/relationships"><w:body><w:p><w:r><w:t>Hello DOCX</w:t></w:r></w:p><w:hyperlink r:id="external"><w:r><w:t>External link</w:t></w:r></w:hyperlink><w:altChunk r:id="bad"/><w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr></w:body></w:document>`,
-    'word/_rels/document.xml.rels': `<Relationships xmlns="${NS}package/2006/relationships"><Relationship Id="bad" Type="${NS}officeDocument/2006/relationships/aFChunk" Target="chunk.html"/><Relationship Id="external" Type="${NS}officeDocument/2006/relationships/hyperlink" TargetMode="External" Target="https://example.invalid/never-load"/></Relationships>`,
-    'word/chunk.html': '<script>parent.PWNED=true</script><form><input></form>',
-  })
-const workbook = () =>
-  zip({
-    'xl/workbook.xml': `<workbook xmlns="${NS}spreadsheetml/2006/main" xmlns:r="${NS}officeDocument/2006/relationships"><workbookPr date1904="1"/><sheets><sheet name="数据" sheetId="1" r:id="one"/><sheet name="隐藏" state="hidden" sheetId="2" r:id="two"/></sheets></workbook>`,
-    'xl/_rels/workbook.xml.rels': `<Relationships xmlns="${NS}package/2006/relationships"><Relationship Id="one" Target="worksheets/sheet1.xml"/><Relationship Id="two" Target="worksheets/sheet2.xml"/></Relationships>`,
-    'xl/styles.xml': `<styleSheet xmlns="${NS}spreadsheetml/2006/main"><cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="14"/></cellXfs></styleSheet>`,
-    'xl/worksheets/sheet1.xml': `<worksheet xmlns="${NS}spreadsheetml/2006/main"><dimension ref="A1:C2"/><sheetViews><sheetView><pane state="frozen" xSplit="1" ySplit="1"/></sheetView></sheetViews><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>表格标题</t></is></c></row><row r="2"><c r="A2" s="1"><v>1</v></c><c r="B2"><f>1+1</f><v>999</v></c><c r="C2" t="inlineStr"><is><t>&lt;script&gt;bad&lt;/script&gt;</t></is></c></row></sheetData><mergeCells><mergeCell ref="A1:C1"/></mergeCells></worksheet>`,
-    'xl/worksheets/sheet2.xml': `<worksheet xmlns="${NS}spreadsheetml/2006/main"><sheetData/></worksheet>`,
-  })
-function presentation(count = 25) {
-  const files: Record<string, string> = {
-    '[Content_Types].xml': `<Types xmlns="${NS}package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/></Types>`,
-    'ppt/presentation.xml': `<p:presentation xmlns:p="${NS}presentationml/2006/main" xmlns:r="${NS}officeDocument/2006/relationships"><p:sldIdLst>${Array.from({ length: count }, (_, i) => `<p:sldId id="${256 + i}" r:id="s${i + 1}"/>`).join('')}</p:sldIdLst><p:sldSz cx="9144000" cy="5143500"/></p:presentation>`,
-    'ppt/_rels/presentation.xml.rels': `<Relationships xmlns="${NS}package/2006/relationships">${Array.from({ length: count }, (_, i) => `<Relationship Id="s${i + 1}" Type="${NS}officeDocument/2006/relationships/slide" Target="slides/slide${i + 1}.xml"/>`).join('')}</Relationships>`,
-    'ppt/slides/_rels/slide1.xml.rels': `<Relationships xmlns="${NS}package/2006/relationships"><Relationship Id="note" Type="${NS}officeDocument/2006/relationships/notesSlide" Target="../notesSlides/notesSlide1.xml"/></Relationships>`,
-    'ppt/notesSlides/notesSlide1.xml': `<p:notes xmlns:p="${NS}presentationml/2006/main" xmlns:a="${NS}drawingml/2006/main"><p:cSld><a:t>Speaker note</a:t></p:cSld></p:notes>`,
-  }
-  for (let i = 1; i <= count; i++)
-    files[`ppt/slides/slide${i}.xml`] =
-      `<p:sld xmlns:p="${NS}presentationml/2006/main" xmlns:a="${NS}drawingml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/><p:sp><p:nvSpPr><p:cNvPr id="2" name="Title"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="300000" y="300000"/><a:ext cx="8000000" cy="1000000"/></a:xfrm></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr sz="2400"/><a:t>Page ${i}</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>`
-  return zip(files)
-}
-function pdf() {
-  const stream = 'BT /F1 18 Tf 50 740 Td (Hello PDF) Tj ET',
-    objects = [
-      `<< /Type /Catalog /Pages 2 0 R /OpenAction << /S /JavaScript /JS (globalThis.PWNED=true) >> >>`,
-      `<< /Type /Pages /Kids [3 0 R] /Count 1 >>`,
-      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>`,
-      `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
-      `<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>`,
-    ]
-  let source = '%PDF-1.4\n',
-    offsets = [0]
-  for (let i = 0; i < objects.length; i++) {
-    offsets.push(source.length)
-    source += `${i + 1} 0 obj\n${objects[i]}\nendobj\n`
-  }
-  source += '%padding\n'.repeat(16000)
-  const xref = source.length
-  source += `xref\n0 6\n0000000000 65535 f \n${offsets
-    .slice(1)
-    .map(value => `${String(value).padStart(10, '0')} 00000 n \n`)
-    .join('')}trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`
-  return Array.from(strToU8(source))
-}
+const { word, workbook, presentation, pdf } = documentFixtures(files =>
+  Array.from(zipSync(Object.fromEntries(Object.entries(files).map(([key, value]) => [key, strToU8(value)])))),
+)
 describe('isolated document renderers', () => {
   let server: ViteDevServer, browser: Browser, page: Page, origin: string
   beforeAll(async () => {
@@ -138,6 +87,40 @@ describe('isolated document renderers', () => {
     await page.getByRole('status').filter({ hasText: '2 / 25 页' }).waitFor()
     await page.getByRole('button', { name: '适应', exact: true }).click()
     expect(await page.getByRole('button', { name: '适应', exact: true }).getAttribute('aria-pressed')).toBe('false')
+    await frame.locator('body').evaluate(body => {
+      body.tabIndex = -1
+      body.focus({ preventScroll: true })
+    })
+    await page.keyboard.press('Meta+=')
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          window.previewEvents.some(
+            value =>
+              !!value
+              && typeof value === 'object'
+              && 'type' in value
+              && value.type === 'view'
+              && 'zoomPercent' in value
+              && value.zoomPercent === 110,
+          ),
+        ),
+      )
+      .toBe(true)
+    await expect.poll(() => page.getByRole('status').allTextContents()).toContain('2 / 25 页')
+    await open('pptx', presentation(24))
+    await page.getByRole('status').filter({ hasText: '2 / 24 页' }).waitFor()
+    expect(await page.getByRole('button', { name: '适应', exact: true }).getAttribute('aria-pressed')).toBe('false')
+    await frame.locator('body').evaluate(body => {
+      const start = new Event('touchstart', { bubbles: true }),
+        end = new Event('touchend', { bubbles: true })
+      Object.defineProperty(start, 'touches', { value: [{ clientX: 280, clientY: 200 }] })
+      Object.defineProperty(end, 'touches', { value: [] })
+      Object.defineProperty(end, 'changedTouches', { value: [{ clientX: 100, clientY: 200 }] })
+      body.dispatchEvent(start)
+      body.dispatchEvent(end)
+    })
+    await page.getByRole('status').filter({ hasText: '3 / 24 页' }).waitFor()
   })
   it('renders DOCX with no altChunk iframe, keeps an opaque origin, and never requests external relationships', async () => {
     const requested: string[] = []
@@ -149,6 +132,17 @@ describe('isolated document renderers', () => {
     expect(await page.frameLocator('iframe[title="文档沙箱"]').locator('iframe').count()).toBe(0)
     expect(await page.frameLocator('iframe[title="文档沙箱"]').locator('a[href^="https://example.invalid"]').count()).toBe(0)
     expect(requested).toEqual([])
+    await page.frameLocator('iframe[title="文档沙箱"]').getByText('External link', { exact: true }).click()
+    await page.getByRole('button', { name: '打开链接', exact: true }).waitFor()
+    expect(requested).toEqual([])
+    await page.evaluate(() => {
+      window.open = url => {
+        window.previewOpened.push(String(url))
+        return null
+      }
+    })
+    await page.getByRole('button', { name: '打开链接', exact: true }).click()
+    expect(await page.evaluate(() => window.previewOpened.at(-1))).toBe('https://example.invalid/never-load')
     expect(await page.evaluate(() => Reflect.get(window, 'PWNED'))).toBeUndefined()
     expect(await page.locator('iframe').getAttribute('sandbox')).toBe('allow-scripts')
   })

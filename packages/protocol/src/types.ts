@@ -1,9 +1,17 @@
+import type { FileChange } from './files.ts'
+export type { FileChange } from './files.ts'
+import type { FileMention } from './file-refs.ts'
+export type { FileMention } from './file-refs.ts'
+import type { AttachmentRef } from './attachments.ts'
+export type { AttachmentRef } from './attachments.ts'
 import type { AgentPreset } from './agent-presets.ts'
 import type { SkillInfo, UiPanelInfo } from './ui.ts'
-import type { AgentProbeResult, HostFeatures } from './features.ts'
+import type { AgentProbeResult, HostFeatures, PromptQueueItem } from './features.ts'
+import type { AgentQuestion } from './questions.ts'
 
 export type { SkillInfo, UiPanelInfo, UiPanelBlock, UiPanelDocument } from './ui.ts'
 export type { HostFeatures, SearchHit, SearchResults, SessionBatchResult } from './features.ts'
+export type { AgentQuestion, QuestionAnswer, QuestionSubmission, QuestionReceipt, QuestionResult } from './questions.ts'
 
 export interface SessionCommand {
   name: string
@@ -56,6 +64,8 @@ export interface UsageReport {
 }
 
 export interface TaskSummary {
+  /** Host-derived count only; question bodies remain in gated detail. Absent on older Hosts. */
+  pendingQuestions?: number
   id: string
   title: string
   status: TaskStatus
@@ -95,6 +105,8 @@ export interface TaskSummary {
    * so a cancel that arrives late cannot stop a run that began afterwards. Drivers that do not track runs omit it.
    */
   runId?: string
+  /** Explicit driver settlement; absent for older or third-party drivers. Only completed permits automatic follow-ups. */
+  runOutcome?: 'completed' | 'failed' | 'cancelled' | 'interrupted'
   /** Host-generated provenance; files remain shared with the chosen project. */
   forkOf?: { taskId: string; upToMessageId: string; title: string; turn: number; prefixLength: number; truncated?: true }
   /** Skills snapshotted for the current or latest Standard run. */
@@ -174,11 +186,20 @@ export interface ToolDetail {
 }
 
 export interface Message {
+  /** Changes observed during this run, including other writers; never attributed to the agent alone. */
+  outputs?: FileChange[]
+  outputsTruncated?: true
+  outputsPending?: true
+  outputsUnavailable?: true
+  fileRefs?: FileMention[]
+  attachments?: AttachmentRef[]
   id: string
   role: 'user' | 'assistant' | 'tool' | 'system'
   text: string
   /** User input request identity, kept across retries and restarts. */
   requestId?: string
+  /** When this input entered the Host queue, before it was actually sent. */
+  queuedAt?: string
   /** Host-only provenance for the first user message. */
   forkContext?: NonNullable<TaskSummary['forkOf']>
   toolName?: string
@@ -265,8 +286,12 @@ export interface SessionConfigOption {
 }
 
 export interface TaskDetail {
+  /** Authorized detail projection only, never an unverified list/status snapshot. */
+  fileChanges?: { runId: string; files: FileChange[]; state: 'watching' | 'settling'; truncated?: true; unavailable?: true }
   summary: TaskSummary
   messages: Message[]
+  queue?: PromptQueueItem[]
+  questions?: AgentQuestion[]
   approvals: Approval[]
   liveText: string
   cursor: number
@@ -306,7 +331,7 @@ export interface TaskDetail {
 }
 
 /** Every listener class the Host accepts connections on; tests iterate it, so a class added here meets the locality rules. */
-export const LISTENER_CLASSES = ['unix', 'loopback-tcp', 'lan-tls', 'tailnet-tls'] as const
+export const LISTENER_CLASSES = ['unix', 'loopback-tcp', 'lan-tls', 'tailnet-tls', 'native-direct', 'native-relay'] as const
 export type ListenerClass = (typeof LISTENER_CLASSES)[number]
 export type DeviceScope = 'view' | 'run' | 'approve:standard' | 'approve:elevated' | 'admin' | 'secrets'
 export type DataScope = 'work' | 'all'
@@ -332,6 +357,36 @@ export interface Device {
   pairedBy: { method: 'lpc' | 'offline' | 'invitation' | 'migration'; deviceId?: string }
   revokedAt?: string
   revokedReason?: 'manual' | 'self' | 'replay' | 'cascade' | 'migration'
+  native?: {
+    lastVerifiedAt: string
+    input: 'ready' | 'paused' | 'verification-required' | 'review' | 'revoked'
+    bodyVerifiedUntil?: string
+  }
+}
+
+export interface NativeLinkInfo {
+  version: 1
+  configHash: string
+  enabled: boolean
+  direct: { host: string; port: number } | null
+  listening: { host: string; port: number } | null
+  directManaged: boolean
+  addresses: Array<{ address: string; interface: string }>
+  relays: Array<{
+    relayId: string
+    url: string
+    spkiHash: string
+    hasRegistrationKey: boolean
+    status: 'connecting' | 'connected' | 'waiting' | 'attention'
+    retryAt?: number
+  }>
+  inputsPaused: boolean
+}
+export interface NativePairingInvitation {
+  id: string
+  payload: string
+  expiresAt: string
+  scopes: DeviceScope[]
 }
 
 /** The device making the request, as returned in the snapshot. */
@@ -355,6 +410,7 @@ export interface SessionPermission {
 
 export type PresenceAction =
   | 'device.enroll'
+  | 'device.enroll-native'
   | 'device.grant'
   | 'agent.probe'
   | 'task.start-l3'
@@ -410,6 +466,8 @@ export type PresenceReasonForm =
   | 'policy.egress-many'
   | 'policy.local'
   | 'policy.remote'
+  | 'policy.native-input'
+  | 'policy.native-link'
   | 'policy.remote-start'
   | 'policy.remote-agents'
   | 'policy.remote-projects'
@@ -424,6 +482,7 @@ export type PresenceReasonForm =
   | 'start.repeat'
   | 'mode.widen'
   | 'device.enroll'
+  | 'device.enroll-native'
   | 'device.grant'
 
 /** The Host-derived facts a confirmation names: one fixed form and the text of each of its slots (escaped). */
@@ -539,6 +598,7 @@ export interface HostView {
     reason?: Extract<PresenceAvailability, { status: 'unavailable' }>['reason']
   }
   tls: { origin: string } | null
+  native?: { enabled: boolean; inputsPaused: boolean }
   policy: { localMaxLevel: PermissionLevel; remoteMaxLevel: PermissionLevel; allowL3: boolean }
   /** The Host hands a rejection's note (「告诉 Agent 改做什么」) to the built-in harness; older Hosts drop it. */
   rejectionNote?: true
@@ -558,10 +618,13 @@ export const LISTENER_LABELS: Record<ListenerClass, string> = {
   'loopback-tcp': '回环端口',
   'lan-tls': '局域网 HTTPS',
   'tailnet-tls': 'Tailscale HTTPS',
+  'native-direct': '原生直连',
+  'native-relay': '原生中继',
 }
 
 export type HarnessSource = 'builtin' | 'acp' | 'plugin'
 export interface HarnessInfo {
+  attachments?: { images?: boolean; text?: boolean; textBytes?: number }
   id: string
   name: string
   description?: string
@@ -588,6 +651,7 @@ export type ProjectFolderAccess = 'all' | 'primary' | 'primary-asks' | 'primary-
 export type ProviderKind = 'openai-compatible' | 'anthropic'
 /** Browser-safe provider listing. It never contains credentials. */
 export interface ProviderSummary {
+  modelCapabilities?: Record<string, { vision?: boolean }>
   id: string
   name: string
   /** `demo` and `plugin` providers are not editable in settings. */
@@ -740,6 +804,7 @@ export type ProviderDestination = 'preset' | 'confirmed' | 'unconfirmed'
 
 /** Owner-only provider configuration as returned to the browser. */
 export interface ProviderSettings {
+  modelCapabilities?: Record<string, { vision?: boolean }>
   id: string
   name: string
   kind: ProviderKind

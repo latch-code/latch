@@ -82,6 +82,7 @@ function Harness() {
     setRich(undefined)
     const bytes = new Uint8Array(values)
     window.previewRanges = []
+    window.previewOpened = []
     window.previewEvents = []
     setValue({
       file: {

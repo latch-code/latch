@@ -13,7 +13,7 @@ interface ProbeOptions {
   dataDir: string
   cwd: string
 }
-const CAPABILITIES = { images: false, resume: false, load: false, additionalDirectories: false }
+const CAPABILITIES = { embeddedContext: false, images: false, resume: false, load: false, additionalDirectories: false }
 const isObject = (value: unknown) => value !== null && typeof value === 'object' && !Array.isArray(value)
 
 /** Same command, environment and configuration fingerprint as execution, without opening an ACP session. */
@@ -136,6 +136,7 @@ export async function probeAgent(
       launchHash: final.launchHash,
       capabilities: {
         images: caps?.promptCapabilities?.image === true,
+        embeddedContext: caps?.promptCapabilities?.embeddedContext === true,
         resume: caps?.sessionCapabilities?.resume != null,
         load: caps?.loadSession === true,
         additionalDirectories: isObject(caps?.sessionCapabilities?.additionalDirectories),

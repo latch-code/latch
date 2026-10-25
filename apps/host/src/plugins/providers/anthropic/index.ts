@@ -23,6 +23,7 @@ export interface AnthropicConfig {
   apiKey: string
   model: string
   models?: string[]
+  modelCapabilities?: Record<string, { vision?: boolean }>
   /** Every request goes through it. The Host passes its egress-checked fetch; defaults to `globalThis.fetch`. */
   fetch?: FetchLike
 }
@@ -45,6 +46,7 @@ export function anthropicHeaders(apiKey: string): Record<string, string> {
 
 type WireBlock =
   | { type: 'text'; text: string }
+  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
   | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
   | { type: 'tool_result'; tool_use_id: string; content?: string; is_error?: true }
 interface WireMessage {
@@ -66,7 +68,14 @@ function messagesOnWire(messages: ModelMessage[]): { system?: string; messages: 
     if (message.role === 'system') {
       if (message.content.trim()) system.push(message.content)
     } else if (message.role === 'user') {
-      append('user', message.content.trim() ? [{ type: 'text', text: message.content }] : [])
+      append('user', [
+        ...(message.content.trim() ? [{ type: 'text' as const, text: message.content }] : []),
+        ...(message.attachments ?? []).map(part =>
+          part.type === 'text'
+            ? { type: 'text' as const, text: `[附件：${part.name}]\n${part.text}` }
+            : { type: 'image' as const, source: { type: 'base64' as const, media_type: part.mimeType, data: part.data } },
+        ),
+      ])
     } else if (message.role === 'assistant') {
       append('assistant', [
         ...(message.content.trim() ? [{ type: 'text' as const, text: message.content }] : []),
@@ -153,10 +162,19 @@ export function createAnthropicPlugin(config: AnthropicConfig): HarnessPlugin {
     id,
     name: config.name ?? 'Anthropic',
     model: config.model,
+    ...(config.modelCapabilities ? { modelCapabilities: structuredClone(config.modelCapabilities) } : {}),
     ...(models ? { models } : {}),
     async *stream({ messages, tools, signal, model: requested }): AsyncIterable<ModelDelta> {
       signal.throwIfAborted()
+      const safeError = messages.some(message => message.attachments?.length)
+        ? (_text: string) => '模型服务无法处理本次附件请求。'
+        : redacted
       const model = selectModel(requested, config.model, models)
+      if (
+        messages.some(message => message.attachments?.some(part => part.type === 'image'))
+        && config.modelCapabilities?.[model]?.vision !== true
+      )
+        throw new ProviderError('当前模型不能看图片。', 'model-vision-unsupported')
       const response = await send(fetcher, endpoint, {
         method: 'POST',
         signal,
@@ -174,7 +192,7 @@ export function createAnthropicPlugin(config: AnthropicConfig): HarnessPlugin {
       })
       if (!response.ok)
         throw new ProviderError(
-          `模型服务 HTTP ${response.status}：${redacted(await readErrorBody(response))}`,
+          `模型服务 HTTP ${response.status}：${safeError(await readErrorBody(response))}`,
           'http-error',
           response.status,
         )
@@ -220,7 +238,7 @@ export function createAnthropicPlugin(config: AnthropicConfig): HarnessPlugin {
         if (type === 'ping') continue
         if (type === 'error') {
           const event = eventSchemas.error.safeParse(parsed)
-          throw new ProviderError(redacted(event.success ? errorMessage(event.data.error) : '供应商返回错误。'), 'upstream-error')
+          throw new ProviderError(safeError(event.success ? errorMessage(event.data.error) : '供应商返回错误。'), 'upstream-error')
         }
         if (type === 'message_start') {
           if (started) throw new ProviderError('模型流重复开始。', 'invalid-chunk')

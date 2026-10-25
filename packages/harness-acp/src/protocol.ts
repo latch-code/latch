@@ -31,7 +31,7 @@ export const initializeResult = z.object({
   agentCapabilities: z
     .object({
       loadSession: z.boolean().nullish(),
-      promptCapabilities: z.object({ image: z.boolean().nullish() }).nullish().catch(undefined),
+      promptCapabilities: z.object({ image: z.boolean().nullish(), embeddedContext: z.boolean().nullish() }).nullish().catch(undefined),
       // Each capability counts when present; additionalDirectories only as an object, as ACP defines it.
       sessionCapabilities: z
         .object({ resume: z.unknown().optional(), delete: z.unknown().optional(), additionalDirectories: z.unknown().optional() })
@@ -76,6 +76,8 @@ export type SessionState = z.infer<typeof sessionState>
 
 export const contentBlock = z.object({
   type: z.string(),
+  data: z.string().max(7_000_000).optional(),
+  mimeType: z.string().max(100).optional(),
   text: z.string().optional(),
   uri: z.string().optional(),
   name: z.string().optional(),

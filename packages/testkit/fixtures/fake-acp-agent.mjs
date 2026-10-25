@@ -260,7 +260,7 @@ async function handle(method, params) {
       return {
         protocolVersion: Number(env.FAKE_ACP_PROTOCOL ?? 1),
         agentCapabilities: {
-          promptCapabilities: { image: caps.has('images') },
+          promptCapabilities: { image: caps.has('images'), embeddedContext: caps.has('embedded') },
           loadSession: caps.has('load'),
           sessionCapabilities: {
             ...(caps.has('resume') ? { resume: {} } : {}),
@@ -614,6 +614,18 @@ const scenarios = {
   },
   big: ({ argument, say }) => {
     say('x'.repeat(Number(argument)))
+    return END
+  },
+  'image-output': ({ sessionId, say }) => {
+    update(sessionId, {
+      sessionUpdate: 'agent_message_chunk',
+      content: {
+        type: 'image',
+        mimeType: 'image/png',
+        data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aV1cAAAAASUVORK5CYII=',
+      },
+    })
+    say('image delivered')
     return END
   },
   stray: ({ sessionId, say }) => {

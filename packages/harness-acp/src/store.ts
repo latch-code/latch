@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, open, readFile, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
+import { isFileChange, type FileChange, isFileMention, type FileMention, isAttachmentRef, type AttachmentRef } from '@latch/protocol'
 import type { Message, SessionCommand, PlanEntry, SessionConfigOption, TaskSummary, UsageReport } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { writeFileAtomic } from '@latch/core/node-kit'
@@ -97,10 +98,17 @@ const toolDetail = z.object({
     .optional(),
 })
 const message = z.object({
+  fileRefs: z.array(z.custom<FileMention>(isFileMention)).max(32).optional(),
+  outputs: z.array(z.custom<FileChange>(isFileChange)).max(1000).optional(),
+  outputsPending: z.literal(true).optional(),
+  outputsTruncated: z.literal(true).optional(),
+  outputsUnavailable: z.literal(true).optional(),
+  attachments: z.array(z.custom<AttachmentRef>(isAttachmentRef)).max(8).optional(),
   id: z.string(),
   role: z.enum(['system', 'user', 'assistant', 'tool']),
   text: z.string(),
   requestId: z.string().optional(),
+  queuedAt: z.string().optional(),
   toolName: z.string().optional(),
   state: z.enum(['queued', 'awaiting-approval', 'running', 'completed', 'failed', 'cancelled']).optional(),
   reasoning: z.string().optional(),
@@ -136,6 +144,7 @@ const stateSchema = z.object({
         folders: z.array(z.object({ id: z.string(), path: z.string() })).optional(),
         folderAccess: z.enum(['all', 'primary']).optional(),
         runId: z.string().min(1).max(128).optional(),
+        runOutcome: z.enum(['completed', 'failed', 'cancelled', 'interrupted']).optional(),
       }),
       messages: z.array(message),
       plan: z

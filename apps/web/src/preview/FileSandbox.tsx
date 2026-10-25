@@ -11,7 +11,7 @@ export function FileSandbox({ kind, data, versionKey, options, onMessage, onChan
   const [error, setError] = useState('')
   const [ready, setReady] = useState(false)
   const nonce = useMemo(() => crypto.randomUUID().replaceAll('-', ''), [kind, data, versionKey, options?.theme, options?.showChanges])
-  const name = kind === 'pptx' || kind === 'docx' || kind === 'xlsx' ? 'office' : 'diagram'
+  const name = kind === 'html' || kind === 'html-script' ? kind : kind === 'mermaid' ? 'diagram' : 'office'
   const src = currentShell() ? `latch-frame://preview/${name}.html#nonce=${nonce}` : `/link/preview-frame/${name}.html#nonce=${nonce}`
   useEffect(() => {
     setError('')
@@ -46,7 +46,17 @@ export function FileSandbox({ kind, data, versionKey, options, onMessage, onChan
       if (Object.keys(message).length !== 3 || message.type !== 'ready' || message.protocol !== 1 || message.nonce !== nonce) return
       initialized = true
       const buffer = data.slice(0)
-      const safeOptions = { theme: options?.theme === 'dark' ? 'dark' : 'light', showChanges: options?.showChanges === true }
+      const safeOptions = {
+        theme: options?.theme === 'dark' ? 'dark' : 'light',
+        showChanges: options?.showChanges === true,
+        ...(Number.isInteger(options?.pageIndex) && Number(options?.pageIndex) >= 0 && Number(options?.pageIndex) <= 9999
+          ? { pageIndex: options!.pageIndex }
+          : {}),
+        fit: options?.fit !== false,
+        ...(Number.isInteger(options?.zoomPercent) && Number(options?.zoomPercent) >= 10 && Number(options?.zoomPercent) <= 400
+          ? { zoomPercent: options!.zoomPercent }
+          : {}),
+      }
       channel.port1.onmessage = message => {
         if (disposed) return
         if (!isFrameEvent(message.data)) {
@@ -54,7 +64,7 @@ export function FileSandbox({ kind, data, versionKey, options, onMessage, onChan
           return
         }
         const value = message.data
-        if (value.type === 'rendered' || value.type === 'diagram') {
+        if (value.type === 'rendered' || value.type === 'diagram' || value.type === 'html') {
           clearTimeout(timer)
           setReady(true)
         }

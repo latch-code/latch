@@ -6,12 +6,14 @@ import { api, ApiError, errorMessage, fileBytes } from '../core/api.ts'
 import { currentShell, revealLabel, shellFiles } from '../core/shell.ts'
 import { describeFailure, fileNote } from '../core/securityCopy.ts'
 import { basename } from '../format.ts'
-import { CopyButton } from '../components/ui.tsx'
+import { useCopy } from '../components/ui.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { DocumentPreview } from './DocumentPreview.tsx'
 import { FileSandbox } from './FileSandbox.tsx'
 import { TextPreview } from './TextPreview.tsx'
 import { MarkdownPreview } from './MarkdownPreview.tsx'
+import { HtmlPreview } from './HtmlPreview.tsx'
+import { ImagePreview } from './ImagePreview.tsx'
 import { FileOpenContext } from './fileContext.ts'
 import { resolveFileImage } from './fileImages.ts'
 import type { FileTab } from './useFileTabs.ts'
@@ -22,6 +24,8 @@ interface ResolveResult {
 export function FilePreview({
   tab,
   local,
+  deviceId,
+  onHistory,
   folders,
   cwd,
   onResolved,
@@ -31,6 +35,8 @@ export function FilePreview({
 }: {
   tab: FileTab
   local: boolean
+  deviceId?: string
+  onHistory?(): void
   folders?: Array<{ id: string; path: string }>
   cwd?: string
   onResolved(file: FileMetadata): void
@@ -47,8 +53,8 @@ export function FilePreview({
   const [updatingText, setUpdatingText] = useState(false)
   const openFile = useContext(FileOpenContext)
   const [text, setText] = useState<string>(),
-    [zoom, setZoom] = useState(1),
     [downloading, setDownloading] = useState(false)
+  const copied = useCopy()
   const downloadController = useRef<AbortController | undefined>(undefined)
   const expiredRetry = useRef(false)
   const playback = useRef({ time: 0, playing: false })
@@ -57,9 +63,22 @@ export function FilePreview({
     resolved = useRef(onResolved)
   current.current = file
   resolved.current = onResolved
-  const { sessionId, reference, rootId } = tab.target
+  const { sessionId, reference, rootId, attachmentId } = tab.target
   const load = useCallback(
     async (signal?: AbortSignal) => {
+      if (attachmentId) {
+        const result = await api<{ file: unknown }>(`attachments/${attachmentId}/resolve`, {
+          method: 'POST',
+          ...(signal ? { signal } : {}),
+        })
+        if (!isFileMetadata(result.file) || result.file.source !== 'attachment') throw new Error('附件响应无效。')
+        if (signal?.aborted) return
+        setFile(result.file)
+        resolved.current(result.file)
+        setError('')
+        setNotice('')
+        return
+      }
       const result = await api<ResolveResult>(`tasks/${encodeURIComponent(sessionId)}/files/resolve`, {
         method: 'POST',
         body: { paths: [reference], ...(rootId ? { rootId } : {}), ...(showSecret ? { showSecret: true } : {}) },
@@ -74,7 +93,7 @@ export function FilePreview({
       setError('')
       setNotice('')
     },
-    [sessionId, reference, rootId, showSecret],
+    [sessionId, reference, rootId, showSecret, attachmentId],
   )
   useEffect(() => {
     const controller = new AbortController()
@@ -84,7 +103,7 @@ export function FilePreview({
     return () => controller.abort()
   }, [load, version])
   useEffect(() => {
-    if (!file) return
+    if (!file || file.source === 'attachment') return
     const controller = new AbortController()
     let checking = false
     const timer = setInterval(() => {
@@ -137,13 +156,14 @@ export function FilePreview({
   const read = useCallback((start?: number, end?: number, signal?: AbortSignal) => {
     const value = current.current
     if (!value) return Promise.reject(new Error('file-unavailable'))
-    return fileBytes(value.handle, start, end, signal, value.etag)
+    return fileBytes(value.handle, start, end, signal, value.etag, value.source)
   }, [])
   useEffect(() => {
     if (
       !file
       || (!file.actions.preview && !(file.secret && showSecret))
-      || (!file.secret && ['pptx', 'docx', 'xlsx', 'pdf', 'csv', 'image', 'svg', 'audio', 'video'].includes(file.kind))
+      || (!file.secret
+        && (['pptx', 'docx', 'xlsx', 'pdf', 'csv', 'image', 'audio', 'video'].includes(file.kind) || (file.kind === 'svg' && !sourceMode)))
     )
       return
     const controller = new AbortController()
@@ -164,7 +184,7 @@ export function FilePreview({
       },
     )
     return () => controller.abort()
-  }, [file?.etag, file?.handle, file?.kind, file?.actions.preview, showSecret, read])
+  }, [file?.etag, file?.handle, file?.kind, file?.actions.preview, showSecret, sourceMode, read])
   const refresh = () => {
     expiredRetry.current = false
     setVersion(value => value + 1)
@@ -192,7 +212,7 @@ export function FilePreview({
   }
   const base = file ? (folders?.length ? folders.find(folder => folder.id === file.root)?.path : cwd) : undefined
   const fullPath = file && base ? `${base.replace(/[\\/]+$/u, '')}/${file.path}` : (file?.path ?? reference)
-  const nativeFiles = local && base ? shellFiles() : null
+  const nativeFiles = local && base && file?.source !== 'attachment' ? shellFiles() : null
   const native = async (action: 'reveal' | 'quickLook' | 'open') => {
     if (!nativeFiles) return
     try {
@@ -222,19 +242,47 @@ export function FilePreview({
         })
     },
   }
-  const source = file ? `/link/api/files/${file.handle}?v=${file.etag.slice(1, -1)}` : ''
+  const source = file
+    ? file.source === 'attachment'
+      ? `/link/api/attachments/${file.handle}/content`
+      : `/link/api/files/${file.handle}?v=${file.etag.slice(1, -1)}`
+    : ''
   const imageRoot = file?.root ?? rootId
   const resolveImage = useCallback(
     (reference: string, signal: AbortSignal) => resolveFileImage(sessionId, reference, imageRoot, signal),
     [sessionId, imageRoot],
   )
   return (
-    <section className="file-preview" aria-label="文件预览">
+    <section
+      className="file-preview"
+      aria-label="文件预览"
+      onKeyDown={event => {
+        if (
+          event.defaultPrevented
+          || event.nativeEvent.isComposing
+          || event.code !== 'Space'
+          || event.metaKey
+          || event.ctrlKey
+          || event.altKey
+          || !nativeFiles
+          || !file?.actions.quicklook
+        )
+          return
+        const target = event.target
+        if (
+          !(target instanceof Element)
+          || target.closest('input,textarea,select,button,a,audio,video,[contenteditable="true"],[role="slider"]')
+        )
+          return
+        event.preventDefault()
+        event.stopPropagation()
+        void native('quickLook')
+      }}>
       <header className="file-preview-head">
         <strong>
           <VisibleText text={file?.name ?? reference} />
         </strong>
-        {file && nativeFiles && (file.actions.reveal || file.actions.quicklook || file.actions.open) && (
+        {file && (
           <Menu
             label="文件操作"
             align="end"
@@ -243,7 +291,7 @@ export function FilePreview({
               {
                 id: 'native',
                 items: [
-                  ...(file.actions.reveal
+                  ...(nativeFiles && file.actions.reveal
                     ? [
                         {
                           id: 'reveal',
@@ -255,7 +303,7 @@ export function FilePreview({
                         },
                       ]
                     : []),
-                  ...(file.actions.quicklook
+                  ...(nativeFiles && file.actions.quicklook
                     ? [
                         {
                           id: 'quicklook',
@@ -267,7 +315,7 @@ export function FilePreview({
                         },
                       ]
                     : []),
-                  ...(file.actions.open
+                  ...(nativeFiles && file.actions.open
                     ? [
                         {
                           id: 'open',
@@ -281,23 +329,54 @@ export function FilePreview({
                     : []),
                 ],
               },
+              {
+                id: 'preview',
+                items: [
+                  { id: 'refresh', label: '更新预览', icon: RefreshCw, onSelect: refresh },
+                  ...(file.actions.download
+                    ? [
+                        {
+                          id: 'download',
+                          label: downloading ? '正在下载' : '下载文件',
+                          icon: Download,
+                          ...(downloading ? { disabledReason: '下载还未结束' } : {}),
+                          onSelect: () => {
+                            void download()
+                          },
+                        },
+                      ]
+                    : []),
+                  ...(file.source !== 'attachment'
+                    ? [
+                        {
+                          id: 'copy',
+                          label: '复制文件路径',
+                          onSelect: () => {
+                            void copied.copy(fullPath)
+                          },
+                        },
+                      ]
+                    : []),
+                  ...(onCompose && file.source !== 'attachment'
+                    ? [
+                        {
+                          id: 'quote',
+                          label: '引用到输入框',
+                          onSelect: () =>
+                            onCompose(
+                              `请查看文件夹「${file.root}」中的文件 \`${file.path}\`${tab.target.line ? ` 第 ${tab.target.line} 行` : ''}`,
+                            ),
+                        },
+                      ]
+                    : []),
+                  { id: 'close', label: '关闭文件', icon: X, onSelect: onClose },
+                ],
+              },
             ]}
           />
         )}
-        <IconButton label="更新预览" icon={RefreshCw} onClick={refresh} />
-        {file?.actions.download && (
-          <IconButton
-            label="下载文件"
-            icon={Download}
-            disabled={downloading}
-            tooltip={downloading ? '正在下载' : undefined}
-            onClick={() => {
-              void download()
-            }}
-          />
-        )}
         <IconButton label="展开文件预览" icon={Maximize2} onClick={onExpand} />
-        <IconButton label="关闭文件" icon={X} onClick={onClose} />
+        <IconButton className="file-preview-close" label="关闭文件" icon={X} onClick={onClose} />
       </header>
       {notice && (
         <InlineNotice
@@ -310,6 +389,13 @@ export function FilePreview({
           {notice}
         </InlineNotice>
       )}
+      {onHistory && (
+        <div className="file-preview-controls" role="group" aria-label="文件变更视图">
+          <Button size="xs" variant="ghost" aria-pressed={false} onClick={onHistory}>
+            变更
+          </Button>
+        </div>
+      )}
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
       {updatingText && text !== undefined && (
         <p className="file-preview-caption" role="status">
@@ -320,22 +406,14 @@ export function FilePreview({
       {file && (
         <>
           <div className="file-preview-caption">
-            <VisibleText text={`${base ? basename(base) : '会话文件夹'} / ${file.path}`} />
+            <VisibleText text={file.source === 'attachment' ? '消息附件' : `${base ? basename(base) : '会话文件夹'} / ${file.path}`} />
             <span>{file.size.toLocaleString()} bytes</span>
-            <CopyButton text={fullPath} label="复制文件路径" size="xs" />
-            {onCompose && (
-              <Button
-                size="xs"
-                variant="ghost"
-                onClick={() =>
-                  onCompose(`请查看文件夹「${file.root}」中的文件 \`${file.path}\`${tab.target.line ? ` 第 ${tab.target.line} 行` : ''}`)
-                }>
-                引用到输入框
-              </Button>
-            )}
+            <span className="sr-only" role="status">
+              {copied.state === 'copied' ? '已复制' : copied.state === 'failed' ? '复制不可用，请手动选择路径' : ''}
+            </span>
           </div>
           {file.truncated && <InlineNotice tone="warn">文件较大，仅显示前 {(file.limit / 1024 / 1024).toFixed(0)} MiB。</InlineNotice>}
-          {!file.secret && file.kind === 'markdown' && (
+          {!file.secret && ['markdown', 'svg'].includes(file.kind) && (
             <div className="file-preview-controls" role="group" aria-label="文件视图">
               <Button size="xs" variant="ghost" aria-pressed={!sourceMode} onClick={() => setSourceMode(false)}>
                 预览
@@ -349,13 +427,13 @@ export function FilePreview({
             <InlineNotice
               tone="warn"
               action={
-                local && ['text', 'code', 'markdown', 'html', 'csv'].includes(file.kind) ? (
+                (local || file.source === 'attachment') && ['text', 'code', 'markdown', 'html', 'csv'].includes(file.kind) ? (
                   <Button size="xs" onClick={() => setShowSecret(true)}>
                     显示内容
                   </Button>
                 ) : undefined
               }>
-              这个文件可能包含密钥。{local ? '显示后，内容只以纯文本呈现。' : '请在执行端电脑上查看。'}
+              这个文件可能包含密钥。{local || file.source === 'attachment' ? '显示后，内容只以纯文本呈现。' : '请在执行端电脑上查看。'}
             </InlineNotice>
           ) : !file.actions.preview ? (
             <InlineNotice>
@@ -376,28 +454,22 @@ export function FilePreview({
                   read={read}
                   renderFrame={input => <FileSandbox {...input} />}
                 />
-              ) : file.kind === 'image' || file.kind === 'svg' ? (
-                <div className="file-image">
-                  <div className="file-preview-controls">
-                    <Button size="xs" onClick={() => setZoom(Math.max(0.1, zoom - 0.25))}>
-                      缩小
-                    </Button>
-                    <span>{Math.round(zoom * 100)}%</span>
-                    <Button size="xs" onClick={() => setZoom(Math.min(4, zoom + 0.25))}>
-                      放大
-                    </Button>
-                    <Button size="xs" onClick={() => setZoom(1)}>
-                      适应宽度
-                    </Button>
-                  </div>
-                  <img src={source} alt={file.name} style={{ width: `${zoom * 100}%` }} />
-                </div>
+              ) : file.kind === 'image' || (file.kind === 'svg' && !sourceMode) ? (
+                <ImagePreview file={file} source={source} local={local} />
               ) : file.kind === 'audio' ? (
                 <audio {...mediaEvents} controls src={source} preload="metadata" />
               ) : file.kind === 'video' ? (
                 <video {...mediaEvents} controls src={source} preload="metadata" playsInline />
               ) : text === undefined ? (
                 <Loading label="正在读取内容…" />
+              ) : file.kind === 'html' ? (
+                <HtmlPreview
+                  text={text}
+                  path={file.path}
+                  versionKey={`${file.etag}:${version}`}
+                  local={local}
+                  preferenceKey={deviceId ? `latch.html-scripts.${deviceId}.${sessionId}.${file.root}.${file.path}` : undefined}
+                />
               ) : file.kind === 'markdown' && !sourceMode ? (
                 <div className="file-markdown">
                   <MarkdownPreview

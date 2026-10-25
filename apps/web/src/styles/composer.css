@@ -691,3 +691,62 @@
 .provider-add-inline .settings-actions {
   flex-wrap: wrap;
 }
+
+.composer-slot[data-queue-draft] {
+  gap: var(--sp-8);
+}
+.prompt-queue {
+  padding: var(--sp-8) var(--sp-12);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label-para);
+}
+.prompt-queue-title {
+  margin: 0 0 var(--sp-4);
+  color: var(--text-2);
+}
+.prompt-queue[data-paused] .prompt-queue-title {
+  color: var(--warn-text);
+}
+.prompt-queue ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.prompt-queue li {
+  display: block;
+}
+.prompt-queue-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  min-height: 32px;
+}
+.prompt-queue-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.prompt-queue-reason {
+  display: block;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.prompt-queue-actions {
+  display: flex;
+  gap: var(--sp-4);
+  flex-shrink: 0;
+}
+.queue-edit-form {
+  display: grid;
+  gap: var(--sp-12);
+}
+@media (max-width: 767.98px) {
+  .prompt-queue-row {
+    min-height: 44px;
+  }
+}

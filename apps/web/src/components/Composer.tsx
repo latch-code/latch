@@ -1,3 +1,6 @@
+import { useFileMentions, type FileMentionChoice } from '../hooks/useFileMentions.tsx'
+import type { AttachmentDraftController } from '../hooks/useAttachments.ts'
+import { AttachmentButton, AttachmentDrafts, pasteAttachments, dropAttachments } from './AttachmentDrafts.tsx'
 import { useLayoutEffect, useRef, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
 import { ArrowUp, LockKeyhole } from 'lucide-react'
 import type { PlanEntry, PromptTemplate, SessionCommand } from '@latch/protocol'
@@ -32,7 +35,7 @@ const MAX_TEXTAREA = 292
 
 /**
  * The message input, on the new-session page and docked under a conversation. The input stays editable while a run
- * is active so the next message can be drafted; sending waits until the run settles because the Host has no queue.
+ * is active so the next message can be drafted; a Host that supports queues accepts the next input for later.
  * Its ring turns line-strong with focus inside, never blue. The send slot is the one blue control: an arrow (a neutral
  * fill while there is nothing to send, still focusable with its reason as its tooltip), or, for a session that needs
  * the local confirmation to start, a button that says so. While a run is active the slot is the stop button, which is
@@ -66,7 +69,15 @@ export function Composer({
   below,
   inline = false,
   confirmation,
+  queueable = false,
+  queueTray,
+  attachments,
+  fileMentions,
 }: {
+  queueable?: boolean
+  queueTray?: ReactNode
+  fileMentions?: FileMentionChoice
+  attachments?: AttachmentDraftController
   templates?: PromptTemplate[]
   commands?: SessionCommand[]
   textareaRef: RefObject<HTMLTextAreaElement | null>
@@ -105,6 +116,7 @@ export function Composer({
   confirmation?: ReactNode
 }) {
   const box = useRef<HTMLDivElement>(null)
+  const mentions = useFileMentions(draft, onDraft, textareaRef, fileMentions)
   // The input grows with its content a line at a time, up to ten lines, its height moving over 120ms (composer.css).
   // Measuring needs the height let go for a moment; it is put back without a transition, so the move then starts from
   // the height the input had and not from the measurement.
@@ -121,11 +133,20 @@ export function Composer({
     element.style.height = next
   }, [draft, textareaRef])
 
-  const locked = sending || pending !== null
-  const empty = draft.trim().length === 0
-  const sendable = !locked && readOnly === undefined && (answer !== undefined || (canSend && !empty && !run))
+  const locked = sending || pending !== null || attachments?.preparing === true
+  const empty = draft.trim().length === 0 && !attachments?.items.length
+  const queueDraft =
+    !!run
+    && queueable
+    && !empty
+    && !attachments?.items.length
+    && !fileMentions?.refs.length
+    && answer === undefined
+    && readOnly === undefined
+  const sendable = !locked && readOnly === undefined && (answer !== undefined || (canSend && !empty && (!run || queueDraft)))
   const submit = answer?.onSubmit ?? onSubmit
   const keydown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (mentions.keydown(event)) return
     if (answer && event.key === 'Escape' && !event.nativeEvent.isComposing) {
       event.preventDefault()
       answer.onCancel()
@@ -138,11 +159,21 @@ export function Composer({
     if (sendable) submit()
   }
   const shortcut = sendKey === 'enter' && !coarse ? 'Enter' : `${isMac() ? '⌘' : 'Ctrl'} Enter`
-  const sendTip = blockReason ?? (locked ? '等待这次提交完成' : empty ? '输入内容后发送' : undefined)
+  const sendTip = blockReason ?? (locked ? '等待这次提交完成' : empty ? '输入内容后发送' : queueDraft ? '本轮完成后发送' : undefined)
 
   // The slot's control swaps in (from 90%, fading in) when the page sees it change: a run starting or ending, or a
   // harness chosen that starts with the local confirmation.
-  const slot = answer ? 'answer' : run ? 'stop' : readOnly !== undefined ? 'none' : confirmStart !== undefined ? 'start' : 'send'
+  const slot = answer
+    ? 'answer'
+    : run && !queueDraft
+      ? 'stop'
+      : queueDraft
+        ? 'queue'
+        : readOnly !== undefined
+          ? 'none'
+          : confirmStart !== undefined
+            ? 'start'
+            : 'send'
   useLiveChange(slot, (_previous, live) => {
     const element = box.current?.querySelector<HTMLElement>('.composer-slot > *')
     if (live && element)
@@ -170,14 +201,23 @@ export function Composer({
         rows={variant === 'sheet' ? 5 : variant === 'new' ? 3 : 1}
         disabled={locked}
         onChange={event => {
+          mentions.setCaret(event.target.selectionStart)
           onDraft(event.target.value)
         }}
         onKeyDown={keydown}
+        onSelect={event => mentions.setCaret(event.currentTarget.selectionStart)}
+        onPaste={attachments ? event => pasteAttachments(event, attachments) : undefined}
       />
     )
   const action = (
-    <div className="composer-slot">
-      {answer ? (
+    <div className="composer-slot" data-queue-draft={queueDraft ? '' : undefined}>
+      {queueDraft && run && <StopButton run={run} />}
+      {attachments?.preparing ? (
+        <Button size="sm" onClick={attachments.cancel}>
+          <Spinner size={14} />
+          取消发送
+        </Button>
+      ) : answer ? (
         <span className="composer-answer">
           <Button size="sm" variant="ghost" onClick={answer.onCancel}>
             {DECISION_COPY.noteCancel}
@@ -186,7 +226,7 @@ export function Composer({
             {answer.label}
           </Button>
         </span>
-      ) : run ? (
+      ) : run && !queueDraft ? (
         <StopButton run={run} />
       ) : readOnly !== undefined ? null : confirmStart !== undefined ? (
         <Button
@@ -202,11 +242,14 @@ export function Composer({
           {confirmStart}
         </Button>
       ) : (
-        <Tooltip content={sendTip ?? '发送'} shortcut={sendTip === undefined ? shortcut : undefined} describe={sendTip !== undefined}>
+        <Tooltip
+          content={sendTip ?? '发送'}
+          shortcut={sendTip === undefined || queueDraft ? shortcut : undefined}
+          describe={sendTip !== undefined}>
           <button
             type="submit"
             className="send-button"
-            aria-label="发送"
+            aria-label={queueDraft ? '排队发送' : '发送'}
             aria-disabled={!sendable || undefined}
             aria-busy={sending || undefined}
             onClick={event => {
@@ -228,22 +271,63 @@ export function Composer({
       {pending !== null && !sending && (
         <div className="pending-submission" data-tint="warn" role="status">
           <div>
-            <strong>有一条待确认的提交</strong>
-            <p>{pending.prompt}</p>
+            <strong>未确认送达</strong>
+            <p>{pending.prompt || `${pending.attachmentIds?.length ?? 0} 个附件`}</p>
           </div>
           <Button onClick={onRetry}>重试这次提交</Button>
         </div>
       )}
-      {inline && <div className="composer-above">{controls}</div>}
+      {inline && (
+        <div className="composer-above">
+          {attachments && <AttachmentButton controller={attachments} disabled={locked} />}
+          {controls}
+        </div>
+      )}
       <form
         className={`composer ${run ? 'is-running' : ''}`}
         data-inline={inline ? '' : undefined}
         data-variant={readOnly !== undefined ? 'read-only' : undefined}
+        onDragEnter={
+          attachments
+            ? event => {
+                if (variant === 'sheet' && [...event.dataTransfer.types].includes('Files')) {
+                  event.preventDefault()
+                  attachments.setDragging(true)
+                }
+              }
+            : undefined
+        }
+        onDragLeave={
+          attachments
+            ? event => {
+                if (variant === 'sheet' && (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)))
+                  attachments.setDragging(false)
+              }
+            : undefined
+        }
+        onDragOver={
+          attachments
+            ? event => {
+                if ([...event.dataTransfer.types].includes('Files')) event.preventDefault()
+              }
+            : undefined
+        }
+        onDrop={attachments ? event => dropAttachments(event, attachments) : undefined}
         onSubmit={event => {
           event.preventDefault()
           if (sendable) submit()
         }}>
+        {variant === 'sheet' && attachments?.dragging && (
+          <div className="attachment-drop-mask" role="status">
+            松开以添加到这条消息
+          </div>
+        )}
         <RunBar run={run} />
+        {queueTray}
+        {!locked && mentions.menu}
+        {attachments && (
+          <AttachmentDrafts controller={attachments} locked={locked} onRestore={text => onDraft(draft ? `${draft}\n${text}` : text)} />
+        )}
         {((commands?.length ?? 0) > 0 || (templates?.length ?? 0) > 0) && !locked && readOnly === undefined && (
           <SlashCommands
             draft={draft}
@@ -263,9 +347,13 @@ export function Composer({
         ) : (
           input
         )}
+        {variant === 'sheet' && attachments && <AttachmentButton controller={attachments} disabled={locked} />}
         {!inline && variant !== 'sheet' && (
           <div className="composer-toolbar">
-            <div className="composer-controls">{controls}</div>
+            <div className="composer-controls">
+              {attachments && <AttachmentButton controller={attachments} disabled={locked} />}
+              {controls}
+            </div>
             {action}
           </div>
         )}

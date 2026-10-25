@@ -122,7 +122,7 @@ const PhoneRow = memo(function PhoneRow({
             className="phone-row-status"
             status={slot}
             size={16}
-            waiting={statusLabels['waiting-approval']}
+            waiting={task.pendingQuestions ? '等你回答' : statusLabels['waiting-approval']}
             failed={task.permissionDrift && task.status !== 'failed' ? '权限已变化' : statusLabels.failed}
             time={time}
             dateTime={task.updatedAt}

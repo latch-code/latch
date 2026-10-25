@@ -28,7 +28,7 @@ import { PROVIDER_COPY } from '../core/securityCopy.ts'
 import { hostOf } from '../format.ts'
 import { InlineConfirm } from '../components/InlineConfirm.tsx'
 import { ConfirmDialog } from '../components/overlays.tsx'
-import { Badge, Button, DemoMark, Icon, IconButton, InlineNotice, Radio, SearchField, SwitchRow, TextField } from '@latch/ui'
+import { Badge, Button, DemoMark, Icon, IconButton, InlineNotice, Radio, SearchField, Switch, SwitchRow, TextField } from '@latch/ui'
 import { ProviderTile } from '../components/BrandTile.tsx'
 import { IconTile, Loading, MiddleEllipsis, NavRow, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
 import { FieldDialog } from './dialogs.tsx'
@@ -325,6 +325,8 @@ function ModelsGroups({
   onDefault,
   onRemove,
   onAdd,
+  modelCapabilities,
+  onVision,
 }: {
   models: string[]
   defaultModel: string
@@ -340,6 +342,8 @@ function ModelsGroups({
   onDefault: (model: string) => void
   onRemove: (model: string) => void
   onAdd: (model: string) => void
+  modelCapabilities?: Record<string, { vision?: boolean }>
+  onVision?: (model: string, vision: boolean) => void
 }) {
   const group = useId()
   const [filter, setFilter] = useState('')
@@ -370,7 +374,7 @@ function ModelsGroups({
             获取模型
           </Button>
         }
-        caption={caption}>
+        caption={onVision ? `${caption ?? ''}${caption ? ' ' : ''}图片开关需与模型服务的真实能力一致，未开启时只发送文字。` : caption}>
         {models.map(model => (
           <div key={model} className="settings-row model-row" data-leading="" data-check="">
             <span className="settings-row-lead">
@@ -391,6 +395,15 @@ function ModelsGroups({
               </span>
             </span>
             <span className="settings-row-end">
+              {onVision && (
+                <Switch
+                  label={`${model} 可以接收图片`}
+                  title="可以接收图片（需与模型服务的真实能力一致）"
+                  checked={modelCapabilities?.[model]?.vision === true}
+                  disabled={disabled}
+                  onCheckedChange={vision => onVision(model, vision)}
+                />
+              )}
               <IconButton
                 label={`移除模型 ${model}`}
                 tooltip="移除"
@@ -779,6 +792,7 @@ export function ProviderAddForm({
  * confirmed says so first, with the way to confirm it from here or where to go.
  */
 function ProviderPage({
+  supportsAttachments,
   provider,
   data,
   abilities,
@@ -787,6 +801,7 @@ function ProviderPage({
   onSaved,
   onDeleted,
 }: {
+  supportsAttachments?: boolean
   provider: ProviderSettings
   data: ProvidersResponse
   abilities: ProviderAbilities
@@ -1040,6 +1055,12 @@ function ProviderPage({
         />
       </SettingsGroup>
       <ModelsGroups
+        modelCapabilities={provider.modelCapabilities}
+        onVision={
+          supportsAttachments
+            ? (model, vision) => apply({ modelCapabilities: { ...provider.modelCapabilities, [model]: { vision } } })
+            : undefined
+        }
         models={provider.models}
         defaultModel={provider.defaultModel}
         fetched={probe.fetched}
@@ -1398,6 +1419,7 @@ export function ProvidersSettings({ snapshot, access, onChanged }: { snapshot: A
           {notice}
           <ProviderPage
             key={selected.id}
+            supportsAttachments={snapshot.catalog?.features?.attachments === true}
             provider={selected}
             data={data}
             abilities={abilities}

@@ -259,7 +259,7 @@ describe('Settings › 电脑 on a current Host', () => {
     expect(html).toContain('确认组件未安装')
     expect(html).toContain('未配置')
     // Phone access says where it is set up, in words, and never with the start options.
-    expect(html).toContain('配置方法见 设置 › 设备 › 手机配对')
+    expect(html).toContain('连接设置在 设置 › 设备 中')
     expect(html).not.toContain('--tls-cert')
     expect(html).toContain('只有能管理此 Host 的设备可以修改上限。')
     expect(html.match(/自动编辑尚未实现，目前按逐项询问执行/gu)).toHaveLength(2)

@@ -1,5 +1,7 @@
 /** A file is opened in the session's existing side column. Roots are stable Host IDs, never client-supplied paths. */
 export interface FileOpenTarget {
+  view?: 'preview' | 'changes'
+  attachmentId?: string
   sessionId: string
   reference: string
   rootId?: string
@@ -23,6 +25,8 @@ export type FileKind =
   | 'binary'
 
 export interface FileMetadata {
+  source?: 'attachment'
+  attachmentId?: string
   handle: string
   name: string
   root: string
@@ -43,13 +47,14 @@ export interface FileMetadata {
 }
 
 export interface FileChange {
+  kind?: FileKind
   root: string
   path: string
   change: 'created' | 'modified' | 'deleted'
   size?: number
 }
 
-const KINDS: readonly FileKind[] = [
+export const FILE_KINDS: readonly FileKind[] = [
   'text',
   'code',
   'markdown',
@@ -71,6 +76,10 @@ const record = (value: unknown): value is Record<string, unknown> => typeof valu
 export function isFileMetadata(value: unknown): value is FileMetadata {
   if (
     !record(value)
+    || (value.source !== undefined && value.source !== 'attachment')
+    || (value.source === 'attachment'
+      ? typeof value.attachmentId !== 'string' || !/^[A-Za-z0-9_-]{22}$/u.test(value.attachmentId)
+      : value.attachmentId !== undefined)
     || typeof value.handle !== 'string'
     || !/^[A-Za-z0-9_-]{22}$/u.test(value.handle)
     || typeof value.name !== 'string'
@@ -82,7 +91,7 @@ export function isFileMetadata(value: unknown): value is FileMetadata {
     || typeof value.ext !== 'string'
     || typeof value.mime !== 'string'
     || value.mime.length > 128
-    || !KINDS.includes(value.kind as FileKind)
+    || !FILE_KINDS.includes(value.kind as FileKind)
     || typeof value.secret !== 'boolean'
     || typeof value.etag !== 'string'
     || !/^"[a-f0-9]{32}"$/u.test(value.etag)

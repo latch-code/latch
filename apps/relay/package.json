@@ -1,0 +1,21 @@
+{
+  "name": "@latch/relay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "latch": {
+    "env": "node"
+  },
+  "dependencies": {
+    "@latch/link-wire": "workspace:*",
+    "@latch/link-client": "workspace:*",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "esbuild": "catalog:"
+  }
+}

@@ -31,3 +31,5 @@ browser 环境：不用 Node 全局变量与模块。Vite 与测试在 Node 中�
 会话切换只淡入消息内容层；带遮罩的滚动容器做透明度动画会丢失点击命中。
 
 布局验证覆盖手机、平板、桌面及深色模式（`e2e/design.e2e.ts`）。先读 [docs/STREAMING.md](../../docs/STREAMING.md)与 [docs/DESIGN.md](../../docs/DESIGN.md)。
+
+- 附件字节只经专用上传，未知提交保留原请求与引用；草稿预览不伪造会话，详见 [ATTACHMENTS.md](../../docs/ATTACHMENTS.md)。

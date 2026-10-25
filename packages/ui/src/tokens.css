@@ -55,6 +55,10 @@
     --bg-pane: #fbfbfa;
     --bg-raised: #ffffff;
     --bg-sunken: #f6f5f3;
+    --preview-light-a: #ffffff;
+    --preview-light-b: #ededed;
+    --preview-dark-a: #242424;
+    --preview-dark-b: #303030;
     --well: rgba(29, 28, 26, 0.04);
     --bg-hover: rgba(29, 28, 26, 0.04);
     --bg-press: rgba(29, 28, 26, 0.07);
@@ -324,6 +328,10 @@
       --bg-pane: #1c1c1b;
       --bg-raised: #252423;
       --bg-sunken: #181716;
+      --preview-light-a: #ffffff;
+      --preview-light-b: #ededed;
+      --preview-dark-a: #242424;
+      --preview-dark-b: #303030;
       --well: rgba(0, 0, 0, 0.24);
       --bg-hover: rgba(234, 233, 231, 0.05);
       --bg-press: rgba(234, 233, 231, 0.08);
@@ -398,6 +406,10 @@
     --bg-pane: #1c1c1b;
     --bg-raised: #252423;
     --bg-sunken: #181716;
+    --preview-light-a: #ffffff;
+    --preview-light-b: #ededed;
+    --preview-dark-a: #242424;
+    --preview-dark-b: #303030;
     --well: rgba(0, 0, 0, 0.24);
     --bg-hover: rgba(234, 233, 231, 0.05);
     --bg-press: rgba(234, 233, 231, 0.08);
@@ -480,6 +492,10 @@
     --bg-pane: #fbfbfa !important;
     --bg-raised: #ffffff !important;
     --bg-sunken: #f6f5f3 !important;
+    --preview-light-a: #ffffff !important;
+    --preview-light-b: #ededed !important;
+    --preview-dark-a: #242424 !important;
+    --preview-dark-b: #303030 !important;
     --well: rgba(29, 28, 26, 0.04) !important;
     --bg-hover: rgba(29, 28, 26, 0.04) !important;
     --bg-press: rgba(29, 28, 26, 0.07) !important;
@@ -646,6 +662,10 @@
       --bg-pane: #1c1c1b !important;
       --bg-raised: #252423 !important;
       --bg-sunken: #181716 !important;
+      --preview-light-a: #ffffff !important;
+      --preview-light-b: #ededed !important;
+      --preview-dark-a: #242424 !important;
+      --preview-dark-b: #303030 !important;
       --well: rgba(0, 0, 0, 0.24) !important;
       --bg-hover: rgba(234, 233, 231, 0.05) !important;
       --bg-press: rgba(234, 233, 231, 0.08) !important;
@@ -722,6 +742,10 @@
     --bg-pane: #1c1c1b !important;
     --bg-raised: #252423 !important;
     --bg-sunken: #181716 !important;
+    --preview-light-a: #ffffff !important;
+    --preview-light-b: #ededed !important;
+    --preview-dark-a: #242424 !important;
+    --preview-dark-b: #303030 !important;
     --well: rgba(0, 0, 0, 0.24) !important;
     --bg-hover: rgba(234, 233, 231, 0.05) !important;
     --bg-press: rgba(234, 233, 231, 0.08) !important;

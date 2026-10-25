@@ -29,7 +29,7 @@
     }
   },
   "scripts": {
-    "build": "pnpm build:host && pnpm build:web && pnpm build:presence",
+    "build": "pnpm build:host && pnpm build:web && pnpm build:presence && pnpm build:relay",
     "build:host": "tsx apps/host/scripts/build.ts",
     "build:web": "vite build apps/web",
     "build:presence": "tsx apps/host/scripts/build-presence.ts",
@@ -55,7 +55,9 @@
     "dev:web": "vite apps/web",
     "start:built": "node --disable-sigusr1 dist/start.js",
     "stop": "tsx apps/host/scripts/stop.ts",
-    "latch": "node --disable-sigusr1 --import tsx apps/host/scripts/latch.ts"
+    "latch": "node --disable-sigusr1 --import tsx apps/host/scripts/latch.ts",
+    "build:relay": "tsx apps/relay/scripts/build.ts",
+    "relay": "node --disable-sigusr1 --import tsx apps/relay/src/cli.ts"
   },
   "dependencies": {
     "@latch/core": "workspace:*",

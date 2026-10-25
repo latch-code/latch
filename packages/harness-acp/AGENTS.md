@@ -2,7 +2,7 @@
 
 ACP HarnessDriver：每个启用的 Agent 定义一个 Driver（`createAcpAgentPlugin`）。`src/bridge.ts`（会话、启动指纹、权限模式）、`connection.ts` 与 `protocol.ts`（进程与 ACP v1）、`probe.ts`（仅握手诊断）、`mapping.ts`、`command.ts`、`environment.ts`（`agentEnvironment`）、`permission.ts`（`launchHash`）、`project-config.ts`、`store.ts`，以及每个预设的权限配置 `src/profiles/`。不负责浏览器可见的预设（`packages/protocol/src/agent-presets.ts`）、Agent 定义的保存与启动的本机确认（Host）。
 
-运行环境 node；依赖 `@latch/protocol`、`@latch/sdk`、`@latch/core`（只用 `./node-kit`）与 `zod`，测试另用 `@latch/testkit`。只有 Host 依赖本包，且只经入口 `src/index.ts`。
+运行环境 node；依赖 `@latch/protocol`、`@latch/sdk`、`@latch/core`（只用 `./node-kit` 与 `./file-tracking`）与 `zod`，测试另用 `@latch/testkit`。只有 Host 依赖本包，且只经入口 `src/index.ts`。
 
 不变量：
 
@@ -16,3 +16,7 @@ ACP HarnessDriver：每个启用的 Agent 定义一个 Driver（`createAcpAgentP
 - 测试只用 testkit 的假 Agent（`FAKE_ACP_AGENT`），不向真实 Agent CLI 发送提示。
 
 测试：`pnpm test --project @latch/harness-acp`，另跑 `pnpm test:e2e`（`e2e/permissions-ui.e2e.ts` 用假 Agent）。改动前先读 [docs/HARNESSES.md](../../docs/HARNESSES.md)。
+
+- 附件只按 initialize 实际协商的 image/embeddedContext 能力发送，转换在提示派发前完成；Agent 图片输出在当前轮经 Host 私有存储转成引用，原始字节不进消息、快照或 stderr。
+
+- 文件产物只表示运行时间窗口中的观察；旧运行的晚到结算只更新原消息，不改新运行或会话排序。范围与预算见 [FILE-OUTPUTS.md](../../docs/FILE-OUTPUTS.md)。

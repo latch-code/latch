@@ -1,6 +1,14 @@
 import type { Locator, Page } from '@playwright/test'
 import { expect } from 'vitest'
 
+/** Child-frame coordinates do not reflect the parent shell's changing grid tracks during a transition. */
+export async function settleShell(page: Page): Promise<void> {
+  await page.locator('.app-shell').evaluate(async element => {
+    await new Promise<void>(done => requestAnimationFrame(() => requestAnimationFrame(() => done())))
+    await Promise.allSettled(element.getAnimations().map(animation => animation.finished))
+  })
+}
+
 /** Checks the actual visible hit target inside the viewport, allowing normal vertical scrolling. */
 export async function reachable(locator: Locator, options: { allowDisabled?: boolean } = {}): Promise<void> {
   await locator.waitFor({ state: 'visible' })
@@ -92,6 +100,12 @@ export async function backToPhoneSessions(page: Page): Promise<void> {
  * modal page named 设置), on its 设备 section when `section` is 设备 (devices are reached through settings).
  */
 export async function openSettings(page: Page, section: '设置' | '设备' = '设置'): Promise<Locator> {
+  await settleShell(page)
+  const expandSidebar = page.getByRole('button', { name: '展开侧栏', exact: true })
+  if (await expandSidebar.isVisible()) {
+    await expandSidebar.click()
+    await settleShell(page)
+  }
   // A closing drawer may remain visually visible while becoming inert. Use
   // navigation semantics rather than the transient visibility of its children.
   const rail = page.getByRole('navigation', { name: '快捷导航', exact: true })

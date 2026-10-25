@@ -10,6 +10,10 @@ export interface HostFeatures {
   fork?: true
   queue?: true
   questions?: true
+  /** User messages retain the prompt's requestId, so a client may replace a pending bubble by identity. */
+  messageIdentity?: true
+  fileMentions?: true
+  attachments?: true
   agentProbe?: true
   usage?: true
 }
@@ -59,9 +63,18 @@ export interface UsageSummary {
 export interface AgentProbeResult {
   status: 'ready' | 'authentication-required' | 'failed'
   agent?: { name?: string; version?: string }
-  capabilities: { images: boolean; resume: boolean; load: boolean; additionalDirectories: boolean }
+  capabilities: { embeddedContext?: boolean; images: boolean; resume: boolean; load: boolean; additionalDirectories: boolean }
   authMethods: Array<{ name: string; description?: string }>
   diagnostic?: string
   checkedAt: string
   launchHash: string
+}
+
+/** Visible queue state; authority and deduplication receipts remain private to the Host. */
+export interface PromptQueueItem {
+  id: string
+  text: string
+  queuedAt: string
+  state: 'waiting' | 'parked' | 'dropped'
+  reason?: string
 }

@@ -21,6 +21,7 @@ import { FileSession } from './FileChip.tsx'
 import { FileReferences } from './FileReferences.tsx'
 import { MessageRow, SourceRow } from './MessageRow.tsx'
 import { ToolCard, type ApprovalGateFor, type DecideHandler } from './ToolCard.tsx'
+import { QuestionCard, QuestionResultCard, type QuestionActions } from './QuestionCard.tsx'
 import { TurnFooter, type TurnRetry } from './TurnFooter.tsx'
 import { transcriptMarkdown } from '../exportMarkdown.ts'
 import { Collapse, ICON_STROKE, useLivePrevious } from '@latch/ui'
@@ -41,10 +42,16 @@ interface RowContext {
   liveId: string
   live: boolean
   coarse: boolean
+  questionActions?: QuestionActions
 }
 
 function Row({ message, context }: { message: Message; context: RowContext }) {
   if (message.role === 'tool') {
+    const question = context.detail.questions?.find(question => `tool:${question.toolCallId}` === message.id)
+    if (question && context.questionActions)
+      return <QuestionCard question={question} sessionId={context.detail.summary.id} actions={context.questionActions} />
+    if (message.toolName === 'ask_user' && message.state === 'completed' && message.text.startsWith('{"kind":"latch.question-result"'))
+      return <QuestionResultCard text={message.text} />
     const approval = context.approvals.get(message.id)
     return (
       <ToolCard
@@ -179,7 +186,16 @@ function TurnView({
   const render = (message: Message) => <Row key={message.id} message={message} context={rowContext} />
   const stamped = turnModel(turn)
   const model = stamped?.model ? { model: stamped.model, providerId: stamped.providerId } : trailingLive ? runModel : undefined
-  const hasReply = turn.replies.length > 0 || trailingLive || standalone.length > 0
+  const observed = latest ? rowContext.detail.fileChanges : undefined
+  const hasOutputs = !!(
+    turn.user?.outputs?.length
+    || turn.user?.outputsTruncated
+    || turn.user?.outputsUnavailable
+    || observed?.files.length
+    || observed?.truncated
+    || observed?.unavailable
+  )
+  const hasReply = turn.replies.length > 0 || trailingLive || standalone.length > 0 || hasOutputs
   // The reply's source line and first block fade in when the page saw them appear, not after a load or a switch.
   const replyBefore = useLivePrevious(hasReply)
   const replyArrived = hasReply && (arrived || replyBefore === false)
@@ -224,6 +240,9 @@ function TurnView({
           <TurnFooter
             key={turn.key}
             turn={turn}
+            fileChanges={
+              latest && rowContext.detail.fileChanges?.runId === rowContext.detail.summary.runId ? rowContext.detail.fileChanges : undefined
+            }
             live={trailingLive ? liveFooter : undefined}
             outcome={outcome}
             pinned={tapped || (latest && rowContext.coarse)}
@@ -259,6 +278,7 @@ export function Transcript({
   retry,
   onFork,
   onCopyError,
+  questionActions,
 }: {
   detail: TaskDetail
   approvals: Approval[]
@@ -282,6 +302,7 @@ export function Transcript({
   retry?: RetryAccess
   onFork?: (upToMessageId: string) => void
   onCopyError?: (error: unknown) => void
+  questionActions?: QuestionActions
 }) {
   const messages = renderedMessages(detail)
   const turns = turnsOf(messages)
@@ -306,6 +327,7 @@ export function Transcript({
     liveId: liveMessageId(detail),
     live: isLive(detail),
     coarse,
+    questionActions,
   }
   const trailingKey = active ? (turns.at(-1)?.key ?? 'empty') : null
   // The turn the page watched run until the previous render: when it settles, its footer lingers and its process folds.

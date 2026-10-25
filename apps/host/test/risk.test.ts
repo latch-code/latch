@@ -19,10 +19,17 @@ function single(root: string | undefined, codeRoot = false): Partial<StandardCal
 
 describe('classifyStandardCall', () => {
   it('keeps the read-only built-in tools at R0', () => {
-    expect(R0_TOOLS).toEqual(['workspace-files:list_folders', 'workspace-files:list_files', 'workspace-files:read_file'])
+    expect(R0_TOOLS).toEqual([
+      'workspace-files:list_folders',
+      'workspace-files:list_files',
+      'workspace-files:read_file',
+      'user-questions:ask_user',
+    ])
     expect(classifyStandardCall(call('workspace-files', 'list_folders'))).toEqual({ risk: 'R0' })
     expect(classifyStandardCall(call('workspace-files', 'list_files', { path: '.' }))).toEqual({ risk: 'R0' })
     expect(classifyStandardCall(call('workspace-files', 'read_file', { path: '.git/config' }))).toEqual({ risk: 'R0' })
+    expect(classifyStandardCall(call('user-questions', 'ask_user'))).toEqual({ risk: 'R0' })
+    expect(classifyStandardCall(call('third-party', 'ask_user'))).toEqual({ risk: 'R2', reason: 'unlisted-tool' })
   })
 
   it.each([

@@ -1,0 +1,78 @@
+import { isFileMention, type FileDiff, type FileOpenTarget, type TaskDetail } from '@latch/protocol'
+import { appliedDiffs } from '../conversation.ts'
+export interface FileHistory {
+  root: string
+  folder: string
+  path: string
+  target: FileOpenTarget
+  entries: Array<{ id: string; toolId: string; tool: string; at?: string; diff: FileDiff }>
+}
+/** Normalizes Host-recorded spellings only. It never resolves a filesystem or authorizes a new file read. */
+function normalize(path: string): string | undefined {
+  if (!path || path.length > 8192 || /[\u0000-\u001f\u007f]/u.test(path)) return undefined
+  if (path.startsWith('file://')) {
+    try {
+      const url = new URL(path)
+      if (url.hostname && url.hostname !== 'localhost') return undefined
+      path = decodeURIComponent(url.pathname)
+    } catch {
+      return undefined
+    }
+  } else if (/^[a-z]+:\/\//iu.test(path)) return undefined
+  path = path.replaceAll('\\', '/')
+  const absolute = path.startsWith('/') || /^[A-Za-z]:\//u.test(path)
+  const parts: string[] = []
+  for (const part of path.split('/')) {
+    if (!part || part === '.') continue
+    if (part === '..') {
+      if (!parts.length) return undefined
+      parts.pop()
+    } else parts.push(part)
+  }
+  return `${absolute && !/^[A-Za-z]:/u.test(path) ? '/' : ''}${parts.join('/')}`
+}
+export function fileHistories(detail: Pick<TaskDetail, 'summary' | 'messages'>): FileHistory[] {
+  const folders = (
+    detail.summary.folders?.length ? detail.summary.folders : detail.summary.cwd ? [{ id: 'default', path: detail.summary.cwd }] : []
+  ).flatMap(folder => {
+    const path = normalize(folder.path)
+    return path ? [{ id: folder.id, path }] : []
+  })
+  const groups = new Map<string, FileHistory>()
+  for (const message of detail.messages) {
+    if (message.role !== 'tool') continue
+    let selected: (typeof folders)[number] | undefined = folders[0]
+    try {
+      const input: unknown = JSON.parse(message.tool?.input ?? '{}')
+      if (input && typeof input === 'object' && 'folder' in input) selected = folders.find(folder => folder.id === input.folder)
+    } catch {
+      /* Old tool records need not have structured input. */
+    }
+    for (const [index, diff] of appliedDiffs(message).entries()) {
+      const absolute = diff.path.startsWith('/') || /^[A-Za-z]:[\\/]/u.test(diff.path) || diff.path.startsWith('file://')
+      const path = normalize(absolute ? diff.path : selected ? `${selected.path}/${diff.path}` : '')
+      if (!path) continue
+      const root = folders.toSorted((a, b) => b.path.length - a.path.length).find(folder => path.startsWith(`${folder.path}/`))
+      if (!root) continue
+      const relative = path.slice(root.path.length + 1)
+      if (!isFileMention({ root: root.id, path: relative })) continue
+      const key = `${root.id}\n${relative}`
+      const history = groups.get(key) ?? {
+        root: root.id,
+        folder: root.path.split('/').at(-1) || '项目文件夹',
+        path: relative,
+        target: { sessionId: detail.summary.id, reference: relative, rootId: root.id, view: 'changes' as const },
+        entries: [],
+      }
+      history.entries.push({
+        id: `${message.id}:${index}`,
+        toolId: message.id,
+        tool: message.tool?.toolTitle ?? message.tool?.title ?? '工具修改',
+        ...(message.startedAt ? { at: message.startedAt } : {}),
+        diff,
+      })
+      groups.set(key, history)
+    }
+  }
+  return [...groups.values()]
+}

@@ -749,8 +749,12 @@ describe('PresenceService', () => {
         .filter(([, value]) => value.duringFullAccess === 'proceed')
         .map(([action]) => action)
         .sort(),
-    ).toEqual(['agent.probe', 'approval.r2', 'task.mode-widen', 'task.start-l3'])
+    ).toEqual(['agent.probe', 'approval.r2', 'device.enroll-native', 'task.mode-widen', 'task.start-l3'])
     expect(backend.requests.map(item => item.preview.action)).toEqual(['approval.r2', 'task.start-l3', 'task.mode-widen', 'agent.probe'])
+    await expect(presence.request(request('device.enroll-native', {}))).rejects.toMatchObject({ code: 'pairing-code-required' })
+    const native = await presence.request({ ...request('device.enroll-native', {}), pairingCode: '123456' })
+    await expect(native.settled).resolves.toMatchObject({ result: 'approved' })
+    expect(backend.requests.at(-1)?.preview.action).toBe('device.enroll-native')
     blocking = []
     await expect(presence.request(request('policy.change', { a: 1 }))).resolves.toBeTruthy()
   })

@@ -9,7 +9,11 @@ export interface ToolCall {
   name: string
   arguments: Record<string, unknown>
 }
+export type AttachmentContent =
+  | { type: 'image'; mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'; data: string }
+  | { type: 'text'; text: string; name: string }
 export interface ModelMessage {
+  attachments?: AttachmentContent[]
   role: 'system' | 'user' | 'assistant' | 'tool'
   content: string
   toolCalls?: ToolCall[]
@@ -54,6 +58,10 @@ export interface ToolDefinition {
   description: string
   parameters: Record<string, unknown>
   requiresApproval: boolean
+  /** A cooperative user-input tool: waiting time is excluded from the run's working duration. Does not change risk. */
+  waitsForUser?: boolean
+  /** Called after the tool result is durably stored, before the model continues. Never acknowledges an uncommitted result. */
+  resultCommitted?(context: { sessionId: string; callId: string; state: 'completed' | 'failed' | 'cancelled' }): Promise<void>
   /**
    * Optional short name of what the tool does, in the product's language: 「读取文件」, 「写入文件」. Tool rows and approval
    * cards show it with the call's object; without it they show `name`. Display only: it never changes the Host's risk
@@ -81,6 +89,7 @@ export interface ToolDefinition {
   ): Promise<{ text: string }>
 }
 export interface ModelProvider {
+  modelCapabilities?: Readonly<Record<string, { vision?: boolean }>>
   id: string
   name: string
   /** Default model ID. */

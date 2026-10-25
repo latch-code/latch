@@ -4,7 +4,15 @@ import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ModelRef, RiskLevel } from '@latch/protocol'
-import { AppError, type ModelMessage, type ModelProvider, type ToolDefinition, type Bridge } from '@latch/sdk'
+import {
+  AppError,
+  type ModelMessage,
+  type ModelProvider,
+  type ToolDefinition,
+  type Bridge,
+  type FileTrackingInput,
+  type FileTrackingResult,
+} from '@latch/sdk'
 import { APPROVAL_OPTIONS, HIGH_RISK_APPROVAL_OPTIONS, createRuntime, createSnapshotStore, type RuntimeState } from '@latch/core'
 import { standardHarnessDriver } from '@latch/host/plugins/standard'
 
@@ -85,6 +93,57 @@ async function waitStatus(bridge: Bridge, id: string, status: string) {
 }
 
 describe('independent harness runtime', () => {
+  it('pauses working time for a user-input tool and acknowledges only its durable result before the model continues', async () => {
+    const dataDir = await directory(),
+      response = deferred<{ text: string }>(),
+      acknowledged = deferred(),
+      proceed = deferred()
+    let now = 1000
+    const seen: ModelMessage[][] = []
+    const provider = toolProvider('ask_user', seen)
+    const question: ToolDefinition = {
+      name: 'ask_user',
+      description: '',
+      parameters: {},
+      requiresApproval: false,
+      waitsForUser: true,
+      execute: () => response.promise,
+      resultCommitted: async context => {
+        const stored = JSON.parse(await readFile(join(dataDir, 'runtime.json'), 'utf8')) as RuntimeState
+        expect(stored.tasks[context.sessionId]?.messages.find(message => message.id === `tool:${context.callId}`)).toMatchObject({
+          state: 'completed',
+          text: '用户选择了 TypeScript',
+        })
+        expect(seen).toHaveLength(1)
+        acknowledged.resolve()
+        await proceed.promise
+      },
+    }
+    const bridge = own(
+      createRuntime({
+        dataDir,
+        workspaceRoot: dataDir,
+        registry: registry(provider, [question]),
+        providerId: provider.id,
+        clock: () => now,
+      }),
+    )
+    const { sessionId } = await bridge.createTask({ prompt: '选择语言', requestId: 'ask-first' })
+    await waitStatus(bridge, sessionId, 'waiting-approval')
+    now = 61_000
+    const waiting = await bridge.detail(sessionId)
+    expect(waiting.runWaitingSince).toBeDefined()
+    response.resolve({ text: '用户选择了 TypeScript' })
+    await acknowledged.promise
+    expect(seen).toHaveLength(1)
+    proceed.resolve()
+    await waitStatus(bridge, sessionId, 'idle')
+    expect(seen[1]?.at(-1)).toMatchObject({ role: 'tool', content: '用户选择了 TypeScript' })
+    expect((await bridge.detail(sessionId)).messages.find(message => message.role === 'user')?.turn).toMatchObject({
+      waitMs: 60_000,
+      activeMs: 0,
+    })
+  })
   it('atomically persists creation receipts, rejects conflicting retries, and does not rerun after restart', async () => {
     const dataDir = await directory()
     const provider = textProvider()
@@ -111,6 +170,23 @@ describe('independent harness runtime', () => {
     expect(users[0]?.requestId).toBe('same-request')
   })
 
+  it('persists explicit completion, queue time and input identity through restart', async () => {
+    const dataDir = await directory(),
+      provider = textProvider(),
+      backend = registry(provider)
+    const bridge = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: backend, providerId: provider.id }))
+    const { sessionId } = await bridge.createTask({ prompt: 'First', requestId: 'queue-create' })
+    await waitStatus(bridge, sessionId, 'idle')
+    const queuedAt = '2026-10-25T06:00:00.000Z'
+    await bridge.prompt(sessionId, 'Queued', 'queue-send', { queuedAt })
+    await waitStatus(bridge, sessionId, 'idle')
+    expect((await bridge.detail(sessionId)).summary.runOutcome).toBe('completed')
+    await bridge.close()
+    const reopened = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: backend, providerId: provider.id }))
+    const detail = await reopened.detail(sessionId)
+    expect(detail.summary.runOutcome).toBe('completed')
+    expect(detail.messages.findLast(message => message.role === 'user')).toMatchObject({ requestId: 'queue-send', queuedAt })
+  })
   it('admits one approval winner, executes once, and rebuilds repeated client snapshots without duplication', async () => {
     const dataDir = await directory()
     const execute = vi.fn(async () => ({ text: 'note saved' }))
@@ -1700,5 +1776,81 @@ describe('times and usage the runtime records', () => {
     expect(detail.summary.status).toBe('interrupted')
     expect(detail.messages[0]).not.toHaveProperty('turn')
     expect(detail.messages.at(-1)).toMatchObject({ role: 'system', state: 'failed', createdAt: at(60_000) })
+  })
+})
+
+describe('Standard file observation', () => {
+  it('settles files on the old reply without delaying a new run or rolling back its summary, and reloads metadata', async () => {
+    const dataDir = await directory()
+    const provider = textProvider()
+    const inputs: FileTrackingInput[] = []
+    const finishes = [deferred<FileTrackingResult>(), deferred<FileTrackingResult>()]
+    const create = () =>
+      own(
+        createRuntime({
+          dataDir,
+          workspaceRoot: dataDir,
+          registry: registry(provider),
+          providerId: provider.id,
+          trackFiles: async input => {
+            const index = inputs.push(input) - 1
+            return { finish: () => finishes[index]!.promise, dispose: () => finishes[index]!.resolve({ files: [], truncated: true }) }
+          },
+        }),
+      )
+    const bridge = create()
+    const { sessionId } = await bridge.createTask({ prompt: 'first', requestId: 'files-1' })
+    await waitStatus(bridge, sessionId, 'idle')
+    const old = (await bridge.detail(sessionId)).messages.findLast(message => message.role === 'assistant')!
+    expect(old.outputsPending).toBe(true)
+    await bridge.prompt(sessionId, 'second', 'files-2')
+    await waitStatus(bridge, sessionId, 'idle')
+    const latest = (await bridge.detail(sessionId)).summary
+    inputs[0]!.onChange({ files: [{ root: 'default', path: 'wrong.txt', change: 'modified' }] })
+    finishes[0]!.resolve({ files: [{ root: 'default', path: 'first.txt', change: 'modified' }] })
+    await vi.waitFor(async () =>
+      expect((await bridge.detail(sessionId)).messages.find(message => message.id === old.id)?.outputsPending).toBeUndefined(),
+    )
+    const settled = await bridge.detail(sessionId)
+    expect(settled.summary).toEqual(latest)
+    expect(settled.fileChanges?.runId).toBe(inputs[1]!.runId)
+    expect(settled.messages.find(message => message.id === old.id)?.outputs).toMatchObject([{ path: 'first.txt' }])
+    finishes[1]!.resolve({ files: [{ root: 'default', path: 'second.txt', change: 'modified' }], truncated: true })
+    await vi.waitFor(async () => expect((await bridge.detail(sessionId)).fileChanges).toBeUndefined())
+    await bridge.close()
+    const loaded = await create().detail(sessionId)
+    expect(loaded.messages.find(message => message.id === old.id)?.outputs).toMatchObject([{ path: 'first.txt' }])
+    expect(loaded.messages.findLast(message => message.role === 'assistant')?.outputsTruncated).toBe(true)
+  })
+})
+
+describe('file observation recovery', () => {
+  it('preserves idle state and sorting time while marking an interrupted observation partial', async () => {
+    const dataDir = await directory(),
+      provider = textProvider()
+    const store = createSnapshotStore(dataDir)
+    const state = await store.load()
+    state.tasks['idle'] = {
+      summary: { id: 'idle', title: 'idle', mode: 'agent', status: 'idle', updatedAt: '2020-01-01T00:00:00Z' },
+      messages: [
+        {
+          id: 'answer',
+          role: 'assistant',
+          text: 'done',
+          outputs: [{ root: 'default', path: 'result.txt', change: 'modified' }],
+          outputsPending: true,
+        },
+      ],
+      history: [],
+      revision: 1,
+    }
+    await store.commit(state)
+    await store.close()
+    const bridge = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: registry(provider), providerId: provider.id }))
+    const detail = await bridge.detail('idle')
+    expect(detail.summary).toEqual(state.tasks['idle']!.summary)
+    expect(detail.messages[0]).toMatchObject({ outputs: [{ path: 'result.txt' }], outputsTruncated: true })
+    expect(detail.messages[0]!.outputsPending).toBeUndefined()
+    expect(detail.cursor).toBe(2)
   })
 })

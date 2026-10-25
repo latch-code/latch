@@ -9,6 +9,11 @@ export default defineConfig({
     testTimeout: 15_000,
     projects: [
       { extends: true, test: { name: 'harness-link', include: ['tests/**/*.test.ts'] } },
+      ...['link-wire', 'link-client'].map(name => ({
+        extends: true as const,
+        test: { name: `@latch/${name}`, include: [`packages/${name}/test/**/*.test.ts`] },
+      })),
+      { extends: true, test: { name: '@latch/relay', include: ['apps/relay/test/**/*.test.ts'] } },
       { extends: true, test: { name: '@latch/host', include: ['apps/host/test/**/*.test.ts'] } },
       { extends: true, test: { name: '@latch/web', include: ['apps/web/test/**/*.test.ts'] } },
       { extends: true, test: { name: '@latch/desktop', include: ['apps/desktop/test/**/*.test.ts'] } },

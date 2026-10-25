@@ -1,5 +1,13 @@
 /** Latch's own credentials: device credentials, and invitation and offline enrolment codes. */
-const LATCH_CREDENTIALS: readonly RegExp[] = [/ldc1\.dev_[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}/gu, /lp[io]1-[A-Z2-7]{26}/gu]
+const LATCH_CREDENTIALS: readonly RegExp[] = [
+  /lnw1\.[A-Za-z0-9_-]{43}/gu,
+  /lnp1\.[A-Za-z0-9_-]{43}/gu,
+  /(?:lrt1|lrs1|lnd1)\.[A-Za-z0-9_-]{43}/gu,
+  /LATCHPAIR1\.[A-Za-z0-9_-]{32,22000}/gu,
+  /LATCHBOOK1\.[A-Za-z0-9_-]{32,90000}/gu,
+  /ldc1\.dev_[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}/gu,
+  /lp[io]1-[A-Z2-7]{26}/gu,
+]
 
 /** Where a credential travels: the cookies, the device header and URL parameters, whatever value they carry. */
 const CARRIERS: readonly RegExp[] = [

@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { clampInspector, inspectorOpen, parseInspectorPreference, placeInspector } from '../src/inspectorLayout.ts'
+import { placeFileColumn } from '../src/preview/layout.ts'
 
 describe('the session-information column', () => {
+  it('gives documents half a window while preserving compact widths for text and images', () => {
+    expect(placeFileColumn(1440, 300, undefined, true)).toEqual({ kind: 'column', width: 720, shutSidebar: true })
+    expect(placeFileColumn(1440, 300, 320, true)).toEqual({ kind: 'column', width: 480, shutSidebar: false })
+    expect(placeFileColumn(1440, 300, 360, false)).toEqual({ kind: 'column', width: 360, shutSidebar: false })
+    expect(placeFileColumn(390, 56, 360, false)).toEqual({ kind: 'page' })
+  })
   it('opens by default only from 1440px and remembers the choice per class of window', () => {
     const none = parseInspectorPreference(undefined)
     expect([1440, 1280, 1024, 900, 390].map(width => inspectorOpen(none, width))).toEqual([true, false, false, false, false])

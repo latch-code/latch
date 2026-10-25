@@ -104,6 +104,29 @@ export async function buildDiagramFrame(directory = resolve('dist/web/preview-fr
   await writeFile(resolve(directory, 'diagram.json'), JSON.stringify({ file: 'diagram.html', scriptHash }))
 }
 
+export async function buildHtmlFrames(directory = resolve('dist/web/preview-frame')): Promise<void> {
+  const result = await bundle({
+    entryPoints: [fileURLToPath(new URL('./src/preview/html-frame.ts', import.meta.url))],
+    bundle: true,
+    format: 'iife',
+    platform: 'browser',
+    target: 'es2023',
+    minify: true,
+    write: false,
+    legalComments: 'none',
+  })
+  const script = result.outputFiles[0]!.text.replace(/<\/script/giu, '<\\/script')
+  const scriptHash = `sha256-${createHash('sha256').update(script).digest('base64')}`
+  await mkdir(directory, { recursive: true })
+  for (const name of ['html', 'html-script']) {
+    await writeFile(
+      resolve(directory, `${name}.html`),
+      `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><script>${script}</script></body></html>`,
+    )
+    await writeFile(resolve(directory, `${name}.json`), JSON.stringify({ file: `${name}.html`, scriptHash }))
+  }
+}
+
 export default defineConfig(async ({ command }): Promise<UserConfig> => ({
   // The page lives in this directory, whichever working directory Vite starts in; the Host serves the build from the
   // repository root's dist/web, the path every Host build reads.
@@ -114,6 +137,7 @@ export default defineConfig(async ({ command }): Promise<UserConfig> => ({
       closeBundle: async () => {
         await buildOfficeFrame()
         await buildDiagramFrame()
+        await buildHtmlFrames()
       },
     },
   ],

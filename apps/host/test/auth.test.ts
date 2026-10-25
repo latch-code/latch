@@ -775,6 +775,8 @@ describe('this computer', () => {
     'loopback-tcp': loopback,
     'lan-tls': { listener: 'lan-tls', origin: 'https://latch.example.lan', remoteAddress: '192.168.1.20' },
     'tailnet-tls': tls,
+    'native-direct': { listener: 'native-direct', origin: 'https://native.example.invalid', remoteAddress: '192.168.1.20' },
+    'native-relay': { listener: 'native-relay', origin: 'https://native.example.invalid', remoteAddress: '中继路径' },
   }
 
   it('counts only host.sock as this computer: every other listener needs its own invitation, refuses offline codes and cannot show a confirmation uninvited', async () => {
@@ -817,6 +819,10 @@ describe('this computer', () => {
         continue
       }
       await expect(uninvited).rejects.toMatchObject({ status: 403, code: 'invitation-required' })
+      if (listener === 'native-direct' || listener === 'native-relay') {
+        expect(context.presence.requests).toHaveLength(shown)
+        continue
+      }
       // An invitation opens only the listener and origin it was issued for.
       for (const other of LISTENER_CLASSES.filter(item => item !== listener && !isLocalListener(item))) {
         const foreign = await invitationFor(context, connections[other])

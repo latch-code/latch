@@ -218,6 +218,33 @@ async function resolveEgress(input: {
   throw denied(target, firstReason ?? 'reserved')
 }
 
+/** A relay socket uses exactly the address checked here; live leases are rechecked when policy tightens. */
+export function createRelayEgress(options: {
+  allow: () => readonly string[]
+  lookup?: LookupFunction
+  localAddresses?: () => ReadonlySet<string>
+}): (url: URL) => Promise<{ address: string; permitted(): boolean }> {
+  const lookup = options.lookup ?? defaultLookup
+  const localAddresses = options.localAddresses ?? cachedLocalAddresses()
+  return async url => {
+    if (url.protocol !== 'https:' || url.username || url.password) throw denied('relay', 'protocol')
+    const checked = await resolveEgress({
+      hostname: url.hostname,
+      port: Number(url.port || 443),
+      allow: options.allow(),
+      lookup,
+      localAddresses: localAddresses(),
+    })
+    return {
+      address: checked.address,
+      permitted: () => {
+        const reason = isDeniedAddress(checked.address, localAddresses())
+        return !reason || (reason !== 'metadata' && checked.allowedBy !== undefined && options.allow().includes(checked.allowedBy))
+      },
+    }
+  }
+}
+
 /** What reaching a URL takes: nothing, an allowlist entry for `target`, or never (a metadata address). */
 export type EgressNeed =
   | { target: string; allowance: 'none' }

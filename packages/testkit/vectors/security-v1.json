@@ -833,6 +833,27 @@
         }
       },
       "reason": "测试启动 Codex（不发送提示词）：/opt/homebrew/bin/codex-acp --probe"
+    },
+    {
+      "action": "device.enroll-native",
+      "subject": {
+        "form": "device.enroll-native",
+        "slots": {
+          "device": "测试手机",
+          "fingerprint": "FPI3 WDCE VCL4 GCT2 UCMR"
+        }
+      },
+      "reason": "配对原生设备「测试手机」，已在此 Mac 输入手机核对码，指纹 FPI3 WDCE VCL4 GCT2 UCMR"
+    },
+    {
+      "action": "policy.change",
+      "subject": { "form": "policy.native-input", "slots": {} },
+      "reason": "恢复所有原生手机的输入权限"
+    },
+    {
+      "action": "policy.change",
+      "subject": { "form": "policy.native-link", "slots": { "direct": "局域网直连 192.168.1.5:4319", "count": "2" } },
+      "reason": "更改手机连接：局域网直连 192.168.1.5:4319，2 个中继节点；新中继可看到连接时间与 IP"
     }
   ],
   "presenceRequest": [
@@ -1384,6 +1405,197 @@
         "requireBiometric": true
       },
       "result": "reason-mismatch"
+    },
+    {
+      "name": "native pairing requires private helper input before system authentication",
+      "request": {
+        "v": 2,
+        "preview": {
+          "v": 2,
+          "hostId": "fpi3wdcevcl4gct2ucmrzxry3adc7zcb3zinud2gqjjuj5qc5atq",
+          "action": "device.enroll-native",
+          "title": "配对原生设备",
+          "reason": "配对原生设备「测试手机」，已在此 Mac 输入手机核对码，指纹 FPI3 WDCE VCL4 GCT2 UCMR",
+          "subject": {
+            "form": "device.enroll-native",
+            "slots": {
+              "device": "测试手机",
+              "fingerprint": "FPI3 WDCE VCL4 GCT2 UCMR"
+            }
+          },
+          "requester": {
+            "listener": "native-direct",
+            "remoteAddress": "192.0.2.3"
+          },
+          "lines": [
+            {
+              "label": "设备指纹",
+              "value": "FPI3 WDCE VCL4 GCT2 UCMR"
+            }
+          ],
+          "warnings": [],
+          "nonce": "AQIDBAUGBwgJCgsMDQ4PEA",
+          "expiresAt": "2026-10-25T10:02:00.000Z"
+        },
+        "previewHash": "4b9a821c27e12311e7310ab6a9052ba9f009a2417374e80d8f3ec14d016787f8",
+        "timeoutSeconds": 115,
+        "requireBiometric": true,
+        "pairingCode": "123456"
+      },
+      "result": "ok"
+    },
+    {
+      "name": "native pairing without code is refused",
+      "request": {
+        "v": 2,
+        "preview": {
+          "v": 2,
+          "hostId": "fpi3wdcevcl4gct2ucmrzxry3adc7zcb3zinud2gqjjuj5qc5atq",
+          "action": "device.enroll-native",
+          "title": "配对原生设备",
+          "reason": "配对原生设备「测试手机」，已在此 Mac 输入手机核对码，指纹 FPI3 WDCE VCL4 GCT2 UCMR",
+          "subject": {
+            "form": "device.enroll-native",
+            "slots": {
+              "device": "测试手机",
+              "fingerprint": "FPI3 WDCE VCL4 GCT2 UCMR"
+            }
+          },
+          "requester": {
+            "listener": "native-direct",
+            "remoteAddress": "192.0.2.3"
+          },
+          "lines": [
+            {
+              "label": "设备指纹",
+              "value": "FPI3 WDCE VCL4 GCT2 UCMR"
+            }
+          ],
+          "warnings": [],
+          "nonce": "AQIDBAUGBwgJCgsMDQ4PEA",
+          "expiresAt": "2026-10-25T10:02:00.000Z"
+        },
+        "previewHash": "4b9a821c27e12311e7310ab6a9052ba9f009a2417374e80d8f3ec14d016787f8",
+        "timeoutSeconds": 115,
+        "requireBiometric": true
+      },
+      "result": "pairing-code-required"
+    },
+    {
+      "name": "native pairing code has exactly six ASCII digits",
+      "request": {
+        "v": 2,
+        "preview": {
+          "v": 2,
+          "hostId": "fpi3wdcevcl4gct2ucmrzxry3adc7zcb3zinud2gqjjuj5qc5atq",
+          "action": "device.enroll-native",
+          "title": "配对原生设备",
+          "reason": "配对原生设备「测试手机」，已在此 Mac 输入手机核对码，指纹 FPI3 WDCE VCL4 GCT2 UCMR",
+          "subject": {
+            "form": "device.enroll-native",
+            "slots": {
+              "device": "测试手机",
+              "fingerprint": "FPI3 WDCE VCL4 GCT2 UCMR"
+            }
+          },
+          "requester": {
+            "listener": "native-direct",
+            "remoteAddress": "192.0.2.3"
+          },
+          "lines": [
+            {
+              "label": "设备指纹",
+              "value": "FPI3 WDCE VCL4 GCT2 UCMR"
+            }
+          ],
+          "warnings": [],
+          "nonce": "AQIDBAUGBwgJCgsMDQ4PEA",
+          "expiresAt": "2026-10-25T10:02:00.000Z"
+        },
+        "previewHash": "4b9a821c27e12311e7310ab6a9052ba9f009a2417374e80d8f3ec14d016787f8",
+        "timeoutSeconds": 115,
+        "requireBiometric": true,
+        "pairingCode": "１２３４５６"
+      },
+      "result": "pairing-code-required"
+    },
+    {
+      "name": "native pairing cannot weaken the system biometric requirement",
+      "request": {
+        "v": 2,
+        "preview": {
+          "v": 2,
+          "hostId": "fpi3wdcevcl4gct2ucmrzxry3adc7zcb3zinud2gqjjuj5qc5atq",
+          "action": "device.enroll-native",
+          "title": "配对原生设备",
+          "reason": "配对原生设备「测试手机」，已在此 Mac 输入手机核对码，指纹 FPI3 WDCE VCL4 GCT2 UCMR",
+          "subject": {
+            "form": "device.enroll-native",
+            "slots": {
+              "device": "测试手机",
+              "fingerprint": "FPI3 WDCE VCL4 GCT2 UCMR"
+            }
+          },
+          "requester": {
+            "listener": "native-direct",
+            "remoteAddress": "192.0.2.3"
+          },
+          "lines": [
+            {
+              "label": "设备指纹",
+              "value": "FPI3 WDCE VCL4 GCT2 UCMR"
+            }
+          ],
+          "warnings": [],
+          "nonce": "AQIDBAUGBwgJCgsMDQ4PEA",
+          "expiresAt": "2026-10-25T10:02:00.000Z"
+        },
+        "previewHash": "4b9a821c27e12311e7310ab6a9052ba9f009a2417374e80d8f3ec14d016787f8",
+        "timeoutSeconds": 115,
+        "requireBiometric": false,
+        "pairingCode": "123456"
+      },
+      "result": "pairing-code-required"
+    },
+    {
+      "name": "other confirmations never accept a pairing code",
+      "request": {
+        "v": 2,
+        "preview": {
+          "v": 2,
+          "hostId": "fpi3wdcevcl4gct2ucmrzxry3adc7zcb3zinud2gqjjuj5qc5atq",
+          "action": "approval.r2",
+          "title": "允许一次高风险操作",
+          "reason": "批准写入 café.md（Latch 程序目录内）",
+          "subject": {
+            "form": "approval.write",
+            "slots": {
+              "path": "café.md",
+              "why": "Latch 程序目录内"
+            }
+          },
+          "requester": {
+            "deviceId": "dev_IiIiIiIiIiIiIiIiIiIiIg",
+            "deviceName": "桌面",
+            "listener": "unix",
+            "remoteAddress": "本机 host.sock"
+          },
+          "lines": [
+            {
+              "label": "工具",
+              "value": "write_file"
+            }
+          ],
+          "warnings": [],
+          "nonce": "AQIDBAUGBwgJCgsMDQ4PEA",
+          "expiresAt": "2026-10-25T10:02:00.000Z"
+        },
+        "previewHash": "2bb8dade3803cc1441c44b2c900c4afde43a1c04f73ae9e09c3975be330cb69f",
+        "timeoutSeconds": 115,
+        "requireBiometric": false,
+        "pairingCode": "123456"
+      },
+      "result": "pairing-code-unexpected"
     }
   ]
 }

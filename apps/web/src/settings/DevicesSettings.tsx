@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Ban, Globe, KeyRound, Laptop, LockKeyhole, Monitor, Smartphone } from 'lucide-react'
 import {
   escapeSecurityText,
@@ -15,7 +15,7 @@ import { withConfirmation } from '../core/confirmations.ts'
 import { InlineConfirm } from '../components/InlineConfirm.tsx'
 import { dateTime, looksLikePhone, relativeTime } from '../format.ts'
 import { DEV_MODE_TEXT, hostView, type DeviceAccess } from '../core/permissions.ts'
-import { DEVICE_NAME_INVALID_TEXT, describeFailure, LOCAL_ONLY_TEXT } from '../core/securityCopy.ts'
+import { DEVICE_NAME_INVALID_TEXT, describeFailure, LOCAL_ONLY_TEXT, NATIVE_LINK_COPY } from '../core/securityCopy.ts'
 import { currentShell, type LatchShell } from '../core/shell.ts'
 import { ConfirmDialog, Modal, ModalHeader } from '../components/overlays.tsx'
 import { Badge, Button, InlineNotice, type LucideIcon, Menu, StatusPill, TextField } from '@latch/ui'
@@ -112,9 +112,17 @@ function ThisDevice({ device, devMode, onChanged }: { device: AppSnapshot['devic
         )}
         <SettingsRow title="权限" description={scopeText(device.scopes)} />
         <SettingsRow
-          title="登记有效期"
-          trailing={<span className="settings-row-value">{dateTime(device.credentialExpiresAt) || '—'}</span>}
+          title={device.native ? '最近身份验证' : '登记有效期'}
+          trailing={
+            <span className="settings-row-value">{dateTime(device.native?.lastVerifiedAt ?? device.credentialExpiresAt) || '—'}</span>
+          }
         />
+        {device.native && (
+          <SettingsRow
+            title="手机访问"
+            description={`${NATIVE_LINK_COPY.nativeInput[device.native.input]}；${device.native.bodyVerifiedUntil ? NATIVE_LINK_COPY.bodyUntil(dateTime(device.native.bodyVerifiedUntil)) : NATIVE_LINK_COPY.bodyLocked}`}
+          />
+        )}
       </SettingsGroup>
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
     </>
@@ -249,16 +257,30 @@ function RegisteredDevices({ currentId, local, onChanged }: { currentId: string;
   const [error, setError] = useState('')
   const [revoking, setRevoking] = useState<Device | null>(null)
   const [editing, setEditing] = useState<Device | null>(null)
+  const generation = useRef(0),
+    mounted = useRef(false)
   const load = useCallback(async () => {
+    const request = ++generation.current
     try {
-      setDevices((await api<{ devices: Device[] }>('devices')).devices)
+      const next = await api<{ devices: Device[] }>('devices')
+      if (!mounted.current || request !== generation.current) return
+      setDevices(next.devices)
       setError('')
     } catch (cause) {
-      setError(errorMessage(cause))
+      if (mounted.current && request === generation.current) setError(errorMessage(cause))
     }
   }, [])
   useEffect(() => {
+    mounted.current = true
     void load()
+    const timer = window.setInterval(() => {
+      void load()
+    }, 5000)
+    return () => {
+      mounted.current = false
+      generation.current++
+      clearInterval(timer)
+    }
   }, [load])
   const order = (device: Device) => (device.status === 'revoked' ? 2 : device.status === 'legacy-pending' ? 1 : 0)
   const shown = devices === null ? [] : [...devices].sort((a, b) => order(a) - order(b) || b.lastSeenAt.localeCompare(a.lastSeenAt))
@@ -296,7 +318,19 @@ function RegisteredDevices({ currentId, local, onChanged }: { currentId: string;
                       ? `撤销于 ${relativeTime(device.revokedAt ?? '') || '未知时间'}`
                       : `最近使用 ${relativeTime(device.lastSeenAt) || '未知'}`}
                   </span>
-                  {!revoked && <span className="settings-row-description">{scopeText(device.scopes)}</span>}
+                  {!revoked && (
+                    <span className="settings-row-description">
+                      {device.native ? NATIVE_LINK_COPY.registeredScopes(scopeText(device.scopes)) : scopeText(device.scopes)}
+                    </span>
+                  )}
+                  {!revoked && device.native && (
+                    <span className="settings-row-description">
+                      {NATIVE_LINK_COPY.nativeInput[device.native.input]} ·{' '}
+                      {device.native.bodyVerifiedUntil
+                        ? NATIVE_LINK_COPY.bodyUntil(dateTime(device.native.bodyVerifiedUntil))
+                        : NATIVE_LINK_COPY.bodyLocked}
+                    </span>
+                  )}
                 </span>
                 {!revoked && !self && (
                   <span className="settings-row-end">

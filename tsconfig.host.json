@@ -9,6 +9,9 @@
   },
   "include": [
     "apps/host/src",
+    "apps/relay/src",
+    "apps/relay/scripts",
+    "packages/link-client/src",
     "apps/host/scripts",
     "packages/harness-acp/src",
     "src/plugin-sdk.ts",

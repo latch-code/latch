@@ -187,10 +187,14 @@ export function createFileRoutes(options: FileRoutesOptions) {
       const limit = contentLimit(format.kind, local)
       const secretAllowed = local && input.showSecret === true
       const canRead = (!file.secret || secretAllowed) && (file.size <= limit || canTruncate(format.kind))
+      const dimensions = format.kind === 'image' ? imageDimensions(file.head, format.mime) : undefined
+      const imageTooLarge = !!dimensions && dimensions.width * dimensions.height > (local ? 100_000_000 : 50_000_000)
+      const imageUnknown = format.kind === 'image' && !dimensions
       if (options.sessionDetail && canRead) await auditRead(caller, sessionId, file, limit)
-      const refused = Object.fromEntries(
+      const refused: Record<string, string> = Object.fromEntries(
         Object.entries(verdicts).flatMap(([action, verdict]) => (verdict.ok ? [] : [[action, verdict.code]])),
       )
+      if (imageTooLarge || imageUnknown) refused.preview = imageTooLarge ? 'file-too-large' : 'file-image-dimensions'
       files.push({
         input: path,
         status: 'ok',
@@ -216,7 +220,7 @@ export function createFileRoutes(options: FileRoutesOptions) {
                 etag: fileEtag(file),
                 limit,
                 ...(file.size > limit && canTruncate(format.kind) ? { truncated: true } : {}),
-                ...(format.kind === 'image' ? imageDimensions(file.head, format.mime) : {}),
+                ...dimensions,
               }
             : {}),
           actions: {
@@ -225,8 +229,8 @@ export function createFileRoutes(options: FileRoutesOptions) {
             open: local && verdicts.open.ok,
             ...(options.sessionDetail
               ? {
-                  download: canRead && file.size <= limit,
-                  preview: canRead && (file.size <= limit || canTruncate(format.kind)) && format.kind !== 'binary',
+                  download: canRead && file.size <= limit && !imageTooLarge,
+                  preview: canRead && !imageTooLarge && !imageUnknown && format.kind !== 'binary',
                 }
               : {}),
           },

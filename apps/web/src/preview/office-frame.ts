@@ -7,8 +7,43 @@ const root = document.getElementById('document')!
 let port: MessagePort | undefined,
   viewer: PptxViewer | undefined,
   sheets: ParsedSheet[] | undefined,
+  observer: IntersectionObserver | undefined,
   pages: HTMLElement[] = [],
-  current = 0
+  current = 0,
+  zoom = 100,
+  fit = true
+let links: Record<string, string> = {}
+let viewRevision = 0,
+  changingView = false,
+  viewWork: Promise<void> = Promise.resolve()
+function resizeViewer(action: (target: PptxViewer) => Promise<void>, index = current) {
+  const target = viewer,
+    revision = ++viewRevision
+  if (!target) return
+  changingView = true
+  current = Math.min(index, target.slideCount - 1)
+  viewWork = viewWork
+    .catch(() => {})
+    .then(async () => {
+      if (target !== viewer || revision !== viewRevision) return
+      await action(target)
+      if (target !== viewer || revision !== viewRevision) return
+      await target.goToSlide(Math.min(index, target.slideCount - 1))
+      if (target !== viewer || revision !== viewRevision) return
+      page(index, target.slideCount)
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          if (revision === viewRevision) changingView = false
+        }),
+      )
+    })
+    .catch(() => {
+      if (revision === viewRevision) {
+        changingView = false
+        send({ type: 'error', code: 'render-failed' })
+      }
+    })
+}
 const nonce = new URLSearchParams(location.hash.slice(1)).get('nonce') ?? location.hash.slice(1)
 const send = (value: FrameEvent) => port?.postMessage(value)
 const page = (index: number, count: number) => {
@@ -31,7 +66,8 @@ document.addEventListener(
     if (!link) return
     event.preventDefault()
     event.stopImmediatePropagation()
-    const href = link.getAttribute('href') ?? ''
+    const raw = link.getAttribute('href') ?? ''
+    const href = raw.startsWith('#') ? (links[raw.slice(1)] ?? '') : raw
     if (/^https?:\/\//iu.test(href) && href.length <= 4096) send({ type: 'link', href })
   },
   true,
@@ -44,12 +80,37 @@ function command(value: unknown) {
     if (sheet) send({ type: 'sheet-page', sheet: value.sheet, start: value.start, ...sheetPage(sheet, value.start, value.count) })
     return
   }
-  if (value.type === 'fit') {
-    if (viewer) void viewer.setFitMode(value.value ? 'contain' : 'none')
-    else root.dataset.fit = String(value.value)
+  if (value.type === 'zoom') {
+    zoom = value.percent
+    fit = false
+    if (viewer)
+      resizeViewer(async target => {
+        await target.setFitMode('none')
+        await target.setZoom(value.percent)
+      })
+    else {
+      root.dataset.fit = 'false'
+      root.style.zoom = String(zoom / 100)
+    }
+    send({ type: 'view', fit, zoomPercent: zoom })
     return
   }
-  if (viewer) void viewer.goToSlide(Math.min(value.index, viewer.slideCount - 1))
+  if (value.type === 'fit') {
+    fit = value.value
+    if (fit) zoom = 100
+    if (viewer)
+      resizeViewer(async target => {
+        await target.setZoom(zoom)
+        await target.setFitMode(value.value ? 'contain' : 'none')
+      })
+    else {
+      root.dataset.fit = String(value.value)
+      root.style.zoom = value.value ? '' : String(zoom / 100)
+    }
+    send({ type: 'view', fit, zoomPercent: zoom })
+    return
+  }
+  if (viewer) resizeViewer(async () => {}, Math.min(value.index, viewer.slideCount - 1))
   else if (pages[value.index]) {
     pages[value.index]!.scrollIntoView({ block: 'start' })
     page(value.index, pages.length)
@@ -78,6 +139,13 @@ async function render(kind: OfficeKind, data: ArrayBuffer, options: Record<strin
   }
   document.documentElement.dataset.theme = options.theme === 'dark' ? 'dark' : 'light'
   const sanitized = sanitizeOfficeZip(data)
+  links = sanitized.links
+  fit = options.fit !== false
+  zoom =
+    Number.isInteger(options.zoomPercent) && Number(options.zoomPercent) >= 10 && Number(options.zoomPercent) <= 400
+      ? Number(options.zoomPercent)
+      : 100
+  const initialPage = Number.isInteger(options.pageIndex) ? Math.max(0, Math.min(9999, Number(options.pageIndex))) : 0
   if (kind === 'xlsx') {
     const workbook = parseXlsx(sanitized.files)
     sheets = workbook.sheets
@@ -96,7 +164,7 @@ async function render(kind: OfficeKind, data: ArrayBuffer, options: Record<strin
       ignoreHeight: false,
     })
     pages = Array.from(root.querySelectorAll<HTMLElement>('section.docx')).slice(0, 10_000)
-    const observer = new IntersectionObserver(
+    observer = new IntersectionObserver(
       entries => {
         for (const entry of entries) if (entry.isIntersecting) page(pages.indexOf(entry.target as HTMLElement), pages.length)
       },
@@ -104,7 +172,8 @@ async function render(kind: OfficeKind, data: ArrayBuffer, options: Record<strin
     )
     for (const element of pages) observer.observe(element)
     send({ type: 'rendered', kind })
-    page(0, pages.length)
+    command({ type: 'fit', value: fit })
+    command({ type: 'page', index: Math.min(initialPage, pages.length - 1) })
     return
   }
   const noteTexts = new Map(
@@ -113,12 +182,16 @@ async function render(kind: OfficeKind, data: ArrayBuffer, options: Record<strin
       .map(path => [path, notes(sanitized.files, path)]),
   )
   viewer = new PptxViewer(root, {
-    fitMode: 'contain',
+    fitMode: fit ? 'contain' : 'none',
+    zoomPercent: zoom,
+    externalMedia: 'block',
     zipLimits: RECOMMENDED_ZIP_LIMITS,
     lazyMedia: true,
     lazySlides: true,
     pdfjs: false,
-    onSlideChange: index => page(index, viewer?.presentationData?.slides.length ?? 0),
+    onSlideChange: index => {
+      if (!changingView) page(index, viewer?.presentationData?.slides.length ?? 0)
+    },
     onSlideUnmounted: index => {
       root.querySelector(`[data-slide-index="${index}"] [data-latch-notes]`)?.remove()
     },
@@ -143,7 +216,8 @@ async function render(kind: OfficeKind, data: ArrayBuffer, options: Record<strin
     listOptions: { windowed: true, initialSlides: 4, batchSize: 4, overscanViewport: 1.5 },
   })
   send({ type: 'rendered', kind })
-  page(0, viewer.presentationData?.slides.length ?? 0)
+  await viewer.goToSlide(Math.min(initialPage, Math.max(0, viewer.slideCount - 1)))
+  page(initialPage, viewer.presentationData?.slides.length ?? 0)
 }
 let accepted = false
 function init(event: MessageEvent<unknown>) {
@@ -177,6 +251,7 @@ if (/^[A-Za-z0-9_-]{20,128}$/u.test(nonce)) {
   parent.postMessage({ type: 'ready', protocol: 1, nonce }, '*')
 }
 window.addEventListener('pagehide', () => {
+  observer?.disconnect()
   viewer?.destroy()
   port?.close()
 })
@@ -202,8 +277,50 @@ document.addEventListener(
 )
 document.addEventListener('keydown', event => {
   if (event.target instanceof Element && event.target.closest('input,textarea,select,button,summary')) return
+  if ((event.metaKey || event.ctrlKey) && ['+', '=', '-', '0'].includes(event.key)) {
+    event.preventDefault()
+    if (event.key === '0') command({ type: 'fit', value: true })
+    else command({ type: 'zoom', percent: Math.min(400, Math.max(10, zoom + (event.key === '-' ? -10 : 10))) })
+    return
+  }
   if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
     event.preventDefault()
     command({ type: 'page', index: Math.max(0, current + (event.key === 'ArrowRight' ? 1 : -1)) })
   }
 })
+
+document.addEventListener(
+  'wheel',
+  event => {
+    if (!event.ctrlKey) return
+    event.preventDefault()
+    command({ type: 'zoom', percent: Math.min(400, Math.max(10, Math.round(zoom + (event.deltaY < 0 ? 10 : -10)))) })
+  },
+  { passive: false },
+)
+
+let pinch: { distance: number; zoom: number } | undefined
+const distance = (touches: TouchList) => Math.hypot(touches[0]!.clientX - touches[1]!.clientX, touches[0]!.clientY - touches[1]!.clientY)
+document.addEventListener(
+  'touchstart',
+  event => {
+    pinch = event.touches.length === 2 ? { distance: distance(event.touches), zoom } : undefined
+  },
+  { passive: true },
+)
+document.addEventListener(
+  'touchmove',
+  event => {
+    if (!pinch || event.touches.length !== 2 || pinch.distance <= 0) return
+    event.preventDefault()
+    command({ type: 'zoom', percent: Math.min(400, Math.max(10, Math.round((pinch.zoom * distance(event.touches)) / pinch.distance))) })
+  },
+  { passive: false },
+)
+document.addEventListener(
+  'touchend',
+  event => {
+    if (event.touches.length < 2) pinch = undefined
+  },
+  { passive: true },
+)

@@ -321,8 +321,8 @@ describe('phone pairing', () => {
   })
   const FLAG = /(?:^|[\s「（(])--[a-z]/u
 
-  it('says phone access is not set up in words, says what is not built yet, and folds the start options away', () => {
-    const html = renderToStaticMarkup(createElement(PairingSection, { tls: false, access: access(true), phone: false }))
+  it('explains browser access without HTTPS and folds the start options away', () => {
+    const html = renderToStaticMarkup(createElement(PairingSection, { tls: false, access: access(false), phone: false }))
     const [body = '', folded = ''] = html.split('class="ui-collapse"')
     expect(body).toContain(PAIRING_COPY.notConfigured)
     expect(body).toContain('同一网络下扫码直连尚未实现：它需要 Host 在局域网中宣告自己并固定身份，正在开发。')

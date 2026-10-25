@@ -21,6 +21,8 @@
 @import './settings.css' layer(app);
 @import './workflows.css' layer(app);
 @import './documents.css' layer(app);
+@import './questions.css' layer(app);
+@import './attachments.css' layer(app);
 @import './auth.css' layer(security);
 @import './confirm.css' layer(security);
 @import './security.css' layer(security);

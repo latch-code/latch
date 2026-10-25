@@ -37,7 +37,24 @@ function restore(key: string): Record<string, SessionTabs> {
           || !/^[A-Za-z0-9_-]{1,32}$/u.test(entry.root)
         )
           return []
-        return [{ id: crypto.randomUUID(), target: { sessionId, reference: entry.path, rootId: entry.root } }]
+        if (
+          entry.attachmentId !== undefined
+          && (typeof entry.attachmentId !== 'string' || !/^[A-Za-z0-9_-]{22}$/u.test(entry.attachmentId))
+        )
+          return []
+        if (entry.view !== undefined && entry.view !== 'preview' && entry.view !== 'changes') return []
+        return [
+          {
+            id: crypto.randomUUID(),
+            target: {
+              sessionId,
+              reference: entry.path,
+              rootId: entry.root,
+              ...(entry.view === 'changes' ? { view: 'changes' as const } : {}),
+              ...(typeof entry.attachmentId === 'string' ? { attachmentId: entry.attachmentId } : {}),
+            },
+          },
+        ]
       })
       if (tabs.length) result[sessionId] = { tabs }
     }
@@ -60,9 +77,16 @@ export function useFileTabs(deviceId: string, sessionId: string | null) {
             sessionId,
             files: state.tabs.flatMap(tab =>
               tab.file
-                ? [{ root: tab.file.root, path: tab.file.path }]
+                ? [
+                    {
+                      root: tab.file.root,
+                      path: tab.file.path,
+                      ...(tab.file.attachmentId ? { attachmentId: tab.file.attachmentId } : {}),
+                      ...(tab.target.view === 'changes' ? { view: 'changes' } : {}),
+                    },
+                  ]
                 : tab.target.rootId && !tab.target.reference.startsWith('/')
-                  ? [{ root: tab.target.rootId, path: tab.target.reference }]
+                  ? [{ root: tab.target.rootId, path: tab.target.reference, ...(tab.target.view === 'changes' ? { view: 'changes' } : {}) }]
                   : [],
             ),
           })),
@@ -89,17 +113,27 @@ export function useFileTabs(deviceId: string, sessionId: string | null) {
       update(target.sessionId, state => {
         const existing = state.tabs.find(
           tab =>
-            (tab.target.reference === target.reference && tab.target.rootId === target.rootId)
-            || (tab.file?.path === target.reference && tab.file.root === target.rootId),
+            (tab.target.reference === target.reference
+              && tab.target.rootId === target.rootId
+              && tab.target.attachmentId === target.attachmentId)
+            || (tab.file?.path === target.reference && tab.file.root === target.rootId && tab.file.attachmentId === target.attachmentId),
         )
         const tab = existing
-          ? { ...existing, target: { ...existing.target, ...(target.line ? { line: target.line } : {}) } }
+          ? { ...existing, target: { ...existing.target, view: target.view ?? 'preview', ...(target.line ? { line: target.line } : {}) } }
           : { id: crypto.randomUUID(), target }
         return { tabs: [...state.tabs.filter(item => item.id !== tab.id), tab].slice(-6), selected: tab.id }
       })
     },
     select(id?: string) {
       if (sessionId !== null) update(sessionId, state => ({ ...state, selected: id }))
+    },
+    view(id: string, view: 'preview' | 'changes') {
+      if (sessionId !== null)
+        update(sessionId, state => ({
+          ...state,
+          selected: id,
+          tabs: state.tabs.map(tab => (tab.id === id ? { ...tab, target: { ...tab.target, view } } : tab)),
+        }))
     },
     close(id: string) {
       if (sessionId !== null)

@@ -66,9 +66,9 @@ async function readHostStateFile(path) {
  * One HTTP/1.1 request over host.sock. Resolves once response headers arrive; the caller owns the body.
  * `timeoutMs` bounds the wait for response headers only, so long-lived streams are not cut.
  * @param {string} socketPath
- * @param {{ method?: string, path?: string, headers?: Record<string, string>, body?: Buffer, timeoutMs?: number }} [options]
+ * @param {{ method?: string, path?: string, headers?: Record<string, string>, body?: Buffer, bodyStream?: ReadableStream<Uint8Array>, bodyLimit?: number, check?: () => void, signal?: AbortSignal, timeoutMs?: number }} [options]
  */
-function socketRequest(socketPath, { method = 'GET', path, headers = {}, body, timeoutMs } = {}) {
+function socketRequest(socketPath, { method = 'GET', path, headers = {}, body, bodyStream, bodyLimit, check, signal, timeoutMs } = {}) {
   return new Promise((resolve, reject) => {
     const outgoing = { ...headers, host: SOCKET_HOST }
     if (body !== undefined) outgoing['content-length'] = String(body.length)
@@ -77,15 +77,61 @@ function socketRequest(socketPath, { method = 'GET', path, headers = {}, body, t
     if (timeoutMs !== undefined) {
       timer = setTimeout(() => req.destroy(Object.assign(new Error('Latch Host 响应超时'), { code: 'ETIMEDOUT' })), timeoutMs)
     }
+    const reader = bodyStream?.getReader()
+    let responded = false
+    const abort = () => {
+      req.destroy(new Error('Latch upload cancelled'))
+      void reader?.cancel().catch(() => {})
+    }
+    if (signal?.aborted) abort()
+    else signal?.addEventListener('abort', abort, { once: true })
+    req.once('close', () => signal?.removeEventListener('abort', abort))
     req.once('response', response => {
+      responded = true
+      void reader?.cancel().catch(() => {})
       if (timer) clearTimeout(timer)
       resolve({ request: req, response })
     })
     req.once('error', error => {
       if (timer) clearTimeout(timer)
+      void reader?.cancel().catch(() => {})
       reject(error)
     })
-    req.end(body)
+    if (reader) {
+      void (async () => {
+        let size = 0
+        try {
+          for (;;) {
+            const chunk = await reader.read()
+            if (chunk.done || responded) break
+            check?.()
+            size += chunk.value.byteLength
+            if (typeof bodyLimit !== 'number' || !Number.isSafeInteger(bodyLimit) || size > bodyLimit)
+              throw Object.assign(new Error('请求内容过长'), { status: 413, code: 'body-too-large' })
+            if (!req.write(Buffer.from(chunk.value))) {
+              const drained = await new Promise(resolve => {
+                const close = () => {
+                    req.off('drain', drain)
+                    resolve(false)
+                  },
+                  drain = () => {
+                    req.off('close', close)
+                    resolve(true)
+                  }
+                req.once('close', close)
+                req.once('drain', drain)
+              })
+              if (!drained) return
+            }
+            check?.()
+          }
+          if (!req.destroyed) req.end()
+        } catch (error) {
+          void reader.cancel().catch(() => {})
+          if (!responded) req.destroy(error instanceof Error ? error : new Error('Latch upload failed'))
+        }
+      })()
+    } else req.end(body)
   })
 }
 

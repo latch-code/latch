@@ -12,15 +12,18 @@ Latch 是跨电脑与手机的 AI Agent 工作台。Node Host（`apps/host`）�
 
 | 路径 | 职责 |
 | --- | --- |
-| `apps/host/` | `@latch/host`：Host 的组合根、内置插件与启动、停止、`pnpm latch`、构建脚本 |
-| `apps/web/` | `@latch/web`：浏览器客户端，构建到根 `dist/web`，桌面端显示同一页面 |
+| `apps/host/` | Host 组合根、插件与命令 |
+| `apps/web/` | 浏览器与桌面共用页面，构建到 `dist/web` |
 | `apps/desktop/` | `@latch/desktop`：Electron 主进程与 preload（CommonJS） |
-| `packages/protocol/` | `@latch/protocol`：浏览器与 Host 共用的 DTO、预设与安全文本规则 |
+| `packages/link-wire/` | 原生连接的纯编码、KDF 与恢复日志；见 `docs/REMOTE.md` |
+| `packages/link-client/` | Node 平台 TLS 客户端与中继隧道；见 `docs/REMOTE.md` |
+| `apps/relay/` | 自建盲中继底座；机制与实现边界见 `docs/RELAY.md` |
+| `packages/protocol/` | 共用 DTO、预设与安全文本 |
 | `packages/ui/` | `@latch/ui`：令牌、层叠层与原语 |
 | `packages/sdk/` | `@latch/sdk`：插件作者面与 `AppError` |
-| `packages/core/` | `@latch/core`：Cordis 注册表、Standard 执行循环与快照存储，Node 工具 `./node-kit` |
-| `packages/harness-acp/` | `@latch/harness-acp`：ACP HarnessDriver 与每个预设的权限配置 |
-| `packages/testkit/` | `@latch/testkit`：只供测试的 Host 夹具、测试确认后端、共享安全向量与假 ACP Agent |
+| `packages/core/` | Cordis、执行循环、快照与 Node 工具 `./node-kit` |
+| `packages/harness-acp/` | ACP 驱动与权限预设 |
+| `packages/testkit/` | Host、确认后端、安全向量与假 ACP 测试夹具 |
 | `e2e/` | `@latch/e2e`：全部 `*.e2e.ts`，Vitest 内用 Playwright 驱动浏览器与 Electron |
 | `tests/` | 根项目的用例：`@latch/core`、`@latch/sdk`、兼容入口与仓库脚本 |
 | `src/` | 兼容入口 `harness-link/plugin-sdk`、`harness-link/harness-sdk`，再导出 `@latch/sdk` |

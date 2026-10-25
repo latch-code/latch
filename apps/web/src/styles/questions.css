@@ -1,0 +1,82 @@
+.question-card {
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+  corner-shape: var(--corner-shape);
+  background: var(--surface);
+  padding: 16px;
+  margin-block: 8px;
+}
+.question-heading,
+.question-actions,
+.question-actions > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.question-heading {
+  justify-content: space-between;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+.question-prompt {
+  font-size: var(--fs-body);
+  margin-block: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.question-card fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.question-card legend {
+  font-size: var(--fs-body);
+  font-weight: 500;
+  margin-bottom: 12px;
+  overflow-wrap: anywhere;
+}
+.question-hint {
+  margin-left: 8px;
+  font-weight: 400;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+.question-options {
+  display: grid;
+  gap: 12px;
+}
+.question-actions {
+  justify-content: space-between;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+.question-actions > span {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+.question-result {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+  padding-block: 8px;
+}
+.question-result summary {
+  cursor: pointer;
+}
+.question-result dl {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+}
+.question-result dt {
+  color: var(--text-3);
+}
+.question-result dd {
+  margin: 2px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.turn-phase.phase-question {
+  color: var(--warn-text);
+}

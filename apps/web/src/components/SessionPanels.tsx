@@ -1,4 +1,6 @@
 import { FilePreview } from '../preview/FilePreview.tsx'
+import { FileHistoryPreview } from '../preview/FileHistoryPreview.tsx'
+import { fileHistories } from '../preview/fileHistory.ts'
 import type { FileTab } from '../preview/useFileTabs.ts'
 import type { FileMetadata } from '@latch/protocol'
 import { useEffect, useId, useState, type ReactNode } from 'react'
@@ -29,6 +31,9 @@ export function SessionPanels({
   onFileResolved,
   onExpandFile,
   local = false,
+  deviceId,
+  detail,
+  onFileView,
 }: {
   files?: FileTab[]
   activeFile?: FileTab
@@ -37,6 +42,9 @@ export function SessionPanels({
   onFileResolved?(id: string, file: FileMetadata): void
   onExpandFile?(): void
   local?: boolean
+  deviceId?: string
+  detail?: import('@latch/protocol').TaskDetail | null
+  onFileView?(id: string, view: 'preview' | 'changes'): void
   panels?: UiPanelInfo[]
   summary: TaskSummary
   children: ReactNode
@@ -47,6 +55,10 @@ export function SessionPanels({
   const id = useId()
   const offered = panels.filter(panel => panel.harnessIds === undefined || panel.harnessIds.includes(summary.harnessId ?? 'standard'))
   const active = offered.find(panel => panel.id === selected)
+  const history =
+    detail && activeFile
+      ? fileHistories(detail).find(item => item.path === activeFile.target.reference && item.root === activeFile.target.rootId)
+      : undefined
   if (offered.length === 0 && files.length === 0) return children
   return (
     <div className="session-panels inspector">
@@ -72,11 +84,21 @@ export function SessionPanels({
         }}
       />
       <div role="tabpanel" id={id} aria-label={activeFile?.file?.name ?? active?.title ?? '会话'}>
-        {activeFile ? (
+        {activeFile?.target.view === 'changes' ? (
+          <FileHistoryPreview
+            history={history}
+            name={activeFile.target.reference.split('/').at(-1) ?? activeFile.target.reference}
+            onPreview={() => onFileView?.(activeFile.id, 'preview')}
+            onClose={() => onCloseFile?.(activeFile.id)}
+            onExpand={() => onExpandFile?.()}
+          />
+        ) : activeFile ? (
           <FilePreview
             key={activeFile.id}
             tab={activeFile}
             local={local}
+            deviceId={deviceId}
+            onHistory={history ? () => onFileView?.(activeFile.id, 'changes') : undefined}
             folders={summary.folders}
             cwd={summary.cwd}
             onResolved={file => onFileResolved?.(activeFile.id, file)}

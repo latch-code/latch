@@ -274,7 +274,10 @@ describe('pending submissions', () => {
       harnessId: 'codex',
       workspaceId: 'docs',
       model: { providerId: 'x', model: 'y' },
+      attachmentIds: ['abcdefghijklmnopqrstuv'],
+      fileRefs: [{ root: 'api', path: 'main.ts' }],
     }
+    expect(submissionRequest(submission).body).toMatchObject({ attachmentIds: submission.attachmentIds, fileRefs: submission.fileRefs })
     writePending('k', submission)
     expect(readPending('k')).toEqual(submission)
     store.set('k', JSON.stringify({ requestId: 'r1', prompt: 'p', model: { providerId: 1 } }))

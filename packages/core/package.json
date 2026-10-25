@@ -8,6 +8,7 @@
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
+    "./file-tracking": "./src/file-tracking.ts",
     "./node-kit": "./src/node-kit/index.ts"
   },
   "dependencies": {

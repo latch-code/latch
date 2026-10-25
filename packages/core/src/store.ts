@@ -2,14 +2,27 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, open, readFile, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
-import type { Approval, Message, TaskSummary } from '@latch/protocol'
+import {
+  isFileMention,
+  isFileChange,
+  type FileChange,
+  type FileMention,
+  isAttachmentRef,
+  type AttachmentRef,
+  type Approval,
+  type Message,
+  type TaskSummary,
+} from '@latch/protocol'
 import { AppError, type ModelMessage, type ToolCall } from '@latch/sdk'
 import { writeFileAtomic } from './node-kit/atomic.ts'
 
+export interface StoredHistory extends Omit<ModelMessage, 'attachments'> {
+  attachmentRefs?: AttachmentRef[]
+}
 export interface StoredTask {
   summary: TaskSummary
   messages: Message[]
-  history: ModelMessage[]
+  history: StoredHistory[]
   /** Model-visible instructions snapshotted at the start of the current/latest run. */
   skillContext?: string
   revision: number
@@ -79,10 +92,17 @@ const toolDetailSchema = z.object({
     .optional(),
 })
 const messageSchema = z.object({
+  fileRefs: z.array(z.custom<FileMention>(isFileMention)).max(32).optional(),
+  outputs: z.array(z.custom<FileChange>(isFileChange)).max(1000).optional(),
+  outputsPending: z.literal(true).optional(),
+  outputsTruncated: z.literal(true).optional(),
+  outputsUnavailable: z.literal(true).optional(),
+  attachments: z.array(z.custom<AttachmentRef>(isAttachmentRef)).max(8).optional(),
   id: z.string(),
   role: z.enum(['system', 'user', 'assistant', 'tool']),
   text: z.string(),
   requestId: z.string().optional(),
+  queuedAt: z.string().optional(),
   toolName: z.string().optional(),
   state: z.enum(['queued', 'awaiting-approval', 'running', 'completed', 'failed', 'cancelled']).optional(),
   reasoning: z.string().optional(),
@@ -97,6 +117,7 @@ const messageSchema = z.object({
   turn: turnSchema.optional(),
 })
 const historySchema = z.object({
+  attachmentRefs: z.array(z.custom<AttachmentRef>(isAttachmentRef)).max(8).optional(),
   role: z.enum(['system', 'user', 'assistant', 'tool']),
   content: z.string(),
   toolCalls: z.array(callSchema).optional(),
@@ -125,6 +146,7 @@ const stateSchema = z.object({
         workspaceId: z.string().optional(),
         folders: z.array(z.object({ id: z.string(), path: z.string() })).optional(),
         runId: z.string().min(1).max(128).optional(),
+        runOutcome: z.enum(['completed', 'failed', 'cancelled', 'interrupted']).optional(),
         skills: z.array(z.string()).optional(),
       }),
       messages: z.array(messageSchema),

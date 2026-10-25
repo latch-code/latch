@@ -1,0 +1,119 @@
+.attachment-drafts {
+  display: grid;
+  gap: var(--sp-4);
+  margin: var(--sp-8);
+  max-height: 240px;
+  overflow: auto;
+}
+.attachment-draft,
+.attachment-intro {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  min-width: 0;
+}
+.attachment-draft {
+  border: 1px solid var(--line);
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
+  padding: var(--sp-4);
+}
+.attachment-draft > .ui-button {
+  min-width: 0;
+}
+.attachment-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 240px;
+}
+.attachment-state,
+.attachment-intro {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.attachment-state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.attachment-draft[data-state='failed'] .attachment-state {
+  color: var(--err-text);
+}
+.attachment-intro > span,
+.attachment-draft > .attachment-state {
+  flex: 1;
+}
+.attachment-preview img {
+  display: block;
+  max-width: 100%;
+  max-height: 60vh;
+  object-fit: contain;
+}
+.attachment-preview pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 60vh;
+  overflow: auto;
+}
+.attachment-preview textarea {
+  min-height: 200px;
+}
+.message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-8);
+  margin-block: var(--sp-8);
+}
+.message-user .message-attachments {
+  justify-content: flex-end;
+}
+@media (max-width: 719px) {
+  .attachment-name {
+    max-width: 144px;
+  }
+  .attachment-draft {
+    flex-wrap: wrap;
+  }
+}
+
+.file-mentions {
+  display: grid;
+  gap: var(--sp-4);
+  max-height: 240px;
+  overflow: auto;
+  margin: var(--sp-8);
+}
+.file-mentions > p {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.file-mentions > .ui-button {
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.attachment-drop-mask {
+  position: absolute;
+  inset: var(--sp-8);
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--line-strong);
+  border-radius: var(--r-12);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-pane);
+  color: var(--text-2);
+  pointer-events: none;
+}
+
+.message-file-refs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+  margin-inline-start: var(--sp-4);
+}

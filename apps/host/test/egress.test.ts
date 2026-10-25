@@ -5,6 +5,7 @@ import {
   EgressDenied,
   createEgressFetch,
   createEgressInspector,
+  createRelayEgress,
   isDeniedAddress,
   resolveEgressAddress,
   type LookupFunction,
@@ -71,6 +72,21 @@ async function rejection(promise: Promise<unknown>): Promise<unknown> {
 }
 
 const noLocal = () => new Set<string>()
+
+it('pins the checked relay address and invalidates a private-address lease when its allowance is removed', async () => {
+  let allow = ['relay.example:443']
+  const lookup = lookupFrom({ 'relay.example': ['192.168.1.5'] })
+  const resolve = createRelayEgress({ allow: () => allow, lookup, localAddresses: noLocal })
+  const lease = await resolve(new URL('https://relay.example/'))
+  expect(lease.address).toBe('192.168.1.5')
+  expect(lease.permitted()).toBe(true)
+  expect(lookup.calls).toEqual(['relay.example'])
+  allow = []
+  expect(lease.permitted()).toBe(false)
+  await expect(resolve(new URL('https://relay.example/'))).rejects.toBeInstanceOf(EgressDenied)
+  const metadata = createRelayEgress({ allow: () => ['169.254.169.254:443'], localAddresses: noLocal })
+  await expect(metadata(new URL('https://169.254.169.254/'))).rejects.toBeInstanceOf(EgressDenied)
+})
 
 describe('isDeniedAddress', () => {
   it.each([

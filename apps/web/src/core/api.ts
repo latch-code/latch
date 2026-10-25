@@ -1,3 +1,5 @@
+import { isFileMention, type FileMention } from '@latch/protocol'
+import { isAttachmentRef, type AttachmentRef, type AttachmentUpload } from '@latch/protocol'
 import type { ApiFailure, ModelRef, TaskMode } from '@latch/protocol'
 import { describeFailure } from './securityCopy.ts'
 
@@ -166,14 +168,92 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
   throw failure
 }
 
-export function fileBytes(handle: string, start?: number, end?: number, signal?: AbortSignal, etag?: string): Promise<ArrayBuffer> {
+/** Raw upload keeps file bytes out of JSON; every retry carries the same immutable Blob and requestId. */
+export async function uploadAttachment(
+  file: Blob,
+  metadata: AttachmentUpload,
+  options: { signal?: AbortSignal; onProgress?: (loaded: number, total: number) => void; retried?: boolean } = {},
+): Promise<AttachmentRef> {
+  if (metadata.size !== file.size || file.size <= 0 || file.size > 25 * 1024 * 1024)
+    throw new ClientError('附件大小不可用。', 'attachment-too-large')
+  const bytes = new TextEncoder().encode(JSON.stringify(metadata)),
+    header = btoa(Array.from(bytes, byte => String.fromCharCode(byte)).join(''))
+      .replaceAll('+', '-')
+      .replaceAll('/', '_')
+      .replace(/=+$/u, '')
+  if (header.length > 4096) throw new ClientError('附件元数据过长。', 'attachment-invalid')
+  const response = await new Promise<Response>((resolve, reject) => {
+    const xhr = new XMLHttpRequest(),
+      abort = () => xhr.abort()
+    const cleanup = () => options.signal?.removeEventListener('abort', abort)
+    xhr.open('POST', '/link/api/attachments')
+    xhr.withCredentials = true
+    xhr.timeout = 60_000
+    xhr.setRequestHeader('content-type', 'application/octet-stream')
+    xhr.setRequestHeader('x-latch-attachment', header)
+    xhr.upload.onprogress = event => {
+      if (event.lengthComputable) options.onProgress?.(Math.min(event.loaded, file.size), file.size)
+    }
+    xhr.onload = () => {
+      cleanup()
+      if (xhr.status < 200 || xhr.status > 599 || xhr.responseText.length > 65_536) {
+        reject(new ClientError('附件上传响应无效，请重试。', 'attachment-response', { definitive: false }))
+        return
+      }
+      resolve(new Response(xhr.responseText, { status: xhr.status, headers: { 'content-type': 'application/json' } }))
+    }
+    xhr.onerror = () => {
+      cleanup()
+      reject(new ClientError('附件上传连接中断，请重试。', 'attachment-upload', { definitive: false }))
+    }
+    xhr.ontimeout = () => {
+      cleanup()
+      reject(new ApiTimeoutError())
+    }
+    xhr.onabort = () => {
+      cleanup()
+      reject(new DOMException('上传已取消', 'AbortError'))
+    }
+    options.signal?.addEventListener('abort', abort, { once: true })
+    if (options.signal?.aborted) {
+      cleanup()
+      reject(new DOMException('上传已取消', 'AbortError'))
+      return
+    }
+    xhr.send(file)
+  })
+  if (response.ok) {
+    const value = (await response.json()) as { attachment?: unknown }
+    if (!isAttachmentRef(value.attachment)) throw new ClientError('附件上传响应无效。', 'attachment-response', { definitive: false })
+    return value.attachment
+  }
+  const failure = await failureOf(response)
+  if (
+    !options.retried
+    && !options.signal?.aborted
+    && ((failure.status === 409 && failure.code === 'upload-retry')
+      || (failure.status === 401 && failure.code === 'renewal-required' && (await authHooks.renew?.().catch(() => false))))
+  )
+    return uploadAttachment(file, metadata, { ...options, retried: true })
+  if (failure.status === 401 && failure.code !== 'renewal-required') authHooks.unauthorized?.(failure)
+  throw failure
+}
+
+export function fileBytes(
+  handle: string,
+  start?: number,
+  end?: number,
+  signal?: AbortSignal,
+  etag?: string,
+  source?: 'attachment',
+): Promise<ArrayBuffer> {
   if (
     !/^[A-Za-z0-9_-]{22}$/u.test(handle)
     || (start !== undefined && (!Number.isSafeInteger(start) || start < 0))
     || (end !== undefined && (!Number.isSafeInteger(end) || end < (start ?? 0)))
   )
     return Promise.reject(new ClientError('文件读取范围不可用。', 'file-range'))
-  return api<ArrayBuffer>(`files/${handle}`, {
+  return api<ArrayBuffer>(source === 'attachment' ? `attachments/${handle}/content` : `files/${handle}`, {
     response: 'bytes',
     ...(etag && /^"[a-f0-9]{32}"$/u.test(etag) ? { ifMatch: etag } : {}),
     timeoutMs: 60_000,
@@ -219,6 +299,9 @@ export interface PendingSubmission {
   model?: ModelRef
   workspaceId?: string
   forkOf?: { taskId: string; upToMessageId: string }
+  queue?: true
+  fileRefs?: FileMention[]
+  attachmentIds?: string[]
 }
 
 function modelRef(value: unknown): ModelRef | undefined {
@@ -239,8 +322,18 @@ export function readPending(key: string): PendingSubmission | null {
       if (item[field] !== undefined && typeof item[field] !== 'string') return null
     if (item.mode !== undefined && item.mode !== 'chat' && item.mode !== 'agent') return null
     if (item.model !== undefined && modelRef(item.model) === undefined) return null
+    if (item.queue !== undefined && item.queue !== true) return null
     const fork = item.forkOf as { taskId?: unknown; upToMessageId?: unknown } | undefined
     if (fork !== undefined && (!fork || typeof fork.taskId !== 'string' || typeof fork.upToMessageId !== 'string')) return null
+    if (
+      item.attachmentIds !== undefined
+      && (!Array.isArray(item.attachmentIds)
+        || item.attachmentIds.length > 8
+        || !item.attachmentIds.every(id => typeof id === 'string' && /^[A-Za-z0-9_-]{22}$/u.test(id)))
+    )
+      return null
+    if (item.fileRefs !== undefined && (!Array.isArray(item.fileRefs) || item.fileRefs.length > 32 || !item.fileRefs.every(isFileMention)))
+      return null
     const model = modelRef(item.model)
     return {
       requestId: item.requestId,
@@ -250,7 +343,10 @@ export function readPending(key: string): PendingSubmission | null {
       ...(typeof item.harnessId === 'string' ? { harnessId: item.harnessId } : {}),
       ...(typeof item.workspaceId === 'string' ? { workspaceId: item.workspaceId } : {}),
       ...(model ? { model } : {}),
+      ...(item.queue === true ? { queue: true as const } : {}),
       ...(fork ? { forkOf: { taskId: fork.taskId as string, upToMessageId: fork.upToMessageId as string } } : {}),
+      ...(Array.isArray(item.fileRefs) ? { fileRefs: item.fileRefs as FileMention[] } : {}),
+      ...(Array.isArray(item.attachmentIds) ? { attachmentIds: item.attachmentIds as string[] } : {}),
     }
   } catch {
     return null
@@ -265,8 +361,15 @@ export function writePending(key: string, value: PendingSubmission | null): void
 /** Maps a stored submission to its HTTP request; optional fields are sent only when chosen. */
 export function submissionRequest(submission: PendingSubmission): { path: string; body: Record<string, unknown> } {
   const { requestId, prompt, model } = submission
+  const attachments = {
+    ...(submission.attachmentIds?.length ? { attachmentIds: submission.attachmentIds } : {}),
+    ...(submission.fileRefs?.length ? { fileRefs: submission.fileRefs } : {}),
+  }
   if (submission.sessionId !== undefined) {
-    return { path: `tasks/${encodeURIComponent(submission.sessionId)}/prompt`, body: { prompt, requestId, ...(model ? { model } : {}) } }
+    return {
+      path: `tasks/${encodeURIComponent(submission.sessionId)}/prompt`,
+      body: { prompt, requestId, ...(model ? { model } : {}), ...(submission.queue ? { queue: true } : {}), ...attachments },
+    }
   }
   return {
     path: 'tasks',
@@ -274,6 +377,7 @@ export function submissionRequest(submission: PendingSubmission): { path: string
       prompt,
       requestId,
       mode: submission.mode ?? 'agent',
+      ...attachments,
       ...(submission.harnessId ? { harnessId: submission.harnessId } : {}),
       ...(model ? { model } : {}),
       ...(submission.workspaceId ? { workspaceId: submission.workspaceId } : {}),

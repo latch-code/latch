@@ -1,4 +1,4 @@
-import type { Approval, ModelRef, TaskDetail, TaskMode, TaskSummary } from '@latch/protocol/types'
+import type { AttachmentRef, FileMention, Approval, ModelRef, TaskDetail, TaskMode, TaskSummary } from '@latch/protocol/types'
 
 /** One folder of a project: its ID inside the project (stable across reorders) and its absolute path. */
 export interface ProjectFolder {
@@ -7,6 +7,8 @@ export interface ProjectFolder {
 }
 
 export interface CreateTaskInput {
+  fileRefs?: FileMention[]
+  attachments?: AttachmentRef[]
   prompt: string
   requestId: string
   mode?: TaskMode
@@ -30,6 +32,10 @@ export interface CreateTaskInput {
 }
 
 export interface PromptOptions {
+  /** Host queue time, for the accepted user message. */
+  queuedAt?: string
+  fileRefs?: FileMention[]
+  attachments?: AttachmentRef[]
   /** Switch the session to this model from this turn on. */
   model?: ModelRef
 }

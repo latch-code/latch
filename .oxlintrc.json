@@ -53,9 +53,24 @@
   },
   "overrides": [
     {
+      "files": ["apps/web/src/**", "packages/ui/src/**"],
+      "rules": {
+        "react/no-danger": "error",
+        "no-restricted-properties": [
+          "error",
+          { "property": "innerHTML", "message": "页面不使用 HTML 字符串，使用 React 节点或 DOM 构建 API。" },
+          { "property": "outerHTML", "message": "页面不使用 HTML 字符串。" },
+          { "property": "insertAdjacentHTML", "message": "页面不使用 HTML 字符串。" },
+          { "property": "DOMParser", "message": "DOMParser 只在固定的不透明预览框入口中使用。" },
+          { "object": "document", "property": "write", "message": "页面不重写文档。" },
+          { "object": "document", "property": "writeln", "message": "页面不重写文档。" }
+        ]
+      }
+    },
+    {
       // Browser client, its design system and isomorphic packages. tsconfig.web.json cannot keep Node out on its own:
       // dependency typings (@types/qrcode, undici-types) load Node's globals into the browser program.
-      "files": ["apps/web/src/**", "packages/ui/src/**", "packages/protocol/**"],
+      "files": ["apps/web/src/**", "packages/ui/src/**", "packages/protocol/**", "packages/link-wire/src/**"],
       "rules": {
         "no-restricted-globals": [
           "error",
@@ -68,15 +83,42 @@
           { "name": "__dirname", "message": "浏览器中没有 __dirname。" },
           { "name": "__filename", "message": "浏览器中没有 __filename。" },
           { "name": "setImmediate", "message": "浏览器中没有 setImmediate，用 setTimeout 或 queueMicrotask。" },
-          { "name": "clearImmediate", "message": "浏览器中没有 clearImmediate。" }
+          { "name": "clearImmediate", "message": "浏览器中没有 clearImmediate。" },
+          { "name": "DOMParser", "message": "DOMParser 只在固定的不透明预览框入口中使用。" }
         ],
         "import/no-nodejs-modules": "error"
+      }
+    },
+    {
+      // Only separately bundled frame entries and their OOXML helper parse markup. Keep browser globals intact.
+      "files": [
+        "apps/web/src/preview/office-frame.ts",
+        "apps/web/src/preview/diagram-frame.ts",
+        "apps/web/src/preview/html-frame.ts",
+        "apps/web/src/preview/zip.ts"
+      ],
+      "rules": {
+        "no-restricted-globals": [
+          "error",
+          "process",
+          "Buffer",
+          "global",
+          "require",
+          "module",
+          "exports",
+          "__dirname",
+          "__filename",
+          "setImmediate",
+          "clearImmediate"
+        ]
       }
     },
     {
       // ES modules that run in Node. @types/node declares the CommonJS globals, but they do not exist here.
       "files": [
         "apps/host/**",
+        "apps/relay/**",
+        "packages/link-client/**",
         "apps/web/vite.config.ts",
         "apps/web/test/**",
         "apps/desktop/test/**",

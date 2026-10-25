@@ -20,6 +20,10 @@ async function fixture() {
   const html = `<!doctype html><html><body><script>${script}</script></body></html>`
   await writeFile(join(root, 'preview-frame/office.html'), html)
   await writeFile(join(root, 'preview-frame/office.json'), JSON.stringify({ file: 'office.html', scriptHash: hash }))
+  for (const name of ['html', 'html-script']) {
+    await writeFile(join(root, `preview-frame/${name}.html`), html)
+    await writeFile(join(root, `preview-frame/${name}.json`), JSON.stringify({ file: `${name}.html`, scriptHash: hash }))
+  }
   await writeFile(join(root, 'assets/csv.worker-abcdefgh.js'), 'postMessage(1)')
   return { root, html, hash }
 }
@@ -47,5 +51,19 @@ describe('document frame static boundary', () => {
     expect(worker.status).toBe(200)
     expect(worker.headers.get('content-security-policy')).toContain("connect-src 'none'")
     expect(worker.headers.get('content-security-policy')).not.toContain("connect-src 'self'")
+  })
+  it('refuses top-level browser frame navigation and never serves the script variant over TCP', async () => {
+    const { root, hash } = await fixture()
+    const host = await startTestHost({ uiDir: root })
+    clean.push(() => host.close())
+    expect((await host.raw('loopback-tcp', 'preview-frame/html.html')).status).toBe(403)
+    const staticFrame = await host.raw('loopback-tcp', 'preview-frame/html.html', { headers: { 'sec-fetch-dest': 'iframe' } })
+    expect(staticFrame.status).toBe(200)
+    expect(staticFrame.headers.get('content-security-policy')).toContain(`script-src '${hash}'`)
+    expect((await host.raw('loopback-tcp', 'preview-frame/html-script.html', { headers: { 'sec-fetch-dest': 'iframe' } })).status).toBe(403)
+    const desktop = await host.raw('unix', 'preview-frame/html-script.html')
+    expect(desktop.status).toBe(200)
+    expect(desktop.headers.get('content-security-policy')).toContain("script-src 'unsafe-inline' 'unsafe-eval'")
+    expect(desktop.headers.get('content-security-policy')).toContain("connect-src 'none'")
   })
 })

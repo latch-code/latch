@@ -5,6 +5,7 @@ import { z } from 'zod'
 import {
   isAcceptableDeviceName,
   isLocalListener,
+  isNativeListener,
   LISTENER_CLASSES,
   LISTENER_LABELS,
   SCOPE_LABELS,
@@ -24,6 +25,9 @@ import { isSocketTransport } from './access.ts'
 import type { AuditActor, AuditLog, StepupMethod } from './audit.ts'
 import { constantTimeEqualHex, deviceFingerprint, parseP256Spki, randomCode, randomId, randomNonce, verifyP256 } from './crypto.ts'
 import { paramsHash, type PresenceService } from './presence.ts'
+import { validateNativeIdentity, type NativeIdentityInput, type NativeRegistrationIdentity } from './native-identity.ts'
+import { nativeKnockSecret, pairingCode } from '@latch/link-wire'
+import { nodeCrypto } from '@latch/link-client/crypto'
 
 export const CREDENTIAL_LIFETIME = 30 * 24 * 60 * 60_000
 export const RENEW_INTERVAL = 24 * 60 * 60_000
@@ -106,11 +110,24 @@ const storedDevice = z.strictObject({
   /** A renewed credential not used yet: it becomes current when first presented. */
   pending: z.strictObject({ hash: hex64, issuedAt: z.number() }).optional(),
   legacyTokenHash: hex64.optional(),
+  native: z
+    .strictObject({
+      certificate: z.string().max(8192),
+      verificationKey: z.string().max(256),
+      lastVerifiedAt: z.number().int().nonnegative(),
+      knockHash: hex64,
+    })
+    .optional(),
   revokedAt: z.number().optional(),
   revokedReason: revokedReason.optional(),
 })
 type StoredDevice = z.infer<typeof storedDevice>
-const devicesFile = z.strictObject({ version: z.literal(2), hostId: z.string(), devices: z.array(storedDevice).max(1000) })
+const devicesFile = z.strictObject({
+  version: z.literal(2),
+  hostId: z.string(),
+  devices: z.array(storedDevice).max(1000),
+  nativeInputsPaused: z.boolean().optional(),
+})
 type DevicesFile = z.infer<typeof devicesFile>
 
 const legacyFile = z.object({
@@ -262,7 +279,7 @@ function publicDevice(device: StoredDevice): Device {
     fingerprint: device.fingerprint,
     createdAt: device.createdAt,
     lastSeenAt: device.lastSeenAt,
-    credentialExpiresAt: iso(device.credentialExpiresAt),
+    credentialExpiresAt: iso(device.native ? device.native.lastVerifiedAt + CREDENTIAL_LIFETIME : device.credentialExpiresAt),
     pairedBy: { method: device.pairedBy.method, ...(device.pairedBy.deviceId ? { deviceId: device.pairedBy.deviceId } : {}) },
     ...(device.revokedAt !== undefined ? { revokedAt: iso(device.revokedAt) } : {}),
     ...(device.revokedReason ? { revokedReason: device.revokedReason } : {}),
@@ -291,6 +308,13 @@ function demote(device: StoredDevice): void {
   device.status = 'review'
   device.scopesBeforeReview = device.scopes
   device.scopes = ['view']
+}
+
+function cascadeNative(device: StoredDevice, at: number): void {
+  device.status = 'revoked'
+  device.revokedAt = at
+  device.revokedReason = 'cascade'
+  delete device.pending
 }
 
 /**
@@ -360,6 +384,16 @@ export class DeviceStore {
         const parsed = devicesFile.safeParse(raw)
         if (!parsed.success) throw corrupt(DEVICES_FILE, version === 2 ? '格式无效' : `不支持的版本 ${String(version)}`)
         if (parsed.data.hostId !== this.hostId) throw new AppError(500, 'devices-host-mismatch', '设备登记属于另一台 Host')
+        for (const device of parsed.data.devices) {
+          if (isNativeListener(device.listener) !== Boolean(device.native)) throw corrupt(DEVICES_FILE, '原生身份缺失或入口不匹配')
+          if (device.native) {
+            try {
+              validateNativeIdentity(device.native, Buffer.from(device.publicKey, 'base64url'), true)
+            } catch {
+              throw corrupt(DEVICES_FILE, '原生设备密钥无效')
+            }
+          }
+        }
         this.state = parsed.data
       }
     }
@@ -374,6 +408,10 @@ export class DeviceStore {
     for (const review of replayed.reviews) {
       await this.audit.append({ action: 'device.review', actor, target: review.deviceId, detail: review }).catch(() => {})
     }
+    for (const id of replayed.nativeRevoked)
+      await this.audit
+        .append({ action: 'device.revoked', actor, target: id, detail: { deviceId: id, reason: 'cascade', cascaded: 0 } })
+        .catch(() => {})
     if (replayed.tornBytes) {
       await this.audit
         .append({ action: 'device.revocations.torn-tail-removed', actor, detail: { bytes: replayed.tornBytes } })
@@ -449,9 +487,15 @@ export class DeviceStore {
   private async applyRevocationLog(): Promise<{
     changed: boolean
     reviews: Array<{ deviceId: string; causeDeviceId: string }>
+    nativeRevoked: string[]
     tornBytes: number
   }> {
-    const result = { changed: false, reviews: [] as Array<{ deviceId: string; causeDeviceId: string }>, tornBytes: 0 }
+    const result = {
+      changed: false,
+      reviews: [] as Array<{ deviceId: string; causeDeviceId: string }>,
+      nativeRevoked: [] as string[],
+      tornBytes: 0,
+    }
     let bytes: Buffer
     try {
       bytes = await readFile(this.revocationsPath)
@@ -466,8 +510,13 @@ export class DeviceStore {
       device.revokedAt = line.at
       device.revokedReason = line.reason
       for (const item of this.cascadeTargets(device.id)) {
-        demote(item)
-        result.reviews.push({ deviceId: item.id, causeDeviceId: device.id })
+        if (item.native) {
+          cascadeNative(item, line.at)
+          result.nativeRevoked.push(item.id)
+        } else {
+          demote(item)
+          result.reviews.push({ deviceId: item.id, causeDeviceId: device.id })
+        }
       }
       result.changed = true
     }
@@ -562,7 +611,23 @@ export class DeviceStore {
 
   /** Active devices paired through an invitation from `deviceId`; revoking that inviter moves them to review. */
   private cascadeTargets(deviceId: string): StoredDevice[] {
-    return this.state.devices.filter(item => item.status === 'active' && item.pairedBy.deviceId === deviceId)
+    const targets: StoredDevice[] = [],
+      pending = [deviceId],
+      seen = new Set(pending)
+    for (let index = 0; index < pending.length; index++) {
+      for (const item of this.state.devices) {
+        if (
+          item.pairedBy.deviceId !== pending[index]
+          || seen.has(item.id)
+          || !(item.status === 'active' || (item.native && item.status === 'review'))
+        )
+          continue
+        seen.add(item.id)
+        targets.push(item)
+        if (item.native) pending.push(item.id)
+      }
+    }
+    return targets
   }
 
   private prune(): boolean {
@@ -571,6 +636,7 @@ export class DeviceStore {
     let changed = false
     this.state.devices = this.state.devices.filter(device => {
       if (device.status === 'revoked' && device.revokedAt !== undefined && now - device.revokedAt > PRUNE_AFTER) return false
+      if (device.native && device.status !== 'revoked') return true
       return now - device.credentialExpiresAt <= PRUNE_AFTER
     })
     for (const device of this.state.devices) {
@@ -709,6 +775,13 @@ export class DeviceStore {
    */
   streamAllowed(deviceId: string, credentialHash: string): boolean {
     const device = this.find(deviceId)
+    if (device?.native)
+      return (
+        device.status !== 'revoked'
+        && device.status !== 'legacy-pending'
+        && device.credential !== null
+        && constantTimeEqualHex(device.credential.hash, credentialHash)
+      )
     if (!device || !this.usable(device) || !device.credential) return false
     const now = this.now()
     if (constantTimeEqualHex(device.credential.hash, credentialHash)) return now - device.credential.rotatedAt <= RENEW_INTERVAL
@@ -748,6 +821,102 @@ export class DeviceStore {
     return device !== undefined && this.usable(device)
   }
 
+  nativeCandidates(): Array<{ id: string; kind: 'registered'; certificate: string; knockKey: Uint8Array }> {
+    return this.state.devices
+      .filter(device => device.native && device.credential && (device.status === 'active' || device.status === 'review'))
+      .map(device => ({
+        id: device.id,
+        kind: 'registered',
+        certificate: device.native!.certificate,
+        knockKey: Buffer.from(device.native!.knockHash, 'hex'),
+      }))
+  }
+
+  nativeInputsPaused(): boolean {
+    return this.state.nativeInputsPaused === true
+  }
+  nativeStatus(deviceId: string): Device['native'] | undefined {
+    const device = this.find(deviceId)
+    if (!device?.native) return undefined
+    return {
+      lastVerifiedAt: iso(device.native.lastVerifiedAt),
+      input:
+        device.status === 'revoked'
+          ? 'revoked'
+          : device.status === 'review'
+            ? 'review'
+            : this.nativeInputsPaused()
+              ? 'paused'
+              : this.now() - device.native.lastVerifiedAt > CREDENTIAL_LIFETIME
+                ? 'verification-required'
+                : 'ready',
+    }
+  }
+
+  setNativeInputsPaused(paused: boolean, actor: AuditActor, stepup: StepupMethod): Promise<{ audited: boolean }> {
+    return this.serialize(async () => {
+      if (this.nativeInputsPaused() === paused) return { audited: true }
+      let seq: number | undefined
+      if (!paused) seq = (await this.audit.append({ action: 'native.inputs.resumed', actor, stepup, detail: {} })).seq
+      this.state.nativeInputsPaused = paused
+      let audited = true
+      if (paused)
+        await this.audit.append({ action: 'native.inputs.paused', actor, stepup: 'none', detail: {} }).catch(() => {
+          audited = false
+        })
+      try {
+        await this.persist()
+      } catch (error) {
+        if (!paused) {
+          this.state.nativeInputsPaused = true
+          if (seq !== undefined) await this.audit.append({ action: 'action.failed', actor, detail: { refSeq: seq } }).catch(() => {})
+        }
+        throw error
+      }
+      return { audited }
+    })
+  }
+
+  nativeVerificationKey(deviceId: string): string | undefined {
+    return this.find(deviceId)?.native?.verificationKey
+  }
+
+  authenticateNative(deviceId: string): AuthOutcome {
+    const device = this.find(deviceId)
+    if (!device?.native || !device.credential || !isNativeListener(device.listener)) return { ok: false, code: 'unauthorized' }
+    if (device.status === 'revoked' || device.status === 'legacy-pending') return { ok: false, code: 'device-revoked', deviceId }
+    const result = publicDevice(device)
+    if (this.nativeInputsPaused() || this.now() - device.native.lastVerifiedAt > CREDENTIAL_LIFETIME) result.scopes = ['view']
+    this.touch(device, this.now())
+    return { ok: true, device: result, credentialHash: device.credential.hash, renewAfter: this.now() + RENEW_INTERVAL, renewDue: false }
+  }
+
+  markNativeVerified(deviceId: string, listener: ListenerClass): Promise<number> {
+    return this.serialize(async () => {
+      const device = this.find(deviceId)
+      if (!device?.native || (device.status !== 'active' && device.status !== 'review')) throw unauthorized()
+      const now = this.now(),
+        before = { verified: device.native.lastVerifiedAt, expires: device.credentialExpiresAt }
+      const { seq } = await this.audit.append({
+        action: 'device.native.verified',
+        actor: { deviceId, listener, via: 'http' },
+        target: deviceId,
+        detail: { deviceId },
+      })
+      device.native.lastVerifiedAt = now
+      device.credentialExpiresAt = now + CREDENTIAL_LIFETIME
+      try {
+        await this.persist()
+      } catch (error) {
+        device.native.lastVerifiedAt = before.verified
+        device.credentialExpiresAt = before.expires
+        await this.audit.append({ action: 'action.failed', actor: { listener: 'host' }, detail: { refSeq: seq } }).catch(() => {})
+        throw error
+      }
+      return now + 10 * 60_000
+    })
+  }
+
   get(deviceId: string): Device | undefined {
     const device = this.find(deviceId)
     return device && publicDevice(device)
@@ -785,6 +954,8 @@ export class DeviceStore {
       dataScope: DataScope
       pairedBy: Device['pairedBy']
       enrollmentId: string
+      native?: NativeRegistrationIdentity
+      reservedNativeId?: string
     },
     actor: AuditActor,
     stepup: StepupMethod,
@@ -804,18 +975,30 @@ export class DeviceStore {
         if (!inviter || inviter.status !== 'active' || !this.usable(inviter))
           throw new AppError(403, 'invitation-invalid', '配对码无效或已过期')
       }
+      const native = isNativeListener(input.connection.listener) && input.native ? validateNativeIdentity(input.native, der) : undefined
+      if (native && this.nativeCandidates().length >= 96) throw new AppError(429, 'native-device-limit', '原生设备登记已达到上限')
+      if (isNativeListener(input.connection.listener) !== Boolean(native))
+        throw new AppError(400, 'native-identity-required', '原生登记必须绑定连接证书与验证密钥')
+      if (native && !/^[a-f0-9]{64}$/u.test(input.native!.knockHash))
+        throw new AppError(400, 'native-identity-invalid', '原生设备的敲门派生无效')
       const now = this.now()
-      const id = randomId('dev')
+      if (
+        input.reservedNativeId !== undefined
+        && (!native || !/^dev_[A-Za-z0-9_-]{22}$/u.test(input.reservedNativeId) || this.find(input.reservedNativeId))
+      )
+        throw new AppError(409, 'native-identity-conflict', '原生设备身份发生冲突，请重新配对')
+      const id = input.reservedNativeId ?? randomId('dev')
       const credential = newCredential(id)
       const record: StoredDevice = {
         id,
         name,
-        status: 'active',
+        status: native && input.connection.listener === 'native-relay' ? 'review' : 'active',
         listener: input.connection.listener,
         origin: input.connection.origin,
         publicKey: der.toString('base64url'),
         fingerprint: deviceFingerprint(der),
-        scopes,
+        scopes: native && input.connection.listener === 'native-relay' ? ['view'] : scopes,
+        ...(native && input.connection.listener === 'native-relay' ? { scopesBeforeReview: scopes } : {}),
         dataScope: input.dataScope,
         pairedBy: { method, ...(input.pairedBy.deviceId ? { deviceId: input.pairedBy.deviceId } : {}) },
         createdAt: iso(now),
@@ -823,6 +1006,7 @@ export class DeviceStore {
         credentialExpiresAt: now + CREDENTIAL_LIFETIME,
         credential: { hash: sha256Hex(credential), rotatedAt: now },
         previous: [],
+        ...(native ? { native: { ...native, knockHash: input.native!.knockHash, lastVerifiedAt: now } } : {}),
       }
       const { seq } = await this.audit.append({
         action: 'device.enrolled',
@@ -834,7 +1018,7 @@ export class DeviceStore {
           enrollmentId: input.enrollmentId,
           listener: record.listener,
           method,
-          scopes,
+          scopes: record.scopes,
           dataScope: record.dataScope,
           ...(record.pairedBy.deviceId ? { pairedByDeviceId: record.pairedBy.deviceId } : {}),
         },
@@ -1102,12 +1286,17 @@ export class DeviceStore {
     }
 
     const cascaded = this.cascadeTargets(device.id)
-    for (const item of cascaded) demote(item)
+    for (const item of cascaded) {
+      if (item.native) cascadeNative(item, now)
+      else demote(item)
+    }
     for (const listener of this.revocationListeners) {
-      try {
-        listener(device.id)
-      } catch {
-        /* a listener must not undo a revocation */
+      for (const id of [device.id, ...cascaded.filter(item => item.native).map(item => item.id)]) {
+        try {
+          listener(id)
+        } catch {
+          /* a listener must not undo a revocation */
+        }
       }
     }
     let audited = true
@@ -1123,12 +1312,11 @@ export class DeviceStore {
     }
     for (const item of cascaded) {
       try {
-        await this.audit.append({
-          action: 'device.review',
-          actor,
-          target: item.id,
-          detail: { deviceId: item.id, causeDeviceId: device.id },
-        })
+        await this.audit.append(
+          item.native
+            ? { action: 'device.revoked', actor, target: item.id, detail: { deviceId: item.id, reason: 'cascade', cascaded: 0 } }
+            : { action: 'device.review', actor, target: item.id, detail: { deviceId: item.id, causeDeviceId: device.id } },
+        )
       } catch {
         audited = false
       }
@@ -1158,6 +1346,7 @@ export interface EnrollmentRequest {
   invitation?: string
   /** 'lpo1-…' */
   offlineCode?: string
+  native?: NativeIdentityInput
 }
 
 interface Enrollment {
@@ -1181,6 +1370,10 @@ interface Enrollment {
   failures: number
   legacyDeviceId?: string
   completing: boolean
+  native?: NativeRegistrationIdentity
+  reservedNativeId?: string
+  nativeInvitationHash?: string
+  nativeInvitationExpiresAt?: number
 }
 
 interface Invitation {
@@ -1254,6 +1447,7 @@ export class EnrollmentService {
   private readonly enrollments = new Map<string, Enrollment>()
   private readonly invitations = new Map<string, Invitation>()
   private offlineQueue: Promise<unknown> = Promise.resolve()
+  private invitationQueue: Promise<unknown> = Promise.resolve()
 
   constructor(options: {
     hostId: string
@@ -1302,7 +1496,7 @@ export class EnrollmentService {
   private prune(): void {
     const now = this.now()
     for (const [id, enrollment] of this.enrollments) {
-      if (now > enrollment.expiresAt + ENROLLMENT_LIFETIME) this.enrollments.delete(id)
+      if (now > Math.max(enrollment.expiresAt + ENROLLMENT_LIFETIME, enrollment.nativeInvitationExpiresAt ?? 0)) this.enrollments.delete(id)
     }
     for (const [id, invitation] of this.invitations) if (now > invitation.expiresAt) this.invitations.delete(id)
   }
@@ -1318,6 +1512,11 @@ export class EnrollmentService {
     }
     if (!request || typeof request !== 'object') throw new AppError(400, 'invalid-request', '登记请求无效')
     const { der } = parseP256Spki(request.publicKey)
+    let native: NativeRegistrationIdentity | undefined
+    let sas: string | undefined
+    if (!isNativeListener(connection.listener) && request.native)
+      throw new AppError(400, 'native-identity-invalid', '此入口不接受原生设备身份')
+    const action = isNativeListener(connection.listener) ? 'device.enroll-native' : 'device.enroll'
     const legacyDevice =
       connection.listener === 'loopback-tcp' && legacy?.kind === 'legacy-cookie' ? this.devices.legacyMatch(legacy.value) : undefined
     // A migrated name is checked like any other before it reaches the confirmation dialog.
@@ -1357,10 +1556,28 @@ export class EnrollmentService {
       if (!request.scopes) scopes = scopes.filter(scope => invitation!.scopes.includes(scope))
       if (scopes.some(scope => !invitation!.scopes.includes(scope)))
         throw new AppError(400, 'scope-not-grantable', '该权限在此连接方式下不可授予')
+      if (isNativeListener(connection.listener)) {
+        if (!request.native) throw new AppError(400, 'native-identity-required', '原生配对必须提供独立的连接密钥与验证密钥')
+        const identity = validateNativeIdentity(request.native, der)
+        const secret = await nativeKnockSecret(
+          nodeCrypto,
+          Buffer.from(sha256Hex(request.invitation as string), 'hex'),
+          der,
+          Buffer.from(identity.verificationKey, 'base64url'),
+        )
+        native = { ...identity, knockHash: sha256Hex(secret) }
+        secret.fill(0)
+        sas = await pairingCode(
+          nodeCrypto,
+          Buffer.from(sha256Hex(request.invitation as string), 'hex'),
+          der,
+          Buffer.from(native.verificationKey, 'base64url'),
+        )
+      }
       // A confirmation that cannot start (a full-access session holds it back, or the component is unavailable) must not
       // spend the invitation: the phone is told to try again once the session ends, with the same code. Checked only for
       // a valid invitation, so nobody without one learns that a session runs.
-      await this.presence.assertCanRequest('device.enroll')
+      await this.presence.assertCanRequest(action)
       // Single use: consumed by the first create that passes validation and may ask for the confirmation. Another
       // create may have taken it during the check.
       if (this.findInvitation(request.invitation, connection) !== invitation)
@@ -1401,6 +1618,14 @@ export class EnrollmentService {
       method,
       failures: 0,
       completing: false,
+      ...(native
+        ? {
+            native,
+            reservedNativeId: randomId('dev'),
+            nativeInvitationHash: invitation!.codeHash,
+            nativeInvitationExpiresAt: invitation!.expiresAt,
+          }
+        : {}),
       ...(invitation?.inviterDeviceId ? { inviterDeviceId: invitation.inviterDeviceId } : {}),
       ...(invitation ? { invitationId: invitation.id } : {}),
       ...(legacyDevice ? { legacyDeviceId: legacyDevice.id } : {}),
@@ -1424,9 +1649,10 @@ export class EnrollmentService {
     ]
     const warnings = ['只有在你正在登记这台设备、并且两边显示的指纹完全一致时才确认。']
     if (scopes.includes('admin')) warnings.push('该设备将可以管理此 Host（模型服务、插件、项目和其他设备）。')
-    const binding = paramsHash('device.enroll', {
+    const binding = paramsHash(action, {
       enrollmentId: id,
       publicKey: request.publicKey,
+      ...(native ? { certificateHash: sha256Hex(native.certificate), verificationKeyHash: sha256Hex(native.verificationKey) } : {}),
       name,
       scopes,
       dataScope,
@@ -1437,10 +1663,11 @@ export class EnrollmentService {
     let confirmation
     try {
       confirmation = await this.presence.request({
-        action: 'device.enroll',
+        action,
+        ...(sas ? { pairingCode: sas } : {}),
         requester: { deviceName: name, listener: connection.listener, remoteAddress: local ? LOCAL_SOURCE : connection.remoteAddress },
         // The fingerprint comes first in the sheet: the name is chosen by the device asking and could imitate one.
-        subject: { form: 'device.enroll', slots: { fingerprint, device: name } },
+        subject: { form: native ? 'device.enroll-native' : 'device.enroll', slots: { fingerprint, device: name } },
         lines,
         warnings,
         paramsHash: binding,
@@ -1459,7 +1686,7 @@ export class EnrollmentService {
       if (enrollment.status !== 'pending') return
       if (outcome.result === 'approved') {
         try {
-          this.presence.consume(confirmation.id, { action: 'device.enroll', paramsHash: binding })
+          this.presence.consume(confirmation.id, { action, paramsHash: binding })
           if (enrollment.inviterDeviceId !== undefined && !this.devices.isActive(enrollment.inviterDeviceId))
             throw new Error('inviter revoked')
           const now = this.now()
@@ -1498,6 +1725,29 @@ export class EnrollmentService {
     this.invitations.set(invitation.id, invitation)
   }
 
+  nativeInvitations(): Array<{ id: string; kind: 'pairing'; knockKey: Uint8Array; enrollmentId?: string }> {
+    this.prune()
+    const unused = [...this.invitations.values()]
+      .filter(item => isNativeListener(item.listener) && (!item.inviterDeviceId || this.devices.isActive(item.inviterDeviceId)))
+      .map(item => ({ id: item.id, kind: 'pairing' as const, knockKey: Buffer.from(item.codeHash, 'hex') }))
+    const recovering = [...this.enrollments.values()]
+      .filter(
+        item =>
+          item.nativeInvitationHash
+          && item.invitationId
+          && item.nativeInvitationExpiresAt! > this.now()
+          && ['pending', 'approved', 'completed'].includes(item.status)
+          && (!item.inviterDeviceId || this.devices.isActive(item.inviterDeviceId)),
+      )
+      .map(item => ({
+        id: item.invitationId!,
+        kind: 'pairing' as const,
+        knockKey: Buffer.from(item.nativeInvitationHash!, 'hex'),
+        enrollmentId: item.id,
+      }))
+    return [...unused, ...recovering]
+  }
+
   /** An unexpired invitation issued for exactly this listener and origin, from an inviter that is still active. */
   private findInvitation(code: unknown, connection: ConnectionContext): Invitation | undefined {
     if (typeof code !== 'string' || !/^lpi1-[A-Z2-7]{26}$/u.test(code)) return undefined
@@ -1507,7 +1757,12 @@ export class EnrollmentService {
     for (const invitation of this.invitations.values()) {
       if (constantTimeEqualHex(invitation.codeHash, hash) && invitation.expiresAt >= now) found = invitation
     }
-    if (!found || found.listener !== connection.listener || found.origin !== connection.origin) return undefined
+    if (
+      !found
+      || !(found.listener === connection.listener || (isNativeListener(found.listener) && isNativeListener(connection.listener)))
+      || found.origin !== connection.origin
+    )
+      return undefined
     if (found.inviterDeviceId && !this.devices.isActive(found.inviterDeviceId)) return undefined
     return found
   }
@@ -1547,7 +1802,13 @@ export class EnrollmentService {
   private lookup(id: unknown, connection: ConnectionContext): Enrollment {
     const enrollment = typeof id === 'string' ? this.enrollments.get(id) : undefined
     if (!enrollment) throw new AppError(404, 'enrollment-not-found', '找不到该登记请求')
-    if (enrollment.connection.listener !== connection.listener || enrollment.connection.origin !== connection.origin) {
+    if (
+      !(
+        enrollment.connection.listener === connection.listener
+        || (isNativeListener(enrollment.connection.listener) && isNativeListener(connection.listener))
+      )
+      || enrollment.connection.origin !== connection.origin
+    ) {
       throw new AppError(409, 'listener-mismatch', '请在发起登记的同一页面完成登记')
     }
     if ((enrollment.status === 'pending' || enrollment.status === 'approved') && this.now() > enrollment.expiresAt) {
@@ -1595,6 +1856,40 @@ export class EnrollmentService {
     return this.view(this.lookup(id, connection), false)
   }
 
+  nativeStatus(id: string, connection: ConnectionContext): EnrollmentView {
+    const enrollment = this.lookup(id, connection)
+    if (!enrollment.native || !isNativeListener(connection.listener)) throw unauthorized()
+    return this.view(enrollment, true)
+  }
+
+  private verifyEnrollment(enrollment: Enrollment, signature: string, connection: ConnectionContext): void {
+    const { key } = parseP256Spki(enrollment.publicKeyDer.toString('base64url'))
+    if (verifyP256(key, `latch-enroll-v1\n${this.hostId}\n${enrollment.id}\n${enrollment.nonce}`, signature)) return
+    enrollment.failures += 1
+    if (enrollment.failures >= SIGNATURE_ATTEMPTS && enrollment.status !== 'completed') {
+      enrollment.status = 'cancelled'
+      void this.failed(enrollment.id, 'signature', { listener: connection.listener, via: 'http' })
+    }
+    throw new AppError(401, 'invalid-signature', '签名校验失败')
+  }
+
+  /** Reveals outer pass material only after OS approval and proof of the enrolled connection key. No device exists yet. */
+  prepareNative(id: string, signature: string, connection: ConnectionContext): string {
+    const enrollment = this.lookup(id, connection)
+    if (
+      !isNativeListener(connection.listener)
+      || !enrollment.native
+      || !enrollment.reservedNativeId
+      || (enrollment.nativeInvitationExpiresAt ?? 0) <= this.now()
+      || !['approved', 'completed'].includes(enrollment.status)
+    )
+      throw new AppError(409, 'enrollment-not-ready', '请先在 Mac 完成本机确认')
+    if (enrollment.status === 'completed' && !['active', 'review'].includes(this.devices.get(enrollment.reservedNativeId)?.status ?? ''))
+      throw unauthorized()
+    this.verifyEnrollment(enrollment, signature, connection)
+    return enrollment.reservedNativeId
+  }
+
   async complete(id: string, signature: string, connection: ConnectionContext): Promise<{ device: Device; credential: string }> {
     const enrollment = this.lookup(id, connection)
     switch (enrollment.status) {
@@ -1607,21 +1902,19 @@ export class EnrollmentService {
       case 'cancelled':
         throw new AppError(410, 'enrollment-cancelled', '登记请求已取消，请重新提交')
       case 'completed':
+        if (enrollment.native && isNativeListener(connection.listener)) {
+          const deviceId = this.prepareNative(id, signature, connection),
+            device = this.devices.get(deviceId)
+          if (!device) throw unauthorized()
+          return { device, credential: '' }
+        }
         throw new AppError(409, 'enrollment-completed', '该登记已完成')
       case 'approved':
         break
     }
     if (enrollment.completing) throw new AppError(409, 'enrollment-pending', '本机尚未确认')
     const actor: AuditActor = { listener: connection.listener, via: 'http' }
-    const { key } = parseP256Spki(enrollment.publicKeyDer.toString('base64url'))
-    if (!verifyP256(key, `latch-enroll-v1\n${this.hostId}\n${enrollment.id}\n${enrollment.nonce}`, signature)) {
-      enrollment.failures += 1
-      if (enrollment.failures >= SIGNATURE_ATTEMPTS) {
-        enrollment.status = 'cancelled'
-        await this.failed(enrollment.id, 'signature', actor)
-      }
-      throw new AppError(401, 'invalid-signature', '签名校验失败')
-    }
+    this.verifyEnrollment(enrollment, signature, connection)
     enrollment.completing = true
     try {
       const result = await this.devices.create(
@@ -1632,6 +1925,8 @@ export class EnrollmentService {
           scopes: enrollment.scopes,
           dataScope: enrollment.dataScope,
           enrollmentId: enrollment.id,
+          ...(enrollment.native ? { native: enrollment.native } : {}),
+          ...(enrollment.reservedNativeId ? { reservedNativeId: enrollment.reservedNativeId } : {}),
           pairedBy: { method: enrollment.method, ...(enrollment.inviterDeviceId ? { deviceId: enrollment.inviterDeviceId } : {}) },
         },
         actor,
@@ -1663,7 +1958,13 @@ export class EnrollmentService {
    * Ten minutes, single use, in memory, valid on one listener and origin only: the TLS entry for a phone, or loopback
    * for a browser on this computer. The code is returned exactly once and never logged.
    */
-  async createInvitation(
+  createInvitation(...input: Parameters<EnrollmentService['issueInvitation']>): Promise<InvitationView> {
+    const operation = this.invitationQueue.then(() => this.issueInvitation(...input))
+    this.invitationQueue = operation.catch(() => {})
+    return operation
+  }
+
+  private async issueInvitation(
     input: { inviter?: Device; scopes?: DeviceScope[]; listener: ListenerClass; origin: string },
     actor: AuditActor,
   ): Promise<InvitationView> {
@@ -1685,6 +1986,8 @@ export class EnrollmentService {
     if (scopes.some(scope => !INVITABLE_SCOPES.includes(scope)))
       throw new AppError(400, 'scope-not-grantable', '该权限在此连接方式下不可授予')
     this.prune()
+    if (isNativeListener(input.listener) && this.nativeInvitations().length >= MAX_INVITATIONS)
+      throw new AppError(429, 'rate-limited', '原生配对正在等待完成，请稍后重试', { retryAfter: 60 })
     if (this.invitations.size >= MAX_INVITATIONS) throw new AppError(429, 'rate-limited', '请求过于频繁，请稍后再试', { retryAfter: 60 })
     const id = randomId('inv')
     const code = randomCode('lpi1')

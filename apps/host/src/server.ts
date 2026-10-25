@@ -1,7 +1,15 @@
 import { readPreviewFrame, WORKER_CSP } from './preview-frames.ts'
+import { PromptQueues, type QueueActor } from './prompt-queues.ts'
+import { Questions } from './questions.ts'
+import { createQuestionsPlugin } from './plugins/tools/questions/index.ts'
 import { forkSeed } from './forks.ts'
+import { createFileTrackingService } from './files/output-tracker.ts'
+import { checkedFileMentions, fileMentionsSchema, projectSearchSchema, searchProjectFiles } from './file-mentions.ts'
+import { AttachmentStore } from './attachments.ts'
+import { createAttachmentRoutes, assertAttachmentCapability } from './attachment-routes.ts'
+import type { AttachmentSelection, AttachmentCapabilities, AttachmentRef } from '@latch/protocol'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 export { loadPluginPackage } from './plugin-packages.ts'
 import { lstat, mkdir, chmod, readFile, readdir, realpath, rm, rmdir, stat, unlink } from 'node:fs/promises'
 import { homedir, hostname } from 'node:os'
@@ -13,6 +21,7 @@ import {
   escapeSecurityText,
   PROVIDER_PRESETS,
   isLocalListener,
+  isNativeListener,
   LISTENER_LABELS,
   SCOPE_LABELS,
   rejectionNote,
@@ -72,8 +81,22 @@ import { createAcpAgentPlugin, forgetCommandLookups, resolveCommand, validateAge
 import { AuditLog, type AuditActor, type StepupMethod } from './audit.ts'
 import { excludeFromBackup } from './backup.ts'
 import { DeviceStore, EnrollmentService, type ConnectionContext, type DeviceScopeBase } from './auth.ts'
-import { hashDisplay } from './crypto.ts'
-import { createEgressFetch, createEgressInspector, type EgressReason, type FetchLike, type LookupFunction } from './egress.ts'
+import { hashDisplay, parseP256Spki, randomNonce, verifyP256 } from './crypto.ts'
+import { nativeRecoverySecret, nativeVerificationText, nativeWindowSecret } from '@latch/link-wire'
+import { nodeCrypto } from '@latch/link-client'
+import { startNativeHost, type NativeOpening } from './native.ts'
+import { NativeSettings, nativeAddresses } from './native-settings.ts'
+import { RelayProfiles } from './relay/profiles.ts'
+import { HostAddressBooks } from './relay/address-book.ts'
+import { HostRelayController } from './relay/controller.ts'
+import {
+  createEgressFetch,
+  createEgressInspector,
+  createRelayEgress,
+  type EgressReason,
+  type FetchLike,
+  type LookupFunction,
+} from './egress.ts'
 import { loadOrCreateHostIdentity } from './identity.ts'
 import {
   DENY_READ_HOME_PATHS,
@@ -198,6 +221,7 @@ const MAX_ISSUED_INVITATIONS = 256
 const PRIVATE_ENTRIES = [
   'auth',
   'identity',
+  'native',
   'audit',
   'policy.json',
   'agents',
@@ -246,6 +270,9 @@ const ANONYMOUS_UNIX = new Set([
   'GET /link/api/devices',
   'DELETE /link/api/devices/:id',
   'POST /link/api/pairings',
+  'POST /link/api/native/pairings',
+  'GET /link/api/native/info',
+  'POST /link/api/native/input/pause',
   'GET /link/api/traffic',
 ])
 
@@ -265,10 +292,16 @@ const legacyProviderSchema = z.object({ baseURL: httpURL, apiKey: apiKeyText, mo
 const modelId = z.string().trim().min(1).max(200)
 const modelRefSchema = z.object({ providerId: z.string().min(1).max(64), model: modelId })
 const promptSchema = z.object({
-  prompt: z.string().trim().min(1).max(16_000),
+  fileRefs: fileMentionsSchema,
+  prompt: z.string().trim().max(16_000),
+  attachmentIds: z
+    .array(z.string().regex(/^[A-Za-z0-9_-]{22}$/u))
+    .max(8)
+    .optional(),
   requestId: z.string().uuid(),
   model: modelRefSchema.optional(),
 })
+const queuedPromptSchema = promptSchema.extend({ queue: z.boolean().optional() })
 const createTaskSchema = promptSchema.extend({
   prompt: z.string().trim().max(16_000).default(''),
   forkOf: z
@@ -288,7 +321,7 @@ const taskPatchSchema = z
   .refine(value => value.title !== undefined || value.pinned !== undefined || value.archived !== undefined, '没有要修改的内容')
 const configSchema = z.object({ configId: z.string().min(1).max(128), value: z.string().max(1024) })
 const requestIdSchema = z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u)
-const decisionSchema = z.object({
+const decisionSchema = z.strictObject({
   decision: z.enum(['allow', 'reject']),
   optionId: z.string().min(1).max(128).optional(),
   /** With a rejection: what to do instead, for the built-in harness (`rejectionNote` decides what is accepted). */
@@ -296,7 +329,7 @@ const decisionSchema = z.object({
   requestId: requestIdSchema.optional(),
 })
 /** Both optional so a page loaded before them can still stop a run; such a cancel stops whatever is running. */
-const cancelSchema = z.object({
+const cancelSchema = z.strictObject({
   requestId: requestIdSchema.optional(),
   runId: z.string().regex(RUN_ID).optional(),
 })
@@ -310,6 +343,10 @@ const enrollmentSchema = z.object({
   dataScope: z.enum(['work', 'all']).optional(),
   invitation: z.string().min(1).max(64).optional(),
   offlineCode: z.string().min(1).max(64).optional(),
+  native: z
+    .object({ certificate: z.string().min(1).max(8192), verificationKey: z.string().min(1).max(256) })
+    .strict()
+    .optional(),
 })
 const signatureSchema = z.object({ signature: z.string().min(1).max(256) })
 const renewSchema = z.object({ nonce: z.string().min(1).max(128), signature: z.string().min(1).max(256) })
@@ -323,6 +360,9 @@ const invitationSchema = z.object({
 })
 const providerKind = z.enum(['openai-compatible', 'anthropic'])
 const modelList = z.array(modelId).max(1000)
+const modelCapabilitiesSchema = z
+  .record(modelId, z.strictObject({ vision: z.boolean().optional() }))
+  .refine(value => Object.keys(value).length <= 1000)
 /**
  * `confirmOrigin`: confirm the address on this computer in the same request when it is not confirmed yet, or when it
  * needs an outbound allowance it lacks (desktop only). Without it, a keyless service at an unconfirmed address is saved
@@ -336,6 +376,7 @@ const providerCreateSchema = z.object({
   baseURL: httpURL,
   apiKey: apiKeyText.optional(),
   models: modelList.default([]),
+  modelCapabilities: modelCapabilitiesSchema.optional(),
   defaultModel: modelId,
   enabled: z.boolean().optional(),
   confirmOrigin: z.boolean().optional(),
@@ -345,6 +386,7 @@ const providerUpdateSchema = z.object({
   baseURL: httpURL.optional(),
   apiKey: apiKeyText.nullable().optional(),
   models: modelList.optional(),
+  modelCapabilities: modelCapabilitiesSchema.optional(),
   defaultModel: modelId.optional(),
   enabled: z.boolean().optional(),
   confirmOrigin: z.boolean().optional(),
@@ -477,6 +519,9 @@ export interface ServerOptions {
   /** Builds the plugin for an agent definition. Defaults to the ACP adapter. */
   agentPlugin?: (agent: AgentRecord) => HarnessPlugin
   tls?: TlsListenerOptions
+  native?: { host: string; port: number }
+  /** Extra platform trust anchors for privately operated relay TLS, supplied only by the Host operator. */
+  nativeRelayCa?: string | Buffer
   /** Tests; default per-user runtime dir. */
   runtimeParent?: string
   agentsDir?: string
@@ -521,6 +566,7 @@ export interface StartedHost {
   origin: string
   loopbackPort: number
   tlsOrigin?: string
+  nativePort?: number
   socketPath: string
   runtimeDir: string
   startedAt: string
@@ -535,6 +581,9 @@ export interface StartedHost {
 interface Caller {
   connection: ConnectionContext
   device?: Device
+  /** Set only by the controlled native metadata/reduction routes. */
+  nativeWindowExempt?: boolean
+  nativeOpening?: NativeOpening
   renewAfter?: number
   presented?: Presented
   /** Hash of the credential this request was admitted with; event streams stay bound to it. */
@@ -542,6 +591,7 @@ interface Caller {
 }
 
 interface EventStream {
+  nativeOpening?: NativeOpening
   deviceId: string
   credentialHash: string
   sessionId?: string
@@ -992,6 +1042,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         hub ? (await hub.unsandboxedTasks()).map(task => ({ id: task.id, title: task.title, harnessId: task.harnessId ?? '' })) : [],
     })
     const enrollments = new EnrollmentService({ hostId, devices, presence, audit, directory: authDir, now })
+    const relayProfiles = await RelayProfiles.open(dataDir)
+    await excludeFromBackup([join(dataDir, 'native')], { log })
+    const addressBooks = new HostAddressBooks(relayProfiles, identity, () => [])
     const limits = createRateLimits(options.rateLimits ?? 'default', now)
     /**
      * Hashes of invitation codes this Host handed out, with their expiry and the listener they are for; only these, on
@@ -1213,6 +1266,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       { managed: 'core' },
     )
     await registry.enable('standard-harness')
+    const questions = await Questions.open({ dataDir, changed: id => refresh(id), detail: id => hub!.detail(id) })
+    startupCleanup.push(() => questions.close())
+    registry.register(createQuestionsPlugin(questions), { managed: 'core' })
+    await registry.enable('user-questions')
+    function questionSummary(task: TaskSummary): TaskSummary {
+      const { pendingQuestions: _untrustedCount, ...summary } = task
+      return { ...summary, pendingQuestions: questions.view(task.id).length }
+    }
     const workspaceFiles = createWorkspacePlugin({ protectedPaths: guardedPaths })
     const optional = [
       isWithin(realWorkspace, realDataDir) ? guardDataDir(workspaceFiles, realDataDir, realWorkspace) : workspaceFiles,
@@ -1238,7 +1299,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     const harnessHub = await HarnessHub.open({ dataDir, defaultId: defaultHarnessId, log, now })
     hub = harnessHub
+    const attachmentStore = await AttachmentStore.open(dataDir, { now, deferPrune: true })
     const fileReferences = await FileReferenceStore.open(dataDir)
+    const fileTracking = createFileTrackingService({
+      protectedPaths: guardedPaths,
+      allowedRoot: async root => (await canonicalSet(usablePrimaries())).has(await canonicalPath(root.path)),
+    })
+    startupCleanup.push(() => fileTracking.close())
     const fileRoutes = createFileRoutes({
       protectedPaths: guardedPaths,
       home,
@@ -1273,17 +1340,107 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       actorOf: caller => actorOf(caller as Caller),
       ...(options.fileHooks ? { hooks: options.fileHooks } : {}),
     })
+    async function attachmentCapabilities(
+      caller: Caller,
+      selection: AttachmentSelection,
+      sessionId?: string,
+    ): Promise<AttachmentCapabilities> {
+      requireScope(caller, 'run')
+      recheck(caller, 'run')
+      let selected = selection
+      if (sessionId) {
+        const level = await assertSessionAccess(caller, sessionId)
+        const detail = await hub!.detail(sessionId)
+        assertSessionCeiling(caller, level)
+        await assertRemoteSession(caller, sessionId)
+        await assertSessionWorkspace(sessionId)
+        selected = {
+          harnessId: detail.summary.harnessId ?? selection.harnessId,
+          ...(detail.summary.workspaceId ? { workspaceId: detail.summary.workspaceId } : {}),
+          ...(selection.model
+            ? { model: selection.model }
+            : detail.summary.providerId && detail.summary.model
+              ? { model: { providerId: detail.summary.providerId, model: detail.summary.model } }
+              : {}),
+        }
+      }
+      const harness = hub!.info(selected.harnessId)
+      if (!harness || harness.status !== 'ready') throw new AppError(409, 'harness-unavailable', '当前 Agent 不可用。')
+      if (harness.level === 'L3') assertSessionCeiling(caller, 'L3')
+      else assertStandardCeiling(caller, { harnessId: selected.harnessId, workspaceId: selected.workspaceId ?? 'default' })
+      const declared = harness.attachments
+      if (harness.models === 'host') {
+        const choice = selected.model ?? defaultModelRef()
+        if (choice) assertModel(choice)
+        const provider = choice ? usableProviders().find(item => item.id === choice.providerId) : undefined
+        const images = declared?.images === true && Boolean(choice && provider?.modelCapabilities?.[choice.model]?.vision === true)
+        return {
+          images,
+          text: declared?.text === true,
+          textBytes: Math.min(declared?.textBytes ?? 256 * 1024, 256 * 1024),
+          ...(!images ? { reason: '当前模型不能看图片。' } : {}),
+        }
+      }
+      const agent = config.settings().agents.find(item => item.id === selected.harnessId)
+      if (agent) {
+        const probe = agent.lastProbe
+        return {
+          images: probe?.status === 'ready' && probe.capabilities.images === true,
+          text: probe?.status === 'ready' && probe.capabilities.embeddedContext === true,
+          textBytes: 25 * 1024 * 1024,
+          ...(!probe || probe.status !== 'ready' ? { reason: '请先在执行端电脑的 Agent 设置中测试连接，再添加附件。' } : {}),
+        }
+      }
+      return {
+        images: declared?.images === true,
+        text: declared?.text === true,
+        textBytes: Math.min(declared?.textBytes ?? 256 * 1024, 25 * 1024 * 1024),
+        ...(!declared ? { reason: '当前 Harness 尚未声明附件能力。' } : {}),
+      }
+    }
+    const attachmentRoutes = createAttachmentRoutes<Caller>({
+      store: attachmentStore,
+      now,
+      audit,
+      actorOf,
+      authorize: requireScope,
+      recheck,
+      capabilities: attachmentCapabilities,
+      sessionAccess: async (caller, id) => {
+        requireScope(caller, 'view')
+        await assertSessionAccess(caller, id)
+        return hub!.detail(id)
+      },
+    })
+    async function promptAttachments(
+      caller: Caller,
+      ids: string[] | undefined,
+      selection: AttachmentSelection,
+      sessionId?: string,
+      creationRequestId?: string,
+    ): Promise<AttachmentRef[]> {
+      requireScope(caller, 'run')
+      if (!ids?.length) return []
+      const refs = attachmentStore.refs(caller.device.id, ids, sessionId, creationRequestId),
+        caps = await attachmentCapabilities(caller, selection, sessionId)
+      for (const ref of refs) assertAttachmentCapability(ref, caps)
+      return refs
+    }
+
     const templateStore = await PromptTemplateStore.open(dataDir)
     const sessionRoutes = createSessionRoutes<Caller>({
       now,
       templates: templateStore,
       changed: () => refresh(),
-      list: () => harnessHub.listTasks(),
+      list: async () => (await harnessHub.listTasks()).map(questionSummary),
       detail: id => harnessHub.detail(id),
       patch: (id, patch) => harnessHub.updateMeta(id, patch),
       remove: async id => {
         await harnessHub.remove(id)
+        await promptQueues.forgetSession(id)
+        await questions.forgetSession(id)
         fileRoutes.forgetSession(id)
+        await attachmentStore.removeTask(id).catch(() => log('未能清理已删除会话的附件'))
         await fileReferences.remove(id).catch(() => log('未能清理已删除会话的文件引用记录'))
         summaries.delete(id)
         refresh()
@@ -1298,6 +1455,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       throw new AppError(409, 'harness-unavailable', `请先配置并启用 Harness ${requiredHarness}`)
     }
     for (const driver of registry.harnesses()) await mount(driver, driver.id === requiredHarness)
+    await questions.reconcile(id => harnessHub.detail(id))
+    if (attachmentStore.hasDrafts())
+      for (const task of await hub!.listTasks()) {
+        const refs = (await hub!.detail(task.id)).messages.flatMap(message => message.attachments ?? [])
+        if (refs.length) await attachmentStore.recoverSession(task.id, refs)
+      }
+    await attachmentStore.prune()
 
     let revision = 0
     const streams = new Map<ServerResponse, EventStream>()
@@ -1317,10 +1481,62 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     const agentProbes = new AgentProbes({ root: runtime.tmpRoot, dataDir, now })
     startupCleanup.push(() => agentProbes.close())
     let closing = false
+    const promptQueues = await PromptQueues.open({
+      dataDir,
+      now,
+      detail: id => harnessHub.detail(id),
+      check: checkQueuedPrompt,
+      beforeEnqueue: async (actor, sessionId, itemId) => {
+        await audited({
+          action: 'task.prompt.queued',
+          actor: { deviceId: actor.deviceId, listener: actor.listener, via: 'http' },
+          detail: { sessionId, itemId },
+        })
+      },
+      send: async (actor, sessionId, input) => {
+        await checkQueuedPrompt(actor, sessionId, input.model)
+        if (input.itemId)
+          await audited({
+            action: 'task.prompt.sent',
+            actor: { deviceId: actor.deviceId, listener: actor.listener, via: 'http' },
+            detail: { sessionId, itemId: input.itemId },
+          })
+        await checkQueuedPrompt(actor, sessionId, input.model)
+        await input.authorize?.()
+        await harnessHub.prompt(sessionId, input.text, input.requestId, {
+          ...(input.model ? { model: input.model } : {}),
+          ...(input.queuedAt ? { queuedAt: input.queuedAt } : {}),
+        })
+      },
+      changed: id => refresh(id),
+    })
+    startupCleanup.push(() => promptQueues.close())
     let shutdown: Promise<void> | undefined
     let listeners: ListenerSet | undefined
     let loopbackOrigin = ''
     let tlsOrigin: string | undefined
+    let nativeHost: Awaited<ReturnType<typeof startNativeHost>> | undefined
+    let relayController: HostRelayController | undefined
+    let nativeSettings: NativeSettings | undefined
+    const nativeRequests = new WeakMap<IncomingMessage, NativeOpening>()
+    const nativeChallenges = new WeakMap<NativeOpening, { nonce: string; appOpenId: string; expiresAt: number; generation: number }>()
+    const nativeGenerations = new Map<string, number>()
+    const nativeWindows = new Map<
+      string,
+      { deviceId: string; appOpenId: string; expiresAt: number; generation: number; recoveryHash: string }
+    >()
+    const nativeWindowIssuer = randomBytes(32)
+    let nativeGeneration = 0
+    devices.onRevoked(id => {
+      nativeGenerations.delete(id)
+      for (const [hash, window] of nativeWindows) if (window.deviceId === id) nativeWindows.delete(hash)
+    })
+    function nativeVerifiedUntil(opening: NativeOpening | undefined): number {
+      const window = opening?.windowHash ? nativeWindows.get(opening.windowHash) : undefined
+      return window && window.deviceId === opening!.deviceId && window.generation === nativeGenerations.get(window.deviceId)
+        ? window.expiresAt
+        : 0
+    }
 
     // ---- Callers, scopes and audit ---------------------------------------------------------------
 
@@ -1371,8 +1587,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     /** Re-checks a caller after an await: a queued or slow request may outlive a revocation or a scope change. */
     function recheck(caller: Caller, scope?: DeviceScope): void {
       if (!caller.device) return
-      const current = devices.get(caller.device.id)
-      if (!current || !devices.isActive(current.id)) throw authFailure('device-revoked')
+      const native = isNativeListener(caller.connection.listener) ? devices.authenticateNative(caller.device.id) : undefined
+      const current = native?.ok ? native.device : devices.get(caller.device.id)
+      if (!current || (native ? !native.ok : !devices.isActive(current.id))) throw authFailure('device-revoked')
+      if (native?.ok && !caller.nativeWindowExempt && nativeVerifiedUntil(caller.nativeOpening) <= now())
+        throw new AppError(403, 'native-verification-required', '请先在手机上完成身份验证')
       if (scope && !current.scopes.includes(scope)) throw scopeRequired(scope)
     }
 
@@ -1492,8 +1711,29 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
 
     function currentDevice(caller: DeviceCaller): CurrentDevice {
-      const device = devices.get(caller.device.id) ?? caller.device
-      return { ...device, current: true, renewAfter: new Date(caller.renewAfter ?? now() + RENEW_INTERVAL_MS).toISOString() }
+      const native = isNativeListener(caller.connection.listener) ? devices.authenticateNative(caller.device.id) : undefined
+      const device = native?.ok ? native.device : (devices.get(caller.device.id) ?? caller.device)
+      return {
+        ...nativeDeviceView(device, caller.nativeOpening),
+        current: true,
+        renewAfter: new Date(caller.renewAfter ?? now() + RENEW_INTERVAL_MS).toISOString(),
+      }
+    }
+    function nativeDeviceView(device: Device, opening?: NativeOpening): Device {
+      const state = devices.nativeStatus(device.id)
+      if (!state) return device
+      const expiresAt = opening
+        ? nativeVerifiedUntil(opening)
+        : Math.max(
+            0,
+            ...[...nativeWindows.values()]
+              .filter(
+                window =>
+                  window.deviceId === device.id && window.generation === nativeGenerations.get(device.id) && window.expiresAt > now(),
+              )
+              .map(window => window.expiresAt),
+          )
+      return { ...device, native: { ...state, ...(expiresAt ? { bodyVerifiedUntil: new Date(expiresAt).toISOString() } : {}) } }
     }
 
     async function presenceStatus(): Promise<HostView['presence']> {
@@ -1510,6 +1750,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         devMode: true,
         presence: await presenceStatus(),
         tls: tlsOrigin ? { origin: tlsOrigin } : null,
+        native: { enabled: nativeHost?.enabled ?? false, inputsPaused: devices.nativeInputsPaused() },
         policy: { localMaxLevel: current.local.maxLevel, remoteMaxLevel: current.remote.maxLevel, allowL3: current.local.allowL3 },
         rejectionNote: true,
       }
@@ -2045,6 +2286,41 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             tmpRoot: runtime.tmpRoot,
             securityEvent,
             clock,
+            trackFiles: input => fileTracking.start(input),
+            readAttachment: async (ref, signal) => {
+              signal?.throwIfAborted()
+              const content = await attachmentStore.read(ref)
+              signal?.throwIfAborted()
+              return content.ref.kind === 'image'
+                ? {
+                    type: 'image',
+                    mimeType: content.ref.mime as 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp',
+                    data: Buffer.from(content.data).toString('base64'),
+                  }
+                : { type: 'text', name: content.ref.name, text: content.text! }
+            },
+            saveAttachment: async input => {
+              if (input.data.length > 7_000_000) throw new AppError(413, 'attachment-too-large', 'Agent 图片超过 5 MB。')
+              const bytes = Buffer.from(input.data, 'base64')
+              if (bytes.toString('base64') !== input.data) throw new AppError(415, 'attachment-image-invalid', 'Agent 图片编码无效。')
+              const ref = await attachmentStore.add({
+                owner: 'host',
+                requestId: randomUUID(),
+                name: `Agent-image.${({ 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' } as Record<string, string>)[input.mime] ?? 'image'}`,
+                size: bytes.length,
+                remote: false,
+                stream: (async function* () {
+                  yield bytes
+                })(),
+                recheck: () => {},
+                accept: ref => {
+                  if (ref.kind !== 'image' || ref.mime !== input.mime)
+                    throw new AppError(415, 'attachment-image-invalid', 'Agent 图片类型无效。')
+                },
+              })
+              await attachmentStore.bind('host', [ref.id], input.sessionId)
+              return ref
+            },
             ...(source === 'builtin' ? { classifyToolCall } : {}),
           }),
       })
@@ -2714,7 +2990,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         promptTemplatesVersion: templateStore.revision(),
         features: {
           agentProbe: true,
+          queue: true,
+          questions: true,
+          messageIdentity: true,
           fork: true,
+          attachments: true,
+          fileMentions: true,
           search: true,
           sessionBatch: true,
           promptTemplates: true,
@@ -2769,7 +3050,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     async function decoratedDetail(sessionId: string): Promise<TaskDetail> {
       const detail = await hub!.detail(sessionId)
       const source = hub!.sourceOf(detail.summary.harnessId ?? '')
-      return { ...detail, approvals: await Promise.all(detail.approvals.map(approval => decorate(approval, source, detail.summary))) }
+      return {
+        ...detail,
+        summary: questionSummary(detail.summary),
+        queue: promptQueues.view(sessionId),
+        questions: questions.view(sessionId),
+        approvals: await Promise.all(detail.approvals.map(approval => decorate(approval, source, detail.summary))),
+      }
     }
 
     function settled(approvalId: string, caller: DeviceCaller): AppError {
@@ -2863,6 +3150,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     async function decideApproval(req: IncomingMessage, res: ServerResponse, caller: Caller, approvalId: string): Promise<void> {
       requireScope(caller, 'view')
       const input = decisionSchema.parse(await jsonBody(req))
+      if (isNativeListener(caller.connection.listener)) {
+        if (input.decision === 'reject' && input.note === undefined) caller.nativeWindowExempt = true
+        else if (nativeVerifiedUntil(caller.nativeOpening) <= now())
+          throw new AppError(403, 'native-verification-required', '请先在手机上完成身份验证')
+      }
       for (let held = decisionLocks.get(approvalId); held; held = decisionLocks.get(approvalId)) await held.catch(() => undefined)
       const run = decideLocked(req, res, caller, approvalId, input)
       decisionLocks.set(approvalId, run)
@@ -2980,7 +3272,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       recheck(caller, needed)
       if (input.decision === 'allow') assertSessionCeiling(caller, level)
       const at = new Date(now()).toISOString()
-      await audited(
+      const intent = await audited(
         {
           action: 'approval.decided',
           actor: actorOf(caller),
@@ -2999,6 +3291,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         },
         input.decision === 'reject' ? res : undefined,
       )
+      try {
+        recheck(caller, needed)
+        if (input.decision === 'allow') assertSessionCeiling(caller, level)
+      } catch (error) {
+        auditFailed(intent, caller)
+        throw error
+      }
       const accepted = await hub!.decide(approvalId, input.decision, {
         ...(input.optionId ? { optionId: input.optionId } : {}),
         // The decision record says only where the person was, never which device: names and ids stay in the audit.
@@ -3120,7 +3419,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
      * not rotated out beyond the grace window, and the device not revoked. The client then reconnects with its current credential.
      */
     function streamAllowed(stream: EventStream): boolean {
-      return devices.streamAllowed(stream.deviceId, stream.credentialHash)
+      return (
+        (!stream.nativeOpening || nativeVerifiedUntil(stream.nativeOpening) > now())
+        && devices.streamAllowed(stream.deviceId, stream.credentialHash)
+      )
     }
 
     function send(res: ServerResponse, event: ChangeEvent | TaskStateEvent): void {
@@ -3232,6 +3534,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             else if (summaryChanged) send(res, { type: 'tasks-invalidated', instanceId, revision: globalRevision, sessionId })
           }
         }
+        for (const [sessionId] of tasks) void promptQueues.changed(sessionId).catch(() => log('排队状态未能更新，请手动检查队列'))
         if (fallback && !global) for (const res of streams.keys()) send(res, { type: 'refresh', instanceId, revision: globalRevision })
       } finally {
         flushing = false
@@ -3240,6 +3543,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
 
     function refresh(sessionId?: string): void {
+      relayController?.reconcile()
       const nextRevision = ++revision
       if (sessionId) pendingTasks.set(sessionId, nextRevision)
       else pendingGlobal = true
@@ -3267,9 +3571,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return {
         listener: listener.listener,
         origin: listener.origin,
-        remoteAddress: isSocketTransport(listener.listener)
-          ? UNIX_ADDRESS
-          : (req.socket.remoteAddress ?? '').replace(/^::ffff:(?=\d+\.\d+\.\d+\.\d+$)/u, ''),
+        remoteAddress:
+          nativeRequests.get(req)?.source
+          ?? (isSocketTransport(listener.listener)
+            ? UNIX_ADDRESS
+            : (req.socket.remoteAddress ?? '').replace(/^::ffff:(?=\d+\.\d+\.\d+\.\d+$)/u, '')),
       }
     }
 
@@ -3283,6 +3589,19 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       connection: ConnectionContext,
       renewal = false,
     ): Promise<Caller> {
+      if (isNativeListener(listener.listener)) {
+        const opening = nativeRequests.get(req)
+        if (!opening || opening.pairing) throw authFailure('unauthorized')
+        const result = devices.authenticateNative(opening.deviceId)
+        if (!result.ok) throw authFailure(result.code as AuthFailureCode)
+        return {
+          connection,
+          device: result.device,
+          credentialHash: result.credentialHash,
+          renewAfter: result.renewAfter,
+          nativeOpening: opening,
+        }
+      }
       const presented = presentedCredential(req, listener, hostId8)
       // Without a credential, only host.sock has an identity of its own: the anonymous command line.
       if (isLocalListener(listener.listener) && !hasAuthorization(req)) return { connection }
@@ -3346,7 +3665,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
       if (path === '/link/api/host-info' && method === 'GET') {
         if (!isLocalListener(listener.listener)) throw new AppError(404, 'not-found', '接口不存在')
-        const tasks = await hub!.listTasks()
+        const tasks = (await hub!.listTasks()).map(questionSummary)
         const running = tasks.filter(task => task.status === 'running').length
         const waiting = tasks.filter(task => task.status === 'waiting-approval').length
         const info: HostInfo = {
@@ -3383,6 +3702,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const local = isLocalListener(listener.listener)
         if (local) limits.enrollmentCreate.take(listener.listener)
         const input = enrollmentSchema.parse(await jsonBody(req))
+        const native = nativeRequests.get(req)
+        if (
+          isNativeListener(listener.listener)
+          && (!native?.pairing || native.enrollmentId || !input.invitation || sha256Hex(input.invitation) !== native.invitationHash)
+        )
+          throw authFailure('unauthorized')
         // Off host.sock only an invitation can succeed. Each one this Host issued gets its own budget on its listener, so
         // other requests cannot use up an invited device's; every other attempt, with or without a code, shares one budget
         // per listener and adds no keys.
@@ -3397,6 +3722,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ...(input.dataScope ? { dataScope: input.dataScope } : {}),
           ...(input.invitation ? { invitation: input.invitation } : {}),
           ...(input.offlineCode ? { offlineCode: input.offlineCode } : {}),
+          ...(input.native ? { native: input.native } : {}),
         }
         const presented = presentedCredential(req, listener, hostId8)
         const legacy = presented?.kind === 'legacy-cookie' ? presented : undefined
@@ -3409,12 +3735,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         }
         // Single use: later attempts with this code share the per-listener budget.
         if (issued) issuedInvitations.delete(invitationHash)
+        if (native) native.enrollmentId = enrollment.id
         json(res, { enrollment }, 202)
         return true
       }
-      const enrollment = path.match(/^\/link\/api\/enrollments\/([^/]+)(\/complete)?$/)
+      const enrollment = path.match(/^\/link\/api\/enrollments\/([^/]+)(\/(?:prepare|complete))?$/)
       if (!enrollment) return false
       const id = safeDecode(enrollment[1]!)
+      if (isNativeListener(listener.listener) && nativeRequests.get(req)?.enrollmentId !== id) throw authFailure('unauthorized')
       if (id.length > 64) throw new AppError(404, 'enrollment-not-found', '找不到该登记请求')
       if (method === 'GET' && !enrollment[2]) {
         limits.enrollmentPoll.take(id)
@@ -3426,12 +3754,26 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         json(res, { cancelled: true })
         return true
       }
-      if (method === 'POST' && enrollment[2]) {
+      if (method === 'POST' && enrollment[2] === '/prepare') {
+        if (!isNativeListener(listener.listener)) throw authFailure('unauthorized')
+        limits.enrollmentPoll.take(id)
+        const input = signatureSchema.strict().parse(await jsonBody(req))
+        const deviceId = enrollments.prepareNative(id, input.signature, connection)
+        const addressBook = await addressBooks.issue(deviceId)
+        if (enrollments.prepareNative(id, input.signature, connection) !== deviceId) throw authFailure('unauthorized')
+        json(res, { deviceId, addressBook })
+        return true
+      }
+      if (method === 'POST' && enrollment[2] === '/complete') {
         limits.enrollmentPoll.take(id)
         const input = signatureSchema.parse(await jsonBody(req))
         const presented = presentedCredential(req, listener, hostId8)
         const { device, credential } = await enrollments.complete(id, input.signature, connection)
         refresh()
+        if (isNativeListener(listener.listener)) {
+          json(res, { device })
+          return true
+        }
         if (isSocketTransport(listener.listener)) {
           json(res, { device, credential })
           return true
@@ -3564,7 +3906,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
       if (path === '/link/api/devices' && method === 'GET') {
         if (caller.device) requireScope(caller, 'admin')
-        json(res, { devices: devices.list() })
+        json(res, { devices: devices.list().map(item => nativeDeviceView(item)) })
         return true
       }
       const match = path.match(/^\/link\/api\/devices\/([^/]+)$/)
@@ -3645,6 +3987,102 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         requireLocal(caller)
         requireScope(caller, 'admin')
         json(res, { enrollments: enrollments.waiting(), blockingTasks: (await hub!.unsandboxedTasks()).slice(0, 8) })
+        return true
+      }
+      if (path === '/link/api/native/input/pause' && method === 'POST') {
+        if (caller.device) requireScope(caller, 'view')
+        else requireLocal(caller)
+        z.strictObject({}).parse(await optionalJsonBody(req))
+        const result = await devices.setNativeInputsPaused(true, actorOf(caller), 'none')
+        if (!result.audited) res.setHeader('x-latch-audit', 'failed')
+        refresh()
+        json(res, { paused: true })
+        return true
+      }
+      if (path === '/link/api/native/input/resume' && method === 'POST') {
+        requireLocal(caller)
+        requireScope(caller, 'admin')
+        z.strictObject({}).parse(await optionalJsonBody(req))
+        const stepup = await confirm(
+          req,
+          caller,
+          'policy.change',
+          { nativeInputPaused: false },
+          { form: 'policy.native-input', slots: {} },
+          [{ label: '手机输入', value: '恢复所有已登记原生手机的输入权限' }],
+        )
+        recheck(caller, 'admin')
+        await devices.setNativeInputsPaused(false, actorOf(caller), stepup)
+        refresh()
+        json(res, { paused: false })
+        return true
+      }
+      if (path === '/link/api/native/info' && method === 'GET') {
+        requireLocal(caller)
+        if (caller.device) requireScope(caller, 'admin')
+        if (!nativeSettings) throw new AppError(503, 'native-not-ready', '手机连接服务正在准备')
+        json(res, { ...nativeSettings.info(), ...(nativeHost?.port !== undefined ? { port: nativeHost.port } : {}) })
+        return true
+      }
+      if (path === '/link/api/native/config' && method === 'PUT') {
+        requireLocal(caller)
+        requireScope(caller, 'admin')
+        if (!nativeSettings) throw new AppError(503, 'native-not-ready', '手机连接服务正在准备')
+        const settings = nativeSettings,
+          input = await jsonBody(req, CONFIG_BODY_LIMIT)
+        recheck(caller, 'admin')
+        if (settings.alreadyApplied(input)) {
+          json(res, settings.info())
+          return true
+        }
+        const plan = settings.plan(input)
+        let stepup: StepupMethod = 'none'
+        if (!plan.lowering) {
+          const direct = plan.input.direct
+          stepup = await confirm(
+            req,
+            caller,
+            'policy.change',
+            { baseHash: plan.baseHash, afterHash: plan.afterHash, requestHash: plan.requestHash },
+            {
+              form: 'policy.native-link',
+              slots: {
+                direct: direct ? `局域网直连 ${direct.host}:${direct.port || '自动端口'}` : '关闭局域网直连',
+                count: String(plan.input.relays.length),
+              },
+            },
+            [
+              { label: '局域网直连', value: direct ? `${direct.host}:${direct.port || '自动端口'}` : '关闭' },
+              ...plan.input.relays.flatMap(node => [
+                { label: '自建中继', value: node.url },
+                { label: '节点身份', value: node.relayId },
+                { label: 'TLS 公钥指纹', value: node.spkiHash },
+                {
+                  label: '登记密钥',
+                  value: node.registrationKey === null ? '不使用' : node.registrationKey ? '已填写（不显示）' : '保持原设置',
+                },
+              ]),
+            ],
+            ['中继与网络服务商可看到 IP、连接时间和数据量；正文仍由 Host 身份与端到端连接保护。'],
+          )
+        }
+        const result = await serial(caller, 'admin', () => settings.apply(plan, actorOf(caller), stepup, () => recheck(caller, 'admin')))
+        if (!result.audited) res.setHeader('x-latch-audit', 'failed')
+        refresh()
+        json(res, settings.info())
+        return true
+      }
+      if (path === '/link/api/native/pairings' && method === 'POST') {
+        requireLocal(caller)
+        if (caller.device) requireScope(caller, 'admin')
+        if (!nativeHost) throw new AppError(409, 'native-not-configured', '尚未配置原生设备连接入口')
+        const input = invitationSchema.parse(await optionalJsonBody(req))
+        recheck(caller, 'admin')
+        const invitation = await nativeHost.invite(
+          { ...(caller.device ? { inviter: caller.device } : {}), ...(input.scopes ? { scopes: input.scopes } : {}) },
+          actorOf(caller),
+        )
+        json(res, { invitation }, 201)
         return true
       }
       if (path === '/link/api/pairings' && method === 'POST') {
@@ -3816,7 +4254,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
 
     async function assertSessionAccess(caller: DeviceCaller, sessionId: string): Promise<'L1' | 'L3'> {
+      if (isNativeListener(caller.connection.listener) && nativeVerifiedUntil(caller.nativeOpening) <= now())
+        throw new AppError(403, 'native-verification-required', '请先在手机上完成身份验证')
       const level = hub!.levelOf(await hub!.harnessOf(sessionId))
+      if (isNativeListener(caller.connection.listener) && nativeVerifiedUntil(caller.nativeOpening) <= now())
+        throw new AppError(403, 'native-verification-required', '请先在手机上完成身份验证')
       if (level === 'L3') requireLocal(caller)
       return level
     }
@@ -3841,7 +4283,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     async function createTask(req: IncomingMessage, res: ServerResponse, caller: Caller): Promise<void> {
       requireScope(caller, 'run')
       const input = createTaskSchema.parse(await jsonBody(req, TASK_BODY_LIMIT))
-      if (!input.prompt && !input.forkOf) throw new AppError(400, 'invalid-prompt', '请输入任务内容')
+      if (!input.prompt && !input.forkOf && !input.attachmentIds?.length)
+        throw new AppError(400, 'invalid-prompt', '请输入任务内容或添加附件。')
       await projectOperation(caller, 'run', async () => {
         recheck(caller, 'run')
         const fork = input.forkOf
@@ -3886,9 +4329,59 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const folderRequest = `${caller.device.id}:${input.requestId}`
         // The session starts in the project's primary folder. Only what the client chose reaches the driver as `cwd`;
         // without a choice the start directory stays the driver's default.
+        if (input.fileRefs?.length && (harness.source === 'plugin' || mode === 'chat' || ownFolder))
+          throw new AppError(415, 'file-references-unavailable', '当前会话尚不能引用项目文件，请先选择项目与 Agent 模式。')
+        if (input.fileRefs?.length && caller.device.dataScope !== 'all') throw new AppError(403, 'file-scope', '此设备不能浏览项目文件。')
+        const mentionRoots = chosen
+          ? harness.projectFolders?.access === 'all'
+            ? chosen.folders
+            : [{ id: 'default', path: chosen.folders[0].path }]
+          : [{ id: 'default', path: forkFolder ?? workspaceRoot }]
+        const fileRefs = await checkedFileMentions(input.fileRefs, mentionRoots, guardedPaths, home)
+        recheck(caller, 'run')
+        const attachments = await promptAttachments(
+          caller,
+          input.attachmentIds,
+          {
+            harnessId,
+            workspaceId,
+            ...(input.model ? { model: input.model } : {}),
+          },
+          undefined,
+          input.requestId,
+        )
+        const acceptCreate = async (operation: () => Promise<{ sessionId: string }>) => {
+          if (attachments.length) await attachmentStore.claim(caller.device.id, input.attachmentIds!, input.requestId)
+          try {
+            checkStart()
+            return await operation()
+          } catch (cause) {
+            if (cause instanceof AppError && cause.status >= 400 && cause.status < 500 && cause.status !== 408 && attachments.length)
+              await attachmentStore.releaseClaim(caller.device.id, input.attachmentIds!, input.requestId)
+            throw cause
+          }
+        }
+        const respondCreated = async (created: { sessionId: string }) => {
+          if (attachments.length)
+            await attachmentStore
+              .bind(
+                caller.device.id,
+                attachments.map(ref => ref.id),
+                created.sessionId,
+                input.requestId,
+              )
+              .catch(() => {
+                throw new AppError(503, 'attachment-publish-unknown', '会话已开始，附件记录尚未确认。请重试同一次提交。')
+              })
+          json(res, created, 201)
+        }
+        if (fileRefs.length && devices.get(caller.device.id)?.dataScope !== 'all')
+          throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
         const task: HubCreateInput = {
           prompt,
           ...(fork ? { forkOf: fork.context, initialTitle: input.prompt || `从「${fork.context.title}」分叉` } : {}),
+          ...(fileRefs.length ? { fileRefs } : {}),
+          ...(attachments.length ? { attachments } : {}),
           requestId: input.requestId,
           harnessId,
           workspaceId,
@@ -3904,6 +4397,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         }
         const checkStart = () => {
           recheck(caller, 'run')
+          if (fileRefs.length && devices.get(caller.device.id)?.dataScope !== 'all')
+            throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
           if (fork) recheck(caller, 'view')
           if (hub!.levelOf(harnessId) === 'L1') assertStandardCeiling(caller, { harnessId, workspaceId })
           else assertSessionCeiling(caller, 'L3')
@@ -3912,14 +4407,17 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           assertStandardCeiling(caller, { harnessId, workspaceId })
           if (ownFolder) {
             const own = await ownFolders.allocate(folderRequest)
-            json(res, await createInOwnFolder({ ...task, cwd: own.path, sessionFolder: own.name }, folderRequest, checkStart), 201)
+            await respondCreated(
+              await acceptCreate(() => createInOwnFolder({ ...task, cwd: own.path, sessionFolder: own.name }, folderRequest, checkStart)),
+            )
             return
           }
-          // Every folder of the project, in order; the hub passes them on only to a driver that takes them all.
           const folders =
             task.cwd === undefined || forkFolder ? undefined : chosen ? chosen.folders : [{ id: 'default', path: workspaceRoot }]
           checkStart()
-          json(res, await hub!.createTask(folders ? { ...task, folders: folders.map(({ id, path }) => ({ id, path })) } : task), 201)
+          await respondCreated(
+            await acceptCreate(() => hub!.createTask(folders ? { ...task, folders: folders.map(({ id, path }) => ({ id, path })) } : task)),
+          )
           return
         }
         assertSessionCeiling(caller, 'L3')
@@ -3937,7 +4435,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             : chosen
               ? chosen.folders.map(({ id, path }) => ({ id, path }))
               : [{ id: 'default', path: workspaceRoot }]
-        const promptHash = sha256Hex(prompt)
+        const promptHash = sha256Hex(
+          attachments.length || fileRefs.length
+            ? canonicalJson({
+                prompt,
+                ...(attachments.length ? { attachments: attachments.map(ref => ({ id: ref.id, sha256: ref.sha256 })) } : {}),
+                ...(fileRefs.length ? { fileRefs } : {}),
+              })
+            : prompt,
+        )
         const preview = await hub!.launchPreviewOf(harnessId, cwd, folders ? { workspaceId, folders } : undefined)
         // The folders the agent receives besides its working directory: shown, bound to the confirmation and audited.
         const passed = [
@@ -4081,13 +4587,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         let created: { sessionId: string }
         try {
           checkStart()
-          created = own
-            ? await createInOwnFolder(
-                { ...task, cwd: own.path, sessionFolder: own.name, expectedLaunchHash: launchHash },
-                folderRequest,
-                checkStart,
-              )
-            : await hub!.createTask({ ...task, ...(folders ? { folders } : {}), expectedLaunchHash: launchHash })
+          created = await acceptCreate(() =>
+            own
+              ? createInOwnFolder(
+                  { ...task, cwd: own.path, sessionFolder: own.name, expectedLaunchHash: launchHash },
+                  folderRequest,
+                  checkStart,
+                )
+              : hub!.createTask({ ...task, ...(folders ? { folders } : {}), expectedLaunchHash: launchHash }),
+          )
         } catch (error) {
           auditFailed(intent, caller)
           throw error
@@ -4109,8 +4617,134 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           res,
         )
         await noteAgentStarted(caller, harnessId)
-        json(res, created, 201)
+        await respondCreated(created)
       })
+    }
+
+    function queueActor(caller: DeviceCaller): QueueActor {
+      const native = isNativeListener(caller.connection.listener)
+      if (native && nativeVerifiedUntil(caller.nativeOpening) <= now())
+        throw new AppError(403, 'native-verification-required', '请先在手机上完成身份验证')
+      return {
+        deviceId: caller.device.id,
+        listener: caller.connection.listener,
+        dataScope: caller.device.dataScope,
+        ...(native ? { nativeWindowHash: caller.nativeOpening!.windowHash! } : {}),
+      }
+    }
+
+    async function checkQueuedPrompt(actor: QueueActor, sessionId: string, model?: ModelRef): Promise<void> {
+      if (closing) throw new AppError(503, 'host-closing', 'Host 正在停止，队列已暂停')
+      const native = isNativeListener(actor.listener)
+      const authenticated = native ? devices.authenticateNative(actor.deviceId) : undefined
+      const device = authenticated?.ok ? authenticated.device : devices.get(actor.deviceId)
+      if (
+        !device
+        || (native ? !authenticated?.ok : !devices.isActive(actor.deviceId) || device.listener !== actor.listener)
+        || device.dataScope !== actor.dataScope
+      )
+        throw authFailure('device-revoked')
+      const paused = () => new AppError(409, 'queue-paused', '原手机验证窗口已结束；请移除此项后重新排队')
+      const opening: NativeOpening | undefined = native
+        ? {
+            deviceId: actor.deviceId,
+            pairing: false,
+            listener: { listener: actor.listener, origin: '' },
+            source: '',
+            ...(actor.nativeWindowHash ? { windowHash: actor.nativeWindowHash } : {}),
+          }
+        : undefined
+      if (native && nativeVerifiedUntil(opening) <= now()) throw paused()
+      const caller: DeviceCaller = {
+        device,
+        connection: { listener: actor.listener, origin: '', remoteAddress: '' },
+        ...(opening ? { nativeOpening: opening } : {}),
+      }
+      try {
+        requireScope(caller, 'run')
+        assertSessionCeiling(caller, await assertSessionAccess(caller, sessionId))
+        await assertRemoteSession(caller, sessionId)
+        await assertSessionWorkspace(sessionId)
+        const detail = await harnessHub.detail(sessionId)
+        if (detail.permission?.drift || detail.summary.permissionDrift) throw new AppError(409, 'permission-drift', '会话权限已变化')
+        if (model) {
+          if (hub!.info(await hub!.harnessOf(sessionId))?.models !== 'host')
+            throw new AppError(400, 'model-unsupported', '该会话不能指定模型服务')
+          assertModel(model)
+        }
+        recheck(caller, 'run')
+      } catch (error) {
+        if (native && codeOf(error) === 'native-verification-required') throw paused()
+        throw error
+      }
+    }
+
+    async function handleQueue(req: IncomingMessage, res: ServerResponse, caller: Caller, path: string, method: string): Promise<boolean> {
+      const match = path.match(/^\/link\/api\/tasks\/([^/]+)\/queue\/([^/]+)(\/send)?$/u)
+      if (!match) return false
+      requireScope(caller, 'run')
+      const sessionId = safeDecode(match[1]!),
+        itemId = safeDecode(match[2]!)
+      if (sessionId.length > 256 || itemId.length > 256) throw new AppError(400, 'invalid-input', '排队标识过长')
+      if (method === 'DELETE' && !match[3]) {
+        recheck(caller, 'run')
+        await audited({ action: 'task.prompt.removed', actor: actorOf(caller), detail: { sessionId, itemId } }, res)
+        json(res, await promptQueues.remove(sessionId, itemId, () => recheck(caller, 'run')))
+        return true
+      }
+      const authorize = () => checkQueuedPrompt(queueActor(caller), sessionId)
+      await authorize()
+      if (method === 'PATCH' && !match[3]) {
+        const input = z.strictObject({ text: z.string().trim().min(1).max(16_000) }).parse(await jsonBody(req, TASK_BODY_LIMIT))
+        await audited({ action: 'task.prompt.edited', actor: actorOf(caller), detail: { sessionId, itemId } })
+        await promptQueues.edit(sessionId, itemId, input.text, queueActor(caller), authorize)
+        json(res, { edited: true })
+        return true
+      }
+      if (method === 'POST' && match[3]) {
+        await promptQueues.send(sessionId, itemId, authorize)
+        json(res, { accepted: true })
+        return true
+      }
+      return false
+    }
+
+    async function handleQuestion(
+      req: IncomingMessage,
+      res: ServerResponse,
+      caller: Caller,
+      path: string,
+      method: string,
+    ): Promise<boolean> {
+      const match = path.match(/^\/link\/api\/tasks\/([^/]+)\/questions\/([^/]+)\/answer$/u)
+      if (!match || method !== 'POST') return false
+      requireScope(caller, 'run')
+      const sessionId = safeDecode(match[1]!),
+        questionId = safeDecode(match[2]!)
+      if (sessionId.length > 256 || questionId.length > 256) throw new AppError(400, 'invalid-input', '问答标识过长')
+      const authorize = async () => {
+        recheck(caller, 'run')
+        if (devices.get(caller.device.id)?.dataScope !== caller.device.dataScope) throw scopeRequired('run')
+        assertSessionCeiling(caller, await assertSessionAccess(caller, sessionId))
+        await assertRemoteSession(caller, sessionId)
+        await assertSessionWorkspace(sessionId)
+        const detail = await harnessHub.detail(sessionId)
+        if (detail.permission?.drift || detail.summary.permissionDrift) throw new AppError(409, 'permission-drift', '会话权限已变化')
+        recheck(caller, 'run')
+      }
+      await authorize()
+      const input = await jsonBody(req, TASK_BODY_LIMIT)
+      json(
+        res,
+        await questions.answer(sessionId, questionId, caller.device.id, input, authorize, async () => {
+          try {
+            await audited({ action: 'task.question.answered', actor: actorOf(caller), detail: { sessionId, questionId } })
+          } catch {
+            throw new AppError(503, 'audit-unavailable', '审计记录暂时无法保存，本次回答尚未接收，请重试')
+          }
+        }),
+      )
+      return true
     }
 
     async function handleTask(
@@ -4125,7 +4759,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (method === 'GET' && !action) {
         requireScope(caller, 'view')
         const detailRevision = revision
-        traffic.response('detail', json(res, { ...(await decoratedDetail(id)), sync: { instanceId, revision: detailRevision } }), id)
+        const detail = await decoratedDetail(id)
+        recheck(caller, 'view')
+        traffic.response('detail', json(res, { ...detail, sync: { instanceId, revision: detailRevision } }), id)
         return true
       }
       if (method === 'PATCH' && !action) {
@@ -4139,6 +4775,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         requireScope(caller, 'run')
         await assertSessionAccess(caller, id)
         await hub!.remove(id)
+        await promptQueues.forgetSession(id)
+        await questions.forgetSession(id)
+        await attachmentStore.removeTask(id).catch(() => log('未能清理已删除会话的附件'))
         summaries.delete(id)
         refresh()
         json(res, { deleted: true })
@@ -4146,7 +4785,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
       if (method === 'POST' && action === 'prompt') {
         requireScope(caller, 'run')
-        const input = promptSchema.parse(await jsonBody(req, TASK_BODY_LIMIT))
+        const input = queuedPromptSchema.parse(await jsonBody(req, TASK_BODY_LIMIT))
+        if (input.queue && (input.attachmentIds?.length || input.fileRefs?.length))
+          throw new AppError(400, 'queue-attachments-unsupported', '附件暂不支持排队，请等本轮结束后发送')
         recheck(caller, 'run')
         assertSessionCeiling(caller, await assertSessionAccess(caller, id))
         await assertRemoteSession(caller, id)
@@ -4156,7 +4797,62 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           if (harness?.models !== 'host') throw new AppError(400, 'model-unsupported', '该会话的 Harness 自行管理模型，不能切换模型服务')
           assertModel(input.model)
         }
-        await hub!.prompt(id, input.prompt, input.requestId, input.model ? { model: input.model } : undefined)
+        if (!input.prompt && !input.attachmentIds?.length) throw new AppError(400, 'invalid-prompt', '请输入任务内容或添加附件。')
+        recheck(caller, 'run')
+        if (input.queue) {
+          const result = await promptQueues.submit(queueActor(caller), id, input)
+          json(res, result, 'queued' in result ? 202 : 200)
+          return true
+        }
+        const harnessId = await hub!.harnessOf(id),
+          attachments = await promptAttachments(
+            caller,
+            input.attachmentIds,
+            { harnessId, ...(input.model ? { model: input.model } : {}) },
+            id,
+            input.requestId,
+          )
+        const mentionTask = input.fileRefs?.length ? await hub!.detail(id) : undefined
+        if (
+          input.fileRefs?.length
+          && (caller.device.dataScope !== 'all' || hub!.info(harnessId)?.source === 'plugin' || mentionTask?.summary.mode === 'chat')
+        )
+          throw new AppError(403, 'file-references-unavailable', '当前设备或会话不能引用项目文件。')
+        const fileRefs = await checkedFileMentions(
+          input.fileRefs,
+          mentionTask ? scopeFolders(mentionTask.summary, workspaceRoot) : [],
+          guardedPaths,
+          home,
+        )
+        recheck(caller, 'run')
+        if (fileRefs.length && devices.get(caller.device.id)?.dataScope !== 'all')
+          throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
+        if (attachments.length) await attachmentStore.claim(caller.device.id, input.attachmentIds!, input.requestId, id)
+        try {
+          recheck(caller, 'run')
+          assertSessionCeiling(caller, hub!.levelOf(harnessId))
+          if (fileRefs.length && devices.get(caller.device.id)?.dataScope !== 'all')
+            throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
+          await hub!.prompt(id, input.prompt, input.requestId, {
+            ...(fileRefs.length ? { fileRefs } : {}),
+            ...(input.model ? { model: input.model } : {}),
+            ...(attachments.length ? { attachments } : {}),
+          })
+        } catch (cause) {
+          if (cause instanceof AppError && cause.status >= 400 && cause.status < 500 && cause.status !== 408 && attachments.length)
+            await attachmentStore.releaseClaim(caller.device.id, input.attachmentIds!, input.requestId, id)
+          throw cause
+        }
+        if (attachments.length)
+          await attachmentStore
+            .bind(
+              caller.device.id,
+              attachments.map(ref => ref.id),
+              id,
+            )
+            .catch(() => {
+              throw new AppError(503, 'attachment-publish-unknown', '会话已开始，附件记录尚未确认。请重试同一次提交。')
+            })
         json(res, { accepted: true })
         return true
       }
@@ -4178,6 +4874,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const change = await hub!.classifyConfigChange(id, input.configId, input.value)
         if (change === 'forbidden') throw new AppError(400, 'mode-forbidden', '该模式由模型代为批准，Latch 不提供')
         if (change !== 'wider') {
+          recheck(caller, 'run')
           await hub!.setConfig(id, input.configId, input.value)
           json(res, { accepted: true })
           return true
@@ -4219,6 +4916,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           detail: { sessionId: id, toHash: sha256Hex(input.value) },
         })
         try {
+          recheck(caller, 'run')
           await hub!.setConfig(id, input.configId, input.value, { allowWiden: true })
         } catch (error) {
           auditFailed(seq, caller)
@@ -4384,6 +5082,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             ...(scope ?? {}),
             enabled: input.enabled ?? true,
             models: withModel(input.models, input.defaultModel),
+            ...(input.modelCapabilities ? { modelCapabilities: input.modelCapabilities } : {}),
             defaultModel: input.defaultModel,
           }
           await saveAt(caller, res, { id, plan, stepup, ...(scope ? { scope } : {}) }, () => saveProvider(caller, next))
@@ -4467,6 +5166,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
                 apiKey,
                 ...(binding ?? {}),
                 models: withModel(input.models ?? previous.models, defaultModel),
+                modelCapabilities: input.modelCapabilities ?? previous.modelCapabilities,
                 defaultModel,
                 enabled: input.enabled ?? previous.enabled,
               }
@@ -4737,6 +5437,25 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         json(res, { nonce: grant.nonce, expiresAt: new Date(grant.expiresAt).toISOString() })
         return true
       }
+      const searchProjectMatch = /^\/link\/api\/workspaces\/([^/]+)\/files\/search$/u.exec(path)
+      if (searchProjectMatch && method === 'POST') {
+        requireScope(caller, 'view')
+        if (caller.device.dataScope !== 'all') throw new AppError(403, 'file-scope', '此设备不能浏览项目文件。')
+        limits.files.take(caller.device.id)
+        const input = projectSearchSchema.parse(await jsonBody(req))
+        const harness = hub!.info(input.harnessId)
+        if (!harness || harness.source === 'plugin')
+          throw new AppError(415, 'file-references-unavailable', '当前 Harness 尚未接入文件引用。')
+        const project = savedProject(decodeURIComponent(searchProjectMatch[1]!))
+        if (!project) throw new AppError(404, 'workspace-unavailable', '请选择已保存的项目。')
+        await assertWorkspaceUsable(project)
+        const roots = harness.projectFolders?.access === 'all' ? project.folders : [{ id: 'default', path: project.folders[0].path }]
+        const result = await searchProjectFiles(roots, guardedPaths, input.q, input.limit, () => req.aborted || res.destroyed)
+        recheck(caller, 'view')
+        if (devices.get(caller.device.id)?.dataScope !== 'all') throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
+        json(res, result)
+        return true
+      }
       if (path === '/link/api/workspaces' && method === 'POST') {
         requireScope(caller, 'admin')
         requireDesktop(caller)
@@ -4844,7 +5563,24 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       method: string,
     ): Promise<void> {
       const connection = connectionOf(req, listener)
+      const nativeOpening = nativeRequests.get(req)
+      if (path === '/link/api/native/pairing' && method === 'GET') {
+        if (!nativeOpening?.pairing) throw authFailure('unauthorized')
+        json(res, { enrollment: nativeOpening.enrollmentId ? enrollments.nativeStatus(nativeOpening.enrollmentId, connection) : null })
+        return
+      }
+      if (
+        nativeOpening?.pairing
+        && !(
+          path === '/link/api/enrollment-info'
+          || (path === '/link/api/enrollments' && method === 'POST')
+          || (nativeOpening.enrollmentId && path.startsWith(`/link/api/enrollments/${nativeOpening.enrollmentId}`))
+        )
+      )
+        throw authFailure('unauthorized')
       if (await handlePublic(req, res, listener, connection, path, method)) return
+      if (nativeOpening && path.startsWith('/link/api/credentials/'))
+        throw new AppError(403, 'native-credential-route', '原生身份不使用浏览器凭据续期')
       if (path === '/link/api/credentials/challenge' || path === '/link/api/credentials/renew') {
         if (method !== 'POST') throw new AppError(404, 'not-found', '接口不存在')
         const caller = await authenticate(req, listener, connection, true)
@@ -4853,6 +5589,136 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         return
       }
       const caller = await authenticate(req, listener, connection)
+      if (path === '/link/api/native/address-book' && method === 'POST') {
+        if (!nativeOpening || nativeOpening.pairing) throw authFailure('unauthorized')
+        requireScope(caller, 'view')
+        recheck(caller, 'view')
+        z.strictObject({}).parse(await optionalJsonBody(req))
+        const addressBook = await addressBooks.issue(caller.device!.id)
+        recheck(caller, 'view')
+        json(res, { addressBook })
+        return
+      }
+      if (nativeOpening && !nativeOpening.pairing) {
+        if (path === '/link/api/native/verification/challenge' && method === 'POST') {
+          const input = z
+            .object({ appOpenId: z.string().regex(/^[A-Za-z0-9_-]{16,80}$/u) })
+            .strict()
+            .parse(await jsonBody(req))
+          if (nativeGeneration >= Number.MAX_SAFE_INTEGER) throw new AppError(503, 'native-generation-exhausted', '请重启 Host 后重新验证')
+          const challenge = { nonce: randomNonce(), appOpenId: input.appOpenId, expiresAt: now() + 60_000, generation: ++nativeGeneration }
+          nativeGenerations.set(nativeOpening.deviceId, challenge.generation)
+          nativeChallenges.set(nativeOpening, challenge)
+          json(res, challenge)
+          return
+        }
+        if (path === '/link/api/native/verification' && method === 'POST') {
+          const input = signatureSchema.parse(await jsonBody(req)),
+            challenge = nativeChallenges.get(nativeOpening)
+          nativeChallenges.delete(nativeOpening)
+          const key = devices.nativeVerificationKey(nativeOpening.deviceId)
+          if (
+            !challenge
+            || challenge.expiresAt < now()
+            || challenge.generation !== nativeGenerations.get(nativeOpening.deviceId)
+            || !key
+            || !verifyP256(
+              parseP256Spki(key).key,
+              nativeVerificationText(hostId, nativeOpening.deviceId, challenge.nonce, challenge.expiresAt, challenge.appOpenId),
+              input.signature,
+            )
+          )
+            throw new AppError(403, 'native-verification-invalid', '手机身份验证已过期或签名无效')
+          const verifiedUntil = await devices.markNativeVerified(nativeOpening.deviceId, listener.listener)
+          if (!devices.authenticateNative(nativeOpening.deviceId).ok) throw authFailure('device-revoked')
+          if (challenge.generation !== nativeGenerations.get(nativeOpening.deviceId))
+            throw new AppError(409, 'native-verification-superseded', '此验证已被更新的 App 打开代次替换')
+          for (const [hash, window] of nativeWindows)
+            if (window.expiresAt <= now() || window.deviceId === nativeOpening.deviceId) nativeWindows.delete(hash)
+          const statement = nativeVerificationText(
+            hostId,
+            nativeOpening.deviceId,
+            challenge.nonce,
+            challenge.expiresAt,
+            challenge.appOpenId,
+          )
+          const recoveryToken = `lnp1.${Buffer.from(await nativeRecoverySecret(nodeCrypto, statement, Buffer.from(input.signature, 'base64url'))).toString('base64url')}`
+          const recoveryHash = sha256Hex(recoveryToken)
+          const windowToken = `lnw1.${Buffer.from(await nativeWindowSecret(nodeCrypto, nativeWindowIssuer, Buffer.from(recoveryHash, 'hex'))).toString('base64url')}`
+          // Even platform crypto adapters may yield; never install a window after a newer opening or revocation.
+          if (
+            !devices.authenticateNative(nativeOpening.deviceId).ok
+            || challenge.generation !== nativeGenerations.get(nativeOpening.deviceId)
+          )
+            throw new AppError(409, 'native-verification-superseded', '此验证已被更新的 App 打开代次替换')
+          const hash = sha256Hex(windowToken)
+          nativeWindows.set(hash, {
+            deviceId: nativeOpening.deviceId,
+            appOpenId: challenge.appOpenId,
+            expiresAt: verifiedUntil,
+            generation: challenge.generation,
+            recoveryHash,
+          })
+          nativeOpening.windowHash = hash
+          json(res, { verifiedUntil: new Date(verifiedUntil).toISOString(), windowToken })
+          return
+        }
+        if (path === '/link/api/native/verification/recover' && method === 'POST') {
+          const input = z
+            .strictObject({
+              appOpenId: z.string().regex(/^[A-Za-z0-9_-]{16,80}$/u),
+              proofReceipt: z.string().regex(/^lnp1\.[A-Za-z0-9_-]{43}$/u),
+            })
+            .parse(await jsonBody(req))
+          const recoveryHash = sha256Hex(input.proofReceipt)
+          const found = [...nativeWindows.entries()].find(
+            ([, window]) =>
+              window.deviceId === nativeOpening.deviceId && window.recoveryHash === recoveryHash && window.appOpenId === input.appOpenId,
+          )
+          if (!found || found[1].expiresAt <= now() || found[1].generation !== nativeGenerations.get(nativeOpening.deviceId))
+            throw new AppError(403, 'native-verification-invalid', '验证窗口已失效，请重新验证')
+          const [hash, window] = found
+          const windowToken = `lnw1.${Buffer.from(await nativeWindowSecret(nodeCrypto, nativeWindowIssuer, Buffer.from(recoveryHash, 'hex'))).toString('base64url')}`
+          if (
+            !devices.authenticateNative(nativeOpening.deviceId).ok
+            || window.expiresAt <= now()
+            || window.generation !== nativeGenerations.get(nativeOpening.deviceId)
+            || nativeWindows.get(hash) !== window
+          )
+            throw new AppError(403, 'native-verification-invalid', '验证窗口已失效，请重新验证')
+          nativeOpening.windowHash = hash
+          json(res, { verifiedUntil: new Date(window.expiresAt).toISOString(), windowToken })
+          return
+        }
+        if (path === '/link/api/native/verification/resume' && method === 'POST') {
+          const input = z
+            .strictObject({
+              appOpenId: z.string().regex(/^[A-Za-z0-9_-]{16,80}$/u),
+              windowToken: z.string().regex(/^lnw1\.[A-Za-z0-9_-]{43}$/u),
+            })
+            .parse(await jsonBody(req))
+          const hash = sha256Hex(input.windowToken),
+            window = nativeWindows.get(hash)
+          if (
+            !window
+            || window.deviceId !== nativeOpening.deviceId
+            || window.appOpenId !== input.appOpenId
+            || window.expiresAt <= now()
+            || window.generation !== nativeGenerations.get(nativeOpening.deviceId)
+          )
+            throw new AppError(403, 'native-verification-invalid', '验证窗口已失效，请重新验证')
+          nativeOpening.windowHash = hash
+          json(res, { verifiedUntil: new Date(window.expiresAt).toISOString() })
+          return
+        }
+        const cancel = method === 'POST' && /^\/link\/api\/tasks\/[^/]+\/cancel$/u.test(path)
+        const reject = method === 'POST' && /^\/link\/api\/approvals\/[^/]+$/u.test(path)
+        caller.nativeWindowExempt =
+          (path === '/link/api/snapshot' && method === 'GET') || cancel || (path === '/link/api/native/input/pause' && method === 'POST')
+        if (nativeVerifiedUntil(nativeOpening) <= now() && !caller.nativeWindowExempt && !reject)
+          throw new AppError(403, 'native-verification-required', '请先在手机上完成身份验证')
+        if (path.startsWith('/link/api/credentials/')) throw new AppError(403, 'native-credential-route', '原生身份不使用浏览器凭据续期')
+      }
       if (!caller.device) {
         const route = `${method} ${path.replace(/^\/link\/api\/devices\/[^/]+$/u, '/link/api/devices/:id')}`
         if (!ANONYMOUS_UNIX.has(route) || path === '/link/api/devices/current') throw authFailure('unauthorized')
@@ -4871,14 +5737,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
                 modelConfigurationRequired: providerId === LEGACY_PROVIDER_ID && !effectiveProvider(LEGACY_PROVIDER_ID),
               }
             : { ready: true }
-        const tasks = await hub!.listTasks()
+        const tasks = (await hub!.listTasks()).map(questionSummary)
         const snapshot: AppSnapshot = {
           instanceId,
           revision: snapshotRevision,
           device: currentDevice(caller),
           host: await hostView(),
           tasks,
-          approvals: await decorateAll(hub!.approvals(), tasks),
+          approvals: nativeOpening ? [] : await decorateAll(hub!.approvals(), tasks),
           demo: options.demo,
           hostName: options.hostName ?? hostname(),
           harness: { id: defaultId, name: hub!.info(defaultId)?.name ?? defaultId },
@@ -4898,13 +5764,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         res.writeHead(200, {
           'content-type': 'text/event-stream',
           'cache-control': 'no-store, no-transform',
-          connection: 'keep-alive',
+          ...(!isNativeListener(listener.listener) ? { connection: 'keep-alive' } : {}),
           'x-accel-buffering': 'no',
         })
         const meter = traffic.stream(caller.connection.listener)
         streams.set(res, {
           deviceId: caller.device.id,
           credentialHash: caller.credentialHash,
+          ...(nativeOpening ? { nativeOpening } : {}),
           ...(sessionId ? { sessionId } : {}),
           lastSentRevision: revision,
           meter,
@@ -4926,7 +5793,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         await createTask(req, res, caller)
         return
       }
+      if (await handleQueue(req, res, caller, path, method)) return
+      if (await handleQuestion(req, res, caller, path, method)) return
       if (await sessionRoutes.handle(req, res, caller, path, method)) return
+      if (await attachmentRoutes.handle(req, res, caller, path, method)) return
       if (await fileRoutes.handle(req, res, caller, path, method)) return
       const clientPanel = path.match(/^\/link\/api\/ui-modules\/([^/]+)\/([a-f0-9]{64})\.mjs$/u)
       if (clientPanel && method === 'GET') {
@@ -5051,6 +5921,17 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     /** Host header and Origin come from the client; they are only compared with the listener's own values. */
     function checkRequest(req: IncomingMessage, res: ServerResponse, listener: ListenerContext, path: string, method: string): boolean {
       if (isSocketTransport(listener.listener)) return true
+      if (isNativeListener(listener.listener)) {
+        if (
+          !nativeRequests.has(req)
+          || req.headers.origin
+          || req.headers.cookie
+          || req.headers.authorization
+          || !path.startsWith('/link/api/')
+        )
+          throw new AppError(403, 'invalid-native-context', '原生请求上下文无效')
+        return true
+      }
       if (req.headers.host !== listener.host) {
         const loose =
           listener.port !== undefined && new Set([`localhost:${listener.port}`, `127.0.0.1:${listener.port}`, `[::1]:${listener.port}`])
@@ -5074,7 +5955,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return true
     }
 
-    async function serveStatic(req: IncomingMessage, res: ServerResponse, path: string, method: string): Promise<void> {
+    async function serveStatic(
+      req: IncomingMessage,
+      res: ServerResponse,
+      path: string,
+      method: string,
+      listener: ListenerContext,
+    ): Promise<void> {
       if (method !== 'GET' && method !== 'HEAD') throw new AppError(405, 'method-not-allowed', '不支持此操作')
       if (path === '/' || path === '/link') {
         res.writeHead(302, { location: '/link/' })
@@ -5085,8 +5972,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (!path.startsWith('/link/')) return sendNotFoundPage(res, method)
       const relativePath = safeDecode(path.slice('/link/'.length)) || 'index.html'
       if (relativePath.startsWith('preview-frame/')) {
-        const match = /^preview-frame\/(office|diagram)\.html$/u.exec(relativePath)
+        const match = /^preview-frame\/(office|diagram|html|html-script)\.html$/u.exec(relativePath)
         if (!match) throw new AppError(404, 'not-found', '页面不存在')
+        if (!isLocalListener(listener.listener) && (match[1] === 'html-script' || req.headers['sec-fetch-dest'] !== 'iframe'))
+          throw new AppError(403, 'preview-refused', '请在文档预览中打开这个文件')
         const frame = await readPreviewFrame(resolve(options.uiDir), match[1]!)
         res.removeHeader('x-frame-options')
         res.writeHead(200, {
@@ -5131,7 +6020,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         await handleApi(req, res, listener, path, method)
         return
       }
-      await serveStatic(req, res, path, method)
+      await serveStatic(req, res, path, method, listener)
     }
 
     function fail(res: ServerResponse, error: unknown, listener: ListenerContext): void {
@@ -5174,6 +6063,50 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         void handle(req, res, listener).catch(error => fail(res, error, listener))
       },
     })
+    {
+      nativeHost = await startNativeHost({
+        identity,
+        devices,
+        enrollments,
+        bind:
+          options.native
+          ?? (nativeAddresses().some(item => item.address === relayProfiles.snapshot().direct?.host)
+            ? (relayProfiles.snapshot().direct ?? undefined)
+            : undefined),
+        allowUnavailableBind: !options.native,
+        relayAvailable: () => relayProfiles.snapshot().profiles.length > 0,
+        relayInvites: (id, expiresAt) => relayController?.invitation(id, expiresAt) ?? Promise.resolve([]),
+        handler(req, res, opening) {
+          nativeRequests.set(req, opening)
+          void handle(req, res, opening.listener).catch(error => fail(res, error, opening.listener))
+        },
+      })
+      const native = nativeHost
+      startupCleanup.push(() => native.close())
+      relayController = new HostRelayController({
+        profiles: relayProfiles,
+        devices,
+        enrollments,
+        audit,
+        resolve: createRelayEgress({
+          allow: () => [...policy.get().hostEgressAllow, ...egressExtra],
+          ...(options.egressLookup ? { lookup: options.egressLookup } : {}),
+        }),
+        accept: (stream, binding, expected) => native.acceptRelay(stream, binding, expected),
+        closePaths: id => native.closeRelay(id),
+        ...(options.nativeRelayCa ? { ca: options.nativeRelayCa } : {}),
+      })
+      const controller = relayController
+      startupCleanup.push(() => controller.close())
+      nativeSettings = new NativeSettings({
+        profiles: relayProfiles,
+        native,
+        controller,
+        audit,
+        managedDirect: options.native,
+        inputsPaused: () => devices.nativeInputsPaused(),
+      })
+    }
     const started = listeners
     startupCleanup.push(() => started.close())
     loopbackOrigin = started.loopbackOrigin
@@ -5208,6 +6141,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       origin: loopbackOrigin,
       loopbackPort: started.loopbackPort,
       ...(tlsOrigin ? { tlsOrigin } : {}),
+      ...(nativeHost?.port !== undefined ? { nativePort: nativeHost.port } : {}),
       socketPath: runtime.socketPath,
       runtimeDir: runtime.runtimeDir,
       startedAt,
@@ -5218,6 +6152,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       close() {
         return (shutdown ??= (async () => {
           closing = true
+          await relayController?.close()
+          await nativeHost?.close()
           clearInterval(heartbeat)
           clearTimeout(eventTimer)
           unsubscribe()
@@ -5225,8 +6161,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           const failures: unknown[] = []
           for (const dispose of [
             () => changes,
+            () => promptQueues.close(),
             () => agentProbes.close(),
             () => harnessHub.close(),
+            () => questions.close(),
+            () => fileTracking.close(),
             () => registry.close(),
             () => started.close(),
             // Agents are stopped by now; their per-session temp dirs go with the runtime dir.

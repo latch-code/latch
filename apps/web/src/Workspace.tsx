@@ -1,6 +1,11 @@
+import { dropAttachments } from './components/AttachmentDrafts.tsx'
+import { hasFileMention } from './fileMentions.ts'
+import type { FileMention } from '@latch/protocol'
+import { useAttachments } from './hooks/useAttachments.ts'
 import { useFileTabs } from './preview/useFileTabs.ts'
 import { FileOpenContext } from './preview/fileContext.ts'
 import { placeFileColumn } from './preview/layout.ts'
+import { useAutoOpenOutputs } from './hooks/useAutoOpenOutputs.ts'
 import type { FileOpenTarget } from '@latch/protocol'
 import { VisibleText } from './components/VisibleText.tsx'
 import { projectScopeCaption } from './projects.tsx'
@@ -102,7 +107,10 @@ import { Rail, Sidebar } from './components/Sidebar.tsx'
 import { TopBar } from './components/TopBar.tsx'
 import { Banner } from './components/Banner.tsx'
 import { JumpLatest } from './components/JumpLatest.tsx'
+import { PromptQueue } from './components/PromptQueue.tsx'
 import { Transcript } from './components/Transcript.tsx'
+import { SendingMessage } from './components/SendingMessage.tsx'
+import { sendingMessageFor } from './core/sendingMessage.ts'
 import { isLive, toolRowId } from './conversation.ts'
 import {
   Button,
@@ -168,7 +176,10 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
   const savedFileTabs = useFileTabs(snapshot.device.id, selectedId)
   const fileTabs = snapshot.catalog?.features?.filePreview ? savedFileTabs : { ...savedFileTabs, tabs: [], active: undefined }
   const [fileExpanded, setFileExpanded] = useState(false)
-  const fileWidthKey = `latch.file-width.${snapshot.device.id}.${widthClass ?? 'phone'}`
+  const fileIsDocument = fileTabs.active?.file
+    ? ['pptx', 'pdf', 'docx', 'xlsx', 'html'].includes(fileTabs.active.file.kind)
+    : /\.(?:pptx|pdf|docx|xlsx|html?)$/iu.test(fileTabs.active?.target.reference ?? '')
+  const fileWidthKey = `latch.file-width.${snapshot.device.id}.${widthClass ?? 'phone'}.${fileIsDocument ? 'document' : 'content'}`
   const fileStored = Number(storageGet(fileWidthKey))
   const current = detail?.summary.id === selectedId ? detail : null
   const summary = current?.summary ?? snapshot.tasks.find(task => task.id === selectedId)
@@ -183,7 +194,8 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
         ? placeFileColumn(
             windowWidth,
             widthClass ? (sidebarShut ? 8 : clampSidebar(storedSidebar, windowWidth)) : 56,
-            inspectorDrag ?? (fileStored >= 480 && fileStored <= 4096 ? fileStored : undefined),
+            inspectorDrag ?? (fileStored >= 280 && fileStored <= 4096 ? fileStored : undefined),
+            fileIsDocument,
           )
         : fileTabs.active && fileExpanded
           ? { kind: 'page' as const }
@@ -334,8 +346,65 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
     },
     onRefused: stopSession,
   })
+  const attachmentDraft = useAttachments({
+    enabled: catalog?.features?.attachments === true && access.scopes.has('run'),
+    selection: {
+      harnessId:
+        selectedId === null
+          ? (submission.choice.harnessId ?? catalog?.defaults.harnessId ?? 'standard')
+          : (summary?.harnessId ?? 'standard'),
+      ...(selectedId === null ? { workspaceId: submission.choice.workspaceId ?? catalog?.defaults.workspaceId } : {}),
+      ...((selectedId === null ? submission.choice.model : (submission.override ?? sessionModel(summary)))
+        ? { model: selectedId === null ? submission.choice.model : (submission.override ?? sessionModel(summary)) }
+        : {}),
+    },
+    ...(selectedId ? { sessionId: selectedId } : {}),
+    locked: submission.sending || submission.pending !== null,
+  })
+  const [fileMentions, setFileMentions] = useState<FileMention[]>([])
+  const mentionScope =
+    selectedId
+    ?? `${submission.choice.workspaceId ?? ''}:${submission.choice.harnessId ?? ''}:${submission.choice.mode}:${snapshot.device.dataScope}`
+  useLayoutEffect(() => {
+    if (submission.pending === null) setFileMentions([])
+  }, [mentionScope])
+  const setSubmissionDraft = (text: string) => {
+    submission.setDraft(text)
+    setFileMentions(previous => previous.filter(ref => hasFileMention(text, ref)))
+  }
+  const mentionChoice = {
+    enabled:
+      catalog?.features?.fileMentions === true
+      && snapshot.device.dataScope === 'all'
+      && (selectedId === null ? submission.choice.mode === 'agent' : summary?.mode !== 'chat')
+      && (selectedId === null ? findHarness(catalog, submission.choice.harnessId)?.source : harnessInfo?.source) !== 'plugin',
+    ...(selectedId ? { sessionId: selectedId } : {}),
+    ...(submission.choice.workspaceId && submission.choice.workspaceId !== 'default' ? { workspaceId: submission.choice.workspaceId } : {}),
+    harnessId: (selectedId === null ? submission.choice.harnessId : summary?.harnessId) ?? 'standard',
+    refs: fileMentions.filter(ref => hasFileMention(submission.draft, ref)),
+    onRefs: setFileMentions,
+  }
+  const sendDraft = async () => {
+    if (active && (attachmentDraft.items.length > 0 || mentionChoice.refs.length > 0)) {
+      submission.setError('排队暂不支持附件或文件引用，请等本轮结束再发送。')
+      return
+    }
+    const ids = await attachmentDraft.wait()
+    if (ids && (await submission.submit(undefined, undefined, active && catalog?.features?.queue === true, ids, mentionChoice.refs))) {
+      attachmentDraft.clear()
+      setFileMentions([])
+    }
+  }
+  const retryDraft = async () => {
+    if (submission.pending && (await submission.submit(submission.pending))) {
+      attachmentDraft.clear()
+      setFileMentions([])
+    }
+  }
   // A Host that records no run times: the time since this page saw the run start, or nothing.
   const pageRunElapsed = useRunClock(snapshot.tasks, selectedId)
+  const sendingView = sendingMessageFor(snapshot, submission.sendingMessage, selectedId, current)
+  const sendingBubble = sendingView ? <SendingMessage key={sendingView.submission.requestId} view={sendingView} /> : null
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -405,8 +474,15 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
     setActionError(previous => (previous?.sessionId === id ? previous : null))
     if (submission.pending === null) submission.setDraft('')
   })
-  const openFile = useStableCallback((target: FileOpenTarget) => {
+  const openFile = useStableCallback((target: FileOpenTarget, options?: { focus: false }) => {
     if (snapshot.catalog?.features?.filePreview !== true) return
+    if (
+      options?.focus === false
+      && document.activeElement instanceof HTMLElement
+      && document.activeElement.closest('.file-preview')
+      && document.activeElement.closest('input,textarea,select,[contenteditable="true"]')
+    )
+      return
     if (target.sessionId !== selectedId) choose(target.sessionId)
     const task = current?.summary.id === target.sessionId ? current.summary : snapshot.tasks.find(item => item.id === target.sessionId)
     const roots = task?.folders?.length ? task.folders : task?.cwd ? [{ id: 'default', path: task.cwd }] : []
@@ -416,6 +492,12 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
     const reference = root && target.reference.startsWith(`${root.path}/`) ? target.reference.slice(root.path.length + 1) : target.reference
     fileTabs.open({ ...target, reference, ...(root ? { rootId: root.id } : {}) })
     setInfoPage(true)
+  })
+  useAutoOpenOutputs({
+    detail: current,
+    visible: fileTabs.active !== undefined && (columnOpen || (pageMode && infoPage)),
+    width: pageMode ? windowWidth : inspectorWidth,
+    onOpen: openFile,
   })
   const failAction = (sessionId: string, text: string) => {
     setActionError({ sessionId, text })
@@ -916,7 +998,9 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
           ? '写下问题或想法…'
           : '描述任务，以及你希望得到的结果…'
         : active
-          ? '可以先写，本轮结束后发送…'
+          ? catalog?.features?.queue
+            ? '可以先写，本轮完成后自动发送…'
+            : '可以先写，本轮结束后发送…'
           : mode === 'chat'
             ? '继续对话 · 不读写文件、不运行命令'
             : `回复 ${harnessInfo ? harnessLabel(harnessInfo) : harnessName}…`
@@ -959,6 +1043,8 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
   const composer = (
     <Composer
       textareaRef={composerRef}
+      attachments={catalog?.features?.attachments === true && gate.kind === 'open' && !noteComposer ? attachmentDraft : undefined}
+      fileMentions={mentionChoice}
       commands={current?.commands}
       templates={scopedTemplates(
         promptTemplates,
@@ -973,7 +1059,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
       label={noteComposer?.kind === 'note' ? DECISION_COPY.noteLabel : selectedId === null ? '新会话消息' : '继续对话'}
       placeholder={submission.pending === null ? (noteComposer?.placeholder ?? placeholder) : placeholder}
       draft={noteComposer?.kind === 'note' ? noteComposer.draft : submission.draft}
-      onDraft={noteComposer?.kind === 'note' ? noteComposer.onDraft : submission.setDraft}
+      onDraft={noteComposer?.kind === 'note' ? noteComposer.onDraft : setSubmissionDraft}
       pending={submission.pending}
       sending={submission.sending}
       error={
@@ -982,7 +1068,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
         || (actionError?.sessionId === selectedId ? actionError.text : '')
       }
       onRetry={() => {
-        if (submission.pending) void submission.submit(submission.pending)
+        void retryDraft()
       }}
       canSend={gate.kind === 'open' && (selectedId === null ? block === null && !presenceDown : sessionBlock === undefined)}
       blockReason={block?.message ?? sessionBlock ?? startReason}
@@ -1033,11 +1119,24 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
         <InlineConfirm active={submission.sending || (selectedId !== null && configBusy.has(selectedId))} className="composer-confirm" />
       }
       onSubmit={() => {
-        void submission.submit()
+        void sendDraft()
       }}
       sendKey={preferences.sendKey}
       coarse={coarse}
       run={run}
+      queueable={catalog?.features?.queue === true && !noteComposer}
+      queueTray={
+        selectedId !== null && current?.queue ? (
+          <PromptQueue
+            key={selectedId}
+            sessionId={selectedId}
+            items={current.queue}
+            canSend={gate.kind === 'open' && sessionBlock === undefined && !submission.pending}
+            canRemove={access.scopes.has('run')}
+            onChanged={refresh}
+          />
+        ) : undefined
+      }
       inline={phone && selectedId !== null}
       controls={
         selectedId === null ? (
@@ -1092,21 +1191,23 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
   )
 
   // Phones: the new-session sheet holds its own input, whose 开始 is in the sheet's header.
-  const newChoicesLocked = submission.pending !== null || submission.sending || gate.kind !== 'open'
+  const newChoicesLocked = submission.pending !== null || submission.sending || attachmentDraft.preparing || gate.kind !== 'open'
   const sheetComposer = phone && (
     <Composer
       textareaRef={sheetComposerRef}
+      fileMentions={mentionChoice}
+      attachments={catalog?.features?.attachments === true && gate.kind === 'open' ? attachmentDraft : undefined}
       templates={scopedTemplates(promptTemplates, choice.workspaceId ?? catalog?.defaults.workspaceId, choice.harnessId)}
       variant="sheet"
       label="新会话消息"
       placeholder={placeholder}
       draft={submission.draft}
-      onDraft={submission.setDraft}
+      onDraft={setSubmissionDraft}
       pending={submission.pending}
       sending={submission.sending}
       error={submission.error}
       onRetry={() => {
-        if (submission.pending) void submission.submit(submission.pending)
+        void retryDraft()
       }}
       canSend={gate.kind === 'open' && block === null && !presenceDown}
       blockReason={block?.message ?? startReason}
@@ -1120,7 +1221,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
         ) : undefined
       }
       onSubmit={() => {
-        void submission.submit()
+        void sendDraft()
       }}
       sendKey={preferences.sendKey}
       coarse={coarse}
@@ -1134,7 +1235,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
     && block === null
     && !presenceDown
     && !newChoicesLocked
-    && submission.draft.trim().length > 0
+    && (submission.draft.trim().length > 0 || attachmentDraft.items.length > 0)
 
   // The open column stands beside the paper, which keeps its minimum width between the two columns.
   const inspectorBeside = columnOpen ? inspectorWidth : 0
@@ -1346,6 +1447,9 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
       files={fileTabs.tabs}
       activeFile={fileTabs.active}
       local={access.local}
+      deviceId={snapshot.device.id}
+      detail={current}
+      onFileView={fileTabs.view}
       onSelectFile={id => {
         fileTabs.select(id)
         setFileExpanded(false)
@@ -1709,10 +1813,38 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
               {(!phone || phoneSession) && (
                 <main
                   ref={main}
+                  onDragEnter={event => {
+                    if (
+                      catalog?.features?.attachments === true
+                      && gate.kind === 'open'
+                      && [...event.dataTransfer.types].includes('Files')
+                    ) {
+                      event.preventDefault()
+                      attachmentDraft.setDragging(true)
+                    }
+                  }}
+                  onDragOver={event => {
+                    if ([...event.dataTransfer.types].includes('Files')) event.preventDefault()
+                  }}
+                  onDragLeave={event => {
+                    if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget))
+                      attachmentDraft.setDragging(false)
+                  }}
+                  onDropCapture={event => {
+                    attachmentDraft.setDragging(false)
+                    if (catalog?.features?.attachments === true && gate.kind === 'open' && !noteComposer)
+                      dropAttachments(event, attachmentDraft)
+                    else if ([...event.dataTransfer.types].includes('Files')) event.preventDefault()
+                  }}
                   className={`workspace ${selectedId === null ? 'is-new' : 'has-task'}`}
                   data-info-page={pageMode && infoPage ? '' : undefined}
                   data-pushed={phone && pushed ? '' : undefined}
                   data-leaving={phone && popping ? '' : undefined}>
+                  {attachmentDraft.dragging && (
+                    <div className="attachment-drop-mask" role="status">
+                      松开以添加到这条消息
+                    </div>
+                  )}
                   {/* Under the page of 会话信息 the conversation cannot be reached until the page is closed. */}
                   <div className="workspace-view" inert={(pageMode && infoPage) || undefined}>
                     <TopBar
@@ -1780,7 +1912,12 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
                             />
                           }
                           harnesses={harnessChoices}
-                          composer={composer}
+                          composer={
+                            <>
+                              {sendingBubble}
+                              {composer}
+                            </>
+                          }
                           demo={demo}
                           mode={choice.mode}
                           setup={setupCard}
@@ -1800,12 +1937,20 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
                             <div className="transcript" ref={reading.containerRef} {...reading.handlers} tabIndex={0} aria-label="会话记录">
                               <div className="transcript-content" ref={reading.contentRef}>
                                 {current === null ? (
-                                  <Loading label="正在读取会话记录…" />
+                                  <>
+                                    <Loading label="正在读取会话记录…" />
+                                    {sendingBubble}
+                                  </>
                                 ) : (
                                   <ApprovalStatuses.Provider value={statuses}>
                                     <ApprovalVisibilityContext.Provider value={approvalVisibility}>
                                       <Transcript
                                         detail={current}
+                                        questionActions={{
+                                          deviceId: snapshot.device.id,
+                                          canAnswer: gate.kind === 'open' && sessionBlock === undefined,
+                                          onChanged: refresh,
+                                        }}
                                         onCopyError={cause => setToast({ text: errorMessage(cause), tone: 'error' })}
                                         onFork={
                                           catalog?.features?.fork && access.scopes.has('run')
@@ -1840,6 +1985,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
                                         {...(fallbackElapsed !== undefined ? { fallbackElapsed } : {})}
                                         {...(retry ? { retry } : {})}
                                       />
+                                      {sendingBubble}
                                     </ApprovalVisibilityContext.Provider>
                                   </ApprovalStatuses.Provider>
                                 )}
@@ -1912,7 +2058,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
                   label="调整会话信息宽度"
                   edge="start"
                   value={inspectorWidth}
-                  min={fileTabs.active ? 480 : INSPECTOR_MIN}
+                  min={fileTabs.active && fileIsDocument ? 480 : INSPECTOR_MIN}
                   max={fileTabs.active ? windowWidth - 528 : inspectorMax(windowWidth, sidebarCollapsed ? 8 : sidebarWidth)}
                   onResize={(width, phase) => {
                     if (!fileTabs.active) {
@@ -1952,7 +2098,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
                 canStart={sheetCanStart}
                 sending={submission.sending}
                 onStart={() => {
-                  void submission.submit()
+                  void sendDraft()
                 }}
                 harnesses={harnessChoices}
                 onManageProviders={manageProviders}
@@ -1962,7 +2108,12 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
                 onManageWorkspaces={owner ? () => openSettings('workspaces') : undefined}
                 onCreateProject={createProject}
                 startLabel={startsL3 && access.local ? '开始会话' : undefined}
-                composer={sheetComposer}
+                composer={
+                  <>
+                    {sendingBubble}
+                    {sheetComposer}
+                  </>
+                }
                 setup={setupCard}
                 demo={demo}
                 suggestions={<DemoSuggestions demo={demo} mode={choice.mode} onSuggestion={suggest} />}

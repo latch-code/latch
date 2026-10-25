@@ -502,6 +502,7 @@ export function runElapsed(detail: TaskDetail, hostNow: number): number | undefi
 export type LivePhase =
   | { kind: 'cancelling' }
   | { kind: 'approval' }
+  | { kind: 'question' }
   | { kind: 'tool'; text: string }
   | { kind: 'reply' }
   | { kind: 'thinking' }
@@ -516,6 +517,7 @@ export type LivePhase =
 export function livePhase(detail: TaskDetail, opts: { cancelling: boolean; approvals: number; hostNow: number }): LivePhase {
   const activity = detail.activity
   if (opts.cancelling || activity?.phase === 'cancelling') return { kind: 'cancelling' }
+  if (detail.questions?.length) return { kind: 'question' }
   if (opts.approvals > 0 || detail.summary.status === 'waiting-approval' || activity?.phase === 'approval') return { kind: 'approval' }
   const running = detail.messages.findLast(message => message.role === 'tool' && message.state === 'running')
   const trailing = turnsOf(detail.messages).at(-1)
@@ -544,6 +546,7 @@ function toolText(message: Message): string {
 const PHASE_WORDS: Record<Exclude<LivePhase['kind'], 'tool' | 'starting'>, string> = {
   cancelling: '正在停止…',
   approval: '等你批准',
+  question: '等你回答',
   reply: '正在回复',
   thinking: '正在思考',
   model: '等待模型…',

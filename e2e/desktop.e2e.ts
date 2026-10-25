@@ -330,6 +330,7 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
         kind: 'electron',
         devMode: true,
         platform: 'darwin',
+        previews: { protocolVersion: 1, htmlScripts: true },
         folders: ['protocolVersion', 'pick', 'drop', 'reveal', 'saveSessionFolder'],
         confirmations: ['protocolVersion', 'confirm'],
         openInBrowser: 'function',
@@ -644,6 +645,7 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
       // place yet (the dock).
       const phone = await testHost.enroll({ name: '测试手机', scopes: ['view'] })
       const settings = await openSettings(page, '设备')
+      await settings.locator('.settings-row', { hasText: '浏览器配对' }).getByRole('button', { name: '展开', exact: true }).click()
       const pairing = settings.locator('.pair-section')
       // The panel's end in view, so each capture shows all of it.
       const showPairing = () => pairing.evaluate(element => element.scrollIntoView({ block: 'end' }))
@@ -867,6 +869,8 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
       const computer = page.getByRole('dialog', { name: '设置', exact: true })
       // Pairing starts here, so this is where the running agent that would hold a phone back is named.
       await computer.getByRole('tab', { name: '设备', exact: true }).click()
+      const browserPairing = computer.locator('.settings-row', { hasText: '浏览器配对' }).getByRole('button')
+      if ((await browserPairing.getAttribute('aria-expanded')) === 'false') await browserPairing.click()
       await computer
         .getByText(`要等「${hangTitle}」（Fake Agent）结束，才能配对新设备。`, {
           exact: true,

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useContext, useEffect, useState, type ReactNode } from 'react'
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
@@ -9,6 +9,7 @@ import {
   CircleDollarSign,
   Cpu,
   FileText,
+  Eye,
   Folder,
   FolderOpen,
   FolderPlus,
@@ -59,6 +60,8 @@ import {
   type LucideIcon,
 } from '@latch/ui'
 import { VisibleText } from './VisibleText.tsx'
+import { FileOpenContext } from '../preview/fileContext.ts'
+import { fileHistories, type FileHistory } from '../preview/fileHistory.ts'
 
 /** The blocks, in their order; each folds from its header and the choice is remembered on this device. */
 export type InfoBlock = 'agent' | 'environment' | 'permission' | 'usage' | 'plan' | 'changes'
@@ -235,6 +238,7 @@ export function Inspector({
   onSource?: (sessionId: string) => void
 }) {
   const [factsOpen, setFactsOpen] = useState(false)
+  const openFile = useContext(FileOpenContext)
   const [savingProject, setSavingProject] = useState(false)
   const [folderError, setFolderError] = useState('')
   useEffect(() => {
@@ -372,7 +376,34 @@ export function Inspector({
   // 计划 and 变更
   const plan = own?.plan ?? []
   const progress = planProgress(plan)
-  const changes = own ? fileChanges(own.messages) : []
+  const histories = own && catalog?.features?.filePreview && openFile ? fileHistories(own) : []
+  const changes: Array<{
+    path: string
+    root?: string
+    added: number
+    removed: number
+    known: boolean
+    toolId: string
+    history?: FileHistory
+  }> = histories.map(history => {
+    let added = 0,
+      removed = 0,
+      known = true
+    for (const entry of history.entries) {
+      const view = diffLines(entry.diff.oldText, entry.diff.newText)
+      added += view.added
+      removed += view.removed
+      known &&= entry.diff.previous === 'text'
+    }
+    return { path: history.path, root: history.root, added, removed, known, toolId: history.entries.at(-1)!.toolId, history }
+  })
+  if (own)
+    changes.push(
+      ...fileChanges(own.messages).filter(
+        change =>
+          !histories.some(history => history.entries.some(entry => entry.toolId === change.toolId && entry.diff.path === change.path)),
+      ),
+    )
 
   const facts = permission
     ? [
@@ -647,21 +678,22 @@ export function Inspector({
             {changes.map(change => {
               const { folder, name } = splitPath(change.path)
               return (
-                <li key={change.path}>
+                <li key={`${change.root ?? ''}\n${change.path}`}>
                   <button
                     type="button"
                     className="info-change"
                     title={change.path}
                     onClick={() => {
-                      onReveal(change.toolId)
+                      if (change.history && openFile) openFile(change.history.target)
+                      else onReveal(change.toolId)
                     }}>
                     <span className="info-icon" aria-hidden="true">
                       <FileText size={14} strokeWidth={ICON_STROKE[14]} />
                     </span>
                     <span className="info-change-path">
-                      {folder && (
+                      {(folder || change.root) && (
                         <span className="info-change-folder">
-                          <VisibleText text={folder} />
+                          <VisibleText text={`${change.root ? `${change.history?.folder ?? change.root} / ` : ''}${folder}`} />
                         </span>
                       )}
                       <VisibleText text={name} />
@@ -669,6 +701,15 @@ export function Inspector({
                     <span className={change.added ? 'diff-stat-add' : 'diff-stat-zero'}>+{change.added}</span>
                     {change.known && <span className={change.removed ? 'diff-stat-remove' : 'diff-stat-zero'}>−{change.removed}</span>}
                   </button>
+                  {change.history && openFile && (
+                    <IconButton
+                      className="info-change-preview"
+                      size="xs"
+                      label={`预览文件：${change.path}`}
+                      icon={Eye}
+                      onClick={() => openFile({ ...change.history!.target, view: 'preview' })}
+                    />
+                  )}
                 </li>
               )
             })}

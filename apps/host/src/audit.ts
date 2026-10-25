@@ -28,6 +28,7 @@ const dataScope = z.enum(['work', 'all'])
 const risk = z.enum(['R0', 'R1', 'R2'])
 const presenceAction = z.enum([
   'device.enroll',
+  'device.enroll-native',
   'device.grant',
   'task.start-l3',
   'task.mode-widen',
@@ -57,7 +58,22 @@ const folderVia = z.enum(['picker', 'drop', 'cli'])
 const fileAction = z.strictObject({ sessionId: opaqueId, pathHash: hex64, type: z.enum(AUDIT_FILE_TYPES) })
 
 /** Strict detail schema per action. */
+const attachmentEvent = z.strictObject({
+  attachmentId: z.string().regex(/^[A-Za-z0-9_-]{22}$/u),
+  contentHash: hex64,
+  bytes: count,
+  type: z.enum(['image', 'text']),
+})
 export const AUDIT_DETAIL = {
+  'task.question.answered': z.strictObject({ sessionId: opaqueId, questionId: opaqueId }),
+  'task.prompt.queued': z.strictObject({ sessionId: opaqueId, itemId: opaqueId }),
+  'task.prompt.sent': z.strictObject({ sessionId: opaqueId, itemId: opaqueId }),
+  'task.prompt.edited': z.strictObject({ sessionId: opaqueId, itemId: opaqueId }),
+  'task.prompt.removed': z.strictObject({ sessionId: opaqueId, itemId: opaqueId }),
+  'attachment.add': attachmentEvent,
+  'attachment.view': attachmentEvent,
+  'native.relay.conflict': z.strictObject({ relayHash: hex64 }),
+  'native.config.changed': z.strictObject({ before: hex64, after: hex64, lowering: z.boolean(), direct: z.boolean(), relayCount: count }),
   'presence.launch-trusted': z.strictObject({ keyHash: hex64 }),
   'host.started': z.strictObject({
     hostId: z.string().regex(/^[a-z2-7]{52}$/u),
@@ -102,6 +118,9 @@ export const AUDIT_DETAIL = {
   'device.renamed': deviceOnly,
   /** A renewal answered with a new credential; it replaces the current one only when first used. */
   'device.credential.issued': deviceOnly,
+  'device.native.verified': deviceOnly,
+  'native.inputs.paused': z.strictObject({}),
+  'native.inputs.resumed': z.strictObject({}),
   /** The renewed credential was used for the first time and became current. */
   'device.credential.rotated': deviceOnly,
   /** `listener` is where the invitation can be used; records written before invitations were bound to one have none. */

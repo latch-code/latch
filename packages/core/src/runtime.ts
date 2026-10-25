@@ -1,8 +1,10 @@
+import { RunFileTracking, recordFileOutputs } from './file-tracking.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import { realpath } from 'node:fs/promises'
 import { isAbsolute, resolve } from 'node:path'
-import { escapeSecurityText, rejectionNote } from '@latch/protocol'
+import { fileMentionContext, isAttachmentRef, escapeSecurityText, rejectionNote } from '@latch/protocol'
 import type {
+  AttachmentRef,
   Approval,
   ApprovalOption,
   Message,
@@ -18,6 +20,10 @@ import type {
 } from '@latch/protocol'
 import {
   AppError,
+  type FileTrackingInput,
+  type FileTrackingHandle,
+  type AttachmentContent,
+  type ModelMessage,
   type CapabilityLease,
   type RuntimeRegistry,
   type ToolCall,
@@ -37,6 +43,8 @@ import { createSnapshotStore, emptyRuntimeState } from './store.ts'
 import type { RuntimeState, RuntimeStore, StoredTask } from './store.ts'
 
 export interface RuntimeOptions {
+  trackFiles?: (input: FileTrackingInput) => Promise<FileTrackingHandle>
+  readAttachment?: (ref: AttachmentRef, signal?: AbortSignal) => Promise<AttachmentContent>
   dataDir: string
   /** Working directory of sessions created without `cwd`. */
   workspaceRoot: string
@@ -160,8 +168,9 @@ function digest(value: unknown): string {
 function skillContext(lease: CapabilityLease): string | undefined {
   return lease.skills?.length ? lease.skills.map(skill => `# ${skill.name} (${skill.id})\n${skill.content}`).join('\n\n') : undefined
 }
-function assertPrompt(prompt: string, requestId: string): void {
-  if (!prompt.trim() || prompt.length > 1_000_000) throw new AppError(400, 'invalid-prompt', '请输入不超过 1 MB 的任务内容')
+function assertPrompt(prompt: string, requestId: string, attachments?: AttachmentRef[]): void {
+  if ((!prompt.trim() && !attachments?.length) || prompt.length > 1_000_000)
+    throw new AppError(400, 'invalid-prompt', '请输入不超过 1 MB 的任务内容')
   if (!requestId || requestId.length > 256) throw new AppError(400, 'invalid-request-id', '缺少有效的请求标识')
 }
 /** Returns a detached copy with only the two known keys, so hashes and records stay stable. */
@@ -324,6 +333,7 @@ export function createRuntime(options: RuntimeOptions): Bridge {
 }
 
 class HarnessRuntime implements Bridge {
+  private readonly fileTracking: RunFileTracking
   private readonly options: RuntimeOptions
   private readonly clock: () => number
   private state = emptyRuntimeState()
@@ -342,6 +352,11 @@ class HarnessRuntime implements Bridge {
 
   constructor(options: RuntimeOptions) {
     this.options = options
+    this.fileTracking = new RunFileTracking({
+      track: options.trackFiles,
+      current: (id, runId) => this.state.tasks[id]?.summary.runId === runId,
+      notify: id => this.notify(id),
+    })
     this.clock = options.clock ?? Date.now
     this.store = options.store ?? createSnapshotStore(options.dataDir)
     this.workspaceRoot = resolve(options.workspaceRoot)
@@ -371,6 +386,13 @@ class HarnessRuntime implements Bridge {
       const recovered = structuredClone(this.state)
       let changed = false
       for (const task of Object.values(recovered.tasks)) {
+        for (const message of task.messages)
+          if (message.outputsPending) {
+            delete message.outputsPending
+            message.outputsTruncated = true
+            task.revision++
+            changed = true
+          }
         if (task.summary.mode === undefined) {
           task.summary.mode = 'agent'
           changed = true
@@ -408,8 +430,10 @@ class HarnessRuntime implements Bridge {
     return (this.closing ??= (async () => {
       this.closed = true
       await this.starting?.catch(() => {})
+      this.fileTracking.dispose()
       for (const run of this.runs.values()) run.controller.abort(new Error('Runtime closed'))
       await Promise.all([...this.runs.values()].map(run => run.done))
+      await this.fileTracking.close()
       await this.queue
       await this.store.close()
       this.listeners.clear()
@@ -432,6 +456,7 @@ class HarnessRuntime implements Bridge {
         await this.store.commit(draft)
       } catch (error) {
         this.storageFailure = error
+        this.fileTracking.dispose()
         for (const run of this.runs.values()) run.controller.abort(error)
         throw error
       }
@@ -554,6 +579,9 @@ class HarnessRuntime implements Bridge {
       approvals: task.approval ? [task.approval] : [],
       liveText: visibleLive?.text ?? '',
       cursor: task.revision,
+      ...(this.fileTracking.projection(sessionId, task.summary.runId)
+        ? { fileChanges: this.fileTracking.projection(sessionId, task.summary.runId) }
+        : {}),
       ...(visibleLive ? { liveMessageId: visibleLive.id } : {}),
       ...(visibleLive?.reasoning ? { liveReasoning: visibleLive.reasoning, ...visibleLive.reasoningTimer.live() } : {}),
       ...(run?.activity ? { activity: run.activity } : {}),
@@ -564,7 +592,9 @@ class HarnessRuntime implements Bridge {
 
   async createTask(input: CreateTaskInput): Promise<{ sessionId: string }> {
     await this.ready()
-    assertPrompt(input.prompt, input.requestId)
+    assertPrompt(input.prompt, input.requestId, input.attachments)
+    const attachments = this.attachments(input.attachments)
+    const fileRefs = input.fileRefs ?? []
     const mode = input.mode ?? 'agent'
     if (mode !== 'chat' && mode !== 'agent') throw new AppError(400, 'invalid-mode', '对话模式必须是 chat 或 agent')
     const model = input.model === undefined ? undefined : modelRef(input.model)
@@ -577,6 +607,8 @@ class HarnessRuntime implements Bridge {
     // they existed still match.
     const payloadHash = digest({
       prompt: input.prompt,
+      ...(attachments.length ? { attachments } : {}),
+      ...(fileRefs.length ? { fileRefs } : {}),
       mode,
       ...(model ? { model } : {}),
       ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
@@ -595,6 +627,8 @@ class HarnessRuntime implements Bridge {
           // Before modes existed, creation receipts hashed the text alone.
           const legacyAgentReceipt =
             mode === 'agent'
+            && !attachments.length
+            && !fileRefs.length
             && !model
             && input.cwd === undefined
             && this.task(draft, receipt.taskId).summary.mode === 'agent'
@@ -608,13 +642,21 @@ class HarnessRuntime implements Bridge {
         if (scope === null) throw new AppError(400, 'workspace-unavailable', '所选项目的文件夹与此节点登记的不一致')
         const selection: Selection = model ? { ...model, source: 'request', persist: true } : this.defaultSelection()
         const folders = scope?.folders ?? [{ id: SINGLE_FOLDER_ID, path: cwd }]
+        let context: string
+        try {
+          context = fileMentionContext(input.prompt, fileRefs, folders)
+        } catch {
+          throw new AppError(400, 'file-reference-invalid', '文件引用无效。')
+        }
+        if (fileRefs.length && mode === 'chat') throw new AppError(415, 'file-references-unavailable', '只对话模式不能引用项目文件。')
         run = this.allocateRun(`task-${randomUUID()}`, mode, selection, cwd, folders)
+        this.assertAttachments(run, attachments)
         const sessionId = run.sessionId
         const at = isoTime(run.clock.startedAt)
         draft.tasks[sessionId] = {
           summary: {
             id: sessionId,
-            title: input.prompt.trim().replace(/\s+/g, ' ').slice(0, 80),
+            title: (input.prompt.trim().replace(/\s+/g, ' ') || attachments[0]?.name || '附件').slice(0, 80),
             status: 'running',
             updatedAt: at,
             createdAt: at,
@@ -626,8 +668,18 @@ class HarnessRuntime implements Bridge {
             runId: run.id,
             ...(run.lease.skills?.length ? { skills: run.lease.skills.map(skill => skill.id) } : {}),
           },
-          messages: [{ id: run.userMessageId, role: 'user', text: input.prompt, requestId: input.requestId, createdAt: at }],
-          history: [{ role: 'user', content: input.prompt }],
+          messages: [
+            {
+              id: run.userMessageId,
+              role: 'user',
+              text: input.prompt,
+              requestId: input.requestId,
+              createdAt: at,
+              ...(attachments.length ? { attachments } : {}),
+              ...(fileRefs.length ? { fileRefs } : {}),
+            },
+          ],
+          history: [{ role: 'user', content: context, ...(attachments.length ? { attachmentRefs: attachments } : {}) }],
           ...(skillContext(run.lease) ? { skillContext: skillContext(run.lease) } : {}),
           revision: 1,
         }
@@ -644,10 +696,18 @@ class HarnessRuntime implements Bridge {
 
   async prompt(sessionId: string, prompt: string, requestId: string, options: PromptOptions = {}): Promise<void> {
     await this.ready()
-    assertPrompt(prompt, requestId)
+    assertPrompt(prompt, requestId, options.attachments)
+    const attachments = this.attachments(options.attachments)
+    const fileRefs = options.fileRefs ?? []
     const model = options.model === undefined ? undefined : modelRef(options.model)
     const key = digest(['prompt', sessionId, requestId])
-    const payloadHash = digest(model ? { prompt, model } : prompt)
+    const payloadHash = digest(
+      attachments.length || fileRefs.length
+        ? { prompt, ...(model ? { model } : {}), ...(attachments.length ? { attachments } : {}), ...(fileRefs.length ? { fileRefs } : {}) }
+        : model
+          ? { prompt, model }
+          : prompt,
+    )
     // A session's cwd and folders never change, so the asynchronous check can precede the commit.
     const summary = Object.hasOwn(this.state.tasks, sessionId) ? this.state.tasks[sessionId]!.summary : undefined
     const recorded = summary?.cwd
@@ -671,11 +731,30 @@ class HarnessRuntime implements Bridge {
             ? { providerId: task.summary.providerId, model: task.summary.model, source: 'session', persist: true }
             : { ...this.defaultSelection(), persist: false }
         run = this.allocateRun(sessionId, task.summary.mode ?? 'agent', selection, recorded, foldersOf(task.summary, recorded))
+        let context: string
+        try {
+          context = fileMentionContext(prompt, fileRefs, foldersOf(task.summary, recorded))
+        } catch {
+          throw new AppError(400, 'file-reference-invalid', '文件引用无效。')
+        }
+        if (fileRefs.length && task.summary.mode === 'chat')
+          throw new AppError(415, 'file-references-unavailable', '只对话模式不能引用项目文件。')
+        this.assertAttachments(run, [...attachments, ...task.history.flatMap(message => message.attachmentRefs ?? [])])
         const at = isoTime(run.clock.startedAt)
-        task.history.push({ role: 'user', content: prompt })
-        task.messages.push({ id: run.userMessageId, role: 'user', text: prompt, requestId, createdAt: at })
+        task.history.push({ role: 'user', content: context, ...(attachments.length ? { attachmentRefs: attachments } : {}) })
+        task.messages.push({
+          id: run.userMessageId,
+          role: 'user',
+          text: prompt,
+          requestId,
+          ...(options.queuedAt ? { queuedAt: options.queuedAt } : {}),
+          ...(fileRefs.length ? { fileRefs } : {}),
+          createdAt: at,
+          ...(attachments.length ? { attachments } : {}),
+        })
         task.summary.status = 'running'
         task.summary.runId = run.id
+        delete task.summary.runOutcome
         task.skillContext = skillContext(run.lease)
         if (run.lease.skills?.length) task.summary.skills = run.lease.skills.map(skill => skill.id)
         else delete task.summary.skills
@@ -702,6 +781,7 @@ class HarnessRuntime implements Bridge {
       delete draft.tasks[sessionId]
       draft.tombstones = { ...draft.tombstones, [sessionId]: { deletedAt: this.now() } }
     })
+    this.fileTracking.dispose(sessionId)
     this.live.delete(sessionId)
   }
 
@@ -976,6 +1056,14 @@ class HarnessRuntime implements Bridge {
       }
     })
     signal.throwIfAborted()
+    const waitKey = `tool:${call.id}`
+    if (tool.waitsForUser) {
+      run.clock.openWait(waitKey)
+      this.phase(run, { phase: 'approval', toolName: call.name })
+      await this.change(run.sessionId, task => {
+        task.summary.status = 'waiting-approval'
+      })
+    }
     let result: { text: string }
     try {
       result = await tool.execute(structuredClone(call.arguments), {
@@ -992,12 +1080,21 @@ class HarnessRuntime implements Bridge {
         : `TOOL_ERROR: ${error instanceof Error ? error.message : String(error)}`
       this.output(run)
       await this.change(run.sessionId, task => recordResult(task, call, this.now(), text, true, signal.aborted))
+      await tool.resultCommitted?.({ sessionId: run.sessionId, callId: call.id, state: signal.aborted ? 'cancelled' : 'failed' })
       signal.throwIfAborted()
       return
+    } finally {
+      if (tool.waitsForUser) {
+        run.clock.closeWait(waitKey)
+        await this.change(run.sessionId, task => {
+          task.summary.status = 'running'
+        })
+      }
     }
     // A completed result remains true even if cancellation raced its completion.
     this.output(run)
     await this.change(run.sessionId, task => recordResult(task, call, this.now(), result.text, false))
+    await tool.resultCommitted?.({ sessionId: run.sessionId, callId: call.id, state: 'completed' })
   }
 
   /** The times and model of an assistant step's message. */
@@ -1011,11 +1108,27 @@ class HarnessRuntime implements Bridge {
     }
   }
 
+  private attachments(refs: AttachmentRef[] | undefined): AttachmentRef[] {
+    if (refs === undefined) return []
+    if (!Array.isArray(refs) || refs.length > 8 || !refs.every(isAttachmentRef) || new Set(refs.map(ref => ref.id)).size !== refs.length)
+      throw new AppError(400, 'attachment-invalid', '附件引用无效。')
+    if (refs.some(ref => ref.kind === 'text' && ref.size > 256 * 1024))
+      throw new AppError(415, 'attachment-text-too-large', 'Latch 内置只接受 256 KB 以内的文本附件。')
+    return structuredClone(refs)
+  }
+  private assertAttachments(run: Run, refs: readonly AttachmentRef[]): void {
+    if (refs.length && !this.options.readAttachment) throw new AppError(415, 'attachments-unsupported', '当前 Harness 尚未接入附件读取。')
+    if (refs.some(ref => ref.kind === 'image') && run.lease.provider.modelCapabilities?.[run.model]?.vision !== true)
+      throw new AppError(415, 'model-vision-unsupported', '当前模型不能看图片。')
+  }
+
   private async drive(run: Run): Promise<void> {
     const signal = run.controller.signal
     let status: TaskStatus = 'idle'
     let failure: string | undefined
     try {
+      if (run.mode === 'agent') await this.fileTracking.start(run.sessionId, run.id, run.folders)
+      signal.throwIfAborted()
       const availableTools = run.mode === 'chat' ? [] : run.lease.tools
       const tools = new Map(availableTools.map(tool => [tool.name, tool]))
       for (let step = 0; step < this.maxSteps; step++) {
@@ -1031,7 +1144,15 @@ class HarnessRuntime implements Bridge {
         this.live.set(run.sessionId, live)
         this.notify(run.sessionId)
         const task = this.task(this.state, run.sessionId)
-        const messages = structuredClone(task.history)
+        const messages: ModelMessage[] = await Promise.all(
+          task.history.map(async item => {
+            const { attachmentRefs, ...message } = structuredClone(item)
+            if (!attachmentRefs?.length) return message
+            this.assertAttachments(run, attachmentRefs)
+            const attachments = await Promise.all(attachmentRefs.map(ref => this.options.readAttachment!(ref, signal)))
+            return { ...message, attachments }
+          }),
+        )
         if (task.skillContext) messages.unshift({ role: 'system', content: task.skillContext })
         const seen = new Set(messages.flatMap(message => message.toolCalls?.map(call => call.id) ?? []))
         const calls: ToolCall[] = []
@@ -1108,6 +1229,7 @@ class HarnessRuntime implements Bridge {
     } finally {
       // Present only while the step's output is uncommitted; the step commit removes it.
       const partial = this.live.get(run.sessionId)
+      let outputMessageId: string | undefined
       try {
         const at = this.now()
         const reasoningMs = partial?.reasoningTimer.end()
@@ -1128,13 +1250,40 @@ class HarnessRuntime implements Bridge {
           }
           if (partial?.usage) task.summary.usage = addUsage(task.summary.usage, partial.usage)
           task.summary.status = signal.aborted ? 'cancelled' : status
+          task.summary.runOutcome =
+            task.summary.status === 'idle' ? 'completed' : task.summary.status === 'cancelled' ? 'cancelled' : 'failed'
           if (failure) task.messages.push({ id: randomUUID(), role: 'system', text: failure, state: 'failed', createdAt: at })
           const prompt = task.messages.find(message => message.id === run.userMessageId)
           if (prompt) prompt.turn = run.clock.turn()
+          const result = this.fileTracking.capture(run.id)
+          if (result) {
+            const turn = task.messages.slice(
+              Math.max(
+                0,
+                task.messages.findIndex(message => message.id === run.userMessageId),
+              ),
+            )
+            const target = turn.findLast(message => message.role === 'assistant') ?? turn.at(-1)
+            if (target) {
+              recordFileOutputs(target, result, true)
+              outputMessageId = target.id
+            }
+          }
         })
       } finally {
         this.live.delete(run.sessionId)
         delete run.activity
+        this.fileTracking.finish(run.id, async result => {
+          await this.commit(next => {
+            const task = next.tasks[run.sessionId]
+            const message = task?.messages.find(item => item.id === outputMessageId)
+            if (message && task) {
+              recordFileOutputs(message, result)
+              task.revision++
+            }
+          })
+          this.notify(run.sessionId)
+        })
       }
     }
   }

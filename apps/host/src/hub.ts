@@ -42,7 +42,7 @@ export interface HarnessMount {
   release(): void
   source: HarnessSource
   /** Overrides `driver.capabilities`, e.g. for a built-in driver that predates the field. */
-  capabilities?: Pick<HarnessInfo, 'modes' | 'models'>
+  capabilities?: Pick<HarnessInfo, 'modes' | 'models' | 'attachments'>
   /** A required driver that fails to start fails `attach`; others are listed as unavailable. */
   required?: boolean
 }
@@ -60,7 +60,7 @@ export interface HubOptions {
 interface Entry {
   driver: HarnessDriver
   source: HarnessSource
-  capabilities?: Pick<HarnessInfo, 'modes' | 'models'>
+  capabilities?: Pick<HarnessInfo, 'modes' | 'models' | 'attachments'>
   bridge?: Bridge
   release?: () => void
   unsubscribe?: () => void
@@ -75,7 +75,7 @@ interface Entry {
 
 type Member = Entry & { bridge: Bridge }
 
-const DEFAULT_CAPABILITIES: Pick<HarnessInfo, 'modes' | 'models'> = { modes: ['chat', 'agent'], models: 'agent' }
+const DEFAULT_CAPABILITIES: Pick<HarnessInfo, 'modes' | 'models' | 'attachments'> = { modes: ['chat', 'agent'], models: 'agent' }
 const ACTIVE = new Set<TaskSummary['status']>(['running', 'waiting-approval'])
 const MAX_DETAIL_APPROVALS = 1024
 const PLUGIN_NOTE = '第三方 Harness 插件，Latch 无法核实其执行范围'
@@ -643,6 +643,7 @@ export class HarnessHub implements Bridge {
       ...(statusMessage ? { statusMessage } : {}),
       modes: [...capabilities.modes],
       models: capabilities.models,
+      ...(capabilities.attachments ? { attachments: structuredClone(capabilities.attachments) } : {}),
       level: levelFor(entry.source),
       ...folderInfo(driver),
     }

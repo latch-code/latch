@@ -10,5 +10,5 @@
     "erasableSyntaxOnly": true,
     "tsBuildInfoFile": "./node_modules/.cache/typescript/isomorphic.tsbuildinfo"
   },
-  "include": ["packages/protocol"]
+  "include": ["packages/protocol", "packages/link-wire/src"]
 }

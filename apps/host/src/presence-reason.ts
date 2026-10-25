@@ -76,6 +76,11 @@ export const REASON_FORMS: Readonly<Record<PresenceReasonForm, ReasonForm>> = {
   'policy.egress': { actions: ['policy.change'], segments: ['允许 Host 访问 ', { slot: 'target', max: 64, keep: 'end' }] },
   'policy.egress-many': { actions: ['policy.change'], segments: ['允许 Host 访问 ', { slot: 'count', max: 4 }, ' 个新地址'] },
   'policy.local': { actions: ['policy.change'], segments: ['把在这台电脑上发起的上限放宽到', { slot: 'level', max: 8 }] },
+  'policy.native-input': { actions: ['policy.change'], segments: ['恢复所有原生手机的输入权限'] },
+  'policy.native-link': {
+    actions: ['policy.change'],
+    segments: ['更改手机连接：', { slot: 'direct', max: 48 }, '，', { slot: 'count', max: 1 }, ' 个中继节点；新中继可看到连接时间与 IP'],
+  },
   'policy.remote': { actions: ['policy.change'], segments: ['把从手机和其他电脑发起的上限放宽到', { slot: 'level', max: 8 }] },
   'policy.remote-start': { actions: ['policy.change'], segments: ['允许其他设备在这台电脑上新建会话'] },
   'policy.remote-agents': { actions: ['policy.change'], segments: ['允许其他设备使用更多 Agent'] },
@@ -107,6 +112,10 @@ export const REASON_FORMS: Readonly<Record<PresenceReasonForm, ReasonForm>> = {
   'mode.widen': {
     actions: ['task.mode-widen'],
     segments: ['把会话「', { slot: 'session', max: 20 }, '」的权限模式放宽到 ', { slot: 'mode', max: 24 }],
+  },
+  'device.enroll-native': {
+    actions: ['device.enroll-native'],
+    segments: ['配对原生设备「', { slot: 'device', max: 20 }, '」，已在此 Mac 输入手机核对码，指纹 ', { slot: 'fingerprint', max: 24 }],
   },
   'device.enroll': {
     actions: ['device.enroll'],

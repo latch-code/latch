@@ -95,6 +95,7 @@ export function providerPlugin(record: ProviderRecord, deps: { fetch: FetchLike 
     apiKey: usableKey(record),
     model: record.defaultModel,
     models: record.models,
+    ...(record.modelCapabilities ? { modelCapabilities: structuredClone(record.modelCapabilities) } : {}),
     fetch: deps.fetch,
   })
 }
@@ -115,13 +116,21 @@ export function providerSettings(record: ProviderRecord): ProviderSettings {
     ...(usable ? { keyOrigin: record.keyOrigin, keyPath: record.keyPath } : {}),
     enabled: record.enabled,
     models: [...record.models],
+    ...(record.modelCapabilities ? { modelCapabilities: structuredClone(record.modelCapabilities) } : {}),
     defaultModel: record.defaultModel,
   }
 }
 
 /** Mirrors the runtime's model check: `models` when declared, else only the default. */
 export function summarizeProvider(provider: ModelProvider, kind: ProviderSummary['kind']): ProviderSummary {
-  return { id: provider.id, name: provider.name, kind, models: [...(provider.models ?? [provider.model])], defaultModel: provider.model }
+  return {
+    id: provider.id,
+    name: provider.name,
+    kind,
+    models: [...(provider.models ?? [provider.model])],
+    defaultModel: provider.model,
+    ...(provider.modelCapabilities ? { modelCapabilities: structuredClone(provider.modelCapabilities) } : {}),
+  }
 }
 
 const LIST_TIMEOUT_MS = 10_000

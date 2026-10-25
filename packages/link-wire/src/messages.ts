@@ -1,0 +1,216 @@
+import { concat, fixed, Reader, uint } from './bytes.ts'
+import type { AdmissionProof } from './pass.ts'
+export const MAX_DATA = 16_384
+export const MAX_MESSAGE = 65_536
+export const CLOSE = {
+  protocol: 4400,
+  admission: 4100,
+  unavailable: 4101,
+  limit: 4102,
+  conflict: 4200,
+  superseded: 4201,
+  drain: 4300,
+  overload: 4302,
+  quota: 4304,
+} as const
+export type RelayMessage =
+  | { type: 'data'; data: Uint8Array }
+  | { type: 'hello' }
+  | { type: 'challenge'; relayId: Uint8Array; nonce: Uint8Array; timeMs: number; requiresToken: boolean }
+  | {
+      type: 'register'
+      previous: Uint8Array
+      day: number
+      routePub: Uint8Array
+      signature: Uint8Array
+      regMac: Uint8Array
+      alternate: boolean
+    }
+  | { type: 'registered'; token: Uint8Array; routeId: Uint8Array; status: 0 | 1 | 4 | 5 | 6 }
+  | { type: 'admit'; proof: AdmissionProof }
+  | { type: 'admitted' }
+  | { type: 'open'; connection: Uint8Array; routeId: Uint8Array }
+  | { type: 'attach'; routeId: Uint8Array; connection: Uint8Array; nonce: Uint8Array; mac: Uint8Array }
+  | { type: 'attached' }
+  | { type: 'spliced'; connection: Uint8Array; passTag: Uint8Array }
+  | { type: 'deny'; routeId: Uint8Array; tags: Uint8Array[] }
+  | { type: 'drop'; routeId: Uint8Array }
+  | { type: 'depart'; state: 1 | 2 | 3 }
+  | { type: 'unavailable'; state: number; since: number }
+  | { type: 'goaway'; reason: 1 | 2 | 3; retryAfterMs: number }
+const tags = {
+  data: 0,
+  admit: 16,
+  hello: 32,
+  register: 33,
+  deny: 36,
+  drop: 37,
+  depart: 38,
+  attach: 48,
+  challenge: 64,
+  registered: 65,
+  open: 66,
+  goaway: 68,
+  attached: 80,
+  spliced: 81,
+  admitted: 96,
+  unavailable: 98,
+} as const
+export function encodeMessage(message: RelayMessage): Uint8Array {
+  let body: Uint8Array
+  switch (message.type) {
+    case 'data':
+      if (message.data.length > MAX_DATA) throw new RangeError('DATA too large')
+      body = message.data
+      break
+    case 'hello':
+      body = uint(1, 1)
+      break
+    case 'challenge':
+      body = concat(fixed(message.relayId, 16), fixed(message.nonce, 32), uint(message.timeMs, 8), uint(message.requiresToken ? 1 : 0, 1))
+      break
+    case 'register':
+      body = concat(
+        fixed(message.previous, 32),
+        uint(message.day, 4),
+        fixed(message.routePub, 32),
+        fixed(message.signature, 64),
+        fixed(message.regMac, 16),
+        uint(message.alternate ? 1 : 0, 1),
+      )
+      break
+    case 'registered':
+      body = concat(fixed(message.token, 32), fixed(message.routeId, 16), uint(message.status, 1))
+      break
+    case 'admit':
+      body = concat(
+        fixed(message.proof.pass, 174),
+        uint(message.proof.timeMs, 8),
+        fixed(message.proof.nonce, 16),
+        fixed(message.proof.signature, 64),
+      )
+      break
+    case 'admitted':
+    case 'attached':
+      body = new Uint8Array()
+      break
+    case 'open':
+      body = concat(fixed(message.connection, 8), fixed(message.routeId, 16))
+      break
+    case 'attach':
+      body = concat(fixed(message.routeId, 16), fixed(message.connection, 8), fixed(message.nonce, 16), fixed(message.mac, 16))
+      break
+    case 'spliced':
+      body = concat(fixed(message.connection, 8), fixed(message.passTag, 16))
+      break
+    case 'deny':
+      if (message.tags.length > 1024) throw new RangeError('DENY too large')
+      body = concat(fixed(message.routeId, 16), uint(message.tags.length, 2), ...message.tags.map(tag => fixed(tag, 16)))
+      break
+    case 'depart':
+      body = uint(message.state, 1)
+      break
+    case 'drop':
+      body = fixed(message.routeId, 16)
+      break
+    case 'unavailable':
+      body = concat(uint(message.state, 1), uint(message.since, 4))
+      break
+    case 'goaway':
+      body = concat(uint(message.reason, 1), uint(message.retryAfterMs, 4))
+      break
+  }
+  return concat(uint(tags[message.type], 1), body)
+}
+export function decodeMessage(bytes: Uint8Array): RelayMessage {
+  const reader = new Reader(bytes, MAX_MESSAGE)
+  const tag = reader.number(1)
+  let value: RelayMessage
+  switch (tag) {
+    case 0:
+      if (bytes.length > MAX_DATA + 1) throw new RangeError('DATA too large')
+      return { type: 'data', data: bytes.slice(1) }
+    case 32:
+      if (reader.number(1) !== 1) throw new RangeError('Protocol version')
+      value = { type: 'hello' }
+      break
+    case 64: {
+      const relayId = reader.take(16),
+        nonce = reader.take(32),
+        timeMs = reader.number(8),
+        flags = reader.number(1)
+      if (flags > 1) throw new RangeError('Reserved flags')
+      value = { type: 'challenge', relayId, nonce, timeMs, requiresToken: flags === 1 }
+      break
+    }
+    case 33: {
+      const previous = reader.take(32),
+        day = reader.number(4),
+        routePub = reader.take(32),
+        signature = reader.take(64),
+        regMac = reader.take(16),
+        flags = reader.number(1)
+      if (flags > 1) throw new RangeError('Reserved flags')
+      value = { type: 'register', previous, day, routePub, signature, regMac, alternate: flags === 1 }
+      break
+    }
+    case 65: {
+      const token = reader.take(32),
+        routeId = reader.take(16),
+        status = reader.number(1)
+      if (![0, 1, 4, 5, 6].includes(status)) throw new RangeError('Invalid route status')
+      value = { type: 'registered', token, routeId, status: status as 0 | 1 | 4 | 5 | 6 }
+      break
+    }
+    case 16:
+      value = {
+        type: 'admit',
+        proof: { pass: reader.take(174), timeMs: reader.number(8), nonce: reader.take(16), signature: reader.take(64) },
+      }
+      break
+    case 96:
+      value = { type: 'admitted' }
+      break
+    case 66:
+      value = { type: 'open', connection: reader.take(8), routeId: reader.take(16) }
+      break
+    case 48:
+      value = { type: 'attach', routeId: reader.take(16), connection: reader.take(8), nonce: reader.take(16), mac: reader.take(16) }
+      break
+    case 80:
+      value = { type: 'attached' }
+      break
+    case 81:
+      value = { type: 'spliced', connection: reader.take(8), passTag: reader.take(16) }
+      break
+    case 36: {
+      const routeId = reader.take(16),
+        size = reader.number(2)
+      if (size > 1024) throw new RangeError('DENY too large')
+      value = { type: 'deny', routeId, tags: Array.from({ length: size }, () => reader.take(16)) }
+      break
+    }
+    case 37:
+      value = { type: 'drop', routeId: reader.take(16) }
+      break
+    case 38: {
+      const state = reader.number(1)
+      if (state < 1 || state > 3) throw new RangeError('Invalid departure')
+      value = { type: 'depart', state: state as 1 | 2 | 3 }
+      break
+    }
+    case 98:
+      value = { type: 'unavailable', state: reader.number(1), since: reader.number(4) }
+      break
+    case 68: {
+      const reason = reader.number(1)
+      if (reason < 1 || reason > 3) throw new RangeError('Invalid GOAWAY')
+      value = { type: 'goaway', reason: reason as 1 | 2 | 3, retryAfterMs: reader.number(4) }
+      break
+    }
+    default:
+      throw new RangeError('Unknown relay tag')
+  }
+  reader.done()
+  return value
+}

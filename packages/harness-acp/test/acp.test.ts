@@ -1,10 +1,11 @@
+import type { FileTrackingInput, FileTrackingResult } from '@latch/sdk'
 import { spawnSync } from 'node:child_process'
 import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, isAbsolute, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { isReservedAgentEnvName, type TaskDetail } from '@latch/protocol'
-import type { HarnessDriver, HarnessSecurityEvent, HarnessPlugin, Bridge, HostProject, ProjectFolder } from '@latch/sdk'
+import type { HarnessHostOptions, HarnessDriver, HarnessSecurityEvent, HarnessPlugin, Bridge, HostProject, ProjectFolder } from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { AgentConnection, ConnectionStopping } from '../src/connection.ts'
@@ -85,7 +86,12 @@ function hostEnv(values: Record<string, string>): void {
   })
 }
 
-async function setup(env: Record<string, string> = {}, options: AcpAgentOptions = {}, overrides: Partial<AgentRecord> = {}) {
+async function setup(
+  env: Record<string, string> = {},
+  options: AcpAgentOptions = {},
+  overrides: Partial<AgentRecord> = {},
+  attachmentOptions: Pick<HarnessHostOptions, 'readAttachment' | 'saveAttachment' | 'trackFiles'> = {},
+) {
   const root = await mkdtemp(join(tmpdir(), 'latch-acp-'))
   cleanups.push(() => rm(root, { recursive: true, force: true }))
   const workspace = join(root, 'workspace')
@@ -120,6 +126,7 @@ async function setup(env: Record<string, string> = {}, options: AcpAgentOptions 
   const driver = await build(record)
   async function openWith(target: HarnessDriver, workspaces?: () => string[], projects?: () => HostProject[]): Promise<Bridge> {
     const bridge = target.create({
+      ...attachmentOptions,
       dataDir,
       workspaceRoot: workspace,
       tmpRoot,
@@ -220,6 +227,53 @@ const userTexts = (detail: TaskDetail) => detail.messages.filter(message => mess
 const promptPid = (log: LogEntry[], text: string) =>
   received(log, 'session/prompt').find(entry => (entry.params?.prompt as Array<{ text: string }>)[0].text.startsWith(text))!.pid
 const answers = (log: LogEntry[]) => log.filter(entry => entry.event === 'permission-answer').map(entry => entry.outcome)
+
+describe('real ACP attachment exchange', () => {
+  it('passes image and embedded text blocks after negotiation and persists Agent image refs across restart', async () => {
+    const inputRef = {
+      id: 'abcdefghijklmnopqrstuv',
+      name: 'image.png',
+      kind: 'image' as const,
+      mime: 'image/png' as const,
+      size: 4,
+      sha256: 'a'.repeat(64),
+    }
+    const outputRef = { ...inputRef, id: 'zyxwvutsrqponmlkjihgfe', name: 'Agent-image.png' }
+    const saved: unknown[] = []
+    const fixture = await setup(
+      { FAKE_ACP_CAPS: 'images,embedded,resume' },
+      {},
+      {},
+      {
+        readAttachment: async () => ({ type: 'image', mimeType: 'image/png', data: 'aGVsbG8=' }),
+        saveAttachment: async input => {
+          saved.push(input)
+          return outputRef
+        },
+      },
+    )
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'image-output', requestId: rid(), attachments: [inputRef] })
+    const detail = await settled(bridge, sessionId)
+    expect(detail.messages[0]!.attachments).toEqual([inputRef])
+    expect(detail.messages.find(message => message.role === 'assistant' && message.attachments)?.attachments).toEqual([outputRef])
+    expect(saved).toEqual([
+      {
+        sessionId,
+        mime: 'image/png',
+        data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aV1cAAAAASUVORK5CYII=',
+      },
+    ])
+    const request = received(await fixture.log(), 'session/prompt')[0]!
+    expect((request.params?.prompt as Array<{ type: string }>).map(block => block.type)).toEqual(['text', 'image'])
+    expect(await readFile(join(fixture.dataDir, 'acp.json'), 'utf8')).not.toContain(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aV1cAAAAASUVORK5CYII=',
+    )
+    await bridge.close()
+    const reopened = await fixture.open()
+    expect((await reopened.detail(sessionId)).messages[0]!.attachments).toEqual([inputRef])
+  })
+})
 
 describe('ACP driver registration and readiness', () => {
   it('registers one agent-mode driver and reports missing commands without spawning anything', async () => {
@@ -2926,6 +2980,21 @@ describe('ACP times and usage reports', () => {
     expect(done).not.toHaveProperty('runStartedAt')
   })
 
+  it('keeps a queued input timestamp, request identity and explicit completion through restart', async () => {
+    const fixture = await setup(),
+      bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo first', requestId: rid() })
+    await settled(bridge, sessionId)
+    const requestId = rid(),
+      queuedAt = '2026-10-25T06:00:00.000Z'
+    await bridge.prompt(sessionId, 'echo queued', requestId, { queuedAt })
+    const detail = await settled(bridge, sessionId)
+    expect(detail.summary.runOutcome).toBe('completed')
+    await bridge.close()
+    const restored = await (await fixture.open()).detail(sessionId)
+    expect(restored.summary.runOutcome).toBe('completed')
+    expect(restored.messages.findLast(message => message.role === 'user')).toMatchObject({ requestId, queuedAt })
+  })
   it('maps the agent usage report and keeps it across restarts', async () => {
     const fixture = await setup()
     const bridge = await fixture.open()
@@ -2940,4 +3009,79 @@ describe('ACP times and usage reports', () => {
     expect(restored.messages).toEqual(detail.messages)
     expect(restored.messages.find(message => message.role === 'user')?.requestId).toEqual(expect.any(String))
   })
+})
+
+describe('ACP file observation', () => {
+  it('persists late files on their original reply while a newer turn retains its own projection and status', async () => {
+    const inputs: FileTrackingInput[] = []
+    const finishes: Array<{ promise: Promise<FileTrackingResult>; resolve: (value: FileTrackingResult) => void }> = []
+    const f = await setup(
+      {},
+      {},
+      {},
+      {
+        trackFiles: async input => {
+          inputs.push(input)
+          let resolve!: (value: FileTrackingResult) => void
+          const promise = new Promise<FileTrackingResult>(done => {
+            resolve = done
+          })
+          finishes.push({ promise, resolve })
+          return { finish: () => promise, dispose: () => resolve({ files: [], truncated: true }) }
+        },
+      },
+    )
+    const bridge = await f.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'first', requestId: rid() })
+    const first = await settled(bridge, sessionId)
+    const reply = assistants(first).at(-1)!
+    expect(reply.outputsPending).toBe(true)
+    await bridge.prompt(sessionId, 'second', rid())
+    const second = await settled(bridge, sessionId)
+    inputs[1]!.onChange({ files: [{ root: 'default', path: 'second.md', change: 'modified' }] })
+    inputs[0]!.onChange({ files: [{ root: 'default', path: 'wrong.md', change: 'modified' }] })
+    finishes[0]!.resolve({ files: [{ root: 'default', path: 'first.md', change: 'modified' }] })
+    await until(bridge, sessionId, detail => detail.messages.find(message => message.id === reply.id)?.outputsPending === undefined)
+    const after = await bridge.detail(sessionId)
+    expect(after.summary).toEqual(second.summary)
+    expect(after.fileChanges).toMatchObject({ runId: inputs[1]!.runId, files: [{ path: 'second.md' }] })
+    finishes[1]!.resolve({ files: [{ root: 'default', path: 'second.md', change: 'modified' }] })
+    await until(bridge, sessionId, detail => detail.fileChanges === undefined)
+    await bridge.close()
+    const loaded = await (await f.open()).detail(sessionId)
+    expect(loaded.messages.find(message => message.id === reply.id)?.outputs).toMatchObject([{ path: 'first.md' }])
+  })
+})
+
+it('marks a recovered idle ACP file observation partial without changing the conversation order', async () => {
+  const fixture = await setup()
+  await mkdir(fixture.dataDir, { recursive: true })
+  await writeFile(
+    join(fixture.dataDir, 'acp.json'),
+    JSON.stringify({
+      version: 1,
+      tasks: {
+        idle: {
+          summary: { id: 'idle', title: 'idle', status: 'idle', updatedAt: '2020-01-01T00:00:00Z', mode: 'agent' },
+          messages: [
+            {
+              id: 'a',
+              role: 'assistant',
+              text: 'done',
+              outputs: [{ root: 'default', path: 'result.txt', change: 'modified' }],
+              outputsPending: true,
+            },
+          ],
+          revision: 1,
+          acp: { cwd: fixture.workspace, turnSeq: 1 },
+        },
+      },
+      receipts: {},
+    }),
+  )
+  const detail = await (await fixture.open()).detail('idle')
+  expect(detail.summary.status).toBe('idle')
+  expect(detail.summary.updatedAt).toBe('2020-01-01T00:00:00Z')
+  expect(detail.messages[0]).toMatchObject({ outputs: [{ path: 'result.txt' }], outputsTruncated: true })
+  expect(detail.messages[0]!.outputsPending).toBeUndefined()
 })

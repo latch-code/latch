@@ -629,6 +629,82 @@
   justify-items: start;
   gap: var(--sp-12);
 }
+.native-config-body,
+.native-config-group {
+  display: grid !important;
+  gap: var(--sp-12);
+  min-width: 0;
+}
+.native-config-group {
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.native-config-group + .native-config-group {
+  border-top: 1px solid var(--line-subtle);
+  padding-top: var(--sp-16);
+}
+.native-config-heading {
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-8);
+  font-size: var(--fs-label) !important;
+}
+.native-connect-dialog[open] {
+  display: block !important;
+  opacity: 1 !important;
+  color: var(--text-1) !important;
+  background: transparent !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui) !important;
+  scale: none !important;
+}
+.native-connect-dialog :is(.ui-modal-surface, form, .native-config-body, .native-config-group, .ui-modal-footer) {
+  color: var(--text-1) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui) !important;
+}
+.native-config-heading {
+  color: var(--text-1) !important;
+  line-height: var(--lh-ui) !important;
+}
+.native-connect-dialog > .ui-modal-surface {
+  display: flex !important;
+  background: var(--bg-raised) !important;
+}
+.native-connect-dialog form {
+  display: flex !important;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.native-connect-dialog :is(.ui-modal-header, .ui-modal-footer) {
+  display: flex !important;
+}
+.native-connect-dialog .ui-modal-header h2 {
+  display: block !important;
+  color: var(--text-1) !important;
+  font-size: var(--fs-title-sm) !important;
+  line-height: var(--lh-title-sm) !important;
+}
+.native-config-heading strong {
+  display: block !important;
+  color: var(--text-1) !important;
+  font-size: var(--fs-label) !important;
+  line-height: var(--lh-label) !important;
+}
+.native-config-body .settings-hint {
+  display: block !important;
+  color: var(--text-2) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption-para) !important;
+}
+.native-connect-dialog .ui-modal-grabber {
+  display: block !important;
+  background: var(--line-strong) !important;
+}
 .pair-empty p {
   color: var(--text-2) !important;
   font-size: var(--fs-label) !important;

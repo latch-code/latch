@@ -10,6 +10,16 @@ export interface FileSearchHit {
   root: string
 }
 
+function matches(path: string, query: string): boolean {
+  let at = 0
+  for (const character of query.replace(/\s+/gu, '')) {
+    const found = path.indexOf(character, at)
+    if (found < 0) return false
+    at = found + character.length
+  }
+  return true
+}
+
 /** A bounded filename search, without git subprocesses, symlink traversal or a directory tree response. */
 export async function searchFiles(
   roots: readonly FileRoot[],
@@ -46,11 +56,11 @@ export async function searchFiles(
       if (item.isDirectory()) {
         if (entry.depth < 32) queue.push({ root: entry.root, relative, depth: entry.depth + 1 })
         else truncated = true
-      } else if (item.isFile() && (!needle || relative.toLocaleLowerCase().includes(needle))) {
+      } else if (item.isFile() && (!needle || matches(relative.toLocaleLowerCase(), needle))) {
         const full = join(real, item.name)
         if (await guard.contains(full)) continue
         const resolved = await resolveRecorded(entry.root.id, relative, { roots: [entry.root], protectedPaths: guard, home: '' })
-        if (resolved.status !== 'ok') continue
+        if (resolved.status !== 'ok' || resolved.file.secret) continue
         files.push({ name: resolved.file.name, path: resolved.file.relativePath, root: entry.root.id })
         if (files.length >= limit) {
           truncated = true

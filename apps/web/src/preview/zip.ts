@@ -105,24 +105,57 @@ export function readOfficeZip(data: ArrayBuffer): Record<string, Uint8Array> {
   return files
 }
 
-export function sanitizeOfficeZip(data: ArrayBuffer): { data: Uint8Array; files: Record<string, Uint8Array>; blocked: number } {
+export function sanitizeOfficeZip(data: ArrayBuffer): {
+  data: Uint8Array
+  files: Record<string, Uint8Array>
+  blocked: number
+  links: Record<string, string>
+} {
   const files = readOfficeZip(data)
   for (const [name, bytes] of Object.entries(files))
     if (name.endsWith('.xml') && /<!DOCTYPE|<!ENTITY/iu.test(xmlText(bytes))) throw new Error('zip-refused')
   let blocked = 0
+  const links: Record<string, string> = Object.create(null)
   for (const [name, bytes] of Object.entries(files)) {
     if (!name.endsWith('.rels')) continue
     const doc = parseXml(xmlText(bytes))
     for (const relationship of Array.from(doc.getElementsByTagNameNS('*', 'Relationship'))) {
       const target = (relationship.getAttribute('Target') ?? '').trim()
       if (relationship.getAttribute('TargetMode')?.toLowerCase() === 'external' || /^[a-z][a-z0-9+.-]*:|^\/\//iu.test(target)) {
+        // DOCX receives only an inert internal anchor; the parent can offer the original URL after a click.
+        if (name.startsWith('word/') && relationship.getAttribute('Type')?.endsWith('/hyperlink') && Object.keys(links).length < 100) {
+          let href: URL | undefined
+          try {
+            href = new URL(target)
+          } catch {
+            /* Invalid document links stay inert. */
+          }
+          if (href && ['https:', 'http:'].includes(href.protocol) && !href.username && !href.password && href.href.length <= 4096) {
+            const source = name.replace('/_rels/', '/').replace(/\.rels$/u, ''),
+              documentBytes = files[source]
+            if (documentBytes) {
+              const body = parseXml(xmlText(documentBytes)),
+                id = relationship.getAttribute('Id')
+              const marker = `latch-document-link-${Object.keys(links).length}`
+              for (const link of Array.from(body.getElementsByTagNameNS('*', 'hyperlink'))) {
+                const attribute = Array.from(link.attributes).find(item => item.localName === 'id' && item.value === id)
+                if (attribute) {
+                  link.removeAttributeNode(attribute)
+                  link.setAttributeNS(link.namespaceURI, 'w:anchor', marker)
+                  links[marker] = href.href
+                }
+              }
+              files[source] = strToU8(new XMLSerializer().serializeToString(body))
+            }
+          }
+        }
         relationship.remove()
         blocked++
       }
     }
     files[name] = strToU8(new XMLSerializer().serializeToString(doc))
   }
-  return { data: blocked ? zipSync(files, { level: 0 }) : new Uint8Array(data), files, blocked }
+  return { data: blocked ? zipSync(files, { level: 0 }) : new Uint8Array(data), files, blocked, links }
 }
 export function resolvePart(base: string, target: string): string | undefined {
   if (/^[a-z][a-z0-9+.-]*:|^\//iu.test(target)) return
