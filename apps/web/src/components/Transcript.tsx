@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ChevronRight } from 'lucide-react'
 import type { Approval, HarnessInfo, Message, TaskDetail } from '@latch/protocol'
 import {
@@ -17,6 +17,8 @@ import {
   type Turn,
   type TurnOutcome,
 } from '../conversation.ts'
+import { FileSession } from './FileChip.tsx'
+import { FileReferences } from './FileReferences.tsx'
 import { MessageRow, SourceRow } from './MessageRow.tsx'
 import { ToolCard, type ApprovalGateFor, type DecideHandler } from './ToolCard.tsx'
 import { TurnFooter, type TurnRetry } from './TurnFooter.tsx'
@@ -314,60 +316,64 @@ export function Transcript({
     ...(fallbackElapsed !== undefined ? { fallbackElapsed } : {}),
   }
   const reportedContext = detail.usageReport?.contextUsed
+  const { id: sessionId, cwd } = detail.summary
+  const fileSession = useMemo(() => ({ id: sessionId, ...(cwd ? { folder: cwd } : {}) }), [sessionId, cwd])
   return (
-    <>
-      {turns.map((turn, index) => {
-        const latest = index === turns.length - 1
-        const trailingLive = latest && active
-        const outcome = trailingLive ? undefined : turnOutcome(turn, latest ? detail.summary.status : undefined)
-        const settledLive = !trailingLive && trailingKey === null && previouslyLive === turn.key
-        const resend =
-          latest && !trailingLive && retry && turn.user && outcome !== 'completed'
-            ? {
-                warning: resendWarning(sideEffects(turn), retry.fullAccess),
-                onResend: () => {
-                  retry.onResend(turn.user!.text)
-                },
-              }
-            : undefined
-        return (
-          <TurnView
-            key={turn.key}
-            turn={turn}
-            context={rowContext}
-            harnessName={harnessName}
-            harness={harness}
-            providerName={providerName}
-            separator={turn.user ? marks.get(turn.user.id) : undefined}
-            latest={latest}
-            trailingLive={trailingLive}
-            outcome={outcome}
-            settledLive={settledLive}
-            arrived={latest && previousLast !== undefined && previousLast !== lastKey}
-            runModel={runModel}
-            standalone={latest ? standalone : []}
-            liveFooter={liveFooter}
-            retry={resend}
-            reportedContext={reportedContext}
-          />
-        )
-      })}
-      {turns.length === 0 && standalone.length > 0 && (
-        <div className="turn">
-          <div className="turn-reply">
-            {standalone.map(approval => (
-              <ToolCard
-                key={approval.id}
-                message={null}
-                approval={approval}
-                busy={busy.get(approval.id)}
-                onDecide={onDecide}
-                gateFor={gateFor}
-              />
-            ))}
+    <FileSession.Provider value={fileSession}>
+      <FileReferences sessionId={sessionId} active={active}>
+        {turns.map((turn, index) => {
+          const latest = index === turns.length - 1
+          const trailingLive = latest && active
+          const outcome = trailingLive ? undefined : turnOutcome(turn, latest ? detail.summary.status : undefined)
+          const settledLive = !trailingLive && trailingKey === null && previouslyLive === turn.key
+          const resend =
+            latest && !trailingLive && retry && turn.user && outcome !== 'completed'
+              ? {
+                  warning: resendWarning(sideEffects(turn), retry.fullAccess),
+                  onResend: () => {
+                    retry.onResend(turn.user!.text)
+                  },
+                }
+              : undefined
+          return (
+            <TurnView
+              key={turn.key}
+              turn={turn}
+              context={rowContext}
+              harnessName={harnessName}
+              harness={harness}
+              providerName={providerName}
+              separator={turn.user ? marks.get(turn.user.id) : undefined}
+              latest={latest}
+              trailingLive={trailingLive}
+              outcome={outcome}
+              settledLive={settledLive}
+              arrived={latest && previousLast !== undefined && previousLast !== lastKey}
+              runModel={runModel}
+              standalone={latest ? standalone : []}
+              liveFooter={liveFooter}
+              retry={resend}
+              reportedContext={reportedContext}
+            />
+          )
+        })}
+        {turns.length === 0 && standalone.length > 0 && (
+          <div className="turn">
+            <div className="turn-reply">
+              {standalone.map(approval => (
+                <ToolCard
+                  key={approval.id}
+                  message={null}
+                  approval={approval}
+                  busy={busy.get(approval.id)}
+                  onDecide={onDecide}
+                  gateFor={gateFor}
+                />
+              ))}
+            </div>
           </div>
-        </div>
-      )}
-    </>
+        )}
+      </FileReferences>
+    </FileSession.Provider>
   )
 }

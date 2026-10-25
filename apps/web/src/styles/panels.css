@@ -1,0 +1,119 @@
+/* The extension host shares the workbench type and controls. Data panels use only these theme rules. */
+.session-panel-tabs {
+  flex-shrink: 0;
+  min-width: 0;
+  padding: var(--sp-4);
+}
+.session-panel-tabs .ui-tab-list {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.session-panel-tabs .ui-tab {
+  flex-shrink: 0;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plugin-panel {
+  display: grid;
+  gap: var(--sp-16);
+  min-width: 0;
+  padding: var(--sp-12);
+  color: var(--text-1);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui-para);
+}
+.plugin-panel-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: var(--sp-8);
+}
+.plugin-panel-head > div {
+  min-width: 0;
+}
+.plugin-panel-head h2 {
+  overflow-wrap: anywhere;
+  font-size: var(--fs-card-title);
+  line-height: var(--lh-card-title);
+  font-weight: 500;
+}
+.plugin-panel-caption {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
+}
+.plugin-panel-description {
+  color: var(--text-2);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label-para);
+}
+.plugin-panel-content {
+  display: grid;
+  gap: var(--sp-16);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.plugin-panel-text {
+  white-space: pre-wrap;
+}
+.plugin-panel-content ul {
+  display: grid;
+  gap: var(--sp-6);
+  padding-left: var(--sp-16);
+  list-style: disc;
+}
+.plugin-panel-content dl {
+  display: grid;
+  gap: var(--sp-8);
+}
+.plugin-panel-content dl > div {
+  display: grid;
+  grid-template-columns: minmax(64px, 1fr) minmax(0, 2fr);
+  gap: var(--sp-12);
+}
+.plugin-panel-content dt {
+  color: var(--text-3);
+}
+.plugin-panel-content dd {
+  min-width: 0;
+}
+.plugin-panel-code {
+  display: grid;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+.plugin-panel-code pre {
+  max-height: 480px;
+  overflow: auto;
+  padding: var(--sp-12);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--r-6);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-sunken);
+  font-family: var(--font-mono);
+  font-size: var(--fs-code);
+  line-height: var(--lh-code);
+}
+.plugin-panel-table {
+  min-width: 0;
+  overflow-x: auto;
+}
+.plugin-panel-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-label);
+  line-height: var(--lh-label-para);
+}
+.plugin-panel-table :is(th, td) {
+  padding: var(--sp-6) var(--sp-8);
+  border-bottom: 1px solid var(--line-subtle);
+  text-align: left;
+  vertical-align: top;
+}
+.plugin-panel-table th {
+  color: var(--text-2);
+  font-weight: 500;
+}

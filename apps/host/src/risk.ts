@@ -1,5 +1,5 @@
 import { posix, win32 } from 'node:path'
-import type { RiskLevel } from '@latch/protocol'
+import type { ApprovalRiskReason, RiskLevel } from '@latch/protocol'
 import { isProtectedWorkspacePath } from './paths.ts'
 
 /** One folder of the session, as the Host resolved it for this call. */
@@ -22,7 +22,7 @@ export interface StandardCallInput {
   folders: readonly CallFolder[]
 }
 
-export type RiskReason = 'protected-path' | 'outside-workspace' | 'code-root' | 'unlisted-tool'
+export type RiskReason = ApprovalRiskReason
 
 /** Read-only built-in tools; they never ask. */
 export const R0_TOOLS: readonly string[] = ['workspace-files:list_folders', 'workspace-files:list_files', 'workspace-files:read_file']
@@ -40,12 +40,14 @@ function record(args: unknown): Record<string, unknown> | undefined {
   return args && typeof args === 'object' && !Array.isArray(args) ? (args as Record<string, unknown>) : undefined
 }
 
-function relativeTarget(args: unknown): string | undefined {
-  const path = record(args)?.path
-  if (typeof path !== 'string' || path.trim() === '' || path.includes('\u0000')) return undefined
-  if (posix.isAbsolute(path) || win32.isAbsolute(path)) return undefined
+/** The relative path a write targets, or why it is not one the classifier can place inside the session's folder. */
+function relativeTarget(args: unknown): string | { reason: 'outside-workspace' | 'unresolved-path' } {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return { reason: 'unresolved-path' }
+  const path = (args as { path?: unknown }).path
+  if (typeof path !== 'string' || path.trim() === '' || path.includes('\u0000')) return { reason: 'unresolved-path' }
+  if (posix.isAbsolute(path) || win32.isAbsolute(path)) return { reason: 'unresolved-path' }
   const normalized = posix.normalize(path.replace(/\\/gu, '/'))
-  if (normalized === '..' || normalized.startsWith('../')) return undefined
+  if (normalized === '..' || normalized.startsWith('../')) return { reason: 'outside-workspace' }
   return path
 }
 
@@ -72,7 +74,7 @@ export function classifyStandardCall(input: StandardCallInput): { risk: RiskLeve
     if (folder === undefined) return { risk: 'R2', reason: 'outside-workspace' }
     if (key !== WRITE_FILE) return { risk: 'R0' }
     const path = relativeTarget(input.args)
-    if (path === undefined) return { risk: 'R2', reason: 'outside-workspace' }
+    if (typeof path !== 'string') return { risk: 'R2', reason: path.reason }
     if (folder.codeRoot || folder.root === undefined) return { risk: 'R2', reason: 'code-root' }
     if (isProtectedWorkspacePath(path, folder.root)) return { risk: 'R2', reason: 'protected-path' }
     return { risk: 'R1' }

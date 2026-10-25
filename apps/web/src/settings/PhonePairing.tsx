@@ -1,14 +1,16 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import QRCode from 'qrcode'
-import { Link, QrCode, RefreshCw, Share2 } from 'lucide-react'
-import type { InvitationView } from '@latch/protocol'
-import { Button, InlineNotice, Spinner } from '@latch/ui'
+import { ChevronRight, Link, QrCode, RefreshCw, Share2 } from 'lucide-react'
+import type { AppSnapshot, InvitationView } from '@latch/protocol'
+import { Button, Collapse, ICON_STROKE, InlineNotice, Spinner } from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { PAIRING_COPY } from '../core/securityCopy.ts'
 import { formatElapsed } from '../format.ts'
-import { useCopy } from '../components/ui.tsx'
+import { CopyButton, useCopy } from '../components/ui.tsx'
 import { IconTile, SettingsGroup, SettingsRow } from './common.tsx'
+import { PairingBlocked } from './PairingBlocked.tsx'
+import { WaitingEnrollments } from './WaitingEnrollments.tsx'
 
 /** A one-time invitation for a phone over the Host's HTTPS entry; it grants nothing until confirmed on this computer. */
 function PhonePairing({ phone }: { phone: boolean }) {
@@ -75,6 +77,7 @@ function PhonePairing({ phone }: { phone: boolean }) {
           {PAIRING_COPY.create}
         </Button>
         {error && <InlineNotice tone="error">{error}</InlineNotice>}
+        <WaitingEnrollments />
       </div>
     )
   return (
@@ -125,21 +128,79 @@ function PhonePairing({ phone }: { phone: boolean }) {
         </div>
         {copyState === 'failed' && <InlineNotice tone="warn">{PAIRING_COPY.copyBlocked}</InlineNotice>}
         {error && <InlineNotice tone="error">{error}</InlineNotice>}
+        <WaitingEnrollments />
       </div>
     </div>
   )
 }
 
 /**
- * 设置 › 设备 › 手机配对, a security surface: the invitation where this device may create one (the desktop app, an HTTPS
- * entry and 管理此 Host), else a row with the reason.
+ * A Host without its HTTPS entry: one plain sentence that phone access is not set up, an honest line that direct
+ * pairing on the same network is not built yet, and the start options for an own certificate folded under a
+ * disclosure with a copy button, so no command-line flag sits in the body.
  */
-export function PairingSection({ tls, access, phone }: { tls: boolean; access: DeviceAccess; phone: boolean }) {
-  const reason = !tls ? PAIRING_COPY.needsTls : !access.local ? PAIRING_COPY.needsDesktop : !access.admin ? PAIRING_COPY.needsAdmin : null
+function PhoneAccessSetup() {
+  const [open, setOpen] = useState(false)
+  const id = useId()
+  return (
+    <div className="settings-card-body pair-section pair-setup">
+      <p>{PAIRING_COPY.notConfigured}</p>
+      <p className="pair-pending">{PAIRING_COPY.directPending}</p>
+      <button
+        type="button"
+        className="pair-toggle"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => {
+          setOpen(!open)
+        }}>
+        <ChevronRight className="chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+        {PAIRING_COPY.tlsDisclosure}
+      </button>
+      <Collapse id={id} open={open}>
+        <div className="pair-tls">
+          <p>{PAIRING_COPY.tlsSteps}</p>
+          <div className="pair-flags">
+            {/* One flag with its value per line, so a narrow screen breaks between flags and never inside one. */}
+            <code>{PAIRING_COPY.tlsFlags.split(/ (?=--)/u).join('\n')}</code>
+            <CopyButton text={PAIRING_COPY.tlsFlags} label={PAIRING_COPY.copyFlags} size="xs" />
+          </div>
+          <p className="pair-pending">{PAIRING_COPY.tlsNote}</p>
+        </div>
+      </Collapse>
+    </div>
+  )
+}
+
+/**
+ * 设置 › 设备 › 手机配对, a security surface: the invitation where this device may create one (the desktop app, an HTTPS
+ * entry and 管理此 Host), how to set up phone access when the Host has no HTTPS entry, else a row with the reason and
+ * where to do it, in words.
+ */
+export function PairingSection({
+  tls,
+  access,
+  phone,
+  snapshot,
+}: {
+  tls: boolean
+  access: DeviceAccess
+  phone: boolean
+  /** Names a full-access session that would hold the phone's enrollment back. */
+  snapshot?: AppSnapshot
+}) {
+  if (!tls)
+    return (
+      <SettingsGroup title="手机配对" secure>
+        <PhoneAccessSetup />
+      </SettingsGroup>
+    )
+  const reason = !access.local ? PAIRING_COPY.needsDesktop : !access.admin ? PAIRING_COPY.needsAdmin : null
   return (
     <SettingsGroup title="手机配对" secure>
       {reason === null ? (
         <div className="settings-card-body pair-section">
+          {snapshot && <PairingBlocked snapshot={snapshot} />}
           <PhonePairing phone={phone} />
         </div>
       ) : (

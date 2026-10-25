@@ -1,0 +1,50 @@
+import { randomUUID } from 'node:crypto'
+import { afterEach, describe, expect, it } from 'vitest'
+import type { SearchResults, SessionBatchResult, TaskDetail } from '@latch/protocol'
+import { startTestHost, type TestHost } from './helpers/host.ts'
+const hosts: TestHost[] = []
+afterEach(async () => {
+  for (const host of hosts.splice(0)) await host.close()
+})
+describe('session workflow routes', () => {
+  it('enforces scopes, searches settled text and reports partial batch failures', async () => {
+    const host = await startTestHost()
+    hosts.push(host)
+    const owner = await host.enroll({ listener: 'unix' })
+    const viewer = await host.enroll({ scopes: ['view'] })
+    const created = await owner.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { prompt: '可搜索正文 abcDEF', requestId: randomUUID() },
+    })
+    await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${created.sessionId}`)).summary.status).toBe('idle')
+    const found = await viewer.json<SearchResults>('search', { method: 'POST', body: { q: 'abcdef' } })
+    expect(found.hits.some(hit => hit.sessionId === created.sessionId)).toBe(true)
+    expect((await viewer.request('tasks/batch', { method: 'POST', body: { action: 'archive', ids: [created.sessionId] } })).status).toBe(
+      403,
+    )
+    const result = await owner.json<SessionBatchResult>('tasks/batch', {
+      method: 'POST',
+      body: { action: 'archive', ids: [created.sessionId, 'missing', created.sessionId] },
+    })
+    expect(result.results).toHaveLength(2)
+    expect(result.results[0]).toEqual({ id: created.sessionId, ok: true })
+    expect(result.results[1]).toMatchObject({ id: 'missing', ok: false })
+    expect((await owner.json<TaskDetail>(`tasks/${created.sessionId}`)).summary.archived).toBe(true)
+    expect((await owner.request('search', { method: 'POST', body: { q: '' } })).status).toBe(400)
+  })
+  it('lets viewers read templates, limits changes to admin and keeps stable PUT and DELETE retries idempotent', async () => {
+    const host = await startTestHost()
+    hosts.push(host)
+    const owner = await host.enroll({ listener: 'unix' }),
+      viewer = await host.enroll({ scopes: ['view', 'run'] })
+    const template = { id: 'review', name: '检查变更', content: '阅读并解释', scope: { kind: 'all' } }
+    expect((await viewer.request('prompts/review', { method: 'PUT', body: template })).status).toBe(403)
+    await owner.json('prompts/review', { method: 'PUT', body: template })
+    await owner.json('prompts/review', { method: 'PUT', body: template })
+    expect(await viewer.json('prompts')).toEqual({ templates: [template] })
+    expect((await owner.request('prompts/wrong', { method: 'PUT', body: template })).status).toBe(400)
+    await owner.json('prompts/review', { method: 'DELETE' })
+    await owner.json('prompts/review', { method: 'DELETE' })
+    expect(await viewer.json('prompts')).toEqual({ templates: [] })
+  })
+})

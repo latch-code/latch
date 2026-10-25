@@ -1,11 +1,9 @@
-import { mkdir, readFile } from 'node:fs/promises'
-import { join } from 'node:path'
-import { z } from 'zod'
 import type { Approval, HarnessInfo, HarnessSource, SessionPermission, TaskDetail, TaskSummary } from '@latch/protocol'
 import {
   AppError,
   type HarnessDriver,
   type Bridge,
+  type CancelOptions,
   type ConfigChangeClass,
   type CreateTaskInput,
   type DecideOptions,
@@ -14,8 +12,7 @@ import {
   type PromptOptions,
   type SetConfigOptions,
 } from '@latch/sdk'
-import { writeFileAtomic } from '@latch/core/node-kit'
-import { SESSION_FOLDER_NAME } from './session-folders.ts'
+import { RUN_ID, SessionMetaStore, type SessionReceipts } from './session-meta.ts'
 
 /**
  * `harnessId` is Host-only. `workspaceId` and `folders` reach only drivers that declare `projectFolders: 'all'`; the
@@ -54,6 +51,8 @@ export interface HubOptions {
   /** Harness for `createTask` without `harnessId`. */
   defaultId: () => string
   log?: (message: string) => void
+  /** Clock for receipt expiry. */
+  now?: () => number
 }
 
 interface Entry {
@@ -73,29 +72,6 @@ interface Entry {
 }
 
 type Member = Entry & { bridge: Bridge }
-
-const META_FILE = 'sessions-meta.json'
-const metaSchema = z.object({
-  version: z.literal(1),
-  sessions: z
-    .array(
-      z.object({
-        id: z.string().min(1).max(256),
-        title: z.string().min(1).max(200).optional(),
-        pinned: z.literal(true).optional(),
-        archived: z.literal(true).optional(),
-        /** The project the session was started in; written once, right after the driver created it. */
-        workspaceId: z
-          .string()
-          .regex(/^[a-z0-9][a-z0-9_-]{0,63}$/u)
-          .optional(),
-        /** The name of the folder the Host made for the session in its start directory; written with `workspaceId`. */
-        sessionFolder: z.string().regex(SESSION_FOLDER_NAME).optional(),
-      }),
-    )
-    .max(100_000),
-})
-type StoredMeta = Omit<z.infer<typeof metaSchema>['sessions'][number], 'id'>
 
 const DEFAULT_CAPABILITIES: Pick<HarnessInfo, 'modes' | 'models'> = { modes: ['chat', 'agent'], models: 'agent' }
 const ACTIVE = new Set<TaskSummary['status']>(['running', 'waiting-approval'])
@@ -126,80 +102,6 @@ function levelFor(source: HarnessSource): 'L1' | 'L3' {
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
-function codeOf(error: unknown): unknown {
-  return error instanceof Error && 'code' in error ? error.code : undefined
-}
-
-/** Atomic, serialized writer for the Host's per-session overlay (title, pin, archive). */
-class SessionMetaStore {
-  private queue: Promise<void> = Promise.resolve()
-
-  private constructor(
-    private readonly path: string,
-    private readonly dataDir: string,
-    private entries: Map<string, StoredMeta>,
-  ) {}
-
-  static async open(dataDir: string): Promise<SessionMetaStore> {
-    const path = join(dataDir, META_FILE)
-    let text: string | undefined
-    try {
-      text = await readFile(path, 'utf8')
-    } catch (error) {
-      if (codeOf(error) !== 'ENOENT') throw error
-    }
-    const entries = new Map<string, StoredMeta>()
-    if (text !== undefined) {
-      let parsed: z.infer<typeof metaSchema>
-      try {
-        parsed = metaSchema.parse(JSON.parse(text))
-      } catch {
-        throw new AppError(500, 'config-corrupt', `会话设置文件 ${path} 无法读取，原文件已保留；请修复或移走后重启`)
-      }
-      for (const { id, ...meta } of parsed.sessions) entries.set(id, meta)
-    }
-    return new SessionMetaStore(path, dataDir, entries)
-  }
-
-  get(sessionId: string): StoredMeta | undefined {
-    return this.entries.get(sessionId)
-  }
-
-  /** The names of the folders the Host made for sessions it still has metadata for. */
-  sessionFolders(): string[] {
-    const names: string[] = []
-    for (const meta of this.entries.values()) if (meta.sessionFolder) names.push(meta.sessionFolder)
-    return names
-  }
-
-  /** Publishes in memory only after the rename, so a failed write leaves the previous state visible. */
-  update(sessionId: string, change: (meta: StoredMeta) => StoredMeta | undefined): Promise<void> {
-    const run = this.queue.then(async () => {
-      const next = new Map(this.entries)
-      const meta = change({ ...next.get(sessionId) })
-      if (meta && Object.keys(meta).length) next.set(sessionId, meta)
-      else next.delete(sessionId)
-      await this.write(next)
-      this.entries = next
-    })
-    this.queue = run.then(
-      () => {},
-      () => {},
-    )
-    return run
-  }
-
-  flush(): Promise<void> {
-    return this.queue
-  }
-
-  private async write(entries: Map<string, StoredMeta>): Promise<void> {
-    await mkdir(this.dataDir, { recursive: true, mode: 0o700 })
-    const sessions = [...entries].map(([id, meta]) => ({ id, ...meta }))
-    await writeFileAtomic(this.path, JSON.stringify({ version: 1, sessions }) + '\n', { prefix: `${META_FILE}.` })
-  }
-}
-
 /**
  * One Bridge over every mounted HarnessDriver. Session and approval IDs pass through verbatim; the
  * routes are derived from createTask results, notifications and listings, never persisted, so they
@@ -223,7 +125,13 @@ export class HarnessHub implements Bridge {
   }
 
   static async open(options: HubOptions): Promise<HarnessHub> {
-    return new HarnessHub(options, await SessionMetaStore.open(options.dataDir))
+    const log = options.log ?? (text => console.error(`[Latch] ${text}`))
+    return new HarnessHub(options, await SessionMetaStore.open(options.dataDir, { log, ...(options.now ? { now: options.now } : {}) }))
+  }
+
+  /** Receipts of approval decisions and cancels, kept with each session in `sessions-meta.json`. */
+  get receipts(): SessionReceipts {
+    return this.meta
   }
 
   /** Mounts a driver: creates and starts its Bridge. Order matters: on an ID collision the earlier mount wins. */
@@ -337,12 +245,18 @@ export class HarnessHub implements Bridge {
     return source ? levelFor(source) : 'L3'
   }
 
-  /** True while any L3 session is running or waiting for approval; local confirmation stays blocked meanwhile. */
-  async hasUnsandboxedActivity(): Promise<boolean> {
+  /**
+   * The L3 sessions running or waiting for approval, the ones waiting for an answer first, then the latest: while any
+   * exists, the local confirmations that would outlive them are refused.
+   */
+  async unsandboxedTasks(): Promise<TaskSummary[]> {
+    const found: TaskSummary[] = []
     for (const [member, tasks] of await this.discover()) {
-      if (levelFor(member.source) === 'L3' && tasks.some(task => ACTIVE.has(task.status))) return true
+      if (levelFor(member.source) !== 'L3') continue
+      for (const task of tasks) if (ACTIVE.has(task.status)) found.push(this.present(member.driver.id, task))
     }
-    return false
+    const waiting = (task: TaskSummary) => (task.status === 'waiting-approval' ? 0 : 1)
+    return found.sort((a, b) => waiting(a) - waiting(b) || b.updatedAt.localeCompare(a.updatedAt))
   }
 
   /** Drivers without a classifier have no permission-mode options; their changes are neutral. */
@@ -419,6 +333,14 @@ export class HarnessHub implements Bridge {
     return merged.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
   }
 
+  /** One session's summary, without reading its messages. */
+  async summary(sessionId: string): Promise<TaskSummary> {
+    const member = await this.route(sessionId)
+    const found = (await member.bridge.listTasks()).find(task => task.id === sessionId)
+    if (!found) throw new AppError(404, 'task-not-found', '找不到该任务')
+    return this.present(member.driver.id, found)
+  }
+
   async detail(sessionId: string): Promise<TaskDetail> {
     const member = await this.route(sessionId)
     const detail = await member.bridge.detail(sessionId)
@@ -462,8 +384,9 @@ export class HarnessHub implements Bridge {
     )
   }
 
-  async cancel(sessionId: string): Promise<void> {
-    await (await this.route(sessionId)).bridge.cancel(sessionId)
+  async cancel(sessionId: string, options?: CancelOptions): Promise<boolean | void> {
+    const member = await this.route(sessionId)
+    return options ? member.bridge.cancel(sessionId, options) : member.bridge.cancel(sessionId)
   }
 
   approvals(): Approval[] {
@@ -521,8 +444,7 @@ export class HarnessHub implements Bridge {
     await member.bridge.remove(sessionId)
     this.routes.delete(sessionId)
     // The session is already gone; a stale overlay entry is harmless, a reported failure would mislead.
-    if (this.meta.get(sessionId))
-      await this.meta.update(sessionId, () => undefined).catch(error => this.log(`会话设置清理失败：${message(error)}`))
+    if (this.meta.has(sessionId)) await this.meta.remove(sessionId).catch(error => this.log(`会话设置清理失败：${message(error)}`))
   }
 
   async setConfig(sessionId: string, configId: string, value: string, options?: SetConfigOptions): Promise<void> {
@@ -653,10 +575,12 @@ export class HarnessHub implements Bridge {
 
   private present(harnessId: string, summary: TaskSummary): TaskSummary {
     // Only the Host makes a session's own folder: a driver's claim is dropped.
-    const { pinned: _pinned, archived: _archived, level: _level, sessionFolder: _sessionFolder, ...rest } = summary
+    const { pinned: _pinned, archived: _archived, level: _level, sessionFolder: _sessionFolder, runId, ...rest } = summary
     const meta = this.meta.get(summary.id)
     return {
       ...rest,
+      // A run ID a cancel could not carry is left out, so the page sends a plain stop rather than one the Host refuses.
+      ...(typeof runId === 'string' && RUN_ID.test(runId) ? { runId } : {}),
       harnessId,
       level: this.levelOf(harnessId),
       ...(this.entries.get(harnessId)?.driver.projectFolders !== 'all' ? { folderAccess: 'primary' as const } : {}),

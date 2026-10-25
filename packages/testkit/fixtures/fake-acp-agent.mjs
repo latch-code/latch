@@ -459,6 +459,39 @@ const scenarios = {
     say('allowed')
     return END
   },
+  // One edit that asks once per file: it writes a.txt after the first answer allows it, then asks again for b.txt and
+  // reports what it wrote whatever the second answer is.
+  twice: async ({ say, tool, permission }) => {
+    const call = { toolCallId: 'call_1', title: 'Edit two files', kind: 'edit', status: 'pending', rawInput: { files: ['a.txt', 'b.txt'] } }
+    tool(call)
+    const first = await permission(call)
+    if (first.result.outcome.optionId !== 'allow') {
+      tool({ toolCallId: 'call_1', status: 'failed' }, 'tool_call_update')
+      return END
+    }
+    const wrote = [{ type: 'diff', path: '/w/a.txt', oldText: 'old\n', newText: 'new\n' }]
+    tool({ toolCallId: 'call_1', status: 'in_progress', content: wrote }, 'tool_call_update')
+    const second = await permission({ toolCallId: 'call_1', title: 'Edit b.txt' })
+    tool({ toolCallId: 'call_1', status: 'completed', content: wrote }, 'tool_call_update')
+    say(`second=${second.result.outcome.optionId}`)
+    return END
+  },
+  // An agent that runs the call whatever the answer, as a full-access agent may: the ask is advisory.
+  ignore: async ({ say, tool, permission }) => {
+    const call = { toolCallId: 'call_1', title: 'Edit a.txt', kind: 'edit', status: 'pending', rawInput: { path: '/w/a.txt' } }
+    tool(call)
+    const { result } = await permission(call)
+    tool(
+      {
+        toolCallId: 'call_1',
+        status: 'completed',
+        content: [{ type: 'diff', path: '/w/a.txt', oldText: 'old\n', newText: 'new\n' }],
+      },
+      'tool_call_update',
+    )
+    say(`ignored ${result.outcome.optionId}`)
+    return END
+  },
   // A plan, then the same question as `permission`: a running session that waits for an answer with a plan in hand.
   'plan-ask': args => {
     update(args.sessionId, {

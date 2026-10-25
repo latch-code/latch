@@ -2,18 +2,23 @@ import { createServer, request as httpRequest } from 'node:http'
 import { createHash, randomUUID } from 'node:crypto'
 import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rename as move, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   escapeSecurityText,
   type AgentRecord,
+  type AgentPresetSettings,
   type AgentSettings,
   type AppSnapshot,
   type Approval,
+  type ApprovalReceipt,
+  type CancelReceipt,
   type ConfirmationTicket,
   type Device,
   type EnrollmentInfo,
+  type EnrollmentView,
   type InvitationView,
+  type PresencePreview,
   type ProviderSettings,
   type TaskDetail,
   type TaskSummary,
@@ -24,9 +29,12 @@ import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { renewSigningText, HttpFailure, type TestDevice, makeTestTls, FAKE_ACP_AGENT } from '@latch/testkit'
 import { createAcpAgentPlugin } from '@latch/harness-acp'
 import { AuditLog } from '../src/audit.ts'
+import { createOfflineTicket } from '../src/auth.ts'
 import { HostConfig } from '../src/config.ts'
 import { hashDisplay } from '../src/crypto.ts'
 import { tlsListenerClass, validateTls } from '../src/listeners.ts'
+import type { TrafficSummary } from '../src/traffic.ts'
+import { programText } from '../src/presence.ts'
 import { startTestHost, type TestHost, type TestHostOptions } from './helpers/host.ts'
 
 const cleanups: Array<() => Promise<void>> = []
@@ -265,7 +273,14 @@ async function openStream(device: TestDevice, path: string): Promise<{ text: str
 }
 
 /** A full-access harness plugin that only records starts; its launch preview carries `notes`. */
+/** A plugin harness that reports a launch preview; tests change `launch` between starts. */
 function launchedHarness(notes: string[] = []) {
+  const launch: { launchHash: string; definitionHash?: string; command: string; args: string[]; verified: boolean } = {
+    launchHash: 'a'.repeat(64),
+    command: '/usr/bin/true',
+    args: [],
+    verified: false,
+  }
   const createTask = vi.fn(async (_input: unknown) => ({ sessionId: `launched-${randomUUID()}` }))
   const prompt = vi.fn(async (..._args: unknown[]) => {})
   const setConfig = vi.fn(async (..._args: unknown[]) => {})
@@ -294,12 +309,10 @@ function launchedHarness(notes: string[] = []) {
           decide: async () => false,
           subscribe: () => () => {},
           launchPreview: async ({ cwd }) => ({
-            launchHash: 'a'.repeat(64),
-            command: '/usr/bin/true',
-            args: [],
+            ...launch,
+            args: [...launch.args],
             envNames: [],
             cwd,
-            verified: false,
             approvals: 'none',
             readback: 'none',
             notes,
@@ -308,7 +321,7 @@ function launchedHarness(notes: string[] = []) {
       })
     },
   }
-  return { plugin, createTask, prompt, setConfig }
+  return { plugin, createTask, prompt, setConfig, launch }
 }
 
 function waitForApproval(device: TestDevice, confirmation: ConfirmationTicket) {
@@ -406,12 +419,38 @@ describe('listeners and request context', () => {
       devMode: true,
       presence: { status: 'available' },
       activeSessions: 0,
+      activity: { running: 0, waiting: 0 },
     })
     for (const path of ['api/login', 'api/pair']) {
       const removed = await t.raw('loopback-tcp', path, { method: 'POST', body: { token: 'x' } })
       expect(removed.status).toBe(410)
       expect(await body(removed)).toMatchObject({ error: 'login-removed' })
     }
+  })
+
+  it('answers an address that is no page with a plain page back to the app, reflecting nothing, and keeps JSON for the API', async () => {
+    const uiDir = await temporaryDirectory('latch-ui-')
+    await writeFile(join(uiDir, 'index.html'), '<!doctype html><title>Latch</title>')
+    const t = await testHost({ uiDir })
+    expect((await t.raw('loopback-tcp', '')).status).toBe(200)
+    const host = { host: new URL(t.host.loopbackOrigin).host }
+    for (const path of ['/link/report.md', '/link/notes/plan.md', '/link/assets/', '/report.md']) {
+      const page = await rawHttp('127.0.0.1', t.host.loopbackPort, path, host)
+      expect(page.status, path).toBe(404)
+      expect(page.headers['content-type']).toBe('text/html; charset=utf-8')
+      expect(page.headers['content-security-policy']).toBe(
+        "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      )
+      expect(page.headers['x-frame-options']).toBe('DENY')
+      expect(page.text).toContain('找不到这个页面')
+      expect(page.text).toContain('<a href="/link/">回到 Latch</a>')
+      expect(page.text).not.toMatch(/<script|report|plan\.md/u)
+    }
+    const head = await rawHttp('127.0.0.1', t.host.loopbackPort, '/link/report.md', host, 'HEAD')
+    expect([head.status, head.text]).toEqual([404, ''])
+    const api = await t.raw('loopback-tcp', 'api/no-such-route')
+    expect(api.headers.get('content-type')).toBe('application/json; charset=utf-8')
+    expect(await body(api)).toMatchObject({ error: expect.any(String) })
   })
 
   it('creates host.sock 0600 in a private runtime directory, removes it on shutdown and refuses an insecure one at startup', async () => {
@@ -496,12 +535,25 @@ describe('enrollment and credentials', () => {
     expect(info).toMatchObject({
       hostId: t.host.hostId,
       listener: 'loopback-tcp',
-      firstDevice: true,
-      invitationRequired: false,
+      invitationRequired: true,
+      offlineCodeAccepted: false,
       presence: { status: 'available' },
     })
+    expect(info.firstDevice).toBeUndefined()
     expect((await t.raw('loopback-tcp', 'api/snapshot')).status).toBe(401)
-    const device = await t.enroll({ name: '我的浏览器', scopes: [...ADMIN] })
+    // Loopback is not this computer: a browser there needs an invitation, as the desktop app's 「在这台电脑的浏览器中打开」 gives it.
+    const { testDeviceKey } = await import('@latch/testkit')
+    const uninvited = await t.raw('loopback-tcp', 'api/enrollments', {
+      method: 'POST',
+      body: { publicKey: testDeviceKey().spki, name: 'x' },
+    })
+    expect(uninvited.status).toBe(403)
+    expect(await body(uninvited)).toMatchObject({ error: 'invitation-required' })
+    expect(t.presence.requests).toHaveLength(0)
+    const invitation = await t.invite([...ADMIN], 'loopback-tcp')
+    expect(invitation.url).toBe(`${t.host.loopbackOrigin}/link/#pair=${invitation.code}`)
+    const device = await t.enroll({ name: '我的浏览器', scopes: [...ADMIN], invitation: invitation.code })
+    expect(device.device.pairedBy.method).toBe('invitation')
     expect(device.cookie).toMatch(new RegExp(`^latch_${t.host.hostId8}=ldc1\\.dev_`))
     expect(t.presence.requests.at(-1)!.preview).toMatchObject({ action: 'device.enroll', title: '允许新设备连接' })
     expect(t.presence.requests.at(-1)!.preview.lines).toContainEqual({ label: '设备指纹', value: device.device.fingerprint })
@@ -519,6 +571,7 @@ describe('enrollment and credentials', () => {
       presence: { status: 'available' },
       tls: null,
       policy: { localMaxLevel: 'L2', remoteMaxLevel: 'L1', allowL3: true },
+      rejectionNote: true,
     })
     expect(JSON.stringify(snapshot)).not.toContain(device.credential)
   })
@@ -527,7 +580,10 @@ describe('enrollment and credentials', () => {
     const t = await testHost({ tls: true })
     const key = await t.enroll({ scopes: [...ADMIN] })
     // Re-run one enrollment by hand to read the Set-Cookie header.
-    const second = await t.raw('loopback-tcp', 'api/enrollments', { method: 'POST', body: { publicKey: key.key.spki, name: 'again' } })
+    const second = await t.raw('loopback-tcp', 'api/enrollments', {
+      method: 'POST',
+      body: { publicKey: key.key.spki, name: 'again', invitation: (await t.invite(undefined, 'loopback-tcp')).code },
+    })
     expect(second.status).toBe(202)
     const browser = await t.enroll({ name: 'Cookie check' })
     const response = await browser.request('snapshot')
@@ -557,12 +613,9 @@ describe('enrollment and credentials', () => {
     const { testDeviceKey, enrollSigningText } = await import('@latch/testkit')
     for (const listener of ['loopback-tcp', 'tls'] as const) {
       const key = testDeviceKey()
-      const invitation = listener === 'tls' ? (await t.invite()).code : undefined
+      const invitation = (await t.invite(undefined, listener)).code
       const created = await body<{ enrollment: { id: string; nonce: string } }>(
-        await t.raw(listener, 'api/enrollments', {
-          method: 'POST',
-          body: { publicKey: key.spki, name: 'n', ...(invitation ? { invitation } : {}) },
-        }),
+        await t.raw(listener, 'api/enrollments', { method: 'POST', body: { publicKey: key.spki, name: 'n', invitation } }),
       )
       await expect
         .poll(
@@ -588,6 +641,50 @@ describe('enrollment and credentials', () => {
       else expect(cookie).toMatch(new RegExp(`^latch_${t.host.hostId8}=ldc1\\.[^;]+; HttpOnly; SameSite=Strict; Path=/; Max-Age=\\d+$`))
       expect(cookie).not.toMatch(/Domain/i)
     }
+  })
+
+  it("lists the enrollments still waiting, with the fingerprint to compare, to the desktop's admins only", async () => {
+    const t = await testHost({ tls: true })
+    const { testDeviceKey } = await import('@latch/testkit')
+    const desktop = await t.enroll({ listener: 'unix', name: 'Desktop' })
+    const member = await t.enroll({ listener: 'unix', scopes: ['view', 'run'] })
+    const browser = await t.enroll({ scopes: [...ADMIN] })
+    const { invitation } = await desktop.json<{ invitation: InvitationView }>('pairings', {
+      method: 'POST',
+      body: { scopes: ['view', 'run'] },
+    })
+    t.presence.mode = 'manual'
+    const created = await body<{ enrollment: EnrollmentView }>(
+      await t.raw('tls', 'api/enrollments', {
+        method: 'POST',
+        body: { publicKey: testDeviceKey().spki, name: '新手机', invitation: invitation.code },
+      }),
+    )
+    await t.presence.waitForRequest()
+    const { enrollment } = created
+    // The phone shows its own fingerprint; the pairing panel and the system sheet show the same one.
+    expect(enrollment.reason).toBe(`允许指纹 ${enrollment.fingerprint} 的新设备「新手机」连接`)
+    expect(await desktop.json('enrollments')).toEqual({
+      enrollments: [
+        {
+          id: enrollment.id,
+          name: '新手机',
+          fingerprint: enrollment.fingerprint,
+          listener: 'lan-tls',
+          method: 'invitation',
+          status: 'pending',
+          expiresAt: enrollment.expiresAt,
+          invitationId: invitation.id,
+          reason: enrollment.reason,
+        },
+      ],
+      blockingTasks: [],
+    })
+    expect(await body(await browser.request('enrollments'))).toMatchObject({ error: 'local-only' })
+    expect(await body(await member.request('enrollments'))).toMatchObject({ error: 'scope-required', required: 'admin' })
+    expect((await t.raw('unix', 'api/enrollments')).status).toBe(401)
+    t.presence.denyNext()
+    await expect.poll(async () => (await desktop.json<{ enrollments: unknown[] }>('enrollments')).enrollments).toEqual([])
   })
 
   it('enrolls over host.sock with the credential in JSON only, and admits anonymous socket callers to a few routes', async () => {
@@ -630,6 +727,83 @@ describe('enrollment and credentials', () => {
     const response = await plain.raw('unix', 'api/pairings', { method: 'POST', body: {} })
     expect(response.status).toBe(409)
     expect(await body(response)).toMatchObject({ error: 'tls-not-configured' })
+    // A browser on this computer needs no HTTPS entry: its invitation is for loopback.
+    const browser = await body<{ invitation: InvitationView }>(
+      await plain.raw('unix', 'api/pairings', { method: 'POST', body: { target: 'loopback' } }),
+    )
+    expect(browser.invitation.url).toBe(`${plain.host.loopbackOrigin}/link/#pair=${browser.invitation.code}`)
+    expect(browser.invitation.scopes).toEqual(['view', 'run', 'approve:standard'])
+  })
+
+  it('keeps a browser enrolled over loopback without an invitation by an earlier build working, as a remote device', async () => {
+    const dataDir = join(await temporaryDirectory(), 'data')
+    // Both Hosts take the same port: loopback credentials are bound to the origin, port included.
+    const port = await freeTcpPort()
+    const before = await testHost({ dataDir, port })
+    const browser = await before.enroll({ name: 'Old browser', scopes: [...ADMIN] })
+    await before.close()
+    // What an earlier build stored for it: a local confirmation over loopback, with no invitation.
+    const file = join(dataDir, 'auth', 'devices.json')
+    const stored = JSON.parse(await readFile(file, 'utf8')) as { devices: Array<{ id: string; pairedBy: unknown }> }
+    stored.devices.find(device => device.id === browser.id)!.pairedBy = { method: 'lpc' }
+    await writeFile(file, JSON.stringify(stored), { mode: 0o600 })
+
+    const after = await testHost({ dataDir, port })
+    const request = (path: string, init: { method?: string; body?: unknown } = {}) =>
+      after.raw('loopback-tcp', `api/${path}`, { ...init, headers: { cookie: browser.cookie! } })
+    expect(await body(await request('snapshot'))).toMatchObject({ device: { id: browser.id, listener: 'loopback-tcp', status: 'active' } })
+    expect((await request('devices')).status).toBe(200)
+    // Remote rules, as before: the remote ceiling, no local confirmation and no elevated scopes.
+    expect(await body(await request('policy', { method: 'PATCH', body: { remote: { maxLevel: 'L2' } } }))).toMatchObject({
+      error: 'local-only',
+    })
+    const desktop = await after.enroll({ listener: 'unix' })
+    expect(
+      await body(await desktop.request(`devices/${browser.id}`, { method: 'PATCH', body: { scopes: [...ADMIN, 'approve:elevated'] } })),
+    ).toMatchObject({ error: 'scope-not-grantable' })
+    expect(after.presence.requests.filter(item => item.preview.requester.listener === 'loopback-tcp')).toHaveLength(0)
+  })
+
+  it('lets no listener but host.sock enroll uninvited, use an offline code or show a local confirmation', async () => {
+    const t = await testHost({ tls: true, presenceMode: 'manual' })
+    const { testDeviceKey } = await import('@latch/testkit')
+    const desktop = await t.enroll({ listener: 'unix', name: 'Desktop' })
+    const browser = await t.enroll({ name: 'Browser', scopes: [...ADMIN] })
+    const phone = await t.enroll({ listener: 'tls', name: 'Phone', scopes: [...ADMIN] })
+    expect([browser.device.listener, phone.device.listener]).toEqual(['loopback-tcp', 'lan-tls'])
+    const { code } = await createOfflineTicket(join(t.dataDir, 'auth'))
+    const shown = t.presence.requests.length
+    for (const listener of ['loopback-tcp', 'tls'] as const) {
+      const enroll = (extra: Record<string, string> = {}) =>
+        t.raw(listener, 'api/enrollments', { method: 'POST', body: { publicKey: testDeviceKey().spki, name: 'x', ...extra } })
+      expect(await body(await enroll())).toMatchObject({ error: 'invitation-required' })
+      expect(await body(await enroll({ offlineCode: code }))).toMatchObject({ error: 'offline-code-invalid' })
+      // An invitation opens only the listener it was issued for.
+      const foreign = await t.invite(undefined, listener === 'tls' ? 'loopback-tcp' : 'tls')
+      expect(await body(await enroll({ invitation: foreign.code }))).toMatchObject({ error: 'invitation-invalid' })
+    }
+    for (const device of [browser, phone]) {
+      expect(await body(await device.request('policy', { method: 'PATCH', body: { remote: { maxLevel: 'L2' } } }))).toMatchObject({
+        error: 'local-only',
+      })
+      expect(await body(await device.request('pairings', { method: 'POST', body: { target: 'loopback' } }))).toMatchObject({
+        error: 'local-only',
+      })
+    }
+    expect(t.presence.requests).toHaveLength(shown)
+
+    // host.sock takes the offline code that loopback and TLS refused, and its raise reaches the confirmation window.
+    const offline = await t.raw('unix', 'api/enrollments', {
+      method: 'POST',
+      body: { publicKey: testDeviceKey().spki, name: 'Second desktop', offlineCode: code },
+    })
+    expect(await body(offline)).toMatchObject({ enrollment: { status: 'approved' } })
+    const raised = await desktop.request('policy', { method: 'PATCH', body: { remote: { maxLevel: 'L2' } } })
+    expect(await body(raised)).toMatchObject({ error: 'stepup-required', confirmation: { action: 'policy.change' } })
+    await t.presence.waitForRequest()
+    expect(t.presence.requests).toHaveLength(shown + 1)
+    expect(t.presence.requests.at(-1)!.preview.requester).toMatchObject({ listener: 'unix', remoteAddress: '本机 host.sock' })
+    t.presence.denyNext()
   })
 
   it('renews over HTTP after 24 hours and revokes on replay of a rotated credential after the grace window', async () => {
@@ -834,8 +1008,20 @@ describe('enrollment and credentials', () => {
 
     const { testDeviceKey, enrollSigningText } = await import('@latch/testkit')
     const key = testDeviceKey()
+    // Re-confirming takes an invitation like any loopback enrollment.
+    const refused = await t.raw('loopback-tcp', 'api/enrollments', {
+      method: 'POST',
+      body: { publicKey: key.spki, name: '' },
+      headers: legacy,
+    })
+    expect(await body(refused)).toMatchObject({ error: 'invitation-required' })
+    const invitation = (await t.invite(undefined, 'loopback-tcp')).code
     const created = await body<{ enrollment: { id: string; nonce: string } }>(
-      await t.raw('loopback-tcp', 'api/enrollments', { method: 'POST', body: { publicKey: key.spki, name: '' }, headers: legacy }),
+      await t.raw('loopback-tcp', 'api/enrollments', {
+        method: 'POST',
+        body: { publicKey: key.spki, name: '', invitation },
+        headers: legacy,
+      }),
     )
     await expect
       .poll(
@@ -860,9 +1046,12 @@ describe('enrollment and credentials', () => {
   it('cancels, rate-limits and never reveals another enrollment', async () => {
     const t = await testHost({ presenceMode: 'manual', rateLimits: 'default' })
     const { testDeviceKey } = await import('@latch/testkit')
-    const create = () =>
-      t.raw('loopback-tcp', 'api/enrollments', { method: 'POST', body: { publicKey: testDeviceKey().spki, name: 'Browser' } })
-    const first = await body<{ enrollment: { id: string } }>(await create())
+    const create = (invitation?: string) =>
+      t.raw('loopback-tcp', 'api/enrollments', {
+        method: 'POST',
+        body: { publicKey: testDeviceKey().spki, name: 'Browser', ...(invitation ? { invitation } : {}) },
+      })
+    const first = await body<{ enrollment: { id: string } }>(await create((await t.invite(undefined, 'loopback-tcp')).code))
     await t.presence.waitForRequest()
     expect(await body(await t.raw('unix', `api/enrollments/${first.enrollment.id}`))).toMatchObject({ error: 'listener-mismatch' })
     expect(await body(await t.raw('loopback-tcp', `api/enrollments/${first.enrollment.id}`, { method: 'DELETE' }))).toEqual({
@@ -871,8 +1060,9 @@ describe('enrollment and credentials', () => {
     expect(await body(await t.raw('loopback-tcp', `api/enrollments/${first.enrollment.id}`))).toMatchObject({
       enrollment: { status: 'cancelled' },
     })
+    // Uninvited attempts are refused and share one budget; the invited one above had its own.
     const statuses = [(await create()).status, (await create()).status, (await create()).status]
-    expect(statuses).toContain(429)
+    expect(statuses).toEqual([403, 403, 403])
     const limited = await create()
     expect(limited.status).toBe(429)
     expect(await body(limited)).toMatchObject({ error: 'rate-limited', retryAfter: expect.any(Number) })
@@ -927,6 +1117,7 @@ describe('scopes', () => {
     expect(raised.status).toBe(200)
     expect(t.presence.requests.at(-1)!.preview).toMatchObject({ action: 'device.grant', title: '为设备增加权限' })
     expect(t.presence.requests.at(-1)!.preview.lines).toContainEqual({ label: '新增权限', value: '批准普通操作' })
+    expect(t.presence.requests.at(-1)!.preview.reason).toMatch(/^为设备「.+」增加权限：批准普通操作$/u)
 
     expect(await body(await admin.request(`devices/${admin.id}`, { method: 'DELETE' }))).toMatchObject({ error: 'current-device' })
     const revoked = await admin.json<{ revoked: true; cascaded: number }>(`devices/${desktop.id}`, { method: 'DELETE' })
@@ -1031,7 +1222,9 @@ describe('approvals and risk', () => {
     expect(allowed.status).toBe(200)
     const preview = t.presence.requests.at(-1)!.preview
     expect(preview).toMatchObject({ action: 'approval.r2', title: '允许一次高风险操作' })
-    expect(preview.lines).toContainEqual({ label: '风险原因', value: '受保护路径' })
+    expect(preview.lines).toContainEqual({ label: '风险原因', value: '受保护的路径' })
+    // The system sheet names the file relative to the session directory, then the Host's reason.
+    expect(preview.reason).toBe('批准写入 .git/config（受保护的路径）')
     expect(preview.lines).toContainEqual({ label: '目标路径', value: join(await realpath(t.workspaceRoot), '.git', 'config') })
     await settled(t, second)
     expect(await readFile(join(t.workspaceRoot, '.git', 'config'), 'utf8')).toBe('[core]\n')
@@ -1044,7 +1237,10 @@ describe('approvals and risk', () => {
 
     const third = await startTask(browser, 'and cancel this one')
     await pendingApproval(t, third)
-    expect(await browser.json(`tasks/${third}/cancel`, { method: 'POST', body: {} })).toEqual({ accepted: true })
+    expect(await browser.json(`tasks/${third}/cancel`, { method: 'POST', body: {} })).toEqual({
+      accepted: true,
+      receipt: { sessionId: third, outcome: 'stopped', status: 'cancelled', at: expect.any(String) },
+    })
     expect((await auditRecords(t)).some(record => record.action === 'task.cancelled' && record.detail.sessionId === third)).toBe(true)
   })
 
@@ -1353,14 +1549,312 @@ describe('agent settings', () => {
     expect(created.status).toBe(201)
     const detected = async () => (await desktop.json<{ agents: AgentSettings[] }>('agents')).agents[0].detected
     const harness = async () => (await desktop.json<AppSnapshot>('snapshot')).catalog!.harnesses.find(item => item.id === 'pi')!
+    // Each preset carries what this computer has of it too, before any agent is added from it.
+    const preset = async (id: string) =>
+      (await desktop.json<{ presets: AgentPresetSettings[] }>('agents')).presets.find(item => item.id === id)!.detected
+    expect(await preset('goose')).toEqual({ found: false })
     expect(await detected()).toEqual({ found: false, companion: { command: 'pi', found: false } })
+    expect(await preset('pi')).toEqual({ found: false, companion: { command: 'pi', found: false } })
     expect((await harness()).statusMessage).toBe('未找到 pi 和它的适配器 pi-acp。安装：npm i -g pi-acp')
     await install('pi')
     expect(await detected()).toEqual({ found: false, companion: { command: 'pi', found: true } })
     await install('pi-acp')
     // Reading the settings is the re-check: the catalog that follows does not show the earlier lookup.
     expect(await detected()).toEqual({ found: true, path: join(bin, 'pi-acp'), companion: { command: 'pi', found: true } })
+    expect(await preset('pi')).toEqual({ found: true, path: join(bin, 'pi-acp'), companion: { command: 'pi', found: true } })
     expect((await harness()).status).toBe('ready')
+  })
+})
+
+/** Data and workspace that outlive one Host, so a second Host can start on them. */
+async function restartable() {
+  const root = await temporaryDirectory()
+  const options = { dataDir: join(root, 'data'), workspaceRoot: join(root, 'workspace') }
+  await mkdir(options.workspaceRoot, { recursive: true })
+  return options
+}
+
+/**
+ * The same device on a Host started later on the same data and port: a loopback credential is bound to the listener's
+ * origin, which includes the port.
+ */
+function again(t: TestHost, device: TestDevice, path: string, payload: unknown): Promise<Response> {
+  return t.raw('loopback-tcp', `api/${path}`, { method: 'POST', body: payload, headers: { cookie: device.cookie! } })
+}
+
+async function runningSession(device: TestDevice, t: TestHost): Promise<{ sessionId: string; runId: string }> {
+  const sessionId = await startTask(device, '运行 30 秒长任务')
+  await expect.poll(async () => (await t.host.bridge.summary(sessionId)).status, { timeout: 10_000 }).toBe('running')
+  const { runId } = await t.host.bridge.summary(sessionId)
+  expect(runId).toEqual(expect.any(String))
+  return { sessionId, runId: runId! }
+}
+
+describe('receipts and cancels', () => {
+  it('keeps an approval decision across a restart: the same request replays it, and another device learns who decided', async () => {
+    const options = await restartable()
+    const first = await testHost(options)
+    const phone = await first.enroll({ name: '测试手机', scopes: [...ADMIN] })
+    const other = await first.enroll({ name: '另一台电脑' })
+    const sessionId = await startTask(phone, '生成需要审批的报告')
+    const approval = await pendingApproval(first, sessionId)
+    const request = { decision: 'allow', optionId: 'allow_once', requestId: 'decision-restart' }
+    const decided = await phone.json<{ receipt: ApprovalReceipt }>(`approvals/${approval.id}`, { method: 'POST', body: request })
+    await settled(first, sessionId)
+    await first.close()
+
+    const second = await testHost({ ...options, port: first.host.loopbackPort })
+    const decide = vi.spyOn(second.host.bridge, 'decide')
+    const retry = await again(second, phone, `approvals/${approval.id}`, request)
+    expect(retry.status).toBe(200)
+    expect(await body(retry)).toEqual({ accepted: true, receipt: { ...decided.receipt, replay: true } })
+    const elsewhere = await again(second, other, `approvals/${approval.id}`, { decision: 'reject', requestId: 'decision-other' })
+    expect(elsewhere.status).toBe(409)
+    expect(await body(elsewhere)).toMatchObject({
+      error: 'approval-settled',
+      decidedBy: {
+        kind: 'device',
+        self: false,
+        deviceName: '测试手机',
+        decision: 'allow',
+        optionKind: 'allow_once',
+        at: decided.receipt.at,
+      },
+    })
+    expect(decide).not.toHaveBeenCalled()
+    expect((await auditRecords(second)).filter(record => record.action === 'approval.decided')).toHaveLength(1)
+  })
+
+  it('answers a cancel retried after a restart with its first receipt, and refuses its request ID for another run', async () => {
+    const options = await restartable()
+    const first = await testHost(options)
+    const browser = await first.enroll({ scopes: [...ADMIN] })
+    const { sessionId, runId } = await runningSession(browser, first)
+    const request = { requestId: 'cancel-restart', runId }
+    const stopped = await browser.json<{ receipt: CancelReceipt }>(`tasks/${sessionId}/cancel`, { method: 'POST', body: request })
+    expect(stopped).toEqual({
+      accepted: true,
+      receipt: { sessionId, requestId: 'cancel-restart', runId, outcome: 'stopped', status: 'cancelled', at: expect.any(String) },
+    })
+    await first.close()
+
+    const second = await testHost({ ...options, port: first.host.loopbackPort })
+    const cancel = vi.spyOn(second.host.bridge, 'cancel')
+    const retry = await again(second, browser, `tasks/${sessionId}/cancel`, request)
+    expect(retry.status).toBe(200)
+    expect(await body(retry)).toEqual({ accepted: true, receipt: { ...stopped.receipt, replay: true } })
+    const conflict = await again(second, browser, `tasks/${sessionId}/cancel`, { requestId: 'cancel-restart', runId: 'another-run' })
+    expect(conflict.status).toBe(409)
+    expect(await body(conflict)).toMatchObject({ error: 'request-conflict' })
+    expect(cancel).not.toHaveBeenCalled()
+    expect((await auditRecords(second)).filter(record => record.action === 'task.cancelled')).toEqual([
+      expect.objectContaining({ detail: { sessionId, runId } }),
+    ])
+  })
+
+  it('answers a cancel retried after a restart from its receipt even when the driver of the session is no longer mounted', async () => {
+    const options = await restartable()
+    const { plugin } = launchedHarness()
+    const first = await testHost({ ...options, plugins: [plugin] })
+    const desktop = await first.enroll({ listener: 'unix' })
+    const browser = await first.enroll({ scopes: [...ADMIN] })
+    const sessionId = await startTask(desktop, 'start', { harnessId: 'launched' })
+    const request = { requestId: 'cancel-unmounted', runId: 'run-1' }
+    const stopped = await browser.json<{ receipt: CancelReceipt }>(`tasks/${sessionId}/cancel`, { method: 'POST', body: request })
+    await first.close()
+
+    const second = await testHost({ ...options, port: first.host.loopbackPort })
+    await expect(second.host.bridge.harnessOf(sessionId)).rejects.toMatchObject({ status: 404 })
+    const retry = await again(second, browser, `tasks/${sessionId}/cancel`, request)
+    expect(retry.status).toBe(200)
+    expect(await body(retry)).toEqual({ accepted: true, receipt: { ...stopped.receipt, replay: true } })
+    // A request the Host has no receipt for still needs the session to route.
+    const fresh = await again(second, browser, `tasks/${sessionId}/cancel`, { requestId: 'cancel-unmounted-2', runId: 'run-1' })
+    expect(fresh.status).toBe(404)
+  })
+
+  it('answers two concurrent copies of one cancel with a single stop and one replayed receipt', async () => {
+    const t = await testHost()
+    const browser = await t.enroll({ scopes: [...ADMIN] })
+    const { sessionId, runId } = await runningSession(browser, t)
+    // The first copy is held in the driver until the second has found it in flight, then both settle.
+    let release!: () => void
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const original = t.host.bridge.cancel.bind(t.host.bridge)
+    const cancel = vi.spyOn(t.host.bridge, 'cancel').mockImplementation(async (...args) => {
+      await held
+      return original(...args)
+    })
+    const lookups = vi.spyOn(t.host.bridge.receipts, 'cancel')
+    const send = () =>
+      browser.json<{ receipt: CancelReceipt }>(`tasks/${sessionId}/cancel`, {
+        method: 'POST',
+        body: { requestId: 'cancel-race', runId },
+      })
+    const firstCopy = send()
+    await expect.poll(() => cancel.mock.calls.length).toBe(1)
+    const looked = lookups.mock.calls.length
+    const secondCopy = send()
+    // One look before routing and one after; the second finds the first copy's flight and waits on it.
+    await expect.poll(() => lookups.mock.calls.length).toBeGreaterThanOrEqual(looked + 2)
+    release()
+    const answers = await Promise.all([firstCopy, secondCopy])
+    expect(answers[0].receipt).toMatchObject({ requestId: 'cancel-race', runId, outcome: 'stopped', status: 'cancelled' })
+    expect(answers[0].receipt.replay).toBeUndefined()
+    expect(answers[1].receipt).toEqual({ ...answers[0].receipt, replay: true })
+    expect(cancel).toHaveBeenCalledOnce()
+    expect((await auditRecords(t)).filter(record => record.action === 'task.cancelled')).toHaveLength(1)
+    cancel.mockRestore()
+
+    // Two devices stopping the same run at once each get their own answer; the run stops once.
+    const { sessionId: next, runId: nextRun } = await runningSession(browser, t)
+    const other = await t.enroll({ name: 'Other browser' })
+    const both = await Promise.all(
+      [browser, other].map(device =>
+        device.json<{ receipt: CancelReceipt }>(`tasks/${next}/cancel`, {
+          method: 'POST',
+          body: { requestId: randomUUID(), runId: nextRun },
+        }),
+      ),
+    )
+    expect(both.map(answer => answer.receipt.replay)).toEqual([undefined, undefined])
+    expect(both.map(answer => answer.receipt.status)).toEqual(['cancelled', 'cancelled'])
+  })
+
+  it('lets a copy that waited on a failed first copy run the cancel itself and keep its receipt', async () => {
+    const t = await testHost()
+    const browser = await t.enroll({ scopes: [...ADMIN] })
+    const { sessionId, runId } = await runningSession(browser, t)
+    let release!: () => void
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const cancel = vi.spyOn(t.host.bridge, 'cancel').mockImplementationOnce(async () => {
+      await held
+      throw new AppError(503, 'storage-unavailable', '执行已停止，但取消状态未能持久化')
+    })
+    const lookups = vi.spyOn(t.host.bridge.receipts, 'cancel')
+    const send = () => browser.request(`tasks/${sessionId}/cancel`, { method: 'POST', body: { requestId: 'cancel-failed', runId } })
+    const firstCopy = send()
+    await expect.poll(() => cancel.mock.calls.length).toBe(1)
+    const looked = lookups.mock.calls.length
+    const secondCopy = send()
+    await expect.poll(() => lookups.mock.calls.length).toBeGreaterThanOrEqual(looked + 2)
+    release()
+    const failed = await firstCopy
+    expect(failed.status).toBe(503)
+    expect(await body(failed)).toMatchObject({ error: 'storage-unavailable' })
+    const answer = await secondCopy
+    expect(answer.status).toBe(200)
+    const { receipt } = await body<{ receipt: CancelReceipt }>(answer)
+    expect(receipt).toMatchObject({ requestId: 'cancel-failed', runId, outcome: 'stopped', status: 'cancelled' })
+    expect(receipt.replay).toBeUndefined()
+    expect(cancel).toHaveBeenCalledTimes(2)
+    expect(t.host.bridge.receipts.cancel(sessionId, browser.id, 'cancel-failed')).toMatchObject({ runId, outcome: 'stopped' })
+  })
+
+  it('answers a cancel for a run that already ended with how it ended, and never stops the run that began after it', async () => {
+    const t = await testHost()
+    const browser = await t.enroll({ scopes: [...ADMIN] })
+    const sessionId = await startTask(browser, '你好')
+    await settled(t, sessionId)
+    const firstRun = (await t.host.bridge.summary(sessionId)).runId!
+    const cancel = vi.spyOn(t.host.bridge, 'cancel')
+    const late = await browser.json<{ receipt: CancelReceipt }>(`tasks/${sessionId}/cancel`, {
+      method: 'POST',
+      body: { requestId: 'cancel-late', runId: firstRun },
+    })
+    expect(late.receipt).toEqual({
+      sessionId,
+      requestId: 'cancel-late',
+      runId: firstRun,
+      outcome: 'ended',
+      status: 'idle',
+      at: expect.any(String),
+    })
+
+    await browser.json(`tasks/${sessionId}/prompt`, { method: 'POST', body: { prompt: '运行 30 秒长任务', requestId: randomUUID() } })
+    await expect.poll(async () => (await t.host.bridge.summary(sessionId)).status, { timeout: 10_000 }).toBe('running')
+    const secondRun = (await t.host.bridge.summary(sessionId)).runId!
+    expect(secondRun).not.toBe(firstRun)
+    const stale = await browser.json<{ receipt: CancelReceipt }>(`tasks/${sessionId}/cancel`, {
+      method: 'POST',
+      body: { requestId: 'cancel-stale', runId: firstRun },
+    })
+    expect(stale.receipt).toEqual({ sessionId, requestId: 'cancel-stale', runId: firstRun, outcome: 'ended', at: expect.any(String) })
+    expect((await t.host.bridge.summary(sessionId)).status).toBe('running')
+    expect(cancel).not.toHaveBeenCalled()
+    expect((await auditRecords(t)).some(record => record.action === 'task.cancelled')).toBe(false)
+
+    const now = await browser.json<{ receipt: CancelReceipt }>(`tasks/${sessionId}/cancel`, {
+      method: 'POST',
+      body: { requestId: 'cancel-now', runId: secondRun },
+    })
+    expect(now.receipt).toMatchObject({ runId: secondRun, outcome: 'stopped', status: 'cancelled' })
+    expect(cancel).toHaveBeenCalledWith(sessionId, { runId: secondRun })
+    // A page loaded before cancels named their run still stops whatever runs, and is told when nothing did.
+    expect(await browser.json(`tasks/${sessionId}/cancel`, { method: 'POST' })).toEqual({
+      accepted: true,
+      receipt: { sessionId, outcome: 'ended', status: 'cancelled', at: expect.any(String) },
+    })
+    expect(await body(await browser.request(`tasks/${sessionId}/cancel`, { method: 'POST', body: { runId: 'bad run' } }))).toMatchObject({
+      error: 'invalid-input',
+    })
+  })
+
+  it('still stops a run when its driver cannot list the session, leaving the run check to the driver', async () => {
+    const { plugin } = launchedHarness()
+    const t = await testHost({ plugins: [plugin] })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const sessionId = await startTask(desktop, 'start', { harnessId: 'launched' })
+    const cancel = vi.spyOn(t.host.bridge, 'cancel')
+    const answer = await desktop.json<{ receipt: CancelReceipt }>(`tasks/${sessionId}/cancel`, {
+      method: 'POST',
+      body: { requestId: 'cancel-unlisted', runId: 'run-1' },
+    })
+    expect(answer.receipt).toEqual({ sessionId, requestId: 'cancel-unlisted', runId: 'run-1', outcome: 'stopped', at: expect.any(String) })
+    expect(cancel).toHaveBeenCalledExactlyOnceWith(sessionId, { runId: 'run-1' })
+    expect((await auditRecords(t)).filter(record => record.action === 'task.cancelled')).toHaveLength(1)
+  })
+})
+
+describe('traffic counters', () => {
+  it('counts the bytes sent per session and per stream, as numbers only, for admin devices and the command line', async () => {
+    const t = await testHost()
+    const admin = await t.enroll({ name: '管理设备', scopes: [...ADMIN] })
+    const viewer = await t.enroll({ scopes: ['view'] })
+    const prompt = '你好，请记住这句话'
+    const sessionId = await startTask(admin, prompt)
+    await settled(t, sessionId)
+    await openStream(admin, `events?sessionId=${encodeURIComponent(sessionId)}`)
+    await admin.json(`tasks/${sessionId}`, { method: 'PATCH', body: { title: '秘密标题' } })
+    await admin.json('snapshot')
+    await admin.json(`tasks/${sessionId}`)
+    await expect
+      .poll(
+        async () => (await admin.json<TrafficSummary>('traffic')).sessions.find(session => session.sessionId === sessionId)?.frames ?? 0,
+      )
+      .toBeGreaterThan(0)
+    const summary = await admin.json<TrafficSummary>('traffic')
+    expect(summary.sessions.find(session => session.sessionId === sessionId)).toMatchObject({ details: 1, detailBytes: expect.any(Number) })
+    expect(summary.kinds['task-state'].count).toBeGreaterThan(0)
+    expect(summary.kinds.refresh.count).toBeGreaterThan(0)
+    expect(summary.kinds.snapshot.count).toBeGreaterThan(0)
+    expect(summary.kinds.detail).toMatchObject({ count: 1 })
+    expect(summary.connections).toEqual([
+      expect.objectContaining({ listener: 'loopback-tcp', frames: expect.any(Number), bytes: expect.any(Number), heartbeats: 0 }),
+    ])
+    expect(summary.connections[0]?.closedAt).toBeUndefined()
+    const text = JSON.stringify(summary)
+    for (const secret of [prompt, '秘密标题', '管理设备', admin.id, viewer.id, t.host.hostId]) expect(text).not.toContain(secret)
+
+    expect(await body(await viewer.request('traffic'))).toMatchObject({ error: 'scope-required', required: 'admin' })
+    const anonymous = await t.raw('unix', 'api/traffic')
+    expect(anonymous.status).toBe(200)
+    expect(await body<TrafficSummary>(anonymous)).toMatchObject({ buckets: summary.buckets })
+    expect((await t.raw('loopback-tcp', 'api/traffic')).status).toBe(401)
   })
 })
 
@@ -1377,11 +1871,46 @@ describe('full-access (L3) sessions', () => {
       env: { FAKE_ACP_STATE: join(t.root, 'acp-state.json'), FAKE_ACP_MODES: 'read-only,auto', FAKE_ACP_CONFIG: 'options' },
     }
     expect(await body(await browser.request('agents', { method: 'POST', body: definition }))).toMatchObject({ error: 'local-only' })
-    const created = await desktop.confirmed('agents', { method: 'POST', body: definition })
+    // Saving asks for no confirmation; the first full-access start does.
+    const enrolled = t.presence.requests.length
+    const created = await desktop.request('agents', { method: 'POST', body: definition })
     expect(created.status).toBe(201)
-    expect(t.presence.requests.at(-1)!.preview).toMatchObject({ action: 'agent.define', title: '保存 Agent 启动设置' })
-    return { t, desktop, browser }
+    expect(t.presence.requests).toHaveLength(enrolled)
+    expect((await auditRecords(t)).find(record => record.action === 'agent.defined')).toMatchObject({ stepup: 'none' })
+    return { t, desktop, browser, enrolled }
   }
+
+  it('names the command in the system sheet only the first time a launch fingerprint starts', async () => {
+    const { t, desktop } = await acpHost()
+    const fingerprint = (preview: PresencePreview) => preview.lines.find(line => line.label === '启动指纹')!.value
+    await settled(t, await startTask(desktop, 'first', { harnessId: 'fake' }))
+    const first = t.presence.requests.at(-1)!.preview
+    expect(first.subject.form).toBe('start.first-custom')
+    // The executable is named by its path, so a same-named file elsewhere reads differently.
+    expect(first.subject.slots.program).toBe(programText(await realpath(process.execPath)))
+    expect(first.reason).toMatch(/^首次以完全访问启动 Fake agent（在启动目录）：自定义命令 \S*node /u)
+    // The variables the definition sets are named in the sheet; their values appear nowhere in the confirmation.
+    expect(first.subject.slots.env).toBe('FAKE_ACP_CONFIG、FAKE_ACP_MODES、FAKE_ACP_STATE')
+    expect(JSON.stringify(first)).not.toContain('read-only,auto')
+    expect(JSON.stringify(first)).not.toContain('acp-state.json')
+    await settled(t, await startTask(desktop, 'again', { harnessId: 'fake' }))
+    const again = t.presence.requests.at(-1)!.preview
+    expect(again.reason).toBe('开启完全访问会话：Fake agent（在启动目录）')
+    expect(fingerprint(again)).toBe(fingerprint(first))
+    // Other arguments are another launch fingerprint of an agent that started before: the sheet says the command changed
+    // and names it again.
+    expect((await desktop.request('agents/fake', { method: 'PUT', body: { args: [FAKE_ACP_AGENT, '--x'] } })).status).toBe(200)
+    await settled(t, await startTask(desktop, 'changed', { harnessId: 'fake' }))
+    const changed = t.presence.requests.at(-1)!.preview
+    expect(changed.subject.form).toBe('start.changed-custom')
+    expect(changed.reason).toMatch(/^以完全访问启动 Fake agent（在启动目录），命令已变化：自定义命令 /u)
+    expect(changed.subject.slots.args).toMatch(/ --x$/u)
+    expect(fingerprint(changed)).not.toBe(fingerprint(first))
+    // The record of a start keeps the fingerprint without the project's configuration as well.
+    expect((await auditRecords(t)).findLast(record => record.action === 'task.l3.started')!.detail).toMatchObject({
+      definitionHash: expect.stringMatching(/^[0-9a-f]{64}$/u),
+    })
+  })
 
   it('starts only from the desktop after local confirmation, and keeps browsers to viewing, rejecting and cancelling', async () => {
     const { t, desktop, browser } = await acpHost()
@@ -1390,6 +1919,8 @@ describe('full-access (L3) sessions', () => {
     const sessionId = await startTask(desktop, 'permission', { harnessId: 'fake' })
     const preview = t.presence.requests.at(-1)!.preview
     expect(preview).toMatchObject({ action: 'task.start-l3', title: '开启完全访问会话' })
+    // Not a preset's own command: the sheet says so and names the executable and its arguments.
+    expect(preview.reason).toMatch(/^首次以完全访问启动 .+（在启动目录）：自定义命令 \S*node .+$/u)
     expect(preview.lines.find(line => line.label === '命令')!.value).toBe(await realpath(process.execPath))
     expect(preview.warnings).toContain('Harness 自己发起的询问只是提示，不是安全边界。')
     const started = (await auditRecords(t)).find(record => record.action === 'task.l3.started')
@@ -1407,10 +1938,32 @@ describe('full-access (L3) sessions', () => {
     expect(await body(await browser.request(`approvals/${approval.id}`, { method: 'POST', body: { decision: 'allow' } }))).toMatchObject({
       error: 'local-only',
     })
-    // A new local confirmation is refused while the unsandboxed turn waits.
+    // While the unsandboxed turn waits, what would outlive it is refused, naming the session to the desktop; an
+    // anonymous enrollment learns nothing about it. Another agent session still starts.
     const blocked = await desktop.request('policy', { method: 'PATCH', body: { remote: { maxLevel: 'L2' } } })
     expect(blocked.status).toBe(409)
-    expect(await body(blocked)).toMatchObject({ error: 'presence-blocked' })
+    expect(await body(blocked)).toEqual({
+      error: 'presence-blocked',
+      message: '有完全访问会话正在运行或等你处理。为防止 Agent 冒用你的确认，这项确认要等它结束。',
+      action: 'policy.change',
+      blockingTasks: [{ id: sessionId, title: expect.any(String), harnessId: 'fake' }],
+    })
+    const { testDeviceKey } = await import('@latch/testkit')
+    const enrolling = await t.raw('unix', 'api/enrollments', { method: 'POST', body: { publicKey: testDeviceKey().spki, name: '新设备' } })
+    expect(enrolling.status).toBe(409)
+    const refusal = await body<Record<string, unknown>>(enrolling)
+    expect(refusal).toMatchObject({ error: 'presence-blocked', action: 'device.enroll' })
+    expect(refusal).not.toHaveProperty('blockingTasks')
+    const confirmations = t.presence.requests.length
+    const second = await startTask(desktop, 'hang', { harnessId: 'fake' })
+    expect(t.presence.requests.slice(confirmations).map(item => item.preview.action)).toEqual(['task.start-l3'])
+    expect(await browser.json(`tasks/${second}/cancel`, { method: 'POST', body: {} })).toMatchObject({
+      accepted: true,
+      receipt: { sessionId: second, outcome: 'stopped', status: 'cancelled' },
+    })
+    await expect.poll(async () => (await t.host.bridge.detail(second)).summary.status, { timeout: 10_000 }).toBe('cancelled')
+    const third = await startTask(desktop, 'second', { harnessId: 'fake' })
+    await settled(t, third)
     expect((await browser.request(`approvals/${approval.id}`, { method: 'POST', body: { decision: 'reject' } })).status).toBe(200)
     await expect.poll(async () => (await t.host.bridge.detail(sessionId)).summary.status, { timeout: 10_000 }).toBe('idle')
 
@@ -1435,13 +1988,17 @@ describe('full-access (L3) sessions', () => {
     const confirmed = await desktop.confirmed(`tasks/${sessionId}/config`, { method: 'POST', body: { configId: 'mode', value: 'auto' } })
     expect(await body(confirmed)).toEqual({ accepted: true })
     expect(t.presence.requests.at(-1)!.preview.lines).toContainEqual({ label: '新模式', value: 'auto' })
+    expect(t.presence.requests.at(-1)!.preview.reason).toMatch(/^把会话「.+」的权限模式放宽到 .*auto/u)
     expect((await auditRecords(t)).find(record => record.action === 'task.mode.widened')).toMatchObject({
       stepup: 'lpc-local',
       detail: { sessionId },
     })
 
     const running = await startTask(desktop, 'hang', { harnessId: 'fake' })
-    expect(await browser.json(`tasks/${running}/cancel`, { method: 'POST', body: {} })).toEqual({ accepted: true })
+    expect(await browser.json(`tasks/${running}/cancel`, { method: 'POST', body: {} })).toMatchObject({
+      accepted: true,
+      receipt: { sessionId: running, outcome: 'stopped', status: 'cancelled' },
+    })
     expect((await desktop.request(`tasks/${sessionId}`, { method: 'DELETE' })).status).toBe(200)
   })
 
@@ -1541,6 +2098,77 @@ describe('full-access (L3) sessions', () => {
       }
     }
     expect([createTask, prompt, setConfig].map(mock => mock.mock.calls.length)).toEqual([3, 2, 2])
+  })
+
+  it('says in the system sheet what changed since earlier starts: nothing, the project configuration, or the command', async () => {
+    const { plugin, launch } = launchedHarness()
+    const t = await testHost({ plugins: [plugin] })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const form = async (prompt: string) => {
+      await startTask(desktop, prompt, { harnessId: 'launched' })
+      return t.presence.requests.at(-1)!.preview
+    }
+    Object.assign(launch, { launchHash: 'a'.repeat(64), definitionHash: 'a'.repeat(64), verified: true })
+    expect((await form('first')).reason).toBe('首次以完全访问启动 Launched（在启动目录）：/usr/bin/true')
+    expect((await form('repeat')).reason).toBe('开启完全访问会话：Launched（在启动目录）')
+    // The start directory chosen as a project reads the same, never by its stored name.
+    await startTask(desktop, 'default', { harnessId: 'launched', workspaceId: 'default' })
+    expect(t.presence.requests.at(-1)!.preview.reason).toBe('开启完全访问会话：Launched（在启动目录）')
+    // The same definition in a folder with its own agent configuration: only that differs.
+    launch.launchHash = 'b'.repeat(64)
+    expect((await form('project')).reason).toBe('开启完全访问会话：Launched（在启动目录），项目配置与以前启动时不同')
+    // A new definition or a moved executable names the command again, as changed.
+    Object.assign(launch, { launchHash: 'c'.repeat(64), definitionHash: 'c'.repeat(64), command: '/opt/elsewhere/true', args: ['--yolo'] })
+    expect((await form('moved')).reason).toBe('以完全访问启动 Launched（在启动目录），命令已变化：/opt/elsewhere/true --yolo')
+    launch.verified = false
+    Object.assign(launch, { launchHash: 'd'.repeat(64), definitionHash: 'd'.repeat(64) })
+    expect((await form('custom')).subject.form).toBe('start.changed-custom')
+  })
+
+  it('names a same-named executable in another folder as a custom command at its own path', async () => {
+    const root = await temporaryDirectory('latch-same-name-')
+    const make = async (directory: string) => {
+      await mkdir(join(root, directory), { recursive: true })
+      const path = join(root, directory, 'codex-acp')
+      await writeFile(path, `#!/bin/sh\nexec "${process.execPath}" "${FAKE_ACP_AGENT}" "$@"\n`)
+      await chmod(path, 0o755)
+      return await realpath(path)
+    }
+    const found = await make('bin')
+    const planted = await make('project/node_modules/.bin')
+    // The Host finds the preset's command in its own search path first.
+    const path = process.env.PATH
+    process.env.PATH = `${dirname(found)}:/usr/bin:/bin`
+    cleanups.push(async () => {
+      process.env.PATH = path
+    })
+    const t = await testHost({ agentPlugin: (agent: AgentRecord) => createAcpAgentPlugin(agent, { stopGraceMs: 100, cancelGraceMs: 500 }) })
+    const desktop = await t.enroll({ listener: 'unix' })
+    for (const [id, command] of [
+      ['codex', 'codex-acp'],
+      ['planted', planted],
+    ] as const) {
+      const saved = await desktop.request('agents', {
+        method: 'POST',
+        body: { id, name: 'Codex', presetId: 'codex', command, args: [], env: {} },
+      })
+      expect(saved.status).toBe(201)
+    }
+    t.presence.mode = 'deny'
+    const sheet = async (harnessId: string) => {
+      const answer = await desktop.request('tasks', {
+        method: 'POST',
+        body: { prompt: 'start', requestId: randomUUID(), mode: 'agent', harnessId },
+      })
+      expect(answer.status).toBe(403)
+      return t.presence.requests.at(-1)!.preview
+    }
+    const own = await sheet('codex')
+    const other = await sheet('planted')
+    expect(own.subject).toMatchObject({ form: 'start.first', slots: { program: programText(found) } })
+    expect(other.subject).toMatchObject({ form: 'start.first-custom', slots: { program: programText(planted) } })
+    expect(other.reason).toContain('：自定义命令 ')
+    expect(other.reason).not.toBe(own.reason)
   })
 
   it("shows the harness's own notes in the full-access start confirmation", async () => {
@@ -1643,6 +2271,43 @@ describe('full-access (L3) sessions', () => {
     expect(t.presence.requests).toHaveLength(asked)
   })
 
+  it('saves definitions on the desktop without a confirmation and marks them not started until a full-access start', async () => {
+    const { t, desktop, browser, enrolled } = await acpHost()
+    const actions = () => t.presence.requests.slice(enrolled).map(item => item.preview.action)
+    const settings = async () => (await desktop.json<{ agents: AgentSettings[] }>('agents')).agents.find(agent => agent.id === 'fake')!
+    expect(await settings()).toMatchObject({ started: false })
+    expect((await auditRecords(t)).find(record => record.action === 'agent.defined')).toMatchObject({
+      stepup: 'none',
+      actor: { deviceId: desktop.id, listener: 'unix' },
+      detail: { agentId: 'fake', created: true },
+    })
+    const sessionId = await startTask(desktop, 'echo one', { harnessId: 'fake' })
+    expect(actions()).toEqual(['task.start-l3'])
+    await settled(t, sessionId)
+    expect(await settings()).toMatchObject({ started: true })
+    // Renaming keeps it; a new definition is not started again, and is still saved only on the desktop, unconfirmed.
+    expect((await browser.json<{ agent: AgentSettings }>('agents/fake', { method: 'PUT', body: { name: 'Renamed' } })).agent).toMatchObject(
+      {
+        started: true,
+      },
+    )
+    expect(await body(await browser.request('agents/fake', { method: 'PUT', body: { args: [FAKE_ACP_AGENT, '--x'] } }))).toMatchObject({
+      error: 'local-only',
+    })
+    const changed = await desktop.json<{ agent: AgentSettings }>('agents/fake', {
+      method: 'PUT',
+      body: { env: { FAKE_ACP_VERSION: '9.9.9' } },
+    })
+    expect(changed.agent).toMatchObject({ started: false })
+    expect(actions()).toEqual(['task.start-l3'])
+    const second = await startTask(desktop, 'echo two', { harnessId: 'fake' })
+    expect(actions()).toEqual(['task.start-l3', 'task.start-l3'])
+    await settled(t, second)
+    expect(await settings()).toMatchObject({ started: true })
+    // Every write of the record is on record as a settings change.
+    expect((await auditRecords(t)).filter(record => record.action === 'settings.changed').length).toBeGreaterThanOrEqual(4)
+  })
+
   it('lets admins rename or disable an agent without confirmation but not change what it runs', async () => {
     const { t, desktop, browser } = await acpHost()
     const renamed = await browser.json<{ agent: AgentSettings }>('agents/fake', { method: 'PUT', body: { name: 'Renamed agent' } })
@@ -1659,7 +2324,9 @@ describe('full-access (L3) sessions', () => {
         }),
       ),
     ).toMatchObject({ error: 'agent-env-reserved' })
-    expect((await desktop.confirmed('agents/fake', { method: 'PUT', body: { env: { FAKE_ACP_VERSION: '9.9.9' } } })).status).toBe(200)
+    const confirmations = t.presence.requests.length
+    expect((await desktop.request('agents/fake', { method: 'PUT', body: { env: { FAKE_ACP_VERSION: '9.9.9' } } })).status).toBe(200)
+    expect(t.presence.requests).toHaveLength(confirmations)
     expect((await auditRecords(t)).filter(record => record.action === 'agent.defined').map(record => record.detail.created)).toEqual([
       true,
       false,
@@ -1670,36 +2337,73 @@ describe('full-access (L3) sessions', () => {
 })
 
 describe('providers', () => {
-  it('sets a key only from the desktop with secrets and local confirmation, bound to the provider origin', async () => {
+  it('sets a key only from the desktop with secrets, confirming a new address once with the key and its allowance', async () => {
     const model = await localModel()
-    const t = await testHost({ demo: false, egressAllow: [model.allow] })
+    const t = await testHost({ demo: false })
     const browser = await t.enroll({ scopes: [...ADMIN] })
     const desktop = await t.enroll({ listener: 'unix' })
+    const origin = new URL(model.baseURL).origin
+    // Any admin device may save a keyless service anywhere; an unconfirmed address is kept but never used.
     const created = await browser.json<{ provider: ProviderSettings }>('providers', {
       method: 'POST',
       body: { name: 'Local Lab', kind: 'openai-compatible', baseURL: model.baseURL, models: ['alpha'], defaultModel: 'alpha' },
     })
-    expect(created.provider).toMatchObject({ id: 'local-lab', hasKey: false })
+    expect(created.provider).toMatchObject({ id: 'local-lab', hasKey: false, destination: 'unconfirmed' })
     expect(await body(await browser.request('providers/local-lab', { method: 'PUT', body: { apiKey: 'secret-1' } }))).toMatchObject({
       error: 'scope-required',
       required: 'secrets',
     })
-    const keyed = await desktop.confirmed('providers/local-lab', { method: 'PUT', body: { apiKey: 'secret-1' } })
+    expect(await body(await browser.request('providers/local-lab', { method: 'PUT', body: { confirmOrigin: true } }))).toMatchObject({
+      error: 'local-only',
+    })
+    const before = t.presence.requests.length
+    const keyed = await desktop.confirmed('providers/local-lab', { method: 'PUT', body: { apiKey: 'secret-1', confirmOrigin: true } })
     expect(keyed.status).toBe(200)
+    expect(t.presence.requests.length).toBe(before + 1)
     const settings = (await body<{ provider: ProviderSettings }>(keyed)).provider
-    expect(settings).toMatchObject({ hasKey: true, keyOrigin: new URL(model.baseURL).origin })
+    expect(settings).toMatchObject({ hasKey: true, keyOrigin: origin, keyPath: '/v1', destination: 'confirmed' })
     expect(JSON.stringify(settings)).not.toContain('secret-1')
     const preview = t.presence.requests.at(-1)!.preview
-    expect(preview).toMatchObject({ action: 'provider.set-key', title: '保存模型服务密钥' })
-    expect(preview.lines).toContainEqual({ label: '密钥', value: '已填写（不显示）' })
-    expect(preview.lines).toContainEqual({ label: '密钥只发往', value: new URL(model.baseURL).origin })
+    expect(preview).toMatchObject({ action: 'provider.confirm-origin', title: `确认模型服务地址 ${model.allow}`, warnings: [] })
+    expect(preview.lines).toEqual([
+      { label: '地址', value: model.baseURL },
+      { label: '出站许可', value: `允许 Host 访问 ${model.allow}（这台电脑上的地址）` },
+      { label: '模型服务', value: 'Local Lab（local-lab）' },
+      { label: '密钥', value: `已填写（不显示），只发往 ${origin}/v1` },
+    ])
+    expect(preview.reason).toBe(`保存 Local Lab 并允许 Host 访问 ${model.baseURL}`)
     expect(JSON.stringify(preview)).not.toContain('secret-1')
+    expect(t.host.security.policy.get()).toMatchObject({ confirmedAddresses: [`${origin}/v1`], hostEgressAllow: [model.allow] })
     await callProvider(t, 'local-lab')
     expect(model.calls.at(-1)).toEqual({ model: 'alpha', authorization: 'Bearer secret-1' })
-    expect((await auditRecords(t)).find(record => record.action === 'provider.secret.set')).toMatchObject({
+    // The key's record, then the policy change, both with the one confirmation.
+    const records = await auditRecords(t)
+    const keyRecord = records.findIndex(record => record.action === 'provider.secret.set')
+    expect(records[keyRecord]).toMatchObject({ stepup: 'lpc-local', detail: { providerId: 'local-lab' } })
+    expect(records[keyRecord + 1]).toMatchObject({
+      action: 'policy.changed',
       stepup: 'lpc-local',
-      detail: { providerId: 'local-lab' },
+      detail: { fields: ['confirmedAddresses', 'hostEgressAllow'], lowering: false },
     })
+    // A confirmed address is confirmed once: a new key, or another service there, needs no confirmation.
+    expect((await desktop.request('providers/local-lab', { method: 'PUT', body: { apiKey: 'secret-1' } })).status).toBe(200)
+    expect(
+      (
+        await desktop.request('providers', {
+          method: 'POST',
+          body: {
+            id: 'twin',
+            name: 'Twin',
+            kind: 'openai-compatible',
+            baseURL: model.baseURL,
+            apiKey: 'twin-key',
+            models: ['beta'],
+            defaultModel: 'beta',
+          },
+        })
+      ).status,
+    ).toBe(201)
+    expect(t.presence.requests.length).toBe(before + 1)
     for (const path of ['providers', 'provider', 'snapshot']) expect(await (await browser.request(path)).text()).not.toContain('secret-1')
 
     // A saved key never follows the base URL to another origin.
@@ -1726,6 +2430,385 @@ describe('providers', () => {
       detail: { reason: 'origin-changed' },
     })
     expect((await browser.request('providers/local-lab', { method: 'DELETE' })).status).toBe(200)
+  })
+
+  it('never uses a service at an unconfirmed address until it is confirmed, and stops at once when it is removed', async () => {
+    const model = await localModel()
+    const t = await testHost({ demo: false })
+    const browser = await t.enroll({ scopes: [...ADMIN] })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const origin = new URL(model.baseURL).origin
+    const address = `${origin}/v1`
+    const catalog = async () => (await browser.json<AppSnapshot>('snapshot')).catalog?.providers.map(provider => provider.id) ?? []
+    await browser.json('providers', {
+      method: 'POST',
+      body: {
+        id: 'ollama',
+        name: 'Ollama',
+        kind: 'openai-compatible',
+        presetId: 'ollama',
+        baseURL: model.baseURL,
+        models: ['alpha'],
+        defaultModel: 'alpha',
+      },
+    })
+    expect(await catalog()).not.toContain('ollama')
+    // Left out of the catalog with its reason, and choosing it says why instead of 「当前不可用」.
+    expect((await browser.json<AppSnapshot>('snapshot')).catalog?.unusableProviders).toEqual([
+      { id: 'ollama', name: 'Ollama', reason: 'origin-unconfirmed' },
+    ])
+    const chosen = await browser.request('preferences', {
+      method: 'PUT',
+      body: { defaults: { model: { providerId: 'ollama', model: 'alpha' } } },
+    })
+    expect(chosen.status).toBe(403)
+    expect(await body(chosen)).toMatchObject({ error: 'origin-unconfirmed' })
+    expect(await body(await browser.request('providers/ollama/models', { method: 'POST', body: {} }))).toMatchObject({
+      error: 'origin-unconfirmed',
+    })
+    // Even a lease taken directly is refused before anything is sent.
+    await expect(callProvider(t, 'ollama')).rejects.toMatchObject({ code: 'origin-unconfirmed' })
+    // A typed address is checked through the egress policy, which names what it would allow.
+    const probe = await desktop.request('provider-checks', { method: 'POST', body: { kind: 'openai-compatible', baseURL: model.baseURL } })
+    expect(probe.status).toBe(403)
+    expect(await body(probe)).toMatchObject({ error: 'egress-denied', target: model.allow })
+    expect(model.calls).toEqual([])
+    expect(model.listings).toEqual([])
+
+    // Confirming the address before saving, so its models can be listed: one confirmation, nothing saved.
+    const before = t.presence.requests.length
+    const confirmed = await desktop.confirmed('provider-origins', { method: 'POST', body: { baseURL: model.baseURL } })
+    expect(await body(confirmed)).toEqual({ origin, address, destination: 'confirmed', egress: model.allow })
+    expect(t.presence.requests.length).toBe(before + 1)
+    expect(t.presence.requests.at(-1)!.preview.lines).toEqual([
+      { label: '地址', value: model.baseURL },
+      { label: '出站许可', value: `允许 Host 访问 ${model.allow}（这台电脑上的地址）` },
+    ])
+    expect(
+      await desktop.json('provider-checks', { method: 'POST', body: { kind: 'openai-compatible', baseURL: model.baseURL } }),
+    ).toMatchObject({
+      ok: true,
+      models: ['alpha', 'beta', 'gamma'],
+    })
+    expect(await catalog()).toContain('ollama')
+    await callProvider(t, 'ollama')
+    expect(model.calls).toEqual([{ model: 'alpha', authorization: undefined }])
+    // Asking again changes nothing and needs nothing.
+    expect(await desktop.json('provider-origins', { method: 'POST', body: { baseURL: model.baseURL } })).toEqual({
+      origin,
+      address,
+      destination: 'confirmed',
+    })
+    expect(t.presence.requests.length).toBe(before + 1)
+
+    // Removing the address is a tightening: any admin device, no confirmation, and the service stops at once.
+    const removed = await browser.request('policy', { method: 'PATCH', body: { confirmedAddresses: { remove: [address] } } })
+    expect(removed.status).toBe(200)
+    expect(t.host.security.policy.get().confirmedAddresses).toEqual([])
+    expect(await catalog()).not.toContain('ollama')
+    await expect(callProvider(t, 'ollama')).rejects.toMatchObject({ code: 'origin-unconfirmed' })
+    expect((await browser.json<{ providers: ProviderSettings[] }>('providers')).providers[0]).toMatchObject({ destination: 'unconfirmed' })
+    // Adding an address through the policy is not offered at all.
+    expect((await desktop.request('policy', { method: 'PATCH', body: { confirmedAddresses: { add: [address] } } })).status).toBe(400)
+  })
+
+  it('confirms an address with its path, so another path on the same origin (a gateway tenant) stays unconfirmed', async () => {
+    const model = await localModel()
+    const t = await testHost({ demo: false })
+    const browser = await t.enroll({ scopes: [...ADMIN] })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const origin = new URL(model.baseURL).origin
+    expect((await desktop.confirmed('provider-origins', { method: 'POST', body: { baseURL: model.baseURL } })).status).toBe(200)
+    expect(t.host.security.policy.get().confirmedAddresses).toEqual([`${origin}/v1`])
+    const save = (id: string, baseURL: string) =>
+      browser.json<{ provider: ProviderSettings }>('providers', {
+        method: 'POST',
+        body: { id, name: id, kind: 'openai-compatible', baseURL, models: ['alpha'], defaultModel: 'alpha' },
+      })
+    // The same address, however it is written, is confirmed; another path, a path below it or a dot-segment way out is not.
+    expect((await save('same', `${origin}/v1/`)).provider.destination).toBe('confirmed')
+    for (const [id, baseURL] of [
+      ['tenant', `${origin}/other/v1`],
+      ['below', `${origin}/v1/tenant-b`],
+      ['dots', `${origin}/v1/../other/v1`],
+      ['root', origin],
+    ] as const)
+      expect((await save(id, baseURL)).provider.destination, id).toBe('unconfirmed')
+    const catalog = (await browser.json<AppSnapshot>('snapshot')).catalog?.providers.map(provider => provider.id) ?? []
+    expect(catalog).toContain('same')
+    expect(catalog).not.toContain('tenant')
+    await expect(callProvider(t, 'tenant')).rejects.toMatchObject({ code: 'origin-unconfirmed' })
+    expect(
+      await body(
+        await browser.request('preferences', { method: 'PUT', body: { defaults: { model: { providerId: 'tenant', model: 'alpha' } } } }),
+      ),
+    ).toMatchObject({ error: 'origin-unconfirmed' })
+    await callProvider(t, 'same')
+    expect(model.calls).toEqual([{ model: 'alpha', authorization: undefined }])
+  })
+
+  it('never offers a keyless service at a preset address, and names it until the key is saved on the desktop', async () => {
+    const t = await testHost({ demo: false })
+    const browser = await t.enroll({ scopes: [...ADMIN] })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const created = await browser.json<{ provider: ProviderSettings }>('providers', {
+      method: 'POST',
+      body: {
+        name: 'DeepSeek',
+        kind: 'openai-compatible',
+        presetId: 'deepseek',
+        baseURL: 'https://api.deepseek.com/v1',
+        models: ['deepseek-chat'],
+        defaultModel: 'deepseek-chat',
+      },
+    })
+    expect(created.provider).toMatchObject({ id: 'deepseek', hasKey: false, destination: 'preset' })
+    const catalog = async () => (await browser.json<AppSnapshot>('snapshot')).catalog
+    expect((await catalog())?.providers.map(provider => provider.id)).not.toContain('deepseek')
+    expect((await catalog())?.unusableProviders).toEqual([{ id: 'deepseek', name: 'DeepSeek', reason: 'key-missing' }])
+    const chosen = await browser.request('preferences', {
+      method: 'PUT',
+      body: { defaults: { model: { providerId: 'deepseek', model: 'deepseek-chat' } } },
+    })
+    expect(chosen.status).toBe(409)
+    expect(await body(chosen)).toMatchObject({
+      error: 'provider-key-missing',
+      message: '「DeepSeek」还没有填写密钥。请在运行 Latch 的电脑上，打开 设置 › 模型服务 › DeepSeek 填写密钥。',
+    })
+    // A disabled service is the owner's choice, not something to explain.
+    expect((await browser.request('providers/deepseek', { method: 'PUT', body: { enabled: false } })).status).toBe(200)
+    expect((await catalog())?.unusableProviders).toEqual([])
+    expect((await browser.request('providers/deepseek', { method: 'PUT', body: { enabled: true } })).status).toBe(200)
+    expect((await desktop.request('providers/deepseek', { method: 'PUT', body: { apiKey: 'sk-preset' } })).status).toBe(200)
+    expect((await catalog())?.providers.map(provider => provider.id)).toContain('deepseek')
+    expect((await catalog())?.unusableProviders).toEqual([])
+  })
+
+  it('takes the address back when the save it was confirmed for fails, even while the audit log fails', async () => {
+    const model = await localModel()
+    const t = await testHost({ demo: false })
+    const desktop = await t.enroll({ listener: 'unix' })
+    await mkdir(join(t.dataDir, 'providers.json'))
+    const audit = t.host.security.audit
+    const append = audit.append.bind(audit)
+    vi.spyOn(audit, 'append').mockImplementation(async event => {
+      if (event.action === 'policy.changed' && (event.detail as { lowering?: boolean }).lowering)
+        throw new AppError(503, 'audit-unavailable', '审计记录写入失败，操作未执行')
+      return append(event)
+    })
+    const response = await desktop.confirmed('providers', {
+      method: 'POST',
+      body: {
+        id: 'local',
+        name: 'Local',
+        kind: 'openai-compatible',
+        baseURL: model.baseURL,
+        apiKey: 'never-saved',
+        models: ['alpha'],
+        defaultModel: 'alpha',
+        confirmOrigin: true,
+      },
+    })
+    expect(response.status).toBe(500)
+    expect(response.headers.get('x-latch-audit')).toBe('failed')
+    expect(t.host.security.policy.get()).toMatchObject({ confirmedAddresses: [], hostEgressAllow: [] })
+    const records = await auditRecords(t)
+    const key = records.find(record => record.action === 'provider.secret.set')!
+    expect(records.filter(record => record.action === 'policy.changed').map(record => record.detail.lowering)).toEqual([false])
+    expect(records.find(record => record.action === 'action.failed')).toMatchObject({ detail: { refSeq: key.seq } })
+  })
+
+  it('never offers an allowance for a metadata address and warns about plain HTTP to another computer', async () => {
+    const t = await testHost({
+      demo: false,
+      egressLookup: (host, _options, done) =>
+        done(null, [{ address: host === 'lan.test' ? '192.168.1.20' : '169.254.169.254', family: 4 }]),
+    })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const metadata = await desktop.request('provider-origins', { method: 'POST', body: { baseURL: 'http://metadata.test/v1' } })
+    expect(metadata.status).toBe(403)
+    expect(await body(metadata)).toMatchObject({ error: 'egress-denied', target: 'metadata.test:80' })
+    expect(
+      await body(await desktop.confirmed('provider-origins', { method: 'POST', body: { baseURL: 'http://lan.test:8000/v1' } })),
+    ).toEqual({
+      origin: 'http://lan.test:8000',
+      address: 'http://lan.test:8000/v1',
+      destination: 'confirmed',
+      egress: 'lan.test:8000',
+    })
+    expect(t.presence.requests.at(-1)!.preview).toMatchObject({
+      title: '确认模型服务地址 lan.test:8000',
+      warnings: ['这个地址不使用 HTTPS，发给它的内容会以明文经过网络。'],
+      lines: [
+        { label: '地址', value: 'http://lan.test:8000/v1' },
+        { label: '出站许可', value: '允许 Host 访问 lan.test:8000（局域网或私网地址）' },
+      ],
+    })
+    // A preset's HTTPS origin needs no confirmation at all.
+    expect(await desktop.json('provider-origins', { method: 'POST', body: { baseURL: 'https://api.openai.com/v1' } })).toEqual({
+      origin: 'https://api.openai.com:443',
+      address: 'https://api.openai.com:443/v1',
+      destination: 'preset',
+    })
+  })
+
+  it('keeps addresses confirmed before the upgrade usable and leaves keyless custom ones to be confirmed', async () => {
+    const model = await localModel()
+    const root = await temporaryDirectory()
+    const dataDir = join(root, 'data')
+    await mkdir(dataDir, { recursive: true, mode: 0o700 })
+    const service = (id: string, baseURL: string, apiKey = '') => ({
+      id,
+      name: id,
+      kind: 'openai-compatible',
+      baseURL,
+      apiKey,
+      ...(apiKey ? { keyOrigin: new URL(baseURL).origin.replace(/^https:\/\/([^:/]+)$/u, 'https://$1:443') } : {}),
+      enabled: true,
+      models: ['alpha'],
+      defaultModel: 'alpha',
+    })
+    await writeFile(
+      join(dataDir, 'providers.json'),
+      JSON.stringify({
+        version: 1,
+        providers: [
+          service('keyed', 'https://gateway.example/v1', 'keyed-secret'),
+          service('allowed', model.baseURL),
+          service('keyless', 'https://elsewhere.example/v1'),
+        ],
+      }),
+      { mode: 0o600 },
+    )
+    // The previous build's policy: no confirmedAddresses, and the local address on the allow list.
+    const first = await testHost({ dataDir, demo: false })
+    await first.close()
+    const previous = JSON.parse(await readFile(join(dataDir, 'policy.json'), 'utf8')) as Record<string, unknown>
+    delete previous.confirmedAddresses
+    previous.hostEgressAllow = [model.allow]
+    await writeFile(join(dataDir, 'policy.json'), JSON.stringify(previous), { mode: 0o600 })
+    const t = await testHost({ dataDir, demo: false })
+    expect(t.host.security.policy.get().confirmedAddresses).toEqual(['https://gateway.example:443/v1', model.baseURL])
+    const admin = await t.enroll({ scopes: [...ADMIN] })
+    const { providers } = await admin.json<{ providers: ProviderSettings[] }>('providers')
+    expect(providers.map(provider => [provider.id, provider.destination])).toEqual([
+      ['keyed', 'confirmed'],
+      ['allowed', 'confirmed'],
+      ['keyless', 'unconfirmed'],
+    ])
+    expect((await auditRecords(t)).some(record => record.action === 'policy.changed-outside')).toBe(true)
+  })
+
+  it('saves a key for a preset HTTPS origin from the desktop without a local confirmation, audited as stepup none', async () => {
+    const t = await testHost({ demo: false })
+    const browser = await t.enroll({ scopes: [...ADMIN] })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const deepseek = {
+      name: 'DeepSeek',
+      kind: 'openai-compatible',
+      presetId: 'deepseek',
+      models: ['deepseek-chat'],
+      defaultModel: 'deepseek-chat',
+    }
+    // Other devices still never hold `secrets`.
+    const refused = await browser.request('providers', {
+      method: 'POST',
+      body: { ...deepseek, baseURL: 'https://api.deepseek.com/v1', apiKey: 'sk-preset' },
+    })
+    expect(await body(refused)).toMatchObject({ error: 'scope-required', required: 'secrets' })
+    const before = t.presence.requests.length
+    const created = await desktop.request('providers', {
+      method: 'POST',
+      body: { ...deepseek, baseURL: 'https://api.deepseek.com/v1', apiKey: 'sk-preset' },
+    })
+    expect(created.status).toBe(201)
+    expect(await body(created)).toMatchObject({
+      provider: { id: 'deepseek', hasKey: true, keyOrigin: 'https://api.deepseek.com:443', keyPath: '/v1' },
+    })
+    // Replacing it and saving another preset's key: still no confirmation.
+    expect((await desktop.request('providers/deepseek', { method: 'PUT', body: { apiKey: 'sk-preset-2' } })).status).toBe(200)
+    expect(
+      (
+        await desktop.request('providers', {
+          method: 'POST',
+          body: {
+            name: 'Claude',
+            kind: 'anthropic',
+            baseURL: 'https://api.anthropic.com',
+            apiKey: 'sk-ant',
+            models: ['m'],
+            defaultModel: 'm',
+          },
+        })
+      ).status,
+    ).toBe(201)
+    expect(t.presence.requests.length).toBe(before)
+    const sets = (await auditRecords(t)).filter(record => record.action === 'provider.secret.set')
+    expect(sets.map(record => record.stepup)).toEqual(['none', 'none', 'none'])
+    expect((await HostConfig.open(t.dataDir)).provider('deepseek')).toMatchObject({ apiKey: 'sk-preset-2' })
+
+    // Only the exact preset origin: plain HTTP, another port or another host of the same brand is not a preset.
+    for (const baseURL of ['http://api.deepseek.com/v1', 'https://api.deepseek.com:8443/v1', 'https://deepseek.example/v1']) {
+      const response = await desktop.request('providers/deepseek', { method: 'PUT', body: { baseURL, apiKey: 'sk-other' } })
+      expect(response.status).toBe(403)
+      expect(await body(response)).toMatchObject({ error: 'stepup-required' })
+    }
+  })
+
+  it('records a key removed through the single-service form, which any admin device may now save without a key', async () => {
+    const t = await testHost({ demo: false })
+    const browser = await t.enroll({ scopes: [...ADMIN] })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const preset = { baseURL: 'https://api.deepseek.com/v1', model: 'deepseek-chat' }
+    expect((await desktop.request('provider', { method: 'PUT', body: { ...preset, apiKey: 'sk-legacy' } })).status).toBe(200)
+    expect((await HostConfig.open(t.dataDir)).provider('openai-compatible')).toMatchObject({ apiKey: 'sk-legacy', keyPath: '/v1' })
+    expect((await browser.request('provider', { method: 'PUT', body: { ...preset, apiKey: '' } })).status).toBe(200)
+    expect((await HostConfig.open(t.dataDir)).provider('openai-compatible')).toMatchObject({ apiKey: '' })
+    expect((await auditRecords(t)).filter(record => record.action.startsWith('provider.secret'))).toMatchObject([
+      { action: 'provider.secret.set', stepup: 'none' },
+      { action: 'provider.secret.cleared', detail: { providerId: 'openai-compatible', reason: 'manual' } },
+    ])
+  })
+
+  it('never lets a saved key follow a new path on the same origin, as a gateway separating tenants by path needs', async () => {
+    const model = await localModel()
+    const t = await testHost({ demo: false, egressAllow: [model.allow] })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const tenantA = model.baseURL.replace(/\/v1$/u, '/tenant-a/v1')
+    const created = await desktop.confirmed('providers', {
+      method: 'POST',
+      body: {
+        id: 'gateway',
+        name: 'Gateway',
+        kind: 'openai-compatible',
+        baseURL: tenantA,
+        apiKey: 'tenant-a-key',
+        models: ['m'],
+        defaultModel: 'm',
+      },
+    })
+    expect(await body(created)).toMatchObject({ provider: { hasKey: true, keyPath: '/tenant-a/v1' } })
+    // A saved key is checked only against its own path; another path must bring its own key.
+    const elsewhere = await desktop.request('provider-checks', {
+      method: 'POST',
+      body: { kind: 'openai-compatible', baseURL: model.baseURL.replace(/\/v1$/u, '/tenant-b/v1'), providerId: 'gateway' },
+    })
+    expect(elsewhere.status).toBe(409)
+    expect(await body(elsewhere)).toMatchObject({ error: 'key-origin-mismatch' })
+    // The same path spelled with a trailing slash keeps the key.
+    expect(await desktop.json('providers/gateway', { method: 'PUT', body: { baseURL: `${tenantA}/` } })).toMatchObject({
+      provider: { hasKey: true },
+    })
+    const moved = await desktop.json<{ provider: ProviderSettings }>('providers/gateway', {
+      method: 'PUT',
+      body: { baseURL: model.baseURL.replace(/\/v1$/u, '/tenant-b/v1') },
+    })
+    expect(moved.provider.hasKey).toBe(false)
+    expect((await HostConfig.open(t.dataDir)).provider('gateway')).toMatchObject({ apiKey: '' })
+    expect((await HostConfig.open(t.dataDir)).provider('gateway')).not.toHaveProperty('keyPath')
+    expect((await auditRecords(t)).filter(record => record.action === 'provider.secret.cleared').at(-1)).toMatchObject({
+      detail: { providerId: 'gateway', reason: 'path-changed' },
+    })
   })
 
   it('refuses checks against metadata, private and loopback addresses outside the egress allowlist', async () => {
@@ -2058,6 +3141,109 @@ describe('workspaces, policy and audit', () => {
     await browser.json(`approvals/${approval.id}`, { method: 'POST', body: { decision: 'reject' } })
   })
 
+  it('names why a request is high risk, as a code and never a path, and a tool’s own title never lowers it', async () => {
+    const titled: ToolDefinition = {
+      name: 'lookup',
+      title: '读取文件',
+      kind: 'read',
+      description: 'fixture',
+      parameters: { type: 'object' },
+      requiresApproval: false,
+      execute: async () => ({ text: 'ok' }),
+    }
+    const cases: Array<[string, HarnessPlugin, Partial<TestHostOptions>, Approval['riskReason']]> = [
+      ['code-root', scripted('write_file', { path: 'notes.txt', content: 'x' }), { codeRoot: '<root>' }, 'code-root'],
+      ['protected-path', scripted('write_file', { path: '.git/config', content: 'x' }), {}, 'protected-path'],
+      ['outside-workspace', scripted('write_file', { path: '../elsewhere.txt', content: 'x' }), {}, 'outside-workspace'],
+      ['unresolved-path', scripted('write_file', { path: '/tmp/notes.txt', content: 'x' }), {}, 'unresolved-path'],
+      ['unlisted-tool', scripted('lookup', { path: 'notes.txt' }, [titled]), {}, 'unlisted-tool'],
+      ['ordinary write', scripted('write_file', { path: 'notes.txt', content: 'x' }), {}, undefined],
+    ]
+    for (const [name, plugin, extra, reason] of cases) {
+      const root = await realpath(await temporaryDirectory())
+      const workspaceRoot = join(root, 'repo')
+      await mkdir(workspaceRoot)
+      const t = await testHost({
+        workspaceRoot,
+        demo: false,
+        providerId: 'scripted',
+        plugins: [plugin],
+        ...extra,
+        ...(extra.codeRoot ? { codeRoot: root } : {}),
+      })
+      const browser = await t.enroll({ scopes: [...ADMIN] })
+      // The start directory says it lies in Latch's program directory, so pages can warn before the first write.
+      const start = (await browser.json<AppSnapshot>('snapshot')).catalog?.workspaces.find(item => item.id === 'default')
+      expect(start?.codeRoot, name).toBe(name === 'code-root' ? true : undefined)
+      const sessionId = await startTask(browser, name)
+      const pending = await pendingApproval(t, sessionId)
+      const shown = (await browser.json<AppSnapshot>('snapshot')).approvals.find(item => item.id === pending.id)!
+      const detail = await browser.json<TaskDetail>(`tasks/${sessionId}`)
+      expect([shown.risk, shown.riskReason], name).toEqual(reason ? ['R2', reason] : ['R1', undefined])
+      expect(detail.approvals[0]?.riskReason, name).toBe(reason)
+      expect(shown.tool?.toolTitle, name).toBe(name === 'unlisted-tool' ? '读取文件' : '写入文件')
+      await browser.json(`approvals/${pending.id}`, { method: 'POST', body: { decision: 'reject' } })
+    }
+  })
+
+  it('records how each approval ended and where, and hands a rejection’s note to the built-in harness', async () => {
+    const t = await testHost()
+    const browser = await t.enroll({ scopes: [...ADMIN] })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const decision = async (sessionId: string) =>
+      (await browser.json<TaskDetail>(`tasks/${sessionId}`)).messages.find(message => message.role === 'tool')?.tool?.decision
+    // Pages ask for a note only from a Host that says it hands one on.
+    expect((await browser.json<AppSnapshot>('snapshot')).host.rejectionNote).toBe(true)
+
+    const allowed = await startTask(desktop, '生成需要审批的报告')
+    await desktop.json(`approvals/${(await pendingApproval(t, allowed)).id}`, { method: 'POST', body: { decision: 'allow' } })
+    await settled(t, allowed)
+    expect(await decision(allowed)).toEqual({ outcome: 'allowed', at: expect.any(String), via: 'this-mac' })
+
+    const rejected = await startTask(browser, '生成需要审批的报告')
+    const approval = await pendingApproval(t, rejected)
+    for (const [payload, message] of [
+      [{ decision: 'allow', note: '改写到 docs/' }, '只有拒绝时可以附上说明'],
+      [{ decision: 'reject', note: 'x'.repeat(501) }, '说明最多 500 个字，不能包含控制字符、不可见字符或改变文字方向的字符'],
+      [{ decision: 'reject', note: '改写‮到 docs/' }, '说明最多 500 个字，不能包含控制字符、不可见字符或改变文字方向的字符'],
+    ] as const) {
+      expect(await body(await browser.request(`approvals/${approval.id}`, { method: 'POST', body: payload }))).toEqual({
+        error: 'invalid-note',
+        message,
+      })
+    }
+    // A note is input to the model: a device that may only view can reject, but not steer the model; neither can a
+    // device whose ceiling no longer lets it give the session input.
+    const viewer = await t.enroll({ scopes: ['view'] })
+    expect(
+      await body(await viewer.request(`approvals/${approval.id}`, { method: 'POST', body: { decision: 'reject', note: '删掉所有文件' } })),
+    ).toMatchObject({ error: 'scope-required', required: 'run' })
+    await browser.json('policy', { method: 'PATCH', body: { remote: { maxLevel: 'L0' } } })
+    expect(
+      await body(
+        await browser.request(`approvals/${approval.id}`, { method: 'POST', body: { decision: 'reject', note: '先把计划发给我看' } }),
+      ),
+    ).toMatchObject({ error: 'ceiling-exceeded' })
+    expect((await desktop.confirmed('policy', { method: 'PATCH', body: { remote: { maxLevel: 'L1' } } })).status).toBe(200)
+    expect(t.host.bridge.approvals().map(item => item.id)).toEqual([approval.id])
+    const before = (await auditRecords(t)).length
+    await browser.json(`approvals/${approval.id}`, { method: 'POST', body: { decision: 'reject', note: '先把计划发给我看' } })
+    await settled(t, rejected)
+    expect(await decision(rejected)).toEqual({ outcome: 'rejected', at: expect.any(String), via: 'other-device' })
+    const detail = await browser.json<TaskDetail>(`tasks/${rejected}`)
+    expect(detail.messages.find(message => message.role === 'tool')?.tool?.output).toBe(
+      '用户拒绝了本次工具调用，未执行该操作。用户的说明：先把计划发给我看',
+    )
+    // The demo answers in its own words: no internal code, no doubled full stop.
+    const reply = detail.messages.findLast(message => message.role === 'assistant')!.text
+    expect(reply).toBe('你拒绝了这次操作，报告没有写入。\n\n收到你的说明：「先把计划发给我看」。这是演示模型，不会据此改做别的事。')
+    expect(reply).not.toMatch(/APPROVAL_REJECTED|。。/u)
+    // The person's words go to the model, not into the audit log.
+    const records = (await auditRecords(t)).slice(before)
+    expect(records.map(record => record.action)).toContain('approval.decided')
+    expect(JSON.stringify(records)).not.toContain('先把计划')
+  })
+
   it('treats every write as protected when the session root itself lies inside .git', async () => {
     const root = await realpath(await temporaryDirectory())
     const workspace = join(root, 'repo', '.git')
@@ -2091,7 +3277,11 @@ describe('workspaces, policy and audit', () => {
       error: 'local-only',
     })
     expect((await desktop.confirmed('policy', { method: 'PATCH', body: { remote: { maxLevel: 'L1' } } })).status).toBe(200)
-    expect(t.presence.requests.at(-1)!.preview).toMatchObject({ action: 'policy.change', title: '放宽本机安全策略' })
+    expect(t.presence.requests.at(-1)!.preview).toMatchObject({
+      action: 'policy.change',
+      title: '放宽本机安全策略',
+      reason: '把从手机和其他电脑发起的上限放宽到逐项询问',
+    })
     expect((await admin.request('tasks', { method: 'POST', body: { prompt: 'hi', requestId: randomUUID(), mode: 'chat' } })).status).toBe(
       201,
     )
@@ -2110,6 +3300,31 @@ describe('workspaces, policy and audit', () => {
       [false, 'lpc-local'],
       [true, 'none'],
     ])
+  })
+
+  it("hands the page the sheet's sentence and its form, the details, and a Touch ID lockout", async () => {
+    const t = await testHost()
+    const desktop = await t.enroll({ listener: 'unix' })
+    const raise = { remote: { maxLevel: 'L2' } }
+    const ticket = async (response: Response) => (await body<{ confirmation: ConfirmationTicket }>(response)).confirmation
+    const asked = await ticket(await desktop.request('policy', { method: 'PATCH', body: raise }))
+    expect(asked).toMatchObject({
+      reason: '把从手机和其他电脑发起的上限放宽到自动编辑',
+      form: 'policy.remote',
+      lines: [expect.objectContaining({ label: expect.any(String), value: expect.any(String) })],
+      warnings: [],
+    })
+    expect(asked).not.toHaveProperty('failure')
+    await expect.poll(async () => (await ticket(await desktop.request(`confirmations/${asked.id}`))).status).toBe('approved')
+    vi.spyOn(t.presence, 'confirm').mockResolvedValueOnce({
+      result: 'error',
+      message: 'Touch ID 已锁定，下次确认改用登录密码',
+      failure: 'biometry-lockout',
+    })
+    const locked = await ticket(await desktop.request('policy', { method: 'PATCH', body: raise }))
+    await expect
+      .poll(async () => await ticket(await desktop.request(`confirmations/${locked.id}`)))
+      .toMatchObject({ status: 'error', failure: 'biometry-lockout' })
   })
 
   it('never lets a confirmed policy raise undo a lowering that committed after the confirmation was computed', async () => {
@@ -2315,7 +3530,7 @@ describe('workspaces, policy and audit', () => {
     const phone = await t.enroll()
     vi.spyOn(t.host.security.audit, 'append').mockRejectedValue(new AppError(503, 'audit-unavailable', '审计记录写入失败，操作未执行'))
     const { testDeviceKey } = await import('@latch/testkit')
-    const enrollment = await t.raw('loopback-tcp', 'api/enrollments', {
+    const enrollment = await t.raw('unix', 'api/enrollments', {
       method: 'POST',
       body: { publicKey: testDeviceKey().spki, name: 'Another' },
     })
@@ -2411,6 +3626,25 @@ describe('sessions, plugins and the change stream', () => {
     const again = await second.enroll({ scopes: [...ADMIN] })
     const plugins = (await again.json<{ plugins: Array<{ id: string; enabled: boolean }> }>('plugins')).plugins
     expect(plugins.find(plugin => plugin.id === 'safe-tools')).toMatchObject({ enabled: false })
+  })
+
+  it('lists a plugin as in use only while sessions run on it, never for a loaded harness alone', async () => {
+    const t = await testHost()
+    const admin = await t.enroll({ scopes: [...ADMIN] })
+    const inUse = async () =>
+      Object.fromEntries(
+        (await admin.json<{ plugins: Array<{ id: string; activeRuns: number }> }>('plugins')).plugins.map(plugin => [
+          plugin.id,
+          plugin.activeRuns,
+        ]),
+      )
+    expect(await inUse()).toMatchObject({ 'standard-harness': 0, demo: 0, 'safe-tools': 0, 'workspace-files': 0 })
+    // The demo report waits for approval: the session runs on the built-in harness, the demo model and the tools.
+    const sessionId = await startTask(admin, '生成需要审批的报告')
+    await pendingApproval(t, sessionId)
+    expect(await inUse()).toMatchObject({ 'standard-harness': 1, demo: 1, 'safe-tools': 1, 'workspace-files': 1 })
+    await admin.json(`tasks/${sessionId}/cancel`, { method: 'POST', body: {} })
+    expect(await inUse()).toMatchObject({ 'standard-harness': 0, demo: 0, 'safe-tools': 0, 'workspace-files': 0 })
   })
 
   it('denies workspace tools the Host data directory and runtime directory', async () => {
@@ -2917,12 +4151,12 @@ describe('projects of several folders', () => {
       { label: '文件夹', value: paths.web },
       { label: '目标路径', value: join(paths.web, 'package.json') },
     ])
-    expect(protectedWrite).toContainEqual({ label: '风险原因', value: '受保护路径' })
+    expect(protectedWrite).toContainEqual({ label: '风险原因', value: '受保护的路径' })
     await expect.poll(() => readFile(join(paths.web, 'package.json'), 'utf8').catch(() => ''), { timeout: 10_000 }).toBe('{}')
     const unknown = await allow()
     expect(unknown.map(line => line.label)).not.toContain('目标路径')
     expect(unknown).toContainEqual({ label: '文件夹', value: '（不是这个会话的文件夹）' })
-    expect(unknown).toContainEqual({ label: '风险原因', value: '工作区外路径' })
+    expect(unknown).toContainEqual({ label: '风险原因', value: '在会话文件夹之外' })
     await settled(t, sessionId)
     const result = (await t.host.bridge.detail(sessionId)).messages.filter(message => message.toolName === 'write_file').at(-1)!
     expect(result).toMatchObject({ state: 'failed' })

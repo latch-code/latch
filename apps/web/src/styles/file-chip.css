@@ -1,0 +1,89 @@
+/*
+ * A file a reply refers to: a neutral chip in the line of text, never a link (links are blue and go somewhere; this
+ * stays on the page). A click opens the file's menu: in the desktop app what the Host allows for it, elsewhere the path
+ * to copy.
+ */
+.file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  max-width: 100%;
+  margin: 0;
+  padding: 0 var(--sp-6) 0 var(--sp-4);
+  border: 0;
+  border-radius: var(--r-4);
+  corner-shape: var(--corner-shape);
+  background: var(--fill);
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
+  text-align: start;
+  vertical-align: text-bottom;
+  cursor: pointer;
+}
+.file-chip:hover {
+  background: var(--fill-hover);
+}
+.file-chip:active,
+.file-chip[aria-expanded='true'] {
+  background: var(--fill-press);
+}
+.file-chip-icon {
+  flex: none;
+  display: inline-flex;
+  color: var(--icon);
+}
+.file-chip:hover .file-chip-icon {
+  color: var(--text-1);
+}
+.file-chip-prefix {
+  flex: none;
+  color: var(--text-2);
+}
+/* The full path is in the tooltip and in what the chip copies; the chip keeps to the line's width. */
+.file-chip-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+:is(.file-chip-text, .file-chip-meta)[data-mono] {
+  font-family: var(--font-mono);
+}
+/* A path gives way in its folders: they end in an ellipsis and the file name, the part that tells files apart, stays. */
+.file-chip-path {
+  display: inline-flex;
+}
+.file-chip-folders {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.file-chip-name {
+  flex: 0 0 auto;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* An image's file name after its description, quieter. */
+.file-chip-meta {
+  flex: 0 0 auto;
+  max-width: 60%;
+  overflow: hidden;
+  color: var(--text-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-chip-tip-path {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+/* The files a finished tool read or wrote, at the top of its opened card. */
+.tool-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-6);
+  margin: 0;
+}

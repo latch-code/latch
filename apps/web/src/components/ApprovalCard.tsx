@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import { ChevronRight, Ellipsis, LockKeyhole } from 'lucide-react'
-import type { Approval, ApprovalOption, FileDiff } from '@latch/protocol'
+import type { Approval, ApprovalOption, ConfirmationTicket, FileDiff } from '@latch/protocol'
 import {
   Button,
   ICON_STROKE,
@@ -17,17 +17,29 @@ import { useCoarsePointer, useViewport } from '../breakpoints.ts'
 import { previousState } from '../diff.ts'
 import { argumentView, relativeTime, type ArgumentView } from '../format.ts'
 import type { ApprovalGate } from '../core/permissions.ts'
-import { APPROVAL_COPY, APPROVAL_OPTION_LABELS } from '../core/securityCopy.ts'
+import { APPROVAL_COPY, APPROVAL_OPTION_LABELS, DECISION_COPY, CONFIRMATION_COPY } from '../core/securityCopy.ts'
 import { ArgumentList } from './ArgumentList.tsx'
 import { diffRows, DiffView, PREVIOUS_NOTES } from './DiffView.tsx'
+import { ConfirmationDetails, SheetSentence } from './InlineConfirm.tsx'
 import { hasHiddenCharacters, VisibleText } from './VisibleText.tsx'
 
-export type DecideHandler = (approval: Approval, decision: 'allow' | 'reject', optionId: string | undefined) => void
+/**
+ * A press on one of the card's choices. `retry`: the same choice sent again after an unknown outcome, with the note a
+ * rejection carried, so it goes as it was and never waits for a note again.
+ */
+export type DecideHandler = (
+  approval: Approval,
+  decision: 'allow' | 'reject',
+  optionId: string | undefined,
+  retry?: { note?: string },
+) => void
 
 /** A choice whose outcome is unknown (a timeout or a dropped connection): retrying sends it again with its requestId. */
 interface UncertainChoice {
   decision: 'allow' | 'reject'
   optionId: string | undefined
+  /** The note the rejection carried (「告诉 Agent 改做什么」). */
+  note?: string
 }
 
 /** What this device's last choice on an approval is doing, when the card has to say more than its buttons do. */
@@ -36,8 +48,13 @@ export interface ApprovalStatus {
   uncertain?: UncertainChoice
   /** The pressed allow's local confirmation: open on this computer, or passed with the choice on its way. */
   confirming?: 'waiting' | 'sending'
+  /** Its ticket (the sentence the system sheet shows and the details), and how to cancel it while it waits. */
+  ticket?: ConfirmationTicket
+  cancel?: () => void
   /** Why the choice did not go through: a confirmation that did not pass (error) or could not start (warn). */
   failure?: { text: string; tone: 'error' | 'warn' }
+  /** 拒绝 was pressed and the composer asks what to do instead; the next 拒绝 sends the rejection. */
+  noting?: true
 }
 
 /** The approvals this device's choices left in such a state, by approval id; the page provides them. */
@@ -202,17 +219,19 @@ function ApprovalPanel({
     .filter(state => diffs.some(diff => previousState(diff) === state))
     .map(state => PREVIOUS_NOTES[state]!)
   const footnote =
-    status?.confirming === 'waiting'
-      ? APPROVAL_COPY.waitingLocal
-      : status?.confirming === 'sending'
-        ? APPROVAL_COPY.confirmedLocal
-        : allow === undefined
-          ? undefined
-          : gate.confirms
-            ? APPROVAL_COPY.localNote
-            : gate.kind === 'R1' && allow.kind === 'allow_once'
-              ? APPROVAL_COPY.onceNote
-              : undefined
+    status?.noting && !running
+      ? DECISION_COPY.noteCard
+      : status?.confirming === 'waiting'
+        ? CONFIRMATION_COPY.waiting
+        : status?.confirming === 'sending'
+          ? APPROVAL_COPY.confirmedLocal
+          : allow === undefined
+            ? undefined
+            : gate.confirms
+              ? APPROVAL_COPY.localNote
+              : gate.kind === 'R1' && allow.kind === 'allow_once'
+                ? APPROVAL_COPY.onceNote
+                : undefined
   const uncertainOption =
     uncertain && (gate.options.find(option => option.id === uncertain.optionId) ?? (uncertain.decision === 'allow' ? allow : reject))
   const keys = (event: KeyboardEvent<HTMLElement>) => {
@@ -320,8 +339,20 @@ function ApprovalPanel({
       )}
       {footnote && (
         <p className="approval-footnote" aria-live="polite" data-confirming={status?.confirming}>
-          {footnote}
+          <span>{footnote}</span>
+          {status?.confirming === 'waiting' && status.cancel && (
+            <Button size="xs" variant="link" className="approval-confirm-cancel" onClick={status.cancel}>
+              {CONFIRMATION_COPY.cancel}
+            </Button>
+          )}
         </p>
+      )}
+      {/* While Touch ID waits: the sentence the system sheet shows, and the Host's facts behind it. */}
+      {status?.confirming && status.ticket && (
+        <div className="approval-confirm">
+          {status.ticket.reason && <SheetSentence reason={status.ticket.reason} />}
+          <ConfirmationDetails ticket={status.ticket} />
+        </div>
       )}
       {failure && (
         <InlineNotice tone={failure.tone} className="approval-failure">
@@ -337,7 +368,7 @@ function ApprovalPanel({
             <Button
               size="xs"
               onClick={() => {
-                onDecide(approval, uncertain.decision, uncertain.optionId)
+                onDecide(approval, uncertain.decision, uncertain.optionId, uncertain.note === undefined ? {} : { note: uncertain.note })
               }}>
               {APPROVAL_COPY.retry}
             </Button>

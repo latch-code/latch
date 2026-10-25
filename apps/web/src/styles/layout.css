@@ -9,12 +9,13 @@ body {
 }
 
 /*
- * Shell: sidebar | conversation | 会话信息; drawer below 1024px; rail on tablets. The window is the ground; the sidebar,
- * the rail and the column of session information sit on it without a divider, and from 768px the conversation is a
- * sheet of paper inset by --shell-inset. The page sets --sidebar-width from 1024px (the inset while the sidebar is shut)
- * with --sidebar-open-width (the width its content keeps), and --inspector-width (the inset while the column is closed)
- * with --inspector-open-width: opening and shutting slide the tracks (180ms) while the content stays as wide as it was
- * and is clipped, and a drag moves nothing but its track.
+ * Shell: sidebar | conversation | 会话信息 from 1024px; on tablets the rail with the session list sliding over; phones
+ * stack their pages instead (phone.css). The window is the ground; the sidebar, the rail and the column of session
+ * information sit on it without a divider, and from 768px the conversation is a sheet of paper inset by --shell-inset.
+ * The page sets --sidebar-width from 1024px (the inset while the sidebar is shut) with --sidebar-open-width (the width
+ * its content keeps), and --inspector-width (the inset while the column is closed) with --inspector-open-width: opening
+ * and shutting slide the tracks (180ms) while the content stays as wide as it was and is clipped, and a drag moves
+ * nothing but its track.
  */
 .app-shell {
   position: relative;
@@ -82,6 +83,14 @@ body {
 .workspace-view {
   display: contents;
 }
+/* Under the top bar: the notices and the conversation (or the new session). Phones draw it as paper. */
+.workspace-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
 
 .rail {
   /* Counts on the rail's buttons are cut out of the ground. */
@@ -111,6 +120,10 @@ body {
   animation: fade-in var(--d-base) var(--ease);
 }
 
+/*
+ * Tablets: the session list slides over from the left as a floating sheet of the ground, set in by the paper's own 8px
+ * and rounded like it (12), with the floating shadow over the scrim; it slides in over 240ms and out over 180ms.
+ */
 @media (max-width: 1023.98px) {
   .app-shell {
     grid-template-columns: 56px minmax(0, 1fr) var(--inspector-width);
@@ -118,17 +131,19 @@ body {
   .sidebar {
     position: fixed;
     z-index: 40;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    width: min(85vw, 300px);
-    padding-top: env(safe-area-inset-top);
+    top: var(--shell-inset);
+    bottom: var(--shell-inset);
+    left: var(--shell-inset);
+    width: min(calc(100vw - 2 * var(--shell-inset)), 300px);
+    overflow: hidden;
+    border-radius: var(--r-12);
+    corner-shape: var(--corner-shape);
     box-shadow: var(--sh-float);
-    transform: translateX(-100%);
+    transform: translateX(calc(-100% - 2 * var(--shell-inset)));
     visibility: hidden;
     transition:
-      transform var(--d-slow) var(--ease),
-      visibility 0s linear var(--d-slow);
+      transform var(--d-slow-exit) var(--ease-exit),
+      visibility 0s linear var(--d-slow-exit);
   }
   /* `none` (not translateX(0)) so fixed popovers inside position against the viewport. */
   .sidebar.is-open {
@@ -138,14 +153,31 @@ body {
       transform var(--d-slow) var(--ease),
       visibility 0s;
   }
+  /* Its head row lines up with the paper's top bar beside it. */
+  .sidebar.is-open .sidebar-body {
+    padding-top: 0;
+  }
+}
+@media (max-width: 1023.98px) and (prefers-reduced-motion: reduce) {
+  .sidebar,
+  .sidebar.is-open {
+    transform: none;
+    opacity: 0;
+    transition:
+      opacity var(--d-fast) var(--ease),
+      visibility 0s linear var(--d-fast);
+  }
+  .sidebar.is-open {
+    opacity: 1;
+    transition:
+      opacity var(--d-fast) var(--ease),
+      visibility 0s;
+  }
 }
 
 @media (max-width: 767.98px) {
   .app-shell {
     grid-template-columns: minmax(0, 1fr);
-  }
-  .sidebar {
-    width: min(85vw, 320px);
   }
 }
 
@@ -312,27 +344,6 @@ body {
   gap: var(--sp-4);
 }
 
-@media (max-width: 767.98px) {
-  .topbar {
-    padding: env(safe-area-inset-top) var(--sp-4) 0;
-    height: calc(var(--topbar-height) + env(safe-area-inset-top));
-    gap: var(--sp-2);
-    box-shadow: inset 0 -1px 0 var(--line-subtle);
-  }
-  .topbar-title {
-    gap: var(--sp-8);
-    padding-left: var(--sp-4);
-  }
-  .topbar-title h1 > .topbar-title-text {
-    padding: 0;
-  }
-  .topbar-title h1 {
-    font-size: var(--fs-card-title);
-    line-height: var(--lh-card-title);
-    font-weight: 600;
-  }
-}
-
 .banner-region {
   padding: var(--sp-8) var(--gutter) 0;
   max-width: calc(var(--content-width) + 2 * var(--gutter));
@@ -440,37 +451,46 @@ body {
   padding: 0 var(--gutter) max(var(--sp-16), env(safe-area-inset-bottom));
 }
 
-/* New session */
+/*
+ * New session: the question, the harness tiles, the input with its context row, then the demo prompts; the ambient
+ * field lies under them (the page is its positioned parent and its own stacking context). The block's top is fixed
+ * where the plain page would sit centred in a paper of that height, so what opens under the input (a caption, the
+ * reason a tile cannot be chosen) grows downward and nothing above it moves.
+ */
 .workspace.is-new .new-session {
+  position: relative;
+  isolation: isolate;
   flex: 1;
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   display: grid;
 }
 .new-session-inner {
-  align-self: center;
+  position: relative;
+  z-index: 1;
+  align-self: start;
   display: grid;
-  gap: var(--sp-20);
+  gap: var(--sp-16);
   width: 100%;
   max-width: calc(var(--content-width) + 2 * var(--gutter));
   margin: 0 auto;
-  padding: var(--sp-32) var(--gutter) 12vh;
+  padding: max(var(--sp-48), calc(38vh - 96px)) var(--gutter) 12vh;
 }
-.greeting {
-  display: grid;
-  justify-items: center;
-  gap: var(--sp-16);
-  text-align: center;
-}
-.greeting h2 {
+.new-session-title {
+  justify-self: start;
   font-size: var(--fs-display);
   line-height: var(--lh-display);
   font-weight: 600;
+  text-align: left;
+}
+.new-session-harnesses {
+  min-width: 0;
 }
 @media (max-width: 767.98px) {
   .new-session-inner {
-    align-self: start;
-    padding-top: 12vh;
+    gap: var(--sp-16);
+    padding-top: 8vh;
     padding-bottom: var(--sp-32);
   }
 }

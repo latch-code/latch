@@ -1,13 +1,15 @@
 import { chmod, mkdir, open, readFile, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
+import { LISTENER_CLASSES, type ListenerClass } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
+import { AUDIT_FILE_TYPES } from './files/kinds.ts'
 
 export type StepupMethod = 'none' | 'lpc-local' | 'offline'
 export interface AuditActor {
   deviceId?: string
-  listener: 'unix' | 'loopback-tcp' | 'lan-tls' | 'tailnet-tls' | 'host' | 'cli'
+  listener: ListenerClass | 'host' | 'cli'
   via?: 'http' | 'cli' | 'startup'
 }
 
@@ -20,7 +22,7 @@ const opaqueId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}$/u)
 const deviceId = z.string().regex(/^dev_[A-Za-z0-9_-]{22}$/u)
 const prefixed = (prefix: string) => z.string().regex(new RegExp(`^${prefix}_[A-Za-z0-9_-]{22}$`, 'u'))
 const count = z.number().int().min(0).max(1_000_000_000)
-const listener = z.enum(['unix', 'loopback-tcp', 'lan-tls', 'tailnet-tls'])
+const listener = z.enum(LISTENER_CLASSES)
 const scopes = z.array(z.enum(['view', 'run', 'approve:standard', 'approve:elevated', 'admin', 'secrets'])).max(6)
 const dataScope = z.enum(['work', 'all'])
 const risk = z.enum(['R0', 'R1', 'R2'])
@@ -32,6 +34,7 @@ const presenceAction = z.enum([
   'agent.define',
   'policy.change',
   'provider.set-key',
+  'provider.confirm-origin',
   'approval.r2',
 ])
 const fieldPath = z
@@ -49,6 +52,8 @@ const ticket = z.strictObject({ ticketId: prefixed('chl') })
 const workspaceChange = z.strictObject({ workspaceId: opaqueId, pathHash: hex64 })
 const folderId = z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/u)
 const folderVia = z.enum(['picker', 'drop', 'cli'])
+/** A desktop file action: the session, the real path's hash and the file's type (an allowed extension, other or none). */
+const fileAction = z.strictObject({ sessionId: opaqueId, pathHash: hex64, type: z.enum(AUDIT_FILE_TYPES) })
 
 /** Strict detail schema per action. */
 export const AUDIT_DETAIL = {
@@ -97,7 +102,8 @@ export const AUDIT_DETAIL = {
   'device.credential.issued': deviceOnly,
   /** The renewed credential was used for the first time and became current. */
   'device.credential.rotated': deviceOnly,
-  'pairing.invited': z.strictObject({ invitationId: prefixed('inv'), scopes }),
+  /** `listener` is where the invitation can be used; records written before invitations were bound to one have none. */
+  'pairing.invited': z.strictObject({ invitationId: prefixed('inv'), scopes, listener: listener.optional() }),
   'offline.ticket.created': ticket,
   'offline.ticket.consumed': ticket,
   'migration.devices.v2': z.strictObject({ revoked: count, legacy: count }),
@@ -114,16 +120,26 @@ export const AUDIT_DETAIL = {
   'approval.stale': z.strictObject({ approvalId: opaqueId }),
   /** Written before a full-access session is spawned; nothing is spawned without it. */
   'task.l3.start-requested': z.strictObject({ harnessId: opaqueId, launchHash: hex64, folderCount: count.optional() }),
-  'task.l3.started': z.strictObject({ sessionId: opaqueId, harnessId: opaqueId, launchHash: hex64, folderCount: count.optional() }),
+  /** `definitionHash`: the launch fingerprint without the project's configuration, from drivers that report it. */
+  'task.l3.started': z.strictObject({
+    sessionId: opaqueId,
+    harnessId: opaqueId,
+    launchHash: hex64,
+    definitionHash: hex64.optional(),
+    folderCount: count.optional(),
+  }),
   'task.l3.start-failed': z.strictObject({ harnessId: opaqueId, launchHash: hex64 }),
-  'task.cancelled': z.strictObject({ sessionId: opaqueId }),
+  'task.cancelled': z.strictObject({ sessionId: opaqueId, runId: opaqueId.optional() }),
   'task.mode.widened': z.strictObject({ sessionId: opaqueId, toHash: hex64 }),
   'task.permission-drift': z.strictObject({ sessionId: opaqueId, observedHash: hex64 }),
   'task.approval-auto-rejected': z.strictObject({ sessionId: opaqueId, reason: z.enum(['persistent-only', 'unknown-kind']) }),
   'agent.defined': z.strictObject({ agentId: opaqueId, definitionHash: hex64, created: z.boolean() }),
   'agent.deleted': z.strictObject({ agentId: opaqueId }),
   'provider.secret.set': z.strictObject({ providerId: opaqueId, originHash: hex64 }),
-  'provider.secret.cleared': z.strictObject({ providerId: opaqueId, reason: z.enum(['origin-changed', 'manual', 'deleted']) }),
+  'provider.secret.cleared': z.strictObject({
+    providerId: opaqueId,
+    reason: z.enum(['origin-changed', 'path-changed', 'manual', 'deleted']),
+  }),
   /**
    * A new project; `pathHash` is its primary folder's, `foldersHash` the canonical list of all its folders. `session`:
    * a session's own folder that the desktop saved as a project.
@@ -164,6 +180,10 @@ export const AUDIT_DETAIL = {
   'settings.changed-outside': z.strictObject({ expected: z.union([hex64, z.literal('')]), actual: hex64 }),
   /** An unterminated, unparsable last line of auth/revocations.jsonl (an append cut short) was moved aside. */
   'device.revocations.torn-tail-removed': z.strictObject({ bytes: count }),
+  /** Written before the desktop app shows a file in Finder, previews it with Quick Look or opens it with its default app. */
+  'file.reveal': fileAction,
+  'file.quicklook': fileAction,
+  'file.open': fileAction,
   /** Best-effort follow-up when an action audited before taking effect then failed to commit. */
   'action.failed': z.strictObject({ refSeq: z.number().int().min(1) }),
 } as const
@@ -174,7 +194,7 @@ export type AuditDetail<A extends AuditAction> = z.input<(typeof AUDIT_DETAIL)[A
 const actions = Object.keys(AUDIT_DETAIL) as [AuditAction, ...AuditAction[]]
 const actorSchema = z.strictObject({
   deviceId: deviceId.optional(),
-  listener: z.enum(['unix', 'loopback-tcp', 'lan-tls', 'tailnet-tls', 'host', 'cli']),
+  listener: z.enum([...LISTENER_CLASSES, 'host', 'cli']),
   via: z.enum(['http', 'cli', 'startup']).optional(),
 })
 const recordSchema = z.strictObject({
@@ -267,6 +287,8 @@ export class AuditLog {
   private headState = { seq: 0, hash: GENESIS }
   private readonly hashes: string[] = []
   private readonly latestByAction = new Map<AuditAction, AuditRecord>()
+  /** What full-access sessions started with after a local confirmation: their launch fingerprints, definitions and harnesses. */
+  private readonly started = { launches: new Set<string>(), definitions: new Set<string>(), harnesses: new Set<string>() }
   private bytes = 0
   private poisoned = false
 
@@ -312,7 +334,7 @@ export class AuditLog {
     log.headState = verified.head
     for (const record of verified.records) {
       log.hashes.push(record.hash)
-      log.latestByAction.set(record.action, record)
+      log.index(record)
     }
     if (tornBytes)
       await log.append({ action: 'audit.torn-tail-removed', actor: { listener: 'host', via: 'startup' }, detail: { bytes: tornBytes } })
@@ -326,6 +348,26 @@ export class AuditLog {
   async hashAt(seq: number): Promise<string | undefined> {
     if (!Number.isInteger(seq) || seq < 1) return undefined
     return this.hashes[seq - 1]
+  }
+
+  private index(record: AuditRecord): void {
+    this.latestByAction.set(record.action, record)
+    if (record.action !== 'task.l3.started' || record.stepup !== 'lpc-local') return
+    const { launchHash, definitionHash, harnessId } = record.detail
+    if (typeof launchHash === 'string') this.started.launches.add(launchHash)
+    if (typeof definitionHash === 'string') this.started.definitions.add(definitionHash)
+    if (typeof harnessId === 'string') this.started.harnesses.add(harnessId)
+  }
+
+  /**
+   * What earlier full-access starts after a local confirmation had in common with this one, as this log records them:
+   * the same launch fingerprint, the same definition (so only the project's configuration differs), or only the same
+   * harness. A moved-away or reset log only makes every start read as a first one again, which names more.
+   */
+  startedBefore(input: { launchHash: string; definitionHash?: string; harnessId: string }): 'launch' | 'definition' | 'harness' | 'never' {
+    if (this.started.launches.has(input.launchHash)) return 'launch'
+    if (input.definitionHash !== undefined && this.started.definitions.has(input.definitionHash)) return 'definition'
+    return this.started.harnesses.has(input.harnessId) ? 'harness' : 'never'
   }
 
   /** The most recent record among `actions`, in chain order. */
@@ -402,7 +444,7 @@ export class AuditLog {
     this.bytes += line.length
     this.headState = { seq: record.seq, hash: record.hash }
     this.hashes.push(record.hash)
-    this.latestByAction.set(record.action, record)
+    this.index(record)
     return { seq: record.seq, hash: record.hash }
   }
 

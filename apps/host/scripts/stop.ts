@@ -1,17 +1,32 @@
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { processAlive as alive, readDataDirLock, readHostState, readRecordedPid, verifyHostState } from '../src/host-state.ts'
+import { processAlive as alive, readDataDirLock, readHostState, readRecordedPid, unixRequest, verifyHostState } from '../src/host-state.ts'
 import { resolveLatchPaths } from '../src/paths.ts'
+
+const REASONS = ['restart', 'update', 'shutdown'] as const
+
+/** `--name value` or `--name=value`; null when the flag is present without a value. */
+function option(args: string[], name: string): string | undefined | null {
+  const index = args.findIndex(arg => arg === name || arg.startsWith(`${name}=`))
+  if (index < 0) return undefined
+  const value = args[index]!.includes('=') ? args[index]!.slice(name.length + 1) : args[index + 1]
+  return !value || value.startsWith('--') ? null : value
+}
 
 /**
  * Stops the Host recorded in this data directory, and only after host.sock proves it is that Host:
  * socket directory and socket owned by this user, process alive, and host-info matching pid, hostId and instanceId.
+ * `--reason restart|update|shutdown` tells the Host first, so the clients it announces the stop to know when to come back.
  */
 async function main(args: string[]): Promise<number> {
-  const index = args.findIndex(arg => arg === '--data-dir' || arg.startsWith('--data-dir='))
-  const flag = index < 0 ? undefined : args[index]!.includes('=') ? args[index]!.slice('--data-dir='.length) : args[index + 1]
-  if (index >= 0 && (!flag || flag.startsWith('--'))) {
+  const flag = option(args, '--data-dir')
+  if (flag === null) {
     console.error('--data-dir 需要一个值')
+    return 1
+  }
+  const reason = option(args, '--reason')
+  if (reason === null || (reason !== undefined && !(REASONS as readonly string[]).includes(reason))) {
+    console.error(`--reason 只能是 ${REASONS.join('、')}`)
     return 1
   }
   const force = args.includes('--force')
@@ -56,6 +71,12 @@ async function main(args: string[]): Promise<number> {
   if (info.activeSessions > 0 && !force) {
     console.error(`有 ${info.activeSessions} 个会话正在运行。确认后使用 pnpm stop --force。`)
     return 1
+  }
+  if (reason !== undefined) {
+    // Best effort: without it the Host announces a plain shutdown.
+    await unixRequest(state.socketPath, '/link/api/host/state', { method: 'POST', body: { state: 'stopping', reason } }).catch(
+      () => undefined,
+    )
   }
   process.kill(state.pid, 'SIGTERM')
   for (let attempt = 0; attempt < 100; attempt++) {

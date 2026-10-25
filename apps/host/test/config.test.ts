@@ -22,6 +22,7 @@ const record = (id: string, extra: Partial<ProviderRecord> = {}): ProviderRecord
   baseURL: 'https://example.test/v1',
   apiKey: `key-${id}`,
   keyOrigin: 'https://example.test:443',
+  keyPath: '/v1',
   enabled: true,
   models: ['model-a', 'model-b'],
   defaultModel: 'model-a',
@@ -53,6 +54,7 @@ describe('HostConfig', () => {
         baseURL: 'https://api.deepseek.com/v1/',
         apiKey: 'legacy-secret',
         keyOrigin: 'https://api.deepseek.com:443',
+        keyPath: '/v1',
         enabled: true,
         models: ['deepseek-chat'],
         defaultModel: 'deepseek-chat',
@@ -74,17 +76,31 @@ describe('HostConfig', () => {
     expect((await HostConfig.open(directory)).provider('openai-compatible')).not.toHaveProperty('keyOrigin')
   })
 
-  it('binds keys saved before origin binding to their current base URL and persists that once', async () => {
+  it('binds keys saved before origin or path binding to their current base URL and persists that once', async () => {
     const directory = await dataDir()
     const file = join(directory, 'providers.json')
-    const { keyOrigin: _unbound, ...keyed } = record('keyed', { baseURL: 'http://127.0.0.1:11434/v1' })
-    const { keyOrigin: _none, ...keyless } = record('keyless', { apiKey: '' })
-    await writeFile(file, JSON.stringify({ version: 1, providers: [keyed, keyless] }), { mode: 0o600 })
+    const { keyOrigin: _unbound, keyPath: _noPath, ...keyed } = record('keyed', { baseURL: 'http://127.0.0.1:11434/v1/' })
+    // Saved by the previous build: bound to an origin, not yet to a path.
+    const { keyPath: _originOnly, ...originBound } = record('origin-bound', { baseURL: 'https://gateway.test/tenant-a/v1' })
+    const { keyOrigin: _none, keyPath: _nothing, ...keyless } = record('keyless', { apiKey: '' })
+    await writeFile(
+      file,
+      JSON.stringify({ version: 1, providers: [keyed, { ...originBound, keyOrigin: 'https://gateway.test:443' }, keyless] }),
+      {
+        mode: 0o600,
+      },
+    )
     const config = await HostConfig.open(directory)
-    expect(config.provider('keyed')?.keyOrigin).toBe('http://127.0.0.1:11434')
+    expect(config.provider('keyed')).toMatchObject({ keyOrigin: 'http://127.0.0.1:11434', keyPath: '/v1' })
+    expect(config.provider('origin-bound')).toMatchObject({ keyOrigin: 'https://gateway.test:443', keyPath: '/tenant-a/v1' })
     expect(config.provider('keyless')).not.toHaveProperty('keyOrigin')
+    expect(config.provider('keyless')).not.toHaveProperty('keyPath')
     const migrated = await readFile(file, 'utf8')
-    expect(JSON.parse(migrated).providers.map((item: ProviderRecord) => item.keyOrigin)).toEqual(['http://127.0.0.1:11434', undefined])
+    expect(JSON.parse(migrated).providers.map((item: ProviderRecord) => [item.keyOrigin, item.keyPath])).toEqual([
+      ['http://127.0.0.1:11434', '/v1'],
+      ['https://gateway.test:443', '/tenant-a/v1'],
+      [undefined, undefined],
+    ])
     if (posix) expect(await mode(file)).toBe(0o600)
 
     const written = await stat(file)
@@ -115,6 +131,12 @@ describe('HostConfig', () => {
         draft.push(record('a', { keyOrigin: undefined }))
       }),
     ).rejects.toMatchObject({ message: expect.stringContaining('API Key 必须绑定保存时的服务地址') })
+    for (const keyPath of [undefined, '/v1/', 'v1', '/v1\n'])
+      await expect(
+        config.updateProviders(draft => {
+          draft.push(record('a', { keyPath }))
+        }),
+      ).rejects.toMatchObject({ status: 400, code: 'invalid-provider' })
     expect(config.providers()).toEqual([])
     // A key bound to another origin may be stored; it is simply never sent (see usableKey).
     await config.updateProviders(draft => {
@@ -184,6 +206,31 @@ describe('HostConfig', () => {
     config.settings().workspaces.length = 0
     expect(config.provider('openai')?.models).toEqual(['model-a', 'model-b'])
     expect(config.settings().workspaces).toHaveLength(1)
+  })
+
+  it('keeps whether an agent definition has started, and leaves records from before that without it', async () => {
+    const directory = await dataDir()
+    const config = await HostConfig.open(directory)
+    const agent = { name: 'Agent', command: 'agent-acp', args: [], env: {}, enabled: true }
+    await config.updateSettings(draft => {
+      draft.agents.push(
+        { ...agent, id: 'legacy' },
+        { ...agent, id: 'fresh', startedHash: null },
+        { ...agent, id: 'ran', startedHash: 'a'.repeat(64) },
+      )
+    })
+    const agents = (await HostConfig.open(directory)).settings().agents
+    expect(agents.map(item => [item.id, item.startedHash])).toEqual([
+      ['legacy', undefined],
+      ['fresh', null],
+      ['ran', 'a'.repeat(64)],
+    ])
+    expect('startedHash' in agents[0]!).toBe(false)
+    await expect(
+      config.updateSettings(draft => {
+        draft.agents[0]!.startedHash = 'not a hash'
+      }),
+    ).rejects.toMatchObject({ code: 'invalid-settings' })
   })
 
   it.each([

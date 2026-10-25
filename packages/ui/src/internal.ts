@@ -112,33 +112,61 @@ export interface AnchorOptions {
 const WINDOW_MARGIN = 8
 
 /**
- * Places `layer` (a fixed-position element, usually in the top layer) next to `anchor` now and on every resize until
- * the returned function is called. It writes the position straight onto the element and sets `data-side` to the side
- * it chose, which the entrance animation reads. Call it once the layer is shown: a hidden layer has no size.
+ * Which side of its trigger a layer `height` tall goes: the preferred side when it fits there whole, else the other
+ * side when it fits there whole, else the preferred side unless that has less than 240 (or the layer's height) and the
+ * other side has more. Exported for its test.
+ */
+export function layerSide(height: number, above: number, below: number, side: 'bottom' | 'top'): 'bottom' | 'top' {
+  const [preferred, other] = side === 'top' ? [above, below] : [below, above]
+  const flip = side === 'top' ? 'bottom' : 'top'
+  if (height <= preferred) return side
+  if (height <= other) return flip
+  return preferred < Math.min(height, 240) && other > preferred ? flip : side
+}
+
+/**
+ * Places `layer` (a fixed-position element, usually in the top layer) next to `anchor` now, on every resize of the
+ * window and whenever the layer itself changes size (its content turns into a taller panel, or it widens), until the
+ * returned function is called. It writes the position straight onto the element and sets `data-side` to the side it
+ * chose, which the entrance animation reads. A layer taller than the room on its side keeps inside the window with a
+ * max-height and scrolls within. Call it once the layer is shown: a hidden layer has no size.
  */
 export function pinLayer(anchor: Element, layer: HTMLElement, { align, side, gap }: AnchorOptions): () => void {
+  // Once placed, the layer prefers the side it is on, so content that changes height does not make it jump across.
+  let chosen = side
   const place = () => {
     const target = anchor.getBoundingClientRect()
-    layer.style.maxHeight = ''
+    // The whole height, past any max-height it has now (the layer scrolls).
     const height = layer.scrollHeight
     const width = layer.offsetWidth
     const below = innerHeight - target.bottom - gap - WINDOW_MARGIN
     const above = target.top - gap - WINDOW_MARGIN
-    const needed = Math.min(height, 240)
-    const up = side === 'top' ? !(above < needed && below > above) : below < needed && above > below
+    chosen = layerSide(height, above, below, chosen)
+    const up = chosen === 'top'
     const room = Math.max(120, up ? above : below)
     const top = up ? target.top - gap - Math.min(height, room) : target.bottom + gap
     const preferred = align === 'end' ? target.right - width : align === 'center' ? target.left + (target.width - width) / 2 : target.left
     const left = Math.min(Math.max(WINDOW_MARGIN, preferred), Math.max(WINDOW_MARGIN, innerWidth - width - WINDOW_MARGIN))
     layer.style.top = `${Math.round(top)}px`
     layer.style.left = `${Math.round(left)}px`
-    if (height > room) layer.style.maxHeight = `${Math.floor(room)}px`
+    layer.style.maxHeight = height > room ? `${Math.floor(room)}px` : ''
     layer.dataset.side = up ? 'top' : 'bottom'
   }
   place()
   addEventListener('resize', place)
+  // What the layer holds, not the layer: placing changes only the layer's own box (its max-height), which is not
+  // watched, so a placement never reports itself back. Content swapped in is watched from its first report.
+  const resized = new ResizeObserver(place)
+  const watch = () => {
+    for (const child of layer.children) resized.observe(child)
+  }
+  watch()
+  const swapped = new MutationObserver(watch)
+  swapped.observe(layer, { childList: true })
   return () => {
     removeEventListener('resize', place)
+    resized.disconnect()
+    swapped.disconnect()
   }
 }
 

@@ -7,6 +7,8 @@ import { ApiError } from '../src/core/api.ts'
 import { sessionMenuSections } from '../src/sessionMenu.ts'
 import { SettingsPage, settingsSections } from '../src/settings/SettingsPage.tsx'
 import { isMissingTask } from '../src/core/useHarness.ts'
+import { harnessName } from '../src/composerChoice.ts'
+import { pluginName } from '../src/settings/PluginsSettings.tsx'
 
 const noop = () => {}
 const catalog: HostCatalog = {
@@ -49,8 +51,8 @@ describe('older Host without a catalog', () => {
     expect(sessionMenuSections(task, actions, true).flatMap(section => section.items.map(item => item.id))).toEqual([
       'rename',
       'pin',
-      'archive',
       'export',
+      'archive',
       'delete',
     ])
   })
@@ -90,5 +92,17 @@ describe('history from a Host that records no times', () => {
     expect(html).toContain('思考过程')
     expect(html).toContain('>输入 1.2k tokens</span>')
     expect(html).toContain('>输出 30 tokens</span>')
+  })
+})
+
+describe('the built-in harness on a Host from before its rename', () => {
+  it('reads 「Latch 内置」 in settings, though the Host still says 「Standard Harness」', () => {
+    const old = { id: 'standard', name: 'Standard Harness', source: 'builtin' as const }
+    expect(harnessName(old)).toBe('Latch 内置')
+    expect(harnessName({ id: 'codex', name: 'Codex', source: 'acp' })).toBe('Codex')
+    // Only the built-in one: a plugin harness that calls itself standard keeps its own name.
+    expect(harnessName({ id: 'standard', name: 'Standard Harness', source: 'plugin' })).toBe('Standard Harness')
+    expect(pluginName({ name: 'Standard Harness', capabilities: ['harness:standard'] })).toBe('Latch 内置')
+    expect(pluginName({ name: '工作区文件', capabilities: ['tool:read_file'] })).toBe('工作区文件')
   })
 })

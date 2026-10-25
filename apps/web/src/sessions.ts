@@ -20,6 +20,20 @@ export function sessionSlot(task: TaskSummary, selected: boolean, unread: boolea
   return 'time'
 }
 
+/**
+ * What a phone's row says on its second line after the harness: the one fact its status slot does not already say. A
+ * running session says so in words (the slot only turns); a cancelled or interrupted one names that state (its slot
+ * shows the time); one that waits, failed or has something new keeps its time there (its slot shows that instead); a
+ * finished one says nothing more. Never a preview of the conversation: the Host sends none.
+ */
+export function sessionFact(task: TaskSummary, slot: SlotStatus, cancelling: boolean, time: string): string | undefined {
+  if (cancelling) return '正在取消'
+  if (slot === 'running') return '正在运行'
+  if (slot === 'time') return task.status === 'cancelled' ? '已取消' : task.status === 'interrupted' ? '已中断' : undefined
+  if (slot === 'none') return undefined
+  return time || undefined
+}
+
 /** Archived sessions appear only under their own filter; search matches titles. */
 export function filterSessions(tasks: TaskSummary[], filter: SessionFilter, query: string): TaskSummary[] {
   const needle = query.trim().toLocaleLowerCase()
@@ -110,6 +124,7 @@ export function groupSessions(tasks: TaskSummary[], workspaces: readonly Workspa
 export interface SeenState {
   baseline: string
   seen: Record<string, string>
+  unread?: Record<string, true>
 }
 
 export function emptySeen(now = new Date()): SeenState {
@@ -117,6 +132,7 @@ export function emptySeen(now = new Date()): SeenState {
 }
 
 export function isUnread(task: TaskSummary, state: SeenState): boolean {
+  if (state.unread?.[task.id]) return true
   const updated = Date.parse(task.updatedAt)
   const seen = Date.parse(state.seen[task.id] ?? state.baseline)
   return !Number.isNaN(updated) && !Number.isNaN(seen) && updated > seen
@@ -124,15 +140,24 @@ export function isUnread(task: TaskSummary, state: SeenState): boolean {
 
 export function markSeen(state: SeenState, id: string, updatedAt: string): SeenState {
   const previous = state.seen[id]
-  if (previous !== undefined && Date.parse(previous) >= Date.parse(updatedAt)) return state
-  return { ...state, seen: { ...state.seen, [id]: updatedAt } }
+  if (previous !== undefined && Date.parse(previous) >= Date.parse(updatedAt) && !state.unread?.[id]) return state
+  const unread = { ...state.unread }
+  delete unread[id]
+  return { ...state, unread, seen: { ...state.seen, [id]: updatedAt } }
+}
+
+export function markUnread(state: SeenState, id: string): SeenState {
+  return { ...state, unread: { ...state.unread, [id]: true } }
 }
 
 /** Forget markers of deleted sessions so storage stays bounded by the Host's list. */
 export function pruneSeen(state: SeenState, tasks: TaskSummary[]): SeenState {
   const ids = new Set(tasks.map(task => task.id))
   const kept = Object.entries(state.seen).filter(([id]) => ids.has(id))
-  return kept.length === Object.keys(state.seen).length ? state : { ...state, seen: Object.fromEntries(kept) }
+  const unread = Object.fromEntries(Object.entries(state.unread ?? {}).filter(([id]) => ids.has(id)))
+  return kept.length === Object.keys(state.seen).length && Object.keys(unread).length === Object.keys(state.unread ?? {}).length
+    ? state
+    : { ...state, unread, seen: Object.fromEntries(kept) }
 }
 
 export function readSeen(key: string): SeenState | null {
@@ -142,7 +167,11 @@ export function readSeen(key: string): SeenState | null {
     const item = value as Record<string, unknown>
     if (typeof item.baseline !== 'string' || typeof item.seen !== 'object' || item.seen === null) return null
     const seen = Object.fromEntries(Object.entries(item.seen).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
-    return { baseline: item.baseline, seen }
+    const unread =
+      typeof item.unread === 'object' && item.unread !== null
+        ? (Object.fromEntries(Object.entries(item.unread).filter(([, flag]) => flag === true)) as Record<string, true>)
+        : {}
+    return { baseline: item.baseline, seen, unread }
   } catch {
     return null
   }

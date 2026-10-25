@@ -1,0 +1,306 @@
+import { mkdir, readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { z } from 'zod'
+import { AppError } from '@latch/sdk'
+import { writeFileAtomic } from '@latch/core/node-kit'
+import { SESSION_FOLDER_NAME } from './session-folders.ts'
+
+export const SESSION_META_FILE = 'sessions-meta.json'
+/** A receipt answers retries for this long, and never longer than its session exists. */
+export const RECEIPT_TTL_MS = 7 * 24 * 60 * 60 * 1000
+export const RECEIPTS_PER_DEVICE = 10_000
+export const MAX_RECEIPTS = 100_000
+/** Sessions with metadata the file holds; receipt-only entries come on top, so the read limit covers both. */
+const MAX_META_SESSIONS = 100_000
+/** `TaskSummary.runId` as the Host accepts it in a cancel; the Hub drops a driver's run ID of any other form. */
+export const RUN_ID = /^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,127}$/u
+
+const TASK_STATUSES = ['idle', 'running', 'waiting-approval', 'cancelled', 'failed', 'interrupted'] as const
+/** `Date#toISOString()`, the only form the Host writes. */
+const isoTime = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u)
+const requestIdText = z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u)
+const deviceIdText = z.string().min(1).max(64)
+const runIdText = z.string().regex(RUN_ID)
+
+// Every persisted field must be listed: z.object drops unknown keys on load.
+const approvalReceiptSchema = z.object({
+  kind: z.literal('approval'),
+  approvalId: z.string().min(1).max(256),
+  requestId: requestIdText.optional(),
+  deviceId: deviceIdText,
+  decision: z.enum(['allow', 'reject']),
+  optionId: z.string().min(1).max(128).optional(),
+  optionKind: z.enum(['allow_once', 'allow_always', 'reject_once', 'reject_always']),
+  at: isoTime,
+})
+const cancelReceiptSchema = z.object({
+  kind: z.literal('cancel'),
+  requestId: requestIdText,
+  deviceId: deviceIdText,
+  runId: runIdText.optional(),
+  outcome: z.enum(['stopped', 'ended']),
+  status: z.enum(TASK_STATUSES).optional(),
+  at: isoTime,
+})
+const receiptSchema = z.discriminatedUnion('kind', [approvalReceiptSchema, cancelReceiptSchema])
+
+/**
+ * Version 1 since titles, pins and archives; receipts were added as an optional field, so files written before them
+ * load unchanged and older builds read newer files (dropping the receipts) while they hold at most 100,000 sessions.
+ * Receipts are checked one by one: one that this build cannot read (a later kind, a damaged entry) is left out instead
+ * of failing the whole file.
+ */
+const metaSchema = z.object({
+  version: z.literal(1),
+  sessions: z
+    .array(
+      z.object({
+        id: z.string().min(1).max(256),
+        title: z.string().min(1).max(200).optional(),
+        pinned: z.literal(true).optional(),
+        archived: z.literal(true).optional(),
+        workspaceId: z
+          .string()
+          .regex(/^[a-z0-9][a-z0-9_-]{0,63}$/u)
+          .optional(),
+        sessionFolder: z.string().regex(SESSION_FOLDER_NAME).optional(),
+        receipts: z.array(z.unknown()).max(MAX_RECEIPTS).optional(),
+      }),
+    )
+    .max(MAX_META_SESSIONS + MAX_RECEIPTS),
+})
+
+export type ApprovalRecord = z.infer<typeof approvalReceiptSchema>
+export type CancelRecord = z.infer<typeof cancelReceiptSchema>
+export type StoredReceipt = ApprovalRecord | CancelRecord
+/** Host-level session metadata (title, pin, archive); receipts are kept beside it. */
+export interface StoredMeta {
+  title?: string
+  pinned?: true
+  archived?: true
+  workspaceId?: string
+  sessionFolder?: string
+}
+
+interface Entry {
+  sessionId: string
+  receipt: StoredReceipt
+}
+
+/** What the Host reads and records about approval decisions and cancels. */
+export interface SessionReceipts {
+  /** The recorded decision on an approval, from any device. */
+  approval(approvalId: string): { sessionId: string; record: ApprovalRecord } | undefined
+  /** A cancel this device sent on this session with this `requestId`. */
+  cancel(sessionId: string, deviceId: string, requestId: string): CancelRecord | undefined
+  /**
+   * Visible to the two lookups at once; the returned promise settles when the file holds it. A failed write leaves the
+   * receipt in memory and in the next write.
+   */
+  record(sessionId: string, receipt: StoredReceipt): Promise<void>
+}
+
+function codeOf(error: unknown): unknown {
+  return error instanceof Error && 'code' in error ? error.code : undefined
+}
+
+function cancelKey(sessionId: string, deviceId: string, requestId: string): string {
+  return `${sessionId}\n${deviceId}\n${requestId}`
+}
+
+export interface SessionMetaOptions {
+  now?: () => number
+  log?: (message: string) => void
+}
+
+/**
+ * Atomic, serialized writer for the Host's per-session overlay: title, pin and archive, and the receipts of approval
+ * decisions and cancels. Receipts are bounded: kept for 7 days, at most 10,000 per device and 100,000 in all, oldest
+ * first out; removing a session removes its receipts.
+ */
+export class SessionMetaStore implements SessionReceipts {
+  private queue: Promise<void> = Promise.resolve()
+  /** A receipt write that is queued and not yet started: receipts recorded meanwhile share it. */
+  private pendingWrite: Promise<void> | undefined
+  /** Insertion order is age order: entries are added with the current time and loaded sorted by it. */
+  private readonly entries = new Set<Entry>()
+  private readonly approvals = new Map<string, Entry>()
+  private readonly cancels = new Map<string, Entry>()
+  private readonly perDevice = new Map<string, number>()
+
+  private constructor(
+    private readonly path: string,
+    private readonly dataDir: string,
+    private meta: Map<string, StoredMeta>,
+    private readonly now: () => number,
+  ) {}
+
+  static async open(dataDir: string, options: SessionMetaOptions = {}): Promise<SessionMetaStore> {
+    const path = join(dataDir, SESSION_META_FILE)
+    let text: string | undefined
+    try {
+      text = await readFile(path, 'utf8')
+    } catch (error) {
+      if (codeOf(error) !== 'ENOENT') throw error
+    }
+    const meta = new Map<string, StoredMeta>()
+    const loaded: Entry[] = []
+    let skipped = 0
+    if (text !== undefined) {
+      let parsed: z.infer<typeof metaSchema>
+      try {
+        parsed = metaSchema.parse(JSON.parse(text))
+      } catch {
+        throw new AppError(500, 'config-corrupt', `会话设置文件 ${path} 无法读取，原文件已保留；请修复或移走后重启`)
+      }
+      for (const { id, receipts, ...fields } of parsed.sessions) {
+        if (Object.keys(fields).length) meta.set(id, fields)
+        for (const value of receipts ?? []) {
+          const receipt = receiptSchema.safeParse(value)
+          if (receipt.success) loaded.push({ sessionId: id, receipt: receipt.data })
+          else skipped++
+        }
+      }
+    }
+    const store = new SessionMetaStore(path, dataDir, meta, options.now ?? Date.now)
+    loaded.sort((a, b) => Date.parse(a.receipt.at) - Date.parse(b.receipt.at))
+    for (const entry of loaded) store.insert(entry)
+    store.prune()
+    if (skipped) options.log?.(`会话设置文件中有 ${skipped} 条无法识别的回执，已忽略`)
+    return store
+  }
+
+  get(sessionId: string): StoredMeta | undefined {
+    return this.meta.get(sessionId)
+  }
+
+  /** Folder names owned by sessions in the Host metadata. */
+  sessionFolders(): string[] {
+    return [...this.meta.values()].flatMap(meta => (meta.sessionFolder ? [meta.sessionFolder] : []))
+  }
+
+  /** Whether the session has metadata or receipts to remove. */
+  has(sessionId: string): boolean {
+    if (this.meta.has(sessionId)) return true
+    for (const entry of this.entries) if (entry.sessionId === sessionId) return true
+    return false
+  }
+
+  /** Publishes in memory only after the rename, so a failed write leaves the previous metadata visible. */
+  update(sessionId: string, change: (meta: StoredMeta) => StoredMeta | undefined): Promise<void> {
+    return this.enqueue(async () => {
+      const next = new Map(this.meta)
+      const meta = change({ ...next.get(sessionId) })
+      if (meta && Object.keys(meta).length) next.set(sessionId, meta)
+      else next.delete(sessionId)
+      await this.write(next)
+      this.meta = next
+    })
+  }
+
+  /** Drops the session's metadata and receipts. */
+  remove(sessionId: string): Promise<void> {
+    // Deleting the entry being visited is safe for a Set: iteration continues with the next one.
+    for (const entry of this.entries) if (entry.sessionId === sessionId) this.delete(entry)
+    return this.update(sessionId, () => undefined)
+  }
+
+  approval(approvalId: string): { sessionId: string; record: ApprovalRecord } | undefined {
+    this.prune()
+    const entry = this.approvals.get(approvalId)
+    return entry?.receipt.kind === 'approval' ? { sessionId: entry.sessionId, record: entry.receipt } : undefined
+  }
+
+  cancel(sessionId: string, deviceId: string, requestId: string): CancelRecord | undefined {
+    this.prune()
+    const receipt = this.cancels.get(cancelKey(sessionId, deviceId, requestId))?.receipt
+    return receipt?.kind === 'cancel' ? receipt : undefined
+  }
+
+  record(sessionId: string, receipt: StoredReceipt): Promise<void> {
+    this.insert({ sessionId, receipt: structuredClone(receipt) })
+    this.prune()
+    // The write reads the receipts when it starts, so every receipt recorded before then is in it.
+    this.pendingWrite ??= this.enqueue(async () => {
+      this.pendingWrite = undefined
+      await this.write(this.meta)
+    })
+    return this.pendingWrite
+  }
+
+  flush(): Promise<void> {
+    return this.queue
+  }
+
+  private enqueue(task: () => Promise<void>): Promise<void> {
+    const run = this.queue.then(task)
+    this.queue = run.then(
+      () => {},
+      () => {},
+    )
+    return run
+  }
+
+  private insert(entry: Entry): void {
+    const { receipt, sessionId } = entry
+    // A key is answered by its first receipt; a second one for the same key only happens when a file was edited.
+    if (receipt.kind === 'approval') {
+      const previous = this.approvals.get(receipt.approvalId)
+      if (previous) this.delete(previous)
+      this.approvals.set(receipt.approvalId, entry)
+    } else {
+      const key = cancelKey(sessionId, receipt.deviceId, receipt.requestId)
+      const previous = this.cancels.get(key)
+      if (previous) this.delete(previous)
+      this.cancels.set(key, entry)
+    }
+    this.entries.add(entry)
+    this.perDevice.set(receipt.deviceId, (this.perDevice.get(receipt.deviceId) ?? 0) + 1)
+  }
+
+  private delete(entry: Entry): void {
+    if (!this.entries.delete(entry)) return
+    const { receipt, sessionId } = entry
+    if (receipt.kind === 'approval') {
+      if (this.approvals.get(receipt.approvalId) === entry) this.approvals.delete(receipt.approvalId)
+    } else {
+      const key = cancelKey(sessionId, receipt.deviceId, receipt.requestId)
+      if (this.cancels.get(key) === entry) this.cancels.delete(key)
+    }
+    const count = (this.perDevice.get(receipt.deviceId) ?? 1) - 1
+    if (count > 0) this.perDevice.set(receipt.deviceId, count)
+    else this.perDevice.delete(receipt.deviceId)
+  }
+
+  private prune(): void {
+    const oldest = this.now() - RECEIPT_TTL_MS
+    for (const entry of this.entries) {
+      const at = Date.parse(entry.receipt.at)
+      if (this.entries.size <= MAX_RECEIPTS && at >= oldest) break
+      this.delete(entry)
+    }
+    for (const [device, count] of this.perDevice) {
+      if (count <= RECEIPTS_PER_DEVICE) continue
+      let excess = count - RECEIPTS_PER_DEVICE
+      for (const entry of this.entries) {
+        if (excess === 0) break
+        if (entry.receipt.deviceId !== device) continue
+        this.delete(entry)
+        excess--
+      }
+    }
+  }
+
+  private async write(meta: Map<string, StoredMeta>): Promise<void> {
+    await mkdir(this.dataDir, { recursive: true, mode: 0o700 })
+    const receipts = new Map<string, StoredReceipt[]>()
+    for (const { sessionId, receipt } of this.entries) {
+      const list = receipts.get(sessionId)
+      if (list) list.push(receipt)
+      else receipts.set(sessionId, [receipt])
+    }
+    const sessions = [...meta].map(([id, fields]) => ({ id, ...fields, ...(receipts.has(id) ? { receipts: receipts.get(id) } : {}) }))
+    for (const [id, list] of receipts) if (!meta.has(id)) sessions.push({ id, receipts: list })
+    await writeFileAtomic(this.path, JSON.stringify({ version: 1, sessions }) + '\n', { prefix: `${SESSION_META_FILE}.` })
+  }
+}

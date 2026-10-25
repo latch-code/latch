@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useState, type FormEvent } from 'react'
 import { CircleAlert, CircleCheck, ExternalLink, Plus, RefreshCw, ShieldCheck, ShieldQuestion, X } from 'lucide-react'
 import type { AgentSettings, AppSnapshot, AgentPreset, HarnessInfo } from '@latch/protocol'
 import { api, errorMessage, inlineError } from '../core/api.ts'
+import { InlineConfirm } from '../components/InlineConfirm.tsx'
 import { withConfirmation } from '../core/confirmations.ts'
 import { LEVEL_LABELS, type DeviceAccess } from '../core/permissions.ts'
 import { LOCAL_ONLY_TEXT } from '../core/securityCopy.ts'
@@ -36,6 +37,11 @@ type Editing = { kind: 'agent'; id: string } | { kind: 'new'; preset?: AgentPres
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/
 const FULL_ACCESS_NOTE = '用它开启的会话为完全访问：Agent 自己决定执行范围，Latch 不隔离它。'
 const DEFINE_ON_DESKTOP = `启动命令、参数和环境变量：${LOCAL_ONLY_TEXT}。`
+/** Saving a definition asks for nothing; every full-access start is confirmed on this computer with what it runs. */
+const SAVE_NOTE = '保存不需要确认；每次用它开始会话，都会在这台电脑上确认要运行的命令。'
+/** A definition no full-access session has started with yet (`started: false`; older Hosts do not say). */
+const NOT_STARTED = '还没有启动过'
+const NOT_STARTED_NOTE = '开始会话时，会在这台电脑上确认它要运行的命令、参数和环境变量名。'
 const lines = (text: string) =>
   text
     .split('\n')
@@ -150,7 +156,7 @@ function PresetList({
           return (
             <div key={preset.id} className="settings-row agent-preset" data-leading="">
               <span className="settings-row-lead">
-                <HarnessTile harness={{ id: preset.id, source: 'acp', presetId: preset.id }} size={32} />
+                <HarnessTile harness={{ id: preset.id, source: 'acp', presetId: preset.id }} size={24} />
               </span>
               <span className="settings-row-text">
                 <span className="settings-row-title settings-row-name" data-record="">
@@ -174,7 +180,7 @@ function PresetList({
         })}
         <div className="settings-row agent-preset" data-leading="">
           <span className="settings-row-lead">
-            <HarnessTile harness={{ id: '', source: 'acp' }} size={32} />
+            <HarnessTile harness={{ id: '', source: 'acp' }} size={24} />
           </span>
           <span className="settings-row-text">
             <span className="settings-row-title" data-record="">
@@ -248,7 +254,8 @@ const invalidEnv = (entries: Array<{ key: string }>) => entries.find(item => ite
 
 /**
  * A new agent from a preset or a custom command: the definition and environment as fields in cards, then 添加 Agent.
- * Saving a definition takes a local confirmation on the Host's desktop.
+ * Only the Host's desktop saves a definition, without a local confirmation: its full-access starts are confirmed. Older
+ * Hosts still ask when saving, which `withConfirmation` handles.
  */
 function AgentAdd({ preset, onSaved, onCancel }: { preset?: AgentPreset; onSaved: () => void; onCancel: () => void }) {
   const [name, setName] = useState(preset?.name ?? '')
@@ -302,7 +309,7 @@ function AgentAdd({ preset, onSaved, onCancel }: { preset?: AgentPreset; onSaved
           <InstallRows preset={preset} />
         </SettingsGroup>
       )}
-      <SettingsGroup title="启动定义" caption={`保存需要在这台电脑上验证身份。${FULL_ACCESS_NOTE}`}>
+      <SettingsGroup title="启动定义" caption={`${SAVE_NOTE}${FULL_ACCESS_NOTE}`}>
         <div className="settings-card-body settings-fields">
           <TextField
             label="名称"
@@ -358,6 +365,7 @@ function AgentAdd({ preset, onSaved, onCancel }: { preset?: AgentPreset; onSaved
         {env.length === 0 && <SettingsRow title="没有环境变量" description="Agent 继承执行端的安全环境；需要额外的变量时在这里添加" />}
         <EnvFields entries={env} onChange={setEnv} />
       </SettingsGroup>
+      <InlineConfirm active={busy} rank={1} />
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
       <div className="settings-actions">
         <Button size="md" disabled={busy} onClick={onCancel}>
@@ -371,7 +379,7 @@ function AgentAdd({ preset, onSaved, onCancel }: { preset?: AgentPreset; onSaved
   )
 }
 
-/** Edits an agent's command and arguments in a 560 dialog; saving takes a local confirmation on the Host's desktop. */
+/** Edits an agent's command and arguments in a 560 dialog; only the Host's desktop saves them. */
 function DefinitionDialog({
   open,
   agent,
@@ -412,7 +420,7 @@ function DefinitionDialog({
       size="form"
       title="编辑启动定义"
       subtitle={FULL_ACCESS_NOTE}
-      note="需要在这台电脑上验证身份"
+      note={SAVE_NOTE}
       onClose={() => {
         if (!busy) onClose()
       }}
@@ -494,7 +502,7 @@ function EnvDialog({
       size="form"
       title="添加环境变量"
       subtitle="值只写入执行端，不会再显示"
-      note="需要在这台电脑上验证身份"
+      note={SAVE_NOTE}
       onClose={() => {
         if (!busy) close()
       }}
@@ -577,7 +585,7 @@ function AgentPage({
   }
   const id = encodeURIComponent(agent.id)
 
-  /** One change; a new definition goes through the local confirmation, which resends the identical body. */
+  /** One change; an older Host confirms a new definition, and the confirmation resends the identical body. */
   const update = async (body: Record<string, unknown>): Promise<string> => {
     setBusy(true)
     setError('')
@@ -643,6 +651,7 @@ function AgentPage({
         }
         caption={definable ? FULL_ACCESS_NOTE : DEFINE_ON_DESKTOP}
         captionIcon={definable ? 'info' : 'lock'}>
+        {agent.started === false && <SettingsRow title={NOT_STARTED} description={NOT_STARTED_NOTE} />}
         <SettingsRow title="命令" description={<MiddleEllipsis text={agent.command} className="settings-mono" />} />
         <SettingsRow
           title="参数"
@@ -816,7 +825,7 @@ function AgentRow({
         <span className="settings-row-lead">
           <HarnessTile
             harness={{ id: agent.id, source: 'acp', presetId: agent.presetId, ...(harness ? { status: harness.status } : {}) }}
-            size={32}
+            size={24}
           />
         </span>
         <span className="settings-row-text">
@@ -826,6 +835,7 @@ function AgentRow({
             {preset && <Badge>{preset.license}</Badge>}
             {agent.verified === false && <Badge>未验证的定义</Badge>}
             {!agent.enabled && <StatusPill>已停用</StatusPill>}
+            {agent.started === false && <StatusPill>{NOT_STARTED}</StatusPill>}
           </span>
           <code className="agent-command">{[agent.command, ...agent.args].join(' ')}</code>
           <Detection agent={agent} preset={preset} harness={harness} />

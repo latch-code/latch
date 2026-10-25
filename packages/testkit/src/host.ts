@@ -116,6 +116,10 @@ export interface HostFixture<H extends FixtureHost = FixtureHost> {
   root: string
   /** Present with `tls`. */
   tlsCa?: string
+  /**
+   * Enrolls a device through the real API. Off host.sock it first gets an invitation for that listener unless given an
+   * invitation or an offline code, as every listener but host.sock requires one.
+   */
   enroll(options?: {
     listener?: TestListener
     name?: string
@@ -123,8 +127,8 @@ export interface HostFixture<H extends FixtureHost = FixtureHost> {
     invitation?: string
     offlineCode?: string
   }): Promise<TestDevice>
-  /** Anonymous unix invitation (needs TLS). */
-  invite(scopes?: DeviceScope[]): Promise<InvitationView>
+  /** Anonymous unix invitation for the TLS entry (needs TLS), or with `'loopback-tcp'` for a browser on loopback. */
+  invite(scopes?: DeviceScope[], listener?: Exclude<TestListener, 'unix'>): Promise<InvitationView>
   /** Path under /link/. */
   raw(listener: TestListener, path: string, init?: TestRequestInit): Promise<Response>
   close(): Promise<void>
@@ -235,8 +239,9 @@ export async function startHostFixture<H extends FixtureHost>(
     }) as unknown as Promise<Response>
   }
 
-  async function invite(scopes?: DeviceScope[]): Promise<InvitationView> {
-    const response = await raw('unix', 'api/pairings', { method: 'POST', body: scopes ? { scopes } : {} })
+  async function invite(scopes?: DeviceScope[], listener: Exclude<TestListener, 'unix'> = 'tls'): Promise<InvitationView> {
+    const request = { ...(scopes ? { scopes } : {}), ...(listener === 'loopback-tcp' ? { target: 'loopback' } : {}) }
+    const response = await raw('unix', 'api/pairings', { method: 'POST', body: request })
     const body = (await response.json()) as { invitation: InvitationView }
     if (response.status !== 201) throw new HttpFailure(response.status, body)
     return body.invitation
@@ -336,8 +341,13 @@ export async function startHostFixture<H extends FixtureHost>(
     const listener = input.listener ?? 'loopback-tcp'
     const key = testDeviceKey()
     let invitation = input.invitation
-    if (listener === 'tls' && !invitation && !input.offlineCode) {
-      invitation = (await invite(input.scopes?.filter(scope => scope !== 'approve:elevated' && scope !== 'secrets'))).code
+    if (listener !== 'unix' && !invitation && !input.offlineCode) {
+      invitation = (
+        await invite(
+          input.scopes?.filter(scope => scope !== 'approve:elevated' && scope !== 'secrets'),
+          listener,
+        )
+      ).code
     }
     const created = await raw(listener, 'api/enrollments', {
       method: 'POST',

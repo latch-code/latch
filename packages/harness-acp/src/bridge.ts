@@ -11,12 +11,14 @@ import type {
   TaskDetail,
   TaskStatus,
   TaskSummary,
+  ToolDecision,
 } from '@latch/protocol'
 import {
   AppError,
   type HarnessHostOptions,
   type HarnessSecurityEvent,
   type Bridge,
+  type CancelOptions,
   type ConfigChangeClass,
   type CreateTaskInput,
   type DecideOptions,
@@ -62,6 +64,7 @@ import {
   cancelRequest,
   chunkUpdate,
   configUpdate,
+  commandsUpdate,
   infoUpdate,
   initializeResult,
   modeUpdate,
@@ -112,6 +115,8 @@ interface Segment {
 }
 
 interface Run {
+  /** `TaskSummary.runId` once the turn is recorded; a cancel naming another run leaves this one alone. */
+  id: string
   taskId: string
   seq: number
   prompt: string
@@ -368,7 +373,8 @@ export class AcpBridge implements Bridge {
       let changed = false
       for (const task of Object.values(this.state.tasks)) {
         if (task.summary.status !== 'running' && task.summary.status !== 'waiting-approval') continue
-        for (const item of task.messages) settleToolMessage(item)
+        const at = this.now()
+        for (const item of task.messages) settleToolMessage(item, at)
         task.summary.status = 'interrupted'
         // The turn did not settle, so its user message gets no times: its duration is unknown.
         task.messages.push({
@@ -442,6 +448,7 @@ export class AcpBridge implements Bridge {
       ...(active && run ? { activity: run.activity, ...run.clock.live() } : {}),
       ...(active && run?.lastOutputAt !== undefined ? { lastOutputAt: isoTime(run.lastOutputAt) } : {}),
       ...(task.usageReport ? { usageReport: task.usageReport } : {}),
+      ...(task.commands ? { commands: task.commands } : {}),
       ...(task.plan ? { plan: task.plan } : {}),
       ...(task.config?.length ? { config: task.config } : {}),
       permission: this.permissionView(task),
@@ -472,13 +479,16 @@ export class AcpBridge implements Bridge {
     })
     return {
       launchHash: launch.hash,
+      definitionHash: launch.definitionHash,
       command: launch.command,
       args: [...this.agent.args],
       envNames: Object.keys(env).sort(),
+      definitionEnvNames: Object.keys(this.agent.env).sort(),
       cwd,
       ...(passed ? { folders: [...passed.paths] } : {}),
       ...(this.selection.preset ? { presetId: this.selection.preset.id } : {}),
-      verified: this.selection.verified,
+      // Looked up again for every start: whether the command is the preset's own depends on where the Host finds it now.
+      verified: selectProfile(this.agent).verified,
       approvals: this.profile?.approvals ?? 'prompts',
       readback: this.profile?.readback ?? 'none',
       // Configuration in the other folders is named by its full path, so it never reads as the session directory's.
@@ -487,6 +497,28 @@ export class AcpBridge implements Bridge {
   }
 
   async createTask(input: CreateTaskInput): Promise<{ sessionId: string }> {
+    await this.ready()
+    assertPrompt(input.prompt, input.requestId)
+    const key = digest(['create', input.requestId])
+    const payloadHash = digest({
+      prompt: input.prompt,
+      mode: input.mode ?? 'agent',
+      ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
+      ...(input.model ? { model: input.model } : {}),
+      ...(Array.isArray(input.folders) && input.folders.length > 1 ? { folders: input.folders.map(({ id, path }) => ({ id, path })) } : {}),
+    })
+    const pending = this.creating.get(key)
+    if (pending) {
+      if (pending.payloadHash !== payloadHash) throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同任务内容')
+      return pending.promise
+    }
+    // Reserve before filesystem checks: another body with this ID cannot overtake a slow first check.
+    const promise = this.createTaskOnce(input).finally(() => this.creating.delete(key))
+    this.creating.set(key, { payloadHash, promise })
+    return promise
+  }
+
+  private async createTaskOnce(input: CreateTaskInput): Promise<{ sessionId: string }> {
     await this.ready()
     assertPrompt(input.prompt, input.requestId)
     const mode = input.mode ?? 'agent'
@@ -517,11 +549,6 @@ export class AcpBridge implements Bridge {
       await this.flush()
       return { sessionId: receipt.taskId }
     }
-    const pending = this.creating.get(key)
-    if (pending) {
-      if (pending.payloadHash !== payloadHash) throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同任务内容')
-      return pending.promise
-    }
     const launch = this.currentLaunch(project, scope?.passed)
     if (launch.hash !== input.expectedLaunchHash) throw this.launchRefusal(input.expectedLaunchHash, launch, scope?.passed)
     const sessionId = `task-${randomUUID()}`
@@ -531,7 +558,7 @@ export class AcpBridge implements Bridge {
     // exists; held, so that no other start stops it as idle meanwhile.
     const passed = scope.passed
     this.enter(this.holds, sessionId)
-    const promise = (async () => {
+    return (async () => {
       try {
         const live = await this.ensureProcess(sessionId, cwd, {
           launchHash: launch.hash,
@@ -546,9 +573,7 @@ export class AcpBridge implements Bridge {
       } finally {
         this.leave(this.holds, sessionId)
       }
-    })().finally(() => this.creating.delete(key))
-    this.creating.set(key, { payloadHash, promise })
-    return promise
+    })()
   }
 
   /** Records a new session with its creation receipt and starts its first turn. */
@@ -578,6 +603,7 @@ export class AcpBridge implements Bridge {
         ...(scope
           ? { workspaceId: scope.workspaceId, folders: scope.folders.map(({ id, path }) => ({ id, path })), folderAccess: 'all' as const }
           : {}),
+        runId: run.id,
       },
       messages: [{ id: run.userMessageId, role: 'user', text: prompt, createdAt: at }],
       revision: 1,
@@ -649,6 +675,7 @@ export class AcpBridge implements Bridge {
         run.userMessageId = randomUUID()
         current.messages.push({ id: run.userMessageId, role: 'user', text: prompt, createdAt: isoTime(run.clock.startedAt) })
         current.summary.status = 'running'
+        current.summary.runId = run.id
         this.touch(current)
         this.state.receipts[key] = { taskId: sessionId, payloadHash, kind: 'prompt' }
         this.tools.set(sessionId, { seq: run.seq, calls: new Map() })
@@ -667,15 +694,17 @@ export class AcpBridge implements Bridge {
     return promise
   }
 
-  async cancel(sessionId: string): Promise<void> {
+  async cancel(sessionId: string, options: CancelOptions = {}): Promise<boolean> {
     await this.ready()
     this.task(sessionId)
     const run = this.runs.get(sessionId)
-    if (!run) return
+    // Checked before anything awaits, so a turn that starts after this point is never the one cancelled.
+    if (!run || (options.runId !== undefined && run.id !== options.runId)) return false
     this.requestCancel(run, true)
     // Acknowledged only once the agent settled the turn, or its process was stopped.
     await run.done
     if (this.storageFailure) throw new AppError(503, 'storage-unavailable', '执行已停止，但取消状态未能持久化')
+    return true
   }
 
   approvals(): Approval[] {
@@ -687,8 +716,14 @@ export class AcpBridge implements Bridge {
     const permission = this.permissions.get(approvalId)
     if (!permission || permission.claimed || this.closed) return false
     const option = this.chooseOption(permission, decision, options.optionId)
-    // Claimed synchronously, before any concurrent decision can compete.
-    this.closePermission(permission, option ? selected(option.optionId) : CANCELLED_OUTCOME)
+    const via = options.via === 'this-mac' || options.via === 'other-device' ? options.via : undefined
+    // Claimed synchronously, before any concurrent decision can compete. A note has nowhere to go: a permission answer
+    // carries no text, so the page sends it as the next message instead.
+    this.closePermission(permission, option ? selected(option.optionId) : CANCELLED_OUTCOME, {
+      outcome: decision === 'allow' ? 'allowed' : 'rejected',
+      at: this.now(),
+      ...(via ? { via } : {}),
+    })
     return true
   }
 
@@ -1230,7 +1265,7 @@ export class AcpBridge implements Bridge {
     task.summary.permissionDrift = true
     // Rejected before the cancel, which would answer them as cancelled.
     for (const permission of [...this.permissions.values()]) {
-      if (permission.taskId === taskId) this.closePermission(permission, this.rejection(permission.visible))
+      if (permission.taskId === taskId) this.closePermission(permission, this.rejection(permission.visible), this.unanswered())
     }
     const note = `检测到权限模式变化（${clip(expected ?? '未知', 64)} → ${clip(observed, 64)}），已取消本轮并拒绝挂起的询问。该会话不再接受输入，请新建会话。`
     const run = this.runs.get(taskId)
@@ -1249,6 +1284,11 @@ export class AcpBridge implements Bridge {
         if (this.lives.get(taskId) === live) void live.connection.stop('stop', this.limits.stopGraceMs)
       })
     }
+  }
+
+  /** The record of an ask that Latch closed for nobody (the turn stopped, the process ended): never a person's rejection. */
+  private unanswered(): ToolDecision {
+    return { outcome: 'cancelled', at: this.now() }
   }
 
   private rejection(visible: PermissionOption[]): unknown {
@@ -1323,6 +1363,7 @@ export class AcpBridge implements Bridge {
     const clock = new RunClock(this.clock)
     // Until session/prompt is written the agent's process and session are being prepared.
     const run: Run = {
+      id: randomUUID(),
       taskId,
       seq,
       prompt,
@@ -1469,7 +1510,7 @@ export class AcpBridge implements Bridge {
   private finishTurn(run: Run, status: TaskStatus, notes: string[]): void {
     clearTimeout(run.graceTimer)
     for (const permission of [...this.permissions.values()]) {
-      if (permission.taskId === run.taskId) this.closePermission(permission, CANCELLED_OUTCOME)
+      if (permission.taskId === run.taskId) this.closePermission(permission, CANCELLED_OUTCOME, this.unanswered())
     }
     const task = this.state.tasks[run.taskId]
     if (task) {
@@ -1513,7 +1554,7 @@ export class AcpBridge implements Bridge {
           .get(run.taskId)
           ?.controller.abort(this.closed ? new AppError(503, 'runtime-closed', '运行节点已关闭') : cancelledBeforeSend())
       for (const permission of [...this.permissions.values()]) {
-        if (permission.taskId === run.taskId) this.closePermission(permission, CANCELLED_OUTCOME)
+        if (permission.taskId === run.taskId) this.closePermission(permission, CANCELLED_OUTCOME, this.unanswered())
       }
       this.notify(run.taskId)
     }
@@ -1716,7 +1757,7 @@ export class AcpBridge implements Bridge {
     clearTimeout(live.idleTimer)
     live.sessions.clear()
     for (const permission of [...this.permissions.values()]) {
-      if (permission.live === live) this.closePermission(permission, CANCELLED_OUTCOME)
+      if (permission.live === live) this.closePermission(permission, CANCELLED_OUTCOME, this.unanswered())
     }
     const unexpected = !info.reason || info.reason === 'overflow'
     if (unexpected) {
@@ -2060,7 +2101,17 @@ export class AcpBridge implements Bridge {
         }
         break
       }
-      // user_message_chunk, available_commands_update and unknown kinds carry nothing Latch shows.
+      case 'available_commands_update': {
+        const parsed = commandsUpdate.safeParse(update)
+        if (!parsed.success) return
+        task.commands = parsed.data.availableCommands.map(command => ({
+          name: command.name,
+          ...(command.description ? { description: command.description } : {}),
+          ...(command.input?.hint ? { inputHint: command.input.hint } : {}),
+        }))
+        break
+      }
+      // user_message_chunk and unknown kinds carry nothing Latch shows.
       default:
         return
     }
@@ -2252,10 +2303,16 @@ export class AcpBridge implements Bridge {
     })
   }
 
-  private closePermission(permission: Permission, result: unknown): void {
+  /**
+   * `decision`: the record the ask leaves on its call; an agent that withdrew its own ask leaves none. A call the agent
+   * asks about more than once keeps an allowance it was given: what it did after that was allowed, so a later
+   * rejection must not make the call read as one that never ran.
+   */
+  private closePermission(permission: Permission, result: unknown, decision?: ToolDecision): void {
     if (!this.permissions.delete(permission.approval.id)) return
     permission.claimed = true
     permission.tool.awaiting = Math.max(0, permission.tool.awaiting - 1)
+    if (decision && permission.tool.decision?.outcome !== 'allowed') permission.tool.decision = decision
     if (result instanceof Error) permission.fail(result)
     else permission.answer(result)
     const task = this.state.tasks[permission.taskId]

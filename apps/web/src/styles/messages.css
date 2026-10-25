@@ -561,14 +561,25 @@
 }
 
 .setup-card {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-12);
+  display: grid;
   padding: var(--sp-12) var(--sp-16);
   border: 1px solid var(--line-subtle);
   border-radius: var(--r-12);
   corner-shape: var(--corner-shape);
   background: var(--bg-sunken);
+}
+.setup-card-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-12);
+}
+/* The model-service panel opens inside the card, under its row. */
+.setup-card-panel {
+  padding-top: var(--sp-12);
+}
+.setup-card-panel > .setup-panel {
+  padding: var(--sp-12) 0 0;
+  border-top: 1px solid var(--line-subtle);
 }
 /* An icon tile: round(32 × 0.225) = 7. */
 .setup-card-icon {
@@ -600,7 +611,7 @@
   line-height: var(--lh-label-para);
 }
 @media (max-width: 767.98px) {
-  .setup-card {
+  .setup-card-row {
     flex-wrap: wrap;
   }
   .setup-card .ui-button {
@@ -623,10 +634,9 @@
 .info-block {
   flex: none;
   min-width: 0;
-  border: 1px solid var(--line);
-  border-radius: var(--r-12);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-pane);
+  border: 0;
+  border-bottom: 1px solid var(--line-subtle);
+  background: transparent;
 }
 .info-block-head {
   display: flex;
@@ -794,6 +804,10 @@
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
+/* A session folder inside Latch's program directory: the amber notice under the 项目 row. */
+.info-code-root {
+  margin: var(--sp-4) var(--sp-12) var(--sp-8);
+}
 .info-note {
   display: flex;
   align-items: flex-start;
@@ -809,6 +823,15 @@
   flex-shrink: 0;
   margin-top: 2px;
   color: var(--icon);
+}
+/* A model switch the next message will carry, with the way back to the session's own model at the line's end. */
+.info-note-pending {
+  align-items: center;
+  justify-content: space-between;
+}
+.info-note-pending > .ui-button {
+  flex-shrink: 0;
+  margin: calc(-1 * var(--sp-4)) calc(-1 * var(--sp-6)) calc(-1 * var(--sp-4)) 0;
 }
 /* 权限说明: a disclosure inside the block, its facts aligned with the rows' labels. */
 .info-disclosure {

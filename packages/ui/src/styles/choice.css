@@ -125,6 +125,15 @@
 .ui-choice > .ui-choice-radio {
   margin-top: calc((var(--lh-ui) - 16px) / 2);
 }
+/* A row with the value's own tile: the tile sits on the title's line between the radio and the text. */
+.ui-choice:has(> .ui-choice-media) {
+  grid-template-columns: 16px auto minmax(0, 1fr);
+}
+.ui-choice-media {
+  display: grid;
+  place-items: center;
+  height: var(--lh-ui);
+}
 .ui-choice-text {
   display: grid;
   min-width: 0;
@@ -166,7 +175,7 @@
 .ui-choice-risk {
   color: var(--warn-text);
 }
-.ui-choice[aria-disabled='true'] :is(.ui-choice-radio, .ui-choice-label > *, .ui-choice-description) {
+.ui-choice[aria-disabled='true'] :is(.ui-choice-radio, .ui-choice-media, .ui-choice-label > *, .ui-choice-description) {
   opacity: 0.45;
 }
 @media (max-width: 767.98px) {

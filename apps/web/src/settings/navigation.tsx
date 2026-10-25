@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState
 import { createPortal } from 'react-dom'
 import { ChevronLeft } from 'lucide-react'
 import { IconButton } from '@latch/ui'
+import { useBackLayer } from '../hooks/backStack.ts'
 import { BackLink } from './common.tsx'
 
 /**
@@ -33,6 +34,12 @@ export interface SettingsLevel {
   title: string
   content: ReactNode
   onBack: () => void
+}
+
+/** A phone page's place in the browser's history: going back there returns one level. */
+function LevelEntry({ onBack }: { onBack: () => void }) {
+  useBackLayer(true, onBack)
+  return null
 }
 
 /** How long a phone page takes to slide away before it is dropped: --d-slow, plus a frame. */
@@ -78,6 +85,9 @@ export function SettingsPages({ main, levels }: { main: ReactNode; levels: Setti
   return (
     <>
       <div className="settings-subpage">{main}</div>
+      {levels.map(level => (
+        <LevelEntry key={level.key} onBack={level.onBack} />
+      ))}
       {navigation.layers && createPortal(<PhoneLevels levels={levels} section={navigation.section} />, navigation.layers)}
     </>
   )

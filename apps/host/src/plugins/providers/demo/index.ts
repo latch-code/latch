@@ -12,6 +12,18 @@ async function* textStream(text: string, signal: AbortSignal, interval = 10): As
   yield { type: 'finish', reason: 'stop' }
 }
 
+/**
+ * The demo's reply to a tool that did not succeed, in its own words: the tool result's text (with Latch's internal
+ * codes) is never echoed back. A rejection with a note says it got the note, and that the demo cannot act on it.
+ */
+function failedText(tool: string, content: string): string {
+  const report = tool === 'write_report'
+  if (!content.startsWith('用户拒绝')) return `${report ? '报告没有写成' : '长任务没有完成'}，没有写入产物。`
+  const note = /用户的说明：([\s\S]*)$/u.exec(content)?.[1]?.trim()
+  const declined = `你拒绝了这次操作，${report ? '报告没有写入' : '长任务没有运行'}。`
+  return note ? `${declined}\n\n收到你的说明：「${note}」。这是演示模型，不会据此改做别的事。` : declined
+}
+
 /** Deterministic model used only when the user chooses the demo provider. */
 export function createDemoPlugin(): HarnessPlugin {
   const provider: ModelProvider = {
@@ -72,7 +84,7 @@ export function createDemoPlugin(): HarnessPlugin {
           result === undefined
             ? '上一次工具调用尚无确定结果，请核对状态；不会重复执行或报告成功。'
             : result.isError
-              ? `操作未完成：${result.content}。没有确认成功写入产物。`
+              ? failedText(call.name, result.content)
               : `${call.name === 'write_report' ? '审批已通过，报告已写入。' : '长任务已完成，产物已写入。'}\n${result.content}`
         yield* textStream(text, signal)
         return

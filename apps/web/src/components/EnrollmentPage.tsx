@@ -1,5 +1,6 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
 import { Check, Fingerprint as FingerprintGlyph, KeyRound, RefreshCw } from 'lucide-react'
+import { isLocalListener } from '@latch/protocol'
 import { acceptableName, enrollmentName, pendingInvitation, useEnrollment, type EnrolledResult } from '../core/enrollment.ts'
 import { useViewport } from '../breakpoints.ts'
 import { useCountdown } from '../hooks/useCountdown.ts'
@@ -10,9 +11,13 @@ import { BrandMark } from './ui.tsx'
 
 const COPY = ENROLLMENT_COPY
 
-/** The Host's reason, without the full stop the sentence around it supplies. */
-function unavailableText(message: string | undefined): string {
-  return COPY.unavailable((message ?? '').trim().replace(/[。.]+$/, ''))
+/**
+ * The Host's reason, without the full stop the sentence around it supplies. Offline codes work only where the Host
+ * takes them, the desktop app's socket; elsewhere the page can only wait.
+ */
+function unavailableText(message: string | undefined, offline: boolean): string {
+  const reason = (message ?? '').trim().replace(/[。.]+$/, '')
+  return offline ? COPY.unavailable(reason) : COPY.unavailableRemote(reason)
 }
 
 /** Buttons on this page: lg (44) on phones, md (32) from 768 up. */
@@ -82,7 +87,11 @@ export function ConnectScreen({ error, onRetry }: { error: string; onRetry: () =
   )
 }
 
-function Fingerprint({ value, hash }: { value: string; hash?: string }) {
+/**
+ * The fingerprint this device computed from its own key, the one code to compare: the computer's system sheet names
+ * the same one in its sentence (`reason`), which is shown under it when the Host says it.
+ */
+function Fingerprint({ value, reason }: { value: string; reason?: string }) {
   return (
     <div className="fingerprint-block">
       <span className="fingerprint-label">{COPY.fingerprint}</span>
@@ -92,9 +101,10 @@ function Fingerprint({ value, hash }: { value: string; hash?: string }) {
           .split(' ')
           .flatMap((group, index) => (index === 0 ? [<span key={index}>{group}</span>] : [' ', <span key={index}>{group}</span>]))}
       </code>
-      {hash && (
+      {reason && (
         <span className="fingerprint-hash">
-          {COPY.hash} <code>{hash}</code>
+          {COPY.sheet}
+          <q>{reason}</q>
         </span>
       )}
     </div>
@@ -103,12 +113,12 @@ function Fingerprint({ value, hash }: { value: string; hash?: string }) {
 
 function Waiting({
   fingerprint,
-  hash,
+  reason,
   expiresAt,
   onCancel,
 }: {
   fingerprint: string
-  hash?: string
+  reason?: string
   expiresAt: string
   onCancel: () => void
 }) {
@@ -126,7 +136,7 @@ function Waiting({
         </span>
       </div>
       <p className="enroll-compare">{COPY.compare}</p>
-      <Fingerprint value={fingerprint} hash={hash} />
+      <Fingerprint value={fingerprint} reason={reason} />
       <span className="presence-track" aria-hidden="true">
         <i style={{ '--fraction': String(fraction) }} />
       </span>
@@ -151,8 +161,12 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
   const reason = ENROLLMENT_REASON_TEXT[auth.reason]
   const title = legacy ? COPY.legacyTitle : COPY.title
   const presenceDown = info?.presence.status === 'unavailable'
+  const offlineTicket = info?.offlineCodeAccepted === true
+  // Only host.sock takes offline codes; a Host of the previous build may still take them over loopback and says so in
+  // offlineCodeAccepted.
+  const offlineAccepted = (info !== null && isLocalListener(info.listener)) || offlineTicket
   // Without local confirmation the offline code is the way in, so the intro does not promise Touch ID.
-  const description = legacy ? COPY.legacyBody : invited ? COPY.invited : presenceDown ? COPY.offline : COPY.local
+  const description = legacy ? COPY.legacyBody : invited ? COPY.invited : presenceDown && offlineAccepted ? COPY.offline : COPY.local
 
   if (step.kind === 'loading')
     return (
@@ -190,18 +204,12 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
         <InlineNotice tone="error">{COPY.unsupported}</InlineNotice>
       </Shell>
     )
-  if (step.kind === 'invitation-required')
-    return (
-      <Shell title={COPY.title}>
-        <InlineNotice tone="neutral">{COPY.invitationRequired}</InlineNotice>
-      </Shell>
-    )
   if (step.kind === 'waiting')
     return (
       <Shell title={title}>
         <Waiting
           fingerprint={step.enrollment.fingerprint}
-          hash={step.enrollment.hashDisplay}
+          reason={step.enrollment.reason}
           expiresAt={step.enrollment.expiresAt}
           onCancel={enrollment.cancel}
         />
@@ -233,16 +241,31 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
       </Shell>
     )
 
-  const offlineOffered = presenceDown || info?.offlineCodeAccepted === true
-  const offlineOnly = presenceDown
-  const adminChecked = admin ?? (info?.firstDevice === true && !invited)
   const outcome =
     step.kind === 'denied' ? COPY.denied : step.kind === 'expired' ? COPY.expired : step.kind === 'mismatch' ? COPY.mismatch : ''
+  // The first request that passes uses the invitation up, so after a refusal or an invalid code the next try needs a new one.
+  if (step.kind === 'invitation-required' || (info?.invitationRequired === true && !invited && (step.kind === 'form' || outcome !== '')))
+    return (
+      <Shell title={COPY.title}>
+        {reason && !legacy && <InlineNotice tone={auth.reason === 'device-revoked' ? 'error' : 'warn'}>{reason}</InlineNotice>}
+        {outcome && <InlineNotice tone="error">{outcome}</InlineNotice>}
+        {error && <InlineNotice tone="error">{error}</InlineNotice>}
+        <InlineNotice tone="neutral">
+          {info?.listener === 'loopback-tcp' ? COPY.browserInvitationRequired : COPY.invitationRequired}
+        </InlineNotice>
+      </Shell>
+    )
+
+  const offlineOffered = offlineAccepted && (presenceDown || offlineTicket)
+  const offlineOnly = offlineAccepted && presenceDown
+  // Without a local confirmation nothing else can approve this device, so there is nothing to submit yet.
+  const blocked = presenceDown && !offlineAccepted
+  const adminChecked = admin ?? (info?.firstDevice === true && !invited)
   const busy = step.kind === 'submitting'
   const chosenName = enrollmentName(name, legacyName)
   const send = (event: FormEvent, useOffline: boolean) => {
     event.preventDefault()
-    if (busy || chosenName === null || (useOffline && !offlineCode.trim())) return
+    if (busy || chosenName === null || (useOffline ? !offlineCode.trim() : blocked)) return
     void enrollment.submit({ name: chosenName, admin: adminChecked, ...(useOffline ? { offlineCode: offlineCode.trim() } : {}) })
   }
 
@@ -250,7 +273,7 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
     <Shell title={title} description={description}>
       {reason && !legacy && <InlineNotice tone={auth.reason === 'device-revoked' ? 'error' : 'warn'}>{reason}</InlineNotice>}
       {outcome && <InlineNotice tone="error">{outcome}</InlineNotice>}
-      {presenceDown && <InlineNotice tone="warn">{unavailableText(info?.presence.message)}</InlineNotice>}
+      {presenceDown && <InlineNotice tone="warn">{unavailableText(info?.presence.message, offlineAccepted)}</InlineNotice>}
       <form
         className="enroll-form"
         onSubmit={event => {
@@ -282,6 +305,7 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
             <Checkbox
               className="enroll-scope is-choice"
               label={COPY.admin}
+              description={COPY.adminNote}
               checked={adminChecked}
               onChange={event => {
                 setAdmin(event.target.checked)
@@ -322,7 +346,7 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
               block
               icon={outcome ? RefreshCw : undefined}
               loading={busy}
-              disabled={chosenName === null}>
+              disabled={chosenName === null || blocked}>
               {legacy ? COPY.legacySubmit : COPY.submit}
             </Button>
             {offlineOffered

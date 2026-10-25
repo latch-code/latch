@@ -88,11 +88,14 @@ it('reports missing built-in model setup and becomes ready after configuration i
   const { admin, desktop, snapshot } = await authenticated(t)
   expect((await snapshot()).execution).toMatchObject({ ready: false, providerId: 'openai-compatible', modelConfigurationRequired: true })
   const legacy = { baseURL: 'http://127.0.0.1:9/v1', model: 'configured', apiKey: '' }
-  expect(await (await admin.request('provider', { method: 'PUT', body: legacy })).json()).toMatchObject({
+  expect(await (await admin.request('provider', { method: 'PUT', body: { ...legacy, apiKey: 'k' } })).json()).toMatchObject({
     error: 'scope-required',
     required: 'secrets',
   })
-  expect((await desktop.confirmed('provider', { method: 'PUT', body: legacy })).status).toBe(200)
+  // Any admin device may save it; its address is used only once the desktop has confirmed it.
+  expect((await admin.request('provider', { method: 'PUT', body: legacy })).status).toBe(200)
+  expect((await snapshot()).execution).toMatchObject({ ready: false, providerId: 'openai-compatible', modelConfigurationRequired: false })
+  expect((await desktop.confirmed('provider-origins', { method: 'POST', body: { baseURL: legacy.baseURL } })).status).toBe(200)
   expect((await snapshot()).execution).toMatchObject({ ready: true, providerId: 'openai-compatible', modelConfigurationRequired: false })
   expect((await admin.request('plugins/openai-compatible', { method: 'POST', body: { enabled: false } })).status).toBe(200)
   expect((await snapshot()).execution).toMatchObject({ ready: false, modelConfigurationRequired: false })
@@ -261,9 +264,17 @@ it('lists every mounted harness in the catalog and routes a session to the one t
   const t = await testHost({ plugins: [outside.plugin] })
   const { admin, desktop, snapshot } = await authenticated(t)
   const current = await snapshot()
-  expect(current.harness).toEqual({ id: 'standard', name: 'Standard Harness' })
+  expect(current.harness).toEqual({ id: 'standard', name: 'Latch 内置' })
   expect(current.catalog?.harnesses).toEqual([
-    expect.objectContaining({ id: 'standard', source: 'builtin', status: 'ready', modes: ['chat', 'agent'], models: 'host', level: 'L1' }),
+    expect.objectContaining({
+      id: 'standard',
+      name: 'Latch 内置',
+      source: 'builtin',
+      status: 'ready',
+      modes: ['chat', 'agent'],
+      models: 'host',
+      level: 'L1',
+    }),
     expect.objectContaining({ id: 'outside', source: 'plugin', status: 'ready', modes: ['agent'], models: 'agent', level: 'L3' }),
   ])
   expect(current.catalog?.defaults).toEqual({

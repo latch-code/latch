@@ -5,7 +5,17 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { AuditLog, verifyAuditFile, type AuditFs } from '../src/audit.ts'
-import { PolicyStore, ceilingFor, defaultPolicy, isEgressEntry, isLowering, policyDiff, policySchema, type Policy } from '../src/policy.ts'
+import {
+  PolicyStore,
+  ceilingFor,
+  defaultPolicy,
+  isConfirmedAddressEntry,
+  isEgressEntry,
+  isLowering,
+  policyDiff,
+  policySchema,
+  type Policy,
+} from '../src/policy.ts'
 
 const cleanups: Array<() => Promise<void> | void> = []
 afterEach(async () => {
@@ -43,6 +53,7 @@ describe('policy defaults and schema', () => {
       operators: [],
       presence: { backend: 'macos-helper', helperCdhash: null },
       hostEgressAllow: [],
+      confirmedAddresses: [],
       keyBackend: 'file',
       unattended: { maxLevel: 'L1', allowAutoApproveRules: false, approvalTtlHours: { standard: 8, acp: 1 }, pauseAfterIdleDays: 14 },
     })
@@ -228,6 +239,63 @@ describe('isLowering', () => {
     expect(isLowering(base, edit(base, change))).toBe(expected)
   })
 
+  it('treats removing a confirmed model-service address as lowering and adding one as raising', () => {
+    const wide = edit(base, draft => {
+      draft.confirmedAddresses = ['https://gateway.example:443/v1/acct-1/openai', 'http://127.0.0.1:11434/v1']
+    })
+    const removed = edit(wide, draft => {
+      draft.confirmedAddresses = ['http://127.0.0.1:11434/v1']
+    })
+    expect(isLowering(wide, removed)).toBe(true)
+    expect(isLowering(removed, wide)).toBe(false)
+    // A file from before the field existed: recording none is no change in what may be used, and adding one raises.
+    const legacy = edit(base, draft => {
+      delete draft.confirmedAddresses
+    })
+    expect(
+      isLowering(
+        legacy,
+        edit(legacy, draft => void (draft.confirmedAddresses = [])),
+      ),
+    ).toBe(true)
+    expect(isLowering(legacy, wide)).toBe(false)
+  })
+
+  it('accepts only canonical model-service addresses (an origin and its path), without duplicates', () => {
+    for (const entry of [
+      'https://api.example.com:443',
+      'http://127.0.0.1:11434',
+      'http://[::1]:8080',
+      'https://xn--fiq228c.com:443',
+      'http://127.0.0.1:11434/v1',
+      'https://gateway.example:443/v1/acct-1/openai',
+      'https://gateway.example:443/v1/%E6%A8%A1%E5%9E%8B',
+    ])
+      expect(isConfirmedAddressEntry(entry), entry).toBe(true)
+    for (const entry of [
+      'https://api.example.com',
+      'https://API.example.com:443',
+      'https://api.example.com:443/',
+      'https://api.example.com:443/v1/',
+      'https://api.example.com:443/v1/../v2',
+      'https://api.example.com:443/v1?tenant=a',
+      'https://api.example.com:443/v1#a',
+      'https://api.example.com:443/v 1',
+      'ftp://api.example.com:21',
+      'https://user@api.example.com:443',
+      'https://api.example.com:0',
+      '127.0.0.1:11434',
+      `https://api.example.com:443/${'a'.repeat(2400)}`,
+    ])
+      expect(isConfirmedAddressEntry(entry), entry).toBe(false)
+    const parse = (confirmedAddresses: unknown) => policySchema.safeParse({ ...defaultPolicy('darwin'), confirmedAddresses }).success
+    expect(parse(['http://127.0.0.1:11434'])).toBe(true)
+    expect(parse(['http://127.0.0.1:11434/v1', 'http://127.0.0.1:11434'])).toBe(true)
+    expect(parse(['http://127.0.0.1:11434/v1', 'http://127.0.0.1:11434/v1'])).toBe(false)
+    expect(parse(['http://127.0.0.1:11434/v1/'])).toBe(false)
+    expect(parse(undefined)).toBe(true)
+  })
+
   it('treats removing egress entries and re-enabling L3 correctly', () => {
     const wide = edit(base, draft => {
       draft.hostEgressAllow = ['a.lan:80', 'b.lan:80']
@@ -337,6 +405,48 @@ describe('PolicyStore', () => {
     expect(reopened.warnings).toEqual(['policy.json 在 Latch 之外被修改过，已记入审计。'])
     const outside = records(dataDir).filter(record => record.action === 'policy.changed-outside')
     expect(outside.map(record => record.detail)).toEqual([{ expected: store.hash(), actual: reopened.hash() }])
+  })
+
+  it('fills confirmed addresses once in a file from before they existed, audited, without a changed-outside record', async () => {
+    const { dataDir, audit, open } = await fixture()
+    const store = await open()
+    // The previous build's file: everything but confirmedAddresses, and the Host's own record of its hash.
+    const legacy = edit(store.get(), draft => {
+      delete draft.confirmedAddresses
+      draft.hostEgressAllow = ['127.0.0.1:11434']
+    })
+    writeFileSync(join(dataDir, 'policy.json'), JSON.stringify(legacy))
+    await audit.append({
+      action: 'host.started',
+      actor: { listener: 'host', via: 'startup' },
+      detail: {
+        hostId: 'a'.repeat(52),
+        version: '0.1.0',
+        policyHash: sha256Hex(canonicalJson(legacy)),
+        settingsHash: sha256Hex(''),
+        devMode: true,
+      },
+    })
+    const reopened = await open()
+    expect(reopened.warnings).toEqual([])
+    expect(reopened.needsAddressMigration).toBe(true)
+    expect(reopened.get()).not.toHaveProperty('confirmedAddresses')
+    await reopened.migrateConfirmedAddresses(['http://127.0.0.1:11434/v1', 'https://gateway.example:443', 'not an address'])
+    expect(reopened.needsAddressMigration).toBe(false)
+    expect(reopened.get().confirmedAddresses).toEqual(['http://127.0.0.1:11434/v1', 'https://gateway.example:443'])
+    expect(records(dataDir).at(-1)).toMatchObject({
+      action: 'policy.changed',
+      actor: { listener: 'host', via: 'startup' },
+      stepup: 'none',
+      detail: { fields: ['confirmedAddresses'], lowering: false, after: reopened.hash() },
+    })
+    // Once the field exists the upgrade never adds anything again, and the next start sees no outside change.
+    await reopened.migrateConfirmedAddresses(['https://later.example:443'])
+    expect(reopened.get().confirmedAddresses).toEqual(['http://127.0.0.1:11434/v1', 'https://gateway.example:443'])
+    const again = await open()
+    expect(again.warnings).toEqual([])
+    expect(again.get().confirmedAddresses).toEqual(['http://127.0.0.1:11434/v1', 'https://gateway.example:443'])
+    expect(records(dataDir).some(record => record.action === 'policy.changed-outside')).toBe(false)
   })
 
   it('refuses plaintext LAN, reports corrupt files, and ignores operators with a warning', async () => {

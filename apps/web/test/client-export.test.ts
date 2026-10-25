@@ -65,6 +65,71 @@ describe('Markdown export', () => {
     expect(markdown.endsWith('\n')).toBe(true)
   })
 
+  it('names a rejected call 已拒绝 with when and where it was decided, and leaves out the diff it never applied', () => {
+    const base = detail()
+    const rejected = {
+      ...base,
+      messages: [
+        {
+          id: 'tool:2',
+          role: 'tool' as const,
+          toolName: 'write_file',
+          state: 'failed' as const,
+          text: '用户拒绝了本次工具调用，未执行该操作。',
+          tool: {
+            kind: 'edit' as const,
+            toolTitle: '写入文件',
+            input: '{"path":"notes/plan.md"}',
+            diffs: [{ path: 'notes/plan.md', newText: 'x', previous: 'none' as const }],
+            decision: { outcome: 'rejected' as const, at: new Date(2026, 9, 23, 14, 32).toISOString(), via: 'this-mac' as const },
+          },
+        },
+      ],
+    }
+    const markdown = transcriptMarkdown(rejected, { harness: 'Latch 内置' })
+    expect(markdown).toContain('<summary>工具：写入文件 notes/plan.md（已拒绝）</summary>')
+    expect(markdown).toContain('审批：已拒绝 · 2026年10月23日 周五 14:32:00 · 在运行 Latch 的电脑上决定')
+    expect(markdown).not.toContain('变更：')
+    expect(markdown).toContain('- Harness：Latch 内置')
+  })
+
+  it('keeps the diff an agent reports for a call it ran after a rejection, and says so next to the record', () => {
+    const base = detail()
+    const ran = {
+      ...base,
+      messages: [
+        {
+          id: 'tool:3',
+          role: 'tool' as const,
+          toolName: 'edit',
+          state: 'completed' as const,
+          text: '',
+          tool: {
+            kind: 'edit' as const,
+            title: 'Edit src/app.ts',
+            diffs: [{ path: 'src/app.ts', newText: 'x\n', previous: 'none' as const }],
+            decision: { outcome: 'rejected' as const, at: new Date(2026, 9, 23, 14, 32).toISOString(), via: 'other-device' as const },
+          },
+        },
+        {
+          id: 'tool:4',
+          role: 'tool' as const,
+          toolName: 'write_file',
+          state: 'failed' as const,
+          text: 'APPROVAL_REJECTED: 用户拒绝了本次工具调用，未执行该操作。',
+          tool: { title: 'write_file', output: 'APPROVAL_REJECTED: 用户拒绝了本次工具调用，未执行该操作。' },
+        },
+      ],
+    }
+    const markdown = transcriptMarkdown(ran)
+    expect(markdown).toContain('<summary>工具：Edit src/app.ts（已完成）</summary>')
+    expect(markdown).toContain('审批：已拒绝 · 2026年10月23日 周五 14:32:00 · 在其他设备上决定 · Agent 报告仍执行了这次调用')
+    expect(markdown).toContain('变更：`src/app.ts`')
+    // History from before decision records: 已拒绝, without the internal code.
+    expect(markdown).toContain('<summary>工具：write_file（已拒绝）</summary>')
+    expect(markdown).not.toContain('APPROVAL_REJECTED')
+  })
+
   it('fences output with more backticks than it contains so content cannot close the block', () => {
     const markdown = transcriptMarkdown(detail())
     expect(markdown).toContain('输出：\n\n````\n已写入 ```三个反引号```\n````')

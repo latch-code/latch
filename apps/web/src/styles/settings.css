@@ -8,7 +8,7 @@
 .settings-page::backdrop {
   background: transparent;
 }
-.settings-page.modal-page > .modal-surface {
+.settings-page.ui-modal-page > .ui-modal-surface {
   background: var(--bg-app);
   animation: fade-in var(--d-fast) var(--ease);
 }
@@ -69,6 +69,21 @@
   display: grid;
   align-content: start;
   gap: var(--sp-2);
+}
+/* A device without 管理此 Host: one quiet line under the sections says what is hidden and where to grant it. */
+.settings-nav-caption {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-6);
+  margin: var(--sp-12) var(--sp-8) 0;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
+}
+.settings-nav-caption .ui-icon {
+  flex-shrink: 0;
+  margin-top: var(--sp-2);
+  color: var(--icon);
 }
 /*
  * The selected section is the neutral selection of a list row, with its text and icon in ink; the selection changes
@@ -208,7 +223,7 @@
   display: none;
 }
 @media (max-width: 767.98px) {
-  .settings-page.modal-page > .modal-surface {
+  .settings-page.ui-modal-page > .ui-modal-surface {
     background: var(--bg-pane);
   }
   .settings-layout {
@@ -552,13 +567,6 @@
 .settings-row-value.settings-mono {
   color: var(--text-1);
 }
-/* A start flag inside a sentence stays whole on its line. */
-.settings-flag {
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono-sm);
-  line-height: var(--lh-mono-sm);
-  white-space: nowrap;
-}
 /* One line that keeps its end: the head gives way with an ellipsis, the tail (the last path parts) always shows. */
 .middle-ellipsis {
   display: flex;
@@ -874,9 +882,19 @@
 .model-row .settings-row-name {
   flex-wrap: nowrap;
 }
+.model-add {
+  flex-wrap: wrap;
+}
 .model-add > .ui-input {
   flex: 1;
   min-width: 0;
+}
+/* Why a typed model ID was not added, on its own line under the field. */
+.model-add-problem {
+  flex-basis: 100%;
+  color: var(--err-text);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
 }
 .model-filter > .ui-search {
   flex: 1;
@@ -1017,6 +1035,10 @@
 }
 .project-card.is-unavailable .folder-row .settings-row-lead {
   opacity: 0.45;
+}
+/* A folder in Latch's program directory: the amber notice sits inside the card, under the folder row. */
+.project-code-root {
+  margin: 0 var(--sp-12) var(--sp-12);
 }
 .workspace-unavailable,
 .folder-missing {

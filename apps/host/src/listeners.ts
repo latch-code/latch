@@ -1,8 +1,11 @@
-import { X509Certificate } from 'node:crypto'
+import { X509Certificate, createHash } from 'node:crypto'
+import { watch, type FSWatcher } from 'node:fs'
 import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { createServer as createHttpsServer } from 'node:https'
 import { connect, isIP, type ListenOptions, type Socket } from 'node:net'
 import { networkInterfaces } from 'node:os'
+import { dirname } from 'node:path'
+import { createSecureContext } from 'node:tls'
 import { chmod, lstat, readFile, unlink } from 'node:fs/promises'
 import type { ListenerClass } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
@@ -35,6 +38,8 @@ export interface ValidatedTls {
   host: string
   port: number
   publicOrigin: string
+  certPath: string
+  keyPath: string
   cert: Buffer
   key: Buffer
   notAfter: number
@@ -53,6 +58,10 @@ export interface ListenerSet {
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const LOCAL_ADDRESS_TTL_MS = 30_000
+/** Renewal tools write the certificate and the key one after the other; a change is read once the files settle. */
+const TLS_SETTLE_MS = 1_000
+/** File-system events can be missed (renames, network volumes), so the files are also compared this often. */
+const TLS_RECHECK_MS = 10 * 60 * 1000
 
 /** IPv4-mapped IPv6 addresses compare as IPv4; IPv6 is lowercased without a zone. */
 export function normalizeAddress(address: string): string {
@@ -193,6 +202,8 @@ export async function validateTls(options: TlsListenerOptions, now: number, log:
     host,
     port: options.port,
     publicOrigin: origin.origin,
+    certPath: options.certPath,
+    keyPath: options.keyPath,
     cert,
     key,
     notAfter,
@@ -287,6 +298,89 @@ async function bindLoopback(
   }
 }
 
+function secureOptions(tls: ValidatedTls) {
+  return { cert: tls.cert, key: tls.key, minVersion: 'TLSv1.3', maxVersion: 'TLSv1.3' } as const
+}
+
+function materialHash(cert: Buffer, key: Buffer): string {
+  return createHash('sha256').update(cert).update('\0').update(key).digest('hex')
+}
+
+/**
+ * Follows the certificate and key files of the HTTPS entry. When their bytes change, `reload` reads and checks them as
+ * at startup (key file rules, expiry, the public host name) and the pair must make a TLS context; only then does the
+ * listener switch to it, for new connections. A pair that fails keeps the current one in use and is logged once, with
+ * the reason. An entry already closed at expiry stays closed. Returns the function that stops following.
+ */
+function watchTls(
+  secure: ReturnType<typeof createHttpsServer>,
+  entry: { current: ValidatedTls },
+  reload: () => Promise<ValidatedTls>,
+  log: (text: string) => void,
+): () => void {
+  let stopped = false
+  let rejected: string | undefined
+  let settle: ReturnType<typeof setTimeout> | undefined
+  let checking = Promise.resolve()
+  const check = async () => {
+    if (stopped || !secure.listening) return
+    let cert: Buffer
+    let key: Buffer
+    try {
+      ;[cert, key] = await Promise.all([readFile(entry.current.certPath), readFile(entry.current.keyPath)])
+    } catch {
+      // Missing for a moment while a tool replaces them; the next change or periodic check reads them again.
+      return
+    }
+    if (cert.equals(entry.current.cert) && key.equals(entry.current.key)) {
+      rejected = undefined
+      return
+    }
+    const seen = materialHash(cert, key)
+    try {
+      const next = await reload()
+      // Throws when the key does not belong to the certificate.
+      createSecureContext(secureOptions(next))
+      if (stopped) return
+      secure.setSecureContext(secureOptions(next))
+      entry.current = next
+      rejected = undefined
+      log(`已重新加载 HTTPS 证书，有效期至 ${new Date(next.notAfter).toISOString().slice(0, 10)}。`)
+    } catch (error) {
+      if (stopped || rejected === seen) return
+      rejected = seen
+      const reason = error instanceof AppError ? error.message : '证书与私钥不匹配，或无法用于 HTTPS'
+      log(`HTTPS 证书没有重新加载：${reason}。继续使用原来的证书。`)
+    }
+  }
+  const schedule = () => {
+    if (stopped) return
+    clearTimeout(settle)
+    settle = setTimeout(() => {
+      checking = checking.then(check, check)
+    }, TLS_SETTLE_MS)
+    settle.unref()
+  }
+  const watchers: FSWatcher[] = []
+  for (const directory of new Set([dirname(entry.current.certPath), dirname(entry.current.keyPath)])) {
+    try {
+      const watcher = watch(directory, { persistent: false }, schedule)
+      watcher.on('error', () => {})
+      watchers.push(watcher)
+    } catch {
+      // The periodic comparison still runs.
+    }
+  }
+  const recheck = setInterval(schedule, TLS_RECHECK_MS)
+  recheck.unref()
+  return () => {
+    stopped = true
+    clearTimeout(settle)
+    clearInterval(recheck)
+    for (const watcher of watchers) watcher.close()
+  }
+}
+
 /**
  * Starts host.sock (0600), loopback on 127.0.0.1 and ::1 with one port, and the optional TLS entry.
  * Each server passes its own fixed context with every request.
@@ -296,15 +390,22 @@ export async function startListeners(options: {
   socketPath: string
   port: number
   tls?: ValidatedTls
+  /**
+   * Reads and checks the TLS files again, as at startup. With it the HTTPS entry follows changes to the certificate and
+   * key files without a restart (see watchTls).
+   */
+  reloadTls?: () => Promise<ValidatedTls>
   handler: ListenerHandler
   log: (text: string) => void
   now?: () => number
 }): Promise<ListenerSet> {
   const servers: Server[] = []
   const timers: Array<ReturnType<typeof setInterval>> = []
+  const cleanups: Array<() => void> = []
   let socketBound = false
   const closeAll = async () => {
     for (const timer of timers) clearInterval(timer)
+    for (const cleanup of cleanups) cleanup()
     const failures: unknown[] = []
     for (const server of servers) {
       server.closeAllConnections()
@@ -352,9 +453,7 @@ export async function startListeners(options: {
     if (options.tls) {
       const tls = options.tls
       const tlsContext: ListenerContext = { listener: tls.listener, origin: tls.publicOrigin, host: new URL(tls.publicOrigin).host }
-      const secure = createHttpsServer({ cert: tls.cert, key: tls.key, minVersion: 'TLSv1.3', maxVersion: 'TLSv1.3' }, (req, res) =>
-        options.handler(req, res, tlsContext),
-      )
+      const secure = createHttpsServer(secureOptions(tls), (req, res) => options.handler(req, res, tlsContext))
       secure.on('connection', (socket: Socket) => {
         if (!tls.allowLocalPeers && (!socket.remoteAddress || isLocalAddress(socket.remoteAddress))) socket.destroy()
       })
@@ -367,9 +466,10 @@ export async function startListeners(options: {
       }
       tlsOrigin = tls.publicOrigin
       const now = options.now ?? Date.now
+      const entry = { current: tls }
       const expiry = setInterval(
         () => {
-          if (now() < tls.notAfter) return
+          if (now() < entry.current.notAfter) return
           options.log('HTTPS 证书已过期，已关闭 HTTPS 入口。')
           clearInterval(expiry)
           secure.closeAllConnections()
@@ -379,6 +479,7 @@ export async function startListeners(options: {
       )
       expiry.unref()
       timers.push(expiry)
+      if (options.reloadTls) cleanups.push(watchTls(secure, entry, options.reloadTls, options.log))
     }
     return {
       socketPath: options.socketPath,

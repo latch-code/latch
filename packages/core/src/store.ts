@@ -10,6 +10,8 @@ export interface StoredTask {
   summary: TaskSummary
   messages: Message[]
   history: ModelMessage[]
+  /** Model-visible instructions snapshotted at the start of the current/latest run. */
+  skillContext?: string
   revision: number
   approval?: Approval
   /** Written before dispatch; an interrupted started call has an unknown outcome. */
@@ -54,6 +56,7 @@ const turnSchema = z.object({
 const toolDetailSchema = z.object({
   kind: z.enum(['read', 'edit', 'delete', 'move', 'search', 'execute', 'think', 'fetch', 'other']).optional(),
   title: z.string().optional(),
+  toolTitle: z.string().optional(),
   input: z.string().optional(),
   output: z.string().optional(),
   locations: z.array(z.string()).optional(),
@@ -66,6 +69,13 @@ const toolDetailSchema = z.object({
         previous: z.enum(['none', 'text', 'unavailable']).optional(),
       }),
     )
+    .optional(),
+  decision: z
+    .object({
+      outcome: z.enum(['allowed', 'rejected', 'expired', 'cancelled']),
+      at: z.string(),
+      via: z.enum(['this-mac', 'other-device']).optional(),
+    })
     .optional(),
 })
 const messageSchema = z.object({
@@ -113,9 +123,12 @@ const stateSchema = z.object({
         usage: usageSchema.optional(),
         workspaceId: z.string().optional(),
         folders: z.array(z.object({ id: z.string(), path: z.string() })).optional(),
+        runId: z.string().min(1).max(128).optional(),
+        skills: z.array(z.string()).optional(),
       }),
       messages: z.array(messageSchema),
       history: z.array(historySchema),
+      skillContext: z.string().optional(),
       revision: z.number().int().nonnegative(),
       approval: z
         .object({

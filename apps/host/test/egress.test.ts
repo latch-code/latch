@@ -1,7 +1,14 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
-import { EgressDenied, createEgressFetch, isDeniedAddress, resolveEgressAddress, type LookupFunction } from '../src/egress.ts'
+import {
+  EgressDenied,
+  createEgressFetch,
+  createEgressInspector,
+  isDeniedAddress,
+  resolveEgressAddress,
+  type LookupFunction,
+} from '../src/egress.ts'
 
 const cleanups: Array<() => Promise<void> | void> = []
 afterEach(async () => {
@@ -164,6 +171,31 @@ describe('resolveEgressAddress', () => {
     await expect(
       resolveEgressAddress({ hostname: 'missing.test', port: 80, allow: [], lookup, localAddresses: new Set() }),
     ).rejects.toMatchObject({ code: 'ENOTFOUND' })
+  })
+})
+
+describe('createEgressInspector', () => {
+  it('names the allow-list entry an address needs exactly when the connector would refuse it', async () => {
+    const lookup = lookupFrom({
+      'ollama.lan': ['192.168.1.20'],
+      'both.example': ['10.0.0.8', '93.184.216.34'],
+      'public.example': ['93.184.216.34'],
+      'metadata.example': ['169.254.169.254'],
+      'local.example': ['::1'],
+    })
+    const inspect = createEgressInspector({ lookup, localAddresses: () => new Set(['192.168.1.5']) })
+    expect(await inspect('http://127.0.0.1:11434/v1')).toEqual({ target: '127.0.0.1:11434', allowance: 'needed', reason: 'loopback' })
+    expect(await inspect('http://[::1]:1234/v1')).toEqual({ target: '[::1]:1234', allowance: 'needed', reason: 'loopback' })
+    expect(await inspect('http://ollama.lan:11434')).toEqual({ target: 'ollama.lan:11434', allowance: 'needed', reason: 'private' })
+    expect(await inspect('https://local.example/v1')).toEqual({ target: 'local.example:443', allowance: 'needed', reason: 'loopback' })
+    expect(await inspect('http://192.168.1.5:8080')).toEqual({ target: '192.168.1.5:8080', allowance: 'needed', reason: 'local-interface' })
+    // A public address among the answers is what the connector dials, so nothing is needed.
+    expect(await inspect('https://both.example/v1')).toEqual({ target: 'both.example:443', allowance: 'none' })
+    expect(await inspect('https://public.example/v1')).toEqual({ target: 'public.example:443', allowance: 'none' })
+    // Metadata addresses can never be allowed; a name that does not resolve needs nothing yet.
+    expect(await inspect('http://metadata.example/latest')).toEqual({ target: 'metadata.example:80', allowance: 'never' })
+    expect(await inspect('http://169.254.169.254/latest')).toEqual({ target: '169.254.169.254:80', allowance: 'never' })
+    expect(await inspect('https://missing.example/v1')).toEqual({ target: 'missing.example:443', allowance: 'none' })
   })
 })
 

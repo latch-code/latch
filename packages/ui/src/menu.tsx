@@ -1,4 +1,16 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type Ref, type RefObject } from 'react'
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+  type Ref,
+  type RefObject,
+} from 'react'
 import { Check, ChevronRight, ChevronsUpDown, CircleSlash, Lock, ShieldAlert } from 'lucide-react'
 import { Button } from './button.tsx'
 import { ChoiceList } from './choice.tsx'
@@ -23,10 +35,21 @@ export interface LayerPlacement {
  * Closing with Escape or by choosing gives focus back to the trigger; a press elsewhere or Tab leaves it where it went.
  * A layer drawn as a bottom sheet (phones) has no popover element; the sheet handles its own dismissal.
  */
-function useLayer({ align = 'start', side = 'bottom' }: LayerPlacement) {
+function useLayer({ align = 'start', side = 'bottom' }: LayerPlacement, onOpenChange?: (open: boolean) => void) {
   const trigger = useRef<HTMLButtonElement>(null)
   const layer = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
+  // The owner hears every opening and closing, whatever caused it (the trigger, a choice, a press outside, Escape).
+  const notify = useRef(onOpenChange)
+  useLayoutEffect(() => {
+    notify.current = onOpenChange
+  })
+  const reported = useRef(false)
+  useEffect(() => {
+    if (reported.current === open) return
+    reported.current = open
+    notify.current?.(open)
+  }, [open])
   // Shown before it is placed: a hidden popover has no size to measure.
   useLayoutEffect(() => {
     const element = layer.current
@@ -59,6 +82,20 @@ function useLayer({ align = 'start', side = 'bottom' }: LayerPlacement) {
   return { trigger, layer, open, setOpen, close }
 }
 
+/** Closes the layer something is shown in, giving focus back to its trigger; outside a layer it does nothing. */
+const LayerClose = createContext<() => void>(() => {})
+
+/** Inside a menu's list, where the arrow keys move between items (a footer row is one of them). */
+const InMenu = createContext(false)
+
+/**
+ * For content inside a menu's, picker's or popover's layer (a footer action, a small form shown in the menu's place):
+ * the function that closes that layer once the content is done, focus going back to the trigger.
+ */
+export function useLayerClose(): () => void {
+  return useContext(LayerClose)
+}
+
 // ---- Menu items ---------------------------------------------------------------------------------------------------
 
 export interface MenuItem {
@@ -72,6 +109,8 @@ export interface MenuItem {
   tag?: ReactNode
   /** The one trailing element: meta text, a small badge or a kbd. */
   meta?: ReactNode
+  /** A tile or avatar between the leading slot and the label: the value's own picture (a harness, a model service). */
+  media?: ReactNode
   /** Selection menus: the chosen item, with an accent check and its label at 500. */
   checked?: boolean
   /** A destructive action (删除…): red text, placed last after a separator. */
@@ -85,6 +124,8 @@ export interface MenuSection {
   id: string
   /** A group heading inside the menu. */
   label?: string
+  /** A 16px tile before the heading, for example the model service a group of models comes from. */
+  media?: ReactNode
   items: MenuItem[]
 }
 
@@ -191,6 +232,7 @@ export function MenuPanel({ label, header, sections, selection = false, footer, 
           {index > 0 && <div className="ui-menu-separator" role="separator" />}
           {section.label && (
             <div className="ui-menu-section-label" aria-hidden="true">
+              {section.media}
               {section.label}
             </div>
           )}
@@ -202,7 +244,9 @@ export function MenuPanel({ label, header, sections, selection = false, footer, 
       {footer && (
         <>
           <div className="ui-menu-separator" role="separator" />
-          <div className="ui-menu-footer">{footer}</div>
+          <div className="ui-menu-footer">
+            <InMenu.Provider value>{footer}</InMenu.Provider>
+          </div>
         </>
       )}
     </div>
@@ -228,6 +272,7 @@ function MenuRow({ item, selection, onChoose }: { item: MenuItem; selection: boo
       className="ui-menu-item"
       data-label={item.label}
       data-two-line={item.description || disabled ? '' : undefined}
+      data-media={item.media ? '' : undefined}
       data-danger={item.danger ? '' : undefined}
       aria-checked={selection ? item.checked === true : undefined}
       aria-disabled={disabled || undefined}
@@ -237,6 +282,7 @@ function MenuRow({ item, selection, onChoose }: { item: MenuItem; selection: boo
         if (!disabled) onChoose?.(item)
       }}>
       <span className="ui-menu-item-lead">{lead}</span>
+      {item.media && <span className="ui-menu-item-media">{item.media}</span>}
       <span className="ui-menu-item-text">
         <span id={`${id}-label`} className="ui-menu-item-label">
           <span className="ui-menu-item-title">{item.label}</span>
@@ -261,26 +307,55 @@ function MenuRow({ item, selection, onChoose }: { item: MenuItem; selection: boo
 
 /**
  * A menu footer row that goes to where the setting lives, ending in chevron-right (「电脑与权限上限…」). It keeps the
- * items' empty leading slot, so its text starts on their titles' column.
+ * items' empty leading slot, so its text starts on their titles' column. An action that stays here (「撤销切换」, 「添加
+ * 模型服务…」 that turns the layer into a small form) leaves the chevron out and may put a 14px glyph in the slot.
+ * `closes` closes the layer before running the action, as choosing an item does. Outside a menu's list (under a list
+ * of buttons in a popover, in a sheet) it is an ordinary button in the Tab order, and without a glyph it has no slot.
  */
-export function MenuFooterLink({ children, onClick }: { children: ReactNode; onClick: () => void }) {
+export function MenuFooterLink({
+  children,
+  onClick,
+  icon,
+  chevron = true,
+  closes = false,
+}: {
+  children: ReactNode
+  onClick: () => void
+  icon?: LucideIcon
+  /** Goes elsewhere (the default): ends in chevron-right. */
+  chevron?: boolean
+  closes?: boolean
+}) {
+  const close = useLayerClose()
+  const inMenu = useContext(InMenu)
   return (
-    <button type="button" role="menuitem" tabIndex={-1} className="ui-menu-footer-link" data-label="" onClick={onClick}>
-      <span className="ui-menu-item-lead" />
+    <button
+      type="button"
+      role={inMenu ? 'menuitem' : undefined}
+      tabIndex={inMenu ? -1 : undefined}
+      className="ui-menu-footer-link"
+      data-label={inMenu ? '' : undefined}
+      data-no-lead={inMenu || icon ? undefined : ''}
+      onClick={() => {
+        if (closes) close()
+        onClick()
+      }}>
+      {(inMenu || icon) && <span className="ui-menu-item-lead">{icon && <Icon icon={icon} size={14} />}</span>}
       <span className="ui-menu-footer-text">{children}</span>
-      <Icon icon={ChevronRight} size={12} />
+      {chevron && <Icon icon={ChevronRight} size={12} />}
     </button>
   )
 }
 
 /**
  * A menu footer note for what can only change elsewhere (「调高要在这台电脑上验证身份」): the lock in the items' leading
- * slot, the note on their titles' column.
+ * slot, the note on their titles' column. A note that is no restriction passes its own glyph (`info` for how to get
+ * there, `circle-alert` for something that went wrong), so the lock keeps meaning a refusal.
  */
-export function MenuFooterNote({ children }: { children: ReactNode }) {
+export function MenuFooterNote({ children, icon = Lock }: { children: ReactNode; icon?: LucideIcon }) {
   return (
     <p className="ui-menu-footer-note">
-      <Icon icon={Lock} size={12} />
+      <Icon icon={icon} size={12} />
       <span className="ui-menu-footer-text">{children}</span>
     </p>
   )
@@ -342,17 +417,21 @@ function focusInto(panel: HTMLElement | null) {
  */
 export function Menu({
   label,
+  title,
   trigger,
   sections,
   header,
   footer,
   width,
+  selection = false,
+  className,
   ...placement
-}: Omit<PanelProps, 'selection' | 'onChoose' | 'onDismiss' | 'panelRef' | 'className'>
+}: Omit<PanelProps, 'onChoose' | 'onDismiss' | 'panelRef'>
   & LayerPlacement & {
     trigger: (props: MenuTriggerProps) => ReactNode
     /** The layer's outer width; at least 220. */
     width?: number
+    title?: string
   }) {
   const phone = useMediaQuery(PHONE_QUERY)
   const panel = useRef<HTMLDivElement>(null)
@@ -366,17 +445,24 @@ export function Menu({
     item.onSelect()
   }
   const content = (
-    <MenuPanel
-      label={label}
-      header={header}
-      sections={sections}
-      footer={footer}
-      panelRef={panel}
-      onChoose={choose}
-      onDismiss={reason => {
-        close(reason === 'escape')
-      }}
-    />
+    <LayerClose.Provider
+      value={() => {
+        close(!phone)
+      }}>
+      <MenuPanel
+        label={label}
+        header={header}
+        sections={sections}
+        footer={footer}
+        selection={selection}
+        className={className}
+        panelRef={panel}
+        onChoose={choose}
+        onDismiss={reason => {
+          close(reason === 'escape')
+        }}
+      />
+    </LayerClose.Provider>
   )
   return (
     <>
@@ -397,7 +483,7 @@ export function Menu({
       {phone ? (
         <Sheet
           open={open}
-          title={label}
+          title={title ?? label}
           onClose={() => {
             close(true)
           }}>
@@ -424,11 +510,15 @@ export interface PickerOption<T extends string> {
   /** A value with real risk (完全访问): once chosen, the trigger leads with an amber shield-alert. */
   risk?: boolean
   disabledReason?: string
+  /** The value's own picture in the menu (a 20px tile), after the check slot. */
+  media?: ReactNode
 }
 
 export interface PickerGroup<T extends string> {
   id: string
   label?: string
+  /** A 16px tile before the group's heading. */
+  media?: ReactNode
   options: Array<PickerOption<T>>
 }
 
@@ -461,7 +551,21 @@ export interface ValuePickerProps<T extends string> extends LayerPlacement {
    */
   reserve?: boolean
   header?: MenuHeader
+  /** Rows under a separator: a link to where the values are managed, an action such as undoing a pending switch. */
   footer?: ReactNode
+  /**
+   * Shown in the layer in the menu's place while set, for adding a value where it is chosen (a model service, from
+   * 「添加模型服务…」 in the footer); the layer stays open around it, and on phones the sheet holds it. It closes the
+   * layer with useLayerClose when it is done.
+   */
+  panel?: ReactNode
+  /** The layer opened or closed, whatever closed it. */
+  onOpenChange?: (open: boolean) => void
+  /**
+   * The words the trigger shows instead of the chosen option's label, for a value that differs from the list's (a
+   * model switch that applies from the next message, 「下一条：…」). Read after the label as well.
+   */
+  valueText?: string
   /** The menu layer's outer width (320 for permissions, 360 when searchable); at least 220. */
   width?: number
   /** A search row on top of the menu, for long lists such as models. */
@@ -507,6 +611,9 @@ export function ValuePicker<T extends string>({
   reserve = false,
   header,
   footer,
+  panel: form,
+  onOpenChange,
+  valueText: shownText,
   width,
   searchable = false,
   disabled = false,
@@ -520,7 +627,13 @@ export function ValuePicker<T extends string>({
   const sheet = phone || variant === 'row'
   const panel = useRef<HTMLDivElement>(null)
   const text = useRef<HTMLSpanElement>(null)
-  const { trigger: triggerRef, layer, open, setOpen, close: closeLayer } = useLayer({ align: align ?? pickerAlign(size, bleed), side })
+  const {
+    trigger: triggerRef,
+    layer,
+    open,
+    setOpen,
+    close: closeLayer,
+  } = useLayer({ align: align ?? pickerAlign(size, bleed), side }, onOpenChange)
   const [waiting, setWaiting] = useState(false)
   const [query, setQuery] = useState('')
   const pending = pendingProp || waiting
@@ -534,7 +647,7 @@ export function ValuePicker<T extends string>({
   }
 
   // The value fades in when it changes (120ms), not when the picker first appears.
-  const currentLabel = current?.label
+  const currentLabel = shownText ?? current?.label
   const shownLabel = useRef(currentLabel)
   useLayoutEffect(() => {
     if (shownLabel.current === currentLabel) return
@@ -543,9 +656,13 @@ export function ValuePicker<T extends string>({
       text.current?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 120, easing: 'cubic-bezier(0.2, 0, 0, 1)' })
   }, [currentLabel])
 
+  const showingForm = form !== undefined
   useEffect(() => {
-    if (open && !sheet) focusInto(panel.current)
-  }, [open, sheet])
+    if (open && !sheet && !showingForm) focusInto(panel.current)
+  }, [open, sheet, showingForm])
+  const closeFromContent = () => {
+    close(true)
+  }
 
   const choose = (next: T) => {
     close(true)
@@ -571,7 +688,7 @@ export function ValuePicker<T extends string>({
   ) : leading ? (
     <span className="ui-value-picker-lead">{leading}</span>
   ) : null
-  const valueText = current?.label ?? placeholder
+  const valueText = shownText ?? current?.label ?? placeholder
   const reserving = reserve && variant === 'inline' && size === 'sm'
   const valueLayers = (
     <span className="ui-value-picker-value" data-reserve={reserving ? '' : undefined}>
@@ -584,8 +701,8 @@ export function ValuePicker<T extends string>({
     </span>
   )
 
-  // One possible value: plain text, no arrow, no hover.
-  if (flat.length === 1 && current && !pending) {
+  // One possible value and nothing else to offer: plain text, no arrow, no hover.
+  if (flat.length === 1 && current && !pending && footer === undefined && form === undefined) {
     return (
       <span className={cx('ui-value-picker', className)} data-static="" data-size={size} data-bleed={bleed} data-variant={variant}>
         {variant === 'row' ? <span className="ui-value-row-label">{label}</span> : <span className="sr-only">{label}：</span>}
@@ -612,12 +729,14 @@ export function ValuePicker<T extends string>({
       description: option.description,
       tag: option.tag,
       meta: option.meta,
+      media: option.media,
       checked: option.value === value,
       disabledReason: option.disabledReason,
       onSelect: () => {
         choose(option.value)
       },
     })),
+    media: group.media,
   }))
 
   const button = (
@@ -664,7 +783,9 @@ export function ValuePicker<T extends string>({
           onClose={() => {
             close(true)
           }}>
-          <PickerSheetBody label={label} header={header} groups={all} value={value} footer={footer} onValueChange={choose} />
+          <LayerClose.Provider value={closeFromContent}>
+            {form ?? <PickerSheetBody label={label} header={header} groups={all} value={value} footer={footer} onValueChange={choose} />}
+          </LayerClose.Provider>
         </Sheet>
       </>
     )
@@ -673,37 +794,61 @@ export function ValuePicker<T extends string>({
   return (
     <>
       {trigger}
-      <div ref={layer} popover="manual" className="ui-popover" style={{ width: width ?? (searchable ? 360 : undefined) }}>
-        {searchable && (
-          <MenuSearch
-            label={label}
-            value={query}
-            onValueChange={setQuery}
-            onKeyDown={event => {
-              if (event.key === 'ArrowDown') {
-                event.preventDefault()
-                panel.current?.querySelector<HTMLButtonElement>('[role^="menuitem"]')?.focus()
-              } else if (event.key === 'Escape') {
-                event.preventDefault()
-                close(true)
-              } else if (event.key === 'Tab') close(false)
-            }}
-          />
-        )}
-        <MenuPanel
-          label={label}
-          header={header}
-          sections={sections}
-          selection
-          footer={footer}
-          panelRef={panel}
-          onChoose={item => {
-            item.onSelect()
-          }}
-          onDismiss={reason => {
-            close(reason === 'escape')
-          }}
-        />
+      <div
+        ref={layer}
+        popover="manual"
+        className="ui-popover"
+        data-panel={form === undefined ? undefined : ''}
+        style={{ width: width ?? (searchable ? 360 : undefined) }}
+        onKeyDown={event => {
+          // The menu handles its own keys; a panel in its place closes on Escape like the menu.
+          if (form === undefined || event.key !== 'Escape' || event.defaultPrevented) return
+          event.preventDefault()
+          event.stopPropagation()
+          close(true)
+        }}
+        onBlur={event => {
+          // Tabbing out of a panel closes the layer, as tabbing out of the menu does.
+          const next = event.relatedTarget
+          if (form === undefined || !(next instanceof Node)) return
+          if (layer.current?.contains(next) || triggerRef.current?.contains(next)) return
+          close(false)
+        }}>
+        <LayerClose.Provider value={closeFromContent}>
+          {form}
+          {form === undefined && searchable && (
+            <MenuSearch
+              label={label}
+              value={query}
+              onValueChange={setQuery}
+              onKeyDown={event => {
+                if (event.key === 'ArrowDown') {
+                  event.preventDefault()
+                  panel.current?.querySelector<HTMLButtonElement>('[role^="menuitem"]')?.focus()
+                } else if (event.key === 'Escape') {
+                  event.preventDefault()
+                  close(true)
+                } else if (event.key === 'Tab') close(false)
+              }}
+            />
+          )}
+          {form === undefined && (
+            <MenuPanel
+              label={label}
+              header={header}
+              sections={sections}
+              selection
+              footer={footer}
+              panelRef={panel}
+              onChoose={item => {
+                item.onSelect()
+              }}
+              onDismiss={reason => {
+                close(reason === 'escape')
+              }}
+            />
+          )}
+        </LayerClose.Provider>
       </div>
     </>
   )
@@ -757,6 +902,7 @@ export function PickerSheetBody<T extends string>({
                 tag: option.tag,
                 risk: option.risk,
                 disabledReason: option.disabledReason,
+                media: option.media,
               }))}
               onValueChange={onValueChange}
             />
@@ -825,17 +971,28 @@ export function Popover({
   trigger,
   children,
   width = 320,
+  onOpenChange,
   ...placement
 }: LayerPlacement & {
   label: string
   /** The sheet's title on phones, for example the label with a count. */
   title?: ReactNode
   trigger: (props: MenuTriggerProps) => ReactNode
+  /** The content; a control in it that is done closes the layer with useLayerClose. */
   children: ReactNode
   width?: number
+  onOpenChange?: (open: boolean) => void
 }) {
   const phone = useMediaQuery(PHONE_QUERY)
-  const { trigger: triggerRef, layer, open, setOpen, close } = useLayer(placement)
+  const { trigger: triggerRef, layer, open, setOpen, close } = useLayer(placement, onOpenChange)
+  const content = (
+    <LayerClose.Provider
+      value={() => {
+        close(true)
+      }}>
+      {children}
+    </LayerClose.Provider>
+  )
   useEffect(() => {
     if (!open || phone || !layer.current) return
     const first = layer.current.querySelector<HTMLElement>('a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])')
@@ -874,7 +1031,7 @@ export function Popover({
           onClose={() => {
             close(true)
           }}>
-          {children}
+          {content}
         </Sheet>
       ) : (
         <div
@@ -898,7 +1055,7 @@ export function Popover({
             if (next instanceof Node && (layer.current?.contains(next) || triggerRef.current?.contains(next))) return
             if (next !== null) close(false)
           }}>
-          {children}
+          {content}
         </div>
       )}
     </>

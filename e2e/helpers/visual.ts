@@ -2,6 +2,7 @@ import type { Browser, BrowserContext, Locator, Page } from '@playwright/test'
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { join, relative, resolve } from 'node:path'
 import { expect } from 'vitest'
+import { layersInWindow } from './layout.ts'
 
 /**
  * Captures of the real product for design review: every surface at three viewports in light and dark, written as
@@ -139,7 +140,8 @@ export class VisualRecorder {
     await page.mouse.move(0, 0)
     await settle(page)
     const options = { animations: 'disabled', caret: 'hide', scale: 'css', style: CAPTURE_STYLE } as const
-    return target ? target.screenshot(options) : page.screenshot(options)
+    if (!target) return page.screenshot(options)
+    return target.screenshot(options)
   }
 
   /**
@@ -153,10 +155,12 @@ export class VisualRecorder {
       const file = captureName(surface, viewport.name, theme)
       const image = await this.shot(page, target)
       await writeFile(join(VISUAL_OUTPUT, file), image)
-      const board = this.boards[surface]?.[viewport.name]?.replaceAll('{theme}', theme) ?? null
+      const mapping = this.boards[surface] ?? (surface.startsWith('ui-gallery-') ? this.boards['ui-gallery'] : undefined)
+      const board = mapping?.[viewport.name]?.replaceAll('{theme}', theme) ?? null
       this.entries.push({ file, surface, viewport: viewport.name, theme, state, ...pngSize(image), board })
     }
     await page.emulateMedia({ colorScheme: 'light' })
+    await layersInWindow(page)
   }
 
   /** Writes index.json for this run's captures; a run that never started leaves the output untouched. */

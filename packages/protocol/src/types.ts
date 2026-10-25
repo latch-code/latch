@@ -1,3 +1,16 @@
+import type { AgentPreset } from './agent-presets.ts'
+import type { SkillInfo, UiPanelInfo } from './ui.ts'
+import type { HostFeatures } from './features.ts'
+
+export type { SkillInfo, UiPanelInfo, UiPanelBlock, UiPanelDocument } from './ui.ts'
+export type { HostFeatures, SearchHit, SearchResults, SessionBatchResult } from './features.ts'
+
+export interface SessionCommand {
+  name: string
+  description?: string
+  inputHint?: string
+}
+
 /** Browser-safe product state, independent of a particular harness driver. */
 export type TaskStatus = 'idle' | 'running' | 'waiting-approval' | 'cancelled' | 'failed' | 'interrupted'
 export type TaskMode = 'chat' | 'agent'
@@ -77,6 +90,44 @@ export interface TaskSummary {
    * Agent session outside a saved project. The desktop can save it as a project's primary folder.
    */
   sessionFolder?: true
+  /**
+   * The session's current or latest run: a new value each time `createTask` or a prompt starts one. A cancel names it,
+   * so a cancel that arrives late cannot stop a run that began afterwards. Drivers that do not track runs omit it.
+   */
+  runId?: string
+  /** Skills snapshotted for the current or latest Standard run. */
+  skills?: string[]
+}
+
+/**
+ * What a cancel did. `stopped`: this request stopped the run it named, and the run has settled. `ended`: that run had
+ * already ended (or a later run had begun), so nothing was stopped.
+ */
+export type CancelOutcome = 'stopped' | 'ended'
+
+/** The Host's answer to `POST /tasks/:id/cancel`, kept with the session so a retry gets the same answer. */
+export interface CancelReceipt {
+  sessionId: string
+  /** Absent for a request sent without one; such a request has no stored receipt. */
+  requestId?: string
+  /** The run the request named. */
+  runId?: string
+  outcome: CancelOutcome
+  /** The named run's final status, when the Host knows it: absent when a later run had begun. */
+  status?: TaskStatus
+  /** ISO time at which the Host settled the request. */
+  at: string
+  /** A retry of a request the Host had already answered. */
+  replay?: true
+}
+
+/** The Host's answer to `POST /approvals/:id`. */
+export interface ApprovalReceipt {
+  approvalId: string
+  decision: 'allow' | 'reject'
+  optionId?: string
+  at: string
+  replay?: true
 }
 
 export type ToolKind = 'read' | 'edit' | 'delete' | 'move' | 'search' | 'execute' | 'think' | 'fetch' | 'other'
@@ -88,17 +139,36 @@ export interface FileDiff {
   previous?: 'none' | 'text' | 'unavailable'
 }
 
+/**
+ * How the approval of a tool call ended, as the Host recorded it. `allowed` and `rejected` are a person's choice, made
+ * on the Host computer's desktop app (`this-mac`) or on another device; `expired` and `cancelled` are answers nobody gave
+ * (a time limit, the session stopping) and carry no `via`. Device names and ids stay in the audit.
+ */
+export interface ToolDecision {
+  outcome: 'allowed' | 'rejected' | 'expired' | 'cancelled'
+  /** When it was decided (ISO). */
+  at: string
+  via?: 'this-mac' | 'other-device'
+}
+
 /** Structured presentation of one tool call. `Message.text` keeps the plain-text form. */
 export interface ToolDetail {
   kind?: ToolKind
   /** Short human summary, for example "读取 src/app.ts". */
   title?: string
+  /**
+   * The tool's own title from its definition (Latch 内置: 「读取文件」, 「写入文件」), escaped by the Host; rows and approval
+   * cards show it with the call's object. Agents' tools have none and are described by `kind` and `title`.
+   */
+  toolTitle?: string
   /** Formatted call arguments. */
   input?: string
   /** Result text, when the call produced one. */
   output?: string
   locations?: string[]
   diffs?: FileDiff[]
+  /** How the call's approval ended; absent for calls that needed none, from older Hosts and from plugin drivers. */
+  decision?: ToolDecision
 }
 
 export interface Message {
@@ -138,6 +208,20 @@ export interface ApprovalOption {
   kind: ApprovalOptionKind
 }
 
+/**
+ * Why the Host classed a built-in harness's request as high risk (R2): the session's folder overlaps Latch's program
+ * folder, the target is a protected path, the target leaves the session's folder (`..`), the target is not a relative
+ * path the Host can judge (absolute, empty or not text), the tool is not one the Host lists, or the arguments do not
+ * parse. An enum only: it never carries a path. Its words are `RISK_REASON_TEXT`.
+ */
+export type ApprovalRiskReason =
+  | 'code-root'
+  | 'protected-path'
+  | 'outside-workspace'
+  | 'unresolved-path'
+  | 'unlisted-tool'
+  | 'unparsable-arguments'
+
 export interface Approval {
   id: string
   sessionId: string
@@ -152,6 +236,8 @@ export interface Approval {
   tool?: ToolDetail
   /** Host classification. R2 can only be allowed on the Host's own desktop with local confirmation. */
   risk?: 'R1' | 'R2'
+  /** Set by the Host on an R2 request of the built-in harness when its classifier names the reason. */
+  riskReason?: ApprovalRiskReason
   /** Asked by an L3 harness: a prompt, not a security boundary. */
   advisory?: true
 }
@@ -198,6 +284,8 @@ export interface TaskDetail {
   lastOutputAt?: string
   /** The agent's latest report of its context window and cost. */
   usageReport?: UsageReport
+  /** Commands currently advertised by this session; selecting one only edits the draft. */
+  commands?: SessionCommand[]
   /** Latest plan reported by the harness. */
   plan?: PlanEntry[]
   /** Options the harness lets the user change for this session. */
@@ -211,7 +299,9 @@ export interface TaskDetail {
   permission?: SessionPermission
 }
 
-export type ListenerClass = 'unix' | 'loopback-tcp' | 'lan-tls' | 'tailnet-tls'
+/** Every listener class the Host accepts connections on; tests iterate it, so a class added here meets the locality rules. */
+export const LISTENER_CLASSES = ['unix', 'loopback-tcp', 'lan-tls', 'tailnet-tls'] as const
+export type ListenerClass = (typeof LISTENER_CLASSES)[number]
 export type DeviceScope = 'view' | 'run' | 'approve:standard' | 'approve:elevated' | 'admin' | 'secrets'
 export type DataScope = 'work' | 'all'
 export type PermissionLevel = 'L0' | 'L1' | 'L2' | 'L3'
@@ -262,10 +352,17 @@ export type PresenceAction =
   | 'device.grant'
   | 'task.start-l3'
   | 'task.mode-widen'
-  | 'agent.define'
   | 'policy.change'
   | 'provider.set-key'
+  | 'provider.confirm-origin'
   | 'approval.r2'
+
+/** A full-access session, running or waiting for an answer, that holds back a confirmation (`presence-blocked`). */
+export interface BlockingTask {
+  id: string
+  title: string
+  harnessId: string
+}
 
 /** A local presence confirmation (Touch ID or login password on the Host computer). */
 export interface ConfirmationTicket {
@@ -275,9 +372,54 @@ export interface ConfirmationTicket {
   /** Fixed Chinese title per action. */
   title: string
   status: 'pending' | 'approved' | 'denied' | 'expired' | 'cancelled' | 'consumed' | 'error'
-  /** 'a1b2-c3d4-e5f6-0718' */
+  /** 'a1b2-c3d4-e5f6-0718'; no longer shown on the Host computer, which shows `reason` instead. */
   hashDisplay: string
   expiresAt: string
+  /** The sentence the macOS system sheet shows (`PresencePreview.reason`). Absent from older Hosts. */
+  reason?: string
+  /** Its fixed form: a first or changed start opens the card's details at once. Absent from older Hosts. */
+  form?: PresenceReasonForm
+  /** The details behind the reason, for the card: the preview's lines and warnings. Absent from older Hosts. */
+  lines?: Array<{ label: string; value: string }>
+  warnings?: string[]
+  /** Why an `error` ended it, when the person can do something about it: Touch ID locked after too many tries. */
+  failure?: 'biometry-lockout'
+}
+
+/**
+ * The fixed sentences a confirmation's reason is built from. The wording lives in the Host's `presenceReason` and in
+ * the macOS helper, which rebuilds the reason from the subject and refuses any difference.
+ */
+export type PresenceReasonForm =
+  | 'approval.write'
+  | 'approval.tool'
+  | 'key.save'
+  | 'key.origin'
+  | 'origin.confirm'
+  | 'policy.egress'
+  | 'policy.egress-many'
+  | 'policy.local'
+  | 'policy.remote'
+  | 'policy.remote-start'
+  | 'policy.remote-agents'
+  | 'policy.remote-projects'
+  | 'policy.several'
+  | 'start.first'
+  | 'start.first-custom'
+  | 'start.changed'
+  | 'start.changed-custom'
+  | 'start.project-config'
+  | 'start.first-plugin'
+  | 'start.changed-plugin'
+  | 'start.repeat'
+  | 'mode.widen'
+  | 'device.enroll'
+  | 'device.grant'
+
+/** The Host-derived facts a confirmation names: one fixed form and the text of each of its slots (escaped). */
+export interface PresenceSubject {
+  form: PresenceReasonForm
+  slots: Record<string, string>
 }
 
 /**
@@ -285,17 +427,23 @@ export interface ConfirmationTicket {
  * confirmation helper both compute (the shared security vectors pin it), and which a test presence backend receives.
  */
 export interface PresencePreview {
-  v: 1
+  v: 2
   hostId: string
   action: PresenceAction
   /** Fixed per action. */
   title: string
+  /**
+   * The one sentence the macOS system sheet shows, the step the person actually verifies: built from `subject` by
+   * fixed wording per form, every slot escaped and cut to its own length in grapheme clusters.
+   */
+  reason: string
+  subject: PresenceSubject
   requester: { deviceId?: string; deviceName?: string; listener: ListenerClass | 'cli'; remoteAddress: string }
-  /** Values escaped, never truncated. */
+  /** Values escaped, never truncated; shown in the client's card, not on the Host computer. */
   lines: Array<{ label: string; value: string }>
   warnings: string[]
   nonce: string
-  /** ISO, creation + 60 s. */
+  /** ISO, creation + 120 s. */
   expiresAt: string
 }
 
@@ -306,17 +454,18 @@ export type PresenceAvailability =
 
 export type PresenceOutcome =
   | { result: 'approved'; method: 'biometric' | 'password'; nonce: string; previewHash: string }
-  | { result: 'denied' | 'cancelled' | 'timeout' | 'error'; message?: string }
+  | { result: 'denied' | 'cancelled' | 'timeout'; message?: string }
+  | { result: 'error'; message?: string; failure?: 'biometry-lockout' }
 
 export interface EnrollmentInfo {
   hostId: string
   listener: ListenerClass
   presence: { status: 'available' | 'unavailable'; message?: string }
-  /** Only on unix and loopback-tcp: no active device holds `admin`. */
+  /** Only on host.sock: no active device holds `admin`. */
   firstDevice?: boolean
-  /** True on TLS listeners. */
+  /** True on every listener but host.sock (see `isLocalListener`). */
   invitationRequired: boolean
-  /** unix/loopback-tcp and at least one unexpired offline ticket exists. */
+  /** host.sock only, while at least one unexpired offline ticket exists. */
   offlineCodeAccepted: boolean
   /** loopback-tcp with a valid legacy harness_link cookie. */
   legacy?: { name: string }
@@ -330,8 +479,30 @@ export interface EnrollmentView {
   /** Present only in the creation response. */
   nonce?: string
   expiresAt: string
-  /** The preview hash shown in the Host's confirmation window. */
+  /** The confirmation's preview hash. The Host computer no longer shows it: the person compares `fingerprint`. */
   hashDisplay?: string
+  /** The sentence the Host computer's system sheet shows, which names `fingerprint`. Absent from older Hosts. */
+  reason?: string
+}
+
+/**
+ * A device still waiting to be enrolled, for the desktop's pairing panel (`GET /link/api/enrollments`, desktop admins
+ * only). Its fingerprint is the code the person compares: the new device shows it from its own key, and the Host
+ * computer's system sheet names it in `reason`.
+ */
+export interface WaitingEnrollmentView {
+  id: string
+  /** Chosen by the device itself. */
+  name: string
+  fingerprint: string
+  listener: ListenerClass
+  method: 'lpc' | 'offline' | 'invitation'
+  /** `pending`: the system sheet is up or about to be; `approved`: the device has yet to sign. */
+  status: 'pending' | 'approved'
+  expiresAt: string
+  /** The invitation it used, so the panel that showed that invitation can find it. */
+  invitationId?: string
+  reason?: string
 }
 
 export interface InvitationView {
@@ -339,7 +510,7 @@ export interface InvitationView {
   id: string
   /** 'lpi1-' + 26 base32 upper chars; returned once. */
   code: string
-  /** `${tlsOrigin}/link/#pair=${code}` */
+  /** `${origin}/link/#pair=${code}`: the TLS public origin, or the loopback origin for a browser on the Host computer. */
   url: string
   scopes: DeviceScope[]
   expiresAt: string
@@ -348,9 +519,19 @@ export interface InvitationView {
 export interface HostView {
   hostId: string
   devMode: boolean
-  presence: { status: 'available' | 'unavailable'; message?: string }
+  /**
+   * `reason` (absent from older Hosts) tells a system without local confirmation (`platform`, or `disabled` in the
+   * policy) from a Mac whose confirmation component needs fixing; `message` says how.
+   */
+  presence: {
+    status: 'available' | 'unavailable'
+    message?: string
+    reason?: Extract<PresenceAvailability, { status: 'unavailable' }>['reason']
+  }
   tls: { origin: string } | null
   policy: { localMaxLevel: PermissionLevel; remoteMaxLevel: PermissionLevel; allowL3: boolean }
+  /** The Host hands a rejection's note (「告诉 Agent 改做什么」) to the built-in harness; older Hosts drop it. */
+  rejectionNote?: true
 }
 
 export const SCOPE_LABELS: Record<DeviceScope, string> = {
@@ -361,9 +542,10 @@ export const SCOPE_LABELS: Record<DeviceScope, string> = {
   admin: '管理此 Host',
   secrets: '设置密钥',
 }
+/** Loopback is named by its port and never with 本机: a forwarded port delivers remote peers there too. */
 export const LISTENER_LABELS: Record<ListenerClass, string> = {
   unix: '本机桌面端',
-  'loopback-tcp': '本机浏览器',
+  'loopback-tcp': '回环端口',
   'lan-tls': '局域网 HTTPS',
   'tailnet-tls': 'Tailscale HTTPS',
 }
@@ -458,10 +640,28 @@ export interface SessionDefaults {
   model?: ModelRef
 }
 
+/**
+ * An enabled model service the Host does not offer, and why: its address is not confirmed on the Host computer yet, or
+ * it is at a preset provider's address, which always needs a key, and has none.
+ */
+export interface UnusableProvider {
+  id: string
+  name: string
+  reason: 'origin-unconfirmed' | 'key-missing'
+}
+
 /** What a device may choose when it starts a session. */
 export interface HostCatalog {
+  promptTemplatesVersion?: string
+  features?: HostFeatures
   harnesses: HarnessInfo[]
   providers: ProviderSummary[]
+  /** Enabled services left out of `providers`, so a page can say why; absent from older Hosts. */
+  unusableProviders?: UnusableProvider[]
+  /** Session panels contributed by enabled plugins; absent from older Hosts. */
+  uiPanels?: UiPanelInfo[]
+  /** Enabled Standard skills. Contents remain on the Host. */
+  skills?: SkillInfo[]
   workspaces: WorkspaceInfo[]
   defaults: SessionDefaults
   /** Present when the Host supports projects of several folders, added from the desktop only; `max` folders per project. */
@@ -506,6 +706,28 @@ export interface TaskStateEvent {
   hostTime?: string
 }
 
+/** Why the Host is about to stop answering: restarting, updating, the computer going to sleep, or stopping. */
+export type HostStateReason = 'restart' | 'update' | 'sleep' | 'shutdown'
+export const HOST_STATE_REASONS: readonly HostStateReason[] = ['restart', 'update', 'sleep', 'shutdown']
+
+/**
+ * The Host's own announcement on the event stream. `stopping` and `sleeping` come just before the Host stops answering;
+ * clients try again after `retryAfter` seconds instead of their usual backoff. `awake` follows the computer waking up.
+ */
+export interface HostStateEvent {
+  type: 'host-state'
+  instanceId: string
+  state: 'stopping' | 'sleeping' | 'awake'
+  /** With `stopping` and `sleeping` (always `sleep` there). */
+  reason?: HostStateReason
+  /** Seconds; with `stopping` and `sleeping`. */
+  retryAfter?: number
+  /** ISO time at which the state began. */
+  at: string
+}
+
+export type ProviderDestination = 'preset' | 'confirmed' | 'unconfirmed'
+
 /** Owner-only provider configuration as returned to the browser. */
 export interface ProviderSettings {
   id: string
@@ -516,6 +738,13 @@ export interface ProviderSettings {
   hasKey: boolean
   /** `scheme://host:port` the saved key may be sent to; present only with a usable key. */
   keyOrigin?: string
+  /** The base URL path the saved key is bound to ('' at the root), with `keyOrigin`; absent from older Hosts. */
+  keyPath?: string
+  /**
+   * Whether the Host sends requests to this address: a preset provider's HTTPS origin, an origin confirmed once on the
+   * Host computer, or one not confirmed yet (saved, but never used until it is). Absent from older Hosts.
+   */
+  destination?: ProviderDestination
   enabled: boolean
   models: string[]
   defaultModel: string
@@ -533,6 +762,26 @@ export interface AgentRecord {
   args: string[]
   env: Record<string, string>
   enabled: boolean
+  /**
+   * The definition's hash when a full-access session last started with it; null once saved and not started since.
+   * Absent on definitions saved before the Host recorded starts, which were confirmed when they were saved.
+   */
+  startedHash?: string | null
+}
+
+/**
+ * Result of resolving a command on the Host's PATH and install directories; with a preset that names a companion (the
+ * agent an adapter connects to), whether that was found too. Older Hosts send no `companion`.
+ */
+export interface CommandDetection {
+  found: boolean
+  path?: string
+  companion?: { command: string; found: boolean }
+}
+
+/** A preset as the agent settings list it: with what the Host found of its commands. Older Hosts send no `detected`. */
+export interface AgentPresetSettings extends AgentPreset {
+  detected?: CommandDetection
 }
 
 /** Owner-only ACP agent definition as returned to the browser. Env values are never returned. */
@@ -544,15 +793,16 @@ export interface AgentSettings {
   args: string[]
   envKeys: string[]
   enabled: boolean
-  /**
-   * Result of resolving `command` on the Host's PATH and install directories; with a preset that names a companion
-   * (the agent an adapter connects to), whether that was found too. Older Hosts send no `companion`.
-   */
-  detected: { found: boolean; path?: string; companion?: { command: string; found: boolean } }
+  detected: CommandDetection
   /** Matches a preset's command and arguments exactly. */
   verified: boolean
   /** Chinese reason the definition cannot run, e.g. a reserved env name. */
   problem?: string
+  /**
+   * False until a full-access session has started with this exact definition (saving it asks for no confirmation; that
+   * first start does). Absent on older Hosts and for definitions saved before the Host recorded starts.
+   */
+  started?: boolean
 }
 
 export interface PluginInfo {
@@ -563,6 +813,7 @@ export interface PluginInfo {
   enabled: boolean
   activeRuns: number
   capabilities: string[]
+  package?: { formatVersion: 1 }
   /** Set when the Host manages the plugin from settings (model providers, agents). */
   managed?: 'provider' | 'agent' | 'core'
 }
@@ -577,4 +828,12 @@ export interface ApiFailure {
   retryAfter?: number
   target?: string
   legacyName?: string
+  /** A model service's own HTTP status, when a listing or check failed there (`http-error`). */
+  upstreamStatus?: number
+  /** The system's code for a failed connection to a model service (`network-error`), such as `ECONNREFUSED`. */
+  networkCode?: string
+  /** `presence-blocked`: the confirmation that was asked for. */
+  action?: PresenceAction
+  /** `presence-blocked`: the sessions holding it back, only for a requester that may view sessions. Older Hosts omit both. */
+  blockingTasks?: BlockingTask[]
 }

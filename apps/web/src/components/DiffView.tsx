@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
-import { ChevronRight, FileText } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { ChevronRight } from 'lucide-react'
 import type { FileDiff } from '@latch/protocol'
-import { CONTENT_HASH_LABEL, contentHash, hashable, knownContentHash } from '../core/contentHash.ts'
 import { diffLines, knowsOldSide, previousState, type PreviousState } from '../diff.ts'
 import { middleEllipsis } from '../format.ts'
 import { Collapse, ICON_STROKE, StatusPill } from '@latch/ui'
@@ -10,7 +9,6 @@ import { escapeHiddenCharacters, VisibleText } from './VisibleText.tsx'
 /** Lines rendered before "显示全部"; long rewrites stay cheap until asked for. */
 const VISIBLE_LINES = 400
 
-export const NEW_FILE_LABEL = '新文件'
 export const PREVIOUS_UNAVAILABLE_LABEL = '原内容未显示'
 export const PREVIOUS_UNAVAILABLE_TEXT = '该文件已存在，但原内容过大、是二进制或无法读取，没有显示：写入会覆盖它。'
 export const PREVIOUS_UNKNOWN_LABEL = '原内容未知'
@@ -23,7 +21,6 @@ export const PREVIOUS_NOTES: Partial<Record<PreviousState, string>> = {
 }
 
 function PreviousBadge({ state }: { state: PreviousState }) {
-  if (state === 'none') return <StatusPill>{NEW_FILE_LABEL}</StatusPill>
   if (state === 'unavailable')
     return (
       <StatusPill tone="warn" title={PREVIOUS_UNAVAILABLE_TEXT}>
@@ -37,43 +34,6 @@ function PreviousBadge({ state }: { state: PreviousState }) {
       </StatusPill>
     )
   return null
-}
-
-export const CONTENT_HASH_PENDING = '计算中…'
-export const CONTENT_HASH_TITLE = '新内容 SHA-256 的前 16 位，可与本机确认窗口中的「新内容哈希」逐字核对'
-
-/**
- * The hash of `text` once WebCrypto has computed it, undefined while it runs, null when there is none to show. The
- * digest runs after rendering, so a long text never delays the diff.
- */
-function useContentHash(text: string): string | null | undefined {
-  const shown = hashable(text)
-  const [computed, setComputed] = useState<{ text: string; hash: string | null } | null>(null)
-  // Always keep this line's own result: the shared cache may evict a hash this line showed earlier.
-  useEffect(() => {
-    if (!shown) return
-    let active = true
-    void contentHash(text).then(hash => {
-      if (active) setComputed({ text, hash: hash ?? null })
-    })
-    return () => {
-      active = false
-    }
-  }, [text, shown])
-  if (!shown) return null
-  return knownContentHash(text) ?? (computed?.text === text ? computed.hash : undefined)
-}
-
-/** One line above the diff body; it keeps its height while the hash is computed. */
-function ContentHashLine({ text }: { text: string }) {
-  const hash = useContentHash(text)
-  if (hash === null) return null
-  return (
-    <p className="diff-hash" title={CONTENT_HASH_TITLE}>
-      <span>{CONTENT_HASH_LABEL}</span>
-      {hash === undefined ? <span className="diff-hash-pending">{CONTENT_HASH_PENDING}</span> : <code>{hash}</code>}
-    </p>
-  )
 }
 
 /** A path's folder (with its trailing slash) and its file name, so the name leads and the folder stays quiet. */
@@ -104,7 +64,7 @@ function DiffFile({ diff, initiallyOpen, fold }: { diff: FileDiff; initiallyOpen
   const folded = fold !== undefined && !unfolded && total > fold
   const path = escapeHiddenCharacters(diff.path)
   const shown = middleEllipsis(diff.path, 64)
-  const { folder, name } = splitPath(shown)
+  const { name } = splitPath(shown)
   let budget = folded ? fold : all ? Infinity : VISIBLE_LINES
   let shownLines = 0
   return (
@@ -116,23 +76,17 @@ function DiffFile({ diff, initiallyOpen, fold }: { diff: FileDiff; initiallyOpen
         onClick={() => {
           setOpen(!open)
         }}>
-        <FileText size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+        <ChevronRight className="chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
         <span className="diff-path" title={path}>
           <span className="diff-path-name">
             <VisibleText text={name} />
           </span>
-          {folder && (
-            <span className="diff-path-folder">
-              <VisibleText text={folder} />
-            </span>
-          )}
         </span>
         <PreviousBadge state={previous} />
         <span className="diff-stat">
           <span className={view.added ? 'diff-stat-add' : 'diff-stat-zero'}>+{view.added}</span>
           {previous === 'text' && <span className={view.removed ? 'diff-stat-remove' : 'diff-stat-zero'}>−{view.removed}</span>}
         </span>
-        <ChevronRight className="chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
       </button>
       <Collapse
         open={open}
@@ -141,7 +95,6 @@ function DiffFile({ diff, initiallyOpen, fold }: { diff: FileDiff; initiallyOpen
           setOpen(true)
         }}>
         <div className="diff-paper">
-          <ContentHashLine text={diff.newText} />
           <div className="diff-body" role="region" tabIndex={0} aria-label={`${path} 的变更`}>
             {note && <p className="diff-note">{note}</p>}
             {view.hunks.length === 0 ? (

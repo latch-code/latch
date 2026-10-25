@@ -1,0 +1,89 @@
+import type { IncomingMessage, ServerResponse } from 'node:http'
+import { z } from 'zod'
+import type { DeviceScope, SessionBatchResult, TaskDetail, TaskSummary } from '@latch/protocol'
+import { AppError } from '@latch/sdk'
+import { json, jsonBody } from './http-util.ts'
+import { templateSchema, type PromptTemplateStore } from './prompt-templates.ts'
+import { SessionSearch } from './search.ts'
+
+const searchSchema = z.strictObject({ q: z.string().trim().min(1).max(200), limit: z.number().int().min(1).max(30).default(30) })
+const batchSchema = z.strictObject({
+  action: z.enum(['archive', 'unarchive', 'delete']),
+  ids: z.array(z.string().min(1).max(256)).min(1).max(100),
+})
+interface Options<Caller> {
+  templates: PromptTemplateStore
+  changed(): void
+  list(): Promise<TaskSummary[]>
+  detail(id: string): Promise<TaskDetail>
+  patch(id: string, patch: { archived: boolean }): Promise<unknown>
+  remove(id: string): Promise<void>
+  authorize(caller: Caller, scope: DeviceScope): void
+  recheck(caller: Caller, scope: DeviceScope): void
+  checkRemove(caller: Caller, id: string): Promise<unknown>
+}
+
+export function createSessionRoutes<Caller>(options: Options<Caller>) {
+  const search = new SessionSearch(options)
+  let searchBusy = false
+  return {
+    async handle(req: IncomingMessage, res: ServerResponse, caller: Caller, path: string, method: string): Promise<boolean> {
+      if (path === '/link/api/prompts' && method === 'GET') {
+        options.authorize(caller, 'view')
+        json(res, { templates: options.templates.list() })
+        return true
+      }
+      const templateId = /^\/link\/api\/prompts\/([A-Za-z0-9_-]{1,64})$/u.exec(path)?.[1]
+      if (templateId && (method === 'PUT' || method === 'DELETE')) {
+        options.authorize(caller, 'admin')
+        if (method === 'PUT') {
+          const input = templateSchema.parse(await jsonBody(req))
+          if (input.id !== templateId) throw new AppError(400, 'prompt-template-id', '模板标识与请求路径不一致。')
+          await options.templates.put(input, () => options.recheck(caller, 'admin'))
+        } else await options.templates.remove(templateId, () => options.recheck(caller, 'admin'))
+        options.changed()
+        json(res, { ok: true })
+        return true
+      }
+      if (path === '/link/api/search' && method === 'POST') {
+        options.authorize(caller, 'view')
+        const input = searchSchema.parse(await jsonBody(req))
+        options.recheck(caller, 'view')
+        if (searchBusy) throw new AppError(429, 'rate-limited', '正在完成一次正文搜索，请稍后再试。', { retryAfter: 1 })
+        searchBusy = true
+        try {
+          const result = await search.search(input.q, input.limit)
+          options.recheck(caller, 'view')
+          json(res, result)
+        } finally {
+          searchBusy = false
+        }
+        return true
+      }
+      if (path !== '/link/api/tasks/batch' || method !== 'POST') return false
+      options.authorize(caller, 'run')
+      const input = batchSchema.parse(await jsonBody(req))
+      const results: SessionBatchResult['results'] = []
+      for (const id of new Set(input.ids)) {
+        try {
+          options.recheck(caller, 'run')
+          if (input.action === 'delete') {
+            await options.checkRemove(caller, id)
+            options.recheck(caller, 'run')
+            await options.remove(id)
+          } else await options.patch(id, { archived: input.action === 'archive' })
+          results.push({ id, ok: true })
+        } catch (error) {
+          results.push({
+            id,
+            ok: false,
+            code: error instanceof AppError ? error.code : 'session-operation-failed',
+            message: error instanceof AppError ? error.message : '这个会话暂时无法处理，请同步后重试。',
+          })
+        }
+      }
+      json(res, { results })
+      return true
+    },
+  }
+}

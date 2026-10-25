@@ -411,7 +411,7 @@ describe('live indicators', () => {
     expect(slots.map(item => item.getAttribute('aria-hidden'))).toEqual(Array(6).fill('true'))
     expect(slots.map(item => item.children.length)).toEqual([1, 1, 1, 1, 1, 0])
     expect(slots[0]?.textContent).toBe('失败')
-    expect(slots[0]?.firstElementChild && getComputedStyle(slots[0].firstElementChild).color).toBe('rgb(180, 35, 24)')
+    expect(slots[0]?.firstElementChild && getComputedStyle(slots[0].firstElementChild).color).toBe('rgb(160, 29, 20)')
     expect(slots[0]?.querySelector('.lucide-triangle-alert')).not.toBeNull()
     expect(slots[1]?.querySelector('.ui-waiting-pill')?.textContent).toBe('待确认')
     expect(slots[2]?.textContent).toBe('权限已变化')

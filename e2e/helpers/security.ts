@@ -63,6 +63,8 @@ async function look(page: Page, selector: string): Promise<Array<Record<string, 
  * its computed display, visibility, opacity, colours, type, filter, transform and clipping; then removes them.
  */
 export async function expectUnmovedByInjectedStyles(page: Page, selectors: readonly string[]): Promise<void> {
+  // Injected styles can move the layout: keep the pointer away so the comparison does not also change hover.
+  await page.mouse.move(0, 0)
   // Colours fade between states (a theme switch, a hover); compare the settled values, not a frame of a transition.
   await page.evaluate(() =>
     Promise.all(

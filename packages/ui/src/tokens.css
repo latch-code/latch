@@ -107,7 +107,7 @@
     --warn-dot: #e8960f;
     --warn-fill: #f5a524;
     --on-warn-fill: #1e2230;
-    --err-text: #b42318;
+    --err-text: #a01d14;
     --err-bg: #fef1f0;
     --err-border: rgba(217, 45, 32, 0.28);
     --err-solid: #d92d20;
@@ -331,7 +331,8 @@
       --sh-raised: 0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.05);
       --sh-float: 0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.05), 0 12px 32px -6px rgba(0, 0, 0, 0.56);
       --sh-composer: 0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.04), 0 8px 24px -12px rgba(0, 0, 0, 0.6);
-      --sh-composer-focus: 0 0 0 1px rgba(234, 233, 231, 0.14), 0 8px 24px -12px rgba(0, 0, 0, 0.5);
+      --sh-composer-focus:
+        0 0 0 1px rgba(234, 233, 231, 0.16), inset 0 1px 0 rgba(234, 233, 231, 0.04), 0 8px 24px -12px rgba(0, 0, 0, 0.6);
       --sh-modal: 0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.05), 0 24px 56px -12px rgba(0, 0, 0, 0.64);
       --accent: #2461e0;
       --accent-hover: #2f6be8;
@@ -347,7 +348,7 @@
       --warn-dot: #f5b642;
       --warn-fill: #f5b642;
       --on-warn-fill: #1e2230;
-      --err-text: #ff8a80;
+      --err-text: #ff7168;
       --err-bg: rgba(255, 123, 114, 0.1);
       --err-border: rgba(255, 123, 114, 0.3);
       --err-solid: #d92d20;
@@ -396,7 +397,7 @@
     --sh-raised: 0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.05);
     --sh-float: 0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.05), 0 12px 32px -6px rgba(0, 0, 0, 0.56);
     --sh-composer: 0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.04), 0 8px 24px -12px rgba(0, 0, 0, 0.6);
-    --sh-composer-focus: 0 0 0 1px rgba(234, 233, 231, 0.14), 0 8px 24px -12px rgba(0, 0, 0, 0.5);
+    --sh-composer-focus: 0 0 0 1px rgba(234, 233, 231, 0.16), inset 0 1px 0 rgba(234, 233, 231, 0.04), 0 8px 24px -12px rgba(0, 0, 0, 0.6);
     --sh-modal: 0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.05), 0 24px 56px -12px rgba(0, 0, 0, 0.64);
     --accent: #2461e0;
     --accent-hover: #2f6be8;
@@ -412,7 +413,7 @@
     --warn-dot: #f5b642;
     --warn-fill: #f5b642;
     --on-warn-fill: #1e2230;
-    --err-text: #ff8a80;
+    --err-text: #ff7168;
     --err-bg: rgba(255, 123, 114, 0.1);
     --err-border: rgba(255, 123, 114, 0.3);
     --err-solid: #d92d20;
@@ -489,7 +490,7 @@
     --warn-dot: #e8960f !important;
     --warn-fill: #f5a524 !important;
     --on-warn-fill: #1e2230 !important;
-    --err-text: #b42318 !important;
+    --err-text: #a01d14 !important;
     --err-bg: #fef1f0 !important;
     --err-border: rgba(217, 45, 32, 0.28) !important;
     --err-solid: #d92d20 !important;
@@ -630,7 +631,8 @@
         0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.05), 0 12px 32px -6px rgba(0, 0, 0, 0.56) !important;
       --sh-composer:
         0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.04), 0 8px 24px -12px rgba(0, 0, 0, 0.6) !important;
-      --sh-composer-focus: 0 0 0 1px rgba(234, 233, 231, 0.14), 0 8px 24px -12px rgba(0, 0, 0, 0.5) !important;
+      --sh-composer-focus:
+        0 0 0 1px rgba(234, 233, 231, 0.16), inset 0 1px 0 rgba(234, 233, 231, 0.04), 0 8px 24px -12px rgba(0, 0, 0, 0.6) !important;
       --sh-modal:
         0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.05), 0 24px 56px -12px rgba(0, 0, 0, 0.64) !important;
       --accent: #2461e0 !important;
@@ -647,7 +649,7 @@
       --warn-dot: #f5b642 !important;
       --warn-fill: #f5b642 !important;
       --on-warn-fill: #1e2230 !important;
-      --err-text: #ff8a80 !important;
+      --err-text: #ff7168 !important;
       --err-bg: rgba(255, 123, 114, 0.1) !important;
       --err-border: rgba(255, 123, 114, 0.3) !important;
       --err-solid: #d92d20 !important;
@@ -697,7 +699,8 @@
       0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.05), 0 12px 32px -6px rgba(0, 0, 0, 0.56) !important;
     --sh-composer:
       0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.04), 0 8px 24px -12px rgba(0, 0, 0, 0.6) !important;
-    --sh-composer-focus: 0 0 0 1px rgba(234, 233, 231, 0.14), 0 8px 24px -12px rgba(0, 0, 0, 0.5) !important;
+    --sh-composer-focus:
+      0 0 0 1px rgba(234, 233, 231, 0.16), inset 0 1px 0 rgba(234, 233, 231, 0.04), 0 8px 24px -12px rgba(0, 0, 0, 0.6) !important;
     --sh-modal:
       0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.05), 0 24px 56px -12px rgba(0, 0, 0, 0.64) !important;
     --accent: #2461e0 !important;
@@ -714,7 +717,7 @@
     --warn-dot: #f5b642 !important;
     --warn-fill: #f5b642 !important;
     --on-warn-fill: #1e2230 !important;
-    --err-text: #ff8a80 !important;
+    --err-text: #ff7168 !important;
     --err-bg: rgba(255, 123, 114, 0.1) !important;
     --err-border: rgba(255, 123, 114, 0.3) !important;
     --err-solid: #d92d20 !important;

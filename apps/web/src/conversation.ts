@@ -1,6 +1,18 @@
-import type { Approval, Message, TaskDetail, TaskStatus, TokenUsage, ToolKind } from '@latch/protocol'
+import type { Approval, Message, TaskDetail, TaskStatus, TokenUsage, ToolDecision, ToolKind } from '@latch/protocol'
 import { parseDuration, parseTime } from './core/hostClock.ts'
-import { argumentView, clockTime, dayClockTime, exactTokens, formatDuration, sameDay, sumUsage, tokenAmount } from './format.ts'
+import { DECISION_COPY } from './core/securityCopy.ts'
+import {
+  absoluteTime,
+  argumentView,
+  clockTime,
+  dayClockTime,
+  exactTokens,
+  formatDuration,
+  messageTime,
+  sameDay,
+  sumUsage,
+  tokenAmount,
+} from './format.ts'
 import { toolKind } from './icons.tsx'
 
 /*
@@ -167,7 +179,9 @@ function argument(input: string | undefined, names: string[]): string | undefine
 
 /**
  * What a process row says: a verb by the tool's kind (in the present while it runs) and its object, a path or command
- * in mono and a query or address in text; or, when the tool names no object Latch can read, its own title alone.
+ * in mono and a query or address in text; or, when the tool names no object Latch can read, its own title alone. A
+ * tool that declares its own title (Latch 内置: 「写入文件」) is named by that title with the call's object, and one that
+ * has neither a title nor an object Latch can read shows its raw name in mono, never a guess.
  */
 export interface ToolLabel {
   verb?: string
@@ -175,28 +189,150 @@ export interface ToolLabel {
   mono: boolean
 }
 
+const PATH_KEYS = ['path', 'file', 'file_path', 'filePath']
+/** The arguments a titled tool's object is read from, in order, and whether it is shown in mono. */
+const OBJECT_KEYS: Array<[keys: string[], mono: boolean]> = [
+  [PATH_KEYS, true],
+  [['command', 'cmd'], true],
+  [['query', 'pattern', 'q'], false],
+  [['url'], true],
+]
+
+/** The object of a titled tool's call: its first location or a known argument; the workspace root names nothing. */
+function titledObject(tool: Message['tool']): { object: string; mono: boolean } | undefined {
+  const located = tool?.locations?.[0]
+  if (located) return { object: located, mono: true }
+  for (const [keys, mono] of OBJECT_KEYS) {
+    const value = argument(tool?.input, keys)
+    if (value !== undefined) return value.trim() === '.' || value.trim() === './' ? undefined : { object: value, mono }
+  }
+  return undefined
+}
+
 export function toolLabel(message: Pick<Message, 'tool' | 'toolName' | 'state'>): ToolLabel {
-  const kind = toolKind(message)
   const tool = message.tool
-  const title = tool?.title || message.toolName || '工具调用'
-  const verbs = VERBS[kind]
   const running = message.state === 'running'
+  if (tool?.toolTitle) {
+    const found = titledObject(tool)
+    return found ? { verb: running ? `正在${tool.toolTitle}` : tool.toolTitle, ...found } : { object: tool.toolTitle, mono: false }
+  }
+  const kind = toolKind(message)
+  const verbs = VERBS[kind]
   let object: string | undefined
   let mono = true
   if (kind === 'execute') object = argument(tool?.input, ['command', 'cmd'])
   else if (kind === 'read' || kind === 'edit' || kind === 'delete' || kind === 'move')
-    object = tool?.locations?.[0] ?? argument(tool?.input, ['path', 'file', 'file_path', 'filePath'])
+    object = tool?.locations?.[0] ?? argument(tool?.input, PATH_KEYS)
   else if (kind === 'search') {
     object = argument(tool?.input, ['query', 'pattern', 'q'])
     mono = false
   } else if (kind === 'fetch') object = argument(tool?.input, ['url'])
-  if (object === undefined || verbs === undefined) return { object: title, mono: false }
-  return { verb: verbs[running ? 0 : 1], object, mono }
+  if (object !== undefined && verbs !== undefined) return { verb: verbs[running ? 0 : 1], object, mono }
+  // A title that only repeats the tool's identifier is the raw name.
+  if (tool?.title && tool.title !== message.toolName) return { object: tool.title, mono: false }
+  return message.toolName ? { object: message.toolName, mono: true } : { object: '工具调用', mono: false }
 }
 
-/** How long a tool ran: from its start (after any approval) to its end, or to now while it runs. */
+/**
+ * The words an approval card and an export name a call by: a titled tool's title and object (「写入文件 notes/plan.md」),
+ * else the call's own summary or the tool's name.
+ */
+export function toolHeading(tool: Message['tool'], toolName: string | undefined): string {
+  if (tool?.toolTitle) {
+    const found = titledObject(tool)
+    return found ? `${tool.toolTitle} ${found.object}` : tool.toolTitle
+  }
+  return tool?.title || toolName || '工具调用'
+}
+
+/** The code the built-in harness put before a rejection's tool result until the Host kept decision records. */
+const LEGACY_REJECTED = 'APPROVAL_REJECTED:'
+const legacyRejected = (message: Pick<Message, 'state' | 'tool' | 'text'>) =>
+  message.state === 'failed' && message.tool?.decision === undefined && (message.tool?.output ?? message.text).startsWith(LEGACY_REJECTED)
+
+/** A tool's output as shown: history recorded before decision records still carries the rejection's internal code. */
+export function shownToolOutput(message: Pick<Message, 'state' | 'tool' | 'text'>): string {
+  const output = message.tool?.output ?? message.text
+  return legacyRejected(message) ? output.slice(LEGACY_REJECTED.length).trimStart() : output
+}
+
+/**
+ * How an approval kept a call from running, as far as the reports go: the call settled failed or cancelled without
+ * ever starting, and its approval was not given. History recorded before decision records counts the built-in harness's
+ * old rejection code. A call that started or completed keeps its own state and its changes whatever its record says:
+ * only the built-in harness holds a call back until it is allowed, and an agent's ask in a full-access session is
+ * advisory, so a rejected call may still run.
+ */
+export function unrunOutcome(
+  message: Pick<Message, 'state' | 'tool' | 'text' | 'startedAt'>,
+): 'rejected' | 'expired' | 'cancelled' | undefined {
+  if ((message.state !== 'failed' && message.state !== 'cancelled') || message.startedAt) return undefined
+  const outcome = message.tool?.decision?.outcome
+  if (outcome !== undefined) return outcome === 'allowed' ? undefined : outcome
+  return legacyRejected(message) ? 'rejected' : undefined
+}
+
+/**
+ * A decision the call's own reports contradict: its approval was not given, yet it started or completed. The ask was
+ * advisory (an agent in a full-access session), and the row keeps what the agent reported.
+ */
+export function ranDespite(message: Pick<Message, 'state' | 'tool' | 'text' | 'startedAt'>): ToolDecision | undefined {
+  const decision = message.tool?.decision
+  if (!decision || decision.outcome === 'allowed') return undefined
+  if (message.state === 'awaiting-approval' || message.state === 'queued') return undefined
+  return unrunOutcome(message) === undefined ? decision : undefined
+}
+
+/** The diffs a call applied as far as the reports go: none while it waits or when its approval kept it from running. */
+export function appliedDiffs(message: Pick<Message, 'state' | 'tool' | 'text' | 'startedAt'>) {
+  if (message.state === 'awaiting-approval' || message.state === 'queued' || unrunOutcome(message)) return []
+  return message.tool?.diffs ?? []
+}
+
+/** A tool row's state as shown: a call its approval kept from running reads by how the approval ended. */
+export type ShownToolState = NonNullable<Message['state']> | 'rejected' | 'expired'
+
+export function shownToolState(message: Pick<Message, 'state' | 'tool' | 'text' | 'startedAt'>): ShownToolState {
+  const state = message.state ?? 'completed'
+  return unrunOutcome(message) ?? state
+}
+
+/**
+ * The record line of a decided approval: 「已允许 · 14:32」 and 「已拒绝 · 昨天 09:15」 for a person's choice, with where
+ * they decided in the tooltip; 「已过期」 and 「已取消（会话停止）」 when nobody answered.
+ */
+export function decisionLine(decision: ToolDecision, now: number): { text: string; title: string; full: string } {
+  const at = parseTime(decision.at)
+  const when = at === undefined ? undefined : absoluteTime(at)
+  const chosen = decision.outcome === 'allowed' || decision.outcome === 'rejected'
+  const words =
+    DECISION_COPY[decision.outcome === 'expired' ? 'expired' : decision.outcome === 'cancelled' ? 'cancelled' : decision.outcome]
+  const about = chosen
+    ? decision.via === 'this-mac'
+      ? DECISION_COPY.viaThisMac
+      : decision.via === 'other-device'
+        ? DECISION_COPY.viaOtherDevice
+        : undefined
+    : decision.outcome === 'expired'
+      ? DECISION_COPY.expiredNote
+      : DECISION_COPY.cancelledNote
+  const title = [when, about].filter(Boolean).join(' · ')
+  return {
+    text: chosen && at !== undefined ? `${words} · ${messageTime(at, now)}` : words,
+    title: title || words,
+    // For an export, which is read later and elsewhere: the words, the full time and where or why.
+    full: [words, when, about].filter(Boolean).join(' · '),
+  }
+}
+
+/**
+ * How long a tool ran: from its start (after any approval) to its end, or to now while it runs. A call that reported no
+ * start is timed from when it was recorded, unless an approval was asked for it: that time is the wait for a person,
+ * and a call its approval kept from running did not run at all.
+ */
 export function toolDuration(message: Message, now: number): { ms: number; live: boolean } | undefined {
   if (message.state === 'awaiting-approval' || message.state === 'queued') return undefined
+  if (message.startedAt === undefined && (message.tool?.decision !== undefined || unrunOutcome(message))) return undefined
   const start = parseTime(message.startedAt) ?? parseTime(message.createdAt)
   if (start === undefined) return undefined
   const end = parseTime(message.completedAt)
@@ -320,6 +456,8 @@ export function sideEffects(turn: Turn): SideEffects {
     const kind = message.tool?.kind
     if (kind !== undefined && HARMLESS.has(kind)) continue
     if (message.state === 'queued' || message.state === 'awaiting-approval' || message.state === undefined) continue
+    // A call its approval kept from running changed nothing; one that started anyway counts like any other.
+    if (unrunOutcome(message)) continue
     const unknown = message.state === 'running' || (message.tool?.output ?? message.text).includes('TOOL_OUTCOME_UNKNOWN')
     if (unknown) effects.unknown++
     else if (message.state === 'cancelled' && (message.tool?.output ?? message.text).includes('TOOL_NOT_STARTED')) continue
@@ -398,7 +536,9 @@ export function livePhase(detail: TaskDetail, opts: { cancelling: boolean; appro
  */
 function toolText(message: Message): string {
   const label = toolLabel({ ...message, state: 'running' })
-  return label.verb ? `${label.verb} ${label.object}` : `正在执行 ${label.object}`
+  if (label.verb) return `${label.verb} ${label.object}`
+  // A titled tool without an object says its own title in the present: 「正在运行长任务」.
+  return message.tool?.toolTitle ? `正在${message.tool.toolTitle}` : `正在执行 ${label.object}`
 }
 
 const PHASE_WORDS: Record<Exclude<LivePhase['kind'], 'tool' | 'starting'>, string> = {

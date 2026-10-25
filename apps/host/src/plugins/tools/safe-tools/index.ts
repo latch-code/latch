@@ -39,8 +39,10 @@ async function writeArtifact(prefix: 'report' | 'completion', content: string, c
 export function createToolsPlugin(): HarnessPlugin {
   const report: ToolDefinition = {
     name: 'write_report',
+    title: '写入报告',
     description: '经用户审批后写入当前会话的报告。仅接受可选 content，最多 64 KiB；路径由执行节点固定。',
     requiresApproval: true,
+    kind: 'edit',
     parameters: { type: 'object', properties: { content: { type: 'string', maxLength: CONTENT_LIMIT } }, additionalProperties: false },
     async execute(args, context) {
       if (Object.keys(args).some(key => key !== 'content')) throw new Error('报告工具只接受 content，不接受路径或其他参数。')
@@ -52,8 +54,10 @@ export function createToolsPlugin(): HarnessPlugin {
   }
   const longTask: ToolDefinition = {
     name: 'long_task',
+    title: '运行长任务',
     description: '运行固定 30 秒、可取消的任务，完成后写入当前会话的完成文件。不接受参数。',
     requiresApproval: false,
+    kind: 'execute',
     parameters: { type: 'object', properties: {}, additionalProperties: false },
     async execute(args, context) {
       if (Object.keys(args).length !== 0) throw new Error('长任务不接受路径、时长或其他参数。')

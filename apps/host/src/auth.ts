@@ -4,6 +4,8 @@ import { join } from 'node:path'
 import { z } from 'zod'
 import {
   isAcceptableDeviceName,
+  isLocalListener,
+  LISTENER_CLASSES,
   LISTENER_LABELS,
   SCOPE_LABELS,
   type DataScope,
@@ -12,11 +14,13 @@ import {
   type DeviceStatus,
   type EnrollmentInfo,
   type EnrollmentView,
+  type WaitingEnrollmentView,
   type InvitationView,
   type ListenerClass,
 } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { sha256Hex, syncDirectory, writeFileAtomic } from '@latch/core/node-kit'
+import { isSocketTransport } from './access.ts'
 import type { AuditActor, AuditLog, StepupMethod } from './audit.ts'
 import { constantTimeEqualHex, deviceFingerprint, parseP256Spki, randomCode, randomId, randomNonce, verifyP256 } from './crypto.ts'
 import { paramsHash, type PresenceService } from './presence.ts'
@@ -33,7 +37,10 @@ export const FOLDER_GRANT_TTL = 60_000
 const MAX_FOLDER_GRANTS = 4
 export const LAST_SEEN_PERSIST = 5 * 60_000
 const PRUNE_AFTER = 90 * 24 * 60 * 60_000
+/** Time to confirm an enrollment: the local confirmation's own lifetime, so the page counts down to the sheet closing. */
 export const ENROLLMENT_LIFETIME = 120_000
+/** Once confirmed, the new device has at least this long to sign, however late in the 120 s the person touched the sensor. */
+export const ENROLLMENT_SIGNING_WINDOW = 60_000
 export const INVITATION_LIFETIME = 10 * 60_000
 export const OFFLINE_TICKET_LIFETIME = 15 * 60_000
 const MAX_PENDING_ENROLLMENTS = 32
@@ -54,7 +61,6 @@ export const ALL_SCOPES: readonly DeviceScope[] = ['view', 'run', 'approve:stand
 export const UNIX_ONLY_SCOPES: readonly DeviceScope[] = ['approve:elevated', 'secrets']
 const DEFAULT_REMOTE_SCOPES: readonly DeviceScope[] = ['view', 'run', 'approve:standard']
 const INVITABLE_SCOPES: readonly DeviceScope[] = ['view', 'run', 'approve:standard', 'admin']
-const OFFLINE_LOOPBACK_SCOPES: readonly DeviceScope[] = ['view', 'run', 'approve:standard', 'admin']
 /** Name used when a migrated record's name cannot be shown in a confirmation dialog. */
 const DEFAULT_DEVICE_NAME = '未命名设备'
 
@@ -72,7 +78,7 @@ const storedDevice = z.strictObject({
   id: deviceIdSchema,
   name: z.string().min(1).max(80),
   status: z.enum(['active', 'review', 'revoked', 'legacy-pending']),
-  listener: z.enum(['unix', 'loopback-tcp', 'lan-tls', 'tailnet-tls']),
+  listener: z.enum(LISTENER_CLASSES),
   /** 'unix:' | 'http://h-<hostId>.localhost:<port>' | the TLS public origin; '' for legacy-pending. */
   origin: z.string().max(300),
   /** base64url SPKI DER; '' for legacy-pending. */
@@ -176,9 +182,18 @@ export interface DeviceFs {
 const defaultFs: DeviceFs = { open: (path, flags, mode) => openFile(path, flags, mode), rename: renameFile }
 
 const codeOf = (error: unknown) => (error as NodeJS.ErrnoException | undefined)?.code
+/** PresenceService refusals raised before it shows a window. */
+const UNSHOWN_PRESENCE = new Set(['presence-unavailable', 'presence-blocked', 'presence-cooldown', 'presence-busy'])
 
-function isTls(listener: ListenerClass): boolean {
-  return listener === 'lan-tls' || listener === 'tailnet-tls'
+/** What a confirmation names as the source of a request made on host.sock. */
+const LOCAL_SOURCE = '本机 host.sock'
+/** Loopback peers may arrive through a forwarded port, so a confirmation never presents them as this computer. */
+const FORWARDABLE_PORT = '回环端口（也可能是转发进来的连接）'
+
+function sourceText(connection: ConnectionContext): string {
+  if (isLocalListener(connection.listener)) return LOCAL_SOURCE
+  if (connection.listener === 'loopback-tcp') return `${connection.remoteAddress} · ${FORWARDABLE_PORT}`
+  return connection.remoteAddress
 }
 
 /** Canonical order, `view` always included, unknown names rejected. */
@@ -189,7 +204,7 @@ function normalizeScopes(scopes: readonly string[]): DeviceScope[] {
 }
 
 function requireGrantable(scopes: readonly DeviceScope[], listener: ListenerClass): void {
-  if (listener !== 'unix' && scopes.some(scope => UNIX_ONLY_SCOPES.includes(scope))) {
+  if (!isLocalListener(listener) && scopes.some(scope => UNIX_ONLY_SCOPES.includes(scope))) {
     throw new AppError(400, 'scope-not-grantable', '该权限在此连接方式下不可授予')
   }
 }
@@ -597,7 +612,7 @@ export class DeviceStore {
       return match ? { ok: false, code: 'legacy-reconfirm', legacyName: legacyName(match.name) } : denied
     }
     // Cookies on TCP listeners, the authorization header on host.sock; the other form is ignored.
-    if (presented.kind !== (connection.listener === 'unix' ? 'header' : 'cookie')) return denied
+    if (presented.kind !== (isSocketTransport(connection.listener) ? 'header' : 'cookie')) return denied
     const parsed = CREDENTIAL.exec(presented.value)
     if (!parsed) return denied
     const device = this.find(parsed[1]!)
@@ -1144,8 +1159,11 @@ interface Enrollment {
   dataScope: DataScope
   method: 'lpc' | 'offline' | 'invitation'
   inviterDeviceId?: string
+  invitationId?: string
   confirmationId?: string
   hashDisplay?: string
+  /** What the Host computer's system sheet shows; it names the fingerprint the person compares. */
+  reason?: string
   failures: number
   legacyDeviceId?: string
   completing: boolean
@@ -1156,6 +1174,9 @@ interface Invitation {
   codeHash: string
   scopes: DeviceScope[]
   expiresAt: number
+  /** The only listener and origin it can be used on. */
+  listener: ListenerClass
+  origin: string
   inviterDeviceId?: string
   inviterName?: string
 }
@@ -1206,8 +1227,8 @@ export async function createOfflineTicket(
 }
 
 /**
- * Device enrollment: local confirmation (default), an invitation (required on TLS listeners, still confirmed locally),
- * or an offline code. Pending enrollments and invitations live in memory only.
+ * Device enrollment. On host.sock: local confirmation, or an offline code. On every other listener: an invitation issued
+ * for that listener, still confirmed locally; no offline code. Pending enrollments and invitations live in memory only.
  */
 export class EnrollmentService {
   private readonly hostId: string
@@ -1250,7 +1271,7 @@ export class EnrollmentService {
 
   async info(connection: ConnectionContext, legacyName?: string): Promise<EnrollmentInfo> {
     const availability = await this.presence.availability()
-    const local = connection.listener === 'unix' || connection.listener === 'loopback-tcp'
+    const local = isLocalListener(connection.listener)
     const now = this.now()
     const offline = local && (await readOfflineTickets(this.directory).catch(() => [])).some(ticket => ticket.expiresAt > now)
     return {
@@ -1258,7 +1279,7 @@ export class EnrollmentService {
       listener: connection.listener,
       presence: availability.status === 'available' ? { status: 'available' } : { status: 'unavailable', message: availability.message },
       ...(local ? { firstDevice: !this.devices.hasActiveAdmin() } : {}),
-      invitationRequired: isTls(connection.listener),
+      invitationRequired: !local,
       offlineCodeAccepted: offline,
       ...(connection.listener === 'loopback-tcp' && legacyName ? { legacy: { name: legacyName } } : {}),
     }
@@ -1295,50 +1316,63 @@ export class EnrollmentService {
     }
     if (request.dataScope !== undefined && request.dataScope !== 'work' && request.dataScope !== 'all')
       throw new AppError(400, 'invalid-data-scope', '数据范围无效')
-    const unix = connection.listener === 'unix'
-    const tls = isTls(connection.listener)
+    const local = isLocalListener(connection.listener)
     const id = randomId('enr')
     const now = this.now()
-    let scopes = request.scopes ? normalizeScopes(request.scopes) : unix ? [...ALL_SCOPES] : [...DEFAULT_REMOTE_SCOPES]
-    let dataScope: DataScope = request.dataScope ?? (unix ? 'all' : 'work')
+    let scopes = request.scopes ? normalizeScopes(request.scopes) : local ? [...ALL_SCOPES] : [...DEFAULT_REMOTE_SCOPES]
+    let dataScope: DataScope = request.dataScope ?? (local ? 'all' : 'work')
     requireGrantable(scopes, connection.listener)
     let method: Enrollment['method'] = 'lpc'
     let invitation: Invitation | undefined
     let ticket: OfflineTicket | undefined
 
     if (request.offlineCode !== undefined) {
-      if (tls) throw new AppError(403, 'offline-code-invalid', '离线登记码无效或已过期')
+      // Offline codes skip the local confirmation, so only the desktop app's socket takes them.
+      if (!local) throw new AppError(403, 'offline-code-invalid', '离线登记码无效或已过期')
       ticket = await this.findOfflineTicket(request.offlineCode)
       if (!ticket) throw new AppError(403, 'offline-code-invalid', '离线登记码无效或已过期')
       method = 'offline'
-      scopes = unix ? [...ALL_SCOPES] : [...OFFLINE_LOOPBACK_SCOPES]
-      dataScope = unix ? 'all' : 'work'
-    } else if (tls) {
-      if (request.invitation === undefined) throw new AppError(403, 'invitation-required', '手机等远程设备需要先在电脑上生成配对二维码')
-      invitation = this.findInvitation(request.invitation)
+      scopes = [...ALL_SCOPES]
+      dataScope = 'all'
+    } else if (!local) {
+      // Without an invitation no listener but host.sock can make the Host show a confirmation.
+      if (request.invitation === undefined)
+        throw new AppError(403, 'invitation-required', '新设备需要一次性邀请：请在运行 Latch 的电脑上用 Latch 桌面端生成')
+      invitation = this.findInvitation(request.invitation, connection)
       if (!invitation) throw new AppError(403, 'invitation-invalid', '配对码无效或已过期')
       if (!request.scopes) scopes = scopes.filter(scope => invitation!.scopes.includes(scope))
       if (scopes.some(scope => !invitation!.scopes.includes(scope)))
         throw new AppError(400, 'scope-not-grantable', '该权限在此连接方式下不可授予')
-      // Single use: consumed by the first create that passes validation.
+      // A confirmation that cannot start (a full-access session holds it back, or the component is unavailable) must not
+      // spend the invitation: the phone is told to try again once the session ends, with the same code. Checked only for
+      // a valid invitation, so nobody without one learns that a session runs.
+      await this.presence.assertCanRequest('device.enroll')
+      // Single use: consumed by the first create that passes validation and may ask for the confirmation. Another
+      // create may have taken it during the check.
+      if (this.findInvitation(request.invitation, connection) !== invitation)
+        throw new AppError(403, 'invitation-invalid', '配对码无效或已过期')
       this.invitations.delete(invitation.id)
       method = 'invitation'
     }
-
     const fingerprint = deviceFingerprint(der)
     const actor: AuditActor = { listener: connection.listener, via: 'http' }
-    await this.audit.append({
-      action: 'device.enroll.requested',
-      actor,
-      target: id,
-      detail: {
-        enrollmentId: id,
-        listener: connection.listener,
-        fingerprint: fingerprint.replace(/ /gu, ''),
-        scopes,
-        ...(invitation ? { invitationId: invitation.id } : {}),
-      },
-    })
+    try {
+      await this.audit.append({
+        action: 'device.enroll.requested',
+        actor,
+        target: id,
+        detail: {
+          enrollmentId: id,
+          listener: connection.listener,
+          fingerprint: fingerprint.replace(/ /gu, ''),
+          scopes,
+          ...(invitation ? { invitationId: invitation.id } : {}),
+        },
+      })
+    } catch (error) {
+      this.restoreInvitation(invitation)
+      throw error
+    }
     const enrollment: Enrollment = {
       id,
       status: 'pending',
@@ -1354,6 +1388,7 @@ export class EnrollmentService {
       failures: 0,
       completing: false,
       ...(invitation?.inviterDeviceId ? { inviterDeviceId: invitation.inviterDeviceId } : {}),
+      ...(invitation ? { invitationId: invitation.id } : {}),
       ...(legacyDevice ? { legacyDeviceId: legacyDevice.id } : {}),
     }
 
@@ -1364,11 +1399,10 @@ export class EnrollmentService {
       return this.view(enrollment, true)
     }
 
-    const remoteAddress = unix ? '本机 host.sock' : connection.remoteAddress
     const lines = [
       { label: '设备名称', value: name },
       { label: '设备指纹', value: fingerprint },
-      { label: '来源地址', value: remoteAddress },
+      { label: '来源地址', value: sourceText(connection) },
       { label: '连接方式', value: `${LISTENER_LABELS[connection.listener]} · ${connection.origin}` },
       { label: '请求的权限', value: scopes.map(scope => SCOPE_LABELS[scope]).join('、') },
       { label: '数据范围', value: dataScope === 'all' ? '全部' : '工作' },
@@ -1390,17 +1424,22 @@ export class EnrollmentService {
     try {
       confirmation = await this.presence.request({
         action: 'device.enroll',
-        requester: { deviceName: name, listener: connection.listener, remoteAddress },
+        requester: { deviceName: name, listener: connection.listener, remoteAddress: local ? LOCAL_SOURCE : connection.remoteAddress },
+        // The fingerprint comes first in the sheet: the name is chosen by the device asking and could imitate one.
+        subject: { form: 'device.enroll', slots: { fingerprint, device: name } },
         lines,
         warnings,
         paramsHash: binding,
       })
     } catch (error) {
+      // These refusals come before any window is shown, so the invitation is still unspent; anything else spends it.
+      if (UNSHOWN_PRESENCE.has(String(codeOf(error)))) this.restoreInvitation(invitation)
       await this.failed(id, 'cancelled', actor)
       throw error
     }
     enrollment.confirmationId = confirmation.id
     enrollment.hashDisplay = confirmation.hashDisplay
+    enrollment.reason = confirmation.reason
     this.enrollments.set(id, enrollment)
     void confirmation.settled.then(async outcome => {
       if (enrollment.status !== 'pending') return
@@ -1409,7 +1448,10 @@ export class EnrollmentService {
           this.presence.consume(confirmation.id, { action: 'device.enroll', paramsHash: binding })
           if (enrollment.inviterDeviceId !== undefined && !this.devices.isActive(enrollment.inviterDeviceId))
             throw new Error('inviter revoked')
-          enrollment.status = this.now() > enrollment.expiresAt ? 'expired' : 'approved'
+          const now = this.now()
+          enrollment.status = now > enrollment.expiresAt ? 'expired' : 'approved'
+          // The page reads the new deadline from its next poll.
+          if (enrollment.status === 'approved') enrollment.expiresAt = Math.max(enrollment.expiresAt, now + ENROLLMENT_SIGNING_WINDOW)
           return
         } catch {
           enrollment.status = 'cancelled'
@@ -1432,7 +1474,18 @@ export class EnrollmentService {
       .catch(() => {})
   }
 
-  private findInvitation(code: unknown): Invitation | undefined {
+  /**
+   * Puts back an invitation that a create took but that showed no confirmation, so the same link can be submitted again.
+   * It keeps its own expiry, and the inviter is checked again when it is used.
+   */
+  private restoreInvitation(invitation: Invitation | undefined): void {
+    if (!invitation || invitation.expiresAt < this.now() || this.invitations.size >= MAX_INVITATIONS) return
+    if (invitation.inviterDeviceId !== undefined && !this.devices.isActive(invitation.inviterDeviceId)) return
+    this.invitations.set(invitation.id, invitation)
+  }
+
+  /** An unexpired invitation issued for exactly this listener and origin, from an inviter that is still active. */
+  private findInvitation(code: unknown, connection: ConnectionContext): Invitation | undefined {
     if (typeof code !== 'string' || !/^lpi1-[A-Z2-7]{26}$/u.test(code)) return undefined
     const hash = sha256Hex(code)
     const now = this.now()
@@ -1440,7 +1493,8 @@ export class EnrollmentService {
     for (const invitation of this.invitations.values()) {
       if (constantTimeEqualHex(invitation.codeHash, hash) && invitation.expiresAt >= now) found = invitation
     }
-    if (found?.inviterDeviceId && !this.devices.isActive(found.inviterDeviceId)) return undefined
+    if (!found || found.listener !== connection.listener || found.origin !== connection.origin) return undefined
+    if (found.inviterDeviceId && !this.devices.isActive(found.inviterDeviceId)) return undefined
     return found
   }
 
@@ -1498,7 +1552,29 @@ export class EnrollmentService {
       ...(withNonce ? { nonce: enrollment.nonce } : {}),
       expiresAt: iso(enrollment.expiresAt),
       ...(enrollment.hashDisplay ? { hashDisplay: enrollment.hashDisplay } : {}),
+      ...(enrollment.reason ? { reason: enrollment.reason } : {}),
     }
+  }
+
+  /** Enrollments still waiting, for the desktop's pairing panel; the fingerprint is the code both screens show. */
+  waiting(): WaitingEnrollmentView[] {
+    const now = this.now()
+    const views: WaitingEnrollmentView[] = []
+    for (const item of this.enrollments.values()) {
+      if ((item.status !== 'pending' && item.status !== 'approved') || now > item.expiresAt) continue
+      views.push({
+        id: item.id,
+        name: item.name,
+        fingerprint: item.fingerprint,
+        listener: item.connection.listener,
+        method: item.method,
+        status: item.status,
+        expiresAt: iso(item.expiresAt),
+        ...(item.invitationId ? { invitationId: item.invitationId } : {}),
+        ...(item.reason ? { reason: item.reason } : {}),
+      })
+    }
+    return views
   }
 
   status(id: string, connection: ConnectionContext): EnrollmentView {
@@ -1569,18 +1645,25 @@ export class EnrollmentService {
     void this.failed(enrollment.id, 'cancelled', { listener: connection.listener, via: 'http' })
   }
 
-  /** Ten minutes, single use, in memory. The code is returned exactly once and never logged. */
+  /**
+   * Ten minutes, single use, in memory, valid on one listener and origin only: the TLS entry for a phone, or loopback
+   * for a browser on this computer. The code is returned exactly once and never logged.
+   */
   async createInvitation(
-    input: { inviter?: Device; scopes?: DeviceScope[]; tlsOrigin: string },
+    input: { inviter?: Device; scopes?: DeviceScope[]; listener: ListenerClass; origin: string },
     actor: AuditActor,
   ): Promise<InvitationView> {
+    // The Host's own listeners only: callers pass the TLS entry or the loopback origin it started with.
+    if (isLocalListener(input.listener)) throw new Error('host.sock enrollment takes no invitation')
     let origin: URL | undefined
     try {
-      origin = new URL(input.tlsOrigin)
+      origin = new URL(input.origin)
     } catch {
       origin = undefined
     }
-    if (!origin || origin.protocol !== 'https:' || origin.origin !== input.tlsOrigin) {
+    const loopback = input.listener === 'loopback-tcp'
+    if (!origin || origin.protocol !== (loopback ? 'http:' : 'https:') || origin.origin !== input.origin) {
+      if (loopback) throw new Error('invalid loopback origin')
       throw new AppError(409, 'tls-not-configured', '尚未配置 HTTPS 入口，无法生成手机配对码')
     }
     if (input.inviter && !this.devices.isActive(input.inviter.id)) throw unauthorized()
@@ -1592,14 +1675,21 @@ export class EnrollmentService {
     const id = randomId('inv')
     const code = randomCode('lpi1')
     const expiresAt = this.now() + INVITATION_LIFETIME
-    await this.audit.append({ action: 'pairing.invited', actor, target: id, detail: { invitationId: id, scopes } })
+    await this.audit.append({
+      action: 'pairing.invited',
+      actor,
+      target: id,
+      detail: { invitationId: id, scopes, listener: input.listener },
+    })
     this.invitations.set(id, {
       id,
       codeHash: sha256Hex(code),
       scopes,
       expiresAt,
+      listener: input.listener,
+      origin: input.origin,
       ...(input.inviter ? { inviterDeviceId: input.inviter.id, inviterName: input.inviter.name } : {}),
     })
-    return { id, code, url: `${input.tlsOrigin}/link/#pair=${code}`, scopes, expiresAt: iso(expiresAt) }
+    return { id, code, url: `${input.origin}/link/#pair=${code}`, scopes, expiresAt: iso(expiresAt) }
   }
 }

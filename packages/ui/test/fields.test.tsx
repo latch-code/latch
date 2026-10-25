@@ -19,7 +19,7 @@ describe('text fields', () => {
     const address = screen.getByRole('textbox', { name: '地址' })
     await expect.element(address).toHaveAttribute('aria-invalid', 'true')
     await expect.element(address).toHaveAccessibleDescription('地址要以 https:// 开头。')
-    expect(getComputedStyle(address.element()).boxShadow).toContain('rgb(180, 35, 24)')
+    expect(getComputedStyle(address.element()).boxShadow).toContain('rgb(160, 29, 20)')
   })
 
   it('raises a focused field and rings it in the focus colour whenever it has focus', async () => {

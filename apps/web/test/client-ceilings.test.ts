@@ -21,7 +21,8 @@ import {
 } from '../src/core/ceilings.ts'
 import { deviceAccess } from '../src/core/permissions.ts'
 import { ComputerSettings } from '../src/settings/ComputerSettings.tsx'
-import { settingsSections } from '../src/settings/SettingsPage.tsx'
+import { SETTINGS_ADMIN_HIDDEN } from '../src/core/securityCopy.ts'
+import { hiddenSectionsCaption, SettingsPage, settingsSections } from '../src/settings/SettingsPage.tsx'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -37,6 +38,10 @@ function hostPatched(base: Policy, patch: PolicyPatch): Policy {
   if (patch.hostEgressAllow) {
     const remove = new Set(patch.hostEgressAllow.remove ?? [])
     next.hostEgressAllow = [...new Set([...next.hostEgressAllow.filter(entry => !remove.has(entry)), ...(patch.hostEgressAllow.add ?? [])])]
+  }
+  if (patch.confirmedAddresses) {
+    const remove = new Set(patch.confirmedAddresses.remove)
+    next.confirmedAddresses = (next.confirmedAddresses ?? []).filter(origin => !remove.has(origin))
   }
   return next
 }
@@ -100,6 +105,7 @@ describe('the ceilings of Settings › 电脑', () => {
         draft.remote.allowRemoteStart = false
         draft.remote.workspaces = ['default']
         draft.hostEgressAllow = ['127.0.0.1:11434']
+        draft.confirmedAddresses = ['http://127.0.0.1:11434', 'https://gateway.example:443']
       }),
       policy(draft => {
         draft.remote.harnesses = null
@@ -122,6 +128,8 @@ describe('the ceilings of Settings › 电脑', () => {
       { hostEgressAllow: { add: ['127.0.0.1:11434'] } },
       { hostEgressAllow: { add: ['192.168.1.5:8080'] } },
       { hostEgressAllow: { remove: ['127.0.0.1:11434'] } },
+      { confirmedAddresses: { remove: ['http://127.0.0.1:11434'] } },
+      { confirmedAddresses: { remove: ['https://not-there.example:443'] } },
     ]
     for (const base of bases)
       for (const patch of patches(base)) {
@@ -142,6 +150,7 @@ describe('the ceilings of Settings › 电脑', () => {
       local: { maxLevel: 'L2', allowL3: true },
       remote: { maxLevel: 'L1', allowRemoteStart: true, harnesses: ['standard'], workspaces: null },
       hostEgressAllow: [],
+      confirmedAddresses: [],
     })
     expect(parsePolicy({ ...defaultPolicy('linux'), local: { maxLevel: 'L3', allowL3: true } })).toBeNull()
     expect(parsePolicy({ ...defaultPolicy('linux'), hostEgressAllow: 'x' })).toBeNull()
@@ -228,6 +237,19 @@ describe('Settings › 电脑 on a current Host', () => {
     expect(settingsSections(viewer, deviceAccess(viewer, null))).toEqual(['general', 'computer', 'devices', 'about'])
   })
 
+  it('says under the sections what a device without 管理此 Host does not see, and where it is granted', () => {
+    const viewer = snapshot(['view', 'run'])
+    expect(hiddenSectionsCaption(viewer, deviceAccess(viewer, null))).toBe(SETTINGS_ADMIN_HIDDEN)
+    const html = renderToStaticMarkup(createElement(SettingsPage, { snapshot: viewer, onClose: () => {}, onChanged: () => {} }))
+    expect(html).toContain(`<span>${SETTINGS_ADMIN_HIDDEN}</span>`)
+    // An administrator sees every section, so the line is not there.
+    const admin = snapshot(['view', 'run', 'admin'])
+    expect(hiddenSectionsCaption(admin, deviceAccess(admin, null))).toBeUndefined()
+    expect(renderToStaticMarkup(createElement(SettingsPage, { snapshot: admin, onClose: () => {}, onChanged: () => {} }))).not.toContain(
+      SETTINGS_ADMIN_HIDDEN,
+    )
+  })
+
   it('shows a device without 管理此 Host the summary read-only, with 自动编辑 said honestly', () => {
     const viewer = snapshot(['view'])
     const html = renderToStaticMarkup(
@@ -236,6 +258,9 @@ describe('Settings › 电脑 on a current Host', () => {
     expect(html).toContain('MacBook Pro')
     expect(html).toContain('确认组件未安装')
     expect(html).toContain('未配置')
+    // Phone access says where it is set up, in words, and never with the start options.
+    expect(html).toContain('配置方法见 设置 › 设备 › 手机配对')
+    expect(html).not.toContain('--tls-cert')
     expect(html).toContain('只有能管理此 Host 的设备可以修改上限。')
     expect(html.match(/自动编辑尚未实现，目前按逐项询问执行/gu)).toHaveLength(2)
     expect(html).not.toContain('aria-haspopup')

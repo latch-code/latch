@@ -31,9 +31,12 @@ export async function optionalJsonBody(req: IncomingMessage, limit = 32 * KIB): 
   return jsonBody(req, limit)
 }
 
-export function json(res: ServerResponse, value: unknown, status = 200): void {
+/** Returns the body's size in bytes. */
+export function json(res: ServerResponse, value: unknown, status = 200): number {
+  const body = JSON.stringify(value)
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
-  res.end(JSON.stringify(value))
+  res.end(body)
+  return Buffer.byteLength(body)
 }
 
 export function safeDecode(value: string): string {

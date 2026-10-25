@@ -151,11 +151,50 @@ describe('independent harness runtime', () => {
     )
     const { sessionId } = await bridge.createTask({ prompt: 'write', requestId: 'reject' })
     await waitStatus(bridge, sessionId, 'waiting-approval')
-    await bridge.decide(bridge.approvals()[0]!.id, 'reject')
+    await bridge.decide(bridge.approvals()[0]!.id, 'reject', { via: 'other-device' })
     await waitStatus(bridge, sessionId, 'idle')
     expect(execute).not.toHaveBeenCalled()
-    expect(seen[1]!.at(-1)).toMatchObject({ role: 'tool', isError: true })
-    expect((await bridge.detail(sessionId)).messages.at(-1)?.text).toBe('操作未完成')
+    // The model is told the person rejected it, in words, without an internal code.
+    expect(seen[1]!.at(-1)).toEqual({
+      role: 'tool',
+      toolCallId: 'call-1',
+      isError: true,
+      content: '用户拒绝了本次工具调用，未执行该操作。',
+    })
+    const detail = await bridge.detail(sessionId)
+    expect(detail.messages.at(-1)?.text).toBe('操作未完成')
+    expect(detail.messages.find(message => message.role === 'tool')?.tool?.decision).toEqual({
+      outcome: 'rejected',
+      at: expect.any(String),
+      via: 'other-device',
+    })
+  })
+
+  it('hands the model what the person said to do instead with a rejection, and refuses a note it cannot pass on', async () => {
+    const dataDir = await directory()
+    const seen: ModelMessage[][] = []
+    const bridge = own(
+      createRuntime({
+        dataDir,
+        workspaceRoot: dataDir,
+        registry: registry(toolProvider('write_note', seen), [tool(async () => ({ text: 'unexpected' }))]),
+        providerId: 'fixture',
+      }),
+    )
+    const { sessionId } = await bridge.createTask({ prompt: 'write', requestId: 'note' })
+    await waitStatus(bridge, sessionId, 'waiting-approval')
+    const approval = bridge.approvals()[0]!
+    await expect(bridge.decide(approval.id, 'allow', { note: '改写到 docs/' })).rejects.toMatchObject({ status: 400, code: 'invalid-note' })
+    await expect(bridge.decide(approval.id, 'reject', { note: 'x'.repeat(501) })).rejects.toMatchObject({ code: 'invalid-note' })
+    await expect(bridge.decide(approval.id, 'reject', { note: '改写\u202E到 docs/' })).rejects.toMatchObject({ code: 'invalid-note' })
+    // A refused note leaves the approval open for the next answer.
+    expect(await bridge.decide(approval.id, 'reject', { note: '  先别写文件，\r\n把计划发给我看  ', via: 'this-mac' })).toBe(true)
+    await waitStatus(bridge, sessionId, 'idle')
+    expect(seen[1]!.at(-1)?.content).toBe('用户拒绝了本次工具调用，未执行该操作。用户的说明：先别写文件，\n把计划发给我看')
+    expect((await bridge.detail(sessionId)).messages.find(message => message.role === 'tool')?.tool?.decision).toMatchObject({
+      outcome: 'rejected',
+      via: 'this-mac',
+    })
   })
 
   it('cancels a waiting approval, rejects late decisions, and rejects new input while active', async () => {
@@ -174,10 +213,57 @@ describe('independent harness runtime', () => {
     const approval = bridge.approvals()[0]!
     await expect(bridge.prompt(sessionId, 'another', 'new-input')).rejects.toMatchObject({ status: 409, code: 'task-running' })
     await bridge.cancel(sessionId)
-    expect((await bridge.detail(sessionId)).summary.status).toBe('cancelled')
+    const detail = await bridge.detail(sessionId)
+    expect(detail.summary.status).toBe('cancelled')
+    // Stopping answered the approval for nobody: it is recorded as cancelled, never as a rejection or with a device.
+    expect(detail.messages.find(message => message.role === 'tool')?.tool?.decision).toEqual({
+      outcome: 'cancelled',
+      at: expect.any(String),
+    })
     expect(await bridge.decide(approval.id, 'allow')).toBe(false)
     expect(execute).not.toHaveBeenCalled()
     expect(bridge.approvals()).toEqual([])
+  })
+
+  it('names each run on the session, keeps the name across a restart, and leaves a run alone when a cancel names another', async () => {
+    const dataDir = await directory()
+    // Replies at once, except to 'wait', which runs until it is cancelled.
+    const provider: ModelProvider = {
+      id: 'fixture',
+      name: 'Fixture provider',
+      model: 'fixture-model',
+      async *stream({ messages, signal }) {
+        signal.throwIfAborted()
+        if (messages.at(-1)?.content === 'wait')
+          await new Promise<void>((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }))
+        yield { type: 'text', text: '完成' }
+        yield { type: 'finish', reason: 'stop' }
+      },
+    }
+    const bridge = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: registry(provider), providerId: provider.id }))
+    const runOf = async (id: string) => (await bridge.detail(id)).summary.runId
+    const { sessionId } = await bridge.createTask({ prompt: 'hello', requestId: 'run-create' })
+    await waitStatus(bridge, sessionId, 'idle')
+    const first = await runOf(sessionId)
+    expect(first).toEqual(expect.any(String))
+    expect(await bridge.cancel(sessionId, { runId: first! })).toBe(false)
+    expect(await bridge.cancel(sessionId)).toBe(false)
+
+    await bridge.prompt(sessionId, 'wait', 'run-wait')
+    const second = await runOf(sessionId)
+    expect(second).toEqual(expect.any(String))
+    expect(second).not.toBe(first)
+    expect(await bridge.cancel(sessionId, { runId: first! })).toBe(false)
+    expect((await bridge.detail(sessionId)).summary.status).toBe('running')
+    expect(await bridge.cancel(sessionId, { runId: second! })).toBe(true)
+    expect((await bridge.detail(sessionId)).summary.status).toBe('cancelled')
+    // A retried prompt is answered from its receipt and starts no run.
+    await bridge.prompt(sessionId, 'wait', 'run-wait')
+    expect(await runOf(sessionId)).toBe(second)
+    await bridge.close()
+
+    const restarted = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: registry(provider), providerId: provider.id }))
+    expect((await restarted.listTasks()).find(task => task.id === sessionId)?.runId).toBe(second)
   })
 
   it('propagates cancellation to a real tool and waits for its cleanup before acknowledging; no artifact is written', async () => {
@@ -844,7 +930,7 @@ describe('sessions with chosen models, workspaces, and structured output', () =>
       text: input,
       tool: { kind: 'edit', title: '写入 example', input, diffs },
     })
-    expect(await bridge.decide(approval.id, 'allow', { optionId: 'allow_once' })).toBe(true)
+    expect(await bridge.decide(approval.id, 'allow', { optionId: 'allow_once', via: 'this-mac' })).toBe(true)
     await waitStatus(bridge, sessionId, 'idle')
     expect((await bridge.detail(sessionId)).messages.find(message => message.role === 'tool')).toEqual({
       id: 'tool:call-1',
@@ -852,10 +938,51 @@ describe('sessions with chosen models, workspaces, and structured output', () =>
       toolName: 'write_note',
       text: 'note saved',
       state: 'completed',
-      tool: { kind: 'edit', title: '写入 example', input, diffs, output: 'note saved' },
+      tool: {
+        kind: 'edit',
+        title: '写入 example',
+        input,
+        diffs,
+        output: 'note saved',
+        decision: { outcome: 'allowed', at: expect.any(String), via: 'this-mac' },
+      },
       createdAt: expect.any(String),
       startedAt: expect.any(String),
       completedAt: expect.any(String),
+    })
+  })
+
+  it('carries the title a tool declares to its row and approval, escaped, and never shows it to the classifier', async () => {
+    const dataDir = await directory()
+    const classifyToolCall = vi.fn(async (): Promise<RiskLevel> => 'R1')
+    const definition: ToolDefinition = { ...tool(async () => ({ text: 'note saved' })), kind: 'edit', title: '  写入笔记‮  ' }
+    const bridge = own(
+      createRuntime({
+        dataDir,
+        workspaceRoot: dataDir,
+        registry: registry(toolProvider('write_note'), [definition, { ...tool(async () => ({ text: '' })), name: 'untitled' }]),
+        providerId: 'fixture',
+        classifyToolCall,
+      }),
+    )
+    const { sessionId } = await bridge.createTask({ prompt: 'write', requestId: 'titled' })
+    await waitStatus(bridge, sessionId, 'waiting-approval')
+    const facts = { kind: 'edit', toolTitle: '写入笔记\\u{202E}' }
+    expect(bridge.approvals()[0]!.tool).toEqual({ ...facts, title: 'write_note' })
+    expect(classifyToolCall).toHaveBeenCalledWith({
+      toolName: 'write_note',
+      arguments: { text: 'example' },
+      cwd: dataDir,
+      sessionId,
+      folders: [{ id: 'default', path: dataDir }],
+    })
+    expect(bridge.approvals()[0]!.risk).toBe('R1')
+    await bridge.decide(bridge.approvals()[0]!.id, 'allow')
+    await waitStatus(bridge, sessionId, 'idle')
+    expect((await bridge.detail(sessionId)).messages.find(message => message.role === 'tool')?.tool).toMatchObject({
+      ...facts,
+      title: 'write_note',
+      output: 'note saved',
     })
   })
 
@@ -992,6 +1119,7 @@ describe('sessions with chosen models, workspaces, and structured output', () =>
               { id: 'api', path: '/workspace' },
               { id: 'web', path: '/web' },
             ],
+            runId: 'run-1',
           },
           messages: [
             {

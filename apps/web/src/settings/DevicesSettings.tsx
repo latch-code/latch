@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { Ban, Globe, KeyRound, Laptop, Monitor, Smartphone } from 'lucide-react'
+import { Ban, Globe, KeyRound, Laptop, LockKeyhole, Monitor, Smartphone } from 'lucide-react'
 import {
   escapeSecurityText,
   isAcceptableDeviceName,
+  isLocalListener,
   LISTENER_LABELS,
   SCOPE_LABELS,
   type AppSnapshot,
@@ -11,9 +12,11 @@ import {
 } from '@latch/protocol'
 import { api, errorMessage, inlineError } from '../core/api.ts'
 import { withConfirmation } from '../core/confirmations.ts'
+import { InlineConfirm } from '../components/InlineConfirm.tsx'
 import { dateTime, looksLikePhone, relativeTime } from '../format.ts'
 import { DEV_MODE_TEXT, hostView, type DeviceAccess } from '../core/permissions.ts'
-import { DEVICE_NAME_INVALID_TEXT, LOCAL_ONLY_TEXT } from '../core/securityCopy.ts'
+import { DEVICE_NAME_INVALID_TEXT, describeFailure, LOCAL_ONLY_TEXT } from '../core/securityCopy.ts'
+import { currentShell, type LatchShell } from '../core/shell.ts'
 import { ConfirmDialog, Modal, ModalHeader } from '../components/overlays.tsx'
 import { Badge, Button, InlineNotice, type LucideIcon, Menu, StatusPill, TextField } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
@@ -164,7 +167,7 @@ function RevokeThisDevice({ device, onChanged }: { device: AppSnapshot['device']
 /** Raising a device's scopes needs a local confirmation on the Host's desktop; lowering works from any admin device. */
 function ScopeDialog({ device, local, onClose, onSaved }: { device: Device; local: boolean; onClose: () => void; onSaved: () => void }) {
   const phone = useViewport() === 'phone'
-  const offered = SCOPE_ORDER.filter(scope => device.listener === 'unix' || !LOCAL_SCOPES.has(scope))
+  const offered = SCOPE_ORDER.filter(scope => isLocalListener(device.listener) || !LOCAL_SCOPES.has(scope))
   const [scopes, setScopes] = useState<DeviceScope[]>(() =>
     device.status === 'review'
       ? offered.filter(scope => scope !== 'admin' && !LOCAL_SCOPES.has(scope))
@@ -200,7 +203,7 @@ function ScopeDialog({ device, local, onClose, onSaved }: { device: Device; loca
         if (!busy) onClose()
       }}>
       <ModalHeader title={`调整权限：${deviceLabel(device.name)}`} onClose={onClose} />
-      <div className="modal-body">
+      <div className="ui-modal-body">
         <fieldset className="scope-list" disabled={busy}>
           <legend>此设备的权限</legend>
           {offered.map(scope => (
@@ -219,20 +222,22 @@ function ScopeDialog({ device, local, onClose, onSaved }: { device: Device; loca
         </fieldset>
         {blocked && <p className="settings-hint">{LOCAL_ONLY_TEXT}</p>}
         {error && <InlineNotice tone="error">{error}</InlineNotice>}
+        <InlineConfirm active={busy} />
       </div>
-      <footer className="modal-footer">
+      <footer className="ui-modal-footer">
         <Button size="md" disabled={busy} onClick={onClose}>
           取消
         </Button>
         <Button
           size="md"
           variant="primary"
+          icon={raising ? LockKeyhole : undefined}
           disabled={busy || blocked}
           onClick={() => {
             void submit()
           }}
           loading={busy}>
-          {raising ? '授予权限（需要本机确认）' : '保存权限'}
+          {raising ? '用 Touch ID 授予' : '保存权限'}
         </Button>
       </footer>
     </Modal>
@@ -282,7 +287,7 @@ function RegisteredDevices({ currentId, local, onChanged }: { currentId: string;
                 <span className="settings-row-text">
                   <span className="settings-row-title settings-row-name" data-record="">
                     <span className="device-row-name">{device.name ? <VisibleText text={device.name} /> : '未命名设备'}</span>
-                    {self && <Badge>本机</Badge>}
+                    {self && <Badge>此设备</Badge>}
                     {device.status !== 'active' && <StatusBadge status={device.status} />}
                   </span>
                   <span className="settings-row-description">
@@ -373,6 +378,76 @@ function RegisteredDevices({ currentId, local, onChanged }: { currentId: string;
   )
 }
 
+/**
+ * 「在这台电脑的浏览器中打开」, in the desktop app only. A browser on this computer enrolls over loopback, which takes a
+ * one-time invitation; the shell's main process makes one and opens the default browser with it in the fragment, so
+ * this page never sees the invitation. Without the action (an older shell, or a system that would put the link on a
+ * command line) the row names the terminal command instead. Like 手机配对 beside it, it hands out an invitation, so it is
+ * a security surface (data-secure), and so is its error.
+ */
+function BrowserHere({ openInBrowser }: { openInBrowser: LatchShell['openInBrowser'] | undefined }) {
+  const [busy, setBusy] = useState(false)
+  const [opened, setOpened] = useState(false)
+  const [error, setError] = useState('')
+  const open = async (action: NonNullable<LatchShell['openInBrowser']>) => {
+    setBusy(true)
+    setOpened(false)
+    setError('')
+    try {
+      const result = await action()
+      if (result.ok) setOpened(true)
+      else
+        setError(
+          describeFailure(
+            result.status,
+            result.error,
+            result.message,
+            result.retryAfter === undefined ? {} : { retryAfter: result.retryAfter },
+          ),
+        )
+    } catch {
+      setError(describeFailure(502, 'browser-open-failed', ''))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <>
+      <SettingsGroup
+        title="这台电脑的浏览器"
+        secure
+        caption={opened ? <span role="status">已在浏览器中打开。在浏览器中提交登记后，这台电脑会显示确认窗口。</span> : undefined}>
+        <SettingsRow
+          leading={<IconTile icon={Globe} />}
+          title="一次性登记链接"
+          description={
+            openInBrowser
+              ? '在默认浏览器中打开 Latch，并附上一次性登记链接：10 分钟内有效，只能使用一次。在浏览器中提交后，仍需在这台电脑上核对指纹并确认。'
+              : '此系统上不能从桌面端直接打开浏览器。请在终端运行 pnpm latch device invite --loopback，在浏览器中打开它给出的一次性链接。'
+          }
+          trailing={
+            openInBrowser ? (
+              <Button
+                icon={Globe}
+                loading={busy}
+                onClick={() => {
+                  void open(openInBrowser)
+                }}>
+                在这台电脑的浏览器中打开
+              </Button>
+            ) : undefined
+          }
+        />
+      </SettingsGroup>
+      {error && (
+        <InlineNotice tone="error" secure>
+          {error}
+        </InlineNotice>
+      )}
+    </>
+  )
+}
+
 export function DevicesSettings({
   snapshot,
   access,
@@ -385,6 +460,9 @@ export function DevicesSettings({
   onChanged: () => void
 }) {
   const host = hostView(snapshot)
+  const shell = currentShell()
+  // Only macOS hands the link to the browser without putting it on a command line (see the shell's main process).
+  const openInBrowser = shell?.platform === 'darwin' ? shell.openInBrowser : undefined
   return (
     <>
       <SectionHeading
@@ -393,7 +471,8 @@ export function DevicesSettings({
       />
       <ThisDevice device={snapshot.device} devMode={host?.devMode === true} onChanged={onChanged} />
       {access.admin && <RegisteredDevices currentId={snapshot.device.id} local={access.local} onChanged={onChanged} />}
-      <PairingSection tls={Boolean(host?.tls)} access={access} phone={phone} />
+      {access.local && access.admin && <BrowserHere openInBrowser={openInBrowser} />}
+      <PairingSection tls={Boolean(host?.tls)} access={access} phone={phone} snapshot={snapshot} />
       <RevokeThisDevice device={snapshot.device} onChanged={onChanged} />
     </>
   )

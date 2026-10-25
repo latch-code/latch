@@ -103,6 +103,11 @@ export interface EventStreamConnection {
   reconnect: () => void
   /** Drop the connection and stay disconnected until reconnect(), e.g. while the browser is offline. */
   suspend: () => void
+  /**
+   * The Host announced it stops answering for now: drop the connection and wait at least `delayMs` before each attempt
+   * until a stream opens again, instead of the usual backoff.
+   */
+  deferReconnect: (delayMs: number) => void
   close: () => void
 }
 
@@ -121,6 +126,8 @@ export function connectEventStream(url: string, handlers: EventStreamHandlers, o
   let attempt = 0
   /** One immediate reconnect per renewal: a Host that keeps answering renewal-required falls back to the backoff. */
   let immediateUsed = false
+  /** The shortest wait between attempts the Host asked for; cleared once a stream opens. */
+  let floorMs = 0
 
   const wait = (ms: number) =>
     new Promise<void>(resolve => {
@@ -181,6 +188,7 @@ export function connectEventStream(url: string, handlers: EventStreamHandlers, o
       open = true
       attempt = 0
       immediateUsed = false
+      floorMs = 0
       handlers.onOpen()
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
@@ -226,7 +234,7 @@ export function connectEventStream(url: string, handlers: EventStreamHandlers, o
       handlers.onError()
       if (suspended) continue
       if (result === 'retry-now') continue
-      await wait(backoffDelay(attempt++, options.initialDelayMs, options.maxDelayMs))
+      await wait(Math.max(floorMs, backoffDelay(attempt++, options.initialDelayMs, options.maxDelayMs)))
     }
     open = false
   })()
@@ -244,6 +252,13 @@ export function connectEventStream(url: string, handlers: EventStreamHandlers, o
     suspend: () => {
       if (closed || suspended) return
       suspended = true
+      open = false
+      request?.abort()
+    },
+    deferReconnect: delayMs => {
+      if (closed) return
+      floorMs = Math.max(0, delayMs)
+      attempt = 0
       open = false
       request?.abort()
     },

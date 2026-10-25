@@ -1,11 +1,22 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
-import { ChevronLeft, RefreshCw, SquarePen, X } from 'lucide-react'
-import type { Approval, AppSnapshot, TaskDetail, TaskSummary } from '@latch/protocol'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { ChevronLeft, RefreshCw, ShieldAlert, SquarePen, X } from 'lucide-react'
+import type { Approval, AppSnapshot, ModelRef, TaskDetail, TaskSummary, SearchHit } from '@latch/protocol'
 import { api, ApiError, errorMessage, inlineError, isUncertain } from './core/api.ts'
 import { choiceKind, DecisionRequests, settledOutcome } from './core/approvalDecision.ts'
 import { AUDIT_ROLLBACK_TEXT, useAuditCheckpoint } from './core/auditCheckpoint.ts'
+import { cancelAnswer, CancelRequests } from './core/cancelRequest.ts'
 import { usesDrawer, useCoarsePointer, useViewport, useWindowWidth } from './breakpoints.ts'
-import { findHarness, findProvider, sessionHarness, sessionModel, startBlock, usesDemoModel } from './composerChoice.ts'
+import {
+  entryKey,
+  findHarness,
+  findProvider,
+  harnessName as harnessLabel,
+  projectFor,
+  sessionHarness,
+  sessionModel,
+  startBlock,
+  usesDemoModel,
+} from './composerChoice.ts'
 import {
   clampInspector,
   INSPECTOR_DEFAULT,
@@ -15,12 +26,15 @@ import {
   inspectorOpen,
   placeInspector,
 } from './inspectorLayout.ts'
+import { openSession, setSessionOpener } from './core/blocking.ts'
 import { ConfirmationError, withConfirmation, type ConfirmationPresenter } from './core/confirmations.ts'
+import { provideSessionLinks } from './core/sessionLinks.ts'
 import { exportFileName, saveText, transcriptMarkdown } from './exportMarkdown.ts'
 import { basename, isActive } from './format.ts'
-import { approvalActions, composerGate, deviceAccess, harnessLevel, hostView, L3_START_HINT, LEGACY_HOST_TEXT } from './core/permissions.ts'
+import { approvalActions, composerGate, deviceAccess, harnessLevel, hostView, LEGACY_HOST_TEXT } from './core/permissions.ts'
 import { setPreference, usePreferences } from './preferences.ts'
-import { isSessionStopCode, SESSION_STOP_TEXT, type SessionStopCode } from './core/securityCopy.ts'
+import { CODE_ROOT_COPY, DECISION_COPY, isSessionStopCode, SESSION_STOP_TEXT, type SessionStopCode } from './core/securityCopy.ts'
+import { workbenchShortcut } from './workbenchShortcuts.ts'
 import { sessionMenuSections } from './sessionMenu.ts'
 import {
   SIDEBAR_MIN,
@@ -31,28 +45,74 @@ import {
   sidebarMax,
   widthClassOf,
 } from './sidebarLayout.ts'
-import { emptySeen, isUnread, markSeen, pruneSeen, readSeen, writeSeen, type SeenState, type SessionFilter } from './sessions.ts'
+import {
+  emptySeen,
+  isUnread,
+  markSeen,
+  markUnread,
+  projectOf,
+  groupSessions,
+  filterSessions,
+  pruneSeen,
+  readSeen,
+  writeSeen,
+  type SeenState,
+  type SessionFilter,
+} from './sessions.ts'
 import type { useHarness } from './core/useHarness.ts'
 import { useReadingPosition } from './core/useReadingPosition.ts'
-import { currentShell } from './core/shell.ts'
+import { hostNoticeCopy } from './core/hostState.ts'
+import { hostLine, hostNeedsStart, keepAwakeLine, useShellLifecycle } from './core/shellLifecycle.ts'
+import { ApprovalVisibilityContext, useApprovalVisibility, useApprovalsInView } from './hooks/useApprovalsInView.ts'
+import { currentShell, shellFolders } from './core/shell.ts'
 import { useDrawer } from './hooks/useDrawer.ts'
+import { useRejectionNote } from './hooks/useRejectionNote.ts'
 import { useStableCallback } from './hooks/useStableCallback.ts'
 import { useRunClock } from './hooks/useRunClock.ts'
 import { useSubmission } from './hooks/useSubmission.ts'
 import { useSwitchFade } from './hooks/useSwitchFade.ts'
+import { openLayer, useBackLayer } from './hooks/backStack.ts'
+import { scopedTemplates, usePromptTemplates } from './hooks/usePromptTemplates.ts'
+import { useSessionSearch } from './hooks/useSessionSearch.ts'
+import { SessionSearchResults } from './components/SessionSearchResults.tsx'
+import { GettingStarted } from './components/GettingStarted.tsx'
+import { KeyboardHelp } from './components/KeyboardHelp.tsx'
+import { FindBar } from './components/FindBar.tsx'
+import { CommandPalette } from './components/CommandPalette.tsx'
+import { ArchiveBatch } from './components/ArchiveBatch.tsx'
 import { Composer, type RunState } from './components/Composer.tsx'
+import { InlineConfirm } from './components/InlineConfirm.tsx'
 import { NewSessionControls, SessionControls } from './components/ComposerControls.tsx'
 import { Inspector, type InfoBlock } from './components/Inspector.tsx'
-import { NewSession, SetupCard } from './components/NewSession.tsx'
+import { SessionPanels } from './components/SessionPanels.tsx'
+import { ContextRow, DemoSuggestions, NewSession, SetupCard } from './components/NewSession.tsx'
+import { HarnessChoice } from './components/HarnessChoice.tsx'
+import { NewSessionSheet } from './components/NewSessionSheet.tsx'
+import { PhoneSessionList } from './components/PhoneSessionList.tsx'
 import { ConfirmDialog, PromptDialog, type MenuSection } from './components/overlays.tsx'
 import { ApprovalStatuses, type ApprovalStatus } from './components/ApprovalCard.tsx'
+import { codeRootWorkspace } from './components/CodeRootNotice.tsx'
 import { Rail, Sidebar } from './components/Sidebar.tsx'
 import { TopBar } from './components/TopBar.tsx'
 import { Banner } from './components/Banner.tsx'
 import { JumpLatest } from './components/JumpLatest.tsx'
 import { Transcript } from './components/Transcript.tsx'
 import { isLive, toolRowId } from './conversation.ts'
-import { Button, IconButton, InlineNotice, LiveChanges, Loading, ResizeHandle, Toast, usePresence, type ResizePhase } from '@latch/ui'
+import {
+  Button,
+  Collapse,
+  Icon,
+  IconButton,
+  InlineNotice,
+  LiveChanges,
+  Loading,
+  LayerHistory,
+  MOTION,
+  ResizeHandle,
+  Toast,
+  usePresence,
+  type ResizePhase,
+} from '@latch/ui'
 import { SettingsPage, type SettingsSection } from './settings/SettingsPage.tsx'
 
 type Harness = ReturnType<typeof useHarness>
@@ -85,6 +145,15 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
   const [sidebarDrag, setSidebarDrag] = useState<{ width: number } | { collapsed: true } | null>(null)
   /** 会话信息 as a page in the conversation's place: on phones, and on tablets too narrow for the column. */
   const [infoPage, setInfoPage] = useState(false)
+  /** Phones: the new-session sheet over the session list. */
+  const [newSheet, setNewSheet] = useState(false)
+  /** Phones: the search row under the list's header. */
+  const [phoneSearching, setPhoneSearching] = useState(false)
+  /** Phones: the open session slides back to the list; it is let go once the slide ends. */
+  const [popping, setPopping] = useState(false)
+  /** Phones: the open session was pushed over the list while the person watched (not restored with the page). */
+  const [pushed, setPushed] = useState(false)
+  const popTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   /** The column's width under a drag of its edge. */
   const [inspectorDrag, setInspectorDrag] = useState<number | null>(null)
   /** Shut by the person (its button, a drag past the snap point, the keyboard), as opposed to shut for the column. */
@@ -126,6 +195,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
   useEffect(
     () => () => {
       clearTimeout(snapTimer.current)
+      clearTimeout(popTimer.current)
     },
     [],
   )
@@ -154,8 +224,18 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
     setPreference('sidebar', { width, collapsed })
   }
   const composerRef = useRef<HTMLTextAreaElement>(null)
+  /** The new-session page's 「添加 Agent」 tile, which the line under the input opens as well. */
+  const addAgentTrigger = useRef<HTMLButtonElement>(null)
+  /** The input of the phone's new-session sheet, apart from the open session's. */
+  const sheetComposerRef = useRef<HTMLTextAreaElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
+  const [keyboardHelp, setKeyboardHelp] = useState(false)
+  const [commandOpen, setCommandOpen] = useState(false)
+  const [findOpen, setFindOpen] = useState(false)
   const [search, setSearch] = useState('')
+  const promptTemplates = usePromptTemplates(snapshot.catalog?.features?.promptTemplates === true, snapshot.catalog?.promptTemplatesVersion)
+  const contentSearch = useSessionSearch(search, snapshot.catalog?.features?.search === true)
+  const [searchTarget, setSearchTarget] = useState<SearchHit | null>(null)
   const [filter, setFilter] = useState<SessionFilter>('all')
   const [settings, setSettings] = useState<{ section?: SettingsSection } | null>(null)
   const inspectorToggle = useRef<HTMLButtonElement>(null)
@@ -174,14 +254,18 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
   const approvalFlights = useRef(new Set<string>())
   const [cancelling, setCancelling] = useState<ReadonlySet<string>>(new Set())
   const [cancelUncertain, setCancelUncertain] = useState<ReadonlySet<string>>(new Set())
+  // A stop whose answer never came is not known to be under way: only the bar above the input speaks of it.
+  const stopping = useMemo(() => new Set([...cancelling].filter(id => !cancelUncertain.has(id))), [cancelling, cancelUncertain])
   const [configBusy, setConfigBusy] = useState<ReadonlyMap<string, string>>(new Map())
   const [now, setNow] = useState(() => Date.now())
   /** Sessions that stopped accepting input, learned from the Host's refusal. */
   const [stopped, setStopped] = useState<ReadonlyMap<string, SessionStopCode>>(new Map())
   const decisions = useRef(new DecisionRequests())
+  const cancels = useRef(new CancelRequests())
 
   const catalog = snapshot.catalog
   const shell = currentShell()
+  const lifecycle = useShellLifecycle()
   const host = hostView(snapshot)
   const scopesKey = host ? `${snapshot.device.listener}:${snapshot.device.scopes.join(',')}` : 'legacy'
   // Recomputed only when the device's listener or scopes change, so approval cards stay memoized across snapshots.
@@ -195,15 +279,19 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
   )
   const active = isActive(summary?.status)
   const harnessInfo = sessionHarness(catalog, summary)
-  const harnessName = harnessInfo?.name ?? snapshot.harness?.name ?? 'Latch'
+  // The built-in harness is 「Latch 内置」 wherever the page names it.
+  const harnessName = harnessInfo ? harnessLabel(harnessInfo) : (snapshot.harness?.name ?? 'Latch')
 
   const reading = useReadingPosition({
     sessionId: selectedId,
     ready: current !== null,
     contentVersion: `${current?.cursor ?? 0}:${current?.liveText.length ?? 0}:${current?.liveReasoning?.length ?? 0}:${approvals.length}`,
   })
-  // Another session's record in the conversation area fades in; the reading position restores as usual.
-  useSwitchFade(reading.containerRef, current?.summary.id ?? null)
+  // Fade the content, not the masked scroller: animating the latter can leave Chromium's hit-test region empty.
+  useSwitchFade(reading.contentRef, current?.summary.id ?? null)
+  // The bar above the input says approvals wait only while none of their cards is in view.
+  const approvalVisibility = useApprovalVisibility()
+  const approvalsInView = useApprovalsInView(approvalVisibility)
   const stopSession = (sessionId: string, cause: unknown) => {
     if (cause instanceof ApiError && isSessionStopCode(cause.code)) {
       const code = cause.code
@@ -219,6 +307,9 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
     onSent: sessionId => {
       setFilter('all')
       setSearch('')
+      setNewSheet(false)
+      setPhoneSearching(false)
+      setPushed(true)
       reading.show(sessionId)
     },
     onRefused: stopSession,
@@ -283,6 +374,9 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
   }, [snapshot])
 
   const choose = useStableCallback((id: string | null) => {
+    clearTimeout(popTimer.current)
+    setPopping(false)
+    setPushed(id !== null)
     select(id)
     drawer.setOpen(false)
     setInfoPage(false)
@@ -296,18 +390,77 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
   const clearAction = (sessionId: string) => {
     setActionError(previous => (previous?.sessionId === sessionId ? null : previous))
   }
+  /** A new session starts where the person is: in the open session's project, else as last chosen. */
   const startNew = () => {
+    const project = selectedId === null ? undefined : projectFor(catalog, summary)
+    // A phone keeps its list under the sheet, and what was being drafted there stays for the next time it opens.
+    if (phone) {
+      if (selectedId !== null) choose(null)
+      if (project) submission.updateChoice({ workspaceId: project })
+      setNewSheet(true)
+      return
+    }
     choose(null)
+    if (project) submission.updateChoice({ workspaceId: project })
     requestAnimationFrame(() => {
       composerRef.current?.focus({ preventScroll: true })
     })
   }
+  /**
+   * Phones: the open session slides back to the list (180ms), then is let go, and focus lands on its row; at once without
+   * motion, or when the browser has already drawn the way back (its own edge swipe).
+   */
+  const back = (instant = false) => {
+    const id = selectedId
+    const arrive = () => {
+      choose(null)
+      requestAnimationFrame(() => {
+        if (id !== null) document.querySelector<HTMLElement>(`#session-navigation [data-task-id="${CSS.escape(id)}"]`)?.focus()
+      })
+    }
+    if (instant || !matchMedia('(prefers-reduced-motion: no-preference)').matches) {
+      arrive()
+      return
+    }
+    setPopping(true)
+    clearTimeout(popTimer.current)
+    popTimer.current = setTimeout(arrive, MOTION.slowExit)
+  }
+  // The confirmation dock opens the session that holds a confirmation back, from settings too.
+  useEffect(
+    () =>
+      setSessionOpener(id => {
+        setSettings(null)
+        choose(id)
+      }),
+    [choose],
+  )
   const openSettings = (section?: SettingsSection) => {
     drawer.setOpen(false)
+    setNewSheet(false)
     setSettings(section ? { section } : {})
   }
+  // A confirmation refused for a running full-access session names it: 查看会话 opens it, 停止会话 stops it.
+  const openBlocking = useStableCallback((id: string) => {
+    openSession(id)
+  })
+  const stopBlocking = useStableCallback(async (id: string) => {
+    await cancelSession(id)
+  })
+  useLayoutEffect(() => {
+    provideSessionLinks({ open: openBlocking, stop: stopBlocking, snapshot })
+    return () => {
+      provideSessionLinks(null)
+    }
+  }, [openBlocking, stopBlocking, snapshot])
   const openSearch = () => {
-    if (drawerMode) drawer.show(searchRef.current)
+    if (phone) {
+      if (selectedId !== null) choose(null)
+      setPhoneSearching(true)
+      requestAnimationFrame(() => {
+        searchRef.current?.focus({ preventScroll: true })
+      })
+    } else if (drawerMode) drawer.show(searchRef.current)
     else if (sidebarCollapsed) {
       // The search is in the shut column: open it, then focus the search once the column can take focus.
       focusAfterToggle.current = { target: searchRef, shut: false }
@@ -316,10 +469,20 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
   }
 
   const searchShortcut = useStableCallback((event: KeyboardEvent) => {
+    if (
+      event.key.toLowerCase() === 'f'
+      && (event.metaKey || event.ctrlKey)
+      && selectedId !== null
+      && !document.querySelector('dialog[open]')
+    ) {
+      event.preventDefault()
+      setFindOpen(true)
+      return
+    }
     if (event.key.toLowerCase() !== 'k' || !(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return
     if (document.querySelector('dialog[open]')) return
     event.preventDefault()
-    openSearch()
+    setCommandOpen(true)
   })
   useEffect(() => {
     window.addEventListener('keydown', searchShortcut)
@@ -328,6 +491,13 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
     }
   }, [searchShortcut])
 
+  useEffect(
+    () =>
+      currentShell()?.notifications?.subscribe(id => {
+        if (snapshot.tasks.some(task => task.id === id)) choose(id)
+      }),
+    [choose, snapshot.tasks],
+  )
   const { reveal, jumpToLatest } = reading
   const revealApprovals = () => {
     const target = approvals[0]
@@ -341,15 +511,77 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
     reading.show(oldest.sessionId, toolRowId(oldest))
   }
 
+  const previousApprovals = useRef(new Set(snapshot.approvals.map(item => item.id)))
+  const [approvalToast, setApprovalToast] = useState<{ sessionId: string; id: string } | null>(null)
+  useEffect(() => {
+    const other = snapshot.approvals.find(item => !previousApprovals.current.has(item.id) && item.sessionId !== selectedId)
+    previousApprovals.current = new Set(snapshot.approvals.map(item => item.id))
+    if (other) setApprovalToast({ sessionId: other.sessionId, id: other.id })
+  }, [snapshot.approvals, selectedId])
+  useEffect(() => {
+    if (!approvalToast) return
+    const timer = setTimeout(() => setApprovalToast(null), 6000)
+    return () => clearTimeout(timer)
+  }, [approvalToast])
+  const approvalCursor = useRef<string | null>(null)
+  const [approvalFocus, setApprovalFocus] = useState<string | null>(null)
+  const nextApproval = useStableCallback(() => {
+    const ordered = snapshot.approvals.toSorted((a, b) => a.requestedAt.localeCompare(b.requestedAt))
+    if (!ordered.length) return
+    const currentIndex = ordered.findIndex(item => item.id === approvalCursor.current)
+    const target = ordered[(currentIndex + 1) % ordered.length]!
+    approvalCursor.current = target.id
+    setApprovalFocus(target.id)
+    choose(target.sessionId)
+    reading.show(target.sessionId, toolRowId(target))
+  })
+  const focusedApproval = snapshot.approvals.find(item => item.id === approvalFocus)
+  const approvalFocusRow = focusedApproval && toolRowId(focusedApproval)
+  const approvalFocusSession = focusedApproval?.sessionId
+  useEffect(() => {
+    if (!approvalFocusRow || current?.summary.id !== approvalFocusSession) return
+    const frame = requestAnimationFrame(() => {
+      const row = document.querySelector<HTMLElement>(`.transcript [data-message-id="${CSS.escape(approvalFocusRow)}"]`)
+      if (row) {
+        row.tabIndex = -1
+        row.focus({ preventScroll: true })
+        row.setAttribute('data-approval-target', '')
+      }
+    })
+    const timer = setTimeout(() => {
+      document.querySelectorAll('[data-approval-target]').forEach(row => row.removeAttribute('data-approval-target'))
+      setApprovalFocus(null)
+    }, 2500)
+    return () => {
+      cancelAnimationFrame(frame)
+      clearTimeout(timer)
+    }
+  }, [approvalFocusRow, approvalFocusSession, current?.summary.id])
+  useEffect(() => {
+    const handle = (event: KeyboardEvent) => {
+      if (
+        event.code === 'KeyA'
+        && event.altKey
+        && (currentShell() ? event.metaKey : event.shiftKey)
+        && !document.querySelector('dialog[open]')
+      ) {
+        event.preventDefault()
+        nextApproval()
+      }
+    }
+    window.addEventListener('keydown', handle)
+    return () => window.removeEventListener('keydown', handle)
+  }, [nextApproval])
+  // `note`: with a rejection of the built-in harness's approval, what to do instead (see `rejectionNoteFor`).
   const decide = useCallback(
-    async (approval: Approval, decision: 'allow' | 'reject', optionId: string | undefined) => {
+    async (approval: Approval, decision: 'allow' | 'reject', optionId: string | undefined, note?: string) => {
       if (approvalFlights.current.has(approval.id)) return
       approvalFlights.current.add(approval.id)
       setApprovalBusy(previous => new Map(previous).set(approval.id, optionId ?? (decision === 'allow' ? 'allow_once' : 'reject_once')))
       clearAction(approval.sessionId)
       // One requestId per decision, reused when the same choice is retried after an unknown outcome.
-      const requestId = decisions.current.idFor(approval.id, decision, optionId)
-      const body = { decision, requestId, ...(optionId ? { optionId } : {}) }
+      const requestId = decisions.current.idFor(approval.id, decision, optionId, note)
+      const body = { decision, requestId, ...(optionId ? { optionId } : {}), ...(note && decision === 'reject' ? { note } : {}) }
       const mark = (status: ApprovalStatus) => {
         setApprovalStatuses(previous => {
           if (Object.keys(status).length === 0 && !previous.has(approval.id)) return previous
@@ -363,8 +595,9 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
       // this computer, and a confirmation that did not pass or could not start leaves its reason in the card. Once
       // confirmed, the line says so until the card folds away; any other ending is settled below.
       const inCard: ConfirmationPresenter = {
-        show: view => {
-          if (view.phase === 'waiting' || view.phase === 'sending') mark({ confirming: view.phase })
+        show: (view, actions) => {
+          if (view.phase === 'waiting' || view.phase === 'sending')
+            mark({ confirming: view.phase, ticket: view.ticket, cancel: actions.cancel })
           else mark({ failure: { text: view.message, tone: view.phase === 'failed' ? 'error' : 'warn' } })
         },
         close: () => {},
@@ -389,7 +622,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
         const unknown = settled === undefined && isUncertain(cause)
         // An unknown outcome stays on the card, which offers to send the same choice again with the same requestId; a
         // reason the card already shows (a confirmation that did not pass) stays too; anything else clears it.
-        if (unknown) mark({ uncertain: { decision, optionId } })
+        if (unknown) mark({ uncertain: { decision, optionId, ...(note && decision === 'reject' ? { note } : {}) } })
         else if (!(cause instanceof ConfirmationError && cause.handled)) mark({})
         if (settled === undefined) {
           const text = unknown ? '' : inlineError(cause)
@@ -408,32 +641,35 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
     },
     [refresh],
   )
-  const onDecide = useCallback(
-    (approval: Approval, decision: 'allow' | 'reject', optionId: string | undefined) => {
-      void decide(approval, decision, optionId)
-    },
-    [decide],
-  )
 
-  const cancel = async () => {
-    if (selectedId === null || (cancelling.has(selectedId) && !cancelUncertain.has(selectedId))) return
-    const id = selectedId
+  const cancelSession = useStableCallback(async (id: string) => {
+    if (cancelling.has(id) && !cancelUncertain.has(id)) return
+    // The run on screen: a stop that arrives after it ended must not stop the next one.
+    const runId = (current?.summary.id === id ? current.summary : snapshot.tasks.find(task => task.id === id))?.runId
     setCancelling(previous => new Set(previous).add(id))
     setCancelUncertain(previous => without(previous, id))
     clearAction(id)
     try {
-      await api<unknown>(`tasks/${encodeURIComponent(id)}/cancel`, { method: 'POST' })
+      const answer = cancelAnswer(
+        await api<unknown>(`tasks/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: cancels.current.bodyFor(id, runId) }),
+      )
+      cancels.current.settle(id)
+      if (answer === 'ended' || answer === 'newer') {
+        setCancelling(previous => without(previous, id))
+        setToast({ text: answer === 'newer' ? '要停止的那一轮已经结束，新的一轮仍在运行' : '这一轮已经结束，无需停止', tone: 'ok' })
+      }
       await refresh()
     } catch (cause) {
-      if (isUncertain(cause)) {
-        setCancelUncertain(previous => new Set(previous).add(id))
-        failAction(id, '取消结果尚未确认。恢复连接后可重试取消。')
-      } else {
+      cancels.current.settle(id, cause)
+      // An unknown outcome is said once, in the bar above the input with its 重试; it is not a failure.
+      if (isUncertain(cause)) setCancelUncertain(previous => new Set(previous).add(id))
+      else {
         failAction(id, errorMessage(cause))
         setCancelling(previous => without(previous, id))
       }
+      throw cause
     }
-  }
+  })
 
   const setConfig = async (configId: string, value: string) => {
     if (selectedId === null || configBusy.has(selectedId)) return
@@ -486,6 +722,20 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
       sessionMenuSections(
         task,
         {
+          unread: () => {
+            setSeen(previous => markUnread(previous, task.id))
+          },
+          copy: () => {
+            void (async () => {
+              try {
+                const data = task.id === current?.summary.id ? current : await api<TaskDetail>(`tasks/${encodeURIComponent(task.id)}`)
+                await navigator.clipboard.writeText(transcriptMarkdown(data))
+                setToast({ text: '已复制 Markdown', tone: 'ok' })
+              } catch (cause) {
+                setToast({ text: errorMessage(cause), tone: 'error' })
+              }
+            })()
+          },
           rename: () => {
             setRenaming(task)
           },
@@ -504,7 +754,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
         },
         manageable,
       ),
-    [patchTask, exportTask, manageable, setRenaming, setDeleting],
+    [patchTask, exportTask, manageable, setRenaming, setDeleting, current],
   )
 
   // Composer: new-session choices or the open session's next-turn settings.
@@ -528,6 +778,42 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
         : !catalog && snapshot.execution?.ready === false
           ? '当前模型接口不可用，请检查模型插件状态。'
           : undefined
+  // 「告诉 Agent 改做什么」 after 拒绝: a Latch 内置 rejection waits for the note in the composer; an agent's goes at once.
+  const rejection = useRejectionNote({
+    selectedId,
+    open: snapshot.approvals,
+    active,
+    mayType: selectedId !== null && gate.kind === 'open' && sessionBlock === undefined && submission.pending === null,
+    hostTakesNote: host?.rejectionNote === true,
+    decide: (approval, optionId, note) => {
+      void decide(approval, 'reject', optionId, note)
+    },
+    focusComposer: () => {
+      composerRef.current?.focus({ preventScroll: true })
+    },
+    keepText: text => {
+      if (!submission.draft.trim()) submission.setDraft(text)
+    },
+  })
+  const onDecide = useStableCallback(
+    (approval: Approval, decision: 'allow' | 'reject', optionId: string | undefined, again?: { note?: string }) => {
+      if (decision === 'reject' && again === undefined) rejection.reject(approval, optionId)
+      else void decide(approval, decision, optionId, again?.note)
+    },
+  )
+  const statuses = useMemo(
+    () =>
+      rejection.noting === undefined
+        ? approvalStatuses
+        : new Map(approvalStatuses).set(rejection.noting, { ...approvalStatuses.get(rejection.noting), noting: true as const }),
+    [approvalStatuses, rejection.noting],
+  )
+  const noteComposer = rejection.composer
+  // A new Agent session in a folder inside Latch's program directory: every write will ask on the Host's computer.
+  const codeRootChoice =
+    selectedId === null && !startsL3 && choice.mode !== 'chat'
+      ? codeRootWorkspace(catalog?.workspaces, { id: choice.workspaceId })
+      : undefined
   const currentModel = sessionModel(summary)
   const effectiveModel = submission.override ?? currentModel
   const mode = selectedId === null ? choice.mode : (summary?.mode ?? 'agent')
@@ -543,15 +829,18 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
       : selectedId !== null && (cancelling.has(selectedId) || phase === 'cancelling')
         ? 'cancelling'
         : 'idle'
+  const firstApproval = approvals[0]
   const run: RunState | undefined =
     selectedId !== null && active
       ? {
           ...(current?.plan?.length ? { plan: current.plan } : {}),
           approvals: approvals.length,
+          approvalsInView: approvalsInView !== false,
+          ...(firstApproval ? { approvalTitle: firstApproval.tool?.title || firstApproval.toolName } : {}),
           onRevealApprovals: revealApprovals,
           cancel: cancelState,
           onCancel: () => {
-            void cancel()
+            if (selectedId !== null) void cancelSession(selectedId).catch(() => {})
           },
         }
       : undefined
@@ -579,40 +868,119 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
         ? mode === 'chat'
           ? '写下问题或想法…'
           : '描述任务，以及你希望得到的结果…'
-        : mode === 'chat'
-          ? '继续对话 · 对话模式不调用工具'
-          : '继续补充要求…'
+        : active
+          ? '可以先写，本轮结束后发送…'
+          : mode === 'chat'
+            ? '继续对话 · 不读写文件、不运行命令'
+            : `回复 ${harnessInfo ? harnessLabel(harnessInfo) : harnessName}…`
+  // Starting a full-access session takes the local confirmation: the send slot says so, and is blocked while this
+  // computer cannot confirm.
+  const presenceDown = startsL3 && host?.presence.status === 'unavailable'
+  const startReason = presenceDown ? `本机确认不可用${host?.presence.message ? `：${host.presence.message}` : ''}` : undefined
+  const folders = shellFolders()
+  const createProject =
+    folders && access.local && owner && catalog
+      ? () => {
+          void (async () => {
+            const result = await folders.pick()
+            if (result.status !== 'added') {
+              if (result.status === 'failed') setToast({ text: '没有新建项目。请在设置 › 项目中重试。', tone: 'error' })
+              return
+            }
+            const added = result.added[0]
+            const refused = result.refused[0]
+            if (refused)
+              setToast({ text: `没有加入 ${basename(refused.path)}：${refused.message ?? '执行端拒绝了这个文件夹。'}`, tone: 'error' })
+            await refresh()
+            if (added) submission.updateChoice({ workspaceId: added.workspaceId })
+          })()
+        }
+      : undefined
+  const onlyBuiltIn = catalog !== undefined && !catalog.harnesses.some(item => item.source !== 'builtin')
   const composer = (
     <Composer
       textareaRef={composerRef}
+      commands={current?.commands}
+      templates={scopedTemplates(
+        promptTemplates,
+        selectedId === null
+          ? (choice.workspaceId ?? catalog?.defaults.workspaceId)
+          : summary && catalog
+            ? projectOf(summary, catalog.workspaces)?.id
+            : undefined,
+        selectedId === null ? choice.harnessId : summary?.harnessId,
+      )}
       variant={selectedId === null ? 'new' : 'session'}
-      label={selectedId === null ? '新会话消息' : '继续对话'}
-      placeholder={placeholder}
-      draft={submission.draft}
-      onDraft={submission.setDraft}
+      label={noteComposer?.kind === 'note' ? DECISION_COPY.noteLabel : selectedId === null ? '新会话消息' : '继续对话'}
+      placeholder={submission.pending === null ? (noteComposer?.placeholder ?? placeholder) : placeholder}
+      draft={noteComposer?.kind === 'note' ? noteComposer.draft : submission.draft}
+      onDraft={noteComposer?.kind === 'note' ? noteComposer.onDraft : submission.setDraft}
       pending={submission.pending}
       sending={submission.sending}
-      error={submission.error || (actionError?.sessionId === selectedId ? actionError.text : '')}
+      error={
+        (noteComposer?.kind === 'note' ? noteComposer.error : '')
+        || submission.error
+        || (actionError?.sessionId === selectedId ? actionError.text : '')
+      }
       onRetry={() => {
         if (submission.pending) void submission.submit(submission.pending)
       }}
-      canSend={gate.kind === 'open' && (selectedId === null ? block === null : sessionBlock === undefined)}
-      blockReason={block?.message ?? sessionBlock}
+      canSend={gate.kind === 'open' && (selectedId === null ? block === null && !presenceDown : sessionBlock === undefined)}
+      blockReason={block?.message ?? sessionBlock ?? startReason}
       readOnly={gate.kind === 'read-only' ? gate.text : gate.kind === 'stopped' ? '该会话不再接受输入。' : undefined}
-      notice={startsL3 && block === null ? L3_START_HINT : undefined}
+      {...(noteComposer ? { hint: noteComposer.hint } : {})}
+      {...(noteComposer?.kind === 'note'
+        ? { answer: { label: DECISION_COPY.noteSubmit, onSubmit: noteComposer.submit, onCancel: noteComposer.cancel } }
+        : {})}
+      {...(startsL3 && access.local ? { confirmStart: '开始会话' } : {})}
+      below={
+        selectedId === null && catalog ? (
+          <>
+            <ContextRow
+              hostName={snapshot.hostName}
+              fullAccess={startsL3}
+              onComputer={() => {
+                openSettings('computer')
+              }}
+            />
+            {/* Captions open under the row like disclosures, so the input and everything above it stay put. */}
+            <Collapse open={codeRootChoice !== undefined}>
+              <p className="composer-notice" data-tint="warn" role="note">
+                <Icon icon={ShieldAlert} size={14} />
+                {codeRootChoice && `${CODE_ROOT_COPY.notice}${codeRootChoice.id === 'default' ? CODE_ROOT_COPY.startDir : ''}`}
+              </p>
+            </Collapse>
+            <Collapse open={onlyBuiltIn && owner}>
+              <button
+                type="button"
+                className="new-session-hint"
+                onClick={() => {
+                  // The same place the add tile opens: the presets, added in place.
+                  addAgentTrigger.current?.click()
+                }}>
+                还可以添加 Codex、OpenCode 等 Agent
+              </button>
+            </Collapse>
+          </>
+        ) : undefined
+      }
+      confirmation={
+        <InlineConfirm active={submission.sending || (selectedId !== null && configBusy.has(selectedId))} className="composer-confirm" />
+      }
       onSubmit={() => {
         void submission.submit()
       }}
       sendKey={preferences.sendKey}
       coarse={coarse}
       run={run}
+      inline={phone && selectedId !== null}
       controls={
         selectedId === null ? (
           <NewSessionControls
+            phone={false}
             catalog={catalog}
             choice={choice}
             onChoice={submission.updateChoice}
-            phone={phone}
             disabled={submission.pending !== null || submission.sending || gate.kind !== 'open'}
             onManageProviders={manageProviders}
             onManageWorkspaces={
@@ -622,6 +990,10 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
                   }
                 : undefined
             }
+            onCreateProject={createProject}
+            onProvidersChanged={() => {
+              void refresh()
+            }}
             access={access}
           />
         ) : (
@@ -641,7 +1013,11 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
                 void setConfig(configId, value)
               }}
               phone={phone}
+              access={access}
               onManageProviders={manageProviders}
+              onProvidersChanged={() => {
+                void refresh()
+              }}
               locked={gate.kind !== 'open'}
             />
           )
@@ -649,6 +1025,51 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
       }
     />
   )
+
+  // Phones: the new-session sheet holds its own input, whose 开始 is in the sheet's header.
+  const newChoicesLocked = submission.pending !== null || submission.sending || gate.kind !== 'open'
+  const sheetComposer = phone && (
+    <Composer
+      textareaRef={sheetComposerRef}
+      templates={scopedTemplates(promptTemplates, choice.workspaceId ?? catalog?.defaults.workspaceId, choice.harnessId)}
+      variant="sheet"
+      label="新会话消息"
+      placeholder={placeholder}
+      draft={submission.draft}
+      onDraft={submission.setDraft}
+      pending={submission.pending}
+      sending={submission.sending}
+      error={submission.error}
+      onRetry={() => {
+        if (submission.pending) void submission.submit(submission.pending)
+      }}
+      canSend={gate.kind === 'open' && block === null && !presenceDown}
+      blockReason={block?.message ?? startReason}
+      readOnly={gate.kind === 'read-only' ? gate.text : undefined}
+      below={
+        codeRootChoice ? (
+          <p className="composer-notice" role="note">
+            {CODE_ROOT_COPY.notice}
+            {codeRootChoice.id === 'default' && CODE_ROOT_COPY.startDir}
+          </p>
+        ) : undefined
+      }
+      onSubmit={() => {
+        void submission.submit()
+      }}
+      sendKey={preferences.sendKey}
+      coarse={coarse}
+      confirmation={<InlineConfirm active={submission.sending} rank={1} className="composer-confirm" />}
+      controls={null}
+    />
+  )
+  const sheetCanStart =
+    selectedId === null
+    && gate.kind === 'open'
+    && block === null
+    && !presenceDown
+    && !newChoicesLocked
+    && submission.draft.trim().length > 0
 
   // The open column stands beside the paper, which keeps its minimum width between the two columns.
   const inspectorBeside = columnOpen ? inspectorWidth : 0
@@ -681,6 +1102,34 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
     if (pageMode) setInfoPage(!infoPage)
     else setColumnOpen(!columnOpen)
   }
+  const workbenchKeys = useStableCallback((event: KeyboardEvent) => {
+    if (event.defaultPrevented || document.querySelector('dialog[open]')) return
+    const action = workbenchShortcut(event, currentShell() !== null)
+    if (!action || action === 'files' || action === 'file-search' || action === 'close-file') return
+    event.preventDefault()
+    if (action === 'new') {
+      startNew()
+      return
+    }
+    if (action === 'sidebar') {
+      if (drawerMode) drawer.setOpen(!drawer.open)
+      else setSidebarShut(!sidebarCollapsed, true)
+      return
+    }
+    if (action === 'help') {
+      setKeyboardHelp(true)
+      return
+    }
+    const ordered = groupSessions(filterSessions(snapshot.tasks, filter, search), catalog?.workspaces).flatMap(group => group.tasks)
+    const index = ordered.findIndex(task => task.id === selectedId)
+    const target =
+      typeof action === 'object' ? ordered[action.nth] : ordered[(index + (action === 'next' ? 1 : -1) + ordered.length) % ordered.length]
+    if (target) choose(target.id)
+  })
+  useEffect(() => {
+    window.addEventListener('keydown', workbenchKeys)
+    return () => window.removeEventListener('keydown', workbenchKeys)
+  }, [workbenchKeys])
   const toggleBlock = (id: InfoBlock, collapse: boolean) => {
     const collapsed = preferences.inspector.collapsed.filter(item => item !== id)
     setPreference('inspector', { ...preferences.inspector, collapsed: collapse ? [...collapsed, id] : collapsed })
@@ -708,6 +1157,36 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
       reveal(messageId)
     })
   }
+  useEffect(() => {
+    if (!searchTarget || current?.summary.id !== searchTarget.sessionId) return
+    const frame = requestAnimationFrame(() => {
+      revealRow(searchTarget.messageId)
+      const row = document.querySelector(`.transcript [data-message-id="${CSS.escape(searchTarget.messageId)}"]`)
+      row?.setAttribute('data-search-target', '')
+    })
+    const timer = setTimeout(() => {
+      document.querySelectorAll('[data-search-target]').forEach(row => row.removeAttribute('data-search-target'))
+      setSearchTarget(null)
+    }, 2500)
+    return () => {
+      cancelAnimationFrame(frame)
+      clearTimeout(timer)
+    }
+  }, [searchTarget, current?.summary.id])
+  const selectSearchHit = (hit: SearchHit) => {
+    setSearchTarget(hit)
+    choose(hit.sessionId)
+    reading.show(hit.sessionId, hit.messageId)
+  }
+  const searchResults =
+    search.trim() && catalog?.features?.search ? <SessionSearchResults state={contentSearch} onSelect={selectSearchHit} /> : undefined
+  const archiveBatch =
+    filter === 'archived' && catalog?.features?.sessionBatch && access.scopes.has('run') ? (
+      <ArchiveBatch tasks={snapshot.tasks} onChanged={refresh} />
+    ) : undefined
+  const findReveal = useStableCallback((messageId: string) => {
+    revealRow(messageId)
+  })
   const revealFromInspector = (messageId: string) => {
     setInfoPage(false)
     revealRow(messageId)
@@ -743,6 +1222,15 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
       }
     : undefined
   const connectionProblem = harness.error || connection === 'reconnecting' || connection === 'offline'
+  // What is known about why the Host does not answer: main's own view on the desktop, else the Host's announcement.
+  const shellHost = lifecycle.view?.host
+  const hostProblem = shellHost && shellHost.status !== 'running' ? hostLine(shellHost) : null
+  const notice = harness.hostNotice ? hostNoticeCopy(harness.hostNotice) : null
+  const connectionTitle = connection === 'offline' ? '当前设备已离线' : (hostProblem?.text ?? notice?.title ?? '连接已中断，正在重连…')
+  const connectionText =
+    connection === 'offline'
+      ? '已读内容仍可查看；恢复连接后会同步执行端状态。'
+      : (notice?.body ?? (hostProblem ? '恢复后会同步执行端的最新状态。' : harness.error || '恢复后会同步执行端的最新状态。'))
   const devMode = host?.devMode === true
   const level = current?.permission?.level ?? summary?.level
 
@@ -756,445 +1244,648 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
           : gate.text
         : undefined
   const inspector = summary && (
-    <Inspector
-      snapshot={snapshot}
+    <SessionPanels
+      panels={catalog?.uiPanels ?? []}
       summary={summary}
-      detail={current}
-      local={access.local}
-      admin={access.admin}
-      controls={{
-        ...(harnessInfo?.models === 'host' && (catalog?.providers.length ?? 0) > 0
-          ? {
-              model: {
-                ...(effectiveModel ? { value: effectiveModel } : {}),
-                ...(currentModel ? { current: currentModel } : {}),
-                onChange: model => {
-                  submission.setOverride(summary.id, model)
+      canCompose={gate.kind === 'open' && !submission.pending && !submission.sending && sessionBlock === undefined}
+      onCompose={text => {
+        submission.setDraft(previous => (previous.trim() ? `${previous}\n\n${text}` : text))
+        if (pageMode) setInfoPage(false)
+        composerRef.current?.focus()
+      }}>
+      <Inspector
+        snapshot={snapshot}
+        summary={summary}
+        detail={current}
+        local={access.local}
+        admin={access.admin}
+        controls={{
+          ...(harnessInfo?.models === 'host' && (catalog?.providers.length ?? 0) > 0
+            ? {
+                model: {
+                  ...(effectiveModel ? { value: effectiveModel } : {}),
+                  ...(currentModel ? { current: currentModel } : {}),
+                  onChange: model => {
+                    submission.setOverride(summary.id, model)
+                  },
                 },
+              }
+            : {}),
+          config: current?.config ?? [],
+          busy: configBusy.get(summary.id) ?? null,
+          onConfig: (configId, value) => setConfig(configId, value),
+          ...(infoLocked ? { locked: infoLocked } : {}),
+        }}
+        collapsed={new Set(preferences.inspector.collapsed)}
+        onToggleBlock={toggleBlock}
+        onReveal={revealFromInspector}
+        {...(owner && shell
+          ? {
+              onNewProject: () => {
+                openSettings('workspaces')
               },
             }
-          : {}),
-        config: current?.config ?? [],
-        busy: configBusy.get(summary.id) ?? null,
-        onConfig: (configId, value) => setConfig(configId, value),
-        ...(infoLocked ? { locked: infoLocked } : {}),
+          : {})}
+      />
+    </SessionPanels>
+  )
+  // The connection and the Host itself: over the open conversation, or at the top of a phone's list.
+  const hostBanners = (
+    <>
+      <Banner show={Boolean(connectionProblem)}>
+        <InlineNotice
+          tone={hostProblem?.tone === 'error' && connection !== 'offline' ? 'error' : 'warn'}
+          title={connectionTitle}
+          action={
+            shellHost && hostNeedsStart(shellHost) && connection !== 'offline' ? (
+              <Button
+                size="xs"
+                onClick={() => {
+                  void lifecycle.restartHost().then(message => {
+                    if (message) setToast({ text: message, tone: 'error' })
+                  })
+                }}>
+                启动 Host
+              </Button>
+            ) : (
+              <Button
+                size="xs"
+                onClick={() => {
+                  void resync()
+                }}>
+                重试
+              </Button>
+            )
+          }>
+          {connectionText}
+        </InlineNotice>
+      </Banner>
+      <Banner show={audit.rollback}>
+        <InlineNotice
+          tone="error"
+          secure
+          action={
+            <span className="banner-actions">
+              <Button size="xs" onClick={audit.accept}>
+                已核对
+              </Button>
+              <IconButton className="banner-close" label="关闭提示" icon={X} size="xs" onClick={audit.dismiss} />
+            </span>
+          }>
+          {AUDIT_ROLLBACK_TEXT}
+        </InlineNotice>
+      </Banner>
+      <Banner show={access.legacy}>
+        <InlineNotice tone="neutral" secure>
+          {LEGACY_HOST_TEXT}
+        </InlineNotice>
+      </Banner>
+    </>
+  )
+  /** Phones: a session is pushed over the list, which stays beneath it, inert, until the session slides away. */
+  const phoneSession = phone && selectedId !== null
+  const harnessChoices = catalog && (
+    <HarnessChoice
+      addRef={addAgentTrigger}
+      catalog={catalog}
+      value={choice.harnessId ? entryKey(choice.harnessId, choice.mode) : undefined}
+      access={access}
+      disabled={newChoicesLocked}
+      onManage={owner ? () => openSettings('agents') : undefined}
+      onChange={entry => submission.updateChoice({ harnessId: entry.harness.id, mode: entry.mode })}
+      onAdded={agent => {
+        submission.updateChoice({ harnessId: agent.id, mode: 'agent' })
+        void refresh()
       }}
-      collapsed={new Set(preferences.inspector.collapsed)}
-      onToggleBlock={toggleBlock}
-      onReveal={revealFromInspector}
     />
   )
+  const setupCard = block && (
+    <SetupCard
+      block={block}
+      owner={owner}
+      providers={
+        owner && catalog
+          ? {
+              access,
+              onSettings: () => openSettings('providers'),
+              onSaved: (model: ModelRef) => {
+                submission.updateChoice({ model })
+                void refresh()
+              },
+            }
+          : undefined
+      }
+      onSetup={() => {
+        openSettings(block.kind === 'model-required' ? 'providers' : catalog ? 'agents' : 'plugins')
+      }}
+    />
+  )
+  const suggest = (prompt: string) => {
+    submission.setDraft(prompt)
+    ;(phone ? sheetComposerRef : composerRef).current?.focus()
+  }
   const column = usePresence(columnOpen, 180)
   const page = usePresence(pageMode && infoPage, 180)
   const closeInfoPage = () => {
     setInfoPage(false)
     inspectorToggle.current?.focus({ preventScroll: true })
   }
+  // A pushed page holds a place in the browser's history, so the platform's back returns to the page under it.
+  useBackLayer(phone && selectedId !== null && !popping, instant => {
+    back(instant)
+  })
+  useBackLayer(pageMode && infoPage, closeInfoPage)
+  // Phones: the list a session is pushed over can no longer hold focus (nor the sheet a new one started from, sliding
+  // away), so the page takes it at its way back, as a settings page does; focus already on the page, or in a dialog
+  // still open, stays where it is.
+  useEffect(() => {
+    if (!phone || selectedId === null || !pushed) return
+    const focused = document.activeElement
+    if (focused && (main.current?.contains(focused) || focused.closest('dialog[open]'))) return
+    main.current?.querySelector<HTMLElement>('.topbar[data-phone] .topbar-back')?.focus({ preventScroll: true })
+  }, [phone, selectedId, pushed, main])
 
   return (
-    <LiveChanges value={harness.resyncs}>
-      <div
-        className={`app-shell viewport-${viewport}`}
-        data-viewport={viewport}
-        data-connection={connection}
-        data-sidebar={widthClass === null ? undefined : sidebarCollapsed ? 'collapsed' : 'open'}
-        data-inspector={columnOpen ? 'open' : undefined}
-        data-resizing={(sidebarDrag !== null && !sidebarSnapping) || inspectorDrag !== null ? '' : undefined}
-        style={{
-          // Shut, each side column keeps the window inset, so the paper sits 8px in on every side.
-          ...(widthClass === null
-            ? {}
-            : {
-                '--sidebar-width': sidebarCollapsed ? 'var(--shell-inset)' : `${sidebarWidth}px`,
-                '--sidebar-open-width': `${sidebarWidth}px`,
-              }),
-          '--inspector-width': columnOpen ? `${inspectorWidth}px` : 'var(--shell-inset)',
-          '--inspector-open-width': `${inspectorWidth}px`,
-        }}>
-        {viewport === 'tablet' && (
-          <nav ref={rail} className="rail" aria-label="快捷导航">
-            <Rail
-              approvals={snapshot.approvals.length}
-              drawerOpen={drawer.open}
-              onSessions={() => {
-                drawer.show()
-              }}
-              onNew={startNew}
-              onSearch={openSearch}
-              onApprovals={openApprovals}
-              onSettings={() => {
-                openSettings()
-              }}
-              devMode={devMode}
-            />
-          </nav>
-        )}
-        {drawerMode && drawer.open && (
-          <button
-            type="button"
-            className="drawer-backdrop"
-            aria-label="关闭会话列表"
-            tabIndex={-1}
-            onClick={() => {
-              drawer.setOpen(false)
-            }}
-          />
-        )}
-        <aside
-          ref={navigation}
-          id="session-navigation"
-          className={`sidebar ${drawer.open ? 'is-open' : ''}`}
-          aria-label="会话导航"
-          role={drawerMode && drawer.open ? 'dialog' : undefined}
-          aria-modal={drawerMode && drawer.open ? true : undefined}
-          tabIndex={-1}>
-          <Sidebar
-            snapshot={snapshot}
-            selectedId={selectedId}
-            isUnread={unread}
-            cancelling={cancelling}
-            search={search}
-            onSearch={setSearch}
-            searchRef={searchRef}
-            filter={filter}
-            onFilter={setFilter}
-            onSelect={choose}
-            onNew={startNew}
-            onNewIn={startIn}
-            newActive={selectedId === null}
-            onApprovals={openApprovals}
-            drawer={drawerMode}
-            phone={phone}
-            onClose={() => {
-              drawer.setOpen(false)
-            }}
-            onCollapse={
-              widthClass === null
-                ? undefined
-                : () => {
-                    setSidebarShut(true, true)
-                  }
-            }
-            collapseRef={collapseButton}
-            connection={connection}
-            onRefresh={() => {
-              void resync()
-            }}
-            onSettings={() => {
-              openSettings()
-            }}
-            sessionMenu={sessionMenu}
-            now={now}
-            devMode={devMode && !drawerMode}
-          />
-        </aside>
-        {widthClass !== null && (
-          <ResizeHandle
-            className="sidebar-resize"
-            label="调整侧栏宽度"
-            value={sidebarCollapsed ? 0 : sidebarWidth}
-            min={SIDEBAR_MIN}
-            max={sidebarLimit}
-            collapsed={sidebarCollapsed}
-            onResize={resizeSidebar}
-            onReset={() => {
-              setSidebarDrag(null)
-              saveSidebar({ width: null, collapsed: false })
-            }}
-            onToggle={() => {
-              setSidebarShut(!sidebarCollapsed, false)
-            }}
-          />
-        )}
-        <LiveChanges value={conversationEpoch}>
-          <main
-            ref={main}
-            className={`workspace ${selectedId === null ? 'is-new' : 'has-task'}`}
-            data-info-page={pageMode && infoPage ? '' : undefined}>
-            {/* Under the page of 会话信息 the conversation cannot be reached until the page is closed. */}
-            <div className="workspace-view" inert={(pageMode && infoPage) || undefined}>
-              <TopBar
-                inspectorRef={inspectorToggle}
-                summary={summary}
-                harness={topHarness}
-                project={project}
-                cancelling={selectedId !== null && cancelling.has(selectedId)}
-                level={access.legacy ? undefined : level}
-                demo={demo}
-                phone={phone}
+    <LayerHistory value={phone ? openLayer : null}>
+      <LiveChanges value={harness.resyncs}>
+        <div
+          className={`app-shell viewport-${viewport}`}
+          data-viewport={viewport}
+          data-connection={connection}
+          data-sidebar={widthClass === null ? undefined : sidebarCollapsed ? 'collapsed' : 'open'}
+          data-inspector={columnOpen ? 'open' : undefined}
+          data-resizing={(sidebarDrag !== null && !sidebarSnapping) || inspectorDrag !== null ? '' : undefined}
+          style={{
+            // Shut, each side column keeps the window inset, so the paper sits 8px in on every side.
+            ...(widthClass === null
+              ? {}
+              : {
+                  '--sidebar-width': sidebarCollapsed ? 'var(--shell-inset)' : `${sidebarWidth}px`,
+                  '--sidebar-open-width': `${sidebarWidth}px`,
+                }),
+            '--inspector-width': columnOpen ? `${inspectorWidth}px` : 'var(--shell-inset)',
+            '--inspector-open-width': `${inspectorWidth}px`,
+          }}>
+          {viewport === 'tablet' && (
+            <nav ref={rail} className="rail" aria-label="快捷导航">
+              <Rail
+                approvals={snapshot.approvals.length}
                 drawerOpen={drawer.open}
-                onDrawer={
-                  phone
-                    ? () => {
-                        drawer.show()
-                      }
-                    : undefined
-                }
+                onSessions={() => {
+                  drawer.show()
+                }}
                 onNew={startNew}
-                sidebarCollapsed={sidebarCollapsed}
-                onExpandSidebar={
+                onSearch={openSearch}
+                onApprovals={openApprovals}
+                onSettings={() => {
+                  openSettings()
+                }}
+                devMode={devMode}
+              />
+            </nav>
+          )}
+          {drawerMode && drawer.open && (
+            <button
+              type="button"
+              className="drawer-backdrop"
+              aria-label="关闭会话列表"
+              tabIndex={-1}
+              onClick={() => {
+                drawer.setOpen(false)
+              }}
+            />
+          )}
+          {phone ? (
+            <section
+              id="session-navigation"
+              className="phone-list"
+              aria-label="会话"
+              data-covered={phoneSession && !popping ? '' : undefined}
+              inert={(phoneSession && !popping) || undefined}>
+              <PhoneSessionList
+                snapshot={snapshot}
+                searchResults={searchResults}
+                archiveBatch={archiveBatch}
+                selectedId={selectedId}
+                isUnread={unread}
+                cancelling={stopping}
+                search={search}
+                onSearch={setSearch}
+                searchRef={searchRef}
+                searching={phoneSearching}
+                onSearching={setPhoneSearching}
+                filter={filter}
+                onFilter={setFilter}
+                onSelect={choose}
+                onNew={startNew}
+                onNewIn={startIn}
+                onApprovals={openApprovals}
+                onSettings={() => {
+                  openSettings()
+                }}
+                onRefresh={resync}
+                sessionMenu={sessionMenu}
+                now={now}
+                banners={selectedId === null ? hostBanners : undefined}
+              />
+            </section>
+          ) : (
+            <aside
+              ref={navigation}
+              id="session-navigation"
+              className={`sidebar ${drawer.open ? 'is-open' : ''}`}
+              aria-label="会话导航"
+              role={drawerMode && drawer.open ? 'dialog' : undefined}
+              aria-modal={drawerMode && drawer.open ? true : undefined}
+              tabIndex={-1}>
+              <Sidebar
+                snapshot={snapshot}
+                searchResults={searchResults}
+                archiveBatch={archiveBatch}
+                selectedId={selectedId}
+                isUnread={unread}
+                cancelling={stopping}
+                search={search}
+                onSearch={setSearch}
+                searchRef={searchRef}
+                filter={filter}
+                onFilter={setFilter}
+                onSelect={choose}
+                onNew={startNew}
+                onNewIn={startIn}
+                newActive={selectedId === null}
+                onApprovals={openApprovals}
+                drawer={drawerMode}
+                onClose={() => {
+                  drawer.setOpen(false)
+                }}
+                onCollapse={
                   widthClass === null
                     ? undefined
                     : () => {
-                        setSidebarShut(false, true)
+                        setSidebarShut(true, true)
                       }
                 }
-                expandRef={expandButton}
-                approvals={snapshot.approvals.length}
-                onApprovals={openApprovals}
-                inspectorOpen={columnOpen || (pageMode && infoPage)}
-                onInspector={toggleInspector}
-                sessionMenu={titleMenu}
-                menu={topMenu}
+                collapseRef={collapseButton}
                 connection={connection}
                 onRefresh={() => {
                   void resync()
                 }}
+                onSettings={() => {
+                  openSettings()
+                }}
+                sessionMenu={sessionMenu}
+                now={now}
+                devMode={devMode && !drawerMode}
+                {...(lifecycle.view?.keepAwake.active ? { keepAwake: keepAwakeLine(lifecycle.view.keepAwake) } : {})}
               />
-              <Banner show={Boolean(connectionProblem)}>
-                <InlineNotice
-                  tone="warn"
-                  title={connection === 'offline' ? '当前设备已离线' : '连接已中断，正在重连…'}
-                  action={
-                    <Button
-                      size="xs"
-                      onClick={() => {
-                        void resync()
-                      }}>
-                      重试
-                    </Button>
-                  }>
-                  {connection === 'offline'
-                    ? '已读内容仍可查看；恢复连接后会同步执行端状态。'
-                    : harness.error || '恢复后会同步执行端的最新状态。'}
-                </InlineNotice>
-              </Banner>
-              <Banner show={audit.rollback}>
-                <InlineNotice
-                  tone="error"
-                  secure
-                  action={
-                    <span className="banner-actions">
-                      <Button size="xs" onClick={audit.accept}>
-                        已核对
-                      </Button>
-                      <IconButton className="banner-close" label="关闭提示" icon={X} size="xs" onClick={audit.dismiss} />
-                    </span>
-                  }>
-                  {AUDIT_ROLLBACK_TEXT}
-                </InlineNotice>
-              </Banner>
-              <Banner show={access.legacy}>
-                <InlineNotice tone="neutral" secure>
-                  {LEGACY_HOST_TEXT}
-                </InlineNotice>
-              </Banner>
-              <Banner show={stopCode !== undefined} scope={selectedId ?? ''}>
-                {stopCode && (
-                  <InlineNotice
-                    tone={stopCode === 'permission-drift' ? 'error' : 'warn'}
-                    secure
-                    action={
-                      <Button size="xs" onClick={startNew} icon={SquarePen}>
-                        新建会话
-                      </Button>
-                    }>
-                    {SESSION_STOP_TEXT[stopCode]}
-                  </InlineNotice>
-                )}
-              </Banner>
-              <Banner show={Boolean(sessionBlock)} scope={selectedId ?? ''}>
-                {sessionBlock && <InlineNotice tone="neutral">{sessionBlock}</InlineNotice>}
-              </Banner>
-              {selectedId === null ? (
-                <NewSession
-                  composer={composer}
-                  demo={demo}
-                  mode={choice.mode}
-                  setup={
-                    block && (
-                      <SetupCard
-                        block={block}
-                        owner={owner}
-                        onSetup={() => {
-                          openSettings(block.kind === 'model-required' ? 'providers' : catalog ? 'agents' : 'plugins')
-                        }}
-                      />
-                    )
-                  }
-                  onSuggestion={prompt => {
-                    submission.setDraft(prompt)
-                    composerRef.current?.focus()
-                  }}
-                />
-              ) : (
-                <div className="conversation">
-                  <div className="transcript-shell">
-                    <div className="transcript" ref={reading.containerRef} {...reading.handlers} tabIndex={0} aria-label="会话记录">
-                      <div className="transcript-content" ref={reading.contentRef}>
-                        {current === null ? (
-                          <Loading label="正在读取会话记录…" />
-                        ) : (
-                          <ApprovalStatuses.Provider value={approvalStatuses}>
-                            <Transcript
-                              detail={current}
-                              approvals={approvals}
-                              busy={approvalBusy}
-                              onDecide={onDecide}
-                              gateFor={gateFor}
-                              harnessName={harnessName}
-                              harness={topHarness}
-                              active={active}
-                              cancelling={cancelState === 'cancelling'}
-                              coarse={coarse}
-                              providerName={providerName}
-                              {...(fallbackElapsed !== undefined ? { fallbackElapsed } : {})}
-                              {...(retry ? { retry } : {})}
-                            />
-                          </ApprovalStatuses.Provider>
-                        )}
-                        {current !== null && current.messages.length === 0 && !isLive(current) && approvals.length === 0 && !active && (
-                          <p className="transcript-empty">会话记录会显示在这里。</p>
-                        )}
-                      </div>
-                    </div>
-                    <JumpLatest
-                      show={!reading.isFollowing}
-                      onJump={jumpToLatest}
-                      {...(current && active
-                        ? {
-                            live: {
-                              detail: current,
-                              harness: harnessName,
-                              cancelling: cancelState === 'cancelling',
-                              approvals: approvals.length,
-                              ...(fallbackElapsed !== undefined ? { fallbackElapsed } : {}),
-                            },
-                          }
-                        : {})}
-                    />
-                  </div>
-                  <div className="composer-dock">{composer}</div>
-                </div>
-              )}
-            </div>
-            {page.present && summary && (
-              <section
-                ref={infoPageRef}
-                className="info-page"
-                data-leaving={page.leaving ? '' : undefined}
-                aria-label="会话信息"
-                onKeyDown={event => {
-                  if (event.key === 'Escape' && !event.defaultPrevented) {
-                    event.preventDefault()
-                    closeInfoPage()
-                  }
-                }}>
-                <header className="info-page-head">
-                  {phone ? (
-                    <IconButton ref={infoBack} label="返回" icon={ChevronLeft} onClick={closeInfoPage} />
-                  ) : (
-                    <Button ref={infoBack} variant="ghost" icon={ChevronLeft} onClick={closeInfoPage}>
-                      返回对话
-                    </Button>
-                  )}
-                  <div className="info-page-title">
-                    <h2>会话信息</h2>
-                    <span>{summary.title || '未命名会话'}</span>
-                  </div>
-                </header>
-                <div className="info-page-body">{inspector}</div>
-              </section>
-            )}
-          </main>
-          {placement?.kind === 'column' && (
-            <aside className="inspector-column" aria-label="会话信息" inert={!columnOpen || undefined}>
-              {column.present && <div className="inspector-column-inner">{inspector}</div>}
             </aside>
           )}
-          {placement?.kind === 'column' && columnOpen && widthClass !== null && (
+          {widthClass !== null && (
             <ResizeHandle
-              className="inspector-resize"
-              label="调整会话信息宽度"
-              edge="start"
-              value={inspectorWidth}
-              min={INSPECTOR_MIN}
-              max={inspectorMax(windowWidth, sidebarCollapsed ? 8 : sidebarWidth)}
-              onResize={resizeInspector}
+              className="sidebar-resize"
+              label="调整侧栏宽度"
+              value={sidebarCollapsed ? 0 : sidebarWidth}
+              min={SIDEBAR_MIN}
+              max={sidebarLimit}
+              collapsed={sidebarCollapsed}
+              onResize={resizeSidebar}
               onReset={() => {
-                setInspectorDrag(null)
-                const width = { ...preferences.inspector.width }
-                delete width[widthClass]
-                setPreference('inspector', { ...preferences.inspector, width })
+                setSidebarDrag(null)
+                saveSidebar({ width: null, collapsed: false })
+              }}
+              onToggle={() => {
+                setSidebarShut(!sidebarCollapsed, false)
               }}
             />
           )}
-        </LiveChanges>
-        {settings && (
-          <SettingsPage
-            snapshot={snapshot}
-            access={access}
-            initial={settings.section}
-            onClose={() => {
-              setSettings(null)
-              void refresh()
-            }}
-            onChanged={() => {
-              void refresh()
-            }}
-          />
-        )}
-        {renaming && (
-          <PromptDialog
-            title="重命名会话"
-            label="会话名称"
-            initial={renaming.title}
-            maxLength={120}
-            onClose={() => {
-              setRenaming(null)
-            }}
-            onSubmit={async title => {
-              try {
-                await api<unknown>(`tasks/${encodeURIComponent(renaming.id)}`, { method: 'PATCH', body: { title } })
-              } catch (cause) {
-                throw new Error(errorMessage(cause))
-              }
-              await refresh()
-            }}
-          />
-        )}
-        {deleting && (
-          <ConfirmDialog
-            title="删除会话"
-            danger
-            confirmLabel="删除"
-            message={`删除「${deleting.title || '未命名会话'}」及其全部记录？此操作无法撤销。`}
-            onClose={() => {
-              setDeleting(null)
-            }}
-            onConfirm={async () => {
-              try {
-                await api<unknown>(`tasks/${encodeURIComponent(deleting.id)}`, { method: 'DELETE' })
-              } catch (cause) {
-                throw new Error(errorMessage(cause))
-              }
-              setStopped(previous => {
-                if (!previous.has(deleting.id)) return previous
-                const next = new Map(previous)
-                next.delete(deleting.id)
-                return next
-              })
-              if (deleting.id === selectedId) choose(null)
-              await refresh()
-            }}
-          />
-        )}
-        {toast && (
-          <Toast className="toast" tone={toast.tone === 'error' ? 'error' : 'neutral'} duration={null}>
-            {toast.text}
-          </Toast>
-        )}
-      </div>
-    </LiveChanges>
+          <LiveChanges value={conversationEpoch}>
+            {(!phone || phoneSession) && (
+              <main
+                ref={main}
+                className={`workspace ${selectedId === null ? 'is-new' : 'has-task'}`}
+                data-info-page={pageMode && infoPage ? '' : undefined}
+                data-pushed={phone && pushed ? '' : undefined}
+                data-leaving={phone && popping ? '' : undefined}>
+                {/* Under the page of 会话信息 the conversation cannot be reached until the page is closed. */}
+                <div className="workspace-view" inert={(pageMode && infoPage) || undefined}>
+                  <TopBar
+                    inspectorRef={inspectorToggle}
+                    summary={summary}
+                    harness={topHarness}
+                    project={project}
+                    cancelling={selectedId !== null && stopping.has(selectedId)}
+                    level={access.legacy ? undefined : level}
+                    demo={demo}
+                    phone={phone}
+                    onBack={() => {
+                      back()
+                    }}
+                    onNew={startNew}
+                    sidebarCollapsed={sidebarCollapsed}
+                    onExpandSidebar={
+                      widthClass === null
+                        ? undefined
+                        : () => {
+                            setSidebarShut(false, true)
+                          }
+                    }
+                    expandRef={expandButton}
+                    approvals={snapshot.approvals.length}
+                    onApprovals={openApprovals}
+                    inspectorOpen={columnOpen || (pageMode && infoPage)}
+                    onInspector={toggleInspector}
+                    sessionMenu={titleMenu}
+                    menu={topMenu}
+                    connection={connection}
+                    onRefresh={() => {
+                      void resync()
+                    }}
+                  />
+                  {/* The conversation's paper: on phones it rises under the header on the ground. */}
+                  <div className="workspace-body">
+                    {hostBanners}
+                    <Banner show={stopCode !== undefined} scope={selectedId ?? ''}>
+                      {stopCode && (
+                        <InlineNotice
+                          tone={stopCode === 'permission-drift' ? 'error' : 'warn'}
+                          secure
+                          action={
+                            <Button size="xs" onClick={startNew} icon={SquarePen}>
+                              新建会话
+                            </Button>
+                          }>
+                          {SESSION_STOP_TEXT[stopCode]}
+                        </InlineNotice>
+                      )}
+                    </Banner>
+                    <Banner show={Boolean(sessionBlock)} scope={selectedId ?? ''}>
+                      {sessionBlock && <InlineNotice tone="neutral">{sessionBlock}</InlineNotice>}
+                    </Banner>
+                    {selectedId === null ? (
+                      <NewSession
+                        onboarding={
+                          <GettingStarted
+                            sessionCount={snapshot.tasks.length}
+                            ready={!block}
+                            project={catalog?.workspaces.find(item => item.id === choice.workspaceId)?.name ?? ''}
+                            remote={!access.local}
+                            firstTask={() => composerRef.current?.focus()}
+                          />
+                        }
+                        harnesses={harnessChoices}
+                        composer={composer}
+                        demo={demo}
+                        mode={choice.mode}
+                        setup={setupCard}
+                        onSuggestion={suggest}
+                      />
+                    ) : (
+                      <div className="conversation">
+                        <div className="transcript-shell">
+                          {findOpen && current && (
+                            <FindBar
+                              sessionId={current.summary.id}
+                              revision={current.cursor}
+                              onReveal={findReveal}
+                              onClose={() => setFindOpen(false)}
+                            />
+                          )}
+                          <div className="transcript" ref={reading.containerRef} {...reading.handlers} tabIndex={0} aria-label="会话记录">
+                            <div className="transcript-content" ref={reading.contentRef}>
+                              {current === null ? (
+                                <Loading label="正在读取会话记录…" />
+                              ) : (
+                                <ApprovalStatuses.Provider value={statuses}>
+                                  <ApprovalVisibilityContext.Provider value={approvalVisibility}>
+                                    <Transcript
+                                      detail={current}
+                                      approvals={approvals}
+                                      busy={approvalBusy}
+                                      onDecide={onDecide}
+                                      gateFor={gateFor}
+                                      harnessName={harnessName}
+                                      harness={topHarness}
+                                      active={active}
+                                      cancelling={cancelState === 'cancelling'}
+                                      coarse={coarse}
+                                      providerName={providerName}
+                                      {...(fallbackElapsed !== undefined ? { fallbackElapsed } : {})}
+                                      {...(retry ? { retry } : {})}
+                                    />
+                                  </ApprovalVisibilityContext.Provider>
+                                </ApprovalStatuses.Provider>
+                              )}
+                              {current !== null
+                                && current.messages.length === 0
+                                && !isLive(current)
+                                && approvals.length === 0
+                                && !active && <p className="transcript-empty">会话记录会显示在这里。</p>}
+                            </div>
+                          </div>
+                          <JumpLatest
+                            show={!reading.isFollowing}
+                            onJump={jumpToLatest}
+                            {...(current && active
+                              ? {
+                                  live: {
+                                    detail: current,
+                                    harness: harnessName,
+                                    cancelling: cancelState === 'cancelling',
+                                    approvals: approvals.length,
+                                    ...(fallbackElapsed !== undefined ? { fallbackElapsed } : {}),
+                                  },
+                                }
+                              : {})}
+                          />
+                        </div>
+                        <div className="composer-dock">{composer}</div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {page.present && summary && (
+                  <section
+                    ref={infoPageRef}
+                    className="info-page"
+                    data-leaving={page.leaving ? '' : undefined}
+                    aria-label="会话信息"
+                    onKeyDown={event => {
+                      if (event.key === 'Escape' && !event.defaultPrevented) {
+                        event.preventDefault()
+                        closeInfoPage()
+                      }
+                    }}>
+                    <header className="info-page-head">
+                      {phone ? (
+                        <IconButton ref={infoBack} size="lg" label="返回" icon={ChevronLeft} onClick={closeInfoPage} />
+                      ) : (
+                        <Button ref={infoBack} variant="ghost" icon={ChevronLeft} onClick={closeInfoPage}>
+                          返回对话
+                        </Button>
+                      )}
+                      <div className="info-page-title">
+                        <h2>会话信息</h2>
+                        <span>{summary.title || '未命名会话'}</span>
+                      </div>
+                    </header>
+                    <div className="info-page-body">{inspector}</div>
+                  </section>
+                )}
+              </main>
+            )}
+            {placement?.kind === 'column' && (
+              <aside className="inspector-column" aria-label="会话信息" inert={!columnOpen || undefined}>
+                {column.present && <div className="inspector-column-inner">{inspector}</div>}
+              </aside>
+            )}
+            {placement?.kind === 'column' && columnOpen && widthClass !== null && (
+              <ResizeHandle
+                className="inspector-resize"
+                label="调整会话信息宽度"
+                edge="start"
+                value={inspectorWidth}
+                min={INSPECTOR_MIN}
+                max={inspectorMax(windowWidth, sidebarCollapsed ? 8 : sidebarWidth)}
+                onResize={resizeInspector}
+                onReset={() => {
+                  setInspectorDrag(null)
+                  const width = { ...preferences.inspector.width }
+                  delete width[widthClass]
+                  setPreference('inspector', { ...preferences.inspector, width })
+                }}
+              />
+            )}
+          </LiveChanges>
+          {phone && (
+            <NewSessionSheet
+              open={newSheet && selectedId === null}
+              onClose={() => {
+                setNewSheet(false)
+              }}
+              snapshot={snapshot}
+              access={access}
+              choice={choice}
+              onChoice={submission.updateChoice}
+              disabled={newChoicesLocked}
+              canStart={sheetCanStart}
+              sending={submission.sending}
+              onStart={() => {
+                void submission.submit()
+              }}
+              harnesses={harnessChoices}
+              onManageProviders={manageProviders}
+              onProvidersChanged={() => {
+                void refresh()
+              }}
+              onManageWorkspaces={owner ? () => openSettings('workspaces') : undefined}
+              onCreateProject={createProject}
+              startLabel={startsL3 && access.local ? '开始会话' : undefined}
+              composer={sheetComposer}
+              setup={setupCard}
+              demo={demo}
+              suggestions={<DemoSuggestions demo={demo} mode={choice.mode} onSuggestion={suggest} />}
+            />
+          )}
+          {settings && (
+            <SettingsPage
+              snapshot={snapshot}
+              access={access}
+              initial={settings.section}
+              onClose={() => {
+                setSettings(null)
+                void refresh()
+              }}
+              onChanged={() => {
+                void refresh()
+              }}
+            />
+          )}
+          {keyboardHelp && <KeyboardHelp onClose={() => setKeyboardHelp(false)} />}
+          {commandOpen && (
+            <CommandPalette
+              snapshot={snapshot}
+              onSelect={choose}
+              onSearchHit={selectSearchHit}
+              onProject={startIn}
+              onClose={() => setCommandOpen(false)}
+              commands={[
+                { id: 'new', label: '新建会话', run: startNew },
+                { id: 'search', label: '搜索会话', run: openSearch },
+                { id: 'settings', label: '打开设置', run: () => openSettings() },
+                { id: 'keyboard', label: '键盘快捷键', run: () => setKeyboardHelp(true) },
+                ...(selectedId ? [{ id: 'find', label: '在当前会话中查找', shortcut: '⌘F', run: () => setFindOpen(true) }] : []),
+                ...(snapshot.approvals.length ? [{ id: 'approval', label: '跳转到下一个待处理请求', run: openApprovals }] : []),
+              ]}
+            />
+          )}
+          {renaming && (
+            <PromptDialog
+              title="重命名会话"
+              label="会话名称"
+              initial={renaming.title}
+              maxLength={120}
+              onClose={() => {
+                setRenaming(null)
+              }}
+              onSubmit={async title => {
+                try {
+                  await api<unknown>(`tasks/${encodeURIComponent(renaming.id)}`, { method: 'PATCH', body: { title } })
+                } catch (cause) {
+                  throw new Error(errorMessage(cause))
+                }
+                await refresh()
+              }}
+            />
+          )}
+          {deleting && (
+            <ConfirmDialog
+              title="删除会话"
+              danger
+              confirmLabel="删除"
+              message={`删除「${deleting.title || '未命名会话'}」及其全部记录？此操作无法撤销。`}
+              onClose={() => {
+                setDeleting(null)
+              }}
+              onConfirm={async () => {
+                try {
+                  await api<unknown>(`tasks/${encodeURIComponent(deleting.id)}`, { method: 'DELETE' })
+                } catch (cause) {
+                  throw new Error(errorMessage(cause))
+                }
+                setStopped(previous => {
+                  if (!previous.has(deleting.id)) return previous
+                  const next = new Map(previous)
+                  next.delete(deleting.id)
+                  return next
+                })
+                if (deleting.id === selectedId) choose(null)
+                await refresh()
+              }}
+            />
+          )}
+          {approvalToast && (
+            <Toast className="toast" duration={null}>
+              <span>另一个会话有请求等你处理。</span>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  choose(approvalToast.sessionId)
+                  const target = snapshot.approvals.find(item => item.id === approvalToast.id)
+                  if (target) reading.show(target.sessionId, toolRowId(target))
+                  setApprovalToast(null)
+                }}>
+                查看
+              </Button>
+            </Toast>
+          )}
+          {!approvalToast && toast && (
+            <Toast className="toast" tone={toast.tone === 'error' ? 'error' : 'neutral'} duration={null}>
+              {toast.text}
+            </Toast>
+          )}
+        </div>
+      </LiveChanges>
+    </LayerHistory>
   )
 }

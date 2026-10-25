@@ -34,6 +34,37 @@ describe('responsive workspace controls', () => {
     await testHost?.close()
   })
 
+  it.each([
+    { label: 'desktop', width: 1440, height: 900, dpr: 2, touch: false },
+    { label: 'phone', width: 390, height: 844, dpr: 3, touch: true },
+  ])('$label keeps the compact controls reachable while the draft grows', async ({ label, width, height, dpr, touch }) => {
+    const context = await browser.newContext({
+      viewport: { width, height },
+      deviceScaleFactor: dpr,
+      isMobile: touch,
+      hasTouch: touch,
+      locale: 'zh-CN',
+    })
+    try {
+      const page = await context.newPage()
+      await enrollBrowser(page, testHost, { name: `输入框 ${label}` })
+      if (touch) {
+        await page.locator('.phone-list-head').getByRole('button', { name: '新建会话', exact: true }).click()
+        await page.getByRole('dialog', { name: '新会话', exact: true }).waitFor()
+      }
+      const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
+      const before = (await input.boundingBox())!.height
+      await input.fill(Array.from({ length: 8 }, (_, index) => `待办 ${index + 1}`).join('\n'))
+      await expect.poll(async () => (await input.boundingBox())!.height).toBeGreaterThan(before)
+      await reachable(page.getByRole('button', { name: touch ? '开始' : '发送', exact: true }))
+      await noHorizontalOverflow(page)
+      expect(await page.locator('canvas.ui-ambient').count()).toBe(0)
+      await capture(page, `compact-draft-${label}`)
+    } finally {
+      await context.close()
+    }
+  })
+
   it.each(VIEWPORTS)('$label keeps new-session, navigation and settings controls reachable', async ({ width, height, label, touch }) => {
     const context = await browser.newContext({
       viewport: { width, height },
@@ -50,24 +81,51 @@ describe('responsive workspace controls', () => {
       await enrollBrowser(page, testHost, { name: `布局 ${label}`, scopes: ['view', 'run', 'approve:standard', 'admin'] })
       // The dev-build chip sits in the sidebar footer (wide) or the rail (tablet); phones show it in settings.
       if (width >= 768) await expect.poll(() => page.getByTestId('dev-mode').filter({ visible: true }).count()).toBe(1)
+      const phone = width < 768
+      if (phone) {
+        // A phone opens on its session list, whose header holds settings, search and a new session; a new session is a
+        // sheet over the list. With no session yet there is nothing to filter: the list says so and offers to start one,
+        // and its end still names the computer and syncs its state.
+        const head = page.locator('.phone-list-head')
+        for (const name of ['设置', '搜索会话', '新建会话']) await reachable(head.getByRole('button', { name, exact: true }))
+        expect(await page.getByRole('group', { name: '筛选会话', exact: true }).count()).toBe(0)
+        await page.locator('.phone-empty').getByText('还没有会话', { exact: true }).waitFor()
+        await reachable(page.locator('.phone-empty').getByRole('button', { name: '新建会话', exact: true }))
+        await reachable(page.locator('.phone-list-foot').getByRole('button', { name: '同步最新状态', exact: true }))
+        await noHorizontalOverflow(page)
+        await capture(page, `${label}-navigation`)
+        await head.getByRole('button', { name: '新建会话', exact: true }).click()
+        await page.getByRole('dialog', { name: '新会话', exact: true }).waitFor()
+      }
       const composer = page.getByRole('textbox', { name: '新会话消息', exact: true })
       // A responsive composition may move the form, but must not duplicate it.
       expect(await page.locator('textarea[aria-label="新会话消息"]').count()).toBe(1)
       await reachable(composer)
       await composer.fill('这是一条未提交的布局验收草稿。')
-      const modes = page.getByRole('radiogroup', { name: '会话模式', exact: true })
-      for (const mode of ['对话', 'Agent']) {
-        const button = modes.getByRole('radio', { name: mode, exact: true })
+      // The harness tiles: the built-in harness as 只对话 and as an agent, and the way to add another.
+      const harnesses = page.getByRole('radiogroup', { name: 'Agent', exact: true })
+      for (const way of [/^Latch 内置\s*只对话$/, /^Latch 内置\s*Agent$/]) {
+        const button = harnesses.getByRole('radio', { name: way })
         await reachable(button)
         await button.click()
         expect(await button.getAttribute('aria-checked')).toBe('true')
         expect(await composer.inputValue()).toBe('这是一条未提交的布局验收草稿。')
         await noHorizontalOverflow(page)
       }
-      // Harness, model and project are one chip on phones and separate pickers elsewhere.
-      const runSettings = page.getByRole('button', { name: /^(运行设置|模型)：/ }).first()
-      await reachable(runSettings)
-      await reachable(page.getByRole('button', { name: '发送', exact: true }))
+      await reachable(page.getByRole('button', { name: /^添加 Agent/ }))
+      // Harness, model and project: tiles and rows of the sheet on phones, pickers in the input elsewhere.
+      if (phone) {
+        const harnesses = page.getByRole('radiogroup', { name: 'Agent', exact: true })
+        await reachable(harnesses.getByRole('radio', { name: /^Latch 内置\s*Agent$/ }))
+        expect(await harnesses.getByRole('radio', { name: /^Latch 内置\s*Agent$/ }).getAttribute('aria-checked')).toBe('true')
+        await page.locator('.new-sheet-card').getByText('电脑', { exact: true }).waitFor()
+        await page
+          .locator('.new-sheet-card')
+          .getByRole('button', { name: /^模型：/ })
+          .waitFor()
+        await noHorizontalOverflow(page, page.locator('.new-session-sheet > .ui-sheet-surface > .ui-sheet-body'))
+      } else await reachable(page.getByRole('button', { name: /^模型：/ }).first())
+      await reachable(page.getByRole('button', { name: phone ? '开始' : '发送', exact: true }), { allowDisabled: phone })
       await composer.fill('')
       await capture(page, `${label}-new-session`)
 
@@ -79,6 +137,10 @@ describe('responsive workspace controls', () => {
         await page.emulateMedia({ colorScheme: 'light' })
       }
 
+      if (phone) {
+        await page.getByRole('dialog', { name: '新会话', exact: true }).getByRole('button', { name: '取消', exact: true }).click()
+        await page.getByRole('dialog', { name: '新会话', exact: true }).waitFor({ state: 'hidden' })
+      }
       const navigationButton = page.getByRole('button', { name: '打开会话列表', exact: true })
       if (await navigationButton.isVisible()) {
         await reachable(navigationButton)
@@ -97,8 +159,8 @@ describe('responsive workspace controls', () => {
       const settings = await openSettings(page, '设置')
       await noHorizontalOverflow(page, settings)
       await openSection(settings, '模型服务')
-      await reachable(settings.getByRole('button', { name: '添加服务', exact: true }))
-      await settings.getByRole('button', { name: '添加服务', exact: true }).click()
+      await reachable(settings.getByRole('button', { name: '添加服务…', exact: true }))
+      await settings.getByRole('button', { name: '添加服务…', exact: true }).click()
       await settings.getByRole('button', { name: /^OpenAI/ }).click()
       // Unsaved form input only; nothing is submitted, checked or persisted. A browser cannot set keys.
       for (const input of [
@@ -108,9 +170,12 @@ describe('responsive workspace controls', () => {
       ]) {
         await reachable(input)
       }
-      await settings.getByText('设置密钥需要在执行端电脑上用 Latch 桌面端确认。', { exact: true }).waitFor()
+      // OpenAI needs a key: the form says before saving where it is typed and that the service waits for it.
+      await settings
+        .getByText('这个服务需要密钥：保存后，在运行 Latch 的电脑上 设置 › 模型服务 填写密钥，它才能使用。', { exact: true })
+        .waitFor()
       await reachable(settings.getByRole('button', { name: '检测连接', exact: true }))
-      await reachable(settings.getByRole('button', { name: '添加服务', exact: true }).last())
+      await reachable(settings.getByRole('button', { name: '保存服务', exact: true }))
       await noHorizontalOverflow(page, settings)
       await capture(page, `${label}-model-settings`)
 
@@ -125,11 +190,16 @@ describe('responsive workspace controls', () => {
       const devices = await openSettings(page, '设备')
       await reachable(devices.getByRole('button', { name: '撤销此设备', exact: true }))
       await devices.getByRole('heading', { name: /已登记的设备/ }).waitFor()
-      await devices.getByText(/^手机接入需要 HTTPS/).waitFor()
+      await devices.getByText('手机接入还没有配置。', { exact: true }).waitFor()
+      // The start options for an own certificate stay folded until asked for, and can be reached and opened.
+      const tlsOptions = devices.getByRole('button', { name: '用自己的 HTTPS 证书配置（需要重启 Host）' })
+      await reachable(tlsOptions)
+      expect(await devices.getByText(/--tls-cert/).isVisible()).toBe(false)
       if (width < 768) await devices.getByTestId('dev-mode').waitFor()
       await noHorizontalOverflow(page, devices)
       await capture(page, `${label}-devices`)
       await closeSettings(devices)
+      if (phone) await page.locator('.phone-list-head').getByRole('button', { name: '新建会话', exact: true }).click()
       await reachable(composer)
       expect((await testHost.host.bridge.listTasks()).length).toBe(0)
       await rm(`${OUTPUT}/${label}-failure.png`, { force: true })

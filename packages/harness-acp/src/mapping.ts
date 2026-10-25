@@ -1,5 +1,5 @@
 /** Pure conversions from ACP payloads to Latch's browser-safe types. */
-import type { FileDiff, Message, PlanEntry, SessionConfigOption, ToolDetail, ToolKind } from '@latch/protocol'
+import type { FileDiff, Message, PlanEntry, SessionConfigOption, ToolDecision, ToolDetail, ToolKind } from '@latch/protocol'
 import { configOption, toolContent, toolLocation, type ContentBlock, type SessionState, type ToolFields } from './protocol.ts'
 
 export const TEXT_LIMIT = 2_000_000
@@ -63,6 +63,8 @@ export interface ToolState {
   awaiting: number
   /** Latch's verdict for a call the agent left unfinished when its turn ended. */
   final?: { state: 'cancelled' | 'failed'; note: string }
+  /** How the latest permission request for this call ended. */
+  decision?: ToolDecision
   /** When Latch first saw the call, when the agent reported it in progress, and when it settled (ISO). */
   createdAt?: string
   startedAt?: string
@@ -149,6 +151,7 @@ export function toolDetail(state: ToolState): ToolDetail {
     ...(output !== undefined ? { output: clip(output, TOOL_TEXT_LIMIT) } : {}),
     ...(locations.length ? { locations } : {}),
     ...(diffs.length ? { diffs } : {}),
+    ...(state.decision ? { decision: state.decision } : {}),
   }
 }
 
@@ -182,19 +185,20 @@ export function toolMessage(state: ToolState): Message {
   }
 }
 
-/** Restart recovery for persisted tool rows whose turn can no longer report a result. */
-export function settleToolMessage(message: Message): boolean {
+/** Restart recovery for persisted tool rows whose turn can no longer report a result; a waiting ask was answered by nobody. */
+export function settleToolMessage(message: Message, at: string): boolean {
   if (message.role !== 'tool') return false
   let note: string
+  const asked = message.state === 'awaiting-approval'
   if (message.state === 'running') {
     message.state = 'failed'
     note = OUTCOME_UNKNOWN
-  } else if (message.state === 'queued' || message.state === 'awaiting-approval') {
+  } else if (message.state === 'queued' || asked) {
     message.state = 'cancelled'
     note = NOT_STARTED
   } else return false
   const output = message.tool?.output ? `${message.tool.output}\n\n${note}` : note
-  message.tool = { ...message.tool, output }
+  message.tool = { ...message.tool, output, ...(asked ? { decision: { outcome: 'cancelled' as const, at } } : {}) }
   message.text = output
   return true
 }

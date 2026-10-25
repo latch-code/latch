@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
+export { loadPluginPackage } from './plugin-packages.ts'
 import { lstat, mkdir, chmod, readFile, readdir, realpath, rm, rmdir, stat, unlink } from 'node:fs/promises'
 import { homedir, hostname } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
@@ -7,13 +8,22 @@ import { z } from 'zod'
 import {
   AGENT_PRESETS,
   PROJECT_GLYPHS,
+  escapeSecurityText,
   PROVIDER_PRESETS,
+  isLocalListener,
   LISTENER_LABELS,
   SCOPE_LABELS,
+  rejectionNote,
+  RISK_REASON_TEXT,
+  type AgentPresetSettings,
   type AgentRecord,
   type AgentSettings,
   type AppSnapshot,
+  type CommandDetection,
   type Approval,
+  type ApprovalReceipt,
+  type CancelOutcome,
+  type CancelReceipt,
   type ChangeEvent,
   type CurrentDevice,
   type DataScope,
@@ -22,19 +32,26 @@ import {
   type FolderVia,
   type HarnessSource,
   type HostCatalog,
+  type HostStateEvent,
   type HostView,
   type EnrollmentView,
+  type ListenerClass,
   type ModelRef,
   type PermissionLevel,
   type PluginInfo,
   type PresenceAction,
   type PresencePreview,
+  type ProviderDestination,
+  type ProviderSettings,
+  type PresenceSubject,
   type ProviderSummary,
   type RiskLevel,
   type SessionDefaults,
   type TaskDetail,
   type TaskStateEvent,
+  type TaskStatus,
   type TaskSummary,
+  type UnusableProvider,
   type WorkspaceInfo,
 } from '@latch/protocol'
 import {
@@ -51,9 +68,10 @@ import { PluginRegistry } from '@latch/core'
 import { canonicalJson, sha256Hex, redactSecrets } from '@latch/core/node-kit'
 import { createAcpAgentPlugin, forgetCommandLookups, resolveCommand, validateAgentDefinition } from '@latch/harness-acp'
 import { AuditLog, type AuditActor, type StepupMethod } from './audit.ts'
+import { excludeFromBackup } from './backup.ts'
 import { DeviceStore, EnrollmentService, type ConnectionContext, type DeviceScopeBase } from './auth.ts'
 import { hashDisplay } from './crypto.ts'
-import { createEgressFetch, type LookupFunction } from './egress.ts'
+import { createEgressFetch, createEgressInspector, type EgressReason, type FetchLike, type LookupFunction } from './egress.ts'
 import { loadOrCreateHostIdentity } from './identity.ts'
 import {
   DENY_READ_HOME_PATHS,
@@ -72,7 +90,17 @@ import {
 } from './paths.ts'
 import { foldersHash, newProject, planFolders, reorderFolders, type FolderRefusal, type ProjectPrimary } from './projects.ts'
 import { PolicyStore, ceilingFor, isLowering, policyDiff, type Policy } from './policy.ts'
-import { PresenceService, createPresenceBackend, paramsHash, type PresenceBackend } from './presence.ts'
+import {
+  PresenceService,
+  argumentsText,
+  createPresenceBackend,
+  envNamesText,
+  programText,
+  toolInputText,
+  paramsHash,
+  policySubject,
+  type PresenceBackend,
+} from './presence.ts'
 import { classifyStandardCall, targetFolder, type CallFolder } from './risk.ts'
 import {
   CLEARED_LEGACY_COOKIE,
@@ -83,6 +111,7 @@ import {
   credentialCookie,
   hasAuthorization,
   hostDesktopRequired,
+  isSocketTransport,
   levelAtMost,
   levelsUpTo,
   localOnly,
@@ -106,22 +135,35 @@ import {
   FOLDER_ID,
   HostConfig,
   PROVIDER_ID,
+  BACKUP_EXCLUDED_CONFIG_FILES,
   availableId,
+  addressOf,
+  keyScopeOf,
+  keyScopeText,
   originOf,
   type HostSettings,
   type ProviderRecord,
   type WorkspaceRecord,
 } from './config.ts'
 import { HarnessHub, type HubCreateInput } from './hub.ts'
+import { RUN_ID, type ApprovalRecord, type StoredReceipt } from './session-meta.ts'
+import { sendNotFoundPage } from './not-found.ts'
 import { SessionFolders } from './session-folders.ts'
 import { writeProjectContext } from './project-context.ts'
 import type { HostInfo } from './host-state.ts'
+import { HostLifecycle, hostStateInputSchema } from './lifecycle.ts'
+import { TrafficMeter, type FrameKind, type StreamMeter } from './traffic.ts'
 import {
   checkProvider,
+  isPresetKeyOrigin,
+  keyBoundTo,
   listProviderModels,
+  OriginUnconfirmed,
+  addressesConfirmedBefore,
   providerPlugin,
   providerSettings,
   summarizeProvider,
+  underBase,
   usableKey,
   type ModelListInput,
 } from './providers.ts'
@@ -129,6 +171,9 @@ import { createDemoPlugin } from './plugins/providers/demo/index.ts'
 import { createToolsPlugin } from './plugins/tools/safe-tools/index.ts'
 import { standardHarnessDriver } from './plugins/standard/index.ts'
 import { createWorkspacePlugin } from './plugins/tools/workspace-files/index.ts'
+import { PromptTemplateStore } from './prompt-templates.ts'
+import { createSessionRoutes } from './session-routes.ts'
+import { createFileRoutes } from './files/index.ts'
 
 export type { TlsListenerOptions } from './listeners.ts'
 
@@ -140,7 +185,7 @@ const HARNESS_ID = /^[a-zA-Z0-9_-]{1,64}$/
 const LEGACY_PROVIDER_ID = 'openai-compatible'
 const STANDARD = 'standard'
 const RENEW_INTERVAL_MS = 24 * 60 * 60 * 1000
-const MAX_DECISION_RECORDS = 1000
+const ACTIVE_STATUSES: ReadonlySet<TaskStatus> = new Set(['running', 'waiting-approval'])
 /** Attempts for a reduction whose base moved underneath it (a cascade or a helper pin landing first). */
 const BASE_RETRIES = 3
 const MAX_ISSUED_INVITATIONS = 256
@@ -166,6 +211,7 @@ const PRIVATE_ENTRIES = [
   'host.json',
   'host.log',
   'host.lock',
+  'desktop-launch.json',
 ]
 /**
  * Names the Host writes next to private entries for a moment: atomic-write temp files (the `prefix` their writers pass to
@@ -180,22 +226,21 @@ const TRANSIENT_PREFIXES = [
   'sessions-meta.json.',
   '.project-context.json-',
   '.session-folders.json-',
+  '.desktop-launch-',
 ]
-const BLOCKED_REASON = '有完全访问会话正在运行，本机确认暂时只能用于拒绝。请等待其结束或取消后重试。'
 const L3_WARNINGS = [
   '该会话可以读写 Latch 数据和 Host 身份私钥，并可以冒用本机 Electron 在其他电脑上的身份。',
   'Harness 自己发起的询问只是提示，不是安全边界。',
 ]
 const UNIX_ADDRESS = '本机 host.sock'
-const RISK_REASONS = {
-  'protected-path': '受保护路径',
-  'outside-workspace': '工作区外路径',
-  'code-root': 'Latch 程序目录内',
-  'unlisted-tool': '未登记的工具',
-} as const
 const PAIRING_LABELS = { lpc: '本机确认', offline: '离线登记码', invitation: '配对邀请', migration: '旧版本迁移' } as const
 /** Unix connections without a credential may reach only these. */
-const ANONYMOUS_UNIX = new Set(['GET /link/api/devices', 'DELETE /link/api/devices/:id', 'POST /link/api/pairings'])
+const ANONYMOUS_UNIX = new Set([
+  'GET /link/api/devices',
+  'DELETE /link/api/devices/:id',
+  'POST /link/api/pairings',
+  'GET /link/api/traffic',
+])
 
 const httpURL = z
   .string()
@@ -230,13 +275,18 @@ const taskPatchSchema = z
   })
   .refine(value => value.title !== undefined || value.pinned !== undefined || value.archived !== undefined, '没有要修改的内容')
 const configSchema = z.object({ configId: z.string().min(1).max(128), value: z.string().max(1024) })
+const requestIdSchema = z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u)
 const decisionSchema = z.object({
   decision: z.enum(['allow', 'reject']),
   optionId: z.string().min(1).max(128).optional(),
-  requestId: z
-    .string()
-    .regex(/^[A-Za-z0-9_-]{8,128}$/u)
-    .optional(),
+  /** With a rejection: what to do instead, for the built-in harness (`rejectionNote` decides what is accepted). */
+  note: z.string().max(4096).optional(),
+  requestId: requestIdSchema.optional(),
+})
+/** Both optional so a page loaded before them can still stop a run; such a cancel stops whatever is running. */
+const cancelSchema = z.object({
+  requestId: requestIdSchema.optional(),
+  runId: z.string().regex(RUN_ID).optional(),
 })
 const deviceNameSchema = z.object({ name: z.string().trim().min(1).max(80) })
 const scopeSchema = z.enum(['view', 'run', 'approve:standard', 'approve:elevated', 'admin', 'secrets'])
@@ -254,9 +304,18 @@ const renewSchema = z.object({ nonce: z.string().min(1).max(128), signature: z.s
 const deviceScopesSchema = z
   .object({ scopes: z.array(scopeSchema).max(6).optional(), dataScope: z.enum(['work', 'all']).optional() })
   .refine(value => value.scopes !== undefined || value.dataScope !== undefined, '没有要修改的内容')
-const invitationSchema = z.object({ scopes: z.array(scopeSchema).max(6).optional() })
+const invitationSchema = z.object({
+  scopes: z.array(scopeSchema).max(6).optional(),
+  /** `tls` (default): a phone or another computer; `loopback`: a browser on this computer. */
+  target: z.enum(['tls', 'loopback']).optional(),
+})
 const providerKind = z.enum(['openai-compatible', 'anthropic'])
 const modelList = z.array(modelId).max(1000)
+/**
+ * `confirmOrigin`: confirm the address on this computer in the same request when it is not confirmed yet, or when it
+ * needs an outbound allowance it lacks (desktop only). Without it, a keyless service at an unconfirmed address is saved
+ * but not used until someone confirms the address.
+ */
 const providerCreateSchema = z.object({
   id: z.string().regex(PROVIDER_ID).optional(),
   name: z.string().trim().min(1).max(80),
@@ -267,6 +326,7 @@ const providerCreateSchema = z.object({
   models: modelList.default([]),
   defaultModel: modelId,
   enabled: z.boolean().optional(),
+  confirmOrigin: z.boolean().optional(),
 })
 const providerUpdateSchema = z.object({
   name: z.string().trim().min(1).max(80).optional(),
@@ -275,7 +335,9 @@ const providerUpdateSchema = z.object({
   models: modelList.optional(),
   defaultModel: modelId.optional(),
   enabled: z.boolean().optional(),
+  confirmOrigin: z.boolean().optional(),
 })
+const providerOriginSchema = z.object({ baseURL: httpURL })
 const providerCheckSchema = z.object({
   kind: providerKind,
   baseURL: httpURL,
@@ -376,6 +438,11 @@ const policyPatchSchema = z
       .object({ add: z.array(egressEntry).max(64).optional(), remove: z.array(egressEntry).max(64).optional() })
       .strict()
       .optional(),
+    // Only removal: an origin is confirmed by saving a model service, never by editing the policy.
+    confirmedAddresses: z
+      .object({ remove: z.array(z.string().trim().min(1).max(2400)).max(256) })
+      .strict()
+      .optional(),
   })
   .strict()
 
@@ -417,6 +484,8 @@ export interface ServerOptions {
   hostName?: string
   /** Tests: 'relaxed' multiplies every rate-limit bucket by 100. Production never sets it. */
   rateLimits?: 'default' | 'relaxed'
+  /** Tests: runs after a file reference was resolved and checked, before the file is opened. Production never sets it. */
+  fileHooks?: { afterResolve?(realPath: string): Promise<void> }
   /** Default `console.error('[Latch] ' + text)`; every line is redacted first. */
   log?: (text: string) => void
   /**
@@ -465,21 +534,51 @@ interface EventStream {
   credentialHash: string
   sessionId?: string
   lastSentRevision: number
+  meter: StreamMeter
 }
 type DeviceCaller = Caller & { device: Device }
 
 type PreviewLine = PresencePreview['lines'][number]
 type AuditEvent = Parameters<AuditLog['append']>[0]
 
-interface DecisionRecord {
-  approvalId: string
-  requestId?: string
-  deviceId: string
-  deviceName: string
-  decision: 'allow' | 'reject'
-  optionId?: string
-  optionKind: string
-  at: string
+/** Where a saved key may be sent: an origin and the path under it. */
+type KeyScope = { keyOrigin: string; keyPath: string }
+
+/**
+ * What saving a model service at an address adds to the policy: its address (origin and path) to `confirmedAddresses`
+ * and, for a local or private address, its `host:port` to the outbound allow list. `reason` says why the address needs
+ * the allowance.
+ */
+interface DestinationPlan {
+  origin: string
+  /** The origin and path that is confirmed (`addressOf`). */
+  address: string
+  /** `host:port` of the origin, for the confirmation's title. */
+  hostPort: string
+  addAddress: boolean
+  /** The allow-list entry to add; absent when none is needed or it is already there. */
+  egress?: string
+  reason?: EgressReason
+}
+
+function approvalReceipt(record: ApprovalRecord): ApprovalReceipt {
+  return {
+    approvalId: record.approvalId,
+    decision: record.decision,
+    ...(record.optionId ? { optionId: record.optionId } : {}),
+    at: record.at,
+  }
+}
+
+function cancelReceipt(sessionId: string, record: Omit<CancelReceipt, 'sessionId' | 'replay'>): CancelReceipt {
+  return {
+    sessionId,
+    ...(record.requestId ? { requestId: record.requestId } : {}),
+    ...(record.runId ? { runId: record.runId } : {}),
+    outcome: record.outcome,
+    ...(record.status ? { status: record.status } : {}),
+    at: record.at,
+  }
 }
 
 function withModel(models: string[], model: string): string[] {
@@ -687,6 +786,9 @@ function guardDataDir(plugin: HarnessPlugin, dataDir: string, workspace: string)
       plugin.activate({
         registerProvider: provider => ctx.registerProvider(provider),
         registerHarness: driver => ctx.registerHarness(driver),
+        registerUiPanel: panel => ctx.registerUiPanel(panel),
+        registerClientPanel: panel => ctx.registerClientPanel(panel),
+        registerSkill: skill => ctx.registerSkill(skill),
         onDispose: dispose => ctx.onDispose(dispose),
         registerTool: tool =>
           ctx.registerTool({
@@ -708,8 +810,16 @@ function guardDataDir(plugin: HarnessPlugin, dataDir: string, workspace: string)
   }
 }
 
+/** What this computer has of a command and, for an adapter, of the agent it connects to. */
+function detectCommand(command: string, companion: string | undefined): CommandDetection {
+  const path = resolveCommand(command)
+  return {
+    ...(path ? { found: true, path } : { found: false }),
+    ...(companion ? { companion: { command: companion, found: resolveCommand(companion) !== undefined } } : {}),
+  }
+}
+
 function agentSettings(agent: AgentRecord): AgentSettings {
-  const path = resolveCommand(agent.command)
   const companion = AGENT_PRESETS.find(preset => preset.id === agent.presetId)?.companion
   const verdict = validateAgentDefinition(agent)
   return {
@@ -720,12 +830,10 @@ function agentSettings(agent: AgentRecord): AgentSettings {
     args: [...agent.args],
     envKeys: Object.keys(agent.env).sort(),
     enabled: agent.enabled,
-    detected: {
-      ...(path ? { found: true, path } : { found: false }),
-      ...(companion ? { companion: { command: companion, found: resolveCommand(companion) !== undefined } } : {}),
-    },
+    detected: detectCommand(agent.command, companion),
     verified: verdict.ok ? verdict.verified : false,
     ...(verdict.ok ? {} : { problem: verdict.error.message }),
+    ...(agent.startedHash === undefined ? {} : { started: agent.startedHash === definitionHash(agent) }),
   }
 }
 
@@ -819,10 +927,19 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     startupCleanup.push(() => devices.close())
     const runtime = await prepareRuntimeDir({ hostId8, ...(options.runtimeParent ? { parent: options.runtimeParent } : {}) })
     const config = await HostConfig.open(dataDir)
+    // Key material, Agent definitions and the Host identity stay out of Time Machine backups; sessions, the audit log
+    // and the policy are backed up as usual.
+    await excludeFromBackup([authDir, join(dataDir, 'identity'), ...BACKUP_EXCLUDED_CONFIG_FILES.map(file => join(dataDir, file))], { log })
+    // A policy.json from before confirmed origins: record the origins the owner had already confirmed, once.
+    if (policy.needsAddressMigration) {
+      await policy
+        .migrateConfirmedAddresses(addressesConfirmedBefore(config.providers(), policy.get().hostEgressAllow))
+        .catch(error => log(`无法记录已确认的模型服务地址，自定义地址的服务在本次运行中不可用：${errorText(error)}`))
+    }
 
-    let tls: ValidatedTls | undefined
-    if (options.tls) {
-      await checkPrivateFile(options.tls.keyPath, {
+    /** The TLS files checked as at startup; the HTTPS entry calls it again when they change on disk. */
+    const loadTls = async (material: TlsListenerOptions): Promise<ValidatedTls> => {
+      await checkPrivateFile(material.keyPath, {
         uid,
         label: 'HTTPS 私钥',
         notInside: [
@@ -836,10 +953,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           )),
         ],
       })
-      tls = await validateTls(options.tls, now(), log)
+      return validateTls(material, now(), log)
     }
+    const tls = options.tls ? await loadTls(options.tls) : undefined
 
     const instanceId = randomUUID()
+    const lifecycle = new HostLifecycle(instanceId, now)
     const registry = new PluginRegistry()
     startupCleanup.push(() => registry.close())
     const buildAgentPlugin = options.agentPlugin ?? ((agent: AgentRecord) => createAcpAgentPlugin(agent, { log }))
@@ -848,25 +967,30 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       allow: () => [...policy.get().hostEgressAllow, ...egressExtra],
       ...(options.egressLookup ? { lookup: options.egressLookup } : {}),
     })
+    const inspectEgress = createEgressInspector(options.egressLookup ? { lookup: options.egressLookup } : {})
     let hub: HarnessHub | undefined
     const presence = new PresenceService({
       backend: options.presence ?? createPresenceBackend({ codeRoot, policy }),
       hostId,
       audit,
       now,
-      blockedReason: async () => (hub && (await hub.hasUnsandboxedActivity()) ? BLOCKED_REASON : undefined),
+      blockingTasks: async () =>
+        hub ? (await hub.unsandboxedTasks()).map(task => ({ id: task.id, title: task.title, harnessId: task.harnessId ?? '' })) : [],
     })
     const enrollments = new EnrollmentService({ hostId, devices, presence, audit, directory: authDir, now })
     const limits = createRateLimits(options.rateLimits ?? 'default', now)
-    /** Hashes of invitation codes this Host handed out, with their expiry; only these get their own enrollment budget. */
-    const issuedInvitations = new Map<string, number>()
+    /**
+     * Hashes of invitation codes this Host handed out, with their expiry and the listener they are for; only these, on
+     * that listener, get their own enrollment budget.
+     */
+    const issuedInvitations = new Map<string, { expiresAt: number; listener: ListenerClass }>()
     function pruneInvitations(): void {
       const current = now()
-      for (const [hash, expiresAt] of issuedInvitations) if (expiresAt < current) issuedInvitations.delete(hash)
+      for (const [hash, issued] of issuedInvitations) if (issued.expiresAt < current) issuedInvitations.delete(hash)
     }
-    function invitationIssued(hash: string): boolean {
+    function invitationIssued(hash: string, listener: ListenerClass): boolean {
       pruneInvitations()
-      return issuedInvitations.has(hash)
+      return issuedInvitations.get(hash)?.listener === listener
     }
     const tlsKeyPath = options.tls ? resolve(options.tls.keyPath) : undefined
 
@@ -1030,18 +1154,42 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       kind: 'openai-compatible',
       baseURL: options.provider.baseURL,
       apiKey: options.provider.apiKey,
-      ...(options.provider.apiKey ? { keyOrigin: originOf(options.provider.baseURL) } : {}),
+      ...(options.provider.apiKey ? keyScopeOf(options.provider.baseURL) : {}),
       enabled: savedLegacy?.enabled ?? true,
       models: [options.provider.model.trim()],
       defaultModel: options.provider.model.trim(),
     }
+    /**
+     * Origins the person who started this Host allowed for this run: `HARNESS_BASE_URL` and the process-level outbound
+     * entries. Every path on them counts as confirmed until the Host stops; they are never written.
+     */
+    const processOrigins = new Set<string>([
+      ...(envProvider ? [originOf(envProvider.baseURL)] : []),
+      ...egressExtra.flatMap(entry => [`http://${entry}`, `https://${entry}`]),
+    ])
+    /**
+     * The fetch of the configured model service at `baseURL`: each request goes only under that base URL (the connectors
+     * build every request from it), only while it is a preset's origin or a confirmed address, then through the egress
+     * policy. Anything else is refused like an unconfirmed address.
+     */
+    const providerFetchFor =
+      (baseURL: string): FetchLike =>
+      (input, init) => {
+        let destination: ProviderDestination = 'unconfirmed'
+        try {
+          if (underBase(input, baseURL)) destination = destinationOf(baseURL)
+        } catch {
+          // Not an HTTP(S) URL: refused below like an unconfirmed address.
+        }
+        return destination === 'unconfirmed' ? Promise.reject(new OriginUnconfirmed()) : egressFetch(input, init)
+      }
     /** Agent plugin ID → agent ID, so plugin toggles find their definition. */
     const agentPlugins = new Map<string, string>()
     const disabled = new Set(config.settings().plugins.disabled)
     registry.register(
       {
         id: 'standard-harness',
-        name: 'Standard Harness',
+        name: 'Latch 内置',
         version: '0.1.0',
         description: '内置对话与 Agent 执行机制；其他 Harness 可通过插件接入。',
         activate(ctx) {
@@ -1074,8 +1222,56 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     for (const agent of config.settings().agents)
       await installAgent(agent).catch(error => log(`Agent ${agent.id} 未加载：${errorText(error)}`))
 
-    const harnessHub = await HarnessHub.open({ dataDir, defaultId: defaultHarnessId, log })
+    const harnessHub = await HarnessHub.open({ dataDir, defaultId: defaultHarnessId, log, now })
     hub = harnessHub
+    const fileRoutes = createFileRoutes({
+      protectedPaths: guardedPaths,
+      home,
+      now,
+      audit,
+      limiter: limits.files,
+      // A file handle is usable only while the session's original folders remain available.
+      async sessionRoots(sessionId) {
+        const task = (await harnessHub.listTasks()).find(item => item.id === sessionId)
+        if (!task) return undefined
+        try {
+          await assertSessionWorkspace(sessionId)
+        } catch (error) {
+          if (error instanceof AppError && ['workspace-changed', 'workspace-disabled'].includes(error.code)) return 'removed'
+          throw error
+        }
+        const available = await canonicalSet(usablePrimaries())
+        const folders = scopeFolders(task, workspaceRoot)
+        for (const folder of folders) {
+          const root = await canonicalPath(folder.path).catch(() => undefined)
+          if (root === undefined || !available.has(root)) return 'removed'
+        }
+        return folders
+      },
+      recheck: (caller, scope) => {
+        recheck(caller as Caller, scope)
+        if (!caller.device || devices.get(caller.device.id)?.dataScope !== 'all')
+          throw new AppError(403, 'file-scope', '这台设备的数据范围不包括会话文件夹中的文件')
+      },
+      actorOf: caller => actorOf(caller as Caller),
+      ...(options.fileHooks ? { hooks: options.fileHooks } : {}),
+    })
+    const templateStore = await PromptTemplateStore.open(dataDir)
+    const sessionRoutes = createSessionRoutes<Caller>({
+      templates: templateStore,
+      changed: () => refresh(),
+      list: () => harnessHub.listTasks(),
+      detail: id => harnessHub.detail(id),
+      patch: (id, patch) => harnessHub.updateMeta(id, patch),
+      remove: async id => {
+        await harnessHub.remove(id)
+        summaries.delete(id)
+        refresh()
+      },
+      authorize: requireScope,
+      recheck,
+      checkRemove: assertSessionAccess,
+    })
     startupCleanup.push(() => harnessHub.close())
     const requiredHarness = options.harnessId ?? STANDARD
     if (!registry.harnesses().some(driver => driver.id === requiredHarness)) {
@@ -1087,9 +1283,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     const streams = new Map<ServerResponse, EventStream>()
     const pendingTasks = new Map<string, number>()
     const summaries = new Map<string, string>()
-    const decisions = new Map<string, DecisionRecord>()
     // One decision per approval at a time, so a retried request sees the first one's outcome.
     const decisionLocks = new Map<string, Promise<void>>()
+    // One answer per cancel request at a time, so a copy sent while the first is settling gets the same receipt.
+    const cancelFlights = new Map<string, Promise<CancelReceipt>>()
+    const traffic = new TrafficMeter(now)
+    // A task-state frame goes to every stream that selected its session; its text is the same for all of them.
+    const frames = new WeakMap<ChangeEvent | TaskStateEvent, string>()
     let pendingGlobal = false
     let eventTimer: ReturnType<typeof setTimeout> | undefined
     let flushing = false
@@ -1117,8 +1317,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (!caller.device.scopes.includes(scope)) throw scopeRequired(scope)
     }
 
-    function requireUnix(caller: Caller): void {
-      if (caller.connection.listener !== 'unix') throw localOnly()
+    /** Only host.sock counts as this computer (`isLocalListener`); loopback and every other listener are remote. */
+    function requireLocal(caller: Caller): void {
+      if (!isLocalListener(caller.connection.listener)) throw localOnly()
     }
 
     /** The desktop app on this computer: a device enrolled on host.sock, calling over host.sock. */
@@ -1213,11 +1414,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       caller: Caller,
       action: PresenceAction,
       params: Record<string, unknown>,
+      subject: PresenceSubject,
       lines: PreviewLine[],
       warnings: string[] = [],
       target?: string,
     ): Promise<StepupMethod> {
-      requireUnix(caller)
+      requireLocal(caller)
       requireDevice(caller)
       const hash = paramsHash(action, params)
       const header = req.headers['x-latch-confirmation']
@@ -1228,10 +1430,18 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const record = await presence.request({
         action,
         paramsHash: hash,
+        subject,
         lines,
         warnings,
-        requester: { deviceId: caller.device.id, deviceName: caller.device.name, listener: 'unix', remoteAddress: UNIX_ADDRESS },
+        requester: {
+          deviceId: caller.device.id,
+          deviceName: caller.device.name,
+          listener: caller.connection.listener,
+          remoteAddress: caller.connection.remoteAddress,
+        },
         ...(target === undefined ? {} : { target }),
+        // Checked against the current record: a refusal names sessions only to a device that may still view them.
+        revealBlocking: devices.get(caller.device.id)?.scopes.includes('view') === true,
       })
       throw stepupRequired(publicTicket(record))
     }
@@ -1243,7 +1453,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     async function presenceStatus(): Promise<HostView['presence']> {
       const availability = await presence.availability()
-      return availability.status === 'available' ? { status: 'available' } : { status: 'unavailable', message: availability.message }
+      return availability.status === 'available'
+        ? { status: 'available' }
+        : { status: 'unavailable', message: availability.message, reason: availability.reason }
     }
 
     async function hostView(): Promise<HostView> {
@@ -1254,6 +1466,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         presence: await presenceStatus(),
         tls: tlsOrigin ? { origin: tlsOrigin } : null,
         policy: { localMaxLevel: current.local.maxLevel, remoteMaxLevel: current.remote.maxLevel, allowL3: current.local.allowL3 },
+        rejectionNote: true,
       }
     }
 
@@ -1274,7 +1487,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     function buildProviderPlugin(record: ProviderRecord): HarnessPlugin {
       try {
-        return providerPlugin(record, { fetch: egressFetch })
+        return providerPlugin(record, { fetch: providerFetchFor(record.baseURL) })
       } catch (error) {
         throw error instanceof AppError ? error : new AppError(400, 'invalid-provider', errorText(error))
       }
@@ -1282,6 +1495,86 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     function pluginInfo(id: string): PluginInfo | undefined {
       return registry.list().find(plugin => plugin.id === id)
+    }
+
+    /**
+     * The plugin list as settings shows it, where `activeRuns` counts sessions running on a plugin: the runs that lease
+     * it (a provider or tools) plus the running sessions of the harnesses it registers. A mounted harness with no
+     * session running is not in use.
+     */
+    async function pluginList(): Promise<PluginInfo[]> {
+      const running = new Map<string, number>()
+      for (const task of await hub!.listTasks()) {
+        if (task.harnessId && (task.status === 'running' || task.status === 'waiting-approval'))
+          running.set(task.harnessId, (running.get(task.harnessId) ?? 0) + 1)
+      }
+      return registry.list().map(plugin => {
+        const sessions = pluginHarnesses(plugin.id).reduce((sum, id) => sum + (running.get(id) ?? 0), 0)
+        return sessions ? { ...plugin, activeRuns: plugin.activeRuns + sessions } : plugin
+      })
+    }
+
+    /**
+     * A preset provider's HTTPS origin (any path), an address confirmed on this computer (exactly this origin and path), an
+     * origin allowed for this run, or none of them. Throws for anything but an HTTP(S) URL.
+     */
+    function destinationOf(baseURL: string): ProviderDestination {
+      const origin = originOf(baseURL)
+      if (isPresetKeyOrigin(origin)) return 'preset'
+      if (processOrigins.has(origin)) return 'confirmed'
+      return (policy.get().confirmedAddresses ?? []).includes(addressOf(baseURL)) ? 'confirmed' : 'unconfirmed'
+    }
+
+    function recordDestination(record: ProviderRecord): ProviderDestination {
+      try {
+        return destinationOf(record.baseURL)
+      } catch {
+        return 'unconfirmed'
+      }
+    }
+
+    function providerView(record: ProviderRecord): ProviderSettings {
+      return { ...providerSettings(record), destination: recordDestination(record) }
+    }
+
+    /**
+     * Why a configured service is not offered: its address is not confirmed (no request is ever sent there), or it is at
+     * a preset provider's address, where every request needs a key, without a usable one. Undefined when it is offered.
+     */
+    function unusableReason(record: ProviderRecord): UnusableProvider['reason'] | undefined {
+      const destination = recordDestination(record)
+      if (destination === 'unconfirmed') return 'origin-unconfirmed'
+      if (destination === 'preset' && !usableKey(record)) return 'key-missing'
+      return undefined
+    }
+
+    /**
+     * Providers sessions may use: every enabled one except configured services with an `unusableReason`. Those stay
+     * registered (their settings can still be edited), but they are never offered, and requests to an unconfirmed
+     * address are refused.
+     */
+    function usableProviders(): ReturnType<PluginRegistry['providers']> {
+      const managed = new Set(
+        registry
+          .list()
+          .filter(plugin => plugin.managed === 'provider')
+          .map(plugin => plugin.id),
+      )
+      return registry.providers().filter(provider => {
+        const record = managed.has(provider.id) ? effectiveProvider(provider.id) : undefined
+        return !record || unusableReason(record) === undefined
+      })
+    }
+
+    /** Enabled services left out of the catalog, with the reason a page names (at most 20). */
+    function unusableProviders(): UnusableProvider[] {
+      return effectiveProviders()
+        .filter(record => record.enabled)
+        .flatMap(record => {
+          const reason = unusableReason(record)
+          return reason ? [{ id: record.id, name: record.name, reason }] : []
+        })
+        .slice(0, 20)
     }
 
     /** Provider and plugin IDs share one namespace: the provider's plugin uses the provider ID. */
@@ -1324,7 +1617,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const next = edit(live)
         return [next, next]
       }
-      const { keyOrigin: _origin, ...withoutKey } = live
+      const { keyOrigin: _origin, keyPath: _path, ...withoutKey } = live
       return [edit(live), edit(config.provider(id) ?? { ...withoutKey, apiKey: '' })]
     }
 
@@ -1393,13 +1686,20 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return new AppError(
         403,
         'egress-denied',
-        `Host 不会访问 ${target}（本机、私网或元数据地址）。如需访问本机模型服务，请在本机确认后加入出站白名单。`,
+        `Host 不会访问 ${target}：这是本机、局域网或云元数据地址。本机与局域网地址要在运行 Latch 的电脑上确认后才能使用。`,
         { target },
       )
     }
 
-    /** Lists remote models; the upstream call stops if the requesting client goes away first. */
-    async function remoteModels(res: ServerResponse, input: ModelListInput, check = false) {
+    function originUnconfirmed(): AppError {
+      return new AppError(403, 'origin-unconfirmed', new OriginUnconfirmed().message)
+    }
+
+    /**
+     * Lists remote models; the upstream call stops if the requesting client goes away first. `fetch` is the egress
+     * policy for a typed address, or the configured providers' fetch when a saved key goes along.
+     */
+    async function remoteModels(res: ServerResponse, input: ModelListInput, check = false, fetch: FetchLike = egressFetch) {
       const controller = new AbortController()
       const abort = () => {
         if (!res.writableFinished) controller.abort(new Error('Client disconnected'))
@@ -1407,8 +1707,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       res.once('close', abort)
       try {
         return check
-          ? await checkProvider(input, controller.signal, { fetch: egressFetch })
-          : { models: await listProviderModels(input, controller.signal, { fetch: egressFetch }) }
+          ? await checkProvider(input, controller.signal, { fetch })
+          : { models: await listProviderModels(input, controller.signal, { fetch }) }
       } catch (error) {
         if (error instanceof AppError) throw error
         const code = codeOf(error) ?? 'provider-error'
@@ -1417,44 +1717,180 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             error instanceof Error && 'target' in error && typeof error.target === 'string' ? error.target : new URL(input.baseURL).host
           throw egressDenied(target)
         }
+        if (code === 'origin-unconfirmed') throw originUnconfirmed()
         const reported = error instanceof Error && error.name === 'ProviderError'
+        const status = reported && 'status' in error && typeof error.status === 'number' ? error.status : undefined
+        const network = reported && 'networkCode' in error && typeof error.networkCode === 'string' ? error.networkCode : undefined
         throw new AppError(
           reported && PROVIDER_INPUT_ERRORS.has(code) ? 400 : 502,
           code,
           reported ? error.message : '无法连接模型服务，请检查地址与网络',
+          {
+            ...(code === 'http-error' && status !== undefined ? { upstreamStatus: status } : {}),
+            ...(network ? { networkCode: network } : {}),
+          },
         )
       } finally {
         res.off('close', abort)
       }
     }
 
-    function keyLines(record: Pick<ProviderRecord, 'id' | 'name'>, origin: string): PreviewLine[] {
-      return [
-        { label: '模型服务', value: `${record.name}（${record.id}）` },
-        { label: '密钥只发往', value: origin },
-        { label: '密钥', value: '已填写（不显示）' },
-      ]
+    /** Keys are typed only on the Host's desktop app, which alone holds `secrets`. */
+    function requireKeyEntry(caller: Caller): void {
+      requireScope(caller, 'secrets')
+      requireLocal(caller)
     }
 
-    /** Setting a key: admin + secrets on host.sock, confirmed locally, audited before it is saved. */
-    async function confirmKey(
+    /**
+     * What saving at `baseURL` adds to the policy. The address (origin and path), when it is neither under a preset's
+     * HTTPS origin nor confirmed and the save carries a key or asks to confirm; an outbound allowance, when the address is
+     * local or private, the allow list lacks it, and the save adds the address or asks to confirm. Nothing is looked up
+     * otherwise, so a keyless save at an unconfirmed address just stays unconfirmed.
+     */
+    async function planDestination(baseURL: string, input: { key: boolean; confirm: boolean }): Promise<DestinationPlan> {
+      const origin = originOf(baseURL)
+      const plan: DestinationPlan = {
+        origin,
+        address: addressOf(baseURL),
+        hostPort: origin.replace(/^https?:\/\//u, ''),
+        addAddress: false,
+      }
+      const destination = destinationOf(baseURL)
+      if (destination === 'preset') return plan
+      plan.addAddress = destination === 'unconfirmed' && (input.key || input.confirm)
+      if (!plan.addAddress && !input.confirm) return plan
+      const need = await inspectEgress(baseURL)
+      if (need.allowance === 'never') throw egressDenied(need.target)
+      if (need.allowance === 'needed') {
+        plan.reason = need.reason
+        if (!policy.get().hostEgressAllow.includes(need.target) && !egressExtra.includes(need.target)) plan.egress = need.target
+      }
+      return plan
+    }
+
+    const confirmsDestination = (plan: DestinationPlan | undefined): plan is DestinationPlan =>
+      plan !== undefined && (plan.addAddress || plan.egress !== undefined)
+
+    /**
+     * The one confirmation for a model-service address: the address, the outbound allowance it needs and a key typed
+     * with it share one paramsHash, at the stricter class (A). The preview lists the Host's facts first, then what the
+     * device typed.
+     */
+    async function confirmDestination(
       req: IncomingMessage,
       caller: Caller,
-      record: Pick<ProviderRecord, 'id' | 'name'>,
-      baseURL: string,
-      apiKey: string,
-    ): Promise<{ origin: string; stepup: StepupMethod }> {
-      requireScope(caller, 'secrets')
-      requireUnix(caller)
-      const origin = originOf(baseURL)
-      const stepup = await confirm(
+      plan: DestinationPlan,
+      input: { baseURL: string; provider?: Pick<ProviderRecord, 'id' | 'name'>; apiKey?: string },
+    ): Promise<StepupMethod> {
+      requireScope(caller, 'admin')
+      requireLocal(caller)
+      if (input.apiKey) requireKeyEntry(caller)
+      const scope = input.apiKey ? keyScopeOf(input.baseURL) : undefined
+      const onThisComputer = plan.reason === 'loopback' || plan.reason === 'local-interface'
+      const lines: PreviewLine[] = [
+        { label: '地址', value: input.baseURL },
+        ...(plan.egress
+          ? [{ label: '出站许可', value: `允许 Host 访问 ${plan.egress}（${onThisComputer ? '这台电脑上的地址' : '局域网或私网地址'}）` }]
+          : []),
+        ...(input.provider
+          ? [
+              { label: '模型服务', value: `${input.provider.name}（${input.provider.id}）` },
+              { label: '密钥', value: scope ? `已填写（不显示），只发往 ${keyScopeText(scope)}` : '未填写' },
+            ]
+          : []),
+      ]
+      const warnings = plan.origin.startsWith('http://') && !onThisComputer ? ['这个地址不使用 HTTPS，发给它的内容会以明文经过网络。'] : []
+      return confirm(
         req,
         caller,
-        'provider.set-key',
-        { providerId: record.id, origin, keyHash: sha256Hex(apiKey) },
-        keyLines(record, origin),
+        'provider.confirm-origin',
+        {
+          origin: plan.origin,
+          address: plan.address,
+          baseURL: input.baseURL,
+          addAddress: plan.addAddress,
+          egress: plan.egress ?? null,
+          providerId: input.provider?.id ?? null,
+          keyHash: input.apiKey ? sha256Hex(input.apiKey) : null,
+        },
+        input.provider && input.apiKey
+          ? { form: 'key.origin', slots: { provider: input.provider.name, target: input.baseURL } }
+          : { form: 'origin.confirm', slots: { target: input.baseURL } },
+        lines,
+        warnings,
+        plan.hostPort,
       )
-      return { origin, stepup }
+    }
+
+    /**
+     * Adds the planned address and allowance in one audited policy change and returns its undo. Undoing only removes, so
+     * the audit log never holds it back; the response then says the record is missing.
+     */
+    async function addDestination(
+      caller: Caller,
+      plan: DestinationPlan,
+      stepup: StepupMethod,
+    ): Promise<(res: ServerResponse) => Promise<void>> {
+      const current = policy.get()
+      const addresses = current.confirmedAddresses ?? []
+      const address = plan.addAddress && !addresses.includes(plan.address) ? plan.address : undefined
+      const egress = plan.egress && !current.hostEgressAllow.includes(plan.egress) ? plan.egress : undefined
+      if (!address && !egress) return async () => {}
+      if (address && addresses.length >= 256)
+        throw new AppError(409, 'origins-full', '已确认的模型服务地址已有 256 个。请先在 设置 › 电脑 中移除不再使用的地址。')
+      if (egress && current.hostEgressAllow.length >= 64)
+        throw new AppError(409, 'egress-full', '出站白名单已有 64 条。请先在 设置 › 电脑 中移除不再使用的条目。')
+      const next = structuredClone(current)
+      if (address) next.confirmedAddresses = [...addresses, address]
+      if (egress) next.hostEgressAllow = [...current.hostEgressAllow, egress]
+      await policy.update(next, actorOf(caller), stepup)
+      return async res => {
+        const latest = policy.get()
+        const lowered = structuredClone(latest)
+        if (address) lowered.confirmedAddresses = (latest.confirmedAddresses ?? []).filter(item => item !== address)
+        if (egress) lowered.hostEgressAllow = latest.hostEgressAllow.filter(item => item !== egress)
+        try {
+          const { audited } = await policy.update(lowered, actorOf(caller), 'none')
+          if (!audited && !res.headersSent) res.setHeader('x-latch-audit', 'failed')
+        } catch (error) {
+          log(`模型服务保存失败后未能撤回它的地址：${errorText(error)}`)
+        }
+      }
+    }
+
+    /**
+     * Saves a provider in the order the confirmation promised: the key's audit record, then the policy change that adds
+     * its address, then the provider itself. A failed save takes the policy change back.
+     */
+    async function saveAt(
+      caller: Caller,
+      res: ServerResponse,
+      input: { id: string; plan?: DestinationPlan; stepup: StepupMethod; scope?: KeyScope },
+      save: () => Promise<void>,
+    ): Promise<void> {
+      const seq = input.scope
+        ? await audited({
+            action: 'provider.secret.set',
+            actor: actorOf(caller),
+            target: input.id,
+            stepup: input.stepup,
+            detail: { providerId: input.id, originHash: sha256Hex(input.scope.keyOrigin) },
+          })
+        : undefined
+      let undo: (res: ServerResponse) => Promise<void> = async () => {}
+      try {
+        if (confirmsDestination(input.plan)) undo = await addDestination(caller, input.plan, input.stepup)
+      } catch (error) {
+        auditFailed(seq, caller)
+        throw error
+      }
+      try {
+        await save()
+      } catch (error) {
+        await undo(res)
+        auditFailed(seq, caller)
+        throw error
+      }
     }
 
     // ---- Harnesses and agents --------------------------------------------------------------------
@@ -1715,9 +2151,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
      * Every settings write the Host makes is recorded with its before and after hashes, so the next start can tell it
      * from an edit made outside Latch. The record is a baseline, not the action's own audit, so a failed append only logs.
      */
-    function writeSettings(caller: Caller, mutate: (draft: HostSettings) => void): Promise<void> {
+    function writeSettings(caller: Caller, mutate: (draft: HostSettings) => void, scope: DeviceScope = 'admin'): Promise<void> {
       return config.updateSettings(mutate, async (next, commit) => {
-        recheck(caller, 'admin')
+        recheck(caller, scope)
         const before = sha256Hex(canonicalJson(config.settings()))
         const after = sha256Hex(canonicalJson(next))
         if (before === after) return
@@ -2146,12 +2582,25 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
 
     function modelAvailable(ref: ModelRef): boolean {
-      const provider = registry.providers().find(item => item.id === ref.providerId)
+      const provider = usableProviders().find(item => item.id === ref.providerId)
       return Boolean(provider && (provider.models?.length ? provider.models : [provider.model]).includes(ref.model))
     }
 
+    /** A model a session may use; otherwise why not, naming the service when it is held back rather than gone. */
     function assertModel(ref: ModelRef): void {
-      if (!modelAvailable(ref)) throw new AppError(400, 'model-unavailable', `模型 ${ref.model} 当前不可用，请选择已启用的模型服务与模型`)
+      if (modelAvailable(ref)) return
+      const record = effectiveProvider(ref.providerId)
+      const reason = record?.enabled ? unusableReason(record) : undefined
+      if (reason === 'origin-unconfirmed') throw originUnconfirmed()
+      if (reason === 'key-missing') {
+        const name = escapeSecurityText(record!.name)
+        throw new AppError(
+          409,
+          'provider-key-missing',
+          `「${name}」还没有填写密钥。请在运行 Latch 的电脑上，打开 设置 › 模型服务 › ${name} 填写密钥。`,
+        )
+      }
+      throw new AppError(400, 'model-unavailable', `模型 ${ref.model} 当前不可用，请选择已启用的模型服务与模型`)
     }
 
     /** Saved default model, while its provider is enabled and still offers it. */
@@ -2164,7 +2613,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     /** Provider for sessions without a model choice: `--provider`, the saved default, demo, then the first usable provider. */
     function defaultProviderId(): string {
       if (options.providerId) return options.providerId
-      const enabled = new Set(registry.providers().map(provider => provider.id))
+      const enabled = new Set(usableProviders().map(provider => provider.id))
       const saved = config.settings().defaults.model?.providerId
       if (saved && enabled.has(saved)) return saved
       if (options.demo) return 'demo'
@@ -2174,7 +2623,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     function defaultModelRef(): ModelRef | undefined {
       const saved = savedDefaultModel()
       if (saved) return saved
-      const provider = registry.providers().find(item => item.id === defaultProviderId())
+      const provider = usableProviders().find(item => item.id === defaultProviderId())
       return provider && { providerId: provider.id, model: provider.model }
     }
 
@@ -2217,9 +2666,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     async function catalog(): Promise<HostCatalog> {
       return {
+        promptTemplatesVersion: templateStore.revision(),
+        features: { search: true, sessionBatch: true, promptTemplates: true },
         harnesses: hub!.drivers(),
-        providers: registry.providers().map(provider => summarizeProvider(provider, providerKindOf(provider.id))),
-        // Unusable projects are listed with their reason for settings; session pickers skip any entry marked unavailable.
+        providers: usableProviders().map(provider => summarizeProvider(provider, providerKindOf(provider.id))),
+        unusableProviders: unusableProviders(),
+        uiPanels: registry.uiPanels(),
+        skills: registry.skills(),
+        // Disabled workspaces are listed with their reason for settings; session pickers skip any entry marked unavailable.
         workspaces: await projectInfos(),
         defaults: sessionDefaults(),
         projectFolders: { max: PROJECT_FOLDER_LIMIT },
@@ -2230,13 +2684,21 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     // ---- Approvals -------------------------------------------------------------------------------
 
     /** Builtin: the Host classifier's risk, never lower than the runtime's. Others: advisory R2. */
+    /**
+     * The approval as clients see it: the Host's own classification, never weaker than what the driver recorded, and for
+     * a built-in R2 the reason the classifier gave. A driver's own `riskReason` is dropped; unparsable arguments are R2
+     * with `unparsable-arguments`.
+     */
     async function decorate(approval: Approval, source: HarnessSource | undefined, session: SessionScope | undefined): Promise<Approval> {
-      const { risk: reported, advisory: _advisory, ...rest } = approval
+      const { risk: reported, advisory: _advisory, riskReason: _reported, ...rest } = approval
       if (source !== 'builtin') return { ...rest, advisory: true, risk: 'R2' }
       const args = parseArguments(approval.arguments)
-      const classified = args ? (await classifyCall({ toolName: approval.toolName, arguments: args, ...session })).risk : 'R2'
-      const risk = maxRisk(maxRisk(classified, reported ?? 'R1'), 'R1')
-      return { ...rest, risk: risk === 'R2' ? 'R2' : 'R1' }
+      const classified = args
+        ? await classifyCall({ toolName: approval.toolName, arguments: args, ...session })
+        : { risk: 'R2' as const, reason: 'unparsable-arguments' as const }
+      const risk = maxRisk(maxRisk(classified.risk, reported ?? 'R1'), 'R1')
+      const riskReason = risk === 'R2' && classified.risk === 'R2' ? classified.reason : undefined
+      return { ...rest, risk: risk === 'R2' ? 'R2' : 'R1', ...(riskReason ? { riskReason } : {}) }
     }
 
     async function decorateAll(approvals: Approval[], tasks: TaskSummary[]): Promise<Approval[]> {
@@ -2257,12 +2719,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
 
     function settled(approvalId: string, caller: DeviceCaller): AppError {
-      const record = decisions.get(approvalId)
+      const record = hub!.receipts.approval(approvalId)?.record
+      // The name is the device's current one; a device the Host no longer knows is named by nothing.
       const decidedBy = record
         ? {
             kind: 'device',
             self: record.deviceId === caller.device.id,
-            deviceName: record.deviceName,
+            deviceName: devices.get(record.deviceId)?.name ?? '',
             decision: record.decision,
             optionKind: record.optionKind,
             at: record.at,
@@ -2271,10 +2734,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return new AppError(409, 'approval-settled', '该审批已处理或已失效，请刷新任务', { decidedBy })
     }
 
-    function remember(record: DecisionRecord): void {
-      decisions.delete(record.approvalId)
-      decisions.set(record.approvalId, record)
-      while (decisions.size > MAX_DECISION_RECORDS) decisions.delete(decisions.keys().next().value!)
+    /**
+     * Keeps a receipt with its session. The decision or cancel has already taken effect, so a failed write is logged
+     * rather than reported: the receipt still answers retries until the Host stops, and goes into the next write.
+     */
+    async function keepReceipt(sessionId: string, receipt: StoredReceipt): Promise<void> {
+      await hub!.receipts.record(sessionId, receipt).catch(error => log(`回执未能保存：${errorText(error)}`))
     }
 
     /**
@@ -2304,7 +2769,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const newTextHash = builtinWrite && args && typeof args.content === 'string' ? sha256Hex(args.content) : undefined
       const oldText = builtinWrite ? approval.tool?.diffs?.[0]?.oldText : undefined
       const oldTextHash = typeof oldText === 'string' ? sha256Hex(oldText) : undefined
-      const reason = args ? (await classifyCall({ toolName: approval.toolName, arguments: args, ...session })).reason : undefined
+      const reason = args
+        ? (await classifyCall({ toolName: approval.toolName, arguments: args, ...session })).reason
+        : ('unparsable-arguments' as const)
       const previewHash = sha256Hex(
         canonicalJson({
           approvalId: approval.id,
@@ -2319,6 +2786,24 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         }),
       )
       return { realCwd, folder, target, newTextHash, oldTextHash, reason, previewHash, builtinWrite }
+    }
+
+    /**
+     * What the system sheet names for an R2 approval: the file the built-in writer would write (relative to the session
+     * directory when inside it, else as resolved or given); for any other tool, its name, the Host's risk reason and the
+     * start of the arguments, so two calls of one tool read differently.
+     */
+    function approvalSubject(
+      toolName: string,
+      args: Record<string, unknown> | undefined,
+      raw: string | undefined,
+      facts: Awaited<ReturnType<typeof approvalFacts>>,
+    ): PresenceSubject {
+      const why = facts.reason ? RISK_REASON_TEXT[facts.reason] : '参数无法解析'
+      const given = facts.builtinWrite && args && typeof args.path === 'string' && args.path ? args.path : undefined
+      if (given === undefined) return { form: 'approval.tool', slots: { tool: toolName, why, input: toolInputText(args, raw) } }
+      const path = facts.target && isWithin(facts.target, facts.realCwd) ? relative(facts.realCwd, facts.target) : (facts.target ?? given)
+      return { form: 'approval.write', slots: { path: path || given, why } }
     }
 
     async function decideApproval(req: IncomingMessage, res: ServerResponse, caller: Caller, approvalId: string): Promise<void> {
@@ -2342,20 +2827,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       input: z.infer<typeof decisionSchema>,
     ): Promise<void> {
       recheck(caller)
-      // An approval decided over HTTP never becomes pending again, even while its driver is still settling it.
-      const record = decisions.get(approvalId)
+      // An approval decided over HTTP never becomes pending again, even while its driver is still settling it, nor
+      // after a restart: the decision is kept with its session.
+      const record = hub!.receipts.approval(approvalId)?.record
       if (record) {
         if (input.requestId && record.requestId === input.requestId && record.deviceId === caller.device.id) {
-          json(res, {
-            accepted: true,
-            receipt: {
-              approvalId,
-              decision: record.decision,
-              ...(record.optionId ? { optionId: record.optionId } : {}),
-              at: record.at,
-              replay: true,
-            },
-          })
+          json(res, { accepted: true, receipt: { ...approvalReceipt(record), replay: true } })
           return
         }
         throw settled(approvalId, caller)
@@ -2374,6 +2851,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (option && option.kind.startsWith('allow') !== (input.decision === 'allow'))
         throw new AppError(400, 'invalid-option', '所选选项与决定不一致')
       const optionKind = option?.kind ?? (input.decision === 'allow' ? 'allow_once' : 'reject_once')
+      // 「告诉 Agent 改做什么」 goes only with a rejection, and only the built-in harness hands it on: an agent's permission
+      // answer carries no text. It is checked before anything is recorded.
+      let note: string | undefined
+      if (input.note !== undefined) {
+        if (input.decision !== 'reject') throw new AppError(400, 'invalid-note', '只有拒绝时可以附上说明')
+        const checked = rejectionNote(input.note)
+        if (checked === null) throw new AppError(400, 'invalid-note', '说明最多 500 个字，不能包含控制字符、不可见字符或改变文字方向的字符')
+        if (source === 'builtin') note = checked
+      }
       const args = source === 'builtin' ? parseArguments(approval.arguments) : undefined
       const level = hub!.levelOf(found.harnessId)
       // Checked against the current device record: the request may have been opened before a scope change.
@@ -2384,9 +2870,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (input.decision === 'reject') {
         limits.classC.take(caller.device.id)
       } else if (approval.advisory) {
-        requireUnix(caller)
+        requireLocal(caller)
       } else if (approval.risk === 'R2') {
-        if (caller.connection.listener !== 'unix') throw hostDesktopRequired()
+        if (!isLocalListener(caller.connection.listener)) throw hostDesktopRequired()
       }
       recheck(caller, needed)
       // Rejections reduce what runs and are never limited by the ceiling.
@@ -2395,6 +2881,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         await assertRemoteSession(caller, approval.sessionId)
         // Allowing a call acts in the session's folders, so they must still be folders of its project, as for new input.
         await assertSessionWorkspace(approval.sessionId)
+      }
+      // A note is input to the model, so it needs what typing into the session needs: a device that may only view or
+      // reject can still reject, but without a note.
+      if (note !== undefined) {
+        recheck(caller, 'run')
+        assertSessionCeiling(caller, level)
+        await assertRemoteSession(caller, approval.sessionId)
       }
       if (input.decision === 'allow' && optionKind === 'allow_always' && (approval.advisory || approval.risk === 'R2')) {
         throw new AppError(403, 'approval-always-unavailable', '高风险操作不提供“始终允许”')
@@ -2405,14 +2898,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         // Host-derived facts come first and the model-chosen arguments last. Only the built-in writer's file content appears
         // as its size and hash; other arguments, and unparsable argument text, appear whole and escaped.
         const lines: PreviewLine[] = [
-          { label: '会话', value: approval.sessionId },
+          { label: '会话', value: session?.title || approval.sessionId },
           { label: '工具', value: approval.toolName },
           { label: '工作目录', value: facts.realCwd },
           ...(facts.folder !== undefined ? [{ label: '文件夹', value: facts.folder ?? '（不是这个会话的文件夹）' }] : []),
           ...(facts.target ? [{ label: '目标路径', value: facts.target }] : []),
           ...(facts.newTextHash ? [{ label: '新内容哈希', value: hashDisplay(facts.newTextHash) }] : []),
           ...(facts.oldTextHash ? [{ label: '原内容哈希', value: hashDisplay(facts.oldTextHash) }] : []),
-          { label: '风险原因', value: facts.reason ? RISK_REASONS[facts.reason] : '参数无法解析' },
+          // The same words as the card's pill, from one mapping.
+          ...(facts.reason ? [{ label: '风险原因', value: RISK_REASON_TEXT[facts.reason] }] : []),
           { label: '参数', value: args ? canonicalJson(previewArguments(args, facts.builtinWrite)) : (approval.arguments ?? '') },
         ]
         stepup = await confirm(
@@ -2420,6 +2914,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           caller,
           'approval.r2',
           { approvalId, optionId: input.optionId, decision: input.decision, previewHash: facts.previewHash },
+          approvalSubject(approval.toolName, args, approval.arguments, facts),
           lines,
         )
       }
@@ -2445,24 +2940,117 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         },
         input.decision === 'reject' ? res : undefined,
       )
-      const accepted = await hub!.decide(approvalId, input.decision, input.optionId ? { optionId: input.optionId } : undefined)
+      const accepted = await hub!.decide(approvalId, input.decision, {
+        ...(input.optionId ? { optionId: input.optionId } : {}),
+        // The decision record says only where the person was, never which device: names and ids stay in the audit.
+        via: isLocalListener(caller.connection.listener) ? 'this-mac' : 'other-device',
+        ...(note ? { note } : {}),
+      })
       if (!accepted) {
         await audited({ action: 'approval.stale', actor: actorOf(caller), target: approvalId, detail: { approvalId } }, res)
         throw settled(approvalId, caller)
       }
-      remember({
+      const recorded: ApprovalRecord = {
+        kind: 'approval',
         approvalId,
         ...(input.requestId ? { requestId: input.requestId } : {}),
         deviceId: caller.device.id,
-        deviceName: caller.device.name,
         decision: input.decision,
         ...(input.optionId ? { optionId: input.optionId } : {}),
         optionKind,
         at,
-      })
-      json(res, {
-        accepted: true,
-        receipt: { approvalId, decision: input.decision, ...(input.optionId ? { optionId: input.optionId } : {}), at },
+      }
+      await keepReceipt(approval.sessionId, recorded)
+      json(res, { accepted: true, receipt: approvalReceipt(recorded) })
+    }
+
+    /**
+     * A cancel names the run it means (`runId`), so a late one cannot stop a run that began afterwards, and carries a
+     * `requestId`, so a retry, also after a restart, gets the first answer instead of a second cancel.
+     */
+    async function cancelTask(
+      caller: DeviceCaller,
+      sessionId: string,
+      input: z.infer<typeof cancelSchema>,
+      res: ServerResponse,
+    ): Promise<CancelReceipt> {
+      const { requestId } = input
+      const replay = (): CancelReceipt | undefined => {
+        const stored = requestId ? hub!.receipts.cancel(sessionId, caller.device.id, requestId) : undefined
+        if (!stored) return undefined
+        if (stored.runId !== input.runId) throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同的取消')
+        return { ...cancelReceipt(sessionId, stored), replay: true }
+      }
+      // A stored answer needs no route, so it replays even when the session's driver did not mount after a restart.
+      const early = replay()
+      if (early) return early
+      await hub!.harnessOf(sessionId)
+      if (!requestId) return cancelOnce(caller, sessionId, input, res)
+      const key = `${sessionId}\n${caller.device.id}\n${requestId}`
+      // No await between the last look and claiming the flight, so two copies never both run.
+      for (;;) {
+        const answer = replay()
+        if (answer) return answer
+        const flight = cancelFlights.get(key)
+        if (!flight) break
+        // A copy waits for the first; a first that failed left no receipt, so this one then runs itself.
+        await flight.catch(() => undefined)
+      }
+      const run = cancelOnce(caller, sessionId, input, res)
+      cancelFlights.set(key, run)
+      try {
+        return await run
+      } finally {
+        if (cancelFlights.get(key) === run) cancelFlights.delete(key)
+      }
+    }
+
+    async function cancelOnce(
+      caller: DeviceCaller,
+      sessionId: string,
+      input: z.infer<typeof cancelSchema>,
+      res: ServerResponse,
+    ): Promise<CancelReceipt> {
+      const { requestId, runId } = input
+      // A driver that cannot list its sessions must not keep a run from being stopped: the driver checks runId itself.
+      const before = await hub!.summary(sessionId).catch(() => undefined)
+      let outcome: CancelOutcome = 'ended'
+      let status: TaskStatus | undefined
+      if (before && runId !== undefined && before.runId !== runId) {
+        // The named run is over and another may be running; its final status is not known here.
+      } else if (before && runId !== undefined && !ACTIVE_STATUSES.has(before.status)) {
+        status = before.status
+      } else {
+        // A cancel without runId keeps its earlier meaning: stop whatever is running, if anything.
+        await audited(
+          { action: 'task.cancelled', actor: actorOf(caller), target: sessionId, detail: { sessionId, ...(runId ? { runId } : {}) } },
+          res,
+        )
+        const cancelled = await hub!.cancel(sessionId, runId === undefined ? undefined : { runId })
+        const stopped = cancelled === true || (cancelled === undefined && (!before || ACTIVE_STATUSES.has(before.status)))
+        outcome = stopped ? 'stopped' : 'ended'
+        // A different run id afterwards means another run began once this one settled.
+        const after = await hub!.summary(sessionId).catch(() => undefined)
+        if (after && after.runId === (before ? before.runId : runId)) status = after.status
+      }
+      const at = new Date(now()).toISOString()
+      if (requestId) {
+        await keepReceipt(sessionId, {
+          kind: 'cancel',
+          requestId,
+          deviceId: caller.device.id,
+          ...(runId ? { runId } : {}),
+          outcome,
+          ...(status ? { status } : {}),
+          at,
+        })
+      }
+      return cancelReceipt(sessionId, {
+        ...(requestId ? { requestId } : {}),
+        ...(runId ? { runId } : {}),
+        outcome,
+        ...(status ? { status } : {}),
+        at,
       })
     }
 
@@ -2492,8 +3080,51 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         streams.delete(res)
         return
       }
-      res.write(`id: ${event.revision}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+      let frame = frames.get(event)
+      if (frame === undefined) {
+        frame = `id: ${event.revision}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`
+        frames.set(event, frame)
+      }
+      write(res, stream, event.type, frame, event.sessionId)
       stream.lastSentRevision = event.revision
+    }
+
+    function write(res: ServerResponse, stream: EventStream, kind: FrameKind, frame: string, sessionId?: string): void {
+      res.write(frame)
+      traffic.frame(stream.meter, kind, Buffer.byteLength(frame), sessionId)
+    }
+
+    /** The Host's own availability goes to every stream whose credential is still accepted, outside the revision order. */
+    function sendHostState(res: ServerResponse, event: HostStateEvent): void {
+      const stream = streams.get(res)
+      if (!stream || !streamAllowed(stream)) {
+        if (!res.writableEnded) res.end()
+        streams.delete(res)
+        return
+      }
+      write(res, stream, 'host-state', `event: host-state\ndata: ${JSON.stringify(event)}\n\n`)
+    }
+
+    /** Announces the stop on every stream and ends them all, giving the last frames a moment to leave. */
+    async function endStreams(event: HostStateEvent): Promise<void> {
+      const open = [...streams.keys()]
+      for (const res of open) sendHostState(res, event)
+      streams.clear()
+      await Promise.all(
+        open.map(
+          res =>
+            new Promise<void>(done => {
+              const timer = setTimeout(done, 500)
+              const finish = () => {
+                clearTimeout(timer)
+                done()
+              }
+              res.once('close', finish)
+              if (res.writableEnded) finish()
+              else res.end(finish)
+            }),
+        ),
+      )
     }
 
     function scheduleEvents(): void {
@@ -2561,7 +3192,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (!streamAllowed(stream)) {
           res.end()
           streams.delete(res)
-        } else res.write(': heartbeat\n\n')
+        } else write(res, stream, 'heartbeat', ': heartbeat\n\n')
       }
     }, 15_000)
     heartbeat.unref()
@@ -2577,8 +3208,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return {
         listener: listener.listener,
         origin: listener.origin,
-        remoteAddress:
-          listener.listener === 'unix' ? UNIX_ADDRESS : (req.socket.remoteAddress ?? '').replace(/^::ffff:(?=\d+\.\d+\.\d+\.\d+$)/u, ''),
+        remoteAddress: isSocketTransport(listener.listener)
+          ? UNIX_ADDRESS
+          : (req.socket.remoteAddress ?? '').replace(/^::ffff:(?=\d+\.\d+\.\d+\.\d+$)/u, ''),
       }
     }
 
@@ -2593,7 +3225,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       renewal = false,
     ): Promise<Caller> {
       const presented = presentedCredential(req, listener, hostId8)
-      if (listener.listener === 'unix' && !hasAuthorization(req)) return { connection }
+      // Without a credential, only host.sock has an identity of its own: the anonymous command line.
+      if (isLocalListener(listener.listener) && !hasAuthorization(req)) return { connection }
       const outcome = await devices.authenticate(presented, connection)
       if (outcome.ok)
         return {
@@ -2639,9 +3272,24 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         json(res, { ok: true })
         return true
       }
+      if (path === '/link/api/host/state') {
+        // Only this computer reports sleep, wake and why it is about to stop the Host: the desktop app and the command line.
+        if (!isLocalListener(listener.listener)) throw new AppError(404, 'not-found', '接口不存在')
+        if (method !== 'POST') throw new AppError(405, 'method-not-allowed', '不支持此操作')
+        const event = lifecycle.report(hostStateInputSchema.parse(await jsonBody(req)))
+        if (event) {
+          for (const stream of [...streams.keys()]) sendHostState(stream, event)
+          // Clients resynchronize after a wake; runs the sleep interrupted show as they are now.
+          if (event.state === 'awake') refresh()
+        }
+        json(res, { ok: true })
+        return true
+      }
       if (path === '/link/api/host-info' && method === 'GET') {
-        if (listener.listener !== 'unix') throw new AppError(404, 'not-found', '接口不存在')
+        if (!isLocalListener(listener.listener)) throw new AppError(404, 'not-found', '接口不存在')
         const tasks = await hub!.listTasks()
+        const running = tasks.filter(task => task.status === 'running').length
+        const waiting = tasks.filter(task => task.status === 'waiting-approval').length
         const info: HostInfo = {
           product: 'Latch',
           version: LATCH_VERSION,
@@ -2653,7 +3301,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           tlsOrigin: tlsOrigin ?? null,
           devMode: true,
           presence: await presenceStatus(),
-          activeSessions: tasks.filter(task => task.status === 'running' || task.status === 'waiting-approval').length,
+          activeSessions: running + waiting,
+          activity: { running, waiting },
         }
         json(res, info)
         return true
@@ -2672,14 +3321,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         return true
       }
       if (path === '/link/api/enrollments' && method === 'POST') {
-        const tls = listener.listener === 'lan-tls' || listener.listener === 'tailnet-tls'
-        if (!tls) limits.enrollmentCreate.take(listener.listener)
+        const local = isLocalListener(listener.listener)
+        if (local) limits.enrollmentCreate.take(listener.listener)
         const input = enrollmentSchema.parse(await jsonBody(req))
-        // On TLS only an invitation can succeed. Each one this Host issued gets its own budget, so other requests cannot use
-        // up a paired phone's; every other attempt, with or without a code, shares one budget per listener and adds no keys.
-        const invitationHash = tls && input.invitation !== undefined ? sha256Hex(input.invitation) : undefined
-        const issued = invitationHash !== undefined && invitationIssued(invitationHash)
-        if (tls)
+        // Off host.sock only an invitation can succeed. Each one this Host issued gets its own budget on its listener, so
+        // other requests cannot use up an invited device's; every other attempt, with or without a code, shares one budget
+        // per listener and adds no keys.
+        const invitationHash = !local && input.invitation !== undefined ? sha256Hex(input.invitation) : undefined
+        const issued = invitationHash !== undefined && invitationIssued(invitationHash, listener.listener)
+        if (!local)
           limits.enrollmentCreate.take(issued ? `${listener.listener}:invitation:${invitationHash}` : `${listener.listener}:uninvited`)
         const request = {
           publicKey: input.publicKey,
@@ -2723,7 +3373,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const presented = presentedCredential(req, listener, hostId8)
         const { device, credential } = await enrollments.complete(id, input.signature, connection)
         refresh()
-        if (listener.listener === 'unix') {
+        if (isSocketTransport(listener.listener)) {
           json(res, { device, credential })
           return true
         }
@@ -2751,7 +3401,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       })
       const renewed: CurrentDevice = { ...device, current: true, renewAfter: new Date(now() + RENEW_INTERVAL_MS).toISOString() }
       refresh()
-      if (caller.connection.listener === 'unix') {
+      if (isSocketTransport(caller.connection.listener)) {
         json(res, { device: renewed, credential })
         return
       }
@@ -2779,7 +3429,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     /** Host-derived facts come first: the name is chosen by the device itself and can imitate another. */
     function grantLines(target: Device, added: DeviceScope[], removed: DeviceScope[], dataScope: DataScope): PreviewLine[] {
       const label = (list: DeviceScope[]) => (list.length ? list.map(scope => SCOPE_LABELS[scope]).join('、') : '无')
-      const origin = target.listener === 'unix' ? UNIX_ADDRESS : target.listener === 'loopback-tcp' ? loopbackOrigin : (tlsOrigin ?? '')
+      const origin = isSocketTransport(target.listener)
+        ? UNIX_ADDRESS
+        : target.listener === 'loopback-tcp'
+          ? loopbackOrigin
+          : (tlsOrigin ?? '')
       const inviter = target.pairedBy.deviceId ? devices.get(target.pairedBy.deviceId) : undefined
       return [
         { label: '连接方式', value: `${LISTENER_LABELS[target.listener]} · ${origin}` },
@@ -2798,9 +3452,25 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       ]
     }
 
+    /** What the system sheet names for a raise: the added rights, all data, and a restored review. */
+    function grantSubject(target: Device, added: DeviceScope[], dataScope: DataScope): PresenceSubject {
+      const change = [
+        ...(target.status === 'review' ? ['恢复正常使用'] : []),
+        ...added.map(scope => SCOPE_LABELS[scope]),
+        ...(dataScope === 'all' && target.dataScope !== 'all' ? ['查看全部数据'] : []),
+      ]
+      return { form: 'device.grant', slots: { device: target.name, change: change.join('、') || '恢复正常使用' } }
+    }
+
+    /** Every device but the desktop app gets a locality warning; a loopback one may be a forwarded peer. */
     function grantWarnings(target: Device, added: DeviceScope[]): string[] {
+      const where = isLocalListener(target.listener)
+        ? []
+        : target.listener === 'loopback-tcp'
+          ? ['该设备经回环端口连接，也可能是转发进来的连接，不能据此认定它在这台电脑上。']
+          : ['该设备通过网络连接，不在这台电脑上。']
       return [
-        ...(target.listener === 'lan-tls' || target.listener === 'tailnet-tls' ? ['该设备通过网络连接，不在这台电脑上。'] : []),
+        ...where,
         ...(target.status === 'review' ? ['该设备的邀请设备已被撤销；确认后它将恢复正常使用。'] : []),
         ...(added.includes('admin') ? ['确认后该设备可以管理此 Host：模型服务、插件、项目和其他设备。'] : []),
       ]
@@ -2826,7 +3496,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (method === 'DELETE') {
           limits.classC.take(caller.device.id)
           await revokeDevice(res, caller, caller.device.id, 'self')
-          if (caller.connection.listener !== 'unix')
+          if (!isSocketTransport(caller.connection.listener))
             res.setHeader('set-cookie', clearedCredentialCookie(caller.connection.listener, hostId8))
           json(res, { revoked: true })
           return true
@@ -2859,7 +3529,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           throw new AppError(404, 'device-not-found', '找不到该设备')
         const scopes = [...new Set<DeviceScope>(['view', ...(input.scopes ?? target.scopes)])].sort()
         const dataScope: DataScope = input.dataScope ?? target.dataScope
-        if (target.listener !== 'unix' && scopes.some(scope => scope === 'approve:elevated' || scope === 'secrets')) {
+        if (!isLocalListener(target.listener) && scopes.some(scope => scope === 'approve:elevated' || scope === 'secrets')) {
           throw new AppError(400, 'scope-not-grantable', '该权限在此连接方式下不可授予')
         }
         const added = scopes.filter(scope => !target.scopes.includes(scope))
@@ -2871,13 +3541,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const base = grantBase(target)
         let stepup: StepupMethod = 'none'
         if (raising) {
-          requireUnix(caller)
+          requireLocal(caller)
           // The preview shows a change against `base`, so the confirmation binds it too.
           stepup = await confirm(
             req,
             caller,
             'device.grant',
             { deviceId: id, scopes, dataScope, base },
+            grantSubject(target, added, dataScope),
             grantLines(target, added, removed, dataScope),
             grantWarnings(target, added),
           )
@@ -2909,20 +3580,35 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         json(res, { device })
         return true
       }
+      if (path === '/link/api/enrollments' && method === 'GET') {
+        // The pairing panel compares fingerprints on this computer, so only the desktop's admins see who is waiting; it
+        // also says which full-access sessions a new pairing has to wait for (they refuse device.enroll).
+        requireLocal(caller)
+        requireScope(caller, 'admin')
+        json(res, { enrollments: enrollments.waiting(), blockingTasks: (await hub!.unsandboxedTasks()).slice(0, 8) })
+        return true
+      }
       if (path === '/link/api/pairings' && method === 'POST') {
-        requireUnix(caller)
+        requireLocal(caller)
         if (caller.device) requireScope(caller, 'admin')
         const input = invitationSchema.parse(await optionalJsonBody(req))
         recheck(caller, 'admin')
-        if (!tlsOrigin) throw new AppError(409, 'tls-not-configured', '尚未配置 HTTPS 入口，无法生成手机配对码')
+        // `loopback`: a browser on this computer, which the desktop app opens with the invitation in the fragment.
+        const target: { listener: ListenerClass; origin: string } | undefined =
+          input.target === 'loopback'
+            ? { listener: 'loopback-tcp', origin: loopbackOrigin }
+            : tls && tlsOrigin
+              ? { listener: tls.listener, origin: tlsOrigin }
+              : undefined
+        if (!target) throw new AppError(409, 'tls-not-configured', '尚未配置 HTTPS 入口，无法生成手机配对码')
         const invitation = await enrollments.createInvitation(
-          { ...(caller.device ? { inviter: caller.device } : {}), ...(input.scopes ? { scopes: input.scopes } : {}), tlsOrigin },
+          { ...(caller.device ? { inviter: caller.device } : {}), ...(input.scopes ? { scopes: input.scopes } : {}), ...target },
           actorOf(caller),
         )
         pruneInvitations()
         // The enrollment service caps live invitations; this bound only keeps the map small if that cap ever changes.
         if (issuedInvitations.size >= MAX_ISSUED_INVITATIONS) issuedInvitations.delete(issuedInvitations.keys().next().value!)
-        issuedInvitations.set(sha256Hex(invitation.code), Date.parse(invitation.expiresAt))
+        issuedInvitations.set(sha256Hex(invitation.code), { expiresAt: Date.parse(invitation.expiresAt), listener: target.listener })
         json(res, { invitation }, 201)
         return true
       }
@@ -2947,6 +3633,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           next.hostEgressAllow = [
             ...new Set([...next.hostEgressAllow.filter(entry => !remove.has(entry)), ...(input.hostEgressAllow.add ?? [])]),
           ]
+        }
+        if (input.confirmedAddresses) {
+          const remove = new Set(input.confirmedAddresses.remove)
+          next.confirmedAddresses = (next.confirmedAddresses ?? []).filter(origin => !remove.has(origin))
         }
         return next
       }
@@ -2986,6 +3676,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           caller,
           'policy.change',
           { baseHash, nextHash: sha256Hex(canonicalJson(next)) },
+          policySubject(previous, next),
           diff.map(line => ({ label: line.path, value: `${line.before} → ${line.after}` })),
           [],
           onlyAddress ? added[0] : undefined,
@@ -3005,7 +3696,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const ceiling: PermissionLevel = ceilingFor(current, caller.connection.listener)
       const allowed = levelsUpTo(ceiling).filter(level => level !== 'L3')
       if (!levelAtMost('L1', ceiling)) throw ceilingExceeded(allowed)
-      if (!start || caller.connection.listener === 'unix') return
+      if (!start || isLocalListener(caller.connection.listener)) return
       const remote = current.remote
       if (
         !remote.allowRemoteStart
@@ -3021,7 +3712,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         assertStandardCeiling(caller)
         return
       }
-      requireUnix(caller)
+      requireLocal(caller)
       const local = policy.get().local
       if (!local.allowL3) throw ceilingExceeded(levelAtMost('L1', local.maxLevel) ? ['L1'] : [])
     }
@@ -3035,7 +3726,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
      * as outside.
      */
     async function assertRemoteSession(caller: Caller, sessionId: string): Promise<void> {
-      if (caller.connection.listener === 'unix') return
+      if (isLocalListener(caller.connection.listener)) return
       const remote = policy.get().remote
       if (remote.harnesses === null && remote.workspaces === null) return
       if (remote.harnesses !== null && !remote.harnesses.includes(await hub!.harnessOf(sessionId))) throw ceilingExceeded([])
@@ -3067,7 +3758,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     async function assertSessionAccess(caller: DeviceCaller, sessionId: string): Promise<'L1' | 'L3'> {
       const level = hub!.levelOf(await hub!.harnessOf(sessionId))
-      if (level === 'L3') requireUnix(caller)
+      if (level === 'L3') requireLocal(caller)
       return level
     }
 
@@ -3168,10 +3859,43 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ]),
         ]
         const foldersAudited = passed.length ? { folderCount: passed.length + 1 } : {}
+        const project = chosen && chosen.id !== 'default' ? chosen.name : undefined
+        const place = { harness: harness.name, project: project ?? '', folder: project === undefined ? '启动目录' : '' }
+        let subject: PresenceSubject
         let launchHash: string
         let lines: PreviewLine[]
         if (preview) {
           launchHash = preview.launchHash
+          const before = audit.startedBefore({
+            launchHash,
+            harnessId,
+            ...(preview.definitionHash ? { definitionHash: preview.definitionHash } : {}),
+          })
+          // A repeat runs the very command the owner approved with this fingerprint; the same command with another project
+          // configuration says so; anything else names the executable's path, the arguments and the variables the
+          // definition sets (they change what the agent does as much as its arguments), as custom unless it is exactly the
+          // preset's own command at the place the Host finds it.
+          const command = {
+            program: programText(preview.command),
+            args: argumentsText(preview.args),
+            env: envNamesText(preview.definitionEnvNames ?? []),
+          }
+          subject =
+            before === 'launch'
+              ? { form: 'start.repeat', slots: place }
+              : before === 'definition'
+                ? { form: 'start.project-config', slots: place }
+                : {
+                    form:
+                      before === 'harness'
+                        ? preview.verified
+                          ? 'start.changed'
+                          : 'start.changed-custom'
+                        : preview.verified
+                          ? 'start.first'
+                          : 'start.first-custom',
+                    slots: { ...place, ...command },
+                  }
           lines = [
             { label: 'Harness', value: `${harness.name}（${harnessId}）` },
             { label: '命令', value: preview.command },
@@ -3191,6 +3915,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           const pluginId = plugin?.id ?? harnessId
           const version = plugin?.version ?? ''
           launchHash = sha256Hex(canonicalJson({ harnessId, pluginId, version, ...(passed.length ? { folders: passed } : {}) }))
+          const before = audit.startedBefore({ launchHash, harnessId })
+          subject =
+            before === 'launch'
+              ? { form: 'start.repeat', slots: place }
+              : {
+                  form: before === 'harness' ? 'start.changed-plugin' : 'start.first-plugin',
+                  slots: { ...place, plugin: `${pluginId}@${version}` },
+                }
           lines = [
             { label: 'Harness', value: `${harness.name}（${harnessId}）` },
             { label: '命令', value: `第三方 Harness 插件 ${pluginId}@${version}` },
@@ -3208,6 +3940,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           caller,
           'task.start-l3',
           { harnessId, cwd, requestId: input.requestId, promptHash, launchHash, ...(passed.length ? { folders: passed } : {}) },
+          subject,
           lines,
           L3_WARNINGS,
         )
@@ -3247,10 +3980,17 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             actor: actorOf(caller),
             target: created.sessionId,
             stepup,
-            detail: { sessionId: created.sessionId, harnessId, launchHash, ...foldersAudited },
+            detail: {
+              sessionId: created.sessionId,
+              harnessId,
+              launchHash,
+              ...foldersAudited,
+              ...(preview?.definitionHash ? { definitionHash: preview.definitionHash } : {}),
+            },
           },
           res,
         )
+        await noteAgentStarted(caller, harnessId)
         json(res, created, 201)
       })
     }
@@ -3267,7 +4007,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (method === 'GET' && !action) {
         requireScope(caller, 'view')
         const detailRevision = revision
-        json(res, { ...(await decoratedDetail(id)), sync: { instanceId, revision: detailRevision } })
+        traffic.response('detail', json(res, { ...(await decoratedDetail(id)), sync: { instanceId, revision: detailRevision } }), id)
         return true
       }
       if (method === 'PATCH' && !action) {
@@ -3305,10 +4045,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (method === 'POST' && action === 'cancel') {
         requireScope(caller, 'view')
         limits.classC.take(caller.device.id)
-        await hub!.harnessOf(id)
-        await audited({ action: 'task.cancelled', actor: actorOf(caller), target: id, detail: { sessionId: id } }, res)
-        await hub!.cancel(id)
-        json(res, { accepted: true })
+        const input = cancelSchema.parse(await optionalJsonBody(req))
+        json(res, { accepted: true, receipt: await cancelTask(caller, id, input, res) })
         return true
       }
       if (method === 'POST' && action === 'config') {
@@ -3330,13 +4068,29 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const harness = hub!.info(detail.summary.harnessId ?? '')
         // A wider mode applies in every folder the harness received, e.g. Codex may then write in all of them.
         const others = detail.summary.folderAccess === 'all' ? (detail.summary.folders ?? []).slice(1) : []
-        const stepup = await confirm(req, caller, 'task.mode-widen', { sessionId: id, configId: input.configId, value: input.value }, [
-          { label: '会话', value: detail.summary.title || id },
-          { label: 'Harness', value: harness ? `${harness.name}（${harness.id}）` : (detail.summary.harnessId ?? '') },
-          { label: '当前模式', value: detail.config?.find(option => option.id === input.configId)?.currentValue ?? '' },
-          { label: '新模式', value: input.value },
-          ...others.map(folder => ({ label: '其他文件夹', value: folder.path })),
-        ])
+        const option = detail.config?.find(item => item.id === input.configId)
+        const modeName = option?.options.find(item => item.value === input.value)?.name
+        const stepup = await confirm(
+          req,
+          caller,
+          'task.mode-widen',
+          { sessionId: id, configId: input.configId, value: input.value },
+          {
+            form: 'mode.widen',
+            slots: {
+              session: detail.summary.title || '未命名会话',
+              // The agent's name for the mode; its value stays in the details.
+              mode: modeName || input.value,
+            },
+          },
+          [
+            { label: '会话', value: detail.summary.title || id },
+            { label: 'Harness', value: harness ? `${harness.name}（${harness.id}）` : (detail.summary.harnessId ?? '') },
+            { label: '当前模式', value: option?.currentValue ?? '' },
+            { label: '新模式', value: input.value },
+            ...others.map(folder => ({ label: '其他文件夹', value: folder.path })),
+          ],
+        )
         recheck(caller, 'run')
         assertSessionCeiling(caller, hub!.levelOf(await hub!.harnessOf(id)))
         const seq = await audited({
@@ -3363,7 +4117,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     async function handleAdmin(req: IncomingMessage, res: ServerResponse, caller: Caller, path: string, method: string): Promise<boolean> {
       if (path === '/link/api/plugins' && method === 'GET') {
         requireScope(caller, 'admin')
-        json(res, { plugins: registry.list() })
+        json(res, { plugins: await pluginList() })
         return true
       }
       const pluginMatch = path.match(/^\/link\/api\/plugins\/([^/]+)$/)
@@ -3372,7 +4126,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const input = z.object({ enabled: z.boolean() }).parse(await jsonBody(req))
         await serial(caller, 'admin', () => setPluginEnabled(caller, safeDecode(pluginMatch[1]!), input.enabled))
         refresh()
-        json(res, { plugins: registry.list() })
+        json(res, { plugins: await pluginList() })
         return true
       }
       if (path === '/link/api/provider' && method === 'GET') {
@@ -3393,37 +4147,42 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         assertBaseURL(input.baseURL)
         recheck(caller, 'admin')
         const current = effectiveProvider(LEGACY_PROVIDER_ID)
-        const { origin, stepup } = await confirmKey(
-          req,
-          caller,
-          { id: LEGACY_PROVIDER_ID, name: current?.name ?? 'OpenAI 兼容接口' },
-          input.baseURL,
-          input.apiKey,
-        )
+        if (input.apiKey) requireKeyEntry(caller)
+        const plan = await planDestination(input.baseURL, { key: Boolean(input.apiKey), confirm: false })
+        const stepup = confirmsDestination(plan)
+          ? await confirmDestination(req, caller, plan, {
+              baseURL: input.baseURL,
+              provider: { id: LEGACY_PROVIDER_ID, name: current?.name ?? 'OpenAI 兼容接口' },
+              apiKey: input.apiKey,
+            })
+          : 'none'
+        const scope = keyScopeOf(input.baseURL)
         await serial(caller, 'admin', async () => {
-          const seq = input.apiKey
-            ? await audited({
-                action: 'provider.secret.set',
+          // This form always replaces the key: saving it without one removes a saved key, a tightening that is recorded.
+          if (!input.apiKey && effectiveProvider(LEGACY_PROVIDER_ID)?.apiKey)
+            await audited(
+              {
+                action: 'provider.secret.cleared',
                 actor: actorOf(caller),
                 target: LEGACY_PROVIDER_ID,
-                stepup,
-                detail: { providerId: LEGACY_PROVIDER_ID, originHash: sha256Hex(origin) },
-              })
-            : undefined
+                detail: { providerId: LEGACY_PROVIDER_ID, reason: 'manual' },
+              },
+              res,
+            )
           const keyed = (record: ProviderRecord): ProviderRecord => {
-            const { keyOrigin: _origin, ...rest } = record
+            const { keyOrigin: _origin, keyPath: _path, ...rest } = record
             return {
               ...rest,
               baseURL: input.baseURL,
               apiKey: input.apiKey,
-              ...(input.apiKey ? { keyOrigin: origin } : {}),
+              ...(input.apiKey ? scope : {}),
               defaultModel: input.model,
               models: withModel(record.models, input.model),
             }
           }
           const edited = editProvider(LEGACY_PROVIDER_ID, keyed)
-          try {
-            await (edited
+          await saveAt(caller, res, { id: LEGACY_PROVIDER_ID, plan, stepup, ...(input.apiKey ? { scope } : {}) }, () =>
+            edited
               ? saveProvider(caller, ...edited)
               : saveProvider(
                   caller,
@@ -3437,11 +4196,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
                     models: [],
                     defaultModel: input.model,
                   }),
-                ))
-          } catch (error) {
-            auditFailed(seq, caller)
-            throw error
-          }
+                ),
+          )
         })
         refresh()
         json(res, { configured: true })
@@ -3449,7 +4205,35 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
       if (path === '/link/api/providers' && method === 'GET') {
         requireScope(caller, 'admin')
-        json(res, { providers: effectiveProviders().map(providerSettings), presets: PROVIDER_PRESETS })
+        json(res, {
+          providers: effectiveProviders().map(providerView),
+          presets: PROVIDER_PRESETS,
+          // Saving a service at one of these addresses, on one of these origins or at a preset's HTTPS origin needs no
+          // confirmation.
+          confirmedAddresses: [...(policy.get().confirmedAddresses ?? [])],
+          runOrigins: [...processOrigins],
+        })
+        return true
+      }
+      if (path === '/link/api/provider-origins' && method === 'POST') {
+        // Confirms an address before a service is saved there, so its models can be listed first; still one confirmation.
+        requireScope(caller, 'admin')
+        requireLocal(caller)
+        const input = providerOriginSchema.parse(await jsonBody(req))
+        assertBaseURL(input.baseURL)
+        recheck(caller, 'admin')
+        const plan = await planDestination(input.baseURL, { key: false, confirm: true })
+        if (confirmsDestination(plan)) {
+          const stepup = await confirmDestination(req, caller, plan, { baseURL: input.baseURL })
+          await serial(caller, 'admin', () => addDestination(caller, plan, stepup))
+          refresh()
+        }
+        json(res, {
+          origin: plan.origin,
+          address: plan.address,
+          destination: destinationOf(input.baseURL),
+          ...(plan.egress ? { egress: plan.egress } : {}),
+        })
         return true
       }
       if (path === '/link/api/providers' && method === 'POST') {
@@ -3460,7 +4244,16 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const id = input.id ?? newProviderId(input.presetId ?? input.name)
         if (idTaken(id)) throw new AppError(409, 'provider-exists', `标识 ${id} 已被占用`)
         const apiKey = input.apiKey ?? ''
-        const keyed = apiKey ? await confirmKey(req, caller, { id, name: input.name }, input.baseURL, apiKey) : undefined
+        if (apiKey) requireKeyEntry(caller)
+        const plan = await planDestination(input.baseURL, { key: Boolean(apiKey), confirm: input.confirmOrigin === true })
+        const stepup = confirmsDestination(plan)
+          ? await confirmDestination(req, caller, plan, {
+              baseURL: input.baseURL,
+              provider: { id, name: input.name },
+              ...(apiKey ? { apiKey } : {}),
+            })
+          : 'none'
+        const scope = apiKey ? keyScopeOf(input.baseURL) : undefined
         const record = await serial(caller, 'admin', async () => {
           if (idTaken(id)) throw new AppError(409, 'provider-exists', `标识 ${id} 已被占用`)
           const next: ProviderRecord = {
@@ -3470,30 +4263,16 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             ...(input.presetId ? { presetId: input.presetId } : {}),
             baseURL: input.baseURL,
             apiKey,
-            ...(keyed ? { keyOrigin: keyed.origin } : {}),
+            ...(scope ?? {}),
             enabled: input.enabled ?? true,
             models: withModel(input.models, input.defaultModel),
             defaultModel: input.defaultModel,
           }
-          const seq = keyed
-            ? await audited({
-                action: 'provider.secret.set',
-                actor: actorOf(caller),
-                target: id,
-                stepup: keyed.stepup,
-                detail: { providerId: id, originHash: sha256Hex(keyed.origin) },
-              })
-            : undefined
-          try {
-            await saveProvider(caller, next)
-          } catch (error) {
-            auditFailed(seq, caller)
-            throw error
-          }
+          await saveAt(caller, res, { id, plan, stepup, ...(scope ? { scope } : {}) }, () => saveProvider(caller, next))
           return next
         })
         refresh()
-        json(res, { provider: providerSettings(record) }, 201)
+        json(res, { provider: providerView(record) }, 201)
         return true
       }
       const providerMatch = path.match(/^\/link\/api\/providers\/([^/]+)(?:\/(models))?$/)
@@ -3503,7 +4282,16 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           requireScope(caller, 'admin')
           const record = effectiveProvider(id)
           if (!record) throw new AppError(404, 'provider-not-found', '找不到该模型服务')
-          json(res, await remoteModels(res, { kind: record.kind, baseURL: record.baseURL, apiKey: usableKey(record) }))
+          // A saved provider's own key goes along, so only to a confirmed or preset address.
+          json(
+            res,
+            await remoteModels(
+              res,
+              { kind: record.kind, baseURL: record.baseURL, apiKey: usableKey(record) },
+              false,
+              providerFetchFor(record.baseURL),
+            ),
+          )
           return true
         }
         if (method === 'PUT' && !providerMatch[2]) {
@@ -3517,61 +4305,62 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             throw new AppError(404, 'provider-not-found', '找不到该模型服务')
           const baseURL = input.baseURL ?? current.baseURL
           const newKey = typeof input.apiKey === 'string' && input.apiKey ? input.apiKey : undefined
-          const keyed = newKey ? await confirmKey(req, caller, current, baseURL, newKey) : undefined
+          if (newKey) requireKeyEntry(caller)
+          const confirming = input.confirmOrigin === true
+          const plan =
+            input.baseURL !== undefined || newKey || confirming
+              ? await planDestination(baseURL, { key: Boolean(newKey), confirm: confirming })
+              : undefined
+          const stepup = confirmsDestination(plan)
+            ? await confirmDestination(req, caller, plan, { baseURL, provider: current, ...(newKey ? { apiKey: newKey } : {}) })
+            : 'none'
           const record = await serial(caller, 'admin', async () => {
             const before = effectiveProvider(id)
             if (!before) throw new AppError(404, 'provider-not-found', '找不到该模型服务')
-            const origin = originOf(baseURL)
+            const scope = keyScopeOf(baseURL)
+            const bound = keyScopeOf(before.baseURL)
             const hadKey = Boolean(before.apiKey)
             const clearing = input.apiKey === null || input.apiKey === ''
-            const originChanged = hadKey && !newKey && !clearing && origin !== (before.keyOrigin ?? originOf(before.baseURL))
-            let seq: number | undefined
-            if (keyed)
-              seq = await audited({
-                action: 'provider.secret.set',
-                actor: actorOf(caller),
-                target: id,
-                stepup: keyed.stepup,
-                detail: { providerId: id, originHash: sha256Hex(keyed.origin) },
-              })
-            else if (hadKey && (clearing || originChanged)) {
+            // A key follows neither a new origin nor a new path; it is removed, as the dialog warned.
+            const originChanged = scope.keyOrigin !== (before.keyOrigin ?? bound.keyOrigin)
+            const moved = hadKey && !newKey && !clearing && (originChanged || scope.keyPath !== (before.keyPath ?? bound.keyPath))
+            if (!newKey && hadKey && (clearing || moved)) {
               await audited(
                 {
                   action: 'provider.secret.cleared',
                   actor: actorOf(caller),
                   target: id,
-                  detail: { providerId: id, reason: clearing ? 'manual' : 'origin-changed' },
+                  detail: { providerId: id, reason: clearing ? 'manual' : originChanged ? 'origin-changed' : 'path-changed' },
                 },
                 res,
               )
             }
             const edited = editProvider(id, previous => {
               const defaultModel = input.defaultModel ?? previous.defaultModel
-              const { keyOrigin: previousOrigin, ...rest } = previous
-              const apiKey = newKey ?? (clearing || originChanged ? '' : previous.apiKey)
-              const keyOrigin = newKey ? origin : apiKey ? previousOrigin : undefined
+              const { keyOrigin: previousOrigin, keyPath: previousPath, ...rest } = previous
+              const apiKey = newKey ?? (clearing || moved ? '' : previous.apiKey)
+              const kept =
+                apiKey && previousOrigin && previousPath !== undefined ? { keyOrigin: previousOrigin, keyPath: previousPath } : undefined
+              const binding = newKey ? scope : kept
               return {
                 ...rest,
                 ...(input.name ? { name: input.name } : {}),
                 baseURL,
                 apiKey,
-                ...(keyOrigin ? { keyOrigin } : {}),
+                ...(binding ?? {}),
                 models: withModel(input.models ?? previous.models, defaultModel),
                 defaultModel,
                 enabled: input.enabled ?? previous.enabled,
               }
             })
             if (!edited) throw new AppError(404, 'provider-not-found', '找不到该模型服务')
-            try {
-              await saveProvider(caller, ...edited)
-            } catch (error) {
-              auditFailed(seq, caller)
-              throw error
-            }
+            await saveAt(caller, res, { id, ...(plan ? { plan } : {}), stepup, ...(newKey ? { scope } : {}) }, () =>
+              saveProvider(caller, ...edited),
+            )
             return edited[0]
           })
           refresh()
-          json(res, { provider: providerSettings(record) })
+          json(res, { provider: providerView(record) })
           return true
         }
         if (method === 'DELETE' && !providerMatch[2]) {
@@ -3596,30 +4385,38 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         assertBaseURL(input.baseURL)
         recheck(caller, 'admin')
         let apiKey = input.apiKey
+        // A typed key goes where it was typed for; a saved key only to its own, confirmed address.
+        let fetch: FetchLike = egressFetch
         if (apiKey === undefined && input.providerId) {
           const record = effectiveProvider(input.providerId)
           if (!record) throw new AppError(404, 'provider-not-found', '找不到该模型服务')
           if (record.apiKey) {
-            if (!record.keyOrigin || originOf(input.baseURL) !== record.keyOrigin)
+            if (!keyBoundTo(record, input.baseURL))
               throw new AppError(409, 'key-origin-mismatch', '已保存的密钥只能发往保存时的地址，请重新输入密钥')
             apiKey = usableKey(record)
+            fetch = providerFetchFor(input.baseURL)
           }
         }
-        json(res, await remoteModels(res, { kind: input.kind, baseURL: input.baseURL, apiKey: apiKey ?? '' }, true))
+        json(res, await remoteModels(res, { kind: input.kind, baseURL: input.baseURL, apiKey: apiKey ?? '' }, true, fetch))
         return true
       }
       if (path === '/link/api/agents' && method === 'GET') {
         requireScope(caller, 'admin')
         // Reading the agent settings is a re-check: the next catalog looks for every command again.
         forgetCommandLookups()
-        json(res, { agents: config.settings().agents.map(agentSettings), presets: AGENT_PRESETS })
+        // Each preset says whether its commands are here, so an agent can be added knowing what is still missing.
+        const presets: AgentPresetSettings[] = AGENT_PRESETS.map(preset => ({
+          ...preset,
+          detected: detectCommand(preset.command, preset.companion),
+        }))
+        json(res, { agents: config.settings().agents.map(agentSettings), presets })
         return true
       }
       if (path === '/link/api/agents' && method === 'POST') {
         requireScope(caller, 'admin')
         const input = agentCreateSchema.parse(await jsonBody(req, CONFIG_BODY_LIMIT))
         recheck(caller, 'admin')
-        requireUnix(caller)
+        requireLocal(caller)
         const agents = config.settings().agents
         const taken = [
           STANDARD,
@@ -3638,16 +4435,17 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           args: input.args,
           env: { ...input.env },
           enabled: input.enabled ?? true,
+          startedHash: null,
         }
-        const hash = await confirmAgent(req, caller, next)
+        const hash = checkAgent(next)
         const record = await serial(caller, 'admin', async () => {
           if (config.settings().agents.some(agent => agent.id === id)) throw new AppError(409, 'agent-exists', `标识 ${id} 已被占用`)
           const seq = await audited({
             action: 'agent.defined',
             actor: actorOf(caller),
             target: id,
-            stepup: hash.stepup,
-            detail: { agentId: id, definitionHash: hash.definitionHash, created: true },
+            stepup: 'none',
+            detail: { agentId: id, definitionHash: hash, created: true },
           })
           try {
             await saveAgent(caller, next, true)
@@ -3683,7 +4481,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           enabled: input.enabled ?? current.enabled,
         }
         const changed = definitionHash(next) !== definitionHash(current)
-        const hash = changed ? (requireUnix(caller), await confirmAgent(req, caller, next)) : undefined
+        // A new definition has not started yet; its first full-access start is confirmed with what it runs.
+        if (changed) next.startedHash = null
+        const hash = changed ? (requireLocal(caller), checkAgent(next)) : undefined
         const record = await serial(caller, 'admin', async () => {
           const latest = config.settings().agents.find(agent => agent.id === id)
           if (!latest) throw new AppError(404, 'agent-not-found', '找不到该 Agent')
@@ -3694,8 +4494,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
                 action: 'agent.defined',
                 actor: actorOf(caller),
                 target: id,
-                stepup: hash.stepup,
-                detail: { agentId: id, definitionHash: hash.definitionHash, created: false },
+                stepup: 'none',
+                detail: { agentId: id, definitionHash: hash, created: false },
               })
             : undefined
           try {
@@ -3793,26 +4593,33 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return false
     }
 
-    /** Agent definitions run as L3 code: saving command, arguments or environment needs local confirmation. */
-    async function confirmAgent(
-      req: IncomingMessage,
-      caller: Caller,
-      next: AgentRecord,
-    ): Promise<{ stepup: StepupMethod; definitionHash: string }> {
+    /**
+     * Agent definitions run as L3 code, so only the desktop saves them (`requireLocal`), but saving asks for no local
+     * confirmation: nothing runs until a full-access start, which is confirmed with the command, arguments,
+     * environment variable names and launch fingerprint. Returns the definition's hash for the audit.
+     */
+    function checkAgent(next: AgentRecord): string {
       const verdict = validateAgentDefinition(next)
       if (!verdict.ok) throw verdict.error
       buildAgent(next)
-      const hash = definitionHash(next)
-      const resolved = resolveCommand(next.command)
-      const stepup = await confirm(req, caller, 'agent.define', { agentId: next.id, definitionHash: hash }, [
-        { label: 'Agent 标识', value: next.id },
-        { label: '命令', value: resolved && resolved !== next.command ? `${next.command}（${resolved}）` : next.command },
-        { label: '参数', value: JSON.stringify(next.args) },
-        { label: '环境变量名', value: Object.keys(next.env).sort().join('、') || '（无）' },
-        { label: '预设', value: next.presetId ?? '（无）' },
-        { label: '定义状态', value: verdict.verified ? '已验证的预设' : '未验证的定义' },
-      ])
-      return { stepup, definitionHash: hash }
+      return definitionHash(next)
+    }
+
+    /** Records that a full-access session started with the agent's current definition; the start never waits on it. */
+    async function noteAgentStarted(caller: Caller, agentId: string): Promise<void> {
+      const agent = config.settings().agents.find(item => item.id === agentId)
+      if (!agent || agent.startedHash === undefined) return
+      const hash = definitionHash(agent)
+      if (agent.startedHash === hash) return
+      await writeSettings(
+        caller,
+        draft => {
+          const entry = draft.agents.find(item => item.id === agentId)
+          // Only the definition that just started: one edited meanwhile stays not started.
+          if (entry && definitionHash(entry) === hash) entry.startedHash = hash
+        },
+        'run',
+      ).catch(error => log(`无法记录 Agent ${agentId} 已启动：${errorText(error)}`))
     }
 
     // ---- HTTP ------------------------------------------------------------------------------------
@@ -3847,7 +4654,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const execution: NonNullable<AppSnapshot['execution']> =
           defaultId === STANDARD
             ? {
-                ready: registry.providers().some(provider => provider.id === providerId),
+                ready: usableProviders().some(provider => provider.id === providerId),
                 providerId,
                 modelConfigurationRequired: providerId === LEGACY_PROVIDER_ID && !effectiveProvider(LEGACY_PROVIDER_ID),
               }
@@ -3868,7 +4675,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           version: LATCH_VERSION,
           hostTime: hostTime(),
         }
-        json(res, snapshot)
+        traffic.response('snapshot', json(res, snapshot))
         return
       }
       if (path === '/link/api/events' && method === 'GET') {
@@ -3882,18 +4689,78 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           connection: 'keep-alive',
           'x-accel-buffering': 'no',
         })
+        const meter = traffic.stream(caller.connection.listener)
         streams.set(res, {
           deviceId: caller.device.id,
           credentialHash: caller.credentialHash,
           ...(sessionId ? { sessionId } : {}),
           lastSentRevision: revision,
+          meter,
         })
         send(res, { type: 'refresh', instanceId, revision })
-        req.on('close', () => streams.delete(res))
+        req.on('close', () => {
+          streams.delete(res)
+          traffic.close(meter)
+        })
+        return
+      }
+      if (path === '/link/api/traffic' && method === 'GET') {
+        // Counts and opaque session IDs only, for the owner: an admin device or the command line on host.sock.
+        if (caller.device) requireScope(caller, 'admin')
+        json(res, traffic.summary())
         return
       }
       if (path === '/link/api/tasks' && method === 'POST') {
         await createTask(req, res, caller)
+        return
+      }
+      if (await sessionRoutes.handle(req, res, caller, path, method)) return
+      if (await fileRoutes.handle(req, res, caller, path, method)) return
+      const clientPanel = path.match(/^\/link\/api\/ui-modules\/([^/]+)\/([a-f0-9]{64})\.mjs$/u)
+      if (clientPanel && method === 'GET') {
+        requireScope(caller, 'view')
+        const panelId = safeDecode(clientPanel[1]!)
+        if (panelId.length > 256) throw new AppError(400, 'invalid-input', '面板标识过长。')
+        const lease = registry.acquireClientPanel(panelId, clientPanel[2]!)
+        try {
+          recheck(caller, 'view')
+          res.writeHead(200, {
+            'content-type': 'text/javascript; charset=utf-8',
+            'cache-control': 'no-store',
+            'x-content-type-options': 'nosniff',
+            'cross-origin-resource-policy': 'same-origin',
+          })
+          res.end(lease.source)
+        } finally {
+          lease.release()
+        }
+        return
+      }
+      const panelRoute = path.match(/^\/link\/api\/tasks\/([^/]+)\/ui-panels\/([^/]+)$/u)
+      if (panelRoute && method === 'GET') {
+        requireScope(caller, 'view')
+        const sessionId = safeDecode(panelRoute[1]!)
+        const panelId = safeDecode(panelRoute[2]!)
+        if (sessionId.length > 256 || panelId.length > 256) throw new AppError(400, 'invalid-input', '会话或面板标识过长。')
+        const controller = new AbortController()
+        const abort = () => {
+          controller.abort()
+        }
+        const lease = registry.acquireUiPanel(panelId)
+        try {
+          res.once('close', abort)
+          const { summary } = await hub!.detail(sessionId)
+          recheck(caller, 'view')
+          if (lease.info.harnessIds !== undefined && !lease.info.harnessIds.includes(summary.harnessId ?? STANDARD)) {
+            throw new AppError(404, 'ui-panel-unavailable', '这个扩展面板不适用于当前会话。')
+          }
+          const panel = await lease.render({ session: summary, signal: controller.signal })
+          recheck(caller, 'view')
+          json(res, { panel })
+        } finally {
+          res.removeListener('close', abort)
+          lease.release()
+        }
         return
       }
       const task = path.match(/^\/link\/api\/tasks\/([^/]+)(?:\/(prompt|cancel|config))?$/)
@@ -3948,7 +4815,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     /** Host header and Origin come from the client; they are only compared with the listener's own values. */
     function checkRequest(req: IncomingMessage, res: ServerResponse, listener: ListenerContext, path: string, method: string): boolean {
-      if (listener.listener === 'unix') return true
+      if (isSocketTransport(listener.listener)) return true
       if (req.headers.host !== listener.host) {
         const loose =
           listener.port !== undefined && new Set([`localhost:${listener.port}`, `127.0.0.1:${listener.port}`, `[::1]:${listener.port}`])
@@ -3979,19 +4846,18 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         res.end()
         return
       }
-      if (!path.startsWith('/link/')) throw new AppError(404, 'not-found', '页面不存在')
+      // A navigation to an address that is no page (a file name in a reply opened as a link) gets a page, not JSON.
+      if (!path.startsWith('/link/')) return sendNotFoundPage(res, method)
       const relativePath = safeDecode(path.slice('/link/'.length)) || 'index.html'
       const root = resolve(options.uiDir)
       const file = resolve(root, relativePath)
       if (!file.startsWith(root + sep)) throw new AppError(403, 'invalid-path', '文件路径无效')
       let data: Buffer
       try {
-        if (!(await stat(file)).isFile()) throw new AppError(404, 'not-found', '文件不存在')
+        if (!(await stat(file)).isFile()) return sendNotFoundPage(res, method)
         data = await readFile(file)
       } catch (error) {
-        if (error instanceof AppError) throw error
-        if (codeOf(error) === 'ENOENT' || codeOf(error) === 'EISDIR' || codeOf(error) === 'ENOTDIR')
-          throw new AppError(404, 'not-found', '文件不存在')
+        if (codeOf(error) === 'ENOENT' || codeOf(error) === 'EISDIR' || codeOf(error) === 'ENOTDIR') return sendNotFoundPage(res, method)
         throw error
       }
       res.setHeader('content-security-policy', UI_CSP)
@@ -4023,7 +4889,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       let failure = error
       // Only requests without a usable credential are throttled, per listener class: answers about a known device's
       // credential (renewal-required, revoked, expired) keep their code, so a flood elsewhere cannot hide them.
-      if (failure instanceof AppError && failure.status === 401 && failure.code === 'unauthorized' && listener.listener !== 'unix') {
+      if (failure instanceof AppError && failure.status === 401 && failure.code === 'unauthorized' && !isLocalListener(listener.listener)) {
         try {
           limits.authFailure.take(listener.listener)
         } catch (limited) {
@@ -4052,7 +4918,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       hostId,
       socketPath: runtime.socketPath,
       port: options.port,
-      ...(tls ? { tls } : {}),
+      ...(tls && options.tls ? { tls, reloadTls: () => loadTls(options.tls!) } : {}),
       log,
       now,
       handler: (req, res, listener) => {
@@ -4106,8 +4972,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           clearInterval(heartbeat)
           clearTimeout(eventTimer)
           unsubscribe()
-          for (const res of streams.keys()) res.end()
-          streams.clear()
+          await endStreams(lifecycle.stopping())
           const failures: unknown[] = []
           for (const dispose of [
             () => changes,

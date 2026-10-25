@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import type { TaskSummary, WorkspaceInfo } from '@latch/protocol'
-import { emptySeen, filterSessions, groupSessions, isUnread, markSeen, pruneSeen, sessionSlot } from '../src/sessions.ts'
+import {
+  emptySeen,
+  filterSessions,
+  groupSessions,
+  isUnread,
+  markSeen,
+  markUnread,
+  pruneSeen,
+  sessionFact,
+  sessionSlot,
+} from '../src/sessions.ts'
 
 function task(id: string, updatedAt: Date, extra: Partial<TaskSummary> = {}): TaskSummary {
   return { id, title: `会话 ${id}`, status: 'idle', updatedAt: updatedAt.toISOString(), ...extra }
@@ -77,6 +87,12 @@ describe('session list', () => {
 const slot = (status: TaskSummary['status'], { selected = false, unread = false, drift = false } = {}) =>
   sessionSlot(task('a', at(23), { status, ...(drift ? { permissionDrift: true as const } : {}) }), selected, unread)
 
+/** The second line's fact of a session with this status, its slot showing what it would show in the list. */
+function fact(status: TaskSummary['status'], options: { unread?: boolean; cancelling?: boolean; drift?: boolean } = {}) {
+  const summary = task('a', at(20), { status, ...(options.drift ? { permissionDrift: true } : {}) })
+  return sessionFact(summary, sessionSlot(summary, false, options.unread ?? false), options.cancelling ?? false, '09:15')
+}
+
 describe('session status slot', () => {
   it("shows one thing by priority and leaves the comet out of the open session's row", () => {
     expect(slot('waiting-approval', { selected: true, unread: true })).toBe('waiting')
@@ -93,6 +109,19 @@ describe('session status slot', () => {
   it('draws a session whose permission mode changed in red, above running and unread', () => {
     expect([slot('cancelled', { drift: true }), slot('idle', { drift: true, unread: true, selected: true })]).toEqual(['failed', 'failed'])
     expect(slot('waiting-approval', { drift: true })).toBe('waiting')
+  })
+  it("adds on a phone's second line only what the slot does not already say, never a preview", () => {
+    expect(fact('running')).toBe('正在运行')
+    expect(fact('running', { cancelling: true })).toBe('正在取消')
+    // The slot shows the waiting pill, the failure or the dot, so the time moves to the second line.
+    expect([fact('waiting-approval'), fact('failed'), fact('idle', { unread: true }), fact('cancelled', { drift: true })]).toEqual([
+      '09:15',
+      '09:15',
+      '09:15',
+      '09:15',
+    ])
+    // The slot shows the time, so the second line names a state that is not the default.
+    expect([fact('cancelled'), fact('interrupted'), fact('idle')]).toEqual(['已取消', '已中断', undefined])
   })
 })
 
@@ -119,5 +148,17 @@ describe('per-device unread markers', () => {
     expect(Object.keys(pruneSeen(seen, [task('a', at(2))]).seen)).toEqual(['a'])
     const kept = pruneSeen(seen, [task('a', at(2)), task('gone', at(2))])
     expect(kept).toBe(seen)
+  })
+})
+
+describe('manual unread markers', () => {
+  it('keeps manual unread on this device until opened, survives serialization, and prunes deleted sessions', () => {
+    const row = task('manual', at(2)),
+      empty = emptySeen(at(5))
+    const marked = markUnread(empty, row.id)
+    expect(isUnread(row, marked)).toBe(true)
+    expect(isUnread(row, JSON.parse(JSON.stringify(marked)))).toBe(true)
+    expect(isUnread(row, markSeen(marked, row.id, row.updatedAt))).toBe(false)
+    expect(pruneSeen(marked, []).unread).toEqual({})
   })
 })

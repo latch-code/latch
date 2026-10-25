@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { CircleSlash, Fingerprint, Laptop, ShieldAlert, Smartphone } from 'lucide-react'
-import type { AppSnapshot, HarnessInfo, PermissionLevel, WorkspaceInfo } from '@latch/protocol'
+import { isLocalListener, type AppSnapshot, type HarnessInfo, type PermissionLevel, type WorkspaceInfo } from '@latch/protocol'
+import { harnessName } from '../composerChoice.ts'
 import { errorMessage, inlineError } from '../core/api.ts'
+import { InlineConfirm } from '../components/InlineConfirm.tsx'
 import {
   applyPatch,
   CEILING_COPY,
@@ -25,8 +27,8 @@ import {
   type StandardLevel,
 } from '../core/ceilings.ts'
 import { DEV_MODE_TEXT, harnessLevel, hostView, type DeviceAccess } from '../core/permissions.ts'
-import { AUDIT_NOT_RECORDED_TEXT } from '../core/securityCopy.ts'
-import { harnessName } from '../composerChoice.ts'
+import { shownAddress } from '../core/providerSetup.ts'
+import { AUDIT_NOT_RECORDED_TEXT, PAIRING_COPY, PROVIDER_COPY } from '../core/securityCopy.ts'
 import { basename } from '../format.ts'
 import { CopyButton } from '../components/ui.tsx'
 import {
@@ -60,14 +62,12 @@ function LevelText({ level }: { level: PermissionLevel }) {
   )
 }
 
-/** Start flags, each kept whole on its line. */
-const Flag = ({ children }: { children: string }) => <code className="settings-flag">{children}</code>
-
 /** This computer: its name, whether this device is on it, local confirmation when it is missing, and phone access. */
 function ThisComputer({ snapshot, access }: { snapshot: AppSnapshot; access: DeviceAccess }) {
   const host = hostView(snapshot)
   const listener = access.device?.listener
-  const here = listener === 'unix' || listener === 'loopback-tcp'
+  // Only host.sock is this computer (isLocalListener); a browser on loopback is remote and never named 本机.
+  const here = listener !== undefined && isLocalListener(listener)
   const origin = host?.tls?.origin
   return (
     <SettingsGroup title="这台电脑">
@@ -94,15 +94,7 @@ function ThisComputer({ snapshot, access }: { snapshot: AppSnapshot; access: Dev
       <SettingsRow
         leading={<IconTile icon={Smartphone} />}
         title="手机接入"
-        description={
-          origin ? (
-            <code className="settings-mono">{origin}</code>
-          ) : (
-            <>
-              用 <Flag>--tls-cert</Flag>、<Flag>--tls-key</Flag> 和 <Flag>--public-origin</Flag> 启动 Host 后可用
-            </>
-          )
-        }
+        description={origin ? <code className="settings-mono">{origin}</code> : PAIRING_COPY.computerRow}
         trailing={origin ? <CopyButton text={origin} label="复制手机接入地址" /> : <span className="settings-row-value">未配置</span>}
       />
     </SettingsGroup>
@@ -187,12 +179,15 @@ function RemoteListPage({
   raiseBlock,
   pending,
   onApply,
+  confirmation,
 }: {
   field: RemoteList
   listed: string[] | null
   entries: ListEntry[]
   /** Why this device cannot widen the list: turning 全部 on, or adding an entry. */
   raiseBlock: { all?: string; add?: string }
+  /** The local confirmation of a widening, under the list. */
+  confirmation?: ReactNode
   pending: string | null
   onApply: (patch: PolicyPatch, key: string) => void
 }) {
@@ -202,14 +197,7 @@ function RemoteListPage({
   const unit = agents ? ' Agent' : '项目'
   return (
     <>
-      <SectionHeading
-        title={title}
-        description={
-          agents
-            ? '手机、本机浏览器和其他电脑只能用这里允许的 Agent 发起或继续会话。完全访问的会话只能在这台电脑的 Latch 桌面端发起。'
-            : '手机、本机浏览器和其他电脑只能在这里允许的项目中发起或继续会话。'
-        }
-      />
+      <SectionHeading title={title} description={agents ? CEILING_COPY.harnessesNote : CEILING_COPY.workspacesNote} />
       <SettingsGroup caption={agents ? CEILING_COPY.listCaption : CEILING_COPY.listCaptionProjects} captionIcon="lock">
         <SwitchRow
           className="settings-row"
@@ -260,6 +248,7 @@ function RemoteListPage({
           </SettingsGroup>
         </div>
       )}
+      {confirmation}
     </>
   )
 }
@@ -325,6 +314,7 @@ function EgressDialog({ open, onClose, onAdd }: { open: boolean; onClose: () => 
           }}
         />
       </form>
+      <InlineConfirm active={busy} />
     </Dialog>
   )
 }
@@ -541,6 +531,8 @@ export function ComputerSettings({ snapshot, access, onChanged }: { snapshot: Ap
           }}
         />
       </SettingsGroup>
+      {/* A raise of a ceiling is confirmed here, right under the card it changes. */}
+      <InlineConfirm active={page === 'main' && !adding && (pending === 'local' || pending === 'remote' || pending === 'start')} />
       <SettingsGroup
         title="出站白名单"
         meta={
@@ -579,6 +571,31 @@ export function ComputerSettings({ snapshot, access, onChanged }: { snapshot: Ap
           )}
         </FoldRows>
       </SettingsGroup>
+      {policy.confirmedAddresses !== undefined && (
+        <SettingsGroup title={PROVIDER_COPY.confirmedAddressesTitle} caption={PROVIDER_COPY.confirmedAddressesCaption}>
+          {policy.confirmedAddresses.length === 0 && (
+            <SettingsRow title={PROVIDER_COPY.confirmedAddressesEmpty} description={PROVIDER_COPY.confirmedAddressesEmptyNote} />
+          )}
+          <FoldRows items={policy.confirmedAddresses} keyOf={address => address}>
+            {address => (
+              <SettingsRow
+                title={<code className="settings-mono">{shownAddress(address)}</code>}
+                description={PROVIDER_COPY.confirmedAddressRow}
+                trailing={
+                  <Button
+                    variant="ghost"
+                    aria-label={`移除 ${shownAddress(address)}`}
+                    onClick={() => {
+                      void apply({ confirmedAddresses: { remove: [address] } }, `address:${address}`)
+                    }}>
+                    移除
+                  </Button>
+                }
+              />
+            )}
+          </FoldRows>
+        </SettingsGroup>
+      )}
       <EgressDialog
         open={adding}
         onClose={() => {
@@ -612,6 +629,7 @@ export function ComputerSettings({ snapshot, access, onChanged }: { snapshot: Ap
                       onApply={(patch, key) => {
                         void apply(patch, key)
                       }}
+                      confirmation={<InlineConfirm active={pending !== null} />}
                     />
                   </>
                 ),

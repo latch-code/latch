@@ -9,6 +9,15 @@ export type Presented = { kind: 'cookie' | 'header'; value: string } | { kind: '
 export const LEGACY_COOKIE = 'harness_link'
 const CREDENTIAL_HEADER = /^Latch-Device ([!-~]{1,256})$/u
 
+/**
+ * host.sock is not a browser transport: it has no cookies, Host header or Origin, the credential travels in the
+ * authorization header and comes back in JSON. This decides the wire format only; whether a caller counts as this
+ * computer is `isLocalListener`.
+ */
+export function isSocketTransport(listener: ListenerClass): boolean {
+  return listener === 'unix'
+}
+
 export function cookieName(listener: ListenerClass, hostId8: string): string {
   return listener === 'loopback-tcp' ? `latch_${hostId8}` : `__Host-latch_${hostId8}`
 }
@@ -31,7 +40,7 @@ export function cookieValues(header: string | undefined, name: string): string[]
  * and only when no new-style cookie is present.
  */
 export function presentedCredential(req: IncomingMessage, listener: ListenerContext, hostId8: string): Presented | undefined {
-  if (listener.listener === 'unix') {
+  if (isSocketTransport(listener.listener)) {
     const header = req.headers.authorization
     if (typeof header !== 'string') return undefined
     const match = CREDENTIAL_HEADER.exec(header.trim())
@@ -121,6 +130,11 @@ export function publicTicket(record: ConfirmationTicket): ConfirmationTicket {
     status: record.status,
     hashDisplay: record.hashDisplay,
     expiresAt: record.expiresAt,
+    ...(record.reason !== undefined ? { reason: record.reason } : {}),
+    ...(record.form !== undefined ? { form: record.form } : {}),
+    ...(record.lines ? { lines: record.lines.map(line => ({ label: line.label, value: line.value })) } : {}),
+    ...(record.warnings ? { warnings: [...record.warnings] } : {}),
+    ...(record.failure !== undefined ? { failure: record.failure } : {}),
   }
 }
 
@@ -139,6 +153,8 @@ export const RATE_LIMITS = {
   classC: { capacity: 60, refill: 1, perMs: 1_000 },
   anonymousRevoke: { capacity: 10, refill: 1, perMs: 6_000 },
   confirmationPoll: { capacity: 5, refill: 2, perMs: 1_000 },
+  /** The desktop app's file routes, per device. */
+  files: { capacity: 60, refill: 20, perMs: 1_000 },
 } as const satisfies Record<string, BucketSpec>
 export type BucketName = keyof typeof RATE_LIMITS
 

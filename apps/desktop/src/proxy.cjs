@@ -1,6 +1,7 @@
 'use strict'
 // The `latch://app/` scheme handler. Every renderer request is forwarded to the Host over host.sock;
-// main adds the device credential and keeps keys, signatures and credentials out of the renderer.
+// main adds the device credential and keeps keys, signatures and credentials out of the renderer. The credential
+// routes and the file routes (which answer with real paths) are main's own: the renderer gets 403 shell-managed.
 // The exported helpers are pure so they can be unit-tested without Electron.
 const { socketRequest, readBody } = require('./host.cjs')
 const { generateDeviceKey, enrollSigningText, renewSigningText } = require('./credentials.cjs')
@@ -28,6 +29,17 @@ const NOT_ENROLLED = '请先在本机确认这台设备'
 const EXTERNAL_URL_LIMIT = 2048
 const NULL_BODY_STATUS = new Set([101, 103, 204, 205, 304])
 const CLEARING_CODES = new Set(['device-revoked', 'credential-expired', 'listener-mismatch'])
+/** The one message the renderer may send to main: open this Host's page in the default browser. */
+const OPEN_IN_BROWSER = 'latch:open-in-browser'
+const PAIRINGS_PATH = '/link/api/pairings'
+/**
+ * What a browser on this computer may ask for at enrollment; the Host confirms whatever it does ask for.
+ * `pnpm latch device invite --loopback` offers the same (apps/host/scripts/latch.ts).
+ */
+const BROWSER_INVITATION = Object.freeze({ target: 'loopback', scopes: Object.freeze(['view', 'run', 'approve:standard', 'admin']) })
+const INVITATION_FRAGMENT = /^#pair=lpi1-[A-Z2-7]{26}$/
+const HOST_UNAVAILABLE = '无法连接到 Latch Host，请确认 Host 仍在运行。'
+const BROWSER_LINK_MANAGED = '这台电脑上浏览器的登记链接由 Latch 桌面端直接交给浏览器'
 const DROPPED_REQUEST_HEADERS = new Set([
   'cookie',
   'authorization',
@@ -137,6 +149,69 @@ function createDialogGate() {
       open = false
     },
   }
+}
+
+/**
+ * The Host's loopback invitation link, accepted only as `http://h-<hostId>.localhost:<port>/link/#pair=lpi1-…`: main
+ * gives the system browser nothing but this Host's own page.
+ */
+function browserInvitationUrl(raw, hostId) {
+  let url
+  try {
+    url = new URL(raw)
+  } catch {
+    return undefined
+  }
+  if (url.protocol !== 'http:' || url.hostname !== `h-${hostId}.localhost` || !url.port || url.username || url.password) return undefined
+  if (url.pathname !== '/link/' || url.search || !INVITATION_FRAGMENT.test(url.hash)) return undefined
+  return url.href
+}
+
+/** An IPC message counts only from the app page in a window's top frame, never from a subframe or another origin. */
+function isAppSender(event) {
+  const frame = event?.senderFrame
+  return Boolean(frame && !frame.parent && isAppUrl(frame.url))
+}
+
+/**
+ * 「在这台电脑的浏览器中打开」. Main asks the Host for a one-time loopback invitation with the shell's own credential and
+ * hands the link, the invitation in its fragment, to the default browser; the renderer only learns the outcome. macOS
+ * passes the URL to the browser by Apple Event, while other systems start the browser with it on the command line,
+ * where other processes can read it, so the action is refused there. Concurrent calls share one attempt.
+ * @param {object} options
+ * @param {() => Promise<{ ok: true, url: string } | { ok: false, status: number, error: string, message: string }>} options.invite
+ * @param {(url: string) => Promise<unknown>} options.open  e.g. shell.openExternal
+ * @param {string} options.platform
+ * @param {(message: string) => void} [options.log]
+ */
+function createBrowserOpener({ invite, open, platform, log = () => {} }) {
+  let opening
+  return function openInBrowser() {
+    if (platform !== 'darwin')
+      return Promise.resolve(
+        refusal(409, 'browser-open-unsupported', '此系统上不能从桌面端直接打开浏览器，请运行 pnpm latch device invite --loopback。'),
+      )
+    opening ??= (async () => {
+      try {
+        const result = await invite()
+        if (!result.ok) return result
+        await open(result.url)
+        return { ok: /** @type {true} */ (true) }
+      } catch {
+        // The error could repeat the link, so only a fixed line is logged.
+        log('无法在浏览器中打开 Latch')
+        return refusal(502, 'browser-open-failed', '无法在浏览器中打开 Latch，请重试。')
+      }
+    })().finally(() => {
+      opening = undefined
+    })
+    return opening
+  }
+}
+
+/** @returns {{ ok: false, status: number, error: string, message: string, retryAfter?: number }} */
+function refusal(status, code, message, extra = {}) {
+  return { ok: false, status, error: code, message, ...extra }
 }
 
 /**
@@ -254,15 +329,39 @@ function classifyRoute(method, pathname) {
   const lower = decoded.toLowerCase()
   if (lower === '/link/api/credentials' || lower.startsWith('/link/api/credentials/')) return { kind: 'credentials' }
   if (isFolderAddRoute(method, lower)) return { kind: 'folders' }
+  // Sleep, wake and coming stops are reported by main itself (lifecycle.cjs), never on the page's behalf.
+  if (lower === '/link/api/host/state' || lower.startsWith('/link/api/host/state/')) return { kind: 'host-state' }
+  // A session ID with an encoded slash decodes into more than one segment, so any depth under /tasks/ counts.
+  if (lower === '/link/api/files' || lower.startsWith('/link/api/files/') || /^\/link\/api\/tasks\/.+\/files(?:\/|$)/.test(lower))
+    return { kind: 'shell-files' }
   if (lower === '/link/api/enrollments' && method === 'POST') return { kind: 'enroll' }
   const complete = /^\/link\/api\/enrollments\/([^/]+)\/complete$/i.exec(decoded)
   if (complete) return { kind: 'complete', enrollmentId: complete[1] }
   const route = { kind: 'forward' }
   if (isPublicRoute(method, pathname, decoded)) route.public = true
+  if (lower === '/link/api/pairings' && method === 'POST') route.pairing = true
   const enrollment = /^\/link\/api\/enrollments\/([^/]+)$/i.exec(decoded)
   if (enrollment && method === 'DELETE') route.cancelEnrollment = enrollment[1]
   if (lower === '/link/api/devices/current' && method === 'DELETE') route.selfRevoke = true
   return route
+}
+
+/**
+ * Whether main forwards the renderer's request for an invitation. The page shows a phone's invitation as a QR code, so
+ * it may ask for one; an invitation for this computer's browser is main's alone (「在这台电脑的浏览器中打开」), and the
+ * page never holds one. A body main cannot read as a JSON object is refused rather than guessed at.
+ * @param {Buffer | undefined} body
+ */
+function isRendererPairing(body) {
+  if (!body || body.length === 0) return true
+  let value
+  try {
+    value = JSON.parse(body.toString('utf8'))
+  } catch {
+    return false
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  return value.target === undefined || value.target === 'tls'
 }
 
 function forwardRequestHeaders(headers, credential) {
@@ -350,7 +449,7 @@ function htmlErrorPage(message) {
 }
 
 function unavailableResponse(pathname) {
-  const message = '无法连接到 Latch Host，请确认 Host 仍在运行。'
+  const message = HOST_UNAVAILABLE
   if (pathname?.startsWith('/link/api/')) return errorResponse(502, 'host-unavailable', message)
   return new Response(htmlErrorPage(message), {
     status: 502,
@@ -561,6 +660,42 @@ function createShellProxy(options) {
     }
   }
 
+  /**
+   * A one-time invitation for a browser on this computer, made over host.sock with the shell's own credential. Renews
+   * once on renewal-required, and forgets a credential the Host reports revoked or expired, as forwarding does.
+   */
+  async function browserInvitation() {
+    try {
+      if (!store.current()) return refusal(401, 'unauthorized', NOT_ENROLLED)
+      if (renewAfter !== 0 && renewDue()) await renew()
+      for (let attempt = 0; ; attempt++) {
+        const used = store.current()?.credential
+        if (used === undefined) return refusal(401, 'unauthorized', NOT_ENROLLED)
+        const result = await control(PAIRINGS_PATH, used, BROWSER_INVITATION)
+        if (result.status === 201) {
+          const url = browserInvitationUrl(result.json?.invitation?.url, hostId)
+          return url ? { ok: /** @type {true} */ (true), url } : refusal(502, 'browser-open-failed', '无法在浏览器中打开 Latch，请重试。')
+        }
+        const action = authFailureAction(result.status, result.json)
+        if (action === 'renew' && attempt === 0) {
+          const latest = store.current()?.credential
+          if ((latest !== undefined && latest !== used) || (await renewUnlessWaiting())) continue
+        }
+        if (action === 'clear') await forget(used)
+        const body = result.json && typeof result.json === 'object' ? result.json : {}
+        return refusal(
+          result.status,
+          typeof body.error === 'string' ? body.error : 'request-failed',
+          typeof body.message === 'string' ? body.message : '',
+          typeof body.retryAfter === 'number' ? { retryAfter: body.retryAfter } : {},
+        )
+      }
+    } catch (error) {
+      log(`生成浏览器登记链接失败：${error instanceof Error ? error.message : '未知错误'}`)
+      return refusal(502, 'host-unavailable', HOST_UNAVAILABLE)
+    }
+  }
+
   function prunePending() {
     const time = now()
     for (const [id, entry] of pending) if (entry.until <= time) pending.delete(id)
@@ -632,6 +767,7 @@ function createShellProxy(options) {
       return errorResponse(401, 'unauthorized', NOT_ENROLLED)
     }
     const body = await readRequestBody(request, REQUEST_BODY_LIMIT)
+    if (route.pairing && !isRendererPairing(body)) return errorResponse(403, 'shell-managed', BROWSER_LINK_MANAGED)
     if (renewAfter !== 0 && renewDue()) await renew()
     let used = store.current()?.credential
     const send = () => {
@@ -685,6 +821,17 @@ function createShellProxy(options) {
         await discardRequestBody(request)
         return errorResponse(403, 'shell-managed', '设备凭据由 Latch 桌面端管理')
       }
+      if (route.kind === 'host-state') {
+        await discardRequestBody(request)
+        return errorResponse(403, 'shell-managed', '电脑的运行状态由 Latch 桌面端报告')
+      }
+      if (route.kind === 'shell-files') {
+        if (origin !== 'shell') {
+          await discardRequestBody(request)
+          return errorResponse(403, 'shell-managed', '文件操作由 Latch 桌面端管理')
+        }
+        return await forward(request, target, { kind: 'forward' })
+      }
       if (route.kind === 'folders') {
         if (origin !== 'shell') {
           await discardRequestBody(request)
@@ -703,8 +850,8 @@ function createShellProxy(options) {
   }
 
   /** The `latch:` scheme handler: everything the renderer requests. */
-  function handle(request) {
-    return dispatch(request, 'renderer')
+  function handle(request, { shell = false } = {}) {
+    return dispatch(request, shell ? 'shell' : 'renderer')
   }
 
   /**
@@ -752,6 +899,7 @@ function createShellProxy(options) {
     handle,
     shellRequest,
     renew,
+    browserInvitation,
     startRenewalTimer,
     /** Test and diagnostics view; never contains keys or credentials. */
     state() {
@@ -763,6 +911,8 @@ function createShellProxy(options) {
 module.exports = {
   APP_ORIGIN,
   HTML_CSP,
+  OPEN_IN_BROWSER,
+  BROWSER_INVITATION,
   REQUEST_BODY_LIMIT,
   RENEW_INTERVAL_MS,
   RENEW_CHECK_MS,
@@ -776,6 +926,10 @@ module.exports = {
   externalLinkDialog,
   createDialogGate,
   createExternalOpener,
+  browserInvitationUrl,
+  isRendererPairing,
+  isAppSender,
+  createBrowserOpener,
   debugFlagProblems,
   unexpectedArguments,
   upstreamTarget,

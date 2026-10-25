@@ -28,12 +28,15 @@ async function directory() {
   return join(root, 'data')
 }
 
-/** Enrolls with an offline code: fixtures that report running external (L3) sessions block local confirmation. */
+/**
+ * Enrolls the desktop app with an offline code: fixtures that report running external (L3) sessions block local
+ * confirmation, and only host.sock takes offline codes.
+ */
 async function testHost(options: TestHostOptions & { dataDir: string }): Promise<{ t: TestHost; device: TestDevice }> {
   const { code } = await createOfflineTicket(join(options.dataDir, 'auth'))
   const t = await startTestHost(options)
   cleanups.push(() => t.close())
-  return { t, device: await t.enroll({ offlineCode: code }) }
+  return { t, device: await t.enroll({ listener: 'unix', offlineCode: code }) }
 }
 
 async function events(device: TestDevice, query: string) {

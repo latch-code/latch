@@ -1,5 +1,5 @@
 import { Context, type Fiber } from 'cordis'
-import type { PluginInfo } from '@latch/protocol'
+import type { PluginInfo, SkillInfo, UiPanelInfo } from '@latch/protocol'
 import {
   AppError,
   type HarnessDriver,
@@ -10,16 +10,39 @@ import {
   type PluginContext,
   type RuntimeRegistry,
   type ToolDefinition,
+  type UiPanelDefinition,
+  type UiPanelLease,
+  type ClientPanelDefinition,
+  type ClientPanelLease,
+  type SkillDefinition,
 } from '@latch/sdk'
+import { z } from 'zod'
+import { checkedClientPanel, checkedUiPanel, renderUiPanel } from './ui-panels.ts'
+import { sha256Hex } from './node-kit/digest.ts'
+
+const skillSchema = z
+  .object({
+    id: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/u),
+    name: z.string().trim().min(1).max(80),
+    description: z.string().max(500),
+    content: z.string().trim().min(1).max(32_000),
+  })
+  .strict()
 
 interface Entry {
   plugin: HarnessPlugin
   managed?: PluginInfo['managed']
   enabled: boolean
+  /** Every lease: runs and harness mounts. A plugin with any cannot be disabled, removed or collected. */
   leases: number
+  /** Leases of runs only (`acquire`), which is what the plugin list calls in use; a mounted harness is not a run. */
+  runs: number
   providers: ModelProvider[]
   tools: ToolDefinition[]
   harnesses: HarnessDriver[]
+  panels: UiPanelDefinition[]
+  clientPanels: Array<ClientPanelDefinition & { hash: string }>
+  skills: SkillDefinition[]
   disposers: Array<() => void | Promise<void>>
   cleanupFailures: unknown[]
   fiber?: Fiber
@@ -38,7 +61,7 @@ export interface AcquireOptions {
 }
 export type RegistryLogger = (message: string, error: unknown) => void
 
-const IN_USE = '运行中的任务或当前加载的 Harness 正在使用此插件，请结束任务或关闭节点后再'
+const IN_USE = '任务、界面读取或当前加载的 Harness 正在使用此插件，请结束任务或关闭节点后再'
 
 /** Cordis owns plugin fibers; leases and staged publication are application policy. */
 export class PluginRegistry implements RuntimeRegistry {
@@ -65,9 +88,13 @@ export class PluginRegistry implements RuntimeRegistry {
       ...(managed ? { managed } : {}),
       enabled: false,
       leases: 0,
+      runs: 0,
       providers: [],
       tools: [],
       harnesses: [],
+      panels: [],
+      clientPanels: [],
+      skills: [],
       disposers: [],
       cleanupFailures: [],
     }
@@ -132,6 +159,26 @@ export class PluginRegistry implements RuntimeRegistry {
             }
             entry.harnesses.push(driver)
           },
+          registerUiPanel: panel => {
+            ctx.fiber.assertActive()
+            const checked = checkedUiPanel(panel)
+            if ([...entry.panels, ...entry.clientPanels].some(item => item.id === checked.id))
+              throw new AppError(409, 'ui-panel-exists', '扩展面板标识重复。')
+            entry.panels.push(checked)
+          },
+          registerClientPanel: panel => {
+            ctx.fiber.assertActive()
+            const checked = checkedClientPanel(panel)
+            if ([...entry.panels, ...entry.clientPanels].some(item => item.id === checked.id))
+              throw new AppError(409, 'ui-panel-exists', '扩展面板标识重复。')
+            entry.clientPanels.push({ ...checked, hash: sha256Hex(checked.source) })
+          },
+          registerSkill: skill => {
+            ctx.fiber.assertActive()
+            const checked = skillSchema.parse(skill)
+            if (entry.skills.some(item => item.id === checked.id)) throw new AppError(409, 'skill-exists', '技能标识重复。')
+            entry.skills.push(checked)
+          },
           onDispose: disposer => {
             ctx.fiber.assertActive()
             entry.disposers.push(disposer)
@@ -185,6 +232,9 @@ export class PluginRegistry implements RuntimeRegistry {
     entry.providers = []
     entry.tools = []
     entry.harnesses = []
+    entry.panels = []
+    entry.clientPanels = []
+    entry.skills = []
     const disposers = entry.disposers.splice(0).reverse()
     for (const dispose of disposers) {
       try {
@@ -195,21 +245,26 @@ export class PluginRegistry implements RuntimeRegistry {
     }
   }
 
-  /** Leases held by every generation of a plugin, including retired ones still finishing runs. */
-  private leases(id: string): number {
-    let total = this.entries.get(id)?.leases ?? 0
-    for (const entry of this.retired) if (entry.plugin.id === id) total += entry.leases
+  /** Leases (or with `runs`, run leases) held by every generation of a plugin, including retired ones still finishing runs. */
+  private leases(id: string, count: 'leases' | 'runs' = 'leases'): number {
+    let total = this.entries.get(id)?.[count] ?? 0
+    for (const entry of this.retired) if (entry.plugin.id === id) total += entry[count]
     return total
   }
 
-  private lease(entries: Entry[]): () => void {
-    for (const entry of entries) entry.leases++
+  /** `run`: the lease of a run, counted in the plugin list; a harness mount holds the other kind. */
+  private lease(entries: Entry[], run: boolean): () => void {
+    for (const entry of entries) {
+      entry.leases++
+      if (run) entry.runs++
+    }
     let released = false
     return () => {
       if (released) return
       released = true
       for (const entry of entries) {
         entry.leases--
+        if (run) entry.runs--
         if (!entry.leases && this.retired.delete(entry)) this.collect(entry)
       }
     }
@@ -230,12 +285,16 @@ export class PluginRegistry implements RuntimeRegistry {
     const provider = owner?.providers.find(p => p.id === providerId)
     if (!owner || !provider) throw new AppError(409, 'provider-unavailable', '请先配置并启用模型接口')
     const withTools = options.tools !== false
-    const contributors = withTools ? selected.filter(e => e.tools.length || e === owner) : [owner]
+    const contributors = selected.filter(e => e === owner || e.skills.length || (withTools && e.tools.length))
     if (contributors.some(entry => this.mutating.has(entry.plugin.id))) {
       throw new AppError(409, 'plugin-busy', '本次任务需要的插件正在变更，请稍后重试')
     }
     const tools = withTools ? contributors.flatMap(e => e.tools) : []
-    return { provider, tools, release: this.lease(contributors) }
+    const skills = contributors.flatMap(entry => entry.skills.map(skill => ({ ...skill, id: `${entry.plugin.id}:${skill.id}` })))
+    if (skills.reduce((size, skill) => size + skill.content.length, 0) > 256_000) {
+      throw new AppError(409, 'skills-too-large', '已启用技能的总长度超过 256 KB，请停用部分需求包后重试。')
+    }
+    return { provider, tools, ...(skills.length ? { skills } : {}), release: this.lease(contributors, true) }
   }
 
   /** Providers of enabled plugins, for catalogs. Use `acquire` to run one. */
@@ -248,18 +307,78 @@ export class PluginRegistry implements RuntimeRegistry {
     return [...this.entries.values()].filter(e => e.enabled).flatMap(e => e.harnesses)
   }
 
+  skills(): SkillInfo[] {
+    return [...this.entries.values()]
+      .filter(entry => entry.enabled)
+      .flatMap(entry =>
+        entry.skills.map(skill => ({
+          id: `${entry.plugin.id}:${skill.id}`,
+          pluginId: entry.plugin.id,
+          pluginName: entry.plugin.name,
+          name: skill.name,
+          description: skill.description,
+        })),
+      )
+  }
+
+  private panelInfo(entry: Entry, panel: UiPanelDefinition | (ClientPanelDefinition & { hash: string })): UiPanelInfo {
+    return {
+      id: `${entry.plugin.id}:${panel.id}`,
+      pluginId: entry.plugin.id,
+      pluginName: entry.plugin.name,
+      title: panel.title,
+      ...(panel.description === undefined ? {} : { description: panel.description }),
+      ...(panel.harnessIds === undefined ? {} : { harnessIds: [...panel.harnessIds] }),
+      ...('hash' in panel ? { moduleHash: panel.hash } : {}),
+    }
+  }
+
+  uiPanels(): UiPanelInfo[] {
+    return [...this.entries.values()]
+      .filter(entry => entry.enabled)
+      .flatMap(entry =>
+        [...entry.panels.filter(panel => panel.listed !== false), ...entry.clientPanels].map(panel => this.panelInfo(entry, panel)),
+      )
+  }
+
+  acquireClientPanel(id: string, hash: string): ClientPanelLease {
+    const entry = [...this.entries.values()].find(
+      item => item.enabled && item.clientPanels.some(panel => `${item.plugin.id}:${panel.id}` === id && panel.hash === hash),
+    )
+    const panel = entry?.clientPanels.find(item => `${entry.plugin.id}:${item.id}` === id && item.hash === hash)
+    if (!entry || !panel) throw new AppError(404, 'ui-panel-unavailable', '这个界面模块已更新或停用，请刷新。')
+    if (this.mutating.has(entry.plugin.id)) throw new AppError(409, 'plugin-busy', '面板插件正在变更，请稍后重试。')
+    return { info: this.panelInfo(entry, panel), source: panel.source, release: this.lease([entry], false) }
+  }
+
+  acquireUiPanel(id: string): UiPanelLease {
+    const entry = [...this.entries.values()].find(item => item.enabled && item.panels.some(panel => `${item.plugin.id}:${panel.id}` === id))
+    const panel = entry?.panels.find(item => `${entry.plugin.id}:${item.id}` === id)
+    if (!entry || !panel) throw new AppError(404, 'ui-panel-unavailable', '这个扩展面板已停用或移除。')
+    if (this.mutating.has(entry.plugin.id)) throw new AppError(409, 'plugin-busy', '面板插件正在变更，请稍后重试。')
+    return {
+      info: this.panelInfo(entry, panel),
+      render: context => renderUiPanel(panel, context, this.log),
+      release: this.lease([entry], false),
+    }
+  }
+
   list(): PluginInfo[] {
     return [...this.entries.values()].map(e => ({
       id: e.plugin.id,
       name: e.plugin.name,
       version: e.plugin.version,
       description: e.plugin.description,
+      ...(e.plugin.package ? { package: e.plugin.package } : {}),
       enabled: e.enabled,
-      activeRuns: this.leases(e.plugin.id),
+      activeRuns: this.leases(e.plugin.id, 'runs'),
       capabilities: [
         ...e.providers.map(p => `provider:${p.id}`),
         ...e.tools.map(t => `tool:${t.name}`),
         ...e.harnesses.map(h => `harness:${h.id}`),
+        ...e.panels.map(panel => `${panel.listed === false ? 'data' : 'ui'}:${panel.id}`),
+        ...e.clientPanels.map(panel => `ui:${panel.id}`),
+        ...e.skills.map(skill => `skill:${skill.id}`),
       ],
       ...(e.managed ? { managed: e.managed } : {}),
     }))
@@ -270,7 +389,7 @@ export class PluginRegistry implements RuntimeRegistry {
     const driver = entry?.harnesses.find(driver => driver.id === id)
     if (!entry || !driver) throw new AppError(409, 'harness-unavailable', `请先配置并启用 Harness ${id}`)
     if (this.mutating.has(entry.plugin.id)) throw new AppError(409, 'plugin-busy', 'Harness 插件正在变更，请稍后重试')
-    return { driver, release: this.lease([entry]) }
+    return { driver, release: this.lease([entry], false) }
   }
 
   /**

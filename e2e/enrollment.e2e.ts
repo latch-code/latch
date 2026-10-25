@@ -7,13 +7,16 @@ import { tmpdir } from 'node:os'
 import { promisify } from 'node:util'
 import { join, resolve } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { createOfflineTicket } from '@latch/host/auth'
+import type { DeviceScope } from '@latch/protocol'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost, type TestHostOptions } from './helpers/host.ts'
 import { openSettings } from './helpers/layout.ts'
 import { expectUnmovedByInjectedStyles } from './helpers/security.ts'
 
 const OUTPUT = 'test-results/enrollment'
+const ADMIN = '管理此 Host（模型服务、插件、项目和设备）'
+/** What the desktop app's 「在这台电脑的浏览器中打开」 lets a browser ask for. */
+const BROWSER_CEILING: DeviceScope[] = ['view', 'run', 'approve:standard', 'admin']
 const UI_DIR = resolve(process.env.HARNESS_E2E_UI_DIR ?? 'dist/web')
 const SIZES = [
   { width: 1440, height: 1000, label: 'desktop' },
@@ -122,13 +125,31 @@ describe('device enrollment in the browser', () => {
     return created
   }
 
-  it('shows the fingerprint the Host shows, handles a denial, then connects after approval', async () => {
+  it('asks a browser on loopback for an invitation, shows the fingerprint the Host shows, handles a denial, then connects', async () => {
     const testHost = await host({ presenceMode: 'manual' })
     const page = await (await context()).newPage()
+    // Loopback is not this computer: without an invitation the page only says where to get one.
     await page.goto(`${testHost.host.loopbackOrigin}/link/`)
-    await page.getByRole('heading', { name: '连接到 Latch', exact: true }).waitFor()
-    // The first device of a Host is offered 管理此 Host.
-    expect(await page.getByRole('checkbox', { name: '管理此 Host（模型服务、插件、项目和设备）' }).isChecked()).toBe(true)
+    await page.getByText(/^这台电脑上的浏览器也需要一次性登记链接。.*在这台电脑的浏览器中打开/).waitFor()
+    expect(await page.getByLabel('设备名称', { exact: true }).count()).toBe(0)
+    await captureSizes(page, 'invitation')
+
+    await page.goto((await testHost.invite(BROWSER_CEILING, 'loopback-tcp')).url)
+    await page.getByText('已收到配对邀请。提交后，请在运行 Latch 的电脑上核对指纹并确认。', { exact: true }).waitFor()
+    expect(new URL(page.url()).hash).toBe('')
+    // An invited browser asks only for what it ticks.
+    const admin = page.getByRole('checkbox', { name: ADMIN })
+    expect(await admin.isChecked()).toBe(false)
+    // What the choice allows from this device, and what stays on the computer running Latch.
+    expect(await admin.getAttribute('aria-describedby')).toBeTruthy()
+    await page
+      .getByText(
+        '可以修改模型服务、插件、项目列表和设备。密钥、Agent 的启动设置、新建项目和放宽安全策略仍只能在运行 Latch 的电脑上完成。',
+        {
+          exact: true,
+        },
+      )
+      .waitFor()
     await page.getByLabel('设备名称', { exact: true }).fill('验收浏览器')
     await captureSizes(page, 'form')
 
@@ -138,6 +159,7 @@ describe('device enrollment in the browser', () => {
     const shown = (await page.locator('.fingerprint span').allTextContents()).join(' ')
     expect(request.preview.lines.find(line => line.label === '设备指纹')?.value).toBe(shown)
     expect(request.preview.lines.find(line => line.label === '设备名称')?.value).toBe('验收浏览器')
+    expect(request.preview.lines.find(line => line.label === '来源地址')?.value).toMatch(/ · 回环端口（也可能是转发进来的连接）$/)
     // The five groups read as three and two, so no group stands alone on a line.
     const tops = await page
       .locator('.fingerprint > span')
@@ -146,9 +168,12 @@ describe('device enrollment in the browser', () => {
     expect(tops[3]).toBeGreaterThan(tops[0])
     await captureSizes(page, 'waiting')
     testHost.presence.denyNext()
+    // The invitation is used up by that request, so the page asks for a new one.
     await page.getByText('本机拒绝了此设备。', { exact: true }).waitFor()
+    await page.getByText(/^这台电脑上的浏览器也需要一次性登记链接。/).waitFor()
     await captureSizes(page, 'denied')
 
+    await page.goto((await testHost.invite(BROWSER_CEILING, 'loopback-tcp')).url)
     await page.getByRole('button', { name: '请求本机确认', exact: true }).click()
     await testHost.presence.waitForRequest()
     testHost.presence.approveNext()
@@ -160,7 +185,7 @@ describe('device enrollment in the browser', () => {
   it('keeps the enrollment page as it is under styles added to the page', async () => {
     const testHost = await host({ presenceMode: 'manual' })
     const page = await (await context()).newPage()
-    await page.goto(`${testHost.host.loopbackOrigin}/link/`)
+    await page.goto((await testHost.invite(undefined, 'loopback-tcp')).url)
     await page.getByRole('heading', { name: '连接到 Latch', exact: true }).waitFor()
     const name = page.getByLabel('设备名称', { exact: true })
     await name.fill('样式核对')
@@ -179,6 +204,9 @@ describe('device enrollment in the browser', () => {
     await page.getByRole('button', { name: '请求本机确认', exact: true }).click()
     await testHost.presence.waitForRequest()
     await page.getByRole('heading', { name: '等待本机确认', exact: true }).waitFor()
+    // The pointer stays where 请求本机确认 was and may now rest on 取消; the injection moves the page under it, so a hover
+    // would change the button's look for a reason that is not the styles.
+    await page.mouse.move(0, 0)
     await expectUnmovedByInjectedStyles(page, [
       '.enroll-status h2',
       '.enroll-timer',
@@ -250,7 +278,7 @@ describe('device enrollment in the browser', () => {
       },
     ])
     const page = await browserContext.newPage()
-    await page.goto(`${testHost.host.loopbackOrigin}/link/`)
+    await page.goto((await testHost.invite(undefined, 'loopback-tcp')).url)
     await page.getByRole('heading', { name: '此设备需要在本机重新确认', exact: true }).waitFor()
     await page
       .getByText('Latch 已升级设备凭据，旧的登录状态不再有效。请提交确认请求，并在运行 Latch 的电脑上核对指纹。', { exact: true })
@@ -264,20 +292,21 @@ describe('device enrollment in the browser', () => {
     expect(await settings.getByLabel('设备名称', { exact: true }).inputValue()).toBe('旧版浏览器')
   })
 
-  it('offers the offline code when local confirmation is unavailable', async () => {
+  it('keeps an invited browser from submitting while local confirmation is unavailable, and offers it no offline code', async () => {
     const testHost = await host({ presenceMode: 'unavailable' })
     const page = await (await context()).newPage()
-    await page.goto(`${testHost.host.loopbackOrigin}/link/`)
-    await page.getByText(/^本机确认不可用：.*pnpm latch device enroll --offline/).waitFor()
-    expect(await page.getByRole('button', { name: '请求本机确认', exact: true }).count()).toBe(0)
-    // The intro points to the offline code; nothing on the page promises Touch ID.
-    await page.getByText('这台设备会生成自己的密钥，再用离线登记码完成登记。', { exact: true }).waitFor()
+    await page.goto((await testHost.invite(undefined, 'loopback-tcp')).url)
+    await page.getByText(/^本机确认不可用：.*新设备要在运行 Latch 的电脑上确认后才能登记/).waitFor()
+    await page.getByLabel('设备名称', { exact: true }).fill('等待中的浏览器')
+    // Offline codes work only in the desktop app; submitting here would only use the invitation up.
+    expect(await page.getByLabel('离线登记码', { exact: true }).count()).toBe(0)
+    expect(await page.getByRole('button', { name: '使用离线登记码', exact: true }).count()).toBe(0)
+    expect(await page.getByRole('button', { name: '请求本机确认', exact: true }).isDisabled()).toBe(true)
+    await page.getByLabel('设备名称', { exact: true }).press('Enter')
+    // The intro is the invitation's; nothing on the page promises Touch ID.
     expect(await page.getByText(/Touch ID/).count()).toBe(0)
     await captureSizes(page, 'unavailable')
-    const { code } = await createOfflineTicket(join(testHost.dataDir, 'auth'))
-    await page.getByLabel('离线登记码', { exact: true }).fill(code)
-    await page.getByRole('button', { name: '使用离线登记码', exact: true }).click()
-    await connected(page)
+    expect(testHost.host.security.audit.lastOf('device.enroll.requested')).toBeUndefined()
   })
 
   it('enrolls a phone over HTTPS only with an invitation', async () => {
@@ -287,7 +316,10 @@ describe('device enrollment in the browser', () => {
     const phone = await context({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, ignoreHTTPSErrors: true })
     const page = await phone.newPage()
     await page.goto(`${testHost.host.tlsOrigin}/link/`)
-    await page.getByText(/^手机或其他电脑需要配对邀请。/).waitFor()
+    // Where to make the invitation, in words: no terminal command for a person holding a phone.
+    const needs = page.getByText(/^手机或其他电脑需要配对邀请：在运行 Latch 的电脑上/)
+    await needs.waitFor()
+    expect(await needs.textContent()).not.toMatch(/pnpm|--[a-z]/u)
     expect(await page.getByLabel('设备名称', { exact: true }).count()).toBe(0)
 
     const invitation = await testHost.invite()

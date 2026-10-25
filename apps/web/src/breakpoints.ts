@@ -16,8 +16,8 @@ export function viewportFor(width: number): Viewport {
   return 'desktop'
 }
 
-/** Below `lg` the session list is a slide-over drawer. */
-export const usesDrawer = (viewport: Viewport) => viewport === 'phone' || viewport === 'tablet'
+/** On tablets the session list slides over from the rail; phones open it as their root page instead. */
+export const usesDrawer = (viewport: Viewport) => viewport === 'tablet'
 
 const queries = [`(min-width: ${BREAKPOINTS.md}px)`, `(min-width: ${BREAKPOINTS.lg}px)`, `(min-width: ${BREAKPOINTS.xl}px)`]
 

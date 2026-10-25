@@ -110,6 +110,21 @@ export const updateEnvelope = z.object({
   update: z.looseObject({ sessionUpdate: z.string() }),
 })
 export const chunkUpdate = z.object({ content: contentBlock, messageId: optionalText })
+export const commandsUpdate = z.object({
+  availableCommands: z
+    .array(
+      z.object({
+        name: z
+          .string()
+          .min(1)
+          .max(100)
+          .regex(/^[^\s\u0000-\u001f\u007f]+$/u),
+        description: z.string().max(1000).optional(),
+        input: z.object({ hint: z.string().max(500) }).nullish(),
+      }),
+    )
+    .max(200),
+})
 export const planUpdate = z.object({
   entries: z.array(z.object({ content: z.string(), status: optionalText, priority: optionalText })),
 })

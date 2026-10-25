@@ -18,6 +18,36 @@ function optionalId(value, pattern) {
   return typeof value === 'string' && pattern.test(value) ? value : undefined
 }
 
+const HANDLE = /^[A-Za-z0-9_-]{22}$/
+const REFERENCE_LIMIT = 4096
+const KNOWN_LIMIT = 64
+
+/**
+ * A file action's input: the session and either the reference as the message wrote it (a string) or `{ handle }`
+ * from the Host. Only these plain values cross to main; anything else never leaves the preload.
+ */
+function fileInput(sessionId, target) {
+  if (typeof sessionId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}$/.test(sessionId)) return undefined
+  if (typeof target === 'string') return target.length > 0 && target.length <= REFERENCE_LIMIT ? { sessionId, path: target } : undefined
+  const handle = target !== null && typeof target === 'object' ? target.handle : undefined
+  return typeof handle === 'string' && HANDLE.test(handle) ? { sessionId, handle } : undefined
+}
+
+/** Which references are files: the session and 1–64 references as strings, nothing else. */
+function knownInput(sessionId, paths) {
+  if (typeof sessionId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}$/.test(sessionId)) return undefined
+  if (!Array.isArray(paths) || paths.length === 0 || paths.length > KNOWN_LIMIT) return undefined
+  const copy = Array.from(paths)
+  return copy.every(path => typeof path === 'string' && path.length > 0 && path.length <= REFERENCE_LIMIT)
+    ? { sessionId, paths: copy }
+    : undefined
+}
+
+const fileCall = channel => (sessionId, target) => {
+  const input = fileInput(sessionId, target)
+  return input ? ipcRenderer.invoke(channel, input) : Promise.resolve(INVALID)
+}
+
 /** The disk paths of dropped File objects; anything that is not a File backed by a file on disk drops the whole set. */
 function diskPaths(files) {
   let list
@@ -42,6 +72,9 @@ function diskPaths(files) {
   return paths
 }
 
+// The channels are OPEN_IN_BROWSER in proxy.cjs and LIFECYCLE_CHANNELS in lifecycle.cjs, which a sandboxed preload
+// cannot load, and the latch:folders:* handlers in main.cjs; main accepts each only from the latch://app/ page in a
+// window's top frame.
 contextBridge.exposeInMainWorld(
   'latchShell',
   Object.freeze({
@@ -76,6 +109,45 @@ contextBridge.exposeInMainWorld(
         if (typeof sessionId !== 'string' || !SESSION_ID.test(sessionId)) return Promise.resolve(INVALID)
         return ipcRenderer.invoke('latch:folders:save-session', { sessionId })
       },
+    }),
+    // Main makes a one-time invitation and opens the browser with it; the renderer only learns whether that worked.
+    openInBrowser: () => ipcRenderer.invoke('latch:open-in-browser'),
+    // Login item, keeping the Mac awake and the Host's restarts (Settings › 通用); main owns all of them.
+    lifecycle: Object.freeze({
+      get: () => ipcRenderer.invoke('latch:lifecycle'),
+      setLoginItem: enabled => ipcRenderer.invoke('latch:lifecycle:login-item', enabled === true),
+      setKeepAwake: enabled => ipcRenderer.invoke('latch:lifecycle:keep-awake', enabled === true),
+      restartHost: () => ipcRenderer.invoke('latch:lifecycle:restart-host'),
+      subscribe: callback => {
+        const listener = (_event, value) => callback(value)
+        ipcRenderer.on('latch:lifecycle:changed', listener)
+        return () => ipcRenderer.removeListener('latch:lifecycle:changed', listener)
+      },
+    }),
+    notifications: Object.freeze({
+      get: () => ipcRenderer.invoke('latch:notifications:get'),
+      set: value =>
+        value && ['completion', 'approval', 'title'].every(key => typeof value[key] === 'boolean')
+          ? ipcRenderer.invoke('latch:notifications:set', { completion: value.completion, approval: value.approval, title: value.title })
+          : Promise.resolve(undefined),
+      subscribe: callback => {
+        const listener = (_event, sessionId) => {
+          if (typeof sessionId === 'string' && SESSION_ID.test(sessionId)) callback(sessionId)
+        }
+        ipcRenderer.on('latch:notifications:open', listener)
+        return () => ipcRenderer.removeListener('latch:notifications:open', listener)
+      },
+    }),
+    files: Object.freeze({
+      inspect: (sessionId, path) =>
+        typeof path === 'string' ? fileCall('latch:files:inspect')(sessionId, path) : Promise.resolve(INVALID),
+      known: (sessionId, paths) => {
+        const input = knownInput(sessionId, paths)
+        return input ? ipcRenderer.invoke('latch:files:known', input) : Promise.resolve(INVALID)
+      },
+      reveal: fileCall('latch:files:reveal'),
+      quickLook: fileCall('latch:files:quicklook'),
+      open: fileCall('latch:files:open'),
     }),
   }),
 )

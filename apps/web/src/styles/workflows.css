@@ -1,0 +1,224 @@
+.content-search {
+  padding: var(--sp-12);
+  display: grid;
+  gap: var(--sp-8);
+}
+.content-search h3 {
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  color: var(--text-3);
+  font-weight: 500;
+}
+.content-search p {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.content-search > button {
+  display: grid;
+  gap: var(--sp-4);
+  text-align: start;
+  padding: var(--sp-8);
+  border-radius: var(--r-6);
+  corner-shape: var(--corner-shape);
+}
+.content-search > button:hover {
+  background: var(--bg-hover);
+}
+.content-search small {
+  color: var(--text-3);
+  margin-inline-start: var(--sp-8);
+}
+.search-snippet {
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  overflow-wrap: anywhere;
+}
+.search-snippet mark,
+[data-search-target] {
+  background: var(--fill-press);
+  color: var(--text-1);
+}
+.archive-batch {
+  padding: var(--sp-12);
+  display: grid;
+  gap: var(--sp-8);
+}
+.archive-batch > div {
+  display: flex;
+  gap: var(--sp-8);
+}
+.archive-batch label {
+  display: flex;
+  gap: var(--sp-8);
+  align-items: center;
+  padding: var(--sp-8);
+}
+.archive-batch label span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.find-bar {
+  display: flex;
+  gap: var(--sp-8);
+  padding: var(--sp-8) var(--sp-16);
+  align-items: center;
+  border-block-end: 1px solid var(--line);
+}
+.find-bar > .ui-field {
+  flex: 1;
+}
+.find-bar > span {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  white-space: nowrap;
+}
+::highlight(latch-find) {
+  background: var(--fill-press);
+  color: var(--text-1);
+}
+::highlight(latch-find-current) {
+  background: var(--fill-press);
+  color: var(--text-1);
+  text-decoration: underline;
+}
+.command-palette :is(.modal-surface, .ui-modal-surface) {
+  max-width: 640px;
+}
+.command-palette .ui-field {
+  margin: var(--sp-12);
+}
+.command-results {
+  max-height: 60vh;
+  overflow: auto;
+  padding: var(--sp-12);
+}
+.command-results section {
+  display: grid;
+  gap: var(--sp-4);
+}
+.command-results h3 {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  padding: var(--sp-8);
+  font-weight: 500;
+}
+.command-results button {
+  display: flex;
+  gap: var(--sp-8);
+  text-align: start;
+  padding: var(--sp-8);
+  border-radius: var(--r-6);
+  corner-shape: var(--corner-shape);
+}
+.command-results button[aria-selected='true'],
+.command-results button:hover {
+  background: var(--bg-hover);
+}
+.command-results button span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.getting-started {
+  display: grid;
+  gap: var(--sp-4);
+  margin-block: var(--sp-16);
+}
+.getting-started > div {
+  display: flex;
+  gap: var(--sp-12);
+  align-items: center;
+  padding-block: var(--sp-8);
+}
+.getting-started > div > div {
+  flex: 1;
+}
+.getting-started strong {
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+  font-weight: 500;
+}
+.getting-started p {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
+}
+.getting-started-step {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.keyboard-help {
+  display: grid;
+  gap: var(--sp-12);
+  padding: var(--sp-16);
+}
+.keyboard-help > div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-16);
+}
+
+.session-item-archive {
+  opacity: 0;
+}
+.session-item:hover .session-item-archive,
+.session-item:focus-within .session-item-archive {
+  opacity: 1;
+}
+@media (hover: none) {
+  .session-item-archive {
+    display: none;
+  }
+}
+
+.slash-commands {
+  display: grid;
+  gap: var(--sp-4);
+  padding: var(--sp-8);
+  max-height: 240px;
+  overflow: auto;
+}
+.slash-commands p,
+.slash-commands span {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.slash-commands button {
+  display: flex;
+  gap: var(--sp-12);
+  padding: var(--sp-8);
+  text-align: start;
+  border-radius: var(--r-6);
+  corner-shape: var(--corner-shape);
+}
+.slash-commands button:hover {
+  background: var(--bg-hover);
+}
+.slash-commands strong {
+  font-weight: 500;
+}
+
+.prompt-template-editor {
+  display: grid;
+  gap: var(--sp-12);
+  padding: var(--sp-16);
+}
+.prompt-template-editor label {
+  display: grid;
+  gap: var(--sp-8);
+}
+
+[data-approval-target] {
+  outline: 2px solid var(--accent);
+  outline-offset: var(--sp-2);
+}

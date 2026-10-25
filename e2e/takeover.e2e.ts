@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { AppSnapshot } from '@latch/protocol'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
+import { backToPhoneSessions } from './helpers/layout.ts'
 
 describe('desktop to phone takeover', () => {
   let testHost: TestHost
@@ -47,11 +48,13 @@ describe('desktop to phone takeover', () => {
       .request.get(host.origin + '/link/api/snapshot')
       .then(r => r.json())
   }
+  /** A phone opens a session from its list, the root page: the session's page is pushed over the list. */
   async function choosePhone(id: string) {
-    await mobile.getByRole('button', { name: '打开会话列表', exact: true }).click()
-    await mobile.locator(`[data-task-id="${id}"]`).click()
-    await mobile.locator('.drawer-backdrop').waitFor({ state: 'detached' })
-    await expect.poll(() => mobile.locator('.sidebar').evaluate(element => element.getBoundingClientRect().right)).toBeLessThanOrEqual(0)
+    await backToPhoneSessions(mobile)
+    await mobile.locator(`.phone-list [data-task-id="${id}"]`).click()
+    await mobile.locator('.phone-list[data-covered]').waitFor()
+    // The page has slid into place.
+    await mobile.locator('main.workspace').evaluate(element => Promise.all(element.getAnimations().map(animation => animation.finished)))
   }
   async function filterSessions(page: Page, name: '全部' | '对话' | 'Agent') {
     // The filter pills unfold under the search while it is in use.
@@ -62,8 +65,11 @@ describe('desktop to phone takeover', () => {
     const before = (await snapshot()).tasks.map(t => t.id)
     await filterSessions(desktop, '对话')
     await desktop.getByRole('button', { name: '新建会话', exact: true }).click()
-    // The device remembers its last mode; demo tasks that use tools need Agent.
-    await desktop.getByRole('radiogroup', { name: '会话模式' }).getByRole('radio', { name: 'Agent', exact: true }).click()
+    // The device remembers its last choice; demo tasks that use tools need the built-in harness working as an agent.
+    await desktop
+      .getByRole('radiogroup', { name: 'Agent', exact: true })
+      .getByRole('radio', { name: /^Latch 内置\s*Agent$/ })
+      .click()
     await desktop.getByRole('textbox', { name: '新会话消息' }).fill(prompt)
     await desktop.getByRole('button', { name: '发送', exact: true }).click()
     await expect.poll(async () => (await snapshot()).tasks.filter(t => !before.includes(t.id)).length).toBe(1)
@@ -74,30 +80,42 @@ describe('desktop to phone takeover', () => {
   }
 
   it('contains mobile navigation focus and restores it on Escape without disabling desktop navigation', async () => {
-    const opener = mobile.getByRole('button', { name: '打开会话列表', exact: true })
+    // The session list slides over on tablets; phones open it as their root page instead.
+    const tabletContext = await browser.newContext({
+      viewport: { width: 768, height: 1024 },
+      isMobile: true,
+      hasTouch: true,
+      storageState: await desktop.context().storageState(),
+    })
     try {
+      const tablet = await tabletContext.newPage()
+      tablet.setDefaultTimeout(15_000)
+      await tablet.goto(host.origin + '/link/')
+      await connected(tablet)
+      const opener = tablet.getByRole('button', { name: '打开会话列表', exact: true })
       await opener.focus()
       await opener.press('Enter')
-      await mobile.getByRole('dialog', { name: '会话导航', exact: true }).waitFor()
-      expect(await mobile.locator('.workspace').evaluate(element => (element as HTMLElement).inert)).toBe(true)
+      await tablet.getByRole('dialog', { name: '会话导航', exact: true }).waitFor()
+      expect(await tablet.locator('.workspace').evaluate(element => (element as HTMLElement).inert)).toBe(true)
       await expect
-        .poll(() => mobile.locator('.sidebar').evaluate(element => element.contains(document.activeElement)), { timeout: 2_000 })
+        .poll(() => tablet.locator('.sidebar').evaluate(element => element.contains(document.activeElement)), { timeout: 2_000 })
         .toBe(true)
-      await mobile.keyboard.press('Shift+Tab')
-      expect(await mobile.locator('.sidebar').evaluate(element => element.contains(document.activeElement))).toBe(true)
-      await mobile.keyboard.press('Tab')
-      expect(await mobile.locator('.sidebar').evaluate(element => element.contains(document.activeElement))).toBe(true)
-      await mobile.keyboard.press('Escape')
+      await tablet.keyboard.press('Shift+Tab')
+      expect(await tablet.locator('.sidebar').evaluate(element => element.contains(document.activeElement))).toBe(true)
+      await tablet.keyboard.press('Tab')
+      expect(await tablet.locator('.sidebar').evaluate(element => element.contains(document.activeElement))).toBe(true)
+      await tablet.keyboard.press('Escape')
       await expect.poll(() => opener.getAttribute('aria-expanded')).toBe('false')
       await expect.poll(() => opener.evaluate(element => element === document.activeElement), { timeout: 2_000 }).toBe(true)
-      expect(await mobile.locator('.workspace').evaluate(element => (element as HTMLElement).inert)).toBe(false)
-      expect(await mobile.locator('.sidebar').evaluate(element => (element as HTMLElement).inert)).toBe(true)
+      expect(await tablet.locator('.workspace').evaluate(element => (element as HTMLElement).inert)).toBe(false)
+      expect(await tablet.locator('.sidebar').evaluate(element => (element as HTMLElement).inert)).toBe(true)
       expect(await desktop.locator('.workspace').evaluate(element => (element as HTMLElement).inert)).toBe(false)
       expect(await desktop.locator('.sidebar').evaluate(element => (element as HTMLElement).inert)).toBe(false)
+      // A phone has no drawer: its list is the page, and nothing on it is inert.
+      expect(await mobile.locator('.sidebar').count()).toBe(0)
+      expect(await mobile.locator('#session-navigation').evaluate(element => element instanceof HTMLElement && element.inert)).toBe(false)
     } finally {
-      if ((await mobile.locator('#session-navigation').getAttribute('aria-modal')) === 'true') {
-        await mobile.locator('.sidebar').getByRole('button', { name: '关闭会话列表', exact: true }).click()
-      }
+      await tabletContext.close()
     }
   })
 
@@ -183,9 +201,21 @@ describe('desktop to phone takeover', () => {
     expect((await snapshot()).tasks.find(t => t.id === id)?.status).toBe('running')
     await phoneContext.setOffline(false)
     await mobile.reload()
-    await mobile.getByRole('button', { name: '取消任务', exact: true }).waitFor()
-    await mobile.getByRole('button', { name: '取消任务', exact: true }).click()
+    const { runId } = await host.bridge.summary(id)
+    await mobile.getByRole('button', { name: '停止', exact: true }).waitFor()
+    await mobile.getByRole('button', { name: '停止', exact: true }).click()
     await expect.poll(async () => (await snapshot()).tasks.find(t => t.id === id)?.status).toBe('cancelled')
+    // The page named the run it showed, and the Host kept the receipt with the session for a retry. The receipt is
+    // written after the run settles, so the session can show 已取消 a moment before it.
+    const receipts = async () => {
+      const meta = JSON.parse(await readFile(join(testHost.dataDir, 'sessions-meta.json'), 'utf8').catch(() => '{"sessions":[]}')) as {
+        sessions: Array<{ id: string; receipts?: Array<Record<string, unknown>> }>
+      }
+      return meta.sessions.find(session => session.id === id)?.receipts
+    }
+    await expect
+      .poll(receipts)
+      .toEqual([expect.objectContaining({ kind: 'cancel', runId, outcome: 'stopped', status: 'cancelled', requestId: expect.any(String) })])
     expect((await readdir(join(directory, 'artifacts'))).some(file => file.includes(id) && file.startsWith('completion-'))).toBe(false)
     const detail = await host.bridge.detail(id)
     expect(new Set(detail.messages.map(m => m.id)).size).toBe(detail.messages.length)
@@ -199,7 +229,10 @@ describe('desktop to phone takeover', () => {
     const before = (await snapshot()).tasks.map(task => task.id)
     await filterSessions(desktop, 'Agent')
     await desktop.getByRole('button', { name: '新建会话', exact: true }).click()
-    await desktop.getByRole('radiogroup', { name: '会话模式' }).getByRole('radio', { name: '对话', exact: true }).click()
+    await desktop
+      .getByRole('radiogroup', { name: 'Agent', exact: true })
+      .getByRole('radio', { name: /只对话/ })
+      .click()
     await desktop.getByRole('textbox', { name: '新会话消息' }).fill('批准生成验收报告')
     await desktop.getByRole('button', { name: '发送', exact: true }).click()
     await expect.poll(async () => (await snapshot()).tasks.filter(task => !before.includes(task.id)).length).toBe(1)
@@ -214,7 +247,7 @@ describe('desktop to phone takeover', () => {
     expect(detail.approvals).toEqual([])
     expect((await readdir(join(directory, 'artifacts'))).some(file => file.includes(task.id))).toBe(false)
     await choosePhone(task.id)
-    await mobile.getByPlaceholder(/对话模式不调用工具/).waitFor()
+    await mobile.getByPlaceholder(/不读写文件、不运行命令/).waitFor()
     await mobile.screenshot({ path: 'test-results/mobile-chat.png', fullPage: true, animations: 'disabled' })
     await desktop.getByRole('button', { name: '设置', exact: true }).click()
     await desktop.getByRole('dialog', { name: '设置', exact: true }).waitFor()

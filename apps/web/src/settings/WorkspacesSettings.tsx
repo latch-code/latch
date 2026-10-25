@@ -6,6 +6,7 @@ import { api, errorMessage } from '../core/api.ts'
 import { describeFailure } from '../core/securityCopy.ts'
 import { currentShell, revealLabel, shellFolders, type FolderResult, type ShellFolders } from '../core/shell.ts'
 import { basename } from '../format.ts'
+import { CodeRootNotice } from '../components/CodeRootNotice.tsx'
 import { ConfirmDialog } from '../components/overlays.tsx'
 import { Badge, Button, IconButton, InlineNotice, Menu, StatusPill } from '@latch/ui'
 import { CopyButton } from '../components/ui.tsx'
@@ -117,6 +118,7 @@ export function ProjectCard({
         }
       />
       <FolderRow workspace={workspace} folders={folders} />
+      {workspace.codeRoot && <CodeRootNotice workspace={workspace} className="project-code-root" />}
     </div>
   )
 }
@@ -312,7 +314,12 @@ export function WorkspacesSettings({
             )}
           </SettingsGroup>
           {start && (
-            <SettingsGroup title="启动目录" caption="Host 启动时使用的目录，不能移除；要在其他文件夹中工作，请新建项目。">
+            <SettingsGroup
+              title="启动目录"
+              // In Latch's program directory the warning already says the way out is a new project; it is said once.
+              caption={
+                start.codeRoot ? 'Host 启动时使用的目录，不能移除。' : 'Host 启动时使用的目录，不能移除；要在其他文件夹中工作，请新建项目。'
+              }>
               <SettingsRow
                 className="project-head"
                 leading={<IconTile icon={Folder} />}
@@ -326,6 +333,19 @@ export function WorkspacesSettings({
                 description={start.id === defaultId ? '新会话默认在这里启动' : undefined}
               />
               <FolderRow workspace={start} folders={folders} />
+              {start.codeRoot && (
+                <CodeRootNotice
+                  workspace={start}
+                  className="project-code-root"
+                  {...(folders
+                    ? {
+                        onNewProject: () => {
+                          void pick()
+                        },
+                      }
+                    : {})}
+                />
+              )}
             </SettingsGroup>
           )}
         </>

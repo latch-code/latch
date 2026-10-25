@@ -218,6 +218,45 @@ async function resolveEgress(input: {
   throw denied(target, firstReason ?? 'reserved')
 }
 
+/** What reaching a URL takes: nothing, an allowlist entry for `target`, or never (a metadata address). */
+export type EgressNeed =
+  | { target: string; allowance: 'none' }
+  | { target: string; allowance: 'needed'; reason: EgressReason }
+  | { target: string; allowance: 'never' }
+
+/**
+ * Judges a model-service URL the way the connector will: the `host:port` an allowlist entry would name, and whether
+ * one is needed, because every address the name resolves to is local, private or reserved. A name that does not
+ * resolve needs nothing yet (the request then fails on its own); metadata addresses can never be allowed.
+ */
+export function createEgressInspector(
+  options: { lookup?: LookupFunction; localAddresses?: () => ReadonlySet<string> } = {},
+): (url: string) => Promise<EgressNeed> {
+  const lookup = options.lookup ?? defaultLookup
+  const localAddresses = options.localAddresses ?? cachedLocalAddresses()
+  return async url => {
+    const parsed = new URL(url)
+    const host = normalizeAddress(parsed.hostname)
+    const target = hostKey(host, parsed.port || (parsed.protocol === 'https:' ? 443 : 80))
+    let addresses: string[]
+    if (isIP(host)) addresses = [host]
+    else {
+      try {
+        addresses = await new Promise<string[]>((resolve, reject) => {
+          lookup(host, { all: true, verbatim: true }, (error, list) => (error ? reject(error) : resolve(list.map(item => item.address))))
+        })
+      } catch {
+        return { target, allowance: 'none' }
+      }
+    }
+    const local = localAddresses()
+    const reasons = addresses.map(address => isDeniedAddress(address, local))
+    if (reasons.length === 0 || reasons.some(reason => reason === undefined)) return { target, allowance: 'none' }
+    const allowable = reasons.find(reason => reason !== undefined && reason !== 'metadata')
+    return allowable ? { target, allowance: 'needed', reason: allowable } : { target, allowance: 'never' }
+  }
+}
+
 const REDIRECTS = new Set([301, 302, 303, 307, 308])
 const MAX_REDIRECTS = 3
 

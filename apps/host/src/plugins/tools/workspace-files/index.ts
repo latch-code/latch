@@ -221,6 +221,7 @@ export function createWorkspacePlugin(options: WorkspacePluginOptions = {}): Har
     activate(ctx) {
       ctx.registerTool({
         name: 'list_folders',
+        title: '列出文件夹',
         description:
           "List the folders of this session's project: each folder's ID, its directory name, and whether it is the primary folder. Pass an ID as `folder` to list_files, read_file and write_file.",
         parameters: { type: 'object', properties: {}, additionalProperties: false },
@@ -236,6 +237,7 @@ export function createWorkspacePlugin(options: WorkspacePluginOptions = {}): Har
       })
       ctx.registerTool({
         name: 'list_files',
+        title: '列出文件',
         description: `List up to 200 entries in a directory of a project folder. Use path "." for the folder itself. ${FOLDERS_HINT}`,
         parameters: {
           type: 'object',
@@ -265,6 +267,7 @@ export function createWorkspacePlugin(options: WorkspacePluginOptions = {}): Har
       })
       ctx.registerTool({
         name: 'read_file',
+        title: '读取文件',
         description: `Read a UTF-8 file in a project folder (up to 128 KiB); path is relative to the folder. ${FOLDERS_HINT}`,
         parameters: {
           type: 'object',
@@ -282,6 +285,7 @@ export function createWorkspacePlugin(options: WorkspacePluginOptions = {}): Har
       })
       ctx.registerTool({
         name: 'write_file',
+        title: '写入文件',
         description: `Create or replace a UTF-8 file in a project folder; path is relative to the folder. The user approves the exact path and content before writing. ${FOLDERS_HINT}`,
         parameters: {
           type: 'object',

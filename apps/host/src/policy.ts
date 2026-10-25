@@ -2,7 +2,7 @@ import { isIPv6 } from 'node:net'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
-import type { ListenerClass, PermissionLevel } from '@latch/protocol'
+import { isLocalListener, type ListenerClass, type PermissionLevel } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex, writeFileAtomic } from '@latch/core/node-kit'
 import type { AuditActor, AuditLog, StepupMethod } from './audit.ts'
@@ -19,6 +19,26 @@ export function isEgressEntry(value: string): boolean {
   const host = match[1]!
   if (host.startsWith('[')) return isIPv6(host.slice(1, -1))
   return host.length <= 253 && host.split('.').every(label => HOST_LABEL.test(label))
+}
+
+/**
+ * A confirmed model-service address: the canonical origin as `originOf` writes it (`http(s)://host:port`, lowercase host
+ * in punycode, bracketed IPv6, explicit port), then the path as a saved key is bound to it (`keyPathOf`: WHATWG
+ * normalized, percent-encoded, no trailing slash, '' at the root). Nothing else: no user, query or fragment. A service
+ * counts as confirmed only at exactly this origin and path, since gateways tell tenants apart by the path.
+ */
+export function isConfirmedAddressEntry(value: string): boolean {
+  if (typeof value !== 'string' || value.length > 2400) return false
+  const match = /^(https?):\/\/([^/]+)(\/.*)?$/u.exec(value)
+  if (!match || !isEgressEntry(match[2]!)) return false
+  try {
+    const url = new URL(value)
+    if (url.username || url.password || url.search || url.hash) return false
+    const origin = `${url.protocol}//${url.hostname}:${url.port || (url.protocol === 'https:' ? '443' : '80')}`
+    return `${origin}${url.pathname.replace(/\/+$/u, '')}` === value
+  } catch {
+    return false
+  }
 }
 
 const level = z.enum(['L0', 'L1', 'L2'])
@@ -50,6 +70,17 @@ export const policySchema = z.strictObject({
     .array(z.string().refine(isEgressEntry, '出站白名单条目必须是 host:port'))
     .max(64)
     .refine(list => new Set(list).size === list.length, '出站白名单条目不能重复'),
+  /**
+   * Model-service addresses (origin and path) confirmed once on this computer (or added offline). A provider at any
+   * other address, except a preset's HTTPS origin, is saved but never sent a request. Absent in files written before it
+   * existed; the Host fills it once at startup (`migrateConfirmedAddresses`), so its absence never reads as a change
+   * made outside Latch.
+   */
+  confirmedAddresses: z
+    .array(z.string().refine(isConfirmedAddressEntry, '已确认的模型服务地址必须是 http(s)://host:port 加路径'))
+    .max(256)
+    .refine(list => new Set(list).size === list.length, '已确认的模型服务地址不能重复')
+    .optional(),
   keyBackend: z.literal('file'),
   /** Stored only; unattended runs are not implemented yet. */
   unattended: z.strictObject({
@@ -70,6 +101,7 @@ export function defaultPolicy(platform: NodeJS.Platform): Policy {
     operators: [],
     presence: { backend: platform === 'darwin' ? 'macos-helper' : 'none', helperCdhash: null },
     hostEgressAllow: [],
+    confirmedAddresses: [],
     keyBackend: 'file',
     unattended: { maxLevel: 'L1', allowAutoApproveRules: false, approvalTtlHours: { standard: 8, acp: 1 }, pauseAfterIdleDays: 14 },
   }
@@ -142,6 +174,9 @@ export function isLowering(prev: Policy, next: Policy): boolean {
       case 'hostEgressAllow':
         if (!isSubset(next.hostEgressAllow, prev.hostEgressAllow)) return false
         break
+      case 'confirmedAddresses':
+        if (!isSubset(next.confirmedAddresses ?? [], prev.confirmedAddresses ?? [])) return false
+        break
       default:
         return false
     }
@@ -149,9 +184,9 @@ export function isLowering(prev: Policy, next: Policy): boolean {
   return true
 }
 
-/** unix → local ceiling; every other listener → remote ceiling. */
+/** host.sock → local ceiling; every other listener, loopback included → remote ceiling. */
 export function ceilingFor(policy: Policy, listener: ListenerClass): PermissionLevel {
-  return listener === 'unix' ? policy.local.maxLevel : policy.remote.maxLevel
+  return isLocalListener(listener) ? policy.local.maxLevel : policy.remote.maxLevel
 }
 
 function invalid(detail: string): AppError {
@@ -163,6 +198,10 @@ export class PolicyStore {
   private queue: Promise<unknown> = Promise.resolve()
   /** Chinese startup warnings (never secrets). */
   readonly warnings: string[] = []
+  /** The file predates `confirmedAddresses`; the Host fills it once from the saved providers. */
+  get needsAddressMigration(): boolean {
+    return this.policy.confirmedAddresses === undefined
+  }
 
   private constructor(
     private readonly dataDir: string,
@@ -297,6 +336,22 @@ export class PolicyStore {
       const candidate = structuredClone(this.policy)
       candidate.presence.helperCdhash = cdhash
       await this.commit(candidate, ['presence.helperCdhash'], false, { listener: 'host', via: 'startup' }, 'none')
+    })
+    this.queue = run.catch(() => {})
+    return run
+  }
+
+  /**
+   * Startup and offline commands only, no confirmation: the one-time upgrade that records which model-service
+   * addresses were already confirmed before `confirmedAddresses` existed (see `addressesConfirmedBefore`). Does nothing
+   * once the field exists, so it can never add an address later.
+   */
+  migrateConfirmedAddresses(addresses: readonly string[], actor: AuditActor = { listener: 'host', via: 'startup' }): Promise<void> {
+    const run = this.queue.then(async () => {
+      if (this.policy.confirmedAddresses !== undefined) return
+      const candidate = structuredClone(this.policy)
+      candidate.confirmedAddresses = [...new Set(addresses.filter(isConfirmedAddressEntry))].slice(0, 256)
+      await this.commit(candidate, ['confirmedAddresses'], false, actor, 'none')
     })
     this.queue = run.catch(() => {})
     return run

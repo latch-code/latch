@@ -1,53 +1,33 @@
-import { Bot, Folder } from 'lucide-react'
-import type { HarnessInfo, HostCatalog, ModelRef, SessionConfigOption, TaskMode, TaskSummary } from '@latch/protocol'
+import { Sparkles } from 'lucide-react'
+import { useState, type ReactNode } from 'react'
+import type { HarnessInfo, HostCatalog, ModelRef, SessionConfigOption, TaskSummary } from '@latch/protocol'
+import { MOTION, usePresence } from '@latch/ui'
 import { findHarness, sameModel, startableWorkspaces, type ComposerChoice } from '../composerChoice.ts'
-import { basename } from '../format.ts'
+import type { DeviceAccess } from '../core/permissions.ts'
 import {
-  ConfigChips,
-  HarnessPicker,
+  StaticChip,
+  ConfigPicker,
   ModelPicker,
   ModeSwitch,
+  ProjectPicker,
   RunSettingsSheet,
-  StaticChip,
-  WorkspacePicker,
-  configSections,
-  harnessSections,
   modelSections,
   pendingModelText,
-  resetModelLabel,
   workspaceSections,
-  type HarnessAccess,
   type SettingsGroup,
 } from './Pickers.tsx'
 
-const bothModes: TaskMode[] = ['chat', 'agent']
+type Access = Pick<DeviceAccess, 'legacy' | 'local' | 'admin'>
 
-/** Phone run-settings groups for a new session; each group carries its own manage link. */
+/** Phone run-settings groups for a new session (the harness is the row of tiles); each group carries its manage link. */
 export function newSessionGroups(
   catalog: HostCatalog,
   choice: ComposerChoice,
   onChoice: (patch: Partial<ComposerChoice>) => void,
   manage: { providers?: () => void; workspaces?: () => void },
-  access?: HarnessAccess,
 ): SettingsGroup[] {
   const hostModels = findHarness(catalog, choice.harnessId)?.models === 'host'
   return [
-    ...(catalog.harnesses.length > 1
-      ? [
-          {
-            id: 'harness',
-            title: 'Harness',
-            sections: harnessSections(
-              catalog,
-              choice.harnessId,
-              id => {
-                onChoice({ harnessId: id })
-              },
-              access,
-            ),
-          },
-        ]
-      : []),
     ...(hostModels && (catalog.providers.length > 0 || manage.providers)
       ? [
           {
@@ -60,7 +40,7 @@ export function newSessionGroups(
           },
         ]
       : []),
-    ...(startableWorkspaces(catalog).length > 1 || manage.workspaces
+    ...(choice.mode !== 'chat' && (startableWorkspaces(catalog).length > 1 || manage.workspaces)
       ? [
           {
             id: 'workspace',
@@ -75,94 +55,115 @@ export function newSessionGroups(
   ]
 }
 
-/** New session: harness, model (host-model harnesses only), project and mode. Without a catalog only the mode remains. */
+/**
+ * The toolbar of a new session's input: the project (not for a conversation, which reads and writes no files) and the
+ * model (only for a harness on the Host's models). The harness is chosen in the tiles above. On phones both sit in
+ * one run-settings sheet. A Host without a catalog offers only 对话 / Agent.
+ */
 export function NewSessionControls({
   catalog,
   choice,
   onChoice,
   phone,
   disabled,
+  access,
   onManageProviders,
   onManageWorkspaces,
-  access,
+  onCreateProject,
+  onProvidersChanged,
 }: {
   catalog?: HostCatalog
   choice: ComposerChoice
   onChoice: (patch: Partial<ComposerChoice>) => void
   phone: boolean
   disabled: boolean
+  access: Access
   onManageProviders?: () => void
   onManageWorkspaces?: () => void
-  access?: HarnessAccess
+  /** The desktop app on the Host's computer: a new project from the system's folder panel. */
+  onCreateProject?: () => void
+  onProvidersChanged?: () => void
 }) {
-  const harness = findHarness(catalog, choice.harnessId)
-  const modes = harness?.modes.length ? harness.modes : bothModes
-  const mode = (
-    <ModeSwitch
-      value={choice.mode}
-      modes={modes}
-      disabled={disabled}
-      onChange={value => {
-        onChoice({ mode: value })
-      }}
-    />
-  )
-  if (!catalog) return mode
-  const hostModels = harness?.models === 'host'
-  if (phone) {
-    const groups = newSessionGroups(catalog, choice, onChoice, { providers: onManageProviders, workspaces: onManageWorkspaces }, access)
-    const summary = [harness?.name, hostModels ? choice.model?.model : undefined].filter(Boolean).join(' · ') || '运行设置'
+  if (!catalog)
     return (
-      <>
-        {groups.length > 0 ? (
-          <RunSettingsSheet summary={summary} groups={groups} disabled={disabled} />
-        ) : (
-          <StaticChip icon={Bot} text={summary} label={summary} />
-        )}
-        {mode}
-      </>
+      <ModeSwitch
+        value={choice.mode}
+        disabled={disabled}
+        onChange={mode => {
+          onChoice({ mode })
+        }}
+      />
     )
+  const harness = findHarness(catalog, choice.harnessId)
+  const hostModels = harness?.models === 'host'
+  const projects = choice.mode !== 'chat'
+  if (phone) {
+    const groups = newSessionGroups(catalog, choice, onChoice, { providers: onManageProviders, workspaces: onManageWorkspaces })
+    const workspace = startableWorkspaces(catalog).find(item => item.id === choice.workspaceId)
+    const summary =
+      [
+        hostModels ? choice.model?.model : undefined,
+        projects && workspace ? (workspace.id === 'default' ? '启动目录' : workspace.name) : undefined,
+      ]
+        .filter(Boolean)
+        .join(' · ') || '运行设置'
+    return <RunSettingsSheet summary={summary} groups={groups} disabled={disabled} />
   }
   return (
     <>
-      <HarnessPicker
-        catalog={catalog}
-        value={choice.harnessId}
-        disabled={disabled}
-        access={access}
-        onChange={id => {
-          onChoice({ harnessId: id })
-        }}
-      />
-      {hostModels && (
+      <Fading show={projects}>
+        <ProjectPicker
+          catalog={catalog}
+          value={choice.workspaceId}
+          disabled={disabled}
+          onManage={onManageWorkspaces}
+          onCreate={onCreateProject}
+          onChange={id => {
+            onChoice({ workspaceId: id })
+          }}
+        />
+      </Fading>
+      <Fading show={hostModels}>
         <ModelPicker
           catalog={catalog}
           value={choice.model}
+          access={access}
           disabled={disabled}
           onManage={onManageProviders}
+          onAdded={onProvidersChanged}
           onChange={model => {
             onChoice({ model })
           }}
         />
-      )}
-      <WorkspacePicker
-        catalog={catalog}
-        value={choice.workspaceId}
-        disabled={disabled}
-        onManage={onManageWorkspaces}
-        onChange={id => {
-          onChoice({ workspaceId: id })
-        }}
-      />
-      {mode}
+      </Fading>
     </>
   )
 }
 
-/** Existing session: switch its model from the next turn (host models) or change agent options. */
+/**
+ * A toolbar control that comes and goes with the choice above it: it fades in when it comes (not on the page's first
+ * render) and fades out before it goes. Under reduced motion it changes at once.
+ */
+function Fading({ show, children }: { show: boolean; children: ReactNode }) {
+  const { present, leaving } = usePresence(show, MOTION.fastExit)
+  // Shown from the start, it needs no entrance; once it has gone, every return fades in.
+  const [entering, setEntering] = useState(false)
+  if (!show && !entering) setEntering(true)
+  if (!present) return null
+  return (
+    <span className="composer-fade" data-enter={entering ? '' : undefined} data-leaving={leaving ? '' : undefined}>
+      {children}
+    </span>
+  )
+}
+
+/**
+ * An existing session's toolbar: its model for the next message (a switch reads 「下一条：…」 and can be undone from the
+ * menu), or the agent's own model option. Its other options are in the session information. On phones the model and
+ * every option live in the session information. Nothing while the device may not change them.
+ */
 export function SessionControls({
   catalog,
-  summary,
   harness,
   model,
   current,
@@ -171,7 +172,9 @@ export function SessionControls({
   configBusy,
   onConfig,
   phone,
+  access,
   onManageProviders,
+  onProvidersChanged,
   locked = false,
 }: {
   catalog?: HostCatalog
@@ -185,12 +188,13 @@ export function SessionControls({
   configBusy: string | null
   onConfig: (configId: string, value: string) => void
   phone: boolean
+  access: Access
   onManageProviders?: () => void
+  onProvidersChanged?: () => void
   /** The device may not change this session's options (read-only or stopped). */
   locked?: boolean
 }) {
-  if (!catalog) return null
-  if (locked) return summary.cwd && !phone ? <StaticChip icon={Folder} text={basename(summary.cwd)} label={`项目：${summary.cwd}`} /> : null
+  if (!catalog || locked) return null
   const hostModels = harness?.models === 'host' && catalog.providers.length > 0
   const choose = (next: ModelRef) => {
     onModel(sameModel(next, current) ? undefined : next)
@@ -204,44 +208,24 @@ export function SessionControls({
           },
         }
       : undefined
-  const workspace = summary.cwd ? <StaticChip icon={Folder} text={basename(summary.cwd)} label={`项目：${summary.cwd}`} /> : null
-  if (phone) {
-    const groups: SettingsGroup[] = [
-      ...(hostModels
-        ? [
-            {
-              id: 'model',
-              title: '模型（从下一条消息起）',
-              sections: modelSections(catalog, model, choose),
-              links: [
-                ...(pending ? [{ id: 'reset', label: resetModelLabel(current), onSelect: pending.onReset }] : []),
-                ...(onManageProviders ? [{ id: 'providers', label: '管理模型服务…', onSelect: onManageProviders }] : []),
-              ],
-            },
-          ]
-        : []),
-      ...config.map(option => ({
-        id: option.id,
-        title: option.name,
-        sections: configSections(option, value => {
-          if (value !== option.currentValue) onConfig(option.id, value)
-        }),
-      })),
-    ]
-    const modelText = hostModels && model ? (pending ? pendingModelText(model.model) : model.model) : undefined
-    const label = [modelText, ...config.map(option => option.options.find(item => item.value === option.currentValue)?.name)]
-      .filter(Boolean)
-      .join(' · ')
-    // The project stays in the session details on phones; the toolbar keeps one row.
-    return groups.length > 0 ? (
-      <RunSettingsSheet summary={label || '运行设置'} groups={groups} disabled={configBusy !== null} pending={pending !== undefined} />
+  // Phone session options live in 会话信息; this chip only reports an unsent model change.
+  if (phone)
+    return pending && model ? (
+      <StaticChip icon={Sparkles} text={pendingModelText(model.model)} label={`下一条消息使用：${model.model}`} className="is-pending" />
     ) : null
-  }
-  return (
-    <>
-      {hostModels && <ModelPicker catalog={catalog} value={model} pending={pending} onManage={onManageProviders} onChange={choose} />}
-      <ConfigChips config={config} busy={configBusy} onChange={onConfig} />
-      {workspace}
-    </>
-  )
+
+  const modelOption = config.find(option => option.category === 'model')
+  if (hostModels)
+    return (
+      <ModelPicker
+        catalog={catalog}
+        value={model}
+        pending={pending}
+        access={access}
+        onManage={onManageProviders}
+        onAdded={onProvidersChanged}
+        onChange={choose}
+      />
+    )
+  return modelOption ? <ConfigPicker option={modelOption} busy={configBusy !== null} onChange={onConfig} /> : null
 }

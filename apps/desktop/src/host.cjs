@@ -122,10 +122,19 @@ function readBody(stream, limit) {
   })
 }
 
+/** `{ running, waiting }` with non-negative integer counts, as hostInfoSchema in host-state.ts requires. */
+function isActivity(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const count = item => Number.isInteger(item) && item >= 0
+  return count(value.running) && count(value.waiting)
+}
+
 function parseHostInfo(value) {
   if (!value || typeof value !== 'object') return undefined
   if (value.product !== 'Latch' || typeof value.hostId !== 'string' || typeof value.instanceId !== 'string') return undefined
   if (!Number.isInteger(value.pid) || typeof value.devMode !== 'boolean') return undefined
+  // Optional, as in host-state.ts: running sessions and waiting approvals, which the desktop app keeps the Mac awake for.
+  if (value.activity !== undefined && !isActivity(value.activity)) return undefined
   return value
 }
 

@@ -2,8 +2,8 @@
  * Device and permission chrome. Neutral by default; amber for pending or full-access
  * states; red only for real risk (R2 approvals, permission drift, audit rollback, revocation).
  *
- * Security surfaces carry data-secure: approval cards, the local confirmation, enrollment, phone pairing and the
- * security banners. Inside them the tokens are locked (tokens.css), and their rules here mark !important what decides
+ * Security surfaces carry data-secure: approval cards, the local confirmation, enrollment, phone pairing, this
+ * computer's browser (设置 › 设备) and the security banners. Inside them the tokens are locked (tokens.css), and their rules here mark !important what decides
  * whether they can be seen and read: display, visibility, opacity at rest, colours, type sizes and fonts, and the
  * transforms, filters and clipping that could hide or shrink them. Important rules of a layer win over styles outside
  * the layers, important or not, and normal rules of later layers lose to them, so styles added to the page cannot
@@ -247,8 +247,7 @@
   display: block !important;
   background: var(--bg-pane) !important;
 }
-/* One sheet with no tray inside it and the lines straight under the hash line, so the first rows and the fold bar stay
- * within 240. */
+/* One sheet, so the first rows and the fold bar stay within 240. */
 .approval-preview .diff-file[data-open] {
   padding-bottom: 0;
 }
@@ -340,18 +339,6 @@
   background: var(--warn-bg) !important;
   color: var(--warn-text) !important;
   font-family: var(--font-sans) !important;
-}
-.approval-preview .diff-hash {
-  display: flex !important;
-  color: var(--text-3) !important;
-  font-size: var(--fs-caption) !important;
-  line-height: var(--lh-caption-para) !important;
-}
-.approval-preview .diff-hash code {
-  color: var(--text-2) !important;
-  font-family: var(--font-mono) !important;
-  font-size: var(--fs-mono-sm) !important;
-  line-height: var(--lh-mono-sm) !important;
 }
 /* A control, bidirectional or zero-width character, shown as \u{XXXX}. */
 [data-secure] .hidden-char {
@@ -448,11 +435,14 @@
 
 /* Composer that this device may watch but not type into: a dashed tray with no shadow, so it does not read as an
  * input waiting for text. */
-.composer:has(> .composer-readonly),
-.composer:has(> .composer-readonly):focus-within {
+.composer:has(> .composer-readonly, > .composer-row > .composer-readonly),
+.composer:has(> .composer-readonly, > .composer-row > .composer-readonly):focus-within {
   border: 1px dashed var(--line-strong);
   background: var(--bg-sunken);
-  box-shadow: none;
+}
+.composer:has(> .composer-readonly)::before,
+.composer:has(> .composer-readonly)::after {
+  display: none;
 }
 .composer-readonly {
   display: flex;
@@ -468,11 +458,12 @@
   margin-top: 3px;
   color: var(--icon);
 }
+/* The full-access caption under a new session's input: its shield on the toolbar's first glyph (8 plus a picker's 6). */
 .composer-notice {
   display: flex;
   align-items: flex-start;
   gap: var(--sp-6);
-  padding: 0 var(--sp-6);
+  padding: 0 calc(var(--sp-8) + var(--sp-6));
   color: var(--warn-text);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
@@ -490,57 +481,6 @@
   flex-shrink: 0;
 }
 
-/*
- * Local confirmation dock (the dialog primitive's dock placement), for actions that do not show the confirmation in
- * place: a still state tile and the request's title, one line on what to do or what happened, the check code only in
- * a browser, and one button. No countdown: the confirmation window times out on its own. Amber while it waits for the
- * person, green once confirmed, red when the request did not run.
- */
-.presence-dock[open] {
-  display: block !important;
-  opacity: 1 !important;
-  scale: 1 !important;
-  translate: 0 0 !important;
-  background: transparent !important;
-  color: var(--text-1) !important;
-  font-size: var(--fs-label) !important;
-  line-height: var(--lh-label-para) !important;
-}
-@media (prefers-reduced-motion: no-preference) {
-  @starting-style {
-    .presence-dock[open] {
-      opacity: 0 !important;
-      translate: 0 var(--sp-12) !important;
-    }
-  }
-}
-.presence-dock .ui-dialog-surface {
-  display: flex !important;
-  background: var(--bg-raised) !important;
-  color: var(--text-1) !important;
-  font-size: var(--fs-label) !important;
-  line-height: var(--lh-label-para) !important;
-}
-.presence-dock .ui-dialog-body {
-  display: grid !important;
-}
-.presence-dock .ui-dialog-lead {
-  display: flex !important;
-}
-.presence-dock .ui-dialog-title {
-  display: block !important;
-  color: var(--text-1) !important;
-  font-size: var(--fs-title-sm) !important;
-  line-height: var(--lh-title-sm) !important;
-  font-weight: 600 !important;
-}
-.presence-dock .ui-dialog-actions {
-  display: flex !important;
-}
-.presence-dock .ui-dialog-icon {
-  display: grid !important;
-  background: transparent !important;
-}
 .presence-icon {
   position: relative;
   display: grid !important;
@@ -599,44 +539,6 @@
     transform: scale(0.8);
   }
 }
-.presence-body {
-  display: grid !important;
-  gap: var(--sp-12);
-  margin-top: var(--sp-4);
-}
-.presence-line {
-  display: block !important;
-  color: var(--text-2) !important;
-  font-size: var(--fs-label) !important;
-  line-height: var(--lh-label-para) !important;
-}
-/* The check code, only in a browser: the large mono figures, spaced for reading character by character. */
-.presence-code {
-  display: grid !important;
-  justify-items: center;
-  gap: var(--sp-6);
-  padding: var(--sp-16);
-  border: 1px solid var(--line-subtle);
-  border-radius: var(--r-12);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-sunken) !important;
-}
-.presence-code > span {
-  display: block !important;
-  color: var(--text-3) !important;
-  font-size: var(--fs-caption) !important;
-  line-height: var(--lh-caption) !important;
-  font-weight: 500;
-}
-.presence-code > code {
-  display: block !important;
-  color: var(--text-1) !important;
-  font-family: var(--font-mono) !important;
-  font-size: var(--fs-mono-display) !important;
-  line-height: var(--lh-mono-display) !important;
-  font-weight: 600 !important;
-  letter-spacing: var(--ls-mono-display) !important;
-}
 .presence-track {
   display: block !important;
   height: 2px;
@@ -652,6 +554,62 @@
   transform: scaleX(var(--fraction));
   transform-origin: left center;
   transition: transform 1s linear;
+}
+
+/*
+ * 设置 › 设备 groups that are security surfaces (手机配对 and 这台电脑的浏览器, both hand out a one-time enrollment
+ * invitation): the heading, the card and its rows, and the caption under it, at the look of the groups around them.
+ */
+.settings-group[data-secure] {
+  display: grid !important;
+}
+[data-secure] :is(.settings-group-head, .settings-row, .settings-caption) {
+  display: flex !important;
+}
+[data-secure] :is(.settings-card, .settings-row-text, .settings-icon-tile) {
+  display: grid !important;
+}
+[data-secure] :is(.settings-row-lead, .settings-row-end) {
+  display: inline-flex !important;
+}
+[data-secure] .settings-card {
+  background-color: var(--bg-pane) !important;
+}
+[data-secure] .settings-icon-tile {
+  background-color: var(--bg-hover) !important;
+  color: var(--text-2) !important;
+}
+[data-secure] .settings-group-head h3 {
+  display: block !important;
+  color: var(--text-2) !important;
+  font-size: var(--fs-label) !important;
+  line-height: var(--lh-label) !important;
+}
+[data-secure] .settings-row-title {
+  display: block !important;
+  color: var(--text-1) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui) !important;
+}
+[data-secure] .settings-row-description {
+  display: block !important;
+  color: var(--text-3) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption) !important;
+}
+[data-secure] .settings-caption {
+  color: var(--text-3) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption-para) !important;
+}
+[data-secure] .settings-caption > .ui-icon {
+  color: var(--icon) !important;
+}
+[data-secure] .settings-caption > span {
+  display: block !important;
+}
+[data-secure] .settings-caption > span span {
+  display: inline !important;
 }
 
 /* Devices: pairing a phone, inside the 手机配对 group of 设置 › 设备 (a security surface). */
@@ -763,6 +721,88 @@
   }
 }
 
+/*
+ * Without HTTPS: what is missing in body text, what is not built yet in hint text, and the start options folded under a
+ * disclosure (chevron turns a quarter, the body grows by its height) as one wrapping mono line with its copy button.
+ */
+.pair-setup {
+  justify-items: start;
+  gap: var(--sp-8);
+}
+.pair-setup p {
+  color: var(--text-2) !important;
+}
+.pair-setup .pair-pending {
+  color: var(--text-3) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption-para) !important;
+}
+.pair-setup > .ui-collapse {
+  justify-self: stretch;
+}
+.pair-toggle {
+  display: inline-flex !important;
+  align-items: center;
+  gap: var(--sp-6);
+  min-height: 28px;
+  margin-left: calc(-1 * var(--sp-8));
+  padding: 0 var(--sp-8);
+  border: 0;
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
+  background: transparent !important;
+  color: var(--text-2) !important;
+  font-size: var(--fs-label) !important;
+  line-height: var(--lh-label) !important;
+  text-align: left;
+  transition: background-color var(--d-fast) var(--ease);
+}
+/* Only a pointer that hovers: a tap would leave the hover on. */
+@media (hover: hover) {
+  .pair-toggle:hover {
+    background: var(--bg-hover) !important;
+    color: var(--text-1) !important;
+    transition-duration: 0s;
+  }
+}
+.pair-toggle .chevron {
+  flex-shrink: 0;
+  color: var(--icon);
+  transition: transform var(--d-base) var(--ease);
+}
+.pair-toggle[aria-expanded='true'] .chevron {
+  transform: rotate(90deg);
+}
+.pair-tls {
+  display: grid !important;
+  gap: var(--sp-8);
+  padding-top: var(--sp-4);
+}
+.pair-flags {
+  display: flex !important;
+  align-items: flex-start;
+  gap: var(--sp-4);
+  padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-8);
+  border-radius: var(--r-6);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-sunken) !important;
+}
+.pair-flags code {
+  flex: 1;
+  min-width: 0;
+  padding: var(--sp-2) 0;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  color: var(--text-1) !important;
+  font-family: var(--font-mono) !important;
+  font-size: var(--fs-mono-sm) !important;
+  line-height: var(--lh-mono-sm) !important;
+}
+@media (max-width: 767.98px) {
+  .pair-toggle {
+    min-height: 44px;
+  }
+}
 /* Providers: keys that this device cannot set, and the address-change warning. */
 .key-state.is-locked {
   color: var(--text-3);
@@ -820,8 +860,9 @@
     .fingerprint > span,
     .enroll-scope > span:not(.scope-check),
     .diff-text > span:not(.hidden-char, .sr-only),
-    .diff-hash > span,
-    .ui-notice-text > :not(.ui-notice-title)
+    .ui-notice-text > :not(.ui-notice-title),
+    .settings-caption > span,
+    .settings-caption > span span
   ) {
   color: inherit !important;
   font-size: inherit !important;
@@ -853,7 +894,7 @@
 [data-secure] :is(.diff-file-header, .diff-stat, .ui-notice-action) {
   display: flex !important;
 }
-[data-secure] :is(.diff-stat > span, .diff-hash code, .diff-hash span) {
+[data-secure] .diff-stat > span {
   display: inline !important;
 }
 [data-secure] .ui-check {

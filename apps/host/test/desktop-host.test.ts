@@ -6,7 +6,14 @@ import { join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { desktopLaunchOptions, desktopShellEnvironment, ensureDesktopHost, probeDesktopHost } from '../scripts/desktop-host.ts'
+import {
+  DESKTOP_LAUNCH_FILE,
+  desktopLaunchOptions,
+  desktopShellEnvironment,
+  ensureDesktopHost,
+  hostSettingsInEnvironment,
+  probeDesktopHost,
+} from '../scripts/desktop-host.ts'
 import { queryHostInfo, readHostState } from '../src/host-state.ts'
 import { defaultPolicy } from '../src/policy.ts'
 
@@ -79,10 +86,10 @@ async function fakeHostScript() {
 }
 
 function cleanEnvironment(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, ...extra }
-  for (const name of ['HARNESS_MODEL', 'HARNESS_API_KEY', 'HARNESS_BASE_URL', 'HARNESS_WORKSPACE', 'HARNESS_DATA_DIR', 'HARNESS_PORT'])
-    delete env[name]
-  return env
+  const env: NodeJS.ProcessEnv = { ...process.env }
+  // Runner flags such as HARNESS_BROWSER_PATH are not part of this fixture's Host settings.
+  for (const name of Object.keys(env)) if (name.startsWith('HARNESS_')) delete env[name]
+  return { ...env, ...extra }
 }
 
 describe('desktop Host launch', () => {
@@ -160,6 +167,64 @@ describe('desktop Host launch', () => {
 
     const reused = await ensureDesktopHost(options, { script: await fakeHostScript() })
     expect(reused).toMatchObject({ reused: true, pid: host.pid, instanceId: host.instanceId })
+  })
+
+  it('records how it started the Host, without the launch when the environment carries Host settings', async () => {
+    const root = await directory()
+    const script = await fakeHostScript()
+    const dataDir = join(root, 'data')
+    const options = desktopLaunchOptions(['--data-dir', dataDir, '--demo'], root, cleanEnvironment({ HARNESS_DATA_DIR: join(root, 'x') }))
+    expect(options.repeatable).toBe(true)
+    const host = await ensureDesktopHost(options, { script, timeoutMs: 10_000 })
+    stopLater(host.pid)
+    const recordPath = join(dataDir, DESKTOP_LAUNCH_FILE)
+    expect((await stat(recordPath)).mode & 0o777).toBe(0o600)
+    expect(JSON.parse(await readFile(recordPath, 'utf8'))).toEqual({
+      version: 1,
+      pid: host.pid,
+      hostId: FAKE_HOST_ID,
+      launch: { node: process.execPath, nodeArgs: [], script, args: ['--data-dir', dataDir, '--demo'], cwd: root },
+    })
+    // Reusing the Host leaves the record of the launch that started it.
+    await ensureDesktopHost(desktopLaunchOptions(['--data-dir', dataDir, '--harness', 'other'], root, cleanEnvironment()), { script })
+    expect(JSON.parse(await readFile(recordPath, 'utf8'))).toMatchObject({
+      pid: host.pid,
+      launch: { args: ['--data-dir', dataDir, '--demo'] },
+    })
+
+    // The desktop app runs without HARNESS_* variables, so it could not start this Host the same way.
+    for (const name of ['HARNESS_MODEL', 'HARNESS_API_KEY', 'HARNESS_TLS_CERT', 'HARNESS_PORT', 'HARNESS_WORKSPACE'])
+      expect(hostSettingsInEnvironment({ [name]: 'x' })).toBe(true)
+    expect(hostSettingsInEnvironment({ HARNESS_DATA_DIR: 'x', HARNESS_DESKTOP_URL: 'x', PATH: '/usr/bin' })).toBe(false)
+    const other = join(root, 'other')
+    const fromEnvironment = desktopLaunchOptions(['--data-dir', other], root, { ...cleanEnvironment(), HARNESS_MODEL: 'gpt-test' })
+    expect(fromEnvironment.repeatable).toBe(false)
+    const second = await ensureDesktopHost(fromEnvironment, { script, timeoutMs: 10_000 })
+    stopLater(second.pid)
+    expect(JSON.parse(await readFile(join(other, DESKTOP_LAUNCH_FILE), 'utf8'))).toEqual({
+      version: 1,
+      pid: second.pid,
+      hostId: FAKE_HOST_ID,
+      launch: null,
+    })
+  })
+
+  it('keeps the Host it started when the launch record cannot be written, and says what that means', async () => {
+    const root = await directory()
+    const script = await fakeHostScript()
+    const dataDir = join(root, 'data')
+    // A directory in the record's place: the atomic rename onto it fails.
+    await mkdir(join(dataDir, DESKTOP_LAUNCH_FILE, 'occupied'), { recursive: true, mode: 0o700 })
+    const host = await ensureDesktopHost(desktopLaunchOptions(['--data-dir', dataDir], root, cleanEnvironment()), {
+      script,
+      timeoutMs: 10_000,
+    })
+    stopLater(host.pid)
+    expect(host.reused).toBe(false)
+    expect(host.notice).toBe(
+      `无法写入 ${join(dataDir, DESKTOP_LAUNCH_FILE)}（EISDIR）。Host 已启动，但它意外退出后桌面端不会自动重新启动它。`,
+    )
+    expect(await probeDesktopHost(dataDir, 2_000, host.pid)).toMatchObject({ pid: host.pid })
   })
 
   it('does not reuse a Host whose socket directory, pid or identity does not check out', async () => {

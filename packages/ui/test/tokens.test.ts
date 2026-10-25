@@ -45,7 +45,64 @@ const themes = () => {
   return { light, dark: new Map([...light, ...block(":root[data-theme='dark']")]) }
 }
 
+// Chromium's linear-RGB vision filters, based on Machado et al. (2009):
+// https://chromium.googlesource.com/chromium/src/+/HEAD/third_party/blink/renderer/core/css/vision_deficiency.cc
+const VISION = {
+  protanopia: [
+    [0.152, 1.053, -0.205],
+    [0.115, 0.786, 0.099],
+    [-0.004, -0.048, 1.052],
+  ],
+  deuteranopia: [
+    [0.367, 0.861, -0.228],
+    [0.28, 0.673, 0.047],
+    [-0.012, 0.043, 0.969],
+  ],
+  tritanopia: [
+    [1.256, -0.077, -0.179],
+    [-0.078, 0.931, 0.148],
+    [0.005, 0.691, 0.304],
+  ],
+}
+function simulatedLab(rgb: Rgba, matrix: number[][]): number[] {
+  const source = rgb.slice(0, 3).map(linear)
+  const [r = 0, g = 0, b = 0] = matrix.map(row =>
+    Math.max(
+      0,
+      Math.min(
+        1,
+        row.reduce((sum, value, index) => sum + value * source[index]!, 0),
+      ),
+    ),
+  )
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+  return [
+    0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+    1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
+  ]
+}
+
 describe('design tokens', () => {
+  it('keeps semantic inks distinct under Chromium vision-deficiency simulations', () => {
+    const colours = ['--accent-text', '--warn-text', '--err-text', '--ok-text']
+    const measurements: Array<{ theme: string; vision: string; pair: string; deltaE: number }> = []
+    for (const [theme, tokens] of Object.entries(themes()))
+      for (const [vision, matrix] of Object.entries(VISION)) {
+        for (let a = 0; a < colours.length; a++)
+          for (let b = a + 1; b < colours.length; b++) {
+            const first = simulatedLab(colour(tokens.get(colours[a]!)), matrix)
+            const second = simulatedLab(colour(tokens.get(colours[b]!)), matrix)
+            const deltaE = 100 * Math.hypot(...first.map((value, index) => value - second[index]!))
+            measurements.push({ theme, vision, pair: `${colours[a]} / ${colours[b]}`, deltaE: Math.round(deltaE * 100) / 100 })
+          }
+      }
+    console.info('Semantic ink simulation measurements', measurements)
+    // A 3-unit OKLab floor prevents near-identical state inks. Labels and glyphs carry every meaning.
+    expect(measurements.filter(item => item.deltaE < 3)).toEqual([])
+  })
   it('declares the cascade layers first, lowest to highest, with security on top', () => {
     expect(tokens.trimStart().startsWith('@layer tokens, base, ui, app, security;')).toBe(true)
   })

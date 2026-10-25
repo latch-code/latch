@@ -37,6 +37,8 @@ export async function buildPresenceHelper(
   }
   const root = options.codeRoot ?? latchCodeRoot()
   const source = join(root, 'native', 'macos', 'LatchPresence.swift')
+  // Embedded as the binary's Info.plist, so the system sheet can name the helper Latch rather than latch-presence.
+  const info = join(root, 'native', 'macos', 'LatchPresence-Info.plist')
   const output = join(root, 'dist', 'native', 'latch-presence')
   try {
     await run('/usr/bin/xcrun', ['--find', 'swiftc'])
@@ -45,18 +47,27 @@ export async function buildPresenceHelper(
     return { built: false, reason: 'no-swiftc', message: SKIPPED }
   }
   try {
-    const [built, sourceTime] = await Promise.all([mtime(output), mtime(source)])
-    if (!options.force && built !== undefined && sourceTime !== undefined && built > sourceTime) {
+    const [built, sourceTime, infoTime] = await Promise.all([mtime(output), mtime(source), mtime(info)])
+    if (
+      !options.force
+      && built !== undefined
+      && sourceTime !== undefined
+      && infoTime !== undefined
+      && built > Math.max(sourceTime, infoTime)
+    ) {
       await run('/usr/bin/codesign', ['--verify', '--strict', output])
       const cdhash = await cdhashOf(output)
       log(`latch-presence cdhash ${cdhash}`)
       return { built: true, path: output, cdhash }
     }
     await mkdir(join(root, 'dist', 'native'), { recursive: true })
+    const linker = ['-sectcreate', '__TEXT', '__info_plist', info].flatMap(argument => ['-Xlinker', argument])
     await run(
       '/usr/bin/xcrun',
-      ['swiftc', '-O', '-parse-as-library', '-framework', 'AppKit', '-framework', 'LocalAuthentication', '-o', output, source],
-      { maxBuffer: 16 * 1024 * 1024 },
+      ['swiftc', '-O', '-parse-as-library', '-framework', 'LocalAuthentication', ...linker, '-o', output, source],
+      {
+        maxBuffer: 16 * 1024 * 1024,
+      },
     )
     await run('/usr/bin/codesign', ['--force', '--sign', '-', '--options', 'runtime', '--identifier', 'dev.latch.presence', output])
     await run('/usr/bin/codesign', ['--verify', '--strict', output])

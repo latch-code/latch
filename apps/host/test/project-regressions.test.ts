@@ -38,6 +38,33 @@ const primaryPlugin: HarnessPlugin = {
 }
 
 describe('project lifecycle regressions', () => {
+  it('resolves files in every original session folder and retires the handles when one leaves its project', async () => {
+    const root = await directory()
+    const paths = ['api', 'web'].map(name => join(root, name))
+    await Promise.all(paths.map(path => mkdir(path)))
+    await writeFile(join(paths[1]!, 'notes.md'), '# Notes')
+    const t = await fixture()
+    const desktop = await t.enroll({ listener: 'unix' })
+    const project = ((await (await desktop.addFolders({ paths })).json()) as { workspace: WorkspaceInfo }).workspace
+    const { sessionId } = await desktop.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: {
+        prompt: 'Hello',
+        requestId: randomUUID(),
+        workspaceId: project.id,
+        mode: 'chat',
+      },
+    })
+    await settled(t, sessionId)
+    const resolve = () =>
+      desktop.request(`tasks/${sessionId}/files/resolve`, { method: 'POST', body: { paths: [join(paths[1]!, 'notes.md')] } })
+    const before = await resolve()
+    expect(before.status).toBe(200)
+    expect(await before.json()).toMatchObject({ files: [{ status: 'ok' }] })
+    await desktop.json(`workspaces/${project.id}/folders/${project.folders![1]!.id}`, { method: 'DELETE' })
+    expect((await resolve()).status).toBe(409)
+  })
+
   it('keeps legacy and primary-only sessions usable after changing the primary, without changing their directory', async () => {
     const root = await directory()
     const paths = ['api', 'web'].map(name => join(root, name))

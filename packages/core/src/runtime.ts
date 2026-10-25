@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { realpath } from 'node:fs/promises'
 import { isAbsolute, resolve } from 'node:path'
+import { escapeSecurityText, rejectionNote } from '@latch/protocol'
 import type {
   Approval,
   ApprovalOption,
@@ -12,6 +13,7 @@ import type {
   TaskStatus,
   TaskSummary,
   TokenUsage,
+  ToolDecision,
   ToolDetail,
 } from '@latch/protocol'
 import {
@@ -22,6 +24,7 @@ import {
   type ToolDefinition,
   type ToolRiskInput,
   type Bridge,
+  type CancelOptions,
   type CreateTaskInput,
   type DecideOptions,
   type HostProject,
@@ -79,7 +82,14 @@ const RISK_LEVELS: ReadonlySet<unknown> = new Set<RiskLevel>(['R0', 'R1', 'R2'])
 /** The ID of the one folder of a session that recorded no folders: its working directory. */
 const SINGLE_FOLDER_ID = 'default'
 
-type Decision = { decision: 'allow' | 'reject' | 'cancel'; always?: boolean }
+/** An approval's answer: a person's (with where they decided and, for a rejection, what to do instead) or the run stopping. */
+type Decision = {
+  decision: 'allow' | 'reject' | 'cancel'
+  at: string
+  always?: boolean
+  via?: ToolDecision['via']
+  note?: string
+}
 type Preview = Pick<ToolDetail, 'title' | 'diffs'>
 
 interface PendingApproval {
@@ -133,9 +143,22 @@ interface Selection {
 
 const MAX_OUTPUT = 2_000_000
 const MAX_PREVIEW = 1_000_000
+/** What the model receives for a call the person rejected; a note follows it when they said what to do instead. */
+const REJECTED = '用户拒绝了本次工具调用，未执行该操作。'
+
+/** The record a decided approval leaves on its call; nobody's answer (the run stopping) is never worded as a choice. */
+function decisionRecord(answer: Decision): ToolDecision {
+  if (answer.decision === 'cancel') return { outcome: 'cancelled', at: answer.at }
+  return { outcome: answer.decision === 'allow' ? 'allowed' : 'rejected', at: answer.at, ...(answer.via ? { via: answer.via } : {}) }
+}
 
 function digest(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex')
+}
+
+/** Snapshot once per run, then persist it with the input before making any model call. */
+function skillContext(lease: CapabilityLease): string | undefined {
+  return lease.skills?.length ? lease.skills.map(skill => `# ${skill.name} (${skill.id})\n${skill.content}`).join('\n\n') : undefined
 }
 function assertPrompt(prompt: string, requestId: string): void {
   if (!prompt.trim() || prompt.length > 1_000_000) throw new AppError(400, 'invalid-prompt', '请输入不超过 1 MB 的任务内容')
@@ -224,6 +247,16 @@ function previewOf(value: unknown): Preview | undefined {
     }
   }
   return preview.title || preview.diffs ? preview : undefined
+}
+/** A tool's declared title as rows show it: trimmed, at most 40 characters, hidden characters made visible. */
+function toolTitleOf(tool: ToolDefinition | undefined): string | undefined {
+  const title = typeof tool?.title === 'string' ? tool.title.trim() : ''
+  return title ? escapeSecurityText([...title].slice(0, 40).join('')) : undefined
+}
+/** What every record of a call says about the tool itself: its kind and title, when it declares them. */
+function toolFacts(tool: ToolDefinition | undefined): Pick<ToolDetail, 'kind' | 'toolTitle'> {
+  const toolTitle = toolTitleOf(tool)
+  return { ...(tool?.kind ? { kind: tool.kind } : {}), ...(toolTitle ? { toolTitle } : {}) }
 }
 async function canonical(path: string): Promise<string> {
   return realpath(path).catch(() => resolve(path))
@@ -344,6 +377,11 @@ class HarnessRuntime implements Bridge {
         }
         if (task.summary.status !== 'running' && task.summary.status !== 'waiting-approval' && !task.approval && !task.batch) continue
         const at = this.now()
+        // An approval left open by the restart was answered by nobody: the run stopped.
+        const asked = task.approval?.toolCallId
+          ? task.messages.find(message => message.id === `tool:${task.approval!.toolCallId}`)
+          : undefined
+        if (asked) asked.tool = { ...asked.tool, decision: { outcome: 'cancelled', at } }
         closeBatch(task, false, at)
         delete task.approval
         task.summary.status = 'interrupted'
@@ -585,9 +623,12 @@ class HarnessRuntime implements Bridge {
             model: run.model,
             mode,
             ...(selection.persist ? { providerId: selection.providerId } : {}),
+            runId: run.id,
+            ...(run.lease.skills?.length ? { skills: run.lease.skills.map(skill => skill.id) } : {}),
           },
           messages: [{ id: run.userMessageId, role: 'user', text: input.prompt, createdAt: at }],
           history: [{ role: 'user', content: input.prompt }],
+          ...(skillContext(run.lease) ? { skillContext: skillContext(run.lease) } : {}),
           revision: 1,
         }
         draft.receipts[key] = { taskId: sessionId, payloadHash }
@@ -634,6 +675,10 @@ class HarnessRuntime implements Bridge {
         task.history.push({ role: 'user', content: prompt })
         task.messages.push({ id: run.userMessageId, role: 'user', text: prompt, createdAt: at })
         task.summary.status = 'running'
+        task.summary.runId = run.id
+        task.skillContext = skillContext(run.lease)
+        if (run.lease.skills?.length) task.summary.skills = run.lease.skills.map(skill => skill.id)
+        else delete task.summary.skills
         task.summary.model = run.model
         if (selection.persist) task.summary.providerId = selection.providerId
         task.summary.updatedAt = at
@@ -717,17 +762,19 @@ class HarnessRuntime implements Bridge {
       .catch(() => {}) // drive records execution errors; storage failure remains fail-closed.
   }
 
-  async cancel(sessionId: string): Promise<void> {
+  async cancel(sessionId: string, options: CancelOptions = {}): Promise<boolean> {
     await this.ready()
     this.task(this.state, sessionId)
     const run = this.runs.get(sessionId)
-    if (!run) return
+    // Checked before anything awaits, so a run that starts after this point is never the one aborted.
+    if (!run || (options.runId !== undefined && run.id !== options.runId)) return false
     this.phase(run, { phase: 'cancelling', ...(run.activity?.toolName ? { toolName: run.activity.toolName } : {}) })
     this.notify(sessionId)
     run.controller.abort(new Error('User cancelled'))
     // The result is acknowledged only after the provider/tool actually settles.
     await run.done
     if (this.storageFailure) throw new AppError(503, 'storage-unavailable', '执行已停止，但取消状态未能持久化')
+    return true
   }
 
   approvals(): Approval[] {
@@ -738,6 +785,14 @@ class HarnessRuntime implements Bridge {
     if (decision !== 'allow' && decision !== 'reject') throw new AppError(400, 'invalid-decision', '无效的审批决定')
     const pending = this.pending.get(approvalId)
     if (!pending || pending.claimed || pending.signal.aborted || this.closed) return false
+    const via = options.via === 'this-mac' || options.via === 'other-device' ? options.via : undefined
+    let note: string | undefined
+    if (options.note !== undefined) {
+      if (decision !== 'reject') throw new AppError(400, 'invalid-note', '只有拒绝时可以附上说明')
+      const checked = rejectionNote(options.note)
+      if (checked === null) throw new AppError(400, 'invalid-note', '说明最多 500 个字，不能包含控制字符、不可见字符或改变文字方向的字符')
+      note = checked
+    }
     let always = false
     if (options.optionId !== undefined) {
       const option = (pending.value.options ?? APPROVAL_OPTIONS).find(item => item.id === options.optionId)
@@ -752,7 +807,7 @@ class HarnessRuntime implements Bridge {
       if (!task || !this.stillListed(task.summary)) throw workspaceChanged()
     }
     pending.claimed = true // Claim synchronously, before any awaiting caller can compete.
-    pending.resolve({ decision, always })
+    pending.resolve({ decision, always, at: this.now(), ...(via ? { via } : {}), ...(note ? { note } : {}) })
     this.notify(pending.value.sessionId)
     return true
   }
@@ -829,7 +884,7 @@ class HarnessRuntime implements Bridge {
       requestedAt: this.now(),
       options: structuredClone([...(risk === 'R2' ? HIGH_RISK_APPROVAL_OPTIONS : APPROVAL_OPTIONS)]),
       tool: {
-        ...(tool.kind ? { kind: tool.kind } : {}),
+        ...toolFacts(tool),
         title: preview?.title ?? call.name,
         ...(preview?.diffs ? { diffs: preview.diffs } : {}),
       },
@@ -842,7 +897,7 @@ class HarnessRuntime implements Bridge {
     const pending: PendingApproval = { value, claimed: false, resolve: settle, signal }
     const abort = (): void => {
       pending.claimed = true
-      settle({ decision: 'cancel' })
+      settle({ decision: 'cancel', at: this.now() })
     }
     let outcome: Decision | undefined
     this.pending.set(value.id, pending)
@@ -871,6 +926,8 @@ class HarnessRuntime implements Bridge {
       await this.change(run.sessionId, task => {
         delete task.approval
         task.summary.status = 'running'
+        const message = toolMessage(task, call)
+        if (message) message.tool = { ...message.tool, decision: decisionRecord(outcome ?? { decision: 'cancel', at: this.now() }) }
         if (risk === 'R1' && outcome?.decision === 'allow' && outcome.always && !task.allowedTools?.includes(call.name)) {
           task.allowedTools = [...(task.allowedTools ?? []), call.name]
         }
@@ -897,13 +954,12 @@ class HarnessRuntime implements Bridge {
       // An R1 tool the user allowed for this session still shows its preview and result, without asking again.
       // R2 ignores that allowance and asks every time.
       if (risk === 'R2' || !this.task(this.state, run.sessionId).allowedTools?.includes(call.name)) {
-        const { decision } = await this.approval(run, call, tool, preview, risk)
+        const answer = await this.approval(run, call, tool, preview, risk)
         signal.throwIfAborted()
-        if (decision !== 'allow') {
+        if (answer.decision !== 'allow') {
           this.output(run)
-          await this.change(run.sessionId, task =>
-            recordResult(task, call, this.now(), 'APPROVAL_REJECTED: 用户拒绝了本次工具调用，未执行该操作。', true),
-          )
+          const text = answer.note ? `${REJECTED}用户的说明：${answer.note}` : REJECTED
+          await this.change(run.sessionId, task => recordResult(task, call, this.now(), text, true))
           return
         }
       }
@@ -976,6 +1032,7 @@ class HarnessRuntime implements Bridge {
         this.notify(run.sessionId)
         const task = this.task(this.state, run.sessionId)
         const messages = structuredClone(task.history)
+        if (task.skillContext) messages.unshift({ role: 'system', content: task.skillContext })
         const seen = new Set(messages.flatMap(message => message.toolCalls?.map(call => call.id) ?? []))
         const calls: ToolCall[] = []
         let finished = false
@@ -1025,14 +1082,13 @@ class HarnessRuntime implements Bridge {
             current.batch = { calls, started: [], completed: [] }
             for (const call of calls) {
               const input = JSON.stringify(call.arguments, null, 2)
-              const kind = tools.get(call.name)?.kind
               current.messages.push({
                 id: `tool:${call.id}`,
                 role: 'tool',
                 toolName: call.name,
                 text: input,
                 state: 'queued',
-                tool: { ...(kind ? { kind } : {}), title: call.name, input },
+                tool: { ...toolFacts(tools.get(call.name)), title: call.name, input },
                 createdAt: completedAt,
               })
             }

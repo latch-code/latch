@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, open, readFile, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
-import type { Message, PlanEntry, SessionConfigOption, TaskSummary, UsageReport } from '@latch/protocol'
+import type { Message, SessionCommand, PlanEntry, SessionConfigOption, TaskSummary, UsageReport } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { writeFileAtomic } from '@latch/core/node-kit'
 import type { ConfigSource } from './mapping.ts'
@@ -42,6 +42,7 @@ export interface AcpRecord {
 export interface AcpTask {
   summary: TaskSummary
   messages: Message[]
+  commands?: SessionCommand[]
   plan?: PlanEntry[]
   config?: SessionConfigOption[]
   /** The agent's latest report of its context window and cost. */
@@ -87,6 +88,13 @@ const toolDetail = z.object({
       }),
     )
     .optional(),
+  decision: z
+    .object({
+      outcome: z.enum(['allowed', 'rejected', 'expired', 'cancelled']),
+      at: z.string(),
+      via: z.enum(['this-mac', 'other-device']).optional(),
+    })
+    .optional(),
 })
 const message = z.object({
   id: z.string(),
@@ -126,6 +134,7 @@ const stateSchema = z.object({
         workspaceId: z.string().optional(),
         folders: z.array(z.object({ id: z.string(), path: z.string() })).optional(),
         folderAccess: z.enum(['all', 'primary']).optional(),
+        runId: z.string().min(1).max(128).optional(),
       }),
       messages: z.array(message),
       plan: z
@@ -148,6 +157,16 @@ const stateSchema = z.object({
             options: z.array(z.object({ value: z.string(), name: z.string(), description: z.string().optional() })),
           }),
         )
+        .optional(),
+      commands: z
+        .array(
+          z.object({
+            name: z.string().min(1).max(100),
+            description: z.string().max(1000).optional(),
+            inputHint: z.string().max(500).optional(),
+          }),
+        )
+        .max(200)
         .optional(),
       usageReport: z
         .object({

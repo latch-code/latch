@@ -37,6 +37,21 @@ export interface PromptOptions {
 export interface DecideOptions {
   /** One of `Approval.options[].id`. */
   optionId?: string
+  /** Where the person decided, for the call's decision record: the Host computer's desktop app or another device. */
+  via?: 'this-mac' | 'other-device'
+  /**
+   * With a rejection: what the person wants done instead, printable and at most 500 characters. The built-in harness
+   * hands it to the model with the rejection; drivers whose permission answer carries no text ignore it.
+   */
+  note?: string
+}
+
+export interface CancelOptions {
+  /**
+   * Cancel only while this is the session's current run (`TaskSummary.runId`). A driver that tracks runs checks it in
+   * the same step that starts the cancel, so a run that began afterwards keeps running.
+   */
+  runId?: string
 }
 
 export interface SetConfigOptions {
@@ -49,15 +64,23 @@ export type ConfigChangeClass = 'neutral' | 'stricter' | 'wider' | 'forbidden'
 /** What an L3 session would launch, shown in the local confirmation before it starts. */
 export interface LaunchPreview {
   launchHash: string
+  /**
+   * The fingerprint without the project's configuration (command, arguments, variables, preset), so the Host can tell a
+   * changed project configuration from a changed command; absent from drivers that do not say.
+   */
+  definitionHash?: string
   /** Absolute path. */
   command: string
   args: string[]
   /** Names only, sorted; values never leave the Host. */
   envNames: string[]
+  /** The names the definition itself sets, sorted, for the system sheet's reason; absent from drivers that do not say. */
+  definitionEnvNames?: string[]
   cwd: string
   /** Folders besides `cwd` the agent receives, as ordered absolute paths. Absent or empty: `cwd` only. */
   folders?: string[]
   presetId?: string
+  /** The command is the preset's own, at the location the Host finds it, with the preset's arguments. */
   verified: boolean
   approvals: 'prompts' | 'none'
   readback: 'mode' | 'none'
@@ -71,7 +94,11 @@ export interface Bridge {
   detail(sessionId: string): Promise<TaskDetail>
   createTask(input: CreateTaskInput): Promise<{ sessionId: string }>
   prompt(sessionId: string, prompt: string, requestId: string, options?: PromptOptions): Promise<void>
-  cancel(sessionId: string): Promise<void>
+  /**
+   * Resolves once the cancelled run has settled. `false`: nothing was cancelled, because no run was active or `runId`
+   * named a run that is no longer current. Drivers that cannot tell resolve without a value.
+   */
+  cancel(sessionId: string, options?: CancelOptions): Promise<boolean | void>
   approvals(): Approval[]
   decide(approvalId: string, decision: 'allow' | 'reject', options?: DecideOptions): Promise<boolean>
   subscribe(listener: (sessionId?: string) => void): () => void

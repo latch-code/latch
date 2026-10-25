@@ -226,13 +226,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* Only one possible value: read-only text that does not respond to hover. */
-.chip-static,
-.chip-static:hover:not(:disabled) {
-  background: transparent;
-  color: var(--text-2);
-  cursor: default;
-}
 /* A model switch that the next message will carry. */
 .chip.is-pending,
 .chip.is-pending:hover:not(:disabled) {

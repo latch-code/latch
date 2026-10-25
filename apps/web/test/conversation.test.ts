@@ -15,6 +15,13 @@ import {
   separators,
   sideEffects,
   toolDuration,
+  decisionLine,
+  appliedDiffs,
+  ranDespite,
+  shownToolOutput,
+  shownToolState,
+  unrunOutcome,
+  toolHeading,
   toolLabel,
   turnOutcome,
   turnsOf,
@@ -128,6 +135,30 @@ describe('process rows', () => {
     })
   })
 
+  it('names a tool that declares a title by that title and its object, and an untitled one by its raw name in mono', () => {
+    const write = {
+      toolName: 'write_file',
+      tool: { kind: 'edit' as const, toolTitle: '写入文件', title: 'write_file', input: '{"path":"notes/plan.md"}' },
+    }
+    expect(toolLabel({ ...write, state: 'completed' })).toEqual({ verb: '写入文件', object: 'notes/plan.md', mono: true })
+    expect(toolLabel({ ...write, state: 'running' })).toEqual({ verb: '正在写入文件', object: 'notes/plan.md', mono: true })
+    expect(toolHeading(write.tool, write.toolName)).toBe('写入文件 notes/plan.md')
+    // Listing the workspace root names no object; a tool without arguments is its title alone.
+    const list = {
+      toolName: 'list_files',
+      state: 'completed' as const,
+      tool: { kind: 'search' as const, toolTitle: '列出文件', input: '{"path":"."}' },
+    }
+    expect(toolLabel(list)).toEqual({ object: '列出文件', mono: false })
+    expect(toolHeading({ toolTitle: '运行长任务', input: '{}' }, 'long_task')).toBe('运行长任务')
+    // A plugin tool without a title is not guessed at: its identifier, in mono.
+    expect(toolLabel({ toolName: 'send_mail', state: 'completed', tool: { title: 'send_mail', input: '{"to":"a"}' } })).toEqual({
+      object: 'send_mail',
+      mono: true,
+    })
+    expect(toolHeading({ title: 'send_mail' }, 'send_mail')).toBe('send_mail')
+  })
+
   it('times a tool from its start after any approval to its end, ticks while it runs and shows nothing without times', () => {
     expect(toolDuration(tool('t', { createdAt: at(0), startedAt: at(35_000), completedAt: at(37_400) }), T0)).toEqual({
       ms: 2400,
@@ -137,6 +168,15 @@ describe('process rows', () => {
     expect(toolDuration(tool('t', { state: 'running', startedAt: at(0) }), T0 + 3200)).toEqual({ ms: 3200, live: true })
     expect(toolDuration(tool('t', { state: 'awaiting-approval', createdAt: at(0) }), T0 + 9000)).toBeUndefined()
     expect(toolDuration(tool('t'), T0)).toBeUndefined()
+    // A call asked about and never started: from its record to its end is the wait for a person, not run time.
+    const asked = { createdAt: at(0), completedAt: at(4200) }
+    const rejected = { outcome: 'rejected' as const, at: at(4200) }
+    expect(toolDuration(tool('t', { ...asked, state: 'failed', tool: { decision: rejected } }), T0)).toBeUndefined()
+    expect(toolDuration(tool('t', { ...asked, tool: { decision: { outcome: 'allowed', at: at(4000) } } }), T0)).toBeUndefined()
+    expect(toolDuration(tool('t', { ...asked, state: 'failed', text: 'APPROVAL_REJECTED: 用户拒绝了本次工具调用。' }), T0)).toBeUndefined()
+    expect(
+      toolDuration(tool('t', { ...asked, startedAt: at(4000), tool: { decision: { outcome: 'allowed', at: at(4000) } } }), T0),
+    ).toEqual({ ms: 200, live: false })
   })
 })
 
@@ -187,11 +227,75 @@ describe('time separators', () => {
   })
 })
 
+describe('decided approvals', () => {
+  const decision = (outcome: 'allowed' | 'rejected' | 'expired' | 'cancelled') => ({ outcome, at: day(14, 32) })
+  const call = (extra: Partial<Message>) => ({ text: '', ...extra })
+
+  it('shows a call its approval kept from running by how the approval ended, and a person’s choice with its time', () => {
+    expect(shownToolState(call({ state: 'failed', tool: { decision: decision('rejected') } }))).toBe('rejected')
+    expect(shownToolState(call({ state: 'failed', tool: { decision: decision('cancelled') } }))).toBe('cancelled')
+    expect(shownToolState(call({ state: 'cancelled', tool: { decision: decision('expired') } }))).toBe('expired')
+    expect(shownToolState(call({ state: 'failed', tool: { decision: decision('allowed') } }))).toBe('failed')
+    expect(shownToolState(call({ state: 'awaiting-approval', tool: { decision: decision('rejected') } }))).toBe('awaiting-approval')
+    const now = new Date(2026, 9, 24, 18).getTime()
+    expect(decisionLine({ ...decision('rejected'), via: 'other-device' }, now)).toEqual({
+      text: '已拒绝 · 14:32',
+      title: '2026年10月24日 周六 14:32:00 · 在其他设备上决定',
+      full: '已拒绝 · 2026年10月24日 周六 14:32:00 · 在其他设备上决定',
+    })
+    expect(decisionLine(decision('allowed'), new Date(2026, 9, 25, 9).getTime()).text).toBe('已允许 · 昨天 14:32')
+    expect(decisionLine(decision('cancelled'), now)).toMatchObject({
+      text: '已取消（会话停止）',
+      title: expect.not.stringContaining('没有执行'),
+    })
+    expect(decisionLine(decision('expired'), now).text).toBe('已过期')
+    expect(decisionLine({ outcome: 'rejected', at: 'not a time' }, now)).toMatchObject({ text: '已拒绝', title: '已拒绝' })
+  })
+
+  it('keeps the state and the changes an agent reports for a call that started or completed after a rejection', () => {
+    const diffs = [{ path: 'src/app.ts', newText: 'x\n', previous: 'none' as const }]
+    // The agent ran the call anyway (its ask was advisory), or it was allowed once and rejected on a later ask.
+    for (const reported of [
+      call({ state: 'completed', tool: { kind: 'edit', diffs, decision: decision('rejected') } }),
+      call({ state: 'failed', startedAt: day(14, 31), tool: { kind: 'edit', diffs, decision: decision('rejected') } }),
+      call({ state: 'completed', tool: { kind: 'edit', diffs, decision: decision('cancelled') } }),
+    ]) {
+      expect(unrunOutcome(reported)).toBeUndefined()
+      expect(shownToolState(reported)).toBe(reported.state)
+      expect(appliedDiffs(reported)).toEqual(diffs)
+      expect(ranDespite(reported)).toEqual(reported.tool?.decision)
+      const effects = sideEffects(firstTurn([user('u'), tool('t', reported)]))
+      expect(effects.edits + effects.unknown).toBe(1)
+    }
+    // A call that settled without starting and was not allowed: its proposed diff is no change.
+    const unrun = call({ state: 'failed', tool: { kind: 'edit', diffs, decision: decision('rejected') } })
+    expect(appliedDiffs(unrun)).toEqual([])
+    expect(ranDespite(unrun)).toBeUndefined()
+    // While it waits, or queued, nothing is applied yet.
+    expect(appliedDiffs(call({ state: 'awaiting-approval', tool: { diffs } }))).toEqual([])
+    expect(appliedDiffs(call({ state: 'queued', tool: { diffs } }))).toEqual([])
+  })
+
+  it('reads a rejection recorded before decision records as 已拒绝 and drops its internal code', () => {
+    const legacy = call({ state: 'failed', tool: { kind: 'edit', output: 'APPROVAL_REJECTED: 用户拒绝了本次工具调用，未执行该操作。' } })
+    expect(shownToolState(legacy)).toBe('rejected')
+    expect(shownToolOutput(legacy)).toBe('用户拒绝了本次工具调用，未执行该操作。')
+    expect(resendWarning(sideEffects(firstTurn([user('u'), tool('t', legacy)])), false)).toBeUndefined()
+    // Only a failure that starts with the code, and only without a record.
+    expect(shownToolState(call({ state: 'failed', text: 'TOOL_ERROR: APPROVAL_REJECTED: x' }))).toBe('failed')
+    expect(shownToolState({ ...legacy, tool: { ...legacy.tool, decision: decision('allowed') } })).toBe('failed')
+  })
+})
+
 describe('resending a turn', () => {
   it('asks first only when a tool that may change something ran, failed, stopped or has an unknown outcome', () => {
     expect(resendWarning(effects('read', 'completed'), false)).toBeUndefined()
     expect(resendWarning(effects('edit', 'queued'), false)).toBeUndefined()
     expect(resendWarning(effects('execute', 'cancelled', 'TOOL_NOT_STARTED: …'), false)).toBeUndefined()
+    // A call its approval kept from running (it settled without starting) changed nothing.
+    const declined = (outcome: 'rejected' | 'expired' | 'cancelled') =>
+      sideEffects(firstTurn([user('u'), tool('t', { state: 'failed', tool: { kind: 'edit', decision: { outcome, at: day(9) } } })]))
+    for (const outcome of ['rejected', 'expired', 'cancelled'] as const) expect(resendWarning(declined(outcome), false)).toBeUndefined()
     expect(resendWarning(effects('edit', 'completed'), false)).toBe(
       '上一次已经执行了 1 个操作：修改 1 个文件。重新发送后，Agent 可能再次执行它们。',
     )

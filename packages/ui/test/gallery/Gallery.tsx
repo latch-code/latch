@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react'
 import {
   ArrowUp,
   Check,
@@ -6,12 +6,14 @@ import {
   ChevronRight,
   ChevronsUpDown,
   Circle,
+  CircleAlert,
   CircleDot,
   Copy,
   Download,
   Ellipsis,
   Fingerprint,
   Folder,
+  Info,
   Lock,
   PanelRight,
   Pencil,
@@ -27,9 +29,11 @@ import {
   Terminal,
   Trash2,
   TriangleAlert,
+  Undo2,
   X,
 } from 'lucide-react'
 import {
+  AmbientField,
   Badge,
   Button,
   Checkbox,
@@ -41,6 +45,7 @@ import {
   DevMark,
   Dialog,
   DialogSurface,
+  ModalHeader,
   EmptyState,
   ErrorState,
   FilterPills,
@@ -78,6 +83,8 @@ import {
   TextAreaField,
   TextField,
   Tile,
+  TileAction,
+  TileChoice,
   Toast,
   TooltipSurface,
   ValuePicker,
@@ -531,6 +538,26 @@ function Pickers() {
             />
           </div>
         </Cell>
+        <Cell caption="操作菜单 · 说明">
+          <div style={{ display: 'grid', gap: 'var(--sp-8)' }}>
+            <div className="ui-popover">
+              <MenuPanel
+                label="文件"
+                header={{ title: 'deck.pptx' }}
+                sections={[{ id: 'copy', items: [{ id: 'copy', label: '复制路径', icon: Copy, onSelect: () => {} }] }]}
+                footer={<MenuFooterNote icon={Info}>重新启动 Host 后可以在这里打开文件。</MenuFooterNote>}
+              />
+            </div>
+            <div className="ui-popover">
+              <MenuPanel
+                label="文件"
+                header={{ title: 'missing.md' }}
+                sections={[{ id: 'copy', items: [{ id: 'copy', label: '复制路径', icon: Copy, onSelect: () => {} }] }]}
+                footer={<MenuFooterNote icon={CircleAlert}>找不到这个文件。</MenuFooterNote>}
+              />
+            </div>
+          </div>
+        </Cell>
         <Cell caption="可搜索 · 打开">
           <div className="ui-popover" style={{ width: 360 }}>
             <MenuSearch label="模型" value="" onValueChange={() => {}} />
@@ -597,6 +624,67 @@ function Pickers() {
               ]}
             />
           </div>
+        </Cell>
+        <Cell caption="带磁贴的选值菜单 · 脚部动作">
+          <div className="ui-popover" style={{ width: 280 }}>
+            <MenuPanel
+              label="模型"
+              selection
+              sections={[
+                {
+                  id: 'local',
+                  label: '本地模型服务',
+                  media: <Tile size={16} mark={MONO_MARK} />,
+                  items: [
+                    { id: 'large', label: 'fixture-large', tag: <Badge>默认</Badge>, onSelect: () => {} },
+                    { id: 'small', label: 'fixture-small', checked: true, onSelect: () => {} },
+                  ],
+                },
+                {
+                  id: 'agents',
+                  label: 'Agent',
+                  items: [
+                    {
+                      id: 'agent',
+                      label: '本地 Agent',
+                      description: '完全访问',
+                      media: <Tile size={20} icon={Puzzle} />,
+                      onSelect: () => {},
+                    },
+                  ],
+                },
+              ]}
+              footer={
+                <>
+                  <MenuFooterLink icon={Undo2} chevron={false} onClick={() => {}}>
+                    撤销切换，继续使用 fixture-large
+                  </MenuFooterLink>
+                  <MenuFooterLink icon={Plus} chevron={false} onClick={() => {}}>
+                    添加模型服务…
+                  </MenuFooterLink>
+                  <MenuFooterLink onClick={() => {}}>管理模型服务…</MenuFooterLink>
+                </>
+              }
+            />
+          </div>
+        </Cell>
+        <Cell caption="弹层里的脚部导航行（列表之外，可用 Tab 到达）">
+          <div className="ui-popover" style={{ width: 280 }}>
+            <p className="gallery-note">一列按钮之后，分隔线下的一行</p>
+            <div className="ui-menu-separator" role="separator" />
+            <MenuFooterLink onClick={() => {}}>管理 Agent 成员…</MenuFooterLink>
+          </div>
+        </Cell>
+        <Cell caption="单选列表 · 带磁贴">
+          <ChoiceList
+            label="模型服务"
+            value="local"
+            options={[
+              { value: 'local', title: '本地模型服务', description: '2 个模型', media: <Tile size={20} mark={MONO_MARK} /> },
+              { value: 'other', title: '备用服务', description: '1 个模型', media: <Tile size={20} mark={COLOUR_MARK} /> },
+            ]}
+            onValueChange={() => {}}
+          />
         </Cell>
         <Cell caption="动作菜单 · 无图标">
           <div className="ui-popover">
@@ -894,6 +982,7 @@ function LiveLayers() {
   const [dialog, setDialog] = useState(false)
   const [dock, setDock] = useState(false)
   const [sheet, setSheet] = useState(false)
+  const [form, setForm] = useState(false)
   return (
     <>
       <Button
@@ -966,6 +1055,26 @@ function LiveLayers() {
         }}>
         <p className="gallery-sheet-text">拖动顶部向下关闭，向上展开。</p>
       </Sheet>
+      <Button
+        onClick={() => {
+          setForm(true)
+        }}>
+        打开新会话面板
+      </Button>
+      <Sheet
+        open={form}
+        detent="large"
+        title="新会话"
+        onClose={() => {
+          setForm(false)
+        }}
+        action={
+          <Button variant="primary" disabled>
+            开始
+          </Button>
+        }>
+        <p className="gallery-sheet-text">表单类面板一打开就占窗口的 92%。</p>
+      </Sheet>
     </>
   )
 }
@@ -973,6 +1082,29 @@ function LiveLayers() {
 function Layers() {
   return (
     <Section title="对话框、底部面板与浮层">
+      <Row label="内容自管的模态层">
+        {(['dialog', 'sheet', 'page'] as const).map(variant => (
+          <Cell key={variant} caption={variant}>
+            <div
+              className={`ui-modal ui-modal-${variant}`}
+              style={{ width: 300, height: 220, maxWidth: '100%', position: 'relative', margin: 0 }}>
+              <div className="ui-modal-surface">
+                {variant === 'sheet' && <span className="ui-modal-grabber" />}
+                <ModalHeader title="工作台页面" onClose={() => {}} />
+                <div className="ui-modal-body ui-modal-sheet-body">
+                  <div className="ui-sheet-dialog-body">
+                    <p className="ui-confirm-message">页面与表单共用焦点、键盘和关闭行为。</p>
+                  </div>
+                </div>
+                <footer className="ui-modal-footer">
+                  <Button>取消</Button>
+                  <Button variant="primary">保存</Button>
+                </footer>
+              </div>
+            </div>
+          </Cell>
+        ))}
+      </Row>
       <Row label="打开">
         <LiveLayers />
       </Row>
@@ -1127,6 +1259,18 @@ function Layers() {
           </SheetSurface>
         </div>
         <div className="gallery-phone">
+          <SheetSurface
+            title="修复设置页保存模型服务之后 API Key 会被清空的问题"
+            onClose={() => {}}
+            action={
+              <Button variant="primary" disabled>
+                保存
+              </Button>
+            }>
+            <p className="gallery-sheet-text">长标题在两侧按钮之间以省略号结束。</p>
+          </SheetSurface>
+        </div>
+        <div className="gallery-phone">
           <SheetSurface title="计划 1/2" cancelLabel={null} action={<Button variant="secondary">完成</Button>}>
             <ol className="gallery-sheet-card">
               <li>读取设置页的保存逻辑</li>
@@ -1231,6 +1375,92 @@ function States() {
             </>
           }
         />
+      </Row>
+    </Section>
+  )
+}
+
+/** Harness choices as tiles: the chosen one, one that cannot be chosen, and the action that adds another. */
+function TileChoices() {
+  const [value, setValue] = useState('agent')
+  const options = [
+    { value: 'agent', label: 'Latch 内置', note: 'Agent', tile: <Tile size={40} mark={APP_ICON} />, description: '可以读写项目里的文件' },
+    { value: 'chat', label: 'Latch 内置', note: '只对话', tile: <Tile size={40} mark={APP_ICON} />, description: '不读写文件、不运行命令' },
+    { value: 'goose', label: 'goose', note: '完全访问', tile: <Tile size={40} mark={MONO_MARK} />, description: '自带模型与登录' },
+    {
+      value: 'codex',
+      label: 'Codex',
+      note: '仅本机桌面端',
+      tile: <Tile size={40} mark={COLOUR_MARK} state="cold" />,
+      disabledReason: '完全访问会话只能在运行 Latch 的电脑上开启',
+    },
+  ]
+  return (
+    <Section title="磁贴选择">
+      <Row label="一行">
+        <Cell caption="选中、可选、不可选，加一项动作">
+          <TileChoice label="Agent" value={value} options={options} onValueChange={setValue}>
+            <TileAction icon={Plus} label="添加 Agent" note="5 个可添加" />
+          </TileChoice>
+        </Cell>
+      </Row>
+      <Row label="紧凑">
+        <Cell caption="工作台：图标与标签同一行">
+          <TileChoice
+            variant="compact"
+            label="紧凑 Agent"
+            value={value}
+            options={options.map(option => ({ ...option, tile: <Tile size={20} mark={APP_ICON} /> }))}
+            onValueChange={setValue}>
+            <TileAction variant="compact" icon={Plus} label="添加 Agent" />
+          </TileChoice>
+        </Cell>
+      </Row>
+      <Row label="状态">
+        <Cell caption="悬停" force="hover" at=".ui-tile-choice-item:not([aria-checked='true'])">
+          <TileChoice label="Agent 悬停" value="agent" options={options.slice(0, 2)} onValueChange={() => {}} />
+        </Cell>
+        <Cell caption="键盘聚焦" force="focus-visible" at=".ui-tile-choice-item">
+          <TileChoice label="Agent 聚焦" value="agent" options={options.slice(0, 2)} onValueChange={() => {}} />
+        </Cell>
+        <Cell caption="动作展开">
+          <TileAction icon={Plus} label="添加 Agent" note="5 个可添加" aria-expanded />
+        </Cell>
+        <Cell caption="按下不可选的一项：原因在行下展开">
+          <Explained options={options} />
+        </Cell>
+      </Row>
+    </Section>
+  )
+}
+
+/** A row whose item that cannot be chosen has been pressed, so its reason shows under the row. */
+function Explained({ options }: { options: ComponentProps<typeof TileChoice<string>>['options'] }) {
+  const box = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    box.current?.querySelector<HTMLButtonElement>('[aria-disabled="true"]')?.click()
+  }, [])
+  return (
+    <div ref={box}>
+      <TileChoice label="Agent 原因" value="agent" options={options.filter(option => option.value !== 'goose')} onValueChange={() => {}} />
+    </div>
+  )
+}
+
+/** The ambient field of an empty page as its still frame, round an anchor and clear of a card. */
+function Ambient() {
+  return (
+    <Section title="环境背景">
+      <Row label="静帧">
+        <Cell caption="轨道、站点与一段光；内容周围留白">
+          <div className="gallery-ambient">
+            <AmbientField still />
+            <p className="gallery-ambient-title" data-ambient-anchor="" data-ambient-avoid="text">
+              今天要做什么？
+            </p>
+            <div className="gallery-ambient-card" data-ambient-avoid="surface" />
+          </div>
+        </Cell>
       </Row>
     </Section>
   )
@@ -1678,6 +1908,8 @@ export function Gallery() {
         <Live />
         <Motion />
         <Tiles />
+        <TileChoices />
+        <Ambient />
         <Resize />
         <Icons />
         <Focus />

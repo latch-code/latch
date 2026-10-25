@@ -1,9 +1,12 @@
-import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createContext, memo, useContext, useEffect, useId, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react'
 import Markdown, { type Components, type Options, type UrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Check, ChevronDown, ChevronUp, Copy } from 'lucide-react'
 import { ErrorBoundary } from './components/ErrorBoundary.tsx'
+import { FileChip } from './components/FileChip.tsx'
+import { useKnownFiles } from './components/FileReferences.tsx'
 import { hasHiddenCharacters, VisibleText } from './components/VisibleText.tsx'
+import { codePathCandidate, linkTarget, namesPath, referenceText, urlScheme } from './fileReference.ts'
 import { exceedsMarkdownNesting, MAX_TREE_DEPTH, treeDepth } from './markdownNesting.ts'
 import { ICON_STROKE } from '@latch/ui'
 
@@ -25,12 +28,16 @@ const remarkPlugins = [remarkGfm, limitDepth]
 const relativeBase = 'https://markdown.invalid/'
 const relativeOrigin = new URL(relativeBase).origin
 
-/** Keep navigation within ordinary web links; never pass executable URL schemes. */
+/**
+ * Keep navigation within ordinary web links; never pass executable URL schemes. A `file:` URI, and a file name with a
+ * line number that only looks like a scheme (`report.md:12`), pass only to become a path chip, which never navigates.
+ */
 const safeUrl: UrlTransform = (value, key) => {
   const url = value.trim()
   if (!url || /[\u0000-\u001f\u007f\\]/.test(url) || url.startsWith('//')) return undefined
 
-  const scheme = /^([a-z][a-z\d+.-]*):/i.exec(url)?.[1]?.toLowerCase()
+  const scheme = urlScheme(url)
+  if (scheme === 'file' || (scheme === undefined && /^[^/?#]*:/u.test(url))) return url
   if (scheme && scheme !== 'http' && scheme !== 'https' && !(scheme === 'mailto' && key === 'href')) return undefined
 
   try {
@@ -137,17 +144,47 @@ const CodeBlock = memo(function CodeBlock({ code, language }: { code: string; la
   )
 })
 
+/** The plain text of a rendered element, to tell a link whose text is its own path. */
+function textOf(node: { type: string; value?: string; children?: unknown[] } | undefined): string {
+  if (!node) return ''
+  if (node.type === 'text') return node.value ?? ''
+  return (node.children ?? []).map(child => textOf(child as Parameters<typeof textOf>[0])).join('')
+}
+
+/** Whether the reply stopped streaming: only then is its inline code asked about. */
+const ReplySettled = createContext(true)
+
+/**
+ * Inline code. In the desktop app, code that looks like a path (`deck.pptx`, `src/app.ts:12`) becomes a path chip
+ * once the reply settled and the Host said it names a file; everything else stays code.
+ */
+function InlineCode({ children, ...props }: ComponentProps<'code'>) {
+  const settled = useContext(ReplySettled)
+  const text = typeof children === 'string' ? children : undefined
+  const candidate = text === undefined ? undefined : codePathCandidate(text)
+  const files = useKnownFiles(candidate === undefined ? [] : [candidate], settled)
+  return candidate !== undefined && files.length > 0 ? <FileChip path={candidate} label={text} /> : <code {...props}>{children}</code>
+}
+
 // Component identities stay stable as tokens arrive, preserving code-block focus,
 // expanded state, and the reader's scroll position.
 const components: Components = {
+  code({ node: _node, ...props }) {
+    return <InlineCode {...props} />
+  },
   // Images are never loaded: a URL the model chose would be fetched as soon as the reply renders, carrying whatever
-  // it encodes. A web image stays reachable as an ordinary link the reader opens.
+  // it encodes. A web image stays reachable as an ordinary link the reader opens; a file becomes a path chip.
   img({ node: _node, src, alt }) {
     const label = alt?.trim() || '图片'
-    return src && /^https?:/i.test(src) ? (
-      <a className="message-image" href={src} target="_blank" rel="noopener noreferrer">
-        外部图片：{label}
-      </a>
+    if (src && /^https?:/i.test(src))
+      return (
+        <a className="message-image" href={src} target="_blank" rel="noopener noreferrer">
+          外部图片：{label}
+        </a>
+      )
+    const path = src ? referenceText(src) : undefined
+    return path ? (
+      <FileChip path={path} image {...(alt?.trim() ? { alt: alt.trim() } : {})} />
     ) : (
       <span className="message-image">图片：{label}</span>
     )
@@ -176,9 +213,23 @@ export const MessageContent = memo(function MessageContent({ text, streaming = f
   const messageComponents = useMemo<Components>(
     () => ({
       ...components,
-      a({ node: _node, children, href, 'aria-describedby': describedBy, ...props }) {
+      // Only web and mail addresses are links, and footnotes of this reply; a file reference is a path chip that never
+      // navigates the page, and anything else is its text.
+      a({ node, children, href, 'aria-describedby': describedBy, ...props }) {
         if (!href) return <span>{children}</span>
-        const external = /^https?:/i.test(href)
+        const target = linkTarget(href, `${id}-`)
+        if (target.kind === 'path') {
+          const linkText = textOf(node).trim()
+          if (!linkText) return <FileChip path={target.path} />
+          // A label that is the path itself is drawn from its text, so its folders can give way to the file name.
+          return namesPath(linkText, target.path) ? (
+            <FileChip path={target.path} label={linkText} />
+          ) : (
+            <FileChip path={target.path} label={children} mono={false} />
+          )
+        }
+        if (target.kind === 'text') return <span>{children}</span>
+        const external = target.kind === 'web'
         return (
           <a
             {...props}
@@ -216,7 +267,7 @@ export const MessageContent = memo(function MessageContent({ text, streaming = f
         plain
       ) : (
         <ErrorBoundary resetKey={text} fallback={plain}>
-          {rendered}
+          <ReplySettled.Provider value={!streaming}>{rendered}</ReplySettled.Provider>
         </ErrorBoundary>
       )}
     </div>

@@ -19,6 +19,9 @@ export const connectionLabels: Record<ConnectionStatus, string> = {
   offline: '离线',
 }
 
+/** The footer's quiet line, in place of 已连接, while the desktop app keeps this Mac awake. */
+const KEEP_AWAKE_LABEL = '保持唤醒中'
+
 /** The connection is named only when it is not healthy. */
 export const connectionProblem = (connection: ConnectionStatus) => connection === 'reconnecting' || connection === 'offline'
 
@@ -27,8 +30,8 @@ export const connectionProblem = (connection: ConnectionStatus) => connection ==
  * agent of that ID; a session from before harnesses were recorded ran on the built-in one. A row describes the
  * session, not the agent's state now, so its tile never draws whether the harness is currently usable.
  */
-type TaskHarness = Pick<HarnessInfo, 'id' | 'source'> & Partial<Pick<HarnessInfo, 'name'>>
-function taskHarness(snapshot: AppSnapshot, task: TaskSummary): TaskHarness {
+export type TaskHarness = Pick<HarnessInfo, 'id' | 'source'> & Partial<Pick<HarnessInfo, 'name'>>
+export function taskHarness(snapshot: AppSnapshot, task: TaskSummary): TaskHarness {
   const known = sessionHarness(snapshot.catalog, task)
   if (known) return known
   return task.harnessId !== undefined && task.harnessId !== 'standard'
@@ -58,7 +61,7 @@ const SessionItem = memo(function SessionItem({
   /** Removed from the list: it folds away and takes no input. */
   leaving: boolean
   now: number
-  /** The status slot's size: 12 in the sidebar, 16 in the phone's list. */
+  /** The status slot's size: 12 in the sidebar. */
   size: CometSize
   onSelect: (id: string) => void
   menu: (task: TaskSummary) => MenuSection[]
@@ -89,6 +92,19 @@ const SessionItem = memo(function SessionItem({
             dateTime={task.updatedAt}
           />
         </button>
+        {!task.archived && menu(task).some(section => section.items.some(item => item.id === 'archive')) && (
+          <IconButton
+            className="session-item-archive"
+            label={`归档：${title}`}
+            icon={Archive}
+            onClick={() =>
+              menu(task)
+                .flatMap(section => section.items)
+                .find(item => item.id === 'archive')
+                ?.onSelect()
+            }
+          />
+        )}
         <Menu
           label={`会话操作：${title}`}
           placement="bottom-end"
@@ -176,6 +192,8 @@ function SessionGroupView({
  */
 export function Sidebar({
   snapshot,
+  searchResults,
+  archiveBatch,
   selectedId,
   isUnread,
   cancelling,
@@ -190,7 +208,6 @@ export function Sidebar({
   newActive = false,
   onApprovals,
   drawer,
-  phone = false,
   onClose,
   onCollapse,
   collapseRef,
@@ -200,10 +217,15 @@ export function Sidebar({
   sessionMenu,
   now,
   devMode = false,
+  keepAwake,
 }: {
   snapshot: AppSnapshot
+  searchResults?: import('react').ReactNode
+  archiveBatch?: import('react').ReactNode
   /** Show the dev-build chip in the footer (wide layouts; tablets show it in the rail, phones in settings). */
   devMode?: boolean
+  /** The desktop app is keeping this Mac awake: why, for the title of the connection line. */
+  keepAwake?: string
   selectedId: string | null
   isUnread: (task: TaskSummary) => boolean
   cancelling: ReadonlySet<string>
@@ -220,8 +242,6 @@ export function Sidebar({
   newActive?: boolean
   onApprovals: () => void
   drawer: boolean
-  /** The list is the phone's: its status slots are 16. */
-  phone?: boolean
   onClose: () => void
   /** Shuts the column (from 1024px). */
   onCollapse?: () => void
@@ -340,6 +360,7 @@ export function Sidebar({
           <Count tone="warn" value={approvals} from={approvalsBefore} />
         </button>
       )}
+      {archiveBatch}
       <nav ref={list} className="session-list" aria-label="会话列表" data-session-filter={filter}>
         {groups.length === 0 ? (
           <div className="list-empty">
@@ -366,13 +387,14 @@ export function Sidebar({
               isUnread={isUnread}
               cancelling={cancelling}
               now={now}
-              size={phone ? 16 : 12}
+              size={12}
               onSelect={onSelect}
               onNewIn={onNewIn}
               menu={sessionMenu}
             />
           ))
         )}
+        {searchResults}
         {archivedCount > 0 && filter !== 'archived' && !search && (
           <button
             type="button"
@@ -395,9 +417,17 @@ export function Sidebar({
           {snapshot.hostName || '执行端'}
         </span>
         {devMode && <DevModeChip />}
-        {connectionProblem(connection) && (
-          <button type="button" className={`connection-badge connection-${connection}`} title="同步最新状态" onClick={onRefresh}>
-            {connectionLabels[connection]}
+        {/*
+         * A healthy connection is not named. While the desktop app keeps this Mac awake the same place says so in a few
+         * quiet words that never shrink, as wide as the amber badge; the reason is in its title.
+         */}
+        {(connectionProblem(connection) || (keepAwake && connection === 'connected')) && (
+          <button
+            type="button"
+            className={`connection-badge connection-${connection}`}
+            title={keepAwake ? `${keepAwake} · 同步最新状态` : '同步最新状态'}
+            onClick={onRefresh}>
+            {connection === 'connected' ? KEEP_AWAKE_LABEL : connectionLabels[connection]}
           </button>
         )}
         <span className="sidebar-footer-spacer" />

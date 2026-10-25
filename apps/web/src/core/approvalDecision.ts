@@ -1,6 +1,6 @@
-import type { Approval, ApprovalOptionKind } from '@latch/protocol'
+import { rejectionNote, type Approval, type ApprovalOptionKind } from '@latch/protocol'
 import { ApiError, isUncertain, newRequestId } from './api.ts'
-import { safeDeviceName } from './securityCopy.ts'
+import { DECISION_COPY, safeDeviceName } from './securityCopy.ts'
 
 /**
  * One user decision on one approval keeps one `requestId` until the Host has
@@ -11,9 +11,9 @@ export class DecisionRequests {
   private readonly pending = new Map<string, { choice: string; requestId: string }>()
   constructor(private readonly makeId: () => string = newRequestId) {}
 
-  /** The id for this choice: reused while the same choice on the same approval is being retried. */
-  idFor(approvalId: string, decision: 'allow' | 'reject', optionId: string | undefined): string {
-    const choice = `${decision}:${optionId ?? ''}`
+  /** The id for this choice (a rejection's note is part of it): reused while the same choice is being retried. */
+  idFor(approvalId: string, decision: 'allow' | 'reject', optionId: string | undefined, note?: string): string {
+    const choice = JSON.stringify([decision, optionId ?? '', note ?? ''])
     const previous = this.pending.get(approvalId)
     if (previous?.choice === choice) return previous.requestId
     const requestId = this.makeId()
@@ -25,6 +25,18 @@ export class DecisionRequests {
   settle(approvalId: string, error?: unknown): void {
     if (error === undefined || !isUncertain(error)) this.pending.delete(approvalId)
   }
+}
+
+/**
+ * 「告诉 Agent 改做什么」 after 拒绝 (`useRejectionNote`): the note to send with the rejection, why it cannot go, or
+ * neither. Only the built-in harness takes a note; an agent's ask (`advisory`) has no room for text, so the composer
+ * keeps it for the next message once the turn ends. The Host applies the same rule, and, since a note is input to the
+ * model, also requires 「发起和继续会话」 and the session ceiling, as typing does.
+ */
+export function rejectionNoteFor(approval: Pick<Approval, 'advisory'>, text: string): { note?: string; problem?: string } {
+  if (approval.advisory) return {}
+  const note = rejectionNote(text)
+  return note === null ? { problem: DECISION_COPY.noteInvalid } : note === undefined ? {} : { note }
 }
 
 /** `conflict`: this device had already chosen differently, so the choice just made did not take effect. */

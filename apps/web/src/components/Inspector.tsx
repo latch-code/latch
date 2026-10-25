@@ -29,16 +29,19 @@ import {
   type TaskSummary,
 } from '@latch/protocol'
 import { presetOf } from '../brands.ts'
-import { findProvider, sameModel, sessionHarness, usesDemoModel } from '../composerChoice.ts'
-import { turnsOf } from '../conversation.ts'
+import { findProvider, harnessName as harnessNameOf, sameModel, sessionHarness, usesDemoModel } from '../composerChoice.ts'
+import { appliedDiffs, turnsOf } from '../conversation.ts'
 import { api } from '../core/api.ts'
 import { parseDuration, parseTime, useTicker } from '../core/hostClock.ts'
 import { diffLines } from '../diff.ts'
 import { absoluteTime, basename, exactTokens, formatDuration, formatTokens, messageTime, tokenAmount, tokenLines } from '../format.ts'
 import { HarnessTile, ProviderTile } from './BrandTile.tsx'
+import { CodeRootNotice, codeRootWorkspace } from './CodeRootNotice.tsx'
+import { InlineConfirm } from './InlineConfirm.tsx'
 import { PlanList, planProgress } from './PlanCard.tsx'
+import { modelFromKey, modelGroups, modelKey } from './pickerOptions.tsx'
 import { CopyButton, MiddleText } from './ui.tsx'
-import { Badge, Collapse, ICON_STROKE, StatusPill, Tooltip, ValuePicker, type LucideIcon, type PickerGroup } from '@latch/ui'
+import { Badge, Button, Collapse, ICON_STROKE, StatusPill, Tooltip, ValuePicker, type LucideIcon } from '@latch/ui'
 import { VisibleText } from './VisibleText.tsx'
 
 /** The blocks, in their order; each folds from its header and the choice is remembered on this device. */
@@ -111,15 +114,18 @@ function Row({
   )
 }
 
-const modelKey = (model: ModelRef) => `${model.providerId}\u0000${model.model}`
 const MODE_CATEGORY = 'mode'
 
-/** The changes of the session's tools, one row per file: lines added and removed over every diff, and the last tool. */
-function fileChanges(messages: Message[]): Array<{ path: string; added: number; removed: number; known: boolean; toolId: string }> {
+/**
+ * The changes of the session's tools, one row per file: lines added and removed over every diff, and the last tool. A
+ * diff counts once it was applied as far as the reports go: not while its call waits for an approval or in the queue,
+ * nor when its approval kept the call from running (`appliedDiffs`).
+ */
+export function fileChanges(messages: Message[]): Array<{ path: string; added: number; removed: number; known: boolean; toolId: string }> {
   const files = new Map<string, { path: string; added: number; removed: number; known: boolean; toolId: string }>()
   for (const message of messages) {
     if (message.role !== 'tool') continue
-    for (const diff of message.tool?.diffs ?? []) {
+    for (const diff of appliedDiffs(message)) {
       const view = diffLines(diff.oldText, diff.newText)
       const entry = files.get(diff.path) ?? { path: diff.path, added: 0, removed: 0, known: true, toolId: message.id }
       entry.added += view.added
@@ -190,6 +196,7 @@ export function Inspector({
   collapsed,
   onToggleBlock,
   onReveal,
+  onNewProject,
 }: {
   snapshot: AppSnapshot
   summary: TaskSummary
@@ -202,12 +209,14 @@ export function Inspector({
   collapsed: ReadonlySet<string>
   onToggleBlock: (id: InfoBlock, collapsed: boolean) => void
   onReveal: (messageId: string) => void
+  /** Where this device can make a project: the way out of a start directory inside Latch's program directory. */
+  onNewProject?: () => void
 }) {
   const [factsOpen, setFactsOpen] = useState(false)
   const now = useTicker('minute')
   const catalog = snapshot.catalog
   const harness = sessionHarness(catalog, summary)
-  const harnessName = harness?.name ?? snapshot.harness?.name ?? 'Latch'
+  const harnessName = harness ? harnessNameOf(harness) : (snapshot.harness?.name ?? 'Latch')
   const own = detail?.summary.id === summary.id ? detail : null
   const permission = own?.permission
   const level = permission?.level ?? summary.level
@@ -217,6 +226,7 @@ export function Inspector({
   const license = AGENT_PRESETS.find(item => item.id === preset)?.license
   const definition = useAgentCommand(admin && harness?.source === 'acp' ? harness.id : undefined)
   const commandLine = definition ? [definition.command, ...definition.args].join(' ') : undefined
+  // The built-in harness's name already says where it comes from, so it has no source line.
   const source =
     harness?.source === 'acp' ? (
       <>
@@ -235,9 +245,7 @@ export function Inspector({
       </>
     ) : harness?.source === 'plugin' ? (
       '插件'
-    ) : (
-      '内置'
-    )
+    ) : undefined
   const config = controls?.config ?? own?.config ?? []
   const modeOption = config.find(option => option.category === MODE_CATEGORY || option.id === MODE_CATEGORY)
   const modelOption = config.find(option => option.category === 'model')
@@ -266,15 +274,7 @@ export function Inspector({
   let modelValue: ReactNode
   if (modelOption) modelValue = optionPicker(modelOption)
   else if (hostModels && modelControl && !locked && catalog) {
-    const groups: Array<PickerGroup<string>> = catalog.providers.map(item => ({
-      id: item.id,
-      label: item.name,
-      options: (item.models.length ? item.models : [item.defaultModel]).filter(Boolean).map(model => ({
-        value: modelKey({ providerId: item.id, model }),
-        label: model,
-        tag: item.kind === 'demo' ? <Badge tone="warn">演示</Badge> : undefined,
-      })),
-    }))
+    const groups = modelGroups(catalog)
     const value = modelControl.value ?? modelControl.current
     modelValue = (
       <ValuePicker
@@ -288,8 +288,7 @@ export function Inspector({
         groups={groups}
         leading={provider && value ? <ProviderTile provider={provider} size={16} /> : undefined}
         onValueChange={key => {
-          const [providerId = '', model = ''] = key.split('\u0000')
-          const next = { providerId, model }
+          const next = modelFromKey(key)
           modelControl.onChange(sameModel(next, modelControl.current) ? undefined : next)
         }}
       />
@@ -339,28 +338,41 @@ export function Inspector({
       ]
     : []
   const block = (id: InfoBlock) => ({ id, collapsed: collapsed.has(id), onToggle: onToggleBlock })
+  const codeRoot = summary.cwd ? codeRootWorkspace(catalog?.workspaces, { path: summary.cwd }) : undefined
 
   return (
     <div className="inspector">
       <Block {...block('agent')} title="Agent">
         <div className="info-who">
-          <HarnessTile harness={harness ? { id: harness.id, source: harness.source } : { id: 'standard', source: 'builtin' }} size={32} />
+          <HarnessTile harness={harness ? { id: harness.id, source: harness.source } : { id: 'standard', source: 'builtin' }} size={24} />
           <span className="info-who-text">
             <span className="info-who-name">{harnessName}</span>
-            <span className="info-who-source">{source}</span>
+            {source !== undefined && <span className="info-who-source">{source}</span>}
           </span>
         </div>
         <Row icon={Cpu} label="模型">
           {modelValue}
         </Row>
-        {pendingModel && <p className="info-note">下一条消息起使用 {pendingModel.model}</p>}
+        {pendingModel && modelControl && (
+          <p className="info-note info-note-pending">
+            <span>下一条消息起使用 {pendingModel.model}</span>
+            <Button
+              size="xs"
+              variant="ghost"
+              onClick={() => {
+                modelControl.onChange(undefined)
+              }}>
+              撤销切换
+            </Button>
+          </p>
+        )}
         {modeOption && (
           <Row icon={SlidersHorizontal} label="模式">
             {optionPicker(modeOption)}
           </Row>
         )}
         <Row icon={Bot} label="方式">
-          {summary.mode === 'chat' ? '对话' : 'Agent'}
+          {summary.mode === 'chat' ? '只对话' : 'Agent'}
         </Row>
         {otherOptions.map(option => (
           <Row key={option.id} icon={SlidersHorizontal} label={option.name}>
@@ -373,6 +385,9 @@ export function Inspector({
             {locked}
           </p>
         )}
+        {/* A wider mode is confirmed here, under the option that asked for it, also when the composer changed it; a folded
+            block leaves it to the composer. */}
+        <InlineConfirm active={busy !== null && !collapsed.has('agent')} rank={1} className="info-confirm" />
       </Block>
 
       <Block {...block('environment')} title="环境">
@@ -391,6 +406,7 @@ export function Inspector({
             </span>
           </Row>
         )}
+        {codeRoot && <CodeRootNotice workspace={codeRoot} className="info-code-root" {...(onNewProject ? { onNewProject } : {})} />}
       </Block>
 
       {level && (

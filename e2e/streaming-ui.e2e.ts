@@ -146,19 +146,27 @@ describe('streamed messages in the real workspace', () => {
   async function start(page: Page, prompt: string): Promise<{ id: string; reply: ControlledReply }> {
     const reply = new ControlledReply()
     replies.set(prompt, reply)
-    // Phones show 新建会话 in the top bar; wider layouts in the sidebar or rail.
+    // Phones show 新建会话 in their list's header and start from a sheet with 开始; wider layouts in the sidebar or rail.
     await page.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
     await page.locator('.drawer-backdrop').waitFor({ state: 'detached' })
-    await page.getByRole('radiogroup', { name: '会话模式' }).getByRole('radio', { name: '对话', exact: true }).click()
+    // 只对话 is the built-in harness's second tile: no tools, no files.
+    await page
+      .getByRole('radiogroup', { name: 'Agent', exact: true })
+      .getByRole('radio', { name: /只对话/ })
+      .click()
     await page.getByRole('textbox', { name: '新会话消息' }).fill(prompt)
     const created = page.waitForResponse(
       response => response.request().method() === 'POST' && new URL(response.url()).pathname === '/link/api/tasks',
     )
-    await page.getByRole('button', { name: '发送', exact: true }).click()
+    await page
+      .getByRole('button', { name: /^(发送|开始)$/ })
+      .filter({ visible: true })
+      .first()
+      .click()
     const response = await created
     expect(response.status()).toBe(201)
     const { sessionId: id } = (await response.json()) as { sessionId: string }
-    await page.getByRole('button', { name: '取消任务', exact: true }).waitFor()
+    await page.getByRole('button', { name: '停止', exact: true }).waitFor()
     await connected(page)
     return { id, reply }
   }
@@ -345,7 +353,7 @@ describe('streamed messages in the real workspace', () => {
       await page.locator(`[data-task-id="${first.id}"]`).click()
       await page.locator(`[data-task-id="${first.id}"][aria-current="page"]`).waitFor({ state: 'attached' })
       await page.locator('[data-message-id]').filter({ hasText: '第一轮。' }).waitFor()
-      await expect.poll(seen, { interval: 20 }).toEqual(expect.arrayContaining(['animate:transcript']))
+      await expect.poll(seen, { interval: 20 }).toEqual(expect.arrayContaining(['animate:transcript-content']))
       expect(await page.locator('[data-arrived]').count()).toBe(0)
 
       // A reload draws the conversation as it is, without arrivals.
@@ -353,6 +361,56 @@ describe('streamed messages in the real workspace', () => {
       await connected(page)
       await page.locator('[data-message-id]').filter({ hasText: '检验到达动效三' }).waitFor()
       expect(await page.locator('[data-arrived]').count()).toBe(0)
+    } finally {
+      await context.close()
+    }
+  })
+
+  it('grows the input a line at a time over the motion tokens, and at once under reduced motion', async () => {
+    const { context, page } = await open(1280, 820)
+    try {
+      await page.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
+      const input = page.getByRole('textbox', { name: '新会话消息' })
+      await input.waitFor()
+      // Each height transition the input starts, as it starts, with the timing it runs on.
+      await input.evaluate(element => {
+        element.dataset.runs = ''
+        element.addEventListener('transitionrun', event => {
+          if (!(event instanceof TransitionEvent) || event.propertyName !== 'height') return
+          const style = getComputedStyle(element)
+          element.dataset.runs += `${style.transitionDuration} ${style.transitionTimingFunction}|`
+        })
+      })
+      const runs = async () => ((await input.getAttribute('data-runs')) ?? '').split('|').filter(Boolean)
+      const tokens = await page.evaluate(() => {
+        const probe = document.createElement('div')
+        document.body.append(probe)
+        probe.style.transitionDuration = 'var(--d-fast)'
+        probe.style.transitionTimingFunction = 'var(--ease)'
+        const style = getComputedStyle(probe)
+        const value = `${style.transitionDuration} ${style.transitionTimingFunction}`
+        probe.remove()
+        return value
+      })
+      expect(tokens).toBe('0.12s cubic-bezier(0.2, 0, 0, 1)')
+      const height = () => input.evaluate(element => element.getBoundingClientRect().height)
+      const resting = await height()
+      // Within the three lines it starts with, typing moves nothing.
+      await input.fill('第一行')
+      await page.waitForTimeout(200)
+      expect(await runs()).toEqual([])
+      expect(await height()).toBe(resting)
+      // Two more lines than it holds: the height follows over 120ms on the entry curve.
+      await input.fill('一\n二\n三\n四\n五')
+      await expect.poll(runs).toEqual([tokens])
+      await expect.poll(height).toBeGreaterThan(resting + 40)
+      // Under reduced motion the next line arrives at once.
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+      const grown = await height()
+      await input.fill('一\n二\n三\n四\n五\n六')
+      await expect.poll(height).toBeGreaterThan(grown)
+      // The shared reduced-motion rule keeps transitions at 1ms so their completion events still fire.
+      for (const run of (await runs()).slice(1)) expect(parseFloat(run) * 1000).toBeLessThanOrEqual(1)
     } finally {
       await context.close()
     }
@@ -477,11 +535,11 @@ describe('streamed messages in the real workspace', () => {
       expect(await renderedIds()).toEqual(expectedIds)
       expect(await originalRow!.evaluate(element => element.isConnected)).toBe(true)
 
-      // A manual resync from the session menu must not duplicate committed rows.
+      // A manual resync from the session menu (the title's menu on a phone) must not duplicate committed rows.
       const refreshed = page.waitForResponse(
         response => response.request().method() === 'GET' && new URL(response.url()).pathname === `/link/api/tasks/${id}`,
       )
-      await page.getByRole('button', { name: '会话操作', exact: true }).click()
+      await page.locator('.topbar[data-phone] .topbar-title-button').click()
       await page.getByRole('menuitem', { name: '同步最新状态', exact: true }).click()
       await refreshed
       expect(await renderedIds()).toEqual(expectedIds)
@@ -505,7 +563,7 @@ describe('streamed messages in the real workspace', () => {
       // The top bar and the composer model picker sit outside the scrolling transcript.
       for (const [trigger, menu] of [
         [page.getByRole('button', { name: '会话操作', exact: true }), '会话操作'],
-        [page.getByRole('button', { name: /^模型：/ }), '选择模型'],
+        [page.getByRole('button', { name: /^模型：/ }), '模型'],
       ] as const) {
         await trigger.click()
         const popover = page.getByRole('menu', { name: menu, exact: true })
@@ -519,7 +577,8 @@ describe('streamed messages in the real workspace', () => {
         expect((await geometry(page)).top).toBeGreaterThan(before)
         expect(await popover.isVisible()).toBe(true)
         await page.keyboard.press('Escape')
-        await popover.waitFor({ state: 'detached' })
+        // The picker's layer stays in the page, hidden; the action menu's leaves it.
+        await popover.waitFor({ state: 'hidden' })
       }
       reply.finish()
       await expect.poll(async () => (await host.bridge.detail(id)).summary.status, { interval: 20 }).toBe('idle')

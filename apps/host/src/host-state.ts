@@ -426,7 +426,10 @@ export interface HostInfo {
   tlsOrigin: string | null
   devMode: boolean
   presence: { status: 'available' | 'unavailable'; message?: string }
+  /** Sessions running or waiting for an approval. */
   activeSessions: number
+  /** The same, split; absent from older Hosts. */
+  activity?: { running: number; waiting: number }
 }
 
 const hostInfoSchema = z.object({
@@ -441,6 +444,7 @@ const hostInfoSchema = z.object({
   devMode: z.boolean(),
   presence: z.object({ status: z.enum(['available', 'unavailable']), message: z.string().optional() }),
   activeSessions: z.number().int().nonnegative(),
+  activity: z.object({ running: z.number().int().nonnegative(), waiting: z.number().int().nonnegative() }).optional(),
 })
 
 const MAX_INFO_BYTES = 64 * 1024

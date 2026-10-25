@@ -6,6 +6,7 @@ import { parseSidebarPreference, type SidebarPreference } from './sidebarLayout.
 export type ThemePreference = 'system' | 'light' | 'dark'
 export type SendKey = 'enter' | 'mod-enter'
 export interface Preferences {
+  onboarding: 'auto' | 'show' | 'hidden'
   theme: ThemePreference
   /** Desktop only; touch keyboards always insert a newline on Enter. */
   sendKey: SendKey
@@ -17,6 +18,7 @@ export interface Preferences {
 
 const KEY = 'harness-link.preferences'
 const defaults: Preferences = {
+  onboarding: 'auto',
   theme: 'system',
   sendKey: 'enter',
   inspector: { open: {}, width: {}, collapsed: [] },
@@ -46,6 +48,7 @@ export function parsePreferences(raw: string | null): Preferences {
     if (typeof value !== 'object' || value === null) return { ...defaults }
     const item = value as Record<string, unknown>
     return {
+      onboarding: item.onboarding === 'show' || item.onboarding === 'hidden' ? item.onboarding : 'auto',
       theme: item.theme === 'light' || item.theme === 'dark' ? item.theme : 'system',
       sendKey: item.sendKey === 'mod-enter' ? 'mod-enter' : 'enter',
       inspector: parseInspectorPreference(item.inspector),
@@ -84,19 +87,15 @@ export function usePreferences(): Preferences {
 }
 
 /**
- * The browser bar takes the colour of the surface under it: the ground (bg-app) from 768px, where the page is paper
- * inset on it, and the pane (bg-pane) on phones, which have no ground showing at the top.
+ * The browser bar takes the colour of the ground (bg-app) at every width: from 768px the page is paper inset on it, and
+ * a phone's pages put their headers on it.
  */
-const themeColors = {
-  wide: { light: '#f2f1ee', dark: '#141413' },
-  phone: { light: '#fbfbfa', dark: '#1c1c1b' },
-}
+const themeColors = { light: '#f2f1ee', dark: '#141413' }
 
-/** The colour for one theme-color meta, read from its media query (index.html qualifies each by width and scheme). */
+/** The colour for one theme-color meta, read from its media query (index.html qualifies each by scheme). */
 export function themeColorFor(media: string, theme: ThemePreference): string {
-  const width = media.includes('max-width') ? 'phone' : 'wide'
   const scheme = theme === 'system' ? (media.includes('dark') ? 'dark' : 'light') : theme
-  return themeColors[width][scheme]
+  return themeColors[scheme]
 }
 
 /** `system` leaves the media query in charge; explicit choices pin `data-theme`. */

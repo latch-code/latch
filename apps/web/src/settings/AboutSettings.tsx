@@ -1,4 +1,6 @@
 import type { AppSnapshot } from '@latch/protocol'
+import { Button } from '@latch/ui'
+import { setPreference } from '../preferences.ts'
 import { BrandMark } from '../components/ui.tsx'
 import { SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
 
@@ -14,6 +16,15 @@ export function AboutSettings({ snapshot }: { snapshot: AppSnapshot }) {
           description={`跨设备的 Agent 工作台${snapshot.version ? ` · 版本 ${snapshot.version}` : ''}`}
         />
         <SettingsRow title="执行端" trailing={<span className="settings-row-value">{snapshot.hostName || '本机'}</span>} />
+        <SettingsRow
+          title="入门"
+          description="在新建会话页重新显示三个起步步骤"
+          trailing={
+            <Button variant="ghost" onClick={() => setPreference('onboarding', 'show')}>
+              重新显示入门
+            </Button>
+          }
+        />
         <SettingsRow title="许可证" trailing={<span className="settings-row-value">Apache License 2.0</span>} />
       </SettingsGroup>
       <SettingsGroup title="数据与插件">

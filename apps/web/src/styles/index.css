@@ -11,10 +11,15 @@
 @import './layout.css' layer(app);
 @import './sidebar.css' layer(app);
 @import './messages.css' layer(app);
+@import './panels.css' layer(app);
 @import './markdown.css' layer(app);
+@import './file-chip.css' layer(app);
 @import './tool-card.css' layer(app);
 @import './composer.css' layer(app);
+@import './phone.css' layer(app);
 @import './overlays.css' layer(app);
 @import './settings.css' layer(app);
+@import './workflows.css' layer(app);
 @import './auth.css' layer(security);
+@import './confirm.css' layer(security);
 @import './security.css' layer(security);

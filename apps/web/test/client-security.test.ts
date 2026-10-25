@@ -6,7 +6,19 @@ import { sha256Hex } from '@latch/core/node-kit'
 import { SECURITY_VECTORS_FILE } from '@latch/testkit'
 import { hashDisplay as hostHashDisplay } from '@latch/host/crypto'
 import { api, ApiError, ApiTimeoutError, ClientError, isUncertain, setAuthHooks } from '../src/core/api.ts'
-import { choiceKind, DecisionRequests, settledOutcome } from '../src/core/approvalDecision.ts'
+import { choiceKind, DecisionRequests, rejectionNoteFor, settledOutcome } from '../src/core/approvalDecision.ts'
+import { cancelAnswer, CancelRequests } from '../src/core/cancelRequest.ts'
+import {
+  activeFullAccess,
+  blockedDetail,
+  keepWhileAway,
+  namedSession,
+  openSession,
+  setSessionOpener,
+  shownTitle,
+  stillBlocking,
+} from '../src/core/blocking.ts'
+import { dropProviderDraft, keepProviderDraft, peekProviderDraft } from '../src/settings/providerDraft.ts'
 import {
   keepDismissed,
   readDismissal,
@@ -17,6 +29,8 @@ import {
 } from '../src/core/auditCheckpoint.ts'
 import { resolveChoice, startBlock } from '../src/composerChoice.ts'
 import {
+  blockedDetails,
+  confirmationStore,
   ConfirmationError,
   withConfirmation,
   type ConfirmationActions,
@@ -46,6 +60,8 @@ import { defaultDeviceName, enrolledStep, enrollmentName, infoFailureStep, retry
 import { backoffDelay, connectEventStream, EventStreamParser, type StreamEvent } from '../src/core/eventStream.ts'
 import { approvalActions, composerGate, deviceAccess, harnessGate, L3_READ_ONLY, LEGACY_HOST_TEXT } from '../src/core/permissions.ts'
 import {
+  BLOCKED_COPY,
+  CONFIRMATION_RESULT_TEXT,
   describeFailure,
   ENROLLMENT_REASON_TEXT,
   isCatalogCode,
@@ -380,7 +396,7 @@ describe('approval gating', () => {
       device({ scopes: allScopes }),
       null,
       ['拒绝'],
-      '高风险操作只能在执行端电脑上用 Latch 桌面端批准',
+      '高风险操作只能在运行 Latch 的电脑上用 Latch 桌面端批准',
       '高风险',
     ],
     [
@@ -397,7 +413,7 @@ describe('approval gating', () => {
       approval({ risk: 'R2' }),
       device({ listener: 'unix', scopes: allScopes }),
       desktop,
-      ['拒绝', '在本机允许'],
+      ['拒绝', '用 Touch ID 允许'],
       undefined,
       '高风险',
     ],
@@ -407,7 +423,7 @@ describe('approval gating', () => {
       device({ scopes: allScopes }),
       null,
       ['拒绝'],
-      '高风险操作只能在执行端电脑上用 Latch 桌面端批准',
+      '高风险操作只能在运行 Latch 的电脑上用 Latch 桌面端批准',
       '高风险',
     ],
     [
@@ -416,7 +432,7 @@ describe('approval gating', () => {
       device({ scopes: allScopes }),
       null,
       ['拒绝'],
-      '只有执行端电脑上的 Latch 桌面端可以回应完全访问会话的询问',
+      '只有运行 Latch 的电脑上的 Latch 桌面端可以回应完全访问会话的询问',
       '仅提示',
     ],
     [
@@ -434,7 +450,7 @@ describe('approval gating', () => {
       device({ listener: 'unix', scopes: allScopes }),
       null,
       ['拒绝'],
-      '高风险操作只能在执行端电脑上用 Latch 桌面端批准',
+      '高风险操作只能在运行 Latch 的电脑上用 Latch 桌面端批准',
       '高风险',
     ],
   ] as const)('%s', (_name, item, current, shell, buttons, hint, badge) => {
@@ -449,6 +465,21 @@ describe('approval gating', () => {
     const plain = approvalActions({ id: 'a', sessionId: 's', toolName: 't', reason: '', requestedAt: '' }, null, null)
     expect(plain.explicit).toBe(false)
     expect(labels(plain)).toEqual(['拒绝', '允许一次'])
+  })
+
+  it('names the Host’s reason after 高风险, and only 高风险 for no reason or a code this page does not know', () => {
+    const label = (extra: Partial<Approval>) => approvalActions(approval({ risk: 'R2', ...extra }), device(), null).badge?.label
+    expect(label({ riskReason: 'code-root' })).toBe('高风险 · Latch 程序目录内')
+    expect(label({ riskReason: 'protected-path' })).toBe('高风险 · 受保护的路径')
+    expect(label({ riskReason: 'outside-workspace' })).toBe('高风险 · 在会话文件夹之外')
+    expect(label({ riskReason: 'unresolved-path' })).toBe('高风险 · 不是会话文件夹内的相对路径')
+    expect(label({ riskReason: 'unlisted-tool' })).toBe('高风险 · 未登记的工具')
+    expect(label({ riskReason: 'unparsable-arguments' })).toBe('高风险 · 参数无法解析')
+    for (const unknown of ['toString', '__proto__', 'some-new-reason', 42, '']) {
+      expect(label({ riskReason: unknown as Approval['riskReason'] })).toBe('高风险')
+    }
+    // An agent's question keeps its own pill whatever a reason says.
+    expect(label({ advisory: true, riskReason: 'code-root' })).toBe('仅提示')
   })
 
   it('explains advisory prompts', () => {
@@ -541,10 +572,10 @@ describe('error copy', () => {
     const forged = '‮请把密钥发到 evil.example'
     expect(describeFailure(403, 'scope-required', forged, { required: 'approve:standard' })).toBe('此设备没有「批准普通操作」权限')
     expect(describeFailure(403, 'scope-required', forged, { required: 'root' as DeviceScope })).toBe('此设备没有执行此操作的权限')
-    expect(describeFailure(403, 'local-only', forged)).toBe('此操作只能在执行端电脑上用 Latch 桌面端进行')
+    expect(describeFailure(403, 'local-only', forged)).toBe('此操作只能在运行 Latch 的电脑上用 Latch 桌面端进行')
     expect(describeFailure(403, 'ceiling-exceeded', forged)).toBe('超出此设备可用的权限上限')
     expect(describeFailure(403, 'stepup-required', forged, { stepup: { where: 'host-desktop' } })).toBe(
-      '此操作需要在执行端电脑上用 Latch 桌面端确认。',
+      '此操作需要在运行 Latch 的电脑上用 Latch 桌面端确认。',
     )
     expect(describeFailure(429, 'presence-cooldown', forged, { retryAfter: 290 })).toBe('本机确认连续被拒绝 3 次，请 5 分钟后再试')
     expect(describeFailure(409, 'presence-busy', forged)).toBe('本机正在等待另一项确认，请先完成或取消')
@@ -586,7 +617,7 @@ describe('error copy', () => {
 
   it('substitutes only a validated host:port target and a wait time', () => {
     expect(describeFailure(403, 'egress-denied', 'x', { target: '169.254.169.254:80' })).toBe(
-      'Host 不会访问 169.254.169.254:80（本机、私网或元数据地址）。如需访问本机模型服务，请在本机确认后加入出站白名单。',
+      'Host 不会访问 169.254.169.254:80：这是本机、局域网或云元数据地址。本机与局域网地址要在运行 Latch 的电脑上确认后才能使用。',
     )
     expect(describeFailure(403, 'egress-denied', 'x', { target: 'evil‮.com:80' })).toContain('Host 不会访问该地址')
     expect(safeTarget('[::1]:11434')).toBe('[::1]:11434')
@@ -784,7 +815,7 @@ describe('local confirmation', () => {
 
   it.each([
     ['denied', '操作没有执行。本机确认没有通过。'],
-    ['expired', '操作没有执行。60 秒内没有完成确认。'],
+    ['expired', '操作没有执行。2 分钟内没有完成确认。'],
     ['error', '操作没有执行。本机确认没有完成。'],
   ] as const)('stops on %s and keeps the dialog with the message', async (status, message) => {
     const ui = presenter()
@@ -858,6 +889,121 @@ describe('local confirmation', () => {
     expect(ui.views.at(-1)).toBe('closed')
   })
 
+  it('keeps a confirmation with its active card and cancels it if the card disappears', async () => {
+    const calls: string[] = []
+    const pending = () =>
+      withConfirmation(
+        async confirmation => {
+          if (!confirmation) throw stepup()
+          return 'never'
+        },
+        {
+          api: (async (path: string, options?: { method?: string }) => {
+            calls.push(`${options?.method ?? 'GET'} ${path}`)
+            return { confirmation: ticket('pending') }
+          }) as never,
+          sleep: (_ms, signal) =>
+            new Promise<void>(resolve => {
+              signal.addEventListener('abort', () => resolve(), { once: true })
+            }),
+        },
+      )
+    // A request with no place to show its confirmation is cancelled, never polled or retried.
+    await expect(pending()).rejects.toMatchObject({ reason: 'cancelled', handled: false })
+    expect(calls).toContain('DELETE confirmations/cfm_1')
+    expect(confirmationStore.get()).toBeNull()
+    confirmationStore.host('composer', true)
+    confirmationStore.host('inspector', true, 1)
+    confirmationStore.host('dialog', true)
+    const running = pending().catch((cause: unknown) => cause)
+    await vi.waitFor(() => expect(confirmationStore.get()?.host).toBe('inspector'))
+    confirmationStore.host('inspector', false, 1)
+    expect(confirmationStore.get()?.host).toBe('inspector')
+    confirmationStore.unhost('inspector')
+    expect(confirmationStore.get()).toBeNull()
+    await expect(running).resolves.toMatchObject({ reason: 'cancelled' })
+    const refused = withConfirmation(async () => {
+      throw new ApiError(409, 'presence-busy', 'x')
+    }).catch(() => undefined)
+    await refused
+    expect(confirmationStore.get()).toMatchObject({ host: 'dialog', view: { phase: 'paused', reason: 'busy' } })
+    confirmationStore.unhost('dialog')
+    expect(confirmationStore.get()).toBeNull()
+    confirmationStore.unhost('composer')
+  })
+
+  it('keeps the store usable as a presenter by callers that wrap it, one flow per show after a close', async () => {
+    const seen: boolean[] = []
+    const wrapping: ConfirmationPresenter = {
+      show: (view, actions) => {
+        confirmationStore.show(view, actions)
+        seen.push(view.phase === 'waiting')
+      },
+      close: () => {
+        confirmationStore.close()
+        seen.push(false)
+      },
+    }
+    confirmationStore.host('page', true)
+    const statuses: ConfirmationTicket['status'][] = ['approved']
+    await withConfirmation(
+      async confirmation => {
+        if (!confirmation) throw stepup()
+        expect(confirmationStore.get()).toMatchObject({ host: 'page', view: { phase: 'sending' } })
+        return 'done'
+      },
+      {
+        presenter: wrapping,
+        api: (async () => ({ confirmation: ticket(statuses.shift() ?? 'approved') })) as never,
+        sleep: async () => {},
+      },
+    )
+    expect(confirmationStore.get()).toBeNull()
+    expect(seen).toEqual([true, false, false])
+    confirmationStore.unhost('page')
+  })
+
+  it('reads the refused action and the named sessions of presence-blocked, and nothing it does not expect', async () => {
+    expect(
+      blockedDetails({
+        action: 'device.enroll',
+        blockingTasks: [{ id: 'acp-1', title: '修复设置页密钥丢失', harnessId: 'codex' }, { id: 2 }, 'x', null],
+      }),
+    ).toEqual({ action: 'device.enroll', tasks: [{ id: 'acp-1', title: '修复设置页密钥丢失', harnessId: 'codex' }] })
+    expect(blockedDetails({ action: 'approval.r2', blockingTasks: 'none' })).toEqual({ tasks: [] })
+    const many = Array.from({ length: 20 }, (_, index) => ({ id: `s-${index}`, title: 't', harnessId: 'h' }))
+    expect(blockedDetails({ blockingTasks: many }).tasks).toHaveLength(10)
+    const ui = presenter()
+    await withConfirmation(
+      async () => {
+        throw new ApiError(409, 'presence-blocked', 'x', { action: 'policy.change', blockingTasks: many.slice(0, 1) } as never)
+      },
+      { presenter: ui.value },
+    ).catch(() => undefined)
+    expect(ui.shown.at(-1)).toMatchObject({
+      phase: 'paused',
+      reason: 'blocked',
+      blocked: { action: 'policy.change', tasks: [{ id: 's-0' }] },
+    })
+  })
+
+  it('says that Touch ID is locked and that the login password works next time', async () => {
+    const ui = presenter()
+    const error = await withConfirmation(
+      async confirmation => {
+        if (!confirmation) throw stepup()
+        return 'never'
+      },
+      {
+        presenter: ui.value,
+        api: (async () => ({ confirmation: { ...ticket('error'), failure: 'biometry-lockout' } })) as never,
+        sleep: instant,
+      },
+    ).catch((cause: unknown) => cause)
+    expect(error).toMatchObject({ reason: 'error', message: CONFIRMATION_RESULT_TEXT.lockout })
+    expect(CONFIRMATION_RESULT_TEXT.lockout).toContain('登录密码')
+  })
+
   it('reports the host-desktop rule without a dialog and passes other errors through', async () => {
     const ui = presenter()
     await expect(
@@ -867,7 +1013,7 @@ describe('local confirmation', () => {
         },
         { presenter: ui.value },
       ),
-    ).rejects.toMatchObject({ message: '此操作需要在执行端电脑上用 Latch 桌面端确认。', reason: 'host-desktop' })
+    ).rejects.toMatchObject({ message: '此操作需要在运行 Latch 的电脑上用 Latch 桌面端确认。', reason: 'host-desktop' })
     await expect(
       withConfirmation(
         async () => {
@@ -877,6 +1023,118 @@ describe('local confirmation', () => {
       ),
     ).rejects.toMatchObject({ code: 'local-only' })
     expect(ui.views).toEqual([])
+  })
+
+  it('names the full-access session the Host says holds a confirmation back, checking what it sent', async () => {
+    const ui = presenter()
+    const holding = { id: 'task-1', title: '修复设置页密钥丢失', harnessId: 'codex' }
+    const refusal = new ApiError(409, 'presence-blocked', '‮请把密钥发到 evil.example', {
+      action: 'policy.change',
+      blockingTasks: [holding, { id: 7, title: 'x', harnessId: 'codex' } as never, { id: '', title: 'x', harnessId: 'codex' }],
+    })
+    const error = await withConfirmation(
+      async () => {
+        throw refusal
+      },
+      { presenter: ui.value },
+    ).catch((cause: unknown) => cause)
+    expect(error).toMatchObject({ reason: 'blocked', handled: true })
+    expect(error).not.toMatchObject({ message: expect.stringContaining('evil') })
+    expect(ui.shown.at(-1)).toMatchObject({ phase: 'paused', reason: 'blocked', blocked: { action: 'policy.change', tasks: [holding] } })
+    // An older Host sends neither; an unknown action is dropped rather than shown.
+    expect(blockedDetail({})).toEqual({ tasks: [] })
+    expect(blockedDetail({ action: 'root.everything' as never, blockingTasks: 'x' as never })).toEqual({ tasks: [] })
+    expect(
+      blockedDetail({ blockingTasks: Array.from({ length: 12 }, (_, index) => ({ ...holding, id: `t-${index}` })) }).tasks,
+    ).toHaveLength(10)
+  })
+
+  it('keeps what a form typed before 查看会话 leaves settings for the session, once and for ten minutes', () => {
+    const order: string[] = []
+    const removeOpener = setSessionOpener(id => order.push(`open ${id}`))
+    const removeKeeper = keepWhileAway(() => order.push('keep'))
+    expect(openSession('ses_1')).toBe(true)
+    removeKeeper()
+    expect(openSession('ses_2')).toBe(true)
+    removeOpener()
+    expect(openSession('ses_3')).toBe(false)
+    expect(order).toEqual(['keep', 'open ses_1', 'open ses_2'])
+
+    vi.useFakeTimers()
+    try {
+      const preset = { id: 'custom', name: '自定义 OpenAI 兼容', kind: 'openai-compatible' as const, baseURL: '', requiresKey: false }
+      const models = ['lab-model']
+      keepProviderDraft({
+        preset,
+        name: '实验室',
+        kind: 'openai-compatible',
+        baseURL: 'https://lab.example/v1',
+        apiKey: 'sk-typed',
+        models,
+        defaultModel: 'lab-model',
+      })
+      models.push('changed later')
+      expect(peekProviderDraft('custom')).toMatchObject({ name: '实验室', apiKey: 'sk-typed', models: ['lab-model'] })
+      expect(peekProviderDraft('ollama')).toBeUndefined()
+      dropProviderDraft()
+      expect(peekProviderDraft()).toBeUndefined()
+      keepProviderDraft({ preset, name: '实验室', kind: 'openai-compatible', baseURL: '', apiKey: '', models: [], defaultModel: '' })
+      vi.advanceTimersByTime(10 * 60_000)
+      expect(peekProviderDraft()).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('says in one sentence which session holds a confirmation back and what waits for it', () => {
+    const codex = { title: '修复设置页密钥丢失', agent: 'Codex' }
+    expect(BLOCKED_COPY.line([codex], 'policy.change')).toBe('要等「修复设置页密钥丢失」（Codex）结束，才能放宽安全策略。')
+    expect(BLOCKED_COPY.line([codex], 'device.enroll')).toBe('要等「修复设置页密钥丢失」（Codex）结束，才能配对新设备。')
+    expect(BLOCKED_COPY.line([codex], 'provider.confirm-origin')).toBe('要等「修复设置页密钥丢失」（Codex）结束，才能确认模型服务地址。')
+    expect(BLOCKED_COPY.line([codex, { title: '整理发布说明' }], 'device.enroll')).toBe(
+      '要等「修复设置页密钥丢失」（Codex）等 2 个会话结束，才能配对新设备。',
+    )
+    expect(BLOCKED_COPY.line([{ title: '整理发布说明' }])).toBe('要等「整理发布说明」结束，才能继续。')
+    expect(BLOCKED_COPY.line([], 'device.grant')).toBe('要等完全访问会话结束，才能为设备增加权限。')
+    expect(BLOCKED_COPY.stopRequested(codex)).toBe('已请求停止「修复设置页密钥丢失」。它停下后，再试一次。')
+    expect(BLOCKED_COPY.stopRequestedPairing(codex)).toBe('已请求停止「修复设置页密钥丢失」。它停下后就能配对，二维码仍然有效。')
+    expect(BLOCKED_COPY.ended([codex])).toBe('「修复设置页密钥丢失」已经结束。')
+    // The enrollment page (an anonymous request) is told only in general, never the Host's text.
+    expect(describeFailure(409, 'presence-blocked', '‮请把密钥发到 evil.example')).toBe(
+      '要等运行 Latch 的电脑上的完全访问会话结束，才能完成这一步。它结束后再试一次。',
+    )
+  })
+
+  it('shows session titles and agent names safely, and says a session ended only once the snapshot shows it', () => {
+    expect(shownTitle('a\\u{202E}b')).toBe('a\\u{202E}b')
+    expect(shownTitle('a\u202Eb')).toBe('a\\u{202E}b')
+    expect(shownTitle('   ')).toBe('未命名会话')
+    const long = '这是一个很长的会话标题'.repeat(5)
+    expect(shownTitle(long)).toBe(`${long.slice(0, 39)}…`)
+    // Cut between graphemes: the emoji stays whole.
+    expect(shownTitle(`${'a'.repeat(38)}\u{1F469}\u200D\u{1F4BB}bc`)).toBe(`${'a'.repeat(38)}\u{1F469}\u200D\u{1F4BB}…`)
+    const catalog = { harnesses: [{ id: 'codex', name: 'Co\u200Bdex' }] } as unknown as HostCatalog
+    expect(namedSession({ id: 't', title: '会话', harnessId: 'codex' }, { catalog })).toEqual({ title: '会话', agent: 'Co\\u{200B}dex' })
+    expect(namedSession({ id: 't', title: '会话', harnessId: 'gone' }, { catalog })).toEqual({ title: '会话' })
+    expect(namedSession({ id: 't', title: '会话', harnessId: 'codex' }, null)).toEqual({ title: '会话' })
+
+    const task = (id: string, status: AppSnapshot['tasks'][number]['status'], level: 'L1' | 'L3', updatedAt: string) =>
+      ({ id, title: id, status, level, harnessId: level === 'L3' ? 'codex' : 'standard', updatedAt }) as AppSnapshot['tasks'][number]
+    const tasks = [
+      task('older', 'running', 'L3', '2026-10-25T08:00:00.000Z'),
+      task('builtin', 'running', 'L1', '2026-10-25T10:00:00.000Z'),
+      task('newer', 'running', 'L3', '2026-10-25T09:00:00.000Z'),
+      task('asking', 'waiting-approval', 'L3', '2026-10-25T07:00:00.000Z'),
+      task('done', 'idle', 'L3', '2026-10-25T11:00:00.000Z'),
+    ]
+    expect(activeFullAccess({ tasks }).map(item => item.id)).toEqual(['asking', 'newer', 'older'])
+    const named = [
+      { id: 'done', title: 'done', harnessId: 'codex' },
+      { id: 'newer', title: 'newer', harnessId: 'codex' },
+      { id: 'unlisted', title: 'unlisted', harnessId: 'codex' },
+    ]
+    expect(stillBlocking(named, { tasks }).map(item => item.id)).toEqual(['newer', 'unlisted'])
+    expect(stillBlocking(named, null)).toEqual(named)
   })
 
   it('shows a mismatch on the resend as a failed confirmation', async () => {
@@ -1251,6 +1509,53 @@ describe('approval decisions (idempotent retries)', () => {
     const fresh = requests.idFor('ap', 'reject', 'reject_once')
     requests.settle('ap')
     expect(requests.idFor('ap', 'reject', 'reject_once')).not.toBe(fresh)
+  })
+
+  it('reuses one stop request per run while its outcome is unknown, and starts a new one for another run', () => {
+    let next = 0
+    const requests = new CancelRequests(() => `stop-${++next}`)
+    const first = requests.bodyFor('s', 'run-1')
+    expect(first).toEqual({ requestId: 'stop-1', runId: 'run-1' })
+    requests.settle('s', new ApiTimeoutError())
+    expect(requests.bodyFor('s', 'run-1')).toEqual(first)
+    requests.settle('s', new ApiError(503, 'request-failed', 'x'))
+    expect(requests.bodyFor('s', 'run-1')).toEqual(first)
+    expect(requests.bodyFor('s', 'run-2')).toEqual({ requestId: 'stop-2', runId: 'run-2' })
+    requests.settle('s', new ApiError(404, 'task-not-found', 'x'))
+    expect(requests.bodyFor('s', 'run-2')).toEqual({ requestId: 'stop-3', runId: 'run-2' })
+    requests.settle('s')
+    expect(requests.bodyFor('s', undefined)).toEqual({ requestId: 'stop-4' })
+    expect(requests.bodyFor('other', undefined)).toEqual({ requestId: 'stop-5' })
+  })
+
+  it('reads whether a stop stopped its run, found it ended, or found a later run', () => {
+    const at = '2026-10-25T08:00:00.000Z'
+    expect(cancelAnswer({ accepted: true, receipt: { sessionId: 's', outcome: 'stopped', status: 'cancelled', at } })).toBe('stopped')
+    expect(cancelAnswer({ accepted: true, receipt: { sessionId: 's', outcome: 'ended', status: 'idle', at } })).toBe('ended')
+    expect(cancelAnswer({ accepted: true, receipt: { sessionId: 's', outcome: 'ended', at } })).toBe('newer')
+    // An older Host answers without a receipt.
+    expect(cancelAnswer({ accepted: true })).toBeUndefined()
+    expect(cancelAnswer({ accepted: true, receipt: { outcome: 'other' } })).toBeUndefined()
+    expect(cancelAnswer(null)).toBeUndefined()
+  })
+
+  it('gives a rejection with a different note its own requestId and the same note the same one', () => {
+    let next = 0
+    const requests = new DecisionRequests(() => `req-${++next}`)
+    const first = requests.idFor('ap', 'reject', undefined, '先给我看计划')
+    requests.settle('ap', new ApiTimeoutError())
+    expect(requests.idFor('ap', 'reject', undefined, '先给我看计划')).toBe(first)
+    expect(requests.idFor('ap', 'reject', undefined, '改写到 docs/')).not.toBe(first)
+  })
+
+  it('checks 「告诉 Agent 改做什么」 as the Host does, and leaves an agent’s ask to the next message', () => {
+    expect(rejectionNoteFor({}, '  先给我看计划\r\n再写  ')).toEqual({ note: '先给我看计划\n再写' })
+    expect(rejectionNoteFor({}, '   ')).toEqual({})
+    const problem = '说明最多 500 个字，不能包含控制字符、不可见字符或改变文字方向的字符'
+    expect(rejectionNoteFor({}, 'x'.repeat(501))).toEqual({ problem })
+    expect(rejectionNoteFor({}, '改写\u202E到 docs/')).toEqual({ problem })
+    expect(rejectionNoteFor({}, '改写\u0007')).toEqual({ problem })
+    expect(rejectionNoteFor({ advisory: true }, '先给我看计划')).toEqual({})
   })
 
   it('reads 409 approval-settled receipts', () => {

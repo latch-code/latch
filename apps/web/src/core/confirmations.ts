@@ -1,6 +1,7 @@
-import { useSyncExternalStore } from 'react'
-import type { ConfirmationTicket } from '@latch/protocol'
+import { useLayoutEffect, useSyncExternalStore } from 'react'
+import type { BlockingTask, ConfirmationTicket, PresenceAction } from '@latch/protocol'
 import { api as defaultApi, ApiError, ClientError, type ApiOptions } from './api.ts'
+import { blockedDetail } from './blocking.ts'
 import { CONFIRMATION_RESULT_TEXT, describeFailure, HOST_DESKTOP_TEXT } from './securityCopy.ts'
 
 /**
@@ -9,9 +10,10 @@ import { CONFIRMATION_RESULT_TEXT, describeFailure, HOST_DESKTOP_TEXT } from './
  * and a ticket; the page waits for the ticket to settle, then sends the
  * identical request again with `x-latch-confirmation`.
  *
- * A presenter shows the states. By default it is the page-wide dock
- * (`ConfirmationDialog`); a caller that shows the states in place (the approval
- * card: the waiting button, the reason in the card) passes its own.
+ * A presenter shows the states. By default each call is a flow in the page's
+ * store, shown by the inline card (`InlineConfirm`) of the place that started
+ * it: the card that was active when the flow began keeps it. Leaving the card
+ * cancels a pending confirmation. The approval card passes its own presenter.
  */
 
 /** Why no confirmation could start: three refusals in a row, another one still open, or a full-access session running. */
@@ -19,11 +21,17 @@ export type PausedReason = 'cooldown' | 'busy' | 'blocked'
 
 export type FailureReason = 'denied' | 'expired' | 'cancelled' | 'error'
 
+/** What a `presence-blocked` refusal says: the confirmation refused and, for a device that may see them, the sessions. */
+export interface Blocked {
+  action?: PresenceAction
+  tasks: BlockingTask[]
+}
+
 export type ConfirmationView =
   | { phase: 'waiting'; ticket: ConfirmationTicket }
   | { phase: 'sending'; ticket: ConfirmationTicket }
   | { phase: 'failed'; ticket: ConfirmationTicket; message: string; reason: FailureReason }
-  | { phase: 'paused'; reason: PausedReason; message: string; until?: number }
+  | { phase: 'paused'; reason: PausedReason; message: string; until?: number; blocked?: Blocked }
 
 export interface ConfirmationActions {
   /** Waiting: cancels the ticket on the Host. */
@@ -45,7 +53,7 @@ export class ConfirmationError extends ClientError {
 }
 
 export interface ConfirmationOptions {
-  /** Where the states are shown; the page-wide dock unless the caller shows them in place. */
+  /** Where the states are shown; the active inline card unless the caller provides its own presenter. */
   presenter?: ConfirmationPresenter
   api?: <T>(path: string, options?: ApiOptions) => Promise<T>
   pollMs?: number
@@ -64,6 +72,11 @@ function defaultSleep(ms: number, wake: AbortSignal): Promise<void> {
   })
 }
 
+/** The refused action and sessions use the same validation as pairing notices. */
+export function blockedDetails(details: Readonly<Record<string, unknown>>): Blocked {
+  return blockedDetail(details)
+}
+
 /** The Host's refusals to start a confirmation at all, which the presenter explains instead of the caller's form. */
 function pausedReason(error: ApiError): PausedReason | undefined {
   if (error.status === 429 && error.code === 'presence-cooldown') return 'cooldown'
@@ -80,7 +93,7 @@ function pausedReason(error: ApiError): PausedReason | undefined {
  * (cooldown, another one open, a full-access session running) is explained the same way.
  */
 export async function withConfirmation<T>(send: (confirmation?: string) => Promise<T>, options: ConfirmationOptions = {}): Promise<T> {
-  const presenter = options.presenter ?? confirmationStore
+  const presenter = options.presenter ?? confirmationStore.begin()
   const request = options.api ?? defaultApi
   const pollMs = Math.max(500, options.pollMs ?? 500)
   const sleep = options.sleep ?? defaultSleep
@@ -100,6 +113,7 @@ export async function withConfirmation<T>(send: (confirmation?: string) => Promi
           reason: paused,
           message,
           ...(paused === 'cooldown' && typeof wait === 'number' && Number.isFinite(wait) ? { until: Date.now() + wait * 1000 } : {}),
+          ...(paused === 'blocked' ? { blocked: blockedDetails(error.details) } : {}),
         },
         closed,
       )
@@ -153,7 +167,8 @@ export async function withConfirmation<T>(send: (confirmation?: string) => Promi
   if (ticket.status === 'denied') fail('denied', CONFIRMATION_RESULT_TEXT.denied)
   if (ticket.status === 'expired') fail('expired', CONFIRMATION_RESULT_TEXT.expired)
   if (ticket.status === 'cancelled') fail('cancelled', CONFIRMATION_RESULT_TEXT.cancelled)
-  if (ticket.status !== 'approved') fail('error', CONFIRMATION_RESULT_TEXT.error)
+  if (ticket.status !== 'approved')
+    fail('error', ticket.failure === 'biometry-lockout' ? CONFIRMATION_RESULT_TEXT.lockout : CONFIRMATION_RESULT_TEXT.error)
 
   presenter.show({ phase: 'sending', ticket }, actions)
   try {
@@ -168,33 +183,98 @@ export async function withConfirmation<T>(send: (confirmation?: string) => Promi
   }
 }
 
-/** The page-wide dialog state; `ConfirmationDialog` renders it. */
+/**
+ * The page's confirmation flows: one at a time, as the Host allows. A flow belongs to the inline card that was active
+ * when it began (the most recently activated one), and stays with it while that card is mounted. A card that goes away
+ * cancels its pending confirmation and removes its flow. A request without an active card is refused.
+ */
 type Listener = () => void
-interface StoreState {
+export interface ConfirmationFlow {
+  id: number
   view: ConfirmationView
   actions: ConfirmationActions
+  /** The inline card that shows it. */
+  host?: string
 }
-let current: StoreState | null = null
+let current: ConfirmationFlow | null = null
+let flows = 0
+/** The flow `confirmationStore.show` drives, for presenters that wrap the store (they predate flows). */
+let wrapped: { id: number; presenter: ConfirmationPresenter } | null = null
+/** Each mounted card: when it was last activated (0 while inactive) and its rank among cards active at once. */
+const hosts = new Map<string, { at: number; rank: number }>()
+let activations = 0
 const listeners = new Set<Listener>()
 const emit = () => {
   for (const listener of listeners) listener()
 }
 
-export const confirmationStore: ConfirmationPresenter & {
-  subscribe: (listener: Listener) => () => void
-  get: () => StoreState | null
-} = {
-  show: (view, actions) => {
-    current = { view, actions }
-    emit()
+/** The card the next flow goes to: of the active ones, the highest rank, then the one activated last. */
+function topHost(): string | undefined {
+  let top: [string, { at: number; rank: number }] | undefined
+  for (const entry of hosts) {
+    const [, state] = entry
+    if (state.at === 0) continue
+    if (top === undefined || state.rank > top[1].rank || (state.rank === top[1].rank && state.at > top[1].at)) top = entry
+  }
+  return top?.[0]
+}
+
+export const confirmationStore = {
+  /**
+   * The store as a presenter itself, for a caller that wraps it to follow the states (a button's own label): each
+   * `show` after a `close` begins a new flow, routed like any other.
+   */
+  show(view: ConfirmationView, actions: ConfirmationActions): void {
+    if (wrapped === null || (current !== null && current.id !== wrapped.id)) {
+      const presenter = confirmationStore.begin()
+      wrapped = { id: flows, presenter }
+    }
+    wrapped.presenter.show(view, actions)
   },
-  close: () => {
-    if (current !== null) {
-      current = null
-      emit()
+  close(): void {
+    wrapped?.presenter.close()
+    wrapped = null
+  },
+  /** A presenter for one withConfirmation call. */
+  begin(): ConfirmationPresenter {
+    const id = ++flows
+    return {
+      show: (view, actions) => {
+        const host = current?.id === id ? current.host : topHost()
+        if (host === undefined) {
+          if (view.phase === 'waiting') actions.cancel()
+          throw new ConfirmationError(
+            view.phase === 'failed' || view.phase === 'paused' ? view.message : CONFIRMATION_RESULT_TEXT.cancelled,
+            view.phase === 'paused' ? view.reason : 'cancelled',
+            false,
+          )
+        }
+        current = { id, view, actions, host }
+        emit()
+      },
+      close: () => {
+        if (current?.id === id) {
+          current = null
+          emit()
+        }
+      },
     }
   },
-  subscribe: listener => {
+  /** Marks an inline card mounted; `active` is true while its place has a request in flight. */
+  host(id: string, active: boolean, rank = 0): void {
+    const was = hosts.get(id)
+    const at = active ? (was !== undefined && was.at > 0 ? was.at : ++activations) : 0
+    hosts.set(id, { at, rank })
+  },
+  unhost(id: string): void {
+    hosts.delete(id)
+    if (current?.host !== id) return
+    const flow = current
+    current = null
+    if (flow.view.phase === 'waiting') flow.actions.cancel()
+    emit()
+  },
+  subscribe: (listener: Listener) => {
     listeners.add(listener)
     return () => {
       listeners.delete(listener)
@@ -203,6 +283,20 @@ export const confirmationStore: ConfirmationPresenter & {
   get: () => current,
 }
 
-export function useConfirmationState(): StoreState | null {
-  return useSyncExternalStore(confirmationStore.subscribe, confirmationStore.get, () => null)
+/**
+ * The flow an inline card shows, while it is mounted; `active` while its place waits for an answer. A higher `rank`
+ * wins over other cards active at the same time.
+ */
+export function useInlineConfirmation(id: string, active: boolean, rank = 0): ConfirmationFlow | null {
+  useLayoutEffect(() => {
+    confirmationStore.host(id, active, rank)
+  }, [id, active, rank])
+  useLayoutEffect(
+    () => () => {
+      confirmationStore.unhost(id)
+    },
+    [id],
+  )
+  const flow = useSyncExternalStore(confirmationStore.subscribe, confirmationStore.get, () => null)
+  return flow?.host === id ? flow : null
 }

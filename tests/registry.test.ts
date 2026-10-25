@@ -187,7 +187,7 @@ describe('plugin lifecycle', () => {
     await registry.close()
   })
 
-  it('keeps a Harness plugin leased for the full host lifetime, independently of provider runs', async () => {
+  it('keeps a Harness plugin leased for the full host lifetime, independently of provider runs, and never lists a mount as a run', async () => {
     const context = new Context()
     const registry = new PluginRegistry(context)
     const dispose = vi.fn()
@@ -206,7 +206,8 @@ describe('plugin lifecycle', () => {
     expect(registry.list()[0]?.capabilities).toEqual(['harness:standard'])
     const lease = registry.acquireHarness('standard')
     expect(lease.driver).toBe(standardHarnessDriver)
-    expect(registry.list()[0]?.activeRuns).toBe(1)
+    // Mounted with no session running: the plugin is held, but nothing runs on it.
+    expect(registry.list()[0]?.activeRuns).toBe(0)
     await expect(registry.disable('standard-harness')).rejects.toMatchObject({ code: 'plugin-in-use' })
     expect(dispose).not.toHaveBeenCalled()
     lease.release()
@@ -215,6 +216,30 @@ describe('plugin lifecycle', () => {
     expect(dispose).toHaveBeenCalledOnce()
     expect(() => registry.acquireHarness('standard')).toThrow()
     expect(context.registry.size).toBe(0)
+    await registry.close()
+  })
+
+  it('lists only runs as in use: a mount holds the plugin but is not a run', async () => {
+    const registry = new PluginRegistry(new Context())
+    const base = plugin()
+    registry.register({
+      ...base,
+      activate(ctx) {
+        ctx.registerHarness(standardHarnessDriver)
+        return base.activate(ctx)
+      },
+    })
+    await registry.enable('example')
+    const mount = registry.acquireHarness('standard')
+    expect(registry.list()[0]?.activeRuns).toBe(0)
+    const run = registry.acquire('test')
+    expect(registry.list()[0]?.activeRuns).toBe(1)
+    run.release()
+    expect(registry.list()[0]?.activeRuns).toBe(0)
+    // The mount alone still keeps the plugin from being turned off.
+    await expect(registry.disable('example')).rejects.toMatchObject({ code: 'plugin-in-use' })
+    mount.release()
+    await registry.disable('example')
     await registry.close()
   })
 

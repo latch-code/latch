@@ -1,12 +1,11 @@
 // Latch local presence confirmation helper (macOS).
 //
-// Reads one JSON request line from stdin, recomputes the preview hash itself, shows the preview in a floating panel,
-// asks for Touch ID or the login password, and writes one JSON result line to stdout. It reads nothing but stdin
-// (and, in --self-test mode, the vectors file named on the command line, checking canonical JSON, preview hashes and
-// the display escaping), writes nothing but stdout, makes no network
-// calls and ignores its environment.
+// Reads one JSON request line from stdin, recomputes the preview hash and the reason sentence itself, asks for Touch ID
+// or the login password through the system's own LocalAuthentication sheet with that sentence, and writes one JSON
+// result line to stdout. It draws no window of its own. It reads nothing but stdin (and, in --self-test mode, the
+// vectors file named on the command line, checking canonical JSON, preview hashes, the display escaping, the reason
+// sentences and request validation), writes nothing but stdout, makes no network calls and ignores its environment.
 
-import AppKit
 import CryptoKit
 import Foundation
 import LocalAuthentication
@@ -324,11 +323,10 @@ func emitError(_ message: String) -> Never {
   emit([("result", "error"), ("error", String(message.prefix(200)))])
 }
 
-// MARK: - Request
+// MARK: - Display text
 
-let listenerLabels: [String: String] = [
-  "unix": "本机桌面端", "loopback-tcp": "本机浏览器", "lan-tls": "局域网 HTTPS", "tailnet-tls": "Tailscale HTTPS", "cli": "命令行",
-]
+/// The Host's listener classes, the only requesters a preview may name.
+let listeners: Set<String> = ["unix", "loopback-tcp", "lan-tls", "tailnet-tls", "cli"]
 
 /// Combining marks kept in a row; later ones in the same run are escaped, so stacked marks cannot cover other lines.
 let maxCombiningRun = 4
@@ -395,16 +393,151 @@ func visible(_ text: String) -> String {
   return output
 }
 
+// MARK: - Reason: the sentence the system sheet shows, byte-for-byte equal to the Host's presenceReason
+
+/// A literal; a slot, escaped and cut to `max` grapheme clusters with "…" (at its start when `keepEnd`, so a path keeps
+/// its file name and a host name its domain); or text added only when one of the named slots was cut. A slot with a
+/// `lead` may be empty, and then neither it, its lead nor its `trail` appears; every other slot must have text.
+enum Segment {
+  case text(String)
+  case slot(String, max: Int, keepEnd: Bool, lead: String?, trail: String?)
+  case cut([String], String)
+}
+
+struct ReasonForm {
+  let actions: Set<String>
+  let segments: [Segment]
+}
+
+func slot(_ name: String, _ max: Int, keepEnd: Bool = false, lead: String? = nil, trail: String? = nil) -> Segment {
+  .slot(name, max: max, keepEnd: keepEnd, lead: lead, trail: trail)
+}
+
+let harnessSlot = slot("harness", 16)
+/// Where a session runs: a saved project by its name, or the Host's words for the folder of a session without one.
+let projectSlot = slot("project", 16, lead: "（在「", trail: "」）")
+let folderSlot = slot("folder", 16, lead: "（在", trail: "）")
+/// The resolved executable's absolute path (home as ~), keeping its end.
+let programSlot = slot("program", 52, keepEnd: true)
+let argsSlot = slot("args", 24, lead: " ")
+/// The names of the environment variables a definition sets; never their values.
+let envSlot = slot("env", 24, lead: "，另设 ")
+let fullCommand = Segment.cut(["program", "args", "env"], "；完整命令见 Latch 里的确认详情")
+let command: [Segment] = [programSlot, argsSlot, envSlot, fullCommand]
+let whySlot = slot("why", 16)
+let targetSlot = slot("target", 48, keepEnd: true)
+
+/// The same table as REASON_FORMS in apps/host/src/presence-reason.ts; the shared vectors pin both.
+let reasonForms: [String: ReasonForm] = [
+  "approval.write": ReasonForm(actions: ["approval.r2"], segments: [
+    .text("批准写入 "), slot("path", 40, keepEnd: true), .text("（"), whySlot, .text("）"),
+  ]),
+  "approval.tool": ReasonForm(actions: ["approval.r2"], segments: [
+    .text("批准运行工具 "), slot("tool", 24), .text("（"), whySlot, .text("）"), slot("input", 40, lead: "："),
+    .cut(["input"], "；完整参数见 Latch 里的确认详情"),
+  ]),
+  "key.save": ReasonForm(actions: ["provider.set-key"], segments: [
+    .text("保存 "), slot("provider", 24), .text(" 的密钥，只发往 "), slot("origin", 48, keepEnd: true),
+  ]),
+  "key.origin": ReasonForm(actions: ["provider.set-key", "policy.change", "provider.confirm-origin"], segments: [
+    .text("保存 "), slot("provider", 24), .text(" 并允许 Host 访问 "), targetSlot,
+  ]),
+  "origin.confirm": ReasonForm(actions: ["provider.confirm-origin"], segments: [.text("允许 Host 访问模型服务地址 "), targetSlot]),
+  "policy.egress": ReasonForm(actions: ["policy.change"], segments: [.text("允许 Host 访问 "), slot("target", 64, keepEnd: true)]),
+  "policy.egress-many": ReasonForm(actions: ["policy.change"], segments: [.text("允许 Host 访问 "), slot("count", 4), .text(" 个新地址")]),
+  "policy.local": ReasonForm(actions: ["policy.change"], segments: [.text("把在这台电脑上发起的上限放宽到"), slot("level", 8)]),
+  "policy.remote": ReasonForm(actions: ["policy.change"], segments: [.text("把从手机和其他电脑发起的上限放宽到"), slot("level", 8)]),
+  "policy.remote-start": ReasonForm(actions: ["policy.change"], segments: [.text("允许其他设备在这台电脑上新建会话")]),
+  "policy.remote-agents": ReasonForm(actions: ["policy.change"], segments: [.text("允许其他设备使用更多 Agent")]),
+  "policy.remote-projects": ReasonForm(actions: ["policy.change"], segments: [.text("允许其他设备使用更多项目")]),
+  "policy.several": ReasonForm(actions: ["policy.change"], segments: [.text("放宽本机安全策略："), slot("count", 4), .text(" 项更改")]),
+  "start.first": ReasonForm(actions: ["task.start-l3"], segments: [
+    .text("首次以完全访问启动 "), harnessSlot, projectSlot, folderSlot, .text("："),
+  ] + command),
+  "start.first-custom": ReasonForm(actions: ["task.start-l3"], segments: [
+    .text("首次以完全访问启动 "), harnessSlot, projectSlot, folderSlot, .text("：自定义命令 "),
+  ] + command),
+  "start.changed": ReasonForm(actions: ["task.start-l3"], segments: [
+    .text("以完全访问启动 "), harnessSlot, projectSlot, folderSlot, .text("，命令已变化："),
+  ] + command),
+  "start.changed-custom": ReasonForm(actions: ["task.start-l3"], segments: [
+    .text("以完全访问启动 "), harnessSlot, projectSlot, folderSlot, .text("，命令已变化：自定义命令 "),
+  ] + command),
+  "start.project-config": ReasonForm(actions: ["task.start-l3"], segments: [
+    .text("开启完全访问会话："), harnessSlot, projectSlot, folderSlot, .text("，项目配置与以前启动时不同"),
+  ]),
+  "start.first-plugin": ReasonForm(actions: ["task.start-l3"], segments: [
+    .text("首次以完全访问启动 "), harnessSlot, projectSlot, folderSlot, .text("：插件 "), slot("plugin", 40),
+  ]),
+  "start.changed-plugin": ReasonForm(actions: ["task.start-l3"], segments: [
+    .text("以完全访问启动 "), harnessSlot, projectSlot, folderSlot, .text("，插件已变化："), slot("plugin", 40),
+  ]),
+  "start.repeat": ReasonForm(actions: ["task.start-l3"], segments: [.text("开启完全访问会话："), harnessSlot, projectSlot, folderSlot]),
+  "mode.widen": ReasonForm(actions: ["task.mode-widen"], segments: [
+    .text("把会话「"), slot("session", 20), .text("」的权限模式放宽到 "), slot("mode", 24),
+  ]),
+  "device.enroll": ReasonForm(actions: ["device.enroll"], segments: [
+    .text("允许指纹 "), slot("fingerprint", 24), .text(" 的新设备「"), slot("device", 20), .text("」连接"),
+  ]),
+  "device.grant": ReasonForm(actions: ["device.grant"], segments: [
+    .text("为设备「"), slot("device", 20), .text("」增加权限："), slot("change", 40),
+  ]),
+]
+
+/// The reason for `action` from a subject, or nil when the form, its action or its slots do not match exactly.
+func presenceReason(action: String, form name: String, slots: [String: String]) -> String? {
+  guard let form = reasonForms[name], form.actions.contains(action) else { return nil }
+  var names: [String] = []
+  for segment in form.segments { if case .slot(let slot, _, _, _, _) = segment { names.append(slot) } }
+  guard slots.count == names.count, Set(slots.keys) == Set(names) else { return nil }
+  var reason = ""
+  var cut = Set<String>()
+  for segment in form.segments {
+    switch segment {
+    case .text(let text): reason += text
+    case .slot(let slot, let max, let keepEnd, let lead, let trail):
+      guard let value = slots[slot], !value.isEmpty || lead != nil else { return nil }
+      if value.isEmpty { continue }
+      // Swift's Character is an extended grapheme cluster, as Intl.Segmenter's graphemes are on the Host.
+      let clusters = Array(visible(value))
+      reason += lead ?? ""
+      if clusters.count <= max {
+        reason += String(clusters)
+      } else {
+        cut.insert(slot)
+        reason += keepEnd ? "…" + String(clusters.suffix(max - 1)) : String(clusters.prefix(max - 1)) + "…"
+      }
+      reason += trail ?? ""
+    case .cut(let names, let text): if names.contains(where: { cut.contains($0) }) { reason += text }
+    }
+  }
+  return reason
+}
+
+/// A subject's form and slots, or nil unless it is exactly `{ form, slots: { name: text } }`.
+func subjectParts(_ subject: JSONValue?) -> (form: String, slots: [String: String])? {
+  guard let subject, Set(subject.keys) == ["form", "slots"], let form = subject["form"]?.stringValue,
+        case .object(let members)? = subject["slots"] else { return nil }
+  var slots: [String: String] = [:]
+  for member in members {
+    guard let value = member.value.stringValue else { return nil }
+    slots[String(decoding: member.key, as: UTF16.self)] = value
+  }
+  return (form, slots)
+}
+
+// MARK: - Request
+
 struct Request {
   let nonce: String
   let previewHash: String
-  let hashDisplay: String
-  let title: String
-  let requester: String
-  let lines: [(label: String, value: String)]
-  let warnings: [String]
+  let reason: String
   let timeoutSeconds: Int
   let requireBiometric: Bool
+}
+
+struct Refusal: Error {
+  let code: String
 }
 
 func strings(_ value: JSONValue?) -> [String]? {
@@ -417,38 +550,35 @@ func strings(_ value: JSONValue?) -> [String]? {
   return output
 }
 
-/// Exits with an error result unless the request is well-formed and its preview hashes to `previewHash`.
-func readRequest(_ data: Data) -> Request {
-  let bytes = [UInt8](data)
+/// The request, unless it is malformed, its preview does not hash to `previewHash`, or its reason is not exactly the
+/// sentence its subject produces (compared as UTF-16 code units, never by Unicode equivalence).
+func parseRequest(_ bytes: [UInt8]) throws -> Request {
   let lineEnd = bytes.firstIndex(of: 0x0A) ?? bytes.count
-  guard let root = try? JSONParser.parse(Array(bytes[..<lineEnd])) else { emitError("request-invalid") }
-  guard case .integer(1)? = root["v"], let preview = root["preview"], case .object = preview,
-        let previewHash = root["previewHash"]?.stringValue, let hashDisplay = root["hashDisplay"]?.stringValue,
+  guard let root = try? JSONParser.parse(Array(bytes[..<lineEnd])) else { throw Refusal(code: "request-invalid") }
+  guard Set(root.keys) == ["v", "preview", "previewHash", "timeoutSeconds", "requireBiometric"], case .integer(2)? = root["v"],
+        let preview = root["preview"], case .object = preview, let previewHash = root["previewHash"]?.stringValue,
         case .integer(let timeout)? = root["timeoutSeconds"], (1...120).contains(timeout),
-        case .bool(let requireBiometric)? = root["requireBiometric"] else { emitError("request-invalid") }
+        case .bool(let requireBiometric)? = root["requireBiometric"] else { throw Refusal(code: "request-invalid") }
 
-  // What is shown must be exactly what was hashed.
-  let computed = Canonical.sha256Hex(Canonical.bytes(preview))
-  guard computed == previewHash, Canonical.hashDisplay(computed) == hashDisplay else { emitError("preview-hash-mismatch") }
+  guard Canonical.sha256Hex(Canonical.bytes(preview)) == previewHash else { throw Refusal(code: "preview-hash-mismatch") }
 
-  let allowed: Set<String> = ["v", "hostId", "action", "title", "requester", "lines", "warnings", "nonce", "expiresAt"]
-  guard Set(preview.keys) == allowed, case .integer(1)? = preview["v"],
-        preview["hostId"]?.stringValue != nil, preview["action"]?.stringValue != nil, preview["expiresAt"]?.stringValue != nil,
-        let title = preview["title"]?.stringValue, let nonce = preview["nonce"]?.stringValue,
+  let allowed: Set<String> = ["v", "hostId", "action", "title", "reason", "subject", "requester", "lines", "warnings", "nonce", "expiresAt"]
+  guard Set(preview.keys) == allowed, case .integer(2)? = preview["v"],
+        preview["hostId"]?.stringValue != nil, let action = preview["action"]?.stringValue, preview["title"]?.stringValue != nil,
+        preview["expiresAt"]?.stringValue != nil, let nonce = preview["nonce"]?.stringValue,
+        case .string(let given)? = preview["reason"], let subject = subjectParts(preview["subject"]),
         let requester = preview["requester"], Set(requester.keys).isSubset(of: ["deviceId", "deviceName", "listener", "remoteAddress"]),
-        let listener = requester["listener"]?.stringValue, let listenerLabel = listenerLabels[listener],
-        let remoteAddress = requester["remoteAddress"]?.stringValue,
-        let warnings = strings(preview["warnings"]), case .array(let lineItems)? = preview["lines"] else { emitError("preview-invalid") }
-  var lines: [(label: String, value: String)] = []
+        let listener = requester["listener"]?.stringValue, listeners.contains(listener),
+        requester["remoteAddress"]?.stringValue != nil, strings(preview["warnings"]) != nil,
+        case .array(let lineItems)? = preview["lines"] else { throw Refusal(code: "preview-invalid") }
   for item in lineItems {
-    guard Set(item.keys) == ["label", "value"], let label = item["label"]?.stringValue, let value = item["value"]?.stringValue else { emitError("preview-invalid") }
-    lines.append((label: label, value: value))
+    guard Set(item.keys) == ["label", "value"], item["label"]?.stringValue != nil, item["value"]?.stringValue != nil else {
+      throw Refusal(code: "preview-invalid")
+    }
   }
-  let deviceName = requester["deviceName"]?.stringValue
-  let requesterText = [deviceName, listenerLabel, remoteAddress].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
-  return Request(
-    nonce: nonce, previewHash: computed, hashDisplay: hashDisplay, title: title, requester: requesterText, lines: lines,
-    warnings: warnings, timeoutSeconds: Int(timeout), requireBiometric: requireBiometric)
+  guard let reason = presenceReason(action: action, form: subject.form, slots: subject.slots) else { throw Refusal(code: "preview-invalid") }
+  guard Array(reason.utf16) == given else { throw Refusal(code: "reason-mismatch") }
+  return Request(nonce: nonce, previewHash: previewHash, reason: reason, timeoutSeconds: Int(timeout), requireBiometric: requireBiometric)
 }
 
 /// Reads stdin until the first newline or end of input.
@@ -464,7 +594,7 @@ func readRequestLine(limit: Int) -> Data {
   return buffer
 }
 
-// MARK: - Self-test (no UI, no LocalAuthentication)
+// MARK: - Self-test (no LocalAuthentication)
 
 enum SelfTest {
   static func run(path: String) -> Int32 {
@@ -503,7 +633,7 @@ enum SelfTest {
         previewResults.append("{\"ok\":\(match),\"previewHash\":\"\(hash)\",\"hashDisplay\":\"\(Canonical.hashDisplay(hash))\"}")
       }
     } else { ok = false }
-    // What the panel shows must be escaped exactly as the Host escapes it.
+    // Text in the sheet must be escaped exactly as the Host escapes it.
     var escapeResults: [String] = []
     if case .array(let escapes)? = root["escapePreviewText"] {
       for item in escapes {
@@ -517,189 +647,89 @@ enum SelfTest {
         escapeResults.append(match ? "true" : "false")
       }
     } else { ok = false }
-    let line = "{\"v\":1,\"ok\":\(ok),\"canonicalJson\":[\(canonicalResults.joined(separator: ","))],\"previewHash\":[\(previewResults.joined(separator: ","))],\"escapePreviewText\":[\(escapeResults.joined(separator: ","))]}\n"
+    // The sheet's sentence must be built exactly as the Host builds it.
+    var reasonResults: [String] = []
+    if case .array(let reasons)? = root["presenceReason"] {
+      for item in reasons {
+        guard let action = item["action"]?.stringValue, let subject = subjectParts(item["subject"]),
+              case .string(let expected)? = item["reason"],
+              let reason = presenceReason(action: action, form: subject.form, slots: subject.slots) else {
+          ok = false
+          reasonResults.append("false")
+          continue
+        }
+        let match = Array(reason.utf16) == expected
+        ok = ok && match
+        reasonResults.append(match ? "true" : "false")
+      }
+    } else { ok = false }
+    // Requests are accepted or refused with the expected code.
+    var requestResults: [String] = []
+    if case .array(let requests)? = root["presenceRequest"] {
+      for item in requests {
+        guard let request = item["request"], let expected = item["result"]?.stringValue else {
+          ok = false
+          requestResults.append("\"invalid-vector\"")
+          continue
+        }
+        var outcome = "ok"
+        do { _ = try parseRequest([UInt8](Canonical.bytes(request))) } catch let refusal as Refusal { outcome = refusal.code } catch { outcome = "error" }
+        ok = ok && outcome == expected
+        requestResults.append("\"\(outcome)\"")
+      }
+    } else { ok = false }
+    let line = "{\"v\":1,\"ok\":\(ok),\"canonicalJson\":[\(canonicalResults.joined(separator: ","))],\"previewHash\":[\(previewResults.joined(separator: ","))],\"escapePreviewText\":[\(escapeResults.joined(separator: ","))],\"presenceReason\":[\(reasonResults.joined(separator: ","))],\"presenceRequest\":[\(requestResults.joined(separator: ","))]}\n"
     FileHandle.standardOutput.write(Data(line.utf8))
     return ok ? 0 : 1
   }
 }
 
-// MARK: - Panel and authentication
+// MARK: - Authentication
 
-/// Flipped, so the preview starts at the top of its scroll view.
-final class FlippedView: NSView {
-  override var isFlipped: Bool { true }
-}
-
-enum PreviewLayout {
-  static let labelWidth: CGFloat = 96
-  static let valueWidth: CGFloat = 368
-  static let inset: CGFloat = 10
-}
-
-/// The Host's lines in their order, as a two-column grid: a fixed label column and a wrapping value column, with a
-/// rule between rows. However long a value is, its wrapped lines stay in the value column and inside its own row, so
-/// they can never look like a label or like a row of their own. Values are shown in full, never truncated.
+/// One run of the system's LocalAuthentication sheet with the Host's reason. Latch draws nothing itself: the sheet's
+/// sentence is the step the person verifies. SIGTERM from the Host (cancelled or expired), the Host's exit and the
+/// helper's own timer all close the sheet.
 @MainActor
-func previewGrid(_ lines: [(label: String, value: String)]) -> NSGridView {
-  let grid = NSGridView(numberOfColumns: 2, rows: 0)
-  grid.columnSpacing = 12
-  grid.rowSpacing = 7
-  grid.yPlacement = .top
-  for (index, line) in lines.enumerated() {
-    if index > 0 {
-      let rule = NSBox()
-      rule.boxType = .separator
-      let row = grid.addRow(with: [rule, NSGridCell.emptyContentView])
-      row.mergeCells(in: NSRange(location: 0, length: 2))
-      row.yPlacement = .center
-      row.cell(at: 0).xPlacement = .fill
-    }
-    let label = NSTextField(wrappingLabelWithString: visible(line.label))
-    label.font = .systemFont(ofSize: 12, weight: .medium)
-    label.textColor = .secondaryLabelColor
-    label.isSelectable = false
-    label.preferredMaxLayoutWidth = PreviewLayout.labelWidth
-    let value = NSTextField(wrappingLabelWithString: visible(line.value))
-    value.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-    value.textColor = .labelColor
-    value.isSelectable = true
-    value.lineBreakMode = .byCharWrapping
-    value.preferredMaxLayoutWidth = PreviewLayout.valueWidth
-    grid.addRow(with: [label, value])
-  }
-  grid.column(at: 0).width = PreviewLayout.labelWidth
-  grid.column(at: 1).width = PreviewLayout.valueWidth
-  return grid
-}
-
-/// A bordered, vertically scrolling box of `height` holding the preview grid.
-@MainActor
-func previewScrollView(_ lines: [(label: String, value: String)], width: CGFloat, height: CGFloat) -> NSScrollView {
-  let grid = previewGrid(lines)
-  grid.translatesAutoresizingMaskIntoConstraints = false
-  let document = FlippedView()
-  document.translatesAutoresizingMaskIntoConstraints = false
-  document.addSubview(grid)
-  let scroll = NSScrollView()
-  scroll.hasVerticalScroller = true
-  scroll.hasHorizontalScroller = false
-  scroll.borderType = .bezelBorder
-  scroll.drawsBackground = true
-  scroll.backgroundColor = .textBackgroundColor
-  scroll.documentView = document
-  scroll.translatesAutoresizingMaskIntoConstraints = false
-  let inset = PreviewLayout.inset
-  NSLayoutConstraint.activate([
-    scroll.widthAnchor.constraint(equalToConstant: width),
-    scroll.heightAnchor.constraint(equalToConstant: height),
-    document.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
-    document.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
-    document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
-    grid.topAnchor.constraint(equalTo: document.topAnchor, constant: inset),
-    grid.leadingAnchor.constraint(equalTo: document.leadingAnchor, constant: inset),
-    grid.trailingAnchor.constraint(lessThanOrEqualTo: document.trailingAnchor, constant: -inset),
-    grid.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -inset),
-  ])
-  return scroll
-}
-
-@MainActor
-final class Confirmation: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class Authentication {
   private let request: Request
-  private var panel: NSPanel?
-  private var context: LAContext?
+  private let context = LAContext()
+  private var sources: [DispatchSourceProtocol] = []
   private var finished = false
 
   init(request: Request) { self.request = request }
 
-  func applicationDidFinishLaunching(_ notification: Notification) {
-    showPanel()
-    Timer.scheduledTimer(withTimeInterval: TimeInterval(request.timeoutSeconds), repeats: false) { _ in
+  func start() {
+    signal(SIGTERM, SIG_IGN)
+    let terminate = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+    terminate.setEventHandler { MainActor.assumeIsolated { self.finish(result: "cancelled") } }
+    terminate.resume()
+    sources.append(terminate)
+    let parent = getppid()
+    let host = DispatchSource.makeProcessSource(identifier: parent, eventMask: .exit, queue: .main)
+    host.setEventHandler { MainActor.assumeIsolated { self.finish(result: "cancelled") } }
+    host.resume()
+    sources.append(host)
+    // Started by a process that is already gone (re-parented to launchd): nobody would read the result.
+    if parent <= 1 || getppid() != parent { finish(result: "cancelled") }
+    DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(request.timeoutSeconds)) {
       MainActor.assumeIsolated { self.finish(result: "timeout") }
     }
-  }
 
-  private func label(_ text: String, font: NSFont, color: NSColor = .labelColor) -> NSTextField {
-    let field = NSTextField(wrappingLabelWithString: text)
-    field.font = font
-    field.textColor = color
-    field.isSelectable = false
-    field.preferredMaxLayoutWidth = 520
-    return field
-  }
-
-  private func showPanel() {
-    let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 560, height: 520), styleMask: [.titled, .closable], backing: .buffered, defer: false)
-    panel.title = "Latch 本机确认"
-    panel.level = .floating
-    panel.isFloatingPanel = true
-    panel.hidesOnDeactivate = false
-    panel.delegate = self
-
-    let stack = NSStackView()
-    stack.orientation = .vertical
-    stack.alignment = .leading
-    stack.spacing = 10
-    stack.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
-    stack.translatesAutoresizingMaskIntoConstraints = false
-
-    stack.addArrangedSubview(label(visible(request.title), font: .boldSystemFont(ofSize: 16)))
-    stack.addArrangedSubview(label(visible(request.requester), font: .systemFont(ofSize: 12), color: .secondaryLabelColor))
-
-    stack.addArrangedSubview(previewScrollView(request.lines, width: 520, height: 240))
-
-    for warning in request.warnings {
-      stack.addArrangedSubview(label(visible(warning), font: .systemFont(ofSize: 12), color: .systemRed))
-    }
-    stack.addArrangedSubview(label("核对码 \(request.hashDisplay)", font: .monospacedSystemFont(ofSize: 22, weight: .semibold)))
-
-    let reject = NSButton(title: "拒绝", target: self, action: #selector(rejectPressed))
-    reject.keyEquivalent = "\u{1b}"
-    let confirm = NSButton(title: "确认…", target: self, action: #selector(confirmPressed))
-    let buttons = NSStackView(views: [reject, confirm])
-    buttons.orientation = .horizontal
-    buttons.spacing = 12
-    stack.addArrangedSubview(buttons)
-
-    let content = NSView()
-    content.addSubview(stack)
-    NSLayoutConstraint.activate([
-      stack.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-      stack.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-      stack.topAnchor.constraint(equalTo: content.topAnchor),
-      stack.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-    ])
-    panel.contentView = content
-    panel.initialFirstResponder = reject
-    panel.center()
-    self.panel = panel
-    NSApp.activate(ignoringOtherApps: true)
-    panel.makeKeyAndOrderFront(nil)
-    panel.makeFirstResponder(reject)
-  }
-
-  @objc private func rejectPressed() { finish(result: "denied") }
-
-  func windowWillClose(_ notification: Notification) { finish(result: "denied") }
-
-  @objc private func confirmPressed() {
-    guard context == nil else { return }
-    let context = LAContext()
-    self.context = context
     var policy = LAPolicy.deviceOwnerAuthentication
     var method = "password"
     var probe: NSError?
     if request.requireBiometric, context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &probe) {
       policy = .deviceOwnerAuthenticationWithBiometrics
       method = "biometric"
+      // Class A takes Touch ID only; a password button here could only end as a refusal.
+      context.localizedFallbackTitle = ""
     }
     var availability: NSError?
     guard context.canEvaluatePolicy(policy, error: &availability) else {
       finish(result: "error", error: "此 Mac 未设置登录密码或 Touch ID")
       return
     }
-    let reason = "确认 Latch：\(visible(request.title))（\(request.hashDisplay)）"
-    context.evaluatePolicy(policy, localizedReason: reason) { success, error in
+    context.evaluatePolicy(policy, localizedReason: request.reason) { success, error in
       let code = (error as? LAError)?.code
       DispatchQueue.main.async {
         MainActor.assumeIsolated {
@@ -707,6 +737,8 @@ final class Confirmation: NSObject, NSApplicationDelegate, NSWindowDelegate {
           switch code {
           case .userCancel?, .authenticationFailed?, .userFallback?, .systemCancel?, .appCancel?: self.finish(result: "denied")
           case .passcodeNotSet?: self.finish(result: "error", error: "此 Mac 未设置登录密码或 Touch ID")
+          // Too many failed fingers: the next run cannot use Touch ID and takes the login password, which unlocks it.
+          case .biometryLockout?: self.finish(result: "error", error: "biometry-lockout")
           default: self.finish(result: "error", error: "本机认证不可用")
           }
         }
@@ -717,7 +749,7 @@ final class Confirmation: NSObject, NSApplicationDelegate, NSWindowDelegate {
   private func finish(result: String, method: String? = nil, error: String? = nil) {
     guard !finished else { return }
     finished = true
-    context?.invalidate()
+    context.invalidate()
     var fields: [(String, String)] = [("nonce", request.nonce), ("previewHash", request.previewHash), ("result", result)]
     if let method, result == "approved" { fields.append(("method", method)) }
     if let error, result == "error" { fields.append(("error", error)) }
@@ -731,13 +763,19 @@ struct LatchPresence {
     let arguments = CommandLine.arguments
     if arguments.count == 3, arguments[1] == "--self-test" { exit(SelfTest.run(path: arguments[2])) }
     guard arguments.count == 1 else { emitError("usage") }
-    let request = readRequest(readRequestLine(limit: 256 * 1024))
-    MainActor.assumeIsolated {
-      let application = NSApplication.shared
-      application.setActivationPolicy(.accessory)
-      let delegate = Confirmation(request: request)
-      application.delegate = delegate
-      withExtendedLifetime(delegate) { application.run() }
+    let request: Request
+    do {
+      request = try parseRequest([UInt8](readRequestLine(limit: 256 * 1024)))
+    } catch let refusal as Refusal {
+      emitError(refusal.code)
+    } catch {
+      emitError("request-invalid")
     }
+    let session = MainActor.assumeIsolated { () -> Authentication in
+      let session = Authentication(request: request)
+      session.start()
+      return session
+    }
+    withExtendedLifetime(session) { dispatchMain() }
   }
 }

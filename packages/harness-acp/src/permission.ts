@@ -1,8 +1,10 @@
-/** Pure permission rules for ACP agents: profile selection, definition checks, launch fingerprint, modes and options. */
-import { basename } from 'node:path'
+/** Permission rules for ACP agents: profile selection, definition checks, launch fingerprint, modes and options. */
+import { realpathSync } from 'node:fs'
+import { basename, isAbsolute } from 'node:path'
 import { AGENT_PRESETS, isReservedAgentEnvName, type AgentPreset } from '@latch/protocol'
 import { AppError, type ConfigChangeClass } from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
+import { resolveCommand } from './command.ts'
 import { HARNESS_PROFILES, type AcpPermissionProfile, type HarnessProfile } from './profiles/index.ts'
 import type { PermissionOption } from './protocol.ts'
 import type { AgentRecord } from './types.ts'
@@ -10,7 +12,10 @@ import type { AgentRecord } from './types.ts'
 export interface ProfileSelection {
   profile?: HarnessProfile
   preset?: AgentPreset
-  /** The definition launches exactly the preset's command and arguments, and sets none of the profile's `configEnv`. */
+  /**
+   * The definition launches exactly the preset's command (see `isPresetCommand`) and arguments, and sets none of the
+   * profile's `configEnv`.
+   */
   verified: boolean
   /** Chinese display notes about the definition itself, shown after the profile's own. */
   notes?: string[]
@@ -22,6 +27,29 @@ function commandName(command: string): string {
   return process.platform === 'win32' ? name.replace(/\.(exe|cmd|bat|com)$/i, '') : name
 }
 
+/** Finds a command the way the Host does; tests pass their own. */
+export type CommandLocator = (command: string) => string | undefined
+
+function sameFile(a: string, b: string): boolean {
+  try {
+    return realpathSync(a) === realpathSync(b)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Whether `command` is the preset's own executable: its bare name, which the Host looks up itself, or the file that
+ * lookup finds (compared by real path, so a link to it counts). Another file of the same name elsewhere, for example
+ * in a project's node_modules/.bin, is not: the system sheet calls it a custom command.
+ */
+function isPresetCommand(command: string, presetCommand: string, locate: CommandLocator = resolveCommand): boolean {
+  if (command === presetCommand) return true
+  if (!isAbsolute(command) || commandName(command) !== presetCommand) return false
+  const found = locate(presetCommand)
+  return found !== undefined && sameFile(found, command)
+}
+
 function matchesName(patterns: readonly string[], name: string): boolean {
   const upper = name.toUpperCase()
   return patterns.some(pattern =>
@@ -30,7 +58,7 @@ function matchesName(patterns: readonly string[], name: string): boolean {
 }
 
 /** By `presetId`, else by the command's file name. The profile's environment applies even when not verified. */
-export function selectProfile(record: AgentRecord): ProfileSelection {
+export function selectProfile(record: AgentRecord, locate: CommandLocator = resolveCommand): ProfileSelection {
   const name = commandName(record.command)
   const byId = record.presetId !== undefined ? AGENT_PRESETS.find(preset => preset.id === record.presetId) : undefined
   const preset = byId ?? AGENT_PRESETS.find(item => item.command === name)
@@ -41,10 +69,10 @@ export function selectProfile(record: AgentRecord): ProfileSelection {
     .sort()
   const verified =
     byId !== undefined
-    && name === byId.command
     && redirected.length === 0
     && record.args.length === byId.args.length
     && record.args.every((arg, index) => arg === byId.args[index])
+    && isPresetCommand(record.command, byId.command, locate)
   const notes =
     preset && redirected.length
       ? [
@@ -54,13 +82,16 @@ export function selectProfile(record: AgentRecord): ProfileSelection {
   return { ...(profile ? { profile } : {}), ...(preset ? { preset } : {}), verified, ...(notes.length ? { notes } : {}) }
 }
 
-export function validateAgentDefinition(record: AgentRecord): { ok: true; verified: boolean } | { ok: false; error: AppError } {
+export function validateAgentDefinition(
+  record: AgentRecord,
+  locate: CommandLocator = resolveCommand,
+): { ok: true; verified: boolean } | { ok: false; error: AppError } {
   for (const name of Object.keys(record.env)) {
     if (isReservedAgentEnvName(name)) {
       return { ok: false, error: new AppError(400, 'agent-env-reserved', `环境变量 ${name} 由 Latch 管理，不能在 Agent 定义中设置`) }
     }
   }
-  return { ok: true, verified: selectProfile(record).verified }
+  return { ok: true, verified: selectProfile(record, locate).verified }
 }
 
 /** The folders a session passes to its agent besides the session directory: how, and their real paths in order. */

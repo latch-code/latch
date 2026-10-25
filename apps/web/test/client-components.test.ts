@@ -5,10 +5,12 @@ import type { Approval, AppSnapshot, HostCatalog, Message, TaskDetail, TaskSumma
 import { sha256Hex } from '@latch/core/node-kit'
 import { hashDisplay } from '@latch/host/crypto'
 import { newSessionGroups, SessionControls } from '../src/components/ComposerControls.tsx'
-import { Inspector } from '../src/components/Inspector.tsx'
+import { RunSettingsGroups, workspaceSections } from '../src/components/Pickers.tsx'
+import { Composer } from '../src/components/Composer.tsx'
+import { fileChanges, Inspector } from '../src/components/Inspector.tsx'
+import { ContextRow } from '../src/components/NewSession.tsx'
 import { MessageRow } from '../src/components/MessageRow.tsx'
 import { scrollMovesAnchor } from '../src/components/overlays.tsx'
-import { RunSettingsGroups } from '../src/components/Pickers.tsx'
 import { PlanList } from '../src/components/PlanCard.tsx'
 import { DiffView, PREVIOUS_UNAVAILABLE_TEXT, PREVIOUS_UNKNOWN_TEXT } from '../src/components/DiffView.tsx'
 import { ApprovalStatuses, type ApprovalStatus } from '../src/components/ApprovalCard.tsx'
@@ -18,11 +20,21 @@ import { Transcript } from '../src/components/Transcript.tsx'
 import { renderedMessages } from '../src/conversation.ts'
 import { escapeHiddenCharacters, hasHiddenCharacters, VisibleText } from '../src/components/VisibleText.tsx'
 import { contentHash } from '../src/core/contentHash.ts'
-import type { ApprovalGate } from '../src/core/permissions.ts'
-import { APPROVAL_COPY, CONFIRMATION_RESULT_TEXT } from '../src/core/securityCopy.ts'
+import type { ApprovalGate, DeviceAccess } from '../src/core/permissions.ts'
+import {
+  APPROVAL_COPY,
+  CODE_ROOT_COPY,
+  CONFIRMATION_COPY,
+  CONFIRMATION_RESULT_TEXT,
+  ENROLLMENT_COPY,
+  PAIRING_COPY,
+} from '../src/core/securityCopy.ts'
+import { ConfirmationContent, detailsOpenAtFirst } from '../src/components/InlineConfirm.tsx'
+import type { ConfirmationActions, ConfirmationView } from '../src/core/confirmations.ts'
 import { missingText } from '../src/settings/AgentsSettings.tsx'
 import { revokeText } from '../src/settings/DevicesSettings.tsx'
-import { ProjectCard } from '../src/settings/WorkspacesSettings.tsx'
+import { PairingSection } from '../src/settings/PhonePairing.tsx'
+import { ProjectCard, WorkspacesSettings } from '../src/settings/WorkspacesSettings.tsx'
 
 const noop = () => {}
 afterEach(() => {
@@ -164,6 +176,191 @@ describe('tool cards', () => {
     )
     expect(html).not.toContain('data-message-id')
     expect(html).toContain('data-approval-id="ap1"')
+  })
+})
+
+describe('decided approvals', () => {
+  const diffs = [{ path: 'notes/plan.md', newText: 'x', previous: 'none' as const }]
+  const decided = (decision: NonNullable<Message['tool']>['decision'], state: Message['state'] = 'failed', extra: Partial<Message> = {}) =>
+    renderToStaticMarkup(
+      createElement(ToolCard, {
+        message: tool({
+          state,
+          text: '用户拒绝了本次工具调用，未执行该操作。',
+          tool: {
+            kind: 'edit',
+            toolTitle: '写入文件',
+            title: 'write_file',
+            input: '{"path":"notes/plan.md","content":"x"}',
+            diffs,
+            output: '用户拒绝了本次工具调用，未执行该操作。',
+            ...(decision ? { decision } : {}),
+          },
+          ...extra,
+        }),
+        onDecide: noop,
+      }),
+    )
+  const at = new Date().toISOString()
+  /** The words in the row's state slot. */
+  const stateSlot = (html: string) =>
+    /<span class="ui-status-words tool-card-state[^"]*">(.*?)<\/span><\/span>(?:<svg|<\/div>)/u.exec(html)?.[1] ?? ''
+
+  it('folds a rejection into its row: 已拒绝 with the time in the state slot, never a failure, and no diff', () => {
+    const html = decided({ outcome: 'rejected', at, via: 'other-device' })
+    expect(html).toContain('写入文件')
+    expect(html).toContain('notes/plan.md')
+    expect(stateSlot(html)).toMatch(
+      /^<span class="tool-decision-words" title="[^"]*在其他设备上决定" data-outcome="rejected">已拒绝 · \d{2}:\d{2}<\/span>$/u,
+    )
+    expect(html).toContain('state-rejected')
+    expect(html).toContain('lucide-circle-slash')
+    expect(html).not.toMatch(/state-failed|process-failed|失败|lucide-triangle-alert/u)
+    // One place says it: no second record line under the row.
+    expect(html).not.toContain('class="tool-decision"')
+    expect(html.match(/已拒绝/gu)).toHaveLength(1)
+    // Folded, not opened by itself like a failure with output, and the proposed diff is no evidence of a change.
+    expect(html).not.toContain('data-open=""')
+    expect(html).not.toContain('diff-view')
+    expect(html).not.toMatch(/APPROVAL_REJECTED|。。/u)
+  })
+
+  it('keeps an allowance in the row’s tooltip, and says nobody’s answer without claiming the call did not run', () => {
+    const allowed = decided({ outcome: 'allowed', at, via: 'this-mac' }, 'completed', { startedAt: at, completedAt: at })
+    expect(allowed).toMatch(/<button type="button" class="tool-card-header"[^>]*title="[^"]*已允许 · [^"]*在运行 Latch 的电脑上决定"/u)
+    expect(allowed).not.toContain('tool-decision')
+    expect(stateSlot(allowed)).toBe('')
+    expect(allowed).toContain('diff-view')
+    const cancelled = decided({ outcome: 'cancelled', at }, 'cancelled')
+    expect(stateSlot(cancelled)).toMatch(/title="[^"]*会话停止时还没有人回答" data-outcome="cancelled">已取消（会话停止）<\/span>$/u)
+    const expired = decided({ outcome: 'expired', at }, 'cancelled')
+    expect(stateSlot(expired)).toMatch(/data-outcome="expired">已过期<\/span>$/u)
+    for (const html of [cancelled, expired]) expect(html).not.toMatch(/已拒绝|决定"|失败|没有执行/u)
+  })
+
+  it('keeps the state and the diff an agent reports for a call that ran after a rejection, with one line that says so', () => {
+    const html = decided({ outcome: 'rejected', at, via: 'other-device' }, 'completed', {
+      text: '',
+      toolName: 'edit',
+      tool: { kind: 'edit', title: 'Edit src/app.ts', diffs, decision: { outcome: 'rejected', at, via: 'other-device' } },
+    })
+    expect(html).not.toContain('state-rejected')
+    expect(stateSlot(html)).toBe('')
+    expect(html).toContain('diff-view')
+    expect(html).toMatch(
+      /<p class="tool-decision" title="[^"]*在其他设备上决定\nAgent 的询问只是提示[^"]*" data-outcome="rejected">.*已拒绝 · \d{2}:\d{2} · Agent 报告仍执行了这次调用<\/p>/u,
+    )
+  })
+
+  it('shows no record while the approval waits, and a failed call that was allowed still reads as a failure', () => {
+    expect(approvalCard({ risk: 'R1' })).not.toContain('tool-decision')
+    const failed = decided({ outcome: 'allowed', at }, 'failed', { startedAt: at })
+    expect(stateSlot(failed)).toBe('失败')
+    expect(failed).toContain('已允许 · ')
+  })
+
+  it('reads a rejection from before decision records as 已拒绝 without its internal code or a duration', () => {
+    const html = renderToStaticMarkup(
+      createElement(ToolCard, {
+        message: tool({
+          state: 'failed',
+          createdAt: at,
+          completedAt: new Date(Date.parse(at) + 300_000).toISOString(),
+          text: 'APPROVAL_REJECTED: 用户拒绝了本次工具调用，未执行该操作。',
+          tool: { title: 'write_file', output: 'APPROVAL_REJECTED: 用户拒绝了本次工具调用，未执行该操作。' },
+        }),
+        onDecide: noop,
+      }),
+    )
+    expect(stateSlot(html)).toBe('已拒绝')
+    expect(html).not.toMatch(/失败|data-open=""|APPROVAL_REJECTED|process-time/u)
+  })
+
+  it('names a titled tool’s row by its title alone, with its ID in the tooltip, and keeps the ID on its approval card', () => {
+    const row = decided({ outcome: 'allowed', at }, 'completed', { startedAt: at })
+    expect(row).not.toContain('tool-card-name')
+    expect(row).toMatch(/title="写入文件 notes\/plan.md\nwrite_file\n已允许 · /u)
+    const card = renderToStaticMarkup(
+      createElement(ToolCard, {
+        message: tool({ tool: { kind: 'edit', toolTitle: '写入文件', title: 'write_file', input: '{"path":"notes/plan.md"}' } }),
+        approval: approval(),
+        onDecide: noop,
+      }),
+    )
+    expect(card).toContain('<code class="tool-card-name">write_file</code>')
+  })
+})
+
+describe('session changes', () => {
+  it('lists a diff under 变更 only once it was applied: not while it waits, nor when its approval kept the call from running', () => {
+    const diff = (path: string) => [{ path, newText: 'a\n', previous: 'none' as const }]
+    const at = new Date().toISOString()
+    const rows: Message[] = [
+      tool({ id: 'tool:1', state: 'awaiting-approval', tool: { kind: 'edit', diffs: diff('docs/waiting.md') } }),
+      tool({ id: 'tool:2', state: 'queued', tool: { kind: 'edit', diffs: diff('docs/queued.md') } }),
+      tool({
+        id: 'tool:3',
+        state: 'failed',
+        tool: { kind: 'edit', diffs: diff('docs/rejected.md'), decision: { outcome: 'rejected', at } },
+      }),
+      tool({ id: 'tool:4', state: 'completed', tool: { kind: 'edit', diffs: diff('docs/written.md') } }),
+      // An agent that ran the call after the rejection: its reported change counts.
+      tool({ id: 'tool:5', state: 'completed', tool: { kind: 'edit', diffs: diff('src/app.ts'), decision: { outcome: 'rejected', at } } }),
+    ]
+    expect(fileChanges(rows).map(change => change.path)).toEqual(['docs/written.md', 'src/app.ts'])
+  })
+})
+
+describe('phone pairing', () => {
+  const access = (local: boolean, admin = true): DeviceAccess => ({
+    legacy: false,
+    local,
+    scopes: new Set(admin ? ['view', 'admin'] : ['view']),
+    admin,
+    device: null,
+  })
+  const FLAG = /(?:^|[\s「（(])--[a-z]/u
+
+  it('says phone access is not set up in words, says what is not built yet, and folds the start options away', () => {
+    const html = renderToStaticMarkup(createElement(PairingSection, { tls: false, access: access(true), phone: false }))
+    const [body = '', folded = ''] = html.split('class="ui-collapse"')
+    expect(body).toContain(PAIRING_COPY.notConfigured)
+    expect(body).toContain('同一网络下扫码直连尚未实现：它需要 Host 在局域网中宣告自己并固定身份，正在开发。')
+    expect(body).toMatch(
+      /<button type="button" class="pair-toggle" aria-expanded="false"[^>]*>.*用自己的 HTTPS 证书配置（需要重启 Host）<\/button>/u,
+    )
+    expect(body).not.toMatch(FLAG)
+    expect(folded).toContain('--tls-cert')
+    expect(folded).toContain('aria-label="复制启动参数"')
+    // The flags show one per line; the copy is the one line to paste.
+    expect(folded).toContain('<code>--tailnet\n--tls-cert &lt;证书文件&gt;\n--tls-key &lt;私钥文件&gt;\n--public-origin https://')
+    // Closing the window does not stop the Host, so the steps say how to stop it before starting with the flags.
+    expect(folded).toContain('关闭窗口不会停止 Host：先在终端运行 pnpm stop，再用 pnpm desktop -- 加上这些参数启动：')
+    expect(html).not.toContain('在 Mac 上打开')
+  })
+
+  it('names where to make the code, in words, on a device that cannot, and never a flag in any body text', () => {
+    const html = renderToStaticMarkup(createElement(PairingSection, { tls: true, access: access(false), phone: true }))
+    // Read on the computer running Latch (in its browser) as well as on a phone.
+    expect(html).toContain('配对二维码要在 Latch 桌面端生成：在运行 Latch 的电脑上打开桌面端的 设置 › 设备。')
+    // A laptop has no camera flow: it uses the copied link.
+    expect(ENROLLMENT_COPY.invitationRequired).toContain('其他电脑打开用「复制链接」得到的配对链接')
+    expect(html).not.toContain('pnpm latch')
+    const body = [
+      PAIRING_COPY.intro,
+      ...PAIRING_COPY.steps,
+      PAIRING_COPY.notConfigured,
+      PAIRING_COPY.computerRow,
+      PAIRING_COPY.directPending,
+      PAIRING_COPY.tlsDisclosure,
+      PAIRING_COPY.needsDesktop,
+      PAIRING_COPY.needsAdmin,
+      ENROLLMENT_COPY.invitationRequired,
+    ]
+    for (const text of body) {
+      expect(text).not.toMatch(FLAG)
+      expect(text).not.toContain('pnpm ')
+    }
   })
 })
 
@@ -320,14 +517,113 @@ describe('approval cards', () => {
     }
     const resting = approvalCard({ risk: 'R2' }, undefined, gate)
     expect(resting).toContain(APPROVAL_COPY.localNote)
-    const waiting = approvalCard({ risk: 'R2' }, { confirming: 'waiting' }, gate)
-    expect(waiting).toContain(APPROVAL_COPY.waitingLocal)
-    expect(waiting).not.toContain(APPROVAL_COPY.localNote)
+    // An older Host's ticket has no sentence: the card still says it waits for Touch ID.
+    const older = approvalCard({ risk: 'R2' }, { confirming: 'waiting' }, gate)
+    expect(older).toContain(CONFIRMATION_COPY.waiting)
+    expect(older).not.toContain(APPROVAL_COPY.localNote)
+    expect(buttonLabels(older)).toEqual(['拒绝', APPROVAL_COPY.allowLocal])
+    // With the ticket: the sentence the system sheet shows, 取消 and the Host's details, in the card itself.
+    const waiting = approvalCard(
+      { risk: 'R2' },
+      {
+        confirming: 'waiting',
+        cancel: () => {},
+        ticket: {
+          id: 'cfm_1',
+          action: 'approval.r2',
+          title: '允许一次高风险操作',
+          status: 'pending',
+          hashDisplay: 'a1b2-c3d4-e5f6-0718',
+          expiresAt: new Date().toISOString(),
+          reason: '批准写入 slides.html（Latch 程序目录内）',
+          form: 'approval.write',
+          lines: [{ label: '工作目录', value: '/Users/u/latch' }],
+          warnings: [],
+        },
+      },
+      gate,
+    )
+    // Rendered here without the desktop shell, the sentence is introduced as one to read on the computer running Latch.
+    expect(waiting).toContain(CONFIRMATION_COPY.browser)
+    expect(waiting).toContain('批准写入 slides.html（Latch 程序目录内）')
+    expect(waiting).toContain(CONFIRMATION_COPY.details)
+    expect(waiting).toContain('/Users/u/latch')
+    expect(waiting).toMatch(/class="ui-button approval-confirm-cancel"[^>]*>取消<\/button>/u)
     expect(buttonLabels(waiting)).toEqual(['拒绝', APPROVAL_COPY.allowLocal])
     const failed = approvalCard({ risk: 'R2' }, { failure: { text: CONFIRMATION_RESULT_TEXT.denied, tone: 'error' } }, gate)
     expect(failed).toMatch(/class="ui-notice approval-failure" data-tone="error"/)
     expect(failed).toContain(CONFIRMATION_RESULT_TEXT.denied)
     expect(buttonLabels(failed)).toEqual(['拒绝', APPROVAL_COPY.allowLocal])
+  })
+
+  it('shows a confirmation in place: the sheet sentence, the warnings in view and the details, never a check code', () => {
+    const actions: ConfirmationActions = { cancel: () => {}, dismiss: () => {} }
+    const render = (view: ConfirmationView) => renderToStaticMarkup(createElement(ConfirmationContent, { view, actions }))
+    const ticket = {
+      id: 'cfm_1',
+      action: 'task.start-l3' as const,
+      title: '开启完全访问会话',
+      status: 'pending' as const,
+      hashDisplay: 'a1b2-c3d4-e5f6-0718',
+      expiresAt: new Date().toISOString(),
+      reason: '首次以完全访问启动 Codex（在「Acme」）：自定义命令 ~/proj/node_modules/.bin/codex-acp',
+      form: 'start.first-custom' as const,
+      lines: [
+        { label: '命令', value: '/Users/u/proj/node_modules/.bin/codex-acp' },
+        { label: '工作目录', value: '/Users/u/proj' },
+        { label: '说明', value: '项目配置可以覆盖询问设置' },
+      ],
+      warnings: ['该会话可以读写 Latch 数据和 Host 身份私钥。', 'Harness 自己发起的询问只是提示，不是安全边界。'],
+    }
+    const waiting = render({ phase: 'waiting', ticket })
+    expect(waiting).toContain(CONFIRMATION_COPY.waiting)
+    expect(waiting).toContain(ticket.reason)
+    for (const warning of ticket.warnings) expect(waiting).toContain(warning)
+    // A first start of a custom command opens its details at once: the full command, the folder and the notes.
+    expect(detailsOpenAtFirst(ticket)).toBe(true)
+    expect(waiting).toMatch(/aria-expanded="true"[^>]*>[\s\S]*确认详情/u)
+    for (const line of ticket.lines) expect(waiting).toContain(line.value)
+    expect(waiting).not.toContain('核对码')
+    expect(waiting).not.toContain(ticket.hashDisplay)
+    // A repeat start keeps them folded, and a sentence cut short opens them again.
+    expect(detailsOpenAtFirst({ form: 'start.repeat', reason: '开启完全访问会话：Codex（在「Acme」）' })).toBe(false)
+    expect(detailsOpenAtFirst({ form: 'approval.tool', reason: '批准运行工具 a（未登记的工具）：{…；完整参数见 Latch 里的确认详情' })).toBe(
+      true,
+    )
+    const sending = render({ phase: 'sending', ticket })
+    expect(sending).toContain(`${CONFIRMATION_COPY.confirmed}开启会话…`)
+    const failed = render({ phase: 'failed', ticket, message: CONFIRMATION_RESULT_TEXT.denied, reason: 'denied' })
+    expect(failed).toContain(CONFIRMATION_RESULT_TEXT.denied)
+    expect(failed).not.toContain(ticket.reason)
+  })
+
+  it('names the session a refused confirmation waits for, in one line', () => {
+    const actions: ConfirmationActions = { cancel: () => {}, dismiss: () => {} }
+    const render = (view: ConfirmationView) => renderToStaticMarkup(createElement(ConfirmationContent, { view, actions }))
+    const named = render({
+      phase: 'paused',
+      reason: 'blocked',
+      message: 'x',
+      blocked: { action: 'device.enroll', tasks: [{ id: 'acp-1', title: '修复设置页密钥丢失', harnessId: 'codex' }] },
+    })
+    expect(named).toContain('要等「修复设置页密钥丢失」结束，才能配对新设备。')
+    const several = render({
+      phase: 'paused',
+      reason: 'blocked',
+      message: 'x',
+      blocked: {
+        action: 'policy.change',
+        tasks: [
+          { id: 'a', title: '\u202E改名', harnessId: 'codex' },
+          { id: 'b', title: '', harnessId: 'codex' },
+        ],
+      },
+    })
+    expect(several).toContain('等 2 个会话结束，才能放宽安全策略。')
+    // A title that hides characters shows them as markers.
+    expect(several).toContain('\\u{202E}')
+    const unnamed = render({ phase: 'paused', reason: 'blocked', message: 'x', blocked: { tasks: [] } })
+    expect(unnamed).toContain(CONFIRMATION_COPY.blocked)
   })
 
   it('keeps the preview short: a long diff shows its first rows and a fold bar for the rest', () => {
@@ -361,7 +657,7 @@ describe('approval cards', () => {
           explicit: false,
           options: [
             { id: 'reject_once', label: '拒绝', kind: 'reject_once' },
-            { id: 'allow_once', label: '在本机允许', kind: 'allow_once' },
+            { id: 'allow_once', label: '用 Touch ID 允许', kind: 'allow_once' },
           ],
           confirms: true,
         }),
@@ -371,7 +667,7 @@ describe('approval cards', () => {
     expect(html).not.toContain('data-variant="primary"')
     expect(html).toMatch(/<button type="button" class="ui-button" data-variant="secondary" data-size="sm">拒绝<\/button>/)
     expect(html).toMatch(
-      /<button type="button" class="ui-button" data-variant="secondary" data-size="sm" data-leading="">(?:(?!<\/button>).)*?<svg[^>]*lucide-lock-keyhole[^>]*>.*?<\/svg>在本机允许<\/button>/,
+      /<button type="button" class="ui-button" data-variant="secondary" data-size="sm" data-leading="">(?:(?!<\/button>).)*?<svg[^>]*lucide-lock-keyhole[^>]*>.*?<\/svg>用 Touch ID 允许<\/button>/,
     )
   })
 
@@ -398,7 +694,7 @@ describe('approval cards', () => {
     const render = (diff: { previous?: 'none' | 'text' | 'unavailable'; oldText?: string }) =>
       renderToStaticMarkup(createElement(DiffView, { diffs: [{ path: 'a.txt', newText: 'x\n', ...diff }] }))
     const created = render({ previous: 'none' })
-    expect(created).toContain('<span class="ui-status-pill" data-tone="neutral">新文件</span>')
+    expect(created).not.toContain('>新文件<')
     expect(created).toContain('@@ -0,0 +1,1 @@')
     expect(created).not.toContain('data-tone="warn"')
     const hidden = render({ previous: 'unavailable' })
@@ -558,8 +854,8 @@ describe('inspector', () => {
   it('leads the project row with the directory name and keeps the whole path', () => {
     const html = renderToStaticMarkup(
       createElement(Inspector, {
-        snapshot: appSnapshot(),
-        summary: session({ cwd: '/Users/me/personal/harness-link' }),
+        snapshot: appSnapshot({ catalog: hostCatalog() }),
+        summary: session({ cwd: '/Users/me/personal/harness-link', harnessId: 'standard' }),
         detail: null,
         local: false,
         collapsed: new Set<string>(),
@@ -568,10 +864,89 @@ describe('inspector', () => {
       }),
     )
     expect(html).toContain('<span class="info-path-name">harness-link</span>')
+    // 「Latch 内置」 already says it is built in: no second 「内置」 under the name.
+    expect(html).toContain('<span class="info-who-name">Latch 内置</span>')
+    expect(html).not.toContain('info-who-source')
     // The whole path until the line is measured (then it is cut in the middle to fit, see middleFit).
     expect(html).toContain(
       '<span class="middle-text info-path-full" title="/Users/me/personal/harness-link"><span aria-hidden="true">/Users/me/personal/harness-link</span><span class="sr-only">/Users/me/personal/harness-link</span></span>',
     )
+  })
+})
+
+describe('a folder inside Latch’s program directory', () => {
+  const start = { id: 'default', name: 'app', path: '/repo/harness-link/.runtime/workspace', codeRoot: true as const }
+  const inspector = (onNewProject?: () => void) =>
+    renderToStaticMarkup(
+      createElement(Inspector, {
+        snapshot: appSnapshot({ catalog: hostCatalog({ workspaces: [start] }) }),
+        summary: session({ cwd: start.path }),
+        detail: null,
+        local: true,
+        collapsed: new Set<string>(),
+        onToggleBlock: noop,
+        onReveal: noop,
+        ...(onNewProject ? { onNewProject } : {}),
+      }),
+    )
+
+  it('warns in 会话信息 › 环境 by the Host’s flag, with 新建项目… where this device can make one', () => {
+    const html = inspector(noop)
+    expect(html).toContain('class="ui-notice info-code-root" data-tone="warn"')
+    expect(html).toContain(CODE_ROOT_COPY.notice)
+    expect(html).toContain(CODE_ROOT_COPY.startDir)
+    expect(html).toContain(`>${CODE_ROOT_COPY.newProject}</button>`)
+    // Elsewhere only the reason; and nothing for a folder the Host does not flag.
+    expect(inspector()).not.toContain(CODE_ROOT_COPY.newProject)
+    const plain = renderToStaticMarkup(
+      createElement(Inspector, {
+        snapshot: appSnapshot({ catalog: hostCatalog({ workspaces: [{ ...start, codeRoot: undefined }] }) }),
+        summary: session({ cwd: start.path }),
+        detail: null,
+        local: true,
+        collapsed: new Set<string>(),
+        onToggleBlock: noop,
+        onReveal: noop,
+      }),
+    )
+    expect(plain).not.toContain(CODE_ROOT_COPY.notice)
+  })
+
+  it('marks the folder in the new session’s project picker and in 设置 › 项目', () => {
+    const sections = workspaceSections(
+      hostCatalog({ workspaces: [start, { id: 'w2', name: 'site', path: '/work/site' }] }),
+      'default',
+      noop,
+    )
+    const items = sections.flatMap(section => section.items)
+    const flagged = items.find(item => item.id === 'default')
+    expect(renderToStaticMarkup(createElement('div', null, flagged?.tag))).toContain(`data-tone="warn">${CODE_ROOT_COPY.badge}</span>`)
+    expect(items.find(item => item.id === 'w2')?.tag).toBeUndefined()
+    const card = renderToStaticMarkup(
+      createElement(ProjectCard, { workspace: { ...start, id: 'p1' }, owner: true, isDefault: false, folders: null, onRemove: noop }),
+    )
+    expect(card).toContain(CODE_ROOT_COPY.notice)
+    // A saved project cannot be moved from here yet: no start-directory sentence and no action.
+    expect(card).not.toContain(CODE_ROOT_COPY.startDir)
+  })
+
+  it('says the way out of the start directory once in 设置 › 项目', () => {
+    const settings = (workspace: typeof start | Omit<typeof start, 'codeRoot'>) =>
+      renderToStaticMarkup(
+        createElement(WorkspacesSettings, {
+          snapshot: appSnapshot({ catalog: hostCatalog({ workspaces: [workspace] }) }),
+          access: { admin: true },
+          onChanged: noop,
+        }),
+      )
+    const flagged = settings(start)
+    expect(flagged).toContain(CODE_ROOT_COPY.startDir)
+    expect(flagged).toContain('Host 启动时使用的目录，不能移除。')
+    expect(flagged).not.toContain('要在其他文件夹中工作，请新建项目。')
+    const { codeRoot: _codeRoot, ...ordinary } = start
+    const plain = settings(ordinary)
+    expect(plain).not.toContain(CODE_ROOT_COPY.startDir)
+    expect(plain).toContain('Host 启动时使用的目录，不能移除；要在其他文件夹中工作，请新建项目。')
   })
 })
 
@@ -585,6 +960,7 @@ describe('session model switch', () => {
     config: [],
     configBusy: null,
     onConfig: noop,
+    access: { legacy: false, local: false, admin: true },
   }
   it('marks a switch that the next message will carry', () => {
     const idle = renderToStaticMarkup(createElement(SessionControls, { ...props, model: props.current, phone: false }))
@@ -592,13 +968,13 @@ describe('session model switch', () => {
     const desktop = renderToStaticMarkup(
       createElement(SessionControls, { ...props, model: { providerId: 'fake', model: 'fake-coder-32k' }, phone: false }),
     )
-    expect(desktop).toContain('class="chip is-pending"')
-    expect(desktop).toContain('下一条：fake-coder-32k')
+    expect(desktop).toContain('model-picker is-pending')
+    expect(desktop).toContain('aria-label="模型：下一条：fake-coder-32k"')
     const phone = renderToStaticMarkup(
       createElement(SessionControls, { ...props, model: { providerId: 'fake', model: 'fake-coder-32k' }, phone: true }),
     )
-    expect(phone).toContain('run-settings-chip is-pending')
-    expect(phone).toContain('aria-label="运行设置：下一条：fake-coder-32k"')
+    expect(phone).toMatch(/^<span class="chip chip-static is-pending" title="下一条消息使用：fake-coder-32k">.*下一条：fake-coder-32k/)
+    expect(renderToStaticMarkup(createElement(SessionControls, { ...props, model: props.current, phone: true }))).toBe('')
   })
 })
 
@@ -626,7 +1002,6 @@ describe('top bar', () => {
     cancelling: false,
     demo: false,
     phone: false,
-    drawerOpen: false,
     onNew: noop,
     inspectorOpen: false,
     onInspector: noop,
@@ -674,6 +1049,51 @@ describe('top bar', () => {
     expect(html).toMatch(/<span class="topbar-source"[^>]*><span class="ui-tile"/)
   })
 
+  it('heads a phone session page with the way back, the centred title over where it runs, and 会话信息', () => {
+    const menu = [{ id: 'sync', items: [{ id: 'refresh', label: '同步最新状态', onSelect: noop }] }]
+    const html = renderToStaticMarkup(
+      createElement(TopBar, {
+        ...topBar,
+        phone: true,
+        onBack: noop,
+        menu,
+        level: 'L3',
+        summary: session({ status: 'failed' }),
+        harness: { id: 'codex', name: 'Codex', source: 'acp' as const },
+        project: 'latch-app',
+      }),
+    )
+    expect(html).toMatch(/^<header class="topbar" data-phone=""><button[^>]*aria-label="返回会话列表"/)
+    // The title opens the session's menu (a sheet on a phone), 同步最新状态 included.
+    expect(html).toMatch(/<h1[^>]*><button[^>]*aria-haspopup="(?:menu|dialog)"[^>]*class="topbar-title-button">/)
+    expect(html).toContain(
+      '<div class="topbar-subline"><span class="topbar-source-text">Codex · latch-app</span><span class="ui-status-pill" data-tone="err">失败</span><span class="ui-status-pill level-pill"',
+    )
+    expect(html).toMatch(/<button[^>]*aria-label="会话信息"[^>]*>.*<\/header>$/)
+    expect(html).not.toContain('新建会话')
+    expect(html).not.toContain('aria-label="会话操作"')
+  })
+
+  it('keeps a phone page header for a session the Host has not listed yet, with no menu or 会话信息 until it does', () => {
+    const menu = [{ id: 'sync', items: [{ id: 'refresh', label: '同步最新状态', onSelect: noop }] }]
+    const html = renderToStaticMarkup(
+      createElement(TopBar, {
+        ...topBar,
+        summary: undefined,
+        phone: true,
+        onBack: noop,
+        menu,
+        level: 'L3',
+        harness: { id: 'codex', name: 'Codex', source: 'acp' as const },
+        project: 'latch-app',
+      }),
+    )
+    expect(html).toMatch(/^<header class="topbar" data-phone=""><button[^>]*aria-label="返回会话列表"/)
+    expect(html).toContain('<h1 title="新会话"><span class="topbar-title-text">新会话</span></h1>')
+    expect(html).not.toContain('topbar-subline')
+    expect(html).not.toContain('会话信息')
+  })
+
   it('makes the title a button that opens the session menu, and offers to open a shut sidebar', () => {
     const sessionMenu = [{ id: 'manage', items: [{ id: 'rename', label: '重命名', onSelect: noop }] }]
     const html = renderToStaticMarkup(createElement(TopBar, { ...topBar, sessionMenu, sidebarCollapsed: true, onExpandSidebar: noop }))
@@ -697,43 +1117,31 @@ describe('popover anchoring', () => {
   })
 })
 
-describe('content hash next to a write diff', () => {
-  const line = (shown: string) => `<span>新内容哈希</span>${shown}</p>`
-
-  it('renders at once with a placeholder, then shows the hash the local confirmation shows for the new text', async () => {
+describe('write diff presentation', () => {
+  it('keeps changes readable without exposing digest metadata or a redundant new-file badge', async () => {
     const text = 'export const answer = 42\n'
-    const card = () =>
+    const expected = hashDisplay(sha256Hex(text))
+    expect(await contentHash(text)).toBe(expected)
+    for (const html of [
+      renderToStaticMarkup(createElement(DiffView, { diffs: [{ path: 'src/a.ts', newText: text, previous: 'none' }] })),
       renderToStaticMarkup(
         createElement(ToolCard, {
           message: tool(),
           onDecide: noop,
           approval: approval({
             risk: 'R2',
-            arguments: JSON.stringify({ path: 'a.ts', content: text }),
-            tool: { diffs: [{ path: 'a.ts', newText: text, previous: 'none' }] },
+            arguments: JSON.stringify({ path: 'src/a.ts', content: text }),
+            tool: { diffs: [{ path: 'src/a.ts', newText: text, previous: 'none' }] },
           }),
         }),
-      )
-    expect(card()).toContain(line('<span class="diff-hash-pending">计算中…</span>'))
-    const expected = hashDisplay(sha256Hex(text))
-    expect(await contentHash(text)).toBe(expected)
-    expect(card()).toContain(line(`<code>${expected}</code>`))
-    // Tool cards show their changes through the same diff view.
-    expect(
-      renderToStaticMarkup(createElement(DiffView, { diffs: [{ path: 'a.ts', oldText: 'x\n', newText: text, previous: 'text' }] })),
-    ).toContain(line(`<code>${expected}</code>`))
-  })
-
-  it('leaves the line out without WebCrypto and for a diff side the agent clipped', () => {
-    expect(
-      renderToStaticMarkup(
-        createElement(DiffView, { diffs: [{ path: 'big.txt', newText: 'x\n…（内容过长，已截断）', previous: 'none' }] }),
       ),
-    ).not.toContain('新内容哈希')
-    vi.stubGlobal('crypto', undefined)
-    expect(
-      renderToStaticMarkup(createElement(DiffView, { diffs: [{ path: 'b.ts', newText: 'only on an insecure origin' }] })),
-    ).not.toContain('新内容哈希')
+    ]) {
+      expect(html).toContain('a.ts')
+      expect(html).toContain('export const answer = 42')
+      expect(html).not.toContain('新内容哈希')
+      expect(html).not.toContain(expected)
+      expect(html).not.toContain('>新文件<')
+    }
   })
 })
 
@@ -906,5 +1314,105 @@ describe('units', () => {
     for (const text of [...footers, ...rows]) expect({ text, bare: bareNumbers(text) }).toEqual({ text, bare: [] })
     // The check itself finds a count without its unit.
     expect(bareNumbers('输入 12.4k · 输出 3.1k tokens · 用时 72')).toEqual(['12', '4', '72'])
+  })
+})
+
+describe('composer', () => {
+  const base = {
+    textareaRef: { current: null },
+    variant: 'new' as const,
+    label: '新会话消息',
+    placeholder: '描述任务…',
+    draft: '列出项目根目录',
+    onDraft: noop,
+    pending: null,
+    sending: false,
+    error: '',
+    onRetry: noop,
+    canSend: true,
+    onSubmit: noop,
+    sendKey: 'enter' as const,
+    coarse: false,
+    controls: null,
+  }
+
+  it('says in the send slot that starting takes the local confirmation, and keeps an empty send focusable with its reason', () => {
+    const start = renderToStaticMarkup(createElement(Composer, { ...base, confirmStart: '开始会话' }))
+    expect(start).toContain('开始会话')
+    expect(start).toContain('start-button')
+    expect(start).not.toContain('aria-label="发送"')
+    const empty = renderToStaticMarkup(createElement(Composer, { ...base, draft: '' }))
+    expect(empty).toContain('aria-label="发送"')
+    expect(empty).toContain('aria-disabled="true"')
+    expect(empty).not.toMatch(/<button[^>]*aria-label="发送"[^>]*disabled=""/u)
+  })
+
+  it('names what the oldest waiting request would do in the run bar, with hidden characters marked', () => {
+    const html = renderToStaticMarkup(
+      createElement(Composer, {
+        ...base,
+        variant: 'session',
+        run: { approvals: 2, approvalTitle: '写入 notes\u200b.md', onRevealApprovals: noop, cancel: 'idle', onCancel: noop },
+      }),
+    )
+    expect(html).toContain('2 项待批准')
+    expect(html).toContain('\\u{200B}')
+    expect(html).toContain('查看')
+    // Stop takes the send slot and is never red.
+    expect(html).toContain('aria-label="停止"')
+  })
+
+  it('keeps the bar quiet while a waiting card is in view, which says so itself', () => {
+    const html = renderToStaticMarkup(
+      createElement(Composer, {
+        ...base,
+        variant: 'session',
+        run: {
+          approvals: 1,
+          approvalsInView: true,
+          approvalTitle: '写入 notes.md',
+          onRevealApprovals: noop,
+          cancel: 'idle',
+          onCancel: noop,
+        },
+      }),
+    )
+    expect(html).not.toContain('项待批准')
+    expect(html).not.toContain('is-waiting')
+  })
+
+  it('says a stop whose outcome is unknown once, in the bar with 重试, and leaves the stop button a square', () => {
+    const html = renderToStaticMarkup(
+      createElement(Composer, {
+        ...base,
+        variant: 'session',
+        run: { approvals: 0, onRevealApprovals: noop, cancel: 'uncertain', onCancel: noop },
+      }),
+    )
+    expect(html.match(/尚未确认/gu)).toHaveLength(1)
+    expect(html.match(/重试/gu)).toHaveLength(1)
+    expect(html).toContain('stop-glyph')
+    expect(html).not.toContain('取消')
+  })
+
+  it('shows a device that may only watch a dashed frame with the reason instead of the input', () => {
+    const html = renderToStaticMarkup(
+      createElement(Composer, { ...base, variant: 'session', readOnly: '此设备没有「发起和继续会话」权限' }),
+    )
+    expect(html).toContain('data-variant="read-only"')
+    expect(html).toContain('此设备没有「发起和继续会话」权限')
+    expect(html).not.toContain('<textarea')
+    expect(html).not.toContain('aria-label="发送"')
+  })
+})
+
+describe('context row', () => {
+  it('names the computer and shows the level only when it is full access, leading to the ceilings', () => {
+    const asking = renderToStaticMarkup(createElement(ContextRow, { hostName: 'MacBook Pro', fullAccess: false, onComputer: noop }))
+    expect(asking).toContain('MacBook Pro')
+    expect(asking).not.toContain('完全访问')
+    const full = renderToStaticMarkup(createElement(ContextRow, { hostName: 'MacBook Pro', fullAccess: true, onComputer: noop }))
+    expect(full).toContain('aria-label="权限：完全访问，查看电脑与权限上限"')
+    expect(full).toContain('context-risk')
   })
 })

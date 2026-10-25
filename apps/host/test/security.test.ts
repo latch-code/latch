@@ -1,5 +1,6 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { existsSync } from 'node:fs'
+import { request as httpRequest } from 'node:http'
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { networkInterfaces, tmpdir } from 'node:os'
@@ -12,6 +13,7 @@ import { randomUUID } from 'node:crypto'
 import type { Device, EnrollmentView, InvitationView } from '@latch/protocol'
 import { enrollSigningText, testDeviceKey, makeTestTls } from '@latch/testkit'
 import { verifyAuditFile } from '../src/audit.ts'
+import { BACKUP_EXCLUSION_ATTRIBUTE, BACKUP_EXCLUSION_VALUE } from '../src/backup.ts'
 import { bootTime, readHostState, unixRequest, verifyHostState, writeHostState } from '../src/host-state.ts'
 import { loadOrCreateHostIdentity } from '../src/identity.ts'
 import { tlsListenerClass } from '../src/listeners.ts'
@@ -143,7 +145,9 @@ describe('Host process', () => {
     const lines = output.stdout.trimEnd().split('\n')
     expect(lines).toHaveLength(4)
     expect(lines[0]).toBe('Latch 0.1.0 · 演示模型 / 真实工具')
-    expect(lines[1]).toMatch(/^打开 http:\/\/h-[a-z2-7]{52}\.localhost:\d+\/link\/ ，请在本机确认。$/u)
+    expect(lines[1]).toMatch(
+      /^浏览器：http:\/\/h-[a-z2-7]{52}\.localhost:\d+\/link\/（新浏览器从 Latch 桌面端「在这台电脑的浏览器中打开」，或运行 pnpm latch device invite --loopback）$/u,
+    )
     expect(lines[2]).toBe(`启动目录：${workspace}`)
     expect(lines[3]).toBe(`手机接入：https://${tls.hostname}:${tlsPort}/link/（在电脑上的 Latch 桌面端生成配对二维码）`)
 
@@ -188,8 +192,48 @@ describe('Host process', () => {
     }
     expect(output.stdout + output.stderr).not.toContain('sk-never-printed')
 
-    const stopped = await run(TSX, [STOP, '--data-dir', dataDir], { cwd: root, env: childEnv() })
+    if (process.platform === 'darwin') {
+      // Key material is kept out of Time Machine from the first start.
+      for (const entry of ['auth', 'identity']) {
+        const { stdout } = await run('/usr/bin/xattr', ['-p', '-x', BACKUP_EXCLUSION_ATTRIBUTE, join(dataDir, entry)])
+        expect(stdout.replace(/\s+/gu, '').toLowerCase()).toBe(BACKUP_EXCLUSION_VALUE)
+      }
+    }
+
+    // `--reason` reaches the clients: the Host's last frame on an open stream says it is updating and when to retry.
+    const events = { text: '' }
+    const stream = httpRequest({
+      socketPath: state.socketPath,
+      path: '/link/api/events',
+      headers: { host: 'latch.unix', authorization: `Latch-Device ${credential}`, accept: 'text/event-stream' },
+    })
+    const ended = new Promise<void>(done => {
+      stream.on('response', response => {
+        response.setEncoding('utf8')
+        response.on('data', (chunk: string) => (events.text += chunk))
+        response.on('end', done)
+        response.on('close', done)
+      })
+      stream.on('error', () => done())
+    })
+    stream.end()
+    await waitFor(() => events.text.includes('event: refresh'), child)
+    const stopped = await run(TSX, [STOP, '--data-dir', dataDir, '--reason', 'update'], { cwd: root, env: childEnv() })
     expect(stopped.stdout).toContain('Latch 运行节点已停止。')
+    await ended
+    const announced = /event: host-state\ndata: (.*)\n\n$/u.exec(events.text)
+    expect(JSON.parse(announced![1]!)).toMatchObject({
+      type: 'host-state',
+      instanceId: state.instanceId,
+      state: 'stopping',
+      reason: 'update',
+      retryAfter: 10,
+    })
+    const refused = await run(TSX, [STOP, '--data-dir', dataDir, '--reason', 'later'], { cwd: root, env: childEnv() }).then(
+      () => ({ code: 0, stderr: '' }),
+      (error: { code: number; stderr: string }) => error,
+    )
+    expect(refused).toMatchObject({ code: 1, stderr: expect.stringContaining('--reason 只能是 restart、update、shutdown') })
     expect(child.exitCode ?? (await new Promise(done => child.once('exit', done)))).toBe(0)
     expect(await readHostState(dataDir)).toBeUndefined()
     expect(existsSync(join(dataDir, 'host.lock'))).toBe(false)
@@ -574,7 +618,9 @@ export default { id: 'gate', name: 'Gate', version: '0.0.1', description: 'Holds
     const t = await startTestHost()
     cleanups.push(() => t.close())
     const { sessionId } = await t.host.bridge.createTask({ prompt: '运行 30 秒长任务', requestId: randomUUID() })
-    cleanups.push(() => t.host.bridge.cancel(sessionId))
+    cleanups.push(async () => {
+      await t.host.bridge.cancel(sessionId)
+    })
     await expect.poll(async () => (await t.host.bridge.detail(sessionId)).summary.status).toBe('running')
     await writeHostState(t.dataDir, {
       version: 2,

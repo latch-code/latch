@@ -50,6 +50,11 @@ async function activate(plugin: HarnessPlugin): Promise<HarnessDriver> {
     registerTool: () => {
       throw new Error('unexpected tool')
     },
+    registerClientPanel: () => {},
+    registerSkill: () => {},
+    registerUiPanel: () => {
+      throw new Error('unexpected panel')
+    },
     onDispose: dispose => {
       disposers.push(dispose)
     },
@@ -398,7 +403,10 @@ describe('ACP driver registration and readiness', () => {
       profile: { presetId: 'codex' },
       preset: { id: 'codex' },
     })
-    expect(selectProfile({ ...base, presetId: 'codex', command: '/opt/homebrew/bin/codex-acp', args: [] }).verified).toBe(true)
+    // An absolute path counts only where the Host's own lookup finds the preset's command (see the next test).
+    expect(selectProfile({ ...base, presetId: 'codex', command: '/opt/homebrew/bin/codex-acp', args: [] }, () => undefined).verified).toBe(
+      false,
+    )
     expect(selectProfile({ ...base, presetId: 'gemini', command: 'gemini', args: ['--acp'] })).toMatchObject({
       verified: false,
       profile: { presetId: 'gemini' },
@@ -413,6 +421,33 @@ describe('ACP driver registration and readiness', () => {
     })
     const unknown = selectProfile({ ...base, command: 'mystery-agent', args: [] })
     expect(unknown).toEqual({ verified: false })
+  })
+
+  it("verifies a preset's command only at the location the Host finds it, never a same-named file elsewhere", async () => {
+    const root = await mkdtemp(join(tmpdir(), 'latch-preset-command-'))
+    cleanups.push(() => rm(root, { recursive: true, force: true }))
+    const make = async (directory: string) => {
+      await mkdir(join(root, directory), { recursive: true })
+      const path = join(root, directory, 'codex-acp')
+      await writeFile(path, '#!/bin/sh\n')
+      await chmod(path, 0o755)
+      return path
+    }
+    const found = await make('bin')
+    const planted = await make('project/node_modules/.bin')
+    await mkdir(join(root, 'links'))
+    const link = join(root, 'links', 'codex-acp')
+    await symlink(found, link)
+    const locate = (command: string) => (command === 'codex-acp' ? found : undefined)
+    const record = { id: 'codex', name: 'Codex', presetId: 'codex', args: [], env: {}, enabled: true }
+    expect(selectProfile({ ...record, command: 'codex-acp' }, locate).verified).toBe(true)
+    expect(selectProfile({ ...record, command: found }, locate).verified).toBe(true)
+    // A link to the file the lookup finds is the same executable.
+    expect(selectProfile({ ...record, command: link }, locate).verified).toBe(true)
+    expect(selectProfile({ ...record, command: planted }, locate)).toMatchObject({ verified: false, preset: { id: 'codex' } })
+    expect(validateAgentDefinition({ ...record, command: planted }, locate)).toEqual({ ok: true, verified: false })
+    // Nothing found under the preset's name: no absolute path can be the preset's own.
+    expect(selectProfile({ ...record, command: found }, () => undefined).verified).toBe(false)
   })
 
   it('does not verify an OpenCode definition whose variables move where OpenCode reads its configuration', () => {
@@ -789,10 +824,14 @@ describe('ACP launch confirmation', () => {
     const preview = await bridge.launchPreview!({ cwd: fixture.workspace })
     expect(preview).toEqual({
       launchHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+      // Without project configuration the two fingerprints are the same.
+      definitionHash: expect.stringMatching(/^[0-9a-f]{64}$/),
       command: process.execPath,
       args: [FAKE_ACP_AGENT],
       cwd: await realpath(fixture.workspace),
       envNames: expect.arrayContaining(['FAKE_SECRET', 'FAKE_ACP_LOG', 'PATH', 'TMPDIR', 'HTTPS_PROXY', 'GIT_CONFIG_COUNT']),
+      // Only what the definition sets, for the system sheet; the launch environment's own names stay out.
+      definitionEnvNames: Object.keys(fixture.record.env).sort(),
       verified: false,
       approvals: 'prompts',
       readback: 'none',
@@ -803,6 +842,7 @@ describe('ACP launch confirmation', () => {
     expect(preview.launchHash).toBe(
       launchHash({ resolvedCommand: process.execPath, args: [FAKE_ACP_AGENT], definitionEnv: fixture.record.env, profileVersion: 1 }),
     )
+    expect(preview.definitionHash).toBe(preview.launchHash)
 
     const { sessionId } = await bridge.createTask({ prompt: 'echo', requestId: rid(), expectedLaunchHash: preview.launchHash })
     const detail = await settled(bridge, sessionId)
@@ -1365,6 +1405,7 @@ describe('ACP project folders', () => {
       bridge.createTask(input),
       bridge.createTask({ ...input, prompt: 'echo other' }),
     ])
+    if (first.status === 'rejected') throw first.reason
     expect(first).toMatchObject({ status: 'fulfilled' })
     expect(again).toEqual(first)
     expect(other).toMatchObject({ status: 'rejected', reason: { status: 409, code: 'request-conflict' } })
@@ -1592,6 +1633,10 @@ describe('ACP permission mode', () => {
     expect(systemText(detail)).toContain(
       '检测到权限模式变化（default → yolo），已取消本轮并拒绝挂起的询问。该会话不再接受输入，请新建会话。',
     )
+    // Latch refused the open ask itself: it is recorded as cancelled, never as the person's rejection.
+    const outcomes = detail.messages.filter(message => message.role === 'tool').map(message => message.tool?.decision?.outcome)
+    expect(outcomes).toContain('cancelled')
+    expect(outcomes).not.toContain('rejected')
     const log = await fixture.log()
     expect(answers(log)).toEqual([{ outcome: 'selected', optionId: 'reject' }])
     expect(received(log, 'session/cancel')).toHaveLength(1)
@@ -1978,8 +2023,9 @@ describe('ACP turn mapping', () => {
     expect(tool(await reopened.detail(sessionId), 'tool:1:call_1')?.tool?.diffs).toEqual(expected)
   })
 
-  it('applies plan, title and usage updates and ignores unknown update kinds', async () => {
-    const bridge = await (await setup({ FAKE_ACP_CONFIG: 'legacy' })).open()
+  it('applies plan, title, commands and usage updates, persists commands and ignores unknown update kinds', async () => {
+    const fixture = await setup({ FAKE_ACP_CONFIG: 'legacy' })
+    const bridge = await fixture.open()
     const { sessionId } = await bridge.createTask({ prompt: 'plan', requestId: rid() })
     const detail = await settled(bridge, sessionId)
     expect(detail.summary).toMatchObject({ status: 'idle', title: 'Fake title', usage: { inputTokens: 10, outputTokens: 20 } })
@@ -1988,6 +2034,10 @@ describe('ACP turn mapping', () => {
       { content: 'Write', status: 'in_progress', priority: 'medium' },
     ])
     expect(assistants(detail).map(message => message.text)).toEqual(['planned'])
+    expect(detail.commands).toEqual([{ name: 'init', description: 'init' }])
+    await bridge.close()
+    const reopened = await fixture.open()
+    expect((await reopened.detail(sessionId)).commands).toEqual(detail.commands)
   })
 
   it('settles text sent outside a turn without changing the task status', async () => {
@@ -2058,23 +2108,31 @@ describe('ACP approvals', () => {
       code: 'approval-option-hidden',
       message: '该选项会持久保存授权，Latch 不提供',
     })
-    expect(await Promise.all([bridge.decide(approval.id, 'allow'), bridge.decide(approval.id, 'allow')])).toEqual([true, false])
+    expect(await Promise.all([bridge.decide(approval.id, 'allow', { via: 'this-mac' }), bridge.decide(approval.id, 'allow')])).toEqual([
+      true,
+      false,
+    ])
 
     const done = await settled(bridge, sessionId)
     expect(done.summary.status).toBe('idle')
     expect(tool(done, 'tool:1:call_1')).toMatchObject({ state: 'completed', text: 'ran with allow' })
+    expect(tool(done, 'tool:1:call_1')?.tool?.decision).toEqual({ outcome: 'allowed', at: expect.any(String), via: 'this-mac' })
     expect(assistants(done).at(-1)?.text).toBe('allowed')
     const replies = received(await fixture.log(), null).filter(entry => entry.result?.outcome)
     expect(replies.map(entry => entry.result?.outcome)).toEqual([{ outcome: 'selected', optionId: 'allow' }])
   })
 
   it('forwards a rejection and keeps several approvals of one session open at once', async () => {
-    const bridge = await (await setup()).open()
+    const fixture = await setup()
+    const bridge = await fixture.open()
     const rejected = await bridge.createTask({ prompt: 'permission', requestId: rid() })
     const [single] = (await until(bridge, rejected.sessionId, detail => detail.approvals.length === 1)).approvals
-    expect(await bridge.decide(single.id, 'reject')).toBe(true)
+    // An agent's permission answer carries no text: a note is not passed on and does not fail the rejection.
+    expect(await bridge.decide(single.id, 'reject', { via: 'other-device', note: '改用 docs/' })).toBe(true)
     const afterReject = await settled(bridge, rejected.sessionId)
     expect(tool(afterReject, 'tool:1:call_1')?.state).toBe('failed')
+    expect(tool(afterReject, 'tool:1:call_1')?.tool?.decision).toEqual({ outcome: 'rejected', at: expect.any(String), via: 'other-device' })
+    expect(JSON.stringify(await fixture.log())).not.toContain('改用 docs/')
     expect(assistants(afterReject).at(-1)?.text).toBe('rejected')
 
     const parallel = await bridge.createTask({ prompt: 'parallel', requestId: rid() })
@@ -2087,6 +2145,35 @@ describe('ACP approvals', () => {
     expect(assistants(await settled(bridge, parallel.sessionId)).at(-1)?.text).toBe('a=allow b=reject')
   })
 
+  it('keeps an allowance on a call asked about twice when the later ask is rejected', async () => {
+    const bridge = await (await setup()).open()
+    const { sessionId } = await bridge.createTask({ prompt: 'twice', requestId: rid() })
+    const [first] = (await until(bridge, sessionId, detail => detail.approvals.length === 1)).approvals
+    expect(await bridge.decide(first.id, 'allow', { via: 'this-mac' })).toBe(true)
+    const [second] = (await until(bridge, sessionId, detail => detail.approvals.some(item => item.id !== first.id))).approvals
+    expect(await bridge.decide(second.id, 'reject', { via: 'other-device' })).toBe(true)
+    const done = await settled(bridge, sessionId)
+    expect(assistants(done).at(-1)?.text).toBe('second=reject')
+    // a.txt was written under the first answer: the call keeps that allowance, its start and the diff it reported.
+    const call = tool(done, 'tool:1:call_1')
+    expect(call).toMatchObject({ state: 'completed', startedAt: expect.any(String) })
+    expect(call?.tool?.decision).toEqual({ outcome: 'allowed', at: expect.any(String), via: 'this-mac' })
+    expect(call?.tool?.diffs?.map(diff => diff.path)).toEqual(['/w/a.txt'])
+  })
+
+  it('reports a call the agent ran after a rejection as it reported it, next to the rejection', async () => {
+    const bridge = await (await setup()).open()
+    const { sessionId } = await bridge.createTask({ prompt: 'ignore', requestId: rid() })
+    const [approval] = (await until(bridge, sessionId, detail => detail.approvals.length === 1)).approvals
+    expect(await bridge.decide(approval.id, 'reject', { via: 'other-device' })).toBe(true)
+    const done = await settled(bridge, sessionId)
+    expect(assistants(done).at(-1)?.text).toBe('ignored reject')
+    const call = tool(done, 'tool:1:call_1')
+    expect(call?.state).toBe('completed')
+    expect(call?.tool?.decision).toEqual({ outcome: 'rejected', at: expect.any(String), via: 'other-device' })
+    expect(call?.tool?.diffs?.map(diff => diff.path)).toEqual(['/w/a.txt'])
+  })
+
   it('drops an approval the agent withdraws and answers it as cancelled', async () => {
     const bridge = await (await setup()).open()
     const { sessionId } = await bridge.createTask({ prompt: 'withdraw', requestId: rid() })
@@ -2097,6 +2184,8 @@ describe('ACP approvals', () => {
     expect(detail.summary.status).toBe('idle')
     expect(assistants(detail).at(-1)?.text).toBe('withdrawn -32800')
     expect(tool(detail, 'tool:1:call_1')?.state).toBe('failed')
+    // Nobody answered an ask the agent withdrew: it leaves no decision.
+    expect(tool(detail, 'tool:1:call_1')?.tool?.decision).toBeUndefined()
   })
 
   it('answers requests that offer only persistent or unknown choices without asking', async () => {
@@ -2171,6 +2260,8 @@ describe('ACP cancellation', () => {
     expect(detail.approvals).toEqual([])
     expect(bridge.approvals()).toEqual([])
     expect(tool(detail, 'tool:1:call_1')?.state).toBe('cancelled')
+    // Stopping answered the ask for nobody: cancelled, never a rejection and never with a device.
+    expect(tool(detail, 'tool:1:call_1')?.tool?.decision).toEqual({ outcome: 'cancelled', at: expect.any(String) })
     expect(systemText(detail)).toBe('')
     const log = await fixture.log()
     const cancel = log.findIndex(entry => entry.event === 'recv' && entry.method === 'session/cancel')
@@ -2191,6 +2282,31 @@ describe('ACP cancellation', () => {
     expect(tool(detail, 'tool:1:call_1')).toMatchObject({ state: 'completed', text: 'stopped cleanly' })
     expect(tool(detail, 'tool:1:call_2')).toMatchObject({ state: 'cancelled', text: expect.stringContaining('TOOL_NOT_STARTED') })
     expect(assistants(detail)[0]).toMatchObject({ text: 'working', state: 'completed' })
+  })
+
+  it('names each turn on the session and leaves a turn alone when a cancel names another', async () => {
+    const fixture = await setup()
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo x', requestId: rid() })
+    await settled(bridge, sessionId)
+    const first = (await bridge.detail(sessionId)).summary.runId
+    expect(first).toEqual(expect.any(String))
+    expect(await bridge.cancel(sessionId, { runId: first! })).toBe(false)
+
+    await bridge.prompt(sessionId, 'count 200', rid())
+    await until(bridge, sessionId, detail => detail.liveText.length > 0)
+    const second = (await bridge.detail(sessionId)).summary.runId
+    expect(second).toEqual(expect.any(String))
+    expect(second).not.toBe(first)
+    expect(await bridge.cancel(sessionId, { runId: first! })).toBe(false)
+    expect((await bridge.detail(sessionId)).summary.status).toBe('running')
+    expect(await bridge.cancel(sessionId, { runId: second! })).toBe(true)
+    expect((await bridge.detail(sessionId)).summary.status).toBe('cancelled')
+    expect(received(await fixture.log(), 'session/cancel')).toHaveLength(1)
+
+    await bridge.close()
+    const reopened = await fixture.open()
+    expect((await reopened.listTasks()).find(task => task.id === sessionId)?.runId).toBe(second)
   })
 
   it('kills only the process group of a session whose cancel never settles', async () => {

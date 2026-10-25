@@ -50,10 +50,12 @@ interface DialogOptions {
   cancelId: number
   noLink: boolean
 }
+type InvitationResult = { ok: true; url: string } | { ok: false; status: number; error: string; message: string; retryAfter?: number }
 interface ShellProxy {
-  handle(request: Request): Promise<Response>
+  handle(request: Request, options?: { shell?: boolean }): Promise<Response>
   shellRequest(method: string, path: string, body?: unknown): Promise<{ status: number; json: unknown }>
   renew(): Promise<boolean>
+  browserInvitation(): Promise<InvitationResult>
   startRenewalTimer(timers?: { setTimer?(callback: () => void, ms: number): unknown; clearTimer?(timer: unknown): void }): () => void
   state(): { renewAfter: number; retryAt: number; pendingEnrollments: number }
 }
@@ -63,6 +65,7 @@ interface RouteInfo {
   cancelEnrollment?: string
   selfRevoke?: boolean
   public?: boolean
+  pairing?: boolean
 }
 
 const proxy = require('../src/proxy.cjs') as {
@@ -83,6 +86,16 @@ const proxy = require('../src/proxy.cjs') as {
     gate?: { enter(): boolean; leave(): void }
     log?(text: string): void
   }): (url: string, parent?: unknown) => Promise<boolean>
+  BROWSER_INVITATION: { target: string; scopes: string[] }
+  browserInvitationUrl(url: unknown, hostId: string): string | undefined
+  isRendererPairing(body: Buffer | undefined): boolean
+  isAppSender(event: unknown): boolean
+  createBrowserOpener(options: {
+    invite(): Promise<InvitationResult>
+    open(url: string): Promise<unknown>
+    platform: string
+    log?(text: string): void
+  }): () => Promise<{ ok: true } | Exclude<InvitationResult, { ok: true }>>
   debugFlagProblems(argv: string[], env: Record<string, string | undefined>): string[]
   unexpectedArguments(args: string[]): string[]
   upstreamTarget(url: string): { path: string; pathname: string } | undefined
@@ -210,6 +223,7 @@ async function fakeHost(now: () => number = Date.now) {
     /** Runs after the Host has issued a renewed credential and before it answers. */
     onRenew: undefined as (() => void) | undefined,
     streamClosed: false,
+    invitationUrl: `http://h-${HOST_ID}.localhost:4317/link/#pair=lpi1-${'A'.repeat(26)}`,
   }
   const sendJson = (res: ServerResponse, status: number, value: unknown, headers: Record<string, string | string[]> = {}) => {
     res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', ...headers })
@@ -349,6 +363,19 @@ async function fakeHost(now: () => number = Date.now) {
       if (url === '/link/assets/app.js') {
         res.writeHead(200, { 'content-type': 'text/javascript', 'content-security-policy': "default-src 'self'" })
         res.end('console.log(1)')
+        return
+      }
+      if (req.method === 'POST' && url === '/link/api/pairings') {
+        const auth = authenticate(req)
+        if ('error' in auth) {
+          sendJson(res, auth.status ?? 401, { error: auth.error, message: 'x' })
+          return
+        }
+        if (state.renewalRequired.has(auth.deviceId)) {
+          sendJson(res, 401, { error: 'renewal-required', message: '设备凭据需要续期' })
+          return
+        }
+        sendJson(res, 201, { invitation: { url: state.invitationUrl } })
         return
       }
       if (url.startsWith('/link/api/')) {
@@ -537,6 +564,72 @@ describe('desktop shell policy', () => {
     expect(gate.enter()).toBe(true)
   })
 
+  it("hands the browser only this Host's loopback page with an invitation, and listens only to the app's top frame", () => {
+    const valid = `http://h-${HOST_ID}.localhost:4317/link/#pair=lpi1-${'A'.repeat(26)}`
+    expect(proxy.browserInvitationUrl(valid, HOST_ID)).toBe(valid)
+    for (const raw of [
+      `https://h-${HOST_ID}.localhost:4317/link/#pair=lpi1-${'A'.repeat(26)}`,
+      `http://h-${'b'.repeat(52)}.localhost:4317/link/#pair=lpi1-${'A'.repeat(26)}`,
+      `http://h-${HOST_ID}.localhost/link/#pair=lpi1-${'A'.repeat(26)}`,
+      `http://user@h-${HOST_ID}.localhost:4317/link/#pair=lpi1-${'A'.repeat(26)}`,
+      `http://h-${HOST_ID}.localhost:4317/link/?pair=lpi1-${'A'.repeat(26)}`,
+      `http://h-${HOST_ID}.localhost:4317/link/api/#pair=lpi1-${'A'.repeat(26)}`,
+      `http://h-${HOST_ID}.localhost:4317/link/#pair=lpo1-${'A'.repeat(26)}`,
+      `http://h-${HOST_ID}.localhost:4317/link/#pair=lpi1-${'A'.repeat(26)}&x=1`,
+      `http://127.0.0.1:4317/link/#pair=lpi1-${'A'.repeat(26)}`,
+      'not a url',
+      undefined,
+    ]) {
+      expect(proxy.browserInvitationUrl(raw, HOST_ID), String(raw)).toBeUndefined()
+    }
+
+    expect(proxy.isAppSender({ senderFrame: { url: 'latch://app/link/', parent: null } })).toBe(true)
+    expect(proxy.isAppSender({ senderFrame: { url: 'latch://app/link/', parent: {} } })).toBe(false)
+    expect(proxy.isAppSender({ senderFrame: { url: 'https://example.com/', parent: null } })).toBe(false)
+    expect(proxy.isAppSender({ senderFrame: null })).toBe(false)
+    expect(proxy.isAppSender(undefined)).toBe(false)
+  })
+
+  it('opens the browser only on macOS, one attempt at a time, and never logs the link', async () => {
+    const url = `http://h-${HOST_ID}.localhost:4317/link/#pair=lpi1-${'A'.repeat(26)}`
+    const opened: string[] = []
+    const logs: string[] = []
+    let invitations = 0
+    let release: (() => void) | undefined
+    const invite = async () => {
+      invitations++
+      await new Promise<void>(resolve => {
+        release = resolve
+      })
+      return { ok: true as const, url }
+    }
+    const other = proxy.createBrowserOpener({ invite, open: async link => opened.push(link), platform: 'linux' })
+    expect(await other()).toMatchObject({ ok: false, error: 'browser-open-unsupported' })
+    expect(invitations).toBe(0)
+
+    const openInBrowser = proxy.createBrowserOpener({ invite, open: async link => opened.push(link), platform: 'darwin' })
+    const first = openInBrowser()
+    const second = openInBrowser()
+    await vi.waitFor(() => expect(invitations).toBe(1))
+    release?.()
+    expect(await first).toEqual({ ok: true })
+    expect(await second).toEqual({ ok: true })
+    expect(opened).toEqual([url])
+
+    const refused = { ok: false as const, status: 403, error: 'scope-required', message: 'x' }
+    expect(await proxy.createBrowserOpener({ invite: async () => refused, open: async () => {}, platform: 'darwin' })()).toEqual(refused)
+    const failing = proxy.createBrowserOpener({
+      invite: async () => ({ ok: true as const, url }),
+      open: async link => {
+        throw new Error(`cannot open ${link}`)
+      },
+      platform: 'darwin',
+      log: text => logs.push(text),
+    })
+    expect(await failing()).toMatchObject({ ok: false, error: 'browser-open-failed' })
+    expect(logs.join('\n')).not.toContain('lpi1-')
+  })
+
   it('reports debugging switches from argv, NODE_OPTIONS and ELECTRON_RUN_AS_NODE', () => {
     expect(proxy.debugFlagProblems(['electron', 'main.cjs', '--latch-host-state=/x'], {})).toEqual([])
     expect(
@@ -631,11 +724,29 @@ describe('desktop shell policy', () => {
     for (const [method, path] of [
       ['GET', '/link/api/devices'],
       ['DELETE', '/link/api/devices/dev_x'],
-      ['POST', '/link/api/pairings'],
+      ['GET', '/link/api/pairings'],
     ] as const) {
       expect(proxy.classifyRoute(method, path)).toEqual({ kind: 'forward' })
     }
+    for (const path of ['/link/api/pairings', '/link/api//pairings/', '/link/api/%70airings', '/LINK/API/Pairings'])
+      expect(proxy.classifyRoute('POST', path), path).toEqual({ kind: 'forward', pairing: true })
     expect(proxy.classifyRoute('GET', '/link/api/snapshot')).toEqual({ kind: 'forward' })
+    for (const path of [
+      '/link/api/files/AAAAAAAAAAAAAAAAAAAAAA/local',
+      '/link/api/files',
+      '/link/api/%66iles/x/local',
+      '/LINK/API/Files/x/local',
+      '/link/api//files/x/local',
+      '/link/api/tasks/task-1/files/resolve',
+      '/link/api/tasks/task-1/files',
+      '/link/api/tasks/task-1/%66iles/resolve',
+      '/link/api/tasks/task-1//files/resolve',
+      '/link/api/tasks/a%2Fb/files/resolve',
+      '/link/api/tasks/a%2Fb%2Fc/%66iles/resolve',
+    ])
+      expect(proxy.classifyRoute('POST', path), path).toEqual({ kind: 'shell-files' })
+    expect(proxy.classifyRoute('POST', '/link/api/tasks/task-1/prompt')).toEqual({ kind: 'forward' })
+    expect(proxy.classifyRoute('GET', '/link/api/tasks/files')).toEqual({ kind: 'forward' })
   })
 
   it('keeps the folder-add routes for main, however the page spells them', () => {
@@ -1063,6 +1174,18 @@ describe('desktop shell proxy', () => {
       expect(response.status, path).toBe(403)
       expect(await response.json()).toEqual({ error: 'shell-managed', message: '设备凭据由 Latch 桌面端管理' })
     }
+    // Sleep, wake and stop reasons come from main itself; the page cannot report them on its behalf.
+    const seen = context.host.seen.length
+    for (const path of ['/link/api/host/state', '/link/api//host/state', '/link/api/HOST/%73tate', '/link/api/host/state/']) {
+      const response = await context.request(path, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ state: 'sleeping' }),
+      })
+      expect(response.status, path).toBe(403)
+      expect(await response.json()).toEqual({ error: 'shell-managed', message: '电脑的运行状态由 Latch 桌面端报告' })
+    }
+    expect(context.host.seen).toHaveLength(seen)
     for (const [method, path] of [
       ['GET', '/link/api/devices'],
       ['DELETE', '/link/api/devices/dev_x'],
@@ -1110,6 +1233,34 @@ describe('desktop shell proxy', () => {
     expect(seen).toMatchObject({ method: 'POST', url: '/link/api/folder-grants' })
     expect(seen.headers.authorization).toBe(`Latch-Device ${credential}`)
     expect(seen.headers['content-type']).toBe('application/json')
+  })
+
+  it('refuses the file routes to the renderer and forwards them, with the credential, only for main', async () => {
+    const context = await shell()
+    await enroll(context)
+    const { credential } = context.store.current()!
+    const before = context.host.seen.length
+    for (const path of [
+      '/link/api/tasks/task-1/files/resolve',
+      '/link/api/files/AAAAAAAAAAAAAAAAAAAAAA/local',
+      '/link/api/%66iles/x/local',
+    ]) {
+      const response = await context.request(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+      expect(response.status, path).toBe(403)
+      expect(await response.json()).toEqual({ error: 'shell-managed', message: '文件操作由 Latch 桌面端管理' })
+    }
+    expect(context.host.seen).toHaveLength(before)
+    const own = await context.handler.handle(
+      new Request('latch://app/link/api/tasks/task-1/files/resolve', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{"paths":["a.md"]}',
+      }),
+      { shell: true },
+    )
+    expect(own.status).toBe(200)
+    expect(context.host.seen.at(-1)).toMatchObject({ method: 'POST', url: '/link/api/tasks/task-1/files/resolve' })
+    expect(context.host.seen.at(-1)!.headers.authorization).toBe(`Latch-Device ${credential}`)
   })
 
   it('forwards only public routes while the shell holds no credential', async () => {
@@ -1392,6 +1543,56 @@ describe('desktop shell proxy', () => {
     stop()
   })
 
+  it("makes a browser invitation with the shell's credential, renews once when asked, and refuses a link that is not this Host's page", async () => {
+    const context = await shell()
+    expect(await context.handler.browserInvitation()).toMatchObject({ ok: false, status: 401, error: 'unauthorized' })
+    await enroll(context)
+    const before = context.store.current()!
+    context.host.state.renewalRequired.add(before.deviceId)
+    expect(await context.handler.browserInvitation()).toEqual({ ok: true, url: context.host.state.invitationUrl })
+    const after = context.store.current()!
+    expect(after.credential).not.toBe(before.credential)
+    const pairing = context.host.seen.filter(item => item.url === '/link/api/pairings').at(-1)!
+    expect(pairing.headers.authorization).toBe(`Latch-Device ${after.credential}`)
+    expect(JSON.parse(pairing.body)).toEqual(proxy.BROWSER_INVITATION)
+
+    context.host.state.invitationUrl = 'https://example.com/#pair=lpi1-AAAAAAAAAAAAAAAAAAAAAAAAAA'
+    expect(await context.handler.browserInvitation()).toMatchObject({ ok: false, error: 'browser-open-failed' })
+    context.host.state.revoked.add(after.deviceId)
+    expect(await context.handler.browserInvitation()).toMatchObject({ ok: false, status: 401, error: 'device-revoked' })
+    expect(context.store.current()).toBeUndefined()
+  })
+
+  it("forwards the page's request for a phone invitation, never one for this computer's browser", async () => {
+    const context = await shell()
+    await enroll(context)
+    const post = (path: string, body?: string) =>
+      context.request(path, { method: 'POST', ...(body === undefined ? {} : { headers: { 'content-type': 'application/json' }, body }) })
+    const before = context.host.seen.length
+    for (const [path, body] of [
+      ['/link/api/pairings', '{"target":"loopback"}'],
+      ['/link/api/pairings', '{"target":"loopback","scopes":["view"]}'],
+      // JSON.parse keeps the last duplicate, as the Host's parser does.
+      ['/link/api/pairings', '{"target":"tls","target":"loopback"}'],
+      ['/link/api//pairings/', '{"target":"loopback"}'],
+      ['/link/api/%70airings', '{"target":"loopback"}'],
+      ['/link/api/pairings', '{"target":"Loopback"}'],
+      ['/link/api/pairings', '{"target":null}'],
+      ['/link/api/pairings', '[]'],
+      ['/link/api/pairings', 'not json'],
+    ] as const) {
+      const response = await post(path, body)
+      expect(response.status, `${path} ${body}`).toBe(403)
+      expect(await response.json()).toEqual({ error: 'shell-managed', message: '这台电脑上浏览器的登记链接由 Latch 桌面端直接交给浏览器' })
+    }
+    expect(context.host.seen).toHaveLength(before)
+    for (const body of [undefined, '{}', '{"target":"tls","scopes":["view","run"]}'])
+      expect((await post('/link/api/pairings', body)).status).toBe(201)
+    expect(context.host.seen.slice(before).map(item => item.body)).toEqual(['', '{}', '{"target":"tls","scopes":["view","run"]}'])
+    expect(proxy.isRendererPairing(undefined)).toBe(true)
+    expect(proxy.isRendererPairing(Buffer.from('{"target":"loopback"}'))).toBe(false)
+  })
+
   it('forgets the device when the Host reports it revoked, then passes the 401 through', async () => {
     const context = await shell()
     await enroll(context)
@@ -1487,6 +1688,44 @@ async function renewalRelay(target: string) {
   return { socketPath, control }
 }
 
+describe('desktop shell against the Host', () => {
+  it('gets a one-time loopback invitation over host.sock that enrolls only a browser on loopback', async () => {
+    const testHost = await startTestHost()
+    cleanups.push(() => testHost.close())
+    const { host } = testHost
+    const store = await credentials.openCredentialStore({
+      directory: join(await directory(), 'latch-devices'),
+      hostId: host.hostId,
+      safeStorage: fakeSafeStorage(),
+    })
+    const handler = proxy.createShellProxy({ hostId: host.hostId, store, log: () => {}, resolveSocket: async () => host.socketPath })
+    const request = (path: string, init: RequestInit = {}) => handler.handle(new Request(`latch://app${path}`, init))
+    const created = await request('/link/api/enrollments', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: '桌面端' }),
+    })
+    const { enrollment } = (await created.json()) as { enrollment: { id: string } }
+    await vi.waitFor(async () => {
+      const status = await request(`/link/api/enrollments/${enrollment.id}`)
+      expect(((await status.json()) as { enrollment: { status: string } }).enrollment.status).toBe('approved')
+    })
+    expect((await request(`/link/api/enrollments/${enrollment.id}/complete`, { method: 'POST', body: '{}' })).status).toBe(200)
+    const desktop = store.current()!
+
+    const result = await handler.browserInvitation()
+    if (!result.ok) throw new Error(result.error)
+    expect(result.url).toMatch(new RegExp(`^${host.loopbackOrigin}/link/#pair=lpi1-[A-Z2-7]{26}$`))
+    expect(host.security.audit.lastOf('pairing.invited')).toMatchObject({
+      actor: { deviceId: desktop.deviceId, listener: 'unix' },
+      detail: { scopes: ['view', 'run', 'approve:standard', 'admin'], listener: 'loopback-tcp' },
+    })
+    const browser = await testHost.enroll({ invitation: new URL(result.url).hash.slice('#pair='.length), scopes: ['view', 'admin'] })
+    expect(browser.device).toMatchObject({ listener: 'loopback-tcp', pairedBy: { method: 'invitation', deviceId: desktop.deviceId } })
+    expect(testHost.presence.requests.at(-1)!.preview.lines.at(-1)).toEqual({ label: '邀请来源', value: '桌面端' })
+  })
+})
+
 describe('desktop shell renewal against the Host', () => {
   it('survives a lost renewal answer: the stored credential keeps working and the next renewal takes over', async () => {
     let time = Date.now()
@@ -1546,7 +1785,7 @@ describe('desktop shell renewal against the Host', () => {
 })
 
 /** A minimal Host on a unix socket that answers host-info like the real one. */
-async function hostInfoServer(info: { pid: number; hostId: string; instanceId: string }) {
+async function hostInfoServer(info: { pid: number; hostId: string; instanceId: string }, extra: Record<string, unknown> = {}) {
   const root = await directory()
   const runtime = join(root, 'latch-run')
   await mkdir(runtime, { mode: 0o700 })
@@ -1569,6 +1808,7 @@ async function hostInfoServer(info: { pid: number; hostId: string; instanceId: s
         devMode: true,
         presence: { status: 'unavailable' },
         activeSessions: 0,
+        ...extra,
       }),
     )
   })
@@ -1622,5 +1862,21 @@ describe('desktop Host verification (CommonJS)', () => {
     expect(await hostModule.inspectHostState(state)).toMatchObject({ ok: false, reason: '运行目录权限不是 0700' })
     await chmod(runtime, 0o700)
     expect(await hostModule.inspectHostState({ ...state, socketPath: join(runtime, 'other.sock') })).toMatchObject({ ok: false })
+  })
+
+  it('reads the running and waiting counts from host-info, and refuses a malformed one as host-state.ts does', async () => {
+    const instanceId = randomUUID()
+    const counted = await hostInfoServer(
+      { pid: process.pid, hostId: HOST_ID, instanceId },
+      { activeSessions: 3, activity: { running: 1, waiting: 2 } },
+    )
+    expect(await hostModule.inspectHostState(counted.state)).toMatchObject({ ok: true, info: { activity: { running: 1, waiting: 2 } } })
+    for (const activity of [{ running: 'many' }, { running: -1, waiting: 0 }, { running: 0, waiting: -2 }, [0, 0]]) {
+      const malformed = await hostInfoServer({ pid: process.pid, hostId: HOST_ID, instanceId }, { activity })
+      expect(await hostModule.inspectHostState(malformed.state), JSON.stringify(activity)).toMatchObject({
+        ok: false,
+        reason: '无法通过 host.sock 读取 Host 信息',
+      })
+    }
   })
 })

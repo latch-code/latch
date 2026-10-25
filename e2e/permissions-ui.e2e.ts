@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { AgentSettings, TaskDetail } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
 import { type TestDevice, FAKE_ACP_AGENT } from '@latch/testkit'
-import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
+import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { expectUnmovedByInjectedStyles } from './helpers/security.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { openSection, openSettings, closeSettings } from './helpers/layout.ts'
@@ -73,6 +73,12 @@ describe('permission states in a browser', () => {
     await testHost?.close()
   })
 
+  /** A Latch 内置 card: 拒绝 asks what to do instead in the composer, and the second 拒绝 rejects without a note. */
+  async function rejectWithoutNote(card: Locator): Promise<void> {
+    await card.getByRole('button', { name: '拒绝', exact: true }).click()
+    await card.getByText('在输入框里告诉 Agent 改做什么，再按「拒绝」；不写也可以。', { exact: true }).waitFor()
+    await card.getByRole('button', { name: '拒绝', exact: true }).click()
+  }
   async function open(sessionId: string): Promise<void> {
     await page.locator(`[data-task-id="${sessionId}"]`).click()
     await page.locator('.transcript-content').waitFor()
@@ -97,13 +103,95 @@ describe('permission states in a browser', () => {
     expect((await detail(sessionId)).approvals[0]?.risk).toBe('R2')
     await open(sessionId)
     const card = page.locator('[data-approval-id]')
-    await card.getByText('高风险', { exact: true }).waitFor()
-    await card.getByText('高风险操作只能在执行端电脑上用 Latch 桌面端批准', { exact: true }).waitFor()
+    await card.getByText('高风险 · 未登记的工具', { exact: true }).waitFor()
+    await card.getByText('高风险操作只能在运行 Latch 的电脑上用 Latch 桌面端批准', { exact: true }).waitFor()
     expect(await card.getByRole('button', { name: /允许/ }).count()).toBe(0)
     await page.screenshot({ path: `${OUTPUT}/r2-browser-desktop.png`, fullPage: true, animations: 'disabled' })
-    await card.getByRole('button', { name: '拒绝', exact: true }).click()
+    // 拒绝 asks what to do instead; pressing it again rejects without a note.
+    await rejectWithoutNote(card)
     await expect.poll(async () => (await detail(sessionId)).summary.status).toBe('idle')
     await card.waitFor({ state: 'detached' })
+    // The card folds into its row: the state slot reads the record, 已拒绝 and its time in the hint ink, never 失败, and
+    // nothing says it a second time.
+    const row = page.locator('.tool-card', { has: page.locator('.tool-decision-words') })
+    const record = row.locator('.tool-card-state .tool-decision-words')
+    await record.waitFor()
+    expect(await row.locator('.tool-card-state').getAttribute('class')).not.toContain('state-failed')
+    expect(await record.textContent()).toMatch(/^已拒绝 · \d{2}:\d{2}$/u)
+    expect(await record.getAttribute('title')).toContain('在其他设备上决定')
+    expect(await row.locator('.tool-decision').count()).toBe(0)
+    expect((await row.textContent())?.match(/已拒绝/gu)).toHaveLength(1)
+    // A titled tool's row names it by its title; the plugin tool here has none, so its ID is the label itself.
+    expect(await row.locator('.tool-card-name').count()).toBe(0)
+    expect((await detail(sessionId)).messages.find(message => message.role === 'tool')?.tool?.decision).toMatchObject({
+      outcome: 'rejected',
+      via: 'other-device',
+    })
+    expect(await page.locator('.transcript-content').textContent()).not.toMatch(/APPROVAL_REJECTED|。。/u)
+    // Captured once the turn has settled on the page: no live line, and the send button back in place of stop.
+    await page.locator('.turn-phase').waitFor({ state: 'detached' })
+    await page.getByRole('button', { name: '取消任务' }).waitFor({ state: 'detached' })
+    await page.screenshot({ path: `${OUTPUT}/r2-rejected-record.png`, fullPage: true, animations: 'disabled' })
+  })
+
+  it('asks what to do instead after 拒绝 and hands it to Latch 内置 with the rejection', async () => {
+    const { sessionId } = await remote.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { prompt: '生成需要审批的报告', requestId: randomUUID(), mode: 'agent', model: { providerId: 'demo', model: 'demo' } },
+    })
+    await expect.poll(async () => (await detail(sessionId)).approvals.length).toBe(1)
+    await open(sessionId)
+    const card = page.locator('[data-approval-id]')
+    await card.getByRole('button', { name: '拒绝', exact: true }).click()
+    // The rejection waits: the composer takes focus and asks, and the card says where to write.
+    const note = page.getByRole('textbox', { name: '告诉 Agent 改做什么', exact: true })
+    await expect.poll(() => note.evaluate(element => element === document.activeElement)).toBe(true)
+    expect(await note.getAttribute('placeholder')).toBe('告诉 Agent 改做什么…')
+    await card.getByText('在输入框里告诉 Agent 改做什么，再按「拒绝」；不写也可以。', { exact: true }).waitFor()
+    await page.getByText('写下的话会和拒绝一起交给模型；不写也可以直接拒绝。', { exact: true }).waitFor()
+    expect((await detail(sessionId)).approvals).toHaveLength(1)
+    await page.screenshot({ path: `${OUTPUT}/reject-note-asking.png`, fullPage: true, animations: 'disabled' })
+    await note.fill('改写到 docs/ 下')
+    await note.press('Enter')
+    await expect.poll(async () => (await detail(sessionId)).summary.status).toBe('idle')
+    const settled = await detail(sessionId)
+    expect(settled.messages.find(message => message.role === 'tool')?.tool?.decision).toMatchObject({ outcome: 'rejected' })
+    expect(settled.messages.filter(message => message.role === 'assistant').at(-1)?.text).toContain('收到你的说明：「改写到 docs/ 下」')
+    await page.getByText(/收到你的说明：「改写到 docs\/ 下」/u).waitFor()
+    // The composer is itself again, and what was written went with the rejection, not into the draft.
+    const composer = page.getByRole('textbox', { name: '继续对话', exact: true })
+    await composer.waitFor()
+    expect(await composer.inputValue()).toBe('')
+    expect(await page.getByText('写下的话会和拒绝一起交给模型；不写也可以直接拒绝。', { exact: true }).count()).toBe(0)
+  })
+
+  it.each([
+    { name: 'phone', width: 390, height: 844 },
+    { name: 'tablet', width: 768, height: 1024 },
+  ])('keeps approval buttons reachable after switching conversations on $name', async ({ width, height }) => {
+    const context = await browser.newContext({ viewport: { width, height }, isMobile: true, hasTouch: true, locale: 'zh-CN' })
+    const phone = await context.newPage()
+    const sessions: string[] = []
+    try {
+      await enrollBrowser(phone, testHost, { name: '审批手机' })
+      sessions.push(await startHighRisk('第一个等待审批的会话'), await startHighRisk('第二个等待审批的会话'))
+      for (let round = 0; round < 16; round++) {
+        await phone.evaluate(() => sessionStorage.clear())
+        await phone.reload()
+        await connected(phone)
+        const drawer = phone.getByRole('button', { name: '打开会话列表', exact: true })
+        if (width >= 768) await drawer.click()
+        await phone.locator(`[data-task-id="${sessions[0]}"]`).click()
+        await phone.locator('.drawer-backdrop').waitFor({ state: 'detached' })
+        const reject = phone.locator('[data-approval-id]').getByRole('button', { name: '拒绝', exact: true })
+        // Exercise the actual pointer hit test after the session's entry animation, including a non-scrolling transcript.
+        // An opacity animation on the masked scroller used to leave its visible buttons outside Chromium's hit region.
+        await reject.click({ trial: true, timeout: 6000 })
+      }
+    } finally {
+      await context.close()
+      for (const id of sessions) await remote.request(`tasks/${id}/cancel`, { method: 'POST' })
+    }
   })
 
   it('keeps an approval card as it is under styles added to the page', async () => {
@@ -114,7 +202,7 @@ describe('permission states in a browser', () => {
     await expect.poll(async () => (await detail(sessionId)).approvals.length).toBe(1)
     await open(sessionId)
     const card = '[data-approval-id]'
-    await page.locator(card).getByText('高风险', { exact: true }).waitFor()
+    await page.locator(card).getByText('高风险 · 未登记的工具', { exact: true }).waitFor()
     await expectUnmovedByInjectedStyles(page, [
       card,
       `${card} .tool-card-header`,
@@ -126,7 +214,7 @@ describe('permission states in a browser', () => {
       `${card} .approval-hint`,
       `${card} .ui-button`,
     ])
-    await page.locator(card).getByRole('button', { name: '拒绝', exact: true }).click()
+    await rejectWithoutNote(page.locator(card))
     await expect.poll(async () => (await detail(sessionId)).summary.status).toBe('idle')
   })
 
@@ -135,7 +223,7 @@ describe('permission states in a browser', () => {
     const arriving = await startHighRisk('看它到达')
     await open(quiet)
     const card = page.locator('[data-approval-id]')
-    await card.getByText('高风险', { exact: true }).waitFor()
+    await card.getByText('高风险 · 未登记的工具', { exact: true }).waitFor()
     // The motion tokens as the browser resolves them (a probe reads each through a transition property).
     const tokens = await page.evaluate(() => {
       const probe = document.createElement('div')
@@ -221,7 +309,9 @@ describe('permission states in a browser', () => {
     await frames('arrival', card)
 
     // Settled: the slot folds by its height over 180ms while its content fades over 120ms, both on the exit curve. The
-    // folding copy stays until those transitions end, so the held frames show it.
+    // folding copy stays until those transitions end, so the held frames show it. The first 拒绝 asks for a note.
+    await card.getByRole('button', { name: '拒绝', exact: true }).click()
+    await card.getByText('在输入框里告诉 Agent 改做什么，再按「拒绝」；不写也可以。', { exact: true }).waitFor()
     await hold()
     await card.getByRole('button', { name: '拒绝', exact: true }).click()
     await page.locator('.approval-slot[data-leaving]').waitFor()
@@ -235,7 +325,7 @@ describe('permission states in a browser', () => {
 
     // The preview's disclosure opens over 180ms on the entry curve and folds over 120ms on the exit curve.
     await open(quiet)
-    await card.getByText('高风险', { exact: true }).waitFor()
+    await card.getByText('高风险 · 未登记的工具', { exact: true }).waitFor()
     const disclosure = await page.evaluate(() => {
       const panel = document.querySelector('[data-approval-id] .approval-panel')!
       const probe = document.createElement('div')
@@ -262,9 +352,54 @@ describe('permission states in a browser', () => {
     )
     expect(reduced.every(value => value.split(', ').every(part => parseFloat(part) <= 0.001))).toBe(true)
     await page.emulateMedia({ reducedMotion: 'no-preference' })
-    await card.getByRole('button', { name: '拒绝', exact: true }).click()
+    await rejectWithoutNote(card)
     await expect.poll(async () => (await detail(quiet)).summary.status).toBe('idle')
     await card.waitFor({ state: 'detached' })
+  })
+
+  it('says approvals wait in amber above the input only while none of their cards is in view', async () => {
+    // A long request makes the conversation taller than the window, so the card can be scrolled out of view.
+    const sessionId = await startHighRisk(Array.from({ length: 40 }, (_, line) => `第 ${line + 1} 行要求`).join('\n'))
+    await page.setViewportSize({ width: 1440, height: 640 })
+    try {
+      await open(sessionId)
+      const card = page.locator('[data-approval-id]')
+      await card.getByText('高风险 · 未登记的工具', { exact: true }).waitFor()
+      const bar = page.locator('.run-bar-collapse')
+      const transcript = page.locator('.transcript')
+      const cardShows = () =>
+        card.evaluate(element => {
+          const box = element.getBoundingClientRect()
+          const frame = element.closest('.transcript')!.getBoundingClientRect()
+          return box.bottom > frame.top && box.top < frame.bottom
+        })
+      // The page opens on the latest output: the card is in view and says so itself, so the bar says nothing.
+      expect(await cardShows()).toBe(true)
+      await expect.poll(() => bar.getAttribute('data-state')).toBe('closed')
+      expect(await page.locator('.run-bar.is-waiting').count()).toBe(0)
+      await page.screenshot({ path: `${OUTPUT}/run-bar-card-in-view.png`, animations: 'disabled' })
+
+      // Scrolled away from it by the reader, the bar says it in amber, with what it would do and 查看.
+      await transcript.hover()
+      await page.mouse.wheel(0, -4000)
+      await expect.poll(() => transcript.evaluate(element => element.scrollTop)).toBe(0)
+      expect(await cardShows()).toBe(false)
+      const waiting = page.locator('.run-bar.is-waiting')
+      await waiting.getByText('1 项待批准', { exact: true }).waitFor()
+      await expect.poll(() => bar.getAttribute('data-state')).toBe('open')
+      expect((await waiting.locator('.run-bar-detail').textContent())?.trim()).toBeTruthy()
+      await page.locator('.run-bar-collapse[data-settled]').waitFor()
+      await page.screenshot({ path: `${OUTPUT}/run-bar-waiting.png`, animations: 'disabled' })
+
+      // 查看 brings the card back into view, and the bar folds away again.
+      await waiting.getByRole('button', { name: '查看', exact: true }).click()
+      await expect.poll(cardShows).toBe(true)
+      await expect.poll(() => bar.getAttribute('data-state')).not.toBe('open')
+      await rejectWithoutNote(card)
+      await expect.poll(async () => (await detail(sessionId)).summary.status).toBe('idle')
+    } finally {
+      await page.setViewportSize({ width: 1440, height: 1000 })
+    }
   })
 
   it('keeps a full-access session read-only in the browser and shows permission drift', async () => {
@@ -289,7 +424,7 @@ describe('permission states in a browser', () => {
     const card = page.locator('[data-approval-id]')
     await card.getByText('仅提示', { exact: true }).waitFor()
     await card.getByText('完全访问会话中，Agent 的询问只是提示：拒绝会转达给它，但不能阻止它执行其他操作。', { exact: true }).waitFor()
-    await card.getByText('只有执行端电脑上的 Latch 桌面端可以回应完全访问会话的询问', { exact: true }).waitFor()
+    await card.getByText('只有运行 Latch 的电脑上的 Latch 桌面端可以回应完全访问会话的询问', { exact: true }).waitFor()
     expect(await card.getByRole('button', { name: /允许/ }).count()).toBe(0)
     await page.screenshot({ path: `${OUTPUT}/l3-read-only-desktop.png`, fullPage: true, animations: 'disabled' })
     await page.setViewportSize({ width: 390, height: 844 })
@@ -321,13 +456,16 @@ describe('permission states in a browser', () => {
 
   it('marks full-access harnesses as desktop-only in the new-session picker', async () => {
     await page.getByRole('button', { name: '新建会话', exact: true }).first().click()
-    await page.getByRole('button', { name: /^Harness：/ }).click()
-    const item = page.getByRole('menuitemradio', { name: /Fake Agent/ })
+    const item = page.getByRole('radiogroup', { name: 'Agent', exact: true }).getByRole('radio', { name: /Fake Agent/ })
     await item.waitFor()
-    expect(await item.isDisabled()).toBe(true)
-    expect(await item.getAttribute('title')).toBe('仅本机桌面端')
+    expect(await item.getAttribute('aria-disabled')).toBe('true')
+    expect(await item.getAttribute('aria-checked')).toBe('false')
+    // Its line says so on the tile; pressed, the reason is said under the row (touch screens have no tooltip).
+    expect(await item.textContent()).toContain('仅本机桌面端')
+    await item.click({ force: true })
+    expect(await item.getAttribute('aria-checked')).toBe('false')
+    await page.locator('.harness-choice .ui-tile-choice-reason', { hasText: '仅本机桌面端' }).waitFor()
     await page.screenshot({ path: `${OUTPUT}/harness-picker-desktop.png`, animations: 'disabled' })
-    await page.keyboard.press('Escape')
   })
 
   const policy = () => testHost.host.security.policy.get()

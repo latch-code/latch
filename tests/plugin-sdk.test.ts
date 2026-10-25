@@ -34,6 +34,9 @@ describe('plugin SDK types', () => {
         "import type { HarnessPlugin, PluginInfo, ToolDefinition } from 'harness-link/plugin-sdk'",
         "import type { HarnessDriver, HarnessHostOptions } from 'harness-link/harness-sdk'",
         'export type Surface = [HarnessPlugin, PluginInfo, ToolDefinition, HarnessDriver, HarnessHostOptions]',
+        // A tool names itself for tool rows with the optional title and kind.
+        "export const shout: ToolDefinition = { name: 'shout', title: '转为大写', kind: 'other', description: 'Uppercase',",
+        '  parameters: {}, requiresApproval: false, execute: async args => ({ text: String(args.text).toUpperCase() }) }',
         '',
       ].join('\n'),
     )

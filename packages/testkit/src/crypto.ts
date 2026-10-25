@@ -22,6 +22,10 @@ export interface SecurityVectors {
   previewHash: Array<{ preview: Record<string, unknown>; previewHash: string; hashDisplay: string }>
   hashDisplay: Array<{ hex: string; display: string }>
   escapePreviewText: Array<{ input: string; output: string }>
+  /** The sentence the system sheet shows, from a subject whose slots are raw text as a device or a model chose it. */
+  presenceReason: Array<{ action: string; subject: { form: string; slots: Record<string, string> }; reason: string }>
+  /** Request lines the macOS helper accepts (`ok`) or refuses with this error code. */
+  presenceRequest: Array<{ name: string; request: Record<string, unknown>; result: string }>
   signing: {
     enroll: { format: string; example: { hostId: string; enrollmentId: string; nonce: string; text: string; signature: string } }
     renew: { format: string; example: { hostId: string; deviceId: string; nonce: string; text: string; signature: string } }
@@ -54,6 +58,8 @@ export const CANONICAL_JSON_CASES = SECURITY_VECTORS.canonicalJsonCases
 export const PREVIEW_HASH_VECTORS = SECURITY_VECTORS.previewHash
 export const HASH_DISPLAY_VECTORS = SECURITY_VECTORS.hashDisplay
 export const ESCAPE_PREVIEW_VECTORS = SECURITY_VECTORS.escapePreviewText
+export const PRESENCE_REASON_VECTORS = SECURITY_VECTORS.presenceReason
+export const PRESENCE_REQUEST_VECTORS = SECURITY_VECTORS.presenceRequest
 export const ENROLL_SIGNING_VECTOR = SECURITY_VECTORS.signing.enroll
 export const RENEW_SIGNING_VECTOR = SECURITY_VECTORS.signing.renew
 export const FOLDERS_SIGNING_VECTOR = SECURITY_VECTORS.signing.folders

@@ -209,7 +209,7 @@
 /*
  * Bottom sheets (phones): the ground colour with 16px top corners, a grabber, a 52px header (取消 · title · action)
  * and the body. They slide up over 240ms and down when closed. A tall sheet opens at 65% of the window and reaches
- * 92% when dragged up.
+ * 92% when dragged up; a form that needs the room stands at 92% from the start.
  */
 .ui-sheet {
   width: 100%;
@@ -245,8 +245,12 @@
   box-shadow: var(--sh-modal);
   transition: max-height var(--d-slow) var(--ease);
 }
-.ui-sheet[data-detent='large'] .ui-sheet-surface {
+.ui-sheet[data-detent='large'] > .ui-sheet-surface {
   max-height: 92dvh;
+}
+/* A form that opens large stands at 92% whatever it holds, so its header stays put as its content changes. */
+.ui-sheet[data-fill] > .ui-sheet-surface {
+  height: 92dvh;
 }
 .ui-sheet-top {
   flex-shrink: 0;
@@ -260,9 +264,13 @@
   border-radius: var(--r-2);
   background: var(--line-strong);
 }
+/*
+ * The side buttons never shrink: a long title takes what is left between them and ends in an ellipsis; a short one
+ * stays centred between two equal sides.
+ */
 .ui-sheet-header {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-columns: minmax(max-content, 1fr) minmax(0, auto) minmax(max-content, 1fr);
   align-items: center;
   gap: var(--sp-8);
   min-height: 52px;

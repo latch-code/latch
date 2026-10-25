@@ -13,9 +13,12 @@
 @import './styles/choice.css' layer(ui);
 @import './styles/menu.css' layer(ui);
 @import './styles/dialog.css' layer(ui);
+@import './styles/modal.css' layer(ui);
 @import './styles/notice.css' layer(ui);
 @import './styles/state.css' layer(ui);
 @import './styles/tile.css' layer(ui);
+@import './styles/tile-choice.css' layer(ui);
+@import './styles/ambient.css' layer(ui);
 @import './styles/live.css' layer(ui);
 @import './styles/resize.css' layer(ui);
 @import './styles/motion.css' layer(ui);

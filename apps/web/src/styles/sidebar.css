@@ -326,7 +326,7 @@
 /*
  * The footer names the computer this Host runs on (this device's own name is in 设置 › 设备), with the development-build
  * mark and, only when the connection is lost, the amber small badge that also syncs the latest state. 已连接 is the
- * default and is not drawn.
+ * default and is not drawn; while the desktop app keeps the Mac awake, a quiet 保持唤醒中 takes the badge's place.
  */
 .sidebar-footer {
   display: flex;
@@ -375,4 +375,18 @@
   content: '';
   position: absolute;
   inset: calc(-1 * var(--sp-4));
+}
+/*
+ * Connected while the desktop app keeps this Mac awake: 保持唤醒中 in plain text3, never amber, since nothing is wrong.
+ * Short enough not to shrink (the computer's name gives way, as it does for the amber badge), and nothing clips it, so
+ * the target still reaches past it.
+ */
+.connection-badge.connection-connected {
+  padding: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--text-3);
+}
+.connection-badge.connection-connected:hover {
+  color: var(--text-1);
 }

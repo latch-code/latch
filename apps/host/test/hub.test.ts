@@ -522,19 +522,29 @@ describe('permission levels', () => {
     await expect(value.launchPreviewOf('missing', '/tmp')).rejects.toMatchObject({ code: 'harness-unavailable' })
   })
 
-  it('reports unsandboxed activity only while an L3 session runs or waits for approval', async () => {
+  it('lists the L3 sessions that run or wait for approval, the waiting ones first', async () => {
     const builtinTasks = [summary('b-1', 'running')]
-    const acpTasks = [summary('a-1', 'idle')]
+    const acpTasks = [
+      { ...summary('a-1', 'idle'), updatedAt: '2026-10-25T10:00:00.000Z' },
+      { ...summary('a-2', 'running'), updatedAt: '2026-10-25T09:00:00.000Z' },
+    ]
     const { hub: value } = await hub()
     await value.attach(driver('standard'), mount(external(builtinTasks).bridge, { source: 'builtin' }))
     await value.attach(driver('agent'), mount(external(acpTasks).bridge, { source: 'acp' }))
-    expect(await value.hasUnsandboxedActivity()).toBe(false)
+    const listed = async () => (await value.unsandboxedTasks()).map(task => [task.id, task.harnessId, task.level])
+    expect(await listed()).toEqual([['a-2', 'agent', 'L3']])
     acpTasks[0]!.status = 'waiting-approval'
-    expect(await value.hasUnsandboxedActivity()).toBe(true)
+    expect(await listed()).toEqual([
+      ['a-1', 'agent', 'L3'],
+      ['a-2', 'agent', 'L3'],
+    ])
     acpTasks[0]!.status = 'running'
-    expect(await value.hasUnsandboxedActivity()).toBe(true)
+    expect((await listed()).map(([id]) => id)).toEqual(['a-1', 'a-2'])
+    acpTasks[1]!.status = 'waiting-approval'
+    expect((await listed()).map(([id]) => id)).toEqual(['a-2', 'a-1'])
     acpTasks[0]!.status = 'cancelled'
-    expect(await value.hasUnsandboxedActivity()).toBe(false)
+    acpTasks[1]!.status = 'idle'
+    expect(await listed()).toEqual([])
   })
 
   it('finds a pending approval by ID, including one a driver reports only in its detail', async () => {
@@ -555,6 +565,40 @@ describe('permission levels', () => {
     await value.detail('s-c')
     expect(await value.findApproval('c-1')).toMatchObject({ harnessId: 'third', approval: { id: 'c-1' } })
     expect(await value.findApproval('missing')).toBeUndefined()
+  })
+})
+
+describe('cancel routing', () => {
+  it('passes the named run to the owning driver and returns whether it cancelled anything', async () => {
+    const answers = external([summary('s-1', 'running')], [], { cancel: vi.fn(async () => false) })
+    const silent = external([summary('s-2', 'running')])
+    const { hub: value } = await hub()
+    await value.attach(driver('answers'), mount(answers.bridge))
+    await value.attach(driver('silent'), mount(silent.bridge))
+    expect(await value.cancel('s-1', { runId: 'run-1' })).toBe(false)
+    expect(answers.bridge.cancel).toHaveBeenCalledExactlyOnceWith('s-1', { runId: 'run-1' })
+    expect(await value.cancel('s-2')).toBeUndefined()
+    expect(silent.bridge.cancel).toHaveBeenCalledExactlyOnceWith('s-2')
+    expect(await value.summary('s-2')).toMatchObject({ id: 's-2', status: 'running', harnessId: 'silent' })
+    await expect(value.cancel('missing')).rejects.toMatchObject({ status: 404 })
+  })
+
+  it('passes on a run ID a cancel can carry and leaves out one it cannot, so the page can still stop that run', async () => {
+    const named = (id: string, runId: unknown) => ({ ...summary(id, 'running'), runId }) as TaskSummary
+    const plugin = external([
+      named('s-ok', 'run_1.a:b@c+d-e'),
+      named('s-slash', 'run/1'),
+      named('s-long', `r${'x'.repeat(128)}`),
+      named('s-number', 7),
+    ])
+    const { hub: value } = await hub()
+    await value.attach(driver('plugin'), mount(plugin.bridge))
+    expect((await value.summary('s-ok')).runId).toBe('run_1.a:b@c+d-e')
+    for (const id of ['s-slash', 's-long', 's-number']) {
+      expect(await value.summary(id)).not.toHaveProperty('runId')
+      expect((await value.detail(id)).summary).not.toHaveProperty('runId')
+    }
+    expect((await value.listTasks()).filter(task => 'runId' in task).map(task => task.id)).toEqual(['s-ok'])
   })
 })
 
@@ -598,8 +642,18 @@ describe('host-level session metadata', () => {
     await value.attach(driver('capable'), mount(capable.bridge))
     await value.attach(driver('limited'), mount(limited.bridge))
     await value.updateMeta('s-1', { archived: true })
+    const receipt = {
+      kind: 'cancel',
+      requestId: 'cancel-0001',
+      deviceId: 'dev_AAAAAAAAAAAAAAAAAAAAAA',
+      outcome: 'ended',
+      at: new Date().toISOString(),
+    } as const
+    await value.receipts.record('s-1', receipt)
+    expect(value.receipts.cancel('s-1', receipt.deviceId, receipt.requestId)).toEqual(receipt)
     await value.remove('s-1')
     expect(remove).toHaveBeenCalledExactlyOnceWith('s-1')
+    expect(value.receipts.cancel('s-1', receipt.deviceId, receipt.requestId)).toBeUndefined()
     expect(JSON.parse(await readFile(join(dataDir, 'sessions-meta.json'), 'utf8'))).toEqual({ version: 1, sessions: [] })
     await expect(value.remove('s-2')).rejects.toMatchObject({ status: 409, code: 'delete-unsupported' })
     await expect(value.setConfig('s-2', 'model', 'x')).rejects.toMatchObject({ status: 501, code: 'not-supported' })

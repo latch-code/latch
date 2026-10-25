@@ -1,15 +1,20 @@
-import type {
-  AppSnapshot,
-  HarnessInfo,
-  HostCatalog,
-  ModelRef,
-  ProviderSummary,
-  TaskMode,
-  TaskSummary,
-  WorkspaceInfo,
+import {
+  AGENT_PRESETS,
+  type AgentPreset,
+  type AppSnapshot,
+  type HarnessInfo,
+  type HostCatalog,
+  type ModelRef,
+  type ProviderSummary,
+  type TaskMode,
+  type TaskSummary,
+  type WorkspaceInfo,
 } from '@latch/protocol'
-import { harnessGate, type DeviceAccess } from './core/permissions.ts'
+import { harnessGate, harnessLevel, LOCAL_ONLY_HARNESS, type DeviceAccess } from './core/permissions.ts'
+import { SETUP_COPY } from './core/securityCopy.ts'
+import { heldBackService } from './core/providerSetup.ts'
 import { storageGet, storageSet } from './preferences.ts'
+import { projectOf } from './sessions.ts'
 
 /** Without access information (older call sites, tests) every ready harness may be chosen. */
 type StartAccess = Pick<DeviceAccess, 'legacy' | 'local'>
@@ -23,15 +28,102 @@ export interface ComposerChoice {
   model?: ModelRef
 }
 
-export const sameModel = (a: ModelRef | undefined, b: ModelRef | undefined) => a?.providerId === b?.providerId && a?.model === b?.model
-
-/** The built-in harness is 「Latch 内置」 wherever the page names it; others keep the name the Host gives them. */
+/** What the Host now calls its built-in harness; a Host from before the rename still says 「Standard Harness」. */
 export const BUILTIN_HARNESS_NAME = 'Latch 内置'
-export const harnessName = (harness: Pick<HarnessInfo, 'source' | 'name'>): string =>
-  harness.source === 'builtin' ? BUILTIN_HARNESS_NAME : harness.name
+/** A harness's name, with the built-in one named as a current Host names it even when an older Host serves this page. */
+export const harnessName = (harness: Pick<HarnessInfo, 'id' | 'source' | 'name'>): string =>
+  harness.source === 'builtin' && harness.id === 'standard' ? BUILTIN_HARNESS_NAME : harness.name
+
+export const sameModel = (a: ModelRef | undefined, b: ModelRef | undefined) => a?.providerId === b?.providerId && a?.model === b?.model
 
 export function findHarness(catalog: HostCatalog | undefined, id: string | undefined): HarnessInfo | undefined {
   return catalog?.harnesses.find(harness => harness.id === (id ?? catalog.defaults.harnessId))
+}
+
+/**
+ * One choice of what a new session runs on: a harness, and for a harness that offers both, how it works. The built-in
+ * harness is two choices, 「Latch 内置」 working as an agent (the default) and 「只对话」, which reads and writes no files
+ * and runs no commands; that is the whole of the 对话 / Agent choice.
+ */
+export interface HarnessEntry {
+  key: string
+  harness: HarnessInfo
+  mode: TaskMode
+  /** The harness's name. */
+  label: string
+  /** The line under the tile: the way of working, the full-access level, or why it cannot be chosen here. */
+  note?: string
+  /** What choosing it means, or why it cannot be chosen: the tooltip, read after the name. */
+  description: string
+  /** Why it cannot be chosen on this device now. */
+  disabledReason?: string
+  /** Full access: the agent decides what it runs; Latch does not ask per step. */
+  fullAccess: boolean
+}
+
+export const entryKey = (harnessId: string, mode: TaskMode) => `${harnessId}\u0000${mode}`
+
+const ENTRY_TEXT = {
+  agent: { note: 'Agent', description: '可以读写项目里的文件、运行命令，有风险的操作先问你' },
+  chat: { note: '只对话', description: '不读写文件、不运行命令' },
+} as const
+
+/**
+ * Every harness the Host offers as choices, usable ones first and then those that cannot start here, each with why.
+ * A harness that takes both ways of working is two entries, Agent first.
+ */
+export function harnessEntries(catalog: HostCatalog, access: StartAccess = openAccess): HarnessEntry[] {
+  const entries = catalog.harnesses.flatMap(harness => {
+    const gate = harnessGate(harness, access)
+    const fullAccess = !access.legacy && harnessLevel(harness) === 'L3'
+    const unavailable = harness.status !== 'ready' ? harness.statusMessage || '暂不可用' : undefined
+    const disabledReason = unavailable ?? (gate.allowed ? undefined : gate.reason)
+    const modes: TaskMode[] = harness.modes.length ? (['agent', 'chat'] as const).filter(mode => harness.modes.includes(mode)) : ['agent']
+    const both = modes.length > 1
+    return modes.map(mode => {
+      const note = disabledReason
+        ? unavailable
+          ? '不可用'
+          : (gate.reason ?? LOCAL_ONLY_HARNESS)
+        : both
+          ? ENTRY_TEXT[mode].note
+          : fullAccess
+            ? '完全访问'
+            : harness.source === 'plugin'
+              ? '插件'
+              : undefined
+      const description = both
+        ? ENTRY_TEXT[mode].description
+        : (harness.description ?? (harness.models === 'agent' ? '自带模型与登录' : '使用执行端的模型服务'))
+      return {
+        key: entryKey(harness.id, mode),
+        harness,
+        mode,
+        label: harnessName(harness),
+        ...(note ? { note } : {}),
+        description: fullAccess && !disabledReason ? `${description}。${SETUP_COPY.fullAccessDetail}` : description,
+        ...(disabledReason ? { disabledReason } : {}),
+        fullAccess,
+      }
+    })
+  })
+  return [...entries.filter(entry => !entry.disabledReason), ...entries.filter(entry => entry.disabledReason)]
+}
+
+/** Agent presets the Host knows that no added agent was made from yet. */
+export function presetsToAdd(catalog: HostCatalog | undefined): AgentPreset[] {
+  // The Host names an agent after its preset (codex, then codex-2, …); the catalog does not carry the preset itself.
+  const added = new Set(
+    (catalog?.harnesses ?? []).filter(harness => harness.source === 'acp').map(harness => harness.id.replace(/-\d+$/u, '')),
+  )
+  return AGENT_PRESETS.filter(preset => !added.has(preset.id))
+}
+
+/** The saved project a new session opened from `task` starts in: the one the task ran in, when it can still start. */
+export function projectFor(catalog: HostCatalog | undefined, task: TaskSummary | undefined): string | undefined {
+  if (!catalog || !task) return undefined
+  const project = projectOf(task, catalog.workspaces)
+  return project && project.unavailable === undefined ? project.id : undefined
 }
 
 export function findProvider(catalog: HostCatalog | undefined, id: string | undefined): ProviderSummary | undefined {
@@ -94,7 +186,13 @@ export function resolveChoice(
   }
 }
 
-export type StartBlock = { kind: 'harness-unavailable'; message: string } | { kind: 'model-required'; message: string }
+/**
+ * `hint` and `action`: what the setup card says to do and its button, when a configured service is held back rather than
+ * missing (its address is not confirmed, or it has no key), so the card does not ask for another service.
+ */
+export type StartBlock =
+  | { kind: 'harness-unavailable'; message: string }
+  | { kind: 'model-required'; message: string; hint?: string; action?: string }
 
 /** Why a new session cannot start with this choice, or null when it can. */
 export function startBlock(snapshot: AppSnapshot, choice: ComposerChoice, access: StartAccess = openAccess): StartBlock | null {
@@ -109,7 +207,12 @@ export function startBlock(snapshot: AppSnapshot, choice: ComposerChoice, access
   if (harness.status !== 'ready') return { kind: 'harness-unavailable', message: harness.statusMessage || `${harness.name} 暂不可用。` }
   if (!harnessGate(harness, access).allowed)
     return { kind: 'harness-unavailable', message: `${harness.name} 是完全访问（L3）Harness，只能在执行端电脑上用 Latch 桌面端开启。` }
-  if (harness.models === 'host' && !choice.model) return { kind: 'model-required', message: `${harness.name} 需要一个模型服务。` }
+  if (harness.models === 'host' && !choice.model) {
+    const held = heldBackService(catalog)
+    return held
+      ? { kind: 'model-required', message: `${harness.name} 需要一个模型服务。${held.message}`, hint: held.hint, action: '打开模型服务' }
+      : { kind: 'model-required', message: `${harness.name} 需要一个模型服务。` }
+  }
   return null
 }
 

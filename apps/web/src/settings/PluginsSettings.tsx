@@ -1,19 +1,28 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Lock, RefreshCw } from 'lucide-react'
 import type { PluginInfo } from '@latch/protocol'
-import { api, errorMessage } from '../core/api.ts'
 import { BUILTIN_HARNESS_NAME } from '../composerChoice.ts'
+import { api, errorMessage } from '../core/api.ts'
 import { Badge, Button, Icon, InlineNotice, StatusPill, Switch } from '@latch/ui'
 import { Loading, NavRow, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
 
-type Group = 'harness' | 'provider' | 'tool' | 'other'
+type Group = 'package' | 'harness' | 'provider' | 'tool' | 'ui' | 'other'
 const groups: Array<{ id: Group; label: string }> = [
+  { id: 'package', label: '需求包' },
   { id: 'harness', label: 'Harness' },
   { id: 'provider', label: '模型' },
   { id: 'tool', label: '工具' },
+  { id: 'ui', label: '界面' },
   { id: 'other', label: '其他' },
 ]
-const capabilityLabels: Record<string, string> = { harness: 'Harness', provider: '模型', tool: '工具' }
+const capabilityLabels: Record<string, string> = {
+  harness: 'Harness',
+  provider: '模型',
+  tool: '工具',
+  ui: '界面',
+  skill: '技能',
+  data: '数据',
+}
 /** Where a plugin that settings manages for the person is turned on and off. */
 export type PluginManager = 'providers' | 'agents'
 const managers: Record<'provider' | 'agent', { section: PluginManager; label: string }> = {
@@ -22,20 +31,34 @@ const managers: Record<'provider' | 'agent', { section: PluginManager; label: st
 }
 
 function groupOf(plugin: PluginInfo): Group {
+  if (plugin.package) return 'package'
   const kinds = plugin.capabilities.map(capability => capability.split(':')[0])
-  return kinds.includes('harness') ? 'harness' : kinds.includes('provider') ? 'provider' : kinds.includes('tool') ? 'tool' : 'other'
+  return kinds.includes('harness')
+    ? 'harness'
+    : kinds.includes('provider')
+      ? 'provider'
+      : kinds.includes('tool')
+        ? 'tool'
+        : kinds.includes('ui')
+          ? 'ui'
+          : 'other'
 }
 
-const capabilityText = (plugin: PluginInfo) =>
-  plugin.capabilities
-    .map(capability => {
-      const [kind = '', ...name] = capability.split(':')
-      return `${capabilityLabels[kind] ?? kind} · ${name.join(':')}`
-    })
-    .join('、')
+const capabilityText = (plugin: PluginInfo) => {
+  const counts = new Map<string, number>()
+  for (const capability of plugin.capabilities) {
+    const kind = capability.split(':')[0] ?? ''
+    counts.set(kind, (counts.get(kind) ?? 0) + 1)
+  }
+  return [...counts].map(([kind, count]) => `${capabilityLabels[kind] ?? kind} ${count}`).join(' · ')
+}
 
-/** The built-in harness's plugin is named as the page names the harness. */
-const pluginName = (plugin: PluginInfo) => (plugin.capabilities.includes('harness:standard') ? BUILTIN_HARNESS_NAME : plugin.name)
+/** Why a plugin's switch is locked while sessions run on it. */
+const pluginInUseText = (sessions: number) => `有 ${sessions} 个会话正在使用，结束后才能停用`
+
+/** The built-in harness's plugin, named as the harness is even when an older Host still says 「Standard Harness」. */
+export const pluginName = (plugin: Pick<PluginInfo, 'name' | 'capabilities'>) =>
+  plugin.capabilities.includes('harness:standard') ? BUILTIN_HARNESS_NAME : plugin.name
 
 /**
  * One plugin: its name and version, one line about it (what it does, or why it cannot be turned off right now) with
@@ -54,14 +77,17 @@ function PluginRow({
   onManage: (section: PluginManager) => void
 }) {
   const provides = plugin.capabilities.length > 0 ? `提供 ${capabilityText(plugin)}` : ''
+  // The Host counts running sessions only; a harness that is loaded with nothing running is not in use.
   const inUse = plugin.enabled && plugin.activeRuns > 0
-  // Only a switch here can be held by runs in use; a built-in or managed plugin is turned off elsewhere or never.
-  const reason = inUse && plugin.managed === undefined ? `正在被 ${plugin.activeRuns} 个运行使用，结束后才能停用` : undefined
+  // Only a switch here can be held by sessions in use; a built-in or managed plugin is turned off elsewhere or never.
+  const reason = inUse && plugin.managed === undefined ? pluginInUseText(plugin.activeRuns) : undefined
+  const name = pluginName(plugin)
   const title = (
     <span className="settings-row-name">
-      {pluginName(plugin)}
+      {name}
       <span className="plugin-version">v{plugin.version}</span>
-      {plugin.managed === 'core' && <Badge>内置</Badge>}
+      {/* 「Latch 内置」 already says it is built in. */}
+      {plugin.managed === 'core' && !name.includes('内置') && <Badge>内置</Badge>}
       {inUse && <StatusPill>使用中</StatusPill>}
     </span>
   )
@@ -96,7 +122,7 @@ function PluginRow({
           <>
             {reason && <Icon icon={Lock} size={12} className="plugin-lock" />}
             <Switch
-              label={pluginName(plugin)}
+              label={name}
               checked={plugin.enabled}
               disabled={busy || reason !== undefined}
               title={reason}
@@ -150,7 +176,7 @@ export function PluginsSettings({ onManage }: { onManage: (section: PluginManage
   const heading = (
     <SectionHeading
       title="插件"
-      description="插件是在执行端运行的可信本机代码，提供 Harness、模型和工具。停用会立即生效并保存。"
+      description="按需要组合技能、工具、界面与 Harness。需求包在执行端加载，在这里统一启停；只启用你信任的代码。"
       action={
         <Button
           disabled={busy !== null}

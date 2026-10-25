@@ -34,12 +34,14 @@ describe('classifyStandardCall', () => {
     [{ path: '.env.local' }, { risk: 'R2', reason: 'protected-path' }],
     [{ path: '../outside.txt' }, { risk: 'R2', reason: 'outside-workspace' }],
     [{ path: 'a/../../outside.txt' }, { risk: 'R2', reason: 'outside-workspace' }],
-    [{ path: '/etc/hosts' }, { risk: 'R2', reason: 'outside-workspace' }],
-    [{ path: 'C:\\x.txt' }, { risk: 'R2', reason: 'outside-workspace' }],
-    [{ path: '' }, { risk: 'R2', reason: 'outside-workspace' }],
-    [{ path: 42 }, { risk: 'R2', reason: 'outside-workspace' }],
-    [{}, { risk: 'R2', reason: 'outside-workspace' }],
-    [null, { risk: 'R2', reason: 'outside-workspace' }],
+    // Not a relative path the classifier can place: an absolute path (even one inside the folder), empty, not text.
+    [{ path: '/etc/hosts' }, { risk: 'R2', reason: 'unresolved-path' }],
+    [{ path: 'C:\\x.txt' }, { risk: 'R2', reason: 'unresolved-path' }],
+    [{ path: '' }, { risk: 'R2', reason: 'unresolved-path' }],
+    [{ path: 'a\u0000b' }, { risk: 'R2', reason: 'unresolved-path' }],
+    [{ path: 42 }, { risk: 'R2', reason: 'unresolved-path' }],
+    [{}, { risk: 'R2', reason: 'unresolved-path' }],
+    [null, { risk: 'R2', reason: 'unresolved-path' }],
   ])('write_file %j → %j', (args, expected) => {
     expect(classifyStandardCall(call('workspace-files', 'write_file', args))).toEqual(expected)
   })
@@ -124,8 +126,8 @@ describe('classifyStandardCall', () => {
       [{ path: 'a.txt', folder: 7 }, 'outside-workspace'],
       [{ path: 'a.txt', folder: null }, 'outside-workspace'],
       [{ path: '../app/a.txt', folder: 'web' }, 'outside-workspace'],
-      [{ path: '/Users/me/projects/web/a.txt', folder: 'web' }, 'outside-workspace'],
-      [{ path: '', folder: 'web' }, 'outside-workspace'],
+      [{ path: '/Users/me/projects/web/a.txt', folder: 'web' }, 'unresolved-path'],
+      [{ path: '', folder: 'web' }, 'unresolved-path'],
       [{ path: 'package.json', folder: 'web' }, 'protected-path'],
       [{ path: '.github/workflows/ci.yml', folder: 'web' }, 'protected-path'],
       [{ path: 'config', folder: 'hooks' }, 'protected-path'],

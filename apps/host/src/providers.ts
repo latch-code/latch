@@ -1,10 +1,10 @@
 import { z } from 'zod'
-import type { ProviderKind, ProviderSettings, ProviderSummary } from '@latch/protocol'
+import { PROVIDER_PRESETS, type ProviderKind, type ProviderSettings, type ProviderSummary } from '@latch/protocol'
 import type { HarnessPlugin, ModelProvider } from '@latch/sdk'
 import { anthropicEndpoint, anthropicHeaders, createAnthropicPlugin } from './plugins/providers/anthropic/index.ts'
 import { ProviderError, readErrorBody, redactor, send, type FetchLike } from './plugins/providers/http.ts'
 import { createOpenAIPlugin, openaiEndpoint } from './plugins/providers/openai-compatible/index.ts'
-import { originOf, type ProviderRecord } from './config.ts'
+import { addressOf, keyPathOf, originOf, type ProviderRecord } from './config.ts'
 
 export { originOf }
 
@@ -13,14 +13,77 @@ const factories: Record<ProviderKind, typeof createOpenAIPlugin> = {
   anthropic: createAnthropicPlugin,
 }
 
-/** The stored key, only while the base URL still has the origin it was saved for; otherwise ''. */
-export function usableKey(record: ProviderRecord): string {
-  if (!record.apiKey || !record.keyOrigin) return ''
-  try {
-    return originOf(record.baseURL) === record.keyOrigin ? record.apiKey : ''
-  } catch {
-    return ''
+/**
+ * The HTTPS origins of the built-in presets that need a key (OpenAI, Anthropic, DeepSeek, …). Saving a key for one of
+ * these needs no local confirmation: the destination is a known service, not one the page chose.
+ */
+export const PRESET_KEY_ORIGINS: ReadonlySet<string> = new Set(
+  PROVIDER_PRESETS.filter(preset => preset.requiresKey && preset.baseURL.startsWith('https://')).map(preset => originOf(preset.baseURL)),
+)
+
+export function isPresetKeyOrigin(origin: string): boolean {
+  return PRESET_KEY_ORIGINS.has(origin)
+}
+
+/** A configured service at an address not confirmed on the Host computer: nothing is sent, the key least of all. */
+export class OriginUnconfirmed extends ProviderError {
+  constructor() {
+    super(
+      '这个模型服务的地址还没有确认，Latch 不会向它发送请求。请在运行 Latch 的电脑上，打开 设置 › 模型服务 确认这个地址。',
+      'origin-unconfirmed',
+    )
   }
+}
+
+/**
+ * On the first start after confirmed addresses were introduced: the addresses (origin and path) the owner had already
+ * confirmed. These are the addresses of saved keys (each was confirmed when it was saved) and services whose address
+ * is already on the outbound allow list (allowed with a confirmation, or by editing policy.json while the Host was
+ * stopped). Preset origins need no entry.
+ */
+export function addressesConfirmedBefore(records: readonly ProviderRecord[], egressAllow: readonly string[]): string[] {
+  const addresses = new Set<string>()
+  for (const record of records) {
+    let origin: string
+    try {
+      origin = originOf(record.baseURL)
+    } catch {
+      continue
+    }
+    if (isPresetKeyOrigin(origin)) continue
+    if (usableKey(record) || egressAllow.includes(origin.replace(/^https?:\/\//u, ''))) addresses.add(addressOf(record.baseURL))
+  }
+  return [...addresses]
+}
+
+/** Whether a key bound to `record`'s origin and path may go to `baseURL`: the same origin and the same path. */
+export function keyBoundTo(record: Pick<ProviderRecord, 'keyOrigin' | 'keyPath'>, baseURL: string): boolean {
+  if (!record.keyOrigin || record.keyPath === undefined) return false
+  try {
+    return originOf(baseURL) === record.keyOrigin && keyPathOf(baseURL) === record.keyPath
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Whether `url` lies under `baseURL`: the same origin, and the base's path itself or a path below it. The connectors
+ * build every request of a service this way, so a request anywhere else did not come from them.
+ */
+export function underBase(url: string, baseURL: string): boolean {
+  try {
+    if (originOf(url) !== originOf(baseURL)) return false
+    const base = keyPathOf(baseURL)
+    const path = new URL(url).pathname
+    return base === '' || path === base || path.startsWith(`${base}/`)
+  } catch {
+    return false
+  }
+}
+
+/** The stored key, only while the base URL still has the origin and path it was saved for; otherwise ''. */
+export function usableKey(record: ProviderRecord): string {
+  return record.apiKey && keyBoundTo(record, record.baseURL) ? record.apiKey : ''
 }
 
 /** One plugin per configured provider; the plugin ID equals the provider ID. Requests go through `deps.fetch`. */
@@ -36,7 +99,10 @@ export function providerPlugin(record: ProviderRecord, deps: { fetch: FetchLike 
   })
 }
 
-/** Owner-facing view of a stored provider. The key itself never leaves the Host; a key bound to another origin counts as absent. */
+/**
+ * Owner-facing view of a stored provider. The key itself never leaves the Host; a key bound to another origin or path
+ * counts as absent.
+ */
 export function providerSettings(record: ProviderRecord): ProviderSettings {
   const usable = Boolean(usableKey(record))
   return {
@@ -46,7 +112,7 @@ export function providerSettings(record: ProviderRecord): ProviderSettings {
     ...(record.presetId ? { presetId: record.presetId } : {}),
     baseURL: record.baseURL,
     hasKey: usable,
-    ...(usable ? { keyOrigin: record.keyOrigin } : {}),
+    ...(usable ? { keyOrigin: record.keyOrigin, keyPath: record.keyPath } : {}),
     enabled: record.enabled,
     models: [...record.models],
     defaultModel: record.defaultModel,
@@ -160,7 +226,11 @@ function networkFailure(error: unknown, redacted: (text: string) => string): Pro
       ? error.message
       : String(error)
   if (/redirect/iu.test(detail)) return new ProviderError('模型服务返回了重定向，请填写最终的 API 地址。', 'redirect')
-  return new ProviderError(`无法连接模型服务：${redacted(detail)}`, 'network-error')
+  const failure = new ProviderError(`无法连接模型服务：${redacted(detail)}`, 'network-error')
+  // The system's code alone (ECONNREFUSED, ENOTFOUND, …), so a page can say what happened in its own words.
+  const networkCode =
+    cause && 'code' in cause && typeof cause.code === 'string' && /^E[A-Z_]{2,30}$/u.test(cause.code) ? cause.code : undefined
+  return networkCode ? Object.assign(failure, { networkCode }) : failure
 }
 
 /**

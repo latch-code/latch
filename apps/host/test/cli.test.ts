@@ -36,8 +36,12 @@ async function temporaryDirectory() {
   return directory
 }
 
-function cli(options: { tty?: boolean; secret?: string; cwd?: string; answer?: boolean } = {}) {
-  const output = { stdout: '', stderr: '' }
+/**
+ * `tty`: stdout is a terminal. `typed`: stdin is a terminal, and `answer` is what is typed at a question (`asked` records
+ * each question with what stdout showed by then); `secret` is the key read from stdin either way.
+ */
+function cli(options: { tty?: boolean; typed?: boolean; answer?: string | boolean; secret?: string; cwd?: string } = {}) {
+  const output = { stdout: '', stderr: '', asked: [] as Array<{ prompt: string; shown: string }>, secrets: 0 }
   const io: CliIO = {
     stdout: {
       write: (text: string) => {
@@ -50,8 +54,16 @@ function cli(options: { tty?: boolean; secret?: string; cwd?: string; answer?: b
         output.stderr += text
       },
     },
-    readSecret: async () => options.secret ?? '',
-    ...(options.answer !== undefined ? { confirm: async () => options.answer! } : {}),
+    stdin: { isTTY: options.typed ?? false },
+    readSecret: async () => {
+      output.secrets++
+      return options.secret ?? ''
+    },
+    readLine: async prompt => {
+      output.asked.push({ prompt, shown: output.stdout })
+      return typeof options.answer === 'string' ? options.answer : ''
+    },
+    ...(options.answer !== undefined ? { confirm: async () => options.answer === true } : {}),
     env: {},
     cwd: options.cwd ?? tmpdir(),
   }
@@ -230,7 +242,7 @@ describe('latch CLI', () => {
     expect(await latch('device', 'list', '--data-dir', t.dataDir)).toBe(0)
     expect(output.stdout).toMatch(/ID\s+名称\s+连接方式\s+权限\s+状态\s+最近使用/u)
     expect(output.stdout).toContain(phone.id)
-    expect(output.stdout).toContain('本机浏览器')
+    expect(output.stdout).toMatch(/测试手机\s+回环端口\s/u)
     const json = cli()
     expect(await json.latch('device', 'list', '--json', '--data-dir', t.dataDir)).toBe(0)
     expect((JSON.parse(json.output.stdout) as Device[]).map(device => device.id)).toEqual([phone.id])
@@ -242,6 +254,24 @@ describe('latch CLI', () => {
     })
     const missing = cli()
     expect(await missing.latch('device', 'list', '--data-dir', await temporaryDirectory())).toBe(1)
+    expect(missing.output.stderr).toContain('没有可确认的运行中 Host')
+  })
+
+  it('prints the traffic counters of the running Host as a table, or as JSON', async () => {
+    const t = await runningHost()
+    const browser = await t.enroll({ name: '测试浏览器' })
+    await browser.json('snapshot')
+    const { output, latch } = cli()
+    expect(await latch('traffic', '--data-dir', t.dataDir)).toBe(0)
+    expect(output.stdout).toMatch(/^统计自 \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}（UTC/u)
+    expect(output.stdout).toMatch(/类别\s+次数\s+字节\s+平均\s+≤256B\s+≤1KiB\s+≤4KiB\s+≤16KiB\s+≤64KiB\s+≤256KiB\s+≤1MiB\s+≤4MiB\s+更大/u)
+    expect(output.stdout).toMatch(/快照响应\s+1\s+[\d.]+ (?:B|KiB)/u)
+    expect(output.stdout).not.toContain('测试浏览器')
+    const json = cli()
+    expect(await json.latch('traffic', '--json', '--data-dir', t.dataDir)).toBe(0)
+    expect(JSON.parse(json.output.stdout)).toMatchObject({ kinds: { snapshot: { count: 1 } }, sessions: [], connections: [] })
+    const missing = cli()
+    expect(await missing.latch('traffic', '--data-dir', await temporaryDirectory())).toBe(1)
     expect(missing.output.stderr).toContain('没有可确认的运行中 Host')
   })
 
@@ -264,6 +294,19 @@ describe('latch CLI', () => {
     expect(
       await cli().latch('device', 'invite', '--scopes', 'view,secrets', '--code-file', join(directory, 'x'), '--data-dir', t.dataDir),
     ).toBe(1)
+    // A browser on this computer gets a loopback link, also only on a terminal or in a 0600 file.
+    const loopback = cli({ cwd: directory })
+    expect(await loopback.latch('device', 'invite', '--loopback', '--code-file', 'browser.txt', '--data-dir', t.dataDir)).toBe(0)
+    expect(loopback.output.stdout).not.toMatch(/lpi1-/)
+    const link = await readFile(join(directory, 'browser.txt'), 'utf8')
+    expect(link).toMatch(new RegExp(`^${t.host.loopbackOrigin}/link/#pair=lpi1-[A-Z2-7]{26}\\n$`))
+    // Without --scopes it offers what the desktop app's link offers, 管理此 Host included.
+    const admin = ['view', 'run', 'approve:standard', 'admin'] as const
+    const browser = await t.enroll({ invitation: new URL(link.trim()).hash.slice('#pair='.length), scopes: [...admin] })
+    expect(browser.device).toMatchObject({ listener: 'loopback-tcp', scopes: admin, pairedBy: { method: 'invitation' } })
+    const browserTty = cli({ tty: true })
+    expect(await browserTty.latch('device', 'invite', '--loopback', '--data-dir', t.dataDir)).toBe(0)
+    expect(browserTty.output.stdout).toContain(`在这台电脑的浏览器中打开：${t.host.loopbackOrigin}/link/#pair=lpi1-`)
   })
 
   it('creates an offline enrollment code only while the Host is stopped, and the Host accepts it once', async () => {
@@ -276,9 +319,11 @@ describe('latch CLI', () => {
     await rm(join(dataDir, 'host.json'), { force: true })
     const directory = await temporaryDirectory()
     const stopped = cli({ cwd: directory })
-    expect(await stopped.latch('device', 'enroll', '--offline', '--code-file', 'code.txt', '--port', '4999', '--data-dir', dataDir)).toBe(0)
+    expect(await stopped.latch('device', 'enroll', '--offline', '--code-file', 'code.txt', '--data-dir', dataDir)).toBe(0)
     expect(stopped.output.stderr).toContain('离线登记依赖本机此刻没有恶意的同用户进程')
-    expect(stopped.output.stdout).toContain(`http://h-${t.host.hostId}.localhost:4999/link/`)
+    expect(stopped.output.stdout).toContain(
+      '启动 Latch 桌面端（pnpm desktop）后，在它的登记页面填写离线登记码。浏览器与手机不接受离线登记码。',
+    )
     const code = (await readFile(join(directory, 'code.txt'), 'utf8')).trim()
     expect(code).toMatch(/^lpo1-[A-Z2-7]{26}$/)
     expect((await stat(join(directory, 'code.txt'))).mode & 0o777).toBe(0o600)
@@ -286,12 +331,17 @@ describe('latch CLI', () => {
 
     const again = await startTestHost({ dataDir, presenceMode: 'unavailable' })
     cleanups.push(() => again.close())
-    const device = await again.enroll({ offlineCode: code, scopes: ['view', 'run', 'approve:standard', 'admin'] })
-    expect(device.device.pairedBy.method).toBe('offline')
+    // Only the desktop app's socket takes the code; a browser's loopback port is refused without using it up.
     await expect(again.enroll({ offlineCode: code })).rejects.toMatchObject({ status: 403, body: { error: 'offline-code-invalid' } })
+    const device = await again.enroll({ listener: 'unix', offlineCode: code })
+    expect(device.device).toMatchObject({ listener: 'unix', pairedBy: { method: 'offline' } })
+    await expect(again.enroll({ listener: 'unix', offlineCode: code })).rejects.toMatchObject({
+      status: 403,
+      body: { error: 'offline-code-invalid' },
+    })
   })
 
-  it('sets a provider key offline, bound to the provider origin and audited', async () => {
+  it('sets a provider key offline, bound to the provider origin and path, confirming its address, audited', async () => {
     const dataDir = join(await temporaryDirectory(), 'data')
     await mkdir(dataDir, { recursive: true, mode: 0o700 })
     const config = await HostConfig.open(dataDir)
@@ -300,28 +350,163 @@ describe('latch CLI', () => {
         id: 'lab',
         name: 'Lab',
         kind: 'openai-compatible',
-        baseURL: 'https://lab.example/v1',
+        baseURL: 'http://127.0.0.1:9/v1',
         apiKey: '',
         enabled: true,
         models: ['m'],
         defaultModel: 'm',
       })
     })
+    // Piped input confirms an address only when --expect-url names it; the facts are printed before the key is read.
+    const refused = cli({ secret: 'sk-offline-secret\n' })
+    expect(await refused.latch('provider', 'set-key', 'lab', '--data-dir', dataDir)).toBe(1)
+    expect(refused.output.stderr).toContain('非交互环境中不能确认地址')
+    expect(refused.output.secrets).toBe(0)
+    expect((await HostConfig.open(dataDir)).provider('lab')?.apiKey).toBe('')
     const { output, latch } = cli({ secret: 'sk-offline-secret\n' })
-    expect(await latch('provider', 'set-key', 'lab', '--data-dir', dataDir)).toBe(0)
-    expect(output.stdout).toContain('https://lab.example:443')
+    expect(await latch('provider', 'set-key', 'lab', '--data-dir', dataDir, '--expect-url', 'http://127.0.0.1:9/v1/')).toBe(0)
+    expect(output.stdout).toContain('  地址：http://127.0.0.1:9/v1\n')
+    expect(output.stdout).toContain('  出站许可：允许 Host 访问 127.0.0.1:9（这台电脑上的地址）\n')
+    expect(output.stdout).toContain('只发往 http://127.0.0.1:9/v1')
+    expect(output.stdout).toContain('已确认模型服务地址 http://127.0.0.1:9/v1。')
+    expect(output.stdout).toContain('已允许 Host 访问 127.0.0.1:9。')
     expect(output.stdout + output.stderr).not.toContain('sk-offline-secret')
     expect((await HostConfig.open(dataDir)).provider('lab')).toMatchObject({
       apiKey: 'sk-offline-secret',
-      keyOrigin: 'https://lab.example:443',
+      keyOrigin: 'http://127.0.0.1:9',
+      keyPath: '/v1',
     })
-    expect((await auditActions(dataDir)).at(-1)).toMatchObject({
-      action: 'provider.secret.set',
-      stepup: 'offline',
-      actor: { listener: 'cli' },
-    })
+    const policy = JSON.parse(await readFile(join(dataDir, 'policy.json'), 'utf8')) as {
+      confirmedAddresses: string[]
+      hostEgressAllow: string[]
+    }
+    expect(policy).toMatchObject({ confirmedAddresses: ['http://127.0.0.1:9/v1'], hostEgressAllow: ['127.0.0.1:9'] })
+    // The key's record, then the policy change that confirms its address; both offline.
+    expect((await auditActions(dataDir)).slice(-2)).toMatchObject([
+      { action: 'provider.secret.set', stepup: 'offline', actor: { listener: 'cli' } },
+      {
+        action: 'policy.changed',
+        stepup: 'offline',
+        actor: { listener: 'cli' },
+        detail: { fields: ['confirmedAddresses', 'hostEgressAllow'] },
+      },
+    ])
     expect(await cli({ secret: 'x' }).latch('provider', 'set-key', 'missing', '--data-dir', dataDir)).toBe(1)
     expect(await cli({ secret: '' }).latch('provider', 'set-key', 'lab', '--data-dir', dataDir)).toBe(1)
+  })
+
+  it('confirms a model-service address offline once, and says when there is nothing to confirm', async () => {
+    const dataDir = join(await temporaryDirectory(), 'data')
+    await mkdir(dataDir, { recursive: true, mode: 0o700 })
+    const service = (id: string, baseURL: string) => ({
+      id,
+      name: id,
+      kind: 'openai-compatible' as const,
+      baseURL,
+      apiKey: '',
+      enabled: true,
+      models: ['m'],
+      defaultModel: 'm',
+    })
+    await (
+      await HostConfig.open(dataDir)
+    ).updateProviders(draft => {
+      draft.push(service('ollama', 'http://127.0.0.1:11434/v1'), service('openai', 'https://api.openai.com/v1'))
+    })
+    const first = cli({ typed: true, answer: 'y' })
+    expect(await first.latch('provider', 'confirm', 'ollama', '--data-dir', dataDir)).toBe(0)
+    expect(first.output.asked).toHaveLength(1)
+    expect(first.output.asked[0]!.shown).toContain('  地址：http://127.0.0.1:11434/v1\n')
+    expect(first.output.asked[0]!.shown).toContain('  出站许可：允许 Host 访问 127.0.0.1:11434（这台电脑上的地址）\n')
+    expect(first.output.stdout).toContain('已确认 ollama 的地址 http://127.0.0.1:11434/v1，启动 Host 后可以使用。')
+    expect(first.output.stdout).toContain('已允许 Host 访问 127.0.0.1:11434。')
+    const again = cli({ typed: true, answer: 'y' })
+    expect(await again.latch('provider', 'confirm', 'ollama', '--data-dir', dataDir)).toBe(0)
+    expect(again.output.stdout).toContain('ollama 的地址 http://127.0.0.1:11434/v1 已经确认过。')
+    expect(again.output.asked).toEqual([])
+    const preset = cli()
+    expect(await preset.latch('provider', 'confirm', 'openai', '--data-dir', dataDir)).toBe(0)
+    expect(preset.output.stdout).toContain('https://api.openai.com:443 是预置服务商的地址，不需要确认。')
+    expect(await cli().latch('provider', 'confirm', 'missing', '--data-dir', dataDir)).toBe(1)
+    const policy = JSON.parse(await readFile(join(dataDir, 'policy.json'), 'utf8')) as { confirmedAddresses: string[] }
+    expect(policy.confirmedAddresses).toEqual(['http://127.0.0.1:11434/v1'])
+    expect((await auditActions(dataDir)).filter(record => record.action === 'policy.changed')).toHaveLength(1)
+  })
+
+  it('shows what an offline confirmation adds and writes nothing unless it is approved', async () => {
+    const dataDir = await stoppedDataDir()
+    await (
+      await HostConfig.open(dataDir)
+    ).updateProviders(draft => {
+      draft.push({
+        id: 'ollama',
+        name: 'Ollama\u202e',
+        kind: 'openai-compatible',
+        baseURL: 'http://192.168.1.1/cgi-bin',
+        apiKey: '',
+        enabled: true,
+        models: ['m'],
+        defaultModel: 'm',
+      })
+    })
+    const policyFile = join(dataDir, 'policy.json')
+    const before = await readFile(policyFile, 'utf8')
+    const preview = [
+      '将确认模型服务「Ollama\\u{202E}」（ollama）的地址：',
+      '  地址：http://192.168.1.1/cgi-bin',
+      '  确认的范围：http://192.168.1.1:80/cgi-bin（只有这个源与路径；同一源下的其他路径要另行确认）',
+      '  出站许可：允许 Host 访问 192.168.1.1:80（局域网或私网地址）',
+      '  注意：这个地址不使用 HTTPS，发给它的内容会以明文经过网络。',
+    ]
+    const refusals: Array<[ReturnType<typeof cli>, string[], string]> = [
+      // Piped input never answers; the facts are still printed, so a log shows what was not confirmed.
+      [cli(), [], '非交互环境中不能确认地址'],
+      [cli({ typed: true, answer: 'n' }), [], '已取消，没有修改任何设置'],
+      [cli({ typed: true, answer: '' }), [], '已取消，没有修改任何设置'],
+      [
+        cli(),
+        ['--expect-url', 'http://192.168.1.1/other'],
+        '--expect-url 与模型服务的地址不一致（服务的地址是 http://192.168.1.1:80/cgi-bin）',
+      ],
+      [cli(), ['--expect-url', 'http://192.168.1.1:80/'], '--expect-url 与模型服务的地址不一致'],
+    ]
+    for (const [run, extra, reason] of refusals) {
+      expect(await run.latch('provider', 'confirm', 'ollama', '--data-dir', dataDir, ...extra)).toBe(1)
+      for (const line of preview) expect(run.output.stdout).toContain(`${line}\n`)
+      expect(run.output.stderr).toContain(reason)
+      expect(await readFile(policyFile, 'utf8')).toBe(before)
+    }
+    expect(refusals[0]![0].output.asked).toEqual([])
+    expect(await readFile(join(dataDir, 'audit', 'audit.jsonl'), 'utf8').catch(() => '')).not.toContain('policy.changed')
+
+    const approved = cli({ typed: true, answer: ' Y ' })
+    expect(await approved.latch('provider', 'confirm', 'ollama', '--data-dir', dataDir)).toBe(0)
+    expect(approved.output.asked.map(item => item.prompt)).toEqual(['确认以上地址？输入 y 确认，其他任意内容取消：'])
+    for (const line of preview) expect(approved.output.asked[0]!.shown).toContain(`${line}\n`)
+    const policy = JSON.parse(await readFile(policyFile, 'utf8')) as { confirmedAddresses: string[]; hostEgressAllow: string[] }
+    expect(policy).toMatchObject({ confirmedAddresses: ['http://192.168.1.1:80/cgi-bin'], hostEgressAllow: ['192.168.1.1:80'] })
+    expect((await auditActions(dataDir)).filter(record => record.action === 'policy.changed')).toMatchObject([
+      { stepup: 'offline', actor: { listener: 'cli' } },
+    ])
+  })
+
+  it('names the address a key confirms in the key prompt, and confirms nothing piped without --expect-url', async () => {
+    const dataDir = await stoppedDataDir()
+    const typed = cli({ typed: true, secret: 'sk-typed\n' })
+    const prompts: string[] = []
+    typed.io.readSecret = async prompt => {
+      prompts.push(prompt)
+      return 'sk-typed\n'
+    }
+    expect(await typed.latch('provider', 'set-key', 'lab', '--data-dir', dataDir)).toBe(0)
+    expect(prompts).toEqual(['Lab 的 API Key（只发往 https://lab.example:443/v1；保存即确认上面的地址）：'])
+    expect(typed.output.stdout).toContain('  确认的范围：https://lab.example:443/v1（只有这个源与路径；同一源下的其他路径要另行确认）\n')
+    expect(typed.output.stdout).toContain('已确认模型服务地址 https://lab.example:443/v1。')
+    // Confirmed now: a new key asks nothing more and names no address to confirm.
+    const replaced = cli({ secret: 'sk-replaced\n' })
+    expect(await replaced.latch('provider', 'set-key', 'lab', '--data-dir', dataDir)).toBe(0)
+    expect(replaced.output.stdout).not.toContain('将确认模型服务')
+    expect((await HostConfig.open(dataDir)).provider('lab')?.apiKey).toBe('sk-replaced')
   })
 
   it('refuses every offline command while a starting Host holds the data-dir lock, before host.json exists', async () => {
@@ -558,6 +743,8 @@ describe('latch CLI', () => {
           output.stderr += text
         },
       },
+      stdin: {},
+      readLine: async () => '',
       env: {},
       cwd: dataDir,
       async readSecret() {
@@ -573,7 +760,7 @@ describe('latch CLI', () => {
         return 'sk-typed-while-starting\n'
       },
     }
-    expect(await runLatch(['provider', 'set-key', 'lab', '--data-dir', dataDir], io)).toBe(1)
+    expect(await runLatch(['provider', 'set-key', 'lab', '--data-dir', dataDir, '--expect-url', 'https://lab.example/v1'], io)).toBe(1)
     expect(lockDuringPrompt).toMatchObject({ code: 'data-dir-locked', details: { role: 'cli' } })
     expect(output.stderr).toContain('Host 正在运行，请先停止（pnpm stop）')
     expect(output.stdout + output.stderr).not.toContain('sk-typed-while-starting')
@@ -588,7 +775,8 @@ describe('latch CLI', () => {
     if (!pnpm) throw new Error('run this test through pnpm (pnpm test) so npm_execpath names the pinned pnpm')
     const dataDir = await stoppedDataDir()
     const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('HARNESS_')))
-    const child = spawn(pnpm.file, [...pnpm.args, '--silent', 'latch', 'provider', 'set-key', 'lab', '--data-dir', dataDir], {
+    const args = ['--silent', 'latch', 'provider', 'set-key', 'lab', '--data-dir', dataDir, '--expect-url', 'https://lab.example/v1']
+    const child = spawn(pnpm.file, [...pnpm.args, ...args], {
       cwd: resolve(),
       env,
       stdio: ['pipe', 'pipe', 'pipe'],

@@ -33,18 +33,43 @@
   color: var(--text-2);
 }
 
-/* The composer floats on its own shadow; with focus inside, its ring darkens to line-strong instead of turning blue. */
+/*
+ * The composer floats on its own shadow. With focus inside, its ring darkens to line-strong, never blue: the resting
+ * and the focused shadow are two layers over the frame whose opacities cross-fade, so no shadow is animated itself.
+ */
 .composer {
   position: relative;
   min-width: 0;
   border-radius: var(--r-16);
   corner-shape: var(--corner-shape);
   background: var(--bg-raised);
-  box-shadow: var(--sh-composer);
-  transition: box-shadow var(--d-fast) var(--ease-exit);
 }
-.composer:focus-within {
+.composer::before,
+.composer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  corner-shape: var(--corner-shape);
+  pointer-events: none;
+}
+.composer::before {
+  box-shadow: var(--sh-composer);
+  transition: opacity var(--d-fast) var(--ease);
+}
+.composer::after {
   box-shadow: var(--sh-composer-focus);
+  opacity: 0;
+  transition: opacity var(--d-fast-exit) var(--ease-exit);
+}
+.composer:focus-within::before {
+  opacity: 0;
+  transition: opacity var(--d-fast-exit) var(--ease-exit);
+}
+.composer:focus-within::after {
+  opacity: 1;
+  transition: opacity var(--d-fast) var(--ease);
 }
 
 /* The bar on top of the input while a session runs, only when it has something to act on: approvals out of view
@@ -58,7 +83,7 @@
   align-items: center;
   gap: var(--sp-8);
   min-height: 32px;
-  padding: 0 var(--sp-6) 0 var(--sp-12);
+  padding: 0 var(--sp-8) 0 var(--sp-12);
   border-bottom: 1px solid var(--line-subtle);
   border-radius: var(--r-16) var(--r-16) 0 0;
   corner-shape: var(--corner-shape);
@@ -67,23 +92,36 @@
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
-.run-bar > [role='status'] {
+/* What the bar says, its parts 4 apart with the middle dot between them evenly: 「1 项待批准 · 写入 docs/notes.md」. */
+.run-bar-what {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .run-bar-status {
+  flex-shrink: 0;
   font-weight: 500;
+  white-space: nowrap;
+}
+.run-bar-dot {
+  flex-shrink: 0;
+  color: var(--text-3);
 }
 .run-bar.is-waiting {
   border-bottom-color: var(--warn-border);
   background: var(--warn-bg);
   color: var(--warn-text);
-  font-weight: 500;
 }
-.run-bar.is-waiting > svg {
-  color: var(--warn-text);
+/* What the oldest waiting request would do, after its count: hint ink, cut at the end. */
+.run-bar-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+}
+.run-bar-what > .ui-comet {
   flex-shrink: 0;
 }
 .run-bar-end {
@@ -92,8 +130,8 @@
 }
 .run-bar-action {
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
-  gap: var(--sp-4);
   min-height: 28px;
   padding: 0 var(--sp-4);
   border: 0;
@@ -105,8 +143,13 @@
   text-decoration: underline;
   text-underline-offset: 3px;
 }
-.run-bar.is-waiting .run-bar-action {
+/* An action inside the sentence keeps its hit box, and its word sits as far from the dot as the words before it. */
+.run-bar-what > .run-bar-action {
+  margin-inline-start: calc(-1 * var(--sp-4));
+}
+.run-bar.is-waiting > .run-bar-action {
   margin-left: auto;
+  margin-right: calc(-1 * var(--sp-4));
 }
 .run-bar.is-waiting .run-bar-end {
   margin-left: 0;
@@ -115,6 +158,12 @@
   .run-bar-action {
     min-height: 36px;
     padding: 0 var(--sp-8);
+  }
+  .run-bar-what > .run-bar-action {
+    margin-inline-start: calc(-1 * var(--sp-8));
+  }
+  .run-bar.is-waiting > .run-bar-action {
+    margin-right: calc(-1 * var(--sp-8));
   }
   .run-bar {
     min-height: 36px;
@@ -137,6 +186,12 @@
   font-size: var(--fs-body);
   line-height: var(--lh-body);
   outline: none;
+}
+/* The input's height follows its lines over 120ms (Composer measures and sets it), not with every key. */
+@media (prefers-reduced-motion: no-preference) {
+  .composer textarea {
+    transition: height var(--d-fast) var(--ease);
+  }
 }
 .composer.is-running textarea {
   border-radius: 0;
@@ -162,9 +217,35 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--sp-4) var(--sp-6);
+  gap: var(--sp-4);
   flex: 1;
   min-width: 0;
+}
+.composer-slot {
+  display: flex;
+  align-items: flex-end;
+  flex-shrink: 0;
+}
+/* A picker that comes or goes with the harness (the project for 只对话, the model for an agent with its own) fades in
+ * over 120ms and out over 90ms; under reduced motion it changes at once. */
+.composer-fade {
+  display: inline-flex;
+  min-width: 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .composer-fade[data-enter] {
+    animation: fade-in var(--d-fast) var(--ease);
+  }
+  .composer-fade[data-leaving] {
+    opacity: 0;
+    transition: opacity var(--d-fast-exit) var(--ease-exit);
+  }
+}
+/* A model switch the next message will carry: the picker rests on a fill until it is sent or undone. */
+.model-picker.is-pending,
+.model-picker.is-pending:hover {
+  background: var(--fill);
+  color: var(--text-1);
 }
 
 /* Send is the composer's one blue action; when there is nothing to send it falls back to a neutral fill. */
@@ -183,19 +264,44 @@
     background-color var(--d-fast) var(--ease-exit),
     color var(--d-fast) var(--ease-exit);
 }
-.send-button:hover:not(:disabled) {
+.send-button:hover:not([aria-disabled='true']) {
   background: var(--accent-hover);
   transition-duration: 0s;
 }
-.send-button:active:not(:disabled) {
+.send-button:active:not([aria-disabled='true']) {
   background: var(--accent-press);
 }
-.send-button:disabled {
+/* Nothing to send yet: a neutral fill that still takes focus and says why in its tooltip. */
+.send-button[aria-disabled='true'] {
   background: var(--fill);
   color: var(--text-3);
+  cursor: default;
 }
 .send-button .ui-spinner {
   color: currentColor;
+}
+/*
+ * While the input answers an approval (「告诉 Agent 改做什么」 after 拒绝): 返回 and 拒绝 in place of send and stop, both
+ * neutral, since rejecting is not a risk; the line under the input says where the text goes, in the hint ink.
+ */
+.composer-answer {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  flex-shrink: 0;
+}
+.composer-hint {
+  padding: 0 var(--sp-6);
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
+}
+/* Starting with the local confirmation and nothing to send yet, or no confirmation here: the same neutral fill, its
+ * lock kept, still focusable with its reason as its tooltip. */
+.composer-slot .start-button[aria-disabled='true'] {
+  opacity: 1;
+  background: var(--fill);
+  color: var(--text-3);
 }
 /* Stopping is not a risk, so the stop button is never red. */
 .stop-button {
@@ -203,16 +309,16 @@
   box-shadow: inset 0 0 0 1px var(--line-strong);
   color: var(--text-1);
 }
-.stop-button:hover:not(:disabled) {
+.stop-button:hover:not([aria-disabled='true']) {
   background: linear-gradient(var(--bg-hover), var(--bg-hover)) var(--bg-raised);
   color: var(--text-1);
 }
-.stop-button:active:not(:disabled) {
+.stop-button:active:not([aria-disabled='true']) {
   background: linear-gradient(var(--bg-press), var(--bg-press)) var(--bg-raised);
 }
-.stop-button:disabled {
+.stop-button[aria-disabled='true'] {
   background: var(--bg-raised);
-  color: var(--text-3);
+  color: var(--text-2);
 }
 /* Stop is a filled 10×10 square with a 2px radius, not a stroked glyph. */
 .stop-glyph {
@@ -239,6 +345,40 @@
 .run-settings-chip {
   max-width: 100%;
 }
+
+/*
+ * A phone's session page: the input and send (or stop) on one row, 52 high at rest; the row grows by lines and send
+ * stays on the last one. Controls with something to say (the model of the next message) stand above as a small chip.
+ */
+.composer-above {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+.composer-above:empty {
+  display: none;
+}
+.composer-row {
+  display: flex;
+  align-items: flex-end;
+  min-width: 0;
+}
+.composer-row > textarea,
+.composer-row > .composer-readonly {
+  flex: 1;
+  min-width: 0;
+}
+/* The height the input is given is its content's plus 2, so the padding leaves 50 for one line. */
+.composer[data-inline] textarea {
+  padding: calc((50px - var(--lh-input)) / 2) var(--sp-4) calc((50px - var(--lh-input)) / 2) var(--sp-16);
+}
+.composer[data-inline] .composer-readonly {
+  padding: var(--sp-16) var(--sp-4) var(--sp-16) var(--sp-16);
+}
+.composer-row > .composer-slot {
+  margin: 0 var(--sp-8) var(--sp-8) 0;
+}
 @media (max-width: 767.98px) {
   .composer-dock .composer-stack {
     gap: var(--sp-6);
@@ -256,4 +396,298 @@
   .composer-toolbar {
     padding: var(--sp-2) var(--sp-6) var(--sp-6) var(--sp-8);
   }
+}
+
+/*
+ * Under a new session's input, 8 below its frame: the context row (28; where it runs, and a full-access level in amber
+ * that leads to 设置 › 电脑), then captions. Values in the row are ghost values like a picker with a single value: an
+ * icon for a label, the value in text-2.
+ */
+.composer-context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4);
+  min-height: 28px;
+  padding: 0 var(--sp-8);
+}
+.context-value {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+  height: 28px;
+  padding: 0 var(--sp-8) 0 var(--sp-6);
+  border: 0;
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+  white-space: nowrap;
+}
+.context-value > svg {
+  flex-shrink: 0;
+  color: var(--icon);
+}
+.context-value > .context-risk {
+  color: var(--warn-text);
+}
+/* The full-access level comes in as the harness is chosen (its caption and the line under it open as disclosures). */
+@media (prefers-reduced-motion: no-preference) {
+  .context-link {
+    animation: fade-in var(--d-fast) var(--ease);
+  }
+}
+.context-link {
+  transition:
+    background-color var(--d-fast) var(--ease-exit),
+    color var(--d-fast) var(--ease-exit);
+}
+.context-link:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
+  transition-duration: 0s;
+}
+.context-link:active {
+  background: var(--bg-press);
+}
+/*
+ * The captions under the row start where the toolbar's first glyph does: the toolbar's 8 plus a picker's 6 inside.
+ * Each sits in a disclosure, which keeps its 8 above it only while it is open.
+ */
+.composer-stack > .ui-collapse {
+  margin-top: calc(-1 * var(--sp-8));
+}
+.composer-stack > .ui-collapse > .ui-collapse-inner > :first-child {
+  margin-top: var(--sp-8);
+}
+.new-session-hint {
+  display: block;
+  max-width: 100%;
+  padding: 0 calc(var(--sp-8) + var(--sp-6));
+  border: 0;
+  background: none;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 3px;
+  transition:
+    color var(--d-fast) var(--ease-exit),
+    text-decoration-color var(--d-fast) var(--ease-exit);
+}
+.new-session-hint:hover {
+  color: var(--text-1);
+  text-decoration-color: currentColor;
+  transition-duration: 0s;
+}
+
+/*
+ * Adding a harness or a model service where it is chosen: the picker's layer turns into this panel. A head (the way
+ * back, the tile, the name), what is needed in 12/16, then one action at the end. On phones the sheet holds it.
+ */
+.setup-panel {
+  display: grid;
+  gap: var(--sp-12);
+  min-width: 0;
+  padding: var(--sp-4) var(--sp-8) var(--sp-8);
+}
+/* Each step of a panel, and the list it starts from, fades in where the last one was. */
+.ui-popover :is(.setup-panel, .setup-list) {
+  animation: fade-in var(--d-fast) var(--ease);
+}
+.setup-panel-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  min-height: 28px;
+}
+.setup-panel-head > .ui-icon-button {
+  margin-inline-start: calc(-1 * var(--sp-4));
+}
+.setup-panel-head h3 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-1);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+  font-weight: 500;
+}
+.setup-panel-body {
+  display: grid;
+  gap: var(--sp-8);
+  min-width: 0;
+}
+.setup-panel-text {
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
+}
+.setup-panel-caption {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
+}
+.setup-panel-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-6);
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
+}
+.setup-panel-note > .ui-icon {
+  flex-shrink: 0;
+  margin-top: var(--sp-2);
+  color: var(--icon);
+}
+.setup-panel-link {
+  justify-self: start;
+}
+.setup-panel-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-12);
+}
+.setup-panel-foot > .setup-panel-caption,
+.setup-panel-foot > .setup-panel-note {
+  flex: 1;
+  min-width: 0;
+}
+/* Services to choose from: their tiles with the name under each, three across in a picker's layer and as many as fit
+ * in the wider setup card, so the card stays two rows deep. */
+.setup-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: var(--sp-4);
+}
+.setup-grid-item {
+  display: grid;
+  justify-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+  padding: var(--sp-12) var(--sp-4) var(--sp-8);
+  border: 0;
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  transition: background-color var(--d-fast) var(--ease-exit);
+}
+.setup-grid-item > span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.setup-grid-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
+  transition-duration: 0s;
+}
+.setup-grid-item:active {
+  background: var(--bg-press);
+}
+.setup-grid-item:focus-visible,
+.setup-list-item:focus-visible {
+  outline: none;
+  box-shadow: var(--ring-focus-inset);
+}
+/* The presets not added yet: rows of 56, the tile, the name with its licence and one line about it. */
+.setup-list {
+  display: grid;
+}
+.setup-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-8);
+  min-height: 28px;
+  padding: 0 var(--sp-8);
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
+}
+.setup-list-meta {
+  font-weight: 400;
+}
+.setup-list-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--sp-12);
+  min-height: 56px;
+  padding: var(--sp-8);
+  border: 0;
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
+  background: transparent;
+  text-align: start;
+}
+.setup-list-item:hover {
+  background: var(--bg-hover);
+}
+.setup-list-item:active {
+  background: var(--bg-press);
+}
+.setup-list-text {
+  display: grid;
+  min-width: 0;
+}
+.setup-list-name {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  color: var(--text-1);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+  font-weight: 500;
+}
+.setup-list-description {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.setup-list-end {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.setup-list-end > .ui-icon {
+  color: var(--icon);
+}
+/* In a sheet the sheet's title already says 添加 Agent: the head keeps only what the list is. */
+.ui-sheet-body .setup-list-title {
+  display: none;
+}
+/* The way to the full page, under a separator: a footer row whose text starts on the rows' tiles. */
+.setup-list-foot {
+  display: grid;
+  margin-top: var(--sp-4);
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--line-subtle);
+}
+
+/* The shared model-service form inside the picker's scrollable panel. */
+.provider-add-inline {
+  display: grid;
+  min-width: 0;
+  gap: var(--sp-16);
+}
+.provider-add-inline .settings-actions {
+  flex-wrap: wrap;
 }

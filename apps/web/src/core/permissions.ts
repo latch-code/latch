@@ -1,15 +1,16 @@
-import type {
-  Approval,
-  ApprovalOption,
-  AppSnapshot,
-  CurrentDevice,
-  DeviceScope,
-  HarnessInfo,
-  HostView,
-  SessionPermission,
-  TaskSummary,
+import {
+  isLocalListener,
+  type Approval,
+  type ApprovalOption,
+  type AppSnapshot,
+  type CurrentDevice,
+  type DeviceScope,
+  type HarnessInfo,
+  type HostView,
+  type SessionPermission,
+  type TaskSummary,
 } from '@latch/protocol'
-import { APPROVAL_COPY } from './securityCopy.ts'
+import { APPROVAL_COPY, highRiskLabel } from './securityCopy.ts'
 import type { LatchShell } from './shell.ts'
 
 /**
@@ -36,7 +37,7 @@ export interface DeviceAccess {
 const ALL_SCOPES: DeviceScope[] = ['view', 'run', 'approve:standard', 'approve:elevated', 'admin', 'secrets']
 
 export function isLocalDevice(device: Pick<CurrentDevice, 'listener'> | null, shell: LatchShell | null): boolean {
-  return device !== null && device.listener === 'unix' && shell !== null
+  return device !== null && isLocalListener(device.listener) && shell !== null
 }
 
 export function deviceAccess(snapshot: AppSnapshot, shell: LatchShell | null): DeviceAccess {
@@ -60,7 +61,6 @@ export const harnessLevel = (harness: Pick<HarnessInfo, 'level' | 'source'>): 'L
 
 export const LEVEL_LABELS = { L1: '逐项询问（L1）', L3: '完全访问（L3）' } as const
 export const LOCAL_ONLY_HARNESS = '仅本机桌面端'
-export const L3_START_HINT = '开启完全访问会话需要本机确认。该会话可以读写 Latch 数据和 Host 身份私钥。'
 export const L3_READ_ONLY = '完全访问会话只接受执行端电脑上 Latch 桌面端的输入。此设备可以查看、拒绝和取消。'
 export const DEV_MODE_TEXT = '开发模式：Host 代码可被本机修改'
 export const LEGACY_HOST_TEXT = '此 Host 仍是旧版本，重启 Host 后启用设备确认。'
@@ -137,7 +137,7 @@ export function approvalActions(approval: Approval, device: CurrentDevice | null
       ...(allowed ? {} : { hint: APPROVAL_COPY.noStandard }),
     }
   }
-  const badge = { label: APPROVAL_COPY.highRisk, tone: 'err' as const }
+  const badge = { label: highRiskLabel(approval.riskReason), tone: 'err' as const }
   if (!local) return { kind: 'R2', badge, explicit, options: rejects, hint: APPROVAL_COPY.hostDesktop }
   if (!scopes.has('approve:elevated')) return { kind: 'R2', badge, explicit, options: rejects, hint: APPROVAL_COPY.noElevated }
   return {

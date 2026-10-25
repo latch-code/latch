@@ -1,11 +1,12 @@
 import { useId, useState, type FormEvent, type ReactNode } from 'react'
 import { Button, Dialog, InlineNotice, TextField } from '@latch/ui'
+import { InlineConfirm } from '../components/InlineConfirm.tsx'
 
 /**
  * A 560 dialog that changes one value of a settings row (a name, an address, a key). The value applies when the person
- * saves, as every settings value does; a failure stays in the dialog with the Host's words, and a cancelled local
- * confirmation closes nothing and says nothing (the confirmation dialog already did). `onSubmit` resolves with the text
- * to show, or '' when it worked.
+ * saves, as every settings value does; a failure stays in the dialog with the Host's words, and a save that needs a
+ * local confirmation shows it in the dialog, under the field (a cancelled one closes nothing). `onSubmit` resolves with
+ * the text to show, or '' when it worked.
  */
 export function FieldDialog({
   open,
@@ -108,6 +109,7 @@ export function FieldDialog({
         {warned && <InlineNotice tone="warn">{warned}</InlineNotice>}
         {error && <InlineNotice tone="error">{error}</InlineNotice>}
       </form>
+      <InlineConfirm active={busy} />
     </Dialog>
   )
 }

@@ -1,14 +1,26 @@
 import type { FileDiff, Message, TaskDetail } from '@latch/protocol'
+import {
+  appliedDiffs,
+  decisionLine,
+  ranDespite,
+  shownToolOutput,
+  shownToolState,
+  toolHeading,
+  type ShownToolState,
+} from './conversation.ts'
+import { DECISION_COPY } from './core/securityCopy.ts'
 import { diffLines, knowsOldSide, previousState } from './diff.ts'
 import { dateTime, tokenText } from './format.ts'
 
-const toolStates: Record<NonNullable<Message['state']>, string> = {
+const toolStates: Record<ShownToolState, string> = {
   queued: '等待执行',
   'awaiting-approval': '待批准',
   running: '执行中',
   completed: '已完成',
   failed: '失败',
   cancelled: '已取消',
+  rejected: '已拒绝',
+  expired: '已过期',
 }
 
 /** A fence longer than any backtick run inside, so content can never close it early. */
@@ -104,13 +116,20 @@ function unifiedDiff(diff: FileDiff): string {
 }
 
 function toolBlock(message: Message): string[] {
-  const title = message.tool?.title || message.toolName || '工具'
-  const state = message.state ? `（${toolStates[message.state]}）` : ''
+  const title = toolHeading(message.tool, message.toolName)
+  const state = message.state ? `（${toolStates[shownToolState(message)]}）` : ''
   const out = ['<details>', `<summary>工具：${escapeHtml(title)}${escapeHtml(state)}</summary>`, '']
   if (message.toolName && message.toolName !== title) out.push(`工具名：${code(message.toolName)}`, '')
+  // How its approval ended, with the full time and where it was decided (never which device).
+  const decision = message.tool?.decision
+  if (decision) {
+    const record = decisionLine(decision, Date.now()).full
+    out.push(`审批：${escapeHtml(ranDespite(message) ? `${record} · ${DECISION_COPY.ranDespite}` : record)}`, '')
+  }
   if (message.tool?.input) out.push('参数：', '', fence(message.tool.input, 'json'), '')
-  for (const diff of message.tool?.diffs ?? []) out.push(`变更：${code(diff.path)}`, '', fence(unifiedDiff(diff), 'diff'), '')
-  const output = message.tool?.output ?? message.text
+  // The diff of a call its approval kept from running changed nothing; one that started keeps its changes.
+  for (const diff of appliedDiffs(message)) out.push(`变更：${code(diff.path)}`, '', fence(unifiedDiff(diff), 'diff'), '')
+  const output = shownToolOutput(message)
   if (output) out.push('输出：', '', fence(output), '')
   out.push('</details>', '')
   return out

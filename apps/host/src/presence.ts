@@ -4,35 +4,77 @@ import { join } from 'node:path'
 import type { Readable, Writable } from 'node:stream'
 import {
   escapeSecurityText,
+  isLocalListener,
+  type BlockingTask,
   type ConfirmationTicket,
   type PresenceAction,
   type PresenceAvailability,
   type PresenceOutcome,
   type PresencePreview,
+  type PresenceReasonForm,
+  type PresenceSubject,
 } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import type { AuditLog } from './audit.ts'
 import { hashDisplay as formatHash, randomId, randomNonce } from './crypto.ts'
 import type { PolicyStore } from './policy.ts'
+import { presenceReason } from './presence-reason.ts'
+
+export {
+  argumentsText,
+  envNamesText,
+  policySubject,
+  presenceReason,
+  programText,
+  REASON_FORMS,
+  reasonSlots,
+  toolInputText,
+} from './presence-reason.ts'
 
 /**
  * Class A needs biometrics when Touch ID is available; class B accepts the login password. The title is fixed wording
- * per action. Only a policy change that adds one outbound address is titled by that address (targetTitle): the Host
- * checked it as `host:port`, so nobody chose those words freely.
+ * per action, for the client's card; the system sheet shows the reason instead. Only a policy change that adds one
+ * outbound address is titled by that address (targetTitle): the Host checked it as `host:port`, so nobody chose those
+ * words freely.
+ *
+ * `duringFullAccess`: while a full-access (L3) session runs or waits for an answer, its unsandboxed process may be the
+ * one asking. What outlives that session (another device, more rights for one, a wider policy, a new model-service
+ * address) is refused until it ends. Approving a Standard R2 call, starting another agent and widening a session's mode
+ * proceed: an agent with full access can already do the same on this computer itself. Every action has to say which.
  */
 export const PRESENCE_ACTIONS: Readonly<
-  Record<PresenceAction, { title: string; requireBiometric: boolean; target?: (target: string) => string }>
+  Record<
+    PresenceAction,
+    { title: string; requireBiometric: boolean; duringFullAccess: 'refuse' | 'proceed'; target?: (target: string) => string }
+  >
 > = {
-  'device.enroll': { title: '允许新设备连接', requireBiometric: true },
-  'device.grant': { title: '为设备增加权限', requireBiometric: true },
-  'task.start-l3': { title: '开启完全访问会话', requireBiometric: true },
-  'task.mode-widen': { title: '放宽会话权限模式', requireBiometric: true },
-  'agent.define': { title: '保存 Agent 启动设置', requireBiometric: true },
-  'policy.change': { title: '放宽本机安全策略', requireBiometric: true, target: target => `允许 Host 访问 ${target}` },
-  'provider.set-key': { title: '保存模型服务密钥', requireBiometric: false },
-  'approval.r2': { title: '允许一次高风险操作', requireBiometric: false },
+  'device.enroll': { title: '允许新设备连接', requireBiometric: true, duringFullAccess: 'refuse' },
+  'device.grant': { title: '为设备增加权限', requireBiometric: true, duringFullAccess: 'refuse' },
+  'task.start-l3': { title: '开启完全访问会话', requireBiometric: true, duringFullAccess: 'proceed' },
+  'task.mode-widen': { title: '放宽会话权限模式', requireBiometric: true, duringFullAccess: 'proceed' },
+  'policy.change': {
+    title: '放宽本机安全策略',
+    requireBiometric: true,
+    duringFullAccess: 'refuse',
+    target: target => `允许 Host 访问 ${target}`,
+  },
+  // No longer asked for (keys save without one or with the address); kept for older audit records.
+  'provider.set-key': { title: '保存模型服务密钥', requireBiometric: false, duringFullAccess: 'refuse' },
+  // The first use of a model-service address: the address, its key and its outbound allowance in one confirmation.
+  'provider.confirm-origin': {
+    title: '确认模型服务地址',
+    requireBiometric: true,
+    duringFullAccess: 'refuse',
+    target: target => `确认模型服务地址 ${target}`,
+  },
+  'approval.r2': { title: '允许一次高风险操作', requireBiometric: false, duringFullAccess: 'proceed' },
 }
+
+/** The refusal's text; clients show their own words for the code. */
+const BLOCKED_MESSAGE = '有完全访问会话正在运行或等你处理。为防止 Agent 冒用你的确认，这项确认要等它结束。'
+/** At most this many blocking sessions are listed in a refusal. */
+const BLOCKING_LIMIT = 10
 
 const TARGET = /^(?:\[[0-9a-fA-F:.]+\]|[A-Za-z0-9.-]+):\d{1,5}$/u
 
@@ -43,9 +85,10 @@ function targetTitle(action: PresenceAction, target: string | undefined): string
   return escapeSecurityText(target) === target ? entry.target(target) : entry.title
 }
 
-export const CONFIRMATION_LIFETIME_MS = 60_000
-/** Sent to the helper so its own timer fires before the Host's. */
-export const HELPER_TIMEOUT_SECONDS = 55
+/** The Host's own limit: at expiry the helper gets SIGTERM, which closes the system sheet. */
+export const CONFIRMATION_LIFETIME_MS = 120_000
+/** Sent to the helper so it closes the sheet itself just before the Host's limit, also if the Host is gone. */
+export const HELPER_TIMEOUT_SECONDS = 115
 const PREVIEW_LIMIT = 64 * 1024
 const COOLDOWN_MS = 5 * 60_000
 const DENIALS_BEFORE_COOLDOWN = 3
@@ -54,7 +97,9 @@ const STDOUT_LIMIT = 4096
 /** The shared security-text rule; the macOS helper's `visible()` applies the same one. */
 export { escapeSecurityText as escapePreviewText } from '@latch/protocol'
 
-export function buildPreview(input: Omit<PresencePreview, 'v' | 'nonce' | 'expiresAt' | 'title'> & { now: number; target?: string }): {
+export function buildPreview(
+  input: Omit<PresencePreview, 'v' | 'nonce' | 'expiresAt' | 'title' | 'reason'> & { now: number; target?: string },
+): {
   preview: PresencePreview
   previewHash: string
   hashDisplay: string
@@ -65,11 +110,17 @@ export function buildPreview(input: Omit<PresencePreview, 'v' | 'nonce' | 'expir
     listener: input.requester.listener,
     remoteAddress: escapeSecurityText(input.requester.remoteAddress),
   }
+  const subject: PresenceSubject = {
+    form: input.subject.form,
+    slots: Object.fromEntries(Object.entries(input.subject.slots).map(([name, value]) => [name, escapeSecurityText(value)])),
+  }
   const preview: PresencePreview = {
-    v: 1,
+    v: 2,
     hostId: input.hostId,
     action: input.action,
     title: targetTitle(input.action, input.target),
+    reason: presenceReason(input.action, subject),
+    subject,
     requester,
     lines: input.lines.map(line => ({ label: line.label, value: escapeSecurityText(line.value) })),
     warnings: [...input.warnings],
@@ -240,10 +291,9 @@ class MacHelperBackend implements PresenceBackend {
     if (availability.status !== 'available') return { result: 'error', message: availability.message }
     if (request.signal.aborted) return { result: 'cancelled' }
     const input = `${JSON.stringify({
-      v: 1,
+      v: 2,
       preview: request.preview,
       previewHash: request.previewHash,
-      hashDisplay: request.hashDisplay,
       timeoutSeconds: HELPER_TIMEOUT_SECONDS,
       requireBiometric: request.requireBiometric,
     })}\n`
@@ -308,17 +358,28 @@ function parseHelperOutput(text: string, nonce: string, previewHash: string): Pr
     case 'timeout':
       return { result: record.result }
     case 'error':
-      return { result: 'error', message: record.error === 'preview-hash-mismatch' ? '本机确认组件无法核对确认内容' : '本机确认失败' }
+      if (record.error === 'biometry-lockout')
+        return { result: 'error', message: 'Touch ID 已锁定，下次确认改用登录密码', failure: 'biometry-lockout' }
+      return {
+        result: 'error',
+        message:
+          record.error === 'preview-hash-mismatch' || record.error === 'reason-mismatch' ? '本机确认组件无法核对确认内容' : '本机确认失败',
+      }
     default:
       return malformed
   }
 }
 
 export interface ConfirmationRecord extends ConfirmationTicket {
+  reason: string
+  form: PresenceReasonForm
+  lines: PresencePreview['lines']
+  warnings: string[]
   paramsHash: string
   previewHash: string
   requesterDeviceId?: string
   method?: 'biometric' | 'password'
+  failure?: 'biometry-lockout'
   settled: Promise<PresenceOutcome>
 }
 
@@ -339,6 +400,11 @@ function ticketOf(record: ConfirmationRecord): ConfirmationTicket {
     status: record.status,
     hashDisplay: record.hashDisplay,
     expiresAt: record.expiresAt,
+    reason: record.reason,
+    form: record.form,
+    lines: record.lines.map(line => ({ ...line })),
+    warnings: [...record.warnings],
+    ...(record.failure ? { failure: record.failure } : {}),
   }
 }
 
@@ -350,7 +416,7 @@ function requesterKind(requester: PresencePreview['requester']): 'device' | 'ano
 }
 
 /**
- * Local presence confirmations (LPC): one at a time, 60 s to show and consume, single use, bound to the requester and
+ * Local presence confirmations (LPC): one at a time, 120 s to show and consume, single use, bound to the requester and
  * to the exact request parameters.
  */
 export class PresenceService {
@@ -358,12 +424,12 @@ export class PresenceService {
   private readonly hostId: string
   private readonly audit: AuditLog
   private readonly now: () => number
-  private readonly blockedReason: () => Promise<string | undefined>
+  private readonly blockingTasks: () => Promise<BlockingTask[]>
   private readonly entries = new Map<string, Entry>()
   private active?: Entry
   /**
-   * Denials of requests from enrolled devices, and separately of anonymous requests (enrollments). Anyone who can
-   * reach the loopback port may ask to enroll; dismissing those dialogs must not lock the owner out.
+   * Denials of requests from enrolled devices, and separately of anonymous requests (enrollments). Anyone holding an
+   * invitation, or able to open host.sock, may ask to enroll; dismissing those dialogs must not lock the owner out.
    */
   private readonly denials = { device: 0, anonymous: 0 }
   private readonly cooldownUntil = { device: 0, anonymous: 0 }
@@ -373,35 +439,53 @@ export class PresenceService {
     hostId: string
     audit: AuditLog
     now?: () => number
-    /** Returns a Chinese reason while unsandboxed execution runs. */
-    blockedReason: () => Promise<string | undefined>
+    /** The full-access sessions running or waiting for an answer; the actions marked `refuse` wait for them to end. */
+    blockingTasks: () => Promise<BlockingTask[]>
   }) {
     this.backend = options.backend
     this.hostId = options.hostId
     this.audit = options.audit
     this.now = options.now ?? Date.now
-    this.blockedReason = options.blockedReason
+    this.blockingTasks = options.blockingTasks
   }
 
   availability(): Promise<PresenceAvailability> {
     return this.backend.availability()
   }
 
+  /**
+   * Refuses the way `request` would before anything else happens: no confirmation component, or a full-access session
+   * holding this action back. A caller checks first when a refusal must not spend something single-use (an invitation).
+   */
+  async assertCanRequest(action: PresenceAction, revealBlocking = false): Promise<void> {
+    const availability = await this.backend.availability()
+    if (availability.status !== 'available') throw new AppError(503, 'presence-unavailable', `本机确认不可用：${availability.message}`)
+    if (PRESENCE_ACTIONS[action].duringFullAccess === 'proceed') return
+    const blocking = await this.blockingTasks()
+    if (blocking.length === 0) return
+    throw new AppError(409, 'presence-blocked', BLOCKED_MESSAGE, {
+      action,
+      ...(revealBlocking
+        ? { blockingTasks: blocking.slice(0, BLOCKING_LIMIT).map(({ id, title, harnessId }) => ({ id, title, harnessId })) }
+        : {}),
+    })
+  }
+
   /** Starts one confirmation and returns at once; `settled` resolves when the backend answers. */
   async request(input: {
     action: PresenceAction
     requester: PresencePreview['requester']
+    /** What the system sheet names; the reason is built from it. */
+    subject: PresenceSubject
     lines: PresencePreview['lines']
     warnings: string[]
     paramsHash: string
     /** A checked `host:port` the request adds, for the title of the actions worded around one. */
     target?: string
+    /** A refusal names the sessions holding it back only for a requester that may view sessions. */
+    revealBlocking?: boolean
   }): Promise<ConfirmationRecord> {
-    const availability = await this.backend.availability()
-    if (availability.status !== 'available') throw new AppError(503, 'presence-unavailable', `本机确认不可用：${availability.message}`)
-    if (await this.blockedReason()) {
-      throw new AppError(409, 'presence-blocked', '有完全访问会话正在运行，本机确认暂时只能用于拒绝。请等待其结束或取消后重试。')
-    }
+    await this.assertCanRequest(input.action, input.revealBlocking === true)
     const now = this.now()
     const kind = requesterKind(input.requester)
     // Device cooldowns stop everyone; an anonymous cooldown only stops further anonymous requests.
@@ -415,7 +499,7 @@ export class PresenceService {
     this.expire()
     const waiting = this.active && !this.active.done ? this.active : undefined
     // The owner's own desktop takes the dialog back from a pending anonymous request (it settles as cancelled).
-    if (waiting && !(kind === 'device' && input.requester.listener === 'unix' && requesterKind(waiting.requester) === 'anonymous')) {
+    if (waiting && !(kind === 'device' && isLocalListener(input.requester.listener) && requesterKind(waiting.requester) === 'anonymous')) {
       throw new AppError(409, 'presence-busy', '本机正在等待另一项确认，请先完成或取消')
     }
 
@@ -423,6 +507,7 @@ export class PresenceService {
       hostId: this.hostId,
       action: input.action,
       requester: input.requester,
+      subject: input.subject,
       lines: input.lines,
       warnings: input.warnings,
       now,
@@ -438,6 +523,10 @@ export class PresenceService {
       status: 'pending',
       hashDisplay,
       expiresAt: preview.expiresAt,
+      reason: preview.reason,
+      form: preview.subject.form,
+      lines: preview.lines,
+      warnings: preview.warnings,
       paramsHash: input.paramsHash,
       previewHash,
       ...(input.requester.deviceId !== undefined ? { requesterDeviceId: input.requester.deviceId } : {}),
@@ -511,6 +600,7 @@ export class PresenceService {
         this.cooldownUntil[kind] = this.now() + COOLDOWN_MS
       }
     }
+    if (record.status === 'pending' && outcome.result === 'error' && outcome.failure) record.failure = outcome.failure
     if (record.status === 'pending') {
       record.status =
         outcome.result === 'denied'

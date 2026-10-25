@@ -4,6 +4,7 @@ import { api, ApiError, errorMessage, setAuthHooks } from './api.ts'
 import { browserRenewal, RenewalScheduler } from './credentials.ts'
 import type { EnrolledResult } from './enrollment.ts'
 import { connectEventStream, type EventStreamConnection } from './eventStream.ts'
+import { noticeOf, parseHostState, type HostNotice } from './hostState.ts'
 import { hostView } from './permissions.ts'
 import { observeHostTime } from './hostClock.ts'
 import { mergeTaskSnapshot, parseTaskState, ProjectionGuard, type ProjectionTicket } from './projection.ts'
@@ -36,8 +37,14 @@ export function authStateFor(error: ApiError, renewalFailure: EnrollmentReason |
   return { reason: ENROLLMENT_CODES.has(error.code) ? (error.code as EnrollmentReason) : 'unauthorized' }
 }
 
-/** HTTP establishes authority; streamed state replaces only the selected slice. */
-export function useHarness() {
+/**
+ * HTTP establishes authority; streamed state replaces only the selected slice. A tab opens on the session it last showed;
+ * a fresh one opens on the latest session unless `openLatest` says otherwise when the device first connects (a phone
+ * opens on its session list).
+ */
+export function useHarness({ openLatest = () => true }: { openLatest?: () => boolean } = {}) {
+  // Read once, when the device first connects; the first one given is the one used.
+  const opensLatest = useRef(openLatest)
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null)
   const [detail, setDetail] = useState<TaskDetail | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -45,6 +52,13 @@ export function useHarness() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [connection, setConnection] = useState<ConnectionStatus>('connecting')
+  /** The Host said it is stopping or the computer is going to sleep; cleared once the Host answers again. */
+  const [hostNotice, setHostNotice] = useState<HostNotice | null>(null)
+  const noticeRef = useRef<HostNotice | null>(null)
+  const publishNotice = useCallback((next: HostNotice | null) => {
+    noticeRef.current = next
+    setHostNotice(next)
+  }, [])
   /** Set each time the selected session disappears from the Host. */
   const [removed, setRemoved] = useState<{ sessionId: string } | null>(null)
   /**
@@ -163,7 +177,9 @@ export function useHarness() {
               } catch {
                 /* Selection still works without browser storage. */
               }
-              const latest = [...next.tasks].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0]
+              const latest = opensLatest.current()
+                ? [...next.tasks].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0]
+                : undefined
               const initial = restored !== null && next.tasks.some(task => task.id === restored) ? restored : (latest?.id ?? null)
               guard.current.select(initial)
               setSelectedId(initial)
@@ -332,9 +348,26 @@ export function useHarness() {
     const syncConnection = () => {
       const attempt = ++openGeneration
       void synchronize('all', true).then(ok => {
-        if (!disposed && attempt === openGeneration && guard.current.current(ticket) && ok && stream.open && navigator.onLine)
+        if (!disposed && attempt === openGeneration && guard.current.current(ticket) && ok && stream.open && navigator.onLine) {
           setConnection('connected')
+          publishNotice(null)
+        }
       })
+    }
+    /** The Host's own word on why it stops answering decides when to try again and what the page says meanwhile. */
+    const hostState = (data: string) => {
+      const event = parseHostState(data)
+      if (!event || event.instanceId !== guard.current.instanceId) return
+      const notice = noticeOf(event)
+      if (notice === null) {
+        publishNotice(null)
+        syncConnection()
+        return
+      }
+      openGeneration++
+      publishNotice(notice)
+      setConnection(navigator.onLine ? 'reconnecting' : 'offline')
+      stream.deferReconnect(notice.retryAfter * 1000)
     }
     const invalidate = (data: string) => {
       if (disposed || !guard.current.current(ticket)) return
@@ -361,17 +394,23 @@ export function useHarness() {
           publishDetail(event.detail)
           if (latestSnapshot.current) publishSnapshot(mergeTaskSnapshot(latestSnapshot.current, event.detail), false)
         } else if (message.event === 'refresh' || message.event === 'tasks-invalidated') invalidate(message.data)
+        else if (message.event === 'host-state') hostState(message.data)
       },
       onError: () => {
         if (disposed) return
         openGeneration++
         setConnection(navigator.onLine ? 'reconnecting' : 'offline')
-        if (navigator.onLine) void synchronize('all', true)
+        // After an announced stop the Host is known to be away; the next attempt comes when it said to try again. Only a
+        // connection that failed waits like this: onUnauthorized clears the notice once the Host answers with a 401.
+        if (navigator.onLine && noticeRef.current === null) void synchronize('all', true)
       },
-      // Otherwise onError's snapshot decides between re-enrollment and a transient failure, after the backoff.
+      // Otherwise onError's snapshot decides between re-enrollment and a transient failure, after the backoff. A 401
+      // means the Host is answering again, so an announcement it made before no longer holds that snapshot back.
       onUnauthorized: async code => {
         if (disposed) return 'stop'
-        return code === 'renewal-required' && (await renew()) ? 'renewed' : 'retry'
+        if (code === 'renewal-required' && (await renew())) return 'renewed'
+        if (!disposed && noticeRef.current !== null) publishNotice(null)
+        return 'retry'
       },
     })
     activeStream.current = { stream, ticket }
@@ -405,7 +444,22 @@ export function useHarness() {
       window.removeEventListener('online', online)
       document.removeEventListener('visibilitychange', visible)
     }
-  }, [identity, selectedId, synchronize, publishDetail, publishSnapshot, renew])
+  }, [identity, selectedId, synchronize, publishDetail, publishSnapshot, publishNotice, renew])
 
-  return { snapshot, detail, selectedId, select, refresh, resync, confirmEnrollment, auth, loading, connection, error, removed, resyncs }
+  return {
+    snapshot,
+    detail,
+    selectedId,
+    select,
+    refresh,
+    resync,
+    confirmEnrollment,
+    auth,
+    loading,
+    connection,
+    hostNotice,
+    error,
+    removed,
+    resyncs,
+  }
 }

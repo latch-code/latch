@@ -266,6 +266,8 @@ export function useEnrollment(onEnrolled: () => Promise<EnrolledResult>) {
           setStep({ kind: 'mismatch' })
           return
         }
+        // An expired or used invitation stays unusable; the page asks for a new one instead of offering the form again.
+        if (cause instanceof ApiError && cause.code === 'invitation-invalid') invitation = null
         setError(errorMessage(cause))
         setStep({ kind: 'form' })
       }

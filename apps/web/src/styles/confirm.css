@@ -1,0 +1,211 @@
+/*
+ * The local confirmation in place (InlineConfirm), a security surface: a card of paper under the control that asked for
+ * it. Its head is a still state tile (amber fingerprint while Touch ID waits, green check once confirmed), the request's
+ * title, one line on what is happening and 取消; then the sentence the macOS system sheet shows, set apart as the one
+ * thing to check; the Host's warnings, always in view; and the details behind a disclosure. A request that did not run
+ * leaves one inline notice. The dock (the fallback) shows the same parts. What decides whether the parts can be seen and
+ * read is pinned, as for every security surface (security.css).
+ */
+.inline-confirm[data-secure] {
+  display: grid !important;
+  gap: var(--sp-12);
+  opacity: 1 !important;
+  color: var(--text-1) !important;
+  font-size: var(--fs-label) !important;
+  line-height: var(--lh-label-para) !important;
+}
+section.inline-confirm[data-secure] {
+  margin-top: var(--sp-8);
+  padding: var(--sp-12);
+  border: 1px solid var(--line-subtle) !important;
+  border-radius: var(--r-12);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-raised) !important;
+}
+/* A request that did not run, or could not start, is one notice: no paper around it. */
+section.inline-confirm[data-secure]:is([data-confirmation-phase='failed'], [data-confirmation-phase='paused']) {
+  padding: 0;
+  border: 0 !important;
+  background: transparent !important;
+}
+.confirm-status {
+  display: flex !important;
+  align-items: center;
+  gap: var(--sp-12);
+}
+.confirm-status-text {
+  display: grid !important;
+  flex: 1;
+  min-width: 0;
+}
+.confirm-title {
+  display: block !important;
+  color: var(--text-1) !important;
+  font-size: var(--fs-card-title) !important;
+  line-height: var(--lh-card-title) !important;
+  font-weight: 600 !important;
+}
+.confirm-line {
+  display: block !important;
+  color: var(--text-2) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption-para) !important;
+}
+/* The sentence on the system sheet: the card's one large text after the title, on its own sunken sheet. */
+.confirm-sheet {
+  display: grid !important;
+  gap: var(--sp-4);
+  padding: var(--sp-8) var(--sp-12);
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-sunken) !important;
+}
+.confirm-sheet-label,
+.confirm-sheet-check {
+  display: block !important;
+  color: var(--text-3) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption-para) !important;
+}
+.confirm-sheet-text {
+  display: block !important;
+  color: var(--text-1) !important;
+  font-size: var(--fs-label) !important;
+  line-height: var(--lh-label-para) !important;
+  font-weight: 500 !important;
+  overflow-wrap: anywhere;
+}
+.confirm-warnings {
+  list-style: none;
+  display: grid !important;
+  gap: var(--sp-2);
+}
+.confirm-warnings li {
+  display: block !important;
+  color: var(--warn-text) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption-para) !important;
+}
+.confirm-details {
+  display: grid !important;
+  gap: var(--sp-4);
+}
+.confirm-details-toggle {
+  display: inline-flex !important;
+  align-items: center;
+  justify-self: start;
+  gap: var(--sp-6);
+  min-height: 28px;
+  padding: 0 var(--sp-8);
+  margin-left: calc(-1 * var(--sp-8));
+  border: 0;
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
+  background: transparent !important;
+  color: var(--text-2) !important;
+  font-size: var(--fs-label) !important;
+  line-height: var(--lh-label) !important;
+  transition:
+    background-color var(--d-fast) var(--ease-exit),
+    color var(--d-fast) var(--ease-exit);
+}
+.confirm-details-toggle:hover {
+  background: var(--bg-hover) !important;
+  color: var(--text-1) !important;
+  transition-duration: 0s;
+}
+.confirm-details-toggle .chevron {
+  flex-shrink: 0;
+  color: var(--icon);
+  transition: transform var(--d-base) var(--ease);
+}
+.confirm-details-toggle[aria-expanded='true'] .chevron {
+  transform: rotate(90deg);
+}
+.confirm-details-list {
+  display: grid !important;
+  gap: var(--sp-6);
+  padding: var(--sp-8) var(--sp-12);
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-sunken) !important;
+}
+.confirm-details-row {
+  display: grid !important;
+  grid-template-columns: minmax(72px, max-content) minmax(0, 1fr);
+  gap: var(--sp-12);
+}
+.confirm-details-row dt {
+  display: block !important;
+  color: var(--text-3) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-mono-sm) !important;
+}
+.confirm-details-row dd {
+  display: block !important;
+  min-width: 0;
+  color: var(--text-1) !important;
+  font-family: var(--font-mono) !important;
+  font-size: var(--fs-mono-sm) !important;
+  line-height: var(--lh-mono-sm) !important;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.confirm-details-note {
+  display: block !important;
+  padding: var(--sp-6) 0 0;
+  color: var(--text-3) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption-para) !important;
+}
+.confirm-blocked-actions {
+  display: inline-flex !important;
+  gap: var(--sp-6);
+}
+/* In the approval card: under the footnote, the same sentence and details. */
+.approval-confirm {
+  display: grid !important;
+  gap: var(--sp-8);
+  padding: var(--sp-8) var(--sp-8) 0;
+}
+.approval-confirm-cancel {
+  margin-left: var(--sp-8);
+}
+/* In the composer: above the input; in the inspector: under the Agent block's options. */
+.composer-confirm > .ui-collapse-inner > .inline-confirm {
+  margin-top: 0;
+  margin-bottom: var(--sp-8);
+}
+/* The pairing panel: the device that used the invitation, its fingerprint to compare with its own screen. */
+[data-secure] .pair-waiting {
+  display: grid !important;
+  justify-items: start;
+  gap: var(--sp-6);
+  padding: var(--sp-12);
+  border: 1px solid var(--line-subtle) !important;
+  border-radius: var(--r-12);
+  corner-shape: var(--corner-shape);
+  background: var(--bg-sunken) !important;
+}
+[data-secure] .pair-waiting .fingerprint {
+  justify-content: start;
+}
+.pair-waiting-title {
+  display: block !important;
+  color: var(--text-1) !important;
+  font-size: var(--fs-label) !important;
+  line-height: var(--lh-label-para) !important;
+  font-weight: 600 !important;
+}
+.pair-waiting-note {
+  display: block !important;
+  color: var(--text-2) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption-para) !important;
+}
+/* The enrollment page: the computer's sentence under the fingerprint, which names it. */
+.fingerprint-hash q {
+  display: inline !important;
+  color: var(--text-2) !important;
+  quotes: '「' '」';
+}

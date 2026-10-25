@@ -13,6 +13,7 @@ import {
 } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { syncDirectory } from '@latch/core/node-kit'
+import { excludeFromBackup } from './backup.ts'
 
 export interface ProviderRecord {
   id: string
@@ -23,6 +24,12 @@ export interface ProviderRecord {
   apiKey: string
   /** `scheme://host:port` (port always explicit) the key was saved for; the key is never sent anywhere else. */
   keyOrigin?: string
+  /**
+   * The base URL's path the key was saved for, without trailing slashes ('' at the root). Requests go to paths under
+   * it, and the key is sent only while the base URL still has this origin and this path: gateways that separate
+   * tenants by path never receive another tenant's key.
+   */
+  keyPath?: string
   enabled: boolean
   models: string[]
   defaultModel: string
@@ -103,6 +110,12 @@ export function availableId(base: string, taken: Iterable<string>): string {
 const PROVIDERS_FILE = 'providers.json'
 const SETTINGS_FILE = 'settings.json'
 const LEGACY_PROVIDER_FILE = 'provider.json'
+/**
+ * Kept out of Time Machine backups (see backup.ts): the model keys, and the Agent definitions, whose environment values
+ * are often API keys. Splitting those values into a file of their own would give each Agent definition two commit
+ * points, and the launch fingerprint covers them; so all of settings.json stays out, projects and defaults included.
+ */
+export const BACKUP_EXCLUDED_CONFIG_FILES: readonly string[] = [PROVIDERS_FILE, SETTINGS_FILE, LEGACY_PROVIDER_FILE]
 
 const noControl = (value: string) => !/[\u0000-\u001f\u007f]/u.test(value)
 const id = (label: string) => z.string().regex(PROVIDER_ID, `${label}只能包含小写字母、数字、- 和 _，且以字母或数字开头，最长 48 个字符`)
@@ -135,6 +148,33 @@ export function originOf(value: string): string {
   return `${url.protocol}//${url.hostname}:${url.port || (url.protocol === 'https:' ? '443' : '80')}`
 }
 
+/**
+ * The path of an HTTP(S) URL as a key is bound to it: WHATWG-normalized (dot segments resolved, percent-encoded) and
+ * without trailing slashes, so `/v1` and `/v1/` are the same binding and the root is ''.
+ */
+export function keyPathOf(value: string): string {
+  originOf(value)
+  return new URL(value).pathname.replace(/\/+$/u, '')
+}
+
+/** Where a key saved for `baseURL` may be sent: its origin and path. */
+export function keyScopeOf(baseURL: string): { keyOrigin: string; keyPath: string } {
+  return { keyOrigin: originOf(baseURL), keyPath: keyPathOf(baseURL) }
+}
+
+/** `https://h:443/v1`: the origin and path a key is bound to, as the owner reads it. */
+export function keyScopeText(scope: { keyOrigin: string; keyPath?: string }): string {
+  return `${scope.keyOrigin}${scope.keyPath ?? ''}`
+}
+
+/**
+ * `https://h:443/v1`: the address a model service at `baseURL` is confirmed at. The same origin and path a key is bound
+ * to, since a gateway tells its tenants apart by the path.
+ */
+export function addressOf(baseURL: string): string {
+  return keyScopeText(keyScopeOf(baseURL))
+}
+
 function originOrUndefined(value: string): string | undefined {
   try {
     return originOf(value)
@@ -147,6 +187,10 @@ const keyOrigin = z
   .string()
   .max(2100)
   .refine(value => originOrUndefined(value) === value, '密钥绑定的服务地址无效')
+const keyPath = z
+  .string()
+  .max(2048)
+  .refine(value => value === '' || (value.startsWith('/') && !value.endsWith('/') && noControl(value)), '密钥绑定的路径无效')
 
 const providerSchema = z
   .object({
@@ -157,6 +201,7 @@ const providerSchema = z
     baseURL,
     apiKey: z.string().max(8192, 'API Key 过长').refine(noControl, 'API Key 不能包含换行或控制字符'),
     keyOrigin: keyOrigin.optional(),
+    keyPath: keyPath.optional(),
     enabled: z.boolean(),
     models: z.array(modelId).min(1, '至少需要一个模型').max(1000, '模型数量过多'),
     defaultModel: modelId,
@@ -167,7 +212,7 @@ const providerSchema = z
     if (!value.models.includes(value.defaultModel))
       context.addIssue({ code: 'custom', path: ['defaultModel'], message: '默认模型必须在模型列表中' })
   })
-/** As stored before key origins existed; `open` back-fills the origin. */
+/** As stored before key origins and paths existed; `open` back-fills them. */
 const storedProvidersSchema = z
   .array(providerSchema)
   .max(64, '模型服务数量过多')
@@ -175,11 +220,13 @@ const storedProvidersSchema = z
     const ids = providers.map(provider => provider.id)
     if (new Set(ids).size !== ids.length) context.addIssue({ code: 'custom', message: '服务标识不能重复' })
   })
-/** Every write: a saved key always names the one origin it may be sent to. */
+/** Every write: a saved key always names the one origin and path it may be sent to. */
 const providersSchema = storedProvidersSchema.superRefine((providers, context) => {
   providers.forEach((provider, index) => {
     if (provider.apiKey && !provider.keyOrigin)
       context.addIssue({ code: 'custom', path: [index, 'keyOrigin'], message: 'API Key 必须绑定保存时的服务地址' })
+    if (provider.apiKey && provider.keyPath === undefined)
+      context.addIssue({ code: 'custom', path: [index, 'keyPath'], message: 'API Key 必须绑定保存时的服务路径' })
   })
 })
 const providersFileSchema = z.object({ version: z.literal(1), providers: storedProvidersSchema })
@@ -238,6 +285,11 @@ const agentSchema = z.object({
     )
     .refine(env => Object.keys(env).length <= 64, '环境变量数量过多'),
   enabled: z.boolean(),
+  startedHash: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/u)
+    .nullable()
+    .optional(),
 })
 const settingsSchema = z
   .object({
@@ -314,7 +366,8 @@ async function readConfig<T>(file: string, schema: z.ZodType<T>, tighten: boolea
 type BeforePublish<T> = (next: T, commit: () => Promise<void>) => Promise<void>
 
 /**
- * Owner configuration in the Host data directory: `providers.json` (with API keys) and `settings.json`, both 0600.
+ * Owner configuration in the Host data directory: `providers.json` (with API keys) and `settings.json` (with the Agents'
+ * environment values), both 0600 and kept out of Time Machine backups.
  * Each file has one serialized writer; readers always see the last published state.
  */
 export class HostConfig {
@@ -326,7 +379,7 @@ export class HostConfig {
 
   /**
    * Loads both files; migrates a legacy `provider.json` once and never modifies it. A corrupt file is reported, never overwritten.
-   * Keys saved before origin binding are bound to their current base URL, and that is written back once.
+   * Keys saved before origin or path binding are bound to their current base URL's origin and path, written back once.
    */
   static async open(dataDir: string): Promise<HostConfig> {
     const config = new HostConfig(resolve(dataDir))
@@ -336,9 +389,13 @@ export class HostConfig {
     if (settings) config.hostSettings = settings
     if (stored) {
       config.providerList = stored.providers
-      if (stored.providers.some(record => record.apiKey && !record.keyOrigin)) {
+      if (stored.providers.some(record => record.apiKey && (!record.keyOrigin || record.keyPath === undefined))) {
         await config.updateProviders(draft => {
-          for (const record of draft) if (record.apiKey && !record.keyOrigin) record.keyOrigin = originOf(record.baseURL)
+          for (const record of draft) {
+            if (!record.apiKey) continue
+            record.keyOrigin ??= originOf(record.baseURL)
+            record.keyPath ??= keyPathOf(record.baseURL)
+          }
         })
       }
     } else {
@@ -427,6 +484,8 @@ export class HostConfig {
       throw error
     }
     await handle.close()
+    // A rename replaces the file, and with it the old file's backup exclusion, so the new one carries its own.
+    if (BACKUP_EXCLUDED_CONFIG_FILES.includes(fileName)) await excludeFromBackup([temporary])
     let renamed = false
     let committing: Promise<void> | undefined
     const commit = () =>
@@ -452,6 +511,7 @@ function migrateLegacy(legacy: z.infer<typeof legacyProviderSchema>): ProviderRe
   )
   // An invalid legacy URL has no origin; the schema then reports the file as corrupt.
   const origin = legacy.apiKey ? originOrUndefined(legacy.baseURL) : undefined
+  const scope = origin ? { keyOrigin: origin, keyPath: keyPathOf(legacy.baseURL) } : {}
   return {
     id: 'openai-compatible',
     name: preset?.name ?? 'OpenAI 兼容接口',
@@ -459,7 +519,7 @@ function migrateLegacy(legacy: z.infer<typeof legacyProviderSchema>): ProviderRe
     ...(preset ? { presetId: preset.id } : {}),
     baseURL: legacy.baseURL,
     apiKey: legacy.apiKey,
-    ...(origin ? { keyOrigin: origin } : {}),
+    ...scope,
     enabled: true,
     models: [legacy.model.trim()],
     defaultModel: legacy.model.trim(),

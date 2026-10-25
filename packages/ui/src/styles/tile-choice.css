@@ -1,0 +1,168 @@
+/*
+ * A row of tiles to pick from (the harness of a new session): items of a 40 tile, the name (13/18, text-2) and one
+ * short line (12/16, text-3), 88 wide with 12px corners. Hover is the hover ground; the chosen item stands on the
+ * neutral selection ground with its name in text-1 at 500, without a ring; the ground cross-fades in 120ms. An item
+ * that cannot be chosen dims its tile and name to 45% and keeps its line at full strength. The row wraps and centres;
+ * on phones it is one line that scrolls sideways under the page's edges.
+ */
+.ui-tile-choice {
+  display: grid;
+  min-width: 0;
+}
+.ui-tile-choice-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--sp-4);
+}
+.ui-tile-choice-group {
+  display: contents;
+}
+.ui-tile-choice-item {
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  width: 88px;
+  min-height: 88px;
+  padding: var(--sp-12) var(--sp-4) var(--sp-8);
+  border: 0;
+  border-radius: var(--r-12);
+  corner-shape: var(--corner-shape);
+  background: transparent;
+  color: var(--text-2);
+  text-align: center;
+  transition: background-color var(--d-fast) var(--ease-exit);
+}
+.ui-tile-choice-item:hover:not([aria-disabled='true'], [aria-checked='true']) {
+  background: var(--bg-hover);
+  transition-duration: 0s;
+}
+.ui-tile-choice-item:active:not([aria-disabled='true'], [aria-checked='true']) {
+  background: var(--bg-press);
+}
+.ui-tile-choice-item[aria-checked='true'] {
+  background: var(--bg-selected-solid);
+  color: var(--text-1);
+  transition: background-color var(--d-fast) var(--ease);
+}
+.ui-tile-choice-tile {
+  display: grid;
+  place-items: center;
+  margin-bottom: var(--sp-6);
+}
+.ui-tile-choice-label,
+.ui-tile-choice-note {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ui-tile-choice-label {
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+}
+.ui-tile-choice-item[aria-checked='true'] .ui-tile-choice-label {
+  font-weight: 500;
+}
+.ui-tile-choice-note {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.ui-tile-choice-item[aria-disabled='true'] :is(.ui-tile-choice-tile, .ui-tile-choice-label) {
+  opacity: 0.45;
+}
+/* An action at the end of the row: a dashed plate of line-strong around an icon-coloured glyph, the tile's size. */
+.ui-tile-action-plate {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px dashed var(--line-strong);
+  /* The 40 tile's corner, round(40 × 0.225). */
+  border-radius: 9px;
+  corner-shape: var(--corner-shape);
+  color: var(--icon);
+}
+.ui-tile-action:is(:hover, [aria-expanded='true']) .ui-tile-action-plate {
+  color: var(--text-1);
+}
+.ui-tile-action[aria-expanded='true'] {
+  background: var(--bg-press);
+}
+/* Why the pressed item cannot be chosen, in a line that opens under the row (a disclosure, so nothing above moves). */
+.ui-tile-choice-reason {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: var(--sp-6);
+  padding-top: var(--sp-8);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.ui-tile-choice-reason > .ui-icon {
+  color: var(--icon);
+}
+/* Workbench controls: small identity marks and text, with the touch target kept independent of the glyph. */
+.ui-tile-choice[data-variant='compact'] .ui-tile-choice-row {
+  justify-content: flex-start;
+}
+.ui-tile-choice[data-variant='compact'] .ui-tile-choice-item {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--sp-6);
+  width: auto;
+  min-height: 36px;
+  max-width: 240px;
+  padding: var(--sp-6) var(--sp-8);
+  border-radius: var(--r-8);
+  corner-shape: var(--corner-shape);
+  text-align: left;
+}
+.ui-tile-choice[data-variant='compact'] .ui-tile-choice-tile {
+  flex-shrink: 0;
+  margin: 0;
+}
+.ui-tile-choice[data-variant='compact'] .ui-tile-choice-label {
+  min-width: 0;
+}
+.ui-tile-choice[data-variant='compact'] .ui-tile-choice-note {
+  flex-shrink: 0;
+}
+.ui-tile-action[data-variant='compact'] .ui-tile-action-plate {
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: var(--r-4);
+  corner-shape: var(--corner-shape);
+}
+.ui-tile-choice[data-variant='compact'] .ui-tile-choice-reason {
+  justify-content: flex-start;
+  padding-inline: var(--sp-8);
+}
+@media (pointer: coarse) {
+  .ui-tile-choice[data-variant='compact'] .ui-tile-choice-item {
+    min-height: 44px;
+  }
+}
+@media (max-width: 767.98px) {
+  .ui-tile-choice-row {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    margin-inline: calc(-1 * var(--gutter));
+    padding-inline: var(--gutter);
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-padding-inline: var(--gutter);
+    scrollbar-width: none;
+  }
+  .ui-tile-choice-row::-webkit-scrollbar {
+    display: none;
+  }
+  .ui-tile-choice-item {
+    flex-shrink: 0;
+    width: 80px;
+  }
+}

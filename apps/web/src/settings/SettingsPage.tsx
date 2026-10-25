@@ -1,11 +1,25 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
-import { Bot, ChevronLeft, ChevronRight, Folder, Info, Laptop, MonitorSmartphone, Puzzle, SlidersHorizontal, Sparkles } from 'lucide-react'
+import {
+  Bot,
+  ChevronLeft,
+  ChevronRight,
+  Folder,
+  Info,
+  Laptop,
+  LockKeyhole,
+  MonitorSmartphone,
+  Puzzle,
+  SlidersHorizontal,
+  Sparkles,
+} from 'lucide-react'
 import type { AppSnapshot } from '@latch/protocol'
 import { useViewport } from '../breakpoints.ts'
 import { deviceAccess, hostView, type DeviceAccess } from '../core/permissions.ts'
+import { SETTINGS_ADMIN_HIDDEN } from '../core/securityCopy.ts'
 import { currentShell } from '../core/shell.ts'
 import { DevModeChip } from '../components/DevModeChip.tsx'
 import { Modal } from '../components/overlays.tsx'
+import { useBackLayer } from '../hooks/backStack.ts'
 import { AboutSettings } from './AboutSettings.tsx'
 import { AgentsSettings } from './AgentsSettings.tsx'
 import { ComputerSettings } from './ComputerSettings.tsx'
@@ -33,6 +47,12 @@ const sections: Array<{ id: SettingsSection; label: string; icon: LucideIcon; ad
   { id: 'devices', label: '设备', icon: MonitorSmartphone, admin: false, secured: true },
   { id: 'about', label: '关于', icon: Info, admin: false },
 ]
+
+/** The line under the sections of a device that lacks 管理此 Host: some sections are hidden, and where to grant it. */
+export function hiddenSectionsCaption(snapshot: AppSnapshot, access: DeviceAccess): string | undefined {
+  if (access.admin || access.legacy) return undefined
+  return sections.some(section => section.admin && (snapshot.catalog || !section.catalog)) ? SETTINGS_ADMIN_HIDDEN : undefined
+}
 
 export function settingsSections(snapshot: AppSnapshot, access: DeviceAccess = deviceAccess(snapshot, currentShell())): SettingsSection[] {
   return sections
@@ -67,6 +87,7 @@ export function SettingsPage({
   const access = given ?? deviceAccess(snapshot, currentShell())
   const ids = settingsSections(snapshot, access)
   const available = sections.filter(section => ids.includes(section.id))
+  const caption = hiddenSectionsCaption(snapshot, access)
   const [chosen, setChosen] = useState<SettingsSection | null>(
     initial && available.some(section => section.id === initial) ? initial : null,
   )
@@ -152,6 +173,10 @@ export function SettingsPage({
     else if (pushed) back()
     else leave()
   }
+  // On a phone the page and the section pushed over its list each hold a place in the browser's history (the pages inside
+  // a section hold theirs in SettingsPages), so the platform's back returns one level.
+  useBackLayer(phone && !closing, leave)
+  useBackLayer(pushed && !closing, back)
 
   return (
     <Modal label="设置" variant="page" className={closing ? 'settings-page is-leaving' : 'settings-page'} onClose={escape}>
@@ -202,6 +227,12 @@ export function SettingsPage({
                 </button>
               ))}
             </div>
+            {caption && (
+              <p className="settings-nav-caption">
+                <Icon icon={LockKeyhole} size={14} />
+                <span>{caption}</span>
+              </p>
+            )}
           </div>
           {/* On phones the panel is laid out off-screen from the start, so the first section slides in too. */}
           {(panel !== null || phone) && (

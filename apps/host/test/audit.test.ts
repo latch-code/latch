@@ -317,6 +317,46 @@ describe('audit chain', () => {
     ).rejects.toEqual(invalid)
   })
 
+  it('knows what earlier confirmed full-access starts had in common with a new one, also after reopening', async () => {
+    const path = directory()
+    const log = await openLog(path)
+    const actor = { deviceId: `dev_${'a'.repeat(22)}`, listener: 'unix' as const, via: 'http' as const }
+    const started = (launch: string, stepup: 'lpc-local' | 'none', definition?: string, harnessId = 'codex') =>
+      log.append({
+        action: 'task.l3.started',
+        actor,
+        target: 's-1',
+        stepup,
+        detail: { sessionId: 's-1', harnessId, launchHash: hash(launch), ...(definition ? { definitionHash: hash(definition) } : {}) },
+      })
+    // An intent alone is not a start.
+    await log.append({
+      action: 'task.l3.start-requested',
+      actor,
+      stepup: 'lpc-local',
+      detail: { harnessId: 'intent-only', launchHash: hash('intent') },
+    })
+    await started('confirmed', 'lpc-local', 'definition')
+    // A record from before definitions were recorded still counts for its fingerprint and harness.
+    await started('older', 'lpc-local', undefined, 'goose')
+    await started('unconfirmed', 'none', 'unconfirmed-definition', 'pi')
+    const ask = (launch: string, harnessId: string, definition?: string) =>
+      log.startedBefore({ launchHash: hash(launch), harnessId, ...(definition ? { definitionHash: hash(definition) } : {}) })
+    expect(ask('confirmed', 'codex', 'definition')).toBe('launch')
+    // The same definition with another project configuration.
+    expect(ask('with-project-config', 'codex', 'definition')).toBe('definition')
+    expect(ask('changed', 'codex', 'changed-definition')).toBe('harness')
+    expect(ask('older', 'goose')).toBe('launch')
+    expect(ask('new', 'goose', 'new-definition')).toBe('harness')
+    expect(ask('unconfirmed', 'pi', 'unconfirmed-definition')).toBe('never')
+    expect(ask('intent', 'intent-only')).toBe('never')
+    await log.close()
+    const reopened = await openLog(path)
+    expect(reopened.startedBefore({ launchHash: hash('confirmed'), harnessId: 'codex' })).toBe('launch')
+    expect(reopened.startedBefore({ launchHash: hash('other'), harnessId: 'codex', definitionHash: hash('definition') })).toBe('definition')
+    expect(reopened.startedBefore({ launchHash: hash('other'), harnessId: 'qwen' })).toBe('never')
+  })
+
   it('rejects details with extra keys or values that are not ids, hashes, enums, booleans or counts', async () => {
     const log = await openLog(directory())
     const invalid = expect.objectContaining({ status: 500, code: 'audit-detail-invalid' })

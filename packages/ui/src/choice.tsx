@@ -58,6 +58,8 @@ export interface ChoiceOption<T extends string> {
   risk?: boolean
   /** Why it cannot be chosen; the row dims and the reason stays readable under it. */
   disabledReason?: string
+  /** The value's own picture (a tile) between the radio and the title. */
+  media?: ReactNode
 }
 
 /**
@@ -121,6 +123,7 @@ export function ChoiceList<T extends string>({
               if (!disabled && !checked) onValueChange(option.value)
             }}>
             <span className="ui-choice-radio" aria-hidden="true" />
+            {option.media && <span className="ui-choice-media">{option.media}</span>}
             <span className="ui-choice-text">
               <span id={`${noteId}-title`} className="ui-choice-label">
                 <span className="ui-choice-title">{option.title}</span>

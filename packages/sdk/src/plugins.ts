@@ -1,5 +1,6 @@
 /** Stable product interfaces. No upstream harness types cross this module. */
 import type { HarnessDriver } from './harness.ts'
+import type { TaskSummary, UiPanelDocument, UiPanelInfo } from '@latch/protocol/types'
 
 export type { PluginInfo } from '@latch/protocol/types'
 
@@ -53,7 +54,13 @@ export interface ToolDefinition {
   description: string
   parameters: Record<string, unknown>
   requiresApproval: boolean
-  /** Optional presentation hint for tool rows, e.g. `read`, `edit`, `execute`. */
+  /**
+   * Optional short name of what the tool does, in the product's language: 「读取文件」, 「写入文件」. Tool rows and approval
+   * cards show it with the call's object; without it they show `name`. Display only: it never changes the Host's risk
+   * class, and invisible or direction-changing characters in it are shown escaped.
+   */
+  title?: string
+  /** Optional presentation hint for tool rows' icons and verbs, e.g. `read`, `edit`, `execute`. */
   kind?: 'read' | 'edit' | 'delete' | 'move' | 'search' | 'execute' | 'think' | 'fetch' | 'other'
   /** Optional, side-effect free. Describes a call before it runs, e.g. the diff a write would apply. */
   preview?(
@@ -87,18 +94,68 @@ export interface PluginContext {
   registerProvider(provider: ModelProvider): void
   registerTool(tool: ToolDefinition): void
   registerHarness(driver: HarnessDriver): void
+  registerUiPanel(panel: UiPanelDefinition): void
+  registerClientPanel(panel: ClientPanelDefinition): void
+  registerSkill(skill: SkillDefinition): void
   onDispose(dispose: () => void | Promise<void>): void
 }
-export interface HarnessPlugin {
+export interface SkillDefinition {
+  /** Local to this package. Enabled skills are included in each Standard run, including chat. */
+  id: string
+  name: string
+  description: string
+  content: string
+}
+/** A bundled ESM component, with React and Latch primitives supplied by the client. No runtime compilation. */
+export interface ClientPanelDefinition {
+  id: string
+  title: string
+  description?: string
+  harnessIds?: string[]
+  source: string
+}
+export interface ClientPanelLease {
+  info: UiPanelInfo
+  source: string
+  release(): void
+}
+/** A side-effect-free view of one session. It runs on the Host and returns client-independent presentation data. */
+export interface UiPanelContext {
+  session: TaskSummary
+  signal: AbortSignal
+}
+export interface UiPanelDefinition {
+  /** Local to the plugin; the published panel ID is `<plugin id>:<id>`. */
+  id: string
+  title: string
+  description?: string
+  harnessIds?: string[]
+  /** False keeps this as a package data source without adding another visible tab. It is still view-authorized. */
+  listed?: boolean
+  render(context: UiPanelContext): UiPanelDocument | Promise<UiPanelDocument>
+}
+export interface UiPanelLease {
+  info: UiPanelInfo
+  render(context: UiPanelContext): Promise<UiPanelDocument>
+  release(): void
+}
+export interface LatchPlugin {
   id: string
   name: string
   version: string
   description: string
+  /** Present for a directory package loaded from latch-plugin.json; legacy module plugins remain supported. */
+  package?: { formatVersion: 1 }
   activate(context: PluginContext): void | Promise<void>
 }
+/** Compatibility name for existing plugin modules. A plugin may contribute a whole feature. */
+export type HarnessPlugin = LatchPlugin
+
 export interface CapabilityLease {
   provider: ModelProvider
   tools: ToolDefinition[]
+  /** A detached, run-stable snapshot; IDs are namespaced by the owning package. */
+  skills?: SkillDefinition[]
   release(): void
 }
 export interface HarnessLease {

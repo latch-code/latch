@@ -16,6 +16,8 @@ export interface PolicyView {
   local: { maxLevel: StandardLevel; allowL3: boolean }
   remote: { maxLevel: StandardLevel; allowRemoteStart: boolean; harnesses: string[] | null; workspaces: string[] | null }
   hostEgressAllow: string[]
+  /** Model-service addresses confirmed on this computer; absent from Hosts before confirmed addresses. */
+  confirmedAddresses?: string[]
 }
 
 /** The body of `PATCH /link/api/policy`: only the fields that change. */
@@ -23,6 +25,8 @@ export interface PolicyPatch {
   local?: { maxLevel?: StandardLevel; allowL3?: boolean }
   remote?: { maxLevel?: StandardLevel; allowRemoteStart?: boolean; harnesses?: string[] | null; workspaces?: string[] | null }
   hostEgressAllow?: { add?: string[]; remove?: string[] }
+  /** Removing only: an address is confirmed by saving a model service there. */
+  confirmedAddresses?: { remove: string[] }
 }
 
 export type RemoteList = 'harnesses' | 'workspaces'
@@ -36,11 +40,13 @@ const isList = (value: unknown): value is string[] | null =>
 /** Reads the response's `policy`; anything that does not have the fields this page needs is null. */
 export function parsePolicy(value: unknown): PolicyView | null {
   if (!isRecord(value)) return null
-  const { local: l, remote: r, hostEgressAllow } = value
+  const { local: l, remote: r, hostEgressAllow, confirmedAddresses } = value
   if (!isRecord(l) || !isRecord(r)) return null
   if (!isStandard(l.maxLevel) || typeof l.allowL3 !== 'boolean') return null
   if (!isStandard(r.maxLevel) || typeof r.allowRemoteStart !== 'boolean' || !isList(r.harnesses) || !isList(r.workspaces)) return null
   if (!Array.isArray(hostEgressAllow) || !hostEgressAllow.every(item => typeof item === 'string')) return null
+  const origins =
+    Array.isArray(confirmedAddresses) && confirmedAddresses.every(item => typeof item === 'string') ? [...confirmedAddresses] : undefined
   return {
     local: { maxLevel: l.maxLevel, allowL3: l.allowL3 },
     remote: {
@@ -50,6 +56,7 @@ export function parsePolicy(value: unknown): PolicyView | null {
       workspaces: r.workspaces === null ? null : [...r.workspaces],
     },
     hostEgressAllow: [...hostEgressAllow],
+    ...(origins ? { confirmedAddresses: origins } : {}),
   }
 }
 
@@ -91,6 +98,11 @@ export function applyPatch(policy: PolicyView, patch: PolicyPatch): PolicyView {
     local: { ...policy.local, ...patch.local },
     remote: { ...policy.remote, ...patch.remote },
     hostEgressAllow: [...policy.hostEgressAllow],
+    ...(policy.confirmedAddresses ? { confirmedAddresses: [...policy.confirmedAddresses] } : {}),
+  }
+  if (patch.confirmedAddresses && next.confirmedAddresses) {
+    const removed = new Set(patch.confirmedAddresses.remove)
+    next.confirmedAddresses = next.confirmedAddresses.filter(origin => !removed.has(origin))
   }
   if (patch.hostEgressAllow) {
     const removed = new Set(patch.hostEgressAllow.remove ?? [])
@@ -121,6 +133,7 @@ export function widens(policy: PolicyView, patch: PolicyPatch): boolean {
     || !narrower(policy.remote.harnesses, next.remote.harnesses)
     || !narrower(policy.remote.workspaces, next.remote.workspaces)
     || !subset(next.hostEgressAllow, policy.hostEgressAllow)
+    || !subset(next.confirmedAddresses ?? [], policy.confirmedAddresses ?? [])
   )
 }
 
@@ -218,6 +231,10 @@ export const CEILING_COPY = {
   remoteStartNote: '关闭后只能查看、批准或停止已有会话',
   harnessesTitle: '其他设备可用的 Agent',
   workspacesTitle: '其他设备可用的项目',
+  /** Under those two headings: who the lists hold back (a browser on loopback is one of them, as in remoteNote). */
+  harnessesNote:
+    '手机、这台电脑上的浏览器和其他电脑只能用这里允许的 Agent 发起或继续会话。完全访问的会话只能在这台电脑的 Latch 桌面端发起。',
+  workspacesNote: '手机、这台电脑上的浏览器和其他电脑只能在这里允许的项目中发起或继续会话。',
 } as const
 
 /**

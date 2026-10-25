@@ -4,7 +4,7 @@ import { open, rename } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { DeviceScope } from '@latch/protocol'
+import { isLocalListener, LISTENER_CLASSES, type BlockingTask, type Device, type DeviceScope, type ListenerClass } from '@latch/protocol'
 import { sha256Hex } from '@latch/core/node-kit'
 import {
   P256_VECTOR,
@@ -29,7 +29,8 @@ import {
   type DeviceFs,
 } from '../src/auth.ts'
 import { deviceFingerprint } from '../src/crypto.ts'
-import { PresenceService } from '../src/presence.ts'
+import { ceilingFor, defaultPolicy } from '../src/policy.ts'
+import { paramsHash, PresenceService } from '../src/presence.ts'
 
 const cleanups: Array<() => Promise<void> | void> = []
 afterEach(async () => {
@@ -60,7 +61,16 @@ interface Fixture {
   auditRecords(): Array<{ action: string; actor: Record<string, unknown>; stepup: string; detail: Record<string, unknown> }>
 }
 
-async function fixture(options: { dataDir?: string; presence?: TestPresence; fs?: DeviceFs; auditFs?: AuditFs } = {}): Promise<Fixture> {
+async function fixture(
+  options: {
+    dataDir?: string
+    presence?: TestPresence
+    fs?: DeviceFs
+    auditFs?: AuditFs
+    /** The full-access sessions holding confirmations back; none by default. */
+    blockingTasks?: () => Promise<BlockingTask[]>
+  } = {},
+): Promise<Fixture> {
   const dataDir = options.dataDir ?? tempDir()
   const authDir = join(dataDir, 'auth')
   const clock = { now: Date.UTC(2026, 9, 23, 10) }
@@ -69,7 +79,7 @@ async function fixture(options: { dataDir?: string; presence?: TestPresence; fs?
   cleanups.push(() => audit.close())
   const devices = await DeviceStore.open({ directory: authDir, hostId, audit, now, fs: options.fs })
   const presence = options.presence ?? createTestPresence()
-  const service = new PresenceService({ backend: presence, hostId, audit, now, blockedReason: async () => undefined })
+  const service = new PresenceService({ backend: presence, hostId, audit, now, blockingTasks: options.blockingTasks ?? (async () => []) })
   const enrollments = new EnrollmentService({ hostId, devices, presence: service, audit, directory: authDir, now })
   return {
     dataDir,
@@ -96,18 +106,34 @@ interface Enrolled {
   connection: ConnectionContext
 }
 
+/** An invitation for `connection`'s listener and origin, issued as the command line (or `inviter`) would. */
+async function invitationFor(
+  context: Fixture,
+  connection: ConnectionContext,
+  options: { scopes?: DeviceScope[]; inviter?: Device } = {},
+): Promise<string> {
+  return (await context.enrollments.createInvitation({ ...options, listener: connection.listener, origin: connection.origin }, actor)).code
+}
+
+/** Off host.sock, enrolls with a fresh invitation for that listener unless given an invitation or an offline code. */
 async function enroll(
   context: Fixture,
   connection: ConnectionContext,
   options: { scopes?: DeviceScope[]; invitation?: string; offlineCode?: string; name?: string } = {},
 ): Promise<Enrolled> {
   const key = testDeviceKey()
+  const invitable = options.scopes?.filter(scope => scope !== 'approve:elevated' && scope !== 'secrets')
+  const invitation =
+    options.invitation
+    ?? (isLocalListener(connection.listener) || options.offlineCode !== undefined
+      ? undefined
+      : await invitationFor(context, connection, invitable ? { scopes: invitable } : {}))
   const view = await context.enrollments.create(
     {
       publicKey: key.spki,
       name: options.name ?? '测试设备',
       scopes: options.scopes,
-      invitation: options.invitation,
+      invitation,
       offlineCode: options.offlineCode,
     },
     connection,
@@ -274,8 +300,12 @@ describe('device credentials', () => {
     const context = await fixture()
     const admin = await enroll(context, unix, { name: '桌面' })
     const invited = await enroll(context, tls, {
-      invitation: (await context.enrollments.createInvitation({ inviter: context.devices.get(admin.id), tlsOrigin: tls.origin }, actor))
-        .code,
+      invitation: (
+        await context.enrollments.createInvitation(
+          { inviter: context.devices.get(admin.id), listener: tls.listener, origin: tls.origin },
+          actor,
+        )
+      ).code,
     })
     const device = await enroll(context, loopback)
     context.clock.now += RENEW_INTERVAL + 1
@@ -423,7 +453,12 @@ describe('device credentials', () => {
     const context = await fixture()
     const desktop = await enroll(context, unix)
     const invitation = await context.enrollments.createInvitation(
-      { inviter: context.devices.get(desktop.id), scopes: ['view', 'run', 'approve:standard', 'admin'], tlsOrigin: tls.origin },
+      {
+        inviter: context.devices.get(desktop.id),
+        scopes: ['view', 'run', 'approve:standard', 'admin'],
+        listener: tls.listener,
+        origin: tls.origin,
+      },
       actor,
     )
     const phone = await enroll(context, tls, { invitation: invitation.code, scopes: ['view', 'run', 'approve:standard', 'admin'] })
@@ -704,7 +739,8 @@ describe('migration from v1', () => {
     writeV1(join(dataDir, 'auth'), Date.UTC(2026, 9, 23, 10))
     const context = await fixture({ dataDir })
     const key = testDeviceKey()
-    const view = await context.enrollments.create({ publicKey: key.spki, name: '' }, loopback, {
+    const invitation = await invitationFor(context, loopback)
+    const view = await context.enrollments.create({ publicKey: key.spki, name: '', invitation }, loopback, {
       kind: 'legacy-cookie',
       value: 'owner-token-value',
     })
@@ -732,6 +768,115 @@ describe('migration from v1', () => {
   })
 })
 
+describe('this computer', () => {
+  /** One connection per listener class. */
+  const connections: Record<ListenerClass, ConnectionContext> = {
+    unix,
+    'loopback-tcp': loopback,
+    'lan-tls': { listener: 'lan-tls', origin: 'https://latch.example.lan', remoteAddress: '192.168.1.20' },
+    'tailnet-tls': tls,
+  }
+
+  it('counts only host.sock as this computer: every other listener needs its own invitation, refuses offline codes and cannot show a confirmation uninvited', async () => {
+    expect(Object.keys(connections).toSorted()).toEqual(LISTENER_CLASSES.toSorted())
+    for (const listener of LISTENER_CLASSES) {
+      const local = listener === 'unix'
+      const connection = connections[listener]
+      expect(isLocalListener(listener)).toBe(local)
+      expect(ceilingFor(defaultPolicy('darwin'), listener)).toBe(local ? 'L2' : 'L1')
+      const context = await fixture({ presence: createTestPresence({ mode: 'manual' }) })
+      const ticket = await createOfflineTicket(context.authDir, { now: () => context.clock.now })
+      expect(await context.enrollments.info(connection)).toMatchObject({ invitationRequired: !local, offlineCodeAccepted: local })
+
+      // An offline code skips the local confirmation, so only host.sock takes it; elsewhere it is not even used up.
+      const offline = context.enrollments.create({ publicKey: testDeviceKey().spki, name: '离线', offlineCode: ticket.code }, connection)
+      if (local) await expect(offline).resolves.toMatchObject({ status: 'approved' })
+      else {
+        await expect(offline).rejects.toMatchObject({ status: 403, code: 'offline-code-invalid' })
+        expect((await context.enrollments.info(unix)).offlineCodeAccepted).toBe(true)
+      }
+      for (const scope of ['approve:elevated', 'secrets'] as const) {
+        const elevated = context.enrollments.create({ publicKey: testDeviceKey().spki, name: '高', scopes: ['view', scope] }, connection)
+        if (!local) {
+          await expect(elevated).rejects.toMatchObject({ status: 400, code: 'scope-not-grantable' })
+          continue
+        }
+        const view = await elevated
+        await context.presence.waitForRequest()
+        context.presence.denyNext()
+        await vi.waitFor(() => expect(context.enrollments.status(view.id, connection).status).toBe('denied'))
+      }
+      const shown = context.presence.requests.length
+
+      // Without an invitation only host.sock makes the Host show its confirmation window.
+      const uninvited = context.enrollments.create({ publicKey: testDeviceKey().spki, name: '无邀请' }, connection)
+      if (local) {
+        await expect(uninvited).resolves.toMatchObject({ status: 'pending' })
+        await vi.waitFor(() => expect(context.presence.requests).toHaveLength(shown + 1))
+        expect(context.presence.requests.at(-1)!.preview.requester).toMatchObject({ listener: 'unix', remoteAddress: '本机 host.sock' })
+        continue
+      }
+      await expect(uninvited).rejects.toMatchObject({ status: 403, code: 'invitation-required' })
+      // An invitation opens only the listener and origin it was issued for.
+      for (const other of LISTENER_CLASSES.filter(item => item !== listener && !isLocalListener(item))) {
+        const foreign = await invitationFor(context, connections[other])
+        await expect(
+          context.enrollments.create({ publicKey: testDeviceKey().spki, name: '别处', invitation: foreign }, connection),
+        ).rejects.toMatchObject({ status: 403, code: 'invitation-invalid' })
+      }
+      await expect(
+        context.enrollments.create(
+          { publicKey: testDeviceKey().spki, name: '别的端口', invitation: await invitationFor(context, connection) },
+          { ...connection, origin: `${connection.origin}0` },
+        ),
+      ).rejects.toMatchObject({ code: 'invitation-invalid' })
+      expect(context.presence.requests).toHaveLength(shown)
+
+      // With its own invitation the request is shown, never as coming from this computer.
+      const invited = await context.enrollments.create(
+        { publicKey: testDeviceKey().spki, name: '受邀', invitation: await invitationFor(context, connection) },
+        connection,
+      )
+      expect(invited.status).toBe('pending')
+      const { preview } = await context.presence.waitForRequest()
+      expect(preview.requester).toEqual({ deviceName: '受邀', listener, remoteAddress: connection.remoteAddress })
+      const source = preview.lines.find(line => line.label === '来源地址')!.value
+      expect(source).not.toContain('host.sock')
+      expect(preview.lines.find(line => line.label === '连接方式')!.value).not.toMatch(/本机/u)
+      if (listener === 'loopback-tcp') expect(source).toBe('127.0.0.1 · 回环端口（也可能是转发进来的连接）')
+      context.presence.denyNext()
+    }
+  })
+
+  it('lets a device take the confirmation window from a waiting enrollment only over host.sock', async () => {
+    for (const listener of LISTENER_CLASSES) {
+      const context = await fixture()
+      const backend = createTestPresence({ mode: 'manual' })
+      const presence = new PresenceService({ backend, hostId, audit: context.audit, blockingTasks: async () => [] })
+      const params = { enrollmentId: 'enr_x' }
+      await presence.request({
+        action: 'device.enroll',
+        subject: { form: 'device.enroll', slots: { fingerprint: 'AAAA AAAA AAAA AAAA AAAA', device: '受邀' } },
+        requester: { deviceName: '受邀', listener: 'lan-tls', remoteAddress: '192.168.1.20' },
+        lines: [],
+        warnings: [],
+        paramsHash: paramsHash('device.enroll', params),
+      })
+      await backend.waitForRequest()
+      const device = presence.request({
+        action: 'policy.change',
+        subject: { form: 'policy.local', slots: { level: '完全访问' } },
+        requester: { deviceId: `dev_${'D'.repeat(22)}`, deviceName: '设备', listener, remoteAddress: connections[listener].remoteAddress },
+        lines: [],
+        warnings: [],
+        paramsHash: paramsHash('policy.change', { baseHash: 'a', nextHash: 'b' }),
+      })
+      if (isLocalListener(listener)) await expect(device).resolves.toMatchObject({ status: 'pending' })
+      else await expect(device).rejects.toMatchObject({ status: 409, code: 'presence-busy' })
+    }
+  })
+})
+
 describe('enrollment', () => {
   it('shows the device on the Host and completes only with a signature from the enrolling key', async () => {
     const context = await fixture({ presence: createTestPresence({ mode: 'manual' }) })
@@ -739,13 +884,14 @@ describe('enrollment', () => {
       hostId,
       listener: 'loopback-tcp',
       presence: { status: 'available' },
-      firstDevice: true,
-      invitationRequired: false,
+      invitationRequired: true,
       offlineCodeAccepted: false,
     })
+    expect((await context.enrollments.info(unix)).firstDevice).toBe(true)
     const key = testDeviceKey()
+    const scopes: DeviceScope[] = ['view', 'run', 'approve:standard', 'admin']
     const view = await context.enrollments.create(
-      { publicKey: key.spki, name: '我的浏览器', scopes: ['view', 'run', 'approve:standard', 'admin'] },
+      { publicKey: key.spki, name: '我的浏览器', scopes, invitation: await invitationFor(context, loopback, { scopes }) },
       loopback,
     )
     const fingerprint = deviceFingerprint(Buffer.from(key.spki, 'base64url'))
@@ -756,18 +902,24 @@ describe('enrollment', () => {
       nonce: expect.any(String),
       expiresAt: new Date(context.clock.now + 120_000).toISOString(),
       hashDisplay: expect.stringMatching(/^[0-9a-f]{4}(-[0-9a-f]{4}){3}$/u),
+      // The system sheet names the fingerprint before the name the device chose for itself.
+      reason: `允许指纹 ${fingerprint} 的新设备「我的浏览器」连接`,
     })
     const { preview } = await context.presence.waitForRequest()
     expect(preview.title).toBe('允许新设备连接')
+    expect(preview.reason).toBe(view.reason)
     expect(preview.requester).toEqual({ deviceName: '我的浏览器', listener: 'loopback-tcp', remoteAddress: '127.0.0.1' })
+    // Loopback is never presented as this computer: a forwarded port arrives there as 127.0.0.1 too.
     expect(preview.lines).toEqual([
       { label: '设备名称', value: '我的浏览器' },
       { label: '设备指纹', value: fingerprint },
-      { label: '来源地址', value: '127.0.0.1' },
-      { label: '连接方式', value: `本机浏览器 · ${loopback.origin}` },
+      { label: '来源地址', value: '127.0.0.1 · 回环端口（也可能是转发进来的连接）' },
+      { label: '连接方式', value: `回环端口 · ${loopback.origin}` },
       { label: '请求的权限', value: '查看、发起和继续会话、批准普通操作、管理此 Host' },
       { label: '数据范围', value: '工作' },
+      { label: '邀请来源', value: '命令行' },
     ])
+    expect(JSON.stringify(preview)).not.toContain('本机')
     expect(preview.warnings).toEqual([
       '只有在你正在登记这台设备、并且两边显示的指纹完全一致时才确认。',
       '该设备将可以管理此 Host（模型服务、插件、项目和其他设备）。',
@@ -779,6 +931,7 @@ describe('enrollment', () => {
       fingerprint,
       expiresAt: view.expiresAt,
       hashDisplay: view.hashDisplay,
+      reason: view.reason,
     })
     await expect(context.enrollments.complete(view.id, 'x', loopback)).rejects.toMatchObject({ status: 409, code: 'enrollment-pending' })
     expect(() => context.enrollments.status(view.id, otherLoopback)).toThrow(
@@ -804,14 +957,14 @@ describe('enrollment', () => {
       fingerprint,
       scopes: ['view', 'run', 'approve:standard', 'admin'],
       dataScope: 'work',
-      pairedBy: { method: 'lpc' },
+      pairedBy: { method: 'invitation' },
     })
     await expect(context.enrollments.complete(view.id, sign(key), loopback)).rejects.toMatchObject({
       status: 409,
       code: 'enrollment-completed',
     })
     expect(context.devices.hasActiveAdmin()).toBe(true)
-    expect((await context.enrollments.info(loopback)).firstDevice).toBe(false)
+    expect((await context.enrollments.info(unix)).firstDevice).toBe(false)
     const records = context.auditRecords()
     expect(records.find(record => record.action === 'device.enroll.requested')?.detail).toMatchObject({
       listener: 'loopback-tcp',
@@ -820,14 +973,17 @@ describe('enrollment', () => {
     })
     expect(records.find(record => record.action === 'device.enrolled')).toMatchObject({
       stepup: 'lpc-local',
-      detail: { deviceId: result.device.id, method: 'lpc' },
+      detail: { deviceId: result.device.id, method: 'invitation' },
     })
   })
 
   it('voids the enrollment after three bad signatures', async () => {
     const context = await fixture()
     const key = testDeviceKey()
-    const view = await context.enrollments.create({ publicKey: key.spki, name: '浏览器' }, loopback)
+    const view = await context.enrollments.create(
+      { publicKey: key.spki, name: '浏览器', invitation: await invitationFor(context, loopback) },
+      loopback,
+    )
     await vi.waitFor(() => expect(context.enrollments.status(view.id, loopback).status).toBe('approved'))
     for (let attempt = 0; attempt < 3; attempt++) {
       await expect(context.enrollments.complete(view.id, testDeviceKey().sign('x'), loopback)).rejects.toMatchObject({
@@ -848,7 +1004,10 @@ describe('enrollment', () => {
 
   it('reports denials and expiry, and cancels the local dialog', async () => {
     const context = await fixture({ presence: createTestPresence({ mode: 'manual' }) })
-    const denied = await context.enrollments.create({ publicKey: testDeviceKey().spki, name: 'a' }, loopback)
+    const denied = await context.enrollments.create(
+      { publicKey: testDeviceKey().spki, name: 'a', invitation: await invitationFor(context, loopback) },
+      loopback,
+    )
     await context.presence.waitForRequest()
     context.presence.denyNext()
     await vi.waitFor(() => expect(context.enrollments.status(denied.id, loopback).status).toBe('denied'))
@@ -858,13 +1017,19 @@ describe('enrollment', () => {
       message: '本机拒绝了此设备',
     })
 
-    const expired = await context.enrollments.create({ publicKey: testDeviceKey().spki, name: 'b' }, loopback)
+    const expired = await context.enrollments.create(
+      { publicKey: testDeviceKey().spki, name: 'b', invitation: await invitationFor(context, loopback) },
+      loopback,
+    )
     await context.presence.waitForRequest()
     context.clock.now += 120_001
     expect(context.enrollments.status(expired.id, loopback).status).toBe('expired')
     await expect(context.enrollments.complete(expired.id, 'x', loopback)).rejects.toMatchObject({ status: 410, code: 'enrollment-expired' })
 
-    const cancelled = await context.enrollments.create({ publicKey: testDeviceKey().spki, name: 'c' }, loopback)
+    const cancelled = await context.enrollments.create(
+      { publicKey: testDeviceKey().spki, name: 'c', invitation: await invitationFor(context, loopback) },
+      loopback,
+    )
     await context.presence.waitForRequest()
     context.enrollments.cancel(cancelled.id, loopback)
     expect(context.enrollments.status(cancelled.id, loopback).status).toBe('cancelled')
@@ -877,6 +1042,25 @@ describe('enrollment', () => {
           .map(record => record.detail.reason),
       ).toEqual(['denied', 'expired', 'cancelled']),
     )
+  })
+
+  it('gives a device confirmed late in the 120 s a full minute to sign', async () => {
+    const context = await fixture({ presence: createTestPresence({ mode: 'manual' }) })
+    const key = testDeviceKey()
+    const view = await context.enrollments.create(
+      { publicKey: key.spki, name: 'late', invitation: await invitationFor(context, loopback) },
+      loopback,
+    )
+    expect(Date.parse(view.expiresAt) - context.clock.now).toBe(120_000)
+    await context.presence.waitForRequest()
+    context.clock.now += 113_000
+    context.presence.approveNext()
+    await vi.waitFor(() => expect(context.enrollments.status(view.id, loopback).status).toBe('approved'))
+    // The deadline the page polls moves to a minute after the approval.
+    expect(Date.parse(context.enrollments.status(view.id, loopback).expiresAt) - context.clock.now).toBe(60_000)
+    context.clock.now += 55_000
+    const done = await context.enrollments.complete(view.id, key.sign(enrollSigningText(hostId, view.id, view.nonce!)), loopback)
+    expect(done.device.name).toBe('late')
   })
 
   it('refuses elevated scopes off host.sock and grants all six on host.sock', async () => {
@@ -902,6 +1086,74 @@ describe('enrollment', () => {
     expect(context.presence.requests.at(-1)!.preview.lines.find(line => line.label === '来源地址')?.value).toBe('本机 host.sock')
   })
 
+  it('keeps an invitation that a held-back enrollment could not use, so the same code works once the session ends', async () => {
+    let holding: BlockingTask[] = []
+    const context = await fixture({ blockingTasks: async () => holding })
+    const desktop = await enroll(context, unix, { name: '桌面' })
+    const invitation = await context.enrollments.createInvitation(
+      { inviter: context.devices.get(desktop.id), listener: tls.listener, origin: tls.origin },
+      actor,
+    )
+    holding = [{ id: 'ses_full', title: '修复设置页', harnessId: 'codex' }]
+    const before = context.presence.requests.length
+    // Held back before the invitation is spent; an anonymous requester learns nothing about the session.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const refused = context.enrollments.create({ publicKey: testDeviceKey().spki, name: '手机', invitation: invitation.code }, tls)
+      await expect(refused).rejects.toMatchObject({ status: 409, code: 'presence-blocked', details: { action: 'device.enroll' } })
+      await expect(refused).rejects.not.toMatchObject({ details: { blockingTasks: expect.anything() } })
+    }
+    // Without a valid invitation the refusal stays the invitation's, so nobody learns that a session runs.
+    await expect(
+      context.enrollments.create({ publicKey: testDeviceKey().spki, name: '手机', invitation: 'lpi1-AAAAAAAAAAAAAAAAAAAAAAAAAA' }, tls),
+    ).rejects.toMatchObject({ code: 'invitation-invalid' })
+    expect(context.presence.requests).toHaveLength(before)
+    expect(
+      context.auditRecords().some(record => record.action === 'device.enroll.requested' && record.detail.listener === 'tailnet-tls'),
+    ).toBe(false)
+
+    holding = []
+    const phone = await enroll(context, tls, { invitation: invitation.code, name: '手机' })
+    expect(context.devices.get(phone.id)).toMatchObject({ pairedBy: { method: 'invitation', deviceId: desktop.id } })
+    await expect(
+      context.enrollments.create({ publicKey: testDeviceKey().spki, name: '第二台', invitation: invitation.code }, tls),
+    ).rejects.toMatchObject({ code: 'invitation-invalid' })
+  })
+
+  it('puts an invitation back when the confirmation is refused after it was spent, until its inviter is revoked', async () => {
+    const presence = createTestPresence()
+    const context = await fixture({ presence })
+    const desktop = await enroll(context, unix, { name: '桌面' })
+    const invitation = await context.enrollments.createInvitation(
+      { inviter: context.devices.get(desktop.id), listener: tls.listener, origin: tls.origin },
+      actor,
+    )
+    // Another enrollment holds the confirmation window: the phone is told it is busy, and keeps its code.
+    presence.mode = 'manual'
+    const waiting = await context.enrollments.create({ publicKey: testDeviceKey().spki, name: '另一台' }, unix)
+    const phoneRequest = { publicKey: testDeviceKey().spki, name: '手机', invitation: invitation.code }
+    await expect(context.enrollments.create(phoneRequest, tls)).rejects.toMatchObject({ code: 'presence-busy' })
+    presence.approveNext()
+    await vi.waitFor(() => expect(context.enrollments.status(waiting.id, unix).status).toBe('approved'))
+    presence.mode = 'approve'
+    let phone: Enrolled | undefined
+    await vi.waitFor(async () => {
+      phone = await enroll(context, tls, { invitation: invitation.code, name: '手机' })
+    })
+    expect(context.devices.get(phone!.id)?.listener).toBe('tailnet-tls')
+
+    // A code put back still dies with its inviter.
+    const second = await context.enrollments.createInvitation(
+      { inviter: context.devices.get(desktop.id), listener: tls.listener, origin: tls.origin },
+      actor,
+    )
+    presence.mode = 'manual'
+    await context.enrollments.create({ publicKey: testDeviceKey().spki, name: '又一台' }, unix)
+    const tablet = { publicKey: testDeviceKey().spki, name: '平板', invitation: second.code }
+    await expect(context.enrollments.create(tablet, tls)).rejects.toMatchObject({ code: 'presence-busy' })
+    await context.devices.revoke(desktop.id, 'manual', actor)
+    await expect(context.enrollments.create(tablet, tls)).rejects.toMatchObject({ code: 'invitation-invalid' })
+  })
+
   it('requires a single-use invitation on TLS listeners, capped to its scopes', async () => {
     const context = await fixture()
     const desktop = await enroll(context, unix, { name: '桌面' })
@@ -919,19 +1171,19 @@ describe('enrollment', () => {
     await expect(
       context.enrollments.create({ publicKey: testDeviceKey().spki, name: '手机', invitation: 'lpi1-AAAAAAAAAAAAAAAAAAAAAAAAAA' }, tls),
     ).rejects.toMatchObject({ status: 403, code: 'invitation-invalid' })
-    await expect(context.enrollments.createInvitation({ scopes: ['view', 'secrets'], tlsOrigin: tls.origin }, actor)).rejects.toMatchObject(
-      { code: 'scope-not-grantable' },
-    )
-    await expect(context.enrollments.createInvitation({ tlsOrigin: '' }, actor)).rejects.toMatchObject({
+    await expect(
+      context.enrollments.createInvitation({ scopes: ['view', 'secrets'], listener: tls.listener, origin: tls.origin }, actor),
+    ).rejects.toMatchObject({ code: 'scope-not-grantable' })
+    await expect(context.enrollments.createInvitation({ listener: tls.listener, origin: '' }, actor)).rejects.toMatchObject({
       status: 409,
       code: 'tls-not-configured',
     })
-    await expect(context.enrollments.createInvitation({ tlsOrigin: 'http://latch.example' }, actor)).rejects.toMatchObject({
-      code: 'tls-not-configured',
-    })
+    await expect(
+      context.enrollments.createInvitation({ listener: tls.listener, origin: 'http://latch.example' }, actor),
+    ).rejects.toMatchObject({ code: 'tls-not-configured' })
 
     const invitation = await context.enrollments.createInvitation(
-      { inviter: context.devices.get(desktop.id), tlsOrigin: tls.origin },
+      { inviter: context.devices.get(desktop.id), listener: tls.listener, origin: tls.origin },
       actor,
     )
     expect(invitation).toEqual({
@@ -960,24 +1212,48 @@ describe('enrollment', () => {
     expect(context.auditRecords().find(record => record.action === 'pairing.invited')?.detail).toEqual({
       invitationId: invitation.id,
       scopes: ['view', 'run', 'approve:standard'],
+      listener: 'tailnet-tls',
     })
     expect(readFileSync(join(context.dataDir, 'audit', 'audit.jsonl'), 'utf8')).not.toContain(invitation.code)
 
-    const expiring = await context.enrollments.createInvitation({ tlsOrigin: tls.origin }, actor)
+    const expiring = await context.enrollments.createInvitation({ listener: tls.listener, origin: tls.origin }, actor)
     context.clock.now += 600_001
     await expect(
       context.enrollments.create({ publicKey: testDeviceKey().spki, name: '手机', invitation: expiring.code }, tls),
     ).rejects.toMatchObject({ code: 'invitation-invalid' })
 
     // An invitation dies with its inviter.
-    const orphan = await context.enrollments.createInvitation({ inviter: context.devices.get(desktop.id), tlsOrigin: tls.origin }, actor)
+    const orphan = await context.enrollments.createInvitation(
+      { inviter: context.devices.get(desktop.id), listener: tls.listener, origin: tls.origin },
+      actor,
+    )
     await context.devices.revoke(desktop.id, 'manual', actor)
     await expect(
       context.enrollments.create({ publicKey: testDeviceKey().spki, name: '手机', invitation: orphan.code }, tls),
     ).rejects.toMatchObject({ code: 'invitation-invalid' })
   })
 
-  it('accepts a one-time offline code on loopback and host.sock only', async () => {
+  it('spends an invitation only once its confirmation window was shown', async () => {
+    const context = await fixture({ presence: createTestPresence({ mode: 'manual' }) })
+    // A request on host.sock holds the window, so the browser's request is refused before anything is shown.
+    const desktop = await context.enrollments.create({ publicKey: testDeviceKey().spki, name: '桌面' }, unix)
+    await context.presence.waitForRequest()
+    const code = await invitationFor(context, loopback)
+    const submit = () => context.enrollments.create({ publicKey: testDeviceKey().spki, name: '浏览器', invitation: code }, loopback)
+    await expect(submit()).rejects.toMatchObject({ status: 409, code: 'presence-busy' })
+    expect(context.presence.requests).toHaveLength(1)
+    context.presence.denyNext()
+    await vi.waitFor(() => expect(context.enrollments.status(desktop.id, unix).status).toBe('denied'))
+
+    // The same link works once the window is free, and is spent by the window it shows, whatever the answer.
+    await expect(submit()).resolves.toMatchObject({ status: 'pending' })
+    expect((await context.presence.waitForRequest()).preview.requester).toMatchObject({ listener: 'loopback-tcp' })
+    context.presence.denyNext()
+    await expect(submit()).rejects.toMatchObject({ status: 403, code: 'invitation-invalid' })
+    expect(context.presence.requests).toHaveLength(2)
+  })
+
+  it('accepts a one-time offline code on host.sock only, and never uses it up elsewhere', async () => {
     const context = await fixture({ presence: createTestPresence({ mode: 'unavailable' }) })
     const ticket = await createOfflineTicket(context.authDir, { now: () => context.clock.now })
     expect(ticket).toEqual({
@@ -987,54 +1263,49 @@ describe('enrollment', () => {
     })
     expect(statSync(join(context.authDir, 'offline-enrollments.json')).mode & 0o777).toBe(0o600)
     expect(readFileSync(join(context.authDir, 'offline-enrollments.json'), 'utf8')).not.toContain(ticket.code)
-    expect(await context.enrollments.info(loopback)).toMatchObject({
+    expect(await context.enrollments.info(unix)).toMatchObject({
       presence: { status: 'unavailable', message: '测试中的本机确认不可用' },
       offlineCodeAccepted: true,
     })
-    expect((await context.enrollments.info(tls)).offlineCodeAccepted).toBe(false)
-    await expect(context.enrollments.create({ publicKey: testDeviceKey().spki, name: 'x' }, loopback)).rejects.toMatchObject({
+    await expect(context.enrollments.create({ publicKey: testDeviceKey().spki, name: 'x' }, unix)).rejects.toMatchObject({
       status: 503,
       code: 'presence-unavailable',
     })
+    // A valid code is refused off host.sock and stays usable: the loopback port may be forwarded from another computer.
+    for (const connection of [loopback, tls]) {
+      expect((await context.enrollments.info(connection)).offlineCodeAccepted).toBe(false)
+      await expect(
+        context.enrollments.create({ publicKey: testDeviceKey().spki, name: 'x', offlineCode: ticket.code }, connection),
+      ).rejects.toMatchObject({ status: 403, code: 'offline-code-invalid' })
+    }
     await expect(
-      context.enrollments.create({ publicKey: testDeviceKey().spki, name: 'x', offlineCode: ticket.code }, tls),
-    ).rejects.toMatchObject({ status: 403, code: 'offline-code-invalid' })
-    await expect(
-      context.enrollments.create({ publicKey: testDeviceKey().spki, name: 'x', offlineCode: 'lpo1-AAAAAAAAAAAAAAAAAAAAAAAAAA' }, loopback),
+      context.enrollments.create({ publicKey: testDeviceKey().spki, name: 'x', offlineCode: 'lpo1-AAAAAAAAAAAAAAAAAAAAAAAAAA' }, unix),
     ).rejects.toMatchObject({ code: 'offline-code-invalid', message: '离线登记码无效或已过期' })
 
     const key = testDeviceKey()
-    const view = await context.enrollments.create(
-      { publicKey: key.spki, name: '浏览器', offlineCode: ticket.code, scopes: ['view'] },
-      loopback,
-    )
+    const view = await context.enrollments.create({ publicKey: key.spki, name: '桌面', offlineCode: ticket.code, scopes: ['view'] }, unix)
     expect(view.status).toBe('approved')
-    const result = await context.enrollments.complete(view.id, key.sign(enrollSigningText(hostId, view.id, view.nonce!)), loopback)
+    const result = await context.enrollments.complete(view.id, key.sign(enrollSigningText(hostId, view.id, view.nonce!)), unix)
     expect(result.device).toMatchObject({
-      scopes: ['view', 'run', 'approve:standard', 'admin'],
-      dataScope: 'work',
+      scopes: ['view', 'run', 'approve:standard', 'approve:elevated', 'admin', 'secrets'],
+      dataScope: 'all',
       pairedBy: { method: 'offline' },
     })
     await expect(
-      context.enrollments.create({ publicKey: testDeviceKey().spki, name: 'again', offlineCode: ticket.code }, loopback),
+      context.enrollments.create({ publicKey: testDeviceKey().spki, name: 'again', offlineCode: ticket.code }, unix),
     ).rejects.toMatchObject({ code: 'offline-code-invalid' })
     const records = context.auditRecords()
-    expect(records.find(record => record.action === 'offline.ticket.consumed')).toMatchObject({
-      stepup: 'offline',
-      detail: { ticketId: ticket.ticketId },
-    })
+    expect(records.filter(record => record.action === 'offline.ticket.consumed')).toEqual([
+      expect.objectContaining({ stepup: 'offline', detail: { ticketId: ticket.ticketId } }),
+    ])
     expect(records.find(record => record.action === 'device.enrolled')).toMatchObject({ stepup: 'offline', detail: { method: 'offline' } })
-
-    const unixTicket = await createOfflineTicket(context.authDir, { now: () => context.clock.now })
-    const desktop = await enroll(context, unix, { offlineCode: unixTicket.code })
-    expect(context.devices.get(desktop.id)?.scopes).toHaveLength(6)
 
     const late = await createOfflineTicket(context.authDir, { now: () => context.clock.now })
     context.clock.now += 15 * 60_000 + 1
     await expect(
-      context.enrollments.create({ publicKey: testDeviceKey().spki, name: 'late', offlineCode: late.code }, loopback),
+      context.enrollments.create({ publicKey: testDeviceKey().spki, name: 'late', offlineCode: late.code }, unix),
     ).rejects.toMatchObject({ code: 'offline-code-invalid' })
-    expect((await context.enrollments.info(loopback)).offlineCodeAccepted).toBe(false)
+    expect((await context.enrollments.info(unix)).offlineCodeAccepted).toBe(false)
   })
 
   it('refuses the enrollment when the audit log cannot record it', async () => {
@@ -1063,7 +1334,7 @@ describe('enrollment', () => {
       hostId,
       audit: broken,
       now: () => context.clock.now,
-      blockedReason: async () => undefined,
+      blockingTasks: async () => [],
     })
     const enrollments = new EnrollmentService({
       hostId,
@@ -1073,7 +1344,7 @@ describe('enrollment', () => {
       directory: context.authDir,
       now: () => context.clock.now,
     })
-    await expect(enrollments.create({ publicKey: testDeviceKey().spki, name: 'x' }, loopback)).rejects.toMatchObject({
+    await expect(enrollments.create({ publicKey: testDeviceKey().spki, name: 'x' }, unix)).rejects.toMatchObject({
       status: 503,
       code: 'audit-unavailable',
     })
@@ -1152,7 +1423,7 @@ describe('revocation durability', () => {
     const desktop = await enroll(context, unix, { name: '桌面' })
     const scopes: DeviceScope[] = ['view', 'run', 'approve:standard', 'admin']
     const invitation = await context.enrollments.createInvitation(
-      { inviter: context.devices.get(desktop.id), scopes, tlsOrigin: tls.origin },
+      { inviter: context.devices.get(desktop.id), scopes, listener: tls.listener, origin: tls.origin },
       actor,
     )
     const phone = await enroll(context, tls, { invitation: invitation.code, scopes, name: '手机' })
@@ -1222,8 +1493,8 @@ describe('revocation durability', () => {
     const desktop = await enroll(context, unix, { name: '桌面' })
     const inviter = context.devices.get(desktop.id)
     const scopes: DeviceScope[] = ['view', 'run', 'approve:standard', 'admin']
-    const used = await context.enrollments.createInvitation({ inviter, scopes, tlsOrigin: tls.origin }, actor)
-    const unused = await context.enrollments.createInvitation({ inviter, tlsOrigin: tls.origin }, actor)
+    const used = await context.enrollments.createInvitation({ inviter, scopes, listener: tls.listener, origin: tls.origin }, actor)
+    const unused = await context.enrollments.createInvitation({ inviter, listener: tls.listener, origin: tls.origin }, actor)
     const key = testDeviceKey()
     const view = await context.enrollments.create({ publicKey: key.spki, name: '手机', invitation: used.code, scopes }, tls)
     await vi.waitFor(() => expect(context.enrollments.status(view.id, tls).status).toBe('approved'))
@@ -1252,7 +1523,7 @@ describe('revocation durability', () => {
     const ticket = await createOfflineTicket(context.authDir, { now: () => context.clock.now })
     const desktop = await enroll(context, unix, { offlineCode: ticket.code })
     const invitation = await context.enrollments.createInvitation(
-      { inviter: context.devices.get(desktop.id), tlsOrigin: tls.origin },
+      { inviter: context.devices.get(desktop.id), listener: tls.listener, origin: tls.origin },
       actor,
     )
     const view = await context.enrollments.create({ publicKey: testDeviceKey().spki, name: '手机', invitation: invitation.code }, tls)
@@ -1484,7 +1755,8 @@ describe('device names', () => {
       legacyName: '未命名设备',
     })
     const key = testDeviceKey()
-    const view = await context.enrollments.create({ publicKey: key.spki, name: '' }, loopback, {
+    const invitation = await invitationFor(context, loopback)
+    const view = await context.enrollments.create({ publicKey: key.spki, name: '', invitation }, loopback, {
       kind: 'legacy-cookie',
       value: 'owner-token-value',
     })

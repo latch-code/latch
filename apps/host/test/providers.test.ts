@@ -13,8 +13,11 @@ import { createOpenAIPlugin } from '../src/plugins/providers/openai-compatible/i
 import { redactor, type FetchLike } from '../src/plugins/providers/http.ts'
 import {
   checkProvider,
+  keyBoundTo,
   listProviderModels,
+  OriginUnconfirmed,
   originOf,
+  addressesConfirmedBefore,
   providerPlugin,
   providerSettings,
   summarizeProvider,
@@ -39,6 +42,9 @@ async function mount(...plugins: HarnessPlugin[]) {
         tools.push(tool)
       },
       registerHarness() {},
+      registerClientPanel: () => {},
+      registerSkill: () => {},
+      registerUiPanel() {},
       onDispose(dispose) {
         cleanups.push(async () => {
           await dispose()
@@ -658,6 +664,7 @@ describe('Host provider helpers', () => {
     baseURL,
     apiKey: 'list-secret',
     keyOrigin: originOf(baseURL),
+    keyPath: new URL(baseURL).pathname.replace(/\/+$/u, ''),
     enabled: true,
     models: ['m1', 'm2'],
     defaultModel: 'm2',
@@ -689,6 +696,7 @@ describe('Host provider helpers', () => {
       baseURL: 'https://api.anthropic.com',
       hasKey: true,
       keyOrigin: 'https://api.anthropic.com:443',
+      keyPath: '',
       enabled: true,
       models: ['m1', 'm2'],
       defaultModel: 'm2',
@@ -841,6 +849,7 @@ describe('Host egress and key origin binding', () => {
     baseURL: offline,
     apiKey: 'origin-secret',
     keyOrigin: 'http://127.0.0.1:9',
+    keyPath: '/v1',
     enabled: true,
     models: ['m1'],
     defaultModel: 'm1',
@@ -926,22 +935,35 @@ describe('Host egress and key origin binding', () => {
     ).rejects.toMatchObject({ code: 'network-error', message: expect.stringContaining('ECONNREFUSED') })
   })
 
-  it('uses a saved key only at the origin it was saved for', async () => {
+  it('uses a saved key only at the origin and path it was saved for', async () => {
     const saved = record('openai-compatible')
     expect(usableKey(saved)).toBe('origin-secret')
-    expect(usableKey({ ...saved, baseURL: 'HTTP://127.0.0.1:9/elsewhere' })).toBe('origin-secret')
+    // The same binding however it is spelled: scheme case, an explicit default port, trailing slashes, dot segments.
+    for (const baseURL of ['HTTP://127.0.0.1:9/v1/', 'http://127.0.0.1:9/x/../v1//', 'http://127.0.0.1:9/v1'])
+      expect(usableKey({ ...saved, baseURL })).toBe('origin-secret')
+    expect(usableKey({ ...record('openai-compatible', { baseURL: 'https://h.example/v1', keyOrigin: 'https://h.example:443' }) })).toBe(
+      'origin-secret',
+    )
     for (const moved of [
       { ...saved, baseURL: 'http://127.0.0.1:10/v1' },
       { ...saved, baseURL: 'https://127.0.0.1:9/v1' },
       { ...saved, baseURL: 'http://localhost:9/v1' },
+      // A gateway that separates tenants by path: another path never receives this key.
+      { ...saved, baseURL: 'http://127.0.0.1:9/tenant-b/v1' },
+      { ...saved, baseURL: 'http://127.0.0.1:9/V1' },
+      { ...saved, baseURL: 'http://127.0.0.1:9' },
       { ...saved, keyOrigin: undefined },
+      { ...saved, keyPath: undefined },
       { ...saved, baseURL: 'not a url' },
     ])
       expect(usableKey(moved)).toBe('')
+    expect(keyBoundTo(saved, 'http://127.0.0.1:9/v1/')).toBe(true)
+    expect(keyBoundTo(saved, 'http://127.0.0.1:9/v2')).toBe(false)
     const moved = { ...saved, baseURL: 'http://127.0.0.1:10/v1' }
-    expect(providerSettings(saved)).toMatchObject({ hasKey: true, keyOrigin: 'http://127.0.0.1:9' })
+    expect(providerSettings(saved)).toMatchObject({ hasKey: true, keyOrigin: 'http://127.0.0.1:9', keyPath: '/v1' })
     expect(providerSettings(moved).hasKey).toBe(false)
     expect(providerSettings(moved)).not.toHaveProperty('keyOrigin')
+    expect(providerSettings(moved)).not.toHaveProperty('keyPath')
 
     const calls: Array<{ url: string; init: RequestInit }> = []
     for (const kind of ['openai-compatible', 'anthropic'] as const) {
@@ -954,6 +976,49 @@ describe('Host egress and key origin binding', () => {
       expect(headers.get('authorization')).toBeNull()
       expect(headers.get('x-api-key')).toBeNull()
     }
+  })
+
+  it('refuses an unconfirmed address before anything is sent, and keeps that reason through a listing', async () => {
+    const refused: FetchLike = async () => {
+      throw new OriginUnconfirmed()
+    }
+    for (const kind of ['openai-compatible', 'anthropic'] as const)
+      await expect(listProviderModels({ kind, baseURL: offline, apiKey: 'k' }, freshSignal(), { fetch: refused })).rejects.toMatchObject({
+        code: 'origin-unconfirmed',
+        message: expect.stringContaining('还没有确认'),
+      })
+  })
+
+  it('names the network error code of a failed listing on its own', async () => {
+    const refused: FetchLike = async () => {
+      throw new TypeError('fetch failed', { cause: Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:9'), { code: 'ECONNREFUSED' }) })
+    }
+    await expect(
+      listProviderModels({ kind: 'openai-compatible', baseURL: offline, apiKey: '' }, freshSignal(), { fetch: refused }),
+    ).rejects.toMatchObject({ code: 'network-error', networkCode: 'ECONNREFUSED' })
+  })
+
+  it('treats the addresses of saved keys and of allow-listed services as confirmed before the upgrade, and never a preset', () => {
+    const service = (id: string, baseURL: string, apiKey = '') =>
+      ({
+        ...record('openai-compatible', { id, baseURL, apiKey }),
+        ...(apiKey
+          ? { keyOrigin: originOf(baseURL), keyPath: new URL(baseURL).pathname.replace(/\/+$/u, '') }
+          : { keyOrigin: undefined, keyPath: undefined }),
+      }) satisfies ProviderRecord
+    expect(
+      addressesConfirmedBefore(
+        [
+          service('keyed', 'https://gateway.example/v1', 'k'),
+          service('allowed', 'http://127.0.0.1:11434/v1'),
+          service('keyless', 'https://elsewhere.example/v1'),
+          service('preset', 'https://api.deepseek.com/v1', 'k'),
+          service('moved', 'https://moved.example/v1', 'k'),
+          service('bad', 'not a url'),
+        ].map(item => (item.id === 'moved' ? { ...item, keyOrigin: 'https://before.example:443' } : item)),
+        ['127.0.0.1:11434'],
+      ),
+    ).toEqual(['https://gateway.example:443/v1', 'http://127.0.0.1:11434/v1'])
   })
 
   it('normalizes origins with an explicit port', () => {
@@ -1089,15 +1154,20 @@ describe('demo provider and bounded tools', () => {
     ]
     const completed = await collect(provider.stream({ messages: history, tools, signal: freshSignal() }))
     expect(completed.flatMap(delta => (delta.type === 'text' ? [delta.text] : [])).join('')).toContain('报告已写入')
-    const rejected = await collect(
-      provider.stream({
-        messages: [...history.slice(0, -1), { role: 'tool', content: '用户拒绝审批', toolCallId: call.call.id, isError: true }],
-        tools,
-        signal: freshSignal(),
-      }),
-    )
-    expect(rejected.flatMap(delta => (delta.type === 'text' ? [delta.text] : [])).join('')).toContain('操作未完成')
-    expect(rejected.some(delta => delta.type === 'tool-call')).toBe(false)
+    const replyTo = async (content: string) =>
+      (
+        await collect(
+          provider.stream({
+            messages: [...history.slice(0, -1), { role: 'tool', content, toolCallId: call.call.id, isError: true }],
+            tools,
+            signal: freshSignal(),
+          }),
+        )
+      ).flatMap(delta => (delta.type === 'text' ? [delta.text] : delta.type === 'tool-call' ? ['<tool-call>'] : []))
+    expect((await replyTo('用户拒绝了本次工具调用，未执行该操作。')).join('')).toBe('你拒绝了这次操作，报告没有写入。')
+    // A tool failure is said in the demo's own words: the tool result and its internal code are not echoed.
+    const failed = (await replyTo('TOOL_ERROR: disk full')).join('')
+    expect(failed).toBe('报告没有写成，没有写入产物。')
   })
 
   it('does not trigger tools when unavailable and starts a distinct call for a new user turn', async () => {

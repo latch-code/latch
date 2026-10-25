@@ -2,7 +2,6 @@ import { existsSync, readFileSync } from 'node:fs'
 import { isIP } from 'node:net'
 import { networkInterfaces } from 'node:os'
 import { join, resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
 import type { HarnessPlugin } from '@latch/sdk'
 import { redactSecrets } from '@latch/core/node-kit'
 import { LATCH_VERSION, startServer, type TlsListenerOptions } from '../src/server.ts'
@@ -18,6 +17,7 @@ import {
 import { latchCodeRoot, resolveLatchPaths } from '../src/paths.ts'
 import { presenceHelperPath } from '../src/presence.ts'
 import { buildPresenceHelper } from './presence-helper.ts'
+import { loadPluginPackage } from '../src/plugin-packages.ts'
 import { createShutdown } from './shutdown.ts'
 
 const PLAINTEXT_REMOVED = '明文局域网接入已移除：请提供 --tls-cert、--tls-key 和 --public-origin（例如用 tailscale cert 生成的证书）。'
@@ -65,23 +65,6 @@ function firstTailnetAddress(): string {
   })
   if (!found) throw new StartupError('未发现 Tailscale 地址（100.64.0.0/10），请确认 Tailscale 已连接，或用 --tls-host 指定')
   return found
-}
-
-function isPlugin(value: unknown): value is HarnessPlugin {
-  return (
-    typeof value === 'object'
-    && value !== null
-    && 'id' in value
-    && typeof value.id === 'string'
-    && 'name' in value
-    && typeof value.name === 'string'
-    && 'version' in value
-    && typeof value.version === 'string'
-    && 'description' in value
-    && typeof value.description === 'string'
-    && 'activate' in value
-    && typeof value.activate === 'function'
-  )
 }
 
 /** `host:port` with an explicit port, for the process-local egress allowlist. */
@@ -196,10 +179,8 @@ async function main(): Promise<void> {
   for (let index = 0; index < argv.length; index++) {
     if (argv[index] !== '--plugin') continue
     const path = argv[++index]
-    if (!path || path.startsWith('--')) throw new StartupError('--plugin 需要本地模块路径')
-    const module: { default?: unknown } = await import(pathToFileURL(resolve(path)).href)
-    if (!isPlugin(module.default)) throw new StartupError(`插件模块无效：${path}`)
-    plugins.push(module.default)
+    if (!path || path.startsWith('--')) throw new StartupError('--plugin 需要本地需求包目录或模块路径')
+    plugins.push(await loadPluginPackage(path))
   }
   const codeRoot = latchCodeRoot()
   if (process.platform === 'darwin' && !existsSync(presenceHelperPath(codeRoot)) && !presenceDisabled(paths.dataDir)) {
@@ -272,7 +253,10 @@ async function main(): Promise<void> {
     dataDir: paths.dataDir,
   })
   console.log(`Latch ${LATCH_VERSION} · ${demo ? '演示模型 / 真实工具' : '通用模型接口'}`)
-  console.log(`打开 ${server.loopbackOrigin}/link/ ，请在本机确认。`)
+  // Loopback enrollment takes an invitation: the desktop app opens one, or the CLI prints one to a terminal.
+  console.log(
+    `浏览器：${server.loopbackOrigin}/link/（新浏览器从 Latch 桌面端「在这台电脑的浏览器中打开」，或运行 pnpm latch device invite --loopback）`,
+  )
   console.log(`启动目录：${paths.workspaceRoot}`)
   if (sessionFolders) console.log('不在项目中的 Agent 会话各自使用启动目录中新建的一个文件夹。')
   console.log(

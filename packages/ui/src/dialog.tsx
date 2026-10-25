@@ -1,4 +1,6 @@
 import {
+  createContext,
+  useContext,
   useEffect,
   useId,
   useLayoutEffect,
@@ -24,7 +26,7 @@ function useModal(
   onClose: () => void,
   dismissible: boolean,
 ): {
-  onCancel: (event: { preventDefault: () => void }) => void
+  onCancel: (event: { preventDefault: () => void; target: EventTarget; currentTarget: EventTarget }) => void
   onClose: (event: { currentTarget: HTMLDialogElement }) => void
   onPointerDown: (event: PointerEvent<HTMLDialogElement>) => void
   onClick: (event: MouseEvent<HTMLDialogElement>) => void
@@ -62,6 +64,9 @@ function useModal(
 
   return {
     onCancel: event => {
+      // React passes the Escape of a dialog opened inside this one (a picker's sheet in a sheet) up the tree: only this
+      // dialog's own closes it.
+      if (event.target !== event.currentTarget) return
       // The dialog closes only through `open`, so its state stays with the caller.
       event.preventDefault()
       if (dismissible) latest.current.onClose()
@@ -114,6 +119,59 @@ function giveBack(element: HTMLElement | null) {
 }
 
 export type DialogSize = 'confirm' | 'form' | 'wide'
+
+/** A content-owned modal, including full-window pages such as settings. Shares dismissal and focus with Dialog. */
+export function Modal({
+  label,
+  variant = 'dialog',
+  onClose,
+  children,
+  className = '',
+  secure = false,
+}: {
+  label: string
+  variant?: 'dialog' | 'sheet' | 'page'
+  onClose: () => void
+  children: ReactNode
+  className?: string
+  secure?: boolean
+}) {
+  const ref = useRef<HTMLDialogElement>(null)
+  const modal = useModal(ref, true, onClose, true)
+  return (
+    <dialog
+      ref={ref}
+      className={cx('ui-modal', `ui-modal-${variant}`, className)}
+      aria-label={label}
+      data-secure={secure ? '' : undefined}
+      {...modal}>
+      <div className="ui-modal-surface">
+        {variant === 'sheet' && <span className="ui-modal-grabber" aria-hidden="true" />}
+        {children}
+      </div>
+    </dialog>
+  )
+}
+
+export function ModalHeader({
+  title,
+  onClose,
+  leading,
+  closeLabel = '关闭',
+}: {
+  title: ReactNode
+  onClose: () => void
+  leading?: ReactNode
+  closeLabel?: string
+}) {
+  return (
+    <header className="ui-modal-header">
+      {leading}
+      <h2>{title}</h2>
+      <IconButton label={closeLabel} icon={X} onClick={onClose} />
+    </header>
+  )
+}
 /**
  * center: in the middle of the window. dock: 400 wide, 24px above the window's bottom edge, rising 12px as it fades
  * in and dropping 8px as it goes; for a short status that follows an action, such as the local confirmation, so it
@@ -244,7 +302,16 @@ export function DialogSurface({
 }
 
 /** Share of the window the sheet may take before it scrolls, and how far it opens when dragged up. */
-type Detent = 'medium' | 'large'
+export type SheetDetent = 'medium' | 'large'
+
+/**
+ * Ties an open sheet to the page's navigation: called with the way to close the sheet when it opens, it returns the
+ * call that says the sheet has closed some other way. A page gives its sheets places in the browser's history this way,
+ * so the platform's back (the Android back button, the edge swipe, the browser's back) closes the top sheet instead of
+ * leaving the page. Without a provider a sheet is only a dialog.
+ */
+export type OpenLayer = (close: () => void) => () => void
+export const LayerHistory = createContext<OpenLayer | null>(null)
 
 interface SheetContent {
   title: ReactNode
@@ -258,27 +325,49 @@ interface SheetContent {
 /**
  * A phone bottom sheet on the ground colour: a grabber, a 52px header (取消 · title · action) and the body. It slides
  * up over 240ms and follows a drag on its top: dragged down past a third of its height or flicked, it closes; a tall
- * sheet opens at 65% of the window and dragging up takes it to 92%.
+ * sheet opens at 65% of the window and dragging up takes it to 92%. A form that needs the room (a new session) stands
+ * at 92% with `detent="large"`, whatever it holds, so its header never moves as its content changes.
  */
 export function Sheet({
   open,
   onClose,
   dismissible = true,
+  detent = 'medium',
   className,
   ...content
-}: SheetContent & { open: boolean; onClose: () => void; dismissible?: boolean; className?: string }) {
+}: SheetContent & {
+  open: boolean
+  onClose: () => void
+  dismissible?: boolean
+  /** Where it opens: up to 65% of the window (medium), or standing at 92% (large). */
+  detent?: SheetDetent
+  className?: string
+}) {
   const ref = useRef<HTMLDialogElement>(null)
   const titleId = useId()
   const modal = useModal(ref, open, onClose, dismissible)
   const drag = useRef<{ y: number; time: number } | null>(null)
+  const layers = useContext(LayerHistory)
+  const latestClose = useRef({ onClose, dismissible })
+  useLayoutEffect(() => {
+    latestClose.current = { onClose, dismissible }
+  })
 
-  // Every opening starts at the medium detent, wherever the last drag left the sheet.
+  // While open, the sheet holds a place in the page's navigation; going back there closes it as 取消 would.
+  useEffect(() => {
+    if (!open || !layers) return undefined
+    return layers(() => {
+      if (latestClose.current.dismissible) latestClose.current.onClose()
+    })
+  }, [open, layers])
+
+  // Every opening starts at its own detent, wherever the last drag left the sheet.
   useLayoutEffect(() => {
     const dialog = ref.current
     if (!open || !dialog) return
-    dialog.dataset.detent = 'medium' satisfies Detent
+    dialog.dataset.detent = detent
     dialog.style.removeProperty('transform')
-  }, [open])
+  }, [open, detent])
 
   const surface = () => ref.current?.querySelector<HTMLElement>('.ui-sheet-surface') ?? null
   const handle = {
@@ -307,7 +396,7 @@ export function Sheet({
       const dy = event.clientY - start.y
       const speed = dy / Math.max(1, event.timeStamp - start.time)
       const height = surface()?.offsetHeight ?? 1
-      if (dy < -24) dialog.dataset.detent = 'large' satisfies Detent
+      if (dy < -24) dialog.dataset.detent = 'large' satisfies SheetDetent
       if (dismissible && (dy > height / 3 || speed > 0.5)) {
         // Closes from where the finger left it; the slide-out continues from that offset.
         onClose()
@@ -316,7 +405,13 @@ export function Sheet({
   }
 
   return (
-    <dialog ref={ref} className={cx('ui-sheet', className)} data-detent="medium" aria-labelledby={titleId} {...modal}>
+    <dialog
+      ref={ref}
+      className={cx('ui-sheet', className)}
+      data-detent={detent}
+      data-fill={detent === 'large' ? '' : undefined}
+      aria-labelledby={titleId}
+      {...modal}>
       <SheetSurface {...content} titleId={titleId} onClose={onClose} handle={handle} />
     </dialog>
   )

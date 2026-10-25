@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { page, userEvent } from 'vitest/browser'
 import { render } from 'vitest-browser-react'
 import { press } from './helpers.ts'
-import { Ellipsis, Pencil, Shield, Trash2 } from 'lucide-react'
+import { CircleAlert, Copy, Ellipsis, Info, Pencil, Plus, Puzzle, Shield, Trash2, Undo2 } from 'lucide-react'
 import {
   IconButton,
   Menu,
@@ -12,7 +12,9 @@ import {
   MenuPanel,
   PermissionMenu,
   Popover,
+  Tile,
   ValuePicker,
+  useLayerClose,
   type PermissionLevel,
 } from '../src/index.ts'
 
@@ -450,7 +452,34 @@ describe('menu rows', () => {
     expect(centre(note?.querySelector('.lucide-lock') ?? null)).toBe(centre(actions?.querySelector('.ui-menu-item-lead') ?? null))
     const danger = screen.getByRole('menuitem', { name: '删除…' }).element()
     expect(getComputedStyle(danger.querySelector('.lucide-trash-2')!).color).toBe(getComputedStyle(danger).color)
-    expect(getComputedStyle(danger).color).toBe('rgb(180, 35, 24)')
+    expect(getComputedStyle(danger).color).toBe('rgb(160, 29, 20)')
+  })
+
+  it('draws a footer note with the lock unless it is no restriction, which keeps its own glyph in the same slot', async () => {
+    const screen = await render(
+      <div>
+        {[undefined, Info, CircleAlert].map((icon, index) => (
+          <div key={index} className="ui-popover">
+            <MenuPanel
+              label={`文件 ${index}`}
+              header={{ title: 'deck.pptx' }}
+              sections={[{ id: 'copy', items: [{ id: 'copy', label: '复制路径', icon: Copy, onSelect: () => {} }] }]}
+              footer={icon ? <MenuFooterNote icon={icon}>说明</MenuFooterNote> : <MenuFooterNote>说明</MenuFooterNote>}
+            />
+          </div>
+        ))}
+      </div>,
+    )
+    const notes = Array.from(screen.container.querySelectorAll('.ui-menu-footer-note'))
+    expect(notes.map(note => note.querySelector('svg')?.getAttribute('class'))).toEqual([
+      expect.stringContaining('lucide-lock'),
+      expect.stringContaining('lucide-info'),
+      expect.stringContaining('lucide-circle-alert'),
+    ])
+    for (const note of notes) {
+      const menu = note.closest('.ui-menu')!
+      expect(centre(note.querySelector('svg'))).toBe(centre(menu.querySelector('.ui-menu-item-lead')))
+    }
   })
 
   it('turns an action glyph from the icon colour to text-1 while its item is hovered, and keeps a destructive glyph red', async () => {
@@ -477,7 +506,7 @@ describe('menu rows', () => {
     await expect.poll(glyph).toBe(getComputedStyle(document.documentElement).color)
     const danger = screen.getByRole('menuitem', { name: '删除…' })
     await userEvent.hover(danger)
-    expect(getComputedStyle(danger.element().querySelector('.lucide-trash-2')!).color).toBe('rgb(180, 35, 24)')
+    expect(getComputedStyle(danger.element().querySelector('.lucide-trash-2')!).color).toBe('rgb(160, 29, 20)')
   })
 
   it('names a menu by its label and whom it acts on, and describes it with the header meta', async () => {
@@ -647,5 +676,215 @@ describe('on phones', () => {
     } finally {
       await page.viewport(1280, 800)
     }
+  })
+})
+
+/** A small form shown in a picker's layer in place of its menu; saving adds a value and closes the layer. */
+function AddForm({ onSave }: { onSave: (value: string) => void }) {
+  const close = useLayerClose()
+  return (
+    <form
+      aria-label="添加模型"
+      onSubmit={event => {
+        event.preventDefault()
+        onSave('epsilon')
+        close()
+      }}>
+      <input aria-label="模型 ID" />
+      <button type="submit">保存并使用</button>
+    </form>
+  )
+}
+
+/** A picker whose footer can undo a pending value and turn the layer into a small form that adds one. */
+function Adding({ onOpenChange }: { onOpenChange?: (open: boolean) => void }) {
+  const [value, setValue] = useState('alpha')
+  const [extra, setExtra] = useState<string[]>([])
+  const [adding, setAdding] = useState(false)
+  const pending = value !== 'alpha'
+  return (
+    <ValuePicker
+      label="模型"
+      value={value}
+      valueText={pending ? `下一条：${value}` : undefined}
+      groups={[
+        {
+          id: 'local',
+          label: '本地',
+          media: <Tile size={16} icon={Puzzle} />,
+          options: [...MODELS, ...extra.map(item => ({ value: item, label: item }))].map(option => ({
+            ...option,
+            media: <Tile size={16} icon={Puzzle} />,
+          })),
+        },
+      ]}
+      onValueChange={setValue}
+      onOpenChange={open => {
+        if (!open) setAdding(false)
+        onOpenChange?.(open)
+      }}
+      footer={
+        <>
+          {pending && (
+            <MenuFooterLink
+              icon={Undo2}
+              chevron={false}
+              closes
+              onClick={() => {
+                setValue('alpha')
+              }}>
+              撤销切换
+            </MenuFooterLink>
+          )}
+          <MenuFooterLink
+            icon={Plus}
+            chevron={false}
+            onClick={() => {
+              setAdding(true)
+            }}>
+            添加模型…
+          </MenuFooterLink>
+        </>
+      }
+      panel={
+        adding ? (
+          <AddForm
+            onSave={item => {
+              setExtra([item])
+              setValue(item)
+            }}
+          />
+        ) : undefined
+      }
+    />
+  )
+}
+
+describe('value picker extras', () => {
+  it("draws each value's tile after the check slot and the group's tile before its heading", async () => {
+    const screen = await render(<Adding />)
+    await screen.getByRole('button', { name: '模型：alpha-large' }).click()
+    const item = screen.getByRole('menuitemradio', { name: 'alpha-large' }).element()
+    expect(item.hasAttribute('data-media')).toBe(true)
+    const [lead, media, text] = Array.from(item.children)
+    expect([lead?.className, media?.className, text?.className]).toEqual(['ui-menu-item-lead', 'ui-menu-item-media', 'ui-menu-item-text'])
+    expect(rect(lead).right).toBeLessThan(rect(media).left)
+    expect(rect(media).right).toBeLessThan(rect(text).left)
+    expect(document.querySelector('.ui-menu-section-label .ui-tile')).not.toBeNull()
+  })
+
+  it('shows a pending value in its own words, and undoes it from a footer action that closes the menu', async () => {
+    const screen = await render(<Adding />)
+    await screen.getByRole('button', { name: '模型：alpha-large' }).click()
+    await screen.getByRole('menuitemradio', { name: 'beta-mini' }).click()
+    const pending = screen.getByRole('button', { name: '模型：下一条：beta' })
+    await expect.element(pending).toBeVisible()
+    await pending.click()
+    const undo = screen.getByRole('menuitem', { name: '撤销切换' })
+    // An action that stays here has its glyph in the leading slot and no chevron.
+    expect(undo.element().querySelectorAll('.ui-icon')).toHaveLength(1)
+    await undo.click()
+    await expect.element(screen.getByRole('button', { name: '模型：alpha-large' })).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it("turns its layer into a form in the menu's place that stays open, closes from inside, and reports every opening and closing", async () => {
+    const changes: boolean[] = []
+    const screen = await render(
+      <Adding
+        onOpenChange={open => {
+          changes.push(open)
+        }}
+      />,
+    )
+    const trigger = screen.getByRole('button', { name: '模型：alpha-large' })
+    await trigger.click()
+    await screen.getByRole('menuitem', { name: '添加模型…' }).click()
+    const form = screen.getByRole('form', { name: '添加模型' })
+    await expect.element(form).toBeVisible()
+    expect(document.querySelector('.ui-popover[data-panel] [role="menu"]')).toBeNull()
+    await expect.element(trigger).toHaveAttribute('aria-expanded', 'true')
+    await screen.getByRole('textbox', { name: '模型 ID' }).fill('epsilon')
+    await screen.getByRole('button', { name: '保存并使用' }).click()
+    await expect.element(screen.getByRole('button', { name: '模型：下一条：epsilon' })).toHaveAttribute('aria-expanded', 'false')
+    expect(changes).toEqual([true, false])
+    // Opened again, it is the menu once more; Escape closes the panel as it closes the menu.
+    await screen.getByRole('button', { name: '模型：下一条：epsilon' }).click()
+    await screen.getByRole('menuitem', { name: '添加模型…' }).click()
+    screen.getByRole('textbox', { name: '模型 ID' }).element().focus()
+    await userEvent.keyboard('{Escape}')
+    await expect.element(screen.getByRole('button', { name: '模型：下一条：epsilon' })).toHaveAttribute('aria-expanded', 'false')
+    await expect.element(screen.getByRole('button', { name: '模型：下一条：epsilon' })).toHaveFocus()
+  })
+})
+
+/** A picker low in the window whose footer turns the layer into a panel `tall` px high, ending in a button. */
+function Reshaping({ tall }: { tall: number }) {
+  const [adding, setAdding] = useState(false)
+  return (
+    <div style={{ position: 'fixed', left: 40, top: 480 }}>
+      <ValuePicker
+        label="模型"
+        value="alpha"
+        options={MODELS}
+        onValueChange={() => {}}
+        width={adding ? 360 : undefined}
+        onOpenChange={open => {
+          if (!open) setAdding(false)
+        }}
+        footer={
+          <MenuFooterLink
+            icon={Plus}
+            chevron={false}
+            onClick={() => {
+              setAdding(true)
+            }}>
+            添加模型…
+          </MenuFooterLink>
+        }
+        panel={
+          adding ? (
+            <section aria-label="添加模型" style={{ display: 'grid', alignContent: 'space-between', height: tall }}>
+              <input aria-label="模型 ID" />
+              <button type="button">保存并使用</button>
+            </section>
+          ) : undefined
+        }
+      />
+    </div>
+  )
+}
+
+const layerBox = () => document.querySelector<HTMLElement>('.ui-popover:popover-open')?.getBoundingClientRect() ?? new DOMRect()
+
+describe('a layer whose content changes', () => {
+  it('is placed again when its menu turns into a taller panel: it flips to the side where the panel fits whole', async () => {
+    const screen = await render(<Reshaping tall={400} />)
+    await screen.getByRole('button', { name: '模型：alpha-large' }).click()
+    await expect.element(screen.getByRole('menu', { name: '模型' })).toBeVisible()
+    const layer = document.querySelector<HTMLElement>('.ui-popover:popover-open')!
+    expect(layer.dataset.side).toBe('bottom')
+    await screen.getByRole('menuitem', { name: '添加模型…' }).click()
+    await expect.element(screen.getByRole('region', { name: '添加模型' })).toBeVisible()
+    await expect.poll(() => layer.dataset.side).toBe('top')
+    expect(layerBox().top).toBeGreaterThanOrEqual(8)
+    expect(layerBox().bottom).toBeLessThanOrEqual(480 - 6 + 0.5)
+    expect(layerBox().width).toBe(360)
+  })
+
+  it('keeps a panel taller than either side inside the window, scrolling within, so its last control can be reached', async () => {
+    const screen = await render(<Reshaping tall={600} />)
+    await screen.getByRole('button', { name: '模型：alpha-large' }).click()
+    await screen.getByRole('menuitem', { name: '添加模型…' }).click()
+    await expect.element(screen.getByRole('region', { name: '添加模型' })).toBeVisible()
+    await expect.poll(() => layerBox().bottom).toBeLessThanOrEqual(innerHeight - 8 + 0.5)
+    const layer = document.querySelector<HTMLElement>('.ui-popover:popover-open')!
+    // The side it was on still has more than a menu's worth of room, so it stays there and scrolls.
+    expect(layer.dataset.side).toBe('bottom')
+    expect(layer.scrollHeight).toBeGreaterThan(layer.clientHeight)
+    const last = screen.getByRole('button', { name: '保存并使用' }).element()
+    last.scrollIntoView({ block: 'nearest' })
+    const box = last.getBoundingClientRect()
+    expect(box.bottom).toBeLessThanOrEqual(layerBox().bottom)
+    expect(document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)).toBe(last)
   })
 })
