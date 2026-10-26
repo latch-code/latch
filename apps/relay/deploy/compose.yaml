@@ -1,0 +1,30 @@
+services:
+  relay:
+    image: ${LATCH_RELAY_IMAGE:?Set an immutable repository@sha256 image}
+    init: true
+    network_mode: host
+    user: '65532:65532'
+    read_only: true
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: ${LATCH_RELAY_MEMORY_BYTES:?Set measured bytes, at most 75 percent of host RAM}
+    pids_limit: ${LATCH_RELAY_PID_LIMIT:?Set the measured process/thread limit}
+    stop_grace_period: 75s
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=${LATCH_RELAY_TMPFS_BYTES:?Set the measured temporary memory budget},mode=1777
+    volumes:
+      - ${LATCH_RELAY_DATA_DIR:?Set the private absolute state directory}:/var/lib/latch-relay
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
+    healthcheck:
+      test: [CMD, /opt/latch/node, --disable-sigusr1, /opt/latch/latch-relay.mjs, health, --data-dir, /var/lib/latch-relay]
+      interval: ${LATCH_RELAY_HEALTH_INTERVAL:?Set the external monitoring interval}
+      timeout: 5s
+      retries: ${LATCH_RELAY_HEALTH_RETRIES:?Set the monitoring retry count}
+    logging:
+      driver: journald
+      options:
+        tag: latch-relay

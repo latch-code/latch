@@ -1,7 +1,7 @@
 import { createHash, createPublicKey, verify, X509Certificate } from 'node:crypto'
 import { once } from 'node:events'
 import type { Duplex } from 'node:stream'
-import { connect, createServer as createTlsServer, createSecureContext, type TLSSocket } from 'node:tls'
+import { connect, type TLSSocket } from 'node:tls'
 import { constants } from 'node:crypto'
 import {
   ascii,
@@ -19,6 +19,7 @@ import {
 } from '@latch/link-wire'
 import { nodeCrypto } from './crypto.ts'
 import { createDeviceTrustAnchor } from './certificate.ts'
+import { acceptNativeTls, type NativeTlsConnection } from './native-helper.ts'
 
 const PROTOCOL = 'h2'
 function rootInput(spki: Uint8Array, nonce: Uint8Array, notBefore: number, notAfter: number): Uint8Array {
@@ -28,9 +29,23 @@ async function readExact(stream: Duplex, size: number, timeoutMs: number): Promi
   const signal = AbortSignal.timeout(timeoutMs)
   for (;;) {
     const chunk = stream.read(size) as Buffer | null
-    if (chunk) return chunk
+    if (chunk) {
+      if (chunk.length !== size) throw new Error('Native transport closed')
+      return chunk
+    }
     if (stream.destroyed || stream.readableEnded) throw new Error('Native transport closed')
-    await once(stream, 'readable', { signal })
+    const waiting = new AbortController(),
+      ready = AbortSignal.any([signal, waiting.signal])
+    try {
+      await Promise.race([
+        once(stream, 'readable', { signal: ready }),
+        once(stream, 'close', { signal: ready }).then(() => {
+          throw new Error('Native transport closed')
+        }),
+      ])
+    } finally {
+      waiting.abort()
+    }
   }
 }
 async function record(stream: Duplex, timeoutMs = 3000): Promise<Buffer> {
@@ -50,6 +65,7 @@ function hash(bytes: Uint8Array): Buffer {
 }
 export type NativeDevice = { id: string; knockKey: Uint8Array } & ({ kind: 'registered'; certificate: string } | { kind: 'pairing' })
 export interface NativeHostOptions {
+  tlsBinary: string
   certificate: { cert: string; key: string; der: Uint8Array; spki: Uint8Array }
   identity: { publicKeySpki: Uint8Array; sign(input: Uint8Array): Uint8Array }
   devices(): readonly NativeDevice[]
@@ -64,97 +80,53 @@ export async function acceptNative(
   stream: Duplex,
   binding: KnockBinding,
   options: NativeHostOptions,
-): Promise<{ socket: TLSSocket; deviceId: string; pairing: boolean }> {
-  let secure: TLSSocket | undefined
+): Promise<{ socket: Duplex; deviceId: string; pairing: boolean; closed: Promise<void> }> {
+  let secure: Duplex | undefined, helper: NativeTlsConnection | undefined
   try {
     const now = options.now?.() ?? Date.now(),
       devices = options.devices()
-    if (devices.length > 128) throw new RangeError('Native device limit')
+    if (devices.length > 1032) throw new RangeError('Native device limit')
     const opening = await readExact(stream, 32, 3000)
     let device: NativeDevice | undefined
     for (const candidate of devices) if (await verifyKnock(nodeCrypto, candidate.knockKey, binding, now, opening)) device = candidate
     if (!device || !options.isActive(device.id)) throw new Error('Native authentication failed')
     for (const [key, expires] of options.replay) if (expires < now) options.replay.delete(key)
-    const replayKey = `${device.id}:${hex(opening.slice(0, 16))}`
-    if (options.replay.has(replayKey) || options.replay.size >= 4096) throw new Error('Native authentication failed')
-    options.replay.set(replayKey, now + 180_000)
+    const prefix = `${device.id}:`,
+      replayKey = `${prefix}${hex(opening.slice(0, 16))}`
+    const identityEntries = [...options.replay.keys()].filter(key => key.startsWith(prefix)).length
+    if (options.replay.has(replayKey) || options.replay.size >= 4096 || identityEntries >= 32)
+      throw new Error('Native authentication failed')
     options.onKnock?.(device.id)
+    options.replay.set(replayKey, now + 180_000)
     const mac = await serverBinding(nodeCrypto, device.knockKey, binding, opening.slice(0, 16), options.certificate.der)
     await writeRecord(stream, concat(field(options.certificate.der), mac))
-    // tls.Server owns certificate-chain verification; a bare TLSSocket does not run that server hook.
-    const tlsOptions = {
-      cert: options.certificate.cert,
+    const expectedSpki =
+      device.kind === 'registered' ? new X509Certificate(device.certificate).publicKey.export({ format: 'der', type: 'spki' }) : undefined
+    helper = await acceptNativeTls(stream, {
+      binary: options.tlsBinary,
+      certificate: options.certificate.cert,
       key: options.certificate.key,
-      ...(device.kind === 'registered'
-        ? {
-            ca: [
-              createDeviceTrustAnchor(
-                new X509Certificate(device.certificate).publicKey.export({ format: 'der', type: 'spki' }),
-                options.identity,
-              ),
-              device.certificate,
-            ],
-            allowPartialTrustChain: true,
-          }
-        : {}),
-      minVersion: 'TLSv1.3' as const,
-      maxVersion: 'TLSv1.3' as const,
-      secureOptions: constants.SSL_OP_NO_TICKET,
-      requestCert: device.kind === 'registered',
-      rejectUnauthorized: true,
-      numTickets: 0,
-      ALPNProtocols: [PROTOCOL],
-    }
-    // Node's Server.setSecureContext omits allowPartialTrustChain; an explicit SNI context retains that flag.
-    const context = createSecureContext(tlsOptions)
-    const tlsServer = createTlsServer({
-      ...tlsOptions,
-      ca: [],
-      SNICallback(servername, callback) {
-        callback(servername === 'transport.latch.invalid' ? null : new Error('Invalid native TLS name'), context)
-      },
+      pairing: device.kind === 'pairing',
+      authorities: expectedSpki
+        ? [createDeviceTrustAnchor(expectedSpki, options.identity), device.kind === 'registered' ? device.certificate : '']
+        : [],
+      peerSpki: expectedSpki?.toString('base64url') ?? '',
     })
-    const handshake = once(tlsServer, 'secureConnection', { signal: AbortSignal.timeout(3000) })
-    tlsServer.once('tlsClientError', () => tlsServer.emit('error', new Error('Native TLS failed')))
-    tlsServer.emit('connection', stream)
-    secure = (await handshake)[0] as TLSSocket
-    secure.on('error', () => {})
-    const peer = secure.getPeerCertificate(true)
-    if (
-      (device.kind === 'registered' && (!secure.authorized || !peer.raw))
-      || secure.alpnProtocol !== PROTOCOL
-      || secure.servername !== 'transport.latch.invalid'
-      || secure.isSessionReused()
-      || !options.isActive(device.id)
-    )
-      throw new Error('Native authentication failed')
-    if (device.kind === 'registered') {
-      const expected = new X509Certificate(device.certificate).publicKey.export({ format: 'der', type: 'spki' })
-      const actual = new X509Certificate(peer.raw).publicKey.export({ format: 'der', type: 'spki' })
-      if (!equal(expected, actual)) throw new Error('Native authentication failed')
-      const presented = new X509Certificate(peer.raw)
-      const validFrom = Date.parse(presented.validFrom),
-        validTo = Date.parse(presented.validTo)
-      if (
-        !presented.verify(presented.publicKey)
-        || !['CN=transport.latch.invalid', 'CN=connection.latch.invalid'].includes(presented.subject)
-        || !Number.isFinite(validFrom)
-        || !Number.isFinite(validTo)
-        || validFrom > Date.now()
-        || validTo <= Date.now()
-      )
-        throw new Error('Native authentication failed')
-    }
+    secure = helper.socket
+    if (!options.isActive(device.id)) throw new Error('Native authentication failed')
     const before = now - 60_000,
       after = now + 300_000,
       root = options.identity.publicKeySpki
     const input = rootInput(options.certificate.spki, opening.slice(0, 16), before, after)
     const signature = options.identity.sign(input)
     await writeRecord(secure, concat(field(root), uint(before, 8), uint(after, 8), fixed(signature, 64)))
-    return { socket: secure, deviceId: device.id, pairing: device.kind === 'pairing' }
+    if (!options.isActive(device.id)) throw new Error('Native authentication failed')
+    return { socket: secure, deviceId: device.id, pairing: device.kind === 'pairing', closed: helper.closed }
   } catch {
     secure?.destroy()
     stream.destroy()
+    helper?.close()
+    await helper?.closed
     throw new Error('Native authentication failed')
   }
 }

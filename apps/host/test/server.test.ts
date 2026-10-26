@@ -566,7 +566,7 @@ describe('enrollment and credentials', () => {
       renewAfter: expect.any(String),
     })
     expect(snapshot.host).toEqual({
-      native: { enabled: false, inputsPaused: false },
+      native: { enabled: false, inputsPaused: false, discoveryEpoch: expect.stringMatching(/^[a-f0-9]{64}$/u) },
       hostId: t.host.hostId,
       devMode: true,
       presence: { status: 'available' },

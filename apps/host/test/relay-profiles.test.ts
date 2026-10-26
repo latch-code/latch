@@ -33,11 +33,17 @@ it('persists private state, preserves an omitted registration secret, and serial
   expect(new Set(generations).size).toBe(12)
   const reopened = await RelayProfiles.open(directory)
   expect(reopened.snapshot().generation).toBe(generations.at(-1))
+  await profiles.rotateDiscovery('a'.repeat(64))
+  const discovery = profiles.snapshot().discoveryKey
+  await (await RelayProfiles.open(directory)).rotateDiscovery('a'.repeat(64))
+  expect((await RelayProfiles.open(directory)).snapshot().discoveryKey).toBe(discovery)
+  await profiles.rotateDiscovery('b'.repeat(64))
+  expect(profiles.snapshot().discoveryKey === discovery).toBe(false)
   const receipt = { requestId: randomUUID(), requestHash: 'a'.repeat(64) }
   await profiles.configure(null, [node], profiles.configHash(), receipt)
   expect((await RelayProfiles.open(directory)).configReceipt(receipt.requestId)).toBe(receipt.requestHash)
   const original = profiles.configHash()
-  await profiles.configure(null, [])
+  await profiles.configure({ host: '127.0.0.1', port: 0 }, [node])
   await profiles.configure(null, [node])
   expect(profiles.configHash() === original).toBe(false)
   await expect(profiles.configure(null, [], original)).rejects.toMatchObject({ code: 'native-config-changed' })

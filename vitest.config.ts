@@ -11,10 +11,20 @@ export default defineConfig({
       { extends: true, test: { name: 'harness-link', include: ['tests/**/*.test.ts'] } },
       ...['link-wire', 'link-client'].map(name => ({
         extends: true as const,
-        test: { name: `@latch/${name}`, include: [`packages/${name}/test/**/*.test.ts`] },
+        test: {
+          name: `@latch/${name}`,
+          include: [`packages/${name}/test/**/*.test.ts`],
+          ...(name === 'link-client' ? { globalSetup: ['scripts/native-test-setup.ts'] } : {}),
+        },
       })),
-      { extends: true, test: { name: '@latch/relay', include: ['apps/relay/test/**/*.test.ts'] } },
-      { extends: true, test: { name: '@latch/host', include: ['apps/host/test/**/*.test.ts'] } },
+      {
+        extends: true,
+        test: { name: '@latch/relay', include: ['apps/relay/test/**/*.test.ts'], globalSetup: ['scripts/native-test-setup.ts'] },
+      },
+      {
+        extends: true,
+        test: { name: '@latch/host', include: ['apps/host/test/**/*.test.ts'], globalSetup: ['scripts/native-test-setup.ts'] },
+      },
       { extends: true, test: { name: '@latch/web', include: ['apps/web/test/**/*.test.ts'] } },
       { extends: true, test: { name: '@latch/desktop', include: ['apps/desktop/test/**/*.test.ts'] } },
       { extends: true, test: { name: '@latch/harness-acp', include: ['packages/harness-acp/test/**/*.test.ts'] } },

@@ -2,6 +2,8 @@ import { build } from 'esbuild'
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { hostBundleOptions, REPOSITORY_ROOT } from './host-bundle.ts'
+import { buildNetworkHelper } from './build-network.ts'
+import { buildNativeTlsHelper } from './build-native-tls.ts'
 
 // Entry points and dist/ are paths in the repository root whatever the working directory: package.json's exports and
 // the start:built and desktop scripts find the bundles there.
@@ -23,3 +25,6 @@ await build({
   outdir: 'dist',
   sourcemap: true,
 })
+await buildNativeTlsHelper(REPOSITORY_ROOT)
+
+await buildNetworkHelper(REPOSITORY_ROOT)

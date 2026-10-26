@@ -14,6 +14,13 @@ export class RelayClosed extends Error {
   }
 }
 
+interface RelaySocketPolicy {
+  sendHighWaterMark?(): number
+  receiveHighWaterMark?(): number
+  sendTimeoutMs?: number
+  pingIntervalMs?: number
+  deadAfterMs?: number
+}
 export class RelaySocket {
   private readonly stream: Duplex
   private readonly outgoingMask: boolean
@@ -24,17 +31,24 @@ export class RelaySocket {
   private bytes = 0
   private readonly heartbeat: ReturnType<typeof setInterval>
   private lastSeen = Date.now()
-  constructor(stream: Duplex, client: boolean, head?: Uint8Array) {
+  private readonly policy: RelaySocketPolicy
+  private sends: Promise<void> = Promise.resolve()
+  private queuedSendBytes = 0
+  private writtenBytes = 0
+  constructor(stream: Duplex, client: boolean, head?: Uint8Array, policy: RelaySocketPolicy = {}) {
     this.stream = stream
+    this.policy = policy
     this.outgoingMask = client
     this.parser = new WebSocketParser(!client)
     this.heartbeat = setInterval(() => {
-      if (Date.now() - this.lastSeen > 60_000) {
+      if (Date.now() - this.lastSeen > (policy.deadAfterMs ?? 60_000)) {
         this.close(1001)
         return
       }
-      stream.write(encodeFrame({ opcode: 9, payload: new Uint8Array() }, client ? randomBytes(4) : undefined))
-    }, 20_000)
+      void this.writeFrame(encodeFrame({ opcode: 9, payload: new Uint8Array() }, client ? randomBytes(4) : undefined)).catch(() =>
+        this.close(4302),
+      )
+    }, policy.pingIntervalMs ?? 20_000)
     this.heartbeat.unref()
     stream.on('data', (chunk: Buffer) => this.feed(chunk))
     stream.on('error', () => this.finish(new Error('Relay transport failed')))
@@ -55,7 +69,9 @@ export class RelaySocket {
           return
         }
         if (frame.opcode === 9) {
-          this.stream.write(encodeFrame({ opcode: 10, payload: frame.payload }, this.outgoingMask ? randomBytes(4) : undefined))
+          void this.writeFrame(encodeFrame({ opcode: 10, payload: frame.payload }, this.outgoingMask ? randomBytes(4) : undefined)).catch(
+            () => this.close(4302),
+          )
           continue
         }
         if (frame.opcode === 10) continue
@@ -68,7 +84,7 @@ export class RelaySocket {
           this.bytes += frame.payload.length
           if (this.queue.length >= 8 || this.bytes > 131_072) throw new RangeError('Relay receive limit')
           this.queue.push(message)
-          if (this.queue.length >= 4) this.stream.pause()
+          if (this.queue.length >= 4 || this.bytes >= (this.policy.receiveHighWaterMark?.() ?? 131_072)) this.stream.pause()
         }
       }
     } catch {
@@ -80,7 +96,7 @@ export class RelaySocket {
     const message = this.queue.shift()
     if (message) {
       this.bytes -= encodeMessage(message).length
-      if (this.queue.length <= 2) this.stream.resume()
+      if (this.queue.length <= 2 && this.bytes < (this.policy.receiveHighWaterMark?.() ?? 131_072)) this.stream.resume()
       return message
     }
     if (this.failure) throw this.failure
@@ -107,13 +123,57 @@ export class RelaySocket {
     })
   }
   async send(message: RelayMessage): Promise<void> {
-    if (this.failure) throw this.failure
-    if (this.stream.writableLength > 131_072) {
-      this.close(4302)
-      throw new Error('Relay send limit')
-    }
     const frame = encodeFrame({ opcode: 2, payload: encodeMessage(message) }, this.outgoingMask ? randomBytes(4) : undefined)
-    if (!this.stream.write(frame)) await once(this.stream, 'drain', { signal: AbortSignal.timeout(3000) })
+    await this.writeFrame(frame)
+  }
+  private writeFrame(frame: Uint8Array): Promise<void> {
+    if (this.failure) return Promise.reject(this.failure)
+    const limit = this.policy.sendHighWaterMark?.() ?? 131_072
+    if (this.queuedSendBytes + frame.length > limit + 32 || this.stream.writableLength > limit) {
+      this.close(4302)
+      return Promise.reject(new Error('Relay send limit'))
+    }
+    this.queuedSendBytes += frame.length
+    const work = this.sends
+      .then(async () => {
+        if (this.failure) throw this.failure
+        if (this.policy.sendHighWaterMark) {
+          await new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(() => {
+              this.close(4302)
+              reject(new Error('Relay send stalled'))
+            }, this.policy.sendTimeoutMs ?? 3000)
+            this.stream.write(frame, error => {
+              clearTimeout(timer)
+              if (error) reject(new Error('Relay send failed'))
+              else {
+                this.writtenBytes += frame.length
+                resolve()
+              }
+            })
+          })
+        } else {
+          if (!this.stream.write(frame))
+            await once(this.stream, 'drain', { signal: AbortSignal.timeout(this.policy.sendTimeoutMs ?? 3000) })
+          this.writtenBytes += frame.length
+        }
+      })
+      .finally(() => {
+        this.queuedSendBytes -= frame.length
+      })
+    this.sends = work.catch(() => {})
+    return work
+  }
+  metrics(): { bufferedBytes: number; pendingWriteBytes: number; writtenBytes: number } {
+    return {
+      bufferedBytes: this.bytes + this.queuedSendBytes + this.stream.writableLength,
+      pendingWriteBytes: this.queuedSendBytes,
+      writtenBytes: this.writtenBytes,
+    }
+  }
+  /** Only the authenticated attach transition may relinquish relay-level idle checks. */
+  markSpliced(): void {
+    clearInterval(this.heartbeat)
   }
   private finish(error: Error): void {
     if (this.failure) return
@@ -213,7 +273,7 @@ export async function connectRelay(options: {
         reject(new Error('Invalid relay upgrade'))
         return
       }
-      resolve(new RelaySocket(socket, true, head))
+      resolve(new RelaySocket(socket, true, head, { pingIntervalMs: 25_000, deadAfterMs: 60_000 }))
     })
     req.end()
   })

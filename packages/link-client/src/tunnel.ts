@@ -1,7 +1,17 @@
 import { Duplex } from 'node:stream'
-import { attachMac, equal, makeProof, registrationInput, registrationMac, type RelayMessage } from '@latch/link-wire'
+import {
+  attachMac,
+  encodeMessage,
+  equal,
+  makeProof,
+  registrationInput,
+  registrationMac,
+  routeId,
+  type RelayMessage,
+} from '@latch/link-wire'
 import { nodeCrypto } from './crypto.ts'
 import { connectRelay, type RelaySocket } from './websocket.ts'
+import { solveRegistrationWork } from './registration-work.ts'
 
 export class RelayTunnel extends Duplex {
   private readonly peer: RelaySocket
@@ -9,6 +19,7 @@ export class RelayTunnel extends Duplex {
   constructor(peer: RelaySocket) {
     super({ highWaterMark: 16_384 })
     this.peer = peer
+    peer.markSpliced()
   }
   override _read(): void {
     if (this.reading) return
@@ -92,22 +103,53 @@ export async function registerRelay(
   close(): void
 }> {
   const peer = await connectRelay(await endpoint(options, '/v1/h'))
+  const abort = new AbortController()
+  let work: Promise<Uint8Array> | undefined
   try {
     const hello = await challenge(peer, options.relayId),
       routePub = await nodeCrypto.publicKey(options.routeKey)
     if (hello.requiresToken && !options.registrationToken) throw new Error('Relay registration token required')
     const input = registrationInput(options.relayId, hello.nonce, options.day, routePub)
-    await peer.send({
+    const packet: Extract<RelayMessage, { type: 'register' }> = {
       type: 'register',
       day: options.day,
       routePub,
-      previous: options.previous ?? new Uint8Array(32),
+      previous: options.previous?.slice() ?? new Uint8Array(32),
       signature: await nodeCrypto.sign(options.routeKey, input),
       regMac: options.registrationToken ? await registrationMac(nodeCrypto, options.registrationToken, input) : new Uint8Array(16),
       alternate: options.alternate,
-    })
-    const response = await peer.receive(5000)
-    if (response.type !== 'registered') throw new Error('Relay registration rejected')
+    }
+    const encodedRegister = encodeMessage(packet)
+    await peer.send(packet)
+    const expected = await routeId(nodeCrypto, routePub)
+    let response = await peer.receive(5000)
+    if (response.type === 'registration-work') {
+      if (!equal(response.routeId, expected)) throw new Error('Relay registration challenge mismatch')
+      const nonce = response.nonce.slice()
+      work = solveRegistrationWork({
+        relayId: options.relayId,
+        helloNonce: hello.nonce,
+        workNonce: nonce,
+        register: encodedRegister,
+        bits: response.bits,
+        signal: abort.signal,
+      })
+      let proofSending = false
+      const reply = peer.receive(5000).then(message => {
+        if (!proofSending) throw new Error('Unexpected relay registration response')
+        return message
+      })
+      const solution = await Promise.race([
+        work,
+        reply.then(() => {
+          throw new Error('Unexpected relay registration response')
+        }),
+      ])
+      proofSending = true
+      await peer.send({ type: 'registration-proof', routeId: expected, nonce, solution })
+      response = await reply
+    }
+    if (response.type !== 'registered' || !equal(response.routeId, expected)) throw new Error('Relay registration rejected')
     return {
       token: response.token,
       routeId: response.routeId,
@@ -140,5 +182,8 @@ export async function registerRelay(
   } catch (error) {
     peer.close()
     throw error
+  } finally {
+    abort.abort()
+    await work?.catch(() => {})
   }
 }

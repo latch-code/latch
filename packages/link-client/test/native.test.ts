@@ -1,6 +1,8 @@
 import { createServer, connect } from 'node:net'
 import { generateKeyPairSync, createPublicKey, sign } from 'node:crypto'
 import { once } from 'node:events'
+import { resolve } from 'node:path'
+import { PassThrough } from 'node:stream'
 import { createServer as tlsServer, connect as tlsConnect, createSecureContext, checkServerIdentity } from 'node:tls'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { knock, Reader } from '@latch/link-wire'
@@ -17,7 +19,7 @@ const cleanup: (() => void | Promise<void>)[] = []
 afterEach(async () => {
   for (const close of cleanup.splice(0).reverse()) await close()
 })
-async function fixture(device = createTransportCertificate()) {
+async function fixture(device = createTransportCertificate(), count = 1) {
   const host = createTransportCertificate(),
     root = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }),
     knockKey = nodeCrypto.random(32)
@@ -25,12 +27,19 @@ async function fixture(device = createTransportCertificate()) {
     failures: string[] = []
   let active = true
   const options = {
+    tlsBinary: resolve('dist/native/latch-native-tls'),
     certificate: host,
     identity: {
       publicKeySpki: root.publicKey.export({ format: 'der', type: 'spki' }),
       sign: (input: Uint8Array) => sign('sha256', input, { key: root.privateKey, dsaEncoding: 'ieee-p1363' }),
     },
-    devices: () => [{ id: 'device-1', kind: 'registered' as const, knockKey, certificate: device.cert }],
+    devices: () =>
+      Array.from({ length: count }, (_, index) => ({
+        id: index === count - 1 ? 'device-1' : `tombstone-${index}`,
+        kind: 'registered' as const,
+        knockKey: index === count - 1 ? knockKey : new Uint8Array(32).fill(index % 256),
+        certificate: device.cert,
+      })),
     isActive: () => active,
     replay: new Map<string, number>(),
   }
@@ -66,6 +75,47 @@ async function fixture(device = createTransportCertificate()) {
   }
 }
 describe('native Host authentication before application bytes', () => {
+  it('settles an incomplete knock on close before its authentication deadline', async () => {
+    const raw = new PassThrough(),
+      certificate = createTransportCertificate(),
+      root = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
+    let settled = false
+    const pending = acceptNative(
+      raw,
+      { path: 'direct' },
+      {
+        tlsBinary: resolve('dist/native/latch-native-tls'),
+        certificate,
+        identity: {
+          publicKeySpki: root.publicKey.export({ type: 'spki', format: 'der' }),
+          sign: input => sign('sha256', input, { key: root.privateKey, dsaEncoding: 'ieee-p1363' }),
+        },
+        devices: () => [],
+        isActive: () => false,
+        replay: new Map(),
+      },
+    ).catch(() => {
+      settled = true
+    })
+    raw.destroy()
+    await new Promise(resolve => setImmediate(resolve))
+    try {
+      expect(settled).toBe(true)
+    } finally {
+      await pending
+    }
+  })
+  it('bounds active, revoked and invitation knock candidates while delivering a retained tombstone at the last slot', async () => {
+    const permitted = await fixture(createTransportCertificate(), 1032),
+      raw = connect(permitted.port, '127.0.0.1')
+    raw.on('error', () => {})
+    const socket = await connectNative(raw, { path: 'direct' }, permitted.client)
+    socket.destroy()
+    const excessive = await fixture(createTransportCertificate(), 1033),
+      blocked = connect(excessive.port, '127.0.0.1')
+    blocked.on('error', () => {})
+    await expect(connectNative(blocked, { path: 'direct' }, excessive.client)).rejects.toThrow('authentication failed')
+  })
   it.each(['', 'wrong.latch.invalid'])('refuses a missing or different SNI before disclosing the Host root (%s)', async servername => {
     const test = await fixture(),
       raw = connect(test.port, '127.0.0.1')
@@ -247,6 +297,6 @@ describe('native Host authentication before application bytes', () => {
     await expect(
       connectNative(raw, { path: 'direct' }, { ...test.client, certificate: different.cert, key: different.key }),
     ).rejects.toThrow()
-    expect(test.failures).toHaveLength(1)
+    await vi.waitFor(() => expect(test.failures).toHaveLength(1))
   })
 })

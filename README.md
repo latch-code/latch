@@ -25,6 +25,7 @@ Latch 在你的电脑（执行端）上运行一个 Host。Host 持有会话、�
 | 系统 | macOS（完整功能）；Linux 可运行但没有本机确认；Windows 暂不支持运行 Host（见「平台限制」） |
 | Node.js / pnpm | Node.js 24.22.1（见 `.node-version`；也支持 22.x ≥ 22.23.4 与 ≥ 26.12.1，其他版本下 pnpm 命令直接报错），pnpm 11.28.6（`packageManager` 固定，已安装的其他版本 pnpm 会自动切换到它） |
 | 本机确认组件 | macOS 上需要 Xcode 命令行工具（`xcode-select --install`），用于构建 Touch ID 确认组件 |
+| 原生连接 TLS 组件 | Go 1.26.x ≥1.26.10 或 1.27.x ≥1.27.3，仅标准库，源码构建时使用；可用构建变量 `LATCH_RELAY_GO` 指定编译器，运行时不下载或编译 |
 | 手机接入 | 你自己提供的 HTTPS 证书（推荐 Tailscale 的 `tailscale cert`） |
 
 ## 安装与首次运行

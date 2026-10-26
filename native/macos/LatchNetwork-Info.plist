@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>dev.latch.network</string>
+  <key>CFBundleName</key><string>Latch</string>
+  <key>CFBundleDisplayName</key><string>Latch</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>NSLocalNetworkUsageDescription</key><string>让已配对的手机在附近自动找到这台电脑。</string>
+  <key>NSBonjourServices</key><array><string>_latch._tcp</string></array>
+</dict>
+</plist>

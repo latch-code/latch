@@ -73,6 +73,7 @@ export const AUDIT_DETAIL = {
   'attachment.add': attachmentEvent,
   'attachment.view': attachmentEvent,
   'native.relay.conflict': z.strictObject({ relayHash: hex64 }),
+  'native.network.remembered': z.strictObject({ networkHash: hex64 }),
   'native.config.changed': z.strictObject({ before: hex64, after: hex64, lowering: z.boolean(), direct: z.boolean(), relayCount: count }),
   'presence.launch-trusted': z.strictObject({ keyHash: hex64 }),
   'host.started': z.strictObject({

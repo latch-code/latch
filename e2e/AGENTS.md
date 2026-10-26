@@ -11,6 +11,8 @@
 
 `desktop-native.e2e.ts` 检查 Mac 手机配置、系统确认接线、三宽浅深色和样式覆盖；只截无邀请的设置，生成的二维码不截图。
 
+`ios-app.e2e.ts` 用临时 DerivedData、固定依赖和禁签名的 iOS Simulator SDK 构建真实 App，检查 Mach-O 产物不含夹具身份；不启动模拟器或访问钥匙串。SDK 编译不能代替运行时布局、平台许可或真机验收。
+
 运行环境 node；依赖都写在 devDependencies：host、protocol、sdk、testkit 与原生全链的 relay、link-client、link-wire；Playwright、vite 用于界面与原语总览。用例与运行器用根项目的同一份 Vitest，所以本项目不声明 `vitest`。
 
 不变量：

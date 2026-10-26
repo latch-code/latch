@@ -1,0 +1,192 @@
+import Foundation
+import Network
+import NIOCore
+import NIOHTTP1
+import NIOHTTP2
+import NIOTransportServices
+
+public struct NativeHTTPResponse: Sendable {
+    public let status: Int
+    public let headers: [String: String]
+    public let body: Data
+}
+public enum NativeHTTPMethod: String, Sendable { case get = "GET", post = "POST", put = "PUT", patch = "PATCH", delete = "DELETE", head = "HEAD" }
+
+/** One authenticated inner TLS/HTTP2 channel; replacement is owned by the workspace, never by a write request. */
+public actor NativeHTTPConnection {
+    private let channel: any Channel
+    private let streams: HTTP2StreamMultiplexer.SendableView
+    private let group: NIOTSEventLoopGroup
+    private var requests = 0
+    private var eventCount = 0
+    private var closed = false
+    private init(channel: any Channel, streams: HTTP2StreamMultiplexer.SendableView, group: NIOTSEventLoopGroup) {
+        self.channel = channel; self.streams = streams; self.group = group
+    }
+    public static func open(host: String, port: UInt16, rootSpki: Data, knockKey: Data, identity: PlatformIdentity? = nil,
+        binding: LinkBinding = .direct, interface: NWInterface? = nil) async throws -> NativeHTTPConnection {
+        let scoped = host.split(separator: "%", omittingEmptySubsequences: false), address = String(scoped[0])
+        guard port > 0, scoped.count <= 2, AddressBookCodec.isIP(address) else { throw NativeFailure.invalidRecord }
+        if scoped.count == 2 {
+            guard let interface, address.contains(":"), scoped[1] == Substring(interface.name) || Int(scoped[1]) == interface.index else { throw NativeFailure.invalidRecord }
+        }
+        let state = try HandshakeState(root: rootSpki, knockKey: knockKey, binding: binding)
+        let parameters = try NativeTLS.parameters(state: state, identity: identity)
+        if let interface { parameters.requiredInterface = interface }
+        let connection = NWConnection(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: port)!, using: parameters)
+        return try await establish(connection, state: state)
+    }
+    static func establish(_ connection: NWConnection, state: HandshakeState) async throws -> NativeHTTPConnection {
+        try await withTaskCancellationHandler {
+            try await establishOnce(connection, state: state)
+        } onCancel: { connection.cancel() }
+    }
+    private static func establishOnce(_ connection: NWConnection, state: HandshakeState) async throws -> NativeHTTPConnection {
+        let group = NIOTSEventLoopGroup(loopCount: 1)
+        let completion = group.next().makePromise(of: Void.self), gate = HostProofGate(state: state, completion: completion)
+        var established: (any Channel)?
+        do {
+            let channel = try await NIOTSConnectionBootstrap(group: group).connectTimeout(.seconds(8))
+                .channelInitializer { channel in channel.pipeline.addHandler(gate) }
+                .withExistingNWConnection(connection).get()
+            established = channel
+            guard !Task.isCancelled else { throw NativeFailure.unavailable }
+            try NativeTLS.validate(state)
+            try await completion.futureResult.get()
+            let streams = try await channel.configureHTTP2Pipeline(mode: .client, initialLocalSettings: [
+                HTTP2Setting(parameter: .headerTableSize, value: 0), HTTP2Setting(parameter: .enablePush, value: 0),
+                HTTP2Setting(parameter: .maxConcurrentStreams, value: 32), HTTP2Setting(parameter: .maxHeaderListSize, value: 32_768),
+            ], inboundStreamInitializer: { stream in stream.close() }).map { $0.sendableView }.get()
+            try await channel.pipeline.removeHandler(gate).get()
+            guard !Task.isCancelled else { throw NativeFailure.unavailable }
+            return NativeHTTPConnection(channel: channel, streams: streams, group: group)
+        } catch {
+            connection.cancel()
+            if let established { try? await established.close().get() }
+            try? await group.shutdownGracefully()
+            throw NativeFailure.identityMismatch
+        }
+    }
+    public func request(_ method: NativeHTTPMethod, path: String, body: Data? = nil, headers: [String: String] = [:], maximum: Int = 1_048_576) async throws -> NativeHTTPResponse {
+        guard !closed, channel.isActive else { throw NativeFailure.unavailable }
+        guard requests < 16, path.hasPrefix("/link/api/"), path.utf8.count <= 4096, path.utf8.allSatisfy({ $0 >= 33 && $0 < 127 }),
+              (body?.count ?? 0) <= 1_048_576, (0...1_048_576).contains(maximum), headers.count <= 8,
+              headers.keys.allSatisfy({ ["content-type", "range", "if-match", "if-none-match", "x-latch-attachment"].contains($0) }),
+              headers.values.allSatisfy({ $0.utf8.count <= 8192 && $0.utf8.allSatisfy({ $0 >= 32 && $0 < 127 }) }) else { throw NativeFailure.invalidRecord }
+        requests += 1
+        defer { requests -= 1 }
+        let response = channel.eventLoop.makePromise(of: NativeHTTPResponse.self), streamPromise = channel.eventLoop.makePromise(of: (any Channel).self)
+        streams.createStreamChannel(promise: streamPromise) { stream in
+            stream.eventLoop.makeCompletedFuture {
+                try stream.pipeline.syncOperations.addHandlers(HTTP2FramePayloadToHTTP1ClientCodec(httpProtocol: .https), HTTPResponseCollector(promise: response, maximum: maximum))
+            }
+        }
+        let stream = try await streamPromise.futureResult.get()
+        do {
+            var fields = HTTPHeaders([("host", "native.latch.invalid"), ("accept", "application/json")])
+            if body != nil { fields.add(name: "content-type", value: headers["content-type"] ?? "application/json") }
+            for (name, value) in headers where name != "content-type" { fields.add(name: name, value: value) }
+            stream.write(HTTPClientRequestPart.head(HTTPRequestHead(version: .http2, method: HTTPMethod(rawValue: method.rawValue), uri: path, headers: fields)), promise: nil)
+            if let body, !body.isEmpty {
+                var buffer = stream.allocator.buffer(capacity: body.count); buffer.writeBytes(body)
+                stream.write(HTTPClientRequestPart.body(.byteBuffer(buffer)), promise: nil)
+            }
+            try await stream.writeAndFlush(HTTPClientRequestPart.end(nil)).get()
+            return try await withTaskCancellationHandler {
+                try await response.futureResult.get()
+            } onCancel: { stream.close(promise: nil) }
+        } catch {
+            try? await stream.close().get()
+            throw NativeFailure.resultUnknown
+        }
+    }
+    public func close() async {
+        guard !closed else { return }; closed = true
+        try? await channel.close().get()
+        try? await group.shutdownGracefully()
+    }
+    public func events(sessionId: String? = nil, lease: BodyLease? = nil, cursor: NativeEventCursor? = nil) async throws -> NativeEventStream {
+        guard !closed, channel.isActive, eventCount < 2 else { throw NativeFailure.unavailable }
+        if let sessionId {
+            guard LinkBytes.matches(sessionId, "[A-Za-z0-9_-]{1,160}"), let lease else { throw NativeFailure.invalidRecord }
+            try lease.requireValid()
+        }
+        eventCount += 1
+        let pair = AsyncThrowingStream<NativeEvent, Error>.makeStream(bufferingPolicy: .bufferingOldest(8))
+        let ready = channel.eventLoop.makePromise(of: Void.self), promise = channel.eventLoop.makePromise(of: (any Channel).self)
+        var installed = false
+        streams.createStreamChannel(promise: promise) { stream in
+            stream.eventLoop.makeCompletedFuture {
+                try stream.pipeline.syncOperations.addHandlers(HTTP2FramePayloadToHTTP1ClientCodec(httpProtocol: .https),
+                    NativeEventCollector(ready: ready, continuation: pair.continuation, lease: lease))
+            }
+        }
+        do {
+            let stream = try await promise.futureResult.get()
+            installed = true
+            stream.closeFuture.whenComplete { _ in Task { await self.eventEnded() } }
+            pair.continuation.onTermination = { _ in stream.close(promise: nil) }
+            var query = sessionId.map { ["sessionId=" + $0] } ?? []
+            if let cursor {
+                _ = try NativeEventCursor.parse("\(cursor.epoch):\(cursor.sequence)")
+                query += ["resumeEpoch=" + cursor.epoch, "resumeAfter=\(cursor.sequence)"]
+            }
+            let path = "/link/api/events" + (query.isEmpty ? "" : "?" + query.joined(separator: "&"))
+            let fields = HTTPHeaders([("host", "native.latch.invalid"), ("accept", "text/event-stream")])
+            stream.write(HTTPClientRequestPart.head(HTTPRequestHead(version: .http2, method: .GET, uri: path, headers: fields)), promise: nil)
+            try await stream.writeAndFlush(HTTPClientRequestPart.end(nil)).get()
+            try await ready.futureResult.get()
+            return NativeEventStream(events: pair.stream, channel: stream)
+        } catch {
+            if !installed { eventCount = max(0, eventCount - 1) }
+            pair.continuation.finish(throwing: NativeFailure.unavailable)
+            throw NativeFailure.unavailable
+        }
+    }
+    private func eventEnded() { eventCount = max(0, eventCount - 1) }
+    public func isClosed() -> Bool { closed || !channel.isActive }
+}
+
+/** Confined to its child stream's event loop. Every response has an explicit byte and time budget. */
+private final class HTTPResponseCollector: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = HTTPClientResponsePart
+    private let promise: EventLoopPromise<NativeHTTPResponse>
+    private let maximum: Int
+    private var status = 0
+    private var headers: [String: String] = [:]
+    private var body = Data()
+    private var settled = false
+    private weak var context: ChannelHandlerContext?
+    private var timer: Scheduled<Void>?
+    init(promise: EventLoopPromise<NativeHTTPResponse>, maximum: Int) { self.promise = promise; self.maximum = maximum }
+    func handlerAdded(context: ChannelHandlerContext) {
+        self.context = context
+        timer = context.eventLoop.scheduleTask(in: .seconds(15)) { [self] in if let context = self.context { fail(context) } }
+    }
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        guard !settled else { return }
+        switch unwrapInboundIn(data) {
+        case let .head(head):
+            if head.status.code < 200 { return }
+            guard status == 0, head.headers.count <= 64 else { fail(context); return }
+            status = Int(head.status.code)
+            for name in ["content-type", "content-length", "content-range", "etag", "x-latch-audit", "retry-after"] {
+                if let value = head.headers[name].first, value.utf8.count <= 4096 { headers[name] = value }
+            }
+        case var .body(buffer):
+            guard status != 0, buffer.readableBytes <= maximum - body.count else { fail(context); return }
+            if let bytes = buffer.readBytes(length: buffer.readableBytes) { body.append(contentsOf: bytes) }
+        case .end:
+            guard status != 0 else { fail(context); return }
+            settled = true; timer?.cancel(); promise.succeed(NativeHTTPResponse(status: status, headers: headers, body: body))
+            context.close(promise: nil)
+        }
+    }
+    func channelInactive(context: ChannelHandlerContext) { if !settled { fail(context) }; context.fireChannelInactive() }
+    func errorCaught(context: ChannelHandlerContext, error: Error) { fail(context) }
+    func handlerRemoved(context: ChannelHandlerContext) { timer?.cancel(); self.context = nil }
+    private func fail(_ context: ChannelHandlerContext) {
+        if !settled { settled = true; timer?.cancel(); promise.fail(NativeFailure.resultUnknown) }
+        context.close(promise: nil)
+    }
+}

@@ -1,5 +1,5 @@
-name: Set up Node.js and dependencies
-description: Installs the Node.js in .node-version, the pnpm pinned in package.json, and the locked dependencies.
+name: Set up Node.js, Go and dependencies
+description: Installs pinned Node.js, the patched Go TLS toolchain, pnpm and locked dependencies.
 
 runs:
   using: composite
@@ -9,6 +9,13 @@ runs:
       with:
         node-version-file: .node-version
         package-manager-cache: false
+
+    - name: Set up patched Go TLS toolchain
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version: '1.26.10'
+        check-latest: false
+        cache: false
 
     # Corepack, bundled with Node.js 24, downloads the pnpm named in packageManager and refuses it
     # unless its sha512 matches the one pinned there.

@@ -52,12 +52,15 @@ describe('bounded binary link records', () => {
         regMac: new Uint8Array(16),
         alternate: false,
       },
+      { type: 'registration-work', routeId: new Uint8Array(16), nonce: new Uint8Array(32), bits: 22 },
+      { type: 'registration-proof', routeId: new Uint8Array(16), nonce: new Uint8Array(32), solution: new Uint8Array(8) },
       { type: 'registered', token: new Uint8Array(32), routeId: new Uint8Array(16), status: 4 },
       { type: 'open', connection: new Uint8Array(8), routeId: new Uint8Array(16) },
       { type: 'attach', routeId: new Uint8Array(16), connection: new Uint8Array(8), nonce: new Uint8Array(16), mac: new Uint8Array(16) },
       { type: 'attached' },
       { type: 'admitted' },
       { type: 'deny', routeId: new Uint8Array(16), tags: [new Uint8Array(16)] },
+      { type: 'deny-ack', routeId: new Uint8Array(16), digest: new Uint8Array(32), count: 8192 },
       { type: 'drop', routeId: new Uint8Array(16) },
       { type: 'depart', state: 2 },
       { type: 'unavailable', state: 1, since: 1 },
@@ -97,5 +100,16 @@ describe('bounded binary link records', () => {
       first = generation.begin()
     generation.changeNetwork()
     expect(generation.current(first)).toBe(false)
+  })
+  it('evicts by bytes as well as event count and never accepts an oversized or invalid measurement', () => {
+    const log = new ResumeLog<string>('bounded', 4, { maxBytes: 5, measure: value => value.length })
+    log.append('123')
+    log.append('456')
+    expect(log.currentSequence()).toBe(2)
+    expect(log.resume('bounded', 0, () => 'snapshot').kind).toBe('snapshot')
+    expect(log.resume('bounded', 1, () => 'snapshot')).toMatchObject({ kind: 'events', events: [{ sequence: 2, value: '456' }] })
+    expect(() => log.append('123456')).toThrow()
+    expect(log.currentSequence()).toBe(2)
+    expect(() => new ResumeLog('invalid', 1, { maxBytes: 0, measure: () => 0 })).toThrow()
   })
 })

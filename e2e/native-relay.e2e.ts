@@ -1,7 +1,7 @@
-import { createHash, createPrivateKey, generateKeyPairSync, randomBytes, sign } from 'node:crypto'
+import { createHash, createPrivateKey, generateKeyPairSync, randomBytes, randomUUID, sign } from 'node:crypto'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { startRelay } from '@latch/relay'
 import {
@@ -10,28 +10,92 @@ import {
   nodeCrypto,
   openNativeHttp,
   verifyAddressBook,
+  verifyNativeRevocation,
+  RelayClosed,
+  RelayControl,
   type NativeHttpClient,
 } from '@latch/link-client'
-import { decodePass, nativeKnockSecret, nativeVerificationText, routeId } from '@latch/link-wire'
+import { decodePass, nativeKnockSecret, nativeRevocationInput, nativeVerificationText, routeId } from '@latch/link-wire'
 import { startTestHost } from './helpers/host.ts'
 
+const observedTls = vi.hoisted(() => ({ inner: 0, outer: 0, tickets: 0, resumed: 0, protocols: new Set<string>() }))
+vi.mock('node:tls', async importOriginal => {
+  const original = await importOriginal<typeof import('node:tls')>()
+  return {
+    ...original,
+    connect(options: import('node:tls').ConnectionOptions, callback?: () => void) {
+      const socket = original.connect(options, callback)
+      socket.on('session', () => {
+        observedTls.tickets++
+      })
+      socket.once('secureConnect', () => {
+        if (options.servername === 'transport.latch.invalid') observedTls.inner++
+        else observedTls.outer++
+        observedTls.protocols.add(socket.getProtocol() ?? 'unknown')
+        if (socket.isSessionReused()) observedTls.resumed++
+      })
+      return socket
+    },
+  }
+})
+vi.mock('node:https', async importOriginal => {
+  const original = await importOriginal<typeof import('node:https')>()
+  return {
+    ...original,
+    request(url: URL, options: import('node:https').RequestOptions) {
+      const req = original.request(url, options)
+      req.once('socket', socket => {
+        const tls = socket as import('node:tls').TLSSocket
+        tls.on('session', () => {
+          observedTls.tickets++
+        })
+        tls.once('secureConnect', () => {
+          observedTls.outer++
+          observedTls.protocols.add(tls.getProtocol() ?? 'unknown')
+          if (tls.isSessionReused()) observedTls.resumed++
+        })
+      })
+      return req
+    },
+  }
+})
 const cleanup: Array<() => void | Promise<void>> = []
 afterEach(async () => {
   vi.restoreAllMocks()
   for (const close of cleanup.splice(0).toReversed()) await close()
+  observedTls.inner = 0
+  observedTls.outer = 0
+  observedTls.tickets = 0
+  observedTls.resumed = 0
+  observedTls.protocols.clear()
 })
 function ok<T>(result: { status: number; body: unknown }, status = 200): T {
   expect(result.status).toBe(status)
   return result.body as T
 }
 
-it('pairs through a real private relay, caches passes before commit, and survives lost create/complete acknowledgements', async () => {
+it('pairs through a private relay and preserves recovery and revocation across lost acknowledgements and policy reconnects', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'latch-native-relay-e2e-'))
   cleanup.push(() => rm(directory, { recursive: true, force: true }))
   const tls = createTransportCertificate(Date.now(), 3_600_000, 'localhost'),
     relayId = randomBytes(16),
     token = randomBytes(32)
-  const relay = await startRelay({ host: '127.0.0.1', port: 0, cert: tls.cert, key: tls.key, relayId, registrationToken: token })
+  const relay = await startRelay({
+    host: '127.0.0.1',
+    port: 0,
+    cert: tls.cert,
+    key: tls.key,
+    relayId,
+    registrationToken: token,
+    maxConnections: 32,
+    gateway: {
+      binary: resolve('dist/relay/latch-relay-tls'),
+      maxHandshakes: 8,
+      handshakesPerSecond: 100,
+      handshakeBurst: 8,
+      prefixFraction: 1,
+    },
+  })
   cleanup.push(() => relay.close())
   const dataDir = join(directory, 'data'),
     nativeDir = join(dataDir, 'native')
@@ -155,17 +219,18 @@ it('pairs through a real private relay, caches passes before commit, and survive
   expect(regular.pairing).toBe(false)
   const registeredTunnel = await connectRelayTunnel({ ...endpoint, pass: selected.pass, holderKey: selected.holderSeed })
   registeredTunnel.on('error', () => {})
+  const regularOptions = {
+    rootSpki,
+    certificate: device.cert,
+    key: device.key,
+    knockKey: await nodeCrypto.hash(
+      await nativeKnockSecret(nodeCrypto, knockKey, device.spki, verification.publicKey.export({ type: 'spki', format: 'der' })),
+    ),
+  }
   const registered = await openNativeHttp(
     registeredTunnel,
     { ...binding, routeId: await routeId(nodeCrypto, regular.routePub) },
-    {
-      rootSpki,
-      certificate: device.cert,
-      key: device.key,
-      knockKey: await nodeCrypto.hash(
-        await nativeKnockSecret(nodeCrypto, knockKey, device.spki, verification.publicKey.export({ type: 'spki', format: 'der' })),
-      ),
-    },
+    regularOptions,
   )
   cleanup.push(() => registered.close())
   const snapshot = ok<{ device: { id: string; status: string; scopes: string[] } }>(await registered.request('GET', '/link/api/snapshot'))
@@ -199,4 +264,69 @@ it('pairs through a real private relay, caches passes before commit, and survive
   await vi.waitFor(() => expect(registered.isClosed()).toBe(true), { timeout: 3000 })
   await vi.waitFor(() => expect(relay.status().connections).toBe(0), { timeout: 3000 })
   expect(host.host.security.devices.get(prepared.deviceId)?.status).toBe('review')
+  host.presence.mode = 'approve'
+  expect(
+    (await desktop.confirmed('policy', { method: 'PATCH', body: { hostEgressAllow: { add: [`localhost:${relay.port}`] } } })).status,
+  ).toBe(200)
+  await vi.waitFor(
+    async () => {
+      const info = await desktop.json<{ relays: Array<{ status: string }> }>('native/info')
+      expect(info.relays[0]?.status).toBe('connected')
+    },
+    { timeout: 3000 },
+  )
+  await host.host.security.devices.revoke(prepared.deviceId, 'manual', { listener: 'host' })
+  const tombstoneTunnel = await connectRelayTunnel({ ...endpoint, pass: selected.pass, holderKey: selected.holderSeed })
+  tombstoneTunnel.on('error', () => {})
+  const tombstoneClient = await openNativeHttp(
+    tombstoneTunnel,
+    { ...binding, routeId: await routeId(nodeCrypto, regular.routePub) },
+    regularOptions,
+  )
+  cleanup.push(() => tombstoneClient.close())
+  expect((await tombstoneClient.request('GET', '/link/api/snapshot')).status).toBe(401)
+  const envelope = ok<{ revocation: unknown }>(await tombstoneClient.request('GET', '/link/api/native/revocation')),
+    revocation = verifyNativeRevocation(envelope.revocation, { rootSpki, hostId: host.host.hostId, deviceId: prepared.deviceId })
+  const acknowledge = host.host.security.devices.acknowledgeNativeRevocation.bind(host.host.security.devices),
+    deny = vi.spyOn(RelayControl.prototype, 'deny')
+  const lostAck = vi.spyOn(host.host.security.devices, 'acknowledgeNativeRevocation').mockImplementationOnce(async (...args) => {
+    await acknowledge(...args)
+    tombstoneClient.close()
+  })
+  await expect(
+    tombstoneClient.request('POST', '/link/api/native/revocation/ack', {
+      requestId: randomUUID(),
+      tombstoneHash: createHash('sha256')
+        .update(nativeRevocationInput(revocation.hostId, revocation.deviceId, revocation.revokedAt))
+        .digest('hex'),
+    }),
+  ).rejects.toThrow()
+  lostAck.mockRestore()
+  const denied = async () => {
+    try {
+      const tunnel = await connectRelayTunnel({ ...endpoint, pass: selected.pass, holderKey: selected.holderSeed })
+      tunnel.destroy()
+      return false
+    } catch (error) {
+      return error instanceof RelayClosed && error.closeCode === 4100
+    }
+  }
+  await vi.waitFor(async () => expect(await denied()).toBe(true), { timeout: 5000 })
+  expect(host.host.security.devices.nativeRevocations().find(item => item.id === prepared.deviceId)?.acknowledged).toBe(true)
+  await vi.waitFor(() => expect(deny.mock.calls.length).toBeGreaterThanOrEqual(3), { timeout: 3000 })
+  expect(
+    (await desktop.request('policy', { method: 'PATCH', body: { hostEgressAllow: { remove: [`localhost:${relay.port}`] } } })).status,
+  ).toBe(200)
+  await vi.waitFor(() => expect(relay.status().connections).toBe(0), { timeout: 3000 })
+  deny.mockClear()
+  expect(
+    (await desktop.confirmed('policy', { method: 'PATCH', body: { hostEgressAllow: { add: [`localhost:${relay.port}`] } } })).status,
+  ).toBe(200)
+  await vi.waitFor(() => expect(deny.mock.calls.length).toBeGreaterThanOrEqual(3), { timeout: 5000 })
+  expect(await denied()).toBe(true)
+  expect(observedTls.inner).toBeGreaterThan(0)
+  expect(observedTls.outer).toBeGreaterThan(0)
+  expect([...observedTls.protocols]).toEqual(['TLSv1.3'])
+  expect(observedTls.resumed).toBe(0)
+  expect(observedTls.tickets).toBe(0)
 })

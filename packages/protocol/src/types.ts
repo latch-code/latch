@@ -598,7 +598,7 @@ export interface HostView {
     reason?: Extract<PresenceAvailability, { status: 'unavailable' }>['reason']
   }
   tls: { origin: string } | null
-  native?: { enabled: boolean; inputsPaused: boolean }
+  native?: { enabled: boolean; inputsPaused: boolean; discoveryEpoch?: string }
   policy: { localMaxLevel: PermissionLevel; remoteMaxLevel: PermissionLevel; allowL3: boolean }
   /** The Host hands a rejection's note (「告诉 Agent 改做什么」) to the built-in harness; older Hosts drop it. */
   rejectionNote?: true
@@ -764,6 +764,8 @@ export interface AppSnapshot {
 }
 
 export interface ChangeEvent {
+  /** Optional SHA-256 discovery-key cache hint; does not unlock content or advance body cursors. */
+  discoveryEpoch?: string
   type: 'refresh' | 'tasks-invalidated'
   instanceId: string
   revision: number

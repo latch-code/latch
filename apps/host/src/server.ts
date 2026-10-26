@@ -82,11 +82,21 @@ import { AuditLog, type AuditActor, type StepupMethod } from './audit.ts'
 import { excludeFromBackup } from './backup.ts'
 import { DeviceStore, EnrollmentService, type ConnectionContext, type DeviceScopeBase } from './auth.ts'
 import { hashDisplay, parseP256Spki, randomNonce, verifyP256 } from './crypto.ts'
-import { nativeRecoverySecret, nativeVerificationText, nativeWindowSecret } from '@latch/link-wire'
+import {
+  discoveryEpochInput,
+  nativeRecoverySecret,
+  nativeRevocationInput,
+  nativeVerificationText,
+  nativeWindowSecret,
+} from '@latch/link-wire'
 import { nodeCrypto } from '@latch/link-client'
 import { startNativeHost, type NativeOpening } from './native.ts'
+import { NativeNetwork } from './native-network.ts'
+import { NativeNetworks } from './native-networks.ts'
+import { MacNetworkBackend, type NativeNetworkBackend } from './native-network-backend.ts'
 import { NativeSettings, nativeAddresses } from './native-settings.ts'
-import { RelayProfiles } from './relay/profiles.ts'
+import { NativeReplay } from './native-replay.ts'
+import { RelayProfiles, secretBytes } from './relay/profiles.ts'
 import { HostAddressBooks } from './relay/address-book.ts'
 import { HostRelayController } from './relay/controller.ts'
 import {
@@ -520,6 +530,8 @@ export interface ServerOptions {
   agentPlugin?: (agent: AgentRecord) => HarnessPlugin
   tls?: TlsListenerOptions
   native?: { host: string; port: number }
+  /** Private platform discovery backend; tests disable it explicitly. */
+  nativeNetwork?: false | (() => Promise<NativeNetworkBackend>)
   /** Extra platform trust anchors for privately operated relay TLS, supplied only by the Host operator. */
   nativeRelayCa?: string | Buffer
   /** Tests; default per-user runtime dir. */
@@ -1044,7 +1056,46 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     const enrollments = new EnrollmentService({ hostId, devices, presence, audit, directory: authDir, now })
     const relayProfiles = await RelayProfiles.open(dataDir)
     await excludeFromBackup([join(dataDir, 'native')], { log })
-    const addressBooks = new HostAddressBooks(relayProfiles, identity, () => [])
+    let nativeNetwork: NativeNetwork | undefined
+    const addressBooks = new HostAddressBooks(relayProfiles, identity, () => nativeNetwork?.lan() ?? [])
+    const revokedDiscoveryHash = () =>
+      sha256Hex(
+        canonicalJson(
+          devices
+            .list()
+            .filter(device => device.status === 'revoked')
+            .map(device => ({ id: device.id, revokedAt: device.revokedAt })),
+        ),
+      )
+    const discoveryEpoch = () => sha256Hex(discoveryEpochInput(secretBytes(relayProfiles.snapshot().discoveryKey)))
+    await relayProfiles.rotateDiscovery(revokedDiscoveryHash())
+    let discoveryRotation: Promise<void> | undefined
+    function synchronizeNativeDiscovery(): Promise<void> {
+      if (discoveryRotation) return discoveryRotation
+      const operation = (async () => {
+        let changed = false
+        for (;;) {
+          const hash = revokedDiscoveryHash(),
+            before = relayProfiles.snapshot().discoveryKey
+          await relayProfiles.rotateDiscovery(hash)
+          changed ||= before !== relayProfiles.snapshot().discoveryKey
+          if (hash === revokedDiscoveryHash()) break
+        }
+        nativeNetwork?.invalidate()
+        if (changed) refresh()
+      })()
+      discoveryRotation = operation
+      void operation
+        .finally(() => {
+          if (discoveryRotation === operation) discoveryRotation = undefined
+        })
+        .catch(() => {})
+      return operation
+    }
+    devices.onRevoked(() => {
+      nativeNetwork?.invalidate()
+      void synchronizeNativeDiscovery().catch(() => log('Native discovery key rotation failed'))
+    })
     const limits = createRateLimits(options.rateLimits ?? 'default', now)
     /**
      * Hashes of invitation codes this Host handed out, with their expiry and the listener they are for; only these, on
@@ -1465,6 +1516,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     let revision = 0
     const streams = new Map<ServerResponse, EventStream>()
+    const nativeReplay = new NativeReplay(instanceId)
     const pendingTasks = new Map<string, number>()
     const summaries = new Map<string, string>()
     // One decision per approval at a time, so a retried request sees the first one's outcome.
@@ -1750,7 +1802,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         devMode: true,
         presence: await presenceStatus(),
         tls: tlsOrigin ? { origin: tlsOrigin } : null,
-        native: { enabled: nativeHost?.enabled ?? false, inputsPaused: devices.nativeInputsPaused() },
+        native: { enabled: nativeHost?.enabled ?? false, inputsPaused: devices.nativeInputsPaused(), discoveryEpoch: discoveryEpoch() },
         policy: { localMaxLevel: current.local.maxLevel, remoteMaxLevel: current.remote.maxLevel, allowL3: current.local.allowL3 },
         rejectionNote: true,
       }
@@ -3421,6 +3473,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     function streamAllowed(stream: EventStream): boolean {
       return (
         (!stream.nativeOpening || nativeVerifiedUntil(stream.nativeOpening) > now())
+        && devices.get(stream.deviceId)?.scopes.includes('view') === true
         && devices.streamAllowed(stream.deviceId, stream.credentialHash)
       )
     }
@@ -3442,6 +3495,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         return
       }
       let frame = frames.get(event)
+      if (stream.nativeOpening) {
+        frame =
+          nativeReplay.frame(event)
+          ?? `id: ${nativeReplay.cursor()}\nevent: ${event.type}\ndata: ${JSON.stringify({ ...event, resumeRequired: true })}\n\n`
+      }
       if (frame === undefined) {
         frame = `id: ${event.revision}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`
         frames.set(event, frame)
@@ -3505,7 +3563,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       pendingGlobal = false
       pendingTasks.clear()
       try {
-        if (global) for (const res of streams.keys()) send(res, { type: 'refresh', instanceId, revision: globalRevision })
+        if (global) {
+          const event = nativeReplay.publish({ type: 'refresh', instanceId, revision: globalRevision, discoveryEpoch: discoveryEpoch() })
+          for (const res of streams.keys()) send(res, event)
+        }
         let fallback = false
         for (const [sessionId] of tasks) {
           let detail: TaskDetail
@@ -3521,21 +3582,27 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           const summaryChanged = summaries.get(sessionId) !== signature
           summaries.set(sessionId, signature)
           const sentAt = hostTime()
-          const event: TaskStateEvent = {
+          const event = nativeReplay.publish({
             type: 'task-state',
             instanceId,
             revision: globalRevision,
             sessionId,
             detail: { ...detail, sync: { instanceId, revision: globalRevision, hostTime: sentAt } },
             hostTime: sentAt,
-          }
+          })
+          const invalidated = summaryChanged
+            ? nativeReplay.publish({ type: 'tasks-invalidated', instanceId, revision: globalRevision, sessionId })
+            : undefined
           for (const [res, stream] of streams) {
             if (stream.sessionId === sessionId) send(res, event)
-            else if (summaryChanged) send(res, { type: 'tasks-invalidated', instanceId, revision: globalRevision, sessionId })
+            else if (invalidated) send(res, invalidated)
           }
         }
         for (const [sessionId] of tasks) void promptQueues.changed(sessionId).catch(() => log('排队状态未能更新，请手动检查队列'))
-        if (fallback && !global) for (const res of streams.keys()) send(res, { type: 'refresh', instanceId, revision: globalRevision })
+        if (fallback && !global) {
+          const event = nativeReplay.publish({ type: 'refresh', instanceId, revision: globalRevision, discoveryEpoch: discoveryEpoch() })
+          for (const res of streams.keys()) send(res, event)
+        }
       } finally {
         flushing = false
         if (pendingGlobal || pendingTasks.size) scheduleEvents()
@@ -3555,7 +3622,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (!streamAllowed(stream)) {
           res.end()
           streams.delete(res)
-        } else write(res, stream, 'heartbeat', ': heartbeat\n\n')
+        } else write(res, stream, 'heartbeat', stream.nativeOpening ? `id: ${nativeReplay.cursor()}\n: heartbeat\n\n` : ': heartbeat\n\n')
       }
     }, 15_000)
     heartbeat.unref()
@@ -5564,6 +5631,39 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     ): Promise<void> {
       const connection = connectionOf(req, listener)
       const nativeOpening = nativeRequests.get(req)
+      if (nativeOpening && !nativeOpening.pairing) {
+        const revoked = devices.nativeRevocations().find(item => item.id === nativeOpening.deviceId)
+        if (revoked) {
+          const statement = nativeRevocationInput(hostId, revoked.id, revoked.revokedAt),
+            hash = sha256Hex(statement)
+          if (path === '/link/api/native/revocation' && method === 'GET') {
+            json(res, {
+              revocation: {
+                hostId,
+                deviceId: revoked.id,
+                revokedAt: revoked.revokedAt,
+                signature: Buffer.from(identity.sign(statement)).toString('base64url'),
+              },
+            })
+            return
+          }
+          if (path === '/link/api/native/revocation/ack' && method === 'POST') {
+            const input = z
+              .strictObject({ requestId: z.uuid(), tombstoneHash: z.string().regex(/^[a-f0-9]{64}$/u) })
+              .parse(await jsonBody(req))
+            if (input.tombstoneHash !== hash) throw authFailure('unauthorized')
+            await devices.acknowledgeNativeRevocation(revoked.id, revoked.revokedAt)
+            json(res, { acknowledged: true })
+            return
+          }
+          throw authFailure('device-revoked')
+        }
+        if (path === '/link/api/native/revocation' && method === 'GET') {
+          if (!devices.authenticateNative(nativeOpening.deviceId).ok) throw authFailure('unauthorized')
+          json(res, { revocation: null })
+          return
+        }
+      }
       if (path === '/link/api/native/pairing' && method === 'GET') {
         if (!nativeOpening?.pairing) throw authFailure('unauthorized')
         json(res, { enrollment: nativeOpening.enrollmentId ? enrollments.nativeStatus(nativeOpening.enrollmentId, connection) : null })
@@ -5600,6 +5700,16 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         return
       }
       if (nativeOpening && !nativeOpening.pairing) {
+        if (path === '/link/api/native/proximity' && method === 'POST') {
+          requireScope(caller, 'view')
+          recheck(caller, 'view')
+          const input = z.strictObject({ gatewayHash: z.string().regex(/^[a-f0-9]{64}$/u) }).parse(await jsonBody(req))
+          const nearby =
+            (await nativeNetwork?.nearby(nativeOpening, Buffer.from(input.gatewayHash, 'hex'), () => recheck(caller, 'view'))) ?? false
+          recheck(caller, 'view')
+          json(res, { nearby })
+          return
+        }
         if (path === '/link/api/native/verification/challenge' && method === 'POST') {
           const input = z
             .object({ appOpenId: z.string().regex(/^[A-Za-z0-9_-]{16,80}$/u) })
@@ -5758,8 +5868,33 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
       if (path === '/link/api/events' && method === 'GET') {
         requireScope(caller, 'view')
-        const sessionId = new URL(req.url ?? '/', 'http://latch.invalid').searchParams.get('sessionId') ?? undefined
+        const query = new URL(req.url ?? '/', 'http://latch.invalid').searchParams
+        const sessionId = query.get('sessionId') ?? undefined
         if (sessionId && sessionId.length > 256) throw new AppError(400, 'invalid-session', '会话标识过长')
+        if (nativeOpening && sessionId) {
+          await hub!.summary(sessionId)
+          recheck(caller, 'view')
+        }
+        let resume: ReturnType<NativeReplay['resume']> | undefined
+        if (nativeOpening && (query.has('resumeEpoch') || query.has('resumeAfter'))) {
+          if (
+            [...query.keys()].some(key => !['sessionId', 'resumeEpoch', 'resumeAfter'].includes(key))
+            || [...new Set(query.keys())].some(key => query.getAll(key).length !== 1)
+          )
+            throw new AppError(400, 'invalid-resume', '恢复位置无效')
+          const epoch = query.get('resumeEpoch'),
+            after = query.get('resumeAfter')
+          if (
+            !epoch
+            || epoch.length > 128
+            || !/^[A-Za-z0-9_-]+$/u.test(epoch)
+            || !after
+            || !/^(?:0|[1-9][0-9]{0,15})$/u.test(after)
+            || !Number.isSafeInteger(Number(after))
+          )
+            throw new AppError(400, 'invalid-resume', '恢复位置无效')
+          resume = nativeReplay.resume(epoch, Number(after), sessionId)
+        }
         if (!caller.credentialHash) throw authFailure('unauthorized')
         res.writeHead(200, {
           'content-type': 'text/event-stream',
@@ -5773,10 +5908,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           credentialHash: caller.credentialHash,
           ...(nativeOpening ? { nativeOpening } : {}),
           ...(sessionId ? { sessionId } : {}),
-          lastSentRevision: revision,
+          lastSentRevision: nativeOpening && resume?.kind === 'events' ? 0 : revision,
           meter,
         })
-        send(res, { type: 'refresh', instanceId, revision })
+        if (resume?.kind === 'events') {
+          for (const event of resume.events) send(res, event)
+          const stream = streams.get(res)
+          if (stream && streamAllowed(stream)) write(res, stream, 'heartbeat', `id: ${nativeReplay.cursor()}\n: resumed\n\n`)
+        } else send(res, { type: 'refresh', instanceId, revision, discoveryEpoch: discoveryEpoch() })
         req.on('close', () => {
           streams.delete(res)
           traffic.close(meter)
@@ -6065,6 +6204,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     })
     {
       nativeHost = await startNativeHost({
+        tlsBinary: join(codeRoot, 'dist/native/latch-native-tls'),
         identity,
         devices,
         enrollments,
@@ -6098,6 +6238,24 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       })
       const controller = relayController
       startupCleanup.push(() => controller.close())
+      if (options.nativeNetwork !== false && (process.platform === 'darwin' || options.nativeNetwork)) {
+        nativeNetwork = new NativeNetwork({
+          profiles: relayProfiles,
+          networks: await NativeNetworks.open(dataDir),
+          audit,
+          backend: options.nativeNetwork || (() => MacNetworkBackend.open(join(codeRoot, 'dist/native/latch-network'))),
+          direct: () => native.direct,
+          automatic: () => !options.native && relayProfiles.snapshot().direct?.host === 'auto',
+          rebind: snapshot =>
+            nativeSettings?.syncNetwork(snapshot, () => !closing && nativeNetwork?.currentEpoch() === snapshot.epoch) ?? Promise.resolve(),
+          pairing: () => enrollments.nativeInvitations().length > 0,
+          discoveryReady: () => relayProfiles.snapshot().discoveryRevocationsHash === revokedDiscoveryHash(),
+          synchronizeDiscovery: synchronizeNativeDiscovery,
+          now,
+        })
+        const network = nativeNetwork
+        startupCleanup.push(() => network.close())
+      }
       nativeSettings = new NativeSettings({
         profiles: relayProfiles,
         native,
@@ -6105,6 +6263,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         audit,
         managedDirect: options.native,
         inputsPaused: () => devices.nativeInputsPaused(),
+        changed: () => nativeNetwork?.invalidate(),
+        resolveDirect: direct => {
+          if (!nativeNetwork) throw new AppError(503, 'native-network-unavailable', '手机连接组件不可用，请更新并重新构建 Latch 后重试')
+          return nativeNetwork.resolveDirect(direct, native.direct)
+        },
       })
     }
     const started = listeners
@@ -6152,6 +6315,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       close() {
         return (shutdown ??= (async () => {
           closing = true
+          await nativeNetwork?.close()
           await relayController?.close()
           await nativeHost?.close()
           clearInterval(heartbeat)
@@ -6180,6 +6344,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               }),
             // The listeners are closed, so requests have stopped arriving; this drains the device writes they queued.
             () => devices.close(),
+            () => discoveryRotation?.catch(() => {}) ?? Promise.resolve(),
             () => audit.close(),
           ]) {
             try {

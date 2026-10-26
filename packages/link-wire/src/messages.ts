@@ -26,6 +26,8 @@ export type RelayMessage =
       regMac: Uint8Array
       alternate: boolean
     }
+  | { type: 'registration-work'; routeId: Uint8Array; nonce: Uint8Array; bits: number }
+  | { type: 'registration-proof'; routeId: Uint8Array; nonce: Uint8Array; solution: Uint8Array }
   | { type: 'registered'; token: Uint8Array; routeId: Uint8Array; status: 0 | 1 | 4 | 5 | 6 }
   | { type: 'admit'; proof: AdmissionProof }
   | { type: 'admitted' }
@@ -34,6 +36,7 @@ export type RelayMessage =
   | { type: 'attached' }
   | { type: 'spliced'; connection: Uint8Array; passTag: Uint8Array }
   | { type: 'deny'; routeId: Uint8Array; tags: Uint8Array[] }
+  | { type: 'deny-ack'; routeId: Uint8Array; digest: Uint8Array; count: number }
   | { type: 'drop'; routeId: Uint8Array }
   | { type: 'depart'; state: 1 | 2 | 3 }
   | { type: 'unavailable'; state: number; since: number }
@@ -43,6 +46,7 @@ const tags = {
   admit: 16,
   hello: 32,
   register: 33,
+  'registration-proof': 34,
   deny: 36,
   drop: 37,
   depart: 38,
@@ -50,7 +54,9 @@ const tags = {
   challenge: 64,
   registered: 65,
   open: 66,
+  'deny-ack': 67,
   goaway: 68,
+  'registration-work': 69,
   attached: 80,
   spliced: 81,
   admitted: 96,
@@ -79,6 +85,13 @@ export function encodeMessage(message: RelayMessage): Uint8Array {
         uint(message.alternate ? 1 : 0, 1),
       )
       break
+    case 'registration-work':
+      if (!Number.isInteger(message.bits) || message.bits < 0 || message.bits > 22) throw new RangeError('Invalid registration work bits')
+      body = concat(fixed(message.routeId, 16), fixed(message.nonce, 32), uint(message.bits, 1))
+      break
+    case 'registration-proof':
+      body = concat(fixed(message.routeId, 16), fixed(message.nonce, 32), fixed(message.solution, 8))
+      break
     case 'registered':
       body = concat(fixed(message.token, 32), fixed(message.routeId, 16), uint(message.status, 1))
       break
@@ -106,6 +119,10 @@ export function encodeMessage(message: RelayMessage): Uint8Array {
     case 'deny':
       if (message.tags.length > 1024) throw new RangeError('DENY too large')
       body = concat(fixed(message.routeId, 16), uint(message.tags.length, 2), ...message.tags.map(tag => fixed(tag, 16)))
+      break
+    case 'deny-ack':
+      if (message.count > 8192) throw new RangeError('DENY count too large')
+      body = concat(fixed(message.routeId, 16), fixed(message.digest, 32), uint(message.count, 2))
       break
     case 'depart':
       body = uint(message.state, 1)
@@ -154,6 +171,17 @@ export function decodeMessage(bytes: Uint8Array): RelayMessage {
       value = { type: 'register', previous, day, routePub, signature, regMac, alternate: flags === 1 }
       break
     }
+    case 69: {
+      const routeId = reader.take(16),
+        nonce = reader.take(32),
+        bits = reader.number(1)
+      if (bits > 22) throw new RangeError('Invalid registration work bits')
+      value = { type: 'registration-work', routeId, nonce, bits }
+      break
+    }
+    case 34:
+      value = { type: 'registration-proof', routeId: reader.take(16), nonce: reader.take(32), solution: reader.take(8) }
+      break
     case 65: {
       const token = reader.take(32),
         routeId = reader.take(16),
@@ -188,6 +216,14 @@ export function decodeMessage(bytes: Uint8Array): RelayMessage {
         size = reader.number(2)
       if (size > 1024) throw new RangeError('DENY too large')
       value = { type: 'deny', routeId, tags: Array.from({ length: size }, () => reader.take(16)) }
+      break
+    }
+    case 67: {
+      const routeId = reader.take(16),
+        digest = reader.take(32),
+        count = reader.number(2)
+      if (count > 8192) throw new RangeError('DENY count too large')
+      value = { type: 'deny-ack', routeId, digest, count }
       break
     }
     case 37:

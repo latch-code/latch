@@ -31,7 +31,8 @@ export class HostAddressBooks {
   private async build(deviceId: string): Promise<string> {
     const generation = await this.profiles.nextGeneration(),
       state = this.profiles.snapshot()
-    const fingerprint = sha256Hex(canonicalJson({ discoveryKey: state.discoveryKey, profiles: state.profiles }))
+    const lan = [...this.lan()]
+    const fingerprint = sha256Hex(canonicalJson({ discoveryKey: state.discoveryKey, profiles: state.profiles, lan }))
     const now = Date.now(),
       day = Math.floor(now / 1000 / UTC_DAY)
     const book: NativeAddressBook = {
@@ -41,7 +42,7 @@ export class HostAddressBooks {
       issuedAt: now,
       expiresAt: (day + 31) * UTC_DAY * 1000,
       discoveryKey: secretBytes(state.discoveryKey),
-      lan: [...this.lan()],
+      lan,
       relays: [],
     }
     for (const profile of state.profiles) {
@@ -67,7 +68,7 @@ export class HostAddressBooks {
       book.relays.push({ relayId, url: profile.url, spkiHash: Buffer.from(profile.spkiHash, 'hex'), passes })
     }
     const current = this.profiles.snapshot()
-    if (fingerprint !== sha256Hex(canonicalJson({ discoveryKey: current.discoveryKey, profiles: current.profiles })))
+    if (fingerprint !== sha256Hex(canonicalJson({ discoveryKey: current.discoveryKey, profiles: current.profiles, lan: [...this.lan()] })))
       throw new AppError(409, 'native-book-changed', '中继配置已变化，请重新取得连接簿')
     return signAddressBook(book, this.identity)
   }

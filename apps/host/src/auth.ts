@@ -116,6 +116,7 @@ const storedDevice = z.strictObject({
       verificationKey: z.string().max(256),
       lastVerifiedAt: z.number().int().nonnegative(),
       knockHash: hex64,
+      revocationAcknowledgedAt: z.number().int().nonnegative().optional(),
     })
     .optional(),
   revokedAt: z.number().optional(),
@@ -830,6 +831,41 @@ export class DeviceStore {
         certificate: device.native!.certificate,
         knockKey: Buffer.from(device.native!.knockHash, 'hex'),
       }))
+  }
+
+  nativeRevocations(): Array<{ id: string; revokedAt: number; acknowledged: boolean }> {
+    return this.state.devices
+      .filter(device => device.native && device.status === 'revoked' && device.revokedAt !== undefined)
+      .map(device => ({ id: device.id, revokedAt: device.revokedAt!, acknowledged: device.native!.revocationAcknowledgedAt !== undefined }))
+  }
+  nativeTransportCandidates(): ReturnType<DeviceStore['nativeCandidates']> {
+    const now = this.now()
+    const revoked = this.state.devices
+      .filter(
+        device => device.native && device.status === 'revoked' && device.revokedAt !== undefined && now - device.revokedAt < PRUNE_AFTER,
+      )
+      .map(device => ({
+        id: device.id,
+        kind: 'registered' as const,
+        certificate: device.native!.certificate,
+        knockKey: Buffer.from(device.native!.knockHash, 'hex'),
+      }))
+    return [...this.nativeCandidates(), ...revoked]
+  }
+  acknowledgeNativeRevocation(deviceId: string, revokedAt: number): Promise<void> {
+    return this.serialize(async () => {
+      const device = this.find(deviceId)
+      if (!device?.native || device.status !== 'revoked' || device.revokedAt !== revokedAt)
+        throw new AppError(401, 'unauthorized', '设备认证失败')
+      if (device.native.revocationAcknowledgedAt !== undefined) return
+      device.native.revocationAcknowledgedAt = this.now()
+      try {
+        await this.persist()
+      } catch (error) {
+        delete device.native.revocationAcknowledgedAt
+        throw error
+      }
+    })
   }
 
   nativeInputsPaused(): boolean {

@@ -1,0 +1,8 @@
+# Review and load on the dedicated Linux relay host. It changes no other table.
+# The unprivileged process binds 8443; redirect retains the actual source address.
+table inet latch_relay {
+  chain public_tls {
+    type nat hook prerouting priority dstnat; policy accept;
+    tcp dport 443 redirect to :8443
+  }
+}

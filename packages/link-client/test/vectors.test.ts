@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises'
-import { createPublicKey, verify, X509Certificate } from 'node:crypto'
+import { scryptSync, createPublicKey, verify, X509Certificate } from 'node:crypto'
 import { expect, it, vi } from 'vitest'
 import {
   ascii,
@@ -18,10 +18,82 @@ import {
   addressBookSigningInput,
   decodeMessage,
   encodeMessage,
+  denyBatchInput,
+  denyBatchDigest,
+  discoveryEpochInput,
+  registrationWorkInput,
+  workDigestMeetsBits,
+  REGISTRATION_WORK,
+  mdnsDigest,
+  mdnsSigningInput,
+  mdnsTarget,
+  gatewaySigningInput,
+  gatewayHash,
 } from '@latch/link-wire'
 import { NativeAddressBookCache } from '../src/address-book.ts'
 import { nodeCrypto } from '../src/crypto.ts'
+import { verifyNativeRevocation } from '../src/revocation.ts'
+import { nativeRevocationInput } from '@latch/link-wire'
 import { nativeKnockSecret, nativeRecoverySecret, nativeVerificationText, nativeWindowSecret, pairingCode } from '@latch/link-wire'
+
+it('accepts credential removal only for the fixed Root and current device revocation vector', async () => {
+  const { nativeRevocation: vector } = JSON.parse(
+    await readFile(new URL('../../testkit/vectors/link-v1.json', import.meta.url), 'utf8'),
+  ) as {
+    nativeRevocation: {
+      rootSpki: string
+      hostId: string
+      deviceId: string
+      revokedAt: number
+      input: string
+      tombstoneHash: string
+      signature: string
+    }
+  }
+  const { rootSpki, input, tombstoneHash, ...revocation } = vector,
+    identity = { ...revocation, rootSpki: unhex(rootSpki) }
+  expect(hex(nativeRevocationInput(vector.hostId, vector.deviceId, vector.revokedAt))).toBe(input)
+  expect(hex(await nodeCrypto.hash(unhex(input)))).toBe(tombstoneHash)
+  expect(verifyNativeRevocation(revocation, identity)).toEqual(revocation)
+  for (const item of [
+    { ...revocation, deviceId: `dev_${'X'.repeat(22)}` },
+    { ...revocation, revokedAt: revocation.revokedAt + 1 },
+    { ...revocation, signature: 'A'.repeat(86) },
+  ])
+    expect(() => verifyNativeRevocation(item, identity)).toThrow()
+  expect(() => verifyNativeRevocation(revocation, { ...identity, rootSpki: new Uint8Array(91) })).toThrow()
+})
+
+it('matches private discovery and durable DENY acknowledgement shared vectors', async () => {
+  const vector = JSON.parse(await readFile(new URL('../../testkit/vectors/link-v1.json', import.meta.url), 'utf8')) as {
+    discovery: {
+      key: string
+      day: number
+      epoch: { input: string; hash: string }
+      names: Array<{ alternate: boolean; input: string; digest: string; label: string; target: string }>
+      gateways: Array<{ address: string; prefixLength: number; gateway: string; input: string; hash: string }>
+    }
+    denyAck: { routeId: string; tags: string[]; input: string; digest: string; count: number; encoded: string }
+  }
+  expect(hex(discoveryEpochInput(unhex(vector.discovery.key)))).toBe(vector.discovery.epoch.input)
+  expect(hex(await nodeCrypto.hash(discoveryEpochInput(unhex(vector.discovery.key))))).toBe(vector.discovery.epoch.hash)
+  for (const name of vector.discovery.names) {
+    expect(hex(mdnsSigningInput(vector.discovery.day, name.alternate))).toBe(name.input)
+    expect(hex(await mdnsDigest(nodeCrypto, unhex(vector.discovery.key), vector.discovery.day, name.alternate))).toBe(name.digest)
+    expect(mdnsTarget(name.label)).toBe(name.target)
+  }
+  for (const network of vector.discovery.gateways) {
+    expect(hex(gatewaySigningInput(network.address, network.prefixLength, network.gateway))).toBe(network.input)
+    expect(hex(await gatewayHash(nodeCrypto, network.address, network.prefixLength, network.gateway))).toBe(network.hash)
+  }
+  const ack = vector.denyAck,
+    id = unhex(ack.routeId),
+    batch = ack.tags.map(tag => unhex(tag))
+  expect(hex(denyBatchInput(id, batch))).toBe(ack.input)
+  expect(hex(await denyBatchDigest(nodeCrypto, id, batch))).toBe(ack.digest)
+  expect(hex(encodeMessage({ type: 'deny-ack', routeId: id, digest: unhex(ack.digest), count: ack.count }))).toBe(ack.encoded)
+  expect(decodeMessage(unhex(ack.encoded))).toEqual({ type: 'deny-ack', routeId: id, digest: unhex(ack.digest), count: ack.count })
+})
 
 it('matches the signed connection-book and route membership removal vectors', async () => {
   const vector = JSON.parse(await readFile(new URL('../../testkit/vectors/link-v1.json', import.meta.url), 'utf8')) as {
@@ -174,4 +246,42 @@ it('pins the native pairing code and P-256 verification statement across impleme
   expect(
     verify('sha256', Buffer.from(`${statement.text}x`), { key, dsaEncoding: 'ieee-p1363' }, Buffer.from(statement.signature, 'hex')),
   ).toBe(false)
+})
+
+it('matches the fixed memory-work registration transcript and scrypt vector', async () => {
+  const vectors = JSON.parse(await readFile(new URL('../../testkit/vectors/link-v1.json', import.meta.url), 'utf8')) as {
+    registrationWork: {
+      relayId: string
+      routeId: string
+      helloNonce: string
+      workNonce: string
+      register: string
+      solution: string
+      bits: number
+      input: string
+      digest: string
+      challenge: string
+      proof: string
+    }
+  }
+  const v = vectors.registrationWork,
+    nonce = unhex(v.workNonce),
+    route = unhex(v.relayId)
+  const input = registrationWorkInput(route, unhex(v.helloNonce), nonce, unhex(v.register), unhex(v.solution))
+  expect(hex(input)).toBe(v.input)
+  const hash = scryptSync(input, nonce, REGISTRATION_WORK.keyLength, {
+    N: REGISTRATION_WORK.N,
+    r: REGISTRATION_WORK.r,
+    p: REGISTRATION_WORK.p,
+    maxmem: REGISTRATION_WORK.maxMemory,
+  })
+  expect(hash.toString('hex')).toBe(v.digest)
+  expect(workDigestMeetsBits(hash, v.bits)).toBe(true)
+  expect(decodeMessage(unhex(v.challenge))).toEqual({ type: 'registration-work', routeId: unhex(v.routeId), nonce, bits: v.bits })
+  expect(decodeMessage(unhex(v.proof))).toEqual({
+    type: 'registration-proof',
+    routeId: unhex(v.routeId),
+    nonce,
+    solution: unhex(v.solution),
+  })
 })

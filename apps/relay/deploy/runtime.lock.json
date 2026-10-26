@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "node": {
+    "version": "24.22.1",
+    "source": "https://nodejs.org/dist/v24.22.1/SHASUMS256.txt",
+    "amd64": "6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6",
+    "arm64": "dbabf7a1cbf947e6059ffad2c27b80041db97dea1e553b62afdee7f13fca336e"
+  },
+  "runtimeImage": {
+    "reference": "gcr.io/distroless/cc-debian13@sha256:e792ab3d241a468a4fd7519ddbbebe66b49b5f365771716ea688ad40b6c6f1c2",
+    "uploadedAt": "2026-10-01T12:33:25.865Z",
+    "source": "https://gcr.io/v2/distroless/cc-debian13/tags/list"
+  }
+}

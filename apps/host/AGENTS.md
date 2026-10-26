@@ -1,11 +1,11 @@
 # @latch/host
 
-Host：监听入口与 HTTP/SSE、设备与本机确认、策略、审计、出站、路径、HarnessHub、模型服务、内置插件与脚本。不负责界面或 ACP Driver。
+Host：HTTP/SSE、设备与本机确认、策略、审计、出站、路径、HarnessHub、模型服务与插件。不负责界面或 ACP Driver。
 
 | 路径 | 职责 |
 | --- | --- |
 | `src/server.ts`、`listeners.ts`、`access.ts`、`http-util.ts`、`preview-frames.ts`、`traffic.ts`、`not-found.ts` | HTTP API、SSE；监听入口与 `ListenerContext`；凭据、Cookie 与限速；请求体与 CSP；流量计数；404 页 |
-| `src/native.ts`、`native-identity.ts`、`native-settings.ts`、`relay/` | 原生身份、敲门、HTTP/2、连接簿与中继控制 |
+| `src/native.ts`、`native-identity.ts`、`native-settings.ts`、`native-replay.ts`、`native-network*.ts`、`relay/` | 原生连接、发现与墓碑 |
 | `src/auth.ts`、`presence*.ts`、`launch-trust.ts`、`agent-probes.ts`、`audit.ts`、`policy.ts`、`egress.ts`、`risk.ts`、`paths.ts` | 设备与登记；本机确认与理由；审计；`policy.json`；出站策略；风险分级；路径与 `latchCodeRoot()` |
 | `src/host-state.ts`、`crypto.ts`、`identity.ts`、`hub.ts`、`session-meta.ts`、`prompt-queues.ts`、`questions.ts`、`config.ts`、`providers.ts` | `host.json` 与 `host.lock`；base32 与 P-256；Host 身份；`HarnessHub`；会话元数据、排队与问答回执；配置、模型服务与本地需求包（`plugin-packages.ts`） |
 | `src/plugins/<种类>/<id>/` | 内置插件：`providers/{openai-compatible,anthropic,demo}`（共用 `http.ts`）、`tools/{workspace-files,safe-tools}`、`standard` |

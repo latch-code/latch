@@ -27,6 +27,7 @@ export function startTestHost(options: TestHostOptions = {}): Promise<TestHost> 
         demo: true,
         runtimeParent: setup.runtimeParent,
         rateLimits: 'relaxed',
+        nativeNetwork: false,
         ...rest,
         dataDir: setup.dataDir,
         workspaceRoot: setup.workspaceRoot,

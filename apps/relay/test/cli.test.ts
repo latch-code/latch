@@ -33,3 +33,11 @@ it('creates a private registration token without printing it and validates opera
 it('requires an explicit data directory before any operation', async () => {
   await expect(run(process.execPath, [...args, 'init'])).rejects.toMatchObject({ code: 1 })
 })
+
+it('refuses an existing public state directory before creating a registration secret', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'latch-relay-cli-mode-'))
+  directories.push(directory)
+  await chmod(directory, 0o755)
+  await expect(run(process.execPath, [...args, 'init', '--data-dir', directory])).rejects.toMatchObject({ code: 1 })
+  await expect(stat(join(directory, 'registration-token'))).rejects.toMatchObject({ code: 'ENOENT' })
+})

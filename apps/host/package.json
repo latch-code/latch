@@ -9,6 +9,7 @@
     ".": "./src/server.ts",
     "./auth": "./src/auth.ts",
     "./backup": "./src/backup.ts",
+    "./build-native-tls": "./scripts/build-native-tls.ts",
     "./crypto": "./src/crypto.ts",
     "./files/kinds": "./src/files/kinds.ts",
     "./files/sniff": "./src/files/sniff.ts",

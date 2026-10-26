@@ -16,7 +16,7 @@ Latch 是跨电脑与手机的 AI Agent 工作台。Node Host（`apps/host`）�
 | `apps/web/` | 浏览器与桌面共用页面，构建到 `dist/web` |
 | `apps/desktop/` | `@latch/desktop`：Electron 主进程与 preload（CommonJS） |
 | `packages/link-wire/` | 原生连接的纯编码、KDF 与恢复日志；见 `docs/REMOTE.md` |
-| `packages/link-client/` | Node 平台 TLS 客户端与中继隧道；见 `docs/REMOTE.md` |
+| `packages/link-client/` | 原生 TLS、Go 组件与中继；见 `docs/REMOTE.md` |
 | `apps/relay/` | 自建盲中继底座；机制与实现边界见 `docs/RELAY.md` |
 | `packages/protocol/` | 共用 DTO、预设与安全文本 |
 | `packages/ui/` | `@latch/ui`：令牌、层叠层与原语 |
@@ -28,7 +28,7 @@ Latch 是跨电脑与手机的 AI Agent 工作台。Node Host（`apps/host`）�
 | `tests/` | 根项目的用例：`@latch/core`、`@latch/sdk`、兼容入口与仓库脚本 |
 | `src/` | 兼容入口 `harness-link/plugin-sdk`、`harness-link/harness-sdk`，再导出 `@latch/sdk` |
 | `scripts/` | 仓库工具：检查、文档与技能、安全扫描、依赖边界（项目表 `boundaries.ts`）、供应链、工作流 |
-| `native/macos/LatchPresence.swift` | 本机确认组件（Touch ID / 登录密码），构建到 `dist/native/latch-presence` |
+| `native/` | macOS 本机确认与目录组件；`ios/` 含独立 Swift 核心、iPhone/iPad App 与互操作夹具 |
 | `docs/`、`examples/` | 机制文档（见「改动前先读」）；插件示例 |
 | `.agents/skills/` | `latch-verify`、`latch-security-review`、`latch-ui-check`；`.claude/skills/` 由 `pnpm agents:sync` 生成 |
 | `tsconfig.*.json`、`.oxlintrc.json`、`.oxfmtrc.json`、`knip.json`、`lefthook.yml` | 类型检查的各运行环境、lint、格式、依赖检查、Git 钩子 |

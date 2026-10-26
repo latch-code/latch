@@ -9,6 +9,7 @@ import { PathManager, type PathCandidate } from './paths.ts'
 import { connectRelayTunnel, type RelayEndpoint } from './tunnel.ts'
 import { renewDeviceCertificate } from './certificate.ts'
 import { NativeReconnect, type NativeReconnectOptions } from './reconnect.ts'
+import { acknowledgeNativeRevocation, verifyNativeRevocation, type NativeRevocation } from './revocation.ts'
 
 export interface NativeIdentity {
   hostId: string
@@ -22,6 +23,7 @@ export interface NativeCheckpoint {
   instanceId: string
   revision: number
   value: unknown
+  discoveryEpoch?: string
 }
 export interface NativeEvent {
   type: 'refresh' | 'tasks-invalidated' | 'task-state' | 'host-state'
@@ -162,11 +164,15 @@ export class NativeWorkspace {
   private verifying?: Promise<'verified' | 'unknown'>
   private stopped = false
   private reconnecting?: NativeReconnect
+  private revocation?: NativeRevocation
+  private readonly onRevoked?: (revocation: NativeRevocation) => void | Promise<void>
+  private readonly cursors = new Map<string, { epoch: string; sequence: number; revision: number }>()
   constructor(
     identity: NativeIdentity,
     options: {
       appOpenId?: string
       path?: ConstructorParameters<typeof PathManager<NativeHttpClient>>[0]
+      onRevoked?(revocation: NativeRevocation): void | Promise<void>
     } = {},
   ) {
     this.appOpenId = options.appOpenId ?? randomBytes(16).toString('base64url')
@@ -175,10 +181,14 @@ export class NativeWorkspace {
     this.hostId = identity.hostId
     this.deviceId = identity.deviceId
     this.identity = { ...identity, rootSpki: Buffer.from(identity.rootSpki), knockKey: Buffer.from(identity.knockKey) }
+    this.onRevoked = options.onRevoked
     this.paths = new PathManager(options.path)
   }
   checkpoint(): NativeCheckpoint | undefined {
     return this.checkpointValue
+  }
+  revoked(): NativeRevocation | undefined {
+    return this.revocation
   }
   bodyVerifiedUntil(): number {
     return this.windowClient === this.paths.current()?.connection ? (this.window?.verifiedUntil ?? 0) : 0
@@ -214,6 +224,7 @@ export class NativeWorkspace {
     this.windowClient = undefined
     this.proofReceipt = undefined
     this.checkpointValue = undefined
+    this.cursors.clear()
   }
   private client(): NativeHttpClient {
     const current = this.paths.current()
@@ -227,10 +238,27 @@ export class NativeWorkspace {
         instanceId: z.string().min(1).max(128),
         revision: z.int().nonnegative(),
         device: z.looseObject({ id: z.literal(this.deviceId) }),
+        host: z
+          .looseObject({
+            native: z
+              .looseObject({
+                discoveryEpoch: z
+                  .string()
+                  .regex(/^[a-f0-9]{64}$/u)
+                  .optional(),
+              })
+              .optional(),
+          })
+          .optional(),
       }),
       response.body,
     )
-    const checkpoint = { instanceId: value.instanceId, revision: value.revision, value: response.body }
+    const checkpoint = {
+      instanceId: value.instanceId,
+      revision: value.revision,
+      value: response.body,
+      ...(value.host?.native?.discoveryEpoch ? { discoveryEpoch: value.host.native.discoveryEpoch } : {}),
+    }
     if (this.checkpointValue?.instanceId === checkpoint.instanceId && this.checkpointValue.revision > checkpoint.revision)
       throw new Error('Obsolete native Host checkpoint')
     return checkpoint
@@ -243,6 +271,7 @@ export class NativeWorkspace {
     return response.status === 403 ? undefined : receipt(response, this.appOpenId)
   }
   async migrate(paths: readonly NativePath[]): Promise<'connected' | 'unchanged' | 'superseded'> {
+    if (this.revocation) throw new Error('Native device revoked; pair again from the Mac')
     if (paths.length > 8) throw new RangeError('Invalid native path count')
     const candidates = paths.map(path =>
       path.kind === 'direct'
@@ -252,6 +281,25 @@ export class NativeWorkspace {
     const savedWindow = this.window,
       proof = this.proofReceipt
     const installed = await this.paths.migrate(candidates, async client => {
+      const response = await client.request('GET', '/link/api/native/revocation')
+      if (response.status !== 200) throw new Error('Native device status unavailable')
+      const status = parse(z.strictObject({ revocation: z.unknown() }), response.body)
+      if (status.revocation !== null) {
+        this.revocation = verifyNativeRevocation(status.revocation, this.identity)
+        try {
+          // The store owner removes its encrypted identity; this hook never runs for a transport failure.
+          await this.onRevoked?.(this.revocation)
+          await acknowledgeNativeRevocation(client, this.revocation)
+        } catch {
+          /* The seven-day fallback remains when the acknowledgement is lost. */
+        } finally {
+          this.identity.knockKey.fill(0)
+          this.identity.key = ''
+          this.identity.certificate = ''
+          this.close()
+        }
+        throw new Error('Native device revoked')
+      }
       let restored: WindowReceipt | undefined
       if (savedWindow) {
         const response = await client.request('POST', '/link/api/native/verification/resume', {
@@ -290,8 +338,29 @@ export class NativeWorkspace {
   }
   async *events(sessionId?: string): AsyncGenerator<NativeEvent> {
     if (sessionId !== undefined && !/^[A-Za-z0-9_-]{1,128}$/u.test(sessionId)) throw new RangeError('Invalid native session id')
+    const selected = sessionId ?? '',
+      cursor = this.cursors.get(selected),
+      query = new URLSearchParams()
+    if (sessionId) query.set('sessionId', sessionId)
+    if (cursor) {
+      query.set('resumeEpoch', cursor.epoch)
+      query.set('resumeAfter', String(cursor.sequence))
+    }
     const client = this.client(),
-      stream = client.events(`/link/api/events${sessionId ? `?sessionId=${sessionId}` : ''}`)
+      stream = client.events(`/link/api/events${query.size ? `?${query}` : ''}`)
+    let appliedRevision = cursor && cursor.epoch === this.checkpointValue?.instanceId ? cursor.revision : 0
+    const acknowledge = (id: string | undefined) => {
+      if (!id || this.paths.current()?.connection !== client) return
+      const match = /^([A-Za-z0-9_-]{1,128}):(0|[1-9][0-9]{0,15})$/u.exec(id)
+      if (!match || match[1] !== this.checkpointValue?.instanceId || !Number.isSafeInteger(Number(match[2])))
+        throw new Error('Invalid native resume cursor')
+      const previous = this.cursors.get(selected),
+        sequence = Number(match[2])
+      if (previous?.epoch === match[1] && sequence < previous.sequence) throw new Error('Obsolete native resume cursor')
+      this.cursors.delete(selected)
+      this.cursors.set(selected, { epoch: match[1], sequence, revision: appliedRevision })
+      while (this.cursors.size > 16) this.cursors.delete(this.cursors.keys().next().value!)
+    }
     try {
       const [headers] = await once(stream, 'response', { signal: AbortSignal.timeout(15_000) })
       if (headers[':status'] !== 200 || !String(headers['content-type']).startsWith('text/event-stream'))
@@ -314,7 +383,15 @@ export class NativeWorkspace {
             .find(line => line.startsWith('event:'))
             ?.slice(6)
             .trim()
-          if (!event || !['refresh', 'tasks-invalidated', 'task-state', 'host-state'].includes(event)) continue
+          const id = lines
+            .find(line => line.startsWith('id:'))
+            ?.slice(3)
+            .trim()
+          if (!event) {
+            acknowledge(id)
+            continue
+          }
+          if (!['refresh', 'tasks-invalidated', 'task-state', 'host-state'].includes(event)) continue
           const value = object(
             JSON.parse(
               lines
@@ -326,14 +403,16 @@ export class NativeWorkspace {
           if (value.type !== event || value.instanceId !== this.checkpointValue?.instanceId) continue
           if (
             event !== 'host-state'
-            && (typeof value.revision !== 'number'
-              || !Number.isSafeInteger(value.revision)
-              || value.revision < (this.checkpointValue?.revision ?? 0))
+            && (typeof value.revision !== 'number' || !Number.isSafeInteger(value.revision) || value.revision < appliedRevision)
           )
             continue
           if (event === 'task-state' && value.sessionId !== sessionId) continue
           if (this.paths.current()?.connection !== client) return
+          if (event !== 'host-state') appliedRevision = value.revision as number
+          if (value.resumeRequired === true && event === 'refresh') await this.refresh()
+          if (this.paths.current()?.connection !== client) return
           yield { type: event as NativeEvent['type'], value }
+          acknowledge(id)
         }
       }
       decoder.decode()

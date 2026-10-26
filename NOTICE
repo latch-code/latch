@@ -1,6 +1,11 @@
 Latch
 Copyright 2026 The Latch Authors
 
+Go TLS runtime
+
+The native TLS component links the Go standard library. Copyright 2009 The Go Authors.
+Its BSD license is retained in packages/link-client/native/GO-LICENSE and copied beside the built component.
+
 Brand icons
 
 The web client shows the icon of each agent and model service it can use, from the files in
@@ -315,3 +320,5 @@ Shiki 4.5.0 (core, JavaScript regex engine and precompiled grammars), KaTeX 0.19
 - zwitch@2.0.4: MIT.
 
 Mermaid uses elkjs under EPL-2.0; the complete upstream source is available at https://github.com/kieler/elkjs/tree/v0.9.3. Khroma uses MIT; its package omits the manifest license field, and the upstream LICENSE is retained alongside the distribution. No package install scripts are executed.
+
+The standalone relay TLS gateway and supervisor link the Go standard library (BSD-3-Clause). Its full license is retained in apps/relay/gateway/GO-LICENSE and distributed next to dist/relay/latch-relay-tls as latch-relay-tls.LICENSE.

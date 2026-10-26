@@ -1,0 +1,7 @@
+# Dedicated relay VM only: these limits apply to the host journal, not only one tag.
+# Review alongside existing host retention before copying into journald.conf.d/.
+[Journal]
+Storage=persistent
+SystemMaxUse=30M
+SystemMaxFileSize=10M
+SystemMaxFiles=3

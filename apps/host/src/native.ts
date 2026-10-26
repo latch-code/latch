@@ -3,7 +3,7 @@ import { createServer as createHttp2Server } from 'node:http2'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { once } from 'node:events'
-import { acceptNative, createTransportCertificate } from '@latch/link-client'
+import { acceptNative, createTransportCertificate, validateNativeTlsBinary } from '@latch/link-client'
 import { hex, type KnockBinding } from '@latch/link-wire'
 import type { Device, DeviceScope } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
@@ -16,11 +16,13 @@ export interface NativeOpening {
   pairing: boolean
   listener: ListenerContext
   source: string
+  localAddress?: string
   invitationHash?: string
   enrollmentId?: string
   windowHash?: string
 }
 export interface NativeHostOptions {
+  tlsBinary: string
   identity: HostIdentity
   devices: DeviceStore
   enrollments: EnrollmentService
@@ -33,17 +35,25 @@ export interface NativeHostOptions {
 
 export async function startNativeHost(options: NativeHostOptions) {
   const origin = `https://native-${options.identity.hostId}.invalid`
-  const sockets = new Map<Duplex, { id?: string; knockId?: string; relayId?: string; opened: number }>(),
+  const sockets = new Map<Duplex, { id?: string; knockId?: string; relayId?: string; opened: number; revoked?: boolean }>(),
     replay = new Map<string, number>()
   let certificate = createTransportCertificate(),
     rotatedAt = Date.now(),
     closing = false
   let server: Server | undefined, bind: NativeHostOptions['bind']
   const retired = new Map<Server, Promise<void>>()
+  const authenticating = new Set<Promise<void>>(),
+    helpers = new Set<Promise<void>>()
   const staging = new Set<Server>(),
     stopped = new AbortController()
-  const accept = async (stream: Duplex, binding: KnockBinding, source: string, expectedDeviceId?: string): Promise<void> => {
-    if (closing || sockets.size >= 64) {
+  const acceptOnce = async (
+    stream: Duplex,
+    binding: KnockBinding,
+    source: string,
+    expectedDeviceId?: string,
+    localAddress?: string,
+  ): Promise<void> => {
+    if (closing || sockets.size >= 64 || authenticating.size + helpers.size >= 64) {
       stream.destroy()
       return
     }
@@ -52,6 +62,7 @@ export async function startNativeHost(options: NativeHostOptions) {
       knockId?: string
       relayId?: string
       opened: number
+      revoked?: boolean
     }
     sockets.set(stream, state)
     stream.once('close', () => sockets.delete(stream))
@@ -61,14 +72,23 @@ export async function startNativeHost(options: NativeHostOptions) {
         certificate = createTransportCertificate()
         rotatedAt = Date.now()
       }
-      const all = [...options.devices.nativeCandidates(), ...options.enrollments.nativeInvitations()]
+      const all = [...options.devices.nativeTransportCandidates(), ...options.enrollments.nativeInvitations()]
       const candidates = expectedDeviceId === undefined ? all : all.filter(item => item.id === expectedDeviceId)
       const accepted = await acceptNative(stream, binding, {
+        tlsBinary: options.tlsBinary,
         identity: options.identity,
         certificate,
         devices: () => candidates,
         replay,
         onKnock(id) {
+          if (options.devices.get(id)?.status === 'revoked') {
+            if ([...sockets].filter(([peer, item]) => !peer.destroyed && item.revoked).length >= 2)
+              throw new Error('Native tombstone connection limit')
+            state.revoked = true
+            const timer = setTimeout(() => stream.destroy(), 5000)
+            timer.unref()
+            stream.once('close', () => clearTimeout(timer))
+          }
           const related = [...sockets].filter(([socket, item]) => socket !== stream && !socket.destroyed && item.knockId === id)
           const pending = related.filter(([, item]) => !item.id).sort((a, b) => a[1].opened - b[1].opened)
           let total = related.length
@@ -80,13 +100,17 @@ export async function startNativeHost(options: NativeHostOptions) {
           }
           state.knockId = id
         },
-        isActive: id => [...options.devices.nativeCandidates(), ...options.enrollments.nativeInvitations()].some(item => item.id === id),
+        isActive: id =>
+          [...options.devices.nativeTransportCandidates(), ...options.enrollments.nativeInvitations()].some(item => item.id === id),
       })
+      helpers.add(accepted.closed)
+      void accepted.closed.finally(() => helpers.delete(accepted.closed))
       const candidate = candidates.find(item => item.id === accepted.deviceId)!
       const opening: NativeOpening = {
         deviceId: accepted.deviceId,
         pairing: accepted.pairing,
         source,
+        ...(localAddress ? { localAddress } : {}),
         listener: { listener: binding.path === 'direct' ? 'native-direct' : 'native-relay', origin },
         ...(candidate.kind === 'pairing'
           ? {
@@ -109,17 +133,38 @@ export async function startNativeHost(options: NativeHostOptions) {
       stream.destroy()
     }
   }
+  const accept = (
+    stream: Duplex,
+    binding: KnockBinding,
+    source: string,
+    expectedDeviceId?: string,
+    localAddress?: string,
+  ): Promise<void> => {
+    const operation = acceptOnce(stream, binding, source, expectedDeviceId, localAddress)
+    authenticating.add(operation)
+    void operation.finally(() => authenticating.delete(operation)).catch(() => {})
+    return operation
+  }
+  async function ensureTransport(): Promise<void> {
+    try {
+      await validateNativeTlsBinary(options.tlsBinary)
+    } catch {
+      throw new AppError(503, 'native-component-unavailable', '手机连接组件不可用，请更新并重新构建 Latch 后重试')
+    }
+  }
   options.devices.onRevoked(id => {
-    for (const [socket, state] of sockets) if (state.id === id) socket.destroy()
+    for (const [socket, state] of sockets) if (state.id === id || state.knockId === id) socket.destroy()
   })
   async function prepareBind(next: NativeHostOptions['bind']) {
     if (closing) throw new AppError(503, 'host-stopping', 'Host 正在停止')
-    if (next?.host === bind?.host && next?.port === bind?.port) return { commit() {}, async cancel() {} }
+    if (next?.host === bind?.host && (next?.port === bind?.port || (server && next?.port === (server.address() as AddressInfo).port)))
+      return { commit() {}, async cancel() {} }
+    if (next) await ensureTransport()
     let active = false,
       settled = false
     const prepared = next
       ? createServer((socket: Socket) => {
-          if (active) void accept(socket, { path: 'direct' }, socket.remoteAddress ?? '直连')
+          if (active) void accept(socket, { path: 'direct' }, socket.remoteAddress ?? '直连', undefined, socket.localAddress)
           else socket.destroy()
         })
       : undefined
@@ -183,8 +228,10 @@ export async function startNativeHost(options: NativeHostOptions) {
       return server && bind ? { host: bind.host, port: (server.address() as AddressInfo).port } : null
     },
     prepareBind,
+    ensureTransport,
     async invite(input: { inviter?: Device; scopes?: DeviceScope[] }, actor: Parameters<EnrollmentService['createInvitation']>[1]) {
       if (!server && !options.relayAvailable?.()) throw new AppError(409, 'native-not-configured', '尚未配置原生设备连接入口')
+      await ensureTransport()
       const invitation = await options.enrollments.createInvitation(
         { ...input, listener: server ? 'native-direct' : 'native-relay', origin },
         actor,
@@ -220,6 +267,8 @@ export async function startNativeHost(options: NativeHostOptions) {
       stopped.abort()
       for (const stream of sockets.keys()) stream.destroy()
       await Promise.allSettled([
+        ...authenticating,
+        ...helpers,
         ...retired.values(),
         ...[...staging, ...(server ? [server] : [])].map(item => new Promise<void>(resolve => item.close(() => resolve()))),
       ])

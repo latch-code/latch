@@ -2,18 +2,27 @@ import { connect } from 'node:net'
 import { createHash, createPrivateKey, generateKeyPairSync, randomUUID, sign } from 'node:crypto'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createTransportCertificate, renewDeviceCertificate, NativeWorkspace, openNativeHttp, NativeHttpClient } from '@latch/link-client'
-import { knock, nativeKnockSecret, nativeVerificationText, pairingCode } from '@latch/link-wire'
+import {
+  createTransportCertificate,
+  renewDeviceCertificate,
+  NativeWorkspace,
+  openNativeHttp,
+  NativeHttpClient,
+  verifyNativeRevocation,
+  verifyAddressBook,
+} from '@latch/link-client'
+import { discoveryEpochInput, knock, nativeKnockSecret, nativeRevocationInput, nativeVerificationText, pairingCode } from '@latch/link-wire'
 import { nodeCrypto } from '@latch/link-client/crypto'
 import type { TestDevice } from '@latch/testkit'
 import type { TaskDetail } from '@latch/protocol'
-import type { HarnessPlugin } from '@latch/sdk'
+import type { Bridge, HarnessPlugin } from '@latch/sdk'
 import type { PresenceBackend } from '../src/presence.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { startNativeHost } from '../src/native.ts'
 import { loadOrCreateHostIdentity } from '../src/identity.ts'
+import { NativeReplay } from '../src/native-replay.ts'
 
 const cleanup: (() => void | Promise<void>)[] = []
 afterEach(async () => {
@@ -260,11 +269,350 @@ describe('native Host entry with existing authorization', () => {
     expect(JSON.stringify(detail)).not.toContain('nativeWindowHash')
     expect(detail.queue).toMatchObject([{ text: nextText, state: 'parked' }])
   })
+
+  it('notifies another verified phone after a durable discovery rotation without changing epochs when books are issued', async () => {
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    cleanup.push(() => host.close())
+    const a = await pair(host),
+      b = await pair(host)
+    await verifyDevice(host, b.client, b.deviceId, b.verification.privateKey)
+    const epoch = async () =>
+      body<{ host: { native: { discoveryEpoch: string } } }>(await b.client.request('GET', '/link/api/snapshot')).host.native.discoveryEpoch
+    const before = await epoch()
+    expect(before).toMatch(/^[a-f0-9]{64}$/u)
+    const workspace = new NativeWorkspace({ ...b.clientOptions, hostId: host.host.hostId, deviceId: b.deviceId })
+    cleanup.push(() => workspace.close())
+    await workspace.migrate([{ id: 'epoch-lan', kind: 'direct', address: '127.0.0.1', port: host.host.nativePort! }])
+    expect(workspace.checkpoint()?.discoveryEpoch).toBe(before)
+    expect((await workspace.request('POST', '/link/api/native/address-book', {})).status).toBe(403)
+    const book = async () => {
+      const value = body<{ addressBook: string }>(await b.client.request('POST', '/link/api/native/address-book', {}))
+      return verifyAddressBook(value.addressBook, b.clientOptions.rootSpki, { hostId: host.host.hostId, deviceId: b.deviceId })
+    }
+    const first = await book(),
+      second = await book()
+    expect(second.generation).toBeGreaterThan(first.generation)
+    expect(createHash('sha256').update(discoveryEpochInput(first.discoveryKey)).digest('hex')).toBe(before)
+    expect(await epoch()).toBe(before)
+    const stream = b.client.events('/link/api/events')
+    stream.on('error', () => {})
+    cleanup.push(async () => {
+      stream.close()
+    })
+    let frames = ''
+    stream.setEncoding('utf8')
+    stream.on('data', (chunk: string) => {
+      frames += chunk
+    })
+    await vi.waitFor(() => expect(frames).toContain(before))
+    await host.host.security.devices.revoke(a.deviceId, 'manual', { listener: 'host' })
+    await vi.waitFor(() => {
+      const hints = [...frames.matchAll(/"discoveryEpoch":"([a-f0-9]{64})"/gu)].map(match => match[1])
+      expect(hints.some(value => value !== before)).toBe(true)
+    })
+    const after = await epoch(),
+      refreshed = await book()
+    expect(after).not.toBe(before)
+    await workspace.refresh()
+    expect(workspace.checkpoint()?.discoveryEpoch).toBe(after)
+    expect(createHash('sha256').update(discoveryEpochInput(refreshed.discoveryKey)).digest('hex')).toBe(after)
+    expect(refreshed.generation).toBeGreaterThan(second.generation)
+    expect((await b.client.request('GET', '/link/api/snapshot')).status).toBe(200)
+  })
+
+  it('requires the same native connection verification window for proximity and keeps unknown networks remote', async () => {
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    cleanup.push(() => host.close())
+    const phone = await pair(host),
+      scopes = host.host.security.devices.get(phone.deviceId)!.scopes
+    expect((await phone.client.request('POST', '/link/api/native/proximity', { gatewayHash: '0'.repeat(64) })).status).toBe(403)
+    await verifyDevice(host, phone.client, phone.deviceId, phone.verification.privateKey)
+    expect(body(await phone.client.request('POST', '/link/api/native/proximity', { gatewayHash: '0'.repeat(64) }))).toEqual({
+      nearby: false,
+    })
+    expect(host.host.security.devices.get(phone.deviceId)!.scopes).toEqual(scopes)
+    expect(
+      (await phone.client.request('POST', '/link/api/native/proximity', { gatewayHash: '0'.repeat(64), source: '192.168.1.9' })).status,
+    ).toBe(400)
+  })
+  it('reports a missing native TLS component and keeps a disabled entry closed without falling back to Node TLS', async () => {
+    const host = await startTestHost()
+    cleanup.push(() => host.close())
+    const native = await startNativeHost({
+      tlsBinary: join(host.dataDir, 'missing-native-component'),
+      identity: await loadOrCreateHostIdentity(host.dataDir),
+      devices: host.host.security.devices,
+      enrollments: host.host.security.enrollments,
+      relayAvailable: () => true,
+      handler(_request, response) {
+        response.end()
+      },
+    })
+    cleanup.push(() => native.close())
+    await expect(native.ensureTransport()).rejects.toMatchObject({ code: 'native-component-unavailable' })
+    await expect(native.prepareBind({ host: '127.0.0.1', port: 0 })).rejects.toMatchObject({ code: 'native-component-unavailable' })
+    expect(native.port).toBeUndefined()
+    await expect(native.invite({}, { listener: 'host' })).rejects.toMatchObject({ code: 'native-component-unavailable' })
+    const disabled = await native.prepareBind(undefined)
+    disabled.commit()
+    expect(native.port).toBeUndefined()
+  })
+  it('replays real missed task projections across a new authenticated path without letting a list checkpoint skip body events', async () => {
+    let notify: (id?: string) => void = () => {}
+    let exists = true
+    let currentTime = Date.now()
+    const detail: TaskDetail = {
+      summary: { id: 'replay-fixture', title: 'Replay fixture', status: 'idle', updatedAt: '2026-10-25' },
+      messages: [],
+      approvals: [],
+      liveText: '',
+      cursor: 0,
+    }
+    const bridge: Bridge = {
+      async start() {},
+      async close() {},
+      async listTasks() {
+        return exists ? [detail.summary] : []
+      },
+      async detail() {
+        return structuredClone(detail)
+      },
+      async createTask() {
+        throw new Error('Unused')
+      },
+      async prompt() {},
+      async cancel() {},
+      approvals() {
+        return []
+      },
+      async decide() {
+        return false
+      },
+      subscribe(listener) {
+        notify = listener
+        return () => {
+          notify = () => {}
+        }
+      },
+    }
+    const published = vi.spyOn(NativeReplay.prototype, 'publish')
+    const host = await startTestHost({
+      native: { host: '127.0.0.1', port: 0 },
+      now: () => currentTime,
+      harnessId: 'replay',
+      plugins: [
+        {
+          id: 'replay-fixture',
+          name: 'Replay fixture',
+          version: '1',
+          description: 'Local deterministic fixture',
+          activate(ctx) {
+            ctx.registerHarness({ id: 'replay', name: 'Replay', version: '1', create: () => bridge })
+          },
+        },
+      ],
+    })
+    cleanup.push(() => host.close())
+    const registered = await pair(host),
+      workspace = new NativeWorkspace({ ...registered.clientOptions, hostId: host.host.hostId, deviceId: registered.deviceId })
+    cleanup.push(() => workspace.close())
+    const paths = [{ id: 'replay-lan', kind: 'direct' as const, address: '127.0.0.1', port: host.host.nativePort! }]
+    await workspace.migrate(paths)
+    await workspace.verify(async statement =>
+      sign('sha256', Buffer.from(statement), { key: registered.verification.privateKey, dsaEncoding: 'ieee-p1363' }),
+    )
+    const initial = workspace.events(detail.summary.id)
+    expect((await initial.next()).value).toMatchObject({ type: 'refresh', value: { resumeRequired: true } })
+    const reading = initial.next().catch(() => ({ done: true }))
+    await workspace.refresh()
+    workspace.networkChanged()
+    await workspace.migrate(paths)
+    await reading
+    await initial.return(undefined)
+    detail.liveText = 'missed while no stream was open'
+    detail.cursor++
+    notify(detail.summary.id)
+    await vi.waitFor(() =>
+      expect(published.mock.calls.some(([event]) => event.type === 'task-state' && event.detail.liveText === detail.liveText)).toBe(true),
+    )
+    await workspace.refresh()
+    const resumed = workspace.events(detail.summary.id)
+    let found = false
+    for (let count = 0; count < 4; count++) {
+      const next = await resumed.next()
+      expect(next.done).toBe(false)
+      expect(next.value).not.toMatchObject({ value: { resumeRequired: true } })
+      if (next.value?.type === 'task-state') {
+        expect(next.value).toMatchObject({ value: { detail: { liveText: detail.liveText, cursor: 1 } } })
+        found = true
+        break
+      }
+    }
+    expect(found).toBe(true)
+    await resumed.return(undefined)
+    exists = false
+    notify()
+    const removed = workspace.events(detail.summary.id)
+    await expect(removed.next()).rejects.toThrow('event stream ended')
+    exists = true
+    currentTime += 10 * 60_000 + 1
+    const expired = workspace.events(detail.summary.id)
+    await expect(expired.next()).rejects.toThrow('event stream ended')
+  })
+  it('delivers only a Root-authenticated revocation and supports idempotent acknowledgement within its retention', async () => {
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    cleanup.push(() => host.close())
+    const registered = await pair(host)
+    await host.host.security.devices.revoke(registered.deviceId, 'manual', { listener: 'host' })
+    await vi.waitFor(() => expect(registered.client.isClosed()).toBe(true))
+    const socket = connect(host.host.nativePort!, '127.0.0.1')
+    socket.on('error', () => {})
+    const client = await openNativeHttp(socket, { path: 'direct' }, registered.clientOptions)
+    cleanup.push(() => client.close())
+    expect((await client.request('GET', '/link/api/snapshot')).status).toBe(401)
+    expect((await client.request('POST', '/link/api/native/verification/challenge', { appOpenId: 'revoked-opening-fixture' })).status).toBe(
+      401,
+    )
+    const response = body<{ revocation: unknown }>(await client.request('GET', '/link/api/native/revocation')),
+      item = verifyNativeRevocation(response.revocation, {
+        ...registered.clientOptions,
+        hostId: host.host.hostId,
+        deviceId: registered.deviceId,
+      })
+    expect(item.deviceId).toBe(registered.deviceId)
+    expect(() =>
+      verifyNativeRevocation(
+        { ...item, revokedAt: item.revokedAt + 1 },
+        { ...registered.clientOptions, hostId: host.host.hostId, deviceId: registered.deviceId },
+      ),
+    ).toThrow()
+    expect(
+      (await client.request('POST', '/link/api/native/revocation/ack', { requestId: randomUUID(), tombstoneHash: '0'.repeat(64) })).status,
+    ).toBe(401)
+    expect(host.host.security.devices.nativeRevocations()[0]!.acknowledged).toBe(false)
+    const ack = {
+      requestId: randomUUID(),
+      tombstoneHash: createHash('sha256')
+        .update(nativeRevocationInput(item.hostId, item.deviceId, item.revokedAt))
+        .digest('hex'),
+    }
+    expect(body(await client.request('POST', '/link/api/native/revocation/ack', ack))).toEqual({ acknowledged: true })
+    expect(body(await client.request('POST', '/link/api/native/revocation/ack', ack))).toEqual({ acknowledged: true })
+    expect(host.host.security.devices.nativeRevocations()[0]!.acknowledged).toBe(true)
+    expect(host.host.security.devices.nativeCandidates().some(device => device.id === registered.deviceId)).toBe(false)
+    expect(host.host.security.devices.nativeTransportCandidates().some(device => device.id === registered.deviceId)).toBe(true)
+    const disk = JSON.parse(await readFile(join(host.dataDir, 'auth/devices.json'), 'utf8')) as {
+      devices: Array<{ id: string; native?: { revocationAcknowledgedAt?: number } }>
+    }
+    expect(disk.devices.find(device => device.id === registered.deviceId)?.native?.revocationAcknowledgedAt).toBeTypeOf('number')
+  })
+  it('stops a native workspace only after a fixed Root revocation and retains tombstone recovery beyond relay grace', async () => {
+    let now = Date.now()
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 }, now: () => now })
+    cleanup.push(() => host.close())
+    const registered = await pair(host),
+      workspace = new NativeWorkspace({ ...registered.clientOptions, hostId: host.host.hostId, deviceId: registered.deviceId })
+    cleanup.push(() => workspace.close())
+    const paths = [{ id: 'lan', kind: 'direct' as const, address: '127.0.0.1', port: host.host.nativePort! }]
+    await workspace.migrate(paths)
+    await host.host.security.devices.revoke(registered.deviceId, 'manual', { listener: 'host' })
+    expect(host.host.security.devices.nativeTransportCandidates().some(device => device.id === registered.deviceId)).toBe(true)
+    await workspace.migrate(paths)
+    expect(workspace.revoked()?.deviceId).toBe(registered.deviceId)
+    expect(workspace.checkpoint()).toBeUndefined()
+    await expect(workspace.migrate(paths)).rejects.toThrow('revoked')
+    const another = await pair(host)
+    await host.host.security.devices.revoke(another.deviceId, 'manual', { listener: 'host' })
+    now += 7 * 86400_000
+    expect(host.host.security.devices.nativeTransportCandidates().some(device => device.id === another.deviceId)).toBe(true)
+    expect(host.host.security.devices.nativeRevocations().find(device => device.id === another.deviceId)?.acknowledged).toBe(false)
+  })
+  it('keeps only the Root tombstone available through direct transport after seven days and an earlier acknowledgement', async () => {
+    let now = Date.now()
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 }, now: () => now })
+    cleanup.push(() => host.close())
+    const phone = await pair(host)
+    await host.host.security.devices.revoke(phone.deviceId, 'manual', { listener: 'host' })
+    now += 8 * 86400_000
+    const open = async () => {
+      const raw = connect(host.host.nativePort!, '127.0.0.1')
+      raw.on('error', () => {})
+      const client = await openNativeHttp(raw, { path: 'direct' }, phone.clientOptions)
+      cleanup.push(() => client.close())
+      return client
+    }
+    const client = await open()
+    expect((await client.request('GET', '/link/api/snapshot')).status).toBe(401)
+    const value = body<{ revocation: unknown }>(await client.request('GET', '/link/api/native/revocation'))
+    const revocation = verifyNativeRevocation(value.revocation, {
+      ...phone.clientOptions,
+      hostId: host.host.hostId,
+      deviceId: phone.deviceId,
+    })
+    const tombstoneHash = createHash('sha256')
+      .update(nativeRevocationInput(revocation.hostId, revocation.deviceId, revocation.revokedAt))
+      .digest('hex')
+    expect((await client.request('POST', '/link/api/native/revocation/ack', { requestId: randomUUID(), tombstoneHash })).status).toBe(200)
+    client.close()
+    const again = await open()
+    expect((await again.request('GET', '/link/api/native/revocation')).status).toBe(200)
+    expect((await again.request('GET', '/link/api/snapshot')).status).toBe(401)
+    expect(host.host.security.devices.nativeCandidates().some(item => item.id === phone.deviceId)).toBe(false)
+    expect(host.host.security.devices.nativeTransportCandidates().some(item => item.id === phone.deviceId)).toBe(true)
+    again.close()
+    now += 83 * 86400_000
+    expect(host.host.security.devices.nativeTransportCandidates().some(item => item.id === phone.deviceId)).toBe(false)
+    await expect(open()).rejects.toThrow()
+  })
+  it('bounds tombstone transports separately and closes them on an absolute deadline even while they stay active', async () => {
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    cleanup.push(() => host.close())
+    const a = await pair(host),
+      b = await pair(host),
+      c = await pair(host),
+      active = await pair(host)
+    for (const phone of [a, b, c]) await host.host.security.devices.revoke(phone.deviceId, 'manual', { listener: 'host' })
+    const open = async (phone: typeof a) => {
+      const raw = connect(host.host.nativePort!, '127.0.0.1')
+      raw.on('error', () => {})
+      const client = await openNativeHttp(raw, { path: 'direct' }, phone.clientOptions)
+      cleanup.push(() => client.close())
+      return client
+    }
+    const first = await open(a),
+      second = await open(b)
+    await expect(open(c)).rejects.toThrow()
+    const normal = await open(active)
+    expect((await normal.request('GET', '/link/api/snapshot')).status).toBe(200)
+    let completed = 0
+    const heartbeat = setInterval(() => {
+      void first
+        .request('GET', '/link/api/native/revocation')
+        .then(() => completed++)
+        .catch(() => {})
+    }, 250)
+    cleanup.push(async () => {
+      clearInterval(heartbeat)
+    })
+    await vi.waitFor(
+      () => {
+        expect(first.isClosed()).toBe(true)
+        expect(second.isClosed()).toBe(true)
+      },
+      { timeout: 6500 },
+    )
+    clearInterval(heartbeat)
+    expect(completed).toBeGreaterThan(1)
+    const recovered = await open(c)
+    expect((await recovered.request('GET', '/link/api/native/revocation')).status).toBe(200)
+    expect((await normal.request('GET', '/link/api/snapshot')).status).toBe(200)
+  })
   it('keeps the old listener until commit and closes a staged replacement during shutdown', async () => {
     const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
     cleanup.push(() => host.close())
     const registered = await pair(host)
     const native = await startNativeHost({
+      tlsBinary: resolve('dist/native/latch-native-tls'),
       identity: await loadOrCreateHostIdentity(host.dataDir),
       devices: host.host.security.devices,
       enrollments: host.host.security.enrollments,
@@ -275,6 +623,9 @@ describe('native Host entry with existing authorization', () => {
       },
     })
     cleanup.push(() => native.close())
+    const actual = native.direct!
+    ;(await native.prepareBind(actual)).commit()
+    expect(native.direct).toEqual(actual)
     const socket = connect(native.port!, '127.0.0.1')
     socket.on('error', () => {})
     const client = await openNativeHttp(socket, { path: 'direct' }, registered.clientOptions)
@@ -376,7 +727,11 @@ describe('native Host entry with existing authorization', () => {
     workspace.networkChanged()
     await vi.waitFor(() => expect(workspace.checkpoint()!.instanceId).not.toBe(previous))
     expect(workspace.bodyVerifiedUntil()).toBe(0)
-    expect(request.mock.calls.every(([method, path]) => method === 'GET' && path === '/link/api/snapshot')).toBe(true)
+    expect(
+      request.mock.calls.every(
+        ([method, path]) => method === 'GET' && ['/link/api/snapshot', '/link/api/native/revocation'].includes(path),
+      ),
+    ).toBe(true)
     workspace.close()
     await owner.done
     expect(states.at(-1)).toBe('stopped')

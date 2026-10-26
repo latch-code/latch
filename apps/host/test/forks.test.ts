@@ -83,9 +83,12 @@ describe('Host-generated forks', () => {
     await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${source.sessionId}`)).summary.status).toBe('idle')
     const original = await host.host.bridge.detail(source.sessionId)
     const read = host.host.bridge.detail.bind(host.host.bridge)
-    vi.spyOn(host.host.bridge, 'detail').mockImplementationOnce(async id => {
+    let revoked: Promise<unknown> | undefined
+    vi.spyOn(host.host.bridge, 'detail').mockImplementation(async id => {
       const result = await read(id)
-      await owner.json(`devices/${runner.id}`, { method: 'PATCH', body: { scopes: ['view'] } })
+      // Background projections may read first; the fork must still wait for the same completed revocation.
+      revoked ??= owner.json(`devices/${runner.id}`, { method: 'PATCH', body: { scopes: ['view'] } })
+      await revoked
       return result
     })
     const response = await runner.request('tasks', {

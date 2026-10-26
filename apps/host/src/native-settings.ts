@@ -6,7 +6,9 @@ import type { NativeLinkInfo } from '@latch/protocol'
 import type { AuditActor, AuditLog, StepupMethod } from './audit.ts'
 import type { startNativeHost } from './native.ts'
 import type { HostRelayController } from './relay/controller.ts'
-import { RelayProfiles, relayProfileInput, nativeDirectSchema } from './relay/profiles.ts'
+import { selectAutoDirect } from './native-network.ts'
+import type { NativeNetworkSnapshot } from './native-network-backend.ts'
+import { RelayProfiles, relayProfileInput, nativeDirectSchema, type NativeDirect } from './relay/profiles.ts'
 
 export function nativeAddresses(): NativeLinkInfo['addresses'] {
   return Object.entries(networkInterfaces())
@@ -32,6 +34,7 @@ type NativeHost = Awaited<ReturnType<typeof startNativeHost>>
 
 /** Durable settings and the listening socket commit together. The renderer never receives transport secrets. */
 export class NativeSettings {
+  private changes = Promise.resolve()
   constructor(
     private readonly options: {
       profiles: RelayProfiles
@@ -40,6 +43,8 @@ export class NativeSettings {
       audit: AuditLog
       managedDirect?: { host: string; port: number }
       inputsPaused(): boolean
+      changed?(): void
+      resolveDirect?(direct: NativeDirect | null): Promise<NativeDirect | undefined>
     },
   ) {}
   info(): NativeLinkInfo {
@@ -84,7 +89,7 @@ export class NativeSettings {
     const direct = this.options.managedDirect ? (state.direct ?? null) : input.direct
     if (this.options.managedDirect && canonicalJson(input.direct) !== canonicalJson(this.options.managedDirect))
       throw new AppError(409, 'native-managed', '直连入口由启动参数管理，请停止 Host 后修改启动参数')
-    if (!this.options.managedDirect && direct && !nativeAddresses().some(item => item.address === direct.host))
+    if (!this.options.managedDirect && direct && direct.host !== 'auto' && !nativeAddresses().some(item => item.address === direct.host))
       throw new AppError(400, 'native-address-unavailable', '请选择这台电脑当前的局域网地址')
     const lowering =
       (direct === null || canonicalJson(direct) === canonicalJson(state.direct ?? null))
@@ -100,7 +105,38 @@ export class NativeSettings {
     const afterHash = sha256Hex(canonicalJson({ direct, relays: input.relays }))
     return { input, direct, baseHash, afterHash, lowering, requestHash: sha256Hex(canonicalJson(input)) }
   }
-  async apply(
+  private serial<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.changes.then(operation)
+    this.changes = result.then(
+      () => {},
+      () => {},
+    )
+    return result
+  }
+  syncNetwork(snapshot: NativeNetworkSnapshot, current: () => boolean): Promise<void> {
+    return this.serial(async () => {
+      const config = this.options.profiles.snapshot().direct
+      if (this.options.managedDirect || config?.host !== 'auto' || !current()) return
+      const hash = this.options.profiles.configHash(),
+        before = this.options.native.direct
+      const prepared = await this.options.native.prepareBind(selectAutoDirect(snapshot, config, before))
+      if (!current() || this.options.profiles.configHash() !== hash) {
+        await prepared.cancel()
+        return
+      }
+      prepared.commit()
+      if (canonicalJson(before) !== canonicalJson(this.options.native.direct)) this.options.changed?.()
+    })
+  }
+  apply(
+    plan: ReturnType<NativeSettings['plan']>,
+    actor: AuditActor,
+    stepup: StepupMethod,
+    recheck: () => void,
+  ): Promise<{ audited: boolean }> {
+    return this.serial(() => this.applyNow(plan, actor, stepup, recheck))
+  }
+  private async applyNow(
     plan: ReturnType<NativeSettings['plan']>,
     actor: AuditActor,
     stepup: StepupMethod,
@@ -135,13 +171,25 @@ export class NativeSettings {
     }
     let prepared: Awaited<ReturnType<NativeHost['prepareBind']>> | undefined
     try {
-      prepared = await this.options.native.prepareBind(this.options.managedDirect ?? plan.direct ?? undefined)
+      if (!plan.lowering && (plan.input.relays.length || plan.direct)) await this.options.native.ensureTransport()
+      const logical = this.options.managedDirect ?? plan.direct
+      let actual = logical ?? undefined
+      if (logical?.host === 'auto') {
+        if (plan.lowering) actual = this.options.native.direct ?? undefined
+        else {
+          if (!this.options.resolveDirect)
+            throw new AppError(503, 'native-network-unavailable', '手机连接组件不可用，请更新并重新构建 Latch 后重试')
+          actual = await this.options.resolveDirect(logical)
+        }
+      }
+      prepared = await this.options.native.prepareBind(actual)
       recheck()
       await this.options.profiles.configure(plan.direct, plan.input.relays, plan.baseHash, {
         requestId: plan.input.requestId,
         requestHash: plan.requestHash,
       })
       prepared.commit()
+      this.options.changed?.()
       this.options.controller.reconcile()
       return { audited }
     } catch (error) {

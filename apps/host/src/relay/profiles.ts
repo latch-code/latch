@@ -39,7 +39,7 @@ export const nativeDirectSchema = z.strictObject({
   host: z
     .string()
     .max(45)
-    .refine(value => Boolean(isIP(value))),
+    .refine(value => value === 'auto' || Boolean(isIP(value))),
   port: z.int().min(0).max(65535),
 })
 export type NativeDirect = z.infer<typeof nativeDirectSchema>
@@ -55,6 +55,10 @@ const schema = z.strictObject({
   generation: z.int().nonnegative(),
   configRevision: z.int().nonnegative().optional(),
   discoveryKey: key('lnd1'),
+  discoveryRevocationsHash: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/u)
+    .optional(),
   direct: nativeDirectSchema.nullable().optional(),
   configReceipts: z
     .array(z.strictObject({ requestId: z.uuid(), requestHash: z.string().regex(/^[a-f0-9]{64}$/u) }))
@@ -184,6 +188,13 @@ export class RelayProfiles {
     return this.change(draft => {
       if (draft.generation >= Number.MAX_SAFE_INTEGER) throw new AppError(503, 'native-generation-exhausted', '连接簿代次已耗尽')
       return ++draft.generation
+    })
+  }
+  rotateDiscovery(revocationsHash: string): Promise<void> {
+    return this.change(draft => {
+      if (draft.discoveryRevocationsHash === revocationsHash) return
+      draft.discoveryKey = secret('lnd1')
+      draft.discoveryRevocationsHash = revocationsHash
     })
   }
   rotate(relayId: string, day: number): Promise<void> {

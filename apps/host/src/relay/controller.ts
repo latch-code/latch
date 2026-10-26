@@ -34,7 +34,8 @@ export interface RelayControllerOptions {
 export class HostRelayController {
   private readonly options: RelayControllerOptions
   private readonly nodes = new Map<string, NodeState>()
-  private readonly retiring = new Set<Promise<void>>()
+  private readonly retiring = new Map<string, Promise<void>>()
+  private readonly resumeTokens = new Map<string, { fingerprint: string; tokens: Map<string, Uint8Array> }>()
   private readonly timer: ReturnType<typeof setInterval>
   private stopped = false
   constructor(options: RelayControllerOptions) {
@@ -86,6 +87,10 @@ export class HostRelayController {
   reconcile(): void {
     if (this.stopped) return
     const profiles = this.options.profiles.snapshot().profiles
+    for (const [id, retained] of this.resumeTokens) {
+      const profile = profiles.find(item => item.relayId === id)
+      if (!profile || retained.fingerprint !== sha256Hex(canonicalJson(profile))) this.resumeTokens.delete(id)
+    }
     for (const [id, state] of this.nodes) {
       const profile = profiles.find(item => item.relayId === id)
       if (!profile || state.fingerprint !== sha256Hex(canonicalJson(profile)) || state.leases.some(lease => !lease.permitted())) {
@@ -93,18 +98,27 @@ export class HostRelayController {
         state.control?.close()
         this.options.closePaths(Buffer.from(id, 'hex'))
         this.nodes.delete(id)
-        this.retiring.add(state.done)
-        void state.done.finally(() => this.retiring.delete(state.done)).catch(() => {})
+        this.retiring.set(id, state.done)
+        void state.done
+          .finally(() => {
+            if (this.retiring.get(id) === state.done) this.retiring.delete(id)
+            this.reconcile()
+          })
+          .catch(() => {})
       }
     }
     for (const profile of profiles) {
-      if (this.nodes.has(profile.relayId) || this.retiring.size >= 16) continue
+      if (this.nodes.has(profile.relayId) || this.retiring.has(profile.relayId) || this.retiring.size >= 16) continue
+      const fingerprint = sha256Hex(canonicalJson(profile)),
+        retained = this.resumeTokens.get(profile.relayId) ?? { fingerprint, tokens: new Map<string, Uint8Array>() }
+      // A temporary egress removal closes every path, but must not make the same configured node look like a hostile takeover.
+      this.resumeTokens.set(profile.relayId, retained)
       const state: NodeState = {
-        fingerprint: sha256Hex(canonicalJson(profile)),
+        fingerprint,
         abort: new AbortController(),
         done: Promise.resolve(),
         leases: [],
-        tokens: new Map(),
+        tokens: retained.tokens,
         status: 'connecting',
       }
       this.nodes.set(profile.relayId, state)
@@ -152,6 +166,33 @@ export class HostRelayController {
     for (const id of state.tokens.keys()) if (!members.has(id)) state.tokens.delete(id)
     return members
   }
+  private async synchronizeDenials(
+    profile: RelayProfile,
+    control: RelayControl,
+    members: Map<string, { day: number; seed: Buffer }>,
+    delivered: Set<string>,
+  ): Promise<void> {
+    const revoked = this.options.devices
+        .nativeRevocations()
+        .filter(item => item.acknowledged || Date.now() - item.revokedAt >= 7 * 86400_000),
+      relayId = Buffer.from(profile.relayId, 'hex')
+    for (const [id, member] of members) {
+      const batch: Array<{ deviceId: string; tag: Uint8Array }> = []
+      for (const device of revoked) {
+        if (delivered.has(`${id}:${device.id}`)) continue
+        const tag = (await holder(nodeCrypto, member.seed, relayId, ascii(device.id), member.day)).tag
+        batch.push({ deviceId: device.id, tag })
+      }
+      for (let at = 0; at < batch.length; at += 1024) {
+        const part = batch.slice(at, at + 1024)
+        await control.deny(
+          Buffer.from(id, 'hex'),
+          part.map(item => item.tag),
+        )
+        for (const item of part) delivered.add(`${id}:${item.deviceId}`)
+      }
+    }
+  }
   private async serve(
     profile: RelayProfile,
     state: NodeState,
@@ -168,7 +209,7 @@ export class HostRelayController {
           continue
         }
         let expected: string | undefined
-        for (const candidate of [...this.options.devices.nativeCandidates(), ...this.options.enrollments.nativeInvitations()]) {
+        for (const candidate of [...this.options.devices.nativeTransportCandidates(), ...this.options.enrollments.nativeInvitations()]) {
           const value = await holder(nodeCrypto, member.seed, relayId, ascii(candidate.id), member.day)
           if (hex(value.tag) === hex(setup.passTag)) {
             expected = candidate.id
@@ -209,13 +250,24 @@ export class HostRelayController {
         }
         state.control = control
         const members = await this.register(profile, state, control)
+        const delivered = new Set<string>()
+        await this.synchronizeDenials(profile, control, members, delivered)
         state.status = 'connected'
         attempts = 0
         const workers = Array.from({ length: 4 }, () => this.serve(profile, state, control, members).catch(() => control.close()))
         const date = Math.floor(Date.now() / 1000 / UTC_DAY)
+        let syncing = false
         const renewal = setInterval(() => {
           if (Math.floor(Date.now() / 1000 / UTC_DAY) !== date) control.close()
-        }, 30_000)
+          if (!syncing && !control.isClosed()) {
+            syncing = true
+            void this.synchronizeDenials(profile, control, members, delivered)
+              .catch(() => control.close())
+              .finally(() => {
+                syncing = false
+              })
+          }
+        }, 1000)
         renewal.unref()
         try {
           const error = await control.closed
@@ -262,7 +314,8 @@ export class HostRelayController {
       state.abort.abort()
       state.control?.close()
     }
-    await Promise.allSettled([...states.map(state => state.done), ...this.retiring])
+    await Promise.allSettled([...states.map(state => state.done), ...this.retiring.values()])
     this.nodes.clear()
+    this.resumeTokens.clear()
   }
 }
