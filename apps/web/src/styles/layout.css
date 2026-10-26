@@ -452,8 +452,7 @@ body {
 }
 
 /*
- * New session: the question, the harness tiles, the input with its context row, then the demo prompts; the ambient
- * field lies under them (the page is its positioned parent and its own stacking context). The block's top is fixed
+ * New session: the question, the harness tiles, the input with its context row, then the demo prompts. The block's top is fixed
  * where the plain page would sit centred in a paper of that height, so what opens under the input (a caption, the
  * reason a tile cannot be chosen) grows downward and nothing above it moves.
  */

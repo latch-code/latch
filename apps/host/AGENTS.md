@@ -25,7 +25,7 @@ Host 的监听、授权、配置与插件组合根。
 - 项目变更与启动串行，撤销和收紧仍可并行；旧会话保留冻结目录（`test/project-regressions.test.ts`）。只读分支规则见 [BRANCHES.md](../../docs/BRANCHES.md)。
 - 原生确认只由本机设备签名批准，仍经 PresenceService；首次启动信任绑定完整指纹和项目目录，规则见 ARCHITECTURE「本机确认服务」。
 - 根 `dist/` 构建拒绝测试代码（`test/security.test.ts`）。
-- `src/paths.ts`、`host-state.ts` 只用可擦除语法（`tsconfig.strip.json`）：`apps/web/vite.config.ts` 经 `@latch/host/paths`、`host-state` 让 Node 只剥离类型加载它们。
+- `src/paths.ts`、`host-state.ts`、`env.ts` 只用可擦除语法（`tsconfig.strip.json`）：Vite 与 Vitest 配置经 `@latch/host/…` 让 Node 只剥离类型加载它们。
 
 - 附件字节只进私有存储，消息与 SSE 只存引用；上传逐块复查设备，下载句柄绑定设备（`test/attachment-routes.test.ts`）。
 - 文件树/搜索只给 `all`；macOS树仅经 `latch-files` 描述符组件，不回退。索引不存权限；预览绑定Harness、根身份/版本，迟到结果重查设备/正文窗口（`test/file-tree.test.ts`、`test/native.test.ts`）。

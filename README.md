@@ -25,7 +25,7 @@ Latch 在你的电脑（执行端）上运行一个 Host。Host 持有会话、�
 | 系统 | macOS（完整功能）；Linux 可运行但没有本机确认；Windows 暂不支持运行 Host（见「平台限制」） |
 | Node.js / pnpm | Node.js 24.22.1（见 `.node-version`；也支持 22.x ≥ 22.23.4 与 ≥ 26.12.1，其他版本下 pnpm 命令直接报错），pnpm 11.28.6（`packageManager` 固定，已安装的其他版本 pnpm 会自动切换到它） |
 | 本机确认组件 | macOS 上需要 Xcode 命令行工具（`xcode-select --install`），用于构建 Touch ID 确认组件 |
-| 原生连接 TLS 组件 | Go 1.26.x ≥1.26.10 或 1.27.x ≥1.27.3，仅标准库，源码构建时使用；可用构建变量 `LATCH_RELAY_GO` 指定编译器，运行时不下载或编译 |
+| 原生连接 TLS 组件 | Go 1.26.10（见 `.go-version`；也支持 1.26.x ≥1.26.10 与 1.27.x ≥1.27.3），仅标准库，源码构建时使用；可用构建变量 `LATCH_RELAY_GO` 指定编译器，运行时不下载或编译 |
 | 手机接入 | 你自己提供的 HTTPS 证书（推荐 Tailscale 的 `tailscale cert`） |
 
 ## 安装与首次运行
@@ -73,7 +73,7 @@ pnpm desktop    # 启动 Host 并打开 Latch 桌面端（推荐）
 - 「设置 → 项目」用系统的文件夹选择器新建项目（可以一次选几个文件夹），也可以从访达拖入文件夹，再在系统对话框中确认；页面不发送路径，由桌面端用设备密钥签名后提交。「在访达中显示」只在访达中选中已登记的文件夹，不打开它。向已有项目添加文件夹、调整顺序、重新选择与「存为项目」的页面尚未实现（客户端界面正在改版）；在此之前可以在 Host 停止时用 `pnpm latch project add-folder`。
 - 「设置 → 设备」的「在这台电脑的浏览器中打开」由主进程生成一次性邀请，并把带邀请的回环地址交给默认浏览器；页面看不到邀请码。只在 macOS 上提供，其他系统请用 `pnpm latch device invite --loopback`。
 - 关闭窗口不会停止 Host，用 `pnpm stop` 停止。在 macOS 上关闭窗口后 Latch 仍在后台运行，继续在 Host 崩溃后重启它、有任务时保持唤醒；点 Dock 图标重新打开窗口，退出 Latch（⌘Q）后这两项停止，Host 继续运行。
-- 桌面端开着时，由 `pnpm desktop` 启动的 Host 意外退出后会被重新启动（1、2、4……秒后，10 分钟内第 5 次时停止并在「设置 → 通用」说明）。用环境变量（如 `HARNESS_MODEL`、`HARNESS_TLS_*`）配置的 Host 不会被自动重启。
+- 桌面端开着时，由 `pnpm desktop` 启动的 Host 意外退出后会被重新启动（1、2、4……秒后，10 分钟内第 5 次时停止并在「设置 → 通用」说明）。用环境变量（如 `LATCH_MODEL`、`LATCH_TLS_*`）配置的 Host 不会被自动重启。
 - 有会话在运行或有审批在等时，桌面端阻止 Mac 自动休眠（显示器照常熄灭；用电池时只在会话运行时，每次最长 1 小时），可在「设置 → 通用」关闭。合上盖子（没有外接显示器）时 Mac 仍会休眠；休眠前与 Host 停止前，手机与浏览器会看到原因（「电脑已休眠」「电脑上的 Latch 正在重启」等），并按 Host 给出的时间重新连接。
 - 「让 Latch 在后台运行」的登录项只能由打包后的 Latch 应用登记；`pnpm desktop` 是开发运行，这个开关不可用。
 - 不进入时间机器备份的是：数据目录的 `auth/`（设备登记）、`identity/`（Host 身份）、`providers.json`（模型密钥）与 `settings.json`（Agent 定义及其环境变量，以及项目列表与默认值，从备份恢复后需要重新添加），桌面端的 `latch-devices/`。会话、审计记录、安全策略与日志照常备份，建议加密备份盘。
@@ -94,8 +94,8 @@ pnpm desktop -- --tailnet \
   --public-origin https://my-mac.example.ts.net:4318
 ```
 
-- 三项 `--tls-cert`、`--tls-key`、`--public-origin` 必须同时提供（或用 `HARNESS_TLS_CERT`、`HARNESS_TLS_KEY`、`HARNESS_PUBLIC_ORIGIN`）。
-- 监听地址：`--tailnet` 取本机第一个 Tailscale 地址（`100.64.0.0/10`），`--lan` 取第一个私网 IPv4，`--tls-host <IP>` 指定网卡地址；公开地址的主机是 IP 时也可省略。必须是具体的 IP，不接受主机名或 `0.0.0.0`、`::` 等通配地址。端口默认 `4318`（`--tls-port`、`HARNESS_TLS_PORT`）。
+- 三项 `--tls-cert`、`--tls-key`、`--public-origin` 必须同时提供（或用 `LATCH_TLS_CERT`、`LATCH_TLS_KEY`、`LATCH_PUBLIC_ORIGIN`）。
+- 监听地址：`--tailnet` 取本机第一个 Tailscale 地址（`100.64.0.0/10`），`--lan` 取第一个私网 IPv4，`--tls-host <IP>` 指定网卡地址；公开地址的主机是 IP 时也可省略。必须是具体的 IP，不接受主机名或 `0.0.0.0`、`::` 等通配地址。端口默认 `4318`（`--tls-port`、`LATCH_TLS_PORT`）。
 - 启动前检查：私钥是你拥有的 0600 普通文件，且不在数据目录或任何项目目录内；证书未过期并与公开地址的主机名匹配。证书剩余不足 14 天时告警，过期后 HTTPS 入口关闭；Latch 不会续签证书。续签后（例如重新运行 `tailscale cert`）直接覆盖证书与私钥文件即可，Host 会自动重新加载，不需要重启；新文件不通过检查时继续使用原证书，并在 `host.log` 中写明原因。
 - HTTPS 入口只接受 TLS 1.3，并断开来自本机网卡地址的连接，请用手机测试（手机也需加入同一 tailnet）。
 - 该数据目录的 Host 已在运行时，`pnpm desktop` 会复用它而忽略这些参数，请先 `pnpm stop`。
@@ -117,7 +117,7 @@ pnpm desktop -- --tailnet \
 - **密钥绑定地址**：密钥只发往保存时服务地址的源（协议、主机与端口）与路径（如 `/v1`）。改到其他源或路径会清空密钥，需要重新输入，所以按路径区分租户的网关不会把密钥带给另一个租户；从旧版本升级时，已有密钥绑定到当时的地址。
 - **出站策略**：Host 发出的模型请求一律经过出站策略，默认拒绝本机回环、私网、链路本地、云元数据与其他特殊用途地址，拒绝跨源重定向。Host 自己解析域名并连接检查过的地址，DNS 重绑定无法绕过。
 - **本机模型服务**（Ollama、LM Studio 等）因此默认无法访问：确认地址时一并把它的 `host:port` 加入出站白名单（可以在获取模型前先确认，也可以在保存时确认）。元数据地址始终拒绝。使用 fake-IP 模式透明代理（系统 DNS 返回 `198.18.0.0/15`）时，同样需要把模型服务的 `host:port` 加入白名单，或在代理中为它关闭 fake-IP。
-- **临时服务**：`HARNESS_BASE_URL`、`HARNESS_MODEL`、`HARNESS_API_KEY` 为本次运行提供一个服务（替换 `openai-compatible` 的连接，不写入数据目录；见 [.env.example](.env.example)）。`HARNESS_BASE_URL` 的 `host:port` 自动加入本进程的出站白名单；地址不能包含用户名、密码、查询参数或片段。
+- **临时服务**：`LATCH_BASE_URL`、`LATCH_MODEL`、`LATCH_API_KEY` 为本次运行提供一个服务（替换 `openai-compatible` 的连接，不写入数据目录；见 [.env.example](.env.example)）。`LATCH_BASE_URL` 的 `host:port` 自动加入本进程的出站白名单；地址不能包含用户名、密码、查询参数或片段。
 - 真实服务失败时报错，不会回退到演示模型。出站策略只约束 Host 自己的模型请求，不约束插件与 ACP Agent 的网络访问。
 
 ## Harness
@@ -135,7 +135,7 @@ pnpm desktop -- --tailnet \
 - 在运行 Host 的电脑上安装并登录 Agent，再在桌面端「设置 → Agent 成员」选择预设或填写自定义命令并保存，不需要确认；在第一次用它开始会话之前，定义显示「还没有启动过」。Latch 不下载、不安装 Agent，也不代为登录。
 - 新建会话时，Latch 在输入框上方列出完整命令、参数、环境变量名、工作目录、项目中找到的 Agent 配置与启动指纹；Touch ID 表单第一次启动时写出可执行文件的路径与参数（「首次以完全访问启动 Codex（在「Acme」）：/opt/homebrew/bin/codex-acp …」），命令变了写「命令已变化」，只有项目配置变了也会说明。之后定义或这些项目配置变化，会话就不能继续。
 - 启动前 Latch 把 Agent 设到预设规定的权限模式，每轮输入前读回核对，发现 Agent 自行放宽时停止会话，并隐藏会持久保存授权的「始终允许 / 始终拒绝」类选项。pi 与 DeepSeek Harness 无法读回模式，pi 执行工具前也不请求审批。
-- Agent 进程只继承 `PATH`、`HOME`、`LANG`、`TERM`、`USER`、`SHELL`、`LC_*`，每个会话有私有临时目录，代理变量被清空。Agent 需要的 API Key 等变量请写在 Agent 定义里；`PATH`、`HOME`、代理、`NODE_OPTIONS`、`HARNESS_*`、`npm_*`、`DYLD_*`、`LD_*`、`GIT_CONFIG_*` 等由 Latch 管理的变量不能在定义中设置。
+- Agent 进程只继承 `PATH`、`HOME`、`LANG`、`TERM`、`USER`、`SHELL`、`LC_*`，每个会话有私有临时目录，代理变量被清空。Agent 需要的 API Key 等变量请写在 Agent 定义里；`PATH`、`HOME`、代理、`NODE_OPTIONS`、`LATCH_*`、`npm_*`、`DYLD_*`、`LD_*`、`GIT_CONFIG_*` 等由 Latch 管理的变量不能在定义中设置。
 - 任何 L3 会话运行或等待审批时，登记新设备、为设备增加权限、放宽安全策略与确认新的模型服务地址会被拒绝：桌面端写出是哪个会话，可以查看或停止它，结束后再试。批准 R2、再开一个 Agent 会话与放宽会话的权限模式照常确认。
 
 | 预设 | 启动命令 | 许可证 |
@@ -177,7 +177,7 @@ pnpm desktop -- --tailnet \
 
 项目与文件夹只能在 Host 所在的电脑上添加：在 Latch 桌面端用系统的文件夹选择器（或把文件夹拖进来，再在系统对话框中确认），或在 Host 停止时用 `pnpm latch project`。命令按「数据与工作区」中的规则逐个检查文件夹，列出真实路径并在终端询问 `y/N`（非交互环境需要 `--yes`），先写审计再保存；Host 运行时拒绝（「Host 正在运行。请在 Latch 桌面端添加，或先停止 Host。」）。重命名、调整顺序、移除文件夹与移除项目不扩大权限，Host 接受任何有「管理此 Host」权限的设备发起；页面目前只提供移除项目。
 
-离线项目命令沿用上次 Host 实际使用的启动目录、Agent 安装目录与 TLS 私钥位置。首次启动之前添加文件夹，需给项目命令加 `--workspace <启动目录>`（或设置 `HARNESS_WORKSPACE`）；之后改变启动参数，应先用新参数成功启动并停止 Host，再执行项目命令。
+离线项目命令沿用上次 Host 实际使用的启动目录、Agent 安装目录与 TLS 私钥位置。首次启动之前添加文件夹，需给项目命令加 `--workspace <启动目录>`（或设置 `LATCH_WORKSPACE`）；之后改变启动参数，应先用新参数成功启动并停止 Host，再执行项目命令。
 
 配对链接与离线登记码默认只打印到终端。非交互环境必须用 `--code-file <路径>`，内容只写入本次新建的 0600 文件：
 
@@ -189,11 +189,11 @@ pnpm desktop -- --tailnet \
 
 | 参数 | 环境变量 | 默认值 |
 | --- | --- | --- |
-| `--data-dir <目录>` | `HARNESS_DATA_DIR` | 见下节 |
-| `--workspace <目录>` | `HARNESS_WORKSPACE` | `~/Latch/workspace` |
-| `--port <端口>` | `HARNESS_PORT` | `4317`（同时监听 `127.0.0.1` 与 `::1`） |
-| `--tls-cert`、`--tls-key`、`--public-origin` | `HARNESS_TLS_CERT`、`HARNESS_TLS_KEY`、`HARNESS_PUBLIC_ORIGIN` | 不启用 HTTPS |
-| `--tls-host <IP>`、`--lan`、`--tailnet`、`--tls-port` | `HARNESS_TLS_HOST`、`HARNESS_TLS_PORT` | 端口 `4318` |
+| `--data-dir <目录>` | `LATCH_DATA_DIR` | 见下节 |
+| `--workspace <目录>` | `LATCH_WORKSPACE` | `~/Latch/workspace` |
+| `--port <端口>` | `LATCH_PORT` | `4317`（同时监听 `127.0.0.1` 与 `::1`） |
+| `--tls-cert`、`--tls-key`、`--public-origin` | `LATCH_TLS_CERT`、`LATCH_TLS_KEY`、`LATCH_PUBLIC_ORIGIN` | 不启用 HTTPS |
+| `--tls-host <IP>`、`--lan`、`--tailnet`、`--tls-port` | `LATCH_TLS_HOST`、`LATCH_TLS_PORT` | 端口 `4318` |
 | `--native-host <具体 IP>`、`--native-port <端口>` | — | 原生直连默认关闭；启用后端口默认 `4319` |
 | `--plugin <目录或模块>`、`--harness <id>`、`--provider <id>`、`--demo` | — | — |
 
@@ -207,13 +207,13 @@ pnpm desktop -- --tailnet \
 
 **数据目录**（设备登记、审计、安全策略、模型服务与密钥、会话）按以下顺序确定：
 
-1. `--data-dir` 或 `HARNESS_DATA_DIR`；
+1. `--data-dir` 或 `LATCH_DATA_DIR`；
 2. 当前目录下已存在的 `.runtime`（旧版本的位置，继续使用并打印迁移提示；迁移时停止 Host、移动目录，再用 `--data-dir` 指定）；
 3. 平台默认：macOS `~/Library/Application Support/Latch/Host`，Linux `${XDG_DATA_HOME:-~/.local/share}/latch/host`。
 
-**启动目录**：`--workspace` → `HARNESS_WORKSPACE` → 数据目录内已存在的 `workspace`（旧布局，迁出之前只能使用 Standard；位于 Latch 程序目录内时不再使用）→ `~/Latch/workspace`（需要时创建）。启动目录只包含这一个文件夹；其他项目在 Latch 桌面端「设置 → 项目」新建，或用 `pnpm latch project` 添加，每个项目最多 8 个文件夹。
+**启动目录**：`--workspace` → `LATCH_WORKSPACE` → 数据目录内已存在的 `workspace`（旧布局，迁出之前只能使用 Standard；位于 Latch 程序目录内时不再使用）→ `~/Latch/workspace`（需要时创建）。启动目录只包含这一个文件夹；其他项目在 Latch 桌面端「设置 → 项目」新建，或用 `pnpm latch project` 添加，每个项目最多 8 个文件夹。
 
-**会话自己的文件夹**：没有指定 `--workspace` 或 `HARNESS_WORKSPACE` 时，每个不在项目中的新 Agent 会话在启动目录中得到一个新文件夹（如 `~/Latch/workspace/20261025-a1b2`，权限 0700），在其中工作，会话之间的文件不再互相覆盖；「只对话」会话不读写文件，没有文件夹。指定了启动目录时照旧在其中工作。删除会话不删除它的文件夹。把会话的文件夹「存为项目」由 Latch 桌面端完成，只能在 Host 所在的电脑上进行，之后的新会话就能在这个项目中开始；页面中的入口尚未实现（客户端界面正在改版）。
+**会话自己的文件夹**：没有指定 `--workspace` 或 `LATCH_WORKSPACE` 时，每个不在项目中的新 Agent 会话在启动目录中得到一个新文件夹（如 `~/Latch/workspace/20261025-a1b2`，权限 0700），在其中工作，会话之间的文件不再互相覆盖；「只对话」会话不读写文件，没有文件夹。指定了启动目录时照旧在其中工作。删除会话不删除它的文件夹。把会话的文件夹「存为项目」由 Latch 桌面端完成，只能在 Host 所在的电脑上进行，之后的新会话就能在这个项目中开始；页面中的入口尚未实现（客户端界面正在改版）。
 
 以下位置既不能作为启动目录（Host 拒绝启动），也不能加入项目：
 
@@ -243,7 +243,7 @@ pnpm stop -- --reason restart           # 告诉手机与浏览器原因：resta
 
 ## 平台限制
 
-- **Linux**：没有本机确认（尚未实现 polkit 等系统确认）。桌面端用离线登记码登记，浏览器与手机无法登记；需要本机确认的操作都不可用，包括确认自定义或本机模型服务地址、新建 ACP 会话、批准 R2、授予设备权限与放宽安全策略（含出站白名单）。预置服务商的密钥可以在桌面端直接保存；自定义与本机地址在 Host 停止时用 `pnpm latch provider confirm` 或 `set-key` 确认，也可以通过 `HARNESS_BASE_URL` 为本次运行放行。桌面端需要系统密钥环，没有密钥环、只能明文保存时拒绝启动。
+- **Linux**：没有本机确认（尚未实现 polkit 等系统确认）。桌面端用离线登记码登记，浏览器与手机无法登记；需要本机确认的操作都不可用，包括确认自定义或本机模型服务地址、新建 ACP 会话、批准 R2、授予设备权限与放宽安全策略（含出站白名单）。预置服务商的密钥可以在桌面端直接保存；自定义与本机地址在 Host 停止时用 `pnpm latch provider confirm` 或 `set-key` 确认，也可以通过 `LATCH_BASE_URL` 为本次运行放行。桌面端需要系统密钥环，没有密钥环、只能明文保存时拒绝启动。
 - **Windows**：Host 依赖 `host.sock` 所在的每用户运行目录，Windows 上尚未实现，Host 无法启动。
 
 ## 与上一版本不兼容的变化
@@ -253,7 +253,8 @@ pnpm stop -- --reason restart           # 告诉手机与浏览器原因：resta
 - **浏览器登记需要一次性邀请，离线登记码只在桌面端接受。** 回环端口可能被转发，不再算作这台电脑：新浏览器从桌面端「在这台电脑的浏览器中打开」或 `pnpm latch device invite --loopback` 获得邀请后登记。已经登记的浏览器照常使用，它们本来就按远程设备的规则运行。`pnpm latch device enroll --offline` 不再接受 `--port`。
 - **明文局域网接入已移除。** `--lan`、`--tailnet`、`--tls-host` 或非回环 `--host` 都必须同时提供证书、私钥与公开地址，否则拒绝启动。
 - **`GET /link/api/health` 只返回 `{"ok":true}`。** Host 实例信息只在 `host.sock` 上提供。
-- **`HARNESS_DESKTOP_URL` 已移除。** 桌面端只通过 `host.json` 与 `host.sock` 连接 Host，启动器会丢弃这个变量。
+- **桌面端的地址变量已移除。** 桌面端只通过 `host.json` 与 `host.sock` 连接 Host，启动器丢弃这个变量（见「启动参数与环境变量」）。
+- **环境变量改名为 `LATCH_*`。** 改名前的名称仍然有效（见「启动参数与环境变量」）；Agent 定义不能再设置 `LATCH_*` 变量，已保存的定义设置了它们时显示问题且不加载，删除这些变量后恢复。
 - **默认位置变化。** 新安装的数据目录与启动目录使用上文的平台默认位置；当前目录已有的 `.runtime` 仍会被使用，其中的 `workspace` 只在不位于 Latch 程序目录内时仍作为启动目录，否则启动目录改为 `~/Latch/workspace`（原目录中的文件不移动，启动时打印提示）。
 - **会话有自己的文件夹。** 使用默认启动目录时，不在项目中的 Agent 会话不再共用启动目录，而是各自使用其中新建的文件夹；已有会话不受影响。
 - **只能在 Host 电脑上添加项目。** 本机浏览器、手机与其他电脑不能再新建项目或添加文件夹（403 `local-only`），旧页面的路径输入框随之失效；改用 Latch 桌面端或 Host 停止时的 `pnpm latch project`。「默认工作区」改称「启动目录」。
@@ -284,8 +285,8 @@ pnpm fmt                       # oxfmt 格式化；pnpm fmt:check 只检查
 pnpm test                      # Vitest 单元与集成测试
 pnpm build
 pnpm test:e2e                  # Vitest + Playwright，使用 dist/web
-HARNESS_BROWSER_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' pnpm test:e2e
-HARNESS_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desktop.e2e.ts
+LATCH_BROWSER_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' pnpm test:e2e
+LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desktop.e2e.ts
 ```
 
 Git 钩子与 `git blame` 的忽略列表需要在每个克隆中手动设置一次，见 [docs/TESTING.md](docs/TESTING.md#git-钩子)。

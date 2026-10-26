@@ -5,6 +5,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep, win32 } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { AppError } from '@latch/sdk'
+import { latchEnv } from './env.ts'
 
 export interface LatchPaths {
   dataDir: string
@@ -49,7 +50,8 @@ function codeRootOrUndefined(): string | undefined {
 /**
  * Data, workspace and agent-install directories, from flags, environment, a legacy `./.runtime`, or platform defaults.
  * The Host never picks a start directory inside Latch's own code: a legacy `<data>/workspace` there gives way to
- * `~/Latch/workspace`. A directory named by `--workspace` or `HARNESS_WORKSPACE` is the owner's choice and kept.
+ * `~/Latch/workspace`. A directory named by `--workspace` or `LATCH_WORKSPACE` is the owner's choice and kept. A
+ * variable is read only when no flag replaces it.
  */
 export function resolveLatchPaths(input: {
   dataDir?: string
@@ -71,11 +73,12 @@ export function resolveLatchPaths(input: {
   let dataDir: string
   let dataDirSource: LatchPaths['dataDirSource']
   const platformDefault = platformData(platform, home, input.env, 'Host')
+  const dataDirEnv = input.dataDir ? undefined : latchEnv(input.env, 'DATA_DIR')
   if (input.dataDir) {
     dataDir = path.resolve(input.cwd, input.dataDir)
     dataDirSource = 'flag'
-  } else if (input.env.HARNESS_DATA_DIR) {
-    dataDir = path.resolve(input.cwd, input.env.HARNESS_DATA_DIR)
+  } else if (dataDirEnv) {
+    dataDir = path.resolve(input.cwd, dataDirEnv)
     dataDirSource = 'env'
   } else if (exists(path.join(input.cwd, '.runtime'))) {
     dataDir = path.join(input.cwd, '.runtime')
@@ -91,15 +94,16 @@ export function resolveLatchPaths(input: {
   let workspaceRoot: string
   let workspaceSource: LatchPaths['workspaceSource']
   const legacyWorkspace = path.join(dataDir, 'workspace')
-  const legacyExists = !input.workspace && !input.env.HARNESS_WORKSPACE && exists(legacyWorkspace)
+  const workspaceEnv = input.workspace ? undefined : latchEnv(input.env, 'WORKSPACE')
+  const legacyExists = !input.workspace && !workspaceEnv && exists(legacyWorkspace)
   const codeRoot = legacyExists ? (input.codeRoot ?? codeRootOrUndefined()) : undefined
   const legacyInCode =
     codeRoot !== undefined && (isInsidePath(realOrSelf(legacyWorkspace), codeRoot) || isInsidePath(codeRoot, realOrSelf(legacyWorkspace)))
   if (input.workspace) {
     workspaceRoot = path.resolve(input.cwd, input.workspace)
     workspaceSource = 'flag'
-  } else if (input.env.HARNESS_WORKSPACE) {
-    workspaceRoot = path.resolve(input.cwd, input.env.HARNESS_WORKSPACE)
+  } else if (workspaceEnv) {
+    workspaceRoot = path.resolve(input.cwd, workspaceEnv)
     workspaceSource = 'env'
   } else if (legacyExists && !legacyInCode) {
     workspaceRoot = legacyWorkspace
@@ -114,9 +118,8 @@ export function resolveLatchPaths(input: {
       )
   }
 
-  const agentsDir = input.env.HARNESS_AGENTS_DIR
-    ? path.resolve(input.cwd, input.env.HARNESS_AGENTS_DIR)
-    : platformData(platform, home, input.env, 'Agents')
+  const agentsDirEnv = latchEnv(input.env, 'AGENTS_DIR')
+  const agentsDir = agentsDirEnv ? path.resolve(input.cwd, agentsDirEnv) : platformData(platform, home, input.env, 'Agents')
   return { dataDir, dataDirSource, workspaceRoot, workspaceSource, agentsDir, warnings }
 }
 
@@ -279,14 +282,18 @@ function withoutAliasesSync(path: string): string {
 
 let cachedCodeRoot: string | undefined
 
-/** Realpath of the nearest ancestor of this module whose package.json is named "harness-link", in its on-disk spelling. */
+/** The root package's name, and the one it had before the rename, which an older checkout still carries. */
+const CODE_ROOT_NAMES: ReadonlySet<unknown> = new Set(['latch', 'harness-link'])
+
+/** Realpath of the nearest ancestor of this module whose package.json is the root package's, in its on-disk spelling. */
 export function latchCodeRoot(): string {
   return (cachedCodeRoot ??= findCodeRoot(dirname(fileURLToPath(import.meta.url))))
 }
 
 /**
- * The nearest ancestor of `start` (or `start` itself) whose package.json is named "harness-link". Workspace projects
- * have package.json files of their own, so the walk passes them and still ends at the repository root.
+ * The nearest ancestor of `start` (or `start` itself) whose package.json is named "latch" (or "harness-link", its name
+ * before the rename). Workspace projects have package.json files of their own, so the walk passes them and still ends
+ * at the repository root.
  */
 export function findCodeRoot(start: string): string {
   let directory = start
@@ -294,7 +301,7 @@ export function findCodeRoot(start: string): string {
     try {
       const manifest = JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8')) as { name?: unknown }
       // The native realpath reports the on-disk case; the JS one keeps whatever case the module URL was loaded with.
-      if (manifest.name === 'harness-link') return withoutAliasesSync(realpathSync.native(directory))
+      if (CODE_ROOT_NAMES.has(manifest.name)) return withoutAliasesSync(realpathSync.native(directory))
     } catch {
       /* keep walking */
     }

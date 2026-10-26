@@ -12,6 +12,7 @@ import { FAKE_ACP_AGENT, testDeviceKey } from '@latch/testkit'
 import { createOfflineTicket } from '@latch/host/auth'
 import { writeHostState } from '@latch/host/host-state'
 import { desktopShellEnvironment } from '@latch/host/desktop-host'
+import { latchEnv } from '@latch/host/env'
 import { expectUnmovedByInjectedStyles } from './helpers/security.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { closeSettings, layersInWindow, openSection, openSettings, reachable, settleShell } from './helpers/layout.ts'
@@ -265,7 +266,7 @@ async function enrollShell(page: Page, testHost: TestHost, name: string) {
   return fingerprint!
 }
 
-describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !== 'darwin')('native desktop shell', () => {
+describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 'darwin')('native desktop shell', () => {
   it('enrolls over host.sock, keeps credentials in main, confines the renderer and leaves the Host running', async () => {
     const root = await mkdtemp(join(tmpdir(), 'latch-electron-'))
     const marks = { ran: 0 }

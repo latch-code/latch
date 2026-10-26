@@ -546,7 +546,7 @@ export interface ServerOptions {
   /** Deprecated. Only '127.0.0.1' | 'localhost' | '::1' are accepted (and ignored); anything else is a startup error. */
   host?: string
   demo: boolean
-  /** Provider from `HARNESS_MODEL`; it replaces the connection of `openai-compatible` for this process and is never persisted. */
+  /** Provider from `LATCH_MODEL`; it replaces the connection of `openai-compatible` for this process and is never persisted. */
   provider?: { baseURL: string; apiKey: string; model: string }
   plugins?: HarnessPlugin[]
   /** Process-level default provider (`--provider`); it overrides the saved default. */
@@ -589,7 +589,7 @@ export interface ServerOptions {
   /**
    * Each new Agent session outside a saved project works in a new folder of its own inside the start directory
    * (`<yyyymmdd>-<4 hex>`, 0700). The start script sets it when the start directory is the Host's default, that is
-   * without `--workspace` or `HARNESS_WORKSPACE`; a start directory the owner chose is used as it is.
+   * without `--workspace` or `LATCH_WORKSPACE`; a start directory the owner chose is used as it is.
    */
   sessionFolders?: boolean
   /** Tests: the four hex characters of a session folder's name; default random. */
@@ -696,17 +696,17 @@ function assertBaseURL(value: string): void {
   if (url.search || url.hash) throw new AppError(400, 'invalid-url', '服务地址不能包含查询参数或片段')
 }
 
-/** The `HARNESS_BASE_URL` overlay is never persisted or validated by the config schema, so its rules apply at startup. */
+/** The `LATCH_BASE_URL` overlay is never persisted or validated by the config schema, so its rules apply at startup. */
 function assertEnvBaseURL(value: string): void {
   let url: URL
   try {
     url = new URL(value)
   } catch {
-    throw new AppError(400, 'invalid-url', 'HARNESS_BASE_URL 不是有效的 HTTP(S) 地址')
+    throw new AppError(400, 'invalid-url', 'LATCH_BASE_URL 不是有效的 HTTP(S) 地址')
   }
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new AppError(400, 'invalid-url', 'HARNESS_BASE_URL 仅支持 HTTP 或 HTTPS')
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new AppError(400, 'invalid-url', 'LATCH_BASE_URL 仅支持 HTTP 或 HTTPS')
   if (url.username || url.password || url.search || url.hash) {
-    throw new AppError(400, 'invalid-url', 'HARNESS_BASE_URL 不能包含凭据、查询参数或片段，请把密钥放在 HARNESS_API_KEY 中')
+    throw new AppError(400, 'invalid-url', 'LATCH_BASE_URL 不能包含凭据、查询参数或片段，请把密钥放在 LATCH_API_KEY 中')
   }
 }
 
@@ -1314,7 +1314,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     const savedLegacy = config.provider(LEGACY_PROVIDER_ID)
     /**
-     * Live `openai-compatible` while `HARNESS_MODEL` is set: the environment's connection with the saved
+     * Live `openai-compatible` while `LATCH_MODEL` is set: the environment's connection with the saved
      * name and switch. Owner edits apply to it in memory and to the saved record; the environment's key is never written.
      */
     let envProvider: ProviderRecord | undefined = options.provider && {
@@ -1329,7 +1329,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       defaultModel: options.provider.model.trim(),
     }
     /**
-     * Origins the person who started this Host allowed for this run: `HARNESS_BASE_URL` and the process-level outbound
+     * Origins the person who started this Host allowed for this run: `LATCH_BASE_URL` and the process-level outbound
      * entries. Every path on them counts as confirmed until the Host stops; they are never written.
      */
     const processOrigins = new Set<string>([
@@ -2354,7 +2354,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
 
     /**
-     * Applies an owner edit to a provider, as [live, saved]. Under `HARNESS_MODEL` the same edit applies
+     * Applies an owner edit to a provider, as [live, saved]. Under `LATCH_MODEL` the same edit applies
      * to the saved record, or to the overlay without its key, so the environment's key stays live and
      * never reaches the disk.
      */

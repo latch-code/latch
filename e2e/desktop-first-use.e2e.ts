@@ -9,6 +9,7 @@ import type { HarnessPlugin } from '@latch/sdk'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { writeHostState } from '@latch/host/host-state'
 import { desktopShellEnvironment } from '@latch/host/desktop-host'
+import { latchEnv } from '@latch/host/env'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { backToPhoneSessions, closeSettings, noHorizontalOverflow, openSection, openSettings, reachable } from './helpers/layout.ts'
 
@@ -103,7 +104,7 @@ async function showOnboarding(page: Page, width: number) {
   if (width === 390) await startNew(page, width)
 }
 
-describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !== 'darwin')(
+describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 'darwin')(
   'actual desktop first use and slash commands',
   () => {
     it.each([1440, 900, 390])('%s keeps first-use actions in place and completes a real non-demo first session', async width => {

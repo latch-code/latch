@@ -10,7 +10,7 @@ afterEach(() => {
 })
 
 function setup() {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'hl-projects-')))
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'lt-projects-')))
   cleanups.push(root)
   for (const path of ['home/code/api/lib', 'home/code/web', 'home/docs/web', 'home/code/c,d', 'data', 'runtime', 'code'])
     mkdirSync(join(root, path), { recursive: true })

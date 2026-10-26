@@ -19,7 +19,7 @@ electron-main 环境：CommonJS，不导入 TypeScript 源码。运行时只依�
 - 顶层不离开 `latch://app/`；主进程凭一次真实点击打开网页或邮件链接，脚本外链先确认，其他协议拒绝。
 - preload 只暴露 `latchShell`，IPC 见 `src/preload.cjs`，只接受主窗口 `latch://app/` 顶层页面；生命周期参数只收布尔。回环邀请仅 macOS 主进程申请并交默认浏览器，不进页面或日志；页面只能申请手机邀请。
 - 通知只读 Host 状态，取消/中断不冒充完成；选择与偏好串行保存，标题默认隐藏。见 [NOTIFICATIONS.md](../../docs/NOTIFICATIONS.md)。
-- 主进程只按 `desktop-launch.json` 启动本仓库的 `dist/start.js`，不带额外 Node 参数，Node 属于当前用户或 root 且他人不可写；`--disable-sigusr1` 在前，环境不带 `HARNESS_*`。睡眠与停止只由主进程报告，页面得到 403。
+- 主进程只按 `desktop-launch.json` 启动本仓库的 `dist/start.js`，无额外 Node 参数，Node 属当前用户或 root 且他人不可写；`--disable-sigusr1` 在前，环境无 `LATCH_*`。睡眠与停止只由主进程报告，页面得到 403。
 - 设备密钥与凭据只在主进程，经 safeStorage 加密保存在 0600 文件中；没有安全存储时不保存。
 - 文件夹操作需 `folders.protocolVersion: 1`，只回应主窗口顶层页面，窗口有焦点才开原生对话框；路径来自面板、经原生确认的拖入或 Host 已知会话目录，页面不给路径。主进程取 nonce、用设备私钥签名提交；页面的添加路由 403 `shell-managed`；在访达中只用 `showItemInFolder`（`test/desktop-folders.test.ts`）。
 - 文件操作只收顶层页面的会话引用或句柄；`files.protocolVersion: 2` 另收项目/Harness与句柄。Host 经 socket 裁决并先审计；主进程复查普通文件、白名单与文件头，再调用 `shell.openPath`、macOS `previewFile` 或 `showItemInFolder`，不调用 `openExternal`、不打开目录或应用。页面仅转发会话/项目 resolve/search/list 与句柄内容/meta；`Origin: null` 一律拒绝。见 [ARCHITECTURE.md](../../docs/ARCHITECTURE.md#会话文件) 与 `test/desktop-files.test.ts`。

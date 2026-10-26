@@ -3,7 +3,7 @@ import type { Change } from '../scripts/repository.ts'
 import { testProjects, verificationPlan, type TestProject } from '../scripts/verify-plan.ts'
 
 const PROJECTS: TestProject[] = [
-  { name: 'harness-link', dir: 'tests' },
+  { name: 'latch', dir: 'tests' },
   { name: '@latch/host', dir: 'apps/host/test' },
   { name: '@latch/web', dir: 'apps/web/test' },
   { name: '@latch/desktop', dir: 'apps/desktop/test' },
@@ -44,7 +44,7 @@ describe('verification plan', () => {
     expect(commands(['apps/web/test/client-diff.test.ts', 'tests/redact.test.ts'])).toEqual([
       'pnpm check:quick',
       'pnpm knip',
-      'pnpm test --project @latch/web --project harness-link',
+      'pnpm test --project @latch/web --project latch',
       'pnpm docs:affected -- --base HEAD',
     ])
   })
@@ -65,16 +65,16 @@ describe('verification plan', () => {
 
   it('adds the Electron suite for the desktop shell, its launcher and the files it relies on, and the layout check for page changes', () => {
     expect(commands(['apps/desktop/src/main.cjs'])).toContain(
-      'HARNESS_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desktop.e2e.ts',
+      'LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desktop.e2e.ts',
     )
     expect(commands(['apps/host/scripts/desktop-host.ts'])).toContain(
-      'HARNESS_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desktop.e2e.ts',
+      'LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desktop.e2e.ts',
     )
     expect(commands(['apps/host/src/host-state.ts'])).toContain(
-      'HARNESS_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desktop.e2e.ts',
+      'LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desktop.e2e.ts',
     )
     expect(commands(['apps/host/src/hub.ts'])).not.toContain(
-      'HARNESS_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desktop.e2e.ts',
+      'LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desktop.e2e.ts',
     )
     expect(commands(['apps/web/src/components/ToolCard.tsx']).some(command => command.includes('深色模式'))).toBe(true)
     expect(commands(['packages/ui/src/tokens.css'])).toEqual([

@@ -855,7 +855,7 @@ describe('inspector', () => {
     const html = renderToStaticMarkup(
       createElement(Inspector, {
         snapshot: appSnapshot({ catalog: hostCatalog() }),
-        summary: session({ cwd: '/Users/me/personal/harness-link', harnessId: 'standard' }),
+        summary: session({ cwd: '/Users/me/code/latch', harnessId: 'standard' }),
         detail: null,
         local: false,
         collapsed: new Set<string>(),
@@ -863,19 +863,19 @@ describe('inspector', () => {
         onReveal: noop,
       }),
     )
-    expect(html).toContain('<span class="info-path-name">harness-link</span>')
+    expect(html).toContain('<span class="info-path-name">latch</span>')
     // 「Latch 内置」 already says it is built in: no second 「内置」 under the name.
     expect(html).toContain('<span class="info-who-name">Latch 内置</span>')
     expect(html).not.toContain('info-who-source')
     // The whole path until the line is measured (then it is cut in the middle to fit, see middleFit).
     expect(html).toContain(
-      '<span class="middle-text info-path-full" title="/Users/me/personal/harness-link"><span aria-hidden="true">/Users/me/personal/harness-link</span><span class="sr-only">/Users/me/personal/harness-link</span></span>',
+      '<span class="middle-text info-path-full" title="/Users/me/code/latch"><span aria-hidden="true">/Users/me/code/latch</span><span class="sr-only">/Users/me/code/latch</span></span>',
     )
   })
 })
 
 describe('a folder inside Latch’s program directory', () => {
-  const start = { id: 'default', name: 'app', path: '/repo/harness-link/.runtime/workspace', codeRoot: true as const }
+  const start = { id: 'default', name: 'app', path: '/repo/latch/.runtime/workspace', codeRoot: true as const }
   const inspector = (onNewProject?: () => void) =>
     renderToStaticMarkup(
       createElement(Inspector, {

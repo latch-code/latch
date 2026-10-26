@@ -33,7 +33,6 @@ import {
   X,
 } from 'lucide-react'
 import {
-  AmbientField,
   Badge,
   Button,
   Checkbox,
@@ -1447,25 +1446,6 @@ function Explained({ options }: { options: ComponentProps<typeof TileChoice<stri
   )
 }
 
-/** The ambient field of an empty page as its still frame, round an anchor and clear of a card. */
-function Ambient() {
-  return (
-    <Section title="环境背景">
-      <Row label="静帧">
-        <Cell caption="轨道、站点与一段光；内容周围留白">
-          <div className="gallery-ambient">
-            <AmbientField still />
-            <p className="gallery-ambient-title" data-ambient-anchor="" data-ambient-avoid="text">
-              今天要做什么？
-            </p>
-            <div className="gallery-ambient-card" data-ambient-avoid="surface" />
-          </div>
-        </Cell>
-      </Row>
-    </Section>
-  )
-}
-
 function Tiles() {
   const sizes = [16, 20, 24, 32, 40, 56] as const
   return (
@@ -1909,7 +1889,6 @@ export function Gallery() {
         <Motion />
         <Tiles />
         <TileChoices />
-        <Ambient />
         <Resize />
         <Icons />
         <Focus />

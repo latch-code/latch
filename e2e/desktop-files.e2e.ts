@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest'
 import type { HarnessPlugin } from '@latch/sdk'
 import { writeHostState } from '@latch/host/host-state'
 import { desktopShellEnvironment } from '@latch/host/desktop-host'
+import { latchEnv } from '@latch/host/env'
 import { startTestHost } from './helpers/host.ts'
 
 /** What the test records in main instead of showing Finder or Quick Look, opening an app or the browser. */
@@ -57,7 +58,9 @@ async function captureThemes(page: Page, name: string) {
   await page.emulateMedia({ colorScheme: 'light' })
 }
 
-describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !== 'darwin')('native desktop shell: files in a reply', () => {
+const electronE2E = latchEnv(process.env, 'ELECTRON_E2E') === '1'
+
+describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop shell: files in a reply', () => {
   it('shows, previews and opens only what the Host allowed, with the real path, after the audit, and never navigates', async () => {
     const root = await mkdtemp(join(tmpdir(), 'latch-electron-files-'))
     const plugin: HarnessPlugin = {

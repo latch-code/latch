@@ -6,6 +6,7 @@ import { resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { AgentSettings } from '@latch/protocol'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
+import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { backToSection, openSection, openSettings } from './helpers/layout.ts'
@@ -22,7 +23,7 @@ describe('settings navigation motion', () => {
   let browser: Browser
 
   beforeAll(async () => {
-    testHost = await startTestHost({ uiDir: resolve(process.env.HARNESS_E2E_UI_DIR ?? 'dist/web') })
+    testHost = await startTestHost({ uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web') })
     browser = await chromium.launch(browserLaunchOptions())
   })
   afterAll(async () => {
@@ -227,8 +228,11 @@ async function buttonNames(region: Locator): Promise<string[]> {
 describe('adding a model service', () => {
   it('adds a model by its ID when listing fails, saves the service and names every button once', async () => {
     const service = await brokenListing()
-    // The address is allowed for this run, as `HARNESS_BASE_URL` would be; confirming it is the desktop's part.
-    const testHost = await startTestHost({ uiDir: resolve(process.env.HARNESS_E2E_UI_DIR ?? 'dist/web'), egressAllow: [service.allow] })
+    // The address is allowed for this run, as `LATCH_BASE_URL` would be; confirming it is the desktop's part.
+    const testHost = await startTestHost({
+      uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web'),
+      egressAllow: [service.allow],
+    })
     const browser = await chromium.launch(browserLaunchOptions())
     try {
       const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'zh-CN', deviceScaleFactor: 1 })
@@ -347,7 +351,7 @@ describe('adding a model service', () => {
  */
 describe('an agent that has not started yet', () => {
   it('saves without a confirmation and says 还没有开启过会话 until a session starts with it', async () => {
-    const testHost = await startTestHost({ uiDir: resolve(process.env.HARNESS_E2E_UI_DIR ?? 'dist/web') })
+    const testHost = await startTestHost({ uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web') })
     const browser = await chromium.launch(browserLaunchOptions())
     try {
       const desktop = await testHost.enroll({ listener: 'unix', name: '本机桌面端' })

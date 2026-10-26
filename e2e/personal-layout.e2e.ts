@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { PersonalAssistant, PersonalGroup, PersonalGroupDetail, PersonalOverview, PersonalRoutine, TaskDetail } from '@latch/protocol'
 import type { HarnessPlugin, ModelMessage } from '@latch/sdk'
 import type { TestDevice } from '@latch/testkit'
+import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { backToPhoneSessions, noHorizontalOverflow, reachable } from './helpers/layout.ts'
@@ -49,7 +50,7 @@ describe('personal group and routine layout with real child-session navigation',
     host = await startTestHost({
       plugins: [plugin],
       hostName: '个人助手布局测试',
-      uiDir: resolve(process.env.HARNESS_E2E_UI_DIR ?? 'dist/web'),
+      uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web'),
     })
     owner = await host.enroll({ listener: 'unix', name: '布局测试电脑' })
     members = []

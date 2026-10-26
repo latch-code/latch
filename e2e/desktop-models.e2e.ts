@@ -8,9 +8,10 @@ import { FAKE_ACP_AGENT } from '@latch/testkit'
 import type { AgentSettings, TaskDetail } from '@latch/protocol'
 import { writeHostState } from '@latch/host/host-state'
 import { desktopShellEnvironment } from '@latch/host/desktop-host'
+import { latchEnv } from '@latch/host/env'
 import { startTestHost } from './helpers/host.ts'
 
-describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !== 'darwin')(
+describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 'darwin')(
   'actual Agent model and reasoning controls',
   () => {
     it('reads actual ACP options at three sizes and reconciles a lost response without sending again', async () => {

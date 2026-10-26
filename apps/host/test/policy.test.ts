@@ -23,7 +23,7 @@ afterEach(async () => {
 })
 
 async function fixture(platform: NodeJS.Platform = 'darwin', auditFs?: AuditFs) {
-  const dataDir = mkdtempSync(join(tmpdir(), 'harness-link-policy-'))
+  const dataDir = mkdtempSync(join(tmpdir(), 'latch-policy-'))
   cleanups.push(() => rmSync(dataDir, { recursive: true, force: true }))
   const audit = await AuditLog.open(join(dataDir, 'audit'), auditFs ? { fs: auditFs } : {})
   cleanups.push(() => audit.close())

@@ -40,7 +40,9 @@ async function temporaryDirectory() {
  * `tty`: stdout is a terminal. `typed`: stdin is a terminal, and `answer` is what is typed at a question (`asked` records
  * each question with what stdout showed by then); `secret` is the key read from stdin either way.
  */
-function cli(options: { tty?: boolean; typed?: boolean; answer?: string | boolean; secret?: string; cwd?: string } = {}) {
+function cli(
+  options: { tty?: boolean; typed?: boolean; answer?: string | boolean; secret?: string; cwd?: string; env?: NodeJS.ProcessEnv } = {},
+) {
   const output = { stdout: '', stderr: '', asked: [] as Array<{ prompt: string; shown: string }>, secrets: 0 }
   const io: CliIO = {
     stdout: {
@@ -64,7 +66,7 @@ function cli(options: { tty?: boolean; typed?: boolean; answer?: string | boolea
       return typeof options.answer === 'string' ? options.answer : ''
     },
     ...(options.answer !== undefined ? { confirm: async () => options.answer === true } : {}),
-    env: {},
+    env: options.env ?? {},
     cwd: options.cwd ?? tmpdir(),
   }
   return { io, output, latch: (...argv: string[]) => runLatch(argv, io) }
@@ -774,7 +776,7 @@ describe('latch CLI', () => {
     const pnpm = pnpmFromEnvironment()
     if (!pnpm) throw new Error('run this test through pnpm (pnpm test) so npm_execpath names the pinned pnpm')
     const dataDir = await stoppedDataDir()
-    const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('HARNESS_')))
+    const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^LATCH_/u.test(name)))
     const args = ['--silent', 'latch', 'provider', 'set-key', 'lab', '--data-dir', dataDir, '--expect-url', 'https://lab.example/v1']
     const child = spawn(pnpm.file, [...pnpm.args, ...args], {
       cwd: resolve(),
@@ -1014,9 +1016,16 @@ describe('latch CLI', () => {
     expect(broken.output.stderr).toContain('第 2 行')
   })
 
+  it('finds the data directory by LATCH_DATA_DIR', async () => {
+    const dataDir = join(await temporaryDirectory(), 'current')
+    const run = cli({ env: { LATCH_DATA_DIR: dataDir } })
+    expect(await run.latch('audit', 'verify')).toBe(1)
+    expect(run.output.stderr).toBe(`找不到审计记录 ${join(dataDir, 'audit', 'audit.jsonl')}\n`)
+  })
+
   it('runs as a script with the documented usage and exit codes', async () => {
     const directory = await temporaryDirectory()
-    const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('HARNESS_')))
+    const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^LATCH_/u.test(name)))
     const usage = await run(TSX, [LATCH], { cwd: directory, env }).catch((error: { code: number; stdout: string }) => error)
     expect(usage).toMatchObject({ code: 1 })
     expect((usage as { stdout: string }).stdout).toContain('用法：pnpm latch')

@@ -124,7 +124,8 @@ export const GLOBAL_RESERVED_ENV: readonly string[] = [
   'GEMINI_CLI_SYSTEM_SETTINGS_PATH',
 ]
 
-export const RESERVED_ENV_PREFIXES: readonly string[] = ['npm_', 'HARNESS_', 'DYLD_', 'LD_', 'GIT_CONFIG_']
+/** `LATCH_*` are the Host's own settings, a model key among them. */
+export const RESERVED_ENV_PREFIXES: readonly string[] = ['npm_', 'LATCH_', 'DYLD_', 'LD_', 'GIT_CONFIG_']
 
 const RESERVED_NAMES = new Set(GLOBAL_RESERVED_ENV.map(name => name.toUpperCase()))
 const RESERVED_PREFIXES = RESERVED_ENV_PREFIXES.map(prefix => prefix.toUpperCase())

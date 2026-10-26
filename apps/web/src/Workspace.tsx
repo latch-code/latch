@@ -530,7 +530,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
   }, [harness.removed])
 
   // Per-device read markers; the selected session is read while it is open.
-  const seenKey = `harness-link.seen.${location.origin}.${snapshot.device.id}`
+  const seenKey = `latch.seen.${location.origin}.${snapshot.device.id}`
   const [seen, setSeen] = useState<SeenState>(() => readSeen(seenKey) ?? emptySeen())
   useEffect(() => {
     if (current) setSeen(previous => markSeen(previous, current.summary.id, current.summary.updatedAt))

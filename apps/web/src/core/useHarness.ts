@@ -10,6 +10,7 @@ import { observeHostTime } from './hostClock.ts'
 import { mergeTaskSnapshot, parseTaskState, ProjectionGuard, type ProjectionTicket } from './projection.ts'
 import type { EnrollmentReason } from './securityCopy.ts'
 import { currentShell } from './shell.ts'
+import { readStorage } from './storageKeys.ts'
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'reconnecting' | 'offline'
 type SyncMode = 'list' | 'all'
@@ -104,7 +105,7 @@ export function useHarness({ openLatest = () => true }: { openLatest?: () => boo
   }, [])
   const storeSelection = useCallback((id: string | null) => {
     if (restoredDevice.current === null) return
-    const key = `harness-link.selected.${location.origin}.${restoredDevice.current}`
+    const key = `latch.selected.${location.origin}.${restoredDevice.current}`
     try {
       if (id === null) sessionStorage.removeItem(key)
       else sessionStorage.setItem(key, id)
@@ -172,12 +173,8 @@ export function useHarness({ openLatest = () => true }: { openLatest?: () => boo
             if (restoredDevice.current !== next.device.id) {
               guard.current.invalidate()
               restoredDevice.current = next.device.id
-              let restored: string | null = null
-              try {
-                restored = sessionStorage.getItem(`harness-link.selected.${location.origin}.${next.device.id}`)
-              } catch {
-                /* Selection still works without browser storage. */
-              }
+              // Selection still works without browser storage, which reads as nothing selected.
+              const restored = readStorage('sessionStorage', `latch.selected.${location.origin}.${next.device.id}`)
               const latest = opensLatest.current()
                 ? [...next.tasks].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0]
                 : undefined

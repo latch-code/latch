@@ -2,6 +2,7 @@ import { resolve } from 'node:path'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { chromium, type Browser } from '@playwright/test'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { closeSettings, openSettings } from './helpers/layout.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
@@ -10,7 +11,7 @@ describe('optional settings chunk lifecycle', () => {
   let host: TestHost
   let browser: Browser
   beforeAll(async () => {
-    host = await startTestHost({ uiDir: resolve(process.env.HARNESS_E2E_UI_DIR ?? 'dist/web') })
+    host = await startTestHost({ uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web') })
     browser = await chromium.launch(browserLaunchOptions())
   })
   afterAll(async () => {

@@ -120,10 +120,10 @@ function needsOf(path: string, projects: readonly TestProject[]): Need[] | undef
   if (path.startsWith('packages/ui/')) return ['knip', 'project:@latch/ui', 'project:@latch/web', 'build', 'e2e', 'layout']
   if (/^apps\/host\/scripts\/desktop[\w-]*\.ts$/u.test(path)) return ['knip', 'project:@latch/host', 'build', 'electron']
   if (path.startsWith('apps/host/') || path.startsWith('packages/')) return ['knip', 'test', 'build', 'e2e']
-  if (path.startsWith('src/')) return ['knip', 'project:harness-link', 'build']
+  if (path.startsWith('src/')) return ['knip', 'project:latch', 'build']
   if (path.startsWith('examples/')) return ['knip']
   if (path.startsWith('scripts/')) {
-    const needs: Need[] = ['knip', 'project:harness-link']
+    const needs: Need[] = ['knip', 'project:latch']
     if (/supply/u.test(name)) needs.push('supply')
     if (/workflow/u.test(name)) needs.push('workflows')
     return needs
@@ -147,7 +147,7 @@ export interface VerificationPlan {
 }
 
 const BROWSER_E2E = 'pnpm test:e2e'
-const ELECTRON_E2E = 'HARNESS_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desktop.e2e.ts'
+const ELECTRON_E2E = 'LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desktop.e2e.ts'
 const DIST_GREP =
   "grep -rnE 'createTestPresence|startHostFixture|latch-test\\.localhost|(tests?|e2e)/(helpers|fixtures)|packages/testkit|@latch/testkit' dist/"
 const ENCODING_TESTS =
@@ -195,7 +195,7 @@ export function verificationPlan(changes: readonly Change[], projects: readonly 
   const build = because('build', 'e2e', 'electron', 'presence')
   add('pnpm build', build)
   add(DIST_GREP, build, '输出必须为空')
-  add(BROWSER_E2E, because('e2e'), '本机可设 HARNESS_BROWSER_PATH 使用已安装的 Chrome')
+  add(BROWSER_E2E, because('e2e'), '本机可设 LATCH_BROWSER_PATH 使用已安装的 Chrome')
   add(ELECTRON_E2E, because('electron'), '仅 macOS，先 pnpm build')
   add(ENCODING_TESTS, pathsOf(['encoding']), '改的是共享编码时，同时更新共享向量、LatchPresence.swift 与各处实现')
   add(

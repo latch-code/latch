@@ -434,44 +434,6 @@ ol.gallery-sheet-card > li {
   line-height: var(--lh-caption);
 }
 
-/* The ambient field's sample: a page of paper with a title for its orbits to circle and a card it keeps clear of. */
-.gallery-cell:has(.gallery-ambient),
-.gallery-sample:has(> .gallery-ambient) {
-  width: 100%;
-}
-.gallery-ambient {
-  position: relative;
-  isolation: isolate;
-  display: grid;
-  justify-items: center;
-  align-content: start;
-  gap: var(--sp-16);
-  width: 100%;
-  height: 520px;
-  padding-top: var(--sp-64);
-  overflow: hidden;
-  border-radius: var(--r-12);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-pane);
-  box-shadow: inset 0 0 0 1px var(--line);
-}
-.gallery-ambient > :not(.ui-ambient) {
-  position: relative;
-  z-index: 1;
-}
-.gallery-ambient-title {
-  font-size: var(--fs-title);
-  line-height: var(--lh-title);
-  font-weight: 600;
-}
-.gallery-ambient-card {
-  width: 60%;
-  height: 48px;
-  border-radius: var(--r-16);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-raised);
-  box-shadow: var(--sh-composer);
-}
 /* A line of text standing in for a popover's own content above its footer row. */
 .gallery-note {
   padding: var(--sp-6) var(--sp-8);

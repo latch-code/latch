@@ -7,6 +7,7 @@ import type { TaskDetail, WorkspaceInfo } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
 import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { writeHostState } from '@latch/host/host-state'
+import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { noHorizontalOverflow, reachable } from './helpers/layout.ts'
 import { startTestHost } from './helpers/host.ts'
@@ -156,7 +157,7 @@ it('keeps expanded directories while real run changes arrive and exposes the sam
   }
 })
 
-describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !== 'darwin')('actual desktop tree actions', () => {
+describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 'darwin')('actual desktop tree actions', () => {
   it('copies only the resolved frozen-root path and asks the real main bridge to reveal an authorized handle', async () => {
     const host = await startTestHost()
     let application: ElectronApplication | undefined

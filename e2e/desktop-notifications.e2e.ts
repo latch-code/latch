@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { HarnessPlugin } from '@latch/sdk'
 import { writeHostState } from '@latch/host/host-state'
 import { desktopShellEnvironment } from '@latch/host/desktop-host'
+import { latchEnv } from '@latch/host/env'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 
 interface Gate {
@@ -201,7 +202,7 @@ describe('desktop notification Host fixture', () => {
   })
 })
 
-describe.skipIf(process.platform !== 'darwin' || process.env.HARNESS_ELECTRON_E2E !== '1')('Electron main notifications', () => {
+describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON_E2E') !== '1')('Electron main notifications', () => {
   it('uses authenticated Host states, suppresses foreground events and opens the clicked session', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'latch-electron-notifications-')),
       fixture = modelFixture()

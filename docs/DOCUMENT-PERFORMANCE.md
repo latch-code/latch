@@ -23,7 +23,7 @@ pnpm exec vitest run --config vitest.config.ts apps/web/test/document-performanc
 运行真实 Chromium 基准前先完成 `pnpm build`，以取得产品的固定 Office frame 和 PDF 字体资源；在仓库规定的浏览器串行窗口内执行：
 
 ```sh
-HARNESS_BROWSER_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' pnpm exec vitest run --config e2e/vitest.config.ts e2e/document-performance.e2e.ts
+LATCH_BROWSER_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' pnpm exec vitest run --config e2e/vitest.config.ts e2e/document-performance.e2e.ts
 ```
 
 用例额外将独立测试宿主构建为生产 bundle，输出到同一 ignored 目录的 `harness/`，不覆盖 `dist/web`。它实际使用产品 `DocumentPreview`、`FileSandbox`、PDF worker 和产品的 Office frame，经仅监听 127.0.0.1、端口 0 的有限输入服务读取 200/206 字节。PDF 继续走实际 Range 接口。这里测量本地渲染路径，不测 Host 认证、远程网络或原生连接。

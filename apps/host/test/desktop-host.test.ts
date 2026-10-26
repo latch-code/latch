@@ -87,8 +87,8 @@ async function fakeHostScript() {
 
 function cleanEnvironment(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env }
-  // Runner flags such as HARNESS_BROWSER_PATH are not part of this fixture's Host settings.
-  for (const name of Object.keys(env)) if (name.startsWith('HARNESS_')) delete env[name]
+  // Neither the developer's Host settings nor runner flags such as LATCH_BROWSER_PATH are part of this fixture's.
+  for (const name of Object.keys(env)) if (/^(?:LATCH|HARNESS)_/u.test(name)) delete env[name]
   return { ...env, ...extra }
 }
 
@@ -105,7 +105,7 @@ describe('desktop Host launch', () => {
       JSON.stringify({ ...defaultPolicy(process.platform), presence: { backend: 'none', helperCdhash: null } }),
       { mode: 0o600 },
     )
-    const env = cleanEnvironment({ HARNESS_DATA_DIR: join(root, 'environment') })
+    const env = cleanEnvironment({ LATCH_DATA_DIR: join(root, 'environment') })
     const options = desktopLaunchOptions(['--data-dir', dataDir, '--demo', '--port', '0', '--workspace', join(root, 'workspace')], cwd, env)
     expect(options.args.filter(arg => arg === '--data-dir')).toHaveLength(1)
     const host = await ensureDesktopHost(options, { script: resolve('apps/host/scripts/start.ts'), nodeArgs: ['--import', TSX] })
@@ -144,7 +144,10 @@ describe('desktop Host launch', () => {
   it('launches the Host without adding a URL or token to its environment', async () => {
     const root = await directory()
     const dataDir = join(root, 'data')
-    const parent = cleanEnvironment({ HARNESS_DESKTOP_URL: 'http://127.0.0.1:1/link/#token=leak', ELECTRON_RUN_AS_NODE: '1' })
+    const parent = cleanEnvironment({
+      LATCH_DESKTOP_URL: 'http://127.0.0.1:1/link/#token=leak',
+      ELECTRON_RUN_AS_NODE: '1',
+    })
     const options = desktopLaunchOptions(['--data-dir', dataDir, '--demo'], root, parent)
     const host = await ensureDesktopHost(options, { script: await fakeHostScript(), timeoutMs: 10_000 })
     stopLater(host.pid)
@@ -156,7 +159,7 @@ describe('desktop Host launch', () => {
     }
     expect(launch.argv).toEqual(['--data-dir', dataDir, '--demo'])
     expect(launch.execArgv).toEqual(['--disable-sigusr1'])
-    expect(launch.env.HARNESS_DESKTOP_URL).toBeUndefined()
+    expect(launch.env.LATCH_DESKTOP_URL).toBeUndefined()
     expect(launch.env.ELECTRON_RUN_AS_NODE).toBeUndefined()
     const added = Object.keys(launch.env).filter(name => !(name in parent) && name !== '__CF_USER_TEXT_ENCODING')
     expect(added).toEqual([])
@@ -173,7 +176,7 @@ describe('desktop Host launch', () => {
     const root = await directory()
     const script = await fakeHostScript()
     const dataDir = join(root, 'data')
-    const options = desktopLaunchOptions(['--data-dir', dataDir, '--demo'], root, cleanEnvironment({ HARNESS_DATA_DIR: join(root, 'x') }))
+    const options = desktopLaunchOptions(['--data-dir', dataDir, '--demo'], root, cleanEnvironment({ LATCH_DATA_DIR: join(root, 'x') }))
     expect(options.repeatable).toBe(true)
     const host = await ensureDesktopHost(options, { script, timeoutMs: 10_000 })
     stopLater(host.pid)
@@ -192,12 +195,16 @@ describe('desktop Host launch', () => {
       launch: { args: ['--data-dir', dataDir, '--demo'] },
     })
 
-    // The desktop app runs without HARNESS_* variables, so it could not start this Host the same way.
-    for (const name of ['HARNESS_MODEL', 'HARNESS_API_KEY', 'HARNESS_TLS_CERT', 'HARNESS_PORT', 'HARNESS_WORKSPACE'])
-      expect(hostSettingsInEnvironment({ [name]: 'x' })).toBe(true)
-    expect(hostSettingsInEnvironment({ HARNESS_DATA_DIR: 'x', HARNESS_DESKTOP_URL: 'x', PATH: '/usr/bin' })).toBe(false)
+    // The desktop app runs without Host settings in its environment, so it could not start this Host the same way.
+    for (const name of ['MODEL', 'API_KEY', 'TLS_CERT', 'PORT', 'WORKSPACE', 'AGENTS_DIR']) {
+      expect(hostSettingsInEnvironment({ [`LATCH_${name}`]: 'x' }), name).toBe(true)
+    }
+    // The data directory becomes an argument; other LATCH_ variables (a build's Go toolchain, test switches) are no settings.
+    expect(
+      hostSettingsInEnvironment({ LATCH_DATA_DIR: 'x', LATCH_DESKTOP_URL: 'x', LATCH_RELAY_GO: 'go', LATCH_VISUAL_BASELINE: '1' }),
+    ).toBe(false)
     const other = join(root, 'other')
-    const fromEnvironment = desktopLaunchOptions(['--data-dir', other], root, { ...cleanEnvironment(), HARNESS_MODEL: 'gpt-test' })
+    const fromEnvironment = desktopLaunchOptions(['--data-dir', other], root, { ...cleanEnvironment(), LATCH_MODEL: 'gpt-test' })
     expect(fromEnvironment.repeatable).toBe(false)
     const second = await ensureDesktopHost(fromEnvironment, { script, timeoutMs: 10_000 })
     stopLater(second.pid)
@@ -291,18 +298,18 @@ describe('desktop Host launch', () => {
 
   it('resolves the data directory once, like the Host, and rejects ambiguous values', async () => {
     const root = await directory()
-    expect(desktopLaunchOptions(['--demo', '--data-dir=chosen'], root, { HARNESS_DATA_DIR: 'ignored' }).args).toEqual([
+    expect(desktopLaunchOptions(['--demo', '--data-dir=chosen'], root, { LATCH_DATA_DIR: 'ignored' }).args).toEqual([
       '--data-dir',
       join(root, 'chosen'),
       '--demo',
     ])
-    expect(desktopLaunchOptions([], root, { HARNESS_DATA_DIR: 'environment' }).dataDir).toBe(join(root, 'environment'))
+    expect(desktopLaunchOptions([], root, { LATCH_DATA_DIR: 'environment' }).dataDir).toBe(join(root, 'environment'))
     await mkdir(join(root, '.runtime'))
     const legacy = desktopLaunchOptions([], root, {})
     expect(legacy.dataDir).toBe(join(root, '.runtime'))
     expect(legacy.warnings.join('\n')).toContain('旧的数据目录')
     expect(legacy.hostStatePath).toBe(join(root, '.runtime', 'host.json'))
-    expect(desktopLaunchOptions([], root, { HARNESS_DESKTOP_URL: 'http://x/#token=y', PATH: '/bin' }).env).toEqual({ PATH: '/bin' })
+    expect(desktopLaunchOptions([], root, { LATCH_DESKTOP_URL: 'http://x/#token=y', PATH: '/bin' }).env).toEqual({ PATH: '/bin' })
     expect(() => desktopLaunchOptions(['--data-dir', '--demo'])).toThrow('requires a value')
     expect(() => desktopLaunchOptions(['--data-dir', 'one', '--data-dir=two'])).toThrow('only be specified once')
   })
@@ -313,9 +320,9 @@ describe('desktop Host launch', () => {
         PATH: '/bin',
         HOME: '/home/me',
         LANG: 'zh_CN.UTF-8',
-        HARNESS_API_KEY: 'sk-x',
-        HARNESS_DATA_DIR: '/d',
-        HARNESS_DESKTOP_URL: 'http://x/#token=y',
+        LATCH_API_KEY: 'sk-x',
+        LATCH_DATA_DIR: '/d',
+        LATCH_DESKTOP_URL: 'http://x/#token=y',
         NODE_OPTIONS: '--inspect',
         ELECTRON_RUN_AS_NODE: '1',
       }),

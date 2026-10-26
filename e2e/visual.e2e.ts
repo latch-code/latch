@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { AgentPresetSettings, AgentSettings, AppSnapshot, Approval, TaskDetail, TaskStatus } from '@latch/protocol'
 import { AppError, type HarnessPlugin, type ModelDelta, type ToolDefinition } from '@latch/sdk'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
+import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import {
@@ -504,7 +505,7 @@ describe('visual capture of the real product', () => {
   beforeAll(async () => {
     projects = await claimProjects()
     testHost = await startTestHost({
-      uiDir: resolve(process.env.HARNESS_E2E_UI_DIR ?? 'dist/web'),
+      uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web'),
       demo: false,
       plugins: [visualPlugin],
       providerId: PROVIDER,

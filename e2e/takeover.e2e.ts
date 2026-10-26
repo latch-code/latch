@@ -3,6 +3,7 @@ import { readFile, readdir, mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { AppSnapshot } from '@latch/protocol'
+import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { backToPhoneSessions } from './helpers/layout.ts'
@@ -17,7 +18,7 @@ describe('desktop to phone takeover', () => {
   let phoneContext: BrowserContext
   let approvedTask: string
   beforeAll(async () => {
-    testHost = await startTestHost({ demo: true, uiDir: resolve(process.env.HARNESS_E2E_UI_DIR ?? 'dist/web') })
+    testHost = await startTestHost({ demo: true, uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web') })
     host = testHost.host
     directory = testHost.workspaceRoot
     browser = await chromium.launch(browserLaunchOptions())

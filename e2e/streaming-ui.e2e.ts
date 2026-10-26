@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { HarnessPlugin, ModelDelta } from '@latch/sdk'
+import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 
@@ -109,7 +110,7 @@ describe('streamed messages in the real workspace', () => {
       },
     }
     testHost = await startTestHost({
-      uiDir: resolve(process.env.HARNESS_E2E_UI_DIR ?? 'dist/web'),
+      uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web'),
       demo: false,
       plugins: [plugin],
       providerId: 'controlled-fixture',

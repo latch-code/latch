@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { PersonalAssistant, PersonalGroup, PersonalGroupDetail, PersonalOverview, PersonalRoutine } from '@latch/protocol'
 import type { HarnessPlugin, ModelMessage } from '@latch/sdk'
 import type { TestDevice } from '@latch/testkit'
+import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 
@@ -42,7 +43,7 @@ describe('real personal group and daily-task workflows', () => {
         })
       },
     }
-    host = await startTestHost({ plugins: [plugin], uiDir: resolve(process.env.HARNESS_E2E_UI_DIR ?? 'dist/web') })
+    host = await startTestHost({ plugins: [plugin], uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web') })
     owner = await host.enroll({ listener: 'unix' })
     members = []
     for (const name of ['成员 A', '成员 B']) {

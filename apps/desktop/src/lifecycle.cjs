@@ -165,11 +165,13 @@ function writeLifecyclePreferences(directory, preferences) {
   )
 }
 
-/** What the Host's environment may not carry from the shell: Host settings, Node options and Electron switches. */
+/**
+ * What the Host's environment may not carry from the shell: Host settings (`LATCH_*`), Node options and Electron switches.
+ */
 function hostEnvironment(env) {
   const result = {}
   for (const [name, value] of Object.entries(env)) {
-    if (value === undefined || name.startsWith('HARNESS_') || name.startsWith('ELECTRON_') || name === 'NODE_OPTIONS') continue
+    if (value === undefined || /^(?:LATCH|ELECTRON)_/u.test(name) || name === 'NODE_OPTIONS') continue
     result[name] = value
   }
   return result

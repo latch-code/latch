@@ -2,6 +2,7 @@ import { chromium, type Browser, type Page } from '@playwright/test'
 import { mkdir, rm } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, openSection, openSettings, reachable, closeSettings } from './helpers/layout.ts'
@@ -24,7 +25,7 @@ describe('responsive workspace controls', () => {
   let browser: Browser
 
   beforeAll(async () => {
-    testHost = await startTestHost({ demo: true, uiDir: resolve(process.env.HARNESS_E2E_UI_DIR ?? 'dist/web') })
+    testHost = await startTestHost({ demo: true, uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web') })
     browser = await chromium.launch(browserLaunchOptions())
     await mkdir(OUTPUT, { recursive: true })
   })
@@ -58,7 +59,6 @@ describe('responsive workspace controls', () => {
       await expect.poll(async () => (await input.boundingBox())!.height).toBeGreaterThan(before)
       await reachable(page.getByRole('button', { name: touch ? '开始' : '发送', exact: true }))
       await noHorizontalOverflow(page)
-      expect(await page.locator('canvas.ui-ambient').count()).toBe(0)
       await capture(page, `compact-draft-${label}`)
     } finally {
       await context.close()

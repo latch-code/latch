@@ -2,6 +2,7 @@ import { chromium, type Browser } from '@playwright/test'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { HarnessPlugin } from '@latch/sdk'
+import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 
@@ -29,7 +30,7 @@ describe('custom model extension in the app', () => {
     let browser: Browser | undefined
     try {
       testHost = await startTestHost({
-        uiDir: resolve(process.env.HARNESS_E2E_UI_DIR ?? 'dist/web'),
+        uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web'),
         demo: false,
         plugins: [plugin],
         providerId: 'custom-fixture',

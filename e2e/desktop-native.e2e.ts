@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { writeHostState } from '@latch/host/host-state'
 import { desktopShellEnvironment } from '@latch/host/desktop-host'
+import { latchEnv } from '@latch/host/env'
 import { startTestHost } from './helpers/host.ts'
 import { openSettings } from './helpers/layout.ts'
 import { expectUnmovedByInjectedStyles } from './helpers/security.ts'
@@ -23,7 +24,7 @@ async function capture(page: Page, name: string) {
   await page.screenshot({ path: `test-results/native-phone/${name}.png`, animations: 'disabled' })
 }
 
-describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !== 'darwin')('native desktop phone settings', () => {
+describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 'darwin')('native desktop phone settings', () => {
   it('configures through OS presence, displays bounded layouts, creates a native QR, and pauses inputs without confirmation', async () => {
     const root = await mkdtemp(join(tmpdir(), 'latch-electron-native-phone-'))
     const host = await startTestHost({

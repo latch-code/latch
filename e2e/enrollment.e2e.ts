@@ -8,6 +8,7 @@ import { promisify } from 'node:util'
 import { join, resolve } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import type { DeviceScope } from '@latch/protocol'
+import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost, type TestHostOptions } from './helpers/host.ts'
 import { openSettings } from './helpers/layout.ts'
@@ -17,7 +18,7 @@ const OUTPUT = 'test-results/enrollment'
 const ADMIN = '管理此 Host（模型服务、插件、项目和设备）'
 /** What the desktop app's 「在这台电脑的浏览器中打开」 lets a browser ask for. */
 const BROWSER_CEILING: DeviceScope[] = ['view', 'run', 'approve:standard', 'admin']
-const UI_DIR = resolve(process.env.HARNESS_E2E_UI_DIR ?? 'dist/web')
+const UI_DIR = resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web')
 const SIZES = [
   { width: 1440, height: 1000, label: 'desktop' },
   { width: 768, height: 1024, label: 'tablet' },

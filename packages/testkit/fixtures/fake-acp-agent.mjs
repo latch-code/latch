@@ -68,7 +68,8 @@ const save = () => {
 log('start', {
   cwd: process.cwd(),
   argv: process.argv.slice(2),
-  harnessEnv: Object.keys(env).filter(key => key.startsWith('HARNESS_')),
+  // Names of the Host's settings, whose values must never reach an agent: LATCH_* and their names before the rename.
+  latchEnv: Object.keys(env).filter(key => /^LATCH_/iu.test(key)),
   secret: env.FAKE_SECRET ?? null,
   tmpdir: env.TMPDIR ?? null,
 })

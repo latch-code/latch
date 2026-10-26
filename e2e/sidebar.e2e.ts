@@ -1,6 +1,7 @@
 import { chromium, type Browser, type BrowserContext, type Page } from '@playwright/test'
 import { resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 
@@ -17,7 +18,7 @@ describe('resizable sidebar', () => {
   let page: Page
 
   beforeAll(async () => {
-    testHost = await startTestHost({ uiDir: resolve(process.env.HARNESS_E2E_UI_DIR ?? 'dist/web') })
+    testHost = await startTestHost({ uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web') })
     browser = await chromium.launch(browserLaunchOptions())
     // The slides are checked frame by frame, so the system's motion setting must not turn them off.
     context = await browser.newContext({

@@ -5,11 +5,12 @@ import { chmod, mkdir, open } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { writeFileAtomic } from '@latch/core/node-kit'
+import { HOST_ENV_NAMES, latchEnv } from '../src/env.ts'
 import { readHostState, verifyHostState, type HostInfo, type HostState } from '../src/host-state.ts'
 import { resolveLatchPaths } from '../src/paths.ts'
 
 /** Variables that must never reach the Host or the shell: the shell finds the Host through host.json only. */
-const DROPPED_ENV = ['HARNESS_DESKTOP_URL', 'ELECTRON_RUN_AS_NODE']
+const DROPPED_ENV = ['LATCH_DESKTOP_URL', 'ELECTRON_RUN_AS_NODE']
 
 /** Without it any same-user process can open an inspector in the running Host with SIGUSR1 (`process._debugProcess`). */
 const HOST_NODE_ARGS = ['--disable-sigusr1']
@@ -27,12 +28,13 @@ export interface DesktopLaunchRecord {
   hostId: string
   launch: { node: string; nodeArgs: string[]; script: string; args: string[]; cwd: string } | null
 }
-/** Variables the launcher resolves into arguments, or drops: they do not stop the desktop app from repeating a launch. */
-const REPEATABLE_ENV = new Set(['HARNESS_DATA_DIR', ...DROPPED_ENV])
-
-/** Whether the environment carries Host settings (a model, its key, HTTPS, ports, paths) that only this launch has. */
+/**
+ * Whether the environment carries Host settings (a model, its key, HTTPS, ports, paths) that only this launch has. The
+ * data directory is not one: the launcher resolves it into an
+ * argument. Other `LATCH_*` variables (a build's Go toolchain, the test runner's switches) are not Host settings.
+ */
 export function hostSettingsInEnvironment(env: NodeJS.ProcessEnv): boolean {
-  return Object.keys(env).some(name => name.startsWith('HARNESS_') && !REPEATABLE_ENV.has(name) && env[name] !== undefined)
+  return HOST_ENV_NAMES.some(name => name !== 'DATA_DIR' && latchEnv(env, name) !== undefined)
 }
 
 export function desktopLaunchOptions(argv: string[], cwd = process.cwd(), env: NodeJS.ProcessEnv = process.env) {
@@ -152,11 +154,11 @@ export async function ensureDesktopHost(
   throw new Error(`节点启动失败，请查看 ${logPath}`)
 }
 
-/** The shell's environment: no Host settings, model keys or debugging hooks. */
+/** The shell's environment: no Host settings (`LATCH_*`), model keys or debugging hooks. */
 export function desktopShellEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const result: NodeJS.ProcessEnv = {}
   for (const [name, value] of Object.entries(env)) {
-    if (name.startsWith('HARNESS_') || name === 'NODE_OPTIONS' || DROPPED_ENV.includes(name)) continue
+    if (/^LATCH_/u.test(name) || name === 'NODE_OPTIONS' || DROPPED_ENV.includes(name)) continue
     result[name] = value
   }
   return result

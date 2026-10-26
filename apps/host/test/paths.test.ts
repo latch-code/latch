@@ -31,7 +31,7 @@ afterEach(() => {
 
 /** Short base so socket paths stay under the 104-byte limit on macOS. */
 function temp(): string {
-  const path = realpathSync(mkdtempSync(join(tmpdir(), 'hl-paths-')))
+  const path = realpathSync(mkdtempSync(join(tmpdir(), 'lt-paths-')))
   cleanups.push(path)
   return path
 }
@@ -44,7 +44,7 @@ describe('resolveLatchPaths', () => {
   it('uses flag, then env, then a legacy ./.runtime, then the platform default', () => {
     const base = { env: {}, cwd: '/work', home: '/Users/me', platform: 'darwin' as const, exists: none }
     expect(resolveLatchPaths({ ...base, dataDir: 'data' })).toMatchObject({ dataDir: '/work/data', dataDirSource: 'flag' })
-    expect(resolveLatchPaths({ ...base, env: { HARNESS_DATA_DIR: '/srv/latch' } })).toMatchObject({
+    expect(resolveLatchPaths({ ...base, env: { LATCH_DATA_DIR: '/srv/latch' } })).toMatchObject({
       dataDir: '/srv/latch',
       dataDirSource: 'env',
     })
@@ -90,12 +90,12 @@ describe('resolveLatchPaths', () => {
   it('resolves the workspace and agents directory', () => {
     const base = { cwd: '/w', home: '/home/me', platform: 'linux' as const, exists: none }
     expect(resolveLatchPaths({ ...base, env: {}, workspace: 'proj' })).toMatchObject({ workspaceRoot: '/w/proj', workspaceSource: 'flag' })
-    expect(resolveLatchPaths({ ...base, env: { HARNESS_WORKSPACE: '/p' } })).toMatchObject({ workspaceRoot: '/p', workspaceSource: 'env' })
-    const legacy = resolveLatchPaths({ ...base, env: { HARNESS_DATA_DIR: '/d' }, exists: path => path === '/d/workspace' })
+    expect(resolveLatchPaths({ ...base, env: { LATCH_WORKSPACE: '/p' } })).toMatchObject({ workspaceRoot: '/p', workspaceSource: 'env' })
+    const legacy = resolveLatchPaths({ ...base, env: { LATCH_DATA_DIR: '/d' }, exists: path => path === '/d/workspace' })
     expect(legacy).toMatchObject({ workspaceRoot: '/d/workspace', workspaceSource: 'legacy-data' })
     expect(legacy.warnings).toEqual(['工作区位于数据目录内（/d/workspace）。迁出之前只能使用内置 Harness。'])
     expect(resolveLatchPaths({ ...base, env: {} })).toMatchObject({ workspaceRoot: '/home/me/Latch/workspace', workspaceSource: 'default' })
-    expect(resolveLatchPaths({ ...base, env: { HARNESS_AGENTS_DIR: '/agents' } }).agentsDir).toBe('/agents')
+    expect(resolveLatchPaths({ ...base, env: { LATCH_AGENTS_DIR: '/agents' } }).agentsDir).toBe('/agents')
   })
 
   it("never picks a start directory inside Latch's code: a legacy workspace there gives way to ~/Latch/workspace", () => {
@@ -113,15 +113,15 @@ describe('resolveLatchPaths', () => {
       '数据目录内的旧工作区 /src/harness-link/.runtime/workspace 位于 Latch 程序目录中，不再作为启动目录；启动目录改为 /home/me/Latch/workspace。原目录中的文件没有移动。',
     )
     expect(
-      resolveLatchPaths({ ...base, cwd: '/w', env: { HARNESS_DATA_DIR: '/src/harness-link/.runtime' }, exists: inRepo }).workspaceRoot,
+      resolveLatchPaths({ ...base, cwd: '/w', env: { LATCH_DATA_DIR: '/src/harness-link/.runtime' }, exists: inRepo }).workspaceRoot,
     ).toBe('/home/me/Latch/workspace')
     // A directory the owner names is kept, wherever it is; a legacy workspace elsewhere is still used.
     expect(
       resolveLatchPaths({ ...base, cwd: '/w', env: {}, workspace: '/src/harness-link/.runtime/workspace', exists: inRepo }),
     ).toMatchObject({ workspaceRoot: '/src/harness-link/.runtime/workspace', workspaceSource: 'flag' })
-    expect(
-      resolveLatchPaths({ ...base, cwd: '/w', env: { HARNESS_DATA_DIR: '/d' }, exists: path => path === '/d/workspace' }),
-    ).toMatchObject({ workspaceRoot: '/d/workspace', workspaceSource: 'legacy-data' })
+    expect(resolveLatchPaths({ ...base, cwd: '/w', env: { LATCH_DATA_DIR: '/d' }, exists: path => path === '/d/workspace' })).toMatchObject(
+      { workspaceRoot: '/d/workspace', workspaceSource: 'legacy-data' },
+    )
   })
 })
 
@@ -298,6 +298,20 @@ describe('workspace guard', () => {
 
   it('finds the code root of this checkout', () => {
     expect(latchCodeRoot()).toBe(realpathSync(process.cwd()))
+  })
+
+  it('finds the code root by the root package name latch, and by harness-link in a checkout from before the rename', () => {
+    for (const name of ['latch', 'harness-link']) {
+      const root = temp()
+      writeFileSync(join(root, 'package.json'), JSON.stringify({ name, private: true }))
+      mkdirSync(join(root, 'apps', 'host', 'src'), { recursive: true })
+      writeFileSync(join(root, 'apps', 'host', 'package.json'), JSON.stringify({ name: '@latch/host' }))
+      expect(findCodeRoot(join(root, 'apps', 'host', 'src')), name).toBe(root)
+    }
+    // Any other name is not a Latch checkout, so the walk goes on and finds none.
+    const other = temp()
+    writeFileSync(join(other, 'package.json'), JSON.stringify({ name: 'latch-fork' }))
+    expect(() => findCodeRoot(other)).toThrow('Latch code root not found')
   })
 
   it('finds the repository root as the code root from inside every workspace project, past their own package.json', async () => {

@@ -1,7 +1,8 @@
-// Host modules that Node loads with type stripping alone: apps/web/vite.config.ts imports them as @latch/host/paths and
-// @latch/host/host-state, and Vite leaves a bundled config's package imports to Node. erasableSyntaxOnly rejects the
-// syntax Node cannot strip (enums, namespaces, constructor parameter properties) in them and in what they import; the
-// rest of the Host is checked by tsconfig.host.json without it.
+// Host modules that Node loads with type stripping alone: apps/web/vite.config.ts imports them as @latch/host/paths,
+// @latch/host/host-state and @latch/host/env, the root vitest.config.ts imports @latch/host/env, and Vite leaves a
+// bundled config's package imports to Node. erasableSyntaxOnly rejects the syntax Node cannot strip (enums, namespaces,
+// constructor parameter properties) in them and in what they import; the rest of the Host is checked by
+// tsconfig.host.json without it.
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
@@ -10,5 +11,5 @@
     "erasableSyntaxOnly": true,
     "tsBuildInfoFile": "./node_modules/.cache/typescript/strip.tsbuildinfo"
   },
-  "files": ["apps/host/src/paths.ts", "apps/host/src/host-state.ts"]
+  "files": ["apps/host/src/paths.ts", "apps/host/src/host-state.ts", "apps/host/src/env.ts"]
 }

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { TestDevice } from '@latch/testkit'
+import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, reachable } from './helpers/layout.ts'
@@ -26,7 +27,7 @@ describe('the phone stack', () => {
   const sessions: string[] = []
 
   beforeAll(async () => {
-    fixture = await startTestHost({ demo: true, uiDir: resolve(process.env.HARNESS_E2E_UI_DIR ?? 'dist/web') })
+    fixture = await startTestHost({ demo: true, uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web') })
     browser = await chromium.launch(browserLaunchOptions())
     local = await fixture.enroll({ listener: 'unix', name: '本机桌面端' })
     for (const prompt of ['展示流式输出', '批准生成验收报告']) {

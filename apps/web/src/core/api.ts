@@ -2,6 +2,7 @@ import { isFileMention, type FileMention } from '@latch/protocol'
 import { isAttachmentRef, type AttachmentRef, type AttachmentUpload } from '@latch/protocol'
 import type { ApiFailure, ModelRef, TaskMode } from '@latch/protocol'
 import { describeFailure } from './securityCopy.ts'
+import { readStorage } from './storageKeys.ts'
 
 /** An explicit server rejection; network errors remain distinguishable. `details` carries the rest of the error body. */
 export class ApiError extends Error {
@@ -315,7 +316,7 @@ function modelRef(value: unknown): ModelRef | undefined {
 
 export function readPending(key: string): PendingSubmission | null {
   try {
-    const value: unknown = JSON.parse(localStorage.getItem(key) ?? 'null')
+    const value: unknown = JSON.parse(readStorage('localStorage', key) ?? 'null')
     if (typeof value !== 'object' || value === null) return null
     const item = value as Record<string, unknown>
     if (typeof item.requestId !== 'string' || typeof item.prompt !== 'string') return null

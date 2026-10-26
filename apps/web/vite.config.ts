@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { build as bundle } from 'esbuild'
 import { resolve } from 'node:path'
 import { defineConfig, type ProxyOptions, type UserConfig } from 'vite'
+import { latchEnv } from '@latch/host/env'
 import { readHostState } from '@latch/host/host-state'
 import { resolveLatchPaths } from '@latch/host/paths'
 
@@ -26,7 +27,7 @@ export function passesCredentialCookie(requestHost: string | undefined, hostName
  * running Host's loopback port. The Host accepts only its own loopback origin, so
  * the proxy rewrites `host` and `origin` to the origin recorded in `<data>/host.json`
  * (the data directory resolves like `pnpm start`: --data-dir is not available here,
- * so `HARNESS_DATA_DIR` or the default). Open the page as
+ * so `LATCH_DATA_DIR` or the default). Open the page as
  * `http://h-<hostId>.localhost:<port>/link/`; on any other name enrollment does not
  * keep its cookie. A production build never contains this.
  */
@@ -34,9 +35,9 @@ async function hostProxy(): Promise<ProxyOptions> {
   const { dataDir } = resolveLatchPaths({ env: process.env, cwd: process.cwd() })
   const state = await readHostState(dataDir)
   if (state === undefined) {
-    const port = process.env.HARNESS_PORT ?? '4317'
+    const port = latchEnv(process.env, 'PORT') ?? '4317'
     console.warn(
-      `[Latch] 未找到运行中的 Host（${dataDir}/host.json）。先启动 Host，或用 HARNESS_DATA_DIR 指向它的数据目录；暂时转发到 127.0.0.1:${port}。`,
+      `[Latch] 未找到运行中的 Host（${dataDir}/host.json）。先启动 Host，或用 LATCH_DATA_DIR 指向它的数据目录；暂时转发到 127.0.0.1:${port}。`,
     )
     return { target: `http://127.0.0.1:${port}` }
   }

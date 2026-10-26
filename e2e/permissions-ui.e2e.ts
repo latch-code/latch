@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { AgentSettings, TaskDetail } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
 import { type TestDevice, FAKE_ACP_AGENT } from '@latch/testkit'
+import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { expectUnmovedByInjectedStyles } from './helpers/security.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
@@ -57,7 +58,11 @@ describe('permission states in a browser', () => {
   let remote: TestDevice
 
   beforeAll(async () => {
-    testHost = await startTestHost({ demo: true, uiDir: resolve(process.env.HARNESS_E2E_UI_DIR ?? 'dist/web'), plugins: [highRiskFixture] })
+    testHost = await startTestHost({
+      demo: true,
+      uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web'),
+      plugins: [highRiskFixture],
+    })
     browser = await chromium.launch(browserLaunchOptions())
     const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, locale: 'zh-CN' })
     context.setDefaultTimeout(15_000)

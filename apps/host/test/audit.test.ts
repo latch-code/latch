@@ -12,7 +12,7 @@ afterEach(async () => {
 })
 
 function directory(): string {
-  const path = mkdtempSync(join(tmpdir(), 'harness-link-audit-'))
+  const path = mkdtempSync(join(tmpdir(), 'latch-audit-'))
   cleanups.push(() => rmSync(path, { recursive: true, force: true }))
   return join(path, 'audit')
 }

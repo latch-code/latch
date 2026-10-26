@@ -68,7 +68,7 @@ jobs:
         env:
           # The design system's tests run in a browser: Google Chrome from the runner image, instead of downloading
           # Playwright's Chromium.
-          HARNESS_BROWSER_PATH: /usr/bin/google-chrome
+          LATCH_BROWSER_PATH: /usr/bin/google-chrome
         run: pnpm test
 
   build:

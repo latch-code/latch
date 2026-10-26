@@ -60,7 +60,7 @@ afterEach(async () => {
 })
 
 function temp(): string {
-  const path = mkdtempSync(join(tmpdir(), 'harness-link-presence-'))
+  const path = mkdtempSync(join(tmpdir(), 'latch-presence-'))
   cleanups.push(() => rmSync(path, { recursive: true, force: true }))
   return path
 }

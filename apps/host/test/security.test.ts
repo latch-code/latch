@@ -36,9 +36,9 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
 })
 
-/** The child sees no HARNESS_* variable from the developer's shell. */
+/** The child sees no Host setting from the developer's shell: no LATCH_* variable. */
 function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
-  return { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('HARNESS_'))), ...extra }
+  return { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^LATCH_/u.test(name))), ...extra }
 }
 
 async function freePort(): Promise<number> {
@@ -130,7 +130,7 @@ describe('Host process', () => {
         '--tls-port',
         String(tlsPort),
       ],
-      { cwd: root, env: childEnv({ HARNESS_API_KEY: 'sk-never-printed' }), stdio: ['ignore', 'pipe', 'pipe'] },
+      { cwd: root, env: childEnv({ LATCH_API_KEY: 'sk-never-printed' }), stdio: ['ignore', 'pipe', 'pipe'] },
     )
     const output = collect(child)
     let socketDir: string | undefined
@@ -424,7 +424,7 @@ export default { id: 'gate', name: 'Gate', version: '0.0.1', description: 'Holds
         message: '请使用具体网卡地址，不要绑定所有接口',
       })),
       { flags: ['--host', '0.0.0.0'], message: '请使用具体网卡地址，不要绑定所有接口' },
-      { flags: [], env: { HARNESS_TLS_HOST: '[::]' }, message: '请使用具体网卡地址，不要绑定所有接口' },
+      { flags: [], env: { LATCH_TLS_HOST: '[::]' }, message: '请使用具体网卡地址，不要绑定所有接口' },
       { flags: ['--tls-host', 'latch-test.localhost'], message: 'HTTPS 监听地址必须是本机网卡的 IP 地址' },
     ]
     for (const attempt of attempts) {

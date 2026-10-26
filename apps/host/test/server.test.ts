@@ -3099,7 +3099,7 @@ describe('providers', () => {
     expect(model.calls).toEqual([{ model: stored.defaultModel, authorization: undefined }])
   })
 
-  it('never writes the HARNESS_MODEL key and keeps it usable for its own origin only', async () => {
+  it('never writes the LATCH_MODEL key and keeps it usable for its own origin only', async () => {
     const model = await localModel()
     const env = { baseURL: model.baseURL, model: 'alpha', apiKey: 'ENV-SECRET-KEY' }
     const t = await testHost({ provider: env, demo: false, egressAllow: [model.allow] })
@@ -3115,7 +3115,7 @@ describe('providers', () => {
     expect(await readFile(join(t.dataDir, 'providers.json'), 'utf8')).not.toContain('ENV-SECRET-KEY')
   })
 
-  it('refuses to start with credentials, a query or a fragment in HARNESS_BASE_URL and never repeats them', async () => {
+  it('refuses to start with credentials, a query or a fragment in LATCH_BASE_URL and never repeats them', async () => {
     for (const baseURL of [
       'https://alice:hunter2@proxy.example/v1',
       'https://proxy.example/v1?api-key=SECRET-QUERY',

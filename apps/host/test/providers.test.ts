@@ -1127,7 +1127,7 @@ describe('API key redaction in upstream errors', () => {
 
 describe('demo provider and bounded tools', () => {
   async function fixture() {
-    const workspaceRoot = await mkdtemp(join(tmpdir(), 'harness-link-tools-'))
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'latch-tools-'))
     cleanups.push(() => rm(workspaceRoot, { recursive: true, force: true }))
     const { providers, tools } = await mount(createDemoPlugin(), createToolsPlugin())
     return { provider: providers[0]!, tools, workspaceRoot }

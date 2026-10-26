@@ -256,7 +256,7 @@ export function sessionModel(summary: TaskSummary | undefined): ModelRef | undef
   return summary?.providerId && summary.model ? { providerId: summary.providerId, model: summary.model } : undefined
 }
 
-const choiceKey = (deviceId: string) => `harness-link.composer.${location.origin}.${deviceId}`
+const choiceKey = (deviceId: string) => `latch.composer.${location.origin}.${deviceId}`
 
 export function readChoice(deviceId: string): Partial<ComposerChoice> | null {
   try {

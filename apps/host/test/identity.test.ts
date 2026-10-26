@@ -14,7 +14,7 @@ afterEach(() => {
 })
 
 function dataDir(): string {
-  const path = mkdtempSync(join(tmpdir(), 'harness-link-identity-'))
+  const path = mkdtempSync(join(tmpdir(), 'latch-identity-'))
   cleanups.push(path)
   return path
 }

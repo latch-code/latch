@@ -6,9 +6,10 @@ import { describe, expect, it } from 'vitest'
 import { writeHostState } from '@latch/host/host-state'
 import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import type { HarnessPlugin } from '@latch/sdk'
+import { latchEnv } from '@latch/host/env'
 import { startTestHost } from './helpers/host.ts'
 
-describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !== 'darwin')('native desktop attachment stream', () => {
+describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 'darwin')('native desktop attachment stream', () => {
   it('uploads an image larger than JSON limit through the actual renderer and displays the private attachment', async () => {
     const root = await mkdtemp(join(tmpdir(), 'latch-electron-attachment-'))
     let application: ElectronApplication | undefined,

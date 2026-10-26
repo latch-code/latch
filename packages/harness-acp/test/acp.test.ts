@@ -401,7 +401,8 @@ describe('ACP driver registration and readiness', () => {
       'HTTPS_PROXY',
       'http_proxy',
       'Https_Proxy',
-      'HARNESS_TOKEN',
+      'LATCH_API_KEY',
+      'latch_data_dir',
       'npm_config_registry',
       'NPM_CONFIG_REGISTRY',
       'DYLD_INSERT_LIBRARIES',
@@ -427,7 +428,7 @@ describe('ACP driver registration and readiness', () => {
     ]) {
       expect(isReservedAgentEnvName(name), name).toBe(true)
     }
-    for (const name of ['OPENAI_API_KEY', 'FAKE_SECRET', 'MY_LD_PATH', 'GIT_AUTHOR_NAME', 'LANG'])
+    for (const name of ['OPENAI_API_KEY', 'FAKE_SECRET', 'MY_LD_PATH', 'MY_LATCH_KEY', 'GIT_AUTHOR_NAME', 'LANG'])
       expect(isReservedAgentEnvName(name), name).toBe(false)
 
     const record: AgentRecord = {
@@ -448,6 +449,10 @@ describe('ACP driver registration and readiness', () => {
         message: '环境变量 GOOSE_MODE 由 Latch 管理，不能在 Agent 定义中设置',
       })
     expect(() => createAcpAgentPlugin(record)).toThrow(expect.objectContaining({ code: 'agent-env-reserved' }))
+    expect(validateAgentDefinition({ ...record, env: { LATCH_API_KEY: 'x' } })).toMatchObject({
+      ok: false,
+      error: { code: 'agent-env-reserved', message: '环境变量 LATCH_API_KEY 由 Latch 管理，不能在 Agent 定义中设置' },
+    })
     expect(validateAgentDefinition({ ...record, env: { GOOSE_PROVIDER: 'x' } })).toEqual({ ok: true, verified: true })
   })
 
@@ -668,8 +673,14 @@ describe('ACP agent environment', () => {
     const env = agentEnvironment({
       resolvedCommand: '/usr/bin/true',
       profile: profileFor('goose')!.permission,
-      materializedEnv: { EXTRA_PATH_FILE: '/data/x.json' },
-      definitionEnv: { GOOSE_MODE: 'auto', HTTPS_PROXY: 'http://proxy.invalid', GOOSE_PROVIDER: 'openai', LD_PRELOAD: '/x.so' },
+      materializedEnv: { EXTRA_PATH_FILE: '/data/x.json', LATCH_DATA_DIR: '/data' },
+      definitionEnv: {
+        GOOSE_MODE: 'auto',
+        HTTPS_PROXY: 'http://proxy.invalid',
+        GOOSE_PROVIDER: 'openai',
+        LD_PRELOAD: '/x.so',
+        LATCH_API_KEY: 'definition-key',
+      },
       sessionTmpDir: '/tmp/latch-session',
       hostEnv: {
         PATH: '/usr/bin',
@@ -684,6 +695,8 @@ describe('ACP agent environment', () => {
         SSL_CERT_FILE: '/tmp/ca.pem',
         TMPDIR: '/var/tmp',
         NODE_OPTIONS: '--inspect',
+        LATCH_API_KEY: 'host-key',
+        LATCH_BASE_URL: 'http://127.0.0.1:2',
       },
     })
     expect(env).toEqual({
@@ -722,7 +735,9 @@ describe('ACP agent environment', () => {
     hostEnv({
       AWS_SECRET_ACCESS_KEY: 'aws-secret-value-1234',
       NODE_OPTIONS: '--max-old-space-size=4096',
-      HARNESS_X: 'harness-x',
+      LATCH_API_KEY: 'latch-key-value-1234',
+      LATCH_DATA_DIR: '/latch/data',
+      latch_model: 'latch-model',
       npm_config_x: 'npm-x',
       DYLD_X: 'dyld-x',
       HTTPS_PROXY: 'http://proxy.invalid:3128',
@@ -747,7 +762,9 @@ describe('ACP agent environment', () => {
       for (const name of [
         'AWS_SECRET_ACCESS_KEY',
         'NODE_OPTIONS',
-        'HARNESS_X',
+        'LATCH_API_KEY',
+        'LATCH_DATA_DIR',
+        'latch_model',
         'npm_config_x',
         'DYLD_X',
         'SSL_CERT_FILE',
@@ -771,6 +788,8 @@ describe('ACP agent environment', () => {
       expect((await stat(env.TMPDIR)).mode & 0o777).toBe(0o700)
     }
     expect(dumps[0].TMPDIR).not.toBe(dumps[1].TMPDIR)
+    expect(log.filter(entry => entry.event === 'start').map(entry => entry.latchEnv)).toEqual([[], []])
+    expect(JSON.stringify(dumps)).not.toContain('latch-key-value-1234')
     expect(JSON.stringify(await bridge.detail(first.sessionId))).not.toContain('aws-secret-value-1234')
 
     // Removing a session stops its process and deletes its TMPDIR.
@@ -798,7 +817,7 @@ describe('ACP agent environment', () => {
     expect(assistants(await settled(bridge, sessionId)).at(-1)?.text).toBe('echo: echo a b c')
 
     const log = await fixture.log()
-    expect(log.find(entry => entry.event === 'start')).toMatchObject({ harnessEnv: [] })
+    expect(log.find(entry => entry.event === 'start')).toMatchObject({ latchEnv: [] })
     expect(log.some(entry => entry.event === 'raw-separator')).toBe(false)
     expect(received(log, 'initialize')[0].params).toEqual({
       protocolVersion: 1,

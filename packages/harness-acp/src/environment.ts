@@ -12,8 +12,11 @@ const GIT_CONFIG: Array<[string, string]> = [
   ['core.hooksPath', '/dev/null'],
   ['safe.bareRepository', 'explicit'],
 ]
-/** Removed last, whatever set them; compared case-insensitively. */
-const REMOVED_PREFIXES = ['NPM_', 'HARNESS_', 'DYLD_', 'LD_']
+/**
+ * Removed last, whatever set them; compared case-insensitively. `LATCH_*` are the Host's own settings, a model key among
+ * them.
+ */
+const REMOVED_PREFIXES = ['NPM_', 'LATCH_', 'DYLD_', 'LD_']
 
 function removed(name: string): boolean {
   const upper = name.toUpperCase()

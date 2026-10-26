@@ -5,6 +5,7 @@ import { createServer, type ViteDevServer } from 'vite'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { documentFixtures } from '@latch/testkit'
 import { strToU8, zipSync } from 'fflate'
+import { latchEnv } from '@latch/host/env'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow } from './helpers/layout.ts'
 
@@ -17,7 +18,7 @@ describe('WebKit actual document frames and product sandbox boundary', () => {
     hold = false,
     release: (() => void) | undefined
   beforeAll(async () => {
-    host = await startTestHost({ uiDir: resolve(process.env.HARNESS_E2E_UI_DIR ?? 'dist/web') })
+    host = await startTestHost({ uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web') })
     server = await createServer({
       configFile: false,
       root: resolve('apps/web'),

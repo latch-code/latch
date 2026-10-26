@@ -38,7 +38,7 @@ function valid(overrides: Record<string, string | undefined> = {}): Record<strin
     'apps/app/test/main.test.ts': "describe('main', () => { it('starts', () => {}) })\n",
     'docs/TESTING.md': DOC,
     'src/index.ts': 'export {}\n',
-    'package.json': '{"name":"harness-link","dependencies":{"react-dom":"1.0.0"}}',
+    'package.json': '{"name":"latch","dependencies":{"react-dom":"1.0.0"}}',
   }
   const merged: Record<string, string> = { ...base }
   for (const [path, text] of Object.entries(overrides)) {

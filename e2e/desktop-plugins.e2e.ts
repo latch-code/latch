@@ -5,10 +5,11 @@ import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { writeHostState } from '@latch/host/host-state'
+import { latchEnv } from '@latch/host/env'
 import { startTestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, openSettings, reachable } from './helpers/layout.ts'
 
-describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !== 'darwin')(
+describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 'darwin')(
   'custom plugin editor in the native desktop',
   () => {
     it('saves inert skills, applies an exact revision, recovers a lost receipt and confirms new executable code once', async () => {

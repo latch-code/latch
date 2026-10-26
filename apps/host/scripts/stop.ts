@@ -30,7 +30,14 @@ async function main(args: string[]): Promise<number> {
     return 1
   }
   const force = args.includes('--force')
-  const { dataDir } = resolveLatchPaths({ dataDir: flag, env: process.env, cwd: process.cwd() })
+  let dataDir: string
+  try {
+    ;({ dataDir } = resolveLatchPaths({ dataDir: flag, env: process.env, cwd: process.cwd() }))
+  } catch (error) {
+    // A setting under both its name and the one from before the rename, with different values: nothing is signalled.
+    console.error(error instanceof Error ? error.message : String(error))
+    return 1
+  }
   const state = await readHostState(dataDir)
   if (!state || !alive(state.pid)) {
     // Neither the lock nor an unrecognised host.json proves which process it is, so they are reported and never signalled.

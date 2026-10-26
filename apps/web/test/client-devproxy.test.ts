@@ -64,8 +64,9 @@ describe('development proxy', () => {
       { mode: 0o600 },
     )
 
-    const previous = process.env.HARNESS_DATA_DIR
-    process.env.HARNESS_DATA_DIR = dataDir
+    // The config finds the Host through LATCH_DATA_DIR.
+    const previous = { LATCH_DATA_DIR: process.env.LATCH_DATA_DIR }
+    process.env.LATCH_DATA_DIR = dataDir
     let server: ViteDevServer
     try {
       server = await createServer({
@@ -77,8 +78,10 @@ describe('development proxy', () => {
         optimizeDeps: { noDiscovery: true, include: [] },
       })
     } finally {
-      if (previous === undefined) delete process.env.HARNESS_DATA_DIR
-      else process.env.HARNESS_DATA_DIR = previous
+      for (const [name, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[name]
+        else process.env[name] = value
+      }
     }
     cleanups.push(() => server.close())
     await server.listen()

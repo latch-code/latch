@@ -34,7 +34,7 @@ jobs:
       - name: Browser end-to-end tests
         env:
           # Google Chrome from the runner image, instead of downloading Playwright's Chromium.
-          HARNESS_BROWSER_PATH: /usr/bin/google-chrome
+          LATCH_BROWSER_PATH: /usr/bin/google-chrome
         run: pnpm test:e2e
       - name: Upload screenshots
         if: failure()

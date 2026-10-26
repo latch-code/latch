@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest'
 import type { HarnessPlugin } from '@latch/sdk'
 import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { writeHostState } from '@latch/host/host-state'
+import { latchEnv } from '@latch/host/env'
 import { startTestHost } from './helpers/host.ts'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { settleShell } from './helpers/layout.ts'
@@ -144,7 +145,7 @@ describe('opaque HTML previews', () => {
       await counter.close()
     }
   })
-  it.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !== 'darwin')(
+  it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 'darwin')(
     'runs explicitly enabled desktop scripts while blocking network, Host access, navigation and WebRTC UDP',
     async () => {
       const counter = await beacon(),

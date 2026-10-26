@@ -5,7 +5,7 @@ export interface ModelPreferences {
   recent: string[]
   hidden: string[]
 }
-const KEY = 'harness-link.model-preferences',
+const KEY = 'latch.model-preferences',
   EMPTY: ModelPreferences = { recent: [], hidden: [] }
 export const modelKey = (model: ModelRef) => `${model.providerId}\u0000${model.model}`
 export function parseModelPreferences(raw: string | null): ModelPreferences {

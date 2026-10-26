@@ -5,6 +5,7 @@ import { chromium, type Page } from '@playwright/test'
 import { expect, it } from 'vitest'
 import type { AppSnapshot, TaskDetail, WorkspaceInfo } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
+import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { noHorizontalOverflow, reachable } from './helpers/layout.ts'
 import { startTestHost } from './helpers/host.ts'
@@ -46,7 +47,7 @@ it.each([
       })
     },
   }
-  const host = await startTestHost({ uiDir: resolve(process.env.HARNESS_E2E_UI_DIR ?? 'dist/web'), plugins: [plugin] })
+  const host = await startTestHost({ uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web'), plugins: [plugin] })
   const browser = await chromium.launch(browserLaunchOptions())
   const active: string[] = []
   try {

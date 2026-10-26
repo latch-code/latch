@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { TaskDetail } from '@latch/protocol'
 import type { TestDevice } from '@latch/testkit'
+import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { backToPhoneSessions, closeSettings, openSection, openSettings } from './helpers/layout.ts'
@@ -30,7 +31,7 @@ describe('a start directory inside Latch’s program directory', () => {
     await mkdir(join(root, 'repo'))
     testHost = await startTestHost({
       demo: true,
-      uiDir: resolve(process.env.HARNESS_E2E_UI_DIR ?? 'dist/web'),
+      uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web'),
       codeRoot: root,
       workspaceRoot: join(root, 'repo'),
     })

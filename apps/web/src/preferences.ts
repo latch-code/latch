@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react'
+import { readStorage } from './core/storageKeys.ts'
 import { parseInspectorPreference, type InspectorPreference } from './inspectorLayout.ts'
 import { parseSidebarPreference, type SidebarPreference } from './sidebarLayout.ts'
 
@@ -19,7 +20,7 @@ export interface Preferences {
   sidebar: SidebarPreference
 }
 
-const KEY = 'harness-link.preferences'
+const KEY = 'latch.preferences'
 const defaults: Preferences = {
   autoOpenDocuments: true,
   diffLayout: 'unified',
@@ -31,12 +32,9 @@ const defaults: Preferences = {
   sidebar: { width: {}, collapsed: {} },
 }
 
+/** Reads `key`, first moving a value saved under its name from before the rename (`readStorage`). */
 export function storageGet(key: string): string | null {
-  try {
-    return localStorage.getItem(key)
-  } catch {
-    return null
-  }
+  return readStorage('localStorage', key)
 }
 
 export function storageSet(key: string, value: string | null): void {

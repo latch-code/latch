@@ -198,8 +198,8 @@ console.log('started')`,
     const env = {
       PATH: process.env.PATH,
       HOME: process.env.HOME,
-      HARNESS_API_KEY: 'sk-never',
-      HARNESS_DATA_DIR: '/elsewhere',
+      LATCH_API_KEY: 'sk-never',
+      LATCH_DATA_DIR: '/elsewhere',
       NODE_OPTIONS: '--inspect',
       ELECTRON_RUN_AS_NODE: '1',
       LANG: 'zh_CN.UTF-8',
@@ -218,7 +218,7 @@ console.log('started')`,
     }
     expect(seen.argv).toEqual(['--data-dir', dataDir, '--demo'])
     expect(seen.execArgv).toEqual(['--disable-sigusr1'])
-    expect(Object.keys(seen.env).filter(name => /^(HARNESS_|ELECTRON_)|^NODE_OPTIONS$/u.test(name))).toEqual([])
+    expect(Object.keys(seen.env).filter(name => /^(LATCH_|ELECTRON_)|^NODE_OPTIONS$/u.test(name))).toEqual([])
     expect(await readFile(join(dataDir, 'host.log'), 'utf8')).toBe('started\n')
     expect((await stat(join(dataDir, 'host.log'))).mode & 0o777).toBe(0o600)
 

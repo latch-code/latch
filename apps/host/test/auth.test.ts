@@ -44,7 +44,7 @@ const otherLoopback: ConnectionContext = { ...loopback, origin: `http://h-${host
 const tls: ConnectionContext = { listener: 'tailnet-tls', origin: 'https://latch.example.ts.net', remoteAddress: '100.100.1.2' }
 
 function tempDir(): string {
-  const path = mkdtempSync(join(tmpdir(), 'harness-link-auth-'))
+  const path = mkdtempSync(join(tmpdir(), 'latch-auth-'))
   cleanups.push(() => rmSync(path, { recursive: true, force: true }))
   return path
 }

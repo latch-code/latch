@@ -68,7 +68,7 @@ export function SetupCard({
   const [adding, setAdding] = useState(false)
   const inPlace = model && owner && providers !== undefined && held?.action === undefined
   return (
-    <div className="setup-card" role="status" data-ambient-avoid="surface">
+    <div className="setup-card" role="status">
       <div className="setup-card-row">
         <span className="setup-card-icon" aria-hidden="true">
           {model ? <PlugZap size={16} strokeWidth={ICON_STROKE[16]} /> : <TriangleAlert size={16} strokeWidth={ICON_STROKE[16]} />}
@@ -88,7 +88,6 @@ export function SetupCard({
           <Button
             ref={triggerRef}
             variant="primary"
-            data-ambient-avoid="accent"
             onClick={() => {
               if (inPlace) setAdding(true)
               else onSetup()
@@ -161,7 +160,7 @@ export function DemoSuggestions({ demo, mode, onSuggestion }: { demo: boolean; m
   const suggestions = (demo ? demoSuggestions : taskSuggestions).filter(item => item.modes.includes(mode))
   if (suggestions.length === 0) return null
   return (
-    <section className="suggestions" aria-label={demo ? '演示任务' : '任务灵感'} data-ambient-avoid="surface">
+    <section className="suggestions" aria-label={demo ? '演示任务' : '任务灵感'}>
       {suggestions.map(item => (
         <button
           key={item.prompt}
@@ -204,17 +203,11 @@ export function NewSession({
   return (
     <div className="new-session">
       <div className="new-session-inner">
-        <h2 className="new-session-title" data-ambient-anchor="" data-ambient-avoid="text">
-          {title ?? '今天要做什么？'}
-        </h2>
-        {harnesses && (
-          <div className="new-session-harnesses" data-ambient-avoid="surface">
-            {harnesses}
-          </div>
-        )}
+        <h2 className="new-session-title">{title ?? '今天要做什么？'}</h2>
+        {harnesses && <div className="new-session-harnesses">{harnesses}</div>}
         {onboarding}
         {setup}
-        <div data-ambient-avoid="surface">{composer}</div>
+        <div>{composer}</div>
         <DemoSuggestions demo={demo} mode={mode} onSuggestion={onSuggestion} />
       </div>
     </div>

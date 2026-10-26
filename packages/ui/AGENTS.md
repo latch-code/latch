@@ -15,7 +15,7 @@
 - 菜单、内容自管的 `Modal` 与异步确认/输入框同样由本包提供，共用顶层、焦点与手机面板机制；页面不另写弹层。
 - 只做真实能力需要的原语：产品还没有的功能，不在这里提前做界面。
 - 活的指示（`src/live.tsx`、`src/styles/live.css`）：只有活的状态会动，动画只写在 `prefers-reduced-motion: no-preference` 里，静帧要能独立表达状态；一次性动效只为 `LiveChanges` 纪元不变时的变化播放（`test/live.test.tsx` 检查同一相位、接力、一次性动效与减少动效时没有动画）。
-- 环境背景（`src/ambient.tsx`）只保留在原语总览中，产品新会话不挂载。`TileChoice` 的 `compact` 变体用 20px 身份图标，保留相同的键盘与不可选语义。
+- `TileChoice` 的 `compact` 变体用 20px 身份图标，保留相同的键盘与不可选语义。
 - 动效（`src/motion.tsx`、`src/styles/motion.css`）：高度只经网格行展开，其余只动不透明度与位移；收起的身体是 `hidden="until-found"`；时长与 `MOTION` 一致（`test/motion.test.tsx`）。
 - 圆角矩形另加 `corner-shape: var(--corner-shape)`，胶囊与圆形不加（`apps/web/test/styles.test.ts#gives rounded rectangles the corner shape and keeps pills and circles round`）。
 

@@ -27,6 +27,7 @@ import {
   type HostInfo,
   type HostState,
 } from '../src/host-state.ts'
+import { latchEnv } from '../src/env.ts'
 import { loadOrCreateHostIdentity } from '../src/identity.ts'
 import {
   PROJECT_FOLDER_LIMIT,
@@ -1004,7 +1005,7 @@ async function remoteProjectIds(dataDir: string): Promise<string[]> {
 
 async function offlineProjectContext(dataDir: string, flags: Map<string, string | true>, io: CliIO) {
   const recorded = await readProjectContext(dataDir)
-  const explicit = flags.get('--workspace') ?? io.env.HARNESS_WORKSPACE
+  const explicit = flags.get('--workspace') ?? latchEnv(io.env, 'WORKSPACE')
   if (!recorded && typeof explicit !== 'string') {
     throw new CliError('没有已记录的 Host 启动目录。请先用原参数启动并停止 Host，或提供 --workspace <启动目录>。')
   }

@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 import type { Device, DeviceScope } from '@latch/protocol'
+import { latchEnv } from '@latch/host/env'
 import type { TestHost } from './host.ts'
 
 const ADMIN_LABEL = '管理此 Host（模型服务、插件、项目和设备）'
@@ -41,8 +42,8 @@ export async function enrollBrowser(
   await connected(page)
 }
 
-/** Browser options shared by the e2e files: an installed Chrome when HARNESS_BROWSER_PATH is set. */
-export const browserLaunchOptions = () => ({
-  headless: true,
-  ...(process.env.HARNESS_BROWSER_PATH ? { executablePath: process.env.HARNESS_BROWSER_PATH } : {}),
-})
+/** Browser options shared by the e2e files: an installed Chrome when LATCH_BROWSER_PATH is set. */
+export const browserLaunchOptions = () => {
+  const executablePath = latchEnv(process.env, 'BROWSER_PATH')
+  return { headless: true, ...(executablePath ? { executablePath } : {}) }
+}

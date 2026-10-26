@@ -14,6 +14,7 @@ import {
   verifyHostState,
   writeHostState,
 } from '../src/host-state.ts'
+import { latchEnv } from '../src/env.ts'
 import { latchCodeRoot, resolveLatchPaths } from '../src/paths.ts'
 import { presenceHelperPath } from '../src/presence.ts'
 import { buildPresenceHelper } from './presence-helper.ts'
@@ -118,13 +119,13 @@ function bindAddress(value: string): string {
 }
 
 function tlsOptions(): TlsListenerOptions | undefined {
-  const certPath = option('--tls-cert') ?? env.HARNESS_TLS_CERT
-  const keyPath = option('--tls-key') ?? env.HARNESS_TLS_KEY
-  const publicOrigin = option('--public-origin') ?? env.HARNESS_PUBLIC_ORIGIN
+  const certPath = option('--tls-cert') ?? latchEnv(env, 'TLS_CERT')
+  const keyPath = option('--tls-key') ?? latchEnv(env, 'TLS_KEY')
+  const publicOrigin = option('--public-origin') ?? latchEnv(env, 'PUBLIC_ORIGIN')
   const legacyHost = option('--host')
   const lan = argv.includes('--lan')
   const tailnet = argv.includes('--tailnet')
-  let host = option('--tls-host') ?? env.HARNESS_TLS_HOST
+  let host = option('--tls-host') ?? latchEnv(env, 'TLS_HOST')
   const remote = lan || tailnet || host !== undefined || (legacyHost !== undefined && !LOOPBACK.has(legacyHost))
   const material = [certPath, keyPath, publicOrigin].filter(Boolean).length
   if (!remote && material === 0) return undefined
@@ -137,7 +138,7 @@ function tlsOptions(): TlsListenerOptions | undefined {
     if (!isIP(originHost)) throw new StartupError('请用 --tls-host、--lan 或 --tailnet 指定 HTTPS 监听地址')
     host = originHost
   }
-  const port = Number(option('--tls-port') ?? env.HARNESS_TLS_PORT ?? '4318')
+  const port = Number(option('--tls-port') ?? latchEnv(env, 'TLS_PORT') ?? '4318')
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new StartupError('HTTPS 端口无效')
   return { host: bindAddress(host), port, certPath: resolve(certPath!), keyPath: resolve(keyPath!), publicOrigin: publicOrigin! }
 }
@@ -175,7 +176,7 @@ async function main(): Promise<void> {
   const nativePort = Number(nativePortText ?? '4319')
   if (!Number.isInteger(nativePort) || nativePort < 0 || nativePort > 65535) throw new StartupError('原生连接端口无效')
   const native = nativeHost === undefined ? undefined : { host: bindAddress(nativeHost), port: nativePort }
-  const port = Number(option('--port') ?? env.HARNESS_PORT ?? '4317')
+  const port = Number(option('--port') ?? latchEnv(env, 'PORT') ?? '4317')
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new StartupError('端口无效')
   // Held from before the first read of the data dir until exit, so offline CLI commands and a second start see this
   // Host even while startServer runs and host.json does not exist yet.
@@ -196,16 +197,18 @@ async function main(): Promise<void> {
     if (!built.built) console.error(redactSecrets(built.message))
   }
   const egressAllow: string[] = []
-  const baseEntry = env.HARNESS_BASE_URL ? egressEntry(env.HARNESS_BASE_URL) : undefined
+  const baseURL = latchEnv(env, 'BASE_URL')
+  const baseEntry = baseURL ? egressEntry(baseURL) : undefined
   if (baseEntry) {
     egressAllow.push(baseEntry)
-    console.error(`[Latch] 已允许 Host 访问 HARNESS_BASE_URL 指定的 ${baseEntry}`)
+    console.error(`[Latch] 已允许 Host 访问 LATCH_BASE_URL 指定的 ${baseEntry}`)
   }
   // A start directory the Host chose gets a folder per Agent session; one the owner named is used as it is.
   const sessionFolders = paths.workspaceSource === 'default' || paths.workspaceSource === 'legacy-data'
   const demo = argv.includes('--demo')
   const providerId = option('--provider')
   const harnessId = option('--harness')
+  const model = latchEnv(env, 'MODEL')
   const server = await startServer({
     dataDir: paths.dataDir,
     workspaceRoot: paths.workspaceRoot,
@@ -221,12 +224,12 @@ async function main(): Promise<void> {
     ...(providerId ? { providerId } : {}),
     ...(harnessId ? { harnessId } : {}),
     // The key from the environment is used in memory only; it never reaches the disk.
-    ...(env.HARNESS_MODEL
+    ...(model
       ? {
           provider: {
-            baseURL: env.HARNESS_BASE_URL ?? 'https://api.openai.com/v1',
-            apiKey: env.HARNESS_API_KEY ?? '',
-            model: env.HARNESS_MODEL,
+            baseURL: baseURL ?? 'https://api.openai.com/v1',
+            apiKey: latchEnv(env, 'API_KEY') ?? '',
+            model,
           },
         }
       : {}),

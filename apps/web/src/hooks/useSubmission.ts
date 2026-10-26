@@ -43,7 +43,7 @@ export function useSubmission({
 }) {
   const deviceId = snapshot.device.id
   const catalog = snapshot.catalog
-  const pendingKey = `harness-link.pending.${location.origin}.${deviceId}`
+  const pendingKey = `latch.pending.${location.origin}.${deviceId}`
   const [draft, setDraft] = useState('')
   const [fork, setFork] = useState<(NonNullable<PendingSubmission['forkOf']> & { title?: string }) | null>(null)
   const [pending, setPending] = useState<PendingSubmission | null>(null)
