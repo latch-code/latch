@@ -1,11 +1,13 @@
 import { useCallback, useContext, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
-import { Check, ChevronRight, Copy, Ellipsis, File, Folder, Link2, RefreshCw, Search, TextQuote } from 'lucide-react'
-import { isFileDirectoryListing, type FileContext, type FileDirectoryListing, type FileMention } from '@latch/protocol'
-import { Button, Icon, IconButton, InlineNotice, Loading, Menu } from '@latch/ui'
+import { Check, ChevronRight, Copy, Ellipsis, File, Folder, FolderOpen, Link2, RefreshCw, Search, TextQuote } from 'lucide-react'
+import { isFileDirectoryListing, type FileChange, type FileContext, type FileDirectoryListing, type FileMention } from '@latch/protocol'
+import { Button, Icon, IconButton, InlineNotice, Loading, Menu, Tooltip } from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
+import { currentShell, revealLabel, shellFiles } from '../core/shell.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { useCopy } from '../components/ui.tsx'
 import { FileOpenContext, fileContextBody, fileContextKey, fileRoute, targetIn } from './fileContext.ts'
+import { readTreeFile, treeChanges, treeFullPath, treeKey as branchKey, treeLocation, type FileTreeView } from './treeFiles.ts'
 
 type Branch = { listing?: FileDirectoryListing; loading?: boolean; error?: string; shown: number }
 type TreeRow = {
@@ -17,7 +19,6 @@ type TreeRow = {
   kind: 'file' | 'directory' | 'symlink' | 'other'
   depth: number
 }
-const branchKey = (root: string, path: string) => JSON.stringify([root, path])
 const PAGE_SIZE = 100
 const CACHE_LIMIT = 32
 
@@ -26,19 +27,40 @@ export function FileTree({
   context,
   onSearch,
   onMention,
+  local = false,
+  folders,
+  cwd,
+  fileChanges = [],
+  revision,
+  initialView,
+  onViewChange,
 }: {
   context: FileContext
   onSearch(): void
   onMention?(mention: FileMention): void
+  local?: boolean
+  folders?: readonly { id: string; path: string }[]
+  cwd?: string
+  fileChanges?: readonly FileChange[]
+  /** Changes only when a Host-observed file set or run generation changes, never for each streamed text chunk. */
+  revision?: string | number
+  initialView?: FileTreeView
+  onViewChange?(view: FileTreeView): void
 }) {
   const open = useContext(FileOpenContext)
   const copy = useCopy()
   const [roots, setRoots] = useState<FileDirectoryListing['roots']>([])
   const [branches, setBranches] = useState<Record<string, Branch>>({})
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
-  const [selected, setSelected] = useState<string>()
-  const [showHidden, setShowHidden] = useState(false)
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set(initialView?.expanded ?? []))
+  const [selected, setSelected] = useState<string | undefined>(initialView?.selected)
+  const [showHidden, setShowHidden] = useState(initialView?.showHidden ?? false)
+  const changedView = useRef(onViewChange)
+  changedView.current = onViewChange
+  useEffect(() => {
+    changedView.current?.({ expanded: [...expanded].slice(0, CACHE_LIMIT), selected, showHidden })
+  }, [expanded, selected, showHidden])
   const [loading, setLoading] = useState(true),
+    [refreshing, setRefreshing] = useState(false),
     [error, setError] = useState(''),
     [notice, setNotice] = useState(''),
     [generation, setGeneration] = useState(0)
@@ -51,6 +73,20 @@ export function FileTree({
   const contextKey = fileContextKey(context)
   const contextRef = useRef(context)
   contextRef.current = context
+  const lastContext = useRef<{ key: string; showHidden: boolean } | undefined>(undefined)
+  const nativeLocal = useRef(local)
+  nativeLocal.current = local
+  const action = useRef<AbortController | undefined>(undefined)
+  const [acting, setActing] = useState(false)
+  const changes = treeChanges(fileChanges)
+  useEffect(
+    () => () => {
+      action.current?.abort()
+      action.current = undefined
+      setActing(false)
+    },
+    [contextKey, local],
+  )
   const load = useCallback(
     async (root: string, path: string) => {
       const key = branchKey(root, path)
@@ -108,13 +144,13 @@ export function FileTree({
           throw new Error('文件夹响应无效，请重试。')
         if (!controller.signal.aborted) {
           loadedBranches.current.add(key)
-          setBranches(previous => ({ ...previous, [key]: { listing: result, shown: PAGE_SIZE } }))
+          setBranches(previous => ({ ...previous, [key]: { listing: result, shown: previous[key]?.shown ?? PAGE_SIZE } }))
         }
       } catch (cause) {
         if (!controller.signal.aborted)
           setBranches(previous => ({
             ...previous,
-            [key]: { ...previous[key], loading: false, error: errorMessage(cause), shown: PAGE_SIZE },
+            [key]: { loading: false, error: errorMessage(cause), shown: PAGE_SIZE },
           }))
       } finally {
         release()
@@ -125,14 +161,18 @@ export function FileTree({
   )
   useEffect(() => {
     const controller = new AbortController()
-    setLoading(true)
+    const priorExpanded = [...openBranches.current]
+    const reset = lastContext.current?.key !== contextKey || lastContext.current.showHidden !== showHidden
+    lastContext.current = { key: contextKey, showHidden }
+    if (reset) setLoading(true)
+    else setRefreshing(true)
     setError('')
     setNotice('')
-    setRoots([])
-    setBranches({})
-    loadedBranches.current.clear()
-    setExpanded(new Set())
-    setSelected(undefined)
+    if (reset) {
+      setRoots([])
+      setBranches({})
+      loadedBranches.current.clear()
+    }
     const params = new URLSearchParams(fileContextBody(contextRef.current))
     void api<unknown>(`${fileRoute(contextRef.current, 'list')}?${params}`, { signal: controller.signal })
       .then(result => {
@@ -141,22 +181,86 @@ export function FileTree({
         setRoots(result.roots)
         const first = result.roots[0]
         if (first) {
-          setExpanded(new Set([branchKey(first.id, '')]))
-          void load(first.id, '')
+          const available = new Set(result.roots.map(root => root.id))
+          const preferred = reset ? priorExpanded : [...openBranches.current]
+          const opened = (preferred.length ? preferred : [branchKey(first.id, '')]).flatMap(key => {
+            const location = treeLocation(key)
+            return location && available.has(location.root) ? [location] : []
+          })
+          if (!opened.length) opened.push({ root: first.id, path: '' })
+          setExpanded(new Set(opened.map(location => branchKey(location.root, location.path))))
+          setBranches(previous =>
+            Object.fromEntries(
+              Object.entries(previous).filter(([key]) => {
+                const location = treeLocation(key)
+                return location && available.has(location.root)
+              }),
+            ),
+          )
+          for (const location of opened) void load(location.root, location.path)
         }
       })
       .catch(cause => {
-        if (!controller.signal.aborted) setError(errorMessage(cause))
+        if (!controller.signal.aborted) {
+          setRoots([])
+          setBranches({})
+          loadedBranches.current.clear()
+          setError(errorMessage(cause))
+        }
       })
       .finally(() => {
-        if (!controller.signal.aborted) setLoading(false)
+        if (!controller.signal.aborted) {
+          setLoading(false)
+          setRefreshing(false)
+        }
       })
     return () => {
       controller.abort()
       for (const request of controllers.current.values()) request.abort()
       controllers.current.clear()
     }
-  }, [contextKey, generation, showHidden])
+  }, [contextKey, generation, showHidden, revision])
+  const fileAction = async (row: TreeRow, kind: 'copy' | 'reveal') => {
+    if (action.current || !local) return
+    const controller = new AbortController()
+    action.current = controller
+    setActing(true)
+    setNotice('')
+    try {
+      const file = await readTreeFile(context, { root: row.root, path: row.path }, controller.signal)
+      if (!nativeLocal.current || fileContextKey(contextRef.current) !== contextKey) return
+      if (kind === 'copy') {
+        const path = treeFullPath(file, folders, cwd)
+        if (!path) throw new Error('找不到这个文件所属的冻结文件夹，请重新同步会话。')
+        await copy.copy(path)
+      } else {
+        const shell = shellFiles()
+        if (!shell || shell.protocolVersion !== 2 || !file.actions.reveal) throw new Error('当前桌面端无法显示这个文件。')
+        const result = await shell.reveal(
+          context.kind === 'session' ? context.sessionId : { workspaceId: context.workspaceId, harnessId: context.harnessId },
+          { handle: file.handle },
+        )
+        if (result.status !== 'shown')
+          throw new Error(result.status === 'busy' ? '上一个文件操作还没有完成，请稍后重试。' : '无法在文件管理器中显示，请刷新后重试。')
+      }
+    } catch (cause) {
+      if (!controller.signal.aborted) setNotice(errorMessage(cause))
+    } finally {
+      if (action.current === controller) {
+        action.current = undefined
+        setActing(false)
+      }
+    }
+  }
+  const rowMenu = (element: HTMLElement, row: TreeRow) => {
+    if (row.kind !== 'file') return false
+    const button = element.querySelector<HTMLButtonElement>('[data-tree-menu]')
+    if (!button) return false
+    setSelected(row.key)
+    button.focus({ preventScroll: true })
+    if (button.getAttribute('aria-expanded') !== 'true') button.click()
+    return true
+  }
   const rows: TreeRow[] = []
   let clipped = false
   const append = (row: TreeRow) => {
@@ -208,6 +312,13 @@ export function FileTree({
   }
   const keydown = (event: KeyboardEvent<HTMLDivElement>, row: TreeRow) => {
     if (event.target !== event.currentTarget || event.nativeEvent.isComposing) return
+    if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) {
+      if (rowMenu(event.currentTarget, row)) {
+        event.preventDefault()
+        event.stopPropagation()
+      }
+      return
+    }
     const index = rows.findIndex(item => item.key === row.key)
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault()
@@ -254,6 +365,8 @@ export function FileTree({
       </header>
       {notice && <InlineNotice>{notice}</InlineNotice>}
       {loading && <Loading label="正在读取项目文件…" />}
+      {refreshing && <Loading label="正在更新已展开的文件夹…" />}
+      {acting && <Loading label="正在核对文件…" />}
       {error && (
         <InlineNotice
           tone="error"
@@ -300,6 +413,12 @@ export function FileTree({
                   tabIndex={selected === row.key || (!selected && index === 0) ? 0 : -1}
                   onFocus={() => setSelected(row.key)}
                   onClick={() => activate(row)}
+                  onContextMenu={event => {
+                    if (rowMenu(event.currentTarget, row)) {
+                      event.preventDefault()
+                      event.stopPropagation()
+                    }
+                  }}
                   onKeyDown={event => keydown(event, row)}>
                   <Icon
                     icon={folder ? ChevronRight : row.kind === 'symlink' ? Link2 : File}
@@ -310,12 +429,19 @@ export function FileTree({
                   <span className="file-tree-name">
                     <VisibleText text={row.name} />
                   </span>
+                  {row.kind === 'file' && changes.has(row.key) && (
+                    <Tooltip content="本轮运行期间有变化，也可能包含其他程序的改动。">
+                      <span className="file-tree-change" aria-label="本轮运行期间有变化" />
+                    </Tooltip>
+                  )}
                   {row.kind === 'symlink' && <small>符号链接</small>}
                   {row.kind === 'file' && (
                     <div onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>
                       <Menu
                         label={`${row.name} 文件操作`}
-                        trigger={props => <IconButton {...props} label={`${row.name} 文件操作`} size="xs" icon={Ellipsis} />}
+                        trigger={props => (
+                          <IconButton {...props} data-tree-menu="" label={`${row.name} 文件操作`} size="xs" icon={Ellipsis} />
+                        )}
                         sections={[
                           {
                             id: 'file',
@@ -334,6 +460,28 @@ export function FileTree({
                                   void copy.copy(row.path)
                                 },
                               },
+                              ...(local && treeFullPath({ root: row.root, path: row.path }, folders, cwd)
+                                ? [
+                                    {
+                                      id: 'copy-full',
+                                      label: '复制完整路径',
+                                      icon: Copy,
+                                      disabledReason: acting ? '请等待当前文件操作完成。' : undefined,
+                                      onSelect: () => void fileAction(row, 'copy'),
+                                    },
+                                  ]
+                                : []),
+                              ...(local && shellFiles()?.protocolVersion === 2
+                                ? [
+                                    {
+                                      id: 'reveal',
+                                      label: revealLabel(currentShell()?.platform),
+                                      icon: FolderOpen,
+                                      disabledReason: acting ? '请等待当前文件操作完成。' : undefined,
+                                      onSelect: () => void fileAction(row, 'reveal'),
+                                    },
+                                  ]
+                                : []),
                               ...(onMention
                                 ? [
                                     {

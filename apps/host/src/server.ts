@@ -1,5 +1,11 @@
+import { ConfigRequests } from './config-requests.ts'
 import { PersonalStore } from './personal-store.ts'
 import { createPersonalRoutes } from './personal-routes.ts'
+import { PersonalRoutines, type RoutinePlan } from './personal-routines.ts'
+import { PersonalGroups } from './personal-groups.ts'
+import type { PersonalGroup, PersonalGroupMessage } from '@latch/protocol'
+import { personalPluginRevision } from './personal-revisions.ts'
+import { executionBuildRevision } from './execution-build.ts'
 import type { PersonalAssistant, PersonalAssistantSummary, PersonalExecutionContext } from '@latch/protocol'
 import { readPreviewFrame, WORKER_CSP } from './preview-frames.ts'
 import { PromptQueues, type QueueActor } from './prompt-queues.ts'
@@ -94,6 +100,7 @@ import {
 } from '@latch/link-wire'
 import { nodeCrypto } from '@latch/link-client'
 import { startNativeHost, type NativeOpening } from './native.ts'
+import { NativePluginTransports } from './native-transports.ts'
 import { NativeNetwork } from './native-network.ts'
 import { NativeNetworks } from './native-networks.ts'
 import { MacNetworkBackend, type NativeNetworkBackend } from './native-network-backend.ts'
@@ -102,6 +109,7 @@ import { NativeReplay } from './native-replay.ts'
 import { RelayProfiles, secretBytes } from './relay/profiles.ts'
 import { HostAddressBooks } from './relay/address-book.ts'
 import { HostRelayController } from './relay/controller.ts'
+import { HostRelayDirectory } from './relay/directory.ts'
 import {
   createEgressFetch,
   createEgressInspector,
@@ -184,7 +192,7 @@ import {
   type WorkspaceRecord,
 } from './config.ts'
 import { HarnessHub, type HubCreateInput } from './hub.ts'
-import { RUN_ID, type ApprovalRecord, type StoredReceipt } from './session-meta.ts'
+import { RUN_ID, type ApprovalRecord, type CancelRecord } from './session-meta.ts'
 import { sendNotFoundPage } from './not-found.ts'
 import { SessionFolders } from './session-folders.ts'
 import { writeProjectContext } from './project-context.ts'
@@ -341,7 +349,14 @@ const taskPatchSchema = z
     archived: z.boolean().optional(),
   })
   .refine(value => value.title !== undefined || value.pinned !== undefined || value.archived !== undefined, '没有要修改的内容')
-const configSchema = z.object({ configId: z.string().min(1).max(128), value: z.string().max(1024) })
+const configSchema = z.strictObject({
+  configId: z.string().min(1).max(128),
+  value: z.string().max(1024),
+  requestId: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{8,128}$/u)
+    .optional(),
+})
 const requestIdSchema = z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u)
 const decisionSchema = z.strictObject({
   decision: z.enum(['allow', 'reject']),
@@ -546,6 +561,8 @@ export interface ServerOptions {
   nativeNetwork?: false | (() => Promise<NativeNetworkBackend>)
   /** Extra platform trust anchors for privately operated relay TLS, supplied only by the Host operator. */
   nativeRelayCa?: string | Buffer
+  /** Composition-root injection; production uses a public-only, DNS-checked fetch without the model allowlist. */
+  nativeDirectoryFetch?: FetchLike
   /** Tests; default per-user runtime dir. */
   runtimeParent?: string
   agentsDir?: string
@@ -616,6 +633,7 @@ interface Caller {
 
 interface EventStream {
   nativeOpening?: NativeOpening
+  paddingObserved?: boolean
   deviceId: string
   credentialHash: string
   sessionId?: string
@@ -872,6 +890,7 @@ function guardDataDir(plugin: HarnessPlugin, dataDir: string, workspace: string)
       plugin.activate({
         registerProvider: provider => ctx.registerProvider(provider),
         registerHarness: driver => ctx.registerHarness(driver),
+        registerTransport: driver => ctx.registerTransport(driver),
         registerUiPanel: panel => ctx.registerUiPanel(panel),
         registerClientPanel: panel => ctx.registerClientPanel(panel),
         registerSkill: skill => ctx.registerSkill(skill),
@@ -1069,7 +1088,27 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     const relayProfiles = await RelayProfiles.open(dataDir)
     await excludeFromBackup([join(dataDir, 'native')], { log })
     let nativeNetwork: NativeNetwork | undefined
-    const addressBooks = new HostAddressBooks(relayProfiles, identity, () => nativeNetwork?.lan() ?? [])
+    const relayDirectory = await HostRelayDirectory.open({
+      dataDir,
+      profiles: relayProfiles,
+      fetch:
+        options.nativeDirectoryFetch
+        ?? createEgressFetch({
+          allow: () => [],
+          ...(options.egressLookup ? { lookup: options.egressLookup } : {}),
+          connectTimeoutMs: 5000,
+        }),
+      changed: () => {
+        if (!starting) refresh()
+      },
+    })
+    startupCleanup.push(() => relayDirectory.close())
+    const addressBooks = new HostAddressBooks(
+      relayProfiles,
+      identity,
+      () => nativeNetwork?.lan() ?? [],
+      () => relayDirectory.sources(),
+    )
     const revokedDiscoveryHash = () =>
       sha256Hex(
         canonicalJson(
@@ -1326,14 +1365,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ctx.registerHarness(standardHarnessDriver)
         },
       },
-      { managed: 'core' },
+      { managed: 'core', revision: executionBuildRevision('standard-harness') },
     )
     await registry.enable('standard-harness')
     const personalStore = await PersonalStore.open(dataDir, { audit, now })
     startupCleanup.push(() => personalStore.close())
     const questions = await Questions.open({ dataDir, changed: id => refresh(id), detail: id => hub!.detail(id) })
     startupCleanup.push(() => questions.close())
-    registry.register(createQuestionsPlugin(questions), { managed: 'core' })
+    registry.register(createQuestionsPlugin(questions), { managed: 'core', revision: executionBuildRevision('user-questions') })
     await registry.enable('user-questions')
     function questionSummary(task: TaskSummary): TaskSummary {
       const { pendingQuestions: _untrustedCount, ...summary } = task
@@ -1345,14 +1384,21 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       ...(options.demo ? [createToolsPlugin(), createDemoPlugin()] : []),
       ...(options.plugins ?? []),
     ]
-    for (const plugin of optional) {
-      registry.register(plugin)
+    for (const [index, plugin] of optional.entries()) {
+      registry.register(plugin, {
+        revision:
+          index < optional.length - (options.plugins?.length ?? 0)
+            ? executionBuildRevision(
+                index === 0 ? [plugin.id, realDataDir, realWorkspace, agentsDir, tlsKeyPath ?? null, denyRead] : plugin.id,
+              )
+            : undefined,
+      })
       if (!disabled.has(plugin.id)) await registry.enable(plugin.id)
     }
     // Saved definitions must not prevent the Host from starting; a broken one is logged and left disabled.
     for (const record of effectiveProviders()) {
       try {
-        registry.register(buildProviderPlugin(record), { managed: 'provider' })
+        registry.register(buildProviderPlugin(record), { managed: 'provider', revision: providerExecutionRevision(record) })
       } catch (error) {
         log(`模型服务 ${record.id} 未加载：${errorText(error)}`)
         continue
@@ -1387,6 +1433,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     startupCleanup.push(() => fileTracking.close())
     const directoryReader = await FileDirectoryReader.open()
     const fileRoutes = createFileRoutes({
+      requestSignal: caller => (caller as Caller).nativeOpening?.signal,
+      contentChunkBytes: caller => ((caller as Caller).nativeOpening?.bulk ? 65_536 : undefined),
       directoryReader,
       contextRevision: context => {
         const projects = config.settings().workspaces
@@ -1449,6 +1497,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       actorOf: caller => actorOf(caller as Caller),
       ...(options.fileHooks ? { hooks: options.fileHooks } : {}),
     })
+    startupCleanup.push(() => fileRoutes.close())
     async function attachmentCapabilities(
       caller: Caller,
       selection: AttachmentSelection,
@@ -1604,6 +1653,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       now,
       detail: id => harnessHub.detail(id),
       check: checkQueuedPrompt,
+      async prepare(actor, sessionId, model) {
+        await checkQueuedPrompt(actor, sessionId, model, undefined, true)
+        const plan = await queuedPersonalPlan(sessionId)
+        return plan ? { binding: plan.basis, model: plan.model } : undefined
+      },
       beforeEnqueue: async (actor, sessionId, itemId) => {
         await audited({
           action: 'task.prompt.queued',
@@ -1612,16 +1666,19 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         })
       },
       send: async (actor, sessionId, input) => {
-        await checkQueuedPrompt(actor, sessionId, input.model)
+        await checkQueuedPrompt(actor, sessionId, input.model, input.binding)
         if (input.itemId)
           await audited({
             action: 'task.prompt.sent',
             actor: { deviceId: actor.deviceId, listener: actor.listener, via: 'http' },
             detail: { sessionId, itemId: input.itemId },
           })
-        await checkQueuedPrompt(actor, sessionId, input.model)
+        await checkQueuedPrompt(actor, sessionId, input.model, input.binding)
         await input.authorize?.()
+        const plan = await queuedPersonalPlan(sessionId)
+        if (plan?.basis !== input.binding) throw queueContextChanged()
         await harnessHub.prompt(sessionId, input.text, input.requestId, {
+          ...(plan ? { personal: plan.personal } : {}),
           ...(input.model ? { model: input.model } : {}),
           ...(input.queuedAt ? { queuedAt: input.queuedAt } : {}),
         })
@@ -1629,11 +1686,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       changed: id => refresh(id),
     })
     startupCleanup.push(() => promptQueues.close())
+    const configRequests = new ConfigRequests(harnessHub.receipts, now)
+    startupCleanup.push(() => configRequests.close())
     let shutdown: Promise<void> | undefined
     let listeners: ListenerSet | undefined
     let loopbackOrigin = ''
     let tlsOrigin: string | undefined
     let nativeHost: Awaited<ReturnType<typeof startNativeHost>> | undefined
+    let nativePluginTransports: NativePluginTransports | undefined
     let relayController: HostRelayController | undefined
     let nativeSettings: NativeSettings | undefined
     const nativeRequests = new WeakMap<IncomingMessage, NativeOpening>()
@@ -1723,7 +1783,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       authorize()
       return { actor: { ...actorOf(caller), deviceId: caller.device.id }, authorize }
     }
-    function personalSummary(assistant: PersonalAssistant, tasks: TaskSummary[]): PersonalAssistantSummary {
+    function personalUnavailable(assistant: PersonalAssistant): string | undefined {
       const harness = hub!.info(assistant.harnessId)
       const driver = registry.harnesses().find(entry => entry.id === assistant.harnessId)
       const enabled = new Set(
@@ -1733,25 +1793,27 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           .map(plugin => plugin.id),
       )
       const selection = assistant.model ?? defaultModelRef()
-      const unavailableReason =
-        !harness || harness.status !== 'ready'
-          ? '这个 Harness 暂时不可用，请检查电脑上的配置。'
-          : driver?.personalContext !== 'private'
-            ? '这个 Harness 尚未提供私有上下文接口，暂不能用于个人助手。'
-            : assistant.pluginIds.some(id => !enabled.has(id))
-              ? '选择的插件已停用或移除，请更新个人助手。'
-              : harness.models === 'host' && (!selection || !modelAvailable(selection))
-                ? '选择的模型服务暂不可用，请在电脑上检查模型配置。'
-                : harness.models !== 'host' && assistant.model
-                  ? '这个执行方式自行管理模型，请移除指定的模型服务。'
-                  : undefined
+      return !harness || harness.status !== 'ready'
+        ? '这个 Harness 暂时不可用，请检查电脑上的配置。'
+        : driver?.personalContext !== 'private'
+          ? '这个 Harness 尚未提供私有上下文接口，暂不能用于个人助手。'
+          : assistant.pluginIds.some(id => !enabled.has(id))
+            ? '选择的插件已停用或移除，请更新个人助手。'
+            : harness.models === 'host' && (!selection || !modelAvailable(selection))
+              ? '选择的模型服务暂不可用，请在电脑上检查模型配置。'
+              : harness.models !== 'host' && assistant.model
+                ? '这个执行方式自行管理模型，请移除指定的模型服务。'
+                : undefined
+    }
+    function personalSummary(assistant: PersonalAssistant, tasks: TaskSummary[]): PersonalAssistantSummary {
+      const unavailableReason = personalUnavailable(assistant)
       return {
         ...assistant,
         available: unavailableReason === undefined,
         ...(unavailableReason ? { unavailableReason } : {}),
         memoryCount: personalStore.memories(assistant.id).length,
         sessionCount: tasks.filter(task => task.personal?.assistantId === assistant.id && !task.personal.groupId).length,
-        canSchedule: false,
+        canSchedule: unavailableReason === undefined && assistant.harnessId === 'standard',
       }
     }
     function personalContext(id: string): PersonalExecutionContext {
@@ -1774,12 +1836,211 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     function personalVisible(caller: Caller, summary: TaskSummary): boolean {
       return !summary.personal || (!!caller.device && devices.get(caller.device.id)?.dataScope === 'all')
     }
+    function routinePlan(id: string, selection?: ModelRef): RoutinePlan {
+      const assistant = personalStore.assistant(id),
+        personal = personalContext(id)
+      if (assistant.harnessId !== 'standard') throw new AppError(409, 'personal-routine-harness', '例行任务目前需要内置执行方式。')
+      const model = selection ?? assistant.model ?? defaultModelRef()
+      if (!model) throw new AppError(409, 'provider-unavailable', '请先配置模型服务。')
+      const provider = registry.providerOwner(model.providerId)
+      if (!provider) throw new AppError(409, 'provider-unavailable', '模型服务不可用。')
+      const snapshot = registry.revisionSnapshot([...new Set(['standard-harness', provider, ...assistant.pluginIds])]),
+        assets = pluginAssets.list(),
+        revisions = Object.entries(snapshot.revisions).map(([id, revision]) => {
+          const asset = assets.find(record => record.id === id)
+          return [id, asset?.appliedBundle ? personalPluginRevision(asset.appliedBundle) : revision]
+        })
+      return {
+        basis: sha256Hex(
+          canonicalJson({
+            instructions: personal.instructions,
+            mode: assistant.mode,
+            model,
+            harnessId: assistant.harnessId,
+            pluginIds: assistant.pluginIds,
+            revisions,
+            policy: policy.hash(),
+            workspace: canonicalWorkspace,
+          }),
+        ),
+        persistent: snapshot.persistent,
+        mode: assistant.mode,
+        model,
+        personal: { ...personal, expectedRevisions: snapshot.revisions },
+      }
+    }
+    function providerExecutionRevision(record: ProviderRecord): string | undefined {
+      const { name: _, ...execution } = record
+      return executionBuildRevision(execution)
+    }
+    function authorizeRoutine(deviceId: string): void {
+      const device = devices.get(deviceId)
+      if (
+        !device
+        || !devices.isActive(deviceId)
+        || device.listener !== 'unix'
+        || device.dataScope !== 'all'
+        || !device.scopes.includes('run')
+        || !levelAtMost('L1', policy.get().local.maxLevel)
+        || !levelAtMost('L1', policy.get().unattended.maxLevel)
+        || now() - Date.parse(device.lastSeenAt) > policy.get().unattended.pauseAfterIdleDays * 86400000
+      )
+        throw new AppError(403, 'personal-routine-owner', '例行任务的电脑授权已变化，请在电脑上重新开启。')
+    }
+    const personalRoutines = await PersonalRoutines.open({
+      dataDir,
+      audit,
+      now,
+      plan: routinePlan,
+      authorize: authorizeRoutine,
+      changed: () => refresh(),
+      detail: id => hub!.detail(id),
+      cancel: (id, runId) => hub!.cancel(id, runId ? { runId } : undefined),
+      approvalTtlMs: () => policy.get().unattended.approvalTtlHours.standard * 3600000,
+      async start({ requestId, prompt, plan, authorize }) {
+        authorize()
+        const task: HubCreateInput = {
+          requestId,
+          prompt,
+          harnessId: 'standard',
+          workspaceId: 'default',
+          mode: plan.mode,
+          model: plan.model,
+          personal: plan.personal,
+        }
+        return projectOperationForRoutine(async () => {
+          authorize()
+          if (makeOwnFolders && plan.mode === 'agent') {
+            const folder = await ownFolders.allocate(requestId)
+            return createInOwnFolder({ ...task, cwd: folder.path, sessionFolder: folder.name }, requestId, authorize)
+          }
+          authorize()
+          return hub!.createTask(task)
+        })
+      },
+    })
+    startupCleanup.push(() => personalRoutines.close())
+    function groupPlan(group: PersonalGroup, id: string, history: PersonalGroupMessage[]): RoutinePlan {
+      const assistant = personalStore.assistant(id),
+        unavailable = personalUnavailable(assistant)
+      if (unavailable !== undefined || assistant.harnessId !== 'standard')
+        throw new AppError(409, 'personal-group-member-unavailable', '这位助手的执行方式暂不可用于群聊，请检查配置。')
+      const model = assistant.model ?? defaultModelRef()
+      if (!model) throw new AppError(409, 'provider-unavailable', '请先配置模型服务。')
+      const provider = registry.providerOwner(model.providerId)
+      if (!provider) throw new AppError(409, 'provider-unavailable', '模型服务不可用。')
+      const snapshot = registry.revisionSnapshot([...new Set(['standard-harness', provider, ...assistant.pluginIds])]),
+        assets = pluginAssets.list(),
+        revisions = Object.entries(snapshot.revisions).map(([id, revision]) => {
+          const asset = assets.find(record => record.id === id)
+          return [id, asset?.appliedBundle ? personalPluginRevision(asset.appliedBundle) : revision]
+        }),
+        basis = sha256Hex(
+          canonicalJson({
+            group: {
+              id: group.id,
+              memberIds: group.memberIds,
+              defaultAssistantId: group.defaultAssistantId,
+              instructions: group.instructions,
+              maxRelays: group.maxRelays,
+            },
+            assistant: {
+              id,
+              role: assistant.role,
+              mode: assistant.mode,
+              harnessId: assistant.harnessId,
+              pluginIds: assistant.pluginIds,
+              model,
+            },
+            revisions,
+            policy: policy.hash(),
+            workspace: canonicalWorkspace,
+          }),
+        ),
+        sharedMessages = history
+          .slice(-64)
+          .filter(message => message.role === 'user' || message.role === 'assistant')
+          .map(message => ({ role: message.role as 'user' | 'assistant', text: message.text }))
+      return {
+        basis,
+        persistent: snapshot.persistent,
+        mode: assistant.mode,
+        model,
+        personal: {
+          owner: { assistantId: id, groupId: group.id },
+          pluginIds: [...assistant.pluginIds],
+          expectedRevisions: snapshot.revisions,
+          revision: basis,
+          instructions: [assistant.role, group.instructions].filter(Boolean).join('\n\n'),
+          sharedMessages,
+        },
+      }
+    }
+    const personalGroups = await PersonalGroups.open({
+      dataDir,
+      audit,
+      now,
+      plan: groupPlan,
+      changed: () => refresh(),
+      detail: id => hub!.detail(id),
+      sessions: async () => (await hub!.listTasks()).map(questionSummary),
+      cancel: (id, runId) => hub!.cancel(id, runId ? { runId } : undefined),
+      async start({ requestId, prompt, plan, authorize }) {
+        return projectOperationForRoutine(async () => {
+          authorize()
+          const task: HubCreateInput = {
+            requestId,
+            prompt,
+            harnessId: 'standard',
+            workspaceId: 'default',
+            mode: plan.mode,
+            model: plan.model,
+            personal: plan.personal,
+          }
+          if (makeOwnFolders && plan.mode === 'agent') {
+            const folder = await ownFolders.allocate(requestId)
+            return createInOwnFolder({ ...task, cwd: folder.path, sessionFolder: folder.name }, requestId, authorize)
+          }
+          authorize()
+          return hub!.createTask(task)
+        })
+      },
+    })
+    startupCleanup.push(() => personalGroups.close())
+    function projectOperationForRoutine<T>(operation: () => Promise<T>): Promise<T> {
+      const result = projectChanges.then(operation)
+      projectChanges = result.then(
+        () => {},
+        () => {},
+      )
+      return result
+    }
     function checkPersonalSession(caller: Caller, id: string, write = false): void {
       recheck(caller)
       if (hub!.personalOf(id)) personalAccess(caller, write)
     }
     const personalRoutes = createPersonalRoutes<Caller>({
       store: personalStore,
+      routines: personalRoutines,
+      groups: personalGroups,
+      turnActor(caller) {
+        const actor = personalAccess(caller, true),
+          native = isNativeListener(caller.connection.listener),
+          windowHash = caller.nativeOpening?.windowHash
+        return {
+          ...actor,
+          authorize() {
+            actor.authorize()
+            if (native && (!windowHash || windowHash !== caller.nativeOpening?.windowHash))
+              throw new AppError(403, 'native-verification-required', '原手机验证窗口已结束，接力已停止。')
+            assertStandardCeiling(caller, { harnessId: 'standard', workspaceId: 'default' })
+          },
+        }
+      },
+      cancelActor(caller) {
+        requireScope(caller, 'view')
+        return { actor: { ...actorOf(caller), deviceId: caller.device.id }, authorize: () => recheck(caller, 'view') }
+      },
       authorize: personalAccess,
       summary: personalSummary,
       plugins: () =>
@@ -1946,7 +2207,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         devMode: true,
         presence: await presenceStatus(),
         tls: tlsOrigin ? { origin: tlsOrigin } : null,
-        native: { enabled: nativeHost?.enabled ?? false, inputsPaused: devices.nativeInputsPaused(), discoveryEpoch: discoveryEpoch() },
+        native: {
+          enabled: nativeHost?.enabled ?? false,
+          inputsPaused: devices.nativeInputsPaused(),
+          discoveryEpoch: discoveryEpoch(),
+          directoryEpoch: relayDirectory.epoch(),
+        },
         policy: { localMaxLevel: current.local.maxLevel, remoteMaxLevel: current.remote.maxLevel, allowL3: current.local.allowL3 },
         rejectionNote: true,
       }
@@ -2119,10 +2385,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           },
           async (_providers, commit) => {
             recheck(caller, 'admin')
-            if (before) await registry.replace(plugin, commit, { managed: 'provider', preserveEnabled: true })
+            if (before)
+              await registry.replace(plugin, commit, {
+                managed: 'provider',
+                preserveEnabled: true,
+                revision: providerExecutionRevision(live),
+              })
             else {
               await commit()
-              registry.register(plugin, { managed: 'provider' })
+              registry.register(plugin, { managed: 'provider', revision: providerExecutionRevision(live) })
             }
           },
         )
@@ -2156,7 +2427,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         )
       } catch (error) {
         if (unregistered) {
-          registry.register(buildProviderPlugin(current), { managed: 'provider' })
+          registry.register(buildProviderPlugin(current), { managed: 'provider', revision: providerExecutionRevision(current) })
           if (current.enabled) await registry.enable(id).catch(cause => log(`模型服务 ${id} 恢复失败：${errorText(cause)}`))
         }
         throw error
@@ -3263,6 +3534,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ...(directoryReader.available ? { fileTree: true as const } : {}),
           filePreview: true,
           personal: true,
+          personalRoutines: true,
+          nativeBulk: true,
+          nativeBulkStream: true,
+          personalGroups: true,
+          personalQueue: true,
+          configReceipts: true,
+          nativePairingScope: true,
         },
         harnesses: hub!.drivers(),
         providers: usableProviders().map(provider => summarizeProvider(provider, providerKindOf(provider.id))),
@@ -3347,7 +3625,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
      * Keeps a receipt with its session. The decision or cancel has already taken effect, so a failed write is logged
      * rather than reported: the receipt still answers retries until the Host stops, and goes into the next write.
      */
-    async function keepReceipt(sessionId: string, receipt: StoredReceipt): Promise<void> {
+    async function keepReceipt(sessionId: string, receipt: ApprovalRecord | CancelRecord): Promise<void> {
       await hub!.receipts.record(sessionId, receipt).catch(error => log(`回执未能保存：${errorText(error)}`))
     }
 
@@ -3717,6 +3995,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
       let frame = frames.get(event)
       if (stream.nativeOpening) {
+        if (event.type === 'task-state') stream.nativeOpening.padding?.activity(res, ACTIVE_STATUSES.has(event.detail.summary.status))
+        if (!stream.paddingObserved) {
+          stream.paddingObserved = true
+          res.once('close', () => stream.nativeOpening?.padding?.activity(res, false))
+        }
         frame =
           nativeReplay.frame(event)
           ?? `id: ${nativeReplay.cursor()}\nevent: ${event.type}\ndata: ${JSON.stringify({ ...event, resumeRequired: true })}\n\n`
@@ -3785,7 +4068,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       pendingTasks.clear()
       try {
         if (global) {
-          const event = nativeReplay.publish({ type: 'refresh', instanceId, revision: globalRevision, discoveryEpoch: discoveryEpoch() })
+          const event = nativeReplay.publish({
+            type: 'refresh',
+            instanceId,
+            revision: globalRevision,
+            discoveryEpoch: discoveryEpoch(),
+            directoryEpoch: relayDirectory.epoch(),
+          })
           for (const res of streams.keys()) send(res, event)
         }
         let fallback = false
@@ -3821,7 +4110,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         }
         for (const [sessionId] of tasks) void promptQueues.changed(sessionId).catch(() => log('排队状态未能更新，请手动检查队列'))
         if (fallback && !global) {
-          const event = nativeReplay.publish({ type: 'refresh', instanceId, revision: globalRevision, discoveryEpoch: discoveryEpoch() })
+          const event = nativeReplay.publish({
+            type: 'refresh',
+            instanceId,
+            revision: globalRevision,
+            discoveryEpoch: discoveryEpoch(),
+            directoryEpoch: relayDirectory.epoch(),
+          })
           for (const res of streams.keys()) send(res, event)
         }
       } finally {
@@ -4335,7 +4630,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             {
               form: 'policy.native-link',
               slots: {
-                direct: direct ? `局域网直连 ${direct.host}:${direct.port || '自动端口'}` : '关闭局域网直连',
+                direct: `${plan.directoryChanged ? (plan.directory ? `地址目录 ${plan.directory.mirrors.length} 个镜像；` : '关闭地址目录；') : ''}${direct ? `局域网直连 ${direct.host}:${direct.port || '自动端口'}` : '关闭局域网直连'}`,
                 count: String(plan.input.relays.length),
               },
             },
@@ -4350,6 +4645,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
                   value: node.registrationKey === null ? '不使用' : node.registrationKey ? '已填写（不显示）' : '保持原设置',
                 },
               ]),
+              ...(plan.directory
+                ? [
+                    ...plan.directory.anchors.map(value => ({ label: '地址发布根公钥', value })),
+                    ...plan.directory.mirrors.map(value => ({ label: '地址镜像', value })),
+                  ]
+                : []),
             ],
             ['中继与网络服务商可看到 IP、连接时间和数据量；正文仍由 Host 身份与端到端连接保护。'],
           )
@@ -4364,10 +4665,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         requireLocal(caller)
         if (caller.device) requireScope(caller, 'admin')
         if (!nativeHost) throw new AppError(409, 'native-not-configured', '尚未配置原生设备连接入口')
-        const input = invitationSchema.parse(await optionalJsonBody(req))
+        const input = invitationSchema.extend({ dataScope: z.enum(['work', 'all']).optional() }).parse(await optionalJsonBody(req))
         recheck(caller, 'admin')
         const invitation = await nativeHost.invite(
-          { ...(caller.device ? { inviter: caller.device } : {}), ...(input.scopes ? { scopes: input.scopes } : {}) },
+          {
+            ...(caller.device ? { inviter: caller.device } : {}),
+            ...(input.scopes ? { scopes: input.scopes } : {}),
+            ...(input.dataScope ? { dataScope: input.dataScope } : {}),
+          },
           actorOf(caller),
         )
         json(res, { invitation }, 201)
@@ -4971,7 +5276,35 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
     }
 
-    async function checkQueuedPrompt(actor: QueueActor, sessionId: string, model?: ModelRef): Promise<void> {
+    function queueContextChanged(): AppError {
+      return new AppError(409, 'queue-context-changed', '助手的执行配置已改变，请移除此项后重新加入队列。')
+    }
+    async function queuedPersonalPlan(sessionId: string): Promise<RoutinePlan | undefined> {
+      const owner = hub!.personalOf(sessionId)
+      if (!owner) return undefined
+      if (owner.groupId) throw new AppError(409, 'personal-group-session', '这个会话由助手群聊管理，请回到群聊发送。')
+      try {
+        const session = await hub!.summary(sessionId),
+          assistant = personalStore.assistant(owner.assistantId)
+        if (assistant.harnessId !== session.harnessId || assistant.mode !== session.mode || assistant.harnessId !== 'standard')
+          throw queueContextChanged()
+        const model =
+          assistant.model ?? (session.providerId && session.model ? { providerId: session.providerId, model: session.model } : undefined)
+        if (!model) throw queueContextChanged()
+        const plan = routinePlan(owner.assistantId, model)
+        return { ...plan, basis: sha256Hex(canonicalJson({ basis: plan.basis, configuredModel: assistant.model ?? null })) }
+      } catch (error) {
+        if (error instanceof AppError && error.status >= 400 && error.status < 500) throw queueContextChanged()
+        throw error
+      }
+    }
+    async function checkQueuedPrompt(
+      actor: QueueActor,
+      sessionId: string,
+      model?: ModelRef,
+      binding?: string,
+      preparing = false,
+    ): Promise<void> {
       if (closing) throw new AppError(503, 'host-closing', 'Host 正在停止，队列已暂停')
       const native = isNativeListener(actor.listener)
       const authenticated = native ? devices.authenticateNative(actor.deviceId) : undefined
@@ -5010,6 +5343,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             throw new AppError(400, 'model-unsupported', '该会话不能指定模型服务')
           assertModel(model)
         }
+        const plan = await queuedPersonalPlan(sessionId)
+        if (!preparing && (plan?.basis !== binding || (plan && canonicalJson(model) !== canonicalJson(plan.model))))
+          throw queueContextChanged()
         recheck(caller, 'run')
       } catch (error) {
         if (native && codeOf(error) === 'native-verification-required') throw paused()
@@ -5030,7 +5366,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         json(res, await promptQueues.remove(sessionId, itemId, () => recheck(caller, 'run')))
         return true
       }
-      const authorize = () => checkQueuedPrompt(queueActor(caller), sessionId)
+      const authorize = () => checkQueuedPrompt(queueActor(caller), sessionId, undefined, undefined, true)
       await authorize()
       if (method === 'PATCH' && !match[3]) {
         const input = z.strictObject({ text: z.string().trim().min(1).max(16_000) }).parse(await jsonBody(req, TASK_BODY_LIMIT))
@@ -5140,22 +5476,22 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         recheck(caller, 'run')
         checkPersonalSession(caller, id, true)
         const personalOwner = hub!.personalOf(id)
-        const session = personalOwner ? await hub!.summary(id) : undefined
-        const personal = personalOwner ? personalContext(personalOwner.assistantId) : undefined
-        if (
-          personal
-          && (personalOwner?.groupId
-            || personalStore.assistant(personal.owner.assistantId).harnessId !== session?.harnessId
-            || personalStore.assistant(personal.owner.assistantId).mode !== session?.mode)
-        )
-          throw new AppError(409, 'personal-harness-changed', '这个助手的 Harness 或模式已改变，请创建新会话。')
-        if (personal && input.model) throw new AppError(400, 'personal-selection-fixed', '请在个人助手设置中修改模型。')
-        if (input.queue && personal) throw new AppError(409, 'personal-queue-unavailable', '个人助手暂不支持排队，请等本轮结束后发送。')
+        if (personalOwner?.groupId) throw new AppError(409, 'personal-group-session', '这个会话由助手群聊管理，请回到群聊发送。')
+        if (personalOwner && input.model) throw new AppError(400, 'personal-selection-fixed', '请在个人助手设置中修改模型。')
         if (input.queue) {
           const result = await promptQueues.submit(queueActor(caller), id, input)
           json(res, result, 'queued' in result ? 202 : 200)
           return true
         }
+        const session = personalOwner ? await hub!.summary(id) : undefined
+        const personal = personalOwner ? personalContext(personalOwner.assistantId) : undefined
+        if (
+          personal
+          && (personalStore.assistant(personal.owner.assistantId).harnessId !== session?.harnessId
+            || personalStore.assistant(personal.owner.assistantId).mode !== session?.mode)
+        )
+          throw new AppError(409, 'personal-harness-changed', '这个助手的 Harness 或模式已改变，请创建新会话。')
+        if (personal && input.model) throw new AppError(400, 'personal-selection-fixed', '请在个人助手设置中修改模型。')
         const harnessId = await hub!.harnessOf(id),
           attachments = await promptAttachments(
             caller,
@@ -5230,63 +5566,106 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
       if (method === 'POST' && action === 'config') {
         requireScope(caller, 'run')
-        const input = configSchema.parse(await jsonBody(req))
-        recheck(caller, 'run')
-        // Any change, stricter ones included, may start the agent process again, so the ceiling applies to all of them.
-        assertSessionCeiling(caller, await assertSessionAccess(caller, id))
-        await assertRemoteSession(caller, id)
-        await assertSessionWorkspace(id)
-        const change = await hub!.classifyConfigChange(id, input.configId, input.value)
-        if (change === 'forbidden') throw new AppError(400, 'mode-forbidden', '该模式由模型代为批准，Latch 不提供')
-        if (change !== 'wider') {
+        const input = configSchema.parse(await jsonBody(req)),
+          originalWindow = caller.nativeOpening?.windowHash
+        let level: 'L1' | 'L3' = 'L3'
+        const authority = () => {
           recheck(caller, 'run')
-          await hub!.setConfig(id, input.configId, input.value)
-          json(res, { accepted: true })
-          return true
+          checkPersonalSession(caller, id, true)
+          if (isNativeListener(caller.connection.listener) && (!originalWindow || caller.nativeOpening?.windowHash !== originalWindow))
+            throw new AppError(403, 'native-verification-required', '原手机验证窗口已结束，请查询原请求。')
+          assertSessionCeiling(caller, level)
         }
-        const detail = await hub!.detail(id)
-        const harness = hub!.info(detail.summary.harnessId ?? '')
-        // A wider mode applies in every folder the harness received, e.g. Codex may then write in all of them.
-        const others = detail.summary.folderAccess === 'all' ? (detail.summary.folders ?? []).slice(1) : []
-        const option = detail.config?.find(item => item.id === input.configId)
-        const modeName = option?.options.find(item => item.value === input.value)?.name
-        const stepup = await confirm(
-          req,
-          caller,
-          'task.mode-widen',
-          { sessionId: id, configId: input.configId, value: input.value },
-          {
-            form: 'mode.widen',
-            slots: {
-              session: detail.summary.title || '未命名会话',
-              // The agent's name for the mode; its value stays in the details.
-              mode: modeName || input.value,
+        const authorize = async () => {
+          recheck(caller, 'run')
+          level = await assertSessionAccess(caller, id)
+          assertSessionCeiling(caller, level)
+          await assertRemoteSession(caller, id)
+          await assertSessionWorkspace(id)
+          authority()
+        }
+        await authorize()
+        const execute = async (before: () => Promise<void>) => {
+          await authorize()
+          const change = await hub!.classifyConfigChange(id, input.configId, input.value)
+          if (change === 'forbidden') throw new AppError(400, 'mode-forbidden', '该模式由模型代为批准，Latch 不提供')
+          if (input.requestId) {
+            const current = await hub!.detail(id),
+              selectedOption = current.config?.find(row => row.id === input.configId)
+            if (!selectedOption) throw new AppError(404, 'config-not-found', '该会话没有这个设置项。')
+            if (!selectedOption.options.some(row => row.value === input.value))
+              throw new AppError(400, 'config-value-invalid', '设置值不在可选范围内。')
+          }
+          const apply = async (allowWiden = false) => {
+            await hub!.setConfig(id, input.configId, input.value, { authorize: authority, ...(allowWiden ? { allowWiden: true } : {}) })
+            if (input.requestId) {
+              authority()
+              const actual = await hub!.detail(id)
+              authority()
+              if (!actual.config?.some(row => row.id === input.configId && row.currentValue === input.value))
+                throw new AppError(503, 'config-outcome-unknown', 'Agent 尚未确认采用所选配置，请查询原请求。')
+            }
+          }
+          if (change !== 'wider') {
+            await audited({
+              action: 'task.config.changed',
+              actor: actorOf(caller),
+              detail: { sessionId: id, configIdHash: sha256Hex(input.configId), toHash: sha256Hex(input.value) },
+            })
+            await before()
+            authority()
+            await apply()
+            return
+          }
+          const detail = await hub!.detail(id)
+          const harness = hub!.info(detail.summary.harnessId ?? '')
+          // A wider mode applies in every folder the harness received, e.g. Codex may then write in all of them.
+          const others = detail.summary.folderAccess === 'all' ? (detail.summary.folders ?? []).slice(1) : []
+          const option = detail.config?.find(item => item.id === input.configId)
+          const modeName = option?.options.find(item => item.value === input.value)?.name
+          const stepup = await confirm(
+            req,
+            caller,
+            'task.mode-widen',
+            { sessionId: id, configId: input.configId, value: input.value },
+            {
+              form: 'mode.widen',
+              slots: {
+                session: detail.summary.title || '未命名会话',
+                // The agent's name for the mode; its value stays in the details.
+                mode: modeName || input.value,
+              },
             },
-          },
-          [
-            { label: '会话', value: detail.summary.title || id },
-            { label: 'Harness', value: harness ? `${harness.name}（${harness.id}）` : (detail.summary.harnessId ?? '') },
-            { label: '当前模式', value: option?.currentValue ?? '' },
-            { label: '新模式', value: input.value },
-            ...others.map(folder => ({ label: '其他文件夹', value: folder.path })),
-          ],
-        )
-        recheck(caller, 'run')
-        assertSessionCeiling(caller, hub!.levelOf(await hub!.harnessOf(id)))
-        const seq = await audited({
-          action: 'task.mode.widened',
-          actor: actorOf(caller),
-          target: id,
-          stepup,
-          detail: { sessionId: id, toHash: sha256Hex(input.value) },
-        })
-        try {
+            [
+              { label: '会话', value: detail.summary.title || id },
+              { label: 'Harness', value: harness ? `${harness.name}（${harness.id}）` : (detail.summary.harnessId ?? '') },
+              { label: '当前模式', value: option?.currentValue ?? '' },
+              { label: '新模式', value: input.value },
+              ...others.map(folder => ({ label: '其他文件夹', value: folder.path })),
+            ],
+          )
           recheck(caller, 'run')
-          await hub!.setConfig(id, input.configId, input.value, { allowWiden: true })
-        } catch (error) {
-          auditFailed(seq, caller)
-          throw error
+          assertSessionCeiling(caller, hub!.levelOf(await hub!.harnessOf(id)))
+          const seq = await audited({
+            action: 'task.mode.widened',
+            actor: actorOf(caller),
+            target: id,
+            stepup,
+            detail: { sessionId: id, toHash: sha256Hex(input.value) },
+          })
+          try {
+            await before()
+            authority()
+            await apply(true)
+          } catch (error) {
+            auditFailed(seq, caller)
+            throw error
+          }
         }
+        if (input.requestId)
+          await configRequests.apply(id, { deviceId: caller.device.id, authorize }, { ...input, requestId: input.requestId }, execute)
+        else await execute(authorize)
+        await authorize()
         json(res, { accepted: true })
         return true
       }
@@ -5911,6 +6290,44 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const connection = connectionOf(req, listener)
       const nativeOpening = nativeRequests.get(req)
       if (nativeOpening && !nativeOpening.pairing) {
+        const revocation =
+          (path === '/link/api/native/revocation' && method === 'GET') || (path === '/link/api/native/revocation/ack' && method === 'POST')
+        const resume = path === '/link/api/native/verification/resume' && method === 'POST'
+        if (nativeOpening.bulk) {
+          const bulk = nativeOpening.bulk
+          const file = path === `/link/api/files/${bulk.handle}` && (method === 'GET' || method === 'HEAD')
+          const range = typeof req.headers.range === 'string' ? /^bytes=(\d+)-(\d+)$/u.exec(req.headers.range) : undefined
+          if (
+            !revocation
+            && !resume
+            && !(
+              file
+              && req.headers['if-range'] === undefined
+              && req.headers['if-match'] === bulk.etag
+              && (method === 'HEAD'
+                || (range
+                  && Number.isSafeInteger(Number(range[1]))
+                  && Number.isSafeInteger(Number(range[2]))
+                  && Number(range[2]) >= Number(range[1])
+                  && Number(range[2]) - Number(range[1]) < 1_048_576))
+            )
+          ) {
+            await nativeOpening.close?.()
+            return
+          }
+          if (
+            !revocation
+            && (bulk.windowHash !== nativeOpening.windowHash || bulk.expiresAt <= now() || nativeVerifiedUntil(nativeOpening) <= now())
+          ) {
+            await nativeOpening.close?.()
+            return
+          }
+        } else if (!revocation && !resume && !(path === '/link/api/native/bulk' && method === 'POST')) {
+          // A business request permanently prevents repurposing this connection, even when it later fails.
+          nativeOpening.controlUsed = true
+        }
+      }
+      if (nativeOpening && !nativeOpening.pairing) {
         const revoked = devices.nativeRevocations().find(item => item.id === nativeOpening.deviceId)
         if (revoked) {
           const statement = nativeRevocationInput(hostId, revoked.id, revoked.revokedAt),
@@ -5968,6 +6385,38 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         return
       }
       const caller = await authenticate(req, listener, connection)
+      if (path === '/link/api/native/bulk' && method === 'POST') {
+        if (!nativeOpening || nativeOpening.pairing) throw authFailure('unauthorized')
+        try {
+          if (nativeOpening.listener.listener !== 'native-relay' || nativeOpening.controlUsed || nativeOpening.bulkAttempted)
+            throw new AppError(409, 'native-bulk-unavailable', '请重新打开这个文件')
+          nativeOpening.bulkAttempted = true
+          requireScope(caller, 'view')
+          recheck(caller, 'view')
+          const windowHash = nativeOpening.windowHash
+          const expiresAt = Math.min(nativeVerifiedUntil(nativeOpening), now() + 60_000)
+          if (!windowHash || expiresAt <= now()) throw new AppError(403, 'native-verification-required', '请先在手机上完成身份验证')
+          const input = z
+            .strictObject({
+              handle: z.string().regex(/^[A-Za-z0-9_-]{22}$/u),
+              etag: z.string().regex(/^"[a-f0-9]{32}"$/u),
+              requestId: z.uuid(),
+            })
+            .parse(await jsonBody(req))
+          const { size } = await fileRoutes.authorizeBulk(caller, input.handle, input.etag)
+          recheck(caller, 'view')
+          if (nativeOpening.controlUsed || nativeOpening.windowHash !== windowHash || expiresAt <= now())
+            throw new AppError(409, 'native-bulk-unavailable', '请重新打开这个文件')
+          if (!nativeOpening.activateBulk) throw new AppError(503, 'native-bulk-unavailable', '文件连接暂时不可用')
+          nativeOpening.activateBulk()
+          nativeOpening.bulk = { ...input, windowHash, expiresAt }
+          json(res, { size, expiresAt: new Date(expiresAt).toISOString() })
+          return
+        } catch {
+          await nativeOpening.close?.()
+          return
+        }
+      }
       if (path === '/link/api/native/address-book' && method === 'POST') {
         if (!nativeOpening || nativeOpening.pairing) throw authFailure('unauthorized')
         requireScope(caller, 'view')
@@ -6090,6 +6539,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             window = nativeWindows.get(hash)
           if (
             !window
+            || (nativeOpening.bulk && nativeOpening.bulk.windowHash !== hash)
             || window.deviceId !== nativeOpening.deviceId
             || window.appOpenId !== input.appOpenId
             || window.expiresAt <= now()
@@ -6100,7 +6550,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           json(res, { verifiedUntil: new Date(window.expiresAt).toISOString() })
           return
         }
-        const cancel = method === 'POST' && /^\/link\/api\/tasks\/[^/]+\/cancel$/u.test(path)
+        const cancel =
+          method === 'POST'
+          && (/^\/link\/api\/tasks\/[^/]+\/cancel$/u.test(path) || /^\/link\/api\/personal\/groups\/grp_[a-f0-9-]{36}\/cancel$/u.test(path))
         const reject = method === 'POST' && /^\/link\/api\/approvals\/[^/]+$/u.test(path)
         caller.nativeWindowExempt =
           (path === '/link/api/snapshot' && method === 'GET') || cancel || (path === '/link/api/native/input/pause' && method === 'POST')
@@ -6203,7 +6655,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           for (const event of resume.events) send(res, event)
           const stream = streams.get(res)
           if (stream && streamAllowed(stream)) write(res, stream, 'heartbeat', `id: ${nativeReplay.cursor()}\n: resumed\n\n`)
-        } else send(res, { type: 'refresh', instanceId, revision, discoveryEpoch: discoveryEpoch() })
+        } else
+          send(res, { type: 'refresh', instanceId, revision, discoveryEpoch: discoveryEpoch(), directoryEpoch: relayDirectory.epoch() })
         req.on('close', () => {
           streams.delete(res)
           traffic.close(meter)
@@ -6276,6 +6729,18 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           res.removeListener('close', abort)
           lease.release()
         }
+        return
+      }
+      const configRequest = /^\/link\/api\/tasks\/([^/]+)\/config-requests\/([A-Za-z0-9_-]{8,128})$/u.exec(path)
+      if (configRequest && method === 'GET') {
+        requireScope(caller, 'view')
+        const id = safeDecode(configRequest[1]!)
+        if (id.length > 256) throw new AppError(400, 'invalid-session', '会话标识过长。')
+        checkPersonalSession(caller, id)
+        await hub!.harnessOf(id)
+        recheck(caller, 'view')
+        checkPersonalSession(caller, id)
+        json(res, { state: configRequests.state(id, caller.device.id, configRequest[2]!) })
         return
       }
       const task = path.match(/^\/link\/api\/tasks\/([^/]+)(?:\/(prompt|cancel|config))?$/)
@@ -6511,12 +6976,27 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         relayAvailable: () => relayProfiles.snapshot().profiles.length > 0,
         relayInvites: (id, expiresAt) => relayController?.invitation(id, expiresAt) ?? Promise.resolve([]),
         handler(req, res, opening) {
+          const permitted = () =>
+            (!opening.windowHash || nativeVerifiedUntil(opening) > now()) && (!opening.bulk || opening.bulk.expiresAt > now())
+          opening.padding?.guard(permitted)
+          opening.guardTransportWrites?.(permitted)
           nativeRequests.set(req, opening)
-          void handle(req, res, opening.listener).catch(error => fail(res, error, opening.listener))
+          return handle(req, res, opening.listener).catch(async error => {
+            if (opening.bulkAttempted || opening.bulk) await opening.close?.()
+            else fail(res, error, opening.listener)
+          })
         },
       })
       const native = nativeHost
       startupCleanup.push(() => native.close())
+      nativePluginTransports = new NativePluginTransports({
+        registry,
+        enabled: () => !closing && native.enabled,
+        accept: (stream, binding) => native.acceptCarrier(stream, binding),
+      })
+      const pluginTransports = nativePluginTransports
+      startupCleanup.push(() => pluginTransports.close())
+      await pluginTransports.sync()
       relayController = new HostRelayController({
         profiles: relayProfiles,
         devices,
@@ -6526,6 +7006,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           allow: () => [...policy.get().hostEgressAllow, ...egressExtra],
           ...(options.egressLookup ? { lookup: options.egressLookup } : {}),
         }),
+        directory: relayDirectory,
+        resolvePublic: (url, address) =>
+          createRelayEgress({
+            allow: () => [],
+            lookup: (_host, _options, callback) => callback(null, [{ address, family: address.includes(':') ? 6 : 4 }]),
+          })(url),
         accept: (stream, binding, expected) => native.acceptRelay(stream, binding, expected),
         closePaths: id => native.closeRelay(id),
         ...(options.nativeRelayCa ? { ca: options.nativeRelayCa } : {}),
@@ -6554,6 +7040,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         profiles: relayProfiles,
         native,
         controller,
+        directory: relayDirectory,
         audit,
         managedDirect: options.native,
         inputsPaused: () => devices.nativeInputsPaused(),
@@ -6610,6 +7097,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         return (shutdown ??= (async () => {
           closing = true
           await nativeNetwork?.close()
+          await nativePluginTransports?.close()
+          await relayDirectory.close()
           await relayController?.close()
           await nativeHost?.close()
           clearInterval(heartbeat)
@@ -6619,12 +7108,16 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           const failures: unknown[] = []
           for (const dispose of [
             () => changes,
+            () => personalGroups.close(),
+            () => personalRoutines.close(),
+            () => configRequests.close(),
             () => promptQueues.close(),
             () => agentProbes.close(),
             () => harnessHub.close(),
             () => questions.close(),
             () => personalStore.close(),
             () => fileTracking.close(),
+            () => fileRoutes.close(),
             () => pluginAssets.close(),
             () => registry.close(),
             () => started.close(),

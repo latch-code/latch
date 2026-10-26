@@ -1,5 +1,18 @@
 import { expect, it } from 'vitest'
-import { concat, decodeAddressBook, encodeAddressBook, encodePass, uint, type NativeAddressBook } from '../src/index.ts'
+import { readFile } from 'node:fs/promises'
+import {
+  concat,
+  decodeAddressBook,
+  encodeAddressBook,
+  encodePass,
+  uint,
+  directoryMirror,
+  decodeDirectorySource,
+  encodeDirectorySource,
+  directoryEpochInput,
+  hex,
+  type NativeAddressBook,
+} from '../src/index.ts'
 
 function book(): NativeAddressBook {
   return {
@@ -64,4 +77,55 @@ it('rejects oversized, duplicate, cross-node and credential-bearing address hint
       relays: [{ ...value.relays[0]!, passes: Array.from({ length: 65 }, () => value.relays[0]!.passes[0]!) }],
     }),
   ).toThrow()
+})
+it('opts into v2 only for explicitly configured fixed directory roots, mirrors and an offline floor', () => {
+  const original = book(),
+    directory = {
+      anchors: [new Uint8Array(32).fill(4)],
+      mirrors: ['https://directory.example/relays-v1.bin'],
+      minimum: { generation: 7, hash: new Uint8Array(32).fill(5) },
+    }
+  expect(encodeAddressBook(original)[0]).toBe(1)
+  const bytes = encodeAddressBook({ ...original, directory })
+  expect(bytes[0]).toBe(2)
+  expect(decodeAddressBook(bytes)).toEqual({ ...original, directory })
+  for (const bad of [
+    { ...directory, anchors: [] },
+    { ...directory, anchors: [directory.anchors[0]!, directory.anchors[0]!] },
+    { ...directory, minimum: { generation: 0, hash: new Uint8Array(32) } },
+  ])
+    expect(() => encodeAddressBook({ ...original, directory: bad })).toThrow()
+  for (const mirror of [
+    'https://127.0.0.1/dir',
+    'https://169.254.169.254/dir',
+    'https://user@public.example/dir',
+    'https://public.example/../dir',
+    'https://public.example//dir',
+    'https://public.example/dir?key=x',
+    'http://public.example/dir',
+  ]) {
+    expect(() => directoryMirror(mirror)).toThrow()
+    expect(() => encodeAddressBook({ ...original, directory: { ...directory, mirrors: [mirror] } })).toThrow()
+  }
+})
+it('matches the shared v2 bytes while preserving the original v1 vector byte for byte', async () => {
+  const vectors = JSON.parse(await readFile(new URL('../../testkit/vectors/link-v1.json', import.meta.url), 'utf8')) as {
+    addressBook: { payload: string }
+    addressBookV2: { payload: string }
+    addressBookV2Online: { payload: string }
+    directorySource: { bytes: string }
+    directorySourceOnline: { bytes: string }
+  }
+  for (const fixture of [vectors.addressBook, vectors.addressBookV2, vectors.addressBookV2Online])
+    expect(hex(encodeAddressBook(decodeAddressBook(Buffer.from(fixture.payload, 'hex'))))).toBe(fixture.payload)
+  for (const source of [vectors.directorySource, vectors.directorySourceOnline])
+    expect(hex(encodeDirectorySource(decodeDirectorySource(Buffer.from(source.bytes, 'hex'))))).toBe(source.bytes)
+})
+it('binds the directory cache hint to the complete fixed source and both floors', async () => {
+  const { directoryEpoch: vector } = JSON.parse(await readFile(new URL('../../testkit/vectors/link-v1.json', import.meta.url), 'utf8')) as {
+    directoryEpoch: { source: string; input: string }
+  }
+  const source = decodeDirectorySource(Buffer.from(vector.source, 'hex'))
+  expect(hex(directoryEpochInput(source))).toBe(vector.input)
+  expect(hex(directoryEpochInput({ ...source, minimumOnline: undefined }))).not.toBe(vector.input)
 })

@@ -21,3 +21,4 @@ Cordis 插件注册表（`src/registry.ts`）、Standard 执行循环（`src/run
 
 - 个人助手的记忆只在本轮 Run 传递，不进入持久历史；显式 pluginIds 同时约束工具展示与实际分发，缺选中的插件就拒绝；带 expectedRevisions 的租约还要同步核对实际 Provider 与完整插件修订。
 - `retire()` 先禁止新租约，旧代等真实释放后清理。自定义插件收紧与旧停用接口的区别见 [PLUGIN-DEVELOPMENT.md](../../docs/PLUGIN-DEVELOPMENT.md#插件对象与生命周期)。
+- 传输租约先失效并关闭，再等真实 release 才卸载；不能把永久监听变成无法停用的普通运行租约。见 [TRANSPORT-PLUGINS.md](../../docs/TRANSPORT-PLUGINS.md)。

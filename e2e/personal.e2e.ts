@@ -83,7 +83,7 @@ describe('personal assistants across workbench sizes', () => {
         await page.screenshot({ path: 'test-results/personal/chat-' + width + '-' + theme + '.png', animations: 'disabled' })
         await backToPhoneSessions(page)
         await page.getByRole('button', { name: '个人助手', exact: true }).first().click()
-        await personal.getByRole('button').filter({ hasText: name }).click()
+        await personal.getByRole('heading', { name, exact: true }).waitFor()
         await personal.getByRole('tab', { name: '记忆', exact: true }).click()
         await personal.getByText(privateMemory, { exact: true }).waitFor()
         expect((await desktop.confirmed('devices/' + deviceId, { method: 'PATCH', body: { dataScope: 'work' } })).status).toBe(200)

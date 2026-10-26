@@ -139,7 +139,12 @@ export const AUDIT_DETAIL = {
   /** The renewed credential was used for the first time and became current. */
   'device.credential.rotated': deviceOnly,
   /** `listener` is where the invitation can be used; records written before invitations were bound to one have none. */
-  'pairing.invited': z.strictObject({ invitationId: prefixed('inv'), scopes, listener: listener.optional() }),
+  'pairing.invited': z.strictObject({
+    invitationId: prefixed('inv'),
+    scopes,
+    listener: listener.optional(),
+    dataScope: dataScope.optional(),
+  }),
   'offline.ticket.created': ticket,
   'offline.ticket.consumed': ticket,
   'migration.devices.v2': z.strictObject({ revoked: count, legacy: count }),
@@ -166,6 +171,7 @@ export const AUDIT_DETAIL = {
   }),
   'task.l3.start-failed': z.strictObject({ harnessId: opaqueId, launchHash: hex64 }),
   'task.cancelled': z.strictObject({ sessionId: opaqueId, runId: opaqueId.optional() }),
+  'task.config.changed': z.strictObject({ sessionId: opaqueId, configIdHash: hex64, toHash: hex64 }),
   'task.mode.widened': z.strictObject({ sessionId: opaqueId, toHash: hex64 }),
   'task.permission-drift': z.strictObject({ sessionId: opaqueId, observedHash: hex64 }),
   'task.approval-auto-rejected': z.strictObject({ sessionId: opaqueId, reason: z.enum(['persistent-only', 'unknown-kind']) }),

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { FairScheduler } from '../src/fairness.ts'
-function fixture(options: { share?: number; factor?: number; maxBytes?: number } = {}) {
+function fixture(options: { share?: number; factor?: number; maxBytes?: number; count?: 'in+out' | 'out' } = {}) {
   let now = 0,
     rate = 1000,
     healthy = true
@@ -10,7 +10,7 @@ function fixture(options: { share?: number; factor?: number; maxBytes?: number }
     maxConnections: 100,
     prefixDailyShare: options.share ?? 1,
     overageFactor: options.factor ?? 0.1,
-    count: 'out',
+    count: options.count ?? 'out',
     now: () => now,
   })
   return {
@@ -28,6 +28,28 @@ function fixture(options: { share?: number; factor?: number; maxBytes?: number }
   }
 }
 describe('asynchronous hierarchical forwarding credits', () => {
+  it('charges explicitly observed wire bytes once while retaining the legacy combined payload estimate', async () => {
+    const exact = fixture({ count: 'in+out' }),
+      legacy = fixture({ count: 'in+out' })
+    let finishedExact = false,
+      finishedLegacy = false
+    const a = exact.scheduler.wait(1, ['192.0.2.0/24'], 'one', 500, true).then(ok => {
+      finishedExact = ok
+    })
+    const b = legacy.scheduler.wait(1, ['192.0.2.0/24'], 'one', 500).then(ok => {
+      finishedLegacy = ok
+    })
+    exact.step(500)
+    legacy.step(500)
+    await Promise.resolve()
+    expect(finishedExact).toBe(true)
+    expect(finishedLegacy).toBe(false)
+    legacy.step(500)
+    await Promise.all([a, b])
+    expect(finishedLegacy).toBe(true)
+    exact.scheduler.close()
+    legacy.scheduler.close()
+  })
   it('lets a small independent frame pass while a large frame waits and does not block the event loop', async () => {
     const f = fixture(),
       done: string[] = []

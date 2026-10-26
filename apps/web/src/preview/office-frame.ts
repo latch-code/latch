@@ -3,6 +3,7 @@ import { renderAsync } from 'docx-preview'
 import { isFrameCommand, type FrameEvent, type FrameCommand, type OfficeKind } from './types.ts'
 import { parseXml, resolvePart, sanitizeOfficeZip, xmlText, ZIP_LIMITS } from './zip.ts'
 import { parseXlsx, sheetPage, type ParsedSheet } from './xlsx.ts'
+import { boundedQuoteText } from './quote.ts'
 const root = document.getElementById('document')!
 let port: MessagePort | undefined,
   viewer: PptxViewer | undefined,
@@ -76,6 +77,29 @@ document.addEventListener(
 for (const type of ['submit', 'drop', 'dragover']) document.addEventListener(type, event => event.preventDefault(), true)
 function command(value: unknown) {
   if (!isFrameCommand(value)) return
+  if (value.type === 'quote') {
+    const selected = window.getSelection()
+    const selection =
+      selected?.anchorNode && selected.focusNode && root.contains(selected.anchorNode) && root.contains(selected.focusNode)
+        ? selected.toString()
+        : ''
+    const element = viewer ? root.querySelector<HTMLElement>('[data-slide-index="' + current + '"]') : pages[current]
+    const text = boundedQuoteText(value.source === 'selection' ? selection : element?.innerText || element?.textContent || '')
+    const anchor = selected?.anchorNode instanceof Element ? selected.anchorNode : selected?.anchorNode?.parentElement
+    const selectedPage = viewer
+      ? Number(anchor?.closest<HTMLElement>('[data-slide-index]')?.dataset.slideIndex ?? -1)
+      : pages.findIndex(page => !!anchor && page.contains(anchor))
+    send({
+      type: 'quote',
+      id: value.id,
+      text,
+      page:
+        value.source === 'selection' && Number.isInteger(selectedPage) && selectedPage >= 0 && selectedPage <= 9999
+          ? selectedPage
+          : current,
+    })
+    return
+  }
   if (value.type === 'sheet-page') {
     const sheet = sheets?.[value.sheet]
     if (sheet) send({ type: 'sheet-page', sheet: value.sheet, start: value.start, ...sheetPage(sheet, value.start, value.count) })
@@ -244,7 +268,11 @@ function init(event: MessageEvent<unknown>) {
   const options =
     input.options && typeof input.options === 'object' && !Array.isArray(input.options) ? (input.options as Record<string, unknown>) : {}
   void render(input.kind as OfficeKind, input.data, options).catch(error => {
-    send({ type: 'error', code: error instanceof Error && error.message === 'zip-refused' ? 'zip-refused' : 'render-failed' })
+    const code =
+      error instanceof Error && (error.message === 'zip-refused' || error.message === 'document-too-complex')
+        ? error.message
+        : 'render-failed'
+    send({ type: 'error', code })
   })
 }
 if (/^[A-Za-z0-9_-]{20,128}$/u.test(nonce)) {

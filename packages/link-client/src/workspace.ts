@@ -362,7 +362,19 @@ export class NativeWorkspace {
       while (this.cursors.size > 16) this.cursors.delete(this.cursors.keys().next().value!)
     }
     try {
-      const [headers] = await once(stream, 'response', { signal: AbortSignal.timeout(15_000) })
+      const waiting = new AbortController(),
+        signal = AbortSignal.any([AbortSignal.timeout(15_000), waiting.signal])
+      let headers: Record<string, unknown>
+      try {
+        ;[headers] = (await Promise.race([
+          once(stream, 'response', { signal }),
+          once(stream, 'close', { signal }).then(() => {
+            throw new Error('Native event stream closed')
+          }),
+        ])) as [Record<string, unknown>]
+      } finally {
+        waiting.abort()
+      }
       if (headers[':status'] !== 200 || !String(headers['content-type']).startsWith('text/event-stream'))
         throw new Error('Native event stream unavailable')
       const decoder = new TextDecoder('utf-8', { fatal: true })

@@ -6,11 +6,15 @@ export interface HostFeatures {
   personalRoutines?: true
   personalGroups?: true
   personalQueue?: true
+  configReceipts?: true
+  nativePairingScope?: true
   promptTemplates?: true
   fileSearch?: true
   fileTree?: true
   pluginPackages?: true
   filePreview?: true
+  nativeBulk?: true
+  nativeBulkStream?: true
   search?: true
   sessionBatch?: true
   fork?: true
@@ -59,6 +63,7 @@ export interface UsageSummary {
     source: 'provider' | 'agent'
     messages: number
     usage: TokenUsage
+    /** A missing/invalid/overflowing contribution omits this split from usage instead of publishing a partial sum. */
     partial: Record<'cacheReadTokens' | 'cacheWriteTokens' | 'reasoningTokens', boolean>
   }>
   unattributedMessages: number

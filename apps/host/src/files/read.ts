@@ -76,11 +76,14 @@ export async function sendContent(
     allowSecret: boolean
     recheck(): void | Promise<void>
     consume(bytes: number): void
+    signal?: AbortSignal
+    chunkBytes?: 65_536
   },
 ): Promise<void> {
   const fd = await openContent(file, options.allowSecret)
   try {
     await options.recheck()
+    if (res.destroyed || res.writableEnded || options.signal?.aborted) return
     const size = Math.min(file.size, options.limit)
     const tag = fileEtag(file)
     const version = new URL(req.url ?? '/', 'http://latch.invalid').searchParams.get('v')
@@ -127,7 +130,7 @@ export async function sendContent(
       res.end()
       return
     }
-    const buffer = Buffer.alloc(Math.min(256 * 1024, length))
+    const buffer = Buffer.alloc(Math.min(options.chunkBytes ?? 256 * 1024, length))
     for (let offset = start; offset <= end && !res.destroyed;) {
       await options.recheck()
       await unchanged()
@@ -135,19 +138,25 @@ export async function sendContent(
       if (bytesRead === 0) throw new AppError(409, 'file-changed', '读取时文件已变化，请重新打开')
       await options.recheck()
       await unchanged()
+      if (res.destroyed || res.writableEnded || options.signal?.aborted) return
       const chunk = Buffer.from(buffer.subarray(0, bytesRead))
       if (!res.write(chunk)) {
         const drained = await new Promise<boolean>(done => {
-          const close = () => {
-            res.off('drain', drain)
-            done(false)
-          }
-          const drain = () => {
+          let settled = false
+          const finish = (value: boolean) => {
+            if (settled) return
+            settled = true
             res.off('close', close)
-            done(true)
+            res.off('drain', drain)
+            options.signal?.removeEventListener('abort', close)
+            done(value)
           }
+          const close = () => finish(false)
+          const drain = () => finish(true)
           res.once('close', close)
           res.once('drain', drain)
+          options.signal?.addEventListener('abort', close, { once: true })
+          if (res.destroyed || res.writableEnded || options.signal?.aborted) close()
         })
         if (!drained) return
       }

@@ -32,6 +32,10 @@ const recordSchema = z.strictObject({
     .regex(/^[a-f0-9]{64}$/u)
     .optional(),
   editor: actorSchema.optional(),
+  binding: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/u)
+    .optional(),
   requestId: z.string().uuid(),
   sendRequestId: z.string().uuid(),
   hash: z.string().regex(/^[a-f0-9]{64}$/u),
@@ -55,12 +59,22 @@ export interface QueueOptions {
   dataDir: string
   now?: () => number
   detail(id: string): Promise<TaskDetail>
-  check(actor: QueueActor, sessionId: string, model?: ModelRef): Promise<void>
+  /** Only a Host-derived execution hash is persisted; private context is rebuilt immediately before dispatch. */
+  prepare?(actor: QueueActor, sessionId: string, model?: ModelRef): Promise<{ binding: string; model: ModelRef } | undefined>
+  check(actor: QueueActor, sessionId: string, model?: ModelRef, binding?: string): Promise<void>
   beforeEnqueue(actor: QueueActor, sessionId: string, itemId: string): Promise<void>
   send(
     actor: QueueActor,
     sessionId: string,
-    input: { text: string; requestId: string; model?: ModelRef; queuedAt?: string; itemId?: string; authorize?: () => Promise<void> },
+    input: {
+      text: string
+      requestId: string
+      model?: ModelRef
+      binding?: string
+      queuedAt?: string
+      itemId?: string
+      authorize?: () => Promise<void>
+    },
   ): Promise<void>
   changed(sessionId: string): void
 }
@@ -134,7 +148,10 @@ export class PromptQueues {
         if (prior.hash !== hash) throw new AppError(409, 'request-conflict', '同一次排队请求不能提交不同内容')
         return VISIBLE.has(prior.state) ? { queued: { id: prior.id } } : { accepted: true }
       }
-      await this.options.check(actor, sessionId, input.model)
+      const prepared = await this.options.prepare?.(actor, sessionId, input.model),
+        model = prepared?.model ?? input.model,
+        binding = prepared?.binding
+      await this.options.check(actor, sessionId, model, binding)
       const detail = await this.options.detail(sessionId)
       if (!ACTIVE.has(detail.summary.status) && !this.items(sessionId).length) {
         const next = new Map(this.entries)
@@ -151,7 +168,8 @@ export class PromptQueues {
           queuedAt: new Date(this.now()).toISOString(),
           waitRunId: detail.summary.runId ?? '',
           state: 'sending',
-          ...(input.model ? { model: input.model } : {}),
+          ...(model ? { model } : {}),
+          ...(binding ? { binding } : {}),
         }
         next.set(immediate.id, immediate)
         await this.options.beforeEnqueue(actor, sessionId, immediate.id)
@@ -161,7 +179,8 @@ export class PromptQueues {
             text: input.prompt,
             requestId: input.requestId,
             itemId: immediate.id,
-            ...(input.model ? { model: input.model } : {}),
+            ...(model ? { model } : {}),
+            ...(binding ? { binding } : {}),
           })
           await this.patch(immediate, { state: 'sent', text: undefined })
         } catch (error) {
@@ -190,12 +209,13 @@ export class PromptQueues {
           ACTIVE.has(detail.summary.status) && !!detail.summary.runId && !this.items(sessionId).some(item => item.state !== 'waiting')
             ? 'waiting'
             : 'parked',
-        ...(input.model ? { model: input.model } : {}),
+        ...(model ? { model } : {}),
+        ...(binding ? { binding } : {}),
       }
       if (item.state === 'parked') item.reason = '队列已暂停，请确认后发送'
       await this.options.beforeEnqueue(actor, sessionId, item.id)
       // Audit I/O can outlive revocation or a policy change.
-      await this.options.check(actor, sessionId, input.model)
+      await this.options.check(actor, sessionId, model, binding)
       next.set(item.id, item)
       await this.commit(next)
       this.options.changed(sessionId)
@@ -210,7 +230,7 @@ export class PromptQueues {
       if (!VISIBLE.has(item.state) || item.state === 'sending' || item.state === 'uncertain')
         throw new AppError(409, 'queue-settled', '这一项已经发送或正在确认结果')
       if (item.text === value) return
-      await this.options.check(actor, sessionId, item.model)
+      await this.options.check(actor, sessionId, item.model, item.binding)
       await authorize?.()
       await this.patch(item, { text: value, sendRequestId: randomUUID(), editor: actor })
     })
@@ -287,12 +307,18 @@ export class PromptQueues {
 
   private async dispatch(item: Record, resume: boolean, authorize?: () => Promise<void>): Promise<void> {
     try {
-      await this.options.check(item, item.sessionId, item.model)
-      if (item.editor) await this.options.check(item.editor, item.sessionId, item.model)
+      await this.options.check(item, item.sessionId, item.model, item.binding)
+      if (item.editor) await this.options.check(item.editor, item.sessionId, item.model, item.binding)
     } catch (error) {
-      if (error instanceof AppError && error.code === 'queue-paused') {
-        await this.patch(item, { state: 'parked', reason: '验证窗口已变化，请检查后重新加入队列' })
-        await this.park(item.sessionId, '验证窗口已变化，队列已暂停')
+      if (error instanceof AppError && (error.code === 'queue-paused' || error.code === 'queue-context-changed')) {
+        await this.patch(item, {
+          state: 'parked',
+          reason:
+            error instanceof AppError && error.code === 'queue-context-changed'
+              ? '助手的执行配置已改变，请移除此项后重新加入队列'
+              : '验证窗口已变化，请检查后重新加入队列',
+        })
+        await this.park(item.sessionId, '原授权已变化，队列已暂停')
         return
       }
       await this.patch(item, { state: 'dropped', reason: '设备权限或会话配置已变化，未发送' })
@@ -304,7 +330,7 @@ export class PromptQueues {
     const beforeSend =
       item.editor || authorize
         ? async () => {
-            if (item.editor) await this.options.check(item.editor, item.sessionId, item.model)
+            if (item.editor) await this.options.check(item.editor, item.sessionId, item.model, item.binding)
             await authorize?.()
           }
         : undefined
@@ -316,11 +342,18 @@ export class PromptQueues {
         itemId: item.id,
         ...(beforeSend ? { authorize: beforeSend } : {}),
         ...(item.model ? { model: item.model } : {}),
+        ...(item.binding ? { binding: item.binding } : {}),
       })
     } catch (error) {
-      if (error instanceof AppError && error.code === 'queue-paused') {
-        await this.patch(this.find(item.sessionId, item.id), { state: 'parked', reason: '验证窗口已变化，请检查后重新加入队列' })
-        await this.park(item.sessionId, '验证窗口已变化，队列已暂停')
+      if (error instanceof AppError && (error.code === 'queue-paused' || error.code === 'queue-context-changed')) {
+        await this.patch(this.find(item.sessionId, item.id), {
+          state: 'parked',
+          reason:
+            error instanceof AppError && error.code === 'queue-context-changed'
+              ? '助手的执行配置已改变，请移除此项后重新加入队列'
+              : '验证窗口已变化，请检查后重新加入队列',
+        })
+        await this.park(item.sessionId, '原授权已变化，队列已暂停')
         return
       }
       await this.patch(this.find(item.sessionId, item.id), { state: 'uncertain', reason: '发送结果未确认，请重试这一项' })

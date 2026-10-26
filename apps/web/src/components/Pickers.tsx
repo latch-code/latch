@@ -316,31 +316,6 @@ export function ProjectPicker({
   )
 }
 
-/** One option an agent exposes for its session (its model, for one), as a value picker. */
-export function ConfigPicker({
-  option,
-  busy,
-  onChange,
-}: {
-  option: SessionConfigOption
-  busy: boolean
-  onChange: (configId: string, value: string) => void
-}) {
-  return (
-    <ValuePicker
-      label={option.name}
-      leading={option.category === 'model' ? Sparkles : SlidersHorizontal}
-      value={option.currentValue}
-      options={option.options.map(item => ({ value: item.value, label: item.name, description: item.description }))}
-      disabled={busy}
-      disabledReason={busy ? '正在切换' : undefined}
-      onValueChange={value => {
-        if (value !== option.currentValue) onChange(option.id, value)
-      }}
-    />
-  )
-}
-
 /** 对话 / Agent for a Host that sends no catalog of harnesses, where the way of working is the only choice. */
 export function ModeSwitch({ value, onChange, disabled }: { value: TaskMode; onChange: (mode: TaskMode) => void; disabled?: boolean }) {
   return (

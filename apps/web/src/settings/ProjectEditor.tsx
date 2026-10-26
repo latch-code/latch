@@ -12,7 +12,8 @@ import { Badge, Button, Icon, IconButton, InlineNotice, Menu, ValuePicker } from
 import { api, errorMessage, isUncertain } from '../core/api.ts'
 import { describeFailure } from '../core/securityCopy.ts'
 import { currentShell, revealLabel, type FolderResult, type ShellFolders } from '../core/shell.ts'
-import { basename } from '../format.ts'
+import { basename, relativeTime, statusLabels } from '../format.ts'
+import { recentProjectSessions } from '../sessions.ts'
 import { folderAccessText, PROJECT_ICONS, ProjectIcon, projectFolders, projectName, projectSessionCount } from '../projects.tsx'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { ConfirmDialog, PromptDialog } from '../components/overlays.tsx'
@@ -38,6 +39,7 @@ export function ProjectEditor({
   onChanged,
   onRemoved,
   onComputer,
+  onOpenSession,
 }: {
   project: WorkspaceInfo
   snapshot: AppSnapshot
@@ -47,6 +49,7 @@ export function ProjectEditor({
   onChanged(): void
   onRemoved(): void
   onComputer?(): void
+  onOpenSession?(id: string): void
 }) {
   const folders = projectFolders(project)
   const name = projectName(project)
@@ -62,6 +65,7 @@ export function ProjectEditor({
   const copy = useCopy()
   const label = revealLabel(currentShell()?.platform)
   const endpoint = `workspaces/${encodeURIComponent(project.id)}`
+  const recent = recentProjectSessions(project.id, snapshot.tasks, snapshot.catalog?.workspaces ?? [project])
   const active = snapshot.tasks.some(
     task => (task.status === 'running' || task.status === 'waiting-approval') && task.workspaceId === project.id,
   )
@@ -186,6 +190,22 @@ export function ProjectEditor({
         />
         <SettingsRow title={`${projectSessionCount(project, snapshot.tasks)} 个会话`} description="已有会话保留开始时记录的文件夹。" />
       </SettingsGroup>
+      {onOpenSession && (
+        <SettingsGroup title="最近会话" caption="按最近更新排列，打开会话继续查看。">
+          <div className="project-recent-sessions">
+            {recent.map(task => (
+              <NavRow
+                key={task.id}
+                title={<VisibleText text={task.title || '未命名会话'} />}
+                label={`打开会话：${escapeSecurityText(task.title || '未命名会话')}`}
+                description={`${task.archived ? '已归档 · ' : ''}${statusLabels[task.status]} · ${relativeTime(task.updatedAt)}`}
+                onClick={() => onOpenSession(task.id)}
+              />
+            ))}
+            {recent.length === 0 && <SettingsRow title="还没有可访问的会话" description="在这个项目开始工作后，会话会显示在这里。" />}
+          </div>
+        </SettingsGroup>
+      )}
       {missing.length > 0 && (
         <InlineNotice tone="warn">{missing.length} 个文件夹暂不可用。项目已保留，恢复或重新选择之前不能在这里新建会话。</InlineNotice>
       )}

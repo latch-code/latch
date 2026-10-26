@@ -6,7 +6,6 @@ import { findHarness, sameModel, startableWorkspaces, type ComposerChoice } from
 import type { DeviceAccess } from '../core/permissions.ts'
 import {
   StaticChip,
-  ConfigPicker,
   ModelPicker,
   ModeSwitch,
   ProjectPicker,
@@ -16,6 +15,9 @@ import {
   workspaceSections,
   type SettingsGroup,
 } from './Pickers.tsx'
+import { HarnessTile } from './BrandTile.tsx'
+import { ModelReasoningPicker } from './ModelReasoningPicker.tsx'
+import type { SessionConfigFeedback } from './modelReasoning.ts'
 
 type Access = Pick<DeviceAccess, 'legacy' | 'local' | 'admin'>
 
@@ -161,8 +163,8 @@ function Fading({ show, children }: { show: boolean; children: ReactNode }) {
 
 /**
  * An existing session's toolbar: its model for the next message (a switch reads 「下一条：…」 and can be undone from the
- * menu), or the agent's own model option. Its other options are in the session information. On phones the model and
- * every option live in the session information. Nothing while the device may not change them.
+ * menu), or the Agent's reported model/reasoning options in a shared menu and phone sheet. Other settings remain in
+ * the session information. Nothing while the device may not change them.
  */
 export function SessionControls({
   catalog,
@@ -172,6 +174,8 @@ export function SessionControls({
   onModel,
   config,
   configBusy,
+  configFeedback,
+  onConfigRefresh,
   onConfig,
   phone,
   access,
@@ -188,7 +192,9 @@ export function SessionControls({
   onModel: (model: ModelRef | undefined) => void
   config: SessionConfigOption[]
   configBusy: string | null
-  onConfig: (configId: string, value: string) => void
+  onConfig: (configId: string, value: string) => void | Promise<void>
+  configFeedback?: SessionConfigFeedback
+  onConfigRefresh?: () => void | Promise<void>
   phone: boolean
   access: Access
   onManageProviders?: () => void
@@ -210,13 +216,12 @@ export function SessionControls({
           },
         }
       : undefined
-  // Phone session options live in 会话信息; this chip only reports an unsent model change.
-  if (phone)
+  // Host models keep their next-message draft; Agent options use their actual per-session values on every screen.
+  if (phone && hostModels)
     return pending && model ? (
       <StaticChip icon={Sparkles} text={pendingModelText(model.model)} label={`下一条消息使用：${model.model}`} className="is-pending" />
     ) : null
 
-  const modelOption = config.find(option => option.category === 'model')
   if (hostModels)
     return (
       <ModelPicker
@@ -229,5 +234,14 @@ export function SessionControls({
         onChange={choose}
       />
     )
-  return modelOption ? <ConfigPicker option={modelOption} busy={configBusy !== null} onChange={onConfig} /> : null
+  return (
+    <ModelReasoningPicker
+      config={config}
+      busy={configBusy}
+      feedback={configFeedback}
+      onRefresh={onConfigRefresh}
+      identity={harness ? <HarnessTile harness={harness} size={16} /> : undefined}
+      onChange={onConfig}
+    />
+  )
 }

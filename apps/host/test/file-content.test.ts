@@ -1,4 +1,5 @@
-import { createServer } from 'node:http'
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import { EventEmitter } from 'node:events'
 import { mkdtemp, mkdir, open, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,8 +9,8 @@ import { AppError } from '@latch/sdk'
 import { AuditLog } from '../src/audit.ts'
 import { createFileRoutes } from '../src/files/index.ts'
 import { FileReadQuota } from '../src/files/quota.ts'
-import { byteRange } from '../src/files/read.ts'
-import { fileFormat } from '../src/files/metadata.ts'
+import { byteRange, sendContent } from '../src/files/read.ts'
+import { fileFormat, contentLimit } from '../src/files/metadata.ts'
 import { FileReferenceStore } from '../src/files/reference-store.ts'
 
 const cleanup: Array<() => Promise<void>> = []
@@ -89,6 +90,7 @@ async function fixture() {
     },
     actorOf: caller => ({ deviceId: caller.device!.id, listener: caller.connection.listener }),
   })
+  cleanup.push(() => routes.close())
   const server = createServer((req, res) => {
     const device = devices.get(String(req.headers['x-test-device']))
     void routes
@@ -142,6 +144,7 @@ async function fixture() {
     }
   }
   return {
+    routes,
     workspace,
     second,
     privateDir,
@@ -163,7 +166,225 @@ async function fixture() {
   }
 }
 
+describe('opaque bulk file authorization', () => {
+  it('authorizes an existing large handle and rejects stale versions, foreign devices and small files', async () => {
+    const f = await fixture()
+    await writeFile(join(f.workspace, 'large.txt'), Buffer.alloc(256 * 1024, 120))
+    const large = (await f.resolve('all', ['large.txt'])).files[0]!.file!
+    const meta = (await (await f.request('all', `files/${large.handle}/meta`)).json()) as { file: { etag: string } }
+    const caller = { device: f.devices.get('all')!, connection: { listener: 'loopback-tcp' as const } }
+    await expect(f.routes.authorizeBulk(caller, large.handle, meta.file.etag)).resolves.toEqual({ size: 256 * 1024 })
+    await expect(f.routes.authorizeBulk(caller, large.handle, `"${'0'.repeat(32)}"`)).rejects.toMatchObject({ status: 412 })
+    await expect(f.routes.authorizeBulk({ ...caller, device: f.devices.get('work')! }, large.handle, meta.file.etag)).rejects.toMatchObject(
+      { status: 403, code: 'file-handle-foreign' },
+    )
+    const small = (await f.resolve('all', ['report.md'])).files[0]!.file!
+    await expect(f.routes.authorizeBulk(caller, small.handle, meta.file.etag)).rejects.toMatchObject({
+      status: 409,
+      code: 'file-bulk-small',
+    })
+  })
+  it('rechecks revocation while the existing handle context waits', async () => {
+    const f = await fixture()
+    await writeFile(join(f.workspace, 'large.txt'), Buffer.alloc(256 * 1024, 120))
+    const large = (await f.resolve('all', ['large.txt'])).files[0]!.file!
+    const meta = (await (await f.request('all', `files/${large.handle}/meta`)).json()) as { file: { etag: string } }
+    const pending = f.routes.authorizeBulk(
+      { device: f.devices.get('all')!, connection: { listener: 'loopback-tcp' } },
+      large.handle,
+      meta.file.etag,
+    )
+    f.revoked.add('all')
+    await expect(pending).rejects.toMatchObject({ status: 403, code: 'device-revoked' })
+  })
+  it('refuses oversized text on bulk even when the ordinary preview may truncate it', async () => {
+    const f = await fixture()
+    await writeFile(join(f.workspace, 'too-large.txt'), Buffer.alloc(contentLimit('text', false) + 1, 120))
+    const large = (await f.resolve('all', ['too-large.txt'])).files[0]!.file!
+    await expect(
+      f.routes.authorizeBulk({ device: f.devices.get('all')!, connection: { listener: 'loopback-tcp' } }, large.handle, 'unused'),
+    ).rejects.toMatchObject({ status: 413, code: 'file-too-large' })
+  })
+  it('preserves private-session scope checks and never promotes a confirmed local secret handle to bulk', async () => {
+    const f = await fixture(),
+      secret = (await f.resolve('desktop', ['.env'], { showSecret: true })).files[0]!.file!
+    await expect(
+      f.routes.authorizeBulk({ device: f.devices.get('desktop')!, connection: { listener: 'unix' } }, secret.handle, 'unused'),
+    ).rejects.toMatchObject({ status: 403, code: 'file-secret' })
+    await writeFile(join(f.workspace, 'large.txt'), Buffer.alloc(256 * 1024, 120))
+    const large = (await f.resolve('all', ['large.txt'])).files[0]!.file!
+    const caller = { device: f.devices.get('all')!, connection: { listener: 'loopback-tcp' as const } }
+    caller.device.dataScope = 'work'
+    f.makePrivate()
+    await expect(f.routes.authorizeBulk(caller, large.handle, 'unused')).rejects.toMatchObject({
+      status: 403,
+      code: 'personal-scope-required',
+    })
+  })
+})
+
 describe('adjudicated file content', () => {
+  it.each(['window', 'context', 'version'])('rechecks a one-MiB stream before any second 64KiB block after %s changes', async mode => {
+    const f = await fixture(),
+      path = join(f.workspace, 'bulk.bin'),
+      source = Buffer.alloc(1_048_576, 120)
+    await writeFile(path, source)
+    const descriptor = await open(path, 'r'),
+      stat = await descriptor.stat({ bigint: true })
+    await descriptor.close()
+    let changed = false,
+      mutation: Promise<void> | undefined
+    const chunks: Buffer[] = []
+    const res = Object.assign(new EventEmitter(), {
+      destroyed: false,
+      writableEnded: false,
+      setHeader: vi.fn(),
+      writeHead: vi.fn(),
+      end: vi.fn(),
+      write(chunk: Buffer) {
+        chunks.push(Buffer.from(chunk))
+        changed = true
+        if (mode === 'version') mutation = writeFile(path, Buffer.alloc(source.length, 121))
+        return true
+      },
+    })
+    await expect(
+      sendContent(
+        { method: 'GET', headers: { range: 'bytes=0-1048575' }, url: '/' } as IncomingMessage,
+        res as unknown as ServerResponse,
+        {
+          rootId: 'default',
+          relativePath: 'bulk.bin',
+          realPath: path,
+          name: 'bulk.bin',
+          ext: 'bin',
+          size: source.length,
+          mtimeMs: 0,
+          head: source.subarray(0, 64),
+          secret: false,
+          identity: `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`,
+        },
+        {
+          mime: 'application/octet-stream',
+          limit: source.length,
+          chunkBytes: 65_536,
+          allowSecret: false,
+          consume() {},
+          async recheck() {
+            await mutation
+            if (changed && mode !== 'version')
+              throw new AppError(
+                mode === 'window' ? 403 : 409,
+                mode === 'window' ? 'native-verification-required' : 'file-roots-changed',
+                'Fixture access changed',
+              )
+          },
+        },
+      ),
+    ).rejects.toMatchObject({ status: mode === 'window' ? 403 : 409 })
+    expect(chunks.map(chunk => chunk.length)).toEqual([65_536])
+    expect(res.end).not.toHaveBeenCalled()
+  })
+  it('settles when a response closes during an awaited block check, before a drain listener can be installed', async () => {
+    const f = await fixture(),
+      source = Buffer.from('# Report\n0123456789')
+    const res = Object.assign(new EventEmitter(), {
+      destroyed: false,
+      writableEnded: false,
+      setHeader: vi.fn(),
+      writeHead: vi.fn(),
+      end: vi.fn(),
+      write: vi.fn(() => false),
+    })
+    let checks = 0
+    await sendContent(
+      { method: 'GET', headers: {}, url: '/' } as IncomingMessage,
+      res as unknown as ServerResponse,
+      {
+        rootId: 'default',
+        relativePath: 'report.md',
+        realPath: join(f.workspace, 'report.md'),
+        name: 'report.md',
+        ext: 'md',
+        size: source.length,
+        mtimeMs: 0,
+        head: source,
+        secret: false,
+      },
+      {
+        mime: 'text/plain',
+        limit: 65536,
+        allowSecret: false,
+        consume() {},
+        async recheck() {
+          if (++checks === 3) {
+            res.destroyed = true
+            res.emit('close')
+          }
+        },
+      },
+    )
+    expect(checks).toBe(3)
+    expect(res.write).not.toHaveBeenCalled()
+    expect(res.listenerCount('close')).toBe(0)
+    expect(res.listenerCount('drain')).toBe(0)
+  }, 2000)
+  it('settles a transport abort raised inside a backpressured write without relying on an HTTP close event', async () => {
+    const f = await fixture(),
+      source = Buffer.from('# Report\n0123456789'),
+      abort = new AbortController()
+    const res = Object.assign(new EventEmitter(), {
+      destroyed: false,
+      writableEnded: false,
+      setHeader: vi.fn(),
+      writeHead: vi.fn(),
+      end: vi.fn(),
+      write: vi.fn(() => {
+        abort.abort()
+        return false
+      }),
+    })
+    await sendContent(
+      { method: 'GET', headers: {}, url: '/' } as IncomingMessage,
+      res as unknown as ServerResponse,
+      {
+        rootId: 'default',
+        relativePath: 'report.md',
+        realPath: join(f.workspace, 'report.md'),
+        name: 'report.md',
+        ext: 'md',
+        size: source.length,
+        mtimeMs: 0,
+        head: source,
+        secret: false,
+      },
+      { mime: 'text/plain', limit: 65536, allowSecret: false, signal: abort.signal, consume() {}, recheck() {} },
+    )
+    expect(res.write).toHaveBeenCalledOnce()
+    expect(res.listenerCount('close')).toBe(0)
+    expect(res.listenerCount('drain')).toBe(0)
+  }, 2000)
+  it('retains ordinary If-Range semantics outside the fixed bulk role', async () => {
+    const f = await fixture(),
+      handle = (await f.resolve('all', ['report.md'])).files[0]!.file!.handle
+    const metadata = (await (await f.request('all', `files/${handle}/meta`)).json()) as { file: { etag: string } }
+    const matching = await f.request('all', `files/${handle}`, undefined, {
+      range: 'bytes=0-3',
+      'if-match': metadata.file.etag,
+      'if-range': metadata.file.etag,
+    })
+    expect(matching.status).toBe(206)
+    expect(await matching.text()).toBe('# Re')
+    const mismatched = await f.request('all', `files/${handle}`, undefined, {
+      range: 'bytes=0-3',
+      'if-match': metadata.file.etag,
+      'if-range': '"obsolete-version"',
+    })
+    expect(mismatched.status).toBe(200)
+    expect(mismatched.headers.get('content-range')).toBeNull()
+    expect(await mismatched.text()).toBe('# Report\n0123456789')
+  })
+
   it('applies a session privacy gate to references and handles issued before that gate changed', async () => {
     const f = await fixture()
     const handle = (await f.resolve('work', ['report.md'])).files[0]!.file!.handle
@@ -310,6 +531,18 @@ describe('adjudicated file content', () => {
     expect(await (await f.request('desktop', `files/${second.handle}`)).text()).toBe('second folder')
     vi.spyOn(f.audit, 'append').mockRejectedValue(new AppError(503, 'audit-unavailable', '无法记录'))
     expect((await f.request('all', 'tasks/session/files/resolve', { paths: ['unmentioned.txt'] })).status).toBe(503)
+  })
+
+  it('does not turn a warm filename index into scope, device or folder authority', async () => {
+    const f = await fixture()
+    const body = { q: 'report' }
+    expect((await f.request('all', 'tasks/session/files/search', body)).status).toBe(200)
+    expect((await f.request('work', 'tasks/session/files/search', body)).status).toBe(403)
+    f.revoked.add('all')
+    expect((await f.request('all', 'tasks/session/files/search', body)).status).toBe(403)
+    f.revoked.clear()
+    f.remove()
+    expect((await f.request('all', 'tasks/session/files/search', body)).status).toBe(409)
   })
 
   it('audits the first content read when a metadata-only secret handle later becomes readable', async () => {

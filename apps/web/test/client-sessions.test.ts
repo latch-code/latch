@@ -5,6 +5,7 @@ import {
   filterSessions,
   groupSessions,
   projectOf,
+  recentProjectSessions,
   isUnread,
   markSeen,
   markUnread,
@@ -96,6 +97,28 @@ describe('session list', () => {
     expect(groups.every(group => group.tasks.length === 0)).toBe(true)
   })
 
+  it('offers only the newest three accessible project sessions using recorded and legacy project membership', () => {
+    const tasks = [
+      task('old', at(1), { workspaceId: 'website' }),
+      task('explicit', at(22), { workspaceId: 'website', cwd: '/unrelated' }),
+      task('legacy', at(21), { cwd: '/Users/me/code/website/src' }),
+      task('archived', at(23), { workspaceId: 'website', archived: true }),
+      task('conversation', at(24), { mode: 'chat', workspaceId: 'website' }),
+      task('other-project', at(24), { workspaceId: 'docs', cwd: '/Users/me/code/website' }),
+      task('removed-project', at(24), { workspaceId: 'removed', cwd: '/Users/me/code/website' }),
+      task('personal', at(24), { workspaceId: 'website', personal: { assistantId: 'assistant' } }),
+    ]
+    expect(recentProjectSessions('website', tasks, workspaces).map(task => task.id)).toEqual(['archived', 'explicit', 'legacy'])
+    // A scope-filtered snapshot is authoritative; the selector never retains previously visible tasks.
+    expect(
+      recentProjectSessions(
+        'website',
+        tasks.filter(task => task.id === 'old'),
+        workspaces,
+      ).map(task => task.id),
+    ).toEqual(['old'])
+    expect(recentProjectSessions('website', [], workspaces)).toEqual([])
+  })
   it('hides archived sessions except under their own filter and filters by mode and title', () => {
     const tasks = [
       task('chat', at(23), { mode: 'chat', title: '整理周报' }),

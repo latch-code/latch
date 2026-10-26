@@ -195,9 +195,10 @@ export const BLOCKED_VERBS: Record<
 }
 
 /** The desktop's pairing panel while a device waits: the fingerprint to compare with the one on that device. */
+export const CONNECTION_DETAILS = '连接详情'
 export const PAIRING_WAITING_COPY = {
   requesting: '正在请求连接',
-  compare: '和这台设备屏幕上的指纹逐字核对。一致时在系统表单里用 Touch ID 允许，不一致就在表单里取消。',
+  compare: '确认是自己的设备后，在电脑弹出的窗口中允许连接。',
   fingerprint: '设备指纹',
   signing: '已允许，等这台设备完成登记…',
   nativeCompare: '在 Mac 弹出的系统窗口里输入手机显示的六位核对码，再完成身份确认。请勿在聊天或网页中填写核对码。',
@@ -288,7 +289,7 @@ export function waitText(seconds: number): string {
 /** The enrollment page. */
 export const ENROLLMENT_COPY = {
   title: '连接到 Latch',
-  local: '这台设备会生成自己的密钥。提交后，请在运行 Latch 的电脑上核对指纹，并用 Touch ID 或登录密码确认。',
+  local: '首次连接时，在这台电脑上允许 Latch 使用。之后打开即可继续工作。',
   /** The intro while local confirmation is unavailable: the offline code is the way in. */
   offline: '这台设备会生成自己的密钥，再用离线登记码完成登记。',
   /** Why only the offline code is accepted, with the Host's reason (trailing full stops removed). */
@@ -297,7 +298,7 @@ export const ENROLLMENT_COPY = {
   /** The same, where the Host takes no offline code (every listener but host.sock): nothing here can be submitted yet. */
   unavailableRemote: (reason: string) =>
     `本机确认不可用：${reason || '未知原因'}。新设备要在运行 Latch 的电脑上确认后才能登记，请先在那台电脑上处理。`,
-  invited: '已收到配对邀请。提交后，请在运行 Latch 的电脑上核对指纹并确认。',
+  invited: '已收到连接邀请。提交后，回到运行 Latch 的电脑上允许连接。',
   invitationRequired:
     '手机或其他电脑需要配对邀请：在运行 Latch 的电脑上打开 Latch 桌面端的 设置 › 设备，生成配对二维码。手机扫描二维码；其他电脑打开用「复制链接」得到的配对链接。',
   /** A browser on loopback is not this computer either; the desktop app or the command line makes its link. */
@@ -313,7 +314,7 @@ export const ENROLLMENT_COPY = {
   cancel: '取消',
   retry: '重试',
   fingerprint: '设备指纹',
-  compare: '请确认电脑上显示的指纹与下面完全一致：',
+  compare: '请在运行 Latch 的电脑上允许这次连接。',
   /** Before the sentence the computer's system sheet shows, which names this fingerprint. */
   sheet: '电脑上的系统表单会写：',
   completing: '正在完成登记…',
@@ -326,7 +327,7 @@ export const ENROLLMENT_COPY = {
   unsupported: '此浏览器无法在当前地址安全地保存设备密钥。请使用最新版 Chrome、Edge、Firefox 或 Safari，或使用 Latch 桌面端。',
   mismatch: '服务器返回的指纹与本机计算的不一致，已停止登记。',
   legacyTitle: '此设备需要在本机重新确认',
-  legacyBody: 'Latch 已升级设备凭据，旧的登录状态不再有效。请提交确认请求，并在运行 Latch 的电脑上核对指纹。',
+  legacyBody: 'Latch 已更新连接方式。请在运行 Latch 的电脑上重新允许这台设备。',
   legacySubmit: '在本机重新确认',
   oldHost: '此 Host 版本过旧，请在电脑上重启 Latch。',
   admin: '管理此 Host（模型服务、插件、项目和设备）',
@@ -355,14 +356,10 @@ export const DESKTOP_SCOPES: readonly string[] = (['view', 'run', 'approve:stand
 
 /** Pairing a phone from 设置 › 设备. */
 export const PAIRING_COPY = {
-  intro: '生成一次性配对二维码，在手机上扫描后提交登记。二维码 10 分钟内有效，只能使用一次；对方提交后，仍需在这台电脑上核对指纹并确认。',
+  intro: '用手机扫描二维码，然后在这台电脑上允许连接。二维码 10 分钟内有效，只能使用一次。',
   expired: '上一个二维码已过期。',
   create: '生成配对二维码',
-  steps: [
-    '在手机上扫描二维码，或打开配对链接。',
-    '在手机上提交登记请求。',
-    '在这台电脑上核对两边显示的指纹，并用 Touch ID 或登录密码确认。',
-  ],
+  steps: ['在手机上扫描二维码，或打开配对链接。', '在手机上提交登记请求。', '回到这台电脑，确认是自己的手机后允许连接。'],
   qrFailed: '二维码生成失败，可复制配对链接。',
   copyBlocked: '当前浏览器不允许复制。请在手机上扫描二维码。',
   /** Without the Host's HTTPS entry: what is missing and what is not built yet, in words; the start options are folded. */
@@ -392,8 +389,11 @@ export const PAIRING_COPY = {
 export const NATIVE_LINK_COPY = {
   title: '连接手机',
   app: '原生 App（开发预览）',
-  configured: '生成一次性二维码，在原生客户端中连接这台电脑。',
-  disabled: '选择局域网直连，或添加你自己的中继。',
+  configured: '在手机 Latch 中扫码，电脑允许后即可继续工作。',
+  disabled: '开启后用手机扫码，电脑会自动寻找可用的网络连接。',
+  enable: '开启手机连接',
+  options: '连接选项',
+  optionsHint: '网络诊断、地址更新与自定义中继。',
   configure: '设置连接',
   direct: '同一网络下直连',
   address: '这台电脑的地址',
@@ -414,7 +414,12 @@ export const NATIVE_LINK_COPY = {
   noKey: '这个节点不使用登记密钥',
   addRelay: '添加自建中继',
   relayPrivacy: '新的中继要在 Mac 上确认。中继可看到 IP、连接时间和数据量，无法读取会话正文。',
-  intro: '用原生客户端扫描二维码；在 Mac 的系统窗口中输入手机显示的六位码并确认。二维码 10 分钟有效，只能使用一次。',
+  intro: '打开手机 Latch 扫描二维码，再回到电脑允许连接。',
+  personalAccess: '使用个人助手和项目文件',
+  personalHint: '连接时在电脑上一起确认，以后可在设备设置中调整。',
+  personalScope: '本次连接包含个人助手和项目文件。',
+  workScope: '本次连接仅使用工作会话。',
+  scopeUnconfirmed: '电脑尚未确认这次连接的访问范围，请重新生成二维码。',
   steps: [
     '在原生客户端中扫描二维码。',
     '在 Mac 的系统窗口输入手机显示的六位码，并完成身份确认。',
@@ -423,7 +428,13 @@ export const NATIVE_LINK_COPY = {
   qrAlt: '原生客户端配对二维码',
   qrFailed: '二维码生成失败，可以复制配对信息后粘贴到原生客户端。',
   copy: '复制配对信息',
-  addressChanged: '局域网入口当前不可用。请核对地址和端口后重新保存，或通过已配置的中继连接。',
+  addressChanged: '当前网络暂时不可用，正在等待恢复。可以先检查电脑的网络连接。',
+  directory: '自动更新连接地址',
+  directoryHint: '由你选择的服务提供已签名的地址更新；不会更换已连接电脑或中继的身份。',
+  directoryAnchors: '目录根公钥',
+  directoryAnchorsHint: '由服务提供者给出，每行一个 64 位十六进制公钥，最多两个。',
+  directoryMirrors: '地址更新服务',
+  directoryMirrorsHint: '每行一个 HTTPS 地址，最多四个。',
   inputs: '手机输入',
   inputsReady: '手机仍按各自登记的权限操作。暂停不会停止正在执行的会话。',
   paused: '所有原生手机均只读，恢复需要在这台 Mac 上确认。',
@@ -627,6 +638,11 @@ export const SESSION_STOP_TEXT = {
   'project-config-changed': '项目中的 Agent 配置在确认后发生了变化，该会话不能继续。请新建会话。',
   'l3-confirmation-missing': '此会话创建于安全升级之前，不能继续。请新建会话。',
   'permission-unverified': '无法确认 Harness 已进入预期的权限模式，未发送本轮输入。',
+} as const
+export const DOCUMENT_PREVIEW_ERRORS = {
+  'document-too-complex': '这份演示文稿的内容过于复杂，暂时无法预览。可以下载或在电脑上打开。',
+  'zip-refused': '文档压缩结构超出预览上限，可以下载或在电脑上打开。',
+  fallback: '无法显示这个文档，请下载或在执行端电脑上打开。',
 } as const
 export type SessionStopCode = keyof typeof SESSION_STOP_TEXT
 export const isSessionStopCode = (code: string): code is SessionStopCode => code in SESSION_STOP_TEXT

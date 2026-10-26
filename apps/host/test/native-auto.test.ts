@@ -65,6 +65,9 @@ async function setup() {
     async acceptRelay(stream: Duplex) {
       stream.destroy()
     },
+    async acceptCarrier(stream: Duplex) {
+      stream.destroy()
+    },
     closeRelay() {},
     async close() {},
   }

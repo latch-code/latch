@@ -124,8 +124,7 @@ it('uses true image pixels, retains zoom on refresh, refuses unknown or excessiv
           await cdp.detach()
           await viewport.press('0')
           await writeFile(join(host.workspaceRoot, 'large.png'), updated)
-          const notice = preview.locator('.ui-notice', { hasText: '文件已更新。' })
-          await notice.getByRole('button', { name: '更新预览', exact: true }).click()
+          await preview.getByText('已更新', { exact: true }).waitFor()
           await expect.poll(() => image.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(800)
           await expect.poll(() => image.evaluate(img => img.getBoundingClientRect().width)).toBe(800)
         }

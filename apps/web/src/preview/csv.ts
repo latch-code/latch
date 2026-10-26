@@ -45,7 +45,7 @@ export function parseCsv(
       hidden: false,
       merges: [],
       colWidths: Array.from({ length: columns }, () => 120),
-      frozen: { rows: 1, cols: 0 },
+      frozen: { rows: 1, cols: 1 },
     },
   }
 }

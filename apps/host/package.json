@@ -17,6 +17,7 @@
     "./paths": "./src/paths.ts",
     "./policy": "./src/policy.ts",
     "./plugins/standard": "./src/plugins/standard/index.ts",
+    "./transports": "./src/transport-api.ts",
     "./desktop-host": "./scripts/desktop-host.ts"
   },
   "dependencies": {

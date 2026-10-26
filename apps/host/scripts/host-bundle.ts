@@ -1,5 +1,6 @@
 import { realpathSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
+import { readFile, readdir } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { BuildOptions, Plugin } from 'esbuild'
@@ -53,6 +54,35 @@ export async function hostBundleOptions(): Promise<BuildOptions> {
     .flatMap(field => Object.entries(field ?? {}))
     .filter(([, version]) => !version.startsWith('workspace:'))
     .map(([name]) => name)
+  const digest = createHash('sha256')
+  async function source(path: string): Promise<void> {
+    const entries = await readdir(join(REPOSITORY_ROOT, path), { withFileTypes: true })
+    for (const entry of entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
+      const child = `${path}/${entry.name}`
+      if (entry.isDirectory()) await source(child)
+      else if (entry.isSymbolicLink()) throw new Error('Execution source links must be resolved before building')
+      else if (entry.isFile()) {
+        const bytes = await readFile(join(REPOSITORY_ROOT, child))
+        digest.update(JSON.stringify([child, bytes.length]))
+        digest.update(bytes)
+      }
+    }
+  }
+  for (const path of [
+    'apps/host/src',
+    'packages/core/src',
+    'packages/sdk/src',
+    'packages/protocol/src',
+    'packages/harness-acp/src',
+    'packages/link-client/src',
+    'packages/link-wire/src',
+  ])
+    await source(path)
+  for (const path of ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'apps/host/scripts/host-bundle.ts', 'tsconfig.host.json']) {
+    digest.update(path)
+    digest.update(await readFile(join(REPOSITORY_ROOT, path)))
+  }
+  digest.update(process.version)
   return {
     bundle: true,
     platform: 'node',
@@ -61,6 +91,7 @@ export async function hostBundleOptions(): Promise<BuildOptions> {
     // The root tsconfig.json is a solution without compiler options, and esbuild does not follow its references.
     tsconfig: join(REPOSITORY_ROOT, 'tsconfig.host.json'),
     external,
+    define: { __LATCH_EXECUTION_BUILD__: JSON.stringify(digest.digest('hex')) },
     plugins: [testCodeGuard],
   }
 }

@@ -20,6 +20,10 @@ public struct NativeRelayAddress: Codable, Sendable {
     public let url: URL
     public let spkiHash: Data
     public let passes: [NativeRelayPass]
+    public let profile: NativeRelayProfile?
+    public init(relayId: Data, url: URL, spkiHash: Data, passes: [NativeRelayPass], profile: NativeRelayProfile? = nil) {
+        self.relayId = relayId; self.url = url; self.spkiHash = spkiHash; self.passes = passes; self.profile = profile
+    }
 }
 public struct NativeLanAddress: Codable, Sendable {
     public let address: String
@@ -38,6 +42,7 @@ public struct NativeAddressBook: Codable, Sendable {
     public let lan: [NativeLanAddress]
     public let relays: [NativeRelayAddress]
     public let payloadHash: Data
+    public let directory: NativeDirectorySource?
 }
 
 public struct AdmissionPass: Sendable {
@@ -90,7 +95,8 @@ public enum AddressBookCodec {
         let payload = Data(bytes.dropLast(64)), signature = Data(bytes.suffix(64))
         guard NativeCrypto.verifyP256(spki: rootSpki, input: Data("latch-address-book-v1\0".utf8) + payload, signature: signature) else { throw NativeFailure.identityMismatch }
         var reader = try LinkReader(payload)
-        guard try reader.integer(1) == 1, try reader.integer(1) == 0 else { throw NativeFailure.invalidRecord }
+        let version = try reader.integer(1)
+        guard [1, 2, 3].contains(version), try reader.integer(1) == 0 else { throw NativeFailure.invalidRecord }
         func text(_ bytes: Data) throws -> String {
             guard bytes.allSatisfy({ (33...126).contains($0) }), let value = String(data: bytes, encoding: .ascii) else { throw NativeFailure.invalidRecord }
             return value
@@ -113,8 +119,8 @@ public enum AddressBookCodec {
         guard relayCount <= 4 else { throw NativeFailure.invalidRecord }
         var relays: [NativeRelayAddress] = [], relayIds = Set<Data>()
         for _ in 0..<relayCount {
-            let relayId = try reader.take(16), url = try relayURL(text(reader.field(512))), spki = try reader.take(32), passCount = try reader.integer(1)
-            guard relayIds.insert(relayId).inserted, (1...64).contains(passCount) else { throw NativeFailure.invalidRecord }
+            let relayId = try reader.take(16), url = try relayURL(text(reader.field(512))), spki = try reader.take(32), profile = try version == 3 ? reader.integer(1) : 0, passCount = try reader.integer(1)
+            guard profile <= 1, relayIds.insert(relayId).inserted, (1...64).contains(passCount) else { throw NativeFailure.invalidRecord }
             var passes: [NativeRelayPass] = [], days = Set<String>()
             for _ in 0..<passCount {
                 let raw = try reader.take(174), seed = try reader.take(32), pass = try AdmissionPass.decode(raw)
@@ -123,10 +129,17 @@ public enum AddressBookCodec {
                       days.insert("\(pass.day):\(LinkBytes.hex(pass.routePublicKey))").inserted else { throw NativeFailure.identityMismatch }
                 passes.append(NativeRelayPass(bytes: raw, holderSeed: seed))
             }
-            relays.append(NativeRelayAddress(relayId: relayId, url: url, spkiHash: spki, passes: passes))
+            relays.append(NativeRelayAddress(relayId: relayId, url: url, spkiHash: spki, passes: passes, profile: profile == 1 ? .outerPadV2 : nil))
+        }
+        var directory: NativeDirectorySource?
+        if version >= 2 {
+            let bytes = try reader.field(2240)
+            if !bytes.isEmpty { directory = try NativeDirectorySource.decode(bytes) }
+            else if version == 2 { throw NativeFailure.invalidRecord }
         }
         try reader.done()
-        return NativeAddressBook(hostId: hostId, deviceId: actualDevice, generation: generation, issuedAt: issuedAt, expiresAt: expiresAt, discoveryKey: discoveryKey, lan: lan, relays: relays, payloadHash: payloadHash)
+        guard version != 3 || relays.contains(where: { $0.profile == .outerPadV2 }) else { throw NativeFailure.invalidRecord }
+        return NativeAddressBook(hostId: hostId, deviceId: actualDevice, generation: generation, issuedAt: issuedAt, expiresAt: expiresAt, discoveryKey: discoveryKey, lan: lan, relays: relays, payloadHash: payloadHash, directory: directory)
     }
 }
 
@@ -162,14 +175,19 @@ public struct PairingInvitation: Sendable {
         }
         var relays: [NativeRelayAddress] = [], known = Set<Data>()
         for item in relayEntries {
-            guard Set(item.keys) == Set(["relayId", "url", "spkiHash", "pass", "holderSeed"]),
+            guard Set(item.keys) == Set(["relayId", "url", "spkiHash", "pass", "holderSeed"]).union(item["profile"] == nil ? [] : ["profile"]),
                   let id = item["relayId"] as? String, let rawURL = item["url"] as? String, let hash = item["spkiHash"] as? String,
                   let rawPass = item["pass"] as? String, let rawSeed = item["holderSeed"] as? String else { throw NativeFailure.invalidRecord }
+            let profile: NativeRelayProfile?
+            if let rawProfile = item["profile"] {
+                guard let text = rawProfile as? String, let value = NativeRelayProfile(rawValue: text) else { throw NativeFailure.invalidRecord }
+                profile = value
+            } else { profile = nil }
             let relayId = try LinkBytes.fixed(LinkBytes.unhex(id, maximum: 16), 16), spkiHash = try LinkBytes.fixed(LinkBytes.unhex(hash, maximum: 32), 32),
                 bytes = try LinkBytes.fixed(LinkBytes.decode64(rawPass, maximum: 174), 174), seed = try LinkBytes.fixed(LinkBytes.decode64(rawSeed, maximum: 32), 32), pass = try AdmissionPass.decode(bytes)
             guard pass.pairing, LinkBytes.equal(pass.relayId, relayId), known.insert(relayId).inserted,
                   LinkBytes.equal(try Curve25519.Signing.PrivateKey(rawRepresentation: seed).publicKey.rawRepresentation, pass.holderPublicKey) else { throw NativeFailure.identityMismatch }
-            relays.append(NativeRelayAddress(relayId: relayId, url: try AddressBookCodec.relayURL(rawURL), spkiHash: spkiHash, passes: [NativeRelayPass(bytes: bytes, holderSeed: seed)]))
+            relays.append(NativeRelayAddress(relayId: relayId, url: try AddressBookCodec.relayURL(rawURL), spkiHash: spkiHash, passes: [NativeRelayPass(bytes: bytes, holderSeed: seed)], profile: profile))
         }
         guard !addresses.isEmpty || !relays.isEmpty else { throw NativeFailure.unsupported }
         return PairingInvitation(rootSpki: root, invitation: invitation, direct: addresses, relays: relays, expiresAt: expires, hostId: LinkBytes.base32(LinkBytes.hash(root)))

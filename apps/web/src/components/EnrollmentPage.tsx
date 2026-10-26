@@ -1,10 +1,17 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
-import { Check, Fingerprint as FingerprintGlyph, KeyRound, RefreshCw } from 'lucide-react'
+import { Check, Laptop, KeyRound, RefreshCw } from 'lucide-react'
 import { isLocalListener } from '@latch/protocol'
 import { acceptableName, enrollmentName, pendingInvitation, useEnrollment, type EnrolledResult } from '../core/enrollment.ts'
 import { useViewport } from '../breakpoints.ts'
 import { useCountdown } from '../hooks/useCountdown.ts'
-import { BROWSER_SCOPES, DESKTOP_SCOPES, DEVICE_NAME_INVALID_TEXT, ENROLLMENT_COPY, ENROLLMENT_REASON_TEXT } from '../core/securityCopy.ts'
+import {
+  BROWSER_SCOPES,
+  DESKTOP_SCOPES,
+  DEVICE_NAME_INVALID_TEXT,
+  CONNECTION_DETAILS,
+  ENROLLMENT_COPY,
+  ENROLLMENT_REASON_TEXT,
+} from '../core/securityCopy.ts'
 import type { AuthState } from '../core/useHarness.ts'
 import { Button, Checkbox, ICON_STROKE, InlineNotice, Loading, TextField, type ButtonSize } from '@latch/ui'
 import { BrandMark } from './ui.tsx'
@@ -128,7 +135,7 @@ function Waiting({
     <section className="enroll-waiting" aria-labelledby="enroll-waiting-title">
       <div className="enroll-status">
         <span className="presence-icon" data-tone="warn" aria-hidden="true">
-          <FingerprintGlyph size={20} strokeWidth={ICON_STROKE[20]} />
+          <Laptop size={20} strokeWidth={ICON_STROKE[20]} />
         </span>
         <h2 id="enroll-waiting-title">{COPY.waiting}</h2>
         <span className="enroll-timer" role="timer">
@@ -136,7 +143,10 @@ function Waiting({
         </span>
       </div>
       <p className="enroll-compare">{COPY.compare}</p>
-      <Fingerprint value={fingerprint} reason={reason} />
+      <details className="connection-details">
+        <summary>{CONNECTION_DETAILS}</summary>
+        <Fingerprint value={fingerprint} reason={reason} />
+      </details>
       <span className="presence-track" aria-hidden="true">
         <i style={{ '--fraction': String(fraction) }} />
       </span>

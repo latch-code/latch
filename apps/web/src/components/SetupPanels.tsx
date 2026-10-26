@@ -14,14 +14,20 @@ import { SETUP_COPY } from '../core/securityCopy.ts'
 import { withConfirmation } from '../core/confirmations.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { hostOf } from '../format.ts'
-import { ProviderAddForm, providerAbilities } from '../settings/ProvidersSettings.tsx'
+import { providerAbilities } from '../core/providerAbilities.ts'
+import { deferredComponent } from './DeferredContent.tsx'
 import { destinationOf, type ProvidersResponse } from '../core/providerSetup.ts'
 import { hostView } from '../core/permissions.ts'
 import { InlineConfirm } from './InlineConfirm.tsx'
-import { missingText } from '../settings/AgentsSettings.tsx'
+import { missingText } from '../core/agentDetection.ts'
 import { Badge, Button, ButtonLink, Icon, IconButton, InlineNotice, Loading } from '@latch/ui'
 import { HarnessTile, ProviderTile } from './BrandTile.tsx'
 import { CopyButton } from './ui.tsx'
+
+const ProviderAddForm = deferredComponent(
+  async () => ({ default: (await import('../settings/ProvidersSettings.tsx')).ProviderAddForm }),
+  '模型服务表单',
+)
 
 /*
  * Adding a harness or a model service where it is chosen: the picker's own layer turns into a small panel (the tile,

@@ -13,6 +13,9 @@ const bindings = [
   ['下一个待处理请求（浏览器）', 'Alt Shift A'],
   ['关闭当前浮层或查找', 'Esc'],
   ['命令面板移动 / 执行', '↑ ↓ / Enter'],
+  ['空输入框取回上一条消息', '↑'],
+  ['取消正在运行的任务（输入框内）', '连续两次 Esc'],
+  ['批准 / 拒绝聚焦的请求', '⌘ Enter / Ctrl Enter · Esc'],
 ]
 export function KeyboardHelp({ onClose }: { onClose: () => void }) {
   const [q, setQ] = useState('')

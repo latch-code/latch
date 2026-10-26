@@ -1,5 +1,23 @@
 import { strToU8, Unzip, UnzipInflate, zipSync } from 'fflate'
 export const ZIP_LIMITS = { entries: 4000, entry: 32 * 1024 * 1024, total: 256 * 1024 * 1024, input: 50 * 1024 * 1024 } as const
+const PRESENTATION_LIMITS = { shapesPerPart: 5000, totalShapes: 50_000, elementsPerPart: 50_000 } as const
+
+/** Bound XML work before building a DOM or starting the presentation renderer, including masters and layouts. */
+export function assertPresentationComplexity(files: Readonly<Record<string, Uint8Array>>): void {
+  let total = 0
+  for (const [path, bytes] of Object.entries(files)) {
+    if (!/^ppt\/(?:slides|slideMasters|slideLayouts)\/[^/]+\.xml$/u.test(path)) continue
+    const text = xmlText(bytes)
+    let shapes = 0,
+      elements = 0
+    for (const _tag of text.matchAll(/<(?![!?/])/gu)) {
+      if (++elements > PRESENTATION_LIMITS.elementsPerPart) throw new Error('document-too-complex')
+    }
+    for (const _shape of text.matchAll(/<(?:[^\s:<>&/?!]+:)?(?:sp|pic|graphicFrame|cxnSp|grpSp)(?=[\s/>])/gu)) {
+      if (++shapes > PRESENTATION_LIMITS.shapesPerPart || ++total > PRESENTATION_LIMITS.totalShapes) throw new Error('document-too-complex')
+    }
+  }
+}
 export function inspectZip(data: Uint8Array): Map<string, number> {
   if (data.length > ZIP_LIMITS.input) throw new Error('zip-refused')
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength)
@@ -112,6 +130,7 @@ export function sanitizeOfficeZip(data: ArrayBuffer): {
   links: Record<string, string>
 } {
   const files = readOfficeZip(data)
+  assertPresentationComplexity(files)
   for (const [name, bytes] of Object.entries(files))
     if (name.endsWith('.xml') && /<!DOCTYPE|<!ENTITY/iu.test(xmlText(bytes))) throw new Error('zip-refused')
   let blocked = 0

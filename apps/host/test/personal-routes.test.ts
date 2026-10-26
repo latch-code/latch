@@ -97,7 +97,7 @@ test('runs real no-project personal sessions with scoped private context, owners
         body: { prompt: 'queued', requestId: randomUUID(), queue: true },
       })
     ).status,
-  ).toBe(409)
+  ).toBe(200)
   expect(await readFile(join(host.dataDir, 'audit', 'audit.jsonl'), 'utf8')).not.toContain('PRIVATE MEMORY ONLY')
 })
 

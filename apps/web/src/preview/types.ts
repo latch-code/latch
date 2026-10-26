@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import type { FileMetadata } from '@latch/protocol'
+import type { PreviewQuote } from './quote.ts'
 export type OfficeKind = 'pptx' | 'docx' | 'xlsx'
 export type FrameKind = OfficeKind | 'mermaid' | 'html' | 'html-script'
 export interface GridCell {
@@ -18,29 +19,36 @@ export interface SheetInfo {
   frozen: { rows: number; cols: number }
 }
 export type FrameCommand =
+  | { type: 'quote'; id: string; source: 'selection' | 'page' }
   | { type: 'sheet-page'; sheet: number; start: number; count: number }
   | { type: 'page'; index: number }
   | { type: 'fit'; value: boolean }
   | { type: 'zoom'; percent: number }
 export type FrameEvent =
+  | { type: 'quote'; id: string; text: string; page?: number }
   | { type: 'initialized' }
   | { type: 'view'; fit: boolean; zoomPercent: number }
   | { type: 'diagram'; svg: string }
   | { type: 'html'; blocked: number }
   | { type: 'rendered'; kind: OfficeKind; sheets?: SheetInfo[]; truncated?: boolean }
-  | { type: 'error'; code: 'invalid-file' | 'file-too-large' | 'zip-refused' | 'render-failed' }
+  | { type: 'error'; code: 'invalid-file' | 'file-too-large' | 'zip-refused' | 'document-too-complex' | 'render-failed' }
   | { type: 'page'; index: number; count: number }
   | { type: 'sheet-page'; sheet: number; start: number; rows: GridCell[][]; truncated?: boolean }
   | { type: 'link'; href: string }
+export interface FrameOrigin {
+  versionKey: string
+  data: ArrayBuffer
+}
 export interface FrameInput {
   kind: FrameKind
   data: ArrayBuffer
   versionKey: string
   options?: Record<string, unknown>
-  onMessage?: (data: unknown) => void
+  onMessage?: (data: unknown, origin: FrameOrigin) => void
   onChannel?: (send: ((message: FrameCommand) => void) | undefined) => void
 }
 export interface DocumentPreviewProps {
+  onQuote?(value: PreviewQuote): void
   file: FileMetadata
   versionKey: string
   read: (start?: number, end?: number, signal?: AbortSignal) => Promise<ArrayBuffer>
@@ -55,6 +63,13 @@ const integer = (value: unknown, max: number) => typeof value === 'number' && Nu
 const keys = (value: Record<string, unknown>, allowed: string[]) => Object.keys(value).every(key => allowed.includes(key))
 export function isFrameCommand(value: unknown): value is FrameCommand {
   if (!plain(value)) return false
+  if (value.type === 'quote')
+    return (
+      keys(value, ['type', 'id', 'source'])
+      && typeof value.id === 'string'
+      && /^[a-f0-9]{32}$/u.test(value.id)
+      && (value.source === 'selection' || value.source === 'page')
+    )
   if (value.type === 'sheet-page')
     return (
       keys(value, ['type', 'sheet', 'start', 'count'])
@@ -70,6 +85,15 @@ export function isFrameCommand(value: unknown): value is FrameCommand {
 export function isFrameEvent(value: unknown): value is FrameEvent {
   if (!plain(value)) return false
   switch (value.type) {
+    case 'quote':
+      return (
+        keys(value, ['type', 'id', 'text', 'page'])
+        && typeof value.id === 'string'
+        && /^[a-f0-9]{32}$/u.test(value.id)
+        && typeof value.text === 'string'
+        && value.text.length <= 2000
+        && (value.page === undefined || integer(value.page, 9999))
+      )
     case 'html':
       return keys(value, ['type', 'blocked']) && integer(value.blocked, 100_000)
     case 'diagram':
@@ -85,7 +109,8 @@ export function isFrameEvent(value: unknown): value is FrameEvent {
       return keys(value, ['type'])
     case 'error':
       return (
-        keys(value, ['type', 'code']) && ['invalid-file', 'file-too-large', 'zip-refused', 'render-failed'].includes(String(value.code))
+        keys(value, ['type', 'code'])
+        && ['invalid-file', 'file-too-large', 'zip-refused', 'document-too-complex', 'render-failed'].includes(String(value.code))
       )
     case 'page':
       return (

@@ -6,8 +6,27 @@ import { loadRelayConfig } from './config.ts'
 import { startRelay } from './server.ts'
 import { requestPrivateAdmin } from './admin.ts'
 import { superviseRelay, verifyWorkerLease } from './supervisor.ts'
+import { runDirectoryCommand } from './directory-commands.ts'
+
+function assertPrivateRuntime(): void {
+  const [major, minor, patch] = process.versions.node.split('.').map(Number)
+  if (
+    !(
+      (major === 22 && (minor! > 23 || (minor === 23 && patch! >= 4)))
+      || (major === 24 && (minor! > 22 || (minor === 22 && patch! >= 1)))
+      || (major! >= 26 && (major! > 26 || minor! > 12 || (minor === 12 && patch! >= 1)))
+    )
+  )
+    throw new Error('Patched Node runtime required')
+  if (!process.execArgv.includes('--disable-sigusr1')) throw new Error('Start the relay with --disable-sigusr1')
+}
 
 async function main(): Promise<void> {
+  if (process.argv[2] === 'directory') {
+    assertPrivateRuntime()
+    process.stdout.write(`${JSON.stringify(await runDirectoryCommand(process.argv.slice(3)))}\n`)
+    return
+  }
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     strict: true,
@@ -15,7 +34,7 @@ async function main(): Promise<void> {
   })
   if (values.help) {
     process.stdout.write(
-      'latch-relay init|check|start|status|health|drain|reload-tls|quota set-used <bytes> --data-dir <absolute-directory> [--config <absolute-file>]\n',
+      'latch-relay init|check|start|status|health|drain|reload-tls|quota set-used <bytes> --data-dir <absolute-directory> [--config <absolute-file>]\nlatch-relay directory --help\n',
     )
     return
   }
@@ -29,16 +48,7 @@ async function main(): Promise<void> {
     || !['init', 'check', 'start', 'status', 'health', 'drain', 'reload-tls', 'quota'].includes(command ?? '')
   )
     throw new Error('Invalid relay command')
-  const [major, minor, patch] = process.versions.node.split('.').map(Number)
-  if (
-    !(
-      (major === 22 && (minor! > 23 || (minor === 23 && patch! >= 4)))
-      || (major === 24 && (minor! > 22 || (minor === 22 && patch! >= 1)))
-      || (major! >= 26 && (major! > 26 || minor! > 12 || (minor === 12 && patch! >= 1)))
-    )
-  )
-    throw new Error('Patched Node runtime required')
-  if (!process.execArgv.includes('--disable-sigusr1')) throw new Error('Start the relay with --disable-sigusr1')
+  assertPrivateRuntime()
   if (command === 'init') {
     await mkdir(directory, { recursive: true, mode: 0o700 })
     const root = await lstat(directory)
@@ -161,6 +171,10 @@ async function main(): Promise<void> {
 try {
   await main()
 } catch {
-  process.stderr.write('{"error":"Relay operation failed; check command, file permissions and TLS configuration"}\n')
+  process.stderr.write(
+    process.argv[2] === 'directory'
+      ? '{"error":"Directory operation failed; use patched Node with --disable-sigusr1 and check private files, role, generations and a new versioned output path"}\n'
+      : '{"error":"Relay operation failed; check command, file permissions and TLS configuration"}\n',
+  )
   process.exitCode = 1
 }

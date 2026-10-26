@@ -62,7 +62,7 @@ export class FairScheduler {
       return row * width + (hash % width)
     })
   }
-  wait(id: number, prefixes: readonly string[], route: string, bytes: number): Promise<boolean> {
+  wait(id: number, prefixes: readonly string[], route: string, bytes: number, exact = false): Promise<boolean> {
     if (
       this.closed
       || this.waiting.has(id)
@@ -84,7 +84,14 @@ export class FairScheduler {
     }
     this.queuedBytes += bytes
     return new Promise(resolve => {
-      this.waiting.set(id, { id, route, groups: weights, remaining: bytes * (this.options.count === 'in+out' ? 2 : 1), bytes, resolve })
+      this.waiting.set(id, {
+        id,
+        route,
+        groups: weights,
+        remaining: bytes * (!exact && this.options.count === 'in+out' ? 2 : 1),
+        bytes,
+        resolve,
+      })
     })
   }
   cancel(id: number): void {

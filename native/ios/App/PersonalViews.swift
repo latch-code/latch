@@ -4,6 +4,8 @@ import SwiftUI
 struct PersonalHomeView: View {
     @EnvironmentObject private var model: PhoneModel
     @State private var creating = false
+    @State private var creatingGroup = false
+    @State private var routine: NativeJSON?
     var body: some View {
         NavigationStack {
             Group {
@@ -40,6 +42,22 @@ struct PersonalHomeView: View {
                                 }.padding(.vertical, 5)
                             }.disabled(model.personalLoading)
                         }
+                        if model.supportsGroups {
+                            Section("助手群聊") {
+                                ForEach(model.personalOverview["groups"].array, id: \.id) { group in
+                                    Button { Task { await model.openGroup(group.id) } } label: {
+                                        Label(group["name"].string ?? "助手群聊", systemImage: "person.2").foregroundStyle(.primary)
+                                    }
+                                }
+                                Button("创建群聊", systemImage: "plus") { creatingGroup = true }.disabled(!model.canRun || !model.pending.isEmpty || model.personalOverview["assistants"].array.isEmpty)
+                            }
+                        }
+                        if model.supportsRoutines {
+                            Section("例行任务") {
+                                ForEach(model.personalOverview["routines"].array, id: \.id) { item in PersonalRoutineRow(routine: item) { routine = item } }
+                                Button("创建例行任务", systemImage: "plus") { routine = .null }.disabled(!model.canRun || !model.pending.isEmpty || !model.personalOverview["assistants"].array.contains { $0["canSchedule"].bool })
+                            }
+                        }
                     }.refreshable { await model.refreshPersonal() }
                 }
             }
@@ -54,7 +72,10 @@ struct PersonalHomeView: View {
                 }
             }
             .sheet(isPresented: $creating) { PersonalAssistantEditor(assistant: .null) }
-            .onChange(of: model.contentGeneration) { _, _ in creating = false }
+            .sheet(isPresented: $creatingGroup) { PersonalGroupEditor(group: .null) }
+            .sheet(item: $routine) { PersonalRoutineEditor(routine: $0) }
+            .onChange(of: model.contentGeneration) { _, _ in creating = false; creatingGroup = false; routine = nil }
+            .onChange(of: model.selectedHost?.id) { _, _ in creating = false; creatingGroup = false; routine = nil }
             .task(id: "\(model.selectedHost?.id ?? ""):\(model.connected)") {
                 if model.connected, model.area == .personal, model.assistantId == nil { await model.refreshPersonal() }
             }

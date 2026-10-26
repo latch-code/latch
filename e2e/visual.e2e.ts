@@ -1231,13 +1231,13 @@ describe('visual capture of the real product', () => {
           .getByRole('radio', { name: /本地 ACP Agent/ })
           .click()
         // Nothing typed yet: the start button rests on the same neutral fill as an empty send, its lock kept.
-        const startButton = desktopApp.getByRole('button', { name: '开始会话', exact: true })
+        const startButton = desktopApp.getByRole('button', { name: '发送', exact: true })
         await reachable(startButton, { allowDisabled: true })
         expect(await startButton.getAttribute('aria-disabled')).toBe('true')
         await desktopApp.evaluate(() => new Promise(done => setTimeout(done, 400)))
         await recorder.capture(desktopApp, viewport, 'new-session-full-access-empty', 'starting a full-access session, nothing typed yet')
         await desktopApp.getByRole('textbox', { name: '新会话消息', exact: true }).fill('列出项目根目录')
-        await reachable(desktopApp.getByRole('button', { name: '开始会话', exact: true }))
+        await reachable(desktopApp.getByRole('button', { name: '发送', exact: true }))
         await reachable(desktopApp.getByRole('button', { name: '权限：完全访问，查看电脑与权限上限', exact: true }))
         expect(await desktopApp.getByText('开启完全访问会话需要本机确认。该会话可以读写 Latch 数据和 Host 身份私钥。').count()).toBe(0)
         await desktopApp.getByRole('textbox', { name: '新会话消息', exact: true }).blur()
@@ -1273,7 +1273,7 @@ describe('visual capture of the real product', () => {
           .getByRole('radio', { name: /本地 ACP Agent/ })
           .click()
         await blockedApp.getByRole('textbox', { name: '新会话消息', exact: true }).fill('列出项目根目录')
-        const blockedStart = blockedApp.getByRole('button', { name: '开始会话', exact: true })
+        const blockedStart = blockedApp.getByRole('button', { name: '发送', exact: true })
         await reachable(blockedStart, { allowDisabled: true })
         expect(await blockedStart.getAttribute('aria-disabled')).toBe('true')
         expect(await blockedStart.getAttribute('aria-describedby')).toBeTruthy()
@@ -1380,7 +1380,8 @@ describe('visual capture of the real product', () => {
         const fills = await sidebar
           .locator('.search-field, .approvals-row')
           .evaluateAll(items => items.map(item => getComputedStyle(item).backgroundColor))
-        expect(fills).toEqual(['rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 0)'])
+        expect(fills.length).toBeGreaterThanOrEqual(2)
+        for (const fill of fills) expect(fill).toBe('rgba(0, 0, 0, 0)')
         expect(await sidebar.locator('.session-item.is-selected').evaluate(item => getComputedStyle(item).backgroundColor)).not.toBe(
           'rgba(0, 0, 0, 0)',
         )

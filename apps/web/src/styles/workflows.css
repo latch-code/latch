@@ -201,7 +201,8 @@
   border-radius: var(--r-6);
   corner-shape: var(--corner-shape);
 }
-.slash-commands button:hover {
+.slash-commands button:hover,
+.slash-commands button[aria-selected='true'] {
   background: var(--bg-hover);
 }
 .slash-commands strong {

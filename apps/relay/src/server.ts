@@ -65,6 +65,13 @@ type RelayStatus = ReturnType<RelayCore['status']> & {
   forwarding?: ReturnType<FairScheduler['status']>
   gateway?: { healthy: boolean; connections: number; handshakes: number; rejected: number; forwardedBytes: number }
   registrationWork?: ReturnType<RegistrationWorkPool['status']>
+  webSockets: {
+    receivedBytes: number
+    writtenBytes: number
+    paddingReceivedBytes: number
+    paddingWrittenBytes: number
+    coverBatches: number
+  }
 }
 export async function startRelay(
   options: StartRelayOptions,
@@ -121,7 +128,7 @@ export async function startRelay(
         quota: () => quota.snapshot(),
         count: options.quota!.count,
         maxQueuedBytes: options.memory?.bufferBytes ?? (options.maxConnections ?? 1024) * 64 * 1024,
-        maxConnections: options.maxConnections ?? 1024,
+        maxConnections: (options.maxConnections ?? 1024) * 2,
         prefixDailyShare: options.fairness?.prefixDailyShare ?? 0.01,
         overageFactor: options.fairness?.overageFactor ?? 0.1,
       })
@@ -148,14 +155,32 @@ export async function startRelay(
     canAdmit: () => ready() && (!quota || quota.snapshot().admission),
     ...(scheduler
       ? {
-          waitBytes: (id: number, prefixes: readonly string[], route: string, bytes: number) => scheduler.wait(id, prefixes, route, bytes),
-          cancelWait: (id: number) => scheduler.cancel(id),
+          waitBytes: (id: number, prefixes: readonly string[], route: string, bytes: number) =>
+            scheduler.wait(id * 2, prefixes, route, bytes),
+          waitWire: (id: number, prefixes: readonly string[], route: string, bytes: number, direction: 'in' | 'out') =>
+            direction === 'in' && options.quota!.count === 'out'
+              ? Promise.resolve(true)
+              : scheduler.wait(id * 2 + (direction === 'out' ? 1 : 0), prefixes, route, bytes, true),
+          cancelWait: (id: number) => {
+            scheduler.cancel(id * 2)
+            scheduler.cancel(id * 2 + 1)
+          },
         }
       : {}),
     crypto: nodeCrypto,
     now: Date.now,
   })
   const peers = new Set<RelaySocket>()
+  const closedTraffic = { receivedBytes: 0, writtenBytes: 0, paddingReceivedBytes: 0, paddingWrittenBytes: 0, coverBatches: 0 }
+  const addTraffic = (sum: typeof closedTraffic, peer: RelaySocket) => {
+    const metrics = peer.metrics()
+    sum.receivedBytes += metrics.readWireBytes
+    sum.writtenBytes += metrics.writtenBytes
+    sum.paddingReceivedBytes += metrics.readPaddingBytes
+    sum.paddingWrittenBytes += metrics.paddingWrittenBytes
+    sum.coverBatches += metrics.coverBatches
+    return sum
+  }
   const raw = new Set<import('node:stream').Duplex>()
   let gateway: Awaited<ReturnType<typeof startGateway>> | undefined
   let backend: Awaited<ReturnType<typeof listenPrivateBackend>> | undefined
@@ -216,7 +241,7 @@ export async function startRelay(
       && /^[A-Za-z0-9+/]{22}==$/u.test(key)
       && Buffer.from(key, 'base64').length === 16
       && headers['sec-websocket-version'] === '13'
-      && headers['sec-websocket-protocol'] === 'latch-relay.1'
+      && ['latch-relay.1', 'latch-relay.2'].includes(String(headers['sec-websocket-protocol']))
       && headers.upgrade?.toLowerCase() === 'websocket'
       && headers.connection?.toLowerCase() === 'upgrade'
       && !headers.origin
@@ -229,10 +254,10 @@ export async function startRelay(
       return
     }
     const id = ++sequence,
-      role = request.url === '/v1/h' ? 'host' : request.url === '/v1/d' ? 'data' : 'client'
+      role = request.url === '/v1/h' ? 'host' : request.url === '/v1/d' ? 'data' : 'client',
+      version = headers['sec-websocket-protocol'] === 'latch-relay.2' ? 2 : 1
     let upgraded: RelaySocket | undefined
     socket.once('close', () => {
-      if (upgraded) peers.delete(upgraded)
       core.disconnect(id)
     })
     if (
@@ -240,6 +265,7 @@ export async function startRelay(
         {
           id,
           prefix: addressPrefix(source),
+          ...(version === 2 ? { profile: 'outer-pad-v2' as const } : {}),
           send: message => upgraded?.send(message) ?? Promise.reject(new Error('Relay upgrade incomplete')),
           close: code => {
             if (upgraded) upgraded.close(code)
@@ -253,7 +279,10 @@ export async function startRelay(
           markSpliced: () => upgraded?.markSpliced(),
           metrics: () => {
             const stats = upgraded?.metrics() ?? { bufferedBytes: 0, pendingWriteBytes: 0, writtenBytes: 0 }
-            return { ...stats, bufferedBytes: stats.bufferedBytes + (scheduler?.buffered(id) ?? 0) }
+            return {
+              ...stats,
+              bufferedBytes: stats.bufferedBytes + (scheduler?.buffered(id * 2) ?? 0) + (scheduler?.buffered(id * 2 + 1) ?? 0),
+            }
           },
         },
         role,
@@ -266,11 +295,23 @@ export async function startRelay(
       sendTimeoutMs: 60_000,
       pingIntervalMs: 25_000,
       deadAfterMs: 75_000,
+      version,
+      outerPadding: version === 2 && role !== 'host',
+      ...(version === 2 && role !== 'host'
+        ? {
+            beforeReceive: (bytes: number) => core.reserveWire(id, bytes, 'in'),
+            beforeWrite: (bytes: number) => core.reserveWire(id, bytes, 'out'),
+          }
+        : {}),
     })
     upgraded = peer
     peers.add(peer)
+    void peer.closed.then(() => {
+      addTraffic(closedTraffic, peer)
+      peers.delete(peer)
+    })
     socket.write(
-      `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${acceptKey(key)}\r\nSec-WebSocket-Protocol: latch-relay.1\r\n\r\n`,
+      `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${acceptKey(key)}\r\nSec-WebSocket-Protocol: latch-relay.${version}\r\n\r\n`,
     )
     void (async () => {
       try {
@@ -309,6 +350,7 @@ export async function startRelay(
     ready: !core.status().draining && ready() && (!quota || quota.snapshot().admission) && (!gateway || gateway.healthy()),
     denials: denials.status(),
     memory: memory.status(),
+    webSockets: [...peers].reduce(addTraffic, { ...closedTraffic }),
     ...(quota ? { quota: quota.snapshot() } : {}),
     ...(registrationWork ? { registrationWork: registrationWork.status() } : {}),
     ...(scheduler ? { forwarding: scheduler.status() } : {}),

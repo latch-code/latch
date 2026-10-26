@@ -18,7 +18,7 @@ electron-main 环境：CommonJS，不导入 TypeScript 源码。运行时只依�
 - 每个 webContents 在加载前禁用非代理 WebRTC UDP；session 使用实际监听的回环黑洞代理并关闭隐式回环绕过。HTML 脚本开关只由具备这两项限制的壳声明，见 DOCUMENT-PREVIEWS.md。
 - 顶层不离开 `latch://app/`；主进程凭一次真实点击打开网页或邮件链接，脚本外链先确认，其他协议拒绝。
 - preload 只暴露 `latchShell`，IPC 见 `src/preload.cjs`，只接受主窗口 `latch://app/` 顶层页面；生命周期参数只收布尔。回环邀请仅 macOS 主进程申请并交默认浏览器，不进页面或日志；页面只能申请手机邀请。
-- 通知只读 Host 快照，不接受页面正文；默认隐藏标题，按会话十秒节流（见 docs/ARCHITECTURE.md）。
+- 通知只读 Host 状态，取消/中断不冒充完成；选择与偏好串行保存，标题默认隐藏。见 [NOTIFICATIONS.md](../../docs/NOTIFICATIONS.md)。
 - 主进程只按 `desktop-launch.json` 启动本仓库的 `dist/start.js`，不带额外 Node 参数，Node 属于当前用户或 root 且他人不可写；`--disable-sigusr1` 在前，环境不带 `HARNESS_*`。睡眠与停止只由主进程报告，页面得到 403。
 - 设备密钥与凭据只在主进程，经 safeStorage 加密保存在 0600 文件中；没有安全存储时不保存。
 - 文件夹操作需 `folders.protocolVersion: 1`，只回应主窗口顶层页面，窗口有焦点才开原生对话框；路径来自面板、经原生确认的拖入或 Host 已知会话目录，页面不给路径。主进程取 nonce、用设备私钥签名提交；页面的添加路由 403 `shell-managed`；在访达中只用 `showItemInFolder`（`test/desktop-folders.test.ts`）。
@@ -27,6 +27,6 @@ electron-main 环境：CommonJS，不导入 TypeScript 源码。运行时只依�
 - 原生确认只收票据 ID，主进程自行取 Host 预览、验哈希并显示系统 sheet 后签名；批准路由对页面封闭，默认取消，共用对话框门禁。
 - 构建不含测试代码（见 [TESTING.md](../../docs/TESTING.md)）。
 
-修改后跑根 Electron 用例。先读 [STREAMING.md](../../docs/STREAMING.md)（转发与续期）与 [ARCHITECTURE.md](../../docs/ARCHITECTURE.md)。
+先读 [STREAMING.md](../../docs/STREAMING.md)（转发与续期）与 [ARCHITECTURE.md](../../docs/ARCHITECTURE.md)。
 
 - 仅 `POST /link/api/attachments` 走有界流式上传；JSON 限 1 MiB，创建与保存插件草稿例外为 8 MiB + 64 KiB。流中复查设备身份，凭据续期后由页面用同一文件与请求 ID 重试，不在主进程缓存上传字节（`test/desktop-uploads.test.ts`）。

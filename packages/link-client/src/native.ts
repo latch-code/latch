@@ -20,8 +20,8 @@ import {
 import { nodeCrypto } from './crypto.ts'
 import { createDeviceTrustAnchor } from './certificate.ts'
 import { acceptNativeTls, type NativeTlsConnection } from './native-helper.ts'
+import { PaddedStream } from './padding.ts'
 
-const PROTOCOL = 'h2'
 function rootInput(spki: Uint8Array, nonce: Uint8Array, notBefore: number, notAfter: number): Uint8Array {
   return concat(ascii('latch-host-proof-v1\0'), field(spki), fixed(nonce, 16), uint(notBefore, 8), uint(notAfter, 8))
 }
@@ -80,7 +80,7 @@ export async function acceptNative(
   stream: Duplex,
   binding: KnockBinding,
   options: NativeHostOptions,
-): Promise<{ socket: Duplex; deviceId: string; pairing: boolean; closed: Promise<void> }> {
+): Promise<{ socket: Duplex; padding?: PaddedStream; deviceId: string; pairing: boolean; closed: Promise<void> }> {
   let secure: Duplex | undefined, helper: NativeTlsConnection | undefined
   try {
     const now = options.now?.() ?? Date.now(),
@@ -111,6 +111,7 @@ export async function acceptNative(
         ? [createDeviceTrustAnchor(expectedSpki, options.identity), device.kind === 'registered' ? device.certificate : '']
         : [],
       peerSpki: expectedSpki?.toString('base64url') ?? '',
+      protocol: binding.path === 'relay' ? 'latch-pad/1' : 'h2',
     })
     secure = helper.socket
     if (!options.isActive(device.id)) throw new Error('Native authentication failed')
@@ -121,7 +122,14 @@ export async function acceptNative(
     const signature = options.identity.sign(input)
     await writeRecord(secure, concat(field(root), uint(before, 8), uint(after, 8), fixed(signature, 64)))
     if (!options.isActive(device.id)) throw new Error('Native authentication failed')
-    return { socket: secure, deviceId: device.id, pairing: device.kind === 'pairing', closed: helper.closed }
+    const padding = binding.path === 'relay' ? new PaddedStream(secure, 'host') : undefined
+    return {
+      socket: padding ?? secure,
+      ...(padding ? { padding } : {}),
+      deviceId: device.id,
+      pairing: device.kind === 'pairing',
+      closed: helper.closed,
+    }
   } catch {
     secure?.destroy()
     stream.destroy()
@@ -138,7 +146,7 @@ export async function connectNative(
     | { pairing: true; certificate?: never; key?: never }
     | { pairing?: false; certificate: string; key: string }
   ),
-): Promise<TLSSocket> {
+): Promise<TLSSocket | PaddedStream> {
   let secure: TLSSocket | undefined
   try {
     if (!options.pairing && (!options.certificate || !options.key)) throw new Error('Native device identity required')
@@ -159,11 +167,12 @@ export async function connectNative(
       servername: 'transport.latch.invalid',
       minVersion: 'TLSv1.3',
       maxVersion: 'TLSv1.3',
-      ALPNProtocols: [PROTOCOL],
+      ALPNProtocols: [binding.path === 'relay' ? 'latch-pad/1' : 'h2'],
       secureOptions: constants.SSL_OP_NO_TICKET,
     })
     await once(secure, 'secureConnect', { signal: AbortSignal.timeout(3000) })
-    if (!secure.authorized || secure.alpnProtocol !== PROTOCOL) throw new Error('Native TLS failed')
+    if (!secure.authorized || secure.alpnProtocol !== (binding.path === 'relay' ? 'latch-pad/1' : 'h2'))
+      throw new Error('Native TLS failed')
     const proof = new Reader(await record(secure)),
       root = proof.field(256),
       before = proof.number(8),
@@ -185,7 +194,7 @@ export async function connectNative(
       )
     )
       throw new Error('Native Host identity mismatch')
-    return secure
+    return binding.path === 'relay' ? new PaddedStream(secure, 'client') : secure
   } catch {
     secure?.destroy()
     stream.destroy()

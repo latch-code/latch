@@ -16,6 +16,8 @@ import {
   type ClientPanelDefinition,
   type ClientPanelLease,
   type SkillDefinition,
+  type TransportDriver,
+  type TransportLease,
 } from '@latch/sdk'
 import { z } from 'zod'
 import { checkedClientPanel, checkedUiPanel, renderUiPanel } from './ui-panels.ts'
@@ -43,6 +45,8 @@ interface Entry {
   providers: ModelProvider[]
   tools: ToolDefinition[]
   harnesses: HarnessDriver[]
+  transports: TransportDriver[]
+  transportLeases: Set<{ invalidate(): void; done: Promise<void> }>
   panels: UiPanelDefinition[]
   clientPanels: Array<ClientPanelDefinition & { hash: string }>
   skills: SkillDefinition[]
@@ -109,6 +113,8 @@ export class PluginRegistry implements RuntimeRegistry {
       providers: [],
       tools: [],
       harnesses: [],
+      transports: [],
+      transportLeases: new Set(),
       panels: [],
       clientPanels: [],
       skills: [],
@@ -177,6 +183,47 @@ export class PluginRegistry implements RuntimeRegistry {
             }
             entry.harnesses.push(driver)
           },
+          registerTransport: driver => {
+            ctx.fiber.assertActive()
+            if (
+              !/^[A-Za-z0-9_-]{1,64}$/u.test(driver.id)
+              || !['native-stream-v1', 'latch-relay-v1', 'latch-relay-v2'].includes(driver.profile)
+              || typeof driver.open !== 'function'
+              || (driver.listen !== undefined && typeof driver.listen !== 'function')
+            )
+              throw new AppError(400, 'transport-invalid', '连接插件的传输声明无效。')
+            if (candidates().some(e => e.transports.some(item => item.id === driver.id)))
+              throw new AppError(409, 'transport-exists', '连接传输标识已注册。')
+            const descriptors = z
+              .array(
+                z.strictObject({
+                  version: z.literal(1),
+                  driverId: z.literal(driver.id),
+                  channelId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/u),
+                  endpoint: z.string().min(1).max(1024),
+                }),
+              )
+              .max(16)
+              .parse(driver.descriptors ?? [])
+            if (new Set(descriptors.map(value => value.channelId)).size !== descriptors.length)
+              throw new AppError(400, 'transport-invalid', '连接通道标识重复。')
+            if (
+              candidates().reduce(
+                (sum, owner) => sum + owner.transports.reduce((count, item) => count + (item.descriptors?.length ?? 0), 0),
+                0,
+              )
+                + descriptors.length
+              > 8
+            )
+              throw new AppError(409, 'transport-limit', '最多启用八个插件连接通道。')
+            entry.transports.push({
+              id: driver.id,
+              profile: driver.profile,
+              descriptors: Object.freeze(descriptors.map(value => Object.freeze(value))),
+              open: input => driver.open(input),
+              ...(driver.listen ? { listen: input => driver.listen!(input) } : {}),
+            })
+          },
           registerUiPanel: panel => {
             ctx.fiber.assertActive()
             const checked = checkedUiPanel(panel)
@@ -212,10 +259,14 @@ export class PluginRegistry implements RuntimeRegistry {
 
   async disable(id: string): Promise<void> {
     const entry = this.entry(id)
-    if (this.leases(id)) throw new AppError(409, 'plugin-in-use', `${IN_USE}停用`)
+    const transports = this.transportLeases(id)
+    if (this.leases(id) > transports.length) throw new AppError(409, 'plugin-in-use', `${IN_USE}停用`)
     if (this.mutating.has(id)) throw new AppError(409, 'plugin-busy', '插件正在变更，请稍后重试')
     this.mutating.add(id)
     try {
+      entry.enabled = false
+      for (const lease of transports) lease.invalidate()
+      await Promise.all(transports.map(lease => lease.done))
       await this.dispose(entry)
     } finally {
       this.mutating.delete(id)
@@ -227,6 +278,7 @@ export class PluginRegistry implements RuntimeRegistry {
     const entry = this.entry(id)
     if (this.mutating.has(id)) throw new AppError(409, 'plugin-busy', '插件正在变更，请稍后重试')
     entry.enabled = false
+    for (const lease of entry.transportLeases) lease.invalidate()
     if (forget) this.entries.delete(id)
     else this.entries.set(id, this.newEntry(entry.plugin, entry.managed, entry.revision))
     if (entry.leases) this.retired.add(entry)
@@ -236,10 +288,14 @@ export class PluginRegistry implements RuntimeRegistry {
   /** Disables and forgets a plugin. The entry is forgotten even when its cleanup reports failures. */
   async unregister(id: string): Promise<void> {
     const entry = this.entry(id)
-    if (this.leases(id)) throw new AppError(409, 'plugin-in-use', `${IN_USE}删除`)
+    const transports = this.transportLeases(id)
+    if (this.leases(id) > transports.length) throw new AppError(409, 'plugin-in-use', `${IN_USE}删除`)
     if (this.mutating.has(id)) throw new AppError(409, 'plugin-busy', '插件正在变更，请稍后重试')
     this.mutating.add(id)
     try {
+      entry.enabled = false
+      for (const lease of transports) lease.invalidate()
+      await Promise.all(transports.map(lease => lease.done))
       await this.dispose(entry)
     } finally {
       if (this.entries.get(id) === entry) this.entries.delete(id)
@@ -261,6 +317,7 @@ export class PluginRegistry implements RuntimeRegistry {
     entry.providers = []
     entry.tools = []
     entry.harnesses = []
+    entry.transports = []
     entry.panels = []
     entry.clientPanels = []
     entry.skills = []
@@ -275,6 +332,10 @@ export class PluginRegistry implements RuntimeRegistry {
   }
 
   /** Leases (or with `runs`, run leases) held by every generation of a plugin, including retired ones still finishing runs. */
+  private transportLeases(id: string): Array<{ invalidate(): void; done: Promise<void> }> {
+    return [...this.entries.values(), ...this.retired].filter(entry => entry.plugin.id === id).flatMap(entry => [...entry.transportLeases])
+  }
+
   private leases(id: string, count: 'leases' | 'runs' = 'leases'): number {
     let total = this.entries.get(id)?.[count] ?? 0
     for (const entry of this.retired) if (entry.plugin.id === id) total += entry[count]
@@ -356,7 +417,7 @@ export class PluginRegistry implements RuntimeRegistry {
     const tools = withTools ? capabilities.flatMap(e => e.tools) : []
     const skills = capabilities.flatMap(entry => entry.skills.map(skill => ({ ...skill, id: `${entry.plugin.id}:${skill.id}` })))
     if (skills.reduce((size, skill) => size + skill.content.length, 0) > 256_000) {
-      throw new AppError(409, 'skills-too-large', '已启用技能的总长度超过 256 KB，请停用部分需求包后重试。')
+      throw new AppError(409, 'skills-too-large', '已启用技能的总长度超过 256 KB，请停用部分插件后重试。')
     }
     return { provider, tools, ...(skills.length ? { skills } : {}), release: this.lease(contributors, true) }
   }
@@ -440,12 +501,60 @@ export class PluginRegistry implements RuntimeRegistry {
         ...e.providers.map(p => `provider:${p.id}`),
         ...e.tools.map(t => `tool:${t.name}`),
         ...e.harnesses.map(h => `harness:${h.id}`),
+        ...e.transports.map(driver => `transport:${driver.id}`),
         ...e.panels.map(panel => `${panel.listed === false ? 'data' : 'ui'}:${panel.id}`),
         ...e.clientPanels.map(panel => `ui:${panel.id}`),
         ...e.skills.map(skill => `skill:${skill.id}`),
       ],
       ...(e.managed ? { managed: e.managed } : {}),
     }))
+  }
+
+  transports(): Array<{
+    id: string
+    profile: TransportDriver['profile']
+    descriptors: ReadonlyArray<import('@latch/sdk').TransportDescriptor>
+  }> {
+    return [...this.entries.values()]
+      .filter(entry => entry.enabled)
+      .flatMap(entry =>
+        entry.transports.map(driver => ({
+          id: driver.id,
+          profile: driver.profile,
+          descriptors: driver.descriptors ?? [],
+        })),
+      )
+  }
+
+  acquireTransport(id: string): TransportLease {
+    const entry = [...this.entries.values()].find(entry => entry.enabled && entry.transports.some(driver => driver.id === id))
+    const driver = entry?.transports.find(driver => driver.id === id)
+    if (!entry || !driver) throw new AppError(409, 'transport-unavailable', '请先安装并启用这个连接插件。')
+    if (this.mutating.has(entry.plugin.id)) throw new AppError(409, 'plugin-busy', '连接插件正在变更，请稍后重试。')
+    let invalidate!: () => void,
+      finish!: () => void,
+      released = false
+    const invalidated = new Promise<void>(resolve => {
+        invalidate = resolve
+      }),
+      done = new Promise<void>(resolve => {
+        finish = resolve
+      }),
+      reference = { invalidate, done },
+      release = this.lease([entry], false)
+    entry.transportLeases.add(reference)
+    return {
+      driver,
+      isCurrent: () => this.entries.get(entry.plugin.id) === entry && entry.enabled && !this.mutating.has(entry.plugin.id),
+      invalidated,
+      release() {
+        if (released) return
+        released = true
+        entry.transportLeases.delete(reference)
+        release()
+        finish()
+      },
+    }
   }
 
   acquireHarness(id: string): HarnessLease {
@@ -474,6 +583,7 @@ export class PluginRegistry implements RuntimeRegistry {
       await beforeCommit?.()
       staged.enabled = !keepDisabled
       this.entries.set(plugin.id, staged)
+      if (previous) for (const lease of previous.transportLeases) lease.invalidate()
       committed = true
       if (previous?.leases) this.retired.add(previous)
       else if (previous)

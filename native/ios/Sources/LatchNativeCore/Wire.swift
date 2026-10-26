@@ -119,13 +119,17 @@ public struct LinkReader {
     public func done() throws { guard at == bytes.count else { throw NativeFailure.invalidRecord } }
 }
 
+public enum NativeRelayProfile: String, Codable, Sendable { case outerPadV2 = "outer-pad-v2" }
+
 public enum LinkBinding: Sendable {
     case direct
     case relay(id: Data, route: Data)
+    case relayPaddedV2(id: Data, route: Data)
     public func encoded() throws -> Data {
         switch self {
         case .direct: return try LinkBytes.field(Data("direct".utf8)) + LinkBytes.field(Data())
         case let .relay(id, route): return try LinkBytes.field(Data("relay".utf8)) + LinkBytes.field(LinkBytes.fixed(id, 16) + LinkBytes.fixed(route, 16))
+        case let .relayPaddedV2(id, route): return try LinkBytes.field(Data("relay-pad-v2".utf8)) + LinkBytes.field(LinkBytes.fixed(id, 16) + LinkBytes.fixed(route, 16))
         }
     }
 }

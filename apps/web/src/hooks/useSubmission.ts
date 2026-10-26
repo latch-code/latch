@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { AppSnapshot, ModelRef, FileMention } from '@latch/protocol'
 import {
   api,
@@ -37,9 +37,9 @@ export function useSubmission({
   assistantId?: string
   select: (id: string | null) => void
   refresh: () => Promise<void>
-  onSent: (sessionId: string, submission: PendingSubmission) => void
-  /** A definitive refusal for an existing session, e.g. a session that no longer accepts input. */
-  onRefused?: (sessionId: string, error: unknown) => void
+  onSent: (sessionId: string, submission: PendingSubmission, result: { foreground: boolean; consumedDraft: boolean }) => void
+  /** A definitive refusal. Return true when a dedicated recovery UI owns its explanation. */
+  onRefused?: (sessionId: string, error: unknown) => boolean | void
 }) {
   const deviceId = snapshot.device.id
   const catalog = snapshot.catalog
@@ -50,6 +50,18 @@ export function useSubmission({
   const [sending, setSending] = useState(false)
   const [sendingMessage, setSendingMessage] = useState<SendingMessage | null>(null)
   const sendingRef = useRef(false)
+  const mounted = useRef(true)
+  const destination = useRef({ selectedId, assistantId, epoch: 0 })
+  if (destination.current.selectedId !== selectedId || destination.current.assistantId !== assistantId)
+    destination.current = { selectedId, assistantId, epoch: destination.current.epoch + 1 }
+  const requestOrigins = useRef(new Map<string, { epoch: number; consumedDraft: boolean }>())
+  useLayoutEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      destination.current.epoch++
+    }
+  }, [])
   const [error, setError] = useState('')
   const [stored, setStored] = useState<Partial<ComposerChoice> | null>(() => readChoice(deviceId))
   const { legacy, local } = access
@@ -73,8 +85,12 @@ export function useSubmission({
         : null,
     )
     if (restored === null) return
-    setDraft(restored.prompt)
-    setFork(restored.forkOf ?? null)
+    const ownsInput =
+      restored.sessionId === undefined ? selectedId === null && assistantId === restored.assistantId : selectedId === restored.sessionId
+    if (ownsInput) {
+      setDraft(restored.prompt)
+      setFork(restored.forkOf ?? null)
+    }
     if (restored.sessionId === undefined) {
       setStored(previous => ({
         ...previous,
@@ -130,9 +146,17 @@ export function useSubmission({
           })
     if (fileRefs?.length && !retry && resend === undefined) submission.fileRefs = fileRefs
     if (attachmentIds?.length && !retry && resend === undefined) submission.attachmentIds = attachmentIds
+    // An uncertain delivery never rebinds a retry to the input currently on screen.
+    const origin = requestOrigins.current.get(submission.requestId) ?? {
+      epoch: destination.current.epoch,
+      consumedDraft: resend === undefined,
+    }
+    if (!retry) requestOrigins.current.clear()
+    requestOrigins.current.set(submission.requestId, origin)
     try {
       writePending(pendingKey, submission)
     } catch {
+      requestOrigins.current.delete(submission.requestId)
       setError('无法保存待发送内容。请允许浏览器存储后重试，避免断线时重复提交。')
       return false
     }
@@ -161,13 +185,20 @@ export function useSubmission({
       const sessionId = submission.sessionId ?? result.sessionId
       if (sessionId === undefined) throw new Error('missing session id')
       setSendingMessage(submission.queue ? null : { submission, sessionId, state: 'accepted', startedAt: Date.now() })
-      select(sessionId)
-      if (!submission.queue) onSent(sessionId, submission)
+      const foreground =
+        mounted.current
+        && destination.current.epoch === origin.epoch
+        && (submission.sessionId === undefined
+          ? destination.current.selectedId === null && destination.current.assistantId === submission.assistantId
+          : destination.current.selectedId === submission.sessionId)
+      if (foreground) select(sessionId)
+      if (mounted.current) onSent(sessionId, submission, { foreground, consumedDraft: origin.consumedDraft })
+      requestOrigins.current.delete(submission.requestId)
       writePending(pendingKey, null)
       setPending(null)
       // A resent prompt never came from the composer, so whatever is being drafted stays.
-      if (resend === undefined) setDraft('')
-      if (submission.sessionId === undefined) setFork(null)
+      if (origin.consumedDraft && foreground) setDraft('')
+      if (submission.sessionId === undefined && foreground) setFork(null)
       if (submission.sessionId !== undefined)
         setOverrides(previous => {
           const next = { ...previous }
@@ -182,12 +213,13 @@ export function useSubmission({
         previous?.submission.requestId !== submission.requestId ? previous : uncertain ? { ...previous, state: 'unknown' } : null,
       )
       if (!uncertain) {
+        requestOrigins.current.delete(submission.requestId)
         writePending(pendingKey, null)
         setPending(null)
       }
-      if (!uncertain && submission.sessionId !== undefined) onRefused?.(submission.sessionId, cause)
+      const handled = !uncertain && submission.sessionId !== undefined && onRefused?.(submission.sessionId, cause) === true
       // The persistent pending card owns unknown delivery; it is not a confirmed failure.
-      setError(uncertain ? '' : inlineError(cause))
+      setError(uncertain || handled ? '' : inlineError(cause))
       return false
     } finally {
       sendingRef.current = false

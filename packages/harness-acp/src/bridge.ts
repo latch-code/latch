@@ -381,9 +381,9 @@ export class AcpBridge implements Bridge {
   }
 
   /** Moves a turn to a phase; `since` changes only when the phase or its tool does. */
-  private phase(run: Run, phase: NonNullable<TaskDetail['activity']>['phase'], toolName?: string): void {
+  private phase(run: Run, phase: NonNullable<TaskDetail['activity']>['phase'], toolName?: string, since?: string): void {
     if (run.activity.phase === phase && run.activity.toolName === toolName && run.activity.since) return
-    run.activity = { phase, ...(toolName !== undefined ? { toolName } : {}), since: this.now() }
+    run.activity = { phase, ...(toolName !== undefined ? { toolName } : {}), since: since ?? this.now() }
   }
 
   start(): Promise<void> {
@@ -904,6 +904,7 @@ export class AcpBridge implements Bridge {
     await this.assertWorkspace(task)
     this.enter(this.holds, sessionId)
     try {
+      options.authorize?.()
       const binding = await this.attach(sessionId)
       const legacy = task.acp.configSource === 'legacy'
       const method = !legacy ? 'session/set_config_option' : option.category === 'model' ? 'session/set_model' : 'session/set_mode'
@@ -915,6 +916,7 @@ export class AcpBridge implements Bridge {
       const apply = async (change?: ModeChange): Promise<void> => {
         let result: unknown
         try {
+          options.authorize?.()
           result = await binding.live.connection.request(method, params, this.limits.requestTimeoutMs)
         } catch (error) {
           if (this.state.tasks[sessionId]?.acp.drift) throw permissionDrift()
@@ -2491,7 +2493,7 @@ export class AcpBridge implements Bridge {
       task.summary.status = 'waiting-approval'
       run.clock.openWait(approval.id)
       run.lastOutputAt = this.clock()
-      this.phase(run, 'approval', approval.toolName)
+      this.phase(run, 'approval', approval.toolName, run.clock.live().runWaitingSince)
       this.touch(task)
       this.mark()
       this.notify(taskId)

@@ -97,7 +97,8 @@ export async function reportedUsage(source: Source, days: 7 | 30): Promise<Usage
             keyof TokenUsage
           >) {
             const value = usage[part]
-            if (value === undefined || !Number.isSafeInteger(value) || value < 0) row.partial[part] = true
+            if (value === undefined || !Number.isSafeInteger(value) || value < 0 || !Number.isSafeInteger((row.usage[part] ?? 0) + value))
+              row.partial[part] = true
             else row.usage[part] = (row.usage[part] ?? 0) + value
           }
         }
@@ -113,5 +114,7 @@ export async function reportedUsage(source: Source, days: 7 | 30): Promise<Usage
   result.rows = [...rows.values()].toSorted(
     (a, b) => b.usage.inputTokens + b.usage.outputTokens - a.usage.inputTokens - a.usage.outputTokens,
   )
+  for (const row of result.rows)
+    for (const part of ['cacheReadTokens', 'cacheWriteTokens', 'reasoningTokens'] as const) if (row.partial[part]) delete row.usage[part]
   return result
 }

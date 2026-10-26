@@ -43,7 +43,15 @@ const cancelReceiptSchema = z.object({
   status: z.enum(TASK_STATUSES).optional(),
   at: isoTime,
 })
-const receiptSchema = z.discriminatedUnion('kind', [approvalReceiptSchema, cancelReceiptSchema])
+const configReceiptSchema = z.strictObject({
+  kind: z.literal('config'),
+  requestId: requestIdText,
+  deviceId: deviceIdText,
+  payloadHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  state: z.enum(['pending', 'applied', 'failed', 'unknown']),
+  at: isoTime,
+})
+const receiptSchema = z.discriminatedUnion('kind', [approvalReceiptSchema, cancelReceiptSchema, configReceiptSchema])
 
 /**
  * Version 1 since titles, pins and archives; receipts were added as an optional field, so files written before them
@@ -84,7 +92,8 @@ const metaSchema = z.object({
 
 export type ApprovalRecord = z.infer<typeof approvalReceiptSchema>
 export type CancelRecord = z.infer<typeof cancelReceiptSchema>
-export type StoredReceipt = ApprovalRecord | CancelRecord
+export type ConfigRecord = z.infer<typeof configReceiptSchema>
+export type StoredReceipt = ApprovalRecord | CancelRecord | ConfigRecord
 /** Host-level session metadata (title, pin, archive); receipts are kept beside it. */
 export interface StoredMeta {
   personal?: TaskSummary['personal']
@@ -111,7 +120,10 @@ export interface SessionReceipts {
    * Visible to the two lookups at once; the returned promise settles when the file holds it. A failed write leaves the
    * receipt in memory and in the next write.
    */
-  record(sessionId: string, receipt: StoredReceipt): Promise<void>
+  record(sessionId: string, receipt: ApprovalRecord | CancelRecord): Promise<void>
+  config(sessionId: string, deviceId: string, requestId: string): ConfigRecord | undefined
+  /** Config identities never expire before their session; capacity is refused before an Agent can be invoked. */
+  recordConfig(sessionId: string, receipt: ConfigRecord): Promise<void>
 }
 
 function codeOf(error: unknown): unknown {
@@ -129,8 +141,8 @@ export interface SessionMetaOptions {
 
 /**
  * Atomic, serialized writer for the Host's per-session overlay: title, pin and archive, and the receipts of approval
- * decisions and cancels. Receipts are bounded: kept for 7 days, at most 10,000 per device and 100,000 in all, oldest
- * first out; removing a session removes its receipts.
+ * decisions, cancels and configuration changes. Decisions/cancels expire after seven days; config identities remain
+ * until session deletion. All receipts share finite device/Host capacities; config insertion fails closed.
  */
 export class SessionMetaStore implements SessionReceipts {
   private queue: Promise<void> = Promise.resolve()
@@ -140,6 +152,7 @@ export class SessionMetaStore implements SessionReceipts {
   private readonly entries = new Set<Entry>()
   private readonly approvals = new Map<string, Entry>()
   private readonly cancels = new Map<string, Entry>()
+  private readonly configs = new Map<string, Entry>()
   private readonly perDevice = new Map<string, number>()
 
   private constructor(
@@ -171,14 +184,30 @@ export class SessionMetaStore implements SessionReceipts {
         if (Object.keys(fields).length) meta.set(id, fields)
         for (const value of receipts ?? []) {
           const receipt = receiptSchema.safeParse(value)
-          if (receipt.success) loaded.push({ sessionId: id, receipt: receipt.data })
-          else skipped++
+          if (receipt.success) {
+            if (receipt.data.kind === 'config' && receipt.data.state === 'pending') receipt.data.state = 'unknown'
+            loaded.push({ sessionId: id, receipt: receipt.data })
+          } else if (typeof value === 'object' && value !== null && 'kind' in value && value.kind === 'config') {
+            throw new AppError(500, 'config-corrupt', '会话配置回执无法读取，原文件已保留。')
+          } else skipped++
         }
       }
     }
     const store = new SessionMetaStore(path, dataDir, meta, options.now ?? Date.now)
     loaded.sort((a, b) => Date.parse(a.receipt.at) - Date.parse(b.receipt.at))
-    for (const entry of loaded) store.insert(entry)
+    const configDevices = new Map<string, number>()
+    for (const entry of loaded) {
+      if (entry.receipt.kind === 'config') {
+        if (
+          store.config(entry.sessionId, entry.receipt.deviceId, entry.receipt.requestId)
+          || store.configs.size >= MAX_RECEIPTS
+          || (configDevices.get(entry.receipt.deviceId) ?? 0) >= RECEIPTS_PER_DEVICE
+        )
+          throw new AppError(500, 'config-corrupt', '会话配置回执有重复标识或超过容量，原文件已保留。')
+        configDevices.set(entry.receipt.deviceId, (configDevices.get(entry.receipt.deviceId) ?? 0) + 1)
+      }
+      store.insert(entry)
+    }
     store.prune()
     if (skipped) options.log?.(`会话设置文件中有 ${skipped} 条无法识别的回执，已忽略`)
     return store
@@ -231,7 +260,7 @@ export class SessionMetaStore implements SessionReceipts {
     return receipt?.kind === 'cancel' ? receipt : undefined
   }
 
-  record(sessionId: string, receipt: StoredReceipt): Promise<void> {
+  record(sessionId: string, receipt: ApprovalRecord | CancelRecord): Promise<void> {
     this.insert({ sessionId, receipt: structuredClone(receipt) })
     this.prune()
     // The write reads the receipts when it starts, so every receipt recorded before then is in it.
@@ -240,6 +269,31 @@ export class SessionMetaStore implements SessionReceipts {
       await this.write(this.meta)
     })
     return this.pendingWrite
+  }
+
+  config(sessionId: string, deviceId: string, requestId: string): ConfigRecord | undefined {
+    const value = this.configs.get(cancelKey(sessionId, deviceId, requestId))?.receipt
+    return value?.kind === 'config' ? structuredClone(value) : undefined
+  }
+
+  recordConfig(sessionId: string, input: ConfigRecord): Promise<void> {
+    const receipt = configReceiptSchema.parse(input),
+      previous = this.config(sessionId, receipt.deviceId, receipt.requestId)
+    if (previous && previous.payloadHash !== receipt.payloadHash)
+      throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同配置。')
+    this.prune()
+    if (!previous && (this.entries.size >= MAX_RECEIPTS || (this.perDevice.get(receipt.deviceId) ?? 0) >= RECEIPTS_PER_DEVICE))
+      throw new AppError(409, 'config-receipt-limit', '配置回执已满，请删除不需要的旧会话后再修改。')
+    this.insert({ sessionId, receipt })
+    return this.enqueue(async () => {
+      try {
+        await this.write(this.meta)
+      } catch {
+        const current = this.config(sessionId, receipt.deviceId, receipt.requestId)
+        if (current?.payloadHash === receipt.payloadHash) this.insert({ sessionId, receipt: { ...current, state: 'unknown' } })
+        throw new AppError(503, 'config-outcome-unknown', '配置修改结果尚未确认，请查询原请求，不能重复执行。')
+      }
+    })
   }
 
   flush(): Promise<void> {
@@ -263,10 +317,11 @@ export class SessionMetaStore implements SessionReceipts {
       if (previous) this.delete(previous)
       this.approvals.set(receipt.approvalId, entry)
     } else {
-      const key = cancelKey(sessionId, receipt.deviceId, receipt.requestId)
-      const previous = this.cancels.get(key)
+      const key = cancelKey(sessionId, receipt.deviceId, receipt.requestId),
+        index = receipt.kind === 'config' ? this.configs : this.cancels
+      const previous = index.get(key)
       if (previous) this.delete(previous)
-      this.cancels.set(key, entry)
+      index.set(key, entry)
     }
     this.entries.add(entry)
     this.perDevice.set(receipt.deviceId, (this.perDevice.get(receipt.deviceId) ?? 0) + 1)
@@ -279,7 +334,8 @@ export class SessionMetaStore implements SessionReceipts {
       if (this.approvals.get(receipt.approvalId) === entry) this.approvals.delete(receipt.approvalId)
     } else {
       const key = cancelKey(sessionId, receipt.deviceId, receipt.requestId)
-      if (this.cancels.get(key) === entry) this.cancels.delete(key)
+      const index = receipt.kind === 'config' ? this.configs : this.cancels
+      if (index.get(key) === entry) index.delete(key)
     }
     const count = (this.perDevice.get(receipt.deviceId) ?? 1) - 1
     if (count > 0) this.perDevice.set(receipt.deviceId, count)
@@ -289,6 +345,7 @@ export class SessionMetaStore implements SessionReceipts {
   private prune(): void {
     const oldest = this.now() - RECEIPT_TTL_MS
     for (const entry of this.entries) {
+      if (entry.receipt.kind === 'config') continue
       const at = Date.parse(entry.receipt.at)
       if (this.entries.size <= MAX_RECEIPTS && at >= oldest) break
       this.delete(entry)
@@ -298,7 +355,7 @@ export class SessionMetaStore implements SessionReceipts {
       let excess = count - RECEIPTS_PER_DEVICE
       for (const entry of this.entries) {
         if (excess === 0) break
-        if (entry.receipt.deviceId !== device) continue
+        if (entry.receipt.deviceId !== device || entry.receipt.kind === 'config') continue
         this.delete(entry)
         excess--
       }

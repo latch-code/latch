@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import {
   Bot,
   ChevronLeft,
@@ -20,17 +20,25 @@ import { currentShell } from '../core/shell.ts'
 import { DevModeChip } from '../components/DevModeChip.tsx'
 import { Modal } from '../components/overlays.tsx'
 import { useBackLayer } from '../hooks/backStack.ts'
-import { AboutSettings } from './AboutSettings.tsx'
-import { AgentsSettings } from './AgentsSettings.tsx'
-import { ComputerSettings } from './ComputerSettings.tsx'
-import { DevicesSettings } from './DevicesSettings.tsx'
-import { GeneralSettings } from './GeneralSettings.tsx'
 import { LegacyProviderSettings } from './LegacyProviderSettings.tsx'
 import { SettingsNavigationProvider, type SettingsNavigation } from './navigation.tsx'
-import { PluginsSettings } from './PluginsSettings.tsx'
-import { ProvidersSettings } from './ProvidersSettings.tsx'
-import { WorkspacesSettings } from './WorkspacesSettings.tsx'
+import { deferredComponent } from '../components/DeferredContent.tsx'
 import { Button, Count, Icon, IconButton, type LucideIcon } from '@latch/ui'
+
+const AboutSettings = deferredComponent(async () => ({ default: (await import('./AboutSettings.tsx')).AboutSettings }), '关于')
+const AgentsSettings = deferredComponent(async () => ({ default: (await import('./AgentsSettings.tsx')).AgentsSettings }), 'Agent 设置')
+const ComputerSettings = deferredComponent(async () => ({ default: (await import('./ComputerSettings.tsx')).ComputerSettings }), '电脑设置')
+const DevicesSettings = deferredComponent(async () => ({ default: (await import('./DevicesSettings.tsx')).DevicesSettings }), '设备设置')
+const GeneralSettings = deferredComponent(async () => ({ default: (await import('./GeneralSettings.tsx')).GeneralSettings }), '通用设置')
+const PluginsSettings = deferredComponent(async () => ({ default: (await import('./PluginsSettings.tsx')).PluginsSettings }), '插件设置')
+const ProvidersSettings = deferredComponent(
+  async () => ({ default: (await import('./ProvidersSettings.tsx')).ProvidersSettings }),
+  '模型服务设置',
+)
+const WorkspacesSettings = deferredComponent(
+  async () => ({ default: (await import('./WorkspacesSettings.tsx')).WorkspacesSettings }),
+  '项目设置',
+)
 
 export type SettingsSection = 'general' | 'computer' | 'providers' | 'agents' | 'workspaces' | 'plugins' | 'devices' | 'about'
 /**
@@ -60,6 +68,21 @@ export function settingsSections(snapshot: AppSnapshot, access: DeviceAccess = d
     .map(section => section.id)
 }
 
+/** A remembered section may disappear while its module loads; hidden permissions must unmount its body immediately. */
+export function settingsPanel(
+  ids: readonly SettingsSection[],
+  chosen: SettingsSection | null,
+  phone: boolean,
+  shown: SettingsSection | null,
+): {
+  active: SettingsSection | null
+  panel: SettingsSection | null
+} {
+  const active = chosen && ids.includes(chosen) ? chosen : phone ? null : 'general'
+  const panel = active ?? (shown && ids.includes(shown) ? shown : null)
+  return { active, panel }
+}
+
 /** 「返回会话」 names what waits there, so its count is read out as well. */
 const returnLabel = (waiting: number) => (waiting > 0 ? `返回会话（${waiting} 项等你处理）` : '返回会话')
 
@@ -77,6 +100,7 @@ export function SettingsPage({
   initialProjectId,
   onClose,
   onChanged,
+  onOpenSession,
 }: {
   snapshot: AppSnapshot
   access?: DeviceAccess
@@ -84,6 +108,7 @@ export function SettingsPage({
   initialProjectId?: string
   onClose: () => void
   onChanged: () => void
+  onOpenSession?: (id: string) => void
 }) {
   const phone = useViewport() === 'phone'
   const access = given ?? deviceAccess(snapshot, currentShell())
@@ -93,10 +118,22 @@ export function SettingsPage({
   const [chosen, setChosen] = useState<SettingsSection | null>(
     initial && available.some(section => section.id === initial) ? initial : null,
   )
-  const active = chosen ?? (phone ? null : 'general')
   // On phones the last section stays laid out under the list, so going back slides it away instead of blanking it.
-  const [shown, setShown] = useState<SettingsSection | null>(active)
-  const panel = active ?? shown
+  const [shown, setShown] = useState<SettingsSection | null>(chosen ?? (phone ? null : 'general'))
+  const { active, panel } = settingsPanel(ids, chosen, phone, shown)
+  const chosenAllowed = chosen === null || ids.includes(chosen)
+  const shownAllowed = shown === null || ids.includes(shown)
+  useLayoutEffect(() => {
+    if (!chosenAllowed) setChosen(null)
+    if (!shownAllowed) setShown(null)
+    if (!chosenAllowed || !shownAllowed) {
+      const dialog = layout.current?.closest('dialog')
+      if (document.activeElement === document.body || document.activeElement === dialog)
+        (tabs.current?.querySelector<HTMLButtonElement>('[aria-selected="true"]') ?? tabs.current?.querySelector('button'))?.focus({
+          preventScroll: true,
+        })
+    }
+  }, [chosenAllowed, shownAllowed])
   const tabs = useRef<HTMLDivElement>(null)
   const layout = useRef<HTMLDivElement>(null)
   const current = available.find(section => section.id === panel)
@@ -271,6 +308,7 @@ export function SettingsPage({
                         onChanged={onChanged}
                         initialProjectId={initialProjectId}
                         onComputer={() => open('computer')}
+                        {...(access.scopes.has('view') && onOpenSession ? { onOpenSession } : {})}
                       />
                     )}
                     {panel === 'plugins' && <PluginsSettings onManage={open} snapshot={snapshot} access={access} onChanged={onChanged} />}

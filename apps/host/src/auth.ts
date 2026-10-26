@@ -1413,6 +1413,8 @@ interface Enrollment {
 }
 
 interface Invitation {
+  /** A Native invitation's maximum data range, selected on host.sock; never learned from the phone. */
+  dataScope?: DataScope
   id: string
   codeHash: string
   scopes: DeviceScope[]
@@ -1593,6 +1595,10 @@ export class EnrollmentService {
       if (scopes.some(scope => !invitation!.scopes.includes(scope)))
         throw new AppError(400, 'scope-not-grantable', '该权限在此连接方式下不可授予')
       if (isNativeListener(connection.listener)) {
+        const allowed = invitation.dataScope ?? 'work'
+        if (request.dataScope === 'all' && allowed !== 'all')
+          throw new AppError(400, 'scope-not-grantable', '这个配对邀请尚未在电脑上允许个人助手和项目文件。')
+        dataScope = request.dataScope ?? allowed
         if (!request.native) throw new AppError(400, 'native-identity-required', '原生配对必须提供独立的连接密钥与验证密钥')
         const identity = validateNativeIdentity(request.native, der)
         const secret = await nativeKnockSecret(
@@ -2001,7 +2007,7 @@ export class EnrollmentService {
   }
 
   private async issueInvitation(
-    input: { inviter?: Device; scopes?: DeviceScope[]; listener: ListenerClass; origin: string },
+    input: { inviter?: Device; scopes?: DeviceScope[]; dataScope?: DataScope; listener: ListenerClass; origin: string },
     actor: AuditActor,
   ): Promise<InvitationView> {
     // The Host's own listeners only: callers pass the TLS entry or the loopback origin it started with.
@@ -2018,6 +2024,9 @@ export class EnrollmentService {
       throw new AppError(409, 'tls-not-configured', '尚未配置 HTTPS 入口，无法生成手机配对码')
     }
     if (input.inviter && !this.devices.isActive(input.inviter.id)) throw unauthorized()
+    if (input.dataScope !== undefined && (!isNativeListener(input.listener) || !['work', 'all'].includes(input.dataScope)))
+      throw new AppError(400, 'invalid-data-scope', '配对数据范围无效。')
+    const dataScope = isNativeListener(input.listener) ? (input.dataScope ?? 'work') : undefined
     const scopes = input.scopes ? normalizeScopes(input.scopes) : [...DEFAULT_REMOTE_SCOPES]
     if (scopes.some(scope => !INVITABLE_SCOPES.includes(scope)))
       throw new AppError(400, 'scope-not-grantable', '该权限在此连接方式下不可授予')
@@ -2032,17 +2041,18 @@ export class EnrollmentService {
       action: 'pairing.invited',
       actor,
       target: id,
-      detail: { invitationId: id, scopes, listener: input.listener },
+      detail: { invitationId: id, scopes, listener: input.listener, ...(dataScope ? { dataScope } : {}) },
     })
     this.invitations.set(id, {
       id,
       codeHash: sha256Hex(code),
       scopes,
+      ...(dataScope ? { dataScope } : {}),
       expiresAt,
       listener: input.listener,
       origin: input.origin,
       ...(input.inviter ? { inviterDeviceId: input.inviter.id, inviterName: input.inviter.name } : {}),
     })
-    return { id, code, url: `${input.origin}/link/#pair=${code}`, scopes, expiresAt: iso(expiresAt) }
+    return { id, code, url: `${input.origin}/link/#pair=${code}`, scopes, expiresAt: iso(expiresAt), ...(dataScope ? { dataScope } : {}) }
   }
 }

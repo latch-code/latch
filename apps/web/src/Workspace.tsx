@@ -3,6 +3,7 @@ import { hasFileMention, mentionMarker } from './fileMentions.ts'
 import type { FileMention } from '@latch/protocol'
 import { useAttachments } from './hooks/useAttachments.ts'
 import { useFileTabs } from './preview/useFileTabs.ts'
+import { quoteDraft, type FileQuote } from './preview/quote.ts'
 import { FileOpenContext, fileContextKey } from './preview/fileContext.ts'
 import { placeFileColumn } from './preview/layout.ts'
 import { useAutoOpenOutputs } from './hooks/useAutoOpenOutputs.ts'
@@ -16,6 +17,10 @@ import { api, ApiError, errorMessage, inlineError, isUncertain } from './core/ap
 import { choiceKind, DecisionRequests, settledOutcome } from './core/approvalDecision.ts'
 import { AUDIT_ROLLBACK_TEXT, useAuditCheckpoint } from './core/auditCheckpoint.ts'
 import { cancelAnswer, CancelRequests } from './core/cancelRequest.ts'
+import { ConfigRequests } from './core/configRequest.ts'
+import { SessionDrafts } from './core/sessionDrafts.ts'
+import type { SessionConfigFeedback } from './components/modelReasoning.ts'
+import { WorkspaceRecovery } from './components/WorkspaceRecovery.tsx'
 import { usesDrawer, useCoarsePointer, useViewport, useWindowWidth } from './breakpoints.ts'
 import {
   entryKey,
@@ -88,6 +93,7 @@ import { scopedTemplates, usePromptTemplates } from './hooks/usePromptTemplates.
 import { useSessionSearch } from './hooks/useSessionSearch.ts'
 import { SessionSearchResults } from './components/SessionSearchResults.tsx'
 import { GettingStarted } from './components/GettingStarted.tsx'
+import { NotificationPrompt } from './components/NotificationPrompt.tsx'
 import { KeyboardHelp } from './components/KeyboardHelp.tsx'
 import { FindBar } from './components/FindBar.tsx'
 import { CommandPalette } from './components/CommandPalette.tsx'
@@ -128,7 +134,7 @@ import {
   usePresence,
   type ResizePhase,
 } from '@latch/ui'
-import { SettingsPage, type SettingsSection } from './settings/SettingsPage.tsx'
+import { SettingsPage, settingsSections, type SettingsSection } from './settings/SettingsPage.tsx'
 import { PersonalPage } from './personal/PersonalPage.tsx'
 
 type Harness = ReturnType<typeof useHarness>
@@ -178,14 +184,22 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
   const sidebarShut =
     widthClass !== null && (sidebarDrag !== null ? 'collapsed' in sidebarDrag : preferences.sidebar.collapsed[widthClass] === true)
   const privateVisible = snapshot.device.dataScope === 'all' && snapshot.device.scopes.includes('view')
+  const sessionDrafts = useRef(new SessionDrafts())
+  const draftSessionId = useRef(selectedId)
+  const draftDevice = useRef(snapshot.device.id)
+  const privateDraftId = useRef<string | null>(null)
+  const [personalGroupId, setPersonalGroupId] = useState<string | undefined>()
   useLayoutEffect(() => {
     if (!privateVisible) {
       setPersonalDraft(null)
       setPersonalOpen(false)
+      setPersonalGroupId(undefined)
     }
   }, [privateVisible])
   const current = detail?.summary.id === selectedId && (!detail.summary.personal || privateVisible) ? detail : null
   const summary = current?.summary ?? snapshot.tasks.find(task => task.id === selectedId && (!task.personal || privateVisible))
+  if (summary?.personal && selectedId) privateDraftId.current = selectedId
+  else if (privateDraftId.current !== selectedId) privateDraftId.current = null
   /**
    * A drag that has just snapped the column shut, or pulled it open again: for one track transition the column slides
    * instead of following the pointer. Each snap restarts the window.
@@ -214,6 +228,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
   const composerRef = useRef<HTMLTextAreaElement>(null)
   /** The new-session page's 「添加 Agent」 tile, which the line under the input opens as well. */
   const addAgentTrigger = useRef<HTMLButtonElement>(null)
+  const setupTrigger = useRef<HTMLButtonElement>(null)
   /** The input of the phone's new-session sheet, apart from the open session's. */
   const sheetComposerRef = useRef<HTMLTextAreaElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
@@ -246,6 +261,10 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
   // A stop whose answer never came is not known to be under way: only the bar above the input speaks of it.
   const stopping = useMemo(() => new Set([...cancelling].filter(id => !cancelUncertain.has(id))), [cancelling, cancelUncertain])
   const [configBusy, setConfigBusy] = useState<ReadonlyMap<string, string>>(new Map())
+  const configRequests = useRef(new ConfigRequests())
+  const [configFeedback, setConfigFeedback] = useState<ReadonlyMap<string, SessionConfigFeedback>>(new Map())
+  const [recoveryProjects, setRecoveryProjects] = useState<ReadonlyMap<string, string>>(new Map())
+  const [workspaceChanged, setWorkspaceChanged] = useState<ReadonlySet<string>>(new Set())
   const [now, setNow] = useState(() => Date.now())
   /** Sessions that stopped accepting input, learned from the Host's refusal. */
   const [stopped, setStopped] = useState<ReadonlyMap<string, SessionStopCode>>(new Map())
@@ -292,6 +311,10 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
   const approvalVisibility = useApprovalVisibility()
   const approvalsInView = useApprovalsInView(approvalVisibility)
   const stopSession = (sessionId: string, cause: unknown) => {
+    if (cause instanceof ApiError && cause.code === 'workspace-changed') {
+      setWorkspaceChanged(previous => new Set(previous).add(sessionId))
+      return true
+    }
     if (cause instanceof ApiError && isSessionStopCode(cause.code)) {
       const code = cause.code
       setStopped(previous => new Map(previous).set(sessionId, code))
@@ -304,7 +327,11 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
     assistantId: personalDraft?.id,
     select,
     refresh,
-    onSent: sessionId => {
+    onSent: (sessionId, sent, { foreground, consumedDraft }) => {
+      if (consumedDraft && sent.sessionId !== undefined) sessionDrafts.current.remove(sent.sessionId)
+      if (!foreground || sent.queue) return
+      draftSessionId.current = sessionId
+      if (sent.sessionId === undefined) setPreference('onboarding', 'hidden')
       setPersonalDraft(null)
       setFilter('all')
       setSearch('')
@@ -315,6 +342,26 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
     },
     onRefused: stopSession,
   })
+  // A remote deletion clears selection without going through choose; never transfer that session's text to a new task.
+  useLayoutEffect(() => {
+    if (draftSessionId.current === selectedId) return
+    if (draftSessionId.current !== null) sessionDrafts.current.remove(draftSessionId.current)
+    draftSessionId.current = selectedId
+    submission.setDraft(selectedId === null ? '' : sessionDrafts.current.read(selectedId, privateVisible))
+  }, [selectedId])
+  useLayoutEffect(() => {
+    if (draftDevice.current !== snapshot.device.id) {
+      sessionDrafts.current.clear()
+      draftDevice.current = snapshot.device.id
+      submission.setDraft('')
+    } else if (!access.scopes.has('view')) {
+      sessionDrafts.current.clear()
+      submission.setDraft('')
+    } else if (!privateVisible) {
+      sessionDrafts.current.clearPrivate()
+      if ((privateDraftId.current !== null && privateDraftId.current === selectedId) || personalDraft !== null) submission.setDraft('')
+    }
+  }, [snapshot.device.id, privateVisible, access.scopes.has('view')])
   const choice: typeof submission.choice = personalDraft
     ? { mode: personalDraft.mode, harnessId: personalDraft.harnessId, model: personalDraft.model }
     : submission.choice
@@ -323,8 +370,13 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
     : !personalDraft && choice.mode !== 'chat' && choice.workspaceId && choice.workspaceId !== 'default'
       ? { kind: 'workspace', workspaceId: choice.workspaceId, harnessId: choice.harnessId ?? catalog?.defaults.harnessId ?? 'standard' }
       : null
-  const savedFileTabs = useFileTabs(snapshot.device.id, fileContext)
-  const fileTabs = snapshot.catalog?.features?.filePreview ? savedFileTabs : { ...savedFileTabs, tabs: [], active: undefined }
+  const fileAuthority = JSON.stringify([snapshot.device.dataScope, access.scopes.has('view'), catalog?.features?.filePreview])
+  const savedFileTabs = useFileTabs(snapshot.device.id, fileContext, fileAuthority)
+  const previewAllowed =
+    catalog?.features?.filePreview
+    && access.scopes.has('view')
+    && (fileContext?.kind !== 'workspace' || snapshot.device.dataScope === 'all')
+  const fileTabs = previewAllowed ? savedFileTabs : { ...savedFileTabs, tabs: [], active: undefined }
   const [fileExpanded, setFileExpanded] = useState(false)
   const [filesOpen, setFilesOpen] = useState(false)
   const canBrowseFiles =
@@ -335,7 +387,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
     setFilesOpen(false)
     setInfoPage(false)
     setFileExpanded(false)
-  }, [contextKey])
+  }, [contextKey, fileAuthority])
   const fileIsDocument = fileTabs.active?.file
     ? ['pptx', 'pdf', 'docx', 'xlsx', 'html'].includes(fileTabs.active.file.kind)
     : /\.(?:pptx|pdf|docx|xlsx|html?)$/iu.test(fileTabs.active?.target.reference ?? '')
@@ -408,6 +460,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
     locked: submission.sending || submission.pending !== null,
   })
   const [fileMentions, setFileMentions] = useState<FileMention[]>([])
+  const quoteSnapshots = useRef(new Map<string, { etag: string; marker: string }>())
   const mentionScope =
     selectedId ?? `${personalDraft?.id ?? choice.workspaceId ?? ''}:${choice.harnessId ?? ''}:${choice.mode}:${snapshot.device.dataScope}`
   useLayoutEffect(() => {
@@ -509,6 +562,18 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
   }, [snapshot])
 
   const choose = useStableCallback((id: string | null) => {
+    if (id !== selectedId || id === null) {
+      if (selectedId !== null) {
+        const personal = summary === undefined || Boolean(summary.personal) || privateDraftId.current === selectedId
+        if (!privateVisible && personal) sessionDrafts.current.remove(selectedId)
+        else if (!sessionDrafts.current.save(selectedId, submission.draft, personal)) {
+          setToast({ text: '草稿超出临时缓存上限，请先复制或缩短内容后再切换。', tone: 'error' })
+          return
+        }
+      }
+      submission.setDraft(id === null ? '' : sessionDrafts.current.read(id, privateVisible))
+      draftSessionId.current = id
+    }
     setPersonalDraft(null)
     clearTimeout(popTimer.current)
     setPopping(false)
@@ -519,7 +584,6 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
     setFileExpanded(false)
     submission.setError('')
     setActionError(previous => (previous?.sessionId === id ? previous : null))
-    if (submission.pending === null) submission.setDraft('')
   })
   const openFile = useStableCallback((target: ContextFileOpenTarget, options?: { focus: false }) => {
     if (snapshot.catalog?.features?.filePreview !== true) return
@@ -862,23 +926,38 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
   })
 
   const setConfig = async (configId: string, value: string) => {
-    if (selectedId === null || configBusy.has(selectedId)) return
+    if (selectedId === null) return
     const id = selectedId
+    const request = configRequests.current.begin(id, configId, value)
+    if (!request) return
     setConfigBusy(previous => new Map(previous).set(id, configId))
+    setConfigFeedback(previous => {
+      const next = new Map(previous)
+      next.delete(id)
+      return next
+    })
     clearAction(id)
     try {
       // Widening a full-access session's permission mode needs a local confirmation.
       await withConfirmation(confirmation =>
         api<unknown>(`tasks/${encodeURIComponent(id)}/config`, {
           method: 'POST',
-          body: { configId, value },
+          body: { configId, value, ...(catalog?.features?.configReceipts === true ? { requestId: request.requestId } : {}) },
           ...(confirmation ? { confirmation } : {}),
         }),
       )
+      configRequests.current.settle(id, request)
       await refresh()
     } catch (cause) {
+      configRequests.current.settle(id, request, cause)
       stopSession(id, cause)
       const text = inlineError(cause)
+      setConfigFeedback(previous =>
+        new Map(previous).set(id, {
+          kind: isUncertain(cause) ? 'unknown' : 'failed',
+          message: isUncertain(cause) ? '切换结果还未确认，请刷新设置查看结果。' : text || '设置未更改，请重新选择。',
+        }),
+      )
       if (text && !(cause instanceof ApiError && isSessionStopCode(cause.code))) failAction(id, text)
     } finally {
       setConfigBusy(previous => {
@@ -886,6 +965,29 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
         next.delete(id)
         return next
       })
+    }
+  }
+
+  const refreshConfig = async () => {
+    if (selectedId === null) return
+    const id = selectedId,
+      request = configRequests.current.get(id)
+    try {
+      const next = await api<TaskDetail>(`tasks/${encodeURIComponent(id)}`)
+      const receipt =
+        request && catalog?.features?.configReceipts === true
+          ? await api<{ state: string }>(`tasks/${encodeURIComponent(id)}/config-requests/${request.requestId}`)
+          : undefined
+      if (!request || configRequests.current.reconcile(id, request, next.config ?? [], receipt?.state))
+        setConfigFeedback(previous => {
+          const updated = new Map(previous)
+          if (receipt?.state === 'failed') updated.set(id, { kind: 'failed', message: '设置未能切换，当前仍使用执行端显示的值。' })
+          else updated.delete(id)
+          return updated
+        })
+      await refresh()
+    } catch (cause) {
+      setToast({ text: errorMessage(cause), tone: 'error' })
     }
   }
 
@@ -907,6 +1009,15 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
     }
   })
   const manageable = catalog !== undefined
+  const copyTask = useStableCallback(async (task: TaskSummary) => {
+    try {
+      const data = task.id === current?.summary.id ? current : await api<TaskDetail>(`tasks/${encodeURIComponent(task.id)}`)
+      await navigator.clipboard.writeText(transcriptMarkdown(data))
+      setToast({ text: '已复制 Markdown', tone: 'ok' })
+    } catch (cause) {
+      setToast({ text: errorMessage(cause), tone: 'error' })
+    }
+  })
   const sessionMenu = useCallback(
     (task: TaskSummary): MenuSection[] =>
       sessionMenuSections(
@@ -916,15 +1027,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
             setSeen(previous => markUnread(previous, task.id))
           },
           copy: () => {
-            void (async () => {
-              try {
-                const data = task.id === current?.summary.id ? current : await api<TaskDetail>(`tasks/${encodeURIComponent(task.id)}`)
-                await navigator.clipboard.writeText(transcriptMarkdown(data))
-                setToast({ text: '已复制 Markdown', tone: 'ok' })
-              } catch (cause) {
-                setToast({ text: errorMessage(cause), tone: 'error' })
-              }
-            })()
+            void copyTask(task)
           },
           rename: () => {
             setRenaming(task)
@@ -944,7 +1047,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
         },
         manageable,
       ),
-    [patchTask, exportTask, manageable, setRenaming, setDeleting, current],
+    [patchTask, exportTask, copyTask, manageable, setRenaming, setDeleting],
   )
 
   // Composer: new-session choices or the open session's next-turn settings.
@@ -965,15 +1068,24 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
       ? access.legacy || access.scopes.has('run')
         ? { kind: 'open' as const }
         : { kind: 'read-only' as const, text: '此设备没有「发起和继续会话」权限' }
-      : composerGate({ summary, permission: current?.permission, access, stopped: stopCode !== undefined })
+      : summary?.personal?.groupId
+        ? { kind: 'read-only' as const, text: '这是群聊中的执行记录，请回到个人助手群聊继续。' }
+        : composerGate({
+            summary,
+            permission: current?.permission,
+            access,
+            stopped: stopCode !== undefined,
+          })
   const sessionBlock =
     selectedId === null
       ? undefined
-      : harnessInfo?.status === 'unavailable'
-        ? harnessInfo.statusMessage || `${harnessInfo.name} 暂不可用`
-        : !catalog && snapshot.execution?.ready === false
-          ? '当前模型接口不可用，请检查模型插件状态。'
-          : undefined
+      : workspaceChanged.has(selectedId)
+        ? '选择一个项目继续，当前草稿会保留。'
+        : harnessInfo?.status === 'unavailable'
+          ? harnessInfo.statusMessage || `${harnessInfo.name} 暂不可用`
+          : !catalog && snapshot.execution?.ready === false
+            ? '当前模型接口不可用，请检查模型插件状态。'
+            : undefined
   // 「告诉 Agent 改做什么」 after 拒绝: a Latch 内置 rejection waits for the note in the composer; an agent's goes at once.
   const rejection = useRejectionNote({
     selectedId,
@@ -1029,6 +1141,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
   const run: RunState | undefined =
     selectedId !== null && active
       ? {
+          id: selectedId + ':' + (summary?.runId ?? ''),
           ...(current?.plan?.length ? { plan: current.plan } : {}),
           approvals: approvals.length,
           approvalsInView: approvalsInView !== false,
@@ -1110,6 +1223,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
   const composer = (
     <Composer
       textareaRef={composerRef}
+      lastPrompt={current?.messages.findLast(message => message.role === 'user')?.text}
       attachments={catalog?.features?.attachments === true && gate.kind === 'open' && !noteComposer ? attachmentDraft : undefined}
       fileMentions={mentionChoice}
       commands={current?.commands}
@@ -1144,7 +1258,6 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
       {...(noteComposer?.kind === 'note'
         ? { answer: { label: DECISION_COPY.noteSubmit, onSubmit: noteComposer.submit, onCancel: noteComposer.cancel } }
         : {})}
-      {...(startsL3 && access.local ? { confirmStart: '开始会话' } : {})}
       below={
         selectedId === null && catalog && !personalDraft ? (
           <>
@@ -1245,9 +1358,9 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
               }}
               config={current?.config ?? []}
               configBusy={configBusy.get(summary.id) ?? null}
-              onConfig={(configId, value) => {
-                void setConfig(configId, value)
-              }}
+              configFeedback={configFeedback.get(summary.id)}
+              onConfigRefresh={refreshConfig}
+              onConfig={setConfig}
               phone={phone}
               access={access}
               onManageProviders={manageProviders}
@@ -1355,9 +1468,11 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
     else setColumnOpen(!columnOpen)
   }
   const workbenchKeys = useStableCallback((event: KeyboardEvent) => {
-    if (event.defaultPrevented || document.querySelector('dialog[open]')) return
+    if (event.defaultPrevented) return
     const action = workbenchShortcut(event, currentShell() !== null)
     if (!action) return
+    const dialogs = document.querySelectorAll('dialog[open]')
+    if (dialogs.length && !(action === 'files' && dialogs.length === 1 && dialogs[0]!.classList.contains('new-session-sheet'))) return
     if (action === 'close-file') {
       if (fileTabs.active) {
         event.preventDefault()
@@ -1372,7 +1487,21 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
         const index = fileTabs.tabs.findIndex(tab => tab.id === fileTabs.active?.id)
         fileTabs.select(fileTabs.tabs[(index + 1) % fileTabs.tabs.length]!.id)
         setInfoPage(true)
+      } else if (canBrowseFiles) {
+        event.preventDefault()
+        browseFiles()
       }
+      return
+    }
+    if (action === 'compose') {
+      event.preventDefault()
+      if (phone && selectedId === null) {
+        setNewSheet(true)
+        requestAnimationFrame(() => sheetComposerRef.current?.focus())
+      } else if (pageMode && infoPage) {
+        setInfoPage(false)
+        requestAnimationFrame(() => composerRef.current?.focus())
+      } else composerRef.current?.focus()
       return
     }
     if (action === 'file-search') {
@@ -1514,16 +1643,20 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
 
   // 会话信息: the same blocks in the column beside the paper and in the page that takes the conversation's place.
   const infoLocked =
-    gate.kind === 'stopped'
-      ? '该会话不再接受输入。'
-      : gate.kind === 'read-only'
-        ? level === 'L3' && !access.local
-          ? `完全访问会话的选项只能在 ${snapshot.hostName} 上用 Latch 桌面端更改`
-          : gate.text
-        : undefined
+    selectedId && workspaceChanged.has(selectedId)
+      ? '原会话的文件夹已变化，请选择一个项目继续。'
+      : selectedId && configFeedback.get(selectedId)?.kind === 'unknown'
+        ? '上次设置切换的结果还未确认，请先在模型菜单刷新设置。'
+        : gate.kind === 'stopped'
+          ? '该会话不再接受输入。'
+          : gate.kind === 'read-only'
+            ? level === 'L3' && !access.local
+              ? `完全访问会话的选项只能在 ${snapshot.hostName} 上用 Latch 桌面端更改`
+              : gate.text
+            : undefined
   const browseFiles = () => {
     if (!canBrowseFiles) return
-    if (filesOpen && !fileTabs.active) {
+    if (filesOpen && !fileTabs.active && (!pageMode || infoPage)) {
       setFilesOpen(false)
       setInfoPage(false)
       setColumnOpen(false)
@@ -1547,6 +1680,32 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
     if (phone && selectedId === null) setNewSheet(true)
     requestAnimationFrame(() => (phone && selectedId === null ? sheetComposerRef : composerRef).current?.focus())
   }
+  const quoteFile = (quote: FileQuote) => {
+    if (
+      !fileContext
+      || quote.contextKey !== fileContextKey(fileContext)
+      || active
+      || submission.pending
+      || submission.sending
+      || gate.kind !== 'open'
+    )
+      return
+    const mention =
+      quote.file.source === 'attachment' || !mentionChoice.enabled ? undefined : { root: quote.file.root, path: quote.file.path }
+    if (mention && fileMentions.length >= 32 && !fileMentions.some(ref => ref.root === mention.root && ref.path === mention.path)) return
+    const formatted = quoteDraft(quote, mention && mentionMarker(mention))
+    submission.setDraft(previous => previous.trimEnd() + (previous.trim() ? '\n\n' : '') + formatted.text)
+    if (mention) setFileMentions(previous => [...previous.filter(ref => ref.root !== mention.root || ref.path !== mention.path), mention])
+    for (const [key, value] of quoteSnapshots.current) if (!submission.draft.includes(value.marker)) quoteSnapshots.current.delete(key)
+    if (quoteSnapshots.current.size >= 32) quoteSnapshots.current.delete(quoteSnapshots.current.keys().next().value!)
+    quoteSnapshots.current.set(quote.contextKey + '\n' + quote.file.root + '\n' + quote.file.path, {
+      etag: quote.file.etag,
+      marker: formatted.marker,
+    })
+    if (pageMode) setInfoPage(false)
+    if (phone && selectedId === null) setNewSheet(true)
+    requestAnimationFrame(() => (phone && selectedId === null ? sheetComposerRef : composerRef).current?.focus())
+  }
   const workspaceForFiles =
     fileContext?.kind === 'workspace' ? catalog?.workspaces.find(item => item.id === fileContext.workspaceId) : undefined
   const inspector = (summary || filesVisible) && (
@@ -1554,10 +1713,13 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
       key={contextKey}
       fileContext={canBrowseFiles && fileContext ? fileContext : undefined}
       fileRevision={JSON.stringify(summary?.folders ?? workspaceForFiles?.folders ?? workspaceForFiles?.path)}
+      treeView={fileTabs.treeView}
+      onTreeViewChange={fileTabs.setTreeView}
       showFiles={filesOpen}
       onShowFiles={setFilesOpen}
       onSearchFiles={searchFiles}
       onMention={mentionChoice.enabled && !active && !submission.pending ? mentionFile : undefined}
+      onQuote={active ? undefined : quoteFile}
       folders={workspaceForFiles?.folders}
       cwd={workspaceForFiles?.path}
       panels={catalog?.uiPanels ?? []}
@@ -1580,7 +1742,15 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
           requestAnimationFrame(() => inspectorToggle.current?.focus({ preventScroll: true }))
         }
       }}
-      onFileResolved={fileTabs.resolved}
+      onFileResolved={(id, file) => {
+        fileTabs.resolved(id, file)
+        if (!fileContext) return
+        const quote = quoteSnapshots.current.get(fileContextKey(fileContext) + '\n' + file.root + '\n' + file.path)
+        if (quote && quote.etag !== file.etag && submission.draft.includes(quote.marker)) {
+          setToast({ text: file.name + ' 已更新，草稿中的引用保留原内容，可能已过时。', tone: 'ok' })
+          quote.etag = file.etag
+        }
+      }}
       onExpandFile={() => {
         setFileExpanded(value => !value)
         setInfoPage(true)
@@ -1638,6 +1808,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
   // The connection and the Host itself: over the open conversation, or at the top of a phone's list.
   const hostBanners = (
     <>
+      <NotificationPrompt />
       <Banner show={Boolean(connectionProblem)}>
         <InlineNotice
           tone={hostProblem?.tone === 'error' && connection !== 'offline' ? 'error' : 'warn'}
@@ -1718,6 +1889,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
       )}
       {block && (
         <SetupCard
+          triggerRef={setupTrigger}
           block={block}
           owner={owner}
           providers={
@@ -1893,6 +2065,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
                   }}
                   newActive={selectedId === null}
                   onApprovals={openApprovals}
+                  onNextApproval={nextApproval}
                   drawer={drawerMode}
                   onClose={() => {
                     drawer.setOpen(false)
@@ -2014,6 +2187,56 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
                     {/* The conversation's paper: on phones it rises under the header on the ground. */}
                     <div className="workspace-body">
                       {hostBanners}
+                      {summary?.personal?.groupId && (
+                        <InlineNotice
+                          tone="neutral"
+                          action={
+                            <Button
+                              size="xs"
+                              onClick={() => {
+                                setPersonalGroupId(summary.personal!.groupId)
+                                setPersonalOpen(true)
+                              }}>
+                              回到群聊
+                            </Button>
+                          }>
+                          这段记录来自个人助手群聊。
+                        </InlineNotice>
+                      )}
+                      {current && workspaceChanged.has(current.summary.id) && (
+                        <WorkspaceRecovery
+                          source={current}
+                          workspaces={catalog?.workspaces ?? []}
+                          workspaceId={recoveryProjects.get(current.summary.id)}
+                          onWorkspaceChange={workspaceId =>
+                            setRecoveryProjects(previous => new Map(previous).set(current.summary.id, workspaceId))
+                          }
+                          forkSupported={catalog?.features?.fork === true}
+                          local={access.local}
+                          harness={harnessInfo}
+                          runGate={
+                            access.scopes.has('run') && harnessInfo?.status === 'ready'
+                              ? { allowed: true }
+                              : { allowed: false, reason: '请先恢复发起会话权限和可用的执行方式。' }
+                          }
+                          phase={
+                            submission.pending ? 'unknown' : submission.sending || cancelling.has(current.summary.id) ? 'busy' : 'idle'
+                          }
+                          onFork={(taskId, upToMessageId, workspaceId) => {
+                            const draft = submission.draft
+                            choose(null)
+                            submission.setFork({ taskId, upToMessageId, title: current.summary.title })
+                            submission.updateChoice({
+                              harnessId: current.summary.harnessId,
+                              workspaceId,
+                              mode: current.summary.mode ?? 'agent',
+                            })
+                            submission.setDraft(draft)
+                            if (phone) setNewSheet(true)
+                            requestAnimationFrame(() => (phone ? sheetComposerRef : composerRef).current?.focus())
+                          }}
+                        />
+                      )}
                       <Banner show={stopCode !== undefined} scope={selectedId ?? ''}>
                         {stopCode && (
                           <InlineNotice
@@ -2028,7 +2251,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
                           </InlineNotice>
                         )}
                       </Banner>
-                      <Banner show={Boolean(sessionBlock)} scope={selectedId ?? ''}>
+                      <Banner show={Boolean(sessionBlock) && !workspaceChanged.has(selectedId ?? '')} scope={selectedId ?? ''}>
                         {sessionBlock && <InlineNotice tone="neutral">{sessionBlock}</InlineNotice>}
                       </Banner>
                       {selectedId === null ? (
@@ -2041,6 +2264,16 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
                                 project={catalog?.workspaces.find(item => item.id === choice.workspaceId)?.name ?? ''}
                                 remote={!access.local}
                                 firstTask={() => composerRef.current?.focus()}
+                                onAgent={() => {
+                                  if (block?.kind === 'model-required' && setupTrigger.current) setupTrigger.current.click()
+                                  else addAgentTrigger.current?.click()
+                                }}
+                                onProject={() => {
+                                  const picker = document.querySelector<HTMLButtonElement>('.composer [aria-label^="项目："]')
+                                  if (picker) picker.click()
+                                  else if (owner) openSettings('workspaces')
+                                  else composerRef.current?.focus()
+                                }}
                               />
                             )
                           }
@@ -2064,6 +2297,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
                               <FindBar
                                 sessionId={current.summary.id}
                                 revision={current.cursor}
+                                messages={current.messages}
                                 onReveal={findReveal}
                                 onClose={() => setFindOpen(false)}
                               />
@@ -2229,6 +2463,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
             {phone && (
               <NewSessionSheet
                 personal={personalDraft ?? undefined}
+                focusComposer={submission.fork ? sheetComposerRef : undefined}
                 open={newSheet && selectedId === null}
                 onBrowseFiles={canBrowseFiles ? browseFiles : undefined}
                 onClose={() => {
@@ -2251,7 +2486,6 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
                 }}
                 onManageWorkspaces={owner ? () => openSettings('workspaces') : undefined}
                 onCreateProject={createProject}
-                startLabel={startsL3 && access.local ? '开始会话' : undefined}
                 composer={
                   <>
                     {sendingBubble}
@@ -2269,6 +2503,10 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
                 access={access}
                 initial={settings.section}
                 initialProjectId={settings.projectId}
+                onOpenSession={id => {
+                  setSettings(null)
+                  choose(id)
+                }}
                 onClose={() => {
                   setSettings(null)
                   void refresh()
@@ -2278,19 +2516,31 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
                 }}
               />
             )}
-            {personalOpen && catalog?.features?.personal && (
+            {catalog?.features?.personal && (privateVisible || personalOpen) && (
               <PersonalPage
+                key={privateVisible ? 'private' : 'restricted'}
+                open={personalOpen}
+                initialGroupId={personalGroupId}
                 canStart={!submission.pending && !submission.sending}
                 snapshot={snapshot}
                 access={access}
                 refreshHint={harness.refreshHints + harness.resyncs}
-                onClose={() => setPersonalOpen(false)}
+                onClose={() => {
+                  setPersonalGroupId(undefined)
+                  setPersonalOpen(false)
+                }}
                 onChanged={() => {
                   void refresh()
                 }}
                 onSession={id => {
+                  setPersonalGroupId(undefined)
                   setPersonalOpen(false)
                   choose(id)
+                }}
+                onGroupSession={(id, groupId) => {
+                  setPersonalGroupId(groupId)
+                  choose(id)
+                  setPersonalOpen(false)
                 }}
                 onStart={assistant => {
                   if (submission.pending || submission.sending) return
@@ -2315,12 +2565,73 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
                 onProject={startIn}
                 onClose={() => setCommandOpen(false)}
                 commands={[
-                  { id: 'new', label: '新建会话', run: startNew },
+                  { id: 'new', label: '新建会话', shortcut: currentShell() ? '⌘N' : 'Alt N', run: startNew },
                   { id: 'search', label: '搜索会话', run: openSearch },
                   { id: 'settings', label: '打开设置', run: () => openSettings() },
-                  { id: 'keyboard', label: '键盘快捷键', run: () => setKeyboardHelp(true) },
+                  {
+                    id: 'sidebar',
+                    label: '展开或收起侧栏',
+                    shortcut: currentShell() ? '⌘B' : 'Alt B',
+                    run: () => {
+                      if (drawerMode) drawer.setOpen(!drawer.open)
+                      else setSidebarShut(!sidebarCollapsed, true)
+                    },
+                  },
+                  ...(summary
+                    ? [
+                        { id: 'info', label: '展开或收起会话信息', run: toggleInspector },
+                        { id: 'copy', label: '复制当前会话为 Markdown', run: () => void copyTask(summary) },
+                        {
+                          id: 'export',
+                          label: '导出当前会话为 Markdown',
+                          run: () => {
+                            void exportTask(summary)
+                          },
+                        },
+                      ]
+                    : []),
+                  ...(canBrowseFiles
+                    ? [
+                        { id: 'files', label: '浏览项目文件', shortcut: currentShell() ? '⇧⌘E' : 'Alt Shift E', run: browseFiles },
+                        ...(catalog?.features?.fileSearch
+                          ? [{ id: 'file-search', label: '搜索项目文件', shortcut: currentShell() ? '⌘P' : 'Alt P', run: searchFiles }]
+                          : []),
+                      ]
+                    : []),
+                  ...fileTabs.tabs.map(tab => ({
+                    id: 'file:' + tab.id,
+                    label: '切换文件：' + (tab.file?.name ?? tab.target.reference),
+                    run: () => {
+                      fileTabs.select(tab.id)
+                      setInfoPage(true)
+                      setColumnOpen(true)
+                    },
+                  })),
+                  ...(['system', 'light', 'dark'] as const).map(theme => ({
+                    id: 'theme:' + theme,
+                    label: '外观：' + { system: '跟随系统', light: '浅色', dark: '深色' }[theme],
+                    run: () => setPreference('theme', theme),
+                  })),
+                  ...settingsSections(snapshot, access).map(section => ({
+                    id: 'settings:' + section,
+                    label:
+                      '设置：'
+                      + {
+                        general: '通用',
+                        computer: '电脑',
+                        providers: '模型服务',
+                        agents: 'Agent 成员',
+                        workspaces: '项目',
+                        plugins: '插件',
+                        devices: '设备',
+                        about: '关于',
+                      }[section],
+                    run: () => openSettings(section),
+                  })),
+                  ...(openPersonal ? [{ id: 'personal', label: '打开个人助手', run: openPersonal }] : []),
+                  { id: 'keyboard', label: '键盘快捷键', shortcut: currentShell() ? '⌘/' : 'Alt /', run: () => setKeyboardHelp(true) },
                   ...(selectedId ? [{ id: 'find', label: '在当前会话中查找', shortcut: '⌘F', run: () => setFindOpen(true) }] : []),
-                  ...(snapshot.approvals.length ? [{ id: 'approval', label: '跳转到下一个待处理请求', run: openApprovals }] : []),
+                  ...(snapshot.approvals.length ? [{ id: 'approval', label: '跳转到下一个待处理请求', run: nextApproval }] : []),
                 ]}
               />
             )}

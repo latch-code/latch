@@ -1,4 +1,14 @@
-import { ascii, holder, issuePass, routeKey, UTC_DAY, type NativeAddressBook, type NativeLanAddress } from '@latch/link-wire'
+import {
+  ascii,
+  holder,
+  issuePass,
+  routeKey,
+  UTC_DAY,
+  encodeDirectorySource,
+  type NativeAddressBook,
+  type NativeDirectorySource,
+  type NativeLanAddress,
+} from '@latch/link-wire'
 import { nodeCrypto, signAddressBook } from '@latch/link-client'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { AppError } from '@latch/sdk'
@@ -10,7 +20,12 @@ export class HostAddressBooks {
   private readonly identity: HostIdentity
   private readonly lan: () => readonly NativeLanAddress[]
   private readonly issuing = new Map<string, Promise<string>>()
-  constructor(profiles: RelayProfiles, identity: HostIdentity, lan: () => readonly NativeLanAddress[]) {
+  constructor(
+    profiles: RelayProfiles,
+    identity: HostIdentity,
+    lan: () => readonly NativeLanAddress[],
+    private readonly directory?: () => NativeDirectorySource | undefined,
+  ) {
     this.profiles = profiles
     this.identity = identity
     this.lan = lan
@@ -32,7 +47,11 @@ export class HostAddressBooks {
     const generation = await this.profiles.nextGeneration(),
       state = this.profiles.snapshot()
     const lan = [...this.lan()]
-    const fingerprint = sha256Hex(canonicalJson({ discoveryKey: state.discoveryKey, profiles: state.profiles, lan }))
+    const source = this.directory?.(),
+      sourceHash = (value: NativeDirectorySource | undefined) => (value ? Buffer.from(encodeDirectorySource(value)).toString('hex') : '')
+    const fingerprint = sha256Hex(
+      canonicalJson({ discoveryKey: state.discoveryKey, profiles: state.profiles, lan, directory: sourceHash(source) }),
+    )
     const now = Date.now(),
       day = Math.floor(now / 1000 / UTC_DAY)
     const book: NativeAddressBook = {
@@ -44,6 +63,7 @@ export class HostAddressBooks {
       discoveryKey: secretBytes(state.discoveryKey),
       lan,
       relays: [],
+      ...(source ? { directory: source } : {}),
     }
     for (const profile of state.profiles) {
       const relayId = Buffer.from(profile.relayId, 'hex'),
@@ -65,10 +85,20 @@ export class HostAddressBooks {
           })
           passes.push({ pass, holderSeed: device.seed })
         }
-      book.relays.push({ relayId, url: profile.url, spkiHash: Buffer.from(profile.spkiHash, 'hex'), passes })
+      book.relays.push({ relayId, url: profile.url, spkiHash: Buffer.from(profile.spkiHash, 'hex'), passes, profile: 'outer-pad-v2' })
     }
     const current = this.profiles.snapshot()
-    if (fingerprint !== sha256Hex(canonicalJson({ discoveryKey: current.discoveryKey, profiles: current.profiles, lan: [...this.lan()] })))
+    if (
+      fingerprint
+      !== sha256Hex(
+        canonicalJson({
+          discoveryKey: current.discoveryKey,
+          profiles: current.profiles,
+          lan: [...this.lan()],
+          directory: sourceHash(this.directory?.()),
+        }),
+      )
+    )
       throw new AppError(409, 'native-book-changed', '中继配置已变化，请重新取得连接簿')
     return signAddressBook(book, this.identity)
   }

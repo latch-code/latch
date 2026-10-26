@@ -25,6 +25,7 @@ type configuration struct {
 	Authorities []string `json:"authorities"`
 	PeerSPKI    string   `json:"peerSpki"`
 	Pairing     bool     `json:"pairing"`
+	Protocol    string   `json:"protocol"`
 }
 
 func descriptor(number uintptr) (net.Conn, error) {
@@ -40,7 +41,7 @@ func serve() error {
 	decoder := json.NewDecoder(io.LimitReader(os.Stdin, 16385))
 	decoder.DisallowUnknownFields()
 	var input configuration
-	if decoder.Decode(&input) != nil || decoder.Decode(new(any)) != io.EOF || len(input.Certificate) > 8192 || len(input.Key) > 4096 || len(input.Authorities) > 2 {
+	if decoder.Decode(&input) != nil || decoder.Decode(new(any)) != io.EOF || len(input.Certificate) > 8192 || len(input.Key) > 4096 || len(input.Authorities) > 2 || (input.Protocol != "h2" && input.Protocol != "latch-pad/1") {
 		return errors.New("configuration")
 	}
 	certificate, err := tls.X509KeyPair([]byte(input.Certificate), []byte(input.Key))
@@ -56,7 +57,7 @@ func serve() error {
 	}
 	options := &tls.Config{
 		Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13,
-		NextProtos: []string{"h2"}, SessionTicketsDisabled: true,
+		NextProtos: []string{input.Protocol}, SessionTicketsDisabled: true,
 		GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
 			if hello.ServerName != "transport.latch.invalid" {
 				return nil, errors.New("name")
@@ -75,7 +76,7 @@ func serve() error {
 		options.ClientAuth = tls.RequireAndVerifyClientCert
 	}
 	options.VerifyConnection = func(state tls.ConnectionState) error {
-		if state.Version != tls.VersionTLS13 || state.NegotiatedProtocol != "h2" || state.ServerName != "transport.latch.invalid" || state.DidResume {
+		if state.Version != tls.VersionTLS13 || state.NegotiatedProtocol != input.Protocol || state.ServerName != "transport.latch.invalid" || state.DidResume {
 			return errors.New("protocol")
 		}
 		if input.Pairing {
@@ -112,7 +113,7 @@ func serve() error {
 		return errors.New("handshake")
 	}
 	_ = ciphertext.SetDeadline(time.Time{})
-	if json.NewEncoder(os.Stdout).Encode(map[string]any{"protocol": 1, "ready": true}) != nil {
+	if json.NewEncoder(os.Stdout).Encode(map[string]any{"protocol": 2, "ready": true}) != nil {
 		return errors.New("ready")
 	}
 	settled := make(chan struct{}, 2)
@@ -127,7 +128,7 @@ func serve() error {
 
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == "version" {
-		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"protocol": 1, "go": runtime.Version()})
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"protocol": 2, "go": runtime.Version()})
 		return
 	}
 	if len(os.Args) != 1 || serve() != nil {

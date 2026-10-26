@@ -11,6 +11,26 @@ const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/
 const FOLDER_LIMIT = 8
 const INVALID = Object.freeze({ status: 'failed', code: 'invalid' })
 const CANCELED = Object.freeze({ status: 'canceled' })
+const NOTIFICATION_CONSENT = new Set(['unasked', 'pending', 'accepted', 'declined'])
+function notificationState(value) {
+  const bools = ['completion', 'approval', 'title', 'supported', 'needsConsent']
+  if (
+    !value
+    || typeof value !== 'object'
+    || !Object.keys(value).every(key => bools.includes(key) || key === 'consent')
+    || !bools.every(key => Object.hasOwn(value, key) && typeof value[key] === 'boolean')
+    || (Object.hasOwn(value, 'consent') && !NOTIFICATION_CONSENT.has(value.consent))
+  )
+    return undefined
+  return {
+    completion: value.completion,
+    approval: value.approval,
+    title: value.title,
+    supported: value.supported,
+    needsConsent: value.needsConsent,
+    ...(Object.hasOwn(value, 'consent') ? { consent: value.consent } : {}),
+  }
+}
 
 /** Absent is null; a given ID must match, otherwise undefined and the call is refused here. */
 function optionalId(value, pattern) {
@@ -147,11 +167,32 @@ contextBridge.exposeInMainWorld(
       },
     }),
     notifications: Object.freeze({
-      get: () => ipcRenderer.invoke('latch:notifications:get'),
+      get: () => ipcRenderer.invoke('latch:notifications:get').then(notificationState),
       set: value =>
-        value && ['completion', 'approval', 'title'].every(key => typeof value[key] === 'boolean')
-          ? ipcRenderer.invoke('latch:notifications:set', { completion: value.completion, approval: value.approval, title: value.title })
+        value
+        && Object.keys(value).length === 3
+        && ['completion', 'approval', 'title'].every(key => Object.hasOwn(value, key) && typeof value[key] === 'boolean')
+          ? ipcRenderer
+              .invoke('latch:notifications:set', { completion: value.completion, approval: value.approval, title: value.title })
+              .then(notificationState)
           : Promise.resolve(undefined),
+      respond: value =>
+        value
+        && typeof value === 'object'
+        && Object.keys(value).length === 1
+        && Object.hasOwn(value, 'choice')
+        && ['enable', 'decline'].includes(value.choice)
+          ? ipcRenderer.invoke('latch:notifications:respond', { choice: value.choice }).then(notificationState)
+          : Promise.resolve(undefined),
+      subscribeState: callback => {
+        if (typeof callback !== 'function') return () => {}
+        const listener = (_event, value) => {
+          const state = notificationState(value)
+          if (state) callback(state)
+        }
+        ipcRenderer.on('latch:notifications:state', listener)
+        return () => ipcRenderer.removeListener('latch:notifications:state', listener)
+      },
       subscribe: callback => {
         const listener = (_event, sessionId) => {
           if (typeof sessionId === 'string' && SESSION_ID.test(sessionId)) callback(sessionId)

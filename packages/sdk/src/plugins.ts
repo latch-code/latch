@@ -1,5 +1,7 @@
 /** Stable product interfaces. No upstream harness types cross this module. */
 import type { HarnessDriver } from './harness.ts'
+import type { TransportDriver } from './transports.ts'
+export type * from './transports.ts'
 import type { TaskSummary, UiPanelDocument, UiPanelInfo } from '@latch/protocol/types'
 
 export type { PluginInfo } from '@latch/protocol/types'
@@ -103,6 +105,7 @@ export interface PluginContext {
   registerProvider(provider: ModelProvider): void
   registerTool(tool: ToolDefinition): void
   registerHarness(driver: HarnessDriver): void
+  registerTransport(driver: TransportDriver): void
   registerUiPanel(panel: UiPanelDefinition): void
   registerClientPanel(panel: ClientPanelDefinition): void
   registerSkill(skill: SkillDefinition): void

@@ -8,17 +8,20 @@ import {
   registrationMac,
   routeId,
   type RelayMessage,
+  type RelayTransportProfile,
 } from '@latch/link-wire'
 import { nodeCrypto } from './crypto.ts'
 import { connectRelay, type RelaySocket } from './websocket.ts'
 import { solveRegistrationWork } from './registration-work.ts'
 
 export class RelayTunnel extends Duplex {
+  readonly transportClosed: Promise<void>
   private readonly peer: RelaySocket
   private reading = false
   constructor(peer: RelaySocket) {
     super({ highWaterMark: 16_384 })
     this.peer = peer
+    this.transportClosed = peer.closed
     peer.markSpliced()
   }
   override _read(): void {
@@ -51,7 +54,10 @@ export class RelayTunnel extends Duplex {
   }
   override _destroy(error: Error | null, callback: (error?: Error | null) => void): void {
     this.peer.close()
-    callback(error)
+    void this.peer.closed.then(() => callback(error))
+  }
+  guardWrites(valid: () => boolean): void {
+    this.peer.guardWrites(valid)
   }
 }
 export interface RelayEndpoint {
@@ -59,12 +65,19 @@ export interface RelayEndpoint {
   relayId: Uint8Array
   spki: Uint8Array
   ca?: string | Buffer
+  profile?: RelayTransportProfile
   resolveAddress?(): Promise<string>
 }
 async function endpoint(options: RelayEndpoint, path: string): Promise<Parameters<typeof connectRelay>[0]> {
   const url = new URL(options.url)
   url.pathname = path
-  return { url, spki: options.spki, ca: options.ca, ...(options.resolveAddress ? { address: await options.resolveAddress() } : {}) }
+  return {
+    url,
+    spki: options.spki,
+    ca: options.ca,
+    profile: options.profile,
+    ...(options.resolveAddress ? { address: await options.resolveAddress() } : {}),
+  }
 }
 async function challenge(peer: RelaySocket, relayId: Uint8Array): Promise<Extract<RelayMessage, { type: 'challenge' }>> {
   await peer.send({ type: 'hello' })
@@ -158,7 +171,7 @@ export async function registerRelay(
       async accept() {
         const request = await peer.receive(0)
         if (request.type !== 'open' || !equal(request.routeId, response.routeId)) throw new Error('Unexpected relay control message')
-        const data = await connectRelay(await endpoint(options, '/v1/d'))
+        const data = await connectRelay(await endpoint({ ...options, profile: request.profile }, '/v1/d'))
         try {
           const nonce = nodeCrypto.random(16)
           await data.send({

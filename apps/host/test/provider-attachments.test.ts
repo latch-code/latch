@@ -13,6 +13,7 @@ const mount = async (plugin: HarnessPlugin) => {
     registerUiPanel: () => {},
     registerClientPanel: () => {},
     registerSkill: () => {},
+    registerTransport: () => {},
     onDispose: () => {},
   })
   return provider

@@ -28,6 +28,7 @@ async function mount(options?: Parameters<typeof createWorkspacePlugin>[0]): Pro
     registerHarness: () => {},
     registerClientPanel: () => {},
     registerSkill: () => {},
+    registerTransport: () => {},
     registerUiPanel: () => {},
     onDispose: () => {},
   })

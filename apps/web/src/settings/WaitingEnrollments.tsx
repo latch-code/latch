@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { BlockingTask, WaitingEnrollmentView } from '@latch/protocol'
 import { api, ApiError } from '../core/api.ts'
-import { PAIRING_WAITING_COPY as COPY } from '../core/securityCopy.ts'
+import { CONNECTION_DETAILS, PAIRING_WAITING_COPY as COPY } from '../core/securityCopy.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 
 const POLL_MS = 1000
@@ -54,12 +54,15 @@ export function WaitingEnrollments() {
           <p className="pair-waiting-title">
             「<VisibleText text={item.name} />」{COPY.requesting}
           </p>
-          <span className="fingerprint-label">{COPY.fingerprint}</span>
-          <code className="fingerprint" aria-label={`${COPY.fingerprint} ${item.fingerprint}`}>
-            {item.fingerprint
-              .split(' ')
-              .flatMap((group, index) => (index === 0 ? [<span key={index}>{group}</span>] : [' ', <span key={index}>{group}</span>]))}
-          </code>
+          <details className="connection-details">
+            <summary>{CONNECTION_DETAILS}</summary>
+            <span className="fingerprint-label">{COPY.fingerprint}</span>
+            <code className="fingerprint" aria-label={`${COPY.fingerprint} ${item.fingerprint}`}>
+              {item.fingerprint
+                .split(' ')
+                .flatMap((group, index) => (index === 0 ? [<span key={index}>{group}</span>] : [' ', <span key={index}>{group}</span>]))}
+            </code>
+          </details>
           <p className="pair-waiting-note">
             {item.status === 'approved'
               ? COPY.signing

@@ -10,7 +10,18 @@ import type { ConnectionStatus } from '../core/useHarness.ts'
 import { HarnessTile } from './BrandTile.tsx'
 import { DevModeChip } from './DevModeChip.tsx'
 import { Menu, type MenuSection } from './overlays.tsx'
-import { Count, FilterPills, ICON_STROKE, IconButton, Kbd, SearchField, StatusSlot, useLivePrevious, type CometSize } from '@latch/ui'
+import {
+  Button,
+  Count,
+  FilterPills,
+  ICON_STROKE,
+  IconButton,
+  Kbd,
+  SearchField,
+  StatusSlot,
+  useLivePrevious,
+  type CometSize,
+} from '@latch/ui'
 import { BrandMark } from './ui.tsx'
 
 export const connectionLabels: Record<ConnectionStatus, string> = {
@@ -223,6 +234,7 @@ export function Sidebar({
   onProjectsChanged,
   newActive = false,
   onApprovals,
+  onNextApproval,
   drawer,
   onClose,
   onCollapse,
@@ -258,6 +270,7 @@ export function Sidebar({
   /** The new-session page is open: 新建会话 shows as a toggle that is on. */
   newActive?: boolean
   onApprovals: () => void
+  onNextApproval?: () => void
   drawer: boolean
   onClose: () => void
   /** Shuts the column (from 1024px). */
@@ -379,13 +392,20 @@ export function Sidebar({
         </button>
       )}
       {approvals > 0 && (
-        <button type="button" className="approvals-row" onClick={onApprovals}>
-          <span className="sidebar-row-icon">
-            <Inbox size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-          </span>
-          <span>等你处理</span>
-          <Count tone="warn" value={approvals} from={approvalsBefore} />
-        </button>
+        <div className="approvals-group">
+          <button type="button" className="approvals-row" onClick={onApprovals}>
+            <span className="sidebar-row-icon">
+              <Inbox size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+            </span>
+            <span>等你处理</span>
+            <Count tone="warn" value={approvals} from={approvalsBefore} />
+          </button>
+          {onNextApproval && (
+            <Button className="approval-next" size="xs" variant="ghost" onClick={onNextApproval} aria-label="下一个待处理请求">
+              下一个
+            </Button>
+          )}
+        </div>
       )}
       {archiveBatch}
       <nav ref={list} className="session-list" aria-label="会话列表" data-session-filter={filter}>

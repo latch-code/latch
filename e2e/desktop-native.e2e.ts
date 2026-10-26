@@ -119,15 +119,36 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
       await capture(page, 'config-waiting')
       host.presence.approveNext()
       await dialog.waitFor({ state: 'hidden' })
-      await page.getByText('relay.example', { exact: true }).waitFor()
+      // Technical endpoints stay inside the explicit connection options after saving.
+      expect(await page.getByText('relay.example', { exact: true }).count()).toBe(0)
       const response = page.waitForResponse(
         value => value.url().endsWith('/link/api/native/pairings') && value.request().method() === 'POST',
       )
+      const personalAccess = page.getByRole('checkbox', { name: '使用个人助手和项目文件', exact: true })
+      for (const width of [390, 900, 1440]) {
+        await size(application, page, width)
+        await page.emulateMedia({ colorScheme: width === 900 ? 'dark' : 'light' })
+        expect(await personalAccess.isChecked()).toBe(true)
+        await capture(page, 'pair-scope-' + width)
+      }
+      expect(await personalAccess.isChecked()).toBe(true)
       await page.getByRole('button', { name: '生成配对二维码', exact: true }).click()
-      const value = (await (await response).json()) as { invitation: { payload: string } }
+      const issued = await response
+      expect(issued.request().postDataJSON()).toEqual({ dataScope: 'all' })
+      const value = (await issued.json()) as { invitation: { payload: string; dataScope: string } }
+      expect(value.invitation.dataScope).toBe('all')
       expect(value.invitation.payload.startsWith('LATCHPAIR1.')).toBe(true)
       await page.getByAltText('原生客户端配对二维码').waitFor()
       expect((await page.locator('body').innerText()).includes(value.invitation.payload)).toBe(false)
+      await personalAccess.uncheck()
+      await page.getByAltText('原生客户端配对二维码').waitFor({ state: 'hidden' })
+      const workResponse = page.waitForResponse(
+        value => value.url().endsWith('/link/api/native/pairings') && value.request().method() === 'POST',
+      )
+      await page.getByRole('button', { name: '生成配对二维码', exact: true }).click()
+      const work = await workResponse
+      expect(work.request().postDataJSON()).toEqual({ dataScope: 'work' })
+      expect(((await work.json()) as { invitation: { dataScope: string } }).invitation.dataScope).toBe('work')
       const before = host.presence.requests.length
       await page.getByRole('button', { name: '暂停所有手机输入', exact: true }).click()
       await page.getByRole('button', { name: '恢复手机输入', exact: true }).waitFor()

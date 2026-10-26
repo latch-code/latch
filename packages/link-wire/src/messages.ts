@@ -1,5 +1,6 @@
 import { concat, fixed, Reader, uint } from './bytes.ts'
 import type { AdmissionProof } from './pass.ts'
+import { relayWireVersion, type RelayTransportProfile, type RelayWireVersion } from './relay-profile.ts'
 export const MAX_DATA = 16_384
 export const MAX_MESSAGE = 65_536
 export const CLOSE = {
@@ -15,6 +16,7 @@ export const CLOSE = {
 } as const
 export type RelayMessage =
   | { type: 'data'; data: Uint8Array }
+  | { type: 'pad'; data: Uint8Array }
   | { type: 'hello' }
   | { type: 'challenge'; relayId: Uint8Array; nonce: Uint8Array; timeMs: number; requiresToken: boolean }
   | {
@@ -31,7 +33,7 @@ export type RelayMessage =
   | { type: 'registered'; token: Uint8Array; routeId: Uint8Array; status: 0 | 1 | 4 | 5 | 6 }
   | { type: 'admit'; proof: AdmissionProof }
   | { type: 'admitted' }
-  | { type: 'open'; connection: Uint8Array; routeId: Uint8Array }
+  | { type: 'open'; connection: Uint8Array; routeId: Uint8Array; profile?: RelayTransportProfile }
   | { type: 'attach'; routeId: Uint8Array; connection: Uint8Array; nonce: Uint8Array; mac: Uint8Array }
   | { type: 'attached' }
   | { type: 'spliced'; connection: Uint8Array; passTag: Uint8Array }
@@ -43,6 +45,7 @@ export type RelayMessage =
   | { type: 'goaway'; reason: 1 | 2 | 3; retryAfterMs: number }
 const tags = {
   data: 0,
+  pad: 1,
   admit: 16,
   hello: 32,
   register: 33,
@@ -62,11 +65,16 @@ const tags = {
   admitted: 96,
   unavailable: 98,
 } as const
-export function encodeMessage(message: RelayMessage): Uint8Array {
+export function encodeMessage(message: RelayMessage, version: RelayWireVersion = 1): Uint8Array {
+  if (version !== 1 && version !== 2) throw new RangeError('Unsupported relay protocol')
   let body: Uint8Array
   switch (message.type) {
     case 'data':
       if (message.data.length > MAX_DATA) throw new RangeError('DATA too large')
+      body = message.data
+      break
+    case 'pad':
+      if (version !== 2 || message.data.length > MAX_DATA) throw new RangeError('Invalid outer padding')
       body = message.data
       break
     case 'hello':
@@ -108,7 +116,12 @@ export function encodeMessage(message: RelayMessage): Uint8Array {
       body = new Uint8Array()
       break
     case 'open':
-      body = concat(fixed(message.connection, 8), fixed(message.routeId, 16))
+      if (version === 1 && message.profile !== undefined) throw new RangeError('Unsupported relay profile')
+      body = concat(
+        fixed(message.connection, 8),
+        fixed(message.routeId, 16),
+        ...(version === 2 ? [uint(relayWireVersion(message.profile) - 1, 1)] : []),
+      )
       break
     case 'attach':
       body = concat(fixed(message.routeId, 16), fixed(message.connection, 8), fixed(message.nonce, 16), fixed(message.mac, 16))
@@ -139,7 +152,8 @@ export function encodeMessage(message: RelayMessage): Uint8Array {
   }
   return concat(uint(tags[message.type], 1), body)
 }
-export function decodeMessage(bytes: Uint8Array): RelayMessage {
+export function decodeMessage(bytes: Uint8Array, version: RelayWireVersion = 1): RelayMessage {
+  if (version !== 1 && version !== 2) throw new RangeError('Unsupported relay protocol')
   const reader = new Reader(bytes, MAX_MESSAGE)
   const tag = reader.number(1)
   let value: RelayMessage
@@ -147,6 +161,9 @@ export function decodeMessage(bytes: Uint8Array): RelayMessage {
     case 0:
       if (bytes.length > MAX_DATA + 1) throw new RangeError('DATA too large')
       return { type: 'data', data: bytes.slice(1) }
+    case 1:
+      if (version !== 2 || bytes.length > MAX_DATA + 1) throw new RangeError('Invalid outer padding')
+      return { type: 'pad', data: bytes.slice(1) }
     case 32:
       if (reader.number(1) !== 1) throw new RangeError('Protocol version')
       value = { type: 'hello' }
@@ -199,9 +216,15 @@ export function decodeMessage(bytes: Uint8Array): RelayMessage {
     case 96:
       value = { type: 'admitted' }
       break
-    case 66:
+    case 66: {
       value = { type: 'open', connection: reader.take(8), routeId: reader.take(16) }
+      if (version === 2) {
+        const profile = reader.number(1)
+        if (profile > 1) throw new RangeError('Unknown relay transport profile')
+        if (profile === 1) value.profile = 'outer-pad-v2'
+      }
       break
+    }
     case 48:
       value = { type: 'attach', routeId: reader.take(16), connection: reader.take(8), nonce: reader.take(16), mac: reader.take(16) }
       break

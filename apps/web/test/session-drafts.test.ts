@@ -1,0 +1,43 @@
+import { describe, expect, it } from 'vitest'
+import { SessionDrafts } from '../src/core/sessionDrafts.ts'
+
+describe('session text drafts', () => {
+  it('restores only the requested conversation and removes text that was sent or explicitly cleared', () => {
+    const drafts = new SessionDrafts()
+    drafts.save('first', 'First unsent text', false)
+    expect(drafts.read('second', true)).toBe('')
+    drafts.save('second', 'Different text', false)
+    expect(drafts.read('first', true)).toBe('First unsent text')
+    drafts.remove('first')
+    expect(drafts.read('first', true)).toBe('')
+    drafts.save('second', '', false)
+    expect(drafts.read('second', true)).toBe('')
+  })
+  it('drops private text on withdrawn access, keeps public text and clears everything on device replacement', () => {
+    const drafts = new SessionDrafts()
+    drafts.save('personal', 'Private unsent text', true)
+    drafts.save('public', 'Project text', false)
+    drafts.clearPrivate()
+    expect(drafts.read('personal', true)).toBe('')
+    expect(drafts.read('public', false)).toBe('Project text')
+    drafts.save('personal', 'Private again', true)
+    expect(drafts.read('personal', false)).toBe('')
+    expect(drafts.read('personal', true)).toBe('')
+    drafts.clear()
+    expect(drafts.read('public', true)).toBe('')
+  })
+  it('bounds count and aggregate text, touches recent drafts and refuses oversize text without overwriting it', () => {
+    const drafts = new SessionDrafts()
+    for (let i = 0; i < 20; i++) drafts.save(String(i), 'draft ' + i, false)
+    drafts.read('0', true)
+    drafts.save('last', 'Newest', false)
+    expect(drafts.read('1', true)).toBe('')
+    expect(drafts.read('0', true)).toBe('draft 0')
+    drafts.save('large', 'x'.repeat(200_000), false)
+    drafts.save('larger', 'y'.repeat(100_000), false)
+    expect(drafts.read('large', true)).toBe('')
+    expect(drafts.read('larger', true)).toHaveLength(100_000)
+    expect(drafts.save('larger', 'z'.repeat(256_001), false)).toBe(false)
+    expect(drafts.read('larger', true)).toHaveLength(100_000)
+  })
+})

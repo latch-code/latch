@@ -274,8 +274,21 @@ func (s *supervisor) start(lock *os.File) (<-chan error, error) {
 			}
 			for key := range status {
 				switch key {
-				case "connections", "routes", "pending", "controls", "withoutAlternate", "certificate", "runtime", "draining", "ready", "denials", "memory", "quota", "forwarding", "gateway", "registrationWork":
+				case "connections", "routes", "pending", "controls", "withoutAlternate", "certificate", "runtime", "draining", "ready", "denials", "memory", "quota", "forwarding", "gateway", "registrationWork", "webSockets":
 				default:
+					_ = command.Process.Kill()
+					return
+				}
+			}
+			if value, exists := status["webSockets"]; exists {
+				var traffic struct {
+					ReceivedBytes        uint64 `json:"receivedBytes"`
+					WrittenBytes         uint64 `json:"writtenBytes"`
+					PaddingReceivedBytes uint64 `json:"paddingReceivedBytes"`
+					PaddingWrittenBytes  uint64 `json:"paddingWrittenBytes"`
+					CoverBatches         uint64 `json:"coverBatches"`
+				}
+				if decodeStrict(value, &traffic) != nil || traffic.ReceivedBytes > 9007199254740991 || traffic.WrittenBytes > 9007199254740991 || traffic.PaddingReceivedBytes > traffic.ReceivedBytes || traffic.PaddingWrittenBytes > traffic.WrittenBytes || traffic.CoverBatches > 9007199254740991 {
 					_ = command.Process.Kill()
 					return
 				}

@@ -44,6 +44,7 @@ async function mount(...plugins: HarnessPlugin[]) {
       registerHarness() {},
       registerClientPanel: () => {},
       registerSkill: () => {},
+      registerTransport: () => {},
       registerUiPanel() {},
       onDispose(dispose) {
         cleanups.push(async () => {

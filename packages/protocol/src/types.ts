@@ -101,6 +101,8 @@ export interface TaskSummary {
   folders?: Array<{ id: string; path: string }>
   /** Whether the harness received every folder of the project or only the primary one. */
   folderAccess?: 'all' | 'primary'
+  /** Host-read, display-only Git branch or detached HEAD label; omitted when metadata cannot be verified. */
+  branch?: string
   /**
    * The Host made `cwd` for this session alone, inside its default start directory (`workspaceId` is `default`): an
    * Agent session outside a saved project. The desktop can save it as a project's primary folder.
@@ -387,8 +389,12 @@ export interface NativeLinkInfo {
     retryAt?: number
   }>
   inputsPaused: boolean
+  /** Public opt-in trust anchors and HTTPS mirrors, edited only on the execution Mac. */
+  directory?: { anchors: string[]; mirrors: string[]; ready: boolean; generation: number; rootGeneration: number } | null
 }
 export interface NativePairingInvitation {
+  /** Host-bound maximum selected on the Mac; absent on older Hosts. Not added to the QR payload. */
+  dataScope?: DataScope
   id: string
   payload: string
   expiresAt: string
@@ -583,6 +589,8 @@ export interface WaitingEnrollmentView {
 }
 
 export interface InvitationView {
+  /** Present only for a Native invitation explicitly bound by the Host. */
+  dataScope?: DataScope
   /** 'inv_' + 22 base64url chars. */
   id: string
   /** 'lpi1-' + 26 base32 upper chars; returned once. */
@@ -606,7 +614,7 @@ export interface HostView {
     reason?: Extract<PresenceAvailability, { status: 'unavailable' }>['reason']
   }
   tls: { origin: string } | null
-  native?: { enabled: boolean; inputsPaused: boolean; discoveryEpoch?: string }
+  native?: { enabled: boolean; inputsPaused: boolean; discoveryEpoch?: string; directoryEpoch?: string }
   policy: { localMaxLevel: PermissionLevel; remoteMaxLevel: PermissionLevel; allowL3: boolean }
   /** The Host hands a rejection's note (「告诉 Agent 改做什么」) to the built-in harness; older Hosts drop it. */
   rejectionNote?: true
@@ -776,6 +784,7 @@ export interface AppSnapshot {
 export interface ChangeEvent {
   /** Optional SHA-256 discovery-key cache hint; does not unlock content or advance body cursors. */
   discoveryEpoch?: string
+  directoryEpoch?: string
   type: 'refresh' | 'tasks-invalidated'
   instanceId: string
   revision: number

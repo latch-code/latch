@@ -72,6 +72,26 @@ function peer(id: number, prefix = '192.0.2.0/24'): RelayPeer & { output: RelayM
   }
 }
 describe('relay trust and bounded state', () => {
+  it('charges discarded v2 padding without treating it as authentication or extending the original deadline', async () => {
+    let now = 0
+    const waitWire = vi.fn(async () => true),
+      client = { ...peer(1), profile: 'outer-pad-v2' as const }
+    const core = new RelayCore({
+      crypto: nodeCrypto,
+      relayId: nodeCrypto.random(16),
+      registrationToken: nodeCrypto.random(32),
+      now: () => now,
+      waitWire,
+    })
+    core.connect(client, 'client')
+    expect(await core.reserveWire(1, 4096, 'in')).toBe(true)
+    await core.receive(1, { type: 'pad', data: new Uint8Array(4087) })
+    expect(waitWire).toHaveBeenCalledWith(1, ['192.0.2.0/24'], 'setup:1', 4096, 'in')
+    expect(client.output).toEqual([])
+    now = 3001
+    core.sweep()
+    expect(client.closed).toBe(4100)
+  })
   it('requires private registration authentication before allocating a route', async () => {
     const now = Date.now(),
       relayId = nodeCrypto.random(16),
@@ -459,7 +479,7 @@ describe('real TLS over an opaque self-hosted relay', () => {
       spki: createHash('sha256').update(certificate.spki).digest(),
       resolveAddress: resolved,
     }
-    const control = await RelayControl.connect({ ...endpoint, registrationToken: token })
+    const control = await RelayControl.connect({ ...endpoint, registrationToken: token, profile: 'outer-pad-v2' })
     cleanup.push(() => control.close())
     const first = await credentials(Date.now(), relayId),
       second = await credentials(Date.now(), relayId)
@@ -505,80 +525,110 @@ describe('real TLS over an opaque self-hosted relay', () => {
     control.close()
     await echo(0)
   })
-  it('splices mutual TLS and Host identity verification without interpreting application bytes', async () => {
-    const certificate = createTransportCertificate(Date.now(), 3_600_000, 'localhost'),
-      relayId = nodeCrypto.random(16),
-      token = nodeCrypto.random(32)
-    const relay = await startRelay({
-      cert: certificate.cert,
-      key: certificate.key,
-      host: '127.0.0.1',
-      port: 0,
-      relayId,
-      registrationToken: token,
-    })
-    cleanup.push(() => relay.close())
-    const forbidden = await fetch(`http://127.0.0.1:${relay.adminPort}/drain`, {
-      method: 'POST',
-      headers: { origin: 'https://untrusted.invalid', 'x-latch-relay-admin': '1' },
-    })
-    expect(forbidden.status).toBe(403)
-    expect(relay.status().draining).toBe(false)
-    const endpoint = {
-        url: new URL(`https://localhost:${relay.port}`),
+  it.each([undefined, 'outer-pad-v2'] as const)(
+    'splices mutual TLS and Host identity verification with fixed profile %s',
+    async profile => {
+      const certificate = createTransportCertificate(Date.now(), 3_600_000, 'localhost'),
+        relayId = nodeCrypto.random(16),
+        token = nodeCrypto.random(32)
+      const relay = await startRelay({
+        cert: certificate.cert,
+        key: certificate.key,
+        host: '127.0.0.1',
+        port: 0,
         relayId,
-        ca: certificate.cert,
-        spki: createHash('sha256').update(certificate.spki).digest(),
-      },
-      data = await credentials(Date.now(), relayId)
-    const control = await registerRelay({ ...endpoint, routeKey: data.key, day: data.day, registrationToken: token, alternate: false })
-    cleanup.push(() => control.close())
-    expect(equal(control.routeId, data.routeId)).toBe(true)
-    const pending = control.accept(),
-      downstream = await connectRelayTunnel({ ...endpoint, pass: data.pass, holderKey: data.device.seed }),
-      upstream = await pending
-    downstream.on('error', () => {})
-    upstream.stream.on('error', () => {})
-    cleanup.push(() => {
-      downstream.destroy()
-      upstream.stream.destroy()
-    })
-    expect(hex(upstream.passTag)).toBe(hex(data.device.tag))
-    const hostCertificate = createTransportCertificate(),
-      device = createTransportCertificate(),
-      root = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }),
-      knockKey = nodeCrypto.random(32)
-    const binding = { path: 'relay' as const, relayId, routeId: control.routeId }
-    const accepted = acceptNative(upstream.stream, binding, {
-      tlsBinary: resolve('dist/native/latch-native-tls'),
-      certificate: hostCertificate,
-      identity: {
-        publicKeySpki: root.publicKey.export({ format: 'der', type: 'spki' }),
-        sign: (input: Uint8Array) => sign('sha256', input, { key: root.privateKey, dsaEncoding: 'ieee-p1363' }),
-      },
-      devices: () => [{ id: 'one', kind: 'registered' as const, certificate: device.cert, knockKey }],
-      isActive: () => true,
-      replay: new Map(),
-    })
-    const secure = await connectNative(downstream, binding, {
-        rootSpki: createPublicKey(root.privateKey).export({ format: 'der', type: 'spki' }),
-        knockKey,
-        certificate: device.cert,
-        key: device.key,
-      }),
-      host = await accepted
-    secure.on('error', () => {})
-    host.socket.on('error', () => {})
-    cleanup.push(() => {
-      secure.destroy()
-      host.socket.destroy()
-    })
-    const response = once(host.socket, 'data')
-    secure.write('opaque encrypted session')
-    expect((await response)[0].toString()).toBe('opaque encrypted session')
-    expect(host.deviceId).toBe('one')
-    expect(relay.status()).toMatchObject({ connections: 3, routes: 1, pending: 0 })
+        registrationToken: token,
+      })
+      cleanup.push(() => relay.close())
+      const forbidden = await fetch(`http://127.0.0.1:${relay.adminPort}/drain`, {
+        method: 'POST',
+        headers: { origin: 'https://untrusted.invalid', 'x-latch-relay-admin': '1' },
+      })
+      expect(forbidden.status).toBe(403)
+      expect(relay.status().draining).toBe(false)
+      const endpoint = {
+          url: new URL(`https://localhost:${relay.port}`),
+          profile,
+          relayId,
+          ca: certificate.cert,
+          spki: createHash('sha256').update(certificate.spki).digest(),
+        },
+        data = await credentials(Date.now(), relayId)
+      const control = await registerRelay({ ...endpoint, routeKey: data.key, day: data.day, registrationToken: token, alternate: false })
+      cleanup.push(() => control.close())
+      expect(equal(control.routeId, data.routeId)).toBe(true)
+      const pending = control.accept(),
+        downstream = await connectRelayTunnel({ ...endpoint, pass: data.pass, holderKey: data.device.seed }),
+        upstream = await pending
+      downstream.on('error', () => {})
+      upstream.stream.on('error', () => {})
+      cleanup.push(() => {
+        downstream.destroy()
+        upstream.stream.destroy()
+      })
+      expect(hex(upstream.passTag)).toBe(hex(data.device.tag))
+      const hostCertificate = createTransportCertificate(),
+        device = createTransportCertificate(),
+        root = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }),
+        knockKey = nodeCrypto.random(32)
+      const binding = { path: 'relay' as const, relayId, routeId: control.routeId, profile }
+      const accepted = acceptNative(upstream.stream, binding, {
+        tlsBinary: resolve('dist/native/latch-native-tls'),
+        certificate: hostCertificate,
+        identity: {
+          publicKeySpki: root.publicKey.export({ format: 'der', type: 'spki' }),
+          sign: (input: Uint8Array) => sign('sha256', input, { key: root.privateKey, dsaEncoding: 'ieee-p1363' }),
+        },
+        devices: () => [{ id: 'one', kind: 'registered' as const, certificate: device.cert, knockKey }],
+        isActive: () => true,
+        replay: new Map(),
+      })
+      const secure = await connectNative(downstream, binding, {
+          rootSpki: createPublicKey(root.privateKey).export({ format: 'der', type: 'spki' }),
+          knockKey,
+          certificate: device.cert,
+          key: device.key,
+        }),
+        host = await accepted
+      secure.on('error', () => {})
+      host.socket.on('error', () => {})
+      cleanup.push(() => {
+        secure.destroy()
+        host.socket.destroy()
+      })
+      const response = once(host.socket, 'data')
+      secure.write('opaque encrypted session')
+      expect((await response)[0].toString()).toBe('opaque encrypted session')
+      expect(host.deviceId).toBe('one')
+      expect(relay.status()).toMatchObject({ connections: 3, routes: 1, pending: 0 })
+    },
+  )
+})
+
+it('refuses a v2 client on a legacy control without sending a v1 OPEN or silently retrying its profile', async () => {
+  const certificate = createTransportCertificate(Date.now(), 3_600_000, 'localhost'),
+    relayId = nodeCrypto.random(16),
+    token = nodeCrypto.random(32)
+  const relay = await startRelay({
+    cert: certificate.cert,
+    key: certificate.key,
+    host: '127.0.0.1',
+    port: 0,
+    relayId,
+    registrationToken: token,
   })
+  cleanup.push(() => relay.close())
+  const endpoint = {
+    url: new URL(`https://localhost:${relay.port}`),
+    relayId,
+    ca: certificate.cert,
+    spki: createHash('sha256').update(certificate.spki).digest(),
+  }
+  const data = await credentials(Date.now(), relayId)
+  const control = await registerRelay({ ...endpoint, routeKey: data.key, day: data.day, registrationToken: token, alternate: false })
+  cleanup.push(() => control.close())
+  await expect(connectRelayTunnel({ ...endpoint, profile: 'outer-pad-v2', pass: data.pass, holderKey: data.device.seed })).rejects.toThrow()
+  expect(relay.status()).toMatchObject({ routes: 1, pending: 0 })
 })
 
 it('acknowledges durable denials and restores them across DROP, DEPART and a real Node relay restart', async () => {

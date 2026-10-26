@@ -74,6 +74,8 @@ export interface CancelOptions {
 }
 
 export interface SetConfigOptions {
+  /** Host authority, checked after async preparation and immediately before an external configuration request. */
+  authorize?: () => void
   /** The owner confirmed widening a mode-category option through local presence confirmation. */
   allowWiden?: boolean
 }

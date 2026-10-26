@@ -6,6 +6,8 @@ import { InlineConfirm } from '../components/InlineConfirm.tsx'
 import { withConfirmation } from '../core/confirmations.ts'
 import { LEVEL_LABELS, type DeviceAccess } from '../core/permissions.ts'
 import { LOCAL_ONLY_TEXT } from '../core/securityCopy.ts'
+import { missingText } from '../core/agentDetection.ts'
+export { missingText } from '../core/agentDetection.ts'
 import { dateTime, hostOf } from '../format.ts'
 import { ConfirmDialog } from '../components/overlays.tsx'
 import {
@@ -48,19 +50,6 @@ const lines = (text: string) =>
     .split('\n')
     .map(item => item.trim())
     .filter(Boolean)
-
-/**
- * What is missing for an agent to start, in words: its command, or for an adapter preset the adapter, the agent it
- * connects to, or both. Undefined when everything was found.
- */
-export function missingText(agent: Pick<AgentSettings, 'command' | 'detected'>): string | undefined {
-  const companion = agent.detected.companion
-  if (!companion) return agent.detected.found ? undefined : `未找到命令 ${agent.command}`
-  if (agent.detected.found && companion.found) return undefined
-  if (agent.detected.found) return `已找到适配器 ${agent.command}，还没找到 ${companion.command}`
-  if (companion.found) return `已安装 ${companion.command}，还差让 Latch 连接它的适配器 ${agent.command}`
-  return `未找到 ${companion.command} 和它的适配器 ${agent.command}`
-}
 
 /** What the Host found for an agent's command, in one line; ready is the default state and stays quiet. */
 function Detection({ agent, preset, harness }: { agent: AgentSettings; preset?: AgentPreset; harness?: HarnessInfo }) {

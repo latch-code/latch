@@ -5,6 +5,7 @@ import { validMathDom } from '../src/preview/math.ts'
 import { MessageContent } from '../src/MessageContent.tsx'
 import { DocumentPreview } from '../src/preview/DocumentPreview.tsx'
 import { isFrameCommand, type FrameInput, type FrameCommand } from '../src/preview/types.ts'
+import type { PreviewQuote } from '../src/preview/quote.ts'
 import '../src/styles/index.css'
 declare global {
   interface Window {
@@ -15,6 +16,9 @@ declare global {
     previewOpened: string[]
     previewImages: string[]
     previewEvents: unknown[]
+    previewQuotes: PreviewQuote[]
+    previewHoldPages: boolean
+    previewDeferred: Array<() => void>
   }
 }
 function Sandbox(input: FrameInput) {
@@ -36,7 +40,9 @@ function Sandbox(input: FrameInput) {
       channel = new MessageChannel()
       channel.port1.onmessage = message => {
         window.previewEvents.push(message.data)
-        callbacks.current.onMessage?.(message.data)
+        const deliver = () => callbacks.current.onMessage?.(message.data, { versionKey: input.versionKey, data: input.data })
+        if (window.previewHoldPages && message.data?.type === 'page') window.previewDeferred.push(deliver)
+        else deliver()
         if (message.data?.type === 'initialized')
           callbacks.current.onChannel?.((command: FrameCommand) => {
             if (isFrameCommand(command)) channel!.port1.postMessage(command)
@@ -84,6 +90,7 @@ function Harness() {
     window.previewRanges = []
     window.previewOpened = []
     window.previewEvents = []
+    window.previewQuotes = []
     setValue({
       file: {
         handle: 'test',
@@ -145,9 +152,17 @@ function Harness() {
           renderFrame={input => <Sandbox key={input.versionKey} {...input} />}
         />
       )}
-      {value && <DocumentPreview {...value} renderFrame={input => <Sandbox key={input.versionKey} {...input} />} />}
+      {value && (
+        <DocumentPreview
+          {...value}
+          onQuote={quote => window.previewQuotes.push(quote)}
+          renderFrame={input => <Sandbox key={input.versionKey} {...input} />}
+        />
+      )}
     </div>
   )
 }
 window.validatePreviewMath = validMathDom
+window.previewHoldPages = false
+window.previewDeferred = []
 createRoot(document.getElementById('root')!).render(<Harness />)

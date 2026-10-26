@@ -76,6 +76,18 @@ export function projectOf(task: TaskSummary, workspaces: readonly WorkspaceInfo[
   return saved.filter(project => within(task.cwd!, project.path)).toSorted((a, b) => trimPath(b.path).length - trimPath(a.path).length)[0]
 }
 
+/** The caller's snapshot is the only source; Personal sessions never become project navigation. */
+export function recentProjectSessions(
+  projectId: string,
+  tasks: readonly TaskSummary[],
+  workspaces: readonly WorkspaceInfo[],
+): TaskSummary[] {
+  return tasks
+    .filter(task => task.personal === undefined && projectOf(task, workspaces)?.id === projectId)
+    .toSorted(byRecency)
+    .slice(0, 3)
+}
+
 /** Pinned first, saved projects by their latest session, then conversations outside a project. */
 export function groupSessions(
   tasks: TaskSummary[],

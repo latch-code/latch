@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useState, type ReactNode, type RefObject } from 'react'
 import { BookOpenText, ChevronRight, FileCheck, Laptop, PlugZap, ShieldAlert, Timer, TriangleAlert } from 'lucide-react'
 import type { ModelRef, TaskMode } from '@latch/protocol'
 import type { DeviceAccess } from '../core/permissions.ts'
@@ -21,6 +21,29 @@ const demoSuggestions: Suggestion[] = [
   { title: '生成一份报告', description: '在手机上批准后写入文件', prompt: '批准生成验收报告', icon: FileCheck, modes: ['agent'] },
   { title: '运行一个长任务', description: '离线后接续，随时取消', prompt: '运行可取消长任务', icon: Timer, modes: ['agent'] },
 ]
+const taskSuggestions: Suggestion[] = [
+  {
+    title: '梳理一个想法',
+    description: '从目标、选择和下一步开始',
+    prompt: '我想和你一起梳理一个想法。请先问我目标和当前遇到的问题。',
+    icon: BookOpenText,
+    modes: ['chat', 'agent'],
+  },
+  {
+    title: '一起整理资料',
+    description: '理清重点，形成清楚的说明',
+    prompt: '我有一些资料想请你一起整理。请先问我资料是什么、打算给谁看，以及希望得到什么结果。',
+    icon: FileCheck,
+    modes: ['chat', 'agent'],
+  },
+  {
+    title: '制定行动计划',
+    description: '把目标拆成可执行的步骤',
+    prompt: '请帮我把接下来的目标拆成一份行动计划。先和我确认目标、时间和现有条件。',
+    icon: Timer,
+    modes: ['chat', 'agent'],
+  },
+]
 
 /**
  * Why a session cannot start and the one thing that fixes it. A missing model service is added right here: the card
@@ -31,12 +54,14 @@ export function SetupCard({
   owner,
   onSetup,
   providers,
+  triggerRef,
 }: {
   block: StartBlock
   owner: boolean
   onSetup: () => void
   /** Adding a model service in place, for a missing one: this device's access and what to do once one is saved. */
   providers?: { access: Pick<DeviceAccess, 'legacy' | 'local' | 'admin'>; onSaved: (model: ModelRef) => void; onSettings: () => void }
+  triggerRef?: RefObject<HTMLButtonElement | null>
 }) {
   const model = block.kind === 'model-required'
   const held = block.kind === 'model-required' ? block : undefined
@@ -61,6 +86,7 @@ export function SetupCard({
         </div>
         {owner && !adding && (
           <Button
+            ref={triggerRef}
             variant="primary"
             data-ambient-avoid="accent"
             onClick={() => {
@@ -130,12 +156,12 @@ export function ContextRow({ hostName, fullAccess, onComputer }: { hostName: str
   )
 }
 
-/** Cards of prompts the demo model recognizes, for the chosen mode; nothing outside demo mode. */
+/** Suggestions only fill the draft; model output and execution still use the selected real harness. */
 export function DemoSuggestions({ demo, mode, onSuggestion }: { demo: boolean; mode: TaskMode; onSuggestion: (prompt: string) => void }) {
-  const suggestions = demo ? demoSuggestions.filter(item => item.modes.includes(mode)) : []
+  const suggestions = (demo ? demoSuggestions : taskSuggestions).filter(item => item.modes.includes(mode))
   if (suggestions.length === 0) return null
   return (
-    <section className="suggestions" aria-label="演示任务" data-ambient-avoid="surface">
+    <section className="suggestions" aria-label={demo ? '演示任务' : '任务灵感'} data-ambient-avoid="surface">
       {suggestions.map(item => (
         <button
           key={item.prompt}
@@ -147,7 +173,7 @@ export function DemoSuggestions({ demo, mode, onSuggestion }: { demo: boolean; m
           <item.icon size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
           <span className="suggestion-title">
             {item.title}
-            <DemoMark compact />
+            {demo && <DemoMark compact />}
           </span>
           <span className="suggestion-description">{item.description}</span>
         </button>

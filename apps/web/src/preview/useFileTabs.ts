@@ -2,13 +2,14 @@ import { useEffect, useState } from 'react'
 import type { FileContext, FileMetadata } from '@latch/protocol'
 import { storageGet, storageSet } from '../preferences.ts'
 import { contextOf, fileContextKey, targetIn, type PreviewTarget } from './fileContext.ts'
+import type { FileTreeView } from './treeFiles.ts'
 
 export interface FileTab {
   id: string
   target: PreviewTarget
   file?: FileMetadata
 }
-type ContextTabs = { context: FileContext; tabs: FileTab[]; selected?: string }
+type ContextTabs = { context: FileContext; tabs: FileTab[]; selected?: string; treeView?: FileTreeView }
 const keyFor = (deviceId: string) => `latch.file-tabs.${location.origin}.${deviceId}`
 const validId = (value: unknown): value is string =>
   typeof value === 'string' && value.length > 0 && value.length <= 256 && !/[\u0000-\u001f\u007f]/u.test(value)
@@ -84,9 +85,28 @@ function restore(key: string): Record<string, ContextTabs> {
 }
 
 /** Only context IDs, relative paths and root IDs survive reload. Bytes and handles stay in memory. */
-export function useFileTabs(deviceId: string, context: FileContext | null) {
+export function useFileTabs(deviceId: string, context: FileContext | null, authority = '') {
   const key = keyFor(deviceId)
-  const [contexts, setContexts] = useState(() => restore(key))
+  const [bank, setBank] = useState(() => ({ key, authority, epoch: 0, contexts: restore(key) }))
+  let contexts = bank.contexts
+  let epoch = bank.epoch
+  if (bank.key !== key || bank.authority !== authority) {
+    contexts =
+      bank.key !== key
+        ? restore(key)
+        : Object.fromEntries(
+            Object.entries(bank.contexts).map(([id, state]) => [
+              id,
+              {
+                context: state.context,
+                tabs: state.tabs.map(tab => ({ id: crypto.randomUUID(), target: tab.target })),
+              },
+            ]),
+          )
+    // Fence this render as well as late callbacks; no old preview is committed under new authority.
+    epoch++
+    setBank({ key, authority, epoch, contexts })
+  }
   useEffect(() => {
     storageSet(
       key,
@@ -117,18 +137,26 @@ export function useFileTabs(deviceId: string, context: FileContext | null) {
   const tabs = state?.tabs ?? []
   const update = (targetContext: FileContext, change: (state: ContextTabs) => ContextTabs) => {
     const id = fileContextKey(targetContext)
-    setContexts(previous =>
-      Object.fromEntries([
-        ...Object.entries(previous)
-          .filter(([key]) => key !== id)
-          .slice(-39),
-        [id, change(Object.hasOwn(previous, id) ? previous[id]! : { context: targetContext, tabs: [] })],
-      ]),
-    )
+    setBank(previous => {
+      if (previous.key !== key || previous.authority !== authority || previous.epoch !== epoch) return previous
+      return {
+        ...previous,
+        contexts: Object.fromEntries([
+          ...Object.entries(previous.contexts)
+            .filter(([key]) => key !== id)
+            .slice(-39),
+          [id, change(Object.hasOwn(previous.contexts, id) ? previous.contexts[id]! : { context: targetContext, tabs: [] })],
+        ]),
+      }
+    })
   }
   return {
     tabs,
     active: tabs.find(tab => tab.id === state?.selected),
+    treeView: state?.treeView,
+    setTreeView(treeView: FileTreeView) {
+      if (context) update(context, state => ({ ...state, treeView }))
+    },
     open(target: PreviewTarget) {
       update(contextOf(target), state => {
         const existing = state.tabs.find(

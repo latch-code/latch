@@ -1,4 +1,5 @@
 import { ascii, concat, equal, field, fixed, uint } from './bytes.ts'
+import { relayWireVersion, type RelayTransportProfile } from './relay-profile.ts'
 
 /** Cryptography is injected; this module never reaches a platform global or implements a primitive. */
 export interface LinkCrypto {
@@ -36,14 +37,26 @@ export async function holder(
   }
 }
 export interface KnockBinding {
-  path: 'direct' | 'relay'
+  path: 'direct' | 'relay' | 'carrier'
   relayId?: Uint8Array
   routeId?: Uint8Array
+  driverId?: string
+  descriptorHash?: Uint8Array
+  profile?: RelayTransportProfile
 }
 export function bindingBytes(binding: KnockBinding): Uint8Array {
+  const version = relayWireVersion(binding.profile)
+  if (binding.profile !== undefined && binding.path !== 'relay') throw new RangeError('Invalid relay profile binding')
+  if (binding.path === 'carrier') {
+    if (!binding.driverId || !/^[A-Za-z0-9_-]{1,64}$/u.test(binding.driverId)) throw new RangeError('Invalid carrier binding')
+    return concat(field(ascii('carrier-v1')), field(concat(field(ascii(binding.driverId)), fixed(binding.descriptorHash!, 32))))
+  }
   return binding.path === 'direct'
     ? concat(field(ascii('direct')), field(new Uint8Array()))
-    : concat(field(ascii('relay')), field(concat(fixed(binding.relayId!, 16), fixed(binding.routeId!, 16))))
+    : concat(
+        field(ascii(version === 2 ? 'relay-pad-v2' : 'relay')),
+        field(concat(fixed(binding.relayId!, 16), fixed(binding.routeId!, 16))),
+      )
 }
 export async function knock(
   crypto: LinkCrypto,

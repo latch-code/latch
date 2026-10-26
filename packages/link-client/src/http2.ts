@@ -2,6 +2,7 @@ import { connect, type ClientHttp2Session, type ClientHttp2Stream } from 'node:h
 import type { Duplex } from 'node:stream'
 import type { KnockBinding } from '@latch/link-wire'
 import { connectNative } from './native.ts'
+import { PaddedStream } from './padding.ts'
 
 export class NativeHttpClient {
   private readonly session: ClientHttp2Session
@@ -10,7 +11,10 @@ export class NativeHttpClient {
   private readonly closeListeners = new Set<() => void>()
   constructor(socket: Duplex) {
     this.stream = socket
-    this.session = connect('https://native.latch.invalid', { createConnection: () => socket })
+    this.session = connect('https://native.latch.invalid', {
+      createConnection: () => socket,
+      settings: { headerTableSize: 0, enablePush: false },
+    })
     this.session.on('error', () => {})
     const ended = () => {
       if (this.ended) return
@@ -58,6 +62,8 @@ export class NativeHttpClient {
     body?: unknown,
   ): Promise<{ status: number; body: unknown; headers: Record<string, string> }> {
     if (!path.startsWith('/link/api/') || path.length > 4096) throw new RangeError('Invalid native request path')
+    if (method === 'POST' && /\/(?:cancel|approve|deny|reject|decision)$|\/approvals\//u.test(path) && this.stream instanceof PaddedStream)
+      this.stream.protect()
     const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body))
     if (payload && payload.length > 1_048_576) throw new RangeError('Native request too large')
     return new Promise((resolve, reject) => {
@@ -92,7 +98,7 @@ export class NativeHttpClient {
         try {
           resolve({ status, body: JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown, headers: responseHeaders })
         } catch {
-          reject(new Error('Invalid native response'))
+          reject(new Error('Native request result unknown; retain the original requestId'))
         }
       })
       request.end(payload)

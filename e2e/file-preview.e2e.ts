@@ -114,11 +114,8 @@ describe('authenticated file column', () => {
         await expect.poll(() => preview.getByLabel('跳到行', { exact: true }).inputValue()).toBe('2')
         if (width === 1440) {
           await writeFile(join(host.workspaceRoot, 'report.txt'), 'updated first\nupdated second\nupdated third')
-          const notice = preview.locator('.ui-notice', { hasText: '文件已更新。' })
-          await notice.waitFor()
-          await preview.getByText('second line', { exact: true }).waitFor()
-          await notice.getByRole('button', { name: '更新预览', exact: true }).click()
           await preview.getByText('updated second', { exact: true }).waitFor()
+          await preview.getByRole('status', { name: '', exact: true }).filter({ hasText: '已更新' }).waitFor()
           expect(await preview.getByLabel('跳到行', { exact: true }).inputValue()).toBe('2')
         }
         const blocked = await page.evaluate(() => {

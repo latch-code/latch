@@ -1,0 +1,282 @@
+import { EventEmitter } from 'node:events'
+import { watch, type FSWatcher, type Dirent } from 'node:fs'
+import { mkdir, mkdtemp, opendir, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { AppError } from '@latch/sdk'
+import { FileSearchIndex } from '../src/files/search.ts'
+import { ProtectedPaths } from '../src/files/resolve.ts'
+
+vi.mock('node:fs', async original => {
+  const fs = await original<typeof import('node:fs')>()
+  return { ...fs, watch: vi.fn(fs.watch) }
+})
+vi.mock('node:fs/promises', async original => {
+  const fs = await original<typeof import('node:fs/promises')>()
+  return { ...fs, opendir: vi.fn(fs.opendir) }
+})
+const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+const actualFs = await vi.importActual<typeof import('node:fs')>('node:fs')
+const cleanup: Array<() => Promise<unknown>> = []
+beforeEach(() => {
+  vi.mocked(opendir).mockReset().mockImplementation(actual.opendir)
+  vi.mocked(watch).mockReset().mockImplementation(actualFs.watch)
+})
+afterEach(async () => {
+  vi.useRealTimers()
+  for (const close of cleanup.splice(0).reverse()) await close()
+  vi.restoreAllMocks()
+})
+function deferred() {
+  let resolve!: () => void
+  const promise = new Promise<void>(done => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
+function controlledWatches(closeImmediately = true) {
+  const observers: Array<{ change(): void; finishClose(): void; close: ReturnType<typeof vi.fn> }> = []
+  vi.mocked(watch).mockImplementation(((...args: unknown[]) => {
+    const callback = args[2] as () => void,
+      emitter = new EventEmitter()
+    const finishClose = () => {
+      emitter.emit('close')
+    }
+    const close = vi.fn(() => {
+      if (closeImmediately) finishClose()
+    })
+    observers.push({ change: callback, finishClose, close })
+    return Object.assign(emitter, {
+      close,
+      ref() {
+        return this
+      },
+      unref() {
+        return this
+      },
+    }) as unknown as FSWatcher
+  }) as typeof watch)
+  return observers
+}
+async function fixture() {
+  const parent = await realpath(await mkdtemp(join(tmpdir(), 'latch-search-index-'))),
+    root = join(parent, 'project')
+  await mkdir(root)
+  await writeFile(join(root, 'report.txt'), 'ordinary content')
+  cleanup.push(() => rm(parent, { recursive: true, force: true }))
+  const index = new FileSearchIndex(),
+    guard = new ProtectedPaths([])
+  cleanup.push(() => index.close())
+  return {
+    index,
+    guard,
+    root,
+    search: (query = '', identity = 'context-v1', check = () => {}, cancelled = () => false) =>
+      index.search([{ id: 'primary', path: root }], guard, identity, query, 100, cancelled, check),
+  }
+}
+
+describe('bounded filename index', () => {
+  it('reuses only names while freshly rejecting changed secret content, symlinks and revoked callers', async () => {
+    controlledWatches()
+    const f = await fixture()
+    expect((await f.search('report')).files).toHaveLength(1)
+    const scans = vi.mocked(opendir).mock.calls.length
+    expect((await f.search('report')).files).toHaveLength(1)
+    expect(opendir).toHaveBeenCalledTimes(scans)
+    await writeFile(join(f.root, 'report.txt'), ['-----BEGIN', 'PRIVATE KEY-----'].join(' '))
+    expect((await f.search('report')).files).toEqual([])
+    expect(opendir).toHaveBeenCalledTimes(scans)
+    await expect(
+      f.search('report', 'context-v1', () => {
+        throw new AppError(403, 'window-expired', 'Fixture expired')
+      }),
+    ).rejects.toMatchObject({ status: 403 })
+  })
+
+  it('binds the configuration identity and actual root inode before reusing names', async () => {
+    const watches = controlledWatches(),
+      f = await fixture()
+    await f.search()
+    expect(opendir).toHaveBeenCalledTimes(1)
+    await f.search('', 'context-v2')
+    expect(opendir).toHaveBeenCalledTimes(2)
+    await rename(f.root, f.root + '-old')
+    await mkdir(f.root)
+    await writeFile(join(f.root, 'replacement.txt'), 'new root')
+    expect((await f.search('', 'context-v2')).files.map(file => file.path)).toEqual(['replacement.txt'])
+    expect(opendir).toHaveBeenCalledTimes(3)
+    for (let generation = 3; generation < 11; generation++) await f.search('', `context-v${generation}`)
+    expect(watches[0]!.close).toHaveBeenCalledOnce()
+    await f.index.close()
+    expect(watches.every(watch => watch.close.mock.calls.length === 1)).toBe(true)
+  })
+
+  it('invalidates a real directory watch on creation and rename', async () => {
+    const f = await fixture()
+    await f.search('new')
+    await writeFile(join(f.root, 'new.txt'), 'new')
+    await vi.waitFor(async () => expect((await f.search('new')).files.map(file => file.path)).toEqual(['new.txt']))
+    await rename(join(f.root, 'new.txt'), join(f.root, 'renamed.txt'))
+    await vi.waitFor(async () => {
+      expect((await f.search('renamed')).files.map(file => file.path)).toEqual(['renamed.txt'])
+      expect((await f.search('new')).files).toEqual([])
+    })
+  })
+
+  it('discards the build epoch if a directory event arrives while opendir is pending', async () => {
+    const watches = controlledWatches(),
+      f = await fixture(),
+      entered = deferred(),
+      release = deferred()
+    vi.mocked(opendir).mockImplementationOnce(async (...args) => {
+      const directory = await actual.opendir(...args)
+      entered.resolve()
+      await release.promise
+      return directory
+    })
+    const first = f.search('report')
+    await entered.promise
+    watches[0]!.change()
+    release.resolve()
+    expect((await first).files).toHaveLength(1)
+    expect(watches[0]!.close).toHaveBeenCalledOnce()
+    expect(opendir).toHaveBeenCalledTimes(2)
+    await f.search('report')
+    expect(opendir).toHaveBeenCalledTimes(3)
+    await f.search('report')
+    expect(opendir).toHaveBeenCalledTimes(3)
+  })
+
+  it('keeps the original fifty-thousand-item live visibility when twenty-thousand cached names do not fit', async () => {
+    controlledWatches()
+    const f = await fixture()
+    await writeFile(join(f.root, 'target.txt'), 'target')
+    vi.mocked(opendir).mockImplementation(
+      async () =>
+        ({
+          async *[Symbol.asyncIterator]() {
+            for (let i = 0; i < 20_100; i++)
+              yield {
+                name: i === 20_099 ? 'target.txt' : `unmatched-${i}.txt`,
+                isFile: () => true,
+                isDirectory: () => false,
+                isSymbolicLink: () => false,
+              } as Dirent
+          },
+          async close() {},
+        }) as Awaited<ReturnType<typeof opendir>>,
+    )
+    expect(await f.search('target')).toEqual({ files: [{ name: 'target.txt', path: 'target.txt', root: 'primary' }], truncated: false })
+    expect(opendir).toHaveBeenCalledTimes(2)
+  })
+
+  it('bounds watches and expires partial watch coverage after one second', async () => {
+    const watches = controlledWatches(),
+      f = await fixture()
+    for (let i = 0; i < 40; i++) await mkdir(join(f.root, `child-${i}`))
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    await f.search('report')
+    expect(watches).toHaveLength(32)
+    const scans = vi.mocked(opendir).mock.calls.length
+    await f.search('report')
+    expect(opendir).toHaveBeenCalledTimes(scans)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(watches.every(watch => watch.close.mock.calls.length === 1)).toBe(true)
+    await f.search('report')
+    expect(vi.mocked(opendir).mock.calls.length).toBeGreaterThan(scans)
+  })
+
+  it('rechecks a warm result after awaited file classification', async () => {
+    controlledWatches()
+    const f = await fixture()
+    await f.search('report')
+    let expired = false
+    vi.spyOn(f.guard, 'contains').mockImplementation(async () => {
+      await Promise.resolve()
+      expired = true
+      return false
+    })
+    await expect(
+      f.search('report', 'context-v1', () => {
+        if (expired) throw new AppError(403, 'window-expired', 'Fixture expired')
+      }),
+    ).rejects.toMatchObject({ status: 403 })
+  })
+
+  it('does not cache an enumeration cancelled while waiting for its directory', async () => {
+    const watches = controlledWatches(),
+      f = await fixture(),
+      entered = deferred(),
+      release = deferred()
+    let cancelled = false
+    vi.mocked(opendir).mockImplementationOnce(async (...args) => {
+      const directory = await actual.opendir(...args)
+      entered.resolve()
+      await release.promise
+      return directory
+    })
+    const result = f.search(
+      '',
+      'context-v1',
+      () => {},
+      () => cancelled,
+    )
+    await entered.promise
+    cancelled = true
+    release.resolve()
+    expect(await result).toEqual({ files: [], truncated: true })
+    expect(watches[0]!.close).toHaveBeenCalledOnce()
+    cancelled = false
+    expect((await f.search('report')).files).toHaveLength(1)
+    expect(opendir).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps watcher ownership until its actual close event', async () => {
+    const watches = controlledWatches(false),
+      f = await fixture()
+    await f.search()
+    let closed = false
+    const closing = f.index.close().then(() => {
+      closed = true
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(watches[0]!.close).toHaveBeenCalledOnce()
+    expect(closed).toBe(false)
+    watches[0]!.finishClose()
+    await closing
+    expect(closed).toBe(true)
+  })
+
+  it('waits for its pending directory descriptor on shutdown and refuses late publication', async () => {
+    const watches = controlledWatches(),
+      f = await fixture(),
+      entered = deferred(),
+      release = deferred()
+    vi.mocked(opendir).mockImplementationOnce(async (...args) => {
+      const directory = await actual.opendir(...args)
+      entered.resolve()
+      await release.promise
+      return directory
+    })
+    const result = f.search().then(
+      () => 'unexpected',
+      (cause: unknown) => cause,
+    )
+    await entered.promise
+    let closed = false
+    const closing = f.index.close().then(() => {
+      closed = true
+    })
+    await Promise.resolve()
+    expect(closed).toBe(false)
+    expect(watches[0]!.close).toHaveBeenCalledOnce()
+    release.resolve()
+    expect(await result).toMatchObject({ status: 503 })
+    await closing
+    expect(closed).toBe(true)
+    await expect(f.search()).rejects.toMatchObject({ status: 503 })
+  })
+})

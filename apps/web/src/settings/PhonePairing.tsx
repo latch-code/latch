@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import QRCode from 'qrcode'
+import { pairingQr } from './pairingQr.ts'
 import { ChevronRight, Link, QrCode, RefreshCw, Share2 } from 'lucide-react'
 import type { AppSnapshot, InvitationView, NativeLinkInfo } from '@latch/protocol'
 import { Button, Collapse, ICON_STROKE, InlineNotice, Spinner } from '@latch/ui'
@@ -27,7 +27,7 @@ function PhonePairing({ phone }: { phone: boolean }) {
     if (invitation === null) return undefined
     let active = true
     // Dark modules on white in both themes: scanners need the contrast.
-    void QRCode.toDataURL(invitation.url, { width: 400, margin: 1, color: { dark: '#1d1c1a', light: '#ffffff' } })
+    void pairingQr(invitation.url, { width: 400, margin: 1, color: { dark: '#1d1c1a', light: '#ffffff' } })
       .then(value => {
         if (active) setQr(value)
       })
@@ -225,6 +225,7 @@ export function PairingSection({
       <NativePairingSection
         info={nativeInfo}
         phone={phone}
+        scopeSelection={snapshot?.catalog?.features?.nativePairingScope === true}
         onChanged={next => {
           nativeLoad.current++
           setNativeInfo(next)

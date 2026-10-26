@@ -172,6 +172,44 @@
 .phone-personal-entry {
   padding: 0 var(--sp-16) var(--sp-12);
 }
+.personal-shared-history,
+.personal-group-compose {
+  display: grid;
+  gap: var(--sp-16);
+  min-width: 0;
+}
+.personal-shared-message {
+  border-bottom: 1px solid var(--line);
+  padding-block: var(--sp-12);
+  min-width: 0;
+}
+.personal-group-compose > .ui-button {
+  justify-self: start;
+}
+.personal-shared-message > header,
+.personal-response-order {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-12);
+}
+.personal-shared-message strong {
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+  font-weight: 500;
+}
+.personal-shared-message time {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.personal-shared-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-1);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+}
 @media (max-width: 767.98px) {
   .personal-content {
     padding: var(--sp-24) var(--sp-16);

@@ -96,11 +96,15 @@ final class KnockFramer: NWProtocolFramerImplementation {
 }
 
 enum NativeTLS {
+    static func applicationProtocol(_ state: HandshakeState) -> String {
+        switch state.binding { case .direct: return "h2"; case .relay, .relayPaddedV2: return "latch-pad/1" }
+    }
     static func options(state: HandshakeState, identity: PlatformIdentity?) throws -> NWProtocolTLS.Options {
         let options = NWProtocolTLS.Options(), security = options.securityProtocolOptions
         sec_protocol_options_set_min_tls_protocol_version(security, .TLSv13)
         sec_protocol_options_set_max_tls_protocol_version(security, .TLSv13)
-        sec_protocol_options_add_tls_application_protocol(security, "h2")
+        let applicationProtocol = applicationProtocol(state)
+        sec_protocol_options_add_tls_application_protocol(security, applicationProtocol)
         sec_protocol_options_set_tls_server_name(security, "transport.latch.invalid")
         sec_protocol_options_set_tls_tickets_enabled(security, false)
         sec_protocol_options_set_tls_resumption_enabled(security, false)
@@ -119,7 +123,7 @@ enum NativeTLS {
                   SecTrustEvaluateWithError(actual, nil), let chain = SecTrustCopyCertificateChain(actual) as? [SecCertificate],
                   let first = chain.first, LinkBytes.equal(SecCertificateCopyData(first) as Data, peer.certificate),
                   sec_protocol_metadata_get_negotiated_tls_protocol_version(metadata) == .TLSv13,
-                  let protocolName = sec_protocol_metadata_get_negotiated_protocol(metadata), String(cString: protocolName) == "h2" else { complete(false); return }
+                  let protocolName = sec_protocol_metadata_get_negotiated_protocol(metadata), String(cString: protocolName) == applicationProtocol else { complete(false); return }
             state.acceptTLS()
             complete(true)
         }, DispatchQueue(label: "app.latch.native.tls-verify"))
@@ -174,6 +178,7 @@ final class HostProofGate: ChannelInboundHandler, RemovableChannelHandler, @unch
     }
     func handlerRemoved(context: ChannelHandlerContext) {
         timer?.cancel()
+        if !settled { settled = true; completion.fail(NativeFailure.identityMismatch) }
         if verified, buffer.readableBytes > 0 { context.fireChannelRead(wrapInboundOut(buffer)); context.fireChannelReadComplete() }
         self.context = nil
     }

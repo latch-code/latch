@@ -7,10 +7,20 @@ export function NotificationSettings() {
   const [value, setValue] = useState<NotificationPreferences>(),
     [error, setError] = useState('')
   useEffect(() => {
+    let active = true
     void api
       ?.get()
-      .then(setValue)
-      .catch(() => setError('无法读取通知设置。'))
+      .then(value => {
+        if (active) setValue(value)
+      })
+      .catch(() => {
+        if (active) setError('无法读取通知设置。')
+      })
+    const stop = api?.subscribeState?.(setValue)
+    return () => {
+      active = false
+      stop?.()
+    }
   }, [api])
   if (!api || !value) return error ? <InlineNotice tone="error">{error}</InlineNotice> : null
   const change = async (key: 'completion' | 'approval' | 'title', checked: boolean) => {

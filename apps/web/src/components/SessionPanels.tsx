@@ -5,6 +5,8 @@ import type { FileTab } from '../preview/useFileTabs.ts'
 import type { FileContext, FileMetadata, FileMention } from '@latch/protocol'
 import { FileTree } from '../preview/FileTree.tsx'
 import { fileContextKey } from '../preview/fileContext.ts'
+import type { FileQuote } from '../preview/quote.ts'
+import type { FileTreeView } from '../preview/treeFiles.ts'
 import { useEffect, useId, useState, type ReactNode } from 'react'
 import {
   escapeSecurityText,
@@ -39,10 +41,13 @@ export function SessionPanels({
   onFileView,
   fileContext,
   fileRevision,
+  treeView,
+  onTreeViewChange,
   showFiles = false,
   onShowFiles,
   onSearchFiles,
   onMention,
+  onQuote,
   folders,
   cwd,
 }: {
@@ -60,10 +65,13 @@ export function SessionPanels({
   panels?: UiPanelInfo[]
   fileContext?: FileContext
   fileRevision?: string
+  treeView?: FileTreeView
+  onTreeViewChange?(view: FileTreeView): void
   showFiles?: boolean
   onShowFiles?(value: boolean): void
   onSearchFiles?(): void
   onMention?(mention: FileMention): void
+  onQuote?(quote: FileQuote): void
   folders?: Array<{ id: string; path: string }>
   cwd?: string
   summary?: TaskSummary
@@ -86,6 +94,14 @@ export function SessionPanels({
   }, [showFiles])
   const active = offered.find(panel => panel.id === selected)
   const histories = detail ? fileHistories(detail) : []
+  const turnStart = Math.max(0, detail?.messages.findLastIndex(message => message.role === 'user') ?? 0)
+  const observedFiles = detail?.fileChanges?.files ?? detail?.messages.slice(turnStart).flatMap(message => message.outputs ?? []) ?? []
+  const treeRevision = JSON.stringify([
+    fileRevision,
+    summary?.runId,
+    summary?.status,
+    observedFiles.map(file => [file.root, file.path, file.change]),
+  ])
   const history = activeFile
     ? histories.find(item => item.path === activeFile.target.reference && item.root === activeFile.target.rootId)
     : undefined
@@ -122,6 +138,13 @@ export function SessionPanels({
           <FileTree
             key={`${fileContextKey(fileContext)}:${fileRevision ?? ''}`}
             context={fileContext}
+            local={local}
+            folders={summary?.folders ?? folders}
+            cwd={summary?.cwd ?? cwd}
+            fileChanges={observedFiles}
+            revision={treeRevision}
+            initialView={treeView}
+            onViewChange={onTreeViewChange}
             onSearch={() => onSearchFiles?.()}
             onMention={onMention}
           />
@@ -154,6 +177,7 @@ export function SessionPanels({
             onResolved={file => onFileResolved?.(activeFile.id, file)}
             onMention={onMention}
             onClose={() => onCloseFile?.(activeFile.id)}
+            onQuote={canCompose ? onQuote : undefined}
             onExpand={() => onExpandFile?.()}
           />
         ) : active?.moduleHash && summary ? (

@@ -2,6 +2,7 @@
 import { format, isDateFormat } from 'numfmt'
 import { parseXml, resolvePart, xmlText } from './zip.ts'
 import type { GridCell, SheetInfo } from './types.ts'
+import { gridPage } from './gridPage.ts'
 export interface ParsedSheet {
   info: SheetInfo
   cells: Map<number, Map<number, GridCell>>
@@ -93,7 +94,7 @@ export function parseXlsx(files: Record<string, Uint8Array>): { sheets: ParsedSh
         hidden: ['hidden', 'veryHidden'].includes(node.getAttribute('state') ?? ''),
         merges: [],
         colWidths: [],
-        frozen: { rows: 0, cols: 0 },
+        frozen: { rows: 1, cols: 1 },
       },
       cells = new Map<number, Map<number, GridCell>>()
     if (!doc) return { info, cells }
@@ -178,17 +179,5 @@ export function parseXlsx(files: Record<string, Uint8Array>): { sheets: ParsedSh
   return { sheets, truncated }
 }
 export function sheetPage(sheet: ParsedSheet, start: number, count: number): { rows: GridCell[][]; truncated: boolean } {
-  const rows: GridCell[][] = []
-  let chars = 0
-  for (let r = start; r < Math.min(sheet.info.rows, start + count); r++) {
-    const row: GridCell[] = []
-    for (let c = 0; c < sheet.info.cols; c++) {
-      const cell = sheet.cells.get(r)?.get(c) ?? { text: '' }
-      chars += cell.text.length + (cell.formula?.length ?? 0)
-      if (chars > 1_000_000) return { rows, truncated: true }
-      row.push(cell)
-    }
-    rows.push(row)
-  }
-  return { rows, truncated: false }
+  return gridPage(sheet.info.rows, sheet.info.cols, start, count, (row, col) => sheet.cells.get(row)?.get(col))
 }

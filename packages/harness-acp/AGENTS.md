@@ -13,6 +13,7 @@ ACP HarnessDriver：每个启用的 Agent 定义一个 Driver（`createAcpAgentP
 - 取消须等进程真实结算（`test/acp.test.ts#answers open permissions as cancelled and waits for the prompt to settle`）；带 `runId` 时只取消仍是当前的那一轮（`test/acp.test.ts#names each turn on the session and leaves a turn alone when a cancel names another`）。
 - 探测只做 initialize，经过同一命令、环境和配置指纹检查，15 秒内结束并等待进程停止；不发提示词，authMethods 不作为未登录证据（`test/probe.test.ts`）。
 - 新的持久化字段以可选字段加入 `src/store.ts` 的 zod schema，旧文件照常读取。
+- 审批活动的 `since` 复用 RunClock 的原等待起点，不用第二次取时钟（`test/acp.test.ts#uses one approval wait timestamp even when every clock read advances`）。
 - 测试只用 testkit 的假 Agent（`FAKE_ACP_AGENT`），不向真实 Agent CLI 发送提示。
 
 测试：`pnpm test --project @latch/harness-acp`，另跑 `pnpm test:e2e`（`e2e/permissions-ui.e2e.ts` 用假 Agent）。改动前先读 [docs/HARNESSES.md](../../docs/HARNESSES.md)。
@@ -20,3 +21,5 @@ ACP HarnessDriver：每个启用的 Agent 定义一个 Driver（`createAcpAgentP
 - 附件只按 initialize 实际协商的 image/embeddedContext 能力发送，转换在提示派发前完成；Agent 图片输出在当前轮经 Host 私有存储转成引用，原始字节不进消息、快照或 stderr。
 
 - 文件产物只表示运行时间窗口中的观察；旧运行的晚到结算只更新原消息，不改新运行或会话排序。范围与预算见 [FILE-OUTPUTS.md](../../docs/FILE-OUTPUTS.md)。
+
+- 配置修改在连接准备前和 RPC 发出前调用 Host `authorize`；超时不表示未执行，Host 回执未知时只查询原请求。

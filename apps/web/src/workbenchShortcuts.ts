@@ -1,4 +1,14 @@
-export type WorkbenchAction = 'new' | 'sidebar' | 'previous' | 'next' | 'help' | 'files' | 'file-search' | 'close-file' | { nth: number }
+export type WorkbenchAction =
+  | 'new'
+  | 'sidebar'
+  | 'previous'
+  | 'next'
+  | 'help'
+  | 'files'
+  | 'file-search'
+  | 'close-file'
+  | 'compose'
+  | { nth: number }
 interface KeyStroke {
   code: string
   metaKey: boolean
@@ -13,9 +23,10 @@ export const workbenchBindings = [
   { action: 'previous', label: '上一个会话', desktop: '⌘[', browser: 'Alt [' },
   { action: 'next', label: '下一个会话', desktop: '⌘]', browser: 'Alt ]' },
   { action: 'help', label: '键盘快捷键', desktop: '⌘/', browser: 'Alt /' },
+  { action: 'compose', label: '聚焦输入框', desktop: '⌘L', browser: 'Alt L' },
   { action: 'file-search', label: '查找项目文件', desktop: '⌘P', browser: 'Alt P' },
   { action: 'close-file', label: '关闭当前文件', desktop: '⌘W', browser: 'Alt W' },
-  { action: 'files', label: '切换文件标签', desktop: '⇧⌘E', browser: 'Alt Shift E' },
+  { action: 'files', label: '浏览文件 / 切换文件标签', desktop: '⇧⌘E', browser: 'Alt Shift E' },
 ] as const
 /** Browser bindings avoid its new-window, close-tab, history and address-bar shortcuts. */
 export function workbenchShortcut(event: KeyStroke, desktop: boolean): WorkbenchAction | null {
@@ -33,6 +44,7 @@ export function workbenchShortcut(event: KeyStroke, desktop: boolean): Workbench
     Slash: 'help',
     KeyP: 'file-search',
     KeyW: 'close-file',
+    KeyL: 'compose',
   }
   return actions[event.code] ?? null
 }

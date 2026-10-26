@@ -5,7 +5,7 @@ import { resolve } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { createServer as tlsServer, connect as tlsConnect, createSecureContext, checkServerIdentity } from 'node:tls'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { knock, Reader } from '@latch/link-wire'
+import { knock, Reader, type KnockBinding } from '@latch/link-wire'
 import {
   acceptNative,
   connectNative,
@@ -19,7 +19,7 @@ const cleanup: (() => void | Promise<void>)[] = []
 afterEach(async () => {
   for (const close of cleanup.splice(0).reverse()) await close()
 })
-async function fixture(device = createTransportCertificate(), count = 1) {
+async function fixture(device = createTransportCertificate(), count = 1, binding: KnockBinding = { path: 'direct' }) {
   const host = createTransportCertificate(),
     root = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }),
     knockKey = nodeCrypto.random(32)
@@ -47,7 +47,7 @@ async function fixture(device = createTransportCertificate(), count = 1) {
     sockets.add(socket)
     socket.once('close', () => sockets.delete(socket))
     socket.on('error', () => {})
-    void acceptNative(socket, { path: 'direct' }, options)
+    void acceptNative(socket, binding, options)
       .then(({ socket: secure }) => {
         secure.on('error', () => {})
         secure.on('data', data => secure.write(data))
@@ -116,40 +116,51 @@ describe('native Host authentication before application bytes', () => {
     blocked.on('error', () => {})
     await expect(connectNative(blocked, { path: 'direct' }, excessive.client)).rejects.toThrow('authentication failed')
   })
-  it.each(['', 'wrong.latch.invalid'])('refuses a missing or different SNI before disclosing the Host root (%s)', async servername => {
-    const test = await fixture(),
-      raw = connect(test.port, '127.0.0.1')
-    raw.on('error', () => {})
-    const exact = async (size: number): Promise<Buffer> => {
-      for (;;) {
-        const value = raw.read(size) as Buffer | null
-        if (value) return value
-        await once(raw, 'readable', { signal: AbortSignal.timeout(3000) })
+  it.each([
+    { servername: '', protocol: 'h2', relay: false },
+    { servername: 'wrong.latch.invalid', protocol: 'h2', relay: false },
+    { servername: 'transport.latch.invalid', protocol: 'latch-pad/1', relay: false },
+    { servername: 'transport.latch.invalid', protocol: 'h2', relay: true },
+  ])(
+    'refuses wrong SNI or a protocol that disagrees with the authenticated binding ($protocol/$relay/$servername)',
+    async ({ servername, protocol, relay }) => {
+      const binding: KnockBinding = relay
+        ? { path: 'relay', relayId: new Uint8Array(16).fill(1), routeId: new Uint8Array(16).fill(2) }
+        : { path: 'direct' }
+      const test = await fixture(undefined, 1, binding),
+        raw = connect(test.port, '127.0.0.1')
+      raw.on('error', () => {})
+      const exact = async (size: number): Promise<Buffer> => {
+        for (;;) {
+          const value = raw.read(size) as Buffer | null
+          if (value) return value
+          await once(raw, 'readable', { signal: AbortSignal.timeout(3000) })
+        }
       }
-    }
-    raw.write(await knock(nodeCrypto, test.client.knockKey, { path: 'direct' }, Date.now()))
-    const size = (await exact(2)).readUInt16BE(),
-      record = new Reader(await exact(size)),
-      certificate = record.field(4096)
-    const client = tlsConnect({
-      socket: raw,
-      servername,
-      ca: new (await import('node:crypto')).X509Certificate(certificate).toString(),
-      cert: test.client.certificate,
-      key: test.client.key,
-      checkServerIdentity: (_name, presented) => checkServerIdentity('transport.latch.invalid', presented),
-      minVersion: 'TLSv1.3',
-      maxVersion: 'TLSv1.3',
-      ALPNProtocols: ['h2'],
-    })
-    client.on('error', () => {})
-    const observed: Buffer[] = []
-    client.on('data', data => observed.push(data))
-    client.setTimeout(2000, () => client.destroy())
-    await new Promise<void>(resolve => client.once('close', () => resolve()))
-    expect(Buffer.concat(observed)).toHaveLength(0)
-    await vi.waitFor(() => expect(test.failures).toHaveLength(1))
-  })
+      raw.write(await knock(nodeCrypto, test.client.knockKey, binding, Date.now()))
+      const size = (await exact(2)).readUInt16BE(),
+        record = new Reader(await exact(size)),
+        certificate = record.field(4096)
+      const client = tlsConnect({
+        socket: raw,
+        servername,
+        ca: new (await import('node:crypto')).X509Certificate(certificate).toString(),
+        cert: test.client.certificate,
+        key: test.client.key,
+        checkServerIdentity: (_name, presented) => checkServerIdentity('transport.latch.invalid', presented),
+        minVersion: 'TLSv1.3',
+        maxVersion: 'TLSv1.3',
+        ALPNProtocols: [protocol],
+      })
+      client.on('error', () => {})
+      const observed: Buffer[] = []
+      client.on('data', data => observed.push(data))
+      client.setTimeout(2000, () => client.destroy())
+      await new Promise<void>(resolve => client.once('close', () => resolve()))
+      expect(Buffer.concat(observed)).toHaveLength(0)
+      await vi.waitFor(() => expect(test.failures).toHaveLength(1))
+    },
+  )
   it('issues a local trust anchor for an enrolled SPKI', () => {
     const device = createTransportCertificate(),
       root = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })

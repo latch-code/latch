@@ -7,6 +7,9 @@ import UIKit
 struct PhonePreviewProgress: Equatable { let completed: Int; let total: Int }
 
 enum PhoneArea: String { case personal, projects }
+struct PhoneGroupControl { let groupId: String; let turnId: String; var state: String
+    var active: Bool { ["running", "waiting-approval"].contains(state) }
+}
 
 @MainActor final class PhoneModel: ObservableObject {
     @Published var hosts: [RegisteredHost] = []
@@ -17,6 +20,9 @@ enum PhoneArea: String { case personal, projects }
     @Published var personalOverview = NativeJSON.null
     @Published var assistantDetail = NativeJSON.null
     @Published var assistantId: String?
+    @Published var groupId: String?
+    @Published var groupDetail = NativeJSON.null
+    @Published var groupControl: PhoneGroupControl?
     @Published var personalLoading = false
     @Published var personalPlugins: [NativeJSON] = []
     @Published var personalPluginsLoaded = false
@@ -25,6 +31,7 @@ enum PhoneArea: String { case personal, projects }
     private var personalLoadId: UUID?
     @Published var sessionId: String?
     @Published var pending: [NativePendingWrite] = []
+    @Published var controlPending = NativeJSON.null
     @Published var draft: PairingDraft?
     @Published var comparisonCode: String?
     @Published var status = "选择一台电脑"
@@ -35,6 +42,9 @@ enum PhoneArea: String { case personal, projects }
     @Published var verifiedUntil: Date?
     @Published var contentGeneration = UUID()
     var supportsPersonal: Bool { snapshot["catalog"]["features"]["personal"].bool }
+    var supportsGroups: Bool { snapshot["catalog"]["features"]["personalGroups"].bool }
+    var supportsRoutines: Bool { snapshot["catalog"]["features"]["personalRoutines"].bool }
+    var canQueueCurrent: Bool { currentSummary["personal"]["groupId"].string == nil && (currentSummary["personal"] == .null ? snapshot["catalog"]["features"]["queue"].bool : snapshot["catalog"]["features"]["personalQueue"].bool) }
     var workspaceTasks: [NativeJSON] {
         snapshot["tasks"].array.filter { task in
             area == .personal ? task["personal"]["assistantId"].string == assistantId && task["personal"]["groupId"].string == nil
@@ -91,8 +101,8 @@ enum PhoneArea: String { case personal, projects }
         let previous = workspace, pairing = pairingConnection, previousStore = store
         store = nil; workspace = nil; pairingConnection = nil
         cancelPreview(); personalLoadId = nil; personalLoading = false; personalPlugins = []; personalPluginsLoaded = false
-        personalOverview = .null; assistantDetail = .null; assistantId = nil
-        detail = .null; snapshot = .null; verifiedUntil = nil; comparisonCode = nil; pending = []; hosts = []; draft = nil; selectedHost = nil
+        personalOverview = .null; assistantDetail = .null; assistantId = nil; groupId = nil; groupDetail = .null; groupControl = nil
+        detail = .null; snapshot = .null; verifiedUntil = nil; comparisonCode = nil; pending = []; controlPending = .null; hosts = []; draft = nil; selectedHost = nil
         connected = false; busy = false; verifying = false; status = "已锁定，解锁后重新连接"
         PreviewFiles.clear()
         await paths.close(); await previous?.closeOpening(); await pairing?.close(); await previousStore?.lock()
@@ -104,7 +114,7 @@ enum PhoneArea: String { case personal, projects }
         eventTask?.cancel(); expiryTask?.cancel(); reconnectTask?.cancel()
         resetBookRefresh()
         let previous = workspace; workspace = nil
-        clearPrivateContent(); snapshot = .null; sessionId = nil; assistantId = nil; verifiedUntil = nil; connected = false
+        clearPrivateContent(); snapshot = .null; sessionId = nil; assistantId = nil; groupId = nil; groupControl = nil; controlPending = .null; verifiedUntil = nil; connected = false
         selectedHost = host; status = "正在连接…"; error = nil
         await paths.close(); await previous?.closeOpening()
         guard generation == current else { return }
@@ -132,7 +142,7 @@ enum PhoneArea: String { case personal, projects }
             let value = try await paths.migrate(candidates, workspace: next)
             guard generation == current else { return }
             adoptSnapshot(value); connected = true; status = "已连接"
-            startEvents()
+            await refreshControlPending(); startEvents()
         } catch {
             guard generation == current else { return }
             if let workspace, let proof = await workspace.verifiedRevocation() { await retire(host, proof: proof); return }
@@ -207,41 +217,114 @@ enum PhoneArea: String { case personal, projects }
         }
     }
     func openPersonalHome() async {
-        area = .personal; assistantId = nil; sessionId = nil; detail = .null; assistantDetail = .null
+        area = .personal; assistantId = nil; groupId = nil; groupControl = nil; groupDetail = .null; sessionId = nil; detail = .null; assistantDetail = .null
         contentGeneration = UUID(); PreviewFiles.clear(); startEvents()
         await refreshPersonal()
     }
     func openProjects() {
-        area = .projects; assistantId = nil; sessionId = nil; detail = .null; assistantDetail = .null
+        area = .projects; assistantId = nil; groupId = nil; groupControl = nil; groupDetail = .null; sessionId = nil; detail = .null; assistantDetail = .null
         contentGeneration = UUID(); PreviewFiles.clear(); startEvents()
     }
     func openAssistant(_ id: String) async {
         guard id.range(of: "^asst_[a-f0-9-]{36}$", options: .regularExpression) != nil else { return }
-        area = .personal; assistantId = id; sessionId = nil; detail = .null; assistantDetail = .null
+        area = .personal; assistantId = id; groupId = nil; groupControl = nil; groupDetail = .null; sessionId = nil; detail = .null; assistantDetail = .null
         contentGeneration = UUID(); PreviewFiles.clear(); startEvents()
         await refreshPersonal()
     }
+    func openGroup(_ id: String) async {
+        guard supportsGroups, id.range(of: "^grp_[a-f0-9-]{36}$", options: .regularExpression) != nil else { return }
+        area = .personal; assistantId = nil; groupId = id; groupControl = nil; sessionId = nil
+        groupDetail = .null; detail = .null; assistantDetail = .null; contentGeneration = UUID(); PreviewFiles.clear(); startEvents()
+        await refreshPersonal()
+    }
+    func sendGroup(text: String, assistantIds: [String]) async -> Bool {
+        guard let groupId, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, text.count <= 16000 else { return false }
+        var fields: [String: NativeJSON] = ["prompt": .string(text)]
+        if !assistantIds.isEmpty { fields["assistantIds"] = .array(assistantIds.map(NativeJSON.string)) }
+        return await mutate(.post, path: "/link/api/personal/groups/" + groupId + "/messages", fields: fields)
+    }
+    func stopGroup() async {
+        guard let workspace, let control = groupControl, control.groupId == groupId, !busy else { return }
+        let current = generation, path = "/link/api/personal/groups/" + control.groupId + "/cancel"
+        busy = true; defer { if generation == current { busy = false } }
+        do {
+            var fields: [String: NativeJSON] = ["requestId": .string(UUID().uuidString), "turnId": .string(control.turnId)]
+            if let previous = try await workspace.pendingControl() {
+                guard previous["path"].string == path, previous["fields"]["turnId"].string == control.turnId else { throw NativeFailure.resultUnknown }
+                fields = previous["fields"].object
+            }
+            let value = try await workspace.freeAction(path: path, fields: fields)
+            guard generation == current, groupControl?.turnId == control.turnId else { return }
+            groupControl?.state = value["state"].string ?? control.state
+            await refreshControlPending()
+            if verifiedUntil != nil { await refreshPersonal() }
+        } catch { if generation == current { await refreshControlPending(); report(error) } }
+    }
+    func refreshControlPending() async {
+        guard let workspace else { return }
+        let current = generation
+        do { let value = try await workspace.pendingControl(); if generation == current { controlPending = value ?? .null } }
+        catch { if generation == current { report(error) } }
+    }
+    func retryControl() async {
+        guard let workspace, !busy else { return }
+        let current = generation
+        busy = true; defer { if generation == current { busy = false } }
+        do {
+            guard let saved = try await workspace.pendingControl(), let path = saved["path"].string else { await refreshControlPending(); return }
+            _ = try await workspace.freeAction(path: path, fields: saved["fields"].object)
+            guard generation == current else { return }
+            await refreshControlPending(); _ = await refresh()
+        } catch { if generation == current { await refreshControlPending(); report(error) } }
+    }
+    private func performControl(path: String, fields: [String: NativeJSON]) async {
+        guard let workspace else { return }
+        let current = generation
+        do {
+            var body = fields
+            if let saved = try await workspace.pendingControl() {
+                var previous = saved["fields"].object, requested = fields
+                previous.removeValue(forKey: "requestId"); requested.removeValue(forKey: "requestId")
+                guard saved["path"].string == path, previous == requested else { throw NativeFailure.resultUnknown }
+                body = saved["fields"].object
+            }
+            _ = try await workspace.freeAction(path: path, fields: body)
+            guard generation == current else { return }
+            await refreshControlPending(); _ = await refresh()
+        } catch { if generation == current { await refreshControlPending(); report(error) } }
+    }
     func refreshPersonal() async {
         guard let workspace, connected, supportsPersonal, !verifying else { return }
-        let current = generation, selected = assistantId, reading = contentGeneration, load = UUID()
+        let current = generation, selected = assistantId, selectedGroup = groupId, reading = contentGeneration, load = UUID()
         personalLoadId = load; personalLoading = true
         defer { if personalLoadId == load { personalLoading = false; personalLoadId = nil } }
         do {
             try await ensureVerified()
-            guard generation == current, area == .personal, assistantId == selected, contentGeneration == reading, personalLoadId == load,
+            guard generation == current, area == .personal, assistantId == selected, groupId == selectedGroup, contentGeneration == reading, personalLoadId == load,
                   let lease = await workspace.lease() else { return }
             let value = try await workspace.read("/link/api/personal", body: true)
-            guard generation == current, area == .personal, assistantId == selected, contentGeneration == reading, personalLoadId == load else { return }
+            guard generation == current, area == .personal, assistantId == selected, groupId == selectedGroup, contentGeneration == reading, personalLoadId == load else { return }
             try lease.requireValid(); personalOverview = value
-            let plugins = try await workspace.read("/link/api/plugins", body: true)
-            guard generation == current, area == .personal, assistantId == selected, contentGeneration == reading, personalLoadId == load else { return }
-            try lease.requireValid(); personalPlugins = plugins["plugins"].array.filter { $0["enabled"].bool }; personalPluginsLoaded = true
+            if case .array(let plugins) = value["plugins"] { personalPlugins = plugins; personalPluginsLoaded = true }
+            else if hasScope("admin") {
+                let plugins = try await workspace.read("/link/api/plugins", body: true)
+                guard generation == current, area == .personal, assistantId == selected, groupId == selectedGroup, contentGeneration == reading, personalLoadId == load else { return }
+                try lease.requireValid(); personalPlugins = plugins["plugins"].array.filter { $0["enabled"].bool }; personalPluginsLoaded = true
+            } else { personalPlugins = []; personalPluginsLoaded = false }
             if let selected {
                 let value = try await workspace.read("/link/api/personal/assistants/" + selected, body: true)
-                guard generation == current, area == .personal, assistantId == selected, contentGeneration == reading, personalLoadId == load else { return }
+                guard generation == current, area == .personal, assistantId == selected, groupId == selectedGroup, contentGeneration == reading, personalLoadId == load else { return }
                 try lease.requireValid(); assistantDetail = value
             }
-        } catch { if generation == current, area == .personal, assistantId == selected, contentGeneration == reading, personalLoadId == load { report(error) } }
+            if let selectedGroup {
+                let value = try await workspace.read("/link/api/personal/groups/" + selectedGroup, body: true)
+                guard generation == current, area == .personal, groupId == selectedGroup, assistantId == selected, contentGeneration == reading, personalLoadId == load else { return }
+                try lease.requireValid(); groupDetail = value
+                if let turnId = value["turn"]["id"].string, let state = value["turn"]["state"].string {
+                    groupControl = PhoneGroupControl(groupId: selectedGroup, turnId: turnId, state: state)
+                } else { groupControl = nil }
+            }
+        } catch { if generation == current, area == .personal, assistantId == selected, groupId == selectedGroup, contentGeneration == reading, personalLoadId == load { report(error) } }
     }
     func openSession(_ id: String) async {
         guard let workspace else { return }
@@ -276,7 +359,7 @@ enum PhoneArea: String { case personal, projects }
         guard current == generation else { throw NativeFailure.expired }
         try lease.requireValid(); pending = restored
         startEvents()
-        scheduleBookRefresh(hint: snapshot["host"]["native"]["discoveryEpoch"].string, force: true)
+        scheduleBookRefresh(hint: snapshot["host"]["native"]["discoveryEpoch"].string, directoryHint: snapshot["host"]["native"]["directoryEpoch"].string, force: true)
         scheduleProximity(workspace)
     }
     private func bindBodyLease(_ lease: BodyLease, current: UUID) throws {
@@ -311,50 +394,48 @@ enum PhoneArea: String { case personal, projects }
     }
     @discardableResult func submit(_ request: NativePendingWrite) async -> Bool {
         guard let workspace, !busy else { return false }
-        let current = generation
+        let current = generation, initialReading = contentGeneration
         do { try await ensureVerified() } catch { report(error); return false }
-        guard current == generation else { return false }
+        guard current == generation, initialReading == contentGeneration else { return false }
         let selected = sessionId, reading = contentGeneration, owner = assistantId, surface = area
-        busy = true; defer { busy = false }
+        busy = true; defer { if generation == current { busy = false } }
         do {
             if !pending.contains(where: { $0.requestId == request.requestId }) { pending.append(request) }
             let value = try await workspace.submit(request)
-            guard generation == current else { return true }
+            guard generation == current else { return false }
             pending.removeAll { $0.requestId == request.requestId }
+            guard contentGeneration == reading else { return false }
             if sessionId == selected, contentGeneration == reading, assistantId == owner, area == surface, let id = value["sessionId"].string { sessionId = id }
             await refresh()
-            if request.path.hasPrefix("/link/api/personal") { await refreshPersonal() }
             return true
         } catch {
-            guard generation == current else { return (error as? NativeFailure) == .resultUnknown }
+            guard generation == current, contentGeneration == reading else { return false }
             if (error as? NativeFailure) != .resultUnknown { pending.removeAll { $0.requestId == request.requestId } }
             report(error)
             return (error as? NativeFailure) == .resultUnknown
         }
     }
-    func mutate(_ method: NativeHTTPMethod, path: String, fields: [String: NativeJSON]) async {
-        let current = generation
+    @discardableResult func mutate(_ method: NativeHTTPMethod, path: String, fields: [String: NativeJSON]) async -> Bool {
+        let current = generation, reading = contentGeneration
         do {
             guard (path.hasPrefix("/link/api/approvals/") ? canApproveStandard : canRun) else { throw NativeFailure.forbidden }
             try await ensureVerified()
-            guard current == generation else { return }
+            guard current == generation, contentGeneration == reading else { return false }
             guard pending.isEmpty else { throw NativeFailure.resultUnknown }
-            await submit(try NativePendingWrite(method: method, path: path, fields: fields))
+            return await submit(try NativePendingWrite(method: method, path: path, fields: fields))
         }
-        catch { report(error) }
+        catch { report(error); return false }
     }
     func stop() async {
-        guard let workspace, let id = sessionId else { return }
+        guard workspace != nil, let id = sessionId else { return }
         var fields: [String: NativeJSON] = ["requestId": .string(UUID().uuidString)]
         let summary = snapshot["tasks"].array.first { $0["id"].string == id } ?? detail["summary"]
         if let run = summary["runId"].string { fields["runId"] = .string(run) }
-        do { _ = try await workspace.freeAction(path: "/link/api/tasks/\(id)/cancel", fields: fields); await refresh() }
-        catch { report(error) }
+        await performControl(path: "/link/api/tasks/\(id)/cancel", fields: fields)
     }
     func reject(_ id: String) async {
-        guard let workspace else { return }
-        do { _ = try await workspace.freeAction(path: "/link/api/approvals/" + id, fields: ["decision": .string("reject"), "requestId": .string(UUID().uuidString)]); await refresh() }
-        catch { report(error) }
+        guard workspace != nil else { return }
+        await performControl(path: "/link/api/approvals/" + id, fields: ["decision": .string("reject"), "requestId": .string(UUID().uuidString)])
     }
     func pauseInput() async {
         guard let workspace else { return }
@@ -362,7 +443,7 @@ enum PhoneArea: String { case personal, projects }
         catch { report(error) }
     }
     func newSession() { sessionId = nil; detail = .null; contentGeneration = UUID(); PreviewFiles.clear(); startEvents() }
-    @discardableResult func refresh() async -> Bool {
+    @discardableResult func refresh(personal: Bool = true) async -> Bool {
         guard let workspace else { return false }
         let current = generation, selected = sessionId
         do {
@@ -376,11 +457,14 @@ enum PhoneArea: String { case personal, projects }
             }
             let value = try await workspace.snapshot()
             guard current == generation else { return false }; adoptSnapshot(value)
+            await refreshControlPending()
+            guard current == generation else { return false }
             if let selected, lease?.valid == true {
                 let reading = contentGeneration
                 let value = try await workspace.detail(selected)
                 guard current == generation, sessionId == selected, contentGeneration == reading, lease?.valid == true else { return false }; detail = value
             }
+            if personal, area == .personal, lease?.valid == true { await refreshPersonal() }
             return true
         } catch { report(error); return false }
     }
@@ -458,7 +542,7 @@ enum PhoneArea: String { case personal, projects }
                     pendingEvent = nil
                     let value = event.data.isEmpty ? NativeJSON.null : try NativeJSON.decode(event.data)
                     if value["resumeRequired"].bool { try await workspace.forgetCursor(sessionId: selected) }
-                    guard await refresh(), current == generation, streamGeneration == streamId else { return }
+                    guard await refresh(personal: event.type == "refresh" || value["resumeRequired"].bool), current == generation, streamGeneration == streamId else { return }
                     let applied = selected == nil ? snapshot["revision"].integer : detail["sync"]["revision"].integer
                     guard let applied else { return }
                     try await workspace.acknowledge(event, from: source, sessionId: selected, appliedRevision: applied)
@@ -522,17 +606,37 @@ enum PhoneArea: String { case personal, projects }
         let previous = bookRefresher; bookRefresher = nil
         Task { await previous?.close() }
     }
-    private func scheduleBookRefresh(hint: String?, force: Bool = false) {
+    private func scheduleBookRefresh(hint: String?, directoryHint: String? = nil, force: Bool = false) {
         guard let bookRefresher else { return }
-        Task { await bookRefresher.observe(hint, force: force) }
+        Task { await bookRefresher.observe(hint, directoryHint: directoryHint, force: force) }
     }
     private func receiveBook(_ device: PreparedNativeDevice, host: RegisteredHost, store: PhoneStore, current: UUID) async {
         guard generation == current else { return }
         let savedHosts = await store.list()
         let pendingDraft = try? await store.draft()
         guard generation == current else { return }
+        let previous = selectedHost ?? host
+        let now = UInt64(Date().timeIntervalSince1970 * 1000)
+        let oldKey = try? AddressBookCodec.discoveryKey(previous.device.signedAddressBook, rootSpki: previous.device.rootSpki,
+            deviceId: previous.device.deviceId, nowMs: now, priorGeneration: previous.device.bookGeneration, priorHash: previous.device.bookHash)
+        let oldBook = try? AddressBookCodec.verify(previous.device.signedAddressBook, rootSpki: previous.device.rootSpki,
+            deviceId: previous.device.deviceId, nowMs: now, priorGeneration: previous.device.bookGeneration, priorHash: previous.device.bookHash)
+        let newBook = try? AddressBookCodec.verify(device.signedAddressBook, rootSpki: device.rootSpki,
+            deviceId: device.deviceId, nowMs: now, priorGeneration: device.bookGeneration, priorHash: device.bookHash)
         var saved = host; saved.device = device; saved.prepared = false
         selectedHost = saved; hosts = savedHosts; draft = pendingDraft
+        guard let newBook, NativeBookPathChange.requiresMigration(previous: oldBook, current: newBook), let workspace else { return }
+        do {
+            if oldKey != newBook.discoveryKey { try startDiscovery(saved) }
+            let value = try await paths.migrate(candidates(saved), workspace: workspace)
+            guard generation == current else { return }
+            await bookRefresher?.connectionChanged()
+            guard generation == current else { return }
+            if let lease = await workspace.lease() { try bindBodyLease(lease, current: current) }
+            guard generation == current else { return }
+            adoptSnapshot(value); connected = true; status = "已连接"
+            _ = await refresh(); startEvents()
+        } catch { if generation == current, !Task.isCancelled { startReconnect() } }
     }
     private func bookFailed(_ failure: NativeFailure, current: UUID) {
         if generation == current { report(failure) }
@@ -559,15 +663,11 @@ enum PhoneArea: String { case personal, projects }
                 })
             }
         }
-        result += try (book?.relays ?? []).compactMap { endpoint in
-            guard let pass = endpoint.passes.first(where: {
-                guard let value = try? AdmissionPass.decode($0.bytes) else { return false }
-                return now / 1000 >= value.notBefore && now / 1000 <= value.notAfter
-            }) else { return nil }
-            return try NativePathCandidate(id: LinkBytes.hex(endpoint.relayId), kind: .relay) {
-                try await NativeHTTPConnection.relay(endpoint: endpoint, admission: pass, rootSpki: host.device.rootSpki,
-                    knockKey: host.device.knockKey, identity: keys.identity())
-            }
+        for endpoint in book?.relays ?? [] {
+            let expiresAt = book?.expiresAt ?? 0
+            guard (try? NativeRelayAdmission.current(endpoint: endpoint, bookExpiresAt: expiresAt, nowMs: now)) != nil else { continue }
+            guard let workspace else { throw NativeFailure.unavailable }
+            result.append(try await workspace.relayCandidate(relayId: endpoint.relayId))
         }
         return Array(result.prefix(12))
     }
@@ -578,7 +678,7 @@ enum PhoneArea: String { case personal, projects }
         let currentStore = retiredStore ?? store, isCurrent = selectedHost?.id == host.id
         if isCurrent {
             generation = UUID(); reconnectTask?.cancel(); eventTask?.cancel(); expiryTask?.cancel()
-            detail = .null; snapshot = .null; pending = []; verifiedUntil = nil; selectedHost = nil; connected = false
+            clearPrivateContent(); groupId = nil; groupControl = nil; controlPending = .null; snapshot = .null; verifiedUntil = nil; selectedHost = nil; connected = false
             PreviewFiles.clear(); discovery.stop(); freshPairings.removeValue(forKey: host.id)
             let old = workspace; workspace = nil
             await paths.close(); await old?.closeOpening()
@@ -616,12 +716,14 @@ enum PhoneArea: String { case personal, projects }
     }
     private func clearPrivateContent() {
         cancelPreview()
-        detail = .null; personalOverview = .null; assistantDetail = .null; personalPlugins = []; personalPluginsLoaded = false; personalLoadId = nil; personalLoading = false; pending = []; contentGeneration = UUID(); PreviewFiles.clear()
+        detail = .null; personalOverview = .null; assistantDetail = .null; groupDetail = .null; personalPlugins = []; personalPluginsLoaded = false; personalLoadId = nil; personalLoading = false; pending = []; contentGeneration = UUID(); PreviewFiles.clear()
     }
     private func adoptSnapshot(_ value: NativeJSON) {
+        if let instance = value["instanceId"].string, snapshot["instanceId"].string == instance,
+           let revision = value["revision"].integer, let applied = snapshot["revision"].integer, revision < applied { return }
         let keys = ["status", "scopes", "dataScope"]
         if snapshot != .null, keys.contains(where: { snapshot["device"][$0] != value["device"][$0] }) { clearPrivateContent() }
         snapshot = value
-        scheduleBookRefresh(hint: value["host"]["native"]["discoveryEpoch"].string)
+        scheduleBookRefresh(hint: value["host"]["native"]["discoveryEpoch"].string, directoryHint: value["host"]["native"]["directoryEpoch"].string)
     }
 }

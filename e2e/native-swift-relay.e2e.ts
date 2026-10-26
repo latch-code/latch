@@ -4,12 +4,33 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
+import { Http2ServerResponse } from 'node:http2'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { startRelay } from '@latch/relay'
-import { createTransportCertificate } from '@latch/link-client'
+import { createTransportCertificate, PaddedStream } from '@latch/link-client'
 import { startTestHost } from './helpers/host.ts'
 
 const exec = promisify(execFile)
+const descriptors = vi.hoisted(() => new Map<object, { close(): Promise<void>; origin: string }>())
+vi.mock('node:fs/promises', async importOriginal => {
+  const original = await importOriginal<typeof import('node:fs/promises')>()
+  return {
+    ...original,
+    async open(...args: Parameters<typeof original.open>) {
+      const handle = await original.open(...args),
+        close = handle.close.bind(handle)
+      descriptors.set(handle, { close, origin: new Error('Unclosed native fixture descriptor').stack ?? 'unknown' })
+      handle.close = async () => {
+        try {
+          await close()
+        } finally {
+          descriptors.delete(handle)
+        }
+      }
+      return handle
+    },
+  }
+})
 let binary = ''
 describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperability', () => {
   beforeAll(async () => {
@@ -30,14 +51,25 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
         reviewDeniedBeforeDesktopGrant: true,
         created: true,
         files: true,
-        largeFile: true,
         events: true,
         resumedWithoutSigning: true,
         replayedAfterReconnect: true,
         rootRevocationClosedLease: true,
       },
     ],
-  ])('runs %s through a pinned outer TLS relay and authenticated inner TLS socket', async (operation, expected) => {
+    ['nativeDirectTransfer', { bulk: true, direct: true, afterCancel: false, bytes: 1_048_576, chunks: 17 }],
+    ['nativeRelayTransferNormal', { bulk: true, direct: false, afterCancel: false, bytes: 1_048_576, chunks: 17 }],
+    ['nativeRelayBulkCancel', { cancelled: true, retried: true, identityKept: true }],
+    ['nativeRelayBulkEarlyCancel', { cancelled: true, retried: true, identityKept: true }],
+    [
+      'nativeRelayBulkReauthenticate',
+      { supersededReadDenied: true, reconnectDidNotSign: true, explicitUnlockRetried: true, signatures: 3 },
+    ],
+    ['nativeRelayBulkNormal', { bulk: true, direct: false, afterCancel: false, bytes: 1_048_576 }],
+    ['nativeRelayBulkLegacy', { bulk: true, direct: false, afterCancel: false, bytes: 1_048_576, chunks: 17 }],
+    ['nativeRelayBulkAfterCancel', { bulk: true, direct: false, afterCancel: true, bytes: 1_048_576 }],
+    ['nativeRelayTransferAfterCancel', { bulk: true, direct: false, afterCancel: true, bytes: 1_048_576, chunks: 17 }],
+  ])('runs %s through its fixed authenticated native path', async (operation, expected) => {
     const directory = await mkdtemp(join(tmpdir(), 'latch-swift-relay-')),
       tls = createTransportCertificate(Date.now(), 3_600_000, 'localhost')
     const relayId = randomBytes(16),
@@ -58,6 +90,29 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
         prefixFraction: 1,
       },
       registrationWork: { softRoutesPerPrefix: 1, minBits: 0, maxBits: 0, maxConcurrent: 2 },
+    })
+    const bulkStreams: PaddedStream[] = []
+    const originalBulk = PaddedStream.prototype.enableBulk
+    const bulkSpy = vi.spyOn(PaddedStream.prototype, 'enableBulk').mockImplementation(function (this: PaddedStream) {
+      bulkStreams.push(this)
+      originalBulk.call(this)
+    })
+    const transferRanges: number[] = []
+    const originalEnd = Http2ServerResponse.prototype.end
+    const responseSpy = vi.spyOn(Http2ServerResponse.prototype, 'end').mockImplementation(function (
+      this: Http2ServerResponse,
+      ...args: Parameters<typeof originalEnd>
+    ) {
+      const range = typeof this.req.headers.range === 'string' ? /^bytes=(\d+)-(\d+)$/u.exec(this.req.headers.range) : undefined
+      if (range && this.req.method === 'GET') transferRanges.push(Number(range[2]) - Number(range[1]) + 1)
+      if (operation === 'nativeRelayBulkLegacy' && typeof args[0] === 'string' && this.req.url?.startsWith('/link/api/snapshot')) {
+        const value = JSON.parse(args[0]) as { catalog?: { features?: Record<string, unknown> } }
+        if (value.catalog?.features) {
+          delete value.catalog.features.nativeBulkStream
+          args[0] = JSON.stringify(value)
+        }
+      }
+      return Reflect.apply(originalEnd, this, args) as Http2ServerResponse
     })
     let host: Awaited<ReturnType<typeof startTestHost>> | undefined
     try {
@@ -89,6 +144,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
         dataDir,
         workspaceRoot: join(directory, 'workspace'),
         nativeRelayCa: tls.cert,
+        ...(operation === 'nativeDirectTransfer' ? { native: { host: '127.0.0.1', port: 0 } } : {}),
         egressLookup: (_hostname, _options, callback) => callback(null, [{ address: '127.0.0.1', family: 4 }]),
       })
       const desktop = await host.enroll({ listener: 'unix' })
@@ -106,6 +162,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
       await writeFile(join(host.workspaceRoot, 'large.txt'), Buffer.alloc(1_048_576, 120))
       const input = {
         operation,
+        ...(operation === 'nativeRelayProbe' ? { iterations: 9 } : {}),
         requestId,
         payload: invitation.payload,
         trustAnchor: new X509Certificate(tls.cert).raw.toString('hex'),
@@ -116,22 +173,25 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
         let grant: Promise<void> | undefined
         let output = '',
           diagnostic = ''
-        const timer = setTimeout(() => {
-          child.kill('SIGKILL')
-          reject(new Error('Swift relay fixture timeout'))
-        }, 20_000)
+        const timer = setTimeout(
+          () => {
+            child.kill('SIGKILL')
+            reject(new Error('Swift relay fixture timeout'))
+          },
+          operation.includes('Transfer') || operation.includes('Bulk') ? 10_000 + 16 * (250 + Math.ceil(65_536 / 1021) * 40) : 20_000,
+        )
         child.stdout.on('data', (data: Buffer) => {
           output += data.toString()
           if (output.length > 1_048_576) child.kill('SIGKILL')
         })
         child.stderr.on('data', (data: Buffer) => {
           diagnostic = (diagnostic + data.toString()).slice(0, 4096)
-          if (operation === 'nativeRelayLifecycle' && !grant && diagnostic.includes('Native fixture waiting for desktop grant\n')) {
+          if (operation !== 'nativeRelayProbe' && !grant && diagnostic.includes('Native fixture waiting for desktop grant\n')) {
             grant = (async () => {
               const candidates = fixtureHost.host.security.devices.list().filter(device => device.name === 'Swift relay fixture')
               expect(candidates.length).toBe(1)
-              expect(candidates[0]!.status).toBe('review')
-              expect(candidates[0]!.scopes).toEqual(['view'])
+              expect(candidates[0]!.status).toBe(operation === 'nativeDirectTransfer' ? 'active' : 'review')
+              if (operation !== 'nativeDirectTransfer') expect(candidates[0]!.scopes).toEqual(['view'])
               expect(
                 (
                   await desktop.confirmed(`devices/${candidates[0]!.id}`, {
@@ -166,7 +226,44 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
         })
         child.stdin.end(JSON.stringify(input))
       })
-      expect(response).toEqual(expected)
+      if (operation === 'nativeRelayBulkCancel' || operation === 'nativeRelayBulkEarlyCancel') {
+        const { cancelMs, ...value } = response as Record<string, unknown>
+        expect(value).toEqual(expected)
+        expect(cancelMs).toBeGreaterThanOrEqual(0)
+        expect(cancelMs).toBeLessThan(1000)
+        if (operation === 'nativeRelayBulkCancel') expect(bulkStreams).toHaveLength(2)
+        else {
+          expect(bulkStreams.length).toBeGreaterThanOrEqual(1)
+          expect(bulkStreams.length).toBeLessThanOrEqual(2)
+        }
+        await writeFile(`/private/tmp/latch-remote-bulk-metrics-${operation}.json`, JSON.stringify({ cancelMs }))
+      } else if (operation === 'nativeRelayBulkReauthenticate') {
+        expect(response).toEqual(expected)
+      } else if (operation.includes('Transfer') || operation.includes('Bulk')) {
+        const { firstChunkMs, totalMs, chunks, ...value } = response as Record<string, unknown>
+        expect('chunks' in expected ? { ...value, chunks } : value).toEqual(expected)
+        if (operation === 'nativeRelayBulkLegacy') {
+          expect(transferRanges.filter(amount => amount >= 16_384)).toHaveLength(17)
+          expect(Math.max(...transferRanges)).toBe(65_536)
+        }
+        if (operation === 'nativeRelayBulkNormal' || operation === 'nativeRelayBulkAfterCancel') {
+          expect(transferRanges.filter(amount => amount >= 16_384)).toEqual([1_048_576])
+        }
+        expect(firstChunkMs).toBeGreaterThan(0)
+        expect(totalMs).toBeGreaterThanOrEqual(Number(firstChunkMs))
+        const measurement = {
+          direct: operation === 'nativeDirectTransfer',
+          afterCancel: operation.endsWith('AfterCancel'),
+          firstChunkMs,
+          totalMs,
+          companion: operation.includes('Bulk'),
+          progressChunks: chunks,
+          downlinkCells: bulkStreams.map(stream => stream.traffic()),
+          outerWebSockets: relay.status().webSockets,
+        }
+        console.info('Native padded transfer fixture milliseconds', measurement)
+        await writeFile(`/private/tmp/latch-remote-bulk-metrics-${operation}.json`, JSON.stringify(measurement))
+      } else expect(response).toEqual(expected)
       if (operation === 'nativeRelayLifecycle') {
         const snapshot = await desktop.json<{ tasks: Array<{ id: string }> }>('snapshot')
         expect(snapshot.tasks).toHaveLength(1)
@@ -175,9 +272,15 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
       }
       await vi.waitFor(() => expect(relay.status().connections).toBe(1), { timeout: 3000 })
     } finally {
+      responseSpy.mockRestore()
+      bulkSpy.mockRestore()
       await host?.close()
       await relay.close()
       await rm(directory, { recursive: true, force: true })
+      const leaked = [...descriptors.values()]
+      await Promise.all(leaked.map(item => item.close()))
+      descriptors.clear()
+      expect(leaked.map(item => item.origin)).toEqual([])
     }
   })
 })

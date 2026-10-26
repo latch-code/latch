@@ -12,12 +12,25 @@ import {
   concat,
   encodeFrame,
   field,
+  WebSocketParser,
+  decodeMessage,
   uint,
   knock,
   serverBinding,
   routeId,
   encodeAddressBook,
   addressBookSigningInput,
+  issuePass,
+  decodeAddressBook,
+  decodeRelayAuthority,
+  decodeRelayDirectory,
+  encodeRelayAuthority,
+  encodeRelayDirectory,
+  encodeSignedRelayDirectory,
+  encodeDirectorySource,
+  relayAuthorityInput,
+  relayDirectoryInput,
+  directoryEpochInput,
 } from '@latch/link-wire'
 import { nodeCrypto } from '@latch/link-client/crypto'
 import { startTestHost } from './helpers/host.ts'
@@ -74,6 +87,193 @@ async function invoke(input: unknown, onDiagnostic?: (text: string) => Promise<v
 }
 
 describe.skipIf(process.platform !== 'darwin')('Swift native core interoperability', () => {
+  it('uses the same bounded first-flight bucket grid in Swift without waiting for a future handshake flight', async () => {
+    const first = Buffer.from(encodeFrame({ opcode: 2, payload: new Uint8Array([0, 4]) }, new Uint8Array([1, 2, 3, 4]))).toString('hex')
+    const second = Buffer.from(encodeFrame({ opcode: 2, payload: new Uint8Array([0, 5]) }, new Uint8Array([1, 2, 3, 4]))).toString('hex')
+    const result = await invoke({
+      operation: 'outerPadding',
+      actions: [
+        { time: 0, frames: [first] },
+        { time: 39, frames: [second] },
+        { time: 40 },
+        { time: 40 },
+        { time: 80 },
+        { time: 3000 },
+        { time: 3001 },
+      ],
+    })
+    expect(result.bufferedBytes).toBe(0)
+    const batches = (result.batches as string[]).map(value => Buffer.from(value, 'hex'))
+    expect(batches.map(value => value.length)).toEqual([4096, 4096, 4096])
+    const frames = new WebSocketParser(true).feed(batches[0]!)
+    expect(frames.map(value => decodeMessage(value.payload, 2).type)).toEqual(['data', 'data', 'pad'])
+    expect(frames.slice(0, 2).map(value => Buffer.from(value.payload).toString('hex'))).toEqual(['0004', '0005'])
+  })
+  it('keeps the explicit v3 relay profile and outer-padding HMAC bound to the shared wire vector', async () => {
+    const vectors = JSON.parse(await readFile(join(root, 'packages/testkit/vectors/link-v1.json'), 'utf8')) as {
+      outerRelayV2: { knock: string; serverBinding: string }
+      addressBookV3: { issuedAt: number; hostId: string; deviceId: string; generation: number; payloadHash: string }
+    }
+    const signed = vectors.addressBookV3
+    expect(await invoke({ operation: 'addressBook', ...signed, timeMs: signed.issuedAt, profiles: true })).toEqual({
+      hostId: signed.hostId,
+      deviceId: signed.deviceId,
+      generation: signed.generation,
+      payloadHash: signed.payloadHash,
+      relays: 1,
+      profiles: ['outer-pad-v2'],
+    })
+    const result = await invoke({ ...vectors, operation: 'vectors', binding: 'relay-pad-v2' })
+    expect(result.knock).toBe(vectors.outerRelayV2.knock)
+    expect(result.serverBinding).toBe(vectors.outerRelayV2.serverBinding)
+  })
+  it('keeps both directory floors through encrypted restart, revoked online keys and unknown commits in Swift', async () => {
+    const vectors = JSON.parse(await readFile(join(root, 'packages/testkit/vectors/link-v1.json'), 'utf8')) as {
+      directory: { authority: string; addresses: string; root: string; now: number }
+      addressBook: { encoded: string; payload: string; rootSpki: string; deviceId: string; issuedAt: number }
+    }
+    const book = decodeAddressBook(Buffer.from(vectors.addressBook.payload, 'hex')),
+      authority = decodeRelayAuthority(Buffer.from(vectors.directory.authority, 'hex')),
+      online = decodeRelayDirectory(Buffer.from(vectors.directory.addresses, 'hex'))
+    authority.nodes[0]!.relayId = book.relays[0]!.relayId
+    authority.nodes[0]!.spkiHashes = [book.relays[0]!.spkiHash]
+    online.nodes[0]!.relayId = book.relays[0]!.relayId
+    async function seal(seed = Buffer.alloc(32, 4)) {
+      const root = encodeRelayAuthority(authority)
+      online.rootGeneration = authority.generation
+      online.rootHash = await nodeCrypto.hash(root)
+      const addresses = encodeRelayDirectory(online)
+      const bundle = encodeSignedRelayDirectory({
+        authority: root,
+        directory: addresses,
+        rootSignature: await nodeCrypto.sign(Buffer.alloc(32, 3), relayAuthorityInput(root)),
+        signature: await nodeCrypto.sign(seed, relayDirectoryInput(addresses)),
+      })
+      return { bytes: Buffer.from(bundle).toString('hex'), rootHash: online.rootHash, hash: await nodeCrypto.hash(addresses) }
+    }
+    const first = await seal()
+    online.generation = Number.MAX_SAFE_INTEGER
+    online.nodes[0]!.addresses = ['1.1.1.1']
+    const second = await seal()
+    const source = { anchors: [Buffer.from(vectors.directory.root, 'hex')], mirrors: ['https://directory.example/relays-v1.bin'] }
+    const freshSource = {
+      ...source,
+      minimum: { generation: 1, hash: first.rootHash },
+      minimumOnline: { generation: Number.MAX_SAFE_INTEGER, hash: second.hash },
+    }
+    authority.generation++
+    authority.revokedKeys = [online.key]
+    const revoked = await seal()
+    const replacement = Buffer.alloc(32, 5)
+    authority.generation++
+    authority.keys.push({ ...authority.keys[0]!, publicKey: await nodeCrypto.publicKey(replacement) })
+    online.key = await nodeCrypto.publicKey(replacement)
+    online.generation = 1
+    const reissued = await seal(replacement)
+    const cache = {
+      book: vectors.addressBook.encoded,
+      rootSpki: vectors.addressBook.rootSpki,
+      deviceId: vectors.addressBook.deviceId,
+      now: vectors.directory.now,
+      bookTime: vectors.addressBook.issuedAt,
+      source: Buffer.from(encodeDirectorySource(source)).toString('hex'),
+      freshSource: Buffer.from(encodeDirectorySource(freshSource)).toString('hex'),
+      first: first.bytes,
+      second: second.bytes,
+      revoked: revoked.bytes,
+      reissued: reissued.bytes,
+    }
+    expect(await invoke({ operation: 'directoryCache', cache })).toEqual({
+      unknownStayedClosed: true,
+      rootRevocationSurvivedRestart: true,
+      freshOfflineReplayRejected: true,
+      reissued: true,
+      rejected: 4,
+    })
+    expect(await invoke({ operation: 'directoryResolver', cache })).toEqual({ coalesced: true, revoked: true, cancelled: true })
+  })
+  it('matches stable directory hints and bounds fragmented HTTP mirror bodies before signatures', async () => {
+    const { directoryEpoch: vector } = JSON.parse(await readFile(join(root, 'packages/testkit/vectors/link-v1.json'), 'utf8')) as {
+      directoryEpoch: { source: string; hash: string; absentHash: string }
+    }
+    expect(createHash('sha256').update(directoryEpochInput()).digest('hex')).toBe(vector.absentHash)
+    expect(await invoke({ operation: 'directoryEpoch', source: vector.source })).toEqual({
+      hash: vector.hash,
+      absentHash: vector.absentHash,
+    })
+    const body = Buffer.from('signed-public-directory-fixture'),
+      hash = createHash('sha256').update(body).digest('hex')
+    const fixed = Buffer.concat([Buffer.from(`HTTP/1.1 200 OK\r\nContent-Length: ${body.length}\r\n\r\n`), body])
+    const chunked = Buffer.from(
+      `HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n${body.length.toString(16)}\r\n${body.toString()}\r\n0\r\n\r\n`,
+    )
+    const eof = Buffer.concat([Buffer.from('HTTP/1.0 200 OK\r\n\r\n'), body])
+    const valid = [fixed, chunked, eof].flatMap(bytes =>
+      [1, 7, 8192].map(fragment => ({ bytes: bytes.toString('hex'), fragment, valid: true, hash })),
+    )
+    const invalid = [
+      'HTTP/1.1 302 Redirect\r\nLocation: https://other.example/\r\n\r\n',
+      'HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Length: 2\r\n\r\nab',
+      'HTTP/1.1 200 OK\r\nContent-Length: 2\r\nTransfer-Encoding: chunked\r\n\r\nab',
+      'HTTP/1.1 200 OK\r\nContent-Length: 32769\r\n\r\n',
+      'HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\n\r\nabc',
+      'HTTP/1.1 200 OK\r\nContent-Length: 9\r\n\r\nshort',
+      `HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n${'1\r\na\r\n'.repeat(1025)}0\r\n\r\n`,
+      `HTTP/1.1 200 OK\r\n\r\n${'a'.repeat(32769)}`,
+      `HTTP/1.1 200 OK\r\nX-Fill: ${'a'.repeat(8192)}`,
+    ].map(value => ({ bytes: Buffer.from(value).toString('hex'), fragment: 8192, valid: false }))
+    expect(await invoke({ operation: 'directoryHTTP', cases: [...valid, ...invalid] })).toEqual({
+      accepted: valid.length,
+      rejected: invalid.length,
+    })
+  })
+  it('matches directory source and opt-in address-book v2 vectors without changing the v1 contract', async () => {
+    const vectors = JSON.parse(await readFile(join(root, 'packages/testkit/vectors/link-v1.json'), 'utf8')) as {
+      directorySource: { mirrors: string[]; invalidMirrors: string[] }
+      directorySourceOnline: { mirrors: string[]; invalidMirrors: string[] }
+      addressBookV2: { hostId: string; deviceId: string; generation: number; payloadHash: string; issuedAt: number }
+      addressBookV2Online: { hostId: string; deviceId: string; generation: number; payloadHash: string; issuedAt: number }
+    }
+    expect(await invoke({ operation: 'directorySource', source: vectors.directorySource })).toEqual({
+      anchors: 1,
+      mirrors: vectors.directorySource.mirrors,
+      generation: 1,
+      rejected: vectors.directorySource.invalidMirrors.length,
+    })
+    expect(await invoke({ operation: 'directorySource', source: vectors.directorySourceOnline })).toEqual({
+      anchors: 1,
+      mirrors: vectors.directorySourceOnline.mirrors,
+      generation: 1,
+      onlineGeneration: 1,
+      rejected: vectors.directorySourceOnline.invalidMirrors.length,
+    })
+    for (const book of [vectors.addressBookV2, vectors.addressBookV2Online])
+      expect(await invoke({ operation: 'addressBook', ...book, timeMs: book.issuedAt })).toEqual({
+        hostId: book.hostId,
+        deviceId: book.deviceId,
+        generation: book.generation,
+        payloadHash: book.payloadHash,
+        relays: 0,
+        directoryAnchors: 1,
+      })
+  })
+  it('verifies the offline directory Root and online address delegation with the shared checkpoint', async () => {
+    const { directory } = JSON.parse(await readFile(join(root, 'packages/testkit/vectors/link-v1.json'), 'utf8')) as {
+      directory: Record<string, unknown>
+    }
+    expect(await invoke({ operation: 'directory', directory })).toEqual({
+      verified: true,
+      rejected: 3,
+      rootHash: directory.rootHash,
+      hash: directory.hash,
+    })
+  })
+  it('matches padding cells and every fragmented small-cell boundary with the shared wire vector', async () => {
+    const { padding } = JSON.parse(await readFile(join(root, 'packages/testkit/vectors/link-v1.json'), 'utf8')) as {
+      padding: { payload: string; small: string; largeDummyHash: string }
+    }
+    expect(await invoke({ operation: 'padding', padding })).toEqual({ small: padding.small, largeDummyHash: padding.largeDummyHash })
+  })
   beforeAll(async () => {
     await exec(
       'swift',
@@ -480,6 +680,123 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     for (const patch of [{ priorGeneration: book.generation + 1 }, { priorHash: '00'.repeat(32) }, { encoded: `${book.encoded}AA` }])
       await expect(invoke({ ...input, ...patch, operation: 'discoveryKey', timeMs: book.expiresAt + 1 })).rejects.toThrow('rejected')
   })
+  it('rebuilds App paths for verified relay identity and profile changes without reconnecting on pass renewal', async () => {
+    const root = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }),
+      rootSpki = root.publicKey.export({ format: 'der', type: 'spki' }),
+      holderSeed = Buffer.alloc(32, 8),
+      routeSeed = Buffer.alloc(32, 7),
+      day = 20000,
+      now = day * 86400000 + 3600000,
+      relays = await Promise.all(
+        [9, 10].map(async id => ({
+          relayId: Buffer.alloc(16, id),
+          url: `https://relay${id}.example`,
+          spkiHash: Buffer.alloc(32, id),
+          passes: await Promise.all(
+            [day, day + 1].map(async day => ({
+              holderSeed,
+              pass: await issuePass(nodeCrypto, routeSeed, {
+                pairing: false,
+                relayId: Buffer.alloc(16, id),
+                day,
+                notBefore: day * 86400 - 900,
+                notAfter: (day + 1) * 86400 + 900,
+                routePub: await nodeCrypto.publicKey(routeSeed),
+                holderPub: await nodeCrypto.publicKey(holderSeed),
+                tag: Buffer.alloc(16, day % 255),
+              }),
+            })),
+          ),
+        })),
+      ),
+      book = {
+        hostId: base32(createHash('sha256').update(rootSpki).digest()),
+        deviceId: `dev_${'A'.repeat(22)}`,
+        generation: 1,
+        issuedAt: now - 1000,
+        expiresAt: now + 86400000,
+        discoveryKey: Buffer.alloc(32, 4),
+        lan: [],
+        relays,
+      }
+    const encode = (patch: Partial<Parameters<typeof encodeAddressBook>[0]> = {}) => {
+      const payload = encodeAddressBook({ ...book, ...patch }),
+        signature = sign('sha256', addressBookSigningInput(payload), { key: root.privateKey, dsaEncoding: 'ieee-p1363' })
+      return `LATCHBOOK1.${Buffer.concat([payload, signature]).toString('base64url')}`
+    }
+    const input = {
+      operation: 'bookPathChange',
+      rootSpki: rootSpki.toString('hex'),
+      deviceId: book.deviceId,
+      timeMs: now,
+      previous: encode(),
+    }
+    const refreshed = encode({
+      generation: 2,
+      issuedAt: now,
+      relays: relays.toReversed().map(relay => ({ ...relay, url: 'https://new-address.example', passes: relay.passes.toReversed() })),
+    })
+    expect(await invoke({ ...input, current: refreshed })).toEqual({ migrate: false })
+    for (const patch of [
+      { discoveryKey: Buffer.alloc(32, 5) },
+      { relays: relays.slice(1) },
+      { relays: relays.map((relay, i) => ({ ...relay, ...(i === 0 ? { spkiHash: Buffer.alloc(32, 6) } : {}) })) },
+      { relays: relays.map((relay, i) => ({ ...relay, ...(i === 0 ? { profile: 'outer-pad-v2' as const } : {}) })) },
+    ])
+      expect(await invoke({ ...input, current: encode({ generation: 2, ...patch }) })).toEqual({ migrate: true })
+    expect(await invoke({ ...input, previous: encode({ relays: relays.slice(1) }), current: encode() })).toEqual({ migrate: true })
+    expect(await invoke({ ...input, previous: undefined, current: encode() })).toEqual({ migrate: true })
+    await expect(invoke({ ...input, current: refreshed.slice(0, -6) + 'AAAAAA' })).rejects.toThrow('rejected')
+  })
+  it('selects relay admission at each dial from one fixed verified book and refuses its expiry', async () => {
+    const root = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }),
+      rootSpki = root.publicKey.export({ format: 'der', type: 'spki' }),
+      relayId = Buffer.alloc(16, 9),
+      holderSeed = Buffer.alloc(32, 8),
+      routeSeed = Buffer.alloc(32, 7),
+      day = 20000,
+      issuedAt = day * 86400000,
+      expiresAt = issuedAt + 2 * 86400000,
+      passes = await Promise.all(
+        [day, day + 1].map(async day => ({
+          holderSeed,
+          pass: await issuePass(nodeCrypto, routeSeed, {
+            pairing: false,
+            relayId,
+            day,
+            notBefore: day * 86400 - 900,
+            notAfter: (day + 1) * 86400 + 900,
+            routePub: await nodeCrypto.publicKey(routeSeed),
+            holderPub: await nodeCrypto.publicKey(holderSeed),
+            tag: Buffer.alloc(16, day % 255),
+          }),
+        })),
+      ),
+      deviceId = `dev_${'A'.repeat(22)}`,
+      payload = encodeAddressBook({
+        hostId: base32(createHash('sha256').update(rootSpki).digest()),
+        deviceId,
+        generation: 1,
+        issuedAt,
+        expiresAt,
+        discoveryKey: Buffer.alloc(32, 4),
+        lan: [],
+        relays: [{ relayId, url: 'https://relay.example', spkiHash: Buffer.alloc(32, 5), passes }],
+      }),
+      signature = sign('sha256', addressBookSigningInput(payload), { key: root.privateKey, dsaEncoding: 'ieee-p1363' }),
+      input = {
+        operation: 'relayAdmission',
+        rootSpki: rootSpki.toString('hex'),
+        deviceId,
+        timeMs: issuedAt + 3600000,
+        encoded: `LATCHBOOK1.${Buffer.concat([payload, signature]).toString('base64url')}`,
+      }
+    expect(await invoke({ ...input, times: [issuedAt + 3600000, issuedAt + 86400000 + 3600000, expiresAt - 1] })).toEqual({
+      selected: [0, 1, 1],
+    })
+    for (const time of [issuedAt - 901000, expiresAt, expiresAt + 1])
+      await expect(invoke({ ...input, times: [time] })).rejects.toThrow('rejected')
+  })
   it('keeps two computers with the same device ID isolated through concurrent saves, locking and signed retirement', async () => {
     const temporary = await mkdtemp(join(tmpdir(), 'latch-swift-profiles-'))
     try {
@@ -623,6 +940,11 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       })
       expect(result).toEqual({
         personal: true,
+        group: true,
+        strictGroupCancel: true,
+        routine: true,
+        personalQueue: true,
+        controlRecovery: true,
         windowRequired: true,
         privateScopeRequired: true,
         privateHistory: true,

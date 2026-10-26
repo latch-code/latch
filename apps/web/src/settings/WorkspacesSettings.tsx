@@ -217,12 +217,14 @@ export function WorkspacesSettings({
   onChanged,
   initialProjectId,
   onComputer,
+  onOpenSession,
 }: {
   snapshot: AppSnapshot
   access: Pick<DeviceAccess, 'admin'>
   onChanged: () => void
   initialProjectId?: string
   onComputer?: () => void
+  onOpenSession?: (id: string) => void
 }) {
   const owner = access.admin
   const folders = owner ? shellFolders() : null
@@ -457,6 +459,7 @@ export function WorkspacesSettings({
                     onChanged={onChanged}
                     onRemoved={() => setEditing(null)}
                     {...(onComputer ? { onComputer } : {})}
+                    {...(onOpenSession ? { onOpenSession } : {})}
                   />
                 ),
               },

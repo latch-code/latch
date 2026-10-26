@@ -16,10 +16,12 @@ public actor NativePathOwner {
     private var round: Task<NativeJSON, Error>?
     private var generation = UUID()
     private var failures: [String: ContinuousClock.Instant] = [:]
+    private weak var workspace: NativeWorkspace?
     public init() {}
-    public func networkChanged() { failures.removeAll(); generation = UUID(); round?.cancel(); round = nil }
-    public func close() { networkChanged() }
+    public func networkChanged() async { failures.removeAll(); generation = UUID(); round?.cancel(); round = nil; await workspace?.cancelFileTransfer() }
+    public func close() async { await networkChanged() }
     public func migrate(_ candidates: [NativePathCandidate], workspace: NativeWorkspace) async throws -> NativeJSON {
+        self.workspace = workspace
         guard candidates.count <= 12 else { throw NativeFailure.invalidRecord }
         round?.cancel()
         let current = UUID(); generation = current
@@ -44,7 +46,7 @@ public actor NativePathOwner {
                         if candidate.kind == .relay { try await Task.sleep(for: .milliseconds(250)) }
                         let connection = try await candidate.connect()
                         guard !Task.isCancelled else { await connection.close(); return (candidate.id, nil) }
-                        return (candidate.id, try await workspace.qualify(connection, ticket: ticket))
+                        return (candidate.id, try await workspace.qualify(connection, ticket: ticket, reopen: candidate.connect))
                     } catch { return (candidate.id, nil) }
                 }
             }

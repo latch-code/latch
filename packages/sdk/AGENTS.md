@@ -7,7 +7,7 @@
 不变量：
 
 - `./plugins`、`./harness` 由根包再导出为 `harness-link/plugin-sdk`、`harness-link/harness-sdk`；它们引到的文件之间只用 `import type`，外部项目不开启 `allowImportingTsExtensions` 也能检查（`tests/plugin-sdk.test.ts#type-check in an outside TypeScript project that does not allow .ts import extensions`）。
-- 需求包可组合多个 Host 模块与技能、工具、界面、Harness，统一归属和清理；插件拿不到原始 Cordis Context，只经 `PluginContext` 注册能力。客户端 props 类型由浏览器包 `@latch/ui` 提供，不在此引入 React 或 DOM。
+- 插件可组合 Host 模块、技能、工具、界面、Harness 和连接载体，统一归属和清理；只经 `PluginContext` 注册能力。连接通道用平台无关 AsyncIterable/write/close，不向 driver 交设备身份。客户端 props 类型由 `@latch/ui` 提供。
 - `TaskSummary.runId` 在每次运行开始时换新并持久化；`Bridge.cancel` 带 `runId` 时只在它仍是当前运行时取消，并在开始取消的同一步核对，迟到的取消不会停止之后开始的运行（`tests/runtime.test.ts#names each run on the session, keeps the name across a restart, and leaves a run alone when a cancel names another`）。
 - 改接口时同步 [docs/PLUGIN-DEVELOPMENT.md](../../docs/PLUGIN-DEVELOPMENT.md) 的签名。
 
@@ -16,3 +16,5 @@
 - 附件在 Bridge/Message 里用元数据引用，在 Provider 输入里用经 Host 校验的 `AttachmentContent`；Harness 必须显式声明能力并在实际协商后复查，缺少 Host 读写接口时拒绝。
 
 - personalContext 只有履行私有历史与显式插件租约契约的 Driver 才声明；personal 输入只接受 Host 构造。
+
+- `setConfig` 在异步准备后、外部修改前调用 `options.authorize`；拒绝立即结束，回调和配置原值不进入持久回执。

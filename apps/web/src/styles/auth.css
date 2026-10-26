@@ -1,4 +1,16 @@
-/* Enrollment: one quiet card; the fingerprint is the only large text because it is what the person compares. */
+/* First connection keeps its technical identity inside a deliberate disclosure. */
+.connection-details {
+  margin: var(--sp-8) var(--sp-16);
+  color: var(--text-2);
+  font-size: var(--fs-label);
+}
+.connection-details summary {
+  padding-block: var(--sp-8);
+  cursor: pointer;
+}
+.enroll-waiting > .connection-details {
+  margin-inline: 0;
+}
 .enroll-page {
   display: grid;
   place-items: center;

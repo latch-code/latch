@@ -41,7 +41,8 @@ struct PhoneRootView: View {
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("设置", systemImage: "gearshape") { settings = true }.labelStyle(.iconOnly) } }
         } detail: {
             if model.selectedHost != nil {
-                if model.area == .personal && model.assistantId == nil { PersonalHomeView() }
+                if let group = model.groupId, model.sessionId == nil { PersonalGroupView(id: group) }
+                else if model.area == .personal && model.assistantId == nil && model.sessionId == nil { PersonalHomeView() }
                 else { SessionWorkspaceView() }
             }
             else {
@@ -51,6 +52,15 @@ struct PhoneRootView: View {
                     Text("连接已登记的电脑，查看进展、回答问题并继续会话。").foregroundStyle(.secondary).multilineTextAlignment(.center)
                     Button("添加电脑") { scan = true }.buttonStyle(.borderedProminent).controlSize(.large)
                 }.padding(32).frame(maxWidth: 460)
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if model.controlPending != .null {
+                HStack(spacing: 12) {
+                    Label("上次操作结果待确认", systemImage: "clock").font(.caption).foregroundStyle(.orange)
+                    Spacer()
+                    Button("重试这次操作") { Task { await model.retryControl() } }.font(.caption).disabled(model.busy || !model.connected)
+                }.padding(12).background(.bar)
             }
         }
         .sheet(isPresented: $scan) { PairingView() }
@@ -105,16 +115,18 @@ struct SessionWorkspaceView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    if model.sessionId != nil { Button("会话", systemImage: "chevron.left") { model.newSession() } }
+                    if model.sessionId != nil { Button(model.groupId == nil ? "会话" : "群聊", systemImage: "chevron.left") { model.newSession() } }
                     else if model.area == .personal { Button("个人助手", systemImage: "chevron.left") { Task { await model.openPersonalHome() } } }
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     if model.verifying { ProgressView().controlSize(.small) }
-                    if model.area == .personal { Button("助手设置", systemImage: "slider.horizontal.3") { editingAssistant = true }.labelStyle(.iconOnly).disabled(model.assistantDetail == .null) }
-                    Button("新会话", systemImage: "square.and.pencil") { model.newSession() }.labelStyle(.iconOnly)
+                    if model.area == .personal && model.assistantId != nil { Button("助手设置", systemImage: "slider.horizontal.3") { editingAssistant = true }.labelStyle(.iconOnly).disabled(model.assistantDetail == .null) }
+                    if model.groupId == nil { Button("新会话", systemImage: "square.and.pencil") { model.newSession() }.labelStyle(.iconOnly) }
                 }
             }
-            .safeAreaInset(edge: .bottom, spacing: 0) { PromptComposer() }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if model.groupId == nil && model.currentSummary["personal"]["groupId"].string == nil { PromptComposer() }
+            }
             .sheet(isPresented: $editingAssistant) { PersonalAssistantEditor(assistant: model.assistantDetail["assistant"]) }
             .onChange(of: model.contentGeneration) { _, _ in editingAssistant = false }
         }
@@ -236,9 +248,9 @@ private struct PromptComposer: View {
                 }
                 Button("发送", systemImage: "arrow.up") {
                     let input = text
-                    Task { if await model.send(text: input, queue: model.currentSummary["status"].string == "running"), text == input { text = "" } }
+                    Task { if await model.send(text: input, queue: ["running", "waiting-approval"].contains(model.currentSummary["status"].string ?? "") && model.canQueueCurrent), text == input { text = "" } }
                 }.labelStyle(.iconOnly).buttonStyle(.borderedProminent).controlSize(.large)
-                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.canRun || model.busy || !model.pending.isEmpty || (model.area == .personal && ["running", "waiting-approval"].contains(model.currentSummary["status"].string ?? "")))
+                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.canRun || model.busy || !model.pending.isEmpty || (["running", "waiting-approval"].contains(model.currentSummary["status"].string ?? "") && !model.canQueueCurrent))
             }
             if !model.connected { Text(model.status).font(.caption).foregroundStyle(.secondary) }
         }.padding(.horizontal, 16).padding(.vertical, 12).background(.bar)
@@ -343,7 +355,7 @@ private struct QueueList: View {
                 if let id = item["id"].string {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(item["text"].string ?? "").lineLimit(4)
-                        if item["state"].string != "waiting" { Text("已暂停，请确认后继续").font(.caption).foregroundStyle(.orange) }
+                        if item["state"].string != "waiting" { Text(item["reason"].string ?? "已暂停，请确认后继续").font(.caption).foregroundStyle(.orange) }
                         HStack {
                             Button("编辑") { editing = id; text = item["text"].string ?? "" }
                             Button("移除", role: .destructive) { Task { await model.mutate(.delete, path: "/link/api/tasks/\(sessionId)/queue/\(id)", fields: [:]) } }
@@ -366,6 +378,8 @@ private struct QueueList: View {
                     }
             }.presentationDetents([.medium, .large])
         }
+        .onChange(of: model.contentGeneration) { _, _ in editing = nil; text = "" }
+        .onChange(of: model.selectedHost?.id) { _, _ in editing = nil; text = "" }
     }
 }
 

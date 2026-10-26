@@ -1,10 +1,10 @@
 import { documentFixtures } from '@latch/testkit'
-import { readFile } from 'node:fs/promises'
+import { mkdir, readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { createServer, type ViteDevServer } from 'vite'
 import { chromium, type Browser, type Page } from '@playwright/test'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { strToU8, zipSync } from 'fflate'
+import { strToU8, unzipSync, zipSync } from 'fflate'
 import { browserLaunchOptions } from './helpers/browser.ts'
 const { word, workbook, presentation, pdf } = documentFixtures(files =>
   Array.from(zipSync(Object.fromEntries(Object.entries(files).map(([key, value]) => [key, strToU8(value)])))),
@@ -75,6 +75,25 @@ describe('isolated document renderers', () => {
   const open = async (kind: 'pptx' | 'docx' | 'xlsx' | 'csv' | 'pdf', bytes: number[]) => {
     await page.evaluate(([kind, bytes]) => window.startPreview(kind, bytes), [kind, bytes] as const)
   }
+  it('refuses a real slide with ten thousand shapes before rendering and remains usable for the next document', async () => {
+    const files = unzipSync(Uint8Array.from(presentation(1)))
+    const source = new TextDecoder().decode(files['ppt/slides/slide1.xml'])
+    const shape = source.match(/<p:sp>[\s\S]*?<\/p:sp>/u)?.[0]
+    expect(shape).toBeDefined()
+    files['ppt/slides/slide1.xml'] = strToU8(
+      source.replace(shape!, Array.from({ length: 10_000 }, (_, i) => shape!.replace('id="2"', 'id="' + (i + 2) + '"')).join('')),
+    )
+    await open('pptx', Array.from(zipSync(files)))
+    await page.getByText('这份演示文稿的内容过于复杂，暂时无法预览。可以下载或在电脑上打开。', { exact: true }).waitFor()
+    expect(
+      await page.evaluate(() =>
+        window.previewEvents.some(event => typeof event === 'object' && event !== null && 'type' in event && event.type === 'rendered'),
+      ),
+    ).toBe(false)
+    expect(await page.locator('iframe').count()).toBe(0)
+    await open('docx', word())
+    await page.frameLocator('iframe').getByText('Hello DOCX', { exact: true }).waitFor()
+  })
   it('renders PPTX as a windowed page list with fit, page navigation and expandable speaker notes', async () => {
     await open('pptx', presentation())
     const frame = page.frameLocator('iframe[title="文档沙箱"]')
@@ -85,6 +104,9 @@ describe('isolated document renderers', () => {
     await frame.getByText('Speaker note', { exact: true }).waitFor()
     await page.getByRole('button', { name: '下一页', exact: true }).click()
     await page.getByRole('status').filter({ hasText: '2 / 25 页' }).waitFor()
+    await page.getByRole('button', { name: '引用本页', exact: true }).click()
+    await expect.poll(() => page.evaluate(() => window.previewQuotes.at(-1)?.page)).toBe(1)
+    expect(await page.evaluate(() => window.previewQuotes.at(-1)?.text)).toContain('Page 2')
     await page.getByRole('button', { name: '适应', exact: true }).click()
     expect(await page.getByRole('button', { name: '适应', exact: true }).getAttribute('aria-pressed')).toBe('false')
     await frame.locator('body').evaluate(body => {
@@ -147,6 +169,23 @@ describe('isolated document renderers', () => {
     expect(requested).toEqual([])
     expect(await page.evaluate(() => Reflect.get(window, 'PWNED'))).toBeUndefined()
     expect(await page.locator('iframe').getAttribute('sandbox')).toBe('allow-scripts')
+    await page
+      .frameLocator('iframe[title="文档沙箱"]')
+      .getByText('Hello DOCX', { exact: true })
+      .evaluate(element => {
+        const range = element.ownerDocument.createRange()
+        range.selectNodeContents(element)
+        const selection = element.ownerDocument.getSelection()!
+        selection.removeAllRanges()
+        selection.addRange(range)
+      })
+    await page.getByRole('button', { name: '引用选区', exact: true }).click()
+    await expect.poll(() => page.evaluate(() => window.previewQuotes.at(-1)?.text)).toBe('Hello DOCX')
+    expect(await page.evaluate(() => window.previewQuotes.at(-1)?.page)).toBe(0)
+    await open('docx', [80, 75, 3, 4])
+    await page.getByText('文档压缩结构超出预览上限，可以下载或在电脑上打开。 之前读到的内容仍保留在这里。', { exact: true }).waitFor()
+    await page.frameLocator('iframe[title="文档沙箱"]').getByText('Hello DOCX', { exact: true }).waitFor()
+    expect(await page.getByRole('button', { name: '引用本页', exact: true }).getAttribute('aria-disabled')).toBe('true')
   })
   it('reads XLSX cached values, formulas, dates, hidden sheets and literal text without running formulas or markup', async () => {
     await open('xlsx', workbook())
@@ -159,6 +198,33 @@ describe('isolated document renderers', () => {
       window.previewEvents.find((value: any) => value.type === 'rendered' && value.kind === 'xlsx'),
     )) as { sheets: Array<{ frozen: { rows: number; cols: number } }> }
     expect(metadata.sheets[0]!.frozen).toEqual({ rows: 1, cols: 1 })
+    await page.getByRole('gridcell', { name: '999', exact: true }).click()
+    await page.getByRole('button', { name: '引用选区', exact: true }).click()
+    await expect.poll(() => page.evaluate(() => window.previewQuotes.at(-1)?.cells)).toEqual({ sheet: '数据', start: [1, 1], end: [1, 1] })
+    expect(await page.evaluate(() => window.previewQuotes.at(-1)?.text)).toBe('999')
+    const frozen = await page.getByRole('gridcell', { name: '表格标题', exact: true }).boundingBox()
+    const numeric = await page.getByRole('gridcell', { name: '999', exact: true }).boundingBox()
+    expect(frozen!.y + frozen!.height).toBeLessThanOrEqual(numeric!.y + 1)
+    const resize = page.getByRole('separator', { name: '调整 B 列宽', exact: true })
+    const before = Number(await resize.getAttribute('aria-valuenow'))
+    await resize.focus()
+    await resize.press('ArrowRight')
+    expect(Number(await resize.getAttribute('aria-valuenow'))).toBe(before + 8)
+    await page.getByRole('gridcell', { name: '999', exact: true }).click()
+    await mkdir('test-results/documents', { recursive: true })
+    for (const [width, theme] of [
+      [390, 'light'],
+      [900, 'dark'],
+      [1440, 'light'],
+      [1440, 'dark'],
+    ] as const) {
+      await page.setViewportSize({ width, height: 900 })
+      await page.emulateMedia({ colorScheme: theme })
+      await page.getByRole('gridcell', { name: '999', exact: true }).waitFor()
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+      await page.screenshot({ path: 'test-results/documents/quoted-grid-' + width + '-' + theme + '.png', animations: 'disabled' })
+    }
+    await page.setViewportSize({ width: 1000, height: 900 })
   })
   it('parses CSV in a worker and leaves formula-looking values as text', async () => {
     await open('csv', Array.from(strToU8('name,value\nhello,=1+1\n')))
@@ -166,6 +232,16 @@ describe('isolated document renderers', () => {
     await page.getByRole('grid', { name: '表格', exact: true }).focus()
     await page.keyboard.press('ArrowDown')
     expect(await page.getByRole('gridcell', { name: 'hello', exact: true }).getAttribute('aria-selected')).toBe('true')
+    await page.getByRole('button', { name: '冻结首行首列', exact: true }).click()
+    await page.getByRole('button', { name: '引用选区', exact: true }).click()
+    expect(await page.evaluate(() => window.previewQuotes.at(-1))).toMatchObject({
+      text: 'hello',
+      cells: { sheet: '表格', start: [1, 0], end: [1, 0] },
+    })
+    await open('csv', Array.from(strToU8('name,value\nupdated,=1+1\n')))
+    await page.getByRole('gridcell', { name: 'updated', exact: true }).waitFor()
+    expect(await page.getByRole('gridcell', { name: 'updated', exact: true }).getAttribute('aria-selected')).toBe('true')
+    expect(await page.getByRole('button', { name: '冻结首行首列', exact: true }).getAttribute('aria-pressed')).toBe('false')
   })
   it('highlights bounded closed code in a worker, marks hidden characters and renders trusted math DOM', async () => {
     await page.evaluate(() =>
@@ -279,5 +355,42 @@ describe('isolated document renderers', () => {
       })
       await page.screenshot({ path: `test-results/documents/pdf-${width}-${dark ? 'dark' : 'light'}.png`, fullPage: false })
     }
+  })
+  it('releases a PDF worker when a document cannot be parsed', async () => {
+    await open('pdf', pdf())
+    await page.locator('.pdf-text-layer').getByText('Hello PDF', { exact: true }).waitFor()
+    let created = false,
+      closed = false
+    page.once('worker', worker => {
+      created = true
+      worker.once('close', () => {
+        closed = true
+      })
+    })
+    await open('pdf', Array.from(strToU8('This is not a PDF document.')))
+    await page.locator('.ui-notice').filter({ hasText: '无法显示这个 PDF，请下载或在执行端电脑上打开。' }).waitFor()
+    await page.locator('.pdf-text-layer').getByText('Hello PDF', { exact: true }).waitFor()
+    expect(created).toBe(true)
+    await expect.poll(() => closed).toBe(true)
+  })
+  it('ignores a valid old-frame page reply after replacing the document version', async () => {
+    await open('pptx', presentation(3))
+    await page.getByRole('status').filter({ hasText: '1 / 3 页' }).waitFor()
+    await page.evaluate(() => {
+      window.previewHoldPages = true
+      window.previewDeferred = []
+    })
+    await page.getByRole('button', { name: '下一页', exact: true }).click()
+    await expect.poll(() => page.evaluate(() => window.previewDeferred.length)).toBeGreaterThan(0)
+    await page.evaluate(() => {
+      window.previewHoldPages = false
+    })
+    await open('pptx', presentation(2))
+    await page.getByRole('status').filter({ hasText: '1 / 2 页' }).waitFor()
+    await page.evaluate(() => {
+      window.previewDeferred.splice(0).forEach(deliver => deliver())
+    })
+    expect(await page.getByRole('status').filter({ hasText: '1 / 2 页' }).count()).toBe(1)
+    expect(await page.getByRole('status').filter({ hasText: '2 / 3 页' }).count()).toBe(0)
   })
 })

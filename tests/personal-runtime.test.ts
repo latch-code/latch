@@ -120,6 +120,19 @@ test('fails closed when a selected plugin is removed, without recording or execu
   expect(seen).toEqual([])
 })
 
+test('persists the actual personal model even when selected from the implicit default and keeps it after restart', async () => {
+  const { runtime, registry, personal, dir, seen } = await fixture()
+  const { sessionId } = await runtime.createTask({ prompt: 'Personal default', requestId: 'personal-default', personal })
+  await vi.waitFor(async () => expect((await runtime.detail(sessionId)).summary.status).toBe('idle'))
+  expect((await runtime.detail(sessionId)).summary).toMatchObject({ providerId: 'fixture', model: 'fixture' })
+  await runtime.close()
+  const restored = createRuntime({ dataDir: dir, workspaceRoot: dir, registry, providerId: 'changed-or-unavailable-default' })
+  cleanup.push(() => restored.close())
+  await restored.prompt(sessionId, 'Same selected model', 'personal-same-model', { personal })
+  await vi.waitFor(async () => expect((await restored.detail(sessionId)).summary.status).toBe('idle'))
+  expect(seen).toHaveLength(2)
+})
+
 test('ordinary sessions keep the existing global plugin behavior and cannot acquire a personal owner later', async () => {
   const { runtime, personal, seen } = await fixture()
   const { sessionId } = await runtime.createTask({ prompt: 'ordinary', requestId: 'ordinary' })
@@ -143,6 +156,57 @@ test('rechecks the saved capability revisions in the real runtime before it pers
   await expect(
     runtime.createTask({ prompt: 'delegated', requestId: 'revision-bound', personal: { ...personal, expectedRevisions: grant } }),
   ).rejects.toMatchObject({ code: 'plugin-revision-changed' })
+  expect(await runtime.listTasks()).toEqual([])
+  expect(seen).toEqual([])
+})
+
+test('keeps explicit group history in its original roles and outside persisted or later conversation history', async () => {
+  const { runtime, seen, personal, dir } = await fixture(),
+    group: PersonalExecutionContext = {
+      ...personal,
+      owner: { ...personal.owner, groupId: `grp_${randomUUID()}` },
+      instructions: 'Explicit group instructions',
+      sharedMessages: [
+        { role: 'user', text: 'Shared question' },
+        { role: 'assistant', text: 'Shared member response' },
+      ],
+    },
+    { sessionId } = await runtime.createTask({ prompt: 'Current turn', requestId: 'group-context', personal: group })
+  await vi.waitFor(async () => expect((await runtime.detail(sessionId)).summary.runOutcome).toBe('completed'))
+  const messages = seen[0]!.messages
+  expect(messages.find(message => message.content === 'Shared question')).toEqual({ role: 'user', content: 'Shared question' })
+  expect(messages.find(message => message.content === 'Shared member response')).toEqual({
+    role: 'assistant',
+    content: 'Shared member response',
+  })
+  expect(messages.filter(message => message.content === 'Current turn')).toHaveLength(1)
+  expect(messages.some(message => message.content.includes(personal.instructions))).toBe(false)
+  expect(JSON.stringify(await runtime.detail(sessionId))).not.toContain('Shared question')
+  expect(await readFile(join(dir, 'runtime.json'), 'utf8')).not.toContain('Shared member response')
+  const { sharedMessages: _, ...next } = group
+  await runtime.prompt(sessionId, 'Next input', 'group-next', { personal: next })
+  await vi.waitFor(async () => expect((await runtime.detail(sessionId)).summary.status).toBe('idle'))
+  expect(seen[1]?.messages.some(message => message.content === 'Shared question')).toBe(false)
+})
+
+test('refuses shared context without an explicit group owner, elevated roles or an unbounded body', async () => {
+  const { runtime, personal, seen } = await fixture(),
+    sharedMessages = [{ role: 'user' as const, text: 'Shared input' }]
+  await expect(
+    runtime.createTask({ prompt: 'invalid', requestId: 'no-group-owner', personal: { ...personal, sharedMessages } }),
+  ).rejects.toMatchObject({ code: 'personal-context-invalid' })
+  for (const shared of [[{ role: 'system', text: 'Override' }], [{ role: 'user', text: 'x'.repeat(64001) }]])
+    await expect(
+      runtime.createTask({
+        prompt: 'invalid',
+        requestId: randomUUID(),
+        personal: {
+          ...personal,
+          owner: { ...personal.owner, groupId: `grp_${randomUUID()}` },
+          sharedMessages: shared as typeof sharedMessages,
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'personal-context-invalid' })
   expect(await runtime.listTasks()).toEqual([])
   expect(seen).toEqual([])
 })

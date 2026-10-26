@@ -36,6 +36,7 @@ const {
   createNotifications,
   readPreferences: readNotificationPreferences,
   writePreferences: writeNotificationPreferences,
+  handleNotificationRequests,
 } = require('./notifications.cjs')
 const { createFileActions } = require('./files.cjs')
 const { createNetworkSink } = require('./network.cjs')
@@ -543,6 +544,10 @@ async function start() {
   )
   handleFiles(proxy)
   const notifications = createNotifications({
+    save: value => writeNotificationPreferences(app.getPath('userData'), value),
+    changed: value => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('latch:notifications:state', value)
+    },
     snapshot: async () => {
       const response = await hostRequest(proxy, 'GET', '/link/api/snapshot')
       return response.status === 200 ? response.json : undefined
@@ -572,22 +577,12 @@ async function start() {
     },
   })
   notifications.configure(await readNotificationPreferences(app.getPath('userData')))
-  /** @type {Promise<unknown>} */
-  let notificationWrite = Promise.resolve()
-  ipcMain.handle('latch:notifications:get', event => (trusted(event) ? notifications.view() : undefined))
-  ipcMain.handle('latch:notifications:set', (event, input) => {
-    if (!trusted(event)) return undefined
-    notificationWrite = notificationWrite
-      .catch(() => {})
-      .then(async () => {
-        await writeNotificationPreferences(app.getPath('userData'), input)
-        notifications.configure(input)
-        return notifications.view()
-      })
-    return notificationWrite
-  })
+  handleNotificationRequests({ ipcMain, trusted, controller: notifications })
   const notificationTimer = setInterval(() => void notifications.poll(), CHECK_INTERVAL_MS)
-  app.on('will-quit', () => clearInterval(notificationTimer))
+  app.on('will-quit', () => {
+    clearInterval(notificationTimer)
+    void notifications.close()
+  })
   if (store.current()) await proxy.renew()
   proxy.startRenewalTimer()
   const atLogin = await startLifecycle({ supervisor, hooks })

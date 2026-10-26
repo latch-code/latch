@@ -12,12 +12,14 @@ import {
   verifyProof,
   type LinkCrypto,
   type RelayMessage,
+  type RelayTransportProfile,
 } from '@latch/link-wire'
 import type { RegistrationWorkInput, RegistrationWorkPolicy, RegistrationWorkResult } from './registration-work.ts'
 
 export interface RelayPeer {
   id: number
   prefix: string
+  profile?: RelayTransportProfile
   send(message: RelayMessage): Promise<void>
   close(code: number): void
   markSpliced?(): void
@@ -78,6 +80,7 @@ export interface RelayCoreOptions {
   }
   canAdmit?(): boolean
   waitBytes?(id: number, prefixes: readonly string[], route: string, bytes: number): Promise<boolean>
+  waitWire?(id: number, prefixes: readonly string[], route: string, bytes: number, direction: 'in' | 'out'): Promise<boolean>
   cancelWait?(id: number): void
   registrationWork?: RegistrationWorkPolicy & { verify(request: RegistrationWorkInput): Promise<RegistrationWorkResult> }
   allowBytes?(prefixes: readonly string[], route: string, bytes: number): boolean
@@ -169,19 +172,22 @@ export class RelayCore {
     const connection = this.connections.get(id)
     if (!connection) return
     try {
+      if (message.type === 'pad' && connection.peer.profile === 'outer-pad-v2' && connection.role !== 'host') return
       if (connection.phase === 'spliced') {
         if (message.type !== 'data') throw new RangeError('Expected DATA')
         const partner = this.connections.get(connection.partner!)
         if (
           !partner
-          || (this.options.allowBytes
+          || (!connection.peer.profile
+            && this.options.allowBytes
             && !this.options.allowBytes([connection.peer.prefix, partner.peer.prefix], connection.route!, message.data.length * 2))
         ) {
           this.close(id, 4304)
           return
         }
         if (
-          this.options.waitBytes
+          !connection.peer.profile
+          && this.options.waitBytes
           && !(await this.options.waitBytes(id, [connection.peer.prefix, partner.peer.prefix], connection.route!, message.data.length))
         ) {
           this.close(id, 4302)
@@ -218,6 +224,25 @@ export class RelayCore {
     } catch {
       if (this.connections.get(id) === connection) this.close(id, 4400)
     }
+  }
+  /** v2 reserves actual WebSocket frame bytes independently in both directions, including discarded PAD. */
+  async reserveWire(id: number, bytes: number, direction: 'in' | 'out'): Promise<boolean> {
+    const connection = this.connections.get(id)
+    if (!connection || !Number.isSafeInteger(bytes) || bytes < 0 || bytes > 65_550) return false
+    if (!connection.peer.profile) return true
+    const partner = connection.partner === undefined ? undefined : this.connections.get(connection.partner)
+    const prefixes = partner ? [connection.peer.prefix, partner.peer.prefix] : [connection.peer.prefix]
+    const route = connection.route ?? `setup:${id}`
+    if (this.options.allowBytes && !this.options.allowBytes(prefixes, route, bytes)) {
+      this.close(id, 4304)
+      return false
+    }
+    for (let at = 0; at < bytes; at += 16_384) {
+      if (this.options.waitWire && !(await this.options.waitWire(id, prefixes, route, Math.min(16_384, bytes - at), direction)))
+        return false
+      if (this.connections.get(id) !== connection || (partner && this.connections.get(partner.peer.id) !== partner)) return false
+    }
+    return true
   }
   private async host(connection: Connection, message: RelayMessage, acceptedWork?: WorkChallenge): Promise<void> {
     const { crypto } = this.options
@@ -497,7 +522,11 @@ export class RelayCore {
       this.routeHolders.set(routeDay, (this.routeHolders.get(routeDay) ?? 0) + 1)
       for (const prefix of prefixes) this.holderPrefixes.set(prefix, (this.holderPrefixes.get(prefix) ?? 0) + 1)
     }
-    if (route.control === undefined || route.departed) {
+    if (
+      route.control === undefined
+      || route.departed
+      || (connection.peer.profile === 'outer-pad-v2' && this.connections.get(route.control)?.peer.profile !== 'outer-pad-v2')
+    ) {
       await connection.peer.send({ type: 'unavailable', state: route.departed ?? 0, since: Math.floor(route.since / 1000) })
       this.close(connection.peer.id, 4101)
       return
@@ -532,7 +561,12 @@ export class RelayCore {
       this.close(connection.peer.id, 4101)
       return
     }
-    await control.peer.send({ type: 'open', connection: request, routeId: route.id })
+    await control.peer.send({
+      type: 'open',
+      connection: request,
+      routeId: route.id,
+      ...(connection.peer.profile ? { profile: connection.peer.profile } : {}),
+    })
   }
   private async attach(connection: Connection, message: Extract<RelayMessage, { type: 'attach' }>): Promise<void> {
     const key = hex(message.routeId),
@@ -550,7 +584,12 @@ export class RelayCore {
       return
     }
     const client = this.connections.get(pending.client)
-    if (!client || client.phase !== 'pending' || this.connections.get(connection.peer.id) !== connection) {
+    if (
+      !client
+      || client.phase !== 'pending'
+      || client.peer.profile !== connection.peer.profile
+      || this.connections.get(connection.peer.id) !== connection
+    ) {
       this.close(connection.peer.id, 4100)
       return
     }

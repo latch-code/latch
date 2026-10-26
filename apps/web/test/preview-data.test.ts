@@ -1,9 +1,52 @@
 import { describe, expect, it } from 'vitest'
 import { strToU8, zipSync } from 'fflate'
-import { inspectZip, readOfficeZip } from '../src/preview/zip.ts'
+import { assertPresentationComplexity, inspectZip, readOfficeZip } from '../src/preview/zip.ts'
 import { isFrameCommand, isFrameEvent } from '../src/preview/types.ts'
 import { parseCsv } from '../src/preview/csv.ts'
+import { sheetPage, type ParsedSheet } from '../src/preview/xlsx.ts'
 describe('document data boundaries', () => {
+  it('refuses excessive presentation shapes before DOM parsing, for arbitrary prefixes and inherited layouts', () => {
+    expect(() => assertPresentationComplexity({ 'ppt/slides/slide1.xml': strToU8('<p:sp/>'.repeat(10_000)) })).toThrow(
+      'document-too-complex',
+    )
+    expect(() => assertPresentationComplexity({ 'ppt/slideMasters/master.xml': strToU8('<自定:pic/>'.repeat(5001)) })).toThrow(
+      'document-too-complex',
+    )
+    expect(() => assertPresentationComplexity({ 'ppt/slideLayouts/layout.xml': strToU8('<a:x/>'.repeat(50_001)) })).toThrow(
+      'document-too-complex',
+    )
+    expect(() => assertPresentationComplexity({ 'ppt/slides/slide1.xml': strToU8('<p:sp/>'.repeat(5000)) })).not.toThrow()
+    expect(() =>
+      assertPresentationComplexity(
+        Object.fromEntries(Array.from({ length: 11 }, (_, i) => ['ppt/slides/slide' + i + '.xml', strToU8('<p:sp/>'.repeat(5000))])),
+      ),
+    ).toThrow('document-too-complex')
+  })
+  it('keeps every workbook row reachable when long cells exhaust a message budget', () => {
+    const sheet: ParsedSheet = {
+      info: { id: 0, name: 'Data', rows: 128, cols: 200, hidden: false, merges: [], colWidths: [], frozen: { rows: 1, cols: 1 } },
+      cells: new Map(
+        Array.from({ length: 128 }, (_, r) => [
+          r,
+          new Map(Array.from({ length: 200 }, (_, c) => [c, { text: 'x'.repeat(256), formula: '1+'.repeat(128) }])),
+        ]),
+      ),
+    }
+    for (const start of [0, 64]) {
+      const result = sheetPage(sheet, start, 64)
+      expect(result.rows).toHaveLength(64)
+      expect(result.truncated).toBe(true)
+      expect(result.rows.flat().reduce((total, cell) => total + cell.text.length + (cell.formula?.length ?? 0), 0)).toBeLessThanOrEqual(
+        1_000_000,
+      )
+      expect(isFrameEvent({ type: 'sheet-page', sheet: 0, start, ...result })).toBe(true)
+      expect(result.rows.at(-1)?.[0]?.text.endsWith('…')).toBe(true)
+    }
+    expect(sheet.info.rows).toBe(128)
+    const detailed = sheetPage(sheet, 127, 1)
+    expect(detailed.truncated).toBe(false)
+    expect(detailed.rows[0]?.[0]?.text).toBe('x'.repeat(256))
+  })
   it('accepts bounded normal ZIPs and rejects traversal, huge declarations, encryption and missing directories before inflation', () => {
     const zip = zipSync({ 'word/document.xml': strToU8('<document/>') })
     expect(() => inspectZip(zip)).not.toThrow()

@@ -17,6 +17,7 @@ import { ImagePreview } from './ImagePreview.tsx'
 import { FileOpenContext, contextOf, fileContextBody, fileContextKey, fileRoute, targetIn } from './fileContext.ts'
 import { resolveFileImage } from './fileImages.ts'
 import type { FileTab } from './useFileTabs.ts'
+import { selectedQuote, type FileQuote, type PreviewQuote } from './quote.ts'
 
 interface ResolveResult {
   files: Array<{ status: string; code?: string; line?: number; file?: unknown }>
@@ -30,6 +31,7 @@ export function FilePreview({
   cwd,
   onResolved,
   onMention,
+  onQuote,
   onExpand,
   onClose,
 }: {
@@ -41,6 +43,7 @@ export function FilePreview({
   cwd?: string
   onResolved(file: FileMetadata): void
   onMention?(mention: FileMention): void
+  onQuote?(value: FileQuote): void
   onExpand(): void
   onClose(): void
 }) {
@@ -50,6 +53,9 @@ export function FilePreview({
     [version, setVersion] = useState(0),
     [showSecret, setShowSecret] = useState(false)
   const [sourceMode, setSourceMode] = useState(false)
+  const [selection, setSelection] = useState<PreviewQuote>()
+  const [updated, setUpdated] = useState(false)
+  const body = useRef<HTMLDivElement>(null)
   const [updatingText, setUpdatingText] = useState(false)
   const openFile = useContext(FileOpenContext)
   const [text, setText] = useState<string>(),
@@ -67,7 +73,7 @@ export function FilePreview({
   const context = contextOf(tab.target)
   const contextKey = fileContextKey(context)
   const load = useCallback(
-    async (signal?: AbortSignal) => {
+    async (signal?: AbortSignal, announce = false) => {
       if (attachmentId) {
         const result = await api<{ file: unknown }>(`attachments/${attachmentId}/resolve`, {
           method: 'POST',
@@ -96,6 +102,10 @@ export function FilePreview({
         throw new Error(answer?.code ? describeFailure(403, answer.code, '无法读取这个文件。') : '无法读取这个文件。')
       if (signal?.aborted) return
       setFile(answer.file)
+      if (announce) {
+        setSelection(undefined)
+        setUpdated(true)
+      }
       resolved.current(answer.file)
       setError('')
       setNotice('')
@@ -117,7 +127,7 @@ export function FilePreview({
       if (checking || document.hidden) return
       checking = true
       void api<unknown>(`files/${file.handle}/meta`, { signal: controller.signal })
-        .then(value => {
+        .then(async value => {
           if (controller.signal.aborted) return
           const next = value && typeof value === 'object' && 'file' in value ? value.file : value
           if (
@@ -127,20 +137,27 @@ export function FilePreview({
             && typeof next.etag === 'string'
             && /^"[a-f0-9]{32}"$/u.test(next.etag)
             && next.etag !== file.etag
-          )
-            setNotice('文件已更新。当前仍显示之前读到的内容。')
+          ) {
+            await load(controller.signal, true)
+          }
         })
         .catch(cause => {
           if (controller.signal.aborted) return
           if (cause instanceof ApiError && cause.status === 410) {
             if (expiredRetry.current) {
-              setFile(undefined)
-              setText(undefined)
-              setError('文件句柄已失效，请关闭后重新打开。')
+              setNotice('文件暂不可用；之前读到的内容仍保留在这里。')
               return
             }
             expiredRetry.current = true
-            void load(controller.signal).catch(() => setNotice('文件暂不可用，请重新打开。'))
+            void load(controller.signal).catch(cause => {
+              if (controller.signal.aborted) return
+              if (cause instanceof ApiError && (cause.status === 401 || cause.status === 403)) {
+                setFile(undefined)
+                setText(undefined)
+                setSelection(undefined)
+                setError(errorMessage(cause))
+              } else setNotice('文件暂不可用；之前读到的内容仍保留在这里。')
+            })
             return
           }
           if (cause instanceof ApiError && (cause.status === 401 || cause.status === 403)) {
@@ -160,19 +177,51 @@ export function FilePreview({
       clearInterval(timer)
     }
   }, [file?.handle, file?.etag, load])
-  const read = useCallback((start?: number, end?: number, signal?: AbortSignal) => {
-    const value = current.current
-    if (!value) return Promise.reject(new Error('file-unavailable'))
-    return fileBytes(value.handle, start, end, signal, value.etag, value.source)
-  }, [])
+  useEffect(() => {
+    if (!updated) return
+    const timer = setTimeout(() => setUpdated(false), 6000)
+    return () => clearTimeout(timer)
+  }, [updated, file?.etag])
+  const quote = (excerpt: PreviewQuote) => {
+    if (!file || file.secret || !onQuote || current.current?.etag !== file.etag || !excerpt.text.trim()) return
+    onQuote({
+      contextKey,
+      file: { root: file.root, path: file.path, name: file.name, source: file.source, size: file.size, mtime: file.mtime, etag: file.etag },
+      excerpt,
+    })
+    setSelection(undefined)
+  }
+  const read = useCallback(
+    (start?: number, end?: number, signal?: AbortSignal) => {
+      if (!file) return Promise.reject(new Error('file-unavailable'))
+      return fileBytes(file.handle, start, end, signal, file.etag, file.source).catch(cause => {
+        if (
+          !signal?.aborted
+          && cause instanceof ApiError
+          && (cause.status === 401 || cause.status === 403)
+          && current.current?.handle === file.handle
+          && current.current.etag === file.etag
+        ) {
+          setFile(undefined)
+          setText(undefined)
+          setSelection(undefined)
+          setError(errorMessage(cause))
+        }
+        throw cause
+      })
+    },
+    [file?.handle, file?.etag, file?.source],
+  )
   useEffect(() => {
     if (
       !file
       || (!file.actions.preview && !(file.secret && showSecret))
       || (!file.secret
         && (['pptx', 'docx', 'xlsx', 'pdf', 'csv', 'image', 'audio', 'video'].includes(file.kind) || (file.kind === 'svg' && !sourceMode)))
-    )
+    ) {
+      setUpdatingText(false)
       return
+    }
     const controller = new AbortController()
     setUpdatingText(true)
     void read(undefined, undefined, controller.signal).then(
@@ -181,6 +230,8 @@ export function FilePreview({
         const head = new Uint8Array(bytes)
         const encoding = head[0] === 0xff && head[1] === 0xfe ? 'utf-16le' : head[0] === 0xfe && head[1] === 0xff ? 'utf-16be' : 'utf-8'
         setText(new TextDecoder(encoding).decode(bytes))
+        setSelection(undefined)
+        setError('')
         setUpdatingText(false)
       },
       cause => {
@@ -191,7 +242,7 @@ export function FilePreview({
       },
     )
     return () => controller.abort()
-  }, [file?.etag, file?.handle, file?.kind, file?.actions.preview, showSecret, sourceMode, read])
+  }, [file?.etag, file?.handle, file?.kind, file?.actions.preview, showSecret, sourceMode, read, version])
   const refresh = () => {
     expiredRetry.current = false
     setVersion(value => value + 1)
@@ -416,6 +467,7 @@ export function FilePreview({
           <div className="file-preview-caption">
             <VisibleText text={file.source === 'attachment' ? '消息附件' : `${base ? basename(base) : '会话文件夹'} / ${file.path}`} />
             <span>{file.size.toLocaleString()} bytes</span>
+            {updated && <span role="status">已更新</span>}
             <span className="sr-only" role="status">
               {copied.state === 'copied' ? '已复制' : copied.state === 'failed' ? '复制不可用，请手动选择路径' : ''}
             </span>
@@ -448,7 +500,18 @@ export function FilePreview({
               {file.refused?.preview ? describeFailure(403, file.refused.preview, '不能在这里预览这个文件。') : '这个文件尚不支持预览。'}
             </InlineNotice>
           ) : (
-            <div className="file-preview-body">
+            <div
+              className="file-preview-body"
+              ref={body}
+              onMouseUp={() => setSelection(selectedQuote(body.current))}
+              onKeyUp={() => setSelection(selectedQuote(body.current))}>
+              {onQuote && !file.secret && !updatingText && selection && !['pptx', 'docx', 'xlsx', 'pdf', 'csv'].includes(file.kind) && (
+                <div className="file-preview-controls">
+                  <Button size="xs" variant="ghost" onPointerDown={event => event.preventDefault()} onClick={() => quote(selection)}>
+                    引用选中文字
+                  </Button>
+                </div>
+              )}
               {file.secret ? (
                 text === undefined ? (
                   <Loading label="正在读取内容…" />
@@ -461,6 +524,7 @@ export function FilePreview({
                   versionKey={`${file.etag}:${version}`}
                   read={read}
                   renderFrame={input => <FileSandbox {...input} />}
+                  onQuote={onQuote ? quote : undefined}
                 />
               ) : file.kind === 'image' || (file.kind === 'svg' && !sourceMode) ? (
                 <ImagePreview file={file} source={source} local={local} />

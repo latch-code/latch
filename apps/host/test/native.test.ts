@@ -3,6 +3,7 @@ import { createHash, createPrivateKey, generateKeyPairSync, randomUUID, sign } f
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   createTransportCertificate,
@@ -16,7 +17,7 @@ import {
 import { discoveryEpochInput, knock, nativeKnockSecret, nativeRevocationInput, nativeVerificationText, pairingCode } from '@latch/link-wire'
 import { nodeCrypto } from '@latch/link-client/crypto'
 import type { TestDevice } from '@latch/testkit'
-import type { TaskDetail } from '@latch/protocol'
+import type { TaskDetail, PersonalAssistant, PersonalGroup, PersonalGroupDetail } from '@latch/protocol'
 import type { Bridge, HarnessPlugin } from '@latch/sdk'
 import type { PresenceBackend } from '../src/presence.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
@@ -25,6 +26,8 @@ import { loadOrCreateHostIdentity } from '../src/identity.ts'
 import { NativeReplay } from '../src/native-replay.ts'
 import { FileDirectoryReader } from '../src/files/directory.ts'
 import { buildFilesHelper } from '../scripts/build-files.ts'
+import { messageCarrierFixture } from './helpers/message-carrier.ts'
+import { connectPluginTransport } from '../src/native-transports.ts'
 
 const cleanup: (() => void | Promise<void>)[] = []
 afterEach(async () => {
@@ -35,12 +38,17 @@ function body<T>(result: { status: number; body: unknown }, status = 200): T {
   expect(result.status).toBe(status)
   return result.body as T
 }
-async function pair(host: TestHost, inviter?: TestDevice) {
+async function pair(
+  host: TestHost,
+  inviter?: TestDevice,
+  open?: (options: Parameters<typeof openNativeHttp>[2]) => Promise<NativeHttpClient>,
+  options: { dataScope?: 'work' | 'all'; requestedDataScope?: 'work' | 'all'; rejectUpgrade?: boolean } = {},
+) {
   const response = inviter
-    ? await inviter.request('native/pairings', { method: 'POST', body: {} })
-    : await host.raw('unix', 'api/native/pairings', { method: 'POST', body: {} })
+    ? await inviter.request('native/pairings', { method: 'POST', body: options.dataScope ? { dataScope: options.dataScope } : {} })
+    : await host.raw('unix', 'api/native/pairings', { method: 'POST', body: options.dataScope ? { dataScope: options.dataScope } : {} })
   expect(response.status).toBe(201)
-  const { invitation } = (await response.json()) as { invitation: { payload: string } }
+  const { invitation } = (await response.json()) as { invitation: { payload: string; dataScope?: 'work' | 'all' } }
   const payload = JSON.parse(Buffer.from(invitation.payload.slice('LATCHPAIR1.'.length), 'base64url').toString()) as {
     rootSpki: string
     invitation: string
@@ -48,25 +56,31 @@ async function pair(host: TestHost, inviter?: TestDevice) {
   const device = createTransportCertificate(),
     verification = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
   const knockKey = createHash('sha256').update(payload.invitation).digest()
-  const raw = connect(host.host.nativePort!, '127.0.0.1')
-  raw.on('error', () => {})
-  const temporary = await openNativeHttp(
-    raw,
-    { path: 'direct' },
-    { rootSpki: Buffer.from(payload.rootSpki, 'base64url'), knockKey, pairing: true },
-  )
+  const raw = open ? undefined : connect(host.host.nativePort!, '127.0.0.1')
+  raw?.on('error', () => {})
+  const temporaryOptions = { rootSpki: Buffer.from(payload.rootSpki, 'base64url'), knockKey, pairing: true as const }
+  const temporary = open ? await open(temporaryOptions) : await openNativeHttp(raw!, { path: 'direct' }, temporaryOptions)
   cleanup.push(() => temporary.close())
   const spy = vi.spyOn(host.presence as PresenceBackend, 'confirm')
+  const enrollmentBody = {
+    name: '原生测试手机',
+    publicKey: device.spki.toString('base64url'),
+    invitation: payload.invitation,
+    ...(options.requestedDataScope ? { dataScope: options.requestedDataScope } : {}),
+    native: {
+      certificate: device.cert,
+      verificationKey: verification.publicKey.export({ format: 'der', type: 'spki' }).toString('base64url'),
+    },
+  }
+  if (options.rejectUpgrade) {
+    const shown = spy.mock.calls.length
+    const rejected = await temporary.request('POST', '/link/api/enrollments', { ...enrollmentBody, dataScope: 'all' })
+    expect(rejected.status).toBe(400)
+    expect(rejected.body).toMatchObject({ error: 'scope-not-grantable' })
+    expect(spy.mock.calls).toHaveLength(shown)
+  }
   const enrollment = body<{ enrollment: { id: string; nonce: string; status: string } }>(
-    await temporary.request('POST', '/link/api/enrollments', {
-      name: '原生测试手机',
-      publicKey: device.spki.toString('base64url'),
-      invitation: payload.invitation,
-      native: {
-        certificate: device.cert,
-        verificationKey: verification.publicKey.export({ format: 'der', type: 'spki' }).toString('base64url'),
-      },
-    }),
+    await temporary.request('POST', '/link/api/enrollments', enrollmentBody),
     202,
   ).enrollment
   const expectedCode = await pairingCode(nodeCrypto, knockKey, device.spki, verification.publicKey.export({ format: 'der', type: 'spki' }))
@@ -86,8 +100,8 @@ async function pair(host: TestHost, inviter?: TestDevice) {
     await temporary.request('POST', `/link/api/enrollments/${enrollment.id}/complete`, { signature }),
   )
   temporary.close()
-  const nativeRaw = connect(host.host.nativePort!, '127.0.0.1')
-  nativeRaw.on('error', () => {})
+  const nativeRaw = open ? undefined : connect(host.host.nativePort!, '127.0.0.1')
+  nativeRaw?.on('error', () => {})
   const clientOptions = {
     rootSpki: Buffer.from(payload.rootSpki, 'base64url'),
     knockKey: await nodeCrypto.hash(
@@ -96,9 +110,9 @@ async function pair(host: TestHost, inviter?: TestDevice) {
     certificate: device.cert,
     key: device.key,
   }
-  const client = await openNativeHttp(nativeRaw, { path: 'direct' }, clientOptions)
+  const client = open ? await open(clientOptions) : await openNativeHttp(nativeRaw!, { path: 'direct' }, clientOptions)
   cleanup.push(() => client.close())
-  return { client, deviceId: registered.device.id, verification, invitation: payload.invitation, clientOptions }
+  return { client, deviceId: registered.device.id, verification, invitation: payload.invitation, invitationInfo: invitation, clientOptions }
 }
 async function verifyDevice(
   host: TestHost,
@@ -117,6 +131,430 @@ async function verifyDevice(
   return { ...receipt, appOpenId: challenge.appOpenId }
 }
 describe('native Host entry with existing authorization', () => {
+  it('grants Mac-selected Personal range through exactly one Native enrollment confirmation while keeping the old QR wire', async () => {
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    cleanup.push(() => host.close())
+    const owner = await host.enroll({ listener: 'unix' }),
+      shown = host.presence.requests.length
+    const registered = await pair(host, owner, undefined, { dataScope: 'all' })
+    expect(registered.invitationInfo.dataScope).toBe('all')
+    const payload = JSON.parse(
+      Buffer.from(registered.invitationInfo.payload.slice('LATCHPAIR1.'.length), 'base64url').toString(),
+    ) as Record<string, unknown>
+    expect(Object.keys(payload).toSorted()).toEqual(['direct', 'expiresAt', 'invitation', 'relays', 'rootSpki', 'v'])
+    expect(host.presence.requests.slice(shown).map(request => request.preview.action)).toEqual(['device.enroll-native'])
+    expect(host.presence.requests.at(-1)?.preview.lines).toContainEqual({ label: '数据范围', value: '全部' })
+    await verifyDevice(host, registered.client, registered.deviceId, registered.verification.privateKey)
+    const snapshot = body<{ device: { dataScope: string; status: string }; catalog: { features: { nativePairingScope?: boolean } } }>(
+      await registered.client.request('GET', '/link/api/snapshot'),
+    )
+    expect(snapshot.device).toMatchObject({ dataScope: 'all', status: 'active' })
+    expect(snapshot.catalog.features.nativePairingScope).toBe(true)
+    expect((await registered.client.request('GET', '/link/api/personal')).status).toBe(200)
+    const assistant = body<PersonalAssistant>(
+      await registered.client.request('POST', '/link/api/personal/assistants', {
+        requestId: randomUUID(),
+        name: 'My assistant',
+        role: 'Help with my day',
+        mode: 'chat',
+        harnessId: 'standard',
+        pluginIds: [],
+      }),
+      201,
+    )
+    const task = body<{ sessionId: string }>(
+      await registered.client.request('POST', '/link/api/tasks', {
+        assistantId: assistant.id,
+        prompt: 'Plan the day',
+        requestId: randomUUID(),
+      }),
+      201,
+    )
+    await expect
+      .poll(async () => body<TaskDetail>(await registered.client.request('GET', '/link/api/tasks/' + task.sessionId)).summary.status)
+      .toBe('idle')
+    expect(host.presence.requests).toHaveLength(shown + 1)
+  })
+
+  it('defaults old Native invitation requests to work and refuses a phone-side upgrade without consuming the invitation', async () => {
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    cleanup.push(() => host.close())
+    const registered = await pair(host, undefined, undefined, { rejectUpgrade: true })
+    expect(registered.invitationInfo.dataScope).toBe('work')
+    await verifyDevice(host, registered.client, registered.deviceId, registered.verification.privateKey)
+    expect(body<{ device: { dataScope: string } }>(await registered.client.request('GET', '/link/api/snapshot')).device.dataScope).toBe(
+      'work',
+    )
+    expect((await registered.client.request('GET', '/link/api/personal')).status).toBe(403)
+    expect(host.presence.requests.at(-1)?.preview.lines).toContainEqual({ label: '数据范围', value: '工作' })
+  })
+
+  it('allows the phone to explicitly reduce an all invitation and keeps remote QR creation forbidden', async () => {
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    cleanup.push(() => host.close())
+    const registered = await pair(host, undefined, undefined, { dataScope: 'all', requestedDataScope: 'work' })
+    await verifyDevice(host, registered.client, registered.deviceId, registered.verification.privateKey)
+    expect(body<{ device: { dataScope: string } }>(await registered.client.request('GET', '/link/api/snapshot')).device.dataScope).toBe(
+      'work',
+    )
+    expect((await registered.client.request('POST', '/link/api/native/pairings', { dataScope: 'all' })).status).toBe(403)
+    expect(host.presence.requests.at(-1)?.preview.lines).toContainEqual({ label: '数据范围', value: '工作' })
+  })
+
+  it('binds a pending configuration to its original native opening and never replays it after a new window', async () => {
+    let time = Date.now(),
+      value = 'low',
+      entered = false,
+      changes = 0,
+      release!: () => void
+    const gate = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 }, now: () => time })
+    cleanup.push(() => host.close())
+    cleanup.push(() => release())
+    const owner = await host.enroll({ listener: 'unix' }),
+      registered = await pair(host),
+      id = 'task-native-config-window'
+    const summary: TaskDetail['summary'] = {
+      id,
+      title: 'Native config fixture',
+      status: 'idle',
+      updatedAt: new Date(time).toISOString(),
+      cwd: host.workspaceRoot,
+      mode: 'agent',
+    }
+    const bridge: Bridge = {
+      async start() {},
+      async close() {},
+      async listTasks() {
+        return [summary]
+      },
+      async detail() {
+        return {
+          summary,
+          messages: [],
+          approvals: [],
+          liveText: '',
+          cursor: 0,
+          config: [
+            {
+              id: 'effort',
+              name: 'Effort',
+              type: 'select',
+              currentValue: value,
+              options: [
+                { value: 'low', name: 'Low' },
+                { value: 'high', name: 'High' },
+              ],
+            },
+          ],
+        }
+      },
+      async createTask() {
+        return { sessionId: id }
+      },
+      async prompt() {},
+      async cancel() {},
+      approvals() {
+        return []
+      },
+      async decide() {
+        return false
+      },
+      subscribe() {
+        return () => {}
+      },
+      async classifyConfigChange() {
+        return 'neutral'
+      },
+      async setConfig(_id, _config, next, options) {
+        entered = true
+        await gate
+        options?.authorize?.()
+        value = next
+        changes++
+      },
+    }
+    // A private test-only built-in mounting seam supplies an L1 config implementation; actual ACPs remain L3.
+    await host.host.bridge.detach('standard')
+    await host.host.bridge.attach(
+      { id: 'standard', name: 'fixture', version: '1', create: () => bridge },
+      { source: 'builtin', create: () => bridge, release() {} },
+    )
+    const path = `/link/api/tasks/${id}`,
+      request = { requestId: randomUUID(), configId: 'effort', value: 'high' }
+    await verifyDevice(host, registered.client, registered.deviceId, registered.verification.privateKey)
+    const pending = registered.client.request('POST', path + '/config', request)
+    await expect.poll(() => entered).toBe(true)
+    const renewed = await verifyDevice(host, registered.client, registered.deviceId, registered.verification.privateKey)
+    release()
+    expect((await pending).status).toBe(503)
+    expect(changes).toBe(0)
+    expect(body(await registered.client.request('GET', path + '/config-requests/' + request.requestId))).toEqual({ state: 'unknown' })
+    expect((await registered.client.request('POST', path + '/config', request)).status).toBe(503)
+    expect(changes).toBe(0)
+    time = Date.parse(renewed.verifiedUntil) + 1
+    expect((await registered.client.request('GET', path + '/config-requests/' + request.requestId)).status).toBe(403)
+    expect(await owner.json(path.slice('/link/api/'.length) + '/config-requests/' + request.requestId)).toEqual({ state: 'unknown' })
+  })
+
+  it('runs the shipped local MessagePort example through the shared native consumer', async () => {
+    const module = (await import(pathToFileURL(resolve('examples/message-port/host.mjs')).href)) as {
+        default: HarnessPlugin
+        descriptor: import('@latch/sdk').TransportDescriptor
+      },
+      host = await startTestHost({ native: { host: '127.0.0.1', port: 0 }, plugins: [module.default] })
+    cleanup.push(() => host.close())
+    const managed: Array<Awaited<ReturnType<typeof connectPluginTransport>>> = []
+    cleanup.push(async () => {
+      for (const connection of managed) await connection.close()
+    })
+    const registered = await pair(host, undefined, async identity => {
+      const connection = await connectPluginTransport(host.host.registry, module.descriptor, identity)
+      managed.push(connection)
+      return connection.client
+    })
+    expect(body<{ device: { status: string } }>(await registered.client.request('GET', '/link/api/snapshot')).device.status).toBe('review')
+    await verifyDevice(host, registered.client, registered.deviceId, registered.verification.privateKey)
+    expect((await registered.client.request('POST', '/link/api/native/address-book', {})).status).toBe(200)
+    await host.host.registry.disable(module.default.id)
+    await Promise.all(managed.map(connection => connection.closed))
+    expect(registered.client.isClosed()).toBe(true)
+  })
+  it('keeps plugin listeners closed until native is configured', async () => {
+    const fixture = messageCarrierFixture(),
+      host = await startTestHost({
+        plugins: [
+          {
+            id: 'custom-message',
+            name: 'Custom message',
+            version: '1',
+            description: 'Fixture',
+            activate(context) {
+              context.registerTransport(fixture.driver)
+            },
+          },
+        ],
+      })
+    cleanup.push(() => host.close())
+    expect(fixture.listen).not.toHaveBeenCalled()
+    expect(host.host.registry.list().find(plugin => plugin.id === 'custom-message')?.capabilities).toEqual([
+      'transport:interactive-fixture',
+    ])
+  })
+  it('consumes a custom reliable message plugin through real TLS, remote review and the body window, then closes it on retirement', async () => {
+    let started = 0
+    const fixture = messageCarrierFixture(),
+      host = await startTestHost({
+        native: { host: '127.0.0.1', port: 0 },
+        plugins: [
+          {
+            id: 'custom-message',
+            name: 'Custom message',
+            version: '1',
+            description: 'Fixture',
+            activate(context) {
+              context.registerTransport(fixture.driver)
+              context.registerProvider({
+                id: 'carrier-wait',
+                name: 'Carrier wait fixture',
+                model: 'wait',
+                async *stream({ signal }) {
+                  started++
+                  yield { type: 'text', text: 'Carrier running' }
+                  await new Promise<void>(resolve => {
+                    if (signal.aborted) resolve()
+                    else signal.addEventListener('abort', () => resolve(), { once: true })
+                  })
+                },
+              })
+            },
+          },
+        ],
+      })
+    cleanup.push(() => host.close())
+    await vi.waitFor(() => expect(fixture.listen).toHaveBeenCalledTimes(1))
+    const managed: Array<Awaited<ReturnType<typeof connectPluginTransport>>> = []
+    cleanup.push(async () => {
+      for (const connection of managed) await connection.close()
+    })
+    const registered = await pair(host, undefined, async identity => {
+      const connection = await connectPluginTransport(host.host.registry, fixture.descriptor, identity)
+      managed.push(connection)
+      return connection.client
+    })
+    expect(fixture.lost()).toBe(true)
+    const snapshot = body<{ device: { status: string; scopes: string[] } }>(await registered.client.request('GET', '/link/api/snapshot'))
+    expect(snapshot.device).toMatchObject({ status: 'review', scopes: ['view'] })
+    const task = await host.host.bridge.createTask({ prompt: 'carrier body fixture', mode: 'chat', requestId: randomUUID() })
+    expect((await registered.client.request('GET', `/link/api/tasks/${task.sessionId}`)).status).toBe(403)
+    await verifyDevice(host, registered.client, registered.deviceId, registered.verification.privateKey)
+    expect((await registered.client.request('GET', `/link/api/tasks/${task.sessionId}`)).status).toBe(200)
+    const owner = await host.enroll({ listener: 'unix' })
+    expect((await owner.confirmed(`devices/${registered.deviceId}`, { method: 'PATCH', body: { scopes: ['view', 'run'] } })).status).toBe(
+      200,
+    )
+    const input = {
+        prompt: 'one carrier run',
+        mode: 'chat',
+        requestId: randomUUID(),
+        model: { providerId: 'carrier-wait', model: 'wait' },
+      },
+      created = body<{ sessionId: string }>(await registered.client.request('POST', '/link/api/tasks', input), 201),
+      replay = await registered.client.request('POST', '/link/api/tasks', input)
+    expect(replay.status).toBe(201)
+    expect((replay.body as { sessionId: string }).sessionId).toBe(created.sessionId)
+    await vi.waitFor(() => expect(started).toBe(1))
+    const cancellation = { requestId: randomUUID() },
+      cancelled = await registered.client.request('POST', `/link/api/tasks/${created.sessionId}/cancel`, cancellation)
+    expect(cancelled.status).toBe(200)
+    const cancellationReplay = body<{ accepted: boolean; receipt: object }>(
+      await registered.client.request('POST', `/link/api/tasks/${created.sessionId}/cancel`, cancellation),
+    )
+    expect(cancellationReplay).toEqual({ accepted: true, receipt: { ...(cancelled.body as { receipt: object }).receipt, replay: true } })
+    expect(body<TaskDetail>(await registered.client.request('GET', `/link/api/tasks/${created.sessionId}`)).summary.runOutcome).toBe(
+      'cancelled',
+    )
+    host.host.registry.retire('custom-message')
+    expect(() => host.host.registry.acquireTransport(fixture.descriptor.driverId)).toThrow('请先安装')
+    await vi.waitFor(() => expect(registered.client.isClosed()).toBe(true))
+    await Promise.all(managed.map(connection => connection.closed))
+  })
+  it('binds group hops to the accepted app window and permits only body-free exact-turn cancellation after expiry', async () => {
+    let time = Date.now(),
+      release!: () => void
+    const seen: string[] = [],
+      provider: HarnessPlugin = {
+        id: 'native-group-model',
+        name: 'fixture',
+        version: '1',
+        description: '',
+        activate(ctx) {
+          ctx.registerProvider({
+            id: 'native-group-model',
+            name: 'fixture',
+            model: 'a',
+            models: ['a', 'b'],
+            async *stream({ model, signal }) {
+              seen.push(model!)
+              if (model === 'a')
+                await new Promise<void>((resolve, reject) => {
+                  const abort = () => reject(new Error('cancelled'))
+                  signal.addEventListener('abort', abort, { once: true })
+                  release = () => {
+                    signal.removeEventListener('abort', abort)
+                    resolve()
+                  }
+                  if (signal.aborted) abort()
+                })
+              yield { type: 'text', text: 'Settled member answer' }
+              yield { type: 'finish', reason: 'stop' }
+            },
+          })
+        },
+      },
+      host = await startTestHost({ native: { host: '127.0.0.1', port: 0 }, now: () => time, plugins: [provider] })
+    cleanup.push(() => host.close())
+    const owner = await host.enroll({ listener: 'unix' }),
+      registered = await pair(host),
+      members: PersonalAssistant[] = []
+    expect((await owner.confirmed(`devices/${registered.deviceId}`, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
+    for (const model of ['a', 'b'])
+      members.push(
+        await owner.json<PersonalAssistant>('personal/assistants', {
+          method: 'POST',
+          body: {
+            requestId: randomUUID(),
+            name: `Member ${model}`,
+            role: 'PRIVATE ROLE NEVER SHARED',
+            harnessId: 'standard',
+            mode: 'chat',
+            pluginIds: [],
+            model: { providerId: 'native-group-model', model },
+          },
+        }),
+      )
+    const group = await owner.json<PersonalGroup>('personal/groups', {
+        method: 'POST',
+        body: {
+          requestId: randomUUID(),
+          name: 'Private group',
+          instructions: 'GROUP BODY',
+          memberIds: members.map(member => member.id),
+          defaultAssistantId: members[0]!.id,
+          maxRelays: 1,
+        },
+      }),
+      path = `/link/api/personal/groups/${group.id}`
+    expect((await registered.client.request('POST', `${path}/messages`, { requestId: randomUUID(), prompt: 'Locked input' })).status).toBe(
+      403,
+    )
+    await verifyDevice(host, registered.client, registered.deviceId, registered.verification.privateKey)
+    body(
+      await registered.client.request('POST', `${path}/messages`, {
+        requestId: randomUUID(),
+        prompt: 'Bound to original opening',
+        assistantIds: members.map(member => member.id),
+      }),
+      202,
+    )
+    await vi.waitFor(() => expect(seen).toEqual(['a']))
+    // A fresh verification on the same connection changes its mutable opening; it cannot rebind an accepted turn.
+    await verifyDevice(host, registered.client, registered.deviceId, registered.verification.privateKey)
+    release()
+    await vi.waitFor(async () =>
+      expect((await owner.json<PersonalGroupDetail>(`personal/groups/${group.id}`)).turn?.state).toBe('interrupted'),
+    )
+    expect(seen).toEqual(['a'])
+    const next = body<{ turnId: string }>(
+      await registered.client.request('POST', `${path}/messages`, { requestId: randomUUID(), prompt: 'Next explicit turn' }),
+      202,
+    )
+    await vi.waitFor(() => expect(seen).toEqual(['a', 'a']))
+    time += 11 * 60000
+    expect((await registered.client.request('GET', path)).status).toBe(403)
+    expect(
+      (
+        await registered.client.request('POST', `${path}/cancel`, {
+          requestId: randomUUID(),
+          turnId: next.turnId,
+          prompt: 'not free input',
+        })
+      ).status,
+    ).toBe(400)
+    const append = host.host.security.audit.append.bind(host.host.security.audit)
+    vi.spyOn(host.host.security.audit, 'append').mockImplementation(event =>
+      event.action === 'personal.changed'
+      && 'kind' in event.detail
+      && 'operation' in event.detail
+      && event.detail.kind === 'group'
+      && event.detail.operation === 'update'
+        ? Promise.reject(new Error('audit fixture unavailable'))
+        : append(event),
+    )
+    const request = { requestId: randomUUID(), turnId: next.turnId },
+      response = await registered.client.request('POST', `${path}/cancel`, request),
+      cancelled = body(response)
+    expect(response.headers['x-latch-audit']).toBe('failed')
+    expect(cancelled).toEqual({ accepted: true, turnId: next.turnId, state: 'cancelled' })
+    expect(await registered.client.request('POST', `${path}/cancel`, request)).toMatchObject({ status: 200, body: cancelled })
+    const done = await owner.json<PersonalGroupDetail>(`personal/groups/${group.id}`)
+    expect(done.turn?.state).toBe('cancelled')
+    expect(done.turn?.sessionIds).toHaveLength(1)
+    expect((await owner.json<TaskDetail>(`tasks/${done.turn!.sessionIds[0]}`)).summary.runOutcome).toBe('cancelled')
+  })
+  it('consumes empty GET request streams and closes a GET payload without deleting the enrolled identity', async () => {
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    cleanup.push(() => host.close())
+    const registered = await pair(host)
+    await expect(registered.client.request('GET', '/link/api/snapshot', { unexpected: true })).rejects.toThrow()
+    const raw = connect(host.host.nativePort!, '127.0.0.1')
+    raw.on('error', () => {})
+    const fresh = await openNativeHttp(raw, { path: 'direct' }, registered.clientOptions)
+    cleanup.push(() => fresh.close())
+    expect(body<{ device: { id: string } }>(await fresh.request('GET', '/link/api/snapshot')).device.id).toBe(registered.deviceId)
+  })
   it.skipIf(process.platform !== 'darwin')(
     'keeps directory names behind the body window and discards a listing when its original window expires',
     async () => {
@@ -234,7 +672,7 @@ describe('native Host entry with existing authorization', () => {
     })
     await expect.poll(() => continued).toBe(1)
   })
-  it('parks queued input when its original App window expires and keeps queue bodies out of unverified snapshots', async () => {
+  it.each([false, true])('parks original App window queues and hides bodies from unverified snapshots (personal=%s)', async personal => {
     let time = Date.now(),
       calls = 0
     let release: (() => void) | undefined
@@ -275,12 +713,30 @@ describe('native Host entry with existing authorization', () => {
     cleanup.push(() => host.close())
     const owner = await host.enroll({ listener: 'unix' })
     const registered = await pair(host)
+    let assistantId: string | undefined
+    if (personal) {
+      expect((await owner.confirmed(`devices/${registered.deviceId}`, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
+      assistantId = (
+        await owner.json<PersonalAssistant>('personal/assistants', {
+          method: 'POST',
+          body: {
+            requestId: randomUUID(),
+            name: 'Native queued assistant',
+            role: 'PRIVATE NATIVE ROLE',
+            harnessId: 'standard',
+            mode: 'chat',
+            pluginIds: [],
+            model: { providerId: 'native-queue', model: 'fake' },
+          },
+        })
+      ).id
+    }
     const receipt = await verifyDevice(host, registered.client, registered.deviceId, registered.verification.privateKey)
     const { sessionId } = body<{ sessionId: string }>(
       await registered.client.request('POST', '/link/api/tasks', {
         prompt: 'First',
         requestId: randomUUID(),
-        model: { providerId: 'native-queue', model: 'fake' },
+        ...(assistantId ? { assistantId } : { model: { providerId: 'native-queue', model: 'fake' } }),
       }),
       201,
     )

@@ -6,6 +6,13 @@ import { isIP } from 'node:net'
 import { z } from 'zod'
 import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex, writeFileAtomic } from '@latch/core/node-kit'
+import {
+  directoryConfigSchema,
+  directoryConfigHash,
+  directoryFloorSchema,
+  type DirectoryConfig,
+  type DirectoryFloor,
+} from './directory-config.ts'
 
 const secret = (prefix: string) => `${prefix}.${randomBytes(32).toString('base64url')}`
 const key = (prefix: string) => z.string().regex(new RegExp(`^${prefix}\\.[A-Za-z0-9_-]{43}$`, 'u'))
@@ -60,6 +67,8 @@ const schema = z.strictObject({
     .regex(/^[a-f0-9]{64}$/u)
     .optional(),
   direct: nativeDirectSchema.nullable().optional(),
+  directory: directoryConfigSchema.nullable().optional(),
+  directoryFloor: directoryFloorSchema.optional(),
   configReceipts: z
     .array(z.strictObject({ requestId: z.uuid(), requestHash: z.string().regex(/^[a-f0-9]{64}$/u) }))
     .max(32)
@@ -116,7 +125,12 @@ export class RelayProfiles {
   }
   configHash(): string {
     return sha256Hex(
-      canonicalJson({ direct: this.state.direct ?? null, profiles: this.state.profiles, revision: this.state.configRevision ?? 0 }),
+      canonicalJson({
+        direct: this.state.direct ?? null,
+        directory: this.state.directory ?? null,
+        profiles: this.state.profiles,
+        revision: this.state.configRevision ?? 0,
+      }),
     )
   }
   configReceipt(requestId: string): string | undefined {
@@ -146,6 +160,7 @@ export class RelayProfiles {
     input: RelayProfileInput[],
     expectedHash?: string,
     receipt?: { requestId: string; requestHash: string },
+    directory?: DirectoryConfig | null,
   ): Promise<void> {
     const checked = z
       .array(relayProfileInput)
@@ -156,6 +171,7 @@ export class RelayProfiles {
       if (expectedHash !== undefined && this.configHash() !== expectedHash)
         throw new AppError(409, 'native-config-changed', '手机连接配置已变化，请刷新后重试')
       draft.direct = direct === null ? null : nativeDirectSchema.parse(direct)
+      if (directory !== undefined) draft.directory = directory === null ? null : directoryConfigSchema.parse(directory)
       if ((draft.configRevision ?? 0) >= Number.MAX_SAFE_INTEGER)
         throw new AppError(503, 'native-generation-exhausted', '连接配置代次已耗尽')
       draft.configRevision = (draft.configRevision ?? 0) + 1
@@ -182,6 +198,31 @@ export class RelayProfiles {
       })
       if (draft.generation >= Number.MAX_SAFE_INTEGER) throw new AppError(503, 'native-generation-exhausted', '连接簿代次已耗尽')
       draft.generation++
+    })
+  }
+  /** Floors come only from verified cache evidence, never from the settings request. Keep them through source removal. */
+  saveDirectoryFloor(expectedSourceHash: string, floor: DirectoryFloor): Promise<void> {
+    floor = directoryFloorSchema.parse(floor)
+    return this.change(draft => {
+      if (expectedSourceHash !== directoryConfigHash(draft.directory))
+        throw new AppError(409, 'native-directory-changed', '连接地址设置已变化，请重试')
+      const previous = draft.directoryFloor
+      if (previous) {
+        if (floor.minimum.generation < previous.minimum.generation) throw new Error('Directory Root rollback')
+        if (floor.minimum.generation === previous.minimum.generation) {
+          if (floor.minimum.hash !== previous.minimum.hash) throw new Error('Directory Root conflict')
+          if (previous.minimumOnline) {
+            if (!floor.minimumOnline || floor.minimumOnline.generation < previous.minimumOnline.generation)
+              throw new Error('Directory online rollback')
+            if (
+              floor.minimumOnline.generation === previous.minimumOnline.generation
+              && floor.minimumOnline.hash !== previous.minimumOnline.hash
+            )
+              throw new Error('Directory online conflict')
+          }
+        }
+      }
+      draft.directoryFloor = floor
     })
   }
   nextGeneration(): Promise<number> {

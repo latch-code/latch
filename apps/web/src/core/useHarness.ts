@@ -435,11 +435,15 @@ export function useHarness({ openLatest = () => true }: { openLatest?: () => boo
         syncConnection()
       }
     }
+    const metadataTimer = setInterval(() => {
+      if (!document.hidden && navigator.onLine) void synchronize('all')
+    }, 30_000)
     window.addEventListener('offline', offline)
     window.addEventListener('online', online)
     document.addEventListener('visibilitychange', visible)
     return () => {
       disposed = true
+      clearInterval(metadataTimer)
       openGeneration++
       stream.close()
       if (activeStream.current?.stream === stream) activeStream.current = null

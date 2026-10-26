@@ -15,7 +15,7 @@ import { withConfirmation } from '../core/confirmations.ts'
 import { InlineConfirm } from '../components/InlineConfirm.tsx'
 import { dateTime, looksLikePhone, relativeTime } from '../format.ts'
 import { DEV_MODE_TEXT, hostView, type DeviceAccess } from '../core/permissions.ts'
-import { DEVICE_NAME_INVALID_TEXT, describeFailure, LOCAL_ONLY_TEXT, NATIVE_LINK_COPY } from '../core/securityCopy.ts'
+import { CONNECTION_DETAILS, DEVICE_NAME_INVALID_TEXT, describeFailure, LOCAL_ONLY_TEXT, NATIVE_LINK_COPY } from '../core/securityCopy.ts'
 import { currentShell, type LatchShell } from '../core/shell.ts'
 import { ConfirmDialog, Modal, ModalHeader } from '../components/overlays.tsx'
 import { Badge, Button, InlineNotice, type LucideIcon, Menu, StatusPill, TextField } from '@latch/ui'
@@ -95,7 +95,6 @@ function ThisDevice({ device, devMode, onChanged }: { device: AppSnapshot['devic
             保存名称
           </Button>
         </form>
-        <SettingsRow title="连接方式" trailing={<span className="settings-row-value">{LISTENER_LABELS[device.listener]}</span>} />
         <SettingsRow
           title="状态"
           trailing={
@@ -107,9 +106,13 @@ function ThisDevice({ device, devMode, onChanged }: { device: AppSnapshot['devic
             )
           }
         />
-        {device.fingerprint && (
-          <SettingsRow title="设备指纹" trailing={<code className="settings-row-value settings-mono">{device.fingerprint}</code>} />
-        )}
+        <details className="connection-details">
+          <summary>{CONNECTION_DETAILS}</summary>
+          <SettingsRow title="连接方式" trailing={<span className="settings-row-value">{LISTENER_LABELS[device.listener]}</span>} />
+          {device.fingerprint && (
+            <SettingsRow title="设备指纹" trailing={<code className="settings-row-value settings-mono">{device.fingerprint}</code>} />
+          )}
+        </details>
         <SettingsRow title="权限" description={scopeText(device.scopes)} />
         <SettingsRow
           title={device.native ? '最近身份验证' : '登记有效期'}
@@ -456,7 +459,7 @@ function BrowserHere({ openInBrowser }: { openInBrowser: LatchShell['openInBrows
           title="一次性登记链接"
           description={
             openInBrowser
-              ? '在默认浏览器中打开 Latch，并附上一次性登记链接：10 分钟内有效，只能使用一次。在浏览器中提交后，仍需在这台电脑上核对指纹并确认。'
+              ? '在默认浏览器中打开 Latch，首次使用时在这台电脑上允许连接。'
               : '此系统上不能从桌面端直接打开浏览器。请在终端运行 pnpm latch device invite --loopback，在浏览器中打开它给出的一次性链接。'
           }
           trailing={
@@ -499,10 +502,7 @@ export function DevicesSettings({
   const openInBrowser = shell?.platform === 'darwin' ? shell.openInBrowser : undefined
   return (
     <>
-      <SectionHeading
-        title="设备"
-        description="每台设备有自己的密钥和权限。新设备要在运行 Latch 的电脑上核对指纹并确认后才能连接；撤销立即生效。"
-      />
+      <SectionHeading title="设备" description="管理可以使用这台电脑的设备。新设备由电脑允许连接，移除后立即失去访问权。" />
       <ThisDevice device={snapshot.device} devMode={host?.devMode === true} onChanged={onChanged} />
       {access.admin && <RegisteredDevices currentId={snapshot.device.id} local={access.local} onChanged={onChanged} />}
       {access.local && access.admin && <BrowserHere openInBrowser={openInBrowser} />}

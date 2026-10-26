@@ -7,7 +7,7 @@ import type { PlanEntry, PromptTemplate, SessionCommand } from '@latch/protocol'
 import type { PendingSubmission } from '../core/api.ts'
 import type { SendKey } from '../preferences.ts'
 import { DECISION_COPY } from '../core/securityCopy.ts'
-import { SlashCommands } from './SlashCommands.tsx'
+import { SlashCommands, useSlashCommands } from './SlashCommands.tsx'
 import { PlanChip } from './PlanCard.tsx'
 import { VisibleText } from './VisibleText.tsx'
 import { Button, Collapse, Comet, ICON_STROKE, InlineNotice, MOTION, Spinner, Swap, Tooltip, useLiveChange } from '@latch/ui'
@@ -17,6 +17,7 @@ import { Button, Collapse, Comet, ICON_STROKE, InlineNotice, MOTION, Spinner, Sw
  * long is said in the conversation (the latest turn's live line), so the bar has no running label.
  */
 export interface RunState {
+  id?: string
   approvals: number
   /** A waiting request's card is in view in the conversation, where it says so itself: the bar stays quiet. */
   approvalsInView?: boolean
@@ -73,10 +74,12 @@ export function Composer({
   queueTray,
   attachments,
   fileMentions,
+  lastPrompt,
 }: {
   queueable?: boolean
   queueTray?: ReactNode
   fileMentions?: FileMentionChoice
+  lastPrompt?: string
   attachments?: AttachmentDraftController
   templates?: PromptTemplate[]
   commands?: SessionCommand[]
@@ -145,11 +148,49 @@ export function Composer({
     && readOnly === undefined
   const sendable = !locked && readOnly === undefined && (answer !== undefined || (canSend && !empty && (!run || queueDraft)))
   const submit = answer?.onSubmit ?? onSubmit
+  const escapeAt = useRef({ at: 0, run: run?.id })
+  const slash = useSlashCommands({
+    draft,
+    commands,
+    templates,
+    enabled: !locked && readOnly === undefined,
+    onDraft: value => {
+      onDraft(value)
+      textareaRef.current?.focus({ preventScroll: true })
+    },
+  })
   const keydown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (slash.keydown(event)) return
     if (mentions.keydown(event)) return
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return
     if (answer && event.key === 'Escape' && !event.nativeEvent.isComposing) {
       event.preventDefault()
       answer.onCancel()
+      return
+    }
+    if (event.key === 'Escape' && run?.cancel === 'idle') {
+      const now = performance.now()
+      if (escapeAt.current.at && escapeAt.current.run === run.id && now - escapeAt.current.at <= 500) {
+        event.preventDefault()
+        run.onCancel()
+        escapeAt.current = { at: 0, run: run.id }
+      } else escapeAt.current = { at: now, run: run.id }
+      return
+    }
+    escapeAt.current.at = 0
+    if (
+      event.key === 'ArrowUp'
+      && !draft
+      && lastPrompt
+      && !locked
+      && readOnly === undefined
+      && !event.altKey
+      && !event.ctrlKey
+      && !event.metaKey
+      && !event.shiftKey
+    ) {
+      event.preventDefault()
+      onDraft(lastPrompt)
       return
     }
     if (event.key !== 'Enter' || event.nativeEvent.isComposing || event.keyCode === 229) return
@@ -196,6 +237,9 @@ export function Composer({
       <textarea
         ref={textareaRef}
         aria-label={label}
+        aria-autocomplete={slash.open ? 'list' : undefined}
+        aria-controls={slash.open ? slash.id : undefined}
+        aria-activedescendant={slash.open && slash.options[slash.active] ? slash.id + '-' + slash.active : undefined}
         placeholder={placeholder}
         value={draft}
         rows={variant === 'sheet' ? 5 : variant === 'new' ? 3 : 1}
@@ -328,17 +372,7 @@ export function Composer({
         {attachments && (
           <AttachmentDrafts controller={attachments} locked={locked} onRestore={text => onDraft(draft ? `${draft}\n${text}` : text)} />
         )}
-        {((commands?.length ?? 0) > 0 || (templates?.length ?? 0) > 0) && !locked && readOnly === undefined && (
-          <SlashCommands
-            draft={draft}
-            commands={commands ?? []}
-            templates={templates}
-            onDraft={value => {
-              onDraft(value)
-              textareaRef.current?.focus({ preventScroll: true })
-            }}
-          />
-        )}
+        <SlashCommands menu={slash} />
         {inline ? (
           <div className="composer-row">
             {input}

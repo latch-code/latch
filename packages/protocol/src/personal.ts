@@ -62,6 +62,8 @@ export interface PersonalExecutionContext {
   /** Host-frozen capability revisions for delegated or scheduled execution. */
   expectedRevisions?: Record<string, string>
   instructions: string
+  /** Explicit group history only, with its original roles. Transient and never inherited by another session. */
+  sharedMessages?: Array<{ role: 'user' | 'assistant'; text: string }>
   pluginIds: string[]
   revision: string
 }
@@ -123,6 +125,7 @@ export interface PersonalGroupInput {
 }
 export interface PersonalGroupMessage {
   id: string
+  requestId?: string
   role: 'user' | 'assistant' | 'system'
   text: string
   assistantId?: string
@@ -132,6 +135,7 @@ export interface PersonalGroupMessage {
 }
 export interface PersonalGroupTurn {
   id: string
+  reason?: 'definition-changed' | 'owner-unavailable' | 'unknown-outcome' | 'host-restarted' | 'storage-unavailable'
   state: 'running' | 'waiting-approval' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
   assistantIds: string[]
   sessionIds: string[]

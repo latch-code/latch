@@ -241,4 +241,29 @@ describe('persistent Host prompt queues', () => {
     await writeFile(join(dataDir, 'queues.json'), '{broken', { mode: 0o600 })
     await expect(PromptQueues.open(options)).rejects.toMatchObject({ code: 'queue-corrupt' })
   })
+  it('persists only the Host execution hash and fixed model across restart, retaining the original receipt before replanning', async () => {
+    const { queue, dataDir, detail, options } = await fixture(),
+      body = input(),
+      binding = 'b'.repeat(64),
+      model = { providerId: 'provider', model: 'fixed' }
+    options.prepare = vi.fn(async () => ({ binding, model }))
+    const accepted = await queue.submit(actor, 'task', body)
+    expect(JSON.stringify(queue.view('task'))).not.toContain(binding)
+    const reopened = await PromptQueues.open(options)
+    completed(detail)
+    await reopened.send('task', reopened.view('task')[0]!.id)
+    expect(options.send).toHaveBeenCalledWith(
+      expect.anything(),
+      'task',
+      expect.objectContaining({ binding, model, requestId: body.requestId }),
+    )
+    vi.mocked(options.prepare).mockRejectedValue(new AppError(409, 'unavailable', 'Unavailable'))
+    expect(await reopened.submit(actor, 'task', body)).toEqual({ accepted: true })
+    expect(options.prepare).toHaveBeenCalledTimes(1)
+    expect(accepted).toHaveProperty('queued')
+    const state = JSON.parse(await readFile(join(dataDir, 'queues.json'), 'utf8'))
+    state.items[0].binding = 'not-a-host-hash'
+    await writeFile(join(dataDir, 'queues.json'), JSON.stringify(state), { mode: 0o600 })
+    await expect(PromptQueues.open(options)).rejects.toMatchObject({ code: 'queue-corrupt' })
+  })
 })

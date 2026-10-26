@@ -32,6 +32,23 @@ final class FixtureKeys: NativeIdentityProvider, @unchecked Sendable {
     }
 }
 actor FixtureCounter { var value = 0; func increment() { value += 1 } }
+final class FixtureTransfer: @unchecked Sendable {
+    private let lock = NSLock(), start = ProcessInfo.processInfo.systemUptime
+    private var first = 0.0, chunks = 0, received = 0, expected = 0
+    private var valid = true
+    func progress(_ done: Int, _ total: Int) {
+        lock.lock(); defer { lock.unlock() }
+        if done <= received || done > total || done - received > 65_536 || (expected != 0 && expected != total) { valid = false }
+        if chunks == 0 { first = (ProcessInfo.processInfo.systemUptime - start) * 1000 }
+        chunks += 1; received = done; expected = total
+    }
+    var hasProgress: Bool { lock.lock(); defer { lock.unlock() }; return chunks > 0 }
+    func result() throws -> [String: Any] {
+        lock.lock(); defer { lock.unlock() }
+        guard valid, expected > 0, received == expected else { throw NativeFailure.invalidRecord }
+        return ["firstChunkMs": first, "totalMs": (ProcessInfo.processInfo.systemUptime - start) * 1000, "chunks": chunks]
+    }
+}
 actor FixtureBookGate {
     var waiting = false
     private var released = false
@@ -55,25 +72,89 @@ do {
     case "nativePersonal":
         stage = "personal"
         result = try await runNativePersonal(input)
+    case "directoryResolver": result = try await directoryResolverFixture(input)
+    case "directoryHTTP": result = try directoryHTTPFixture(input)
+    case "directoryEpoch":
+        guard let bytes = input["source"] as? String else { throw NativeFailure.invalidRecord }
+        let source = try NativeDirectorySource.decode(LinkBytes.unhex(bytes))
+        result = ["hash": try source.epoch, "absentHash": NativeDirectorySource.absentEpoch]
+    case "directoryCache": result = try await directoryCacheFixture(input)
+    case "directorySource":
+        guard let value = input["source"] as? [String: Any], let bytes = value["bytes"] as? String,
+              let invalid = value["invalidMirrors"] as? [String] else { throw NativeFailure.invalidRecord }
+        let decoded = try NativeDirectorySource.decode(LinkBytes.unhex(bytes))
+        var rejected = 0
+        for url in invalid {
+            let encoded = try Data([1]) + LinkBytes.fixed(decoded.anchors[0], 32) + Data([1]) + LinkBytes.field(Data(url.utf8)) + Data([0])
+            do { _ = try NativeDirectorySource.decode(encoded) } catch { rejected += 1 }
+        }
+        guard rejected == invalid.count else { throw NativeFailure.invalidRecord }
+        result = ["anchors": decoded.anchors.count, "mirrors": decoded.mirrors.map(\.absoluteString),
+            "generation": decoded.minimum?.generation ?? 0, "rejected": rejected]
+        if let online = decoded.minimumOnline { result["onlineGeneration"] = online.generation }
+    case "directory":
+        guard let vector = input["directory"] as? [String: Any], let now = vector["now"] as? NSNumber else { throw NativeFailure.invalidRecord }
+        func bytes(_ name: String) throws -> Data { try LinkBytes.unhex(vector[name] as? String ?? "", maximum: 16_384) }
+        let authority = try bytes("authority"), addresses = try bytes("addresses"), root = try bytes("root"), rootSignature = try bytes("rootSignature"), signature = try bytes("signature")
+        let verified = try NativeRelayDirectory.verify(authority: authority, rootSignature: rootSignature, addresses: addresses, signature: signature, anchors: [root], nowMs: now.uint64Value)
+        var rejected = 0
+        for mode in 0..<3 {
+            do {
+                let checkpoint = mode == 2 ? try NativeDirectoryCheckpoint(rootGeneration: 2, rootHash: verified.checkpoint.rootHash, generation: 2, hash: verified.checkpoint.hash) : nil
+                _ = try NativeRelayDirectory.verify(authority: authority, rootSignature: rootSignature, addresses: addresses, signature: signature,
+                    anchors: [mode == 0 ? Data(repeating: 0, count: 32) : root], nowMs: mode == 1 ? 5_000_000 : now.uint64Value, prior: checkpoint)
+            } catch { rejected += 1 }
+        }
+        guard rejected == 3 else { throw NativeFailure.identityMismatch }
+        result = ["verified": true, "rejected": rejected, "rootHash": LinkBytes.hex(verified.checkpoint.rootHash), "hash": LinkBytes.hex(verified.checkpoint.hash)]
+    case "outerPadding":
+        guard let actions = input["actions"] as? [[String: Any]], actions.count <= 256 else { throw NativeFailure.invalidRecord }
+        var writer = NativeRelayOuterPadding(), batches: [String] = []
+        for action in actions {
+            if let frames = action["frames"] as? [String] { for frame in frames { try writer.enqueue(LinkBytes.unhex(frame, maximum: 32_752)) } }
+            guard let time = action["time"] as? NSNumber else { throw NativeFailure.invalidRecord }
+            if let batch = try writer.batch(elapsedMs: time.uint64Value) { batches.append(LinkBytes.hex(batch)) }
+        }
+        result = ["batches": batches, "bufferedBytes": writer.bufferedBytes]
+    case "padding":
+        guard let vector = input["padding"] as? [String: String], let payload = vector["payload"], let encoded = vector["small"] else { throw NativeFailure.invalidRecord }
+        let bytes = try LinkBytes.unhex(encoded, maximum: 16_384)
+        for split in 0...bytes.count {
+            var decoder = NativePaddingWire.Decoder()
+            let decoded = try decoder.feed(Data(bytes.prefix(split))) + decoder.feed(Data(bytes.dropFirst(split)))
+            guard decoded == [try LinkBytes.unhex(payload, maximum: 1021)] else { throw NativeFailure.invalidRecord }
+        }
+        result = ["small": LinkBytes.hex(try NativePaddingWire.cell(LinkBytes.unhex(payload, maximum: 1021))), "largeDummyHash": LinkBytes.hex(LinkBytes.hash(try NativePaddingWire.cell(Data(), large: true)))]
     case "nativeRelayProbe":
         stage = "relay-open"
         let invitation = try PairingInvitation.parse(input["payload"] as? String ?? "")
         guard let endpoint = invitation.relays.first, let admission = endpoint.passes.first else { throw NativeFailure.invalidRecord }
-        let connection = try await NativeHTTPConnection.relay(endpoint: endpoint, admission: admission,
-            rootSpki: invitation.rootSpki, knockKey: LinkBytes.hash(Data(invitation.invitation.utf8)),
-            trustAnchor: LinkBytes.unhex(input["trustAnchor"] as? String ?? ""))
-        stage = "relay-request"
-        let response = try await connection.request(.get, path: "/link/api/snapshot")
-        await connection.close()
-        result["status"] = response.status
-    case "nativeRelayLifecycle":
+        let repetitions = (input["iterations"] as? NSNumber)?.intValue ?? 1
+        guard (1...9).contains(repetitions) else { throw NativeFailure.invalidRecord }
+        for _ in 0..<repetitions {
+            let connection = try await NativeHTTPConnection.relay(endpoint: endpoint, admission: admission,
+                rootSpki: invitation.rootSpki, knockKey: LinkBytes.hash(Data(invitation.invitation.utf8)),
+                trustAnchor: LinkBytes.unhex(input["trustAnchor"] as? String ?? ""))
+            stage = "relay-request"
+            let response = try await connection.request(.get, path: "/link/api/snapshot")
+            await connection.close()
+            result["status"] = response.status
+        }
+    case "nativeRelayLifecycle", "nativeRelayTransferNormal", "nativeRelayTransferAfterCancel", "nativeRelayBulkNormal", "nativeRelayBulkLegacy", "nativeRelayBulkReauthenticate", "nativeRelayBulkAfterCancel", "nativeRelayBulkCancel", "nativeRelayBulkEarlyCancel", "nativeDirectTransfer":
         stage = "relay-pairing"
         let invitation = try PairingInvitation.parse(input["payload"] as? String ?? ""), keys = try FixtureKeys()
         let anchor = try LinkBytes.unhex(input["trustAnchor"] as? String ?? "")
         guard let invitationEndpoint = invitation.relays.first, let invitationPass = invitationEndpoint.passes.first else { throw NativeFailure.invalidRecord }
+        let direct = input["operation"] as? String == "nativeDirectTransfer"
         let pairing = try NativePairing(invitation: invitation, keys: keys)
-        let temporary = try await NativeHTTPConnection.relay(endpoint: invitationEndpoint, admission: invitationPass,
-            rootSpki: invitation.rootSpki, knockKey: LinkBytes.hash(Data(invitation.invitation.utf8)), trustAnchor: anchor)
+        let temporary: NativeHTTPConnection
+        if direct, let location = invitation.direct.first {
+            temporary = try await NativeHTTPConnection.open(host: location.host, port: location.port, rootSpki: invitation.rootSpki,
+                knockKey: LinkBytes.hash(Data(invitation.invitation.utf8)))
+        } else {
+            temporary = try await NativeHTTPConnection.relay(endpoint: invitationEndpoint, admission: invitationPass,
+                rootSpki: invitation.rootSpki, knockKey: LinkBytes.hash(Data(invitation.invitation.utf8)), trustAnchor: anchor)
+        }
         stage = "relay-begin"
         let enrollment = try await pairing.begin(on: temporary, name: "Swift relay fixture")
         guard enrollment.comparisonCode.count == 6 else { throw NativeFailure.invalidRecord }
@@ -103,31 +184,37 @@ do {
         }
         guard let admission = usable else { throw NativeFailure.expired }
         let dial: @Sendable () async throws -> NativeHTTPConnection = {
-            try await NativeHTTPConnection.relay(endpoint: endpoint, admission: admission, rootSpki: device.rootSpki,
+            if direct, let location = invitation.direct.first {
+                return try await NativeHTTPConnection.open(host: location.host, port: location.port, rootSpki: device.rootSpki,
+                    knockKey: device.knockKey, identity: keys.identity())
+            }
+            return try await NativeHTTPConnection.relay(endpoint: endpoint, admission: admission, rootSpki: device.rootSpki,
                 knockKey: device.knockKey, identity: keys.identity(), trustAnchor: anchor)
         }
         stage = "relay-mtls"
         let workspace = try NativeWorkspace(device: device, keys: keys, vault: vault)
         let review = try await workspace.install(dial)
-        guard review["device"]["status"].string == "review", review["device"]["scopes"].array == [.string("view")] else { throw NativeFailure.identityMismatch }
+        if !direct { guard review["device"]["status"].string == "review", review["device"]["scopes"].array == [.string("view")] else { throw NativeFailure.identityMismatch } }
         var requiresWindow = false
         do { _ = try await workspace.events() } catch { requiresWindow = (error as? NativeFailure) == .expired }
         guard requiresWindow else { throw NativeFailure.identityMismatch }
         stage = "relay-unlock"
         let lease = try await workspace.verify()
         try await vault.storeBody(Data("relay private body".utf8), name: "body", lease: lease)
+        if !direct {
         var reviewDenied = false
         do {
             _ = try await workspace.submit(NativePendingWrite(method: .post, path: "/link/api/tasks",
                 fields: ["prompt": .string("Must remain review only")]))
         } catch { reviewDenied = (error as? NativeFailure) == .forbidden }
         guard reviewDenied else { throw NativeFailure.identityMismatch }
+        }
         stage = "relay-desktop-grant"
         FileHandle.standardError.write(Data("Native fixture waiting for desktop grant\n".utf8))
         var granted = false
         for _ in 0..<60 {
             let value = try await workspace.snapshot()
-            if value["device"]["status"].string == "active", value["device"]["scopes"].array.contains(.string("run")) { granted = true; break }
+            if value["device"]["status"].string == "active", value["device"]["dataScope"].string == "all", value["device"]["scopes"].array.contains(.string("run")) { granted = true; break }
             try await Task.sleep(for: .milliseconds(50))
         }
         guard granted else { throw NativeFailure.forbidden }
@@ -139,18 +226,81 @@ do {
         guard let taskId = snapshot["tasks"].array.first?["id"].string,
               let runId = snapshot["tasks"].array.first?["runId"].string,
               try await workspace.pendingWrites().isEmpty else { throw NativeFailure.invalidRecord }
-        _ = try await workspace.freeAction(path: "/link/api/tasks/" + taskId + "/cancel",
-            fields: ["runId": .string(runId), "requestId": .string(UUID().uuidString)])
         stage = "relay-file"
         let files = try await workspace.resolveFile(sessionId: taskId, reference: "notes.txt", rootId: nil)
         guard let file = files["files"].array.first?["file"], let handle = file["handle"].string,
               let etag = file["etag"].string, let count = file["size"].integer,
               try await workspace.fileBytes(handle: handle, etag: etag, offset: 0, count: Int(count)) == Data("Swift relay file fixture".utf8) else { throw NativeFailure.invalidRecord }
-        stage = "relay-large-file"
-        let large = try await workspace.resolveFile(sessionId: taskId, reference: "large.txt", rootId: nil)
-        guard let file = large["files"].array.first?["file"], let handle = file["handle"].string,
-              let etag = file["etag"].string, file["size"].integer == 1_048_576,
-              try await workspace.fileBytes(handle: handle, etag: etag, offset: 0, count: 1_048_576) == Data(repeating: 120, count: 1_048_576) else { throw NativeFailure.invalidRecord }
+        let bulk = direct || (input["operation"] as? String ?? "").hasPrefix("nativeRelayTransfer") || (input["operation"] as? String ?? "").hasPrefix("nativeRelayBulk")
+        let companion = (input["operation"] as? String ?? "").hasPrefix("nativeRelayBulk")
+        let afterCancel = (input["operation"] as? String ?? "").hasSuffix("AfterCancel")
+        if bulk && !afterCancel {
+            stage = "relay-large-file"
+            let large = try await workspace.resolveFile(sessionId: taskId, reference: "large.txt", rootId: nil)
+            guard let file = large["files"].array.first?["file"], let handle = file["handle"].string,
+                  let etag = file["etag"].string, file["size"].integer == 1_048_576 else { throw NativeFailure.invalidRecord }
+            try await Task.sleep(for: .milliseconds(5250))
+            let timing = FixtureTransfer()
+            if input["operation"] as? String == "nativeRelayBulkReauthenticate" {
+                let reading = Task { try await workspace.fileBytes(handle: handle, etag: etag, offset: 0, count: 1_048_576,
+                    explicitOpen: true, progress: timing.progress) }
+                while !timing.hasProgress { try await Task.sleep(for: .milliseconds(5)) }
+                let otherDirectory = directory.deletingLastPathComponent().appendingPathComponent("latch-swift-other-opening-" + UUID().uuidString)
+                defer { try? FileManager.default.removeItem(at: otherDirectory) }
+                let otherVault = try EncryptedVault(directory: otherDirectory, key: LinkBytes.random(32), binding: invitation.hostId)
+                let other = try NativeWorkspace(device: device, keys: keys, vault: otherVault)
+                stage = "relay-bulk-other-open"
+                _ = try await other.install(dial); _ = try await other.verify()
+                var blocked = false
+                do { _ = try await reading.value } catch { blocked = true }
+                guard blocked, await workspace.verifiedRevocation() == nil, await keys.verificationCalls.value == 2 else { throw NativeFailure.invalidRecord }
+                stage = "relay-bulk-restored"
+                _ = try await workspace.install(dial)
+                guard await keys.verificationCalls.value == 2, await workspace.lease() == nil else { throw NativeFailure.invalidRecord }
+                stage = "relay-bulk-explicit-unlock"
+                _ = try await workspace.verify()
+                guard await keys.verificationCalls.value == 3 else { throw NativeFailure.invalidRecord }
+                guard try await workspace.fileBytes(handle: handle, etag: etag, offset: 0, count: 1_048_576, explicitOpen: true) == Data(repeating: 120, count: 1_048_576) else { throw NativeFailure.invalidRecord }
+                result = ["supersededReadDenied": true, "reconnectDidNotSign": true, "explicitUnlockRetried": true, "signatures": 3]
+                await other.closeOpening(); await workspace.closeOpening(); break
+            }
+            if ["nativeRelayBulkCancel", "nativeRelayBulkEarlyCancel"].contains(input["operation"] as? String ?? "") {
+                let early = input["operation"] as? String == "nativeRelayBulkEarlyCancel"
+                let reading = Task { try await workspace.fileBytes(handle: handle, etag: etag, offset: 0, count: 1_048_576,
+                    explicitOpen: true, progress: timing.progress) }
+                if early {
+                    try await Task.sleep(for: .milliseconds(25))
+                    guard !timing.hasProgress else { throw NativeFailure.invalidRecord }
+                } else { while !timing.hasProgress { try await Task.sleep(for: .milliseconds(5)) } }
+                let cancelledAt = ProcessInfo.processInfo.systemUptime
+                reading.cancel()
+                var cancelled = false
+                do { _ = try await reading.value } catch { cancelled = error is CancellationError }
+                let cancelMs = (ProcessInfo.processInfo.systemUptime - cancelledAt) * 1000
+                guard cancelled, await workspace.lease()?.valid == true else { throw NativeFailure.invalidRecord }
+                let retry = try await workspace.fileBytes(handle: handle, etag: etag, offset: 0, count: 1_048_576, explicitOpen: true)
+                guard retry == Data(repeating: 120, count: 1_048_576), await keys.verificationCalls.value == 1 else { throw NativeFailure.invalidRecord }
+                result = ["cancelled": true, "cancelMs": cancelMs, "retried": true, "identityKept": true]
+                try await Task.sleep(for: .seconds(5)); await workspace.closeOpening(); break
+            }
+            guard try await workspace.fileBytes(handle: handle, etag: etag, offset: 0, count: 1_048_576, explicitOpen: companion, progress: timing.progress) == Data(repeating: 120, count: 1_048_576) else { throw NativeFailure.invalidRecord }
+            result = try timing.result(); result["bulk"] = true; result["direct"] = direct; result["afterCancel"] = false; result["bytes"] = 1_048_576
+            if companion { try await Task.sleep(for: .seconds(5)) }
+            await workspace.closeOpening(); break
+        }
+        _ = try await workspace.freeAction(path: "/link/api/tasks/" + taskId + "/cancel",
+            fields: ["runId": .string(runId), "requestId": .string(UUID().uuidString)])
+        if bulk && afterCancel {
+            stage = "relay-large-file-after-cancel"
+            let large = try await workspace.resolveFile(sessionId: taskId, reference: "large.txt", rootId: nil)
+            guard let file = large["files"].array.first?["file"], let handle = file["handle"].string,
+                  let etag = file["etag"].string, file["size"].integer == 1_048_576 else { throw NativeFailure.invalidRecord }
+            let timing = FixtureTransfer()
+            guard try await workspace.fileBytes(handle: handle, etag: etag, offset: 0, count: 1_048_576, explicitOpen: companion, progress: timing.progress) == Data(repeating: 120, count: 1_048_576) else { throw NativeFailure.invalidRecord }
+            result = try timing.result(); result["bulk"] = true; result["direct"] = direct; result["afterCancel"] = true; result["bytes"] = 1_048_576
+            if companion { try await Task.sleep(for: .seconds(5)) }
+            await workspace.closeOpening(); break
+        }
         stage = "relay-events"
         let stream = try await workspace.events(sessionId: taskId)
         var applied = false
@@ -192,7 +342,7 @@ do {
         guard closedBody else { throw NativeFailure.identityMismatch }
         await workspace.closeOpening()
         result = ["paired": true, "persistedBeforeComplete": true, "mutualTLS": true, "requiresWindow": true,
-            "verified": true, "reviewDeniedBeforeDesktopGrant": true, "created": true, "files": true, "largeFile": true, "events": true, "resumedWithoutSigning": true,
+            "verified": true, "reviewDeniedBeforeDesktopGrant": true, "created": true, "files": true, "events": true, "resumedWithoutSigning": true,
             "replayedAfterReconnect": true, "rootRevocationClosedLease": true]
     case "nativeLeaseExpiry":
         stage = "recovered-expiry"
@@ -382,7 +532,16 @@ do {
         await bookOwner.connectionChanged(); await bookOwner.observe(latestHint)
         for _ in 0..<100 { if await bookCalls.value == 5 { break }; try await Task.sleep(for: .milliseconds(10)) }
         try await Task.sleep(for: .milliseconds(100))
-        guard await bookCalls.value == 5 else { throw NativeFailure.invalidRecord }; await bookOwner.close()
+        guard await bookCalls.value == 5 else { throw NativeFailure.invalidRecord }
+        let directoryEpoch = try await workspace.directoryEpoch()
+        guard snapshot["host"]["native"]["directoryEpoch"].string == directoryEpoch else { throw NativeFailure.identityMismatch }
+        let directoryHint = String(repeating: "f", count: 64)
+        await bookOwner.observe(discoveryEpoch, directoryHint: directoryHint)
+        for _ in 0..<100 { if await bookCalls.value == 6 { break }; try await Task.sleep(for: .milliseconds(10)) }
+        for _ in 0..<20 { await bookOwner.observe(discoveryEpoch, directoryHint: directoryHint) }
+        try await Task.sleep(for: .milliseconds(100))
+        guard await bookCalls.value == 6, try await workspace.directoryEpoch() == directoryEpoch else { throw NativeFailure.identityMismatch }
+        await bookOwner.close()
         let delayedGate = FixtureBookGate(), staleUpdates = FixtureCounter()
         let delayed = NativeBookRefresher(workspace: workspace, persist: { _ in try await delayedGate.wait() },
             updated: { _ in await staleUpdates.increment() })
@@ -579,6 +738,25 @@ do {
             priorGeneration: (input["priorGeneration"] as? NSNumber)?.uint64Value ?? 0,
             priorHash: (input["priorHash"] as? String).map { try LinkBytes.unhex($0) })
         result = ["hostId": book.hostId, "deviceId": book.deviceId, "generation": book.generation, "payloadHash": LinkBytes.hex(book.payloadHash), "relays": book.relays.count]
+        if let directory = book.directory { result["directoryAnchors"] = directory.anchors.count }
+        if input["profiles"] as? Bool == true { result["profiles"] = book.relays.map { $0.profile?.rawValue ?? "legacy-v1" } }
+    case "bookPathChange":
+        let root = try LinkBytes.unhex(input["rootSpki"] as? String ?? ""), deviceId = input["deviceId"] as? String ?? ""
+        let now = (input["timeMs"] as? NSNumber)?.uint64Value ?? 0
+        let previous = try (input["previous"] as? String).map {
+            try AddressBookCodec.verify($0, rootSpki: root, deviceId: deviceId, nowMs: now)
+        }
+        let current = try AddressBookCodec.verify(input["current"] as? String ?? "", rootSpki: root, deviceId: deviceId, nowMs: now)
+        result["migrate"] = NativeBookPathChange.requiresMigration(previous: previous, current: current)
+    case "relayAdmission":
+        let book = try AddressBookCodec.verify(input["encoded"] as? String ?? "", rootSpki: LinkBytes.unhex(input["rootSpki"] as? String ?? ""),
+            deviceId: input["deviceId"] as? String ?? "", nowMs: (input["timeMs"] as? NSNumber)?.uint64Value ?? 0)
+        guard let endpoint = book.relays.first, let times = input["times"] as? [NSNumber] else { throw NativeFailure.invalidRecord }
+        result["selected"] = try times.map { time in
+            let selected = try NativeRelayAdmission.current(endpoint: endpoint, bookExpiresAt: book.expiresAt, nowMs: time.uint64Value)
+            guard let index = endpoint.passes.firstIndex(where: { $0.bytes == selected.bytes }) else { throw NativeFailure.invalidRecord }
+            return index
+        }
     case "discoveryKey":
         result["key"] = try LinkBytes.hex(AddressBookCodec.discoveryKey(input["encoded"] as? String ?? "", rootSpki: LinkBytes.unhex(input["rootSpki"] as? String ?? ""),
             deviceId: input["deviceId"] as? String ?? "", nowMs: (input["timeMs"] as? NSNumber)?.uint64Value ?? 0,
@@ -596,7 +774,12 @@ do {
         func bytes(_ text: Any?) throws -> Data { try LinkBytes.unhex(text as? String ?? "invalid") }
         let pairing = input["pairing"] as? [String: Any] ?? [:], verification = input["nativeVerification"] as? [String: Any] ?? [:]
         let route = LinkBytes.hash(Data("latch-route-id-v1\0".utf8) + (try bytes(input["routePub"]))).prefix(16)
-        let binding = input["binding"] as? String == "relay" ? LinkBinding.relay(id: try bytes(input["relayId"]), route: route) : .direct
+        let binding: LinkBinding
+        switch input["binding"] as? String {
+        case "relay": binding = .relay(id: try bytes(input["relayId"]), route: route)
+        case "relay-pad-v2": binding = .relayPaddedV2(id: try bytes(input["relayId"]), route: route)
+        default: binding = .direct
+        }
         result["knock"] = try LinkBytes.hex(NativeCrypto.knock(key: bytes(input["knockKey"]), binding: binding, timeMs: (input["timeMs"] as? NSNumber)?.uint64Value ?? 0, nonce: bytes(input["nonce"])))
         result["serverBinding"] = try LinkBytes.hex(NativeCrypto.serverBinding(key: bytes(input["knockKey"]), binding: binding, nonce: bytes(input["nonce"]), certificate: Data((input["certificate"] as? String ?? "").utf8)))
         result["pairingCode"] = try NativeCrypto.pairingCode(invitationHash: bytes(pairing["invitationHash"]), connectionSpki: bytes(pairing["connectionSpki"]), verificationSpki: bytes(pairing["verificationSpki"]))

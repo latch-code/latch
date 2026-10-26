@@ -69,7 +69,7 @@ export function FileSandbox({ kind, data, versionKey, options, onMessage, onChan
           setReady(true)
         }
         if (value.type === 'error') clearTimeout(timer)
-        latest.current.onMessage?.(value)
+        latest.current.onMessage?.(value, { versionKey, data })
       }
       channel.port1.onmessageerror = fail
       channel.port1.start()

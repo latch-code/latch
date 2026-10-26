@@ -120,6 +120,30 @@
 .approvals-row .ui-count {
   margin-left: auto;
 }
+.approvals-group {
+  display: flex;
+  align-items: center;
+  margin-top: var(--sp-8);
+}
+.approvals-group .approvals-row {
+  flex: 1;
+  min-width: 0;
+  margin-top: 0;
+}
+.approval-next {
+  opacity: 0;
+  pointer-events: none;
+}
+.approvals-group:is(:hover, :focus-within) .approval-next {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (hover: none) {
+  .approval-next {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
 .archived-row {
   width: 100%;
   margin-top: var(--sp-12);

@@ -1,8 +1,10 @@
 import { parseCsv } from './csv.ts'
 import { isFrameCommand } from './types.ts'
 import type { GridCell } from './types.ts'
+import { gridPage } from './gridPage.ts'
 const scope = globalThis as unknown as { onmessage: ((event: MessageEvent<unknown>) => void) | null; postMessage: (value: unknown) => void }
 let rows: GridCell[][] = []
+let columns = 0
 scope.onmessage = event => {
   const value = event.data
   if (
@@ -22,6 +24,7 @@ scope.onmessage = event => {
           : undefined,
       )
       rows = result.rows
+      columns = result.info.cols
       scope.postMessage({
         type: 'rendered',
         kind: 'csv',
@@ -36,17 +39,11 @@ scope.onmessage = event => {
     return
   }
   if (isFrameCommand(value) && value.type === 'sheet-page') {
-    const selected: GridCell[][] = []
-    let chars = 0,
-      truncated = false
-    for (const row of rows.slice(value.start, value.start + value.count)) {
-      if (chars + row.reduce((n, cell) => n + cell.text.length, 0) > 1_000_000) {
-        truncated = true
-        break
-      }
-      selected.push(row)
-      chars += row.reduce((n, cell) => n + cell.text.length, 0)
-    }
-    scope.postMessage({ type: 'sheet-page', sheet: 0, start: value.start, rows: selected, truncated })
+    scope.postMessage({
+      type: 'sheet-page',
+      sheet: 0,
+      start: value.start,
+      ...gridPage(rows.length, columns, value.start, value.count, (row, col) => rows[row]?.[col]),
+    })
   }
 }

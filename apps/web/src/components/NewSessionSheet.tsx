@@ -1,6 +1,6 @@
 import { projectScopeCaption } from '../projects.tsx'
 import { VisibleText } from './VisibleText.tsx'
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode, type RefObject } from 'react'
 import { FlaskConical, Folder, LockKeyhole } from 'lucide-react'
 import type { AppSnapshot, PersonalAssistantSummary } from '@latch/protocol'
 import { findHarness, type ComposerChoice } from '../composerChoice.ts'
@@ -32,6 +32,7 @@ export function NewSessionSheet({
   onCreateProject,
   startLabel,
   onBrowseFiles,
+  focusComposer,
 }: {
   personal?: PersonalAssistantSummary
   open: boolean
@@ -55,16 +56,18 @@ export function NewSessionSheet({
   onCreateProject?: () => void
   startLabel?: string
   onBrowseFiles?(): void
+  focusComposer?: RefObject<HTMLTextAreaElement | null>
 }) {
   const { present } = usePresence(open, MOTION.slow)
   const choices = useRef<HTMLElement>(null)
   useEffect(() => {
     if (!open || !present) return undefined
-    const frame = requestAnimationFrame(() =>
-      choices.current?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]')?.focus({ preventScroll: true }),
-    )
+    const frame = requestAnimationFrame(() => {
+      if (focusComposer) focusComposer.current?.focus({ preventScroll: true })
+      else choices.current?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]')?.focus({ preventScroll: true })
+    })
     return () => cancelAnimationFrame(frame)
-  }, [open, present])
+  }, [open, present, focusComposer])
   const catalog = snapshot.catalog
   const harness = findHarness(catalog, choice.harnessId)
   return (

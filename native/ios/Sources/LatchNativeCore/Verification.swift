@@ -77,6 +77,18 @@ public actor NativeVerification {
     public func restore(on connection: NativeHTTPConnection) async throws -> Bool {
         try installPrepared(prepare: await prepareRestore(on: connection), on: connection)
     }
+    /** A companion resumes the original receipt without changing which connection owns system confirmation. */
+    func attachCompanion(on connection: NativeHTTPConnection) async throws -> BodyLease {
+        guard let window, window.lease.valid else { throw NativeFailure.expired }
+        let current = opening, expected = version
+        let response = try await connection.request(.post, path: "/link/api/native/verification/resume",
+            body: json(["appOpenId": current, "windowToken": window.token]))
+        guard current == opening, expected == version, window.lease.valid else { throw NativeFailure.expired }
+        if response.status == 403 { discardRejectedRecovery(); throw NativeFailure.expired }
+        guard response.status == 200 else { throw NativeFailure.expired }
+        guard try resumedUntil(response) == window.until else { throw NativeFailure.invalidRecord }
+        return window.lease
+    }
     func prepareRestore(on connection: NativeHTTPConnection) async throws -> PreparedWindowRestore {
         // An ongoing system confirmation still owns its challenge connection; do not close it mid-signature.
         if let flight { _ = try? await flight.value }

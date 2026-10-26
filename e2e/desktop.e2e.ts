@@ -14,7 +14,7 @@ import { writeHostState } from '@latch/host/host-state'
 import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { expectUnmovedByInjectedStyles } from './helpers/security.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { closeSettings, layersInWindow, openSection, openSettings } from './helpers/layout.ts'
+import { closeSettings, layersInWindow, openSection, openSettings, reachable, settleShell } from './helpers/layout.ts'
 
 const MARK_TOOL = 'mark_release'
 const R2_PROMPT = '标记发布版本'
@@ -255,7 +255,10 @@ async function enrollShell(page: Page, testHost: TestHost, name: string) {
   expect(request.preview.requester.listener).toBe('unix')
   const fingerprint = request.preview.lines.find(line => line.label === '设备指纹')?.value
   expect(fingerprint).toMatch(/^[A-Z2-7]{4}( [A-Z2-7]{4}){4}$/)
+  expect(await page.locator('.fingerprint').isVisible()).toBe(false)
+  await page.getByText('连接详情', { exact: true }).click()
   await page.getByText(fingerprint!).first().waitFor()
+  await page.getByText('连接详情', { exact: true }).click()
   await page.screenshot({ path: 'test-results/native-desktop-enrollment.png', animations: 'disabled' })
   testHost.presence.approveNext()
   await page.locator('.app-shell[data-connection="connected"]').waitFor()
@@ -335,8 +338,8 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
         confirmations: ['protocolVersion', 'confirm'],
         openInBrowser: 'function',
         lifecycle: { get: 'function', setLoginItem: 'function', setKeepAwake: 'function', restartHost: 'function', subscribe: 'function' },
-        files: ['inspect', 'known', 'reveal', 'quickLook', 'open'],
-        notifications: ['get', 'set', 'subscribe'],
+        files: ['protocolVersion', 'inspect', 'known', 'reveal', 'quickLook', 'open'],
+        notifications: ['get', 'set', 'respond', 'subscribeState', 'subscribe'],
       })
 
       const fingerprint = await enrollShell(page, testHost, '桌面端测试')
@@ -710,6 +713,7 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
       const enrolling = await testHost.presence.waitForRequest(15_000)
       expect(enrolling.preview.reason).toBe(enrollment.reason)
       const waitingDevice = pairing.locator('.pair-waiting')
+      await waitingDevice.getByText('连接详情', { exact: true }).click()
       await waitingDevice.getByLabel(`设备指纹 ${enrollment.fingerprint}`, { exact: true }).waitFor()
       await waitingDevice.getByText('正在请求连接', { exact: false }).waitFor()
       // The panel came back from its expired state with the real code: masked again before the capture.
@@ -721,7 +725,10 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
       expect(phone.device.scopes).toEqual(['view'])
       // A device's actions are in its row's ⋯ menu.
       const row = settings.locator(`[data-device-id="${phone.device.id}"]`)
-      await row.getByRole('button', { name: '测试手机 的操作', exact: true }).click()
+      const deviceActions = row.getByRole('button', { name: '测试手机 的操作', exact: true })
+      await reachable(deviceActions)
+      await settleShell(page)
+      await deviceActions.click()
       await page.getByRole('menuitem', { name: '调整权限…', exact: true }).click()
       const grant = page.getByRole('dialog', { name: '调整权限', exact: true })
       await grant.getByRole('checkbox', { name: '发起和继续会话', exact: true }).check()
@@ -830,7 +837,7 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
       await page.getByRole('button', { name: '新建会话', exact: true }).first().click()
       await page.getByRole('radio', { name: /Second Agent/ }).click()
       await page.getByRole('textbox', { name: '新会话消息' }).fill('echo 开始')
-      await page.getByRole('button', { name: '开始会话', exact: true }).click()
+      await page.getByRole('button', { name: '发送', exact: true }).click()
       const start = await testHost.presence.waitForRequest(15_000)
       expect(start.preview.action).toBe('task.start-l3')
       expect(start.preview.subject.form).toBe('start.first-custom')

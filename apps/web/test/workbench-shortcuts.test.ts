@@ -9,6 +9,9 @@ describe('workbench key routing', () => {
       ['BracketLeft', 'previous'],
       ['BracketRight', 'next'],
       ['Slash', 'help'],
+      ['KeyL', 'compose'],
+      ['KeyP', 'file-search'],
+      ['KeyW', 'close-file'],
     ]) {
       expect(workbenchShortcut(key(code!, { metaKey: true }), true)).toBe(action)
       expect(workbenchShortcut(key(code!, { metaKey: true }), false)).toBe(null)
@@ -17,5 +20,6 @@ describe('workbench key routing', () => {
     expect(workbenchShortcut(key('Digit9', { altKey: true }), false)).toEqual({ nth: 8 })
     expect(workbenchShortcut(key('KeyN', { altKey: true, isComposing: true }), false)).toBeNull()
     expect(workbenchShortcut(key('KeyE', { metaKey: true, shiftKey: true }), true)).toBe('files')
+    expect(workbenchShortcut(key('KeyE', { altKey: true, shiftKey: true }), false)).toBe('files')
   })
 })

@@ -80,8 +80,10 @@ private final class RelaySetup: @unchecked Sendable {
     let endpoint: NativeRelayAddress
     let admission: NativeRelayPass
     let key: String
+    let outerSlot: RelayOuterSlot?
     init(endpoint: NativeRelayAddress, admission: NativeRelayPass) throws {
         self.endpoint = endpoint; self.admission = admission
+        outerSlot = try endpoint.profile == .outerPadV2 ? RelayOuterSlot() : nil
         key = try LinkBytes.random(16).base64EncodedString()
     }
 }
@@ -94,19 +96,47 @@ private final class RelayFramer: NWProtocolFramerImplementation {
     private var phase = Phase.upgrade
     private var header = Data()
     private var decoder = RelayWire.Decoder()
-    private var lastSeen = ContinuousClock.now
     private var drainScheduled = false
+    private var outer: NativeRelayOuterPadding?
+    private var outerStart: ContinuousClock.Instant?
+    private let started = ContinuousClock.now
+    private var stopped = false
     required init(framer: NWProtocolFramer.Instance) { setup = framer.options["latch.relay"] as? RelaySetup }
     func start(framer: NWProtocolFramer.Instance) -> NWProtocolFramer.StartResult {
         guard let setup, let host = setup.endpoint.url.host else { framer.markFailed(error: .posix(.EAUTH)); return .willMarkReady }
         let authority = host + (setup.endpoint.url.port.map { ":\($0)" } ?? "")
-        let request = "GET /v1/c HTTP/1.1\r\nHost: \(authority)\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: \(setup.key)\r\nSec-WebSocket-Protocol: latch-relay.1\r\n\r\n"
+        let protocolName = setup.endpoint.profile == .outerPadV2 ? "latch-relay.2" : "latch-relay.1"
+        let request = "GET /v1/c HTTP/1.1\r\nHost: \(authority)\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: \(setup.key)\r\nSec-WebSocket-Protocol: \(protocolName)\r\n\r\n"
         framer.writeOutput(data: Data(request.utf8))
         framer.scheduleWakeup(wakeupTime: .milliseconds(8000))
         return .willMarkReady
     }
     private func send(_ payload: Data, opcode: UInt8 = 2, framer: NWProtocolFramer.Instance) throws {
-        framer.writeOutput(data: try RelayWire.frame(opcode: opcode, payload: payload, mask: LinkBytes.random(4)))
+        guard !stopped else { throw NativeFailure.unavailable }
+        let frame = try RelayWire.frame(opcode: opcode, payload: payload, mask: LinkBytes.random(4))
+        if outer != nil {
+            try outer!.enqueue(frame)
+            if elapsedMs > NativeRelayOuterPadding.durationMs {
+                while let batch = try outer!.batch(elapsedMs: elapsedMs) { framer.writeOutput(data: batch) }
+                outer = nil
+            }
+        } else { framer.writeOutput(data: frame) }
+    }
+    private var elapsedMs: UInt64 {
+        guard let outerStart else { return 0 }
+        let duration = outerStart.duration(to: .now).components
+        return UInt64(max(0, duration.seconds * 1000 + duration.attoseconds / 1_000_000_000_000_000))
+    }
+    private func schedule(framer: NWProtocolFramer.Instance) {
+        guard !stopped else { return }
+        if outer != nil, elapsedMs < NativeRelayOuterPadding.durationMs {
+            framer.scheduleWakeup(wakeupTime: .milliseconds(NativeRelayOuterPadding.tickMs - elapsedMs % NativeRelayOuterPadding.tickMs))
+        } else if phase == .ready { framer.scheduleWakeup(wakeupTime: .forever) }
+        else {
+            let spent = started.duration(to: .now).components
+            let milliseconds = spent.seconds * 1000 + spent.attoseconds / 1_000_000_000_000_000
+            framer.scheduleWakeup(wakeupTime: .milliseconds(UInt64(max(1, 8000 - milliseconds))))
+        }
     }
     func handleInput(framer: NWProtocolFramer.Instance) -> Int {
         // Input notifications are edge triggered. A partial WebSocket frame may have more TLS records already buffered.
@@ -147,21 +177,26 @@ private final class RelayFramer: NWProtocolFramerImplementation {
                     fields[name] = value
                 }
                 let expected = Data(Insecure.SHA1.hash(data: Data((setup.key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").utf8))).base64EncodedString()
-                guard fields["sec-websocket-accept"] == expected, fields["sec-websocket-protocol"] == "latch-relay.1",
+                let protocolName = setup.endpoint.profile == .outerPadV2 ? "latch-relay.2" : "latch-relay.1"
+                guard fields["sec-websocket-accept"] == expected, fields["sec-websocket-protocol"] == protocolName,
                     fields["upgrade"]?.lowercased() == "websocket", fields["sec-websocket-extensions"] == nil,
                     fields["connection"]?.lowercased().split(separator: ",").map({ $0.trimmingCharacters(in: .whitespaces) }).contains("upgrade") == true else { throw NativeFailure.identityMismatch }
                 remaining = Data(header[end.upperBound...]); header.removeAll(keepingCapacity: false)
                 phase = .challenge
+                if setup.endpoint.profile == .outerPadV2 { outer = NativeRelayOuterPadding(); outerStart = .now; schedule(framer: framer) }
                 try send(Data([0x20, 1]), framer: framer)
             } else {
                 guard header.count <= 16_384 else { throw NativeFailure.invalidRecord }; return
             }
         }
         for frame in try decoder.feed(remaining) {
-            lastSeen = .now
             if frame.opcode == 9 { try send(frame.payload, opcode: 10, framer: framer); continue }
             if frame.opcode == 10 { continue }
             guard frame.opcode == 2 else { throw NativeFailure.unavailable }
+            if frame.payload.first == 1 {
+                guard setup.endpoint.profile == .outerPadV2, frame.payload.count <= 16_385 else { throw NativeFailure.invalidRecord }
+                continue
+            }
             switch phase {
             case .challenge:
                 var reader = try LinkReader(frame.payload)
@@ -180,7 +215,7 @@ private final class RelayFramer: NWProtocolFramerImplementation {
                 let pass = try AdmissionPass.decode(setup.admission.bytes)
                 guard frame.payload.count == 25, frame.payload.first == 0x51,
                       LinkBytes.equal(Data(frame.payload.suffix(16)), pass.tag) else { throw NativeFailure.identityMismatch }
-                phase = .ready; framer.markReady(); framer.scheduleWakeup(wakeupTime: .milliseconds(20_000))
+                phase = .ready; framer.markReady(); schedule(framer: framer)
             case .ready:
                 guard frame.payload.first == 0, frame.payload.count <= 16_385 else { throw NativeFailure.invalidRecord }
                 if frame.payload.count > 1 { framer.deliverInput(data: Data(frame.payload.dropFirst()), message: .init(instance: framer), isComplete: false) }
@@ -204,17 +239,38 @@ private final class RelayFramer: NWProtocolFramerImplementation {
         }
     }
     func wakeup(framer: NWProtocolFramer.Instance) {
-        guard phase == .ready, ContinuousClock.now - lastSeen < .seconds(60) else { framer.markFailed(error: .posix(.ETIMEDOUT)); return }
-        do { try send(Data(), opcode: 9, framer: framer); framer.scheduleWakeup(wakeupTime: .milliseconds(20_000)) }
+        guard !stopped else { return }
+        do {
+            if outer != nil {
+                if let batch = try outer!.batch(elapsedMs: elapsedMs) { framer.writeOutput(data: batch) }
+                if elapsedMs >= NativeRelayOuterPadding.durationMs {
+                    while let batch = try outer!.batch(elapsedMs: NativeRelayOuterPadding.durationMs + 1) { framer.writeOutput(data: batch) }
+                    outer = nil
+                }
+                schedule(framer: framer); return
+            }
+            guard phase == .ready else { framer.markFailed(error: .posix(.ETIMEDOUT)); return }
+            framer.scheduleWakeup(wakeupTime: .forever)
+        }
         catch { framer.markFailed(error: .posix(.EAUTH)) }
     }
-    func stop(framer: NWProtocolFramer.Instance) -> Bool { true }
-    func cleanup(framer: NWProtocolFramer.Instance) {}
+    func stop(framer: NWProtocolFramer.Instance) -> Bool { stopped = true; outer?.clear(); outer = nil; return true }
+    func cleanup(framer: NWProtocolFramer.Instance) { stopped = true; outer?.clear(); outer = nil; setup?.outerSlot?.release() }
 }
 
 extension NativeHTTPConnection {
+    public static func relay(target: NativeDirectoryTarget, admission: NativeRelayPass, rootSpki: Data, knockKey: Data,
+        identity: PlatformIdentity? = nil, trustAnchor: Data? = nil) async throws -> NativeHTTPConnection {
+        let address = try NativeDirectoryFetch.checkedAddress(target.address)
+        return try await relay(endpoint: target.endpoint, admission: admission, rootSpki: rootSpki, knockKey: knockKey,
+            identity: identity, trustAnchor: trustAnchor, dialAddress: address)
+    }
     public static func relay(endpoint: NativeRelayAddress, admission: NativeRelayPass, rootSpki: Data, knockKey: Data,
         identity: PlatformIdentity? = nil, trustAnchor: Data? = nil) async throws -> NativeHTTPConnection {
+        try await relay(endpoint: endpoint, admission: admission, rootSpki: rootSpki, knockKey: knockKey, identity: identity, trustAnchor: trustAnchor, dialAddress: nil)
+    }
+    private static func relay(endpoint: NativeRelayAddress, admission: NativeRelayPass, rootSpki: Data, knockKey: Data,
+        identity: PlatformIdentity?, trustAnchor: Data?, dialAddress: String?) async throws -> NativeHTTPConnection {
         _ = try AddressBookCodec.relayURL(endpoint.url.absoluteString)
         guard let hostname = endpoint.url.host, endpoint.spkiHash.count == 32, endpoint.relayId.count == 16,
               LinkBytes.equal(try AdmissionPass.decode(admission.bytes).relayId, endpoint.relayId) else { throw NativeFailure.invalidRecord }
@@ -243,16 +299,17 @@ extension NativeHTTPConnection {
                   let selected = sec_protocol_metadata_get_negotiated_protocol(metadata), String(cString: selected) == "http/1.1" else { complete(false); return }
             complete(true)
         }, DispatchQueue(label: "app.latch.relay.tls-verify"))
-        let state = try HandshakeState(root: rootSpki, knockKey: knockKey,
-            binding: .relay(id: endpoint.relayId, route: admission.routeId()))
+        let binding: LinkBinding = try endpoint.profile == .outerPadV2 ? .relayPaddedV2(id: endpoint.relayId, route: admission.routeId()) : .relay(id: endpoint.relayId, route: admission.routeId())
+        let state = try HandshakeState(root: rootSpki, knockKey: knockKey, binding: binding)
         let inner = try NativeTLS.options(state: state, identity: identity)
         let knock = NWProtocolFramer.Options(definition: KnockFramer.definition); knock["latch.state"] = state
         let relay = NWProtocolFramer.Options(definition: RelayFramer.definition); relay["latch.relay"] = try RelaySetup(endpoint: endpoint, admission: admission)
         let tcp = NWProtocolTCP.Options(); tcp.noDelay = true; tcp.connectionTimeout = 5
+        tcp.enableKeepalive = true; tcp.keepaliveIdle = 60; tcp.keepaliveInterval = 15; tcp.keepaliveCount = 4
         let parameters = NWParameters(tls: outer, tcp: tcp)
         parameters.defaultProtocolStack.applicationProtocols.insert(contentsOf: [inner, knock, relay], at: 0)
         parameters.includePeerToPeer = false
-        let connection = NWConnection(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: UInt16(endpoint.url.port ?? 443))!, using: parameters)
+        let connection = NWConnection(host: NWEndpoint.Host(dialAddress ?? host), port: NWEndpoint.Port(rawValue: UInt16(endpoint.url.port ?? 443))!, using: parameters)
         return try await establish(connection, state: state)
     }
 }

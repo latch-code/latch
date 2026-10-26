@@ -29,12 +29,41 @@ import {
   mdnsTarget,
   gatewaySigningInput,
   gatewayHash,
+  encodePaddingCell,
+  verifyRelayDirectory,
+  relayAuthorityInput,
+  relayDirectoryInput,
 } from '@latch/link-wire'
 import { NativeAddressBookCache } from '../src/address-book.ts'
 import { nodeCrypto } from '../src/crypto.ts'
 import { verifyNativeRevocation } from '../src/revocation.ts'
 import { nativeRevocationInput } from '@latch/link-wire'
 import { nativeKnockSecret, nativeRecoverySecret, nativeVerificationText, nativeWindowSecret, pairingCode } from '@latch/link-wire'
+
+it('matches offline authority and online directory signing bytes with the shared Swift vector', async () => {
+  const { directory: v } = JSON.parse(await readFile(new URL('../../testkit/vectors/link-v1.json', import.meta.url), 'utf8')) as {
+    directory: Record<string, string | number>
+  }
+  const bytes = (key: string) => unhex(String(v[key]))
+  expect(hex(relayAuthorityInput(bytes('authority')))).toBe(v.authorityInput)
+  expect(hex(relayDirectoryInput(bytes('addresses')))).toBe(v.addressesInput)
+  const checked = await verifyRelayDirectory(
+    nodeCrypto,
+    { authority: bytes('authority'), rootSignature: bytes('rootSignature'), directory: bytes('addresses'), signature: bytes('signature') },
+    [bytes('root')],
+    Number(v.now),
+  )
+  expect(hex(checked.checkpoint.rootHash)).toBe(v.rootHash)
+  expect(hex(checked.checkpoint.hash)).toBe(v.hash)
+})
+
+it('matches authenticated padding cell bytes with the shared Swift vector', async () => {
+  const { padding } = JSON.parse(await readFile(new URL('../../testkit/vectors/link-v1.json', import.meta.url), 'utf8')) as {
+    padding: { payload: string; small: string; largeDummyHash: string }
+  }
+  expect(hex(encodePaddingCell(unhex(padding.payload)))).toBe(padding.small)
+  expect(hex(await nodeCrypto.hash(encodePaddingCell(new Uint8Array(), true)))).toBe(padding.largeDummyHash)
+})
 
 it('accepts credential removal only for the fixed Root and current device revocation vector', async () => {
   const { nativeRevocation: vector } = JSON.parse(

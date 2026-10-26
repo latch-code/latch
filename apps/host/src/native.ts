@@ -1,11 +1,11 @@
 import { createServer, type Socket, type Server, type AddressInfo } from 'node:net'
-import { createServer as createHttp2Server } from 'node:http2'
+import { createServer as createHttp2Server, type ServerHttp2Session } from 'node:http2'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { once } from 'node:events'
-import { acceptNative, createTransportCertificate, validateNativeTlsBinary } from '@latch/link-client'
+import { acceptNative, createTransportCertificate, validateNativeTlsBinary, RelayTunnel } from '@latch/link-client'
 import { hex, type KnockBinding } from '@latch/link-wire'
-import type { Device, DeviceScope } from '@latch/protocol'
+import type { DataScope, Device, DeviceScope } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import type { DeviceStore, EnrollmentService } from './auth.ts'
 import type { HostIdentity } from './identity.ts'
@@ -20,6 +20,19 @@ export interface NativeOpening {
   invitationHash?: string
   enrollmentId?: string
   windowHash?: string
+  controlUsed?: boolean
+  bulkAttempted?: boolean
+  bulk?: { handle: string; etag: string; requestId: string; windowHash: string; expiresAt: number }
+  activateBulk?(): void
+  close?(): Promise<void>
+  signal?: AbortSignal
+  guardTransportWrites?(check: () => boolean): void
+  padding?: {
+    activity(key: object, active: boolean): void
+    protect(): void
+    protectUntil(deadline: number): void
+    guard(check: () => boolean): void
+  }
 }
 export interface NativeHostOptions {
   tlsBinary: string
@@ -30,12 +43,18 @@ export interface NativeHostOptions {
   allowUnavailableBind?: boolean
   relayAvailable?(): boolean
   relayInvites?(id: string, expiresAt: string): Promise<unknown[]>
-  handler(req: IncomingMessage, res: ServerResponse, opening: NativeOpening): void
+  handler(req: IncomingMessage, res: ServerResponse, opening: NativeOpening): void | Promise<void>
 }
 
 export async function startNativeHost(options: NativeHostOptions) {
   const origin = `https://native-${options.identity.hostId}.invalid`
-  const sockets = new Map<Duplex, { id?: string; knockId?: string; relayId?: string; opened: number; revoked?: boolean }>(),
+  const cooldowns = new Map<string, number>()
+  const bulkSlots = new Map<string, object>(),
+    bulkSettlements = new Set<Promise<void>>()
+  const sockets = new Map<
+      Duplex,
+      { id?: string; knockId?: string; relayId?: string; opened: number; revoked?: boolean; padding?: NativeOpening['padding'] }
+    >(),
     replay = new Map<string, number>()
   let certificate = createTransportCertificate(),
     rotatedAt = Date.now(),
@@ -44,6 +63,8 @@ export async function startNativeHost(options: NativeHostOptions) {
   const retired = new Map<Server, Promise<void>>()
   const authenticating = new Set<Promise<void>>(),
     helpers = new Set<Promise<void>>()
+  const sessions = new Set<ServerHttp2Session>(),
+    requests = new Set<Promise<void>>()
   const staging = new Set<Server>(),
     stopped = new AbortController()
   const acceptOnce = async (
@@ -63,6 +84,7 @@ export async function startNativeHost(options: NativeHostOptions) {
       relayId?: string
       opened: number
       revoked?: boolean
+      padding?: NativeOpening['padding']
     }
     sockets.set(stream, state)
     stream.once('close', () => sockets.delete(stream))
@@ -103,10 +125,52 @@ export async function startNativeHost(options: NativeHostOptions) {
         isActive: id =>
           [...options.devices.nativeTransportCandidates(), ...options.enrollments.nativeInvitations()].some(item => item.id === id),
       })
+      if (closing || stream.destroyed || accepted.socket.destroyed) {
+        accepted.socket.destroy()
+        stream.destroy()
+        await accepted.closed
+        return
+      }
       helpers.add(accepted.closed)
       void accepted.closed.finally(() => helpers.delete(accepted.closed))
       const candidate = candidates.find(item => item.id === accepted.deviceId)!
+      const rawClosed = new Promise<void>(resolve => {
+          if (stream.closed) resolve()
+          else stream.once('close', resolve)
+        }),
+        settled = Promise.all([accepted.closed, rawClosed]).then(() => {})
+      const disconnected = new AbortController()
+      stream.once('close', () => disconnected.abort())
+      accepted.socket.once('close', () => disconnected.abort())
+      if (stream.destroyed || accepted.socket.destroyed) disconnected.abort()
+      for (const [id, deadline] of cooldowns) if (deadline <= performance.now()) cooldowns.delete(id)
+      state.padding = accepted.padding
+      const cooldown = cooldowns.get(accepted.deviceId)
+      if (cooldown !== undefined) accepted.padding?.protectUntil(cooldown)
       const opening: NativeOpening = {
+        signal: disconnected.signal,
+        ...(stream instanceof RelayTunnel ? { guardTransportWrites: (check: () => boolean) => stream.guardWrites(check) } : {}),
+        async close() {
+          disconnected.abort()
+          stream.destroy()
+          await settled
+        },
+        activateBulk() {
+          if (binding.path !== 'relay' || accepted.pairing || !accepted.padding || bulkSlots.has(accepted.deviceId))
+            throw new AppError(409, 'native-bulk-busy', '文件连接正在准备，请稍后重试')
+          const lease = {}
+          bulkSlots.set(accepted.deviceId, lease)
+          bulkSettlements.add(settled)
+          const timer = setTimeout(() => stream.destroy(), 60_000)
+          timer.unref()
+          void settled.finally(() => {
+            clearTimeout(timer)
+            bulkSettlements.delete(settled)
+            if (bulkSlots.get(accepted.deviceId) === lease) bulkSlots.delete(accepted.deviceId)
+          })
+          accepted.padding.enableBulk()
+        },
+        ...(accepted.padding ? { padding: accepted.padding } : {}),
         deviceId: accepted.deviceId,
         pairing: accepted.pairing,
         source,
@@ -121,11 +185,48 @@ export async function startNativeHost(options: NativeHostOptions) {
       }
       state.id = accepted.deviceId
       const h2 = createHttp2Server(
-        { maxSessionMemory: 1, settings: { maxConcurrentStreams: 8, maxHeaderListSize: 8192, initialWindowSize: 32_768 } },
+        {
+          maxSessionMemory: 1,
+          settings: { headerTableSize: 0, maxConcurrentStreams: 8, maxHeaderListSize: 8192, initialWindowSize: 32_768 },
+        },
         (request, response) => {
-          options.handler(request as unknown as IncomingMessage, response as unknown as ServerResponse, opening)
+          if (request.method === 'GET' || request.method === 'HEAD') {
+            // Node otherwise resets unread request streams after finishing a response, racing queued END_STREAM frames.
+            request.on('data', () => accepted.socket.destroy())
+            request.resume()
+          }
+          if (
+            !accepted.pairing
+            && request.method === 'POST'
+            && /\/(?:cancel|approve|deny|reject|decision)$|\/approvals\//u.test(request.url ?? '')
+          ) {
+            const deadline = performance.now() + 15000
+            cooldowns.set(accepted.deviceId, deadline)
+            for (const item of sockets.values()) if (item.id === accepted.deviceId) item.padding?.protectUntil(deadline)
+          }
+          const handled = Promise.resolve().then(() =>
+            options.handler(request as unknown as IncomingMessage, response as unknown as ServerResponse, opening),
+          )
+          // File readers own descriptors after socket teardown; execution requests settle with the Harness shutdown instead.
+          if (
+            (request.method === 'GET' || request.method === 'HEAD')
+            && /^\/link\/api\/files\/[A-Za-z0-9_-]{22}(?:\/meta)?(?:\?|$)/u.test(request.url ?? '')
+          )
+            requests.add(handled)
+          void handled.finally(() => requests.delete(handled)).catch(() => accepted.socket.destroy())
         },
       )
+      h2.on('session', session => {
+        sessions.add(session)
+        const close = () => session.destroy()
+        stream.once('close', close)
+        accepted.socket.once('close', close)
+        session.once('close', () => {
+          sessions.delete(session)
+          stream.off('close', close)
+          accepted.socket.off('close', close)
+        })
+      })
       h2.on('sessionError', () => accepted.socket.destroy())
       h2.setTimeout(120_000, () => accepted.socket.destroy())
       h2.emit('connection', accepted.socket)
@@ -229,7 +330,10 @@ export async function startNativeHost(options: NativeHostOptions) {
     },
     prepareBind,
     ensureTransport,
-    async invite(input: { inviter?: Device; scopes?: DeviceScope[] }, actor: Parameters<EnrollmentService['createInvitation']>[1]) {
+    async invite(
+      input: { inviter?: Device; scopes?: DeviceScope[]; dataScope?: DataScope },
+      actor: Parameters<EnrollmentService['createInvitation']>[1],
+    ) {
       if (!server && !options.relayAvailable?.()) throw new AppError(409, 'native-not-configured', '尚未配置原生设备连接入口')
       await ensureTransport()
       const invitation = await options.enrollments.createInvitation(
@@ -249,7 +353,15 @@ export async function startNativeHost(options: NativeHostOptions) {
         payload: `LATCHPAIR1.${Buffer.from(JSON.stringify(payload)).toString('base64url')}`,
         expiresAt: invitation.expiresAt,
         scopes: invitation.scopes,
+        dataScope: invitation.dataScope ?? 'work',
       }
+    },
+    acceptCarrier(stream: Duplex, binding: KnockBinding): Promise<void> {
+      if (closing || binding.path !== 'carrier' || (!server && !options.relayAvailable?.())) {
+        stream.destroy()
+        return Promise.reject(new Error('Native carrier unavailable'))
+      }
+      return accept(stream, binding, '插件连接')
     },
     acceptRelay(stream: Duplex, binding: KnockBinding, expectedDeviceId?: string): Promise<void> {
       if (binding.path !== 'relay') {
@@ -264,14 +376,26 @@ export async function startNativeHost(options: NativeHostOptions) {
     },
     async close(): Promise<void> {
       closing = true
+      cooldowns.clear()
       stopped.abort()
       for (const stream of sockets.keys()) stream.destroy()
+      await Promise.all(
+        [...sessions].map(
+          session =>
+            new Promise<void>(resolve => {
+              session.once('close', resolve)
+              session.destroy()
+            }),
+        ),
+      )
       await Promise.allSettled([
         ...authenticating,
         ...helpers,
+        ...bulkSettlements,
         ...retired.values(),
         ...[...staging, ...(server ? [server] : [])].map(item => new Promise<void>(resolve => item.close(() => resolve()))),
       ])
+      await Promise.allSettled(requests)
     },
   }
 }

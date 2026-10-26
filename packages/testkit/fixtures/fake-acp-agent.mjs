@@ -318,7 +318,7 @@ async function handle(method, params) {
     case 'session/set_config_option': {
       const session = existing(params.sessionId)
       const mode = params.configId === 'mode'
-      if (!(stickyMode && mode)) session[params.configId] = params.value
+      if (!(stickyMode && mode) && env.FAKE_ACP_IGNORE_CONFIG !== params.configId) session[params.configId] = params.value
       if (mode && selfMode) {
         session.mode = selfMode
         reportMode(params.sessionId, session)

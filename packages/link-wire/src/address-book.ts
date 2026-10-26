@@ -1,5 +1,7 @@
 import { ascii, concat, equal, field, fixed, hex, Reader, uint } from './bytes.ts'
 import { decodePass } from './pass.ts'
+import { decodeDirectorySource, encodeDirectorySource, type NativeDirectorySource } from './directory-source.ts'
+import { relayWireVersion, type RelayTransportProfile } from './relay-profile.ts'
 
 export const ADDRESS_BOOK_LIMIT = 65_536
 export const ADDRESS_BOOK_TTL_MS = 31 * 86_400_000
@@ -19,6 +21,7 @@ export interface NativeRelayAddress {
   url: string
   spkiHash: Uint8Array
   passes: NativeRelayPass[]
+  profile?: RelayTransportProfile
 }
 export interface NativeAddressBook {
   hostId: string
@@ -29,6 +32,7 @@ export interface NativeAddressBook {
   discoveryKey: Uint8Array
   lan: NativeLanAddress[]
   relays: NativeRelayAddress[]
+  directory?: NativeDirectorySource
 }
 const KINDS = ['wifi', 'ethernet', 'tunnel'] as const
 function text(bytes: Uint8Array): string {
@@ -77,6 +81,7 @@ function validate(book: NativeAddressBook): void {
   fixed(book.discoveryKey, 32)
   for (const hint of book.lan) address(hint)
   for (const relay of book.relays) {
+    relayWireVersion(relay.profile)
     fixed(relay.relayId, 16)
     fixed(relay.spkiHash, 32)
     endpoint(relay.url)
@@ -95,8 +100,9 @@ function validate(book: NativeAddressBook): void {
 /** The signature covers these exact ordered bytes. URI parsing and network approval remain platform responsibilities. */
 export function encodeAddressBook(book: NativeAddressBook): Uint8Array {
   validate(book)
+  const version = book.relays.some(relay => relay.profile !== undefined) ? 3 : book.directory ? 2 : 1
   const bytes = concat(
-    uint(1, 1),
+    uint(version, 1),
     uint(0, 1),
     field(ascii(book.hostId)),
     field(ascii(book.deviceId)),
@@ -120,17 +126,20 @@ export function encodeAddressBook(book: NativeAddressBook): Uint8Array {
         fixed(relay.relayId, 16),
         field(ascii(relay.url)),
         fixed(relay.spkiHash, 32),
+        ...(version === 3 ? [uint(relayWireVersion(relay.profile) - 1, 1)] : []),
         uint(relay.passes.length, 1),
         ...relay.passes.map(entry => concat(fixed(entry.pass, 174), fixed(entry.holderSeed, 32))),
       ),
     ),
+    ...(version >= 2 ? [field(book.directory ? encodeDirectorySource(book.directory) : new Uint8Array())] : []),
   )
   if (bytes.length > ADDRESS_BOOK_LIMIT) throw new RangeError('Address book too large')
   return bytes
 }
 export function decodeAddressBook(bytes: Uint8Array): NativeAddressBook {
   const reader = new Reader(bytes, ADDRESS_BOOK_LIMIT)
-  if (reader.number(1) !== 1 || reader.number(1) !== 0) throw new RangeError('Unsupported address book version')
+  const version = reader.number(1)
+  if (![1, 2, 3].includes(version) || reader.number(1) !== 0) throw new RangeError('Unsupported address book version')
   const book: NativeAddressBook = {
     hostId: text(reader.field(52)),
     deviceId: text(reader.field(26)),
@@ -156,17 +165,25 @@ export function decodeAddressBook(bytes: Uint8Array): NativeAddressBook {
     const relayId = reader.take(16),
       url = text(reader.field(512)),
       spkiHash = reader.take(32),
+      profile = version === 3 ? reader.number(1) : 0,
       count = reader.number(1)
-    if (count < 1 || count > 64) throw new RangeError('Address book pass count')
+    if (profile > 1 || count < 1 || count > 64) throw new RangeError('Address book relay profile or pass count')
     book.relays.push({
       relayId,
       url,
       spkiHash,
+      ...(profile === 1 ? { profile: 'outer-pad-v2' as const } : {}),
       passes: Array.from({ length: count }, () => ({ pass: reader.take(174), holderSeed: reader.take(32) })),
     })
   }
+  if (version >= 2) {
+    const source = reader.field(2240)
+    if (source.length) book.directory = decodeDirectorySource(source)
+    else if (version === 2) throw new RangeError('Missing directory source')
+  }
   reader.done()
   validate(book)
+  if (version === 3 && !book.relays.some(relay => relay.profile === 'outer-pad-v2')) throw new RangeError('Missing v3 relay profile')
   return book
 }
 export function addressBookSigningInput(bytes: Uint8Array): Uint8Array {

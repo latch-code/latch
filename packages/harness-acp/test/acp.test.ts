@@ -53,6 +53,7 @@ async function activate(plugin: HarnessPlugin): Promise<HarnessDriver> {
     },
     registerClientPanel: () => {},
     registerSkill: () => {},
+    registerTransport: () => {},
     registerUiPanel: () => {
       throw new Error('unexpected panel')
     },
@@ -90,7 +91,7 @@ async function setup(
   env: Record<string, string> = {},
   options: AcpAgentOptions = {},
   overrides: Partial<AgentRecord> = {},
-  attachmentOptions: Pick<HarnessHostOptions, 'readAttachment' | 'saveAttachment' | 'trackFiles'> = {},
+  attachmentOptions: Pick<HarnessHostOptions, 'readAttachment' | 'saveAttachment' | 'trackFiles' | 'clock'> = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), 'latch-acp-'))
   cleanups.push(() => rm(root, { recursive: true, force: true }))
@@ -2942,6 +2943,14 @@ describe('ACP request identity and removal', () => {
 const ms = (value: string | undefined) => Date.parse(value ?? '')
 
 describe('ACP times and usage reports', () => {
+  it('uses one approval wait timestamp even when every clock read advances', async () => {
+    let clock = Date.parse('2026-10-26T00:00:00Z')
+    const bridge = await (await setup({}, {}, {}, { clock: () => ++clock })).open()
+    const { sessionId } = await bridge.createTask({ prompt: 'permission', requestId: rid() })
+    const waiting = await until(bridge, sessionId, detail => detail.approvals.length === 1)
+    expect(waiting.activity).toMatchObject({ phase: 'approval', since: waiting.runWaitingSince })
+    await bridge.cancel(sessionId)
+  })
   it('records reply, reasoning and tool times, and a turn without its approval wait', async () => {
     const bridge = await (await setup()).open()
     const { sessionId } = await bridge.createTask({ prompt: 'think', requestId: rid() })

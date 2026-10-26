@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import QRCode from 'qrcode'
+import { pairingQr } from './pairingQr.ts'
 import { Ban, ChevronDown, Plus, QrCode, RefreshCw, Settings2, Trash2 } from 'lucide-react'
 import type { NativeLinkInfo, NativePairingInvitation } from '@latch/protocol'
-import { Button, Checkbox, Collapse, InlineNotice, Spinner, StatusPill, TextField, ValuePicker } from '@latch/ui'
-import { api, inlineError } from '../core/api.ts'
+import { Button, Checkbox, Collapse, InlineNotice, Spinner, TextAreaField, TextField, ValuePicker } from '@latch/ui'
+import { api, inlineError, isUncertain } from '../core/api.ts'
 import { withConfirmation } from '../core/confirmations.ts'
 import { NATIVE_LINK_COPY as COPY, PAIRING_COPY } from '../core/securityCopy.ts'
 import { CopyButton } from '../components/ui.tsx'
@@ -29,6 +29,9 @@ function NativeConnectionForm({
   const [baseHash] = useState(info.configHash)
   const [address, setAddress] = useState(info.direct?.host ?? info.addresses[0]?.address ?? '')
   const [port, setPort] = useState(String(info.direct?.port ?? 0))
+  const [directoryEnabled, setDirectoryEnabled] = useState(Boolean(info.directory))
+  const [directoryAnchors, setDirectoryAnchors] = useState(info.directory?.anchors.join('\n') ?? '')
+  const [directoryMirrors, setDirectoryMirrors] = useState(info.directory?.mirrors.join('\n') ?? '')
   const [relays, setRelays] = useState<RelayDraft[]>(() =>
     info.relays.map(node => ({ ...node, registrationKey: '', clearKey: false, hasKey: node.hasRegistrationKey })),
   )
@@ -44,6 +47,22 @@ function NativeConnectionForm({
     const fields = {
       configHash: baseHash,
       direct: direct ? { host: address, port: Number(port) } : null,
+      ...('directory' in info
+        ? {
+            directory: directoryEnabled
+              ? {
+                  anchors: directoryAnchors
+                    .split(/\r?\n/u)
+                    .map(value => value.trim().toLowerCase())
+                    .filter(Boolean),
+                  mirrors: directoryMirrors
+                    .split(/\r?\n/u)
+                    .map(value => value.trim())
+                    .filter(Boolean),
+                }
+              : null,
+          }
+        : {}),
       relays: relays.map(node => ({
         relayId: node.relayId.trim().toLowerCase(),
         url: (() => {
@@ -110,7 +129,10 @@ function NativeConnectionForm({
                   <ValuePicker
                     label={COPY.address}
                     value={address}
-                    options={info.addresses.map(item => ({ value: item.address, label: item.address, description: item.interface }))}
+                    options={[
+                      { value: 'auto', label: '自动选择网络' },
+                      ...info.addresses.map(item => ({ value: item.address, label: item.address, description: item.interface })),
+                    ]}
                     onValueChange={value => setAddress(value)}
                   />
                   <TextField
@@ -128,6 +150,38 @@ function NativeConnectionForm({
             )}
             {!info.directManaged && info.addresses.length === 0 && <p className="settings-hint">{COPY.noAddress}</p>}
           </fieldset>
+          {'directory' in info && (
+            <fieldset className="native-config-group" disabled={busy}>
+              <Checkbox label={COPY.directory} checked={directoryEnabled} onChange={event => setDirectoryEnabled(event.target.checked)} />
+              <p className="settings-hint">{COPY.directoryHint}</p>
+              {directoryEnabled && (
+                <>
+                  <TextAreaField
+                    label={COPY.directoryAnchors}
+                    hint={COPY.directoryAnchorsHint}
+                    rows={2}
+                    maxLength={160}
+                    value={directoryAnchors}
+                    onChange={event => setDirectoryAnchors(event.target.value)}
+                    autoComplete="off"
+                    spellCheck={false}
+                    required
+                  />
+                  <TextAreaField
+                    label={COPY.directoryMirrors}
+                    hint={COPY.directoryMirrorsHint}
+                    rows={4}
+                    maxLength={8400}
+                    value={directoryMirrors}
+                    onChange={event => setDirectoryMirrors(event.target.value)}
+                    autoComplete="off"
+                    spellCheck={false}
+                    required
+                  />
+                </>
+              )}
+            </fieldset>
+          )}
           {relays.map((node, index) => (
             <fieldset key={index} className="native-config-group" disabled={busy}>
               <div className="native-config-heading">
@@ -213,17 +267,19 @@ function NativeConnectionForm({
   )
 }
 
-function NativeCode() {
+function NativeCode({ autoStart = false, scopeSelection = false }: { autoStart?: boolean; scopeSelection?: boolean }) {
   const [invitation, setInvitation] = useState<NativePairingInvitation | null>(null),
     [qr, setQr] = useState(''),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [now, setNow] = useState(Date.now)
+  const [includePersonal, setIncludePersonal] = useState(true)
   const remaining = invitation ? Date.parse(invitation.expiresAt) - now : 0
+  const started = useRef(false)
   useEffect(() => {
     if (!invitation) return
     let active = true
-    void QRCode.toDataURL(invitation.payload, {
+    void pairingQr(invitation.payload, {
       width: 600,
       margin: 2,
       errorCorrectionLevel: 'L',
@@ -245,7 +301,12 @@ function NativeCode() {
     setBusy(true)
     setError('')
     try {
-      const answer = await api<{ invitation: NativePairingInvitation }>('native/pairings', { method: 'POST', body: {} })
+      const dataScope = includePersonal ? 'all' : 'work'
+      const answer = await api<{ invitation: NativePairingInvitation }>('native/pairings', {
+        method: 'POST',
+        body: scopeSelection ? { dataScope } : {},
+      })
+      if (scopeSelection && answer.invitation.dataScope !== dataScope) throw new Error(COPY.scopeUnconfirmed)
       setQr('')
       setInvitation(answer.invitation)
       setNow(Date.now())
@@ -255,8 +316,27 @@ function NativeCode() {
       setBusy(false)
     }
   }
+  useEffect(() => {
+    if (autoStart && !started.current) {
+      started.current = true
+      void create()
+    }
+  }, [autoStart])
   return (
     <>
+      {scopeSelection && (
+        <Checkbox
+          label={COPY.personalAccess}
+          description={COPY.personalHint}
+          checked={includePersonal}
+          disabled={busy}
+          onChange={event => {
+            setIncludePersonal(event.target.checked)
+            setInvitation(null)
+            setQr('')
+          }}
+        />
+      )}
       {!invitation || remaining <= 0 ? (
         <div className="pair-empty">
           <p>{COPY.intro}</p>
@@ -288,6 +368,9 @@ function NativeCode() {
             <p className="pair-expiry" role="timer">
               {PAIRING_COPY.remaining(formatElapsed(remaining))}
             </p>
+            {invitation.dataScope && (
+              <p className="settings-hint">{invitation.dataScope === 'all' ? COPY.personalScope : COPY.workScope}</p>
+            )}
             <div className="pair-actions">
               <CopyButton text={invitation.payload} label={COPY.copy} />
               <Button
@@ -314,16 +397,50 @@ export function NativePairingSection({
   phone,
   onChanged,
   children,
+  scopeSelection = false,
 }: {
   info: NativeLinkInfo
   phone: boolean
   onChanged(info: NativeLinkInfo): void
   children?: ReactNode
+  scopeSelection?: boolean
 }) {
   const [editing, setEditing] = useState(false),
     [legacy, setLegacy] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('')
+  const [autoStart, setAutoStart] = useState(false)
+  const enableRequest = useRef<object | undefined>(undefined)
+  const enableFlight = useRef(false)
+  const enable = async () => {
+    if (enableFlight.current) return
+    enableFlight.current = true
+    setBusy(true)
+    setError('')
+    enableRequest.current ??= {
+      requestId: crypto.randomUUID(),
+      configHash: info.configHash,
+      direct: { host: 'auto', port: 0 },
+      relays: info.relays.map(({ relayId, url, spkiHash }) => ({ relayId, url, spkiHash })),
+    }
+    try {
+      const next = await withConfirmation(confirmation =>
+        api<NativeLinkInfo>('native/config', {
+          method: 'PUT',
+          body: enableRequest.current,
+          ...(confirmation ? { confirmation } : {}),
+        }),
+      )
+      setAutoStart(true)
+      onChanged(next)
+    } catch (cause) {
+      setError(inlineError(cause))
+      if (!isUncertain(cause)) enableRequest.current = undefined
+    } finally {
+      enableFlight.current = false
+      setBusy(false)
+    }
+  }
   const pause = async () => {
     setBusy(true)
     setError('')
@@ -349,9 +466,16 @@ export function NativePairingSection({
           title={COPY.app}
           description={info.enabled ? COPY.configured : COPY.disabled}
           trailing={
-            <Button icon={Settings2} onClick={() => setEditing(true)}>
-              {COPY.configure}
-            </Button>
+            !info.enabled ? (
+              <Button
+                variant="primary"
+                loading={busy}
+                onClick={() => {
+                  void enable()
+                }}>
+                {COPY.enable}
+              </Button>
+            ) : undefined
           }
         />
         {info.direct && !info.listening && (
@@ -359,17 +483,9 @@ export function NativePairingSection({
             <InlineNotice tone="warn">{COPY.addressChanged}</InlineNotice>
           </div>
         )}
-        {info.relays.map(node => (
-          <SettingsRow
-            key={node.relayId}
-            title={new URL(node.url).host}
-            description={COPY.relayStatus[node.status]}
-            trailing={node.status === 'attention' ? <StatusPill tone="warn">{COPY.attention}</StatusPill> : undefined}
-          />
-        ))}
         {info.enabled && (
           <div className="settings-card-body pair-section">
-            <NativeCode />
+            <NativeCode autoStart={autoStart} scopeSelection={scopeSelection} />
           </div>
         )}
         <SettingsRow
@@ -388,6 +504,15 @@ export function NativePairingSection({
           }
         />
         <InlineConfirm active={busy} />
+        <SettingsRow
+          title={COPY.options}
+          description={COPY.optionsHint}
+          trailing={
+            <Button icon={Settings2} onClick={() => setEditing(true)}>
+              {COPY.configure}
+            </Button>
+          }
+        />
         {error && (
           <div className="settings-card-body">
             <InlineNotice tone="error">{error}</InlineNotice>

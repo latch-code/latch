@@ -135,7 +135,7 @@ describe('device enrollment in the browser', () => {
     await captureSizes(page, 'invitation')
 
     await page.goto((await testHost.invite(BROWSER_CEILING, 'loopback-tcp')).url)
-    await page.getByText('已收到配对邀请。提交后，请在运行 Latch 的电脑上核对指纹并确认。', { exact: true }).waitFor()
+    await page.getByText('已收到连接邀请。提交后，回到运行 Latch 的电脑上允许连接。', { exact: true }).waitFor()
     expect(new URL(page.url()).hash).toBe('')
     // An invited browser asks only for what it ticks.
     const admin = page.getByRole('checkbox', { name: ADMIN })
@@ -156,6 +156,9 @@ describe('device enrollment in the browser', () => {
     await page.getByRole('button', { name: '请求本机确认', exact: true }).click()
     const request = await testHost.presence.waitForRequest()
     await page.getByRole('heading', { name: '等待本机确认', exact: true }).waitFor()
+    expect(await page.locator('.fingerprint').isVisible()).toBe(false)
+    await captureSizes(page, 'waiting-simple')
+    await page.getByText('连接详情', { exact: true }).click()
     const shown = (await page.locator('.fingerprint span').allTextContents()).join(' ')
     expect(request.preview.lines.find(line => line.label === '设备指纹')?.value).toBe(shown)
     expect(request.preview.lines.find(line => line.label === '设备名称')?.value).toBe('验收浏览器')
@@ -280,9 +283,7 @@ describe('device enrollment in the browser', () => {
     const page = await browserContext.newPage()
     await page.goto((await testHost.invite(undefined, 'loopback-tcp')).url)
     await page.getByRole('heading', { name: '此设备需要在本机重新确认', exact: true }).waitFor()
-    await page
-      .getByText('Latch 已升级设备凭据，旧的登录状态不再有效。请提交确认请求，并在运行 Latch 的电脑上核对指纹。', { exact: true })
-      .waitFor()
+    await page.getByText('Latch 已更新连接方式。请在运行 Latch 的电脑上重新允许这台设备。', { exact: true }).waitFor()
     expect(await page.getByLabel('设备名称', { exact: true }).getAttribute('placeholder')).toBe('旧版浏览器')
     await captureSizes(page, 'legacy')
     await page.getByRole('button', { name: '在本机重新确认', exact: true }).click()
@@ -324,7 +325,7 @@ describe('device enrollment in the browser', () => {
 
     const invitation = await testHost.invite()
     await page.goto(invitation.url)
-    await page.getByText('已收到配对邀请。提交后，请在运行 Latch 的电脑上核对指纹并确认。', { exact: true }).waitFor()
+    await page.getByText('已收到连接邀请。提交后，回到运行 Latch 的电脑上允许连接。', { exact: true }).waitFor()
     // The fragment never stays in the address bar.
     expect(new URL(page.url()).hash).toBe('')
     await page.getByLabel('设备名称', { exact: true }).fill('我的手机')

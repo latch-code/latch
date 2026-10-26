@@ -32,14 +32,51 @@ describe('reported period usage', () => {
     expect(week.rows[0]).toMatchObject({
       providerId: 'p',
       model: 'm',
-      usage: { inputTokens: 12, outputTokens: 6, cacheReadTokens: 3 },
+      usage: { inputTokens: 12, outputTokens: 6 },
       partial: { cacheReadTokens: true, reasoningTokens: true },
     })
     expect(week.rows[0]!.usage.reasoningTokens).toBeUndefined()
+    expect(week.rows[0]!.usage.cacheReadTokens).toBeUndefined()
     expect(week.unattributedMessages).toBe(1)
     const month = await reportedUsage(source, 30)
     expect(month.rows).toHaveLength(2)
     expect(month.rows.some(row => row.providerId === undefined && row.model === undefined)).toBe(true)
+  })
+  it('preserves complete zero reports, hides only incomplete model groups and rejects overflowing splits', async () => {
+    const messages = [
+      message(
+        'complete-one',
+        1,
+        { inputTokens: 10, outputTokens: 3, cacheReadTokens: 0, cacheWriteTokens: 1, reasoningTokens: 0 },
+        { providerId: 'p', model: 'complete' },
+      ),
+      message(
+        'complete-two',
+        1,
+        { inputTokens: 2, outputTokens: 4, cacheReadTokens: 0, cacheWriteTokens: 2, reasoningTokens: 0 },
+        { providerId: 'p', model: 'complete' },
+      ),
+      message(
+        'partial-one',
+        1,
+        { inputTokens: 1, outputTokens: 1, cacheReadTokens: 3, cacheWriteTokens: Number.MAX_SAFE_INTEGER, reasoningTokens: 0 },
+        { providerId: 'p', model: 'partial' },
+      ),
+      message(
+        'partial-two',
+        1,
+        { inputTokens: 1, outputTokens: 1, cacheWriteTokens: 1, reasoningTokens: 0 },
+        { providerId: 'p', model: 'partial' },
+      ),
+    ]
+    const result = await reportedUsage({ list: async () => [{ id: 's' }], detail: async () => detail(messages), now: () => now }, 7)
+    expect(result.rows.find(row => row.model === 'complete')).toMatchObject({
+      usage: { inputTokens: 12, outputTokens: 7, cacheReadTokens: 0, cacheWriteTokens: 3, reasoningTokens: 0 },
+      partial: { cacheReadTokens: false, cacheWriteTokens: false, reasoningTokens: false },
+    })
+    const partial = result.rows.find(row => row.model === 'partial')!
+    expect(partial.usage).toEqual({ inputTokens: 2, outputTokens: 2, reasoningTokens: 0 })
+    expect(partial.partial).toEqual({ cacheReadTokens: true, cacheWriteTokens: true, reasoningTokens: false })
   })
   it('labels external reports as agent data and returns partial results within a bounded driver wait', async () => {
     const value = detail([message('a', 1, { inputTokens: 1, outputTokens: 2 })])

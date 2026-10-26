@@ -9,6 +9,8 @@ import type { HostRelayController } from './relay/controller.ts'
 import { selectAutoDirect } from './native-network.ts'
 import type { NativeNetworkSnapshot } from './native-network-backend.ts'
 import { RelayProfiles, relayProfileInput, nativeDirectSchema, type NativeDirect } from './relay/profiles.ts'
+import { directoryConfigSchema, type DirectoryConfig } from './relay/directory-config.ts'
+import type { HostRelayDirectory } from './relay/directory.ts'
 
 export function nativeAddresses(): NativeLinkInfo['addresses'] {
   return Object.entries(networkInterfaces())
@@ -29,6 +31,7 @@ const inputSchema = z.strictObject({
   configHash: z.string().regex(/^[a-f0-9]{64}$/u),
   direct: nativeDirectSchema.nullable(),
   relays: z.array(relayProfileInput).max(4),
+  directory: directoryConfigSchema.nullable().optional(),
 })
 type NativeHost = Awaited<ReturnType<typeof startNativeHost>>
 
@@ -40,6 +43,7 @@ export class NativeSettings {
       profiles: RelayProfiles
       native: NativeHost
       controller: HostRelayController
+      directory?: HostRelayDirectory
       audit: AuditLog
       managedDirect?: { host: string; port: number }
       inputsPaused(): boolean
@@ -59,6 +63,9 @@ export class NativeSettings {
       directManaged: Boolean(this.options.managedDirect),
       addresses: nativeAddresses(),
       inputsPaused: this.options.inputsPaused(),
+      directory: state.directory
+        ? { ...state.directory, ...(this.options.directory?.status() ?? { ready: false, generation: 0, rootGeneration: 0 }) }
+        : null,
       relays: state.profiles.map(item => {
         const status = statuses.find(value => value.relayId === item.relayId)
         return {
@@ -87,12 +94,19 @@ export class NativeSettings {
     if (new Set(input.relays.map(item => item.relayId)).size !== input.relays.length)
       throw new AppError(400, 'native-relay-duplicate', '每个中继节点只能添加一次')
     const direct = this.options.managedDirect ? (state.direct ?? null) : input.direct
+    const directory: DirectoryConfig | null = input.directory === undefined ? (state.directory ?? null) : input.directory
     if (this.options.managedDirect && canonicalJson(input.direct) !== canonicalJson(this.options.managedDirect))
       throw new AppError(409, 'native-managed', '直连入口由启动参数管理，请停止 Host 后修改启动参数')
     if (!this.options.managedDirect && direct && direct.host !== 'auto' && !nativeAddresses().some(item => item.address === direct.host))
       throw new AppError(400, 'native-address-unavailable', '请选择这台电脑当前的局域网地址')
     const lowering =
       (direct === null || canonicalJson(direct) === canonicalJson(state.direct ?? null))
+      && (directory === null
+        || Boolean(
+          state.directory
+          && directory.anchors.every(key => state.directory!.anchors.includes(key))
+          && directory.mirrors.every(url => state.directory!.mirrors.includes(url)),
+        ))
       && input.relays.every(item => {
         const old = state.profiles.find(value => value.relayId === item.relayId)
         return (
@@ -102,8 +116,17 @@ export class NativeSettings {
           && (item.registrationKey === undefined || item.registrationKey === null || item.registrationKey === old.registrationKey)
         )
       })
-    const afterHash = sha256Hex(canonicalJson({ direct, relays: input.relays }))
-    return { input, direct, baseHash, afterHash, lowering, requestHash: sha256Hex(canonicalJson(input)) }
+    const afterHash = sha256Hex(canonicalJson({ direct, relays: input.relays, directory }))
+    return {
+      input,
+      direct,
+      directory,
+      directoryChanged: canonicalJson(directory) !== canonicalJson(state.directory ?? null),
+      baseHash,
+      afterHash,
+      lowering,
+      requestHash: sha256Hex(canonicalJson(input)),
+    }
   }
   private serial<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.changes.then(operation)
@@ -184,11 +207,18 @@ export class NativeSettings {
       }
       prepared = await this.options.native.prepareBind(actual)
       recheck()
-      await this.options.profiles.configure(plan.direct, plan.input.relays, plan.baseHash, {
-        requestId: plan.input.requestId,
-        requestHash: plan.requestHash,
-      })
+      await this.options.profiles.configure(
+        plan.direct,
+        plan.input.relays,
+        plan.baseHash,
+        {
+          requestId: plan.input.requestId,
+          requestHash: plan.requestHash,
+        },
+        plan.directory,
+      )
       prepared.commit()
+      await this.options.directory?.configure()
       this.options.changed?.()
       this.options.controller.reconcile()
       return { audited }

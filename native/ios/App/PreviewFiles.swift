@@ -52,7 +52,7 @@ struct PreviewItem: Identifiable {
         while data.count < size {
             try Task.checkCancellation(); try lease.requireValid()
             let offset = data.count, total = Int(size), count = min(1_048_576, total - offset)
-            data.append(try await workspace.fileBytes(handle: handle, etag: etag, offset: offset, count: count) { done, _ in progress?(offset + done, total) })
+            data.append(try await workspace.fileBytes(handle: handle, etag: etag, offset: offset, count: count, explicitOpen: true) { done, _ in progress?(offset + done, total) })
         }
         try Task.checkCancellation(); try lease.requireValid()
         if text {

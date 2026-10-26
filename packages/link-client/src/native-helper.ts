@@ -8,7 +8,7 @@ import { z } from 'zod'
 const execute = promisify(execFile),
   versions = new Map<string, string>(),
   validating = new Map<string, { fingerprint: string; promise: Promise<void> }>()
-const versionSchema = z.strictObject({ protocol: z.literal(1), go: z.string() })
+const versionSchema = z.strictObject({ protocol: z.literal(2), go: z.string() })
 let running = 0
 export async function validateNativeTlsBinary(binary: string): Promise<void> {
   if (!isAbsolute(binary)) throw new Error('Native TLS component unavailable')
@@ -43,7 +43,15 @@ export interface NativeTlsConnection {
 /** Only private inherited streams carry configuration or plaintext; no loopback listener or command-line key. */
 export async function acceptNativeTls(
   raw: Duplex,
-  input: { binary: string; certificate: string; key: string; pairing: boolean; authorities: string[]; peerSpki: string },
+  input: {
+    binary: string
+    certificate: string
+    key: string
+    pairing: boolean
+    authorities: string[]
+    peerSpki: string
+    protocol?: 'h2' | 'latch-pad/1'
+  },
 ): Promise<NativeTlsConnection> {
   try {
     await validateNativeTlsBinary(input.binary)
@@ -59,6 +67,7 @@ export async function acceptNativeTls(
       pairing: input.pairing,
       authorities: input.authorities,
       peerSpki: input.peerSpki,
+      protocol: input.protocol ?? 'h2',
     }),
   )
   if (payload.length > 16384) {
@@ -148,7 +157,7 @@ export async function acceptNativeTls(
         try {
           if (
             tail.slice(end + 1)
-            || !z.strictObject({ protocol: z.literal(1), ready: z.literal(true) }).safeParse(JSON.parse(tail.slice(0, end))).success
+            || !z.strictObject({ protocol: z.literal(2), ready: z.literal(true) }).safeParse(JSON.parse(tail.slice(0, end))).success
           )
             throw new Error('Native TLS state')
           ready = true

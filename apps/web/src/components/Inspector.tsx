@@ -513,6 +513,11 @@ export function Inspector({
                 <span className="info-path" data-unused={index > 0 && !allFolders ? '' : undefined}>
                   <span className="info-path-name">
                     <VisibleText text={basename(folder.path)} />
+                    {index === 0 && summary.branch && (
+                      <Badge>
+                        <VisibleText text={summary.branch} />
+                      </Badge>
+                    )}
                     {missing ? <Badge tone="warn">找不到</Badge> : removed ? <Badge>已移出项目</Badge> : null}
                   </span>
                   <span className="info-path-line">

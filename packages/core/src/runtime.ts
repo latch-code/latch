@@ -56,6 +56,20 @@ function privateContext(value: PersonalExecutionContext | undefined): PersonalEx
     || value.pluginIds.length > 64
     || value.pluginIds.some(id => typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/u.test(id))
     || new Set(value.pluginIds).size !== value.pluginIds.length
+    || (value.sharedMessages !== undefined
+      && (!value.owner.groupId
+        || !Array.isArray(value.sharedMessages)
+        || value.sharedMessages.length > 64
+        || value.sharedMessages.some(
+          message =>
+            !message
+            || typeof message !== 'object'
+            || !['user', 'assistant'].includes(message.role)
+            || typeof message.text !== 'string'
+            || message.text.length > 64000
+            || Object.keys(message).some(key => key !== 'role' && key !== 'text'),
+        )
+        || Buffer.byteLength(JSON.stringify(value.sharedMessages)) > 256 * 1024))
     || (value.expectedRevisions !== undefined
       && (!value.expectedRevisions
         || typeof value.expectedRevisions !== 'object'
@@ -135,6 +149,7 @@ interface PendingApproval {
 }
 interface Run {
   instructions?: string
+  sharedMessages?: ModelMessage[]
   id: string
   sessionId: string
   mode: TaskMode
@@ -696,7 +711,7 @@ class HarnessRuntime implements Bridge {
             ...(scope ? { workspaceId: scope.workspaceId, folders: scope.folders } : {}),
             model: run.model,
             mode,
-            ...(selection.persist ? { providerId: selection.providerId } : {}),
+            ...(selection.persist || personal ? { providerId: selection.providerId } : {}),
             runId: run.id,
             ...(run.lease.skills?.length ? { skills: run.lease.skills.map(skill => skill.id) } : {}),
           },
@@ -798,7 +813,7 @@ class HarnessRuntime implements Bridge {
         if (run.lease.skills?.length) task.summary.skills = run.lease.skills.map(skill => skill.id)
         else delete task.summary.skills
         task.summary.model = run.model
-        if (selection.persist) task.summary.providerId = selection.providerId
+        if (selection.persist || personal) task.summary.providerId = selection.providerId
         task.summary.updatedAt = at
         task.revision++
         draft.receipts[key] = { taskId: sessionId, payloadHash }
@@ -861,6 +876,9 @@ class HarnessRuntime implements Bridge {
       providerId: selection.providerId,
       userMessageId: randomUUID(),
       ...(personal ? { instructions: personal.instructions } : {}),
+      ...(personal?.sharedMessages
+        ? { sharedMessages: personal.sharedMessages.map(message => ({ role: message.role, content: message.text })) }
+        : {}),
       clock,
       cwd,
       folders,
@@ -1205,6 +1223,7 @@ class HarnessRuntime implements Bridge {
             return { ...message, attachments }
           }),
         )
+        if (run.sharedMessages) messages.unshift(...structuredClone(run.sharedMessages))
         if (task.skillContext) messages.unshift({ role: 'system', content: task.skillContext })
         if (run.instructions) messages.unshift({ role: 'system', content: run.instructions })
         const seen = new Set(messages.flatMap(message => message.toolCalls?.map(call => call.id) ?? []))

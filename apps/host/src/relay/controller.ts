@@ -1,11 +1,12 @@
 import { setTimeout as delay } from 'node:timers/promises'
 import type { Duplex } from 'node:stream'
 import { ascii, hex, holder, issuePass, routeId, routeKey, UTC_DAY, type KnockBinding } from '@latch/link-wire'
-import { nodeCrypto, RelayClosed, RelayControl, type RelayEndpoint } from '@latch/link-client'
+import { nodeCrypto, RelayClosed, RelayControl } from '@latch/link-client'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import type { AuditLog } from '../audit.ts'
 import type { DeviceStore, EnrollmentService } from '../auth.ts'
 import { RelayProfiles, secretBytes, type RelayProfile } from './profiles.ts'
+import type { HostRelayDirectory } from './directory.ts'
 
 type Lease = { address: string; permitted(): boolean }
 interface NodeState {
@@ -24,6 +25,8 @@ export interface RelayControllerOptions {
   enrollments: EnrollmentService
   audit: AuditLog
   resolve(url: URL): Promise<Lease>
+  directory?: HostRelayDirectory
+  resolvePublic?(url: URL, address: string): Promise<Lease>
   accept(stream: Duplex, binding: KnockBinding, expectedDeviceId?: string): Promise<void>
   closePaths(relayId: Uint8Array): void
   /** Additional platform trust anchors are explicit process configuration, never received from a node. */
@@ -54,7 +57,7 @@ export class HostRelayController {
   async invitation(
     invitationId: string,
     expiresAt: string,
-  ): Promise<Array<{ relayId: string; url: string; spkiHash: string; pass: string; holderSeed: string }>> {
+  ): Promise<Array<{ relayId: string; url: string; spkiHash: string; pass: string; holderSeed: string; profile: 'outer-pad-v2' }>> {
     const now = Date.now(),
       day = Math.floor(now / 1000 / UTC_DAY),
       result = []
@@ -79,6 +82,7 @@ export class HostRelayController {
         spkiHash: profile.spkiHash,
         pass: Buffer.from(pass).toString('base64url'),
         holderSeed: Buffer.from(device.seed).toString('base64url'),
+        profile: 'outer-pad-v2' as const,
       })
     }
     return result
@@ -125,8 +129,13 @@ export class HostRelayController {
       state.done = this.run(profile, state)
     }
   }
-  private async resolve(state: NodeState, url: URL): Promise<string> {
-    const operation = this.options.resolve(url)
+  private async resolve(state: NodeState, url: URL, fixed?: { address: string; permitted(): boolean }): Promise<string> {
+    const operation = fixed
+      ? (this.options
+          .resolvePublic?.(url, fixed.address)
+          .then(lease => ({ address: lease.address, permitted: () => fixed.permitted() && lease.permitted() }))
+        ?? Promise.reject(new Error('Directory transport unavailable')))
+      : this.options.resolve(url)
     const timeout = new AbortController()
     let lease: Lease
     try {
@@ -141,11 +150,43 @@ export class HostRelayController {
     }
     if (state.abort.signal.aborted || !lease.permitted()) throw new Error('Relay egress unavailable')
     // Only distinct checked addresses matter; this set is bounded even under a hostile DNS answer sequence.
-    if (!state.leases.some(item => item.address === lease.address)) {
+    if (!state.leases.some(item => item.address === lease.address && item.permitted())) {
       if (state.leases.length >= 16) throw new Error('Relay address churn limit')
       state.leases.push(lease)
     }
     return lease.address
+  }
+  private async connect(profile: RelayProfile, state: NodeState): Promise<RelayControl> {
+    const create = (url: string, fixed?: { address: string; permitted(): boolean }) =>
+      RelayControl.connect({
+        url: new URL(url),
+        relayId: Buffer.from(profile.relayId, 'hex'),
+        spki: Buffer.from(profile.spkiHash, 'hex'),
+        profile: 'outer-pad-v2',
+        resolveAddress: () => this.resolve(state, new URL(url), fixed),
+        ...(this.options.ca ? { ca: this.options.ca } : {}),
+        registrationToken: profile.registrationKey ? secretBytes(profile.registrationKey) : undefined,
+        signal: state.abort.signal,
+      })
+    try {
+      return await create(profile.url)
+    } catch (original) {
+      if (state.abort.signal.aborted || !this.options.directory) throw original
+      await this.options.directory.refresh()
+      for (const candidate of this.options.directory.candidates(profile.relayId, profile.spkiHash)) {
+        if (state.abort.signal.aborted) throw original
+        const permitted = () =>
+          this.options
+            .directory!.candidates(profile.relayId, profile.spkiHash)
+            .some(item => item.url === candidate.url && item.address === candidate.address)
+        try {
+          return await create(candidate.url, { address: candidate.address, permitted })
+        } catch {
+          /* Another address of the same approved identity may still be reachable. */
+        }
+      }
+      throw original
+    }
   }
   private async register(
     profile: RelayProfile,
@@ -220,7 +261,7 @@ export class HostRelayController {
           setup.stream.destroy()
           continue
         }
-        await this.options.accept(setup.stream, { path: 'relay', relayId, routeId: setup.routeId }, expected)
+        await this.options.accept(setup.stream, { path: 'relay', relayId, routeId: setup.routeId, profile: setup.profile }, expected)
       } finally {
         setup.finishSetup()
       }
@@ -232,18 +273,7 @@ export class HostRelayController {
       try {
         state.status = 'connecting'
         delete state.retryAt
-        const endpoint: RelayEndpoint = {
-          url: new URL(profile.url),
-          relayId: Buffer.from(profile.relayId, 'hex'),
-          spki: Buffer.from(profile.spkiHash, 'hex'),
-          resolveAddress: () => this.resolve(state, new URL(profile.url)),
-          ...(this.options.ca ? { ca: this.options.ca } : {}),
-        }
-        const control = await RelayControl.connect({
-          ...endpoint,
-          registrationToken: profile.registrationKey ? secretBytes(profile.registrationKey) : undefined,
-          signal: state.abort.signal,
-        })
+        const control = await this.connect(profile, state)
         if (state.abort.signal.aborted) {
           control.close()
           return

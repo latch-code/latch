@@ -13,6 +13,7 @@ import {
   type SetConfigOptions,
 } from '@latch/sdk'
 import { RUN_ID, SessionMetaStore, type SessionReceipts } from './session-meta.ts'
+import { BranchReader } from './branch-reader.ts'
 
 /**
  * `harnessId` is Host-only. `workspaceId` and `folders` reach only drivers that declare `projectFolders: 'all'`; the
@@ -118,6 +119,7 @@ export class HarnessHub implements Bridge {
   private readonly listeners = new Set<(sessionId?: string) => void>()
   private readonly collisions = new Set<string>()
   private readonly log: (message: string) => void
+  private readonly branches: BranchReader
   private closing?: Promise<void>
 
   private constructor(
@@ -125,6 +127,12 @@ export class HarnessHub implements Bridge {
     private readonly meta: SessionMetaStore,
   ) {
     this.log = options.log ?? (text => console.error(`[Latch] ${text}`))
+    this.branches = new BranchReader({
+      now: options.now,
+      changed: () => {
+        if (!this.closing) this.emit()
+      },
+    })
   }
 
   static async open(options: HubOptions): Promise<HarnessHub> {
@@ -323,6 +331,7 @@ export class HarnessHub implements Bridge {
       this.entries.clear()
       this.routes.clear()
       this.listeners.clear()
+      await this.branches.close()
       try {
         await this.meta.flush()
       } catch (error) {
@@ -495,6 +504,7 @@ export class HarnessHub implements Bridge {
   async setConfig(sessionId: string, configId: string, value: string, options?: SetConfigOptions): Promise<void> {
     const member = await this.route(sessionId)
     await this.accept(member, bridge => {
+      options?.authorize?.()
       if (!bridge.setConfig) throw new AppError(501, 'not-supported', `${member.driver.name} 不支持修改会话选项`)
       return options ? bridge.setConfig(sessionId, configId, value, options) : bridge.setConfig(sessionId, configId, value)
     })
@@ -624,7 +634,7 @@ export class HarnessHub implements Bridge {
     const { pinned: _pinned, archived: _archived, level: _level, sessionFolder: _sessionFolder, forkOf: _forkOf, runId, ...rest } = summary
     const meta = this.meta.get(summary.id)
     const personal = this.personalOf(summary.id)
-    return {
+    return this.branches.decorate({
       ...rest,
       // A run ID a cancel could not carry is left out, so the page sends a plain stop rather than one the Host refuses.
       ...(typeof runId === 'string' && RUN_ID.test(runId) ? { runId } : {}),
@@ -638,7 +648,7 @@ export class HarnessHub implements Bridge {
       ...(meta?.forkOf ? { forkOf: meta.forkOf } : {}),
       ...(personal ? { personal } : {}),
       ...(meta?.sessionFolder ? { sessionFolder: true as const } : {}),
-    }
+    })
   }
 
   private describe(entry: Entry): HarnessInfo {

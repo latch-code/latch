@@ -29,6 +29,30 @@ function fixture(limit = 16384) {
   })
   return { peer, writes, stream }
 }
+it('keeps physical relay closure pending after protocol close until the underlying stream really exits', async () => {
+  let release: (error?: Error | null) => void = () => {}
+  const stream = new Duplex({
+      read() {},
+      write(_bytes, _encoding, callback) {
+        callback()
+      },
+      destroy(_error, callback) {
+        release = callback
+      },
+    }),
+    peer = new RelaySocket(stream, false),
+    settled = vi.fn()
+  void peer.closed.then(settled)
+  peer.close()
+  await Promise.resolve()
+  expect(settled).not.toHaveBeenCalled()
+  stream.destroy()
+  await Promise.resolve()
+  expect(settled).not.toHaveBeenCalled()
+  release()
+  await peer.closed
+  expect(settled).toHaveBeenCalledTimes(1)
+})
 it('bounds server queued frames at the adaptive limit and fails only that peer', async () => {
   const slow = fixture(),
     healthy = fixture(65536)
@@ -45,9 +69,12 @@ it('bounds server queued frames at the adaptive limit and fails only that peer',
   await next
   expect(healthy.peer.metrics()).toMatchObject({ pendingWriteBytes: 0, writtenBytes: 4 })
 })
-it('settles a blocked writer by its bounded timeout and records successful flushed bytes', async () => {
+it('fails a blocked send by its deadline while retaining actual bytes until its entered callback settles', async () => {
   const f = fixture()
   await expect(f.peer.send({ type: 'data', data: new Uint8Array([1]) })).rejects.toThrow('stalled')
+  expect(f.peer.metrics().pendingWriteBytes).toBe(4)
+  f.writes.shift()?.()
+  await Promise.resolve()
   expect(f.peer.metrics().pendingWriteBytes).toBe(0)
 })
 it('relinquishes relay heartbeats only when a verified splice becomes a tunnel, while control remains timed', async () => {

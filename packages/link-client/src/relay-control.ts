@@ -8,6 +8,7 @@ import {
   registrationMac,
   routeId,
   type RelayMessage,
+  type RelayTransportProfile,
 } from '@latch/link-wire'
 import { solveRegistrationWork } from './registration-work.ts'
 import { nodeCrypto } from './crypto.ts'
@@ -21,6 +22,7 @@ export interface RelaySetup {
   stream: RelayTunnel
   passTag: Uint8Array
   routeId: Uint8Array
+  profile?: RelayTransportProfile
   /** Called after native authentication settles; close also releases the bounded setup slot. */
   finishSetup(): void
 }
@@ -29,7 +31,7 @@ async function dial(options: RelayEndpoint, path: string, signal?: AbortSignal):
   url.pathname = path
   const address = options.resolveAddress ? await options.resolveAddress() : undefined
   if (signal?.aborted) throw new Error('Relay setup cancelled')
-  return connectRelay({ url, spki: options.spki, ca: options.ca, address, signal })
+  return connectRelay({ url, spki: options.spki, ca: options.ca, address, signal, profile: options.profile })
 }
 
 /** One control socket, one receive pump, at most eight route memberships and eight queued/authenticating opens. */
@@ -321,7 +323,7 @@ export class RelayControl {
     try {
       const route = this.routes.get(hex(request.routeId))
       if (!route || this.failure) throw new Error('Relay route unavailable')
-      data = await dial(this.options, '/v1/d')
+      data = await dial({ ...this.options, profile: request.profile }, '/v1/d')
       this.attaching.add(data)
       if (this.failure) throw this.failure
       const nonce = nodeCrypto.random(16)
@@ -339,7 +341,7 @@ export class RelayControl {
       this.attaching.delete(data)
       stream = new RelayTunnel(data)
       stream.once('close', finishSetup)
-      return { stream, passTag: spliced.passTag, routeId: route.routeId, finishSetup }
+      return { stream, passTag: spliced.passTag, routeId: route.routeId, profile: request.profile, finishSetup }
     } catch (error) {
       data?.close()
       if (data) this.attaching.delete(data)

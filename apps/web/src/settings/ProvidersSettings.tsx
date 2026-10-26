@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode, type Ref } from 'react'
 import { CircleAlert, CircleCheck, Info, KeyRound, LockKeyhole, Plus, Trash } from 'lucide-react'
-import type { AppSnapshot, HostView, ProviderKind, ProviderPreset, ProviderSettings } from '@latch/protocol'
+import type { AppSnapshot, ProviderKind, ProviderPreset, ProviderSettings } from '@latch/protocol'
 import { api, errorMessage, inlineError } from '../core/api.ts'
 import { keepWhileAway } from '../core/blocking.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
@@ -34,23 +34,12 @@ import { IconTile, Loading, MiddleEllipsis, NavRow, SectionHeading, SettingsGrou
 import { FieldDialog } from './dialogs.tsx'
 import { dropProviderDraft, keepProviderDraft, peekProviderDraft, type ProviderDraft } from './providerDraft.ts'
 import { SettingsPages, type SettingsLevel } from './navigation.tsx'
+import { providerAbilities, type ProviderAbilities } from '../core/providerAbilities.ts'
+export { providerAbilities, type ProviderAbilities } from '../core/providerAbilities.ts'
 
 type Selection = { kind: 'provider'; id: string; check?: boolean } | { kind: 'new'; preset: ProviderPreset } | { kind: 'presets' } | null
 type CheckState = { ok: true; latencyMs: number; count: number } | { ok: false; failure: ProbeFailure }
 type Access = Pick<DeviceAccess, 'legacy' | 'local' | 'admin'>
-
-/**
- * What this device can do with model services, for display only (the Host checks again): type a key (the desktop app,
- * or any device of an older Host that decides by itself), confirm an address on this computer (the desktop app with
- * local confirmation), or only point to the offline command (the desktop app without it). `presenceBroken`: on a Mac
- * whose confirmation component needs fixing, the Host's reason and fix, which replaces the offline command's text.
- */
-export interface ProviderAbilities {
-  keys: boolean
-  confirm: boolean
-  offline: boolean
-  presenceBroken?: string
-}
 
 /** Where an address is confirmed on the desktop that cannot confirm it now: the fix, or the offline command. */
 function offlineText(abilities: ProviderAbilities, providerId?: string): string {
@@ -1196,21 +1185,6 @@ function ProviderPage({
       )}
     </>
   )
-}
-
-export function providerAbilities(access: Access, presence: HostView['presence'] | undefined): ProviderAbilities {
-  // An older Host decides by itself whether a key or an address needs a confirmation; the page only offers.
-  const desktop = access.legacy || access.local
-  // A Mac whose component needs fixing says the Host's fix; a system without local confirmation, the offline command.
-  const broken =
-    presence?.status === 'unavailable'
-    && (presence.reason === 'helper-missing' || presence.reason === 'helper-signature' || presence.reason === 'cdhash-mismatch')
-  return {
-    keys: desktop,
-    confirm: desktop && presence?.status !== 'unavailable',
-    offline: !access.legacy && access.local && presence?.status === 'unavailable',
-    ...(broken && presence.message ? { presenceBroken: presence.message } : {}),
-  }
 }
 
 export function ProvidersSettings({ snapshot, access, onChanged }: { snapshot: AppSnapshot; access: Access; onChanged: () => void }) {

@@ -1,11 +1,13 @@
 import { createHash, createPrivateKey, generateKeyPairSync, randomBytes, randomUUID, sign } from 'node:crypto'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { connect as connectHttp2, type ClientHttp2Session } from 'node:http2'
 import { join, resolve } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { startRelay } from '@latch/relay'
 import {
   connectRelayTunnel,
+  connectNative,
   createTransportCertificate,
   nodeCrypto,
   openNativeHttp,
@@ -17,6 +19,7 @@ import {
 } from '@latch/link-client'
 import { decodePass, nativeKnockSecret, nativeRevocationInput, nativeVerificationText, routeId } from '@latch/link-wire'
 import { startTestHost } from './helpers/host.ts'
+import { connectPluginTransport, createRelayTransportDriver } from '@latch/host/transports'
 
 const observedTls = vi.hoisted(() => ({ inner: 0, outer: 0, tickets: 0, resumed: 0, protocols: new Set<string>() }))
 vi.mock('node:tls', async importOriginal => {
@@ -74,6 +77,44 @@ function ok<T>(result: { status: number; body: unknown }, status = 200): T {
   return result.body as T
 }
 
+async function rawRequest(session: ClientHttp2Session, method: string, path: string, headers: Record<string, string>, body?: unknown) {
+  return new Promise<{ status: number; bytes: number; timedOut: boolean }>((resolve, reject) => {
+    const stream = session.request({
+      ':method': method,
+      ':path': path,
+      ...headers,
+      ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+    })
+    let status = 0,
+      bytes = 0,
+      timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      stream.close()
+    }, 15_000)
+    timer.unref()
+    stream.on('error', () => {})
+    stream.once('response', values => {
+      status = Number(values[':status'])
+    })
+    stream.on('data', (chunk: Buffer) => {
+      bytes += chunk.length
+      if (bytes > 2_097_152) stream.destroy(new Error('Fixture response exceeded its content bound'))
+    })
+    stream.once('close', () => {
+      clearTimeout(timer)
+      resolve({ status, bytes, timedOut })
+    })
+    try {
+      stream.end(body === undefined ? undefined : JSON.stringify(body))
+    } catch (cause) {
+      clearTimeout(timer)
+      stream.destroy()
+      reject(cause)
+    }
+  })
+}
+
 it('pairs through a private relay and preserves recovery and revocation across lost acknowledgements and policy reconnects', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'latch-native-relay-e2e-'))
   cleanup.push(() => rm(directory, { recursive: true, force: true }))
@@ -129,19 +170,22 @@ it('pairs through a private relay and preserves recovery and revocation across l
   host.presence.mode = 'manual'
   await vi.waitFor(() => expect(relay.status().routes).toBe(3), { timeout: 3000 })
   expect(relay.status().connections).toBe(1)
-  const invited = await desktop.request('native/pairings', { method: 'POST', body: {} })
+  const invited = await desktop.request('native/pairings', { method: 'POST', body: { dataScope: 'all' } })
   expect(invited.status).toBe(201)
-  const { invitation } = (await invited.json()) as { invitation: { payload: string } }
+  const { invitation } = (await invited.json()) as { invitation: { payload: string; dataScope?: string } }
+  expect(invitation.dataScope).toBe('all')
   const payload = JSON.parse(Buffer.from(invitation.payload.slice('LATCHPAIR1.'.length), 'base64url').toString()) as {
     rootSpki: string
     invitation: string
     direct: unknown[]
-    relays: Array<{ pass: string; holderSeed: string }>
+    relays: Array<{ pass: string; holderSeed: string; profile: 'outer-pad-v2' }>
   }
   expect(payload.direct).toHaveLength(0)
   expect(payload.relays).toHaveLength(1)
+  expect(payload.relays[0]!.profile).toBe('outer-pad-v2')
   const endpoint = {
     url: new URL(profile.url),
+    profile: payload.relays[0]!.profile,
     relayId,
     spki: Buffer.from(profile.spkiHash, 'hex'),
     ca: tls.cert,
@@ -149,7 +193,12 @@ it('pairs through a private relay and preserves recovery and revocation across l
   }
   const pairPass = Buffer.from(payload.relays[0]!.pass, 'base64url'),
     pairKey = Buffer.from(payload.relays[0]!.holderSeed, 'base64url')
-  const binding = { path: 'relay' as const, relayId, routeId: await routeId(nodeCrypto, decodePass(pairPass).routePub) }
+  const binding = {
+    path: 'relay' as const,
+    profile: endpoint.profile,
+    relayId,
+    routeId: await routeId(nodeCrypto, decodePass(pairPass).routePub),
+  }
   const knockKey = createHash('sha256').update(payload.invitation).digest(),
     rootSpki = Buffer.from(payload.rootSpki, 'base64url')
   const temporary = async (): Promise<NativeHttpClient> => {
@@ -189,6 +238,7 @@ it('pairs through a private relay and preserves recovery and revocation across l
     dsaEncoding: 'ieee-p1363',
   }).toString('base64url')
   expect((await recovered.request('POST', `/link/api/enrollments/${enrollment.id}/prepare`, { signature })).status).toBe(409)
+  expect(host.presence.requests.at(-1)?.preview.lines).toContainEqual({ label: '数据范围', value: '全部' })
   host.presence.approveNext()
   await vi.waitFor(async () =>
     expect(
@@ -207,6 +257,7 @@ it('pairs through a private relay and preserves recovery and revocation across l
   expect(host.host.security.devices.get(prepared.deviceId)).toBeUndefined()
   const book = verifyAddressBook(prepared.addressBook, rootSpki, { hostId: host.host.hostId, deviceId: prepared.deviceId })
   expect(book.relays[0]!.passes).toHaveLength(62)
+  expect(book.relays[0]!.profile).toBe(endpoint.profile)
   const complete = host.host.security.enrollments.complete.bind(host.host.security.enrollments)
   vi.spyOn(host.host.security.enrollments, 'complete').mockImplementationOnce(async (...args) => {
     const result = await complete(...args)
@@ -227,16 +278,46 @@ it('pairs through a private relay and preserves recovery and revocation across l
       await nativeKnockSecret(nodeCrypto, knockKey, device.spki, verification.publicKey.export({ type: 'spki', format: 'der' })),
     ),
   }
+  const descriptor = {
+      version: 1 as const,
+      driverId: 'official-relay-fixture',
+      channelId: 'regular-device',
+      endpoint: endpoint.url.origin + '/',
+    },
+    relayDriver = createRelayTransportDriver({
+      descriptor,
+      endpoint,
+      credentials: async () => ({ pass: selected.pass, holderKey: selected.holderSeed }),
+    })
+  host.host.registry.register({
+    id: 'official-transport-fixture',
+    name: 'Official transport fixture',
+    version: '1',
+    description: '',
+    activate(context) {
+      context.registerTransport(relayDriver)
+    },
+  })
+  await host.host.registry.enable('official-transport-fixture')
+  const viaPlugin = await connectPluginTransport(host.host.registry, descriptor, regularOptions, {
+    relayBinding: { ...binding, routeId: await routeId(nodeCrypto, regular.routePub) },
+  })
+  cleanup.push(() => viaPlugin.close())
+  expect(ok<{ device: { id: string } }>(await viaPlugin.client.request('GET', '/link/api/snapshot')).device.id).toBe(prepared.deviceId)
+  await viaPlugin.close()
   const registered = await openNativeHttp(
     registeredTunnel,
     { ...binding, routeId: await routeId(nodeCrypto, regular.routePub) },
     regularOptions,
   )
   cleanup.push(() => registered.close())
-  const snapshot = ok<{ device: { id: string; status: string; scopes: string[] } }>(await registered.request('GET', '/link/api/snapshot'))
+  const snapshot = ok<{ device: { id: string; status: string; scopes: string[]; dataScope: string } }>(
+    await registered.request('GET', '/link/api/snapshot'),
+  )
   expect(snapshot.device.id).toBe(prepared.deviceId)
   expect(snapshot.device.status).toBe('review')
   expect(snapshot.device.scopes).toEqual(['view'])
+  expect(snapshot.device.dataScope).toBe('all')
   expect((await registered.request('POST', '/link/api/native/address-book', {})).status).toBe(403)
   const challenge = ok<{ nonce: string; appOpenId: string; expiresAt: number }>(
     await registered.request('POST', '/link/api/native/verification/challenge', { appOpenId: 'native-relay-fixture-open' }),
@@ -246,10 +327,87 @@ it('pairs through a private relay and preserves recovery and revocation across l
     Buffer.from(nativeVerificationText(host.host.hostId, prepared.deviceId, challenge.nonce, challenge.expiresAt, challenge.appOpenId)),
     { key: verification.privateKey, dsaEncoding: 'ieee-p1363' },
   ).toString('base64url')
-  expect((await registered.request('POST', '/link/api/native/verification', { signature: verificationSignature })).status).toBe(200)
+  const window = ok<{ windowToken: string }>(
+    await registered.request('POST', '/link/api/native/verification', { signature: verificationSignature }),
+  )
   expect((await registered.request('POST', '/link/api/native/address-book', {})).status).toBe(200)
   expect(ok<{ device: { scopes: string[] } }>(await registered.request('GET', '/link/api/snapshot')).device.scopes).toEqual(['view'])
   expect((await registered.request('POST', '/link/api/native/pairings', {})).status).toBe(403)
+  host.presence.mode = 'approve'
+  expect((await registered.request('POST', '/link/api/tasks', { prompt: 'review cannot run', requestId: randomUUID() })).status).toBe(403)
+  await writeFile(join(host.workspaceRoot, 'bulk.txt'), Buffer.alloc(2_097_152, 120))
+  const task = await host.host.bridge.createTask({ prompt: 'bulk fixture', requestId: randomUUID(), mode: 'chat' })
+  const metadata = ok<{ files: Array<{ file: { handle: string; etag: string } }> }>(
+    await registered.request('POST', `/link/api/tasks/${task.sessionId}/files/resolve`, { paths: ['bulk.txt'] }),
+  ).files[0]!.file
+  const openRegistered = async () => {
+    const tunnel = await connectRelayTunnel({ ...endpoint, pass: selected.pass, holderKey: selected.holderSeed })
+    tunnel.on('error', () => {})
+    const client = await openNativeHttp(tunnel, { ...binding, routeId: await routeId(nodeCrypto, regular.routePub) }, regularOptions)
+    cleanup.push(() => client.close())
+    expect(
+      (
+        await client.request('POST', '/link/api/native/verification/resume', {
+          appOpenId: challenge.appOpenId,
+          windowToken: window.windowToken,
+        })
+      ).status,
+    ).toBe(200)
+    return client
+  }
+  const activation = () => ({ handle: metadata.handle, etag: metadata.etag, requestId: randomUUID() })
+  const bulk = await openRegistered()
+  expect(ok<{ size: number }>(await bulk.request('POST', '/link/api/native/bulk', activation())).size).toBe(2_097_152)
+  const competing = await openRegistered()
+  await expect(competing.request('POST', '/link/api/native/bulk', activation())).rejects.toThrow()
+  await expect(bulk.request('GET', '/link/api/snapshot')).rejects.toThrow()
+  await vi.waitFor(() => expect(bulk.isClosed()).toBe(true))
+  const stale = await openRegistered()
+  await expect(stale.request('POST', '/link/api/native/bulk', { ...activation(), etag: `"${'0'.repeat(32)}"` })).rejects.toThrow()
+  const notFresh = await openRegistered()
+  expect((await notFresh.request('GET', '/link/api/snapshot')).status).toBe(200)
+  await expect(notFresh.request('POST', '/link/api/native/bulk', activation())).rejects.toThrow()
+  const resumedBulk = await openRegistered()
+  expect((await resumedBulk.request('POST', '/link/api/native/bulk', activation())).status).toBe(200)
+  await expect(resumedBulk.request('POST', '/link/api/native/address-book', {})).rejects.toThrow()
+  await vi.waitFor(() => expect(resumedBulk.isClosed()).toBe(true))
+  // Exercise headers unavailable in the convenience SDK through a real authenticated HTTP/2 session.
+  const rangeTunnel = await connectRelayTunnel({ ...endpoint, pass: selected.pass, holderKey: selected.holderSeed })
+  rangeTunnel.on('error', () => {})
+  const rangeSocket = await connectNative(rangeTunnel, { ...binding, routeId: await routeId(nodeCrypto, regular.routePub) }, regularOptions)
+  const rangeSession = connectHttp2('https://native.latch.invalid', {
+    createConnection: () => rangeSocket,
+    settings: { headerTableSize: 0, enablePush: false },
+  })
+  rangeSession.on('error', () => {})
+  cleanup.push(() => {
+    rangeSession.destroy()
+    rangeSocket.destroy()
+  })
+  expect(
+    (
+      await rawRequest(
+        rangeSession,
+        'POST',
+        '/link/api/native/verification/resume',
+        {},
+        {
+          appOpenId: challenge.appOpenId,
+          windowToken: window.windowToken,
+        },
+      )
+    ).status,
+  ).toBe(200)
+  expect((await rawRequest(rangeSession, 'POST', '/link/api/native/bulk', {}, activation())).status).toBe(200)
+  expect(
+    await rawRequest(rangeSession, 'GET', `/link/api/files/${metadata.handle}`, {
+      range: 'bytes=0-1048575',
+      'if-match': metadata.etag,
+      'if-range': '"obsolete-version"',
+    }),
+  ).toEqual({ status: 0, bytes: 0, timedOut: false })
+  await vi.waitFor(() => expect(rangeSocket.destroyed).toBe(true))
+  host.presence.mode = 'manual'
   const retry = await temporary()
   const repeated = ok<{ device: { id: string } }>(
     await retry.request('POST', `/link/api/enrollments/${enrollment.id}/complete`, { signature }),

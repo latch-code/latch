@@ -1,6 +1,6 @@
 # @latch/testkit
 
-只供测试使用的辅助：Host 夹具 `startHostFixture`（`src/host.ts`）、测试确认后端 `createTestPresence`（`src/presence.ts`）、共享安全向量 `vectors/security-v1.json`、原生连接向量 `vectors/link-v1.json` 与测试设备密钥（`src/crypto.ts`）、假 ACP Agent `fixtures/fake-acp-agent.mjs`（`FAKE_ACP_AGENT`）、测试证书 `makeTestTls`（`src/tls.ts`）；Office/PDF 的普通、恶意与性能样例见 `src/documents.ts`。
+只供测试使用的辅助：Host 夹具 `startHostFixture`（`src/host.ts`）、测试确认后端 `createTestPresence`（`src/presence.ts`）、共享安全向量 `vectors/security-v1.json`、原生连接向量 `vectors/link-v1.json` 与测试设备密钥（`src/crypto.ts`）、假 ACP Agent `fixtures/fake-acp-agent.mjs`（`FAKE_ACP_AGENT`）、测试证书 `makeTestTls`（`src/tls.ts`）；Office/PDF 的普通、恶意与性能样例见 `src/documents.ts`，测量边界见 [DOCUMENT-PERFORMANCE.md](../../docs/DOCUMENT-PERFORMANCE.md)。
 
 运行环境 node，与测试一起由 `tsconfig.tests.json` 检查；只依赖 `@latch/protocol` 与 `undici`。
 

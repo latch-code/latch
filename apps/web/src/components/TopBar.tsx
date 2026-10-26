@@ -1,6 +1,6 @@
 import type { RefObject } from 'react'
 import { ChevronDown, ChevronLeft, Ellipsis, Folder, Inbox, PanelLeft, PanelRight, RefreshCw, ShieldAlert, SquarePen } from 'lucide-react'
-import type { HarnessInfo, TaskSummary } from '@latch/protocol'
+import { escapeSecurityText, type HarnessInfo, type TaskSummary } from '@latch/protocol'
 import { harnessName } from '../composerChoice.ts'
 import { LEVEL_LABELS } from '../core/permissions.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
@@ -197,7 +197,12 @@ export function TopBar({
   // The button shows only while something waits, so its count is told the value it rose from.
   const approvalsBefore = useLivePrevious(approvals)
   const title = summary ? summary.title || '未命名会话' : '新会话'
-  const source = identity ?? (harness ? [harnessName(harness), project].filter(Boolean).join(' · ') : undefined)
+  const source = [
+    identity ?? (harness ? [harnessName(harness), project].filter(Boolean).join(' · ') : undefined),
+    summary?.branch && escapeSecurityText(summary.branch),
+  ]
+    .filter(Boolean)
+    .join(' · ')
   if (phone)
     return (
       <PhoneTopBar

@@ -26,14 +26,19 @@ import {
   TextField,
   ValuePicker,
 } from '@latch/ui'
-import { api, inlineError, isUncertain, newRequestId, type ApiOptions } from '../core/api.ts'
+import { api, ApiError, inlineError, isUncertain, newRequestId } from '../core/api.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { relativeTime } from '../format.ts'
 import { ModelPicker } from '../components/Pickers.tsx'
 import { NavRow, SectionHeading, SettingsGroup } from '../settings/common.tsx'
+import { deferredComponent } from '../components/DeferredContent.tsx'
+import { emptyGroupDraft, groupPath, type GroupDraft, type RoutineDraft, type PersonalMutation as Mutation } from './model.ts'
+
+const GroupPage = deferredComponent(async () => ({ default: (await import('./GroupPage.tsx')).GroupPage }), '助手群聊')
+const RoutinePage = deferredComponent(async () => ({ default: (await import('./RoutinePage.tsx')).RoutinePage }), '例行任务')
+type Area = 'assistants' | 'groups' | 'routines'
 
 type Overview = PersonalOverview & { plugins?: Array<Pick<PluginInfo, 'id' | 'name' | 'description' | 'capabilities'>> }
-type Mutation = { path: string; options: ApiOptions; after?: (value: Record<string, unknown>) => void }
 const assistantPath = (id: string) => 'personal/assistants/' + encodeURIComponent(id)
 
 /** The personal namespace is loaded only while this private page is visible. No roles or memories enter local storage. */
@@ -42,6 +47,9 @@ export function PersonalPage({
   access,
   refreshHint,
   canStart,
+  open = true,
+  initialGroupId,
+  onGroupSession,
   onClose,
   onChanged,
   onSession,
@@ -51,6 +59,9 @@ export function PersonalPage({
   access: DeviceAccess
   refreshHint: number
   canStart: boolean
+  open?: boolean
+  initialGroupId?: string
+  onGroupSession?: (sessionId: string, groupId: string) => void
   onClose: () => void
   onChanged: () => void
   onSession: (id: string) => void
@@ -58,6 +69,13 @@ export function PersonalPage({
 }) {
   const allowed = snapshot.device.dataScope === 'all' && access.scopes.has('view')
   const writable = allowed && access.scopes.has('run')
+  const groupsEnabled = snapshot.catalog?.features?.personalGroups === true
+  const routinesEnabled = snapshot.catalog?.features?.personalRoutines === true
+  const [area, setArea] = useState<Area>(initialGroupId && groupsEnabled ? 'groups' : 'assistants')
+  const [groupId, setGroupId] = useState<string | null>(initialGroupId ?? null)
+  const [routineId, setRoutineId] = useState<string | null>(null)
+  const [groupDrafts, setGroupDrafts] = useState<Record<string, GroupDraft>>({})
+  const [routineDrafts, setRoutineDrafts] = useState<Record<string, RoutineDraft>>({})
   const [overview, setOverview] = useState<Overview | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const [detail, setDetail] = useState<PersonalAssistantDetail | null>(null)
@@ -69,92 +87,206 @@ export function PersonalPage({
   const [error, setError] = useState('')
   const [pending, setPending] = useState<Mutation | null>(null)
   const [busy, setBusy] = useState(false)
+  const [cancelPending, setCancelPending] = useState<{ groupId: string; turnId: string; requestId: string } | null>(null)
+  const [cancelBusy, setCancelBusy] = useState(false)
+  const [cancelError, setCancelError] = useState('')
   const [sessionLimit, setSessionLimit] = useState(40)
   const request = useRef<AbortController | null>(null)
   const generation = useRef(0)
   const live = useRef(true)
   const busyRef = useRef(false)
+  const pendingRef = useRef<Mutation | null>(null)
+  const cancelBusyRef = useRef(false)
+  const cancelPendingRef = useRef<typeof cancelPending>(null)
+  const privateEpoch = useRef(0)
+  const visible = useRef(open)
+  visible.current = open
+  const permitted = useRef(allowed)
+  permitted.current = allowed
+  const areaRef = useRef(area)
+  areaRef.current = area
+  const groupRef = useRef(groupId)
+  groupRef.current = groupId
+  const routineRef = useRef(routineId)
+  routineRef.current = routineId
   const selectedRef = useRef(selected)
   selectedRef.current = selected
   const changedRef = useRef(onChanged)
   changedRef.current = onChanged
   const reload = async (id = selectedRef.current) => {
+    if (!visible.current || !permitted.current) return
     request.current?.abort()
     const controller = new AbortController(),
       ticket = ++generation.current
     request.current = controller
-    const [next, nextDetail] = await Promise.all([
-      api<Overview>('personal', { signal: controller.signal }),
-      id ? api<PersonalAssistantDetail>(assistantPath(id), { signal: controller.signal }) : Promise.resolve(null),
-    ])
-    if (!live.current || ticket !== generation.current) return
-    setOverview(next)
-    setDetail(nextDetail)
+    try {
+      const [next, nextDetail] = await Promise.all([
+        api<Overview>('personal', { signal: controller.signal }),
+        areaRef.current === 'assistants' && id
+          ? api<PersonalAssistantDetail>(assistantPath(id), { signal: controller.signal })
+          : Promise.resolve(null),
+      ])
+      if (!live.current || !visible.current || !permitted.current || ticket !== generation.current) return
+      setOverview(next)
+      setDetail(nextDetail)
+    } catch (cause) {
+      if (live.current && visible.current && permitted.current && ticket === generation.current && !controller.signal.aborted) throw cause
+    }
+  }
+  const clearPrivate = () => {
+    privateEpoch.current++
+    generation.current++
+    request.current?.abort()
+    setOverview(null)
+    setDetail(null)
+    setEditing(null)
+    setMemory(null)
+    setMemoryText('')
+    setError('')
+    setGroupDrafts({})
+    setRoutineDrafts({})
+    setGroupId(null)
+    setRoutineId(null)
+    pendingRef.current = null
+    busyRef.current = false
+    setPending(null)
+    setBusy(false)
+    cancelPendingRef.current = null
+    cancelBusyRef.current = false
+    setCancelPending(null)
+    setCancelBusy(false)
+    setCancelError('')
+  }
+  const readError = (cause: unknown) => {
+    if (cause instanceof ApiError && (cause.status === 401 || cause.status === 403)) {
+      clearPrivate()
+      changedRef.current()
+    }
+    if (live.current && !(cause instanceof DOMException && cause.name === 'AbortError')) setError(inlineError(cause))
   }
   useEffect(() => {
     live.current = allowed
-    if (!allowed) {
-      generation.current++
-      request.current?.abort()
-      setOverview(null)
-      setDetail(null)
-      setEditing(null)
-      setMemory(null)
-      setMemoryText('')
-      setPending(null)
-      setError('')
-      return
-    }
-    void reload().catch(cause => {
-      if (live.current && !(cause instanceof DOMException && cause.name === 'AbortError')) setError(inlineError(cause))
-    })
+    if (!allowed) clearPrivate()
     return () => {
       live.current = false
+      privateEpoch.current++
       generation.current++
       request.current?.abort()
     }
-  }, [allowed, selected])
+  }, [allowed])
   useEffect(() => {
-    if (!allowed || !overview) return
+    if (!allowed || !open) {
+      request.current?.abort()
+      generation.current++
+      setOverview(null)
+      setDetail(null)
+      return
+    }
+    void reload().catch(readError)
+    return () => {
+      generation.current++
+      request.current?.abort()
+    }
+  }, [allowed, open, selected, area])
+  useEffect(() => {
+    if (open && groupsEnabled && initialGroupId) {
+      setArea('groups')
+      setGroupId(initialGroupId)
+    }
+  }, [open, initialGroupId, groupsEnabled])
+  useEffect(() => {
+    if ((area === 'groups' && !groupsEnabled) || (area === 'routines' && !routinesEnabled)) setArea('assistants')
+  }, [area, groupsEnabled, routinesEnabled])
+  useEffect(() => {
+    if (!allowed || !open || !overview) return
     const timer = setTimeout(() => {
       if (document.hidden || busyRef.current) return
       void reload().catch(() => {})
     }, 320)
     return () => clearTimeout(timer)
-  }, [refreshHint])
+  }, [refreshHint, open])
   useEffect(() => {
     const visible = () => {
-      if (allowed && !document.hidden && !busyRef.current) void reload().catch(cause => setError(inlineError(cause)))
+      if (allowed && open && !document.hidden && !busyRef.current) void reload().catch(readError)
     }
     document.addEventListener('visibilitychange', visible)
     return () => document.removeEventListener('visibilitychange', visible)
-  }, [allowed])
-  const mutate = async (change: Mutation) => {
-    if (!writable || busyRef.current) return
+  }, [allowed, open])
+  const mutate = async (change: Mutation, retry = false) => {
+    if (
+      !writable
+      || !live.current
+      || !visible.current
+      || busyRef.current
+      || cancelBusyRef.current
+      || cancelPendingRef.current !== null
+      || (pendingRef.current !== null && (!retry || change !== pendingRef.current))
+    )
+      return
+    const exact = retry ? change : { ...change, options: { ...change.options, body: structuredClone(change.options.body) } }
+    const epoch = privateEpoch.current
     busyRef.current = true
     setBusy(true)
-    setPending(change)
+    pendingRef.current = exact
+    setPending(exact)
     setError('')
     try {
-      const value = await api<Record<string, unknown>>(change.path, change.options)
-      if (!live.current) return
+      const value = await api<Record<string, unknown>>(exact.path, exact.options)
+      if (!live.current || !permitted.current || epoch !== privateEpoch.current) return
+      pendingRef.current = null
       setPending(null)
-      change.after?.(value)
+      exact.after?.(value)
       changedRef.current()
-      await reload()
+      await reload().catch(readError)
     } catch (cause) {
-      if (!live.current) return
-      if (!isUncertain(cause)) setPending(null)
+      if (!live.current || !permitted.current || epoch !== privateEpoch.current) return
+      if (!isUncertain(cause)) {
+        pendingRef.current = null
+        setPending(null)
+      }
       setError(inlineError(cause))
     } finally {
-      busyRef.current = false
-      if (live.current) setBusy(false)
+      if (epoch === privateEpoch.current) {
+        busyRef.current = false
+        if (live.current) setBusy(false)
+      }
     }
   }
-  const locked = busy || pending !== null
+  const cancelGroup = async (id: string, turnId: string, retry = false) => {
+    if (!access.scopes.has('view') || !live.current || cancelBusyRef.current || (!retry && cancelPendingRef.current)) return
+    const exact = retry ? cancelPendingRef.current : { groupId: id, turnId, requestId: newRequestId() }
+    if (!exact) return
+    const epoch = privateEpoch.current
+    cancelBusyRef.current = true
+    setCancelBusy(true)
+    cancelPendingRef.current = exact
+    setCancelPending(exact)
+    setCancelError('')
+    try {
+      await api(groupPath(exact.groupId) + '/cancel', { method: 'POST', body: { requestId: exact.requestId, turnId: exact.turnId } })
+      if (!live.current || epoch !== privateEpoch.current) return
+      cancelPendingRef.current = null
+      setCancelPending(null)
+      changedRef.current()
+      await reload().catch(readError)
+    } catch (cause) {
+      if (!live.current || epoch !== privateEpoch.current) return
+      if (!isUncertain(cause)) {
+        cancelPendingRef.current = null
+        setCancelPending(null)
+      }
+      setCancelError(inlineError(cause))
+    } finally {
+      if (epoch === privateEpoch.current) {
+        cancelBusyRef.current = false
+        if (live.current) setCancelBusy(false)
+      }
+    }
+  }
+  const locked = busy || pending !== null || cancelBusy || cancelPending !== null
   const feedback = (
     <>
-      {error && (
+      {error && !pending && (
         <InlineNotice tone="error">
           {error}
           {!pending && !busy && (
@@ -172,13 +304,23 @@ export function PersonalPage({
         <InlineNotice tone="warn">
           结果尚未确认，内容已保留。
           <Button
+            disabled={!writable}
             onClick={() => {
-              void mutate(pending)
+              void mutate(pending, true)
             }}>
             重试同一请求
           </Button>
         </InlineNotice>
       )}
+      {cancelError && (
+        <InlineNotice tone={cancelPending ? 'warn' : 'error'}>
+          {cancelPending ? '停止结果尚未确认。' : cancelError}
+          {cancelPending && !cancelBusy && (
+            <Button onClick={() => void cancelGroup(cancelPending.groupId, cancelPending.turnId, true)}>重试原停止请求</Button>
+          )}
+        </InlineNotice>
+      )}
+      {cancelBusy && <Loading label="正在等待本轮真实停止…" />}
     </>
   )
   const active = detail?.assistant.id === selected ? detail : null
@@ -190,17 +332,56 @@ export function PersonalPage({
     setSessionLimit(40)
     setError('')
   }
+  const groupKey = groupId ?? 'new'
+  const routineKey = routineId ?? 'new'
+  const groupDraft = groupDrafts[groupKey] ?? emptyGroupDraft()
+  const routineDraft = routineDrafts[routineKey] ?? {}
+  const back =
+    area === 'groups' && groupId
+      ? () => setGroupId(null)
+      : area === 'routines' && routineId
+        ? () => setRoutineId(null)
+        : area === 'assistants' && selected
+          ? () => choose(null)
+          : onClose
+  useEffect(() => {
+    if (!overview) return
+    const groups = new Set((overview.groups ?? []).map(item => item.id)),
+      routines = new Set((overview.routines ?? []).map(item => item.id))
+    setGroupDrafts(previous => Object.fromEntries(Object.entries(previous).filter(([id]) => id === 'new' || groups.has(id))))
+    setRoutineDrafts(previous => Object.fromEntries(Object.entries(previous).filter(([id]) => id === 'new' || routines.has(id))))
+  }, [overview])
+  if (!open) return null
   return (
     <Modal label="个人助手" variant="page" className="personal-page" onClose={onClose}>
       <header className="personal-bar">
-        <Button variant="ghost" icon={ChevronLeft} onClick={selected ? () => choose(null) : onClose}>
-          {selected ? '所有助手' : '返回工作台'}
+        <Button variant="ghost" icon={ChevronLeft} onClick={back}>
+          {area === 'groups' && groupId
+            ? '所有群聊'
+            : area === 'routines' && routineId
+              ? '所有例行任务'
+              : area === 'assistants' && selected
+                ? '所有助手'
+                : '返回工作台'}
         </Button>
         <span className="personal-bar-title">个人助手</span>
         <IconButton label="关闭个人助手" icon={X} onClick={onClose} />
       </header>
       <div className="personal-scroll">
         <div className="personal-content">
+          {allowed && (groupsEnabled || routinesEnabled) && (
+            <Tabs
+              label="个人助手内容"
+              value={area}
+              options={[
+                { value: 'assistants', label: '助手' },
+                ...(groupsEnabled ? [{ value: 'groups' as const, label: '群聊' }] : []),
+                ...(routinesEnabled ? [{ value: 'routines' as const, label: '例行任务' }] : []),
+              ]}
+              onValueChange={setArea}
+            />
+          )}
+          {allowed && overview && ((area === 'groups' && !groupDraft.editor) || (area === 'routines' && !routineDraft.editor)) && feedback}
           {!allowed ? (
             <EmptyState title="在电脑上允许个人助手访问" description="允许后，这台设备就能查看助手、记忆和日常对话。" />
           ) : !overview ? (
@@ -208,6 +389,44 @@ export function PersonalPage({
               {feedback}
               {!error && <Loading label="正在读取个人助手…" />}
             </>
+          ) : area === 'groups' && groupsEnabled ? (
+            <GroupPage
+              groups={overview.groups ?? []}
+              assistants={overview.assistants}
+              groupId={groupId}
+              draft={groupDraft}
+              onDraft={update => setGroupDrafts(previous => ({ ...previous, [groupKey]: update(previous[groupKey] ?? emptyGroupDraft()) }))}
+              onSelect={id => {
+                if (areaRef.current === 'groups' && groupRef.current === groupId) setGroupId(id)
+              }}
+              writable={writable}
+              locked={locked}
+              canStart={canStart}
+              cancelLocked={cancelBusy || cancelPending !== null}
+              feedback={groupDraft.editor ? feedback : null}
+              refreshHint={refreshHint}
+              onMutate={change => mutate(change)}
+              onCancel={cancelGroup}
+              onSession={(id, group) => (onGroupSession ? onGroupSession(id, group) : onSession(id))}
+              onDenied={readError}
+            />
+          ) : area === 'routines' && routinesEnabled ? (
+            <RoutinePage
+              routines={overview.routines ?? []}
+              assistants={overview.assistants}
+              routineId={routineId}
+              draft={routineDraft}
+              onDraft={update => setRoutineDrafts(previous => ({ ...previous, [routineKey]: update(previous[routineKey] ?? {}) }))}
+              onSelect={id => {
+                if (areaRef.current === 'routines' && routineRef.current === routineId) setRoutineId(id)
+              }}
+              local={access.local}
+              writable={writable}
+              locked={locked}
+              feedback={routineDraft.editor ? feedback : null}
+              onMutate={change => mutate(change)}
+              onSession={onSession}
+            />
           ) : !selected ? (
             <>
               <SectionHeading
@@ -373,7 +592,7 @@ export function PersonalPage({
           )}
         </div>
       </div>
-      {editing && allowed && (
+      {editing && allowed && area === 'assistants' && (
         <AssistantEditor
           snapshot={snapshot}
           access={access}
@@ -408,7 +627,7 @@ export function PersonalPage({
         />
       )}
       <Dialog
-        open={memory !== null && allowed}
+        open={memory !== null && allowed && area === 'assistants'}
         title={memory === 'new' ? '添加记忆' : '编辑记忆'}
         size="form"
         onClose={() => {
@@ -452,7 +671,7 @@ export function PersonalPage({
           {feedback}
         </div>
       </Dialog>
-      {deleting && allowed && (
+      {deleting && allowed && area === 'assistants' && (
         <ConfirmDialog
           title={deleting.kind === 'assistant' ? '删除这位助手？' : '删除这条记忆？'}
           message={'删除「' + deleting.name + '」后无法恢复。'}

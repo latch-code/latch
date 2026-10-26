@@ -159,6 +159,7 @@ type State = z.infer<typeof stateSchema>
 export interface PersonalActor {
   actor: AuditActor & { deviceId: string }
   authorize(): void
+  auditFailed?(): void
 }
 export interface PersonalMutation<T> {
   value: T
