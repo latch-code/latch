@@ -19,6 +19,7 @@ import { presenceHelperPath } from '../src/presence.ts'
 import { buildPresenceHelper } from './presence-helper.ts'
 import { loadPluginPackage } from '../src/plugin-packages.ts'
 import { createShutdown } from './shutdown.ts'
+import { cleanupPluginGenerations } from './cleanup-plugin-generations.ts'
 
 const PLAINTEXT_REMOVED = '明文局域网接入已移除：请提供 --tls-cert、--tls-key 和 --public-origin（例如用 tailscale cert 生成的证书）。'
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '::1'])
@@ -181,11 +182,12 @@ async function main(): Promise<void> {
   const lock = await acquireDataDirLock(paths.dataDir, 'host')
   process.on('exit', () => lock.releaseSync())
   await refuseHostWithoutLock(paths.dataDir)
+  await cleanupPluginGenerations(paths.dataDir)
   const plugins: HarnessPlugin[] = []
   for (let index = 0; index < argv.length; index++) {
     if (argv[index] !== '--plugin') continue
     const path = argv[++index]
-    if (!path || path.startsWith('--')) throw new StartupError('--plugin 需要本地需求包目录或模块路径')
+    if (!path || path.startsWith('--')) throw new StartupError('--plugin 需要本地插件包目录或模块路径')
     plugins.push(await loadPluginPackage(path))
   }
   const codeRoot = latchCodeRoot()

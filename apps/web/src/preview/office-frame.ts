@@ -66,6 +66,7 @@ document.addEventListener(
     if (!link) return
     event.preventDefault()
     event.stopImmediatePropagation()
+    if (!event.isTrusted) return
     const raw = link.getAttribute('href') ?? ''
     const href = raw.startsWith('#') ? (links[raw.slice(1)] ?? '') : raw
     if (/^https?:\/\//iu.test(href) && href.length <= 4096) send({ type: 'link', href })

@@ -142,6 +142,29 @@ describe('desktop shell files', () => {
       expect(files.parseFileInput(input), JSON.stringify(input)).toBeUndefined()
   })
 
+  it('keeps workspace actions bound to the issued handle and selected harness', async () => {
+    const input = { workspaceId: 'project-1', harnessId: 'standard', handle: HANDLE }
+    expect(files.parseFileInput(input)).toEqual(input)
+    for (const invalid of [
+      { ...input, sessionId: SESSION },
+      { workspaceId: 'project-1', handle: HANDLE },
+      { ...input, harnessId: '../standard' },
+      { ...input, workspaceId: 'bad/project' },
+      { ...input, path: 'a.md' },
+      { workspaceId: 'project-1', harnessId: 'standard', path: 'a.md' },
+    ])
+      expect(files.parseFileInput(invalid)).toBeUndefined()
+    const { actions, calls } = harness({})
+    expect(await actions.revealFile(input)).toEqual({ status: 'shown' })
+    expect(calls).toEqual([
+      `POST /link/api/files/${HANDLE}/local ${JSON.stringify({ workspaceId: 'project-1', harnessId: 'standard', action: 'reveal' })}`,
+      `show ${DECK}`,
+    ])
+    const replaced = harness({ found: { real: DECK, file: true, symlink: true } })
+    expect(await replaced.actions.revealFile(input)).toEqual({ status: 'refused', code: 'file-changed' })
+    expect(shellCalls(replaced.calls)).toEqual([])
+  })
+
   it('keeps the same type lists and header checks as the Host', () => {
     expect([...files.QUICK_LOOK_TYPES].sort()).toEqual([...HOST_QUICK_LOOK].sort())
     expect([...files.OPEN_TYPES].sort()).toEqual([...HOST_OPEN].sort())

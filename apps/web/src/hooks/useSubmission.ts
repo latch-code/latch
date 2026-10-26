@@ -25,6 +25,7 @@ export function useSubmission({
   snapshot,
   access,
   selectedId,
+  assistantId,
   select,
   refresh,
   onSent,
@@ -33,6 +34,7 @@ export function useSubmission({
   snapshot: AppSnapshot
   access: Pick<DeviceAccess, 'legacy' | 'local'>
   selectedId: string | null
+  assistantId?: string
   select: (id: string | null) => void
   refresh: () => Promise<void>
   onSent: (sessionId: string, submission: PendingSubmission) => void
@@ -100,22 +102,25 @@ export function useSubmission({
   ): Promise<boolean> => {
     if (sendingRef.current || (!retry && resend === undefined && !draft.trim() && !attachmentIds?.length)) return false
     if (resend !== undefined && (selectedId === null || !resend.trim())) return false
-    const override = selectedId === null ? undefined : overrides[selectedId]
+    const override =
+      selectedId === null || snapshot.tasks.find(task => task.id === selectedId)?.personal ? undefined : overrides[selectedId]
     const submission: PendingSubmission =
       retry
       ?? (resend !== undefined && selectedId !== null
         ? { requestId: newRequestId(), prompt: resend, sessionId: selectedId, ...(override ? { model: override } : {}) }
         : undefined)
       ?? (selectedId === null
-        ? {
-            requestId: newRequestId(),
-            prompt: draft.trim(),
-            mode: choice.mode,
-            ...(fork ? { forkOf: { taskId: fork.taskId, upToMessageId: fork.upToMessageId } } : {}),
-            ...(choice.harnessId ? { harnessId: choice.harnessId } : {}),
-            ...(choice.workspaceId ? { workspaceId: choice.workspaceId } : {}),
-            ...(choice.model ? { model: choice.model } : {}),
-          }
+        ? assistantId
+          ? { requestId: newRequestId(), prompt: draft.trim(), assistantId }
+          : {
+              requestId: newRequestId(),
+              prompt: draft.trim(),
+              mode: choice.mode,
+              ...(fork ? { forkOf: { taskId: fork.taskId, upToMessageId: fork.upToMessageId } } : {}),
+              ...(choice.harnessId ? { harnessId: choice.harnessId } : {}),
+              ...(choice.workspaceId ? { workspaceId: choice.workspaceId } : {}),
+              ...(choice.model ? { model: choice.model } : {}),
+            }
         : {
             requestId: newRequestId(),
             prompt: draft.trim(),

@@ -23,6 +23,8 @@ import { startTestHost, type TestHost } from './helpers/host.ts'
 import { startNativeHost } from '../src/native.ts'
 import { loadOrCreateHostIdentity } from '../src/identity.ts'
 import { NativeReplay } from '../src/native-replay.ts'
+import { FileDirectoryReader } from '../src/files/directory.ts'
+import { buildFilesHelper } from '../scripts/build-files.ts'
 
 const cleanup: (() => void | Promise<void>)[] = []
 afterEach(async () => {
@@ -115,6 +117,48 @@ async function verifyDevice(
   return { ...receipt, appOpenId: challenge.appOpenId }
 }
 describe('native Host entry with existing authorization', () => {
+  it.skipIf(process.platform !== 'darwin')(
+    'keeps directory names behind the body window and discards a listing when its original window expires',
+    async () => {
+      await buildFilesHelper()
+      let time = Date.now()
+      const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 }, now: () => time })
+      cleanup.push(() => host.close())
+      const owner = await host.enroll({ listener: 'unix' }),
+        registered = await pair(host)
+      expect((await owner.confirmed(`devices/${registered.deviceId}`, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
+      await writeFile(join(host.workspaceRoot, 'never-unverified.txt'), 'private body')
+      const task = await host.host.bridge.createTask({ prompt: 'hello', requestId: randomUUID(), mode: 'chat' })
+      const path = `/link/api/tasks/${task.sessionId}/files`
+      expect((await registered.client.request('GET', `${path}/list?rootId=default`)).status).toBe(403)
+      expect((await registered.client.request('POST', `${path}/resolve`, { paths: ['never-unverified.txt'] })).status).toBe(403)
+      const receipt = await verifyDevice(host, registered.client, registered.deviceId, registered.verification.privateKey)
+      expect(JSON.stringify(body(await registered.client.request('GET', `${path}/list?rootId=default`)))).toContain('never-unverified.txt')
+      let entered!: () => void, release!: () => void
+      const arrived = new Promise<void>(done => {
+          entered = done
+        }),
+        barrier = new Promise<void>(done => {
+          release = done
+        })
+      const original = FileDirectoryReader.prototype.list
+      vi.spyOn(FileDirectoryReader.prototype, 'list').mockImplementationOnce(async function (this: FileDirectoryReader, input) {
+        const result = await original.call(this, input)
+        entered()
+        await barrier
+        return result
+      })
+      const pending = registered.client.request('GET', `${path}/list?rootId=default`).catch(() => undefined)
+      await arrived
+      time = Date.parse(receipt.verifiedUntil) + 1
+      release()
+      const result = await pending
+      if (result) {
+        expect(result.status).toBe(403)
+        expect(JSON.stringify(result.body)).not.toContain('never-unverified')
+      }
+    },
+  )
   it('keeps question bodies private before App verification and refuses an answer after its window expires', async () => {
     let time = Date.now(),
       continued = 0

@@ -592,6 +592,10 @@ body {
   margin: 0 auto;
   gap: var(--sp-12);
 }
+.info-page-body:has(.file-preview, .file-tree) > .inspector {
+  max-width: none;
+  margin: 0;
+}
 @media (max-width: 767.98px) {
   .info-page-head {
     display: grid;

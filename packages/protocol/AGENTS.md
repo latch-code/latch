@@ -1,6 +1,6 @@
 # @latch/protocol
 
-浏览器与 Host 共用的数据：浏览器 DTO（`src/types.ts`，含 `PluginInfo`，及只在 Host 使用的 `AgentRecord` 与本机确认的 `PresencePreview`）、模型服务预设 `src/presets.ts` 与 Agent 预设 `src/agent-presets.ts`、`escapeSecurityText` 与设备名称规则 `src/text.ts`、「这台电脑」的判定 `isLocalListener`（`src/listeners.ts`）、拒绝说明的规则 `rejectionNote`（`src/decision.ts`），以及高风险原因的文字 `RISK_REASON_TEXT`（`src/risk.ts`，审批卡与本机确认共用）。`src/ui.ts` 定义需求包面板与技能的展示数据，以及数据面板的有限文档校验；`src/files.ts` 定义预览句柄元数据与打开目标。不做持久化或 I/O。
+浏览器与 Host 共用的数据：浏览器 DTO（`src/types.ts`，含 `PluginInfo`，及只在 Host 使用的 `AgentRecord` 与本机确认的 `PresencePreview`）、模型服务预设 `src/presets.ts` 与 Agent 预设 `src/agent-presets.ts`、`escapeSecurityText` 与设备名称规则 `src/text.ts`、「这台电脑」的判定 `isLocalListener`（`src/listeners.ts`）、拒绝说明的规则 `rejectionNote`（`src/decision.ts`），以及高风险原因的文字 `RISK_REASON_TEXT`（`src/risk.ts`，审批卡与本机确认共用）。`src/ui.ts` 定义插件面板与技能的展示数据，以及数据面板的有限文档校验；`src/files.ts` 定义预览句柄元数据与打开目标。不做持久化或 I/O。
 
 运行环境 isomorphic：只用 ECMAScript 标准库，不导入 `node:*`，不用 DOM 或 Node 的全局变量（`tsconfig.isomorphic.json`、`.oxlintrc.json`）。没有依赖，不使用其他 workspace 包；模块没有副作用。入口 `@latch/protocol` 与只含类型和常量的 `@latch/protocol/types`。
 
@@ -17,3 +17,6 @@
 改动后运行 `pnpm typecheck`、`pnpm test` 与 `pnpm test:e2e`。消息与快照见 [docs/STREAMING.md](../../docs/STREAMING.md)，代码地图见 [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md)。
 
 - `src/file-refs.ts` 定义显式相对引用；`src/attachments.ts` 仅定义有限的元数据、上传上下文与能力；`AttachmentRef` 不含内容或私有路径，新增字段须同步两个 Harness 的持久化 schema。
+- 文件上下文区分 session 和带 Harness 的 workspace；目录 DTO 不含绝对路径，旧会话 `FileOpenTarget` 继续兼容。
+- `src/personal.ts` 定义个人助手、用户记忆、例行任务与有界群聊；私有执行 context 不是客户端可授予的权限，概览不代替正文授权。
+- `plugin-packages.ts` 定义可编辑插件资产与有限模板；摘要区分草稿、已应用版本及真实不可用原因，不含 Host 私有路径。

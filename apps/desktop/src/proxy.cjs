@@ -10,8 +10,9 @@ const { generateDeviceKey, enrollSigningText, renewSigningText } = require('./cr
 const APP_ORIGIN = 'latch://app'
 const HTML_CSP =
   "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self'; connect-src 'self'; manifest-src 'self'; frame-src latch-frame: blob:; worker-src 'self'; object-src 'none'; require-trusted-types-for 'script'; trusted-types latch-runtime; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
-/** API bodies are JSON of at most 256 KiB; buffering them lets a request be replayed once after renewal. */
+/** Buffering bounded JSON lets a request be replayed once after renewal. */
 const REQUEST_BODY_LIMIT = 1024 * 1024
+const PLUGIN_DRAFT_BODY_LIMIT = 8 * 1024 * 1024 + 65536
 const UPLOAD_BODY_LIMIT = 25 * 1024 * 1024
 const JSON_RESPONSE_LIMIT = 1024 * 1024
 const RENEW_INTERVAL_MS = 24 * 60 * 60 * 1000
@@ -137,18 +138,43 @@ function isAppUrl(raw) {
 }
 
 /**
- * Links the renderer tries to open in a new window go to the system browser only when they are plain
- * https URLs. The result is the serialized URL, which is printable ASCII (no bidi or control characters).
+ * Requested web/mail links use the system handler; unprompted requests are HTTPS-only with a confirmation.
+ * The serialized URL is printable ASCII, without credentials or privileged system protocols.
  */
-function externalUrl(raw) {
+function externalUrl(raw, userGesture = false) {
+  if (typeof raw !== 'string' || raw.length > EXTERNAL_URL_LIMIT) return undefined
   let url
   try {
     url = new URL(raw)
   } catch {
     return undefined
   }
-  if (url.protocol !== 'https:' || url.username || url.password) return undefined
+  if (!(userGesture ? ['https:', 'http:', 'mailto:'].includes(url.protocol) : url.protocol === 'https:') || url.username || url.password)
+    return undefined
   return url.href.length > EXTERNAL_URL_LIMIT ? undefined : url.href
+}
+
+/** Native input is observed in main; document scripts cannot mint or reuse this one-shot allowance. */
+function createExternalGesture(now = () => performance.now()) {
+  let until = 0
+  return {
+    /** @param {Electron.MouseInputEvent} input */
+    mouse(input) {
+      if (input.type === 'mouseUp' && (input.button === 'left' || input.button === 'middle')) until = now() + 1000
+    },
+    /** @param {Electron.Input} input */
+    key(input) {
+      if (input.type === 'keyDown' && !input.isAutoRepeat && ['Enter', ' ', 'Space'].includes(input.key)) until = now() + 1000
+    },
+    take() {
+      const allowed = until > now()
+      until = 0
+      return allowed
+    },
+    clear() {
+      until = 0
+    },
+  }
 }
 
 /**
@@ -251,8 +277,8 @@ function refusal(status, code, message, extra = {}) {
 }
 
 /**
- * Electron reports window.open without saying whether the user asked for it, so a link reaches the system
- * browser (outside the renderer's network confinement) only after the owner confirms the full URL.
+ * Main's one-shot native gesture permits normal clicks without a second prompt. Other window.open requests
+ * still need the owner to confirm the full URL before leaving the renderer's network confinement.
  * One confirmation at a time; links requested while it (or another native dialog sharing `gate`) is open are dropped.
  * @param {object} options
  * @param {(dialogOptions: Electron.MessageBoxOptions, parent?: Electron.BaseWindow) => Promise<{ response: number }>} options.confirm
@@ -262,16 +288,18 @@ function refusal(status, code, message, extra = {}) {
  * @param {(message: string) => void} [options.log]
  */
 function createExternalOpener({ confirm, open, gate = createDialogGate(), log = () => {} }) {
-  return async function openExternal(raw, parent) {
-    const url = externalUrl(raw)
+  return async function openExternal(raw, parent, { userGesture = false } = {}) {
+    const url = externalUrl(raw, userGesture)
     if (url === undefined || !gate.enter()) return false
     try {
-      const { response } = await confirm(externalLinkDialog(url), parent)
-      if (response !== 0) return false
+      if (!userGesture) {
+        const { response } = await confirm(externalLinkDialog(url), parent)
+        if (response !== 0) return false
+      }
       await open(url)
       return true
-    } catch (error) {
-      log(`无法打开链接：${error instanceof Error ? error.message : '未知错误'}`)
+    } catch {
+      log('无法打开链接')
       return false
     } finally {
       gate.leave()
@@ -370,10 +398,15 @@ function classifyRoute(method, pathname) {
   // Sleep, wake and coming stops are reported by main itself (lifecycle.cjs), never on the page's behalf.
   if (lower === '/link/api/host/state' || lower.startsWith('/link/api/host/state/')) return { kind: 'host-state' }
   // A session ID with an encoded slash decodes into more than one segment, so any depth under /tasks/ counts.
-  if (lower === '/link/api/files' || lower.startsWith('/link/api/files/') || /^\/link\/api\/tasks\/.+\/files(?:\/|$)/.test(lower)) {
+  if (
+    lower === '/link/api/files'
+    || lower.startsWith('/link/api/files/')
+    || /^\/link\/api\/(?:tasks|workspaces)\/.+\/files(?:\/|$)/.test(lower)
+  ) {
     const content = (method === 'GET' || method === 'HEAD') && /^\/link\/api\/files\/[A-Za-z0-9_-]{22}(?:\/meta)?$/.test(decoded)
-    const reference = method === 'POST' && /^\/link\/api\/tasks\/[^/]+\/files\/(?:resolve|search)$/.test(decoded)
-    if (!content && !reference) return { kind: 'shell-files' }
+    const reference = method === 'POST' && /^\/link\/api\/(?:tasks|workspaces)\/[^/]+\/files\/(?:resolve|search)$/.test(decoded)
+    const listing = method === 'GET' && /^\/link\/api\/(?:tasks|workspaces)\/[^/]+\/files\/list$/.test(decoded)
+    if (!content && !reference && !listing) return { kind: 'shell-files' }
   }
   if (lower === '/link/api/enrollments' && method === 'POST') return { kind: 'enroll' }
   const complete = /^\/link\/api\/enrollments\/([^/]+)\/complete$/i.exec(decoded)
@@ -849,7 +882,10 @@ function createShellProxy(options) {
       await discardRequestBody(request)
       return errorResponse(401, 'unauthorized', NOT_ENROLLED)
     }
-    const body = await readRequestBody(request, REQUEST_BODY_LIMIT)
+    const pluginDraft =
+      (request.method === 'POST' && target.pathname === '/link/api/plugin-packages')
+      || (request.method === 'PUT' && /^\/link\/api\/plugin-packages\/[A-Za-z0-9_-]{1,64}$/u.test(target.pathname))
+    const body = await readRequestBody(request, pluginDraft ? PLUGIN_DRAFT_BODY_LIMIT : REQUEST_BODY_LIMIT)
     if (route.pairing && !isRendererPairing(body)) return errorResponse(403, 'shell-managed', BROWSER_LINK_MANAGED)
     if (renewAfter !== 0 && renewDue()) await renew()
     let used = store.current()?.credential
@@ -1057,6 +1093,7 @@ module.exports = {
   externalUrl,
   externalLinkDialog,
   createDialogGate,
+  createExternalGesture,
   createExternalOpener,
   browserInvitationUrl,
   isRendererPairing,

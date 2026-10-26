@@ -173,5 +173,8 @@ export interface HarnessLease {
 }
 export interface RuntimeRegistry {
   /** `tools: false` leases only the provider's plugin, e.g. for chat runs. */
-  acquire(providerId: string, options?: { tools?: boolean }): CapabilityLease
+  acquire(
+    providerId: string,
+    options?: { tools?: boolean; pluginIds?: ReadonlyArray<string>; expectedRevisions?: Readonly<Record<string, string>> },
+  ): CapabilityLease
 }

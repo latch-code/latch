@@ -78,15 +78,21 @@ const proxy = require('../src/proxy.cjs') as {
   ProxyError: new (...args: never[]) => Error & { status: number; code: string }
   isAllowedRendererRequest(url: string, options: { packaged: boolean }): boolean
   isAppUrl(url: string): boolean
-  externalUrl(url: string): string | undefined
+  externalUrl(url: string, userGesture?: boolean): string | undefined
   externalLinkDialog(url: string): DialogOptions
   createDialogGate(): { enter(): boolean; leave(): void }
+  createExternalGesture(now?: () => number): {
+    mouse(input: { type: string; button?: string }): void
+    key(input: { type: string; key: string; isAutoRepeat?: boolean }): void
+    take(): boolean
+    clear(): void
+  }
   createExternalOpener(options: {
     confirm(options: DialogOptions, parent?: unknown): Promise<{ response: number }>
     open(url: string): Promise<unknown>
     gate?: { enter(): boolean; leave(): void }
     log?(text: string): void
-  }): (url: string, parent?: unknown) => Promise<boolean>
+  }): (url: string, parent?: unknown, options?: { userGesture?: boolean }) => Promise<boolean>
   BROWSER_INVITATION: { target: string; scopes: string[] }
   browserInvitationUrl(url: unknown, hostId: string): string | undefined
   isRendererPairing(body: Buffer | undefined): boolean
@@ -503,7 +509,50 @@ describe('desktop shell policy', () => {
     }
   })
 
-  it('opens an external link only after the owner confirms the full URL, one confirmation at a time', async () => {
+  it('consumes only recent native click or activation keys once and forgets them on blur', () => {
+    let time = 1000
+    const gesture = proxy.createExternalGesture(() => time)
+    expect(gesture.take()).toBe(false)
+    gesture.mouse({ type: 'mouseMove', button: 'left' })
+    gesture.key({ type: 'keyDown', key: 'a' })
+    expect(gesture.take()).toBe(false)
+    gesture.mouse({ type: 'mouseUp', button: 'left' })
+    expect(gesture.take()).toBe(true)
+    expect(gesture.take()).toBe(false)
+    gesture.key({ type: 'keyDown', key: 'Enter', isAutoRepeat: true })
+    expect(gesture.take()).toBe(false)
+    gesture.key({ type: 'keyDown', key: 'Enter' })
+    time += 1000
+    expect(gesture.take()).toBe(false)
+    gesture.key({ type: 'keyDown', key: ' ' })
+    gesture.clear()
+    expect(gesture.take()).toBe(false)
+  })
+
+  it('opens a requested web or mail link directly and never delegates a dangerous scheme to the system', async () => {
+    const confirm = vi.fn(async () => ({ response: 0 }))
+    const opened: string[] = []
+    const open = proxy.createExternalOpener({ confirm, open: async url => opened.push(url) })
+    for (const url of ['https://example.com/a', 'http://localhost:8000/page', 'mailto:person@example.com']) {
+      expect(await open(url, undefined, { userGesture: true })).toBe(true)
+    }
+    expect(opened).toEqual(['https://example.com/a', 'http://localhost:8000/page', 'mailto:person@example.com'])
+    for (const url of ['javascript:alert(1)', 'file:///etc/passwd', 'latch://app/', 'https://user:secret@example.com/'])
+      expect(await open(url, undefined, { userGesture: true })).toBe(false)
+    expect(confirm).not.toHaveBeenCalled()
+    const log = vi.fn()
+    const failed = proxy.createExternalOpener({
+      confirm,
+      open: async () => {
+        throw new Error('https://example.com/?private=document-secret')
+      },
+      log,
+    })
+    expect(await failed('https://example.com/', undefined, { userGesture: true })).toBe(false)
+    expect(log).toHaveBeenCalledWith('无法打开链接')
+  })
+
+  it('asks for a programmatic external link, with one native dialog at a time', async () => {
     const asked: Array<{ options: DialogOptions; parent: unknown }> = []
     const opened: string[] = []
     let answer: (value: { response: number }) => void = () => {}
@@ -742,11 +791,18 @@ describe('desktop shell policy', () => {
       '/link/api/tasks/task-1/files',
       '/link/api/tasks/a%2Fb/files/resolve',
       '/link/api/tasks/a%2Fb%2Fc/%66iles/resolve',
+      '/link/api/workspaces/project-1/files/local',
+      '/link/api/workspaces/a%2Fb/files/list',
+      '/LINK/API/WORKSPACES/project-1/FILES/list',
     ])
       expect(proxy.classifyRoute('POST', path), path).toEqual({ kind: 'shell-files' })
     for (const [method, path] of [
       ['POST', '/link/api/tasks/task-1/files/resolve'],
       ['POST', '/link/api/tasks/task-1/files/search'],
+      ['GET', '/link/api/tasks/task-1/files/list'],
+      ['GET', '/link/api/workspaces/project-1/files/list'],
+      ['POST', '/link/api/workspaces/project-1/files/resolve'],
+      ['POST', '/link/api/workspaces/project-1/files/search'],
       ['GET', '/link/api/files/AAAAAAAAAAAAAAAAAAAAAA'],
       ['HEAD', '/link/api/files/AAAAAAAAAAAAAAAAAAAAAA/meta'],
     ])
@@ -1186,6 +1242,36 @@ describe('desktop shell proxy', () => {
     const before = context.host.seen.length
     const tooLarge = await context.request('/link/api/tasks', { method: 'POST', body: 'x'.repeat(proxy.REQUEST_BODY_LIMIT + 1) })
     expect(tooLarge.status).toBe(413)
+    expect(context.host.seen).toHaveLength(before)
+  })
+
+  it('forwards larger plugin drafts with a finite limit without widening execution routes', async () => {
+    const context = await shell()
+    await enroll(context)
+    const body = JSON.stringify({ content: 'x'.repeat(proxy.REQUEST_BODY_LIMIT) })
+    for (const [method, path] of [
+      ['POST', '/link/api/plugin-packages'],
+      ['PUT', '/link/api/plugin-packages/my-plugin'],
+    ]) {
+      const response = await context.request(path!, { method, headers: { 'content-type': 'application/json' }, body })
+      expect(response.status).toBe(200)
+      expect(await response.json()).toMatchObject({ body })
+      expect(context.host.seen.at(-1)?.body).toBe(body)
+    }
+    for (const [method, path] of [
+      ['POST', '/link/api/plugin-packages/my-plugin/apply'],
+      ['POST', '/link/api/plugin-packages/my-plugin/enabled'],
+      ['DELETE', '/link/api/plugin-packages/my-plugin'],
+      ['POST', '/link/api/tasks'],
+    ]) {
+      const before = context.host.seen.length
+      const response = await context.request(path!, { method, body })
+      expect(response.status).toBe(413)
+      expect(context.host.seen).toHaveLength(before)
+    }
+    const before = context.host.seen.length
+    const response = await context.request('/link/api/plugin-packages', { method: 'POST', body: 'x'.repeat(8 * 1024 * 1024 + 65537) })
+    expect(response.status).toBe(413)
     expect(context.host.seen).toHaveLength(before)
   })
 

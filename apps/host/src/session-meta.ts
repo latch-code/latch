@@ -60,6 +60,7 @@ const metaSchema = z.object({
         title: z.string().min(1).max(200).optional(),
         pinned: z.literal(true).optional(),
         archived: z.literal(true).optional(),
+        personal: z.strictObject({ assistantId: z.string().min(1).max(128), groupId: z.string().min(1).max(128).optional() }).optional(),
         workspaceId: z
           .string()
           .regex(/^[a-z0-9][a-z0-9_-]{0,63}$/u)
@@ -86,6 +87,7 @@ export type CancelRecord = z.infer<typeof cancelReceiptSchema>
 export type StoredReceipt = ApprovalRecord | CancelRecord
 /** Host-level session metadata (title, pin, archive); receipts are kept beside it. */
 export interface StoredMeta {
+  personal?: TaskSummary['personal']
   title?: string
   pinned?: true
   archived?: true

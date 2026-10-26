@@ -93,12 +93,17 @@ export type FileKnownResult = { status: 'ok'; known: string[] } | { status: 'bus
  * or opens it with its default application. The page sends the session and the reference as the message wrote it.
  */
 export interface ShellFiles {
+  /** Version 2 also accepts a real workspace context and an authorized handle. */
+  protocolVersion?: 2
   inspect: (sessionId: string, path: string) => Promise<FileInspection>
   /** Up to 64 references at once (inline code, a tool's targets); shells from before it do not have it. */
   known?: (sessionId: string, paths: string[]) => Promise<FileKnownResult>
-  reveal: (sessionId: string, path: string) => Promise<FileActionResult>
-  quickLook: (sessionId: string, path: string) => Promise<FileActionResult>
-  open: (sessionId: string, path: string) => Promise<FileActionResult>
+  reveal: (context: string | { workspaceId: string; harnessId: string }, target: string | { handle: string }) => Promise<FileActionResult>
+  quickLook: (
+    context: string | { workspaceId: string; harnessId: string },
+    target: string | { handle: string },
+  ) => Promise<FileActionResult>
+  open: (context: string | { workspaceId: string; harnessId: string }, target: string | { handle: string }) => Promise<FileActionResult>
 }
 
 export interface NotificationPreferences {

@@ -3,9 +3,10 @@ import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { z } from 'zod'
 import { AppError, type HarnessPlugin, type PluginContext } from '@latch/sdk'
+import { isUiPanelDocument, type UiPanelDocument } from '@latch/protocol'
 
 const id = z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/u)
-const manifestSchema = z
+export const pluginManifestSchema = z
   .object({
     formatVersion: z.literal(1),
     id,
@@ -41,6 +42,18 @@ const manifestSchema = z
       )
       .max(32)
       .default([]),
+    dataPanels: z
+      .array(
+        z.strictObject({
+          id,
+          title: z.string().trim().min(1).max(48),
+          description: z.string().max(240).optional(),
+          harnessIds: z.array(id).max(32).optional(),
+          document: z.custom<UiPanelDocument>(isUiPanelDocument),
+        }),
+      )
+      .max(32)
+      .default([]),
   })
   .strict()
 
@@ -70,20 +83,20 @@ export async function loadPluginPackage(path: string): Promise<HarnessPlugin> {
     return module.default
   }
   async function local(file: string): Promise<string> {
-    if (isAbsolute(file)) throw invalid('需求包中的文件路径必须相对于包目录。')
+    if (isAbsolute(file)) throw invalid('插件包中的文件路径必须相对于包目录。')
     const candidate = await realpath(resolve(root, file))
     const child = relative(root, candidate)
     if (!child || child === '..' || child.startsWith(`..${sep}`) || isAbsolute(child)) {
-      throw invalid('需求包不能引用包目录以外的文件。')
+      throw invalid('插件包不能引用包目录以外的文件。')
     }
     return candidate
   }
   async function contents(file: string, max: number): Promise<string> {
     const location = await local(file)
     const info = await stat(location)
-    if (!info.isFile() || info.size > max) throw invalid('需求包文件类型或大小不受支持。')
+    if (!info.isFile() || info.size > max) throw invalid('插件包文件类型或大小不受支持。')
     const content = await readFile(location, 'utf8')
-    if (Buffer.byteLength(content) > max) throw invalid('需求包文件过大。')
+    if (Buffer.byteLength(content) > max) throw invalid('插件包文件过大。')
     return content
   }
   const text = await contents('latch-plugin.json', 65_536)
@@ -93,8 +106,8 @@ export async function loadPluginPackage(path: string): Promise<HarnessPlugin> {
   } catch {
     throw invalid('latch-plugin.json 必须是有效的 JSON。')
   }
-  const parsed = manifestSchema.safeParse(value)
-  if (!parsed.success) throw invalid('latch-plugin.json 格式无效，请检查需求包文档。')
+  const parsed = pluginManifestSchema.safeParse(value)
+  if (!parsed.success) throw invalid('latch-plugin.json 格式无效，请检查插件包文档。')
   const manifest = parsed.data
   const skills = await Promise.all(manifest.skills.map(async ({ file, ...skill }) => ({ ...skill, content: await contents(file, 32_000) })))
   const panels = await Promise.all(
@@ -104,7 +117,7 @@ export async function loadPluginPackage(path: string): Promise<HarnessPlugin> {
   for (const file of manifest.host) {
     const entry = await local(file)
     const module: { default?: unknown } = await import(pathToFileURL(entry).href)
-    if (!hostModule(module.default)) throw invalid('需求包的 Host 模块必须默认导出含 activate 的对象。')
+    if (!hostModule(module.default)) throw invalid('插件包的 Host 模块必须默认导出含 activate 的对象。')
     modules.push(module.default)
   }
   return {
@@ -116,6 +129,8 @@ export async function loadPluginPackage(path: string): Promise<HarnessPlugin> {
     async activate(context) {
       for (const skill of skills) context.registerSkill(skill)
       for (const panel of panels) context.registerClientPanel(panel)
+      for (const { document, ...panel } of manifest.dataPanels)
+        context.registerUiPanel({ ...panel, render: () => structuredClone(document) })
       for (const module of modules) await module.activate(context, structuredClone(manifest.config))
     },
   }

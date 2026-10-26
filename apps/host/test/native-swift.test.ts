@@ -29,11 +29,12 @@ const exec = promisify(execFile)
 const root = fileURLToPath(new URL('../../../', import.meta.url)),
   packagePath = join(root, 'native/ios')
 let binary = ''
-async function invoke(input: unknown): Promise<Record<string, unknown>> {
+async function invoke(input: unknown, onDiagnostic?: (text: string) => Promise<void>): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const child = spawn(binary, [], { stdio: ['pipe', 'pipe', 'pipe'], env: { PATH: process.env.PATH, LANG: 'en_US.UTF-8' } })
     let output = '',
-      diagnostic = ''
+      diagnostic = '',
+      notified = false
     const timer = setTimeout(() => {
       child.kill('SIGKILL')
       reject(new Error('Swift fixture timeout'))
@@ -44,6 +45,13 @@ async function invoke(input: unknown): Promise<Record<string, unknown>> {
     })
     child.stderr.on('data', (data: Buffer) => {
       diagnostic = (diagnostic + data.toString()).slice(0, 2000)
+      if (onDiagnostic && !notified && diagnostic.includes('Native personal waiting for desktop grant\n')) {
+        notified = true
+        void onDiagnostic(diagnostic).catch(error => {
+          child.kill('SIGKILL')
+          reject(error)
+        })
+      }
     })
     child.once('error', error => {
       clearTimeout(timer)
@@ -601,6 +609,35 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       await rm(temporary, { recursive: true, force: true })
     }
   })
+  it('uses Personal APIs from the actual Swift workspace after a local private-data grant without persisting hidden memory in chats', async () => {
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      const response = await host.raw('unix', 'api/native/pairings', { method: 'POST', body: {} })
+      const { invitation } = (await response.json()) as { invitation: { payload: string } }
+      const result = await invoke({ operation: 'nativePersonal', payload: invitation.payload, port: host.host.nativePort }, async () => {
+        const devices = await owner.json<{ devices: Array<{ id: string; native?: unknown }> }>('devices')
+        const device = devices.devices.find(item => item.native !== undefined)
+        expect(device).toBeDefined()
+        expect((await owner.confirmed(`devices/${device!.id}`, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
+      })
+      expect(result).toEqual({
+        personal: true,
+        windowRequired: true,
+        privateScopeRequired: true,
+        privateHistory: true,
+        cachedClassification: true,
+        sameRequest: true,
+        pendingCleared: true,
+      })
+      expect((await owner.json<{ assistants: unknown[] }>('personal')).assistants).toEqual([])
+      expect((await owner.json<{ tasks: unknown[] }>('snapshot')).tasks).toEqual([])
+      const audit = await readFile(join(host.dataDir, 'audit', 'audit.jsonl'), 'utf8')
+      expect(audit).not.toContain('Swift private')
+    } finally {
+      await host.close()
+    }
+  }, 30_000)
   it('rejects noncanonical base64url, trailing bytes and unsafe integers without trapping', async () => {
     expect(await invoke({ base64url: 'Zm9v' })).toEqual({ base64url: 'Zm9v', base32: 'mzxw6' })
     for (const base64url of ['A', 'Zh', 'Zg==', 'Z g', 'Zg\n']) await expect(invoke({ base64url })).rejects.toThrow('rejected')

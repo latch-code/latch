@@ -4,11 +4,25 @@ import Network
 import SwiftUI
 import UIKit
 
+struct PhonePreviewProgress: Equatable { let completed: Int; let total: Int }
+
+enum PhoneArea: String { case personal, projects }
+
 @MainActor final class PhoneModel: ObservableObject {
     @Published var hosts: [RegisteredHost] = []
     @Published var selectedHost: RegisteredHost?
     @Published var snapshot = NativeJSON.null
     @Published var detail = NativeJSON.null
+    @Published var area = PhoneArea.personal
+    @Published var personalOverview = NativeJSON.null
+    @Published var assistantDetail = NativeJSON.null
+    @Published var assistantId: String?
+    @Published var personalLoading = false
+    @Published var personalPlugins: [NativeJSON] = []
+    @Published var personalPluginsLoaded = false
+    @Published var previewProgress: PhonePreviewProgress?
+    private var previewJob: UUID?
+    private var personalLoadId: UUID?
     @Published var sessionId: String?
     @Published var pending: [NativePendingWrite] = []
     @Published var draft: PairingDraft?
@@ -20,6 +34,13 @@ import UIKit
     @Published var verifying = false
     @Published var verifiedUntil: Date?
     @Published var contentGeneration = UUID()
+    var supportsPersonal: Bool { snapshot["catalog"]["features"]["personal"].bool }
+    var workspaceTasks: [NativeJSON] {
+        snapshot["tasks"].array.filter { task in
+            area == .personal ? task["personal"]["assistantId"].string == assistantId && task["personal"]["groupId"].string == nil
+                : task["personal"]["assistantId"].string == nil
+        }
+    }
     var currentSummary: NativeJSON { snapshot["tasks"].array.first { $0["id"].string == sessionId } ?? detail["summary"] }
     var canRun: Bool { connected && snapshot["device"]["status"].string == "active" && hasScope("run") && !snapshot["host"]["native"]["inputsPaused"].bool }
     var canApproveStandard: Bool { connected && snapshot["device"]["status"].string == "active" && hasScope("approve:standard") && !snapshot["host"]["native"]["inputsPaused"].bool }
@@ -69,6 +90,8 @@ import UIKit
         discovery.stop(); freshPairings.removeAll()
         let previous = workspace, pairing = pairingConnection, previousStore = store
         store = nil; workspace = nil; pairingConnection = nil
+        cancelPreview(); personalLoadId = nil; personalLoading = false; personalPlugins = []; personalPluginsLoaded = false
+        personalOverview = .null; assistantDetail = .null; assistantId = nil
         detail = .null; snapshot = .null; verifiedUntil = nil; comparisonCode = nil; pending = []; hosts = []; draft = nil; selectedHost = nil
         connected = false; busy = false; verifying = false; status = "已锁定，解锁后重新连接"
         PreviewFiles.clear()
@@ -81,7 +104,7 @@ import UIKit
         eventTask?.cancel(); expiryTask?.cancel(); reconnectTask?.cancel()
         resetBookRefresh()
         let previous = workspace; workspace = nil
-        clearPrivateContent(); snapshot = .null; sessionId = nil; verifiedUntil = nil; connected = false
+        clearPrivateContent(); snapshot = .null; sessionId = nil; assistantId = nil; verifiedUntil = nil; connected = false
         selectedHost = host; status = "正在连接…"; error = nil
         await paths.close(); await previous?.closeOpening()
         guard generation == current else { return }
@@ -183,6 +206,43 @@ import UIKit
             }
         }
     }
+    func openPersonalHome() async {
+        area = .personal; assistantId = nil; sessionId = nil; detail = .null; assistantDetail = .null
+        contentGeneration = UUID(); PreviewFiles.clear(); startEvents()
+        await refreshPersonal()
+    }
+    func openProjects() {
+        area = .projects; assistantId = nil; sessionId = nil; detail = .null; assistantDetail = .null
+        contentGeneration = UUID(); PreviewFiles.clear(); startEvents()
+    }
+    func openAssistant(_ id: String) async {
+        guard id.range(of: "^asst_[a-f0-9-]{36}$", options: .regularExpression) != nil else { return }
+        area = .personal; assistantId = id; sessionId = nil; detail = .null; assistantDetail = .null
+        contentGeneration = UUID(); PreviewFiles.clear(); startEvents()
+        await refreshPersonal()
+    }
+    func refreshPersonal() async {
+        guard let workspace, connected, supportsPersonal, !verifying else { return }
+        let current = generation, selected = assistantId, reading = contentGeneration, load = UUID()
+        personalLoadId = load; personalLoading = true
+        defer { if personalLoadId == load { personalLoading = false; personalLoadId = nil } }
+        do {
+            try await ensureVerified()
+            guard generation == current, area == .personal, assistantId == selected, contentGeneration == reading, personalLoadId == load,
+                  let lease = await workspace.lease() else { return }
+            let value = try await workspace.read("/link/api/personal", body: true)
+            guard generation == current, area == .personal, assistantId == selected, contentGeneration == reading, personalLoadId == load else { return }
+            try lease.requireValid(); personalOverview = value
+            let plugins = try await workspace.read("/link/api/plugins", body: true)
+            guard generation == current, area == .personal, assistantId == selected, contentGeneration == reading, personalLoadId == load else { return }
+            try lease.requireValid(); personalPlugins = plugins["plugins"].array.filter { $0["enabled"].bool }; personalPluginsLoaded = true
+            if let selected {
+                let value = try await workspace.read("/link/api/personal/assistants/" + selected, body: true)
+                guard generation == current, area == .personal, assistantId == selected, contentGeneration == reading, personalLoadId == load else { return }
+                try lease.requireValid(); assistantDetail = value
+            }
+        } catch { if generation == current, area == .personal, assistantId == selected, contentGeneration == reading, personalLoadId == load { report(error) } }
+    }
     func openSession(_ id: String) async {
         guard let workspace else { return }
         let current = generation
@@ -240,7 +300,12 @@ import UIKit
             let path = sessionId.map { "/link/api/tasks/" + $0 + "/prompt" } ?? "/link/api/tasks"
             var fields: [String: NativeJSON] = ["prompt": .string(text)]
             if queue { fields["queue"] = .bool(true) }
-            else if sessionId == nil { fields["mode"] = .string("agent") }
+            else if sessionId == nil {
+                if area == .personal {
+                    guard let assistantId else { throw NativeFailure.invalidRecord }
+                    fields["assistantId"] = .string(assistantId)
+                } else { fields["mode"] = .string("agent") }
+            }
             return await submit(try NativePendingWrite(method: .post, path: path, fields: fields))
         } catch { report(error); return false }
     }
@@ -249,14 +314,16 @@ import UIKit
         let current = generation
         do { try await ensureVerified() } catch { report(error); return false }
         guard current == generation else { return false }
+        let selected = sessionId, reading = contentGeneration, owner = assistantId, surface = area
         busy = true; defer { busy = false }
         do {
             if !pending.contains(where: { $0.requestId == request.requestId }) { pending.append(request) }
             let value = try await workspace.submit(request)
             guard generation == current else { return true }
             pending.removeAll { $0.requestId == request.requestId }
-            if let id = value["sessionId"].string { sessionId = id }
+            if sessionId == selected, contentGeneration == reading, assistantId == owner, area == surface, let id = value["sessionId"].string { sessionId = id }
             await refresh()
+            if request.path.hasPrefix("/link/api/personal") { await refreshPersonal() }
             return true
         } catch {
             guard generation == current else { return (error as? NativeFailure) == .resultUnknown }
@@ -317,11 +384,30 @@ import UIKit
             return true
         } catch { report(error); return false }
     }
+    func cancelPreview() { previewJob = nil; previewing = false; previewProgress = nil }
+    func previewFailed(_ failure: Error) {
+        guard !Task.isCancelled, !(failure is CancellationError) else { return }
+        if [.expired, .forbidden, .contextChanged].contains(failure as? NativeFailure) { report(failure) }
+        else { error = "此文件暂不能在手机预览。文本与 PNG/JPEG 可用；PDF、Office 和网页格式尚未完成 iOS 预览验证。" }
+    }
     func preview(reference: String, root: String?) async throws -> PreviewItem {
         guard !previewing, let workspace, let sessionId else { throw NativeFailure.unavailable }
-        previewing = true; defer { previewing = false }
-        try await ensureVerified()
-        return try await PreviewFiles.load(reference: reference, root: root, session: sessionId, workspace: workspace)
+        let job = UUID(), current = generation, reading = contentGeneration
+        previewJob = job; previewing = true; previewProgress = PhonePreviewProgress(completed: 0, total: 0)
+        defer { if previewJob == job { cancelPreview() } }
+        try await ensureVerified(); try Task.checkCancellation()
+        guard generation == current, contentGeneration == reading, previewJob == job else { throw NativeFailure.contextChanged }
+        let item = try await PreviewFiles.load(reference: reference, root: root, session: sessionId, workspace: workspace) { [weak self] done, total in
+            Task { @MainActor [weak self] in
+                guard let self, self.generation == current, self.contentGeneration == reading, self.previewJob == job else { return }
+                self.previewProgress = PhonePreviewProgress(completed: done, total: total)
+            }
+        }
+        do {
+            try Task.checkCancellation(); try item.lease.requireValid()
+            guard generation == current, contentGeneration == reading, previewJob == job else { throw NativeFailure.contextChanged }
+            return item
+        } catch { PreviewFiles.discard(item); throw error }
     }
     private func startEvents() {
         eventTask?.cancel()
@@ -529,7 +615,8 @@ import UIKit
         error = (failure as? NativeFailure)?.errorDescription ?? "暂时无法完成，请稍后重试。"
     }
     private func clearPrivateContent() {
-        detail = .null; pending = []; contentGeneration = UUID(); PreviewFiles.clear()
+        cancelPreview()
+        detail = .null; personalOverview = .null; assistantDetail = .null; personalPlugins = []; personalPluginsLoaded = false; personalLoadId = nil; personalLoading = false; pending = []; contentGeneration = UUID(); PreviewFiles.clear()
     }
     private func adoptSnapshot(_ value: NativeJSON) {
         let keys = ["status", "scopes", "dataScope"]

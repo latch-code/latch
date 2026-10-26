@@ -775,7 +775,14 @@ describe('PresenceService', () => {
       const record = await presence.request(request(action, { n: action }))
       await record.settled
     }
-    for (const action of ['device.enroll', 'device.grant', 'policy.change', 'provider.set-key', 'provider.confirm-origin'] as const) {
+    for (const action of [
+      'device.enroll',
+      'device.grant',
+      'policy.change',
+      'provider.set-key',
+      'provider.confirm-origin',
+      'plugin.package.apply',
+    ] as const) {
       await expect(presence.request({ ...request(action), revealBlocking: true }), action).rejects.toMatchObject({
         status: 409,
         code: 'presence-blocked',
@@ -789,7 +796,7 @@ describe('PresenceService', () => {
       .catch((error: unknown) => error)
     expect(anonymous).toMatchObject({ code: 'presence-blocked', details: { action: 'device.enroll' } })
     expect((anonymous as AppError).details).not.toHaveProperty('blockingTasks')
-    expect(Object.values(PRESENCE_ACTIONS).filter(action => action.duringFullAccess === 'refuse')).toHaveLength(5)
+    expect(Object.values(PRESENCE_ACTIONS).filter(action => action.duringFullAccess === 'refuse')).toHaveLength(6)
     running = []
     await expect(presence.request(request('policy.change'))).resolves.toBeTruthy()
     expect(backend.requests.map(item => item.preview.action)).toEqual([

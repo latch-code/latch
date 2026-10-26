@@ -144,7 +144,7 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
           const shell: { files: object } = Reflect.get(globalThis, 'latchShell')
           return { files: Object.keys(shell.files), frozen: Object.isFrozen(shell.files) }
         }),
-      ).toEqual({ files: ['inspect', 'known', 'reveal', 'quickLook', 'open'], frozen: true })
+      ).toEqual({ files: ['protocolVersion', 'inspect', 'known', 'reveal', 'quickLook', 'open'], frozen: true })
 
       await page.getByRole('heading', { name: '连接到 Latch' }).waitFor()
       await page.getByRole('textbox', { name: '设备名称' }).fill('桌面端文件')
@@ -304,7 +304,12 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
       await menu.getByText('正在检查…').waitFor()
       expect(await items()).toEqual(['复制路径'])
       await captureThemes(page, 'native-desktop-file-menu-checking')
-      await menu.getByRole('menuitem', { name: '用默认应用打开', exact: true }).waitFor({ timeout: SLOW_MS + 5_000 })
+      try {
+        await menu.getByRole('menuitem', { name: '用默认应用打开', exact: true }).waitFor({ timeout: SLOW_MS + 5_000 })
+      } catch (cause) {
+        await page.screenshot({ path: 'test-results/native-file-check-failure.png', animations: 'disabled' })
+        throw cause
+      }
       expect(await menu.getByText('正在检查…').count()).toBe(0)
       await close()
 
@@ -417,6 +422,28 @@ describe.skipIf(process.env.HARNESS_ELECTRON_E2E !== '1' || process.platform !==
       expect(final.external).toEqual([])
       expect(final.opened).toEqual([deck])
       expect(final.shown).toEqual([deck])
+
+      // A saved project can use real workspace handles before it has any sessions.
+      const owner = await testHost.enroll({ listener: 'unix' })
+      const projectRoot = join(root, 'standalone-project')
+      await mkdir(projectRoot)
+      await writeFile(join(projectRoot, 'notes.txt'), 'Workspace preview before the first message.\n')
+      const added = await owner.addFolders({ name: '文件项目', paths: [projectRoot] })
+      expect(added.status).toBe(201)
+      await page.reload()
+      await page.locator('.app-shell[data-connection="connected"]').waitFor()
+      await page.getByRole('button', { name: '在 文件项目 中新建会话', exact: true }).click()
+      await page.getByRole('button', { name: '浏览项目文件', exact: true }).click()
+      const tree = page.getByRole('region', { name: '项目文件', exact: true })
+      await tree.getByRole('treeitem', { name: 'notes.txt', exact: true }).click()
+      const preview = page.getByRole('region', { name: '文件预览', exact: true })
+      await preview.getByText('Workspace preview before the first message.', { exact: true }).waitFor()
+      await preview.getByRole('button', { name: '文件操作', exact: true }).click()
+      await page.getByRole('menuitem', { name: '在访达中显示', exact: true }).click()
+      await waitFor(async () => (await record()).shown.length === 2)
+      expect((await record()).shown.at(-1)).toBe(await realpath(join(projectRoot, 'notes.txt')))
+      expect((await host.bridge.listTasks()).length).toBe(1)
+      await page.screenshot({ path: 'test-results/native-workspace-files.png', animations: 'disabled' })
     } finally {
       await application?.close()
       await testHost.close()

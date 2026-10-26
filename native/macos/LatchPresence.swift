@@ -430,6 +430,7 @@ let targetSlot = slot("target", 48, keepEnd: true)
 
 /// The same table as REASON_FORMS in apps/host/src/presence-reason.ts; the shared vectors pin both.
 let reasonForms: [String: ReasonForm] = [
+  "plugin.package.apply": ReasonForm(actions: ["plugin.package.apply"], segments: [.text("应用插件「"), slot("plugin", 24), .text("」，允许其可信代码访问 Host 进程或当前页面")]),
   "agent.probe": ReasonForm(actions: ["agent.probe"], segments: [.text("测试启动 "), harnessSlot, .text("（不发送提示词）：")] + command),
   "approval.write": ReasonForm(actions: ["approval.r2"], segments: [
     .text("批准写入 "), slot("path", 40, keepEnd: true), .text("（"), whySlot, .text("）"),

@@ -9,6 +9,7 @@ import type {
   ApprovalOption,
   Message,
   ModelRef,
+  PersonalExecutionContext,
   RiskLevel,
   TaskDetail,
   TaskMode,
@@ -41,6 +42,32 @@ import {
 import { isoTime, ReasoningTimer, RunClock } from './node-kit/timing.ts'
 import { createSnapshotStore, emptyRuntimeState } from './store.ts'
 import type { RuntimeState, RuntimeStore, StoredTask } from './store.ts'
+
+function privateContext(value: PersonalExecutionContext | undefined): PersonalExecutionContext | undefined {
+  if (value === undefined) return undefined
+  if (
+    !value
+    || !/^asst_[a-f0-9-]{36}$/u.test(value.owner?.assistantId ?? '')
+    || (value.owner.groupId !== undefined && !/^grp_[a-f0-9-]{36}$/u.test(value.owner.groupId))
+    || typeof value.instructions !== 'string'
+    || value.instructions.length > 600_000
+    || !/^[a-f0-9]{64}$/u.test(value.revision)
+    || !Array.isArray(value.pluginIds)
+    || value.pluginIds.length > 64
+    || value.pluginIds.some(id => typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/u.test(id))
+    || new Set(value.pluginIds).size !== value.pluginIds.length
+    || (value.expectedRevisions !== undefined
+      && (!value.expectedRevisions
+        || typeof value.expectedRevisions !== 'object'
+        || Array.isArray(value.expectedRevisions)
+        || Object.keys(value.expectedRevisions).length > 128
+        || Object.entries(value.expectedRevisions).some(
+          ([id, hash]) => !/^[A-Za-z0-9_-]{1,64}$/u.test(id) || typeof hash !== 'string' || !/^[a-f0-9]{64}$/u.test(hash),
+        )))
+  )
+    throw new AppError(400, 'personal-context-invalid', '个人助手上下文无效。')
+  return structuredClone(value)
+}
 
 export interface RuntimeOptions {
   trackFiles?: (input: FileTrackingInput) => Promise<FileTrackingHandle>
@@ -107,6 +134,7 @@ interface PendingApproval {
   signal: AbortSignal
 }
 interface Run {
+  instructions?: string
   id: string
   sessionId: string
   mode: TaskMode
@@ -595,6 +623,7 @@ class HarnessRuntime implements Bridge {
     assertPrompt(input.prompt, input.requestId, input.attachments)
     const attachments = this.attachments(input.attachments)
     const fileRefs = input.fileRefs ?? []
+    const personal = privateContext(input.personal)
     const mode = input.mode ?? 'agent'
     if (mode !== 'chat' && mode !== 'agent') throw new AppError(400, 'invalid-mode', '对话模式必须是 chat 或 agent')
     const model = input.model === undefined ? undefined : modelRef(input.model)
@@ -607,6 +636,7 @@ class HarnessRuntime implements Bridge {
     // they existed still match.
     const payloadHash = digest({
       prompt: input.prompt,
+      ...(personal ? { personal: personal.owner, pluginIds: personal.pluginIds } : {}),
       ...(attachments.length ? { attachments } : {}),
       ...(fileRefs.length ? { fileRefs } : {}),
       mode,
@@ -626,7 +656,8 @@ class HarnessRuntime implements Bridge {
           }
           // Before modes existed, creation receipts hashed the text alone.
           const legacyAgentReceipt =
-            mode === 'agent'
+            !personal
+            && mode === 'agent'
             && !attachments.length
             && !fileRefs.length
             && !model
@@ -649,13 +680,14 @@ class HarnessRuntime implements Bridge {
           throw new AppError(400, 'file-reference-invalid', '文件引用无效。')
         }
         if (fileRefs.length && mode === 'chat') throw new AppError(415, 'file-references-unavailable', '只对话模式不能引用项目文件。')
-        run = this.allocateRun(`task-${randomUUID()}`, mode, selection, cwd, folders)
+        run = this.allocateRun(`task-${randomUUID()}`, mode, selection, cwd, folders, personal)
         this.assertAttachments(run, attachments)
         const sessionId = run.sessionId
         const at = isoTime(run.clock.startedAt)
         draft.tasks[sessionId] = {
           summary: {
             id: sessionId,
+            ...(personal ? { personal: structuredClone(personal.owner), pluginIds: [...personal.pluginIds] } : {}),
             title: (input.prompt.trim().replace(/\s+/g, ' ') || attachments[0]?.name || '附件').slice(0, 80),
             status: 'running',
             updatedAt: at,
@@ -697,6 +729,7 @@ class HarnessRuntime implements Bridge {
   async prompt(sessionId: string, prompt: string, requestId: string, options: PromptOptions = {}): Promise<void> {
     await this.ready()
     assertPrompt(prompt, requestId, options.attachments)
+    const personal = privateContext(options.personal)
     const attachments = this.attachments(options.attachments)
     const fileRefs = options.fileRefs ?? []
     const model = options.model === undefined ? undefined : modelRef(options.model)
@@ -721,6 +754,11 @@ class HarnessRuntime implements Bridge {
           if (receipt.payloadHash !== payloadHash) throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同输入')
           return
         }
+        if (
+          task.summary.personal?.assistantId !== personal?.owner.assistantId
+          || task.summary.personal?.groupId !== personal?.owner.groupId
+        )
+          throw new AppError(409, 'personal-context-required', '请通过原个人助手继续这个会话。')
         if (!allowed || recorded === undefined) throw workspaceChanged()
         if (this.runs.has(sessionId) || task.summary.status === 'running' || task.summary.status === 'waiting-approval') {
           throw new AppError(409, 'task-running', '任务仍在运行，请等待完成或先取消')
@@ -730,7 +768,7 @@ class HarnessRuntime implements Bridge {
           : task.summary.providerId
             ? { providerId: task.summary.providerId, model: task.summary.model, source: 'session', persist: true }
             : { ...this.defaultSelection(), persist: false }
-        run = this.allocateRun(sessionId, task.summary.mode ?? 'agent', selection, recorded, foldersOf(task.summary, recorded))
+        run = this.allocateRun(sessionId, task.summary.mode ?? 'agent', selection, recorded, foldersOf(task.summary, recorded), personal)
         let context: string
         try {
           context = fileMentionContext(prompt, fileRefs, foldersOf(task.summary, recorded))
@@ -752,6 +790,7 @@ class HarnessRuntime implements Bridge {
           createdAt: at,
           ...(attachments.length ? { attachments } : {}),
         })
+        if (personal) task.summary.pluginIds = [...personal.pluginIds]
         task.summary.status = 'running'
         task.summary.runId = run.id
         delete task.summary.runOutcome
@@ -785,10 +824,22 @@ class HarnessRuntime implements Bridge {
     this.live.delete(sessionId)
   }
 
-  private allocateRun(sessionId: string, mode: TaskMode, selection: Selection, cwd: string, folders: ProjectFolder[]): Run {
+  private allocateRun(
+    sessionId: string,
+    mode: TaskMode,
+    selection: Selection,
+    cwd: string,
+    folders: ProjectFolder[],
+    personal?: PersonalExecutionContext,
+  ): Run {
     if (this.closed) throw new AppError(503, 'runtime-closed', '运行节点已关闭')
     // Chat runs never use tools, so they must not pin tool plugins either.
-    const lease = this.options.registry.acquire(selection.providerId, { tools: mode === 'agent' })
+    const lease = this.options.registry.acquire(selection.providerId, {
+      tools: mode === 'agent',
+      ...(personal
+        ? { pluginIds: personal.pluginIds, ...(personal.expectedRevisions ? { expectedRevisions: personal.expectedRevisions } : {}) }
+        : {}),
+    })
     const model = selection.model ?? lease.provider.model
     const available = lease.provider.models?.length ? lease.provider.models : [lease.provider.model]
     if (!available.includes(model)) {
@@ -809,6 +860,7 @@ class HarnessRuntime implements Bridge {
       model,
       providerId: selection.providerId,
       userMessageId: randomUUID(),
+      ...(personal ? { instructions: personal.instructions } : {}),
       clock,
       cwd,
       folders,
@@ -1154,6 +1206,7 @@ class HarnessRuntime implements Bridge {
           }),
         )
         if (task.skillContext) messages.unshift({ role: 'system', content: task.skillContext })
+        if (run.instructions) messages.unshift({ role: 'system', content: run.instructions })
         const seen = new Set(messages.flatMap(message => message.toolCalls?.map(call => call.id) ?? []))
         const calls: ToolCall[] = []
         let finished = false

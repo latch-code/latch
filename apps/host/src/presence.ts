@@ -49,6 +49,7 @@ export const PRESENCE_ACTIONS: Readonly<
     { title: string; requireBiometric: boolean; duringFullAccess: 'refuse' | 'proceed'; target?: (target: string) => string }
   >
 > = {
+  'plugin.package.apply': { title: '应用自定义插件', requireBiometric: true, duringFullAccess: 'refuse' },
   'device.enroll': { title: '允许新设备连接', requireBiometric: true, duringFullAccess: 'refuse' },
   'device.enroll-native': { title: '配对原生设备', requireBiometric: true, duringFullAccess: 'proceed' },
   'agent.probe': { title: '测试启动 Agent', requireBiometric: true, duringFullAccess: 'proceed' },

@@ -27,10 +27,19 @@ export async function searchFiles(
   query: string,
   limit: number,
   cancelled: () => boolean,
+  check: () => void = () => {},
 ) {
+  const checked = async <T>(operation: Promise<T>): Promise<T> => {
+    const result = await operation
+    check()
+    return result
+  }
+  check()
   const files: FileSearchHit[] = []
   const needle = query.trim().toLocaleLowerCase()
-  const canonical = await Promise.all(roots.map(async root => ({ id: root.id, path: await realpath(root.path).catch(() => undefined) })))
+  const canonical = await Promise.all(
+    roots.map(async root => ({ id: root.id, path: await checked(realpath(root.path).catch(() => undefined)) })),
+  )
   const queue = canonical.flatMap(root => (root.path ? [{ root: { id: root.id, path: root.path }, relative: '', depth: 0 }] : []))
   const deadline = Date.now() + 2000
   let visited = 0
@@ -38,15 +47,22 @@ export async function searchFiles(
   while (queue.length && !cancelled()) {
     const entry = queue.shift()!
     const path = join(entry.root.path, entry.relative)
-    const real = await realpath(path).catch(() => undefined)
-    if (real === undefined || !isInsidePath(real, entry.root.path) || (await guard.contains(real))) continue
+    const real = await checked(realpath(path).catch(() => undefined))
+    if (real === undefined || !isInsidePath(real, entry.root.path) || (await checked(guard.contains(real)))) continue
     let directory: Awaited<ReturnType<typeof opendir>>
     try {
       directory = await opendir(real)
     } catch {
       continue
     }
+    try {
+      check()
+    } catch (cause) {
+      await directory.close()
+      throw cause
+    }
     for await (const item of directory) {
+      check()
       if (++visited > 50_000 || Date.now() > deadline || cancelled()) {
         truncated = true
         break
@@ -58,8 +74,8 @@ export async function searchFiles(
         else truncated = true
       } else if (item.isFile() && (!needle || matches(relative.toLocaleLowerCase(), needle))) {
         const full = join(real, item.name)
-        if (await guard.contains(full)) continue
-        const resolved = await resolveRecorded(entry.root.id, relative, { roots: [entry.root], protectedPaths: guard, home: '' })
+        if (await checked(guard.contains(full))) continue
+        const resolved = await checked(resolveRecorded(entry.root.id, relative, { roots: [entry.root], protectedPaths: guard, home: '' }))
         if (resolved.status !== 'ok' || resolved.file.secret) continue
         files.push({ name: resolved.file.name, path: resolved.file.relativePath, root: entry.root.id })
         if (files.length >= limit) {

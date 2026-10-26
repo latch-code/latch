@@ -4,6 +4,7 @@ import { createRuntime } from '@latch/core'
 /** The bundled independent loop; external drivers may supply an entirely different Bridge. */
 export const standardHarnessDriver: HarnessDriver = {
   id: 'standard',
+  personalContext: 'private',
   name: 'Latch 内置',
   version: '0.1.0',
   description: '独立的会话、模型调用、工具审批、取消与持久化运行时。',

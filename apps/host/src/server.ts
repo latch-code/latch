@@ -1,10 +1,13 @@
+import { PersonalStore } from './personal-store.ts'
+import { createPersonalRoutes } from './personal-routes.ts'
+import type { PersonalAssistant, PersonalAssistantSummary, PersonalExecutionContext } from '@latch/protocol'
 import { readPreviewFrame, WORKER_CSP } from './preview-frames.ts'
 import { PromptQueues, type QueueActor } from './prompt-queues.ts'
 import { Questions } from './questions.ts'
 import { createQuestionsPlugin } from './plugins/tools/questions/index.ts'
 import { forkSeed } from './forks.ts'
 import { createFileTrackingService } from './files/output-tracker.ts'
-import { checkedFileMentions, fileMentionsSchema, projectSearchSchema, searchProjectFiles } from './file-mentions.ts'
+import { checkedFileMentions, fileMentionsSchema } from './file-mentions.ts'
 import { AttachmentStore } from './attachments.ts'
 import { createAttachmentRoutes, assertAttachmentCapability } from './attachment-routes.ts'
 import type { AttachmentSelection, AttachmentCapabilities, AttachmentRef } from '@latch/protocol'
@@ -211,7 +214,10 @@ import { createWorkspacePlugin } from './plugins/tools/workspace-files/index.ts'
 import { PromptTemplateStore } from './prompt-templates.ts'
 import { createSessionRoutes } from './session-routes.ts'
 import { createFileRoutes } from './files/index.ts'
+import { FileDirectoryReader } from './files/directory.ts'
 import { FileReferenceStore } from './files/reference-store.ts'
+import { PluginAssets } from './plugin-assets.ts'
+import { createPluginPackageRoutes, installedAssetPlugin } from './plugin-package-routes.ts'
 
 export type { TlsListenerOptions } from './listeners.ts'
 
@@ -229,9 +235,11 @@ const BASE_RETRIES = 3
 const MAX_ISSUED_INVITATIONS = 256
 /** Data-directory entries holding credentials, identity, audit, settings or session data. */
 const PRIVATE_ENTRIES = [
+  'plugin-packages',
   'auth',
   'identity',
   'native',
+  'personal',
   'audit',
   'policy.json',
   'agents',
@@ -321,6 +329,10 @@ const createTaskSchema = promptSchema.extend({
   mode: z.enum(['chat', 'agent']).optional(),
   harnessId: z.string().regex(HARNESS_ID).optional(),
   workspaceId: z.string().min(1).max(64).optional(),
+  assistantId: z
+    .string()
+    .regex(/^asst_[a-f0-9-]{36}$/u)
+    .optional(),
 })
 const taskPatchSchema = z
   .object({
@@ -1317,6 +1329,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       { managed: 'core' },
     )
     await registry.enable('standard-harness')
+    const personalStore = await PersonalStore.open(dataDir, { audit, now })
+    startupCleanup.push(() => personalStore.close())
     const questions = await Questions.open({ dataDir, changed: id => refresh(id), detail: id => hub!.detail(id) })
     startupCleanup.push(() => questions.close())
     registry.register(createQuestionsPlugin(questions), { managed: 'core' })
@@ -1348,6 +1362,20 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     for (const agent of config.settings().agents)
       await installAgent(agent).catch(error => log(`Agent ${agent.id} 未加载：${errorText(error)}`))
 
+    const pluginAssets = await PluginAssets.open(dataDir, { audit })
+    startupCleanup.push(() => pluginAssets.close())
+    const assetPluginIds = new Set<string>()
+    for (const record of pluginAssets.list()) {
+      if (!record.appliedBundle) continue
+      try {
+        registry.register(installedAssetPlugin(pluginAssets, record), { revision: record.appliedRevision })
+        assetPluginIds.add(record.id)
+        if (record.enabled) await registry.enable(record.id)
+      } catch {
+        log(`自定义插件 ${record.id} 未加载，请检查本地声明与依赖。`)
+      }
+    }
+
     const harnessHub = await HarnessHub.open({ dataDir, defaultId: defaultHarnessId, log, now })
     hub = harnessHub
     const attachmentStore = await AttachmentStore.open(dataDir, { now, deferPrune: true })
@@ -1357,7 +1385,36 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       allowedRoot: async root => (await canonicalSet(usablePrimaries())).has(await canonicalPath(root.path)),
     })
     startupCleanup.push(() => fileTracking.close())
+    const directoryReader = await FileDirectoryReader.open()
     const fileRoutes = createFileRoutes({
+      directoryReader,
+      contextRevision: context => {
+        const projects = config.settings().workspaces
+        return sha256Hex(
+          JSON.stringify(
+            context.kind === 'session'
+              ? projects.map(project => [project.id, project.folders])
+              : [
+                  context.workspaceId === 'default' ? workspaceRoot : projects.find(project => project.id === context.workspaceId),
+                  hub!.info(context.harnessId),
+                ],
+          ),
+        )
+      },
+      async workspaceRoots(workspaceId, harnessId) {
+        const harness = hub!.info(harnessId)
+        if (!harness || harness.status !== 'ready') throw new AppError(409, 'file-harness-unavailable', '当前 Agent 不可用，请重新选择')
+        if (workspaceId === 'default') {
+          if ((await canonicalPath(workspaceRoot).catch(() => undefined)) !== canonicalWorkspace) return 'removed'
+          return [{ id: 'default', path: workspaceRoot }]
+        }
+        const record = savedProject(workspaceId)
+        if (!record) return undefined
+        await assertWorkspaceUsable(record)
+        return harness.projectFolders?.access === 'all'
+          ? record.folders.map(folder => ({ id: folder.id, path: folder.path }))
+          : [{ id: 'default', path: record.folders[0].path }]
+      },
       protectedPaths: guardedPaths,
       home,
       now,
@@ -1386,6 +1443,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (!caller.device || devices.get(caller.device.id)?.dataScope !== caller.device.dataScope)
           throw new AppError(403, 'file-scope', '这台设备的数据范围已变化，请重新打开文件')
       },
+      sessionAccess: (caller, id) => checkPersonalSession(caller as Caller, id),
       sessionDetail: id => harnessHub.detail(id),
       referencePaths: async (id, roots) => fileReferences.references(id, await harnessHub.detail(id), roots, home),
       actorOf: caller => actorOf(caller as Caller),
@@ -1497,8 +1555,16 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         refresh()
       },
       authorize: requireScope,
-      recheck,
+      recheck: (caller, scope) => {
+        recheck(caller, scope)
+        if (caller.device && devices.get(caller.device.id)?.dataScope !== caller.device.dataScope)
+          throw new AppError(403, 'personal-scope-required', '设备的数据范围已改变，请重新同步。')
+      },
       checkRemove: assertSessionAccess,
+      visible: personalVisible,
+      checkRead: async (caller, id, write) => {
+        checkPersonalSession(caller, id, write)
+      },
     })
     startupCleanup.push(() => harnessHub.close())
     const requiredHarness = options.harnessId ?? STANDARD
@@ -1646,6 +1712,84 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         throw new AppError(403, 'native-verification-required', '请先在手机上完成身份验证')
       if (scope && !current.scopes.includes(scope)) throw scopeRequired(scope)
     }
+
+    function personalAccess(caller: Caller, write = false) {
+      requireScope(caller, write ? 'run' : 'view')
+      const authorize = () => {
+        recheck(caller, write ? 'run' : 'view')
+        if (devices.get(caller.device!.id)?.dataScope !== 'all')
+          throw new AppError(403, 'personal-scope-required', '个人助手含有私有记忆，请先在电脑上允许这台设备使用个人助手。')
+      }
+      authorize()
+      return { actor: { ...actorOf(caller), deviceId: caller.device.id }, authorize }
+    }
+    function personalSummary(assistant: PersonalAssistant, tasks: TaskSummary[]): PersonalAssistantSummary {
+      const harness = hub!.info(assistant.harnessId)
+      const driver = registry.harnesses().find(entry => entry.id === assistant.harnessId)
+      const enabled = new Set(
+        registry
+          .list()
+          .filter(plugin => plugin.enabled)
+          .map(plugin => plugin.id),
+      )
+      const selection = assistant.model ?? defaultModelRef()
+      const unavailableReason =
+        !harness || harness.status !== 'ready'
+          ? '这个 Harness 暂时不可用，请检查电脑上的配置。'
+          : driver?.personalContext !== 'private'
+            ? '这个 Harness 尚未提供私有上下文接口，暂不能用于个人助手。'
+            : assistant.pluginIds.some(id => !enabled.has(id))
+              ? '选择的插件已停用或移除，请更新个人助手。'
+              : harness.models === 'host' && (!selection || !modelAvailable(selection))
+                ? '选择的模型服务暂不可用，请在电脑上检查模型配置。'
+                : harness.models !== 'host' && assistant.model
+                  ? '这个执行方式自行管理模型，请移除指定的模型服务。'
+                  : undefined
+      return {
+        ...assistant,
+        available: unavailableReason === undefined,
+        ...(unavailableReason ? { unavailableReason } : {}),
+        memoryCount: personalStore.memories(assistant.id).length,
+        sessionCount: tasks.filter(task => task.personal?.assistantId === assistant.id && !task.personal.groupId).length,
+        canSchedule: false,
+      }
+    }
+    function personalContext(id: string): PersonalExecutionContext {
+      const assistant = personalStore.assistant(id)
+      const summary = personalSummary(assistant, [])
+      if (!summary.available) throw new AppError(409, 'personal-unavailable', summary.unavailableReason!)
+      const memories = personalStore.memories(id)
+      return {
+        owner: { assistantId: id },
+        pluginIds: [...assistant.pluginIds],
+        revision: personalStore.definitionHash(id),
+        instructions: [
+          assistant.role,
+          ...(memories.length ? ['用户明确维护的本助手私有记忆：', ...memories.map(item => item.content)] : []),
+        ]
+          .filter(Boolean)
+          .join('\n\n'),
+      }
+    }
+    function personalVisible(caller: Caller, summary: TaskSummary): boolean {
+      return !summary.personal || (!!caller.device && devices.get(caller.device.id)?.dataScope === 'all')
+    }
+    function checkPersonalSession(caller: Caller, id: string, write = false): void {
+      recheck(caller)
+      if (hub!.personalOf(id)) personalAccess(caller, write)
+    }
+    const personalRoutes = createPersonalRoutes<Caller>({
+      store: personalStore,
+      authorize: personalAccess,
+      summary: personalSummary,
+      plugins: () =>
+        registry
+          .list()
+          .filter(plugin => plugin.enabled)
+          .map(({ id, name, description, capabilities }) => ({ id, name, description, capabilities })),
+      sessions: () => hub!.listTasks(),
+      changed: () => refresh(),
+    })
 
     let projectChanges = Promise.resolve()
     /** A start cannot enter a project between a removal's in-use check and its committed settings write. */
@@ -1848,7 +1992,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
       return registry.list().map(plugin => {
         const sessions = pluginHarnesses(plugin.id).reduce((sum, id) => sum + (running.get(id) ?? 0), 0)
-        return sessions ? { ...plugin, activeRuns: plugin.activeRuns + sessions } : plugin
+        return { ...plugin, activeRuns: plugin.activeRuns + sessions, ...(pluginAssets.has(plugin.id) ? { editable: true as const } : {}) }
       })
     }
 
@@ -2469,6 +2613,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
 
     async function setPluginEnabled(caller: Caller, id: string, enabled: boolean): Promise<void> {
+      if (pluginAssets.has(id)) throw new AppError(409, 'plugin-package-settings', '请在「自定义插件」中启停此插件，以保留修改回执。')
       const info = pluginInfo(id)
       if (!info) throw new AppError(404, 'plugin-not-found', '找不到该插件')
       if (info.managed === 'core') throw new AppError(409, 'plugin-locked', '内置插件不能停用')
@@ -2544,6 +2689,67 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         }
       })
     }
+
+    const pluginPackageRoutes = createPluginPackageRoutes<Caller>({
+      assets: pluginAssets,
+      registry,
+      installedIds: assetPluginIds,
+      authorize(caller) {
+        requireScope(caller, 'admin')
+        requireDesktop(caller)
+        limits.classC.take(caller.device.id)
+        const authorize = () => {
+          recheck(caller, 'admin')
+          if (devices.get(caller.device.id)?.dataScope !== 'all')
+            throw new AppError(403, 'plugin-package-scope', '自定义插件只能由这台电脑上拥有完整数据范围的管理设备编辑。')
+        }
+        authorize()
+        return { actor: { ...actorOf(caller), deviceId: caller.device.id }, authorize }
+      },
+      async confirm(req, caller, input) {
+        await confirm(
+          req,
+          caller,
+          'plugin.package.apply',
+          { id: input.id, revision: input.revision, executionHash: input.executionHash },
+          { form: 'plugin.package.apply', slots: { plugin: input.name } },
+          [
+            { label: '插件', value: input.name },
+            { label: 'Host 模块', value: String(input.hostModules) },
+            { label: 'React 面板', value: String(input.clientPanels) },
+            { label: '可执行内容摘要', value: input.executionHash },
+          ],
+          ['插件是可信本机代码，可访问 Host 进程的数据；客户端模块具有当前页面权限。'],
+        )
+      },
+      serial(actor, operation) {
+        const pending = changes.then(() => {
+          actor.authorize()
+          return operation()
+        })
+        changes = pending.then(
+          () => {},
+          () => {},
+        )
+        return pending
+      },
+      async unmount(id) {
+        try {
+          await unmountPlugin(id)
+        } catch (cause) {
+          await mountPlugin(id)
+          if (cause instanceof AppError && cause.code === 'harness-busy')
+            throw new AppError(409, 'plugin-in-use', '有会话正在使用此插件，请先停止这些会话，再应用、停用或删除。')
+          throw cause
+        }
+      },
+      mount: mountPlugin,
+      changed: () => refresh(),
+      unavailableReason: id =>
+        pluginHarnesses(id).some(harnessId => hub!.info(harnessId)?.status !== 'ready')
+          ? '此插件有 Harness 未能启动，请检查模块声明与本地依赖。'
+          : undefined,
+    })
 
     /** The start directory and the other projects' primary folders: a new primary folder may equal none of them. */
     function primaries(exceptId?: string): ProjectPrimary[] {
@@ -3051,9 +3257,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           search: true,
           sessionBatch: true,
           promptTemplates: true,
+          pluginPackages: true,
           usage: true,
           fileSearch: true,
+          ...(directoryReader.available ? { fileTree: true as const } : {}),
           filePreview: true,
+          personal: true,
         },
         harnesses: hub!.drivers(),
         providers: usableProviders().map(provider => summarizeProvider(provider, providerKindOf(provider.id))),
@@ -3104,6 +3313,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const source = hub!.sourceOf(detail.summary.harnessId ?? '')
       return {
         ...detail,
+        messages: detail.summary.personal
+          ? detail.messages.map(message => {
+              const requestId =
+                message.role === 'user' && message.requestId ? personalStore.clientRequestIdFor(message.requestId) : undefined
+              return requestId ? { ...message, requestId } : message
+            })
+          : detail.messages,
         summary: questionSummary(detail.summary),
         queue: promptQueues.view(sessionId),
         questions: questions.view(sessionId),
@@ -3239,6 +3455,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (!found) throw settled(approvalId, caller)
       const source = hub!.sourceOf(found.harnessId)
       const session = (await hub!.listTasks()).find(task => task.id === found.approval.sessionId)
+      if (session?.personal && (input.decision === 'allow' || input.note !== undefined)) personalAccess(caller)
       const approval = await decorate(found.approval, source, session)
       const option = input.optionId ? approval.options?.find(item => item.id === input.optionId) : undefined
       if (input.optionId && !option) {
@@ -3345,7 +3562,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       )
       try {
         recheck(caller, needed)
-        if (input.decision === 'allow') assertSessionCeiling(caller, level)
+        if (input.decision === 'allow') {
+          assertSessionCeiling(caller, level)
+          if (session?.personal) personalAccess(caller)
+        }
       } catch (error) {
         auditFailed(intent, caller)
         throw error
@@ -3485,6 +3705,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         streams.delete(res)
         return
       }
+      if (event.type === 'task-state' && event.detail.summary.personal && devices.get(stream.deviceId)?.dataScope !== 'all') return
       // A connection can join while an older batch awaits an external Bridge.
       // Equal revisions are valid for different events in the same batch.
       if (event.revision < stream.lastSentRevision) return
@@ -4323,6 +4544,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     async function assertSessionAccess(caller: DeviceCaller, sessionId: string): Promise<'L1' | 'L3'> {
       if (isNativeListener(caller.connection.listener) && nativeVerifiedUntil(caller.nativeOpening) <= now())
         throw new AppError(403, 'native-verification-required', '请先在手机上完成身份验证')
+      await checkPersonalSession(caller, sessionId, true)
       const level = hub!.levelOf(await hub!.harnessOf(sessionId))
       if (isNativeListener(caller.connection.listener) && nativeVerifiedUntil(caller.nativeOpening) <= now())
         throw new AppError(403, 'native-verification-required', '请先在手机上完成身份验证')
@@ -4349,16 +4571,56 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     async function createTask(req: IncomingMessage, res: ServerResponse, caller: Caller): Promise<void> {
       requireScope(caller, 'run')
-      const input = createTaskSchema.parse(await jsonBody(req, TASK_BODY_LIMIT))
+      let input = createTaskSchema.parse(await jsonBody(req, TASK_BODY_LIMIT))
       if (!input.prompt && !input.forkOf && !input.attachmentIds?.length)
         throw new AppError(400, 'invalid-prompt', '请输入任务内容或添加附件。')
       await projectOperation(caller, 'run', async () => {
         recheck(caller, 'run')
+        let personal: PersonalExecutionContext | undefined
+        let personalRevision: string | undefined
+        if (input.assistantId) {
+          const actor = personalAccess(caller, true)
+          if (
+            input.forkOf
+            || input.workspaceId !== undefined
+            || input.harnessId !== undefined
+            || input.mode !== undefined
+            || input.model !== undefined
+          )
+            throw new AppError(400, 'personal-selection-fixed', '个人助手使用已保存的 Harness、模型和插件，请在助手设置中修改。')
+          const binding = (
+            await personalStore.beginSession(
+              input.assistantId,
+              input.requestId,
+              { prompt: input.prompt, attachmentIds: input.attachmentIds ?? [], fileRefs: input.fileRefs ?? [] },
+              actor,
+            )
+          ).value
+          // A stored reservation keeps the original driver even if the profile is edited while the result is unknown.
+          const known = (await hub!.listTasks()).filter(task => task.personal?.assistantId === input.assistantId)
+          for (const task of known) {
+            const detail = await hub!.detail(task.id)
+            actor.authorize()
+            if (detail.messages.some(message => message.role === 'user' && message.requestId === binding.requestId)) {
+              await hub!.recordPersonal(task.id, task.personal!)
+              actor.authorize()
+              json(res, { sessionId: task.id }, 201)
+              return
+            }
+          }
+          personal = personalContext(binding.assistantId)
+          if (personal.revision !== binding.definitionHash)
+            throw new AppError(409, 'personal-definition-changed', '助手设置或记忆已改变，原请求尚未确认。请先同步已有会话。')
+          personalRevision = binding.definitionHash
+          input = { ...input, harnessId: binding.harnessId, mode: binding.mode, ...(binding.model ? { model: binding.model } : {}) }
+        }
         const fork = input.forkOf
           ? await (async () => {
               requireScope(caller, 'view')
+              await checkPersonalSession(caller, input.forkOf!.taskId)
               const detail = await hub!.detail(input.forkOf!.taskId)
               recheck(caller, 'view')
+              if (detail.summary.personal) personalAccess(caller)
               return { ...forkSeed(detail, input.forkOf!.upToMessageId), source: detail.summary }
             })()
           : undefined
@@ -4449,7 +4711,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ...(fork ? { forkOf: fork.context, initialTitle: input.prompt || `从「${fork.context.title}」分叉` } : {}),
           ...(fileRefs.length ? { fileRefs } : {}),
           ...(attachments.length ? { attachments } : {}),
-          requestId: input.requestId,
+          requestId: personal ? sha256Hex(canonicalJson(['personal-session', caller.device.id, input.requestId])) : input.requestId,
+          ...(personal ? { personal } : {}),
           harnessId,
           workspaceId,
           ...(input.mode ? { mode: input.mode } : {}),
@@ -4464,9 +4727,17 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         }
         const checkStart = () => {
           recheck(caller, 'run')
+          if (personal) {
+            personalAccess(caller, true)
+            if (personalStore.definitionHash(personal.owner.assistantId) !== personalRevision)
+              throw new AppError(409, 'personal-definition-changed', '助手设置或记忆已改变，请重新开始。')
+          }
           if (fileRefs.length && devices.get(caller.device.id)?.dataScope !== 'all')
             throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
-          if (fork) recheck(caller, 'view')
+          if (fork) {
+            recheck(caller, 'view')
+            if (fork.source.personal) personalAccess(caller)
+          }
           if (hub!.levelOf(harnessId) === 'L1') assertStandardCeiling(caller, { harnessId, workspaceId })
           else assertSessionCeiling(caller, 'L3')
         }
@@ -4828,6 +5099,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const detailRevision = revision
         const detail = await decoratedDetail(id)
         recheck(caller, 'view')
+        if (detail.summary.personal) personalAccess(caller)
         traffic.response('detail', json(res, { ...detail, sync: { instanceId, revision: detailRevision } }), id)
         return true
       }
@@ -4866,6 +5138,19 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         }
         if (!input.prompt && !input.attachmentIds?.length) throw new AppError(400, 'invalid-prompt', '请输入任务内容或添加附件。')
         recheck(caller, 'run')
+        checkPersonalSession(caller, id, true)
+        const personalOwner = hub!.personalOf(id)
+        const session = personalOwner ? await hub!.summary(id) : undefined
+        const personal = personalOwner ? personalContext(personalOwner.assistantId) : undefined
+        if (
+          personal
+          && (personalOwner?.groupId
+            || personalStore.assistant(personal.owner.assistantId).harnessId !== session?.harnessId
+            || personalStore.assistant(personal.owner.assistantId).mode !== session?.mode)
+        )
+          throw new AppError(409, 'personal-harness-changed', '这个助手的 Harness 或模式已改变，请创建新会话。')
+        if (personal && input.model) throw new AppError(400, 'personal-selection-fixed', '请在个人助手设置中修改模型。')
+        if (input.queue && personal) throw new AppError(409, 'personal-queue-unavailable', '个人助手暂不支持排队，请等本轮结束后发送。')
         if (input.queue) {
           const result = await promptQueues.submit(queueActor(caller), id, input)
           json(res, result, 'queued' in result ? 202 : 200)
@@ -4900,7 +5185,20 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           assertSessionCeiling(caller, hub!.levelOf(harnessId))
           if (fileRefs.length && devices.get(caller.device.id)?.dataScope !== 'all')
             throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
+          if (personal) {
+            personalAccess(caller, true)
+            if (personalStore.definitionHash(personal.owner.assistantId) !== personal.revision)
+              throw new AppError(409, 'personal-definition-changed', '助手设置已改变，请重新发送。')
+          }
           await hub!.prompt(id, input.prompt, input.requestId, {
+            ...(personal
+              ? {
+                  personal,
+                  ...(personalStore.assistant(personal.owner.assistantId).model
+                    ? { model: personalStore.assistant(personal.owner.assistantId).model }
+                    : {}),
+                }
+              : {}),
             ...(fileRefs.length ? { fileRefs } : {}),
             ...(input.model ? { model: input.model } : {}),
             ...(attachments.length ? { attachments } : {}),
@@ -5504,25 +5802,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         json(res, { nonce: grant.nonce, expiresAt: new Date(grant.expiresAt).toISOString() })
         return true
       }
-      const searchProjectMatch = /^\/link\/api\/workspaces\/([^/]+)\/files\/search$/u.exec(path)
-      if (searchProjectMatch && method === 'POST') {
-        requireScope(caller, 'view')
-        if (caller.device.dataScope !== 'all') throw new AppError(403, 'file-scope', '此设备不能浏览项目文件。')
-        limits.files.take(caller.device.id)
-        const input = projectSearchSchema.parse(await jsonBody(req))
-        const harness = hub!.info(input.harnessId)
-        if (!harness || harness.source === 'plugin')
-          throw new AppError(415, 'file-references-unavailable', '当前 Harness 尚未接入文件引用。')
-        const project = savedProject(decodeURIComponent(searchProjectMatch[1]!))
-        if (!project) throw new AppError(404, 'workspace-unavailable', '请选择已保存的项目。')
-        await assertWorkspaceUsable(project)
-        const roots = harness.projectFolders?.access === 'all' ? project.folders : [{ id: 'default', path: project.folders[0].path }]
-        const result = await searchProjectFiles(roots, guardedPaths, input.q, input.limit, () => req.aborted || res.destroyed)
-        recheck(caller, 'view')
-        if (devices.get(caller.device.id)?.dataScope !== 'all') throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
-        json(res, result)
-        return true
-      }
       if (path === '/link/api/workspaces' && method === 'POST') {
         requireScope(caller, 'admin')
         requireDesktop(caller)
@@ -5847,14 +6126,19 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
                 modelConfigurationRequired: providerId === LEGACY_PROVIDER_ID && !effectiveProvider(LEGACY_PROVIDER_ID),
               }
             : { ready: true }
-        const tasks = (await hub!.listTasks()).map(questionSummary)
+        const tasks = (await hub!.listTasks()).filter(task => personalVisible(caller, task)).map(questionSummary)
         const snapshot: AppSnapshot = {
           instanceId,
           revision: snapshotRevision,
           device: currentDevice(caller),
           host: await hostView(),
           tasks,
-          approvals: nativeOpening ? [] : await decorateAll(hub!.approvals(), tasks),
+          approvals: nativeOpening
+            ? []
+            : await decorateAll(
+                hub!.approvals().filter(approval => tasks.some(task => task.id === approval.sessionId)),
+                tasks,
+              ),
           demo: options.demo,
           hostName: options.hostName ?? hostname(),
           harness: { id: defaultId, name: hub!.info(defaultId)?.name ?? defaultId },
@@ -5863,6 +6147,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           version: LATCH_VERSION,
           hostTime: hostTime(),
         }
+        recheck(caller, 'view')
+        snapshot.tasks = snapshot.tasks.filter(task => personalVisible(caller, task))
+        snapshot.approvals = snapshot.approvals.filter(approval => snapshot.tasks.some(task => task.id === approval.sessionId))
         traffic.response('snapshot', json(res, snapshot))
         return
       }
@@ -5872,7 +6159,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const sessionId = query.get('sessionId') ?? undefined
         if (sessionId && sessionId.length > 256) throw new AppError(400, 'invalid-session', '会话标识过长')
         if (nativeOpening && sessionId) {
-          await hub!.summary(sessionId)
+          const summary = await hub!.summary(sessionId)
+          if (summary.personal) personalAccess(caller)
           recheck(caller, 'view')
         }
         let resume: ReturnType<NativeReplay['resume']> | undefined
@@ -5932,11 +6220,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         await createTask(req, res, caller)
         return
       }
+      if (await personalRoutes.handle(req, res, caller, path, method)) return
+      const privateTaskId = /^\/link\/api\/tasks\/([^/]+)/u.exec(path)?.[1]
+      if (privateTaskId && !path.endsWith('/cancel') && hub!.personalOf(safeDecode(privateTaskId))) personalAccess(caller)
       if (await handleQueue(req, res, caller, path, method)) return
       if (await handleQuestion(req, res, caller, path, method)) return
       if (await sessionRoutes.handle(req, res, caller, path, method)) return
       if (await attachmentRoutes.handle(req, res, caller, path, method)) return
       if (await fileRoutes.handle(req, res, caller, path, method)) return
+      if (await pluginPackageRoutes.handle(req, res, caller, path, method)) return
       const clientPanel = path.match(/^\/link\/api\/ui-modules\/([^/]+)\/([a-f0-9]{64})\.mjs$/u)
       if (clientPanel && method === 'GET') {
         requireScope(caller, 'view')
@@ -5972,6 +6264,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           res.once('close', abort)
           const { summary } = await hub!.detail(sessionId)
           recheck(caller, 'view')
+          if (summary.personal && !summary.pluginIds?.includes(lease.info.pluginId))
+            throw new AppError(404, 'ui-panel-unavailable', '这个助手没有选择此插件。')
           if (lease.info.harnessIds !== undefined && !lease.info.harnessIds.includes(summary.harnessId ?? STANDARD)) {
             throw new AppError(404, 'ui-panel-unavailable', '这个扩展面板不适用于当前会话。')
           }
@@ -6329,7 +6623,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             () => agentProbes.close(),
             () => harnessHub.close(),
             () => questions.close(),
+            () => personalStore.close(),
             () => fileTracking.close(),
+            () => pluginAssets.close(),
             () => registry.close(),
             () => started.close(),
             // Agents are stopped by now; their per-session temp dirs go with the runtime dir.

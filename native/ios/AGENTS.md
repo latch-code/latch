@@ -19,3 +19,5 @@
 - 系统性验证统一由现有 Vitest 项目编排 Swift 编译、向量及本地 Host 互操作；不新增独立 JS 或 XCTest 测试入口。只用临时目录、端口0、假模型、无签名模拟器构建与夹具身份；不操作用户 Host、默认钥匙串或真实模型。
 
 机制见 docs/REMOTE.md、docs/RELAY.md、docs/STREAMING.md。真机 Secure Enclave、Face ID、App Attest 与推送签名配置由所有者人工验收，自动化结果不能代替它们。
+
+- Personal入口的职责/记忆和编辑草稿属于正文窗口，权限变化、到期或换电脑时撤下；冷缓存只保留归属ID，不缓存私有记忆。文件预览进度来自真实字节，取消关闭自有任务，晚回不能再展示。

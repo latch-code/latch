@@ -27,6 +27,20 @@ const KNOWN_LIMIT = 64
  * from the Host. Only these plain values cross to main; anything else never leaves the preload.
  */
 function fileInput(sessionId, target) {
+  if (
+    sessionId
+    && typeof sessionId === 'object'
+    && Object.keys(sessionId).length === 2
+    && typeof sessionId.workspaceId === 'string'
+    && /^[A-Za-z0-9_-]{1,64}$/.test(sessionId.workspaceId)
+    && typeof sessionId.harnessId === 'string'
+    && /^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,127}$/.test(sessionId.harnessId)
+    && target
+    && typeof target === 'object'
+    && typeof target.handle === 'string'
+    && HANDLE.test(target.handle)
+  )
+    return { workspaceId: sessionId.workspaceId, harnessId: sessionId.harnessId, handle: target.handle }
   if (typeof sessionId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}$/.test(sessionId)) return undefined
   if (typeof target === 'string') return target.length > 0 && target.length <= REFERENCE_LIMIT ? { sessionId, path: target } : undefined
   const handle = target !== null && typeof target === 'object' ? target.handle : undefined
@@ -147,6 +161,7 @@ contextBridge.exposeInMainWorld(
       },
     }),
     files: Object.freeze({
+      protocolVersion: 2,
       inspect: (sessionId, path) =>
         typeof path === 'string' ? fileCall('latch:files:inspect')(sessionId, path) : Promise.resolve(INVALID),
       known: (sessionId, paths) => {

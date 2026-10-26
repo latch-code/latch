@@ -23,7 +23,7 @@ class PanelBoundary extends Component<{ children: ReactNode; retry: () => void }
             重新加载
           </Button>
         }>
-        这个需求包的界面无法显示。其他会话仍可使用。
+        这个插件的界面无法显示。其他会话仍可使用。
       </InlineNotice>
     ) : (
       this.props.children
@@ -85,11 +85,11 @@ export function ClientPluginPanel({
             重试
           </Button>
         }>
-        无法加载这个需求包的界面，请同步后重试。
+        无法加载这个插件的界面，请同步后重试。
       </InlineNotice>
     )
   const View = current?.component
-  if (!View) return <Loading label="正在加载需求包界面…" />
+  if (!View) return <Loading label="正在加载插件界面…" />
   return (
     <PanelBoundary key={retry} retry={reload}>
       <View

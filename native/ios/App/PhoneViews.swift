@@ -8,6 +8,13 @@ struct PhoneRootView: View {
     var body: some View {
         NavigationSplitView {
             List {
+                if model.selectedHost != nil {
+                    Section {
+                        Button("个人助手", systemImage: "person.crop.circle") { Task { await model.openPersonalHome() } }
+                            .foregroundStyle(.primary)
+                        Button("项目工作", systemImage: "folder") { model.openProjects() }.foregroundStyle(.primary)
+                    }
+                }
                 if model.hosts.isEmpty {
                     ContentUnavailableView("把电脑带在身边", systemImage: "laptopcomputer", description: Text("在电脑上的 Latch 打开手机配对，扫描二维码连接。"))
                         .listRowBackground(Color.clear)
@@ -23,7 +30,7 @@ struct PhoneRootView: View {
                             Spacer()
                             if model.selectedHost?.id == host.id { Image(systemName: "checkmark").font(.footnote.weight(.semibold)) }
                         }.padding(.vertical, 3)
-                    }
+                    }.disabled(model.busy || model.verifying)
                 }
                 if model.draft != nil {
                     Button("继续未完成的登记", systemImage: "arrow.clockwise") { model.resumePairing() }.disabled(model.busy)
@@ -33,7 +40,10 @@ struct PhoneRootView: View {
             .navigationTitle("电脑")
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("设置", systemImage: "gearshape") { settings = true }.labelStyle(.iconOnly) } }
         } detail: {
-            if model.selectedHost != nil { SessionWorkspaceView() }
+            if model.selectedHost != nil {
+                if model.area == .personal && model.assistantId == nil { PersonalHomeView() }
+                else { SessionWorkspaceView() }
+            }
             else {
                 VStack(spacing: 20) {
                     Image("LatchMark").resizable().frame(width: 42, height: 42).clipShape(RoundedRectangle(cornerRadius: 10))
@@ -64,9 +74,9 @@ struct PhoneRootView: View {
     }
 }
 
-private struct SessionWorkspaceView: View {
+struct SessionWorkspaceView: View {
     @EnvironmentObject private var model: PhoneModel
-    @State private var showList = true
+    @State private var editingAssistant = false
     var body: some View {
         NavigationStack {
             Group {
@@ -74,8 +84,8 @@ private struct SessionWorkspaceView: View {
                 else {
                     List {
                         if !model.connected { Label(model.status, systemImage: "wifi.slash").foregroundStyle(.secondary) }
-                        if model.snapshot["tasks"].array.isEmpty { ContentUnavailableView("还没有会话", systemImage: "text.bubble", description: Text("开始一个新任务，或等待电脑上的会话同步。")) }
-                        ForEach(model.snapshot["tasks"].array, id: \.id) { task in
+                        if model.workspaceTasks.isEmpty { ContentUnavailableView("还没有会话", systemImage: "text.bubble", description: Text("开始一个新任务，或等待电脑上的会话同步。")) }
+                        ForEach(model.workspaceTasks, id: \.id) { task in
                             Button { if let id = task["id"].string { Task { await model.openSession(id) } } } label: {
                                 HStack(alignment: .top, spacing: 10) {
                                     Circle().fill(task["status"].string == "running" ? Color.blue : Color.secondary.opacity(0.4)).frame(width: 6, height: 6).padding(.top, 7)
@@ -91,18 +101,22 @@ private struct SessionWorkspaceView: View {
                     }.refreshable { await model.refresh() }
                 }
             }
-            .navigationTitle(model.sessionId == nil ? model.selectedHost?.name ?? "会话" : model.detail["summary"]["title"].string ?? "会话")
+            .navigationTitle(model.sessionId == nil ? (model.area == .personal ? model.assistantDetail["assistant"]["name"].string ?? "个人助手" : "项目工作") : model.detail["summary"]["title"].string ?? "会话")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     if model.sessionId != nil { Button("会话", systemImage: "chevron.left") { model.newSession() } }
+                    else if model.area == .personal { Button("个人助手", systemImage: "chevron.left") { Task { await model.openPersonalHome() } } }
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     if model.verifying { ProgressView().controlSize(.small) }
+                    if model.area == .personal { Button("助手设置", systemImage: "slider.horizontal.3") { editingAssistant = true }.labelStyle(.iconOnly).disabled(model.assistantDetail == .null) }
                     Button("新会话", systemImage: "square.and.pencil") { model.newSession() }.labelStyle(.iconOnly)
                 }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) { PromptComposer() }
+            .sheet(isPresented: $editingAssistant) { PersonalAssistantEditor(assistant: model.assistantDetail["assistant"]) }
+            .onChange(of: model.contentGeneration) { _, _ in editingAssistant = false }
         }
     }
     private func statusText(_ value: String?) -> String {
@@ -114,6 +128,8 @@ private struct SessionDetailView: View {
     @EnvironmentObject private var model: PhoneModel
     let id: String
     @State private var preview: PreviewItem?
+    @State private var previewTask: Task<Void, Never>?
+    @State private var previewRequest: UUID?
     var body: some View {
         Group {
             if model.verifiedUntil == nil {
@@ -133,19 +149,37 @@ private struct SessionDetailView: View {
                 }.refreshable { await model.refresh() }
             }
         }
+        .safeAreaInset(edge: .bottom) {
+            if let progress = model.previewProgress {
+                HStack(spacing: 12) {
+                    if progress.total > 0 { ProgressView(value: Double(progress.completed), total: Double(progress.total)).frame(width: 72).tint(.secondary) }
+                    else { ProgressView().controlSize(.small) }
+                    Text(progress.total > 0 ? "读取文件 · " + ByteCountFormatter.string(fromByteCount: Int64(progress.completed), countStyle: .file) + " / " + ByteCountFormatter.string(fromByteCount: Int64(progress.total), countStyle: .file) : "正在打开文件…").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("取消") { cancelFile() }.font(.caption).foregroundStyle(.primary)
+                }.padding(.horizontal, 20).padding(.vertical, 10).background(.bar)
+            }
+        }
         .sheet(item: $preview, onDismiss: { PreviewFiles.clear() }) { NativePreviewView(item: $0) }
         .onChange(of: model.verifiedUntil) { _, value in if value == nil { preview = nil } }
-        .onChange(of: model.contentGeneration) { _, _ in preview = nil }
+        .onChange(of: model.contentGeneration) { _, _ in preview = nil; cancelFile() }
+        .onDisappear { cancelFile(); preview = nil; PreviewFiles.clear() }
+    }
+    private func cancelFile() {
+        previewTask?.cancel(); previewTask = nil; previewRequest = nil; model.cancelPreview()
     }
     private func openFile(_ path: String, _ root: String?) {
-        let selected = id, generation = model.contentGeneration
-        Task {
+        cancelFile()
+        let selected = id, generation = model.contentGeneration, request = UUID()
+        previewRequest = request
+        previewTask = Task {
+            defer { if previewRequest == request { previewTask = nil; previewRequest = nil } }
             do {
                 let item = try await model.preview(reference: path, root: root)
-                guard model.sessionId == selected, model.contentGeneration == generation, item.lease.valid else { PreviewFiles.discard(item); return }
+                guard !Task.isCancelled, previewRequest == request, model.sessionId == selected, model.contentGeneration == generation, item.lease.valid else { PreviewFiles.discard(item); return }
                 preview = item
             }
-            catch { model.error = "此文件暂不能在手机预览。文本与 PNG/JPEG 可用；PDF、Office 和网页格式尚未完成 iOS 预览验证。" }
+            catch { if !Task.isCancelled, previewRequest == request, model.contentGeneration == generation { model.previewFailed(error) } }
         }
     }
 }
@@ -204,7 +238,7 @@ private struct PromptComposer: View {
                     let input = text
                     Task { if await model.send(text: input, queue: model.currentSummary["status"].string == "running"), text == input { text = "" } }
                 }.labelStyle(.iconOnly).buttonStyle(.borderedProminent).controlSize(.large)
-                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.canRun || model.busy || !model.pending.isEmpty)
+                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.canRun || model.busy || !model.pending.isEmpty || (model.area == .personal && ["running", "waiting-approval"].contains(model.currentSummary["status"].string ?? "")))
             }
             if !model.connected { Text(model.status).font(.caption).foregroundStyle(.secondary) }
         }.padding(.horizontal, 16).padding(.vertical, 12).background(.bar)

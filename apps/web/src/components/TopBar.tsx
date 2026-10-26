@@ -1,5 +1,5 @@
 import type { RefObject } from 'react'
-import { ChevronDown, ChevronLeft, Ellipsis, Inbox, PanelLeft, PanelRight, RefreshCw, ShieldAlert, SquarePen } from 'lucide-react'
+import { ChevronDown, ChevronLeft, Ellipsis, Folder, Inbox, PanelLeft, PanelRight, RefreshCw, ShieldAlert, SquarePen } from 'lucide-react'
 import type { HarnessInfo, TaskSummary } from '@latch/protocol'
 import { harnessName } from '../composerChoice.ts'
 import { LEVEL_LABELS } from '../core/permissions.ts'
@@ -133,6 +133,7 @@ function PhoneTopBar({
  * it is not healthy, full access, the demo model, the inspector toggle and ⋯. Phones draw their own header (above).
  */
 export function TopBar({
+  identity,
   summary,
   harness,
   project,
@@ -154,7 +155,10 @@ export function TopBar({
   menu,
   connection,
   onRefresh,
+  onFiles,
+  filesOpen,
 }: {
+  identity?: string
   summary?: TaskSummary
   harness?: Pick<HarnessInfo, 'id' | 'name' | 'source'>
   /** The basename of the session's working directory. */
@@ -187,11 +191,13 @@ export function TopBar({
   menu: MenuSection[]
   connection: ConnectionStatus
   onRefresh: () => void
+  onFiles?: () => void
+  filesOpen?: boolean
 }) {
   // The button shows only while something waits, so its count is told the value it rose from.
   const approvalsBefore = useLivePrevious(approvals)
   const title = summary ? summary.title || '未命名会话' : '新会话'
-  const source = harness ? [harnessName(harness), project].filter(Boolean).join(' · ') : undefined
+  const source = identity ?? (harness ? [harnessName(harness), project].filter(Boolean).join(' · ') : undefined)
   if (phone)
     return (
       <PhoneTopBar
@@ -252,6 +258,7 @@ export function TopBar({
         {summary && sessionPill(summary, cancelling)}
       </div>
       <div className="topbar-actions">
+        {onFiles && <IconButton label="浏览项目文件" icon={Folder} pressed={filesOpen} onClick={onFiles} />}
         <ConnectionPill connection={connection} onRefresh={onRefresh} />
         {summary && level === 'L3' && fullAccessPill}
         {demo && (

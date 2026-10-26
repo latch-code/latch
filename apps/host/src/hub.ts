@@ -112,6 +112,7 @@ function message(error: unknown): string {
 export class HarnessHub implements Bridge {
   private readonly entries = new Map<string, Entry>()
   private readonly routes = new Map<string, string>()
+  private readonly personalOwners = new Map<string, NonNullable<TaskSummary['personal']>>()
   /** Approvals seen only through `detail()`, for drivers that do not list them in `approvals()`. */
   private readonly detailApprovals = new Map<string, string>()
   private readonly listeners = new Set<(sessionId?: string) => void>()
@@ -169,6 +170,10 @@ export class HarnessHub implements Bridge {
       // close() or detach() ran while this driver was starting; it was never visible, so retire it here.
       if (this.closing || this.entries.get(driver.id) !== entry)
         throw new AppError(503, 'harness-detached', `Harness ${driver.id} 已在启动期间停用`)
+      if (driver.personalContext === 'private')
+        for (const task of await bridge.listTasks()) {
+          if (task.personal) await this.recordPersonal(task.id, task.personal)
+        }
       Object.assign(entry, { bridge, release: mount.release })
     } catch (error) {
       entry.unsubscribe?.()
@@ -371,6 +376,7 @@ export class HarnessHub implements Bridge {
     if (!this.claim(id, result.sessionId)) {
       throw new AppError(502, 'session-id-collision', `Harness ${id} 返回的会话标识已属于另一个 Harness`)
     }
+    if (input.personal) await this.recordPersonal(result.sessionId, input.personal.owner)
     // Without it the session is grouped and matched by its directory, as sessions from before projects had several folders.
     if (workspaceId)
       await this.meta
@@ -383,6 +389,27 @@ export class HarnessHub implements Bridge {
         return current.forkOf ? current : { ...current, forkOf, ...(initialTitle ? { title: initialTitle.slice(0, 120) } : {}) }
       })
     return result
+  }
+
+  /** Host private-body classification remains available even when the driver cannot list its tasks. */
+  personalOf(sessionId: string): TaskSummary['personal'] {
+    return this.personalOwners.get(sessionId) ?? this.meta.get(sessionId)?.personal
+  }
+
+  private rememberPersonal(sessionId: string, owner: NonNullable<TaskSummary['personal']>): void {
+    if (!/^asst_[a-f0-9-]{36}$/u.test(owner.assistantId) || (owner.groupId !== undefined && !/^grp_[a-f0-9-]{36}$/u.test(owner.groupId)))
+      throw new AppError(502, 'personal-owner-invalid', '执行端返回了无效的个人助手归属。')
+    const current = this.personalOf(sessionId)
+    if (current && (current.assistantId !== owner.assistantId || current.groupId !== owner.groupId))
+      throw new AppError(409, 'personal-owner-changed', '会话归属已改变。')
+    this.personalOwners.set(sessionId, structuredClone(owner))
+  }
+  /** Mark private before awaiting storage; a failed write never reclassifies a real session as ordinary. */
+  async recordPersonal(sessionId: string, owner: NonNullable<TaskSummary['personal']>): Promise<void> {
+    this.rememberPersonal(sessionId, owner)
+    const persisted = this.meta.get(sessionId)?.personal
+    if (persisted && persisted.assistantId === owner.assistantId && persisted.groupId === owner.groupId) return
+    await this.meta.update(sessionId, current => ({ ...current, personal: structuredClone(owner) }))
   }
 
   /** The names of the folders the Host made for sessions, from the session metadata. */
@@ -592,9 +619,11 @@ export class HarnessHub implements Bridge {
   }
 
   private present(harnessId: string, summary: TaskSummary): TaskSummary {
+    if (summary.personal) this.rememberPersonal(summary.id, summary.personal)
     // Only the Host makes a session's own folder: a driver's claim is dropped.
     const { pinned: _pinned, archived: _archived, level: _level, sessionFolder: _sessionFolder, forkOf: _forkOf, runId, ...rest } = summary
     const meta = this.meta.get(summary.id)
+    const personal = this.personalOf(summary.id)
     return {
       ...rest,
       // A run ID a cancel could not carry is left out, so the page sends a plain stop rather than one the Host refuses.
@@ -607,6 +636,7 @@ export class HarnessHub implements Bridge {
       ...(meta?.archived ? { archived: true } : {}),
       ...(meta?.workspaceId ? { workspaceId: meta.workspaceId } : {}),
       ...(meta?.forkOf ? { forkOf: meta.forkOf } : {}),
+      ...(personal ? { personal } : {}),
       ...(meta?.sessionFolder ? { sessionFolder: true as const } : {}),
     }
   }
@@ -643,6 +673,7 @@ export class HarnessHub implements Bridge {
       ...(statusMessage ? { statusMessage } : {}),
       modes: [...capabilities.modes],
       models: capabilities.models,
+      ...(driver.personalContext === 'private' ? { personalContext: 'private' as const } : {}),
       ...(capabilities.attachments ? { attachments: structuredClone(capabilities.attachments) } : {}),
       level: levelFor(entry.source),
       ...folderInfo(driver),

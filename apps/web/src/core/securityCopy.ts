@@ -205,6 +205,7 @@ export const PAIRING_WAITING_COPY = {
 
 /** What the request does once the local confirmation passes, for 「已在本机确认，正在…」. */
 export const CONFIRMATION_VERBS: Record<PresenceAction, string> = {
+  'plugin.package.apply': '应用插件',
   'device.enroll-native': '在 Mac 输入手机核对码并完成系统确认',
   'device.enroll': '登记设备',
   'agent.probe': '测试启动',
@@ -219,6 +220,7 @@ export const CONFIRMATION_VERBS: Record<PresenceAction, string> = {
 
 /** What a confirmation held back by a full-access session was for, in 「要等「…」结束，才能放宽安全策略。」. */
 export const BLOCKED_ACTION_TEXT: Record<PresenceAction, string> = {
+  'plugin.package.apply': '应用自定义插件',
   'device.enroll-native': '在 Mac 输入手机核对码并完成系统确认',
   'agent.probe': '测试启动 Agent',
   'device.enroll': '配对新设备',

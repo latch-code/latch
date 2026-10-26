@@ -15,8 +15,8 @@ browser 环境：不用 Node 全局变量与模块。Vite 与测试在 Node 中�
 
 - `src/core/` 只导入本目录的文件、`react` 与 `@latch/protocol`，不依赖布局组件（`.oxlintrc.json`）。
 - 只有 `useReadingPosition` 写入滚动位置（`jumpToLatest`、`reveal`）；消息与工具行带 `data-message-id`。改消息布局时检查上翻、重排、回到最新与切换会话（`test/reading-position.test.ts`）。
-- 文件预览只经授权句柄；不透明文档框与可信需求包分开，生命周期和限制见 `src/preview/AGENTS.md`。
-- 需求包面板由 `SessionPanels` / `ClientPluginPanel` 挂载并随会话清理；可信代码没有隔离，`compose` 只追加草稿（`e2e/plugin-packages.e2e.ts`）。
+- 文件预览只经授权句柄，项目预览不伪造会话；文件树懒加载。不透明文档框与可信插件分开，见 `src/preview/AGENTS.md`。
+- 插件面板由 `SessionPanels` / `ClientPluginPanel` 挂载并随会话清理；可信代码没有隔离，`compose` 只追加草稿（`e2e/plugin-packages.e2e.ts`）。
 - 安全文案只来自 `src/core/securityCopy.ts`，按错误码选择，新增安全错误码时在此补充（`test/client-security.test.ts`）。
 - `permissions.ts` 只是展示，Host 会再次检查；事件流用 `eventStream.ts`（fetch），不用 `EventSource`。
 - 「这台电脑」只看 `@latch/protocol` 的 `isLocalListener`：回环上的浏览器按远程显示；登记页没有邀请时只说明去哪里取，邀请用掉后要求新的（`e2e/enrollment.e2e.ts#asks a browser on loopback for an invitation, shows the fingerprint the Host shows, handles a denial, then connects`）。

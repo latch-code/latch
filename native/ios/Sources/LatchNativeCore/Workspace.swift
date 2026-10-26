@@ -266,19 +266,29 @@ public actor NativeWorkspace {
         guard response.status == 200 else { throw await responseFailure(response, lease: lease) }; try lease.requireValid()
         return try NativeJSON.decode(response.body)
     }
-    public func fileBytes(handle: String, etag: String, offset: Int, count: Int) async throws -> Data {
+    public func fileBytes(handle: String, etag: String, offset: Int, count: Int, progress: (@Sendable (Int, Int) -> Void)? = nil) async throws -> Data {
         guard LinkBytes.matches(handle, "[A-Za-z0-9_-]{22}"), LinkBytes.matches(etag, "\"[a-f0-9]{32}\""),
               offset >= 0, offset <= 8_388_608, count > 0, count <= 1_048_576 else { throw NativeFailure.invalidRecord }
         let (connection, current) = try transport()
         guard let lease = await verification.currentLease() else { throw NativeFailure.expired }; try lease.requireValid()
-        let response = try await connection.request(.get, path: "/link/api/files/" + handle,
-            headers: ["if-match": etag, "range": "bytes=\(offset)-\(offset + count - 1)"], maximum: max(count, 8192))
-        guard epoch == current else { throw NativeFailure.unavailable }
-        guard response.status == 206 else { throw await responseFailure(response, lease: lease) }
-        guard
-              response.headers["etag"] == etag, let range = response.headers["content-range"],
-              LinkBytes.matches(range, "bytes \(offset)-\(offset + count - 1)/[0-9]+"), response.body.count == count else { throw NativeFailure.invalidRecord }
-        try lease.requireValid(); return response.body
+        var result = Data(), total: Int?
+        while result.count < count {
+            try Task.checkCancellation(); try lease.requireValid()
+            guard epoch == current else { throw NativeFailure.unavailable }
+            let start = offset + result.count, amount = min(65_536, count - result.count)
+            let response = try await connection.request(.get, path: "/link/api/files/" + handle,
+                headers: ["if-match": etag, "range": "bytes=\(start)-\(start + amount - 1)"], maximum: max(amount, 8192))
+            try Task.checkCancellation(); try lease.requireValid()
+            guard epoch == current else { throw NativeFailure.unavailable }
+            guard response.status == 206 else { throw await responseFailure(response, lease: lease) }
+            guard response.headers["etag"] == etag, let range = response.headers["content-range"],
+                  LinkBytes.matches(range, "bytes \(start)-\(start + amount - 1)/[0-9]+"), response.body.count == amount,
+                  let size = range.split(separator: "/").last.flatMap({ Int($0) }), size >= offset + count,
+                  total == nil || total == size else { throw NativeFailure.invalidRecord }
+            total = size; result.append(response.body); progress?(result.count, count)
+        }
+        try Task.checkCancellation(); try lease.requireValid()
+        guard epoch == current else { throw NativeFailure.unavailable }; return result
     }
     public func submit(_ pending: NativePendingWrite) async throws -> NativeJSON {
         let (connection, current) = try transport()
@@ -516,6 +526,6 @@ public actor NativeWorkspace {
         }
         return .object(["instanceId": value["instanceId"], "revision": value["revision"], "approvals": .array([]),
             "device": select(value["device"], keys: ["id", "status", "scopes", "dataScope"]),
-            "tasks": .array(value["tasks"].array.map { select($0, keys: ["id", "title", "status", "updatedAt", "pinned", "archived", "pendingQuestions", "harnessId", "workspaceId", "runId", "level"]) })])
+            "tasks": .array(value["tasks"].array.map { select($0, keys: ["id", "title", "status", "updatedAt", "pinned", "archived", "pendingQuestions", "harnessId", "workspaceId", "runId", "level", "personal", "pluginIds"]) })])
     }
 }

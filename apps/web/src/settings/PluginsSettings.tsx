@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Lock, RefreshCw } from 'lucide-react'
-import type { PluginInfo } from '@latch/protocol'
+import type { PluginInfo, AppSnapshot } from '@latch/protocol'
+import type { DeviceAccess } from '../core/permissions.ts'
 import { BUILTIN_HARNESS_NAME } from '../composerChoice.ts'
 import { api, errorMessage } from '../core/api.ts'
 import { Badge, Button, Icon, InlineNotice, StatusPill, Switch } from '@latch/ui'
 import { Loading, NavRow, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
+import { PluginAssetsSettings } from './PluginAssetsSettings.tsx'
 
 type Group = 'package' | 'harness' | 'provider' | 'tool' | 'ui' | 'other'
 const groups: Array<{ id: Group; label: string }> = [
-  { id: 'package', label: '需求包' },
+  { id: 'package', label: '插件包' },
   { id: 'harness', label: 'Harness' },
   { id: 'provider', label: '模型' },
   { id: 'tool', label: '工具' },
@@ -116,7 +118,9 @@ function PluginRow({
       title={title}
       description={description}
       trailing={
-        plugin.managed === 'core' ? (
+        plugin.editable ? (
+          <span className="settings-row-value">在 Mac 上编辑</span>
+        ) : plugin.managed === 'core' ? (
           <span className="settings-row-value">始终启用</span>
         ) : (
           <>
@@ -135,8 +139,19 @@ function PluginRow({
   )
 }
 
-export function PluginsSettings({ onManage }: { onManage: (section: PluginManager) => void }) {
+export function PluginsSettings({
+  onManage,
+  snapshot,
+  access,
+  onChanged,
+}: {
+  onManage: (section: PluginManager) => void
+  snapshot: AppSnapshot
+  access: DeviceAccess
+  onChanged: () => void
+}) {
   const [plugins, setPlugins] = useState<PluginInfo[] | null>(null)
+  const [ownedIds, setOwnedIds] = useState<string[]>([])
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState('')
   const load = useCallback(async () => {
@@ -176,7 +191,7 @@ export function PluginsSettings({ onManage }: { onManage: (section: PluginManage
   const heading = (
     <SectionHeading
       title="插件"
-      description="按需要组合技能、工具、界面与 Harness。需求包在执行端加载，在这里统一启停；只启用你信任的代码。"
+      description="组合技能、工具、界面与执行方式，按你的工作习惯扩展 Latch。插件在运行 Latch 的电脑上加载，在这里统一管理。"
       action={
         <Button
           disabled={busy !== null}
@@ -200,10 +215,20 @@ export function PluginsSettings({ onManage }: { onManage: (section: PluginManage
   return (
     <>
       {heading}
+      {snapshot.catalog?.features?.pluginPackages && (
+        <PluginAssetsSettings
+          canEdit={access.local && access.admin && access.device?.dataScope === 'all'}
+          onOwned={setOwnedIds}
+          onChanged={() => {
+            void load()
+            onChanged()
+          }}
+        />
+      )}
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
       {plugins.length === 0 && <p className="settings-empty">执行端目前没有可管理的插件。</p>}
       {groups.map(group => {
-        const members = plugins.filter(plugin => groupOf(plugin) === group.id)
+        const members = plugins.filter(plugin => !ownedIds.includes(plugin.id) && groupOf(plugin) === group.id)
         if (members.length === 0) return null
         return (
           <SettingsGroup key={group.id} title={group.label} meta={`${members.length} 个插件`}>

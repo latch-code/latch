@@ -66,6 +66,7 @@ export function useHarness({ openLatest = () => true }: { openLatest?: () => boo
    * bringing a change as it happened. The page plays its one-shot indicators only for changes made in neither.
    */
   const [resyncs, setResyncs] = useState(0)
+  const [refreshHints, setRefreshHints] = useState(0)
   const guard = useRef(new ProjectionGuard())
   const latestSnapshot = useRef<AppSnapshot | null>(null)
   const latestDetail = useRef<TaskDetail | null>(null)
@@ -377,7 +378,9 @@ export function useHarness({ openLatest = () => true }: { openLatest?: () => boo
           syncConnection()
           return
         }
-        if (!Number.isSafeInteger(event.revision) || event.revision <= (latestSnapshot.current?.revision ?? -1)) return
+        if (!Number.isSafeInteger(event.revision)) return
+        if (event.type === 'refresh') setRefreshHints(value => value + 1)
+        if (event.revision <= (latestSnapshot.current?.revision ?? -1)) return
         void synchronize(event.type === 'tasks-invalidated' ? 'list' : 'all')
       } catch {
         /* Malformed events cannot replace browser state. */
@@ -461,5 +464,6 @@ export function useHarness({ openLatest = () => true }: { openLatest?: () => boo
     error,
     removed,
     resyncs,
+    refreshHints,
   }
 }

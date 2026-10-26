@@ -15,6 +15,31 @@ export interface DiffHunk {
   newLines: number
   lines: DiffLine[]
 }
+export interface SideBySideLine {
+  before?: DiffLine
+  after?: DiffLine
+}
+
+/** Pair each changed block without losing either side's order, line number or empty lines. */
+export function sideBySideLines(lines: readonly DiffLine[]): SideBySideLine[] {
+  const rows: SideBySideLine[] = []
+  let removed: DiffLine[] = [],
+    added: DiffLine[] = []
+  const flush = () => {
+    for (let index = 0; index < Math.max(removed.length, added.length); index++) rows.push({ before: removed[index], after: added[index] })
+    removed = []
+    added = []
+  }
+  for (const line of lines) {
+    if (line.kind === 'context') {
+      flush()
+      rows.push({ before: line, after: line })
+    } else if (line.kind === 'remove') removed.push(line)
+    else added.push(line)
+  }
+  flush()
+  return rows
+}
 export interface LineDiff {
   added: number
   removed: number

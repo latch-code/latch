@@ -36,7 +36,7 @@ struct PreviewItem: Identifiable {
             try? FileManager.default.removeItem(at: url)
         }
     }
-    static func load(reference: String, root: String?, session: String, workspace: NativeWorkspace) async throws -> PreviewItem {
+    static func load(reference: String, root: String?, session: String, workspace: NativeWorkspace, progress: (@Sendable (Int, Int) -> Void)? = nil) async throws -> PreviewItem {
         guard let lease = await workspace.lease() else { throw NativeFailure.expired }
         let resolved = try await workspace.resolveFile(sessionId: session, reference: reference, rootId: root)
         guard let entry = resolved["files"].array.first, entry["status"].string == "ok" else { throw NativeFailure.unsupported }
@@ -48,12 +48,13 @@ struct PreviewItem: Identifiable {
         let raster = kind == "image" && ["image/png", "image/jpeg"].contains(meta["mime"].string ?? "")
         guard text || raster, !text || size <= 524_288 else { throw NativeFailure.unsupported }
         var data = Data()
+        progress?(0, Int(size))
         while data.count < size {
-            try lease.requireValid()
-            let count = min(1_048_576, Int(size) - data.count)
-            data.append(try await workspace.fileBytes(handle: handle, etag: etag, offset: data.count, count: count))
+            try Task.checkCancellation(); try lease.requireValid()
+            let offset = data.count, total = Int(size), count = min(1_048_576, total - offset)
+            data.append(try await workspace.fileBytes(handle: handle, etag: etag, offset: offset, count: count) { done, _ in progress?(offset + done, total) })
         }
-        try lease.requireValid()
+        try Task.checkCancellation(); try lease.requireValid()
         if text {
             guard let value = String(data: data, encoding: .utf8) else { throw NativeFailure.unsupported }
             return PreviewItem(name: name, text: value, url: nil, lease: lease)

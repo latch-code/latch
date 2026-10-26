@@ -1,18 +1,18 @@
 # @latch/host
 
-Host：HTTP/SSE、设备与本机确认、策略、审计、出站、路径、HarnessHub、模型服务与插件。不负责界面或 ACP Driver。
+Host：HTTP/SSE、设备、本机确认、策略、审计、出站、路径、HarnessHub 与插件。
 
 | 路径 | 职责 |
 | --- | --- |
-| `src/server.ts`、`listeners.ts`、`access.ts`、`http-util.ts`、`preview-frames.ts`、`traffic.ts`、`not-found.ts` | HTTP API、SSE；监听入口与 `ListenerContext`；凭据、Cookie 与限速；请求体与 CSP；流量计数；404 页 |
+| `src/server.ts`、`listeners.ts`、`access.ts`、`http-util.ts`、`preview-frames.ts`、`traffic.ts`、`not-found.ts` | HTTP/SSE 入口、认证、限速、CSP、流量与 404 |
 | `src/native.ts`、`native-identity.ts`、`native-settings.ts`、`native-replay.ts`、`native-network*.ts`、`relay/` | 原生连接、发现与墓碑 |
 | `src/auth.ts`、`presence*.ts`、`launch-trust.ts`、`agent-probes.ts`、`audit.ts`、`policy.ts`、`egress.ts`、`risk.ts`、`paths.ts` | 设备与登记；本机确认与理由；审计；`policy.json`；出站策略；风险分级；路径与 `latchCodeRoot()` |
-| `src/host-state.ts`、`crypto.ts`、`identity.ts`、`hub.ts`、`session-meta.ts`、`prompt-queues.ts`、`questions.ts`、`config.ts`、`providers.ts` | `host.json` 与 `host.lock`；base32 与 P-256；Host 身份；`HarnessHub`；会话元数据、排队与问答回执；配置、模型服务与本地需求包（`plugin-packages.ts`） |
+| `src/host-state.ts`、`crypto.ts`、`identity.ts`、`hub.ts`、`session-meta.ts`、`prompt-queues.ts`、`questions.ts`、`personal-*.ts`、`config.ts`、`providers.ts` | Host 状态与锁、加密、会话路由及回执、个人助手、配置与插件（`plugin-packages.ts`） |
 | `src/plugins/<种类>/<id>/` | 内置插件：`providers/{openai-compatible,anthropic,demo}`（共用 `http.ts`）、`tools/{workspace-files,safe-tools}`、`standard` |
 | `scripts/` | 启停、CLI、桌面启动与构建；`build-files.ts` 构建只读目录组件 |
 | `test/` | Vitest；Host 夹具在 `test/helpers/host.ts` |
 
-环境 node；依赖见 `package.json`。
+环境 node。
 
 不变量：
 
@@ -24,9 +24,10 @@ Host：HTTP/SSE、设备与本机确认、策略、审计、出站、路径、Ha
 - 程序目录由 `latchCodeRoot()` 定位仓库根，不随进程的项目目录变化；规则与离线项目校验的启动上下文见 [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md#路径与项目目录)。
 - 项目变更与会话启动串行，但不阻塞设备撤销和策略收紧；主文件夹换序保留旧会话目录，重试沿用已持久化的自有目录（`test/project-regressions.test.ts`）。
 - 原生确认只由本机设备签名批准，仍经 PresenceService；首次启动信任绑定完整指纹和项目目录，规则见 ARCHITECTURE「本机确认服务」。
-- 产物在根 `dist/`；Host 构建拒绝测试代码（`test/security.test.ts`）。
+- 根 `dist/` 构建拒绝测试代码（`test/security.test.ts`）。
 - `src/paths.ts`、`host-state.ts` 只用可擦除语法（`tsconfig.strip.json`）：`apps/web/vite.config.ts` 经 `@latch/host/paths`、`host-state` 让 Node 只剥离类型加载它们。
 
-机制与检查见 [ARCHITECTURE.md](../../docs/ARCHITECTURE.md)、[PLUGIN-DEVELOPMENT.md](../../docs/PLUGIN-DEVELOPMENT.md) 与 [TESTING.md](../../docs/TESTING.md)；改后运行 `pnpm test` 与 `pnpm test:e2e`。
+- 附件字节只进私有存储，消息与 SSE 只存引用；上传逐块复查设备，下载句柄绑定设备（`test/attachment-routes.test.ts`）。
+- 文件枚举只给 `all`；macOS 只经 `latch-files` 描述符组件，不回退路径枚举。项目预览显式绑定 Harness、根身份与版本，迟到结果重查设备和正文窗口（`test/file-tree.test.ts`、`test/native.test.ts`）。
 
-- 附件原始字节只进私有 `attachments.ts`，消息与 SSE 只存 `AttachmentRef`；上传逐块复查设备，下载句柄绑定设备，不把私有文件映射成项目路径（`test/attachments.test.ts`、`test/attachment-routes.test.ts`）。
+- 自定义插件草稿与应用分离；批准执行摘要后才导入，旧租约真实释放后回收。边界见 [PLUGIN-DEVELOPMENT.md](../../docs/PLUGIN-DEVELOPMENT.md#应用内的自定义插件资产)（`test/plugin-package-api.test.ts`）。

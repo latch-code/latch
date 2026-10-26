@@ -157,6 +157,7 @@ export function DemoSuggestions({ demo, mode, onSuggestion }: { demo: boolean; m
 }
 
 export function NewSession({
+  title,
   harnesses,
   onboarding,
   composer,
@@ -165,6 +166,7 @@ export function NewSession({
   mode,
   onSuggestion,
 }: {
+  title?: string
   harnesses?: ReactNode
   onboarding?: ReactNode
   composer: ReactNode
@@ -177,7 +179,7 @@ export function NewSession({
     <div className="new-session">
       <div className="new-session-inner">
         <h2 className="new-session-title" data-ambient-anchor="" data-ambient-avoid="text">
-          今天要做什么？
+          {title ?? '今天要做什么？'}
         </h2>
         {harnesses && (
           <div className="new-session-harnesses" data-ambient-avoid="surface">

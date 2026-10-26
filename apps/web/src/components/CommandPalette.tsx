@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react'
-import type { AppSnapshot, SearchHit } from '@latch/protocol'
+import type { AppSnapshot, ContextFileOpenTarget, FileContext, SearchHit } from '@latch/protocol'
 import { Kbd, SearchField } from '@latch/ui'
 import { useSessionSearch } from '../hooks/useSessionSearch.ts'
-import { useFileSearch, type FileSearchTarget } from '../hooks/useFileSearch.ts'
+import { useFileSearch } from '../hooks/useFileSearch.ts'
+import { targetIn } from '../preview/fileContext.ts'
 import { Modal, ModalHeader } from './overlays.tsx'
 export interface WorkbenchCommand {
   id: string
@@ -13,7 +14,7 @@ export interface WorkbenchCommand {
 export function CommandPalette({
   snapshot,
   mode = 'all',
-  sessionId,
+  fileContext,
   onOpenFile,
   commands,
   onSelect,
@@ -23,8 +24,8 @@ export function CommandPalette({
 }: {
   snapshot: AppSnapshot
   mode?: 'all' | 'files'
-  sessionId?: string
-  onOpenFile?: (target: FileSearchTarget) => void
+  fileContext?: FileContext
+  onOpenFile?: (target: ContextFileOpenTarget) => void
   commands: WorkbenchCommand[]
   onSelect: (id: string) => void
   onSearchHit: (hit: SearchHit) => void
@@ -35,7 +36,7 @@ export function CommandPalette({
     [active, setActive] = useState(0)
   const search = useSessionSearch(query, mode === 'all' && snapshot.catalog?.features?.search === true)
   const fileEnabled = !!onOpenFile && snapshot.catalog?.features?.fileSearch === true && snapshot.device.dataScope === 'all'
-  const files = useFileSearch(query, fileEnabled ? sessionId : undefined)
+  const files = useFileSearch(query, fileEnabled && (mode === 'files' || query.trim()) ? fileContext : undefined)
   const groups = useMemo(() => {
     const q = query.trim().toLocaleLowerCase()
     const fileGroup = {
@@ -44,7 +45,7 @@ export function CommandPalette({
         id: `${file.root}:${file.path}`,
         label: `${file.name} · ${file.path}`,
         run: () => {
-          if (sessionId) onOpenFile?.({ sessionId, reference: file.path, rootId: file.root })
+          if (fileContext) onOpenFile?.(targetIn(fileContext, file.path, file.root))
         },
       })),
     }
@@ -83,7 +84,7 @@ export function CommandPalette({
   }, [
     mode,
     files.files,
-    sessionId,
+    fileContext,
     onOpenFile,
     query,
     snapshot.tasks,

@@ -2,7 +2,9 @@ import { FilePreview } from '../preview/FilePreview.tsx'
 import { FileHistoryPreview } from '../preview/FileHistoryPreview.tsx'
 import { fileHistories } from '../preview/fileHistory.ts'
 import type { FileTab } from '../preview/useFileTabs.ts'
-import type { FileMetadata } from '@latch/protocol'
+import type { FileContext, FileMetadata, FileMention } from '@latch/protocol'
+import { FileTree } from '../preview/FileTree.tsx'
+import { fileContextKey } from '../preview/fileContext.ts'
 import { useEffect, useId, useState, type ReactNode } from 'react'
 import {
   escapeSecurityText,
@@ -30,10 +32,19 @@ export function SessionPanels({
   onCloseFile,
   onFileResolved,
   onExpandFile,
+  fileExpanded,
   local = false,
   deviceId,
   detail,
   onFileView,
+  fileContext,
+  fileRevision,
+  showFiles = false,
+  onShowFiles,
+  onSearchFiles,
+  onMention,
+  folders,
+  cwd,
 }: {
   files?: FileTab[]
   activeFile?: FileTab
@@ -41,52 +52,91 @@ export function SessionPanels({
   onCloseFile?(id: string): void
   onFileResolved?(id: string, file: FileMetadata): void
   onExpandFile?(): void
+  fileExpanded?: boolean
   local?: boolean
   deviceId?: string
   detail?: import('@latch/protocol').TaskDetail | null
   onFileView?(id: string, view: 'preview' | 'changes'): void
   panels?: UiPanelInfo[]
-  summary: TaskSummary
+  fileContext?: FileContext
+  fileRevision?: string
+  showFiles?: boolean
+  onShowFiles?(value: boolean): void
+  onSearchFiles?(): void
+  onMention?(mention: FileMention): void
+  folders?: Array<{ id: string; path: string }>
+  cwd?: string
+  summary?: TaskSummary
   children: ReactNode
   canCompose?: boolean
   onCompose?: (text: string) => void
 }) {
   const [selected, setSelected] = useState('session')
   const id = useId()
-  const offered = panels.filter(panel => panel.harnessIds === undefined || panel.harnessIds.includes(summary.harnessId ?? 'standard'))
+  const offered = summary
+    ? panels.filter(
+        panel =>
+          (!summary.personal || summary.pluginIds?.includes(panel.pluginId))
+          && (panel.harnessIds === undefined || panel.harnessIds.includes(summary.harnessId ?? 'standard')),
+      )
+    : []
+  const [treeStarted, setTreeStarted] = useState(showFiles)
+  useEffect(() => {
+    if (showFiles) setTreeStarted(true)
+  }, [showFiles])
   const active = offered.find(panel => panel.id === selected)
-  const history =
-    detail && activeFile
-      ? fileHistories(detail).find(item => item.path === activeFile.target.reference && item.root === activeFile.target.rootId)
-      : undefined
-  if (offered.length === 0 && files.length === 0) return children
+  const histories = detail ? fileHistories(detail) : []
+  const history = activeFile
+    ? histories.find(item => item.path === activeFile.target.reference && item.root === activeFile.target.rootId)
+    : undefined
+  if (offered.length === 0 && files.length === 0 && !fileContext) return children
   return (
     <div className="session-panels inspector">
-      <Tabs
-        label="会话面板"
-        className="session-panel-tabs"
-        value={activeFile ? `file:${activeFile.id}` : (active?.id ?? 'session')}
-        options={[
-          { value: 'session', label: '会话', controls: id },
-          ...files.map(tab => ({
-            value: `file:${tab.id}`,
-            label: escapeSecurityText(tab.file?.name ?? tab.target.reference.split(/[\\/]/u).at(-1) ?? tab.target.reference),
-            controls: id,
-          })),
-          ...offered.map(panel => ({ value: panel.id, label: escapeSecurityText(panel.title), controls: id })),
-        ]}
-        onValueChange={value => {
-          if (value.startsWith('file:')) onSelectFile?.(value.slice(5))
-          else {
-            onSelectFile?.(undefined)
-            setSelected(value)
-          }
-        }}
-      />
-      <div role="tabpanel" id={id} aria-label={activeFile?.file?.name ?? active?.title ?? '会话'}>
+      {!(fileExpanded && activeFile?.target.view === 'changes') && (
+        <Tabs
+          label="会话面板"
+          className="session-panel-tabs"
+          value={activeFile ? `file:${activeFile.id}` : showFiles || !summary ? 'files' : (active?.id ?? 'session')}
+          options={[
+            ...(summary ? [{ value: 'session', label: '会话', controls: id }] : []),
+            ...(fileContext ? [{ value: 'files', label: '文件', controls: id }] : []),
+            ...files.map(tab => ({
+              value: `file:${tab.id}`,
+              label: escapeSecurityText(tab.file?.name ?? tab.target.reference.split(/[\\/]/u).at(-1) ?? tab.target.reference),
+              controls: id,
+            })),
+            ...offered.map(panel => ({ value: panel.id, label: escapeSecurityText(panel.title), controls: id })),
+          ]}
+          onValueChange={value => {
+            if (value.startsWith('file:')) onSelectFile?.(value.slice(5))
+            else {
+              onSelectFile?.(undefined)
+              setSelected(value)
+              onShowFiles?.(value === 'files')
+            }
+          }}
+        />
+      )}
+      {fileContext && treeStarted && (
+        <div className="session-file-tree" hidden={!!activeFile || (!showFiles && !!summary)}>
+          <FileTree
+            key={`${fileContextKey(fileContext)}:${fileRevision ?? ''}`}
+            context={fileContext}
+            onSearch={() => onSearchFiles?.()}
+            onMention={onMention}
+          />
+        </div>
+      )}
+      <div
+        hidden={!activeFile && (showFiles || !summary)}
+        role="tabpanel"
+        id={id}
+        aria-label={activeFile?.file?.name ?? active?.title ?? '会话'}>
         {activeFile?.target.view === 'changes' ? (
           <FileHistoryPreview
             history={history}
+            histories={histories}
+            expanded={fileExpanded}
             name={activeFile.target.reference.split('/').at(-1) ?? activeFile.target.reference}
             onPreview={() => onFileView?.(activeFile.id, 'preview')}
             onClose={() => onCloseFile?.(activeFile.id)}
@@ -99,14 +149,14 @@ export function SessionPanels({
             local={local}
             deviceId={deviceId}
             onHistory={history ? () => onFileView?.(activeFile.id, 'changes') : undefined}
-            folders={summary.folders}
-            cwd={summary.cwd}
+            folders={summary?.folders ?? folders}
+            cwd={summary?.cwd ?? cwd}
             onResolved={file => onFileResolved?.(activeFile.id, file)}
-            onCompose={canCompose ? onCompose : undefined}
+            onMention={onMention}
             onClose={() => onCloseFile?.(activeFile.id)}
             onExpand={() => onExpandFile?.()}
           />
-        ) : active?.moduleHash ? (
+        ) : active?.moduleHash && summary ? (
           <section className="plugin-panel" aria-label={active.title}>
             <p className="plugin-panel-caption">
               由 <VisibleText text={active.pluginName} /> 提供
@@ -119,7 +169,7 @@ export function SessionPanels({
               onCompose={onCompose}
             />
           </section>
-        ) : active ? (
+        ) : active && summary ? (
           <PluginPanel key={active.id} panel={active} summary={summary} />
         ) : (
           children

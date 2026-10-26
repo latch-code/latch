@@ -234,6 +234,7 @@
 }
 .diff-file {
   min-width: 0;
+  overflow: hidden;
   padding: 0;
   border: 1px solid var(--line-subtle);
   border-radius: var(--r-8);
@@ -336,7 +337,41 @@
 }
 .diff-table {
   min-width: max-content;
-  padding: var(--sp-4) 0;
+  padding: 0;
+}
+.diff-file[data-layout='split'] .diff-table {
+  min-width: 0;
+}
+.diff-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.diff-split-side {
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+.diff-split-side + .diff-split-side {
+  border-left: 1px solid var(--line-subtle);
+}
+.diff-side-title {
+  padding: var(--sp-2) var(--sp-8);
+  background: var(--bg-sunken);
+  color: var(--text-3);
+  font-family: var(--font-sans);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.diff-side-row {
+  display: grid;
+  grid-template-columns: 36px 16px minmax(max-content, 1fr);
+  min-width: 100%;
+  width: max-content;
+  min-height: var(--lh-code);
+  white-space: pre;
+}
+.diff-absent {
+  background: var(--bg-sunken);
 }
 .diff-hunk-header {
   padding: var(--sp-2) var(--sp-8);

@@ -1,6 +1,6 @@
 import { ProjectGroupHeading, ProjectsHeading, type ProjectNavigationActions } from './ProjectNavigation.tsx'
 import { Fragment, memo, useMemo, useRef, useState, type PointerEvent, type ReactNode, type RefObject } from 'react'
-import { ChevronRight, Inbox, Laptop, Plus, RefreshCw, Search, Settings, SquarePen } from 'lucide-react'
+import { ChevronRight, Inbox, Laptop, Plus, RefreshCw, Search, Settings, SquarePen, UsersRound } from 'lucide-react'
 import type { AppSnapshot, TaskSummary } from '@latch/protocol'
 import { BUILTIN_HARNESS_NAME } from '../composerChoice.ts'
 import { relativeTime, statusLabels } from '../format.ts'
@@ -245,6 +245,7 @@ export function PhoneSessionList({
   onProjectsChanged,
   onApprovals,
   onSettings,
+  onPersonal,
   onRefresh,
   sessionMenu,
   now,
@@ -269,6 +270,7 @@ export function PhoneSessionList({
   onNewIn?: (workspaceId: string) => void
   onApprovals: () => void
   onSettings: () => void
+  onPersonal?: () => void
   /** 同步最新状态: reads the Host's state again. */
   onRefresh: () => Promise<void>
   sessionMenu: (task: TaskSummary) => MenuSection[]
@@ -319,6 +321,13 @@ export function PhoneSessionList({
         />
         <IconButton size="lg" label="新建会话" icon={SquarePen} onClick={onNew} />
       </header>
+      {onPersonal && (
+        <div className="phone-personal-entry">
+          <Button variant="ghost" icon={UsersRound} onClick={onPersonal}>
+            个人助手
+          </Button>
+        </div>
+      )}
       <Collapse open={searching} className="phone-search-collapse">
         <div className="phone-search" inert={!searching || undefined}>
           <SearchField

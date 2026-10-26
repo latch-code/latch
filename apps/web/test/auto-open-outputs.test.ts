@@ -16,12 +16,14 @@ const result: TaskDetail = {
     { id: 'answer', role: 'assistant', text: 'done', outputs: [{ root: 'other', path: 'deck.pptx', kind: 'pptx', change: 'created' }] },
   ],
 }
-const options = { enabled: true, visible: true, width: 600 }
+const options = { enabled: true, available: true, width: 600 }
 describe('optional document opening after an observed run', () => {
-  it('defaults off and accepts only a boolean preference', () => {
-    expect(parsePreferences(null).autoOpenDocuments).toBe(false)
-    expect(parsePreferences('{"autoOpenDocuments":"true"}').autoOpenDocuments).toBe(false)
+  it('opens documents by default and preserves an explicit choice to keep them closed', () => {
+    expect(parsePreferences(null).autoOpenDocuments).toBe(true)
+    expect(parsePreferences('{"autoOpenDocuments":"true"}').autoOpenDocuments).toBe(true)
     expect(parsePreferences('{"autoOpenDocuments":true}').autoOpenDocuments).toBe(true)
+    expect(parsePreferences('{"autoOpenDocuments":false}').autoOpenDocuments).toBe(false)
+    expect(parsePreferences('{"theme":"dark"}').autoOpenDocuments).toBe(true)
   })
   it('ignores history, waits for settlement, opens once and keeps the explicit root', () => {
     const tracker = new AutoOpenOutputs()
@@ -33,7 +35,7 @@ describe('optional document opening after an observed run', () => {
   })
   it.each([
     { ...options, enabled: false },
-    { ...options, visible: false },
+    { ...options, available: false },
     { ...options, width: 479 },
   ])('does not open later when the completion was ineligible', gate => {
     const tracker = new AutoOpenOutputs()

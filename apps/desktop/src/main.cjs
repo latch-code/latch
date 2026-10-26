@@ -57,6 +57,7 @@ const {
   createDialogGate,
   OPEN_IN_BROWSER,
   createBrowserOpener,
+  createExternalGesture,
   createExternalOpener,
   createShellProxy,
   debugFlagProblems,
@@ -208,8 +209,14 @@ const openExternal = createExternalOpener({
 
 app.on('web-contents-created', (_event, contents) => {
   contents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp')
+  const gesture = createExternalGesture()
+  contents.on('before-mouse-event', (_event, input) => gesture.mouse(input))
+  contents.on('before-input-event', (_event, input) => gesture.key(input))
+  contents.on('blur', () => gesture.clear())
+  contents.on('did-start-navigation', () => gesture.clear())
   contents.setWindowOpenHandler(({ url }) => {
-    void openExternal(url, BrowserWindow.fromWebContents(contents) ?? undefined)
+    const userGesture = contents === mainWindow?.webContents && isAppUrl(contents.getURL()) && gesture.take()
+    void openExternal(url, BrowserWindow.fromWebContents(contents) ?? undefined, { userGesture })
     return { action: 'deny' }
   })
   const guard = (event, url) => {

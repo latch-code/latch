@@ -148,6 +148,8 @@ const stateSchema = z.object({
         runId: z.string().min(1).max(128).optional(),
         runOutcome: z.enum(['completed', 'failed', 'cancelled', 'interrupted']).optional(),
         skills: z.array(z.string()).optional(),
+        personal: z.strictObject({ assistantId: z.string().min(1).max(128), groupId: z.string().min(1).max(128).optional() }).optional(),
+        pluginIds: z.array(z.string().min(1).max(64)).max(64).optional(),
       }),
       messages: z.array(messageSchema),
       history: z.array(historySchema),

@@ -65,9 +65,9 @@
         "z": "é",
         "y": null
       },
-      "c": "line\u202Eend"
+      "c": "line‮end"
     },
-    "output": "{\"a\":{\"y\":null,\"z\":\"é\"},\"b\":[2,\"x\"],\"c\":\"line\u202Eend\"}",
+    "output": "{\"a\":{\"y\":null,\"z\":\"é\"},\"b\":[2,\"x\"],\"c\":\"line‮end\"}",
     "sha256": "a1cf7306dd48049d32637f397c1b63bbebd18bcd49e4b05c35ecad97bb6382c7"
   },
   "canonicalJsonCases": [
@@ -89,10 +89,10 @@
         "\ud800",
         "a\udc00b",
         "😀",
-        "\u007F\u0085\u2028\u2029",
-        "\u202E\u200B"
+        "  ",
+        "‮​"
       ],
-      "output": "[\"\\u0001\\u001f\\b\\f\\n\\r\\t\\\"\\\\/\",\"\\ud800\",\"a\\udc00b\",\"😀\",\"\u007F\u0085\u2028\u2029\",\"\u202E\u200B\"]",
+      "output": "[\"\\u0001\\u001f\\b\\f\\n\\r\\t\\\"\\\\/\",\"\\ud800\",\"a\\udc00b\",\"😀\",\"  \",\"‮​\"]",
       "sha256": "32ff75d1de65b48e584b4e3b63b0fdfbfac1caefd6562601269de6c4ad41d1a3"
     },
     {
@@ -131,14 +131,14 @@
           }
         },
         "requester": {
-          "deviceName": "我的\u202E手机\u200B",
+          "deviceName": "我的‮手机​",
           "listener": "loopback-tcp",
           "remoteAddress": "::1"
         },
         "lines": [
           {
             "label": "设备名称",
-            "value": "我的\u202E手机\u200B"
+            "value": "我的‮手机​"
           },
           {
             "label": "设备指纹",
@@ -216,11 +216,11 @@
   ],
   "escapePreviewText": [
     {
-      "input": "a\u202Eb",
+      "input": "a‮b",
       "output": "a\\u{202E}b"
     },
     {
-      "input": "x\u200By",
+      "input": "x​y",
       "output": "x\\u{200B}y"
     },
     {
@@ -228,15 +228,15 @@
       "output": "line1\\u{000A}line2\\u{0009}end\\u{000D}"
     },
     {
-      "input": "\u0000\u001f\u007F\u0085\u009F",
+      "input": "\u0000\u001f",
       "output": "\\u{0000}\\u{001F}\\u{007F}\\u{0085}\\u{009F}"
     },
     {
-      "input": "\u061C\u200E\u200F\u202A\u202D",
+      "input": "؜‎‏‪‭",
       "output": "\\u{061C}\\u{200E}\\u{200F}\\u{202A}\\u{202D}"
     },
     {
-      "input": "\u2060\u2066x\u2069\uFEFF",
+      "input": "⁠⁦x⁩﻿",
       "output": "\\u{2060}\\u{2066}x\\u{2069}\\u{FEFF}"
     },
     {
@@ -280,59 +280,59 @@
       "output": "nbsp ideographic　space"
     },
     {
-      "input": "❤\uFE0F iPhone",
-      "output": "❤\uFE0F iPhone"
+      "input": "❤️ iPhone",
+      "output": "❤️ iPhone"
     },
     {
-      "input": "👨\u200D💻 Mac",
-      "output": "👨\u200D💻 Mac"
+      "input": "👨‍💻 Mac",
+      "output": "👨‍💻 Mac"
     },
     {
-      "input": "1\uFE0F\u20E3 号机",
-      "output": "1\uFE0F\u20E3 号机"
+      "input": "1️⃣ 号机",
+      "output": "1️⃣ 号机"
     },
     {
-      "input": "#\uFE0F\u20E3 *\uFE0E\u20E3",
-      "output": "#\uFE0F\u20E3 *\uFE0E\u20E3"
+      "input": "#️⃣ *︎⃣",
+      "output": "#️⃣ *︎⃣"
     },
     {
-      "input": "☺\uFE0E text",
-      "output": "☺\uFE0E text"
+      "input": "☺︎ text",
+      "output": "☺︎ text"
     },
     {
       "input": "👍🏽 skin tone",
       "output": "👍🏽 skin tone"
     },
     {
-      "input": "a\u200Db",
+      "input": "a‍b",
       "output": "a\\u{200D}b"
     },
     {
-      "input": "👨\u200D\u200D💻",
+      "input": "👨‍‍💻",
       "output": "👨\\u{200D}\\u{200D}💻"
     },
     {
-      "input": "👨\u200D x \u200D💻",
+      "input": "👨‍ x ‍💻",
       "output": "👨\\u{200D} x \\u{200D}💻"
     },
     {
-      "input": "❤\uFE0F\u200D🔥",
-      "output": "❤\uFE0F\\u{200D}🔥"
+      "input": "❤️‍🔥",
+      "output": "❤️\\u{200D}🔥"
     },
     {
-      "input": "x\uFE0F #\uFE0F",
+      "input": "x️ #️",
       "output": "x\\u{FE0F} #\\u{FE0F}"
     },
     {
-      "input": "1\uFE0F\uFE0F\u20E3",
-      "output": "1\\u{FE0F}\\u{FE0F}\u20E3"
+      "input": "1️️⃣",
+      "output": "1\\u{FE0F}\\u{FE0F}⃣"
     },
     {
-      "input": "❤\uFE0F\uFE0F",
-      "output": "❤\uFE0F\\u{FE0F}"
+      "input": "❤️️",
+      "output": "❤️\\u{FE0F}"
     },
     {
-      "input": "❤\u200B\uFE0F",
+      "input": "❤​️",
       "output": "❤\\u{200B}\\u{FE0F}"
     }
   ],
@@ -379,7 +379,10 @@
         "body": {
           "nonce": "BAUGBwgJCgsMDQ4PEBESEw",
           "via": "picker",
-          "paths": ["/Users/me/code/shop-api", "/Users/me/文档/设计稿"],
+          "paths": [
+            "/Users/me/code/shop-api",
+            "/Users/me/文档/设计稿"
+          ],
           "name": "Shop"
         },
         "canonicalBody": "{\"name\":\"Shop\",\"nonce\":\"BAUGBwgJCgsMDQ4PEBESEw\",\"paths\":[\"/Users/me/code/shop-api\",\"/Users/me/文档/设计稿\"],\"via\":\"picker\"}",
@@ -455,7 +458,7 @@
         "slots": {
           "tool": "write_file",
           "why": "参数无法解析",
-          "input": "{\"path\":\"a\u202Etxt.exe\""
+          "input": "{\"path\":\"a‮txt.exe\""
         }
       },
       "reason": "批准运行工具 write_file（参数无法解析）：{\"path\":\"a\\u{202E}txt.exe\""
@@ -465,7 +468,7 @@
       "subject": {
         "form": "key.save",
         "slots": {
-          "provider": "Deep\u202Eseek",
+          "provider": "Deep‮seek",
           "origin": "https://api.deepseek.com"
         }
       },
@@ -749,7 +752,7 @@
         "form": "start.repeat",
         "slots": {
           "harness": "Codex",
-          "project": "\u202E客户周报与年度复盘：营销部门",
+          "project": "‮客户周报与年度复盘：营销部门",
           "folder": ""
         }
       },
@@ -772,7 +775,7 @@
         "form": "device.enroll",
         "slots": {
           "fingerprint": "FPI3 WDCE VCL4 GCT2 UCMR",
-          "device": "我的\u200BiPhone"
+          "device": "我的​iPhone"
         }
       },
       "reason": "允许指纹 FPI3 WDCE VCL4 GCT2 UCMR 的新设备「我的\\u{200B}iPhone」连接"
@@ -783,10 +786,10 @@
         "form": "device.enroll",
         "slots": {
           "fingerprint": "FPI3 WDCE VCL4 GCT2 UCMR",
-          "device": "家里的 👨\u200D👩\u200D👧\u200D👦 iPad 🇯🇵👍🏽❤\uFE0F1\uFE0F\u20E3🇨🇳 第二台设备"
+          "device": "家里的 👨‍👩‍👧‍👦 iPad 🇯🇵👍🏽❤️1️⃣🇨🇳 第二台设备"
         }
       },
-      "reason": "允许指纹 FPI3 WDCE VCL4 GCT2 UCMR 的新设备「家里的 👨\u200D👩\u200D👧\u200D👦 iPad 🇯🇵👍🏽❤\uFE0F1\uFE0F\u20E3🇨🇳 第二…」连接"
+      "reason": "允许指纹 FPI3 WDCE VCL4 GCT2 UCMR 的新设备「家里的 👨‍👩‍👧‍👦 iPad 🇯🇵👍🏽❤️1️⃣🇨🇳 第二…」连接"
     },
     {
       "action": "device.enroll",
@@ -794,10 +797,10 @@
         "form": "device.enroll",
         "slots": {
           "fingerprint": "FPI3 WDCE VCL4 GCT2 UCMR",
-          "device": "aaaaaaaaaaaaaaaaaa👨\u200D👩\u200D👧\u200D👦xyz"
+          "device": "aaaaaaaaaaaaaaaaaa👨‍👩‍👧‍👦xyz"
         }
       },
-      "reason": "允许指纹 FPI3 WDCE VCL4 GCT2 UCMR 的新设备「aaaaaaaaaaaaaaaaaa👨\u200D👩\u200D👧\u200D👦…」连接"
+      "reason": "允许指纹 FPI3 WDCE VCL4 GCT2 UCMR 的新设备「aaaaaaaaaaaaaaaaaa👨‍👩‍👧‍👦…」连接"
     },
     {
       "action": "device.enroll",
@@ -805,7 +808,7 @@
         "form": "device.enroll",
         "slots": {
           "fingerprint": "FPI3 WDCE VCL4 GCT2 UCMR",
-          "device": "\u202E\u202E\u202Eevil"
+          "device": "‮‮‮evil"
         }
       },
       "reason": "允许指纹 FPI3 WDCE VCL4 GCT2 UCMR 的新设备「\\u{202E}\\u{202E}\\u{…」连接"
@@ -815,11 +818,11 @@
       "subject": {
         "form": "device.grant",
         "slots": {
-          "device": "Zoe\u0301\u0301\u0301\u0301\u0301\u0301 Mac",
+          "device": "Zoé́́́́́ Mac",
           "change": "管理此 Host"
         }
       },
-      "reason": "为设备「Zoe\u0301\u0301\u0301\u0301\\u{0301}\\u{0301}…」增加权限：管理此 Host"
+      "reason": "为设备「Zoé́́́\\u{0301}\\u{0301}…」增加权限：管理此 Host"
     },
     {
       "action": "agent.probe",
@@ -847,13 +850,32 @@
     },
     {
       "action": "policy.change",
-      "subject": { "form": "policy.native-input", "slots": {} },
+      "subject": {
+        "form": "policy.native-input",
+        "slots": {}
+      },
       "reason": "恢复所有原生手机的输入权限"
     },
     {
       "action": "policy.change",
-      "subject": { "form": "policy.native-link", "slots": { "direct": "局域网直连 192.168.1.5:4319", "count": "2" } },
+      "subject": {
+        "form": "policy.native-link",
+        "slots": {
+          "direct": "局域网直连 192.168.1.5:4319",
+          "count": "2"
+        }
+      },
       "reason": "更改手机连接：局域网直连 192.168.1.5:4319，2 个中继节点；新中继可看到连接时间与 IP"
+    },
+    {
+      "action": "plugin.package.apply",
+      "subject": {
+        "form": "plugin.package.apply",
+        "slots": {
+          "plugin": "发布检查"
+        }
+      },
+      "reason": "应用插件「发布检查」，允许其可信代码访问 Host 进程或当前页面"
     }
   ],
   "presenceRequest": [
@@ -905,12 +927,12 @@
           "hostId": "fpi3wdcevcl4gct2ucmrzxry3adc7zcb3zinud2gqjjuj5qc5atq",
           "action": "device.enroll",
           "title": "允许新设备连接",
-          "reason": "允许指纹 FPI3 WDCE VCL4 GCT2 UCMR 的新设备「❤\uFE0F 👨\u200D💻 的 MacBook」连接",
+          "reason": "允许指纹 FPI3 WDCE VCL4 GCT2 UCMR 的新设备「❤️ 👨‍💻 的 MacBook」连接",
           "subject": {
             "form": "device.enroll",
             "slots": {
               "fingerprint": "FPI3 WDCE VCL4 GCT2 UCMR",
-              "device": "❤\uFE0F 👨\u200D💻 的 MacBook"
+              "device": "❤️ 👨‍💻 的 MacBook"
             }
           },
           "requester": {
@@ -944,7 +966,7 @@
           "hostId": "fpi3wdcevcl4gct2ucmrzxry3adc7zcb3zinud2gqjjuj5qc5atq",
           "action": "approval.r2",
           "title": "允许一次高风险操作",
-          "reason": "批准写入 cafe\u0301.md（Latch 程序目录内）",
+          "reason": "批准写入 café.md（Latch 程序目录内）",
           "subject": {
             "form": "approval.write",
             "slots": {
@@ -1596,6 +1618,44 @@
         "pairingCode": "123456"
       },
       "result": "pairing-code-unexpected"
+    },
+    {
+      "name": "plugin-package-apply",
+      "request": {
+        "v": 2,
+        "preview": {
+          "v": 2,
+          "hostId": "fpi3wdcevcl4gct2ucmrzxry3adc7zcb3zinud2gqjjuj5qc5atq",
+          "action": "plugin.package.apply",
+          "title": "应用自定义插件",
+          "reason": "应用插件「发布检查」，允许其可信代码访问 Host 进程或当前页面",
+          "subject": {
+            "form": "plugin.package.apply",
+            "slots": {
+              "plugin": "发布检查"
+            }
+          },
+          "requester": {
+            "deviceId": "dev_CCCCCCCCCCCCCCCCCCCCCC",
+            "deviceName": "桌面",
+            "listener": "unix",
+            "remoteAddress": "本机 host.sock"
+          },
+          "lines": [
+            {
+              "label": "Host 模块",
+              "value": "1"
+            }
+          ],
+          "warnings": [],
+          "nonce": "3e7D1xv_cMWsD_BcFpAScg",
+          "expiresAt": "1970-01-01T00:02:00.000Z"
+        },
+        "previewHash": "91ce2bf2d4b534e2aae653199162a7c2aa4c5f2d70b8946d716f58d24b8cf983",
+        "timeoutSeconds": 115,
+        "requireBiometric": true
+      },
+      "result": "ok"
     }
   ]
 }

@@ -1,4 +1,13 @@
-import type { AttachmentRef, FileMention, Approval, ModelRef, TaskDetail, TaskMode, TaskSummary } from '@latch/protocol/types'
+import type {
+  AttachmentRef,
+  FileMention,
+  Approval,
+  ModelRef,
+  PersonalExecutionContext,
+  TaskDetail,
+  TaskMode,
+  TaskSummary,
+} from '@latch/protocol/types'
 
 /** One folder of a project: its ID inside the project (stable across reorders) and its absolute path. */
 export interface ProjectFolder {
@@ -7,6 +16,8 @@ export interface ProjectFolder {
 }
 
 export interface CreateTaskInput {
+  /** Authoritative Host-only personal instructions, transient for this run. */
+  personal?: PersonalExecutionContext
   fileRefs?: FileMention[]
   attachments?: AttachmentRef[]
   prompt: string
@@ -32,6 +43,8 @@ export interface CreateTaskInput {
 }
 
 export interface PromptOptions {
+  /** Required on every turn of a personal session; never accepted from an HTTP body. */
+  personal?: PersonalExecutionContext
   /** Host queue time, for the accepted user message. */
   queuedAt?: string
   fileRefs?: FileMention[]

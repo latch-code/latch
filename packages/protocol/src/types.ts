@@ -8,6 +8,8 @@ import type { AgentPreset } from './agent-presets.ts'
 import type { SkillInfo, UiPanelInfo } from './ui.ts'
 import type { AgentProbeResult, HostFeatures, PromptQueueItem } from './features.ts'
 import type { AgentQuestion } from './questions.ts'
+import type { PersonalSessionOwner } from './personal.ts'
+export type * from './personal.ts'
 
 export type { SkillInfo, UiPanelInfo, UiPanelBlock, UiPanelDocument } from './ui.ts'
 export type { HostFeatures, SearchHit, SearchResults, SessionBatchResult } from './features.ts'
@@ -64,6 +66,10 @@ export interface UsageReport {
 }
 
 export interface TaskSummary {
+  /** Enabled capability owners selected by this personal assistant. */
+  pluginIds?: string[]
+  /** Host-owned personal context, independent of a saved project. Absent for ordinary project sessions. */
+  personal?: PersonalSessionOwner
   /** Host-derived count only; question bodies remain in gated detail. Absent on older Hosts. */
   pendingQuestions?: number
   id: string
@@ -409,6 +415,7 @@ export interface SessionPermission {
 }
 
 export type PresenceAction =
+  | 'plugin.package.apply'
   | 'device.enroll'
   | 'device.enroll-native'
   | 'device.grant'
@@ -456,6 +463,7 @@ export interface ConfirmationTicket {
  * the macOS helper, which rebuilds the reason from the subject and refuses any difference.
  */
 export type PresenceReasonForm =
+  | 'plugin.package.apply'
   | 'agent.probe'
   | 'approval.write'
   | 'approval.tool'
@@ -624,6 +632,8 @@ export const LISTENER_LABELS: Record<ListenerClass, string> = {
 
 export type HarnessSource = 'builtin' | 'acp' | 'plugin'
 export interface HarnessInfo {
+  /** Explicit driver support for private personal instructions and selected Host capabilities. */
+  personalContext?: 'private'
   attachments?: { images?: boolean; text?: boolean; textBytes?: number }
   id: string
   name: string
@@ -895,6 +905,8 @@ export interface PluginInfo {
   activeRuns: number
   capabilities: string[]
   package?: { formatVersion: 1 }
+  /** Local editable asset; its mutations use the plugin-packages receipt flow. */
+  editable?: true
   /** Set when the Host manages the plugin from settings (model providers, agents). */
   managed?: 'provider' | 'agent' | 'core'
 }

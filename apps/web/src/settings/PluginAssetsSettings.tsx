@@ -1,0 +1,562 @@
+import { useEffect, useRef, useState } from 'react'
+import { Download, Plus, Puzzle, Upload } from 'lucide-react'
+import { createPluginPackageTemplate, type PluginPackageBundle, type PluginPackageDetail, type PluginPackageSummary } from '@latch/protocol'
+import {
+  Button,
+  ChoiceList,
+  ConfirmDialog,
+  Dialog,
+  Icon,
+  InlineNotice,
+  StatusPill,
+  Switch,
+  Tabs,
+  TextAreaField,
+  TextField,
+} from '@latch/ui'
+import { api, inlineError, isUncertain, newRequestId, type ApiOptions } from '../core/api.ts'
+import { withConfirmation } from '../core/confirmations.ts'
+import { InlineConfirm } from '../components/InlineConfirm.tsx'
+import { NavRow, SettingsGroup } from './common.tsx'
+import { addPluginSource, editPluginSource, readPluginBundle } from './pluginAssets.ts'
+
+type Template = 'skill' | 'tool' | 'react-ui'
+interface PendingChange {
+  path: string
+  options: ApiOptions
+  thenApply?: { requestId: string }
+}
+interface Editor {
+  bundle: PluginPackageBundle
+  record?: PluginPackageDetail
+}
+const route = (id: string) => 'plugin-packages/' + encodeURIComponent(id)
+const stateText = (record: PluginPackageSummary) =>
+  record.unavailableReason
+    ? '需要处理'
+    : record.state === 'draft'
+      ? '草稿'
+      : record.state === 'update-available'
+        ? '有未应用修改'
+        : record.enabled
+          ? '已应用'
+          : '已停用'
+
+/** Edits are inert until the exact saved revision is applied. */
+export function PluginAssetsSettings({
+  canEdit,
+  onChanged,
+  onOwned,
+}: {
+  canEdit: boolean
+  onChanged: () => void
+  onOwned: (ids: string[]) => void
+}) {
+  const [records, setRecords] = useState<PluginPackageSummary[] | null>(null)
+  const [editor, setEditor] = useState<Editor | null>(null)
+  const [template, setTemplate] = useState<Template | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [pending, setPending] = useState<PendingChange | null>(null)
+  const [error, setError] = useState('')
+  const [deleting, setDeleting] = useState(false)
+  const [tab, setTab] = useState<'content' | 'files' | 'manifest'>('content')
+  const [file, setFile] = useState('')
+  const [newFile, setNewFile] = useState('')
+  const [dirty, setDirty] = useState(false)
+  const [manifestText, setManifestText] = useState('')
+  const input = useRef<HTMLInputElement>(null)
+  const alive = useRef(true)
+  const changed = useRef(onChanged),
+    owned = useRef(onOwned)
+  changed.current = onChanged
+  owned.current = onOwned
+  async function load() {
+    const value = await api<{ packages: PluginPackageSummary[] }>('plugin-packages')
+    if (alive.current) {
+      setRecords(value.packages)
+      owned.current(value.packages.map(record => record.id))
+    }
+  }
+  useEffect(() => {
+    alive.current = canEdit
+    if (!canEdit) {
+      setRecords(null)
+      setEditor(null)
+      setTemplate(null)
+      setPending(null)
+      setError('')
+      setDeleting(false)
+    } else
+      void load().catch(cause => {
+        if (alive.current) setError(inlineError(cause))
+      })
+    return () => {
+      alive.current = false
+    }
+  }, [canEdit])
+  const open = (next: Editor) => {
+    setEditor(next)
+    setDirty(false)
+    setNewFile('')
+    setTab(next.bundle.manifest.skills?.length ? 'content' : 'files')
+    setFile(next.bundle.files[0]?.path ?? '')
+    setManifestText(JSON.stringify(next.bundle.manifest, null, 2))
+    setError('')
+  }
+  const editBundle = (bundle: PluginPackageBundle) => {
+    setEditor(current => (current ? { ...current, bundle } : null))
+    setDirty(true)
+  }
+  const refresh = async () => {
+    await load()
+    changed.current()
+  }
+  // Preserve the full immutable body and requestId when the result is unknown.
+  const perform = async (change: PendingChange) => {
+    if (busy) return
+    setBusy(true)
+    setError('')
+    let current = change
+    setPending(current)
+    try {
+      const send = (request: PendingChange) =>
+        withConfirmation(confirmation =>
+          api<{ package?: PluginPackageDetail; removed?: true }>(request.path, {
+            ...request.options,
+            ...(confirmation ? { confirmation } : {}),
+          }),
+        )
+      let result = await send(current)
+      if (result.package && alive.current) {
+        setEditor({ bundle: result.package.bundle, record: result.package })
+        setDirty(false)
+        setManifestText(JSON.stringify(result.package.bundle.manifest, null, 2))
+      }
+      if (current.thenApply && result.package) {
+        current = {
+          path: route(result.package.id) + '/apply',
+          options: { method: 'POST', body: { requestId: current.thenApply.requestId, revision: result.package.revision } },
+        }
+        if (alive.current) setPending(current)
+        result = await send(current)
+        if (result.package && alive.current) setEditor({ bundle: result.package.bundle, record: result.package })
+      }
+      if (alive.current) {
+        setPending(null)
+        if (result.removed) {
+          setEditor(null)
+          setDeleting(false)
+        }
+        await refresh()
+      }
+    } catch (cause) {
+      if (alive.current) {
+        if (!isUncertain(cause)) setPending(null)
+        setError(inlineError(cause))
+      }
+    } finally {
+      if (alive.current) setBusy(false)
+    }
+  }
+  const save = (apply: boolean) => {
+    if (!editor || pending || busy) return
+    let bundle = editor.bundle
+    if (tab === 'manifest') {
+      try {
+        bundle = readPluginBundle(JSON.stringify({ manifest: JSON.parse(manifestText), files: bundle.files }))
+        if (bundle.manifest.id !== editor.bundle.manifest.id) throw new Error('插件标识不能在高级编辑中更改。')
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : '插件声明格式无效。')
+        return
+      }
+    }
+    const record = editor.record
+    void perform({
+      path: record ? route(record.id) : 'plugin-packages',
+      options: {
+        method: record ? 'PUT' : 'POST',
+        body: { requestId: newRequestId(), bundle: structuredClone(bundle), ...(record ? { baseRevision: record.revision } : {}) },
+      },
+      ...(apply ? { thenApply: { requestId: newRequestId() } } : {}),
+    })
+  }
+  const exportBundle = async () => {
+    if (!editor?.record) return
+    try {
+      const result = await api<{ bundle: PluginPackageBundle }>(route(editor.record.id) + '/export')
+      const url = URL.createObjectURL(new Blob([JSON.stringify(result.bundle, null, 2)], { type: 'application/json' }))
+      const link = document.createElement('a')
+      link.href = url
+      link.download = editor.record.id + '.latch-plugin.json'
+      link.click()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch (cause) {
+      setError(inlineError(cause))
+    }
+  }
+  const selectRecord = async (record: PluginPackageSummary) => {
+    if (busy || pending) return
+    setBusy(true)
+    setError('')
+    try {
+      const value = await api<{ package: PluginPackageDetail }>(route(record.id))
+      if (alive.current) open({ bundle: value.package.bundle, record: value.package })
+    } catch (cause) {
+      if (alive.current) setError(inlineError(cause))
+    } finally {
+      if (alive.current) setBusy(false)
+    }
+  }
+  const locked = busy || pending !== null
+  const skillFiles = new Set(editor?.bundle.manifest.skills?.map(skill => skill.file) ?? [])
+  const shownFiles = editor?.bundle.files.filter(item => (tab === 'content' ? skillFiles.has(item.path) : true)) ?? []
+  const selectedFile = shownFiles.find(item => item.path === file) ?? shownFiles[0]
+  const record = editor?.record
+  if (!canEdit)
+    return (
+      <SettingsGroup
+        title="自定义插件"
+        caption="在运行 Latch 的 Mac 上创建和编辑；应用后的技能与面板可以在其他设备使用。"
+        captionIcon={null}>
+        <p className="plugin-asset-empty">插件随会话同步。</p>
+      </SettingsGroup>
+    )
+  return (
+    <SettingsGroup
+      title="自定义插件"
+      caption={
+        canEdit
+          ? '从技能开始，也可以加入工具、界面和 Harness。应用后在会话中使用。'
+          : '在运行 Latch 的 Mac 上创建和编辑；应用后的技能与面板可以在其他设备使用。'
+      }
+      captionIcon={null}
+      meta={
+        canEdit && (
+          <div className="plugin-asset-actions">
+            <Button icon={Upload} disabled={locked} onClick={() => input.current?.click()}>
+              导入
+            </Button>
+            <Button
+              icon={Plus}
+              disabled={locked}
+              onClick={() => {
+                setTemplate('skill')
+                setError('')
+              }}>
+              创建插件
+            </Button>
+          </div>
+        )
+      }>
+      {canEdit && (
+        <input
+          ref={input}
+          type="file"
+          accept=".json,application/json"
+          hidden
+          onChange={event => {
+            const selected = event.target.files?.[0]
+            event.target.value = ''
+            if (!selected || locked) return
+            if (selected.size > 8 * 1024 * 1024) {
+              setError('插件文件不能超过 8 MiB。')
+              return
+            }
+            void selected
+              .text()
+              .then(text => {
+                const bundle = readPluginBundle(text)
+                if (alive.current) open({ bundle })
+              })
+              .catch(cause => {
+                if (alive.current) setError(cause instanceof Error ? cause.message : '无法读取插件文件。')
+              })
+          }}
+        />
+      )}
+      {canEdit && records === null && <p className="plugin-asset-empty">正在读取自定义插件…</p>}
+      {canEdit && records?.length === 0 && (
+        <div className="plugin-asset-empty">
+          <Icon icon={Puzzle} size={20} />
+          <p>让 Agent 按你的方法工作</p>
+          <span>写一项技能，或把常用工具与界面放进同一个插件。</span>
+        </div>
+      )}
+      {records?.map(item => (
+        <NavRow
+          key={item.id}
+          record
+          title={item.name}
+          description={item.unavailableReason ?? item.description}
+          value={stateText(item)}
+          onClick={() => {
+            void selectRecord(item)
+          }}
+        />
+      ))}
+      {!editor && error && (
+        <InlineNotice tone="error">
+          {error}
+          <Button
+            variant="ghost"
+            onClick={() => {
+              setError('')
+              void load().catch(cause => setError(inlineError(cause)))
+            }}>
+            重试
+          </Button>
+        </InlineNotice>
+      )}
+      <Dialog
+        open={template !== null}
+        title="创建自定义插件"
+        size="form"
+        subtitle="选择一个起点，之后可以自由组合。"
+        onClose={() => setTemplate(null)}
+        footer={
+          <Button
+            variant="primary"
+            onClick={() => {
+              if (!template) return
+              open({ bundle: createPluginPackageTemplate(template, 'my-plugin-' + newRequestId().slice(0, 8)) })
+              setTemplate(null)
+            }}>
+            继续
+          </Button>
+        }>
+        <ChoiceList
+          label="插件模板"
+          value={template ?? 'skill'}
+          onValueChange={value => setTemplate(value)}
+          options={[
+            { value: 'skill' as const, title: '技能', description: '用文字说明工作方法，直接开始使用。' },
+            { value: 'tool' as const, title: '工具', description: '编写在电脑上执行的工具模块。' },
+            { value: 'react-ui' as const, title: '界面', description: '为会话增加自己的交互面板。' },
+          ]}
+        />
+      </Dialog>
+      <Dialog
+        open={editor !== null}
+        title={record ? record.name : '新建插件'}
+        size="wide"
+        subtitle="保存为草稿，或应用到 Latch。应用前不会执行编辑中的代码。"
+        onClose={() => {
+          if (!locked) {
+            setEditor(null)
+            setError('')
+          }
+        }}
+        footer={
+          <>
+            {record && (
+              <Button variant="ghost" disabled={locked} onClick={() => setDeleting(true)}>
+                删除
+              </Button>
+            )}
+            <span className="plugin-asset-spacer" />
+            <Button disabled={locked} onClick={() => save(false)}>
+              保存草稿
+            </Button>
+            <Button
+              variant="primary"
+              loading={busy}
+              disabled={pending !== null || !editor?.bundle.manifest.name.trim()}
+              onClick={() => save(true)}>
+              保存并应用
+            </Button>
+          </>
+        }>
+        {editor && (
+          <div className="settings-form plugin-editor">
+            <div className="plugin-asset-toolbar">
+              <StatusPill>{dirty ? '未保存修改' : record ? stateText(record) : '未保存'}</StatusPill>
+              <span className="plugin-asset-spacer" />
+              {record?.appliedRevision && (
+                <Switch
+                  label="启用插件"
+                  checked={record.enabled}
+                  disabled={locked || dirty}
+                  onCheckedChange={enabled => {
+                    void perform({
+                      path: route(record.id) + '/enabled',
+                      options: { method: 'POST', body: { requestId: newRequestId(), enabled } },
+                    })
+                  }}
+                />
+              )}
+              {record && (
+                <Button
+                  icon={Download}
+                  disabled={locked || dirty}
+                  onClick={() => {
+                    void exportBundle()
+                  }}>
+                  导出
+                </Button>
+              )}
+            </div>
+            {record?.unavailableReason && <InlineNotice tone="error">{record.unavailableReason}</InlineNotice>}
+            <fieldset disabled={locked} className="plugin-asset-fields">
+              <div className="form-grid">
+                <TextField
+                  label="插件名称"
+                  disabled={tab === 'manifest'}
+                  maxLength={80}
+                  value={editor.bundle.manifest.name}
+                  onChange={event => editBundle({ ...editor.bundle, manifest: { ...editor.bundle.manifest, name: event.target.value } })}
+                />
+                <TextField
+                  label="版本"
+                  disabled={tab === 'manifest'}
+                  maxLength={64}
+                  value={editor.bundle.manifest.version}
+                  onChange={event => editBundle({ ...editor.bundle, manifest: { ...editor.bundle.manifest, version: event.target.value } })}
+                />
+              </div>
+              <TextField
+                label="说明"
+                disabled={tab === 'manifest'}
+                maxLength={1000}
+                value={editor.bundle.manifest.description}
+                onChange={event =>
+                  editBundle({ ...editor.bundle, manifest: { ...editor.bundle.manifest, description: event.target.value } })
+                }
+              />
+              <Tabs
+                label="插件编辑方式"
+                value={tab}
+                options={[
+                  ...(skillFiles.size ? [{ value: 'content' as const, label: '技能正文' }] : []),
+                  { value: 'files' as const, label: '文件' },
+                  { value: 'manifest' as const, label: '高级声明' },
+                ]}
+                onValueChange={value => {
+                  if (tab === 'manifest') {
+                    try {
+                      const next = readPluginBundle(JSON.stringify({ manifest: JSON.parse(manifestText), files: editor.bundle.files }))
+                      if (next.manifest.id !== editor.bundle.manifest.id) throw new Error('插件标识不能更改。')
+                      editBundle(next)
+                    } catch (cause) {
+                      setError(cause instanceof Error ? cause.message : '声明格式无效。')
+                      return
+                    }
+                  } else if (value === 'manifest') setManifestText(JSON.stringify(editor.bundle.manifest, null, 2))
+                  setError('')
+                  setTab(value)
+                }}
+              />
+              {tab === 'manifest' ? (
+                <TextAreaField
+                  label="插件声明"
+                  value={manifestText}
+                  rows={16}
+                  spellCheck={false}
+                  className="plugin-source"
+                  onChange={event => {
+                    setManifestText(event.target.value)
+                    setDirty(true)
+                  }}
+                  hint="可组合技能、Host 模块、React 面板和静态数据面板；执行入口使用 .mjs。"
+                />
+              ) : (
+                <div className="plugin-file-editor">
+                  <div className="plugin-file-list" role="group" aria-label="插件文件">
+                    {shownFiles.map(item => (
+                      <Button
+                        key={item.path}
+                        variant="ghost"
+                        aria-pressed={item.path === selectedFile?.path}
+                        onClick={() => setFile(item.path)}>
+                        {item.path}
+                      </Button>
+                    ))}
+                  </div>
+                  {selectedFile ? (
+                    <TextAreaField
+                      label={tab === 'content' ? '工作方法' : selectedFile.path}
+                      rows={14}
+                      className={tab === 'files' ? 'plugin-source' : undefined}
+                      spellCheck={tab === 'content'}
+                      value={selectedFile.content}
+                      onChange={event => editBundle(editPluginSource(editor.bundle, selectedFile.path, event.target.value))}
+                    />
+                  ) : (
+                    <p className="settings-empty">这个插件没有文本文件，可以在高级声明中编辑静态面板。</p>
+                  )}
+                </div>
+              )}
+              {tab === 'files' && (
+                <div className="settings-form-row plugin-asset-actions">
+                  <TextField
+                    label="新增文件路径"
+                    value={newFile}
+                    maxLength={256}
+                    placeholder="helpers/format.mjs"
+                    disabled={locked}
+                    onChange={event => setNewFile(event.target.value)}
+                  />
+                  <Button
+                    disabled={locked || !newFile.trim()}
+                    onClick={() => {
+                      try {
+                        editBundle(addPluginSource(editor.bundle, newFile.trim()))
+                        setFile(newFile.trim())
+                        setNewFile('')
+                        setError('')
+                      } catch (cause) {
+                        setError(cause instanceof Error ? cause.message : '无法添加文件。')
+                      }
+                    }}>
+                    添加文件
+                  </Button>
+                </div>
+              )}
+              <details className="plugin-asset-details">
+                <summary>插件标识与执行方式</summary>
+                <TextField
+                  label="插件标识"
+                  value={editor.bundle.manifest.id}
+                  readOnly={record !== undefined}
+                  maxLength={64}
+                  onChange={event => editBundle({ ...editor.bundle, manifest: { ...editor.bundle.manifest, id: event.target.value } })}
+                />
+                <p>技能与静态数据可以直接应用。Host 和界面模块是你信任的代码，首次应用会在 Mac 上确认；代码可以访问其运行环境。</p>
+              </details>
+            </fieldset>
+            {error && <InlineNotice tone="error">{error}</InlineNotice>}
+            {pending && !busy && (
+              <InlineNotice tone="warn">
+                结果尚未确认，编辑内容已保留。
+                <Button
+                  onClick={() => {
+                    void perform(pending)
+                  }}>
+                  重试同一请求
+                </Button>
+              </InlineNotice>
+            )}
+            <InlineConfirm active={busy} rank={1} />
+          </div>
+        )}
+      </Dialog>
+      {deleting && (
+        <ConfirmDialog
+          title="删除这个插件？"
+          message="新的会话将不再使用它；正在运行的工作会保留已经取得的能力。"
+          confirmLabel="删除插件"
+          danger
+          onConfirm={async () => {
+            if (!record) return
+            await perform({
+              path: route(record.id),
+              options: { method: 'DELETE', body: { requestId: newRequestId(), baseRevision: record.revision } },
+            })
+          }}
+          onClose={() => {
+            if (!busy) setDeleting(false)
+          }}
+        />
+      )}
+    </SettingsGroup>
+  )
+}

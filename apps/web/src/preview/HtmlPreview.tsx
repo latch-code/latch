@@ -1,10 +1,11 @@
 import { useCallback, useMemo, useState } from 'react'
-import { Button, InlineNotice } from '@latch/ui'
+import { Button, IconButton, InlineNotice } from '@latch/ui'
+import { Info } from 'lucide-react'
 import { currentShell } from '../core/shell.ts'
-import { VisibleText } from '../components/VisibleText.tsx'
 import { FileSandbox } from './FileSandbox.tsx'
 import { TextPreview } from './TextPreview.tsx'
 import { isFrameEvent } from './types.ts'
+import { openDocumentLink } from './openLink.ts'
 
 export function HtmlPreview({
   text,
@@ -29,7 +30,7 @@ export function HtmlPreview({
     }
   })
   const [blocked, setBlocked] = useState(0),
-    [link, setLink] = useState(''),
+    [info, setInfo] = useState(false),
     [error, setError] = useState(false)
   const enabled = available && scripts
   const bytes = useMemo(() => new TextEncoder().encode(text).buffer, [text])
@@ -37,14 +38,7 @@ export function HtmlPreview({
     if (!isFrameEvent(value)) return
     if (value.type === 'html') setBlocked(value.blocked)
     if (value.type === 'error') setError(true)
-    if (value.type === 'link') {
-      try {
-        const url = new URL(value.href)
-        if (['http:', 'https:'].includes(url.protocol) && !url.username && !url.password) setLink(url.href)
-      } catch {
-        /* Keep an invalid document URL inside the frame. */
-      }
-    }
+    if (value.type === 'link') openDocumentLink(value.href)
   }, [])
   return (
     <div className="html-preview document-preview">
@@ -64,7 +58,6 @@ export function HtmlPreview({
               const next = !enabled
               setScripts(next)
               setBlocked(0)
-              setLink('')
               setError(false)
               try {
                 if (preferenceKey) localStorage.setItem(preferenceKey, next ? '1' : '0')
@@ -75,24 +68,14 @@ export function HtmlPreview({
             运行页面脚本
           </Button>
         )}
+        <IconButton icon={Info} size="xs" label="预览说明" aria-pressed={info} onClick={() => setInfo(!info)} />
       </div>
-      {!available && <p className="file-preview-caption">页面脚本只在运行 Latch 的电脑上的桌面端运行，这里显示的是静态内容。</p>}
-      {blocked > 0 && <InlineNotice>页面引用了外部资源（至少 {blocked} 处），预览中不加载。</InlineNotice>}
-      {link && (
-        <InlineNotice
-          action={
-            <Button
-              size="xs"
-              onClick={() => {
-                window.open(link, '_blank', 'noopener,noreferrer')
-                setLink('')
-              }}>
-              打开链接
-            </Button>
-          }>
-          文档请求打开：
-          <VisibleText text={link} />
-        </InlineNotice>
+      {info && (
+        <div className="file-preview-caption" role="note">
+          {!available && <p>这里显示页面的静态预览。可以在这台电脑的桌面端运行页面脚本。</p>}
+          {blocked > 0 && <p>部分外部图片或资源未加载（至少 {blocked} 处）。</p>}
+          <p>文档链接会在默认浏览器打开。</p>
+        </div>
       )}
       {source ? (
         <TextPreview text={text} path={path} />

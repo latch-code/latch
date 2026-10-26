@@ -4,7 +4,7 @@
 
 | 路径 | 职责 |
 | --- | --- |
-| `*.e2e.ts` | 浏览器：登记、接管、流式界面、Host 宣布的停止与休眠（`host-state.e2e.ts`）、权限展示、扩展、需求包技能与 React 会话面板（`plugin-packages.e2e.ts`）、项目编辑与缺失目录（`projects.e2e.ts`）、布局、侧栏的宽度、吸附与筛选胶囊（`sidebar.e2e.ts`）、设置的层级动效与模型服务（`settings.e2e.ts`）、启动目录在程序目录内的提示（`code-root.e2e.ts`）、手机的页面栈（`phone.e2e.ts`）、视觉截图（`visual.e2e.ts`）、旧 Host 路径标记（`file-chips.e2e.ts`）与文件内容列（`file-preview.e2e.ts`）；桌面端壳：`desktop.e2e.ts` 与 `desktop-files.e2e.ts`（`HARNESS_ELECTRON_E2E=1`，仅 macOS） |
+| `*.e2e.ts` | 浏览器：登记、接管、流式界面、Host 宣布的停止与休眠（`host-state.e2e.ts`）、权限展示、扩展、插件技能与 React 会话面板（`plugin-packages.e2e.ts`）、项目编辑与缺失目录（`projects.e2e.ts`）、布局、侧栏的宽度、吸附与筛选胶囊（`sidebar.e2e.ts`）、设置的层级动效与模型服务（`settings.e2e.ts`）、启动目录在程序目录内的提示（`code-root.e2e.ts`）、手机的页面栈（`phone.e2e.ts`）、视觉截图（`visual.e2e.ts`）、旧 Host 路径标记（`file-chips.e2e.ts`）、文件内容列（`file-preview.e2e.ts`）与发消息前的项目文件树（`file-tree.e2e.ts`）；桌面端壳：`desktop.e2e.ts` 与 `desktop-files.e2e.ts`（`HARNESS_ELECTRON_E2E=1`，仅 macOS） |
 | `helpers/host.ts`、`helpers/browser.ts` | `startTestHost`（经 `@latch/host` 绑定 testkit 的夹具，与 `apps/host/test/helpers/host.ts`、`apps/desktop/test/helpers/host.ts` 保持一致）；`enrollBrowser`、`connected` 与 `browserLaunchOptions` |
 | `helpers/layout.ts`、`helpers/motion.ts`、`helpers/visual.ts`、`helpers/security.ts` | 控件可达、横向溢出、回到手机的会话列表与打开、离开设置（含从分区里的页面一级级返回）；按令牌读出的过渡与动画；视觉截图的视口、固定时钟、截图、索引与逐像素比较；向页面注入样式并核对安全界面不变 |
 | `vitest.config.ts` | 文件依次运行，用例与钩子超时 120 秒 |

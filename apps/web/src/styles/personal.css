@@ -1,0 +1,191 @@
+.personal-page > .ui-modal-surface {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-app);
+}
+.personal-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-12);
+  padding: var(--sp-12) var(--sp-16);
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.personal-bar-title {
+  flex: 1;
+  text-align: center;
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+  font-weight: 500;
+  color: var(--text-2);
+}
+.personal-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.personal-content {
+  max-width: 960px;
+  padding: var(--sp-32) var(--sp-24);
+  margin-inline: auto;
+  display: grid;
+  gap: var(--sp-24);
+}
+.personal-assistants {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-12);
+}
+.personal-assistant {
+  corner-shape: var(--corner-shape);
+  display: flex;
+  text-align: left;
+  align-items: flex-start;
+  gap: var(--sp-12);
+  padding: var(--sp-20);
+  background: var(--bg-pane);
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+  min-width: 0;
+  transition: background var(--d-fast) var(--ease);
+}
+.personal-assistant:hover {
+  background: var(--bg-hover);
+}
+.personal-assistant > span:last-child {
+  min-width: 0;
+  display: grid;
+  gap: var(--sp-8);
+}
+.personal-assistant strong {
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  font-weight: 500;
+}
+.personal-avatar {
+  corner-shape: var(--corner-shape);
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-8);
+  background: var(--bg-hover);
+  flex-shrink: 0;
+  color: var(--text-2);
+}
+.personal-role {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  white-space: pre-line;
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+  color: var(--text-2);
+}
+.personal-facts,
+.personal-unavailable {
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  color: var(--text-3);
+}
+.personal-unavailable {
+  color: var(--warn-text);
+}
+.personal-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-8);
+}
+.personal-memory-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--sp-12);
+  color: var(--text-2);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+}
+.personal-memory-heading p {
+  margin: 0;
+}
+.personal-memories {
+  display: grid;
+  gap: var(--sp-12);
+}
+.personal-memory {
+  corner-shape: var(--corner-shape);
+  padding: var(--sp-16);
+  background: var(--bg-pane);
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+}
+.personal-memory p {
+  margin: 0 0 var(--sp-12);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+}
+.personal-memory > .personal-actions {
+  justify-content: flex-end;
+}
+.personal-empty {
+  padding: var(--sp-24) var(--sp-16);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+  color: var(--text-2);
+  margin: 0;
+}
+.personal-delete {
+  border-top: 1px solid var(--line);
+  padding-top: var(--sp-16);
+}
+.personal-editor-fields {
+  display: grid;
+  gap: var(--sp-16);
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.personal-plugin-options {
+  display: grid;
+  gap: var(--sp-12);
+}
+.personal-plugin-options h3 {
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+  font-weight: 500;
+  margin: 0;
+}
+.personal-plugin-options p {
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  color: var(--text-2);
+  margin: 0;
+}
+.phone-personal-entry {
+  padding: 0 var(--sp-16) var(--sp-12);
+}
+@media (max-width: 767.98px) {
+  .personal-content {
+    padding: var(--sp-24) var(--sp-16);
+  }
+  .personal-assistants {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .personal-bar {
+    padding-inline: var(--sp-8);
+  }
+  .personal-bar-title {
+    display: none;
+  }
+  .personal-bar > :last-child {
+    margin-left: auto;
+  }
+}

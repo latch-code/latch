@@ -50,6 +50,10 @@ const TARGET = { slot: 'target', max: 48, keep: 'end' } as const
  * one (a tool's or a mode's display name, the words for a session's folder) is slot text the Host fills in.
  */
 export const REASON_FORMS: Readonly<Record<PresenceReasonForm, ReasonForm>> = {
+  'plugin.package.apply': {
+    actions: ['plugin.package.apply'],
+    segments: ['应用插件「', { slot: 'plugin', max: 24 }, '」，允许其可信代码访问 Host 进程或当前页面'],
+  },
   'agent.probe': { actions: ['agent.probe'], segments: ['测试启动 ', HARNESS, '（不发送提示词）：', ...COMMAND] },
   'approval.write': { actions: ['approval.r2'], segments: ['批准写入 ', { slot: 'path', max: 40, keep: 'end' }, '（', WHY, '）'] },
   'approval.tool': {

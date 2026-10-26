@@ -107,12 +107,24 @@ describe('opaque HTML previews', () => {
           const frame = page.frameLocator('iframe[title="文档预览"]')
           await frame.getByRole('heading', { name: 'Local HTML slides' }).waitFor()
           await frame.getByText('Static content', { exact: true }).waitFor()
-          await preview.getByText('页面引用了外部资源（至少 4 处），预览中不加载。', { exact: true }).waitFor()
+          expect(await preview.getByRole('note').count()).toBe(0)
+          await preview.getByRole('button', { name: '预览说明', exact: true }).click()
+          await preview.getByText('部分外部图片或资源未加载（至少 4 处）。', { exact: true }).waitFor()
+          await preview.getByRole('button', { name: '预览说明', exact: true }).click()
           expect(await preview.getByRole('button', { name: '运行页面脚本', exact: true }).count()).toBe(0)
           expect(await page.evaluate(() => document.body.dataset.previewEscape)).toBeUndefined()
           await settleShell(page)
+          await page.evaluate(() => {
+            window.open = url => {
+              document.body.dataset.openedDocumentLink = String(url)
+              return null
+            }
+          })
           await frame.getByRole('link', { name: 'Document link' }).click()
-          await preview.getByText('文档请求打开：', { exact: false }).waitFor()
+          await expect
+            .poll(() => page.evaluate(() => document.body.dataset.openedDocumentLink))
+            .toBe('https://example.invalid/document-link')
+          expect(await preview.getByText('文档请求打开：', { exact: false }).count()).toBe(0)
           await preview.getByRole('button', { name: '源码', exact: true }).click()
           await preview.getByRole('searchbox', { name: '查找文件内容' }).waitFor()
           await preview.getByRole('button', { name: '预览', exact: true }).click()
@@ -189,6 +201,29 @@ describe('opaque HTML previews', () => {
         await page.getByRole('button', { name: '预览文件：slides.html', exact: true }).click()
         const preview = page.getByRole('region', { name: '文件预览', exact: true })
         await page.frameLocator('iframe').getByText('Static content', { exact: true }).waitFor()
+        await settleShell(page)
+        await application.evaluate(({ shell, dialog }) => {
+          const state = { opened: [] as string[], dialogs: 0 }
+          Object.assign(globalThis, { documentLinks: state })
+          shell.openExternal = async url => {
+            state.opened.push(url)
+          }
+          dialog.showMessageBox = (async () => {
+            state.dialogs++
+            return { response: 1, checkboxChecked: false }
+          }) as typeof dialog.showMessageBox
+        })
+        const link = page.frameLocator('iframe').getByRole('link', { name: 'Document link' })
+        await link.evaluate(element => element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
+        const links = () =>
+          application!.evaluate(() => (globalThis as unknown as { documentLinks: { opened: string[]; dialogs: number } }).documentLinks)
+        expect(await links()).toEqual({ opened: [], dialogs: 0 })
+        await link.click()
+        await expect.poll(async () => (await links()).opened).toEqual(['https://example.invalid/document-link'])
+        expect((await links()).dialogs).toBe(0)
+        await page.evaluate(() => window.open('https://example.invalid/programmatic'))
+        await expect.poll(async () => (await links()).dialogs).toBe(1)
+        expect((await links()).opened).toEqual(['https://example.invalid/document-link'])
         await preview.getByRole('button', { name: '运行页面脚本', exact: true }).click()
         await page.frameLocator('iframe').getByText('Scripts ran', { exact: true }).waitFor()
         const frame = page.frames().find(frame => frame.url().startsWith('latch-frame://preview/html-script.html'))!

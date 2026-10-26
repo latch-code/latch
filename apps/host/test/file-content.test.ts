@@ -62,6 +62,7 @@ async function fixture() {
   }
   const revoked = new Set<string>()
   let removed = false
+  let privateSession = false
   let now = Date.now()
   const routes = createFileRoutes({
     protectedPaths: [privateDir],
@@ -69,6 +70,10 @@ async function fixture() {
     now: () => now,
     audit,
     limiter: { take: () => {} },
+    sessionAccess: caller => {
+      if (privateSession && caller.device?.dataScope !== 'all')
+        throw new AppError(403, 'personal-scope-required', '私有会话只供 all 范围查看')
+    },
     sessionRoots: async id =>
       id !== 'session'
         ? undefined
@@ -146,6 +151,9 @@ async function fixture() {
     request,
     resolve,
     revoked,
+    makePrivate: () => {
+      privateSession = true
+    },
     remove: () => {
       removed = true
     },
@@ -156,6 +164,20 @@ async function fixture() {
 }
 
 describe('adjudicated file content', () => {
+  it('applies a session privacy gate to references and handles issued before that gate changed', async () => {
+    const f = await fixture()
+    const handle = (await f.resolve('work', ['report.md'])).files[0]!.file!.handle
+    expect(await (await f.request('work', `files/${handle}`)).text()).toContain('# Report')
+    f.makePrivate()
+    for (const path of [`files/${handle}`, `files/${handle}/meta`]) {
+      const response = await f.request('work', path)
+      expect(response.status).toBe(403)
+      expect(await response.json()).toEqual({ error: 'personal-scope-required' })
+    }
+    expect((await f.request('work', 'tasks/session/files/resolve', { paths: ['report.md'] })).status).toBe(403)
+    const allowed = (await f.resolve('all', ['report.md'])).files[0]!.file!.handle
+    expect(await (await f.request('all', `files/${allowed}`)).text()).toContain('# Report')
+  })
   it('refuses pixel-heavy previews in metadata before loading and keeps unknown image headers as download-only', async () => {
     const f = await fixture()
     const image = Buffer.alloc(24)

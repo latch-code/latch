@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { Context, type Fiber } from 'cordis'
 import type { PluginInfo, SkillInfo, UiPanelInfo } from '@latch/protocol'
 import {
@@ -30,6 +31,8 @@ const skillSchema = z
   .strict()
 
 interface Entry {
+  revision?: string
+  activation: string
   plugin: HarnessPlugin
   managed?: PluginInfo['managed']
   enabled: boolean
@@ -49,6 +52,8 @@ interface Entry {
 }
 
 export interface RegisterOptions {
+  /** Host-verified complete applied source/config revision. Absence means this activation only. */
+  revision?: string
   managed?: PluginInfo['managed']
 }
 export interface ReplaceOptions extends RegisterOptions {
@@ -56,8 +61,16 @@ export interface ReplaceOptions extends RegisterOptions {
   preserveEnabled?: boolean
 }
 export interface AcquireOptions {
+  /** A saved execution grant must still name exactly these enabled plugin revisions. */
+  expectedRevisions?: Readonly<Record<string, string>>
+  /** Explicit capability owners; an empty list leases no tools or skills. Provider availability is independent. */
+  pluginIds?: ReadonlyArray<string>
   /** `false` leases only the provider's plugin, so tool plugins stay free to change during chat runs. */
   tools?: boolean
+}
+export interface PluginRevisionSnapshot {
+  revisions: Record<string, string>
+  persistent: boolean
 }
 export type RegistryLogger = (message: string, error: unknown) => void
 
@@ -82,9 +95,13 @@ export class PluginRegistry implements RuntimeRegistry {
     this.log = log
   }
 
-  private newEntry(plugin: HarnessPlugin, managed?: PluginInfo['managed']): Entry {
+  private newEntry(plugin: HarnessPlugin, managed?: PluginInfo['managed'], revision?: string): Entry {
+    if (revision !== undefined && !/^[a-f0-9]{64}$/u.test(revision))
+      throw new AppError(400, 'plugin-revision-invalid', '插件修订摘要无效。')
     return {
       plugin,
+      activation: randomUUID(),
+      ...(revision ? { revision } : {}),
       ...(managed ? { managed } : {}),
       enabled: false,
       leases: 0,
@@ -103,7 +120,7 @@ export class PluginRegistry implements RuntimeRegistry {
   register(plugin: HarnessPlugin, options: RegisterOptions = {}): void {
     if (this.mutating.has(plugin.id)) throw new AppError(409, 'plugin-busy', '插件正在变更，请稍后重试')
     if (this.entries.has(plugin.id)) throw new AppError(409, 'plugin-exists', `插件 ${plugin.id} 已安装`)
-    this.entries.set(plugin.id, this.newEntry(plugin, options.managed))
+    this.entries.set(plugin.id, this.newEntry(plugin, options.managed, options.revision))
   }
 
   async enable(id: string): Promise<void> {
@@ -127,6 +144,7 @@ export class PluginRegistry implements RuntimeRegistry {
   }
 
   private async activate(entry: Entry, previous?: Entry): Promise<void> {
+    entry.activation = randomUUID()
     // A retired generation is no longer acquirable, so its registrations do not block a new one.
     const candidates = () => [...this.entries.values(), ...this.staged.values()].filter(other => other !== previous)
     const loading = this.root.plugin({
@@ -204,6 +222,17 @@ export class PluginRegistry implements RuntimeRegistry {
     }
   }
 
+  /** Stop new acquisitions immediately; existing leases own the old generation until their real settlement. */
+  retire(id: string, forget = false): void {
+    const entry = this.entry(id)
+    if (this.mutating.has(id)) throw new AppError(409, 'plugin-busy', '插件正在变更，请稍后重试')
+    entry.enabled = false
+    if (forget) this.entries.delete(id)
+    else this.entries.set(id, this.newEntry(entry.plugin, entry.managed, entry.revision))
+    if (entry.leases) this.retired.add(entry)
+    else this.collect(entry)
+  }
+
   /** Disables and forgets a plugin. The entry is forgotten even when its cleanup reports failures. */
   async unregister(id: string): Promise<void> {
     const entry = this.entry(id)
@@ -279,18 +308,53 @@ export class PluginRegistry implements RuntimeRegistry {
     void disposal.finally(() => this.disposals.delete(disposal))
   }
 
+  /** A conservative revision for legacy closures; only a Host-supplied content revision survives restart. */
+  revisionSnapshot(ids: ReadonlyArray<string>): PluginRevisionSnapshot {
+    if (ids.length > 128 || ids.some(id => !/^[A-Za-z0-9_-]{1,64}$/u.test(id)))
+      throw new AppError(400, 'plugin-revision-invalid', '插件修订范围无效。')
+    const revisions = new Map<string, string>()
+    let persistent = true
+    for (const id of [...new Set(ids)].sort()) {
+      const entry = this.entries.get(id)
+      if (!entry?.enabled) throw new AppError(409, 'plugin-unavailable', '需要的插件已停用或移除。')
+      if (this.mutating.has(id)) throw new AppError(409, 'plugin-busy', '需要的插件正在变更，请稍后重试。')
+      revisions.set(id, entry.revision ?? sha256Hex('latch-plugin-activation-v1\0' + entry.activation))
+      if (entry.revision === undefined) persistent = false
+    }
+    return { revisions: Object.fromEntries(revisions), persistent }
+  }
+  providerOwner(providerId: string): string | undefined {
+    return [...this.entries.values()].find(entry => entry.enabled && entry.providers.some(provider => provider.id === providerId))?.plugin
+      .id
+  }
+
   acquire(providerId: string, options: AcquireOptions = {}): CapabilityLease {
+    if (options.expectedRevisions !== undefined) {
+      const ids = Object.keys(options.expectedRevisions)
+      const current = this.revisionSnapshot(ids)
+      if (ids.some(id => current.revisions[id] !== options.expectedRevisions![id]))
+        throw new AppError(409, 'plugin-revision-changed', '插件已更新，原执行授权暂停，请重新确认设置。')
+    }
     const selected = [...this.entries.values()].filter(e => e.enabled)
     const owner = selected.find(e => e.providers.some(p => p.id === providerId))
     const provider = owner?.providers.find(p => p.id === providerId)
     if (!owner || !provider) throw new AppError(409, 'provider-unavailable', '请先配置并启用模型接口')
     const withTools = options.tools !== false
-    const contributors = selected.filter(e => e === owner || e.skills.length || (withTools && e.tools.length))
+    const requested = options.pluginIds === undefined ? undefined : new Set(options.pluginIds)
+    if (requested && [...requested].some(id => !selected.some(entry => entry.plugin.id === id)))
+      throw new AppError(409, 'personal-plugin-unavailable', '选择的插件已停用或移除，请更新个人助手。')
+    const capabilities = selected.filter(entry => requested === undefined || requested.has(entry.plugin.id))
+    if (
+      options.expectedRevisions !== undefined
+      && [owner.plugin.id, ...capabilities.map(entry => entry.plugin.id)].some(id => !Object.hasOwn(options.expectedRevisions!, id))
+    )
+      throw new AppError(409, 'plugin-revision-missing', '执行授权缺少实际插件修订，请重新确认设置。')
+    const contributors = [...new Set([owner, ...capabilities.filter(e => e.skills.length || (withTools && e.tools.length))])]
     if (contributors.some(entry => this.mutating.has(entry.plugin.id))) {
       throw new AppError(409, 'plugin-busy', '本次任务需要的插件正在变更，请稍后重试')
     }
-    const tools = withTools ? contributors.flatMap(e => e.tools) : []
-    const skills = contributors.flatMap(entry => entry.skills.map(skill => ({ ...skill, id: `${entry.plugin.id}:${skill.id}` })))
+    const tools = withTools ? capabilities.flatMap(e => e.tools) : []
+    const skills = capabilities.flatMap(entry => entry.skills.map(skill => ({ ...skill, id: `${entry.plugin.id}:${skill.id}` })))
     if (skills.reduce((size, skill) => size + skill.content.length, 0) > 256_000) {
       throw new AppError(409, 'skills-too-large', '已启用技能的总长度超过 256 KB，请停用部分需求包后重试。')
     }
@@ -400,7 +464,7 @@ export class PluginRegistry implements RuntimeRegistry {
   async replace(plugin: HarnessPlugin, beforeCommit?: () => Promise<void>, options: ReplaceOptions = {}): Promise<void> {
     const previous = this.entries.get(plugin.id)
     if (this.mutating.has(plugin.id)) throw new AppError(409, 'plugin-busy', '插件正在变更，请稍后重试')
-    const staged = this.newEntry(plugin, options.managed ?? previous?.managed)
+    const staged = this.newEntry(plugin, options.managed ?? previous?.managed, options.revision)
     const keepDisabled = options.preserveEnabled === true && previous !== undefined && !previous.enabled
     this.mutating.add(plugin.id)
     this.staged.set(plugin.id, staged)

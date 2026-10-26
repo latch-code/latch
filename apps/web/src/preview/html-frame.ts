@@ -36,6 +36,7 @@ document.addEventListener(
     const anchor = event.target instanceof Element ? event.target.closest('a') : null
     if (!anchor) return
     event.preventDefault()
+    if (!event.isTrusted) return
     const href = anchor.getAttribute('href') ?? anchor.getAttribute('xlink:href') ?? ''
     if (href.startsWith('#')) {
       try {

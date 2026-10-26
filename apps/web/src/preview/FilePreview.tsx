@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { AppWindow, Download, Ellipsis, Eye, FolderOpen, Maximize2, RefreshCw, X } from 'lucide-react'
-import { isFileMetadata, type FileMetadata } from '@latch/protocol'
+import { isFileMetadata, type FileMetadata, type FileMention } from '@latch/protocol'
 import { Button, IconButton, InlineNotice, Loading, Menu } from '@latch/ui'
 import { api, ApiError, errorMessage, fileBytes } from '../core/api.ts'
 import { currentShell, revealLabel, shellFiles } from '../core/shell.ts'
@@ -14,7 +14,7 @@ import { TextPreview } from './TextPreview.tsx'
 import { MarkdownPreview } from './MarkdownPreview.tsx'
 import { HtmlPreview } from './HtmlPreview.tsx'
 import { ImagePreview } from './ImagePreview.tsx'
-import { FileOpenContext } from './fileContext.ts'
+import { FileOpenContext, contextOf, fileContextBody, fileContextKey, fileRoute, targetIn } from './fileContext.ts'
 import { resolveFileImage } from './fileImages.ts'
 import type { FileTab } from './useFileTabs.ts'
 
@@ -29,7 +29,7 @@ export function FilePreview({
   folders,
   cwd,
   onResolved,
-  onCompose,
+  onMention,
   onExpand,
   onClose,
 }: {
@@ -40,7 +40,7 @@ export function FilePreview({
   folders?: Array<{ id: string; path: string }>
   cwd?: string
   onResolved(file: FileMetadata): void
-  onCompose?(text: string): void
+  onMention?(mention: FileMention): void
   onExpand(): void
   onClose(): void
 }) {
@@ -63,7 +63,9 @@ export function FilePreview({
     resolved = useRef(onResolved)
   current.current = file
   resolved.current = onResolved
-  const { sessionId, reference, rootId, attachmentId } = tab.target
+  const { reference, rootId, attachmentId } = tab.target
+  const context = contextOf(tab.target)
+  const contextKey = fileContextKey(context)
   const load = useCallback(
     async (signal?: AbortSignal) => {
       if (attachmentId) {
@@ -79,9 +81,14 @@ export function FilePreview({
         setNotice('')
         return
       }
-      const result = await api<ResolveResult>(`tasks/${encodeURIComponent(sessionId)}/files/resolve`, {
+      const result = await api<ResolveResult>(fileRoute(context, 'resolve'), {
         method: 'POST',
-        body: { paths: [reference], ...(rootId ? { rootId } : {}), ...(showSecret ? { showSecret: true } : {}) },
+        body: {
+          ...fileContextBody(context),
+          paths: [reference],
+          ...(rootId ? { rootId } : {}),
+          ...(showSecret ? { showSecret: true } : {}),
+        },
         ...(signal ? { signal } : {}),
       })
       const answer = result.files[0]
@@ -93,7 +100,7 @@ export function FilePreview({
       setError('')
       setNotice('')
     },
-    [sessionId, reference, rootId, showSecret, attachmentId],
+    [contextKey, reference, rootId, showSecret, attachmentId],
   )
   useEffect(() => {
     const controller = new AbortController()
@@ -212,11 +219,15 @@ export function FilePreview({
   }
   const base = file ? (folders?.length ? folders.find(folder => folder.id === file.root)?.path : cwd) : undefined
   const fullPath = file && base ? `${base.replace(/[\\/]+$/u, '')}/${file.path}` : (file?.path ?? reference)
-  const nativeFiles = local && base && file?.source !== 'attachment' ? shellFiles() : null
+  const shell = shellFiles()
+  const nativeFiles = local && file?.source !== 'attachment' && (context.kind === 'session' || shell?.protocolVersion === 2) ? shell : null
   const native = async (action: 'reveal' | 'quickLook' | 'open') => {
-    if (!nativeFiles) return
+    if (!nativeFiles || !file) return
     try {
-      const result = await nativeFiles[action](sessionId, fullPath)
+      const result = await nativeFiles[action](
+        context.kind === 'session' ? context.sessionId : { workspaceId: context.workspaceId, harnessId: context.harnessId },
+        { handle: file.handle },
+      )
       if (result.status === 'refused' || result.status === 'failed') setError(fileNote(result.code).text)
       if (result.status === 'busy') setError('上一个操作还没有完成，请稍后再试。')
     } catch (cause) {
@@ -249,8 +260,8 @@ export function FilePreview({
     : ''
   const imageRoot = file?.root ?? rootId
   const resolveImage = useCallback(
-    (reference: string, signal: AbortSignal) => resolveFileImage(sessionId, reference, imageRoot, signal),
-    [sessionId, imageRoot],
+    (reference: string, signal: AbortSignal) => resolveFileImage(context, reference, imageRoot, signal),
+    [contextKey, imageRoot],
   )
   return (
     <section
@@ -357,15 +368,12 @@ export function FilePreview({
                         },
                       ]
                     : []),
-                  ...(onCompose && file.source !== 'attachment'
+                  ...(onMention && file.source !== 'attachment'
                     ? [
                         {
                           id: 'quote',
                           label: '引用到输入框',
-                          onSelect: () =>
-                            onCompose(
-                              `请查看文件夹「${file.root}」中的文件 \`${file.path}\`${tab.target.line ? ` 第 ${tab.target.line} 行` : ''}`,
-                            ),
+                          onSelect: () => onMention({ root: file.root, path: file.path }),
                         },
                       ]
                     : []),
@@ -468,14 +476,14 @@ export function FilePreview({
                   path={file.path}
                   versionKey={`${file.etag}:${version}`}
                   local={local}
-                  preferenceKey={deviceId ? `latch.html-scripts.${deviceId}.${sessionId}.${file.root}.${file.path}` : undefined}
+                  preferenceKey={deviceId ? `latch.html-scripts.${deviceId}.${contextKey}.${file.root}.${file.path}` : undefined}
                 />
               ) : file.kind === 'markdown' && !sourceMode ? (
                 <div className="file-markdown">
                   <MarkdownPreview
                     text={text}
                     path={file.path}
-                    onOpenFile={reference => openFile?.({ sessionId, reference, rootId: file.root })}
+                    onOpenFile={reference => openFile?.(targetIn(context, reference, file.root))}
                     resolveImage={resolveImage}
                     renderFrame={input => <FileSandbox {...input} />}
                   />

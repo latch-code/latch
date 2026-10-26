@@ -13,6 +13,8 @@ const batchSchema = z.strictObject({
   ids: z.array(z.string().min(1).max(256)).min(1).max(100),
 })
 interface Options<Caller> {
+  visible?(caller: Caller, summary: TaskSummary): boolean
+  checkRead?(caller: Caller, id: string, write?: boolean): Promise<unknown>
   now?: () => number
   templates: PromptTemplateStore
   changed(): void
@@ -38,7 +40,10 @@ export function createSessionRoutes<Caller>(options: Options<Caller>) {
         if (usageBusy) throw new AppError(429, 'rate-limited', '正在读取用量，请稍后再试。', { retryAfter: 1 })
         usageBusy = true
         try {
-          const result = await reportedUsage(options, input.days)
+          const result = await reportedUsage(
+            { ...options, list: async () => (await options.list()).filter(summary => options.visible?.(caller, summary) !== false) },
+            input.days,
+          )
           options.recheck(caller, 'view')
           json(res, result)
         } finally {
@@ -70,7 +75,7 @@ export function createSessionRoutes<Caller>(options: Options<Caller>) {
         if (searchBusy) throw new AppError(429, 'rate-limited', '正在完成一次正文搜索，请稍后再试。', { retryAfter: 1 })
         searchBusy = true
         try {
-          const result = await search.search(input.q, input.limit)
+          const result = await search.search(input.q, input.limit, summary => options.visible?.(caller, summary) !== false)
           options.recheck(caller, 'view')
           json(res, result)
         } finally {
@@ -84,6 +89,8 @@ export function createSessionRoutes<Caller>(options: Options<Caller>) {
       const results: SessionBatchResult['results'] = []
       for (const id of new Set(input.ids)) {
         try {
+          options.recheck(caller, 'run')
+          await options.checkRead?.(caller, id, true)
           options.recheck(caller, 'run')
           if (input.action === 'delete') {
             await options.checkRemove(caller, id)

@@ -76,6 +76,8 @@ export interface HarnessHostOptions {
 
 /** A complete harness implementation. This is distinct from a model API adapter. */
 export interface HarnessDriver {
+  /** Keeps personal instructions out of public/forkable history and enforces the selected Host capabilities. */
+  personalContext?: 'private'
   id: string
   name: string
   version: string

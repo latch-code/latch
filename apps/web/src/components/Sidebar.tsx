@@ -1,6 +1,6 @@
 import { ProjectGroupHeading, ProjectsHeading, type ProjectNavigationActions } from './ProjectNavigation.tsx'
 import { Fragment, memo, useEffect, useRef, useState, type RefObject } from 'react'
-import { Archive, Ellipsis, Inbox, Laptop, PanelLeft, Plus, Search, Settings, SquarePen, X } from 'lucide-react'
+import { Archive, Ellipsis, Inbox, Laptop, PanelLeft, Plus, Search, Settings, SquarePen, UsersRound, X } from 'lucide-react'
 import type { AppSnapshot, HarnessInfo, TaskSummary } from '@latch/protocol'
 import { sessionHarness } from '../composerChoice.ts'
 import { relativeTime, statusLabels } from '../format.ts'
@@ -230,6 +230,7 @@ export function Sidebar({
   connection,
   onRefresh,
   onSettings,
+  onPersonal,
   sessionMenu,
   now,
   devMode = false,
@@ -265,6 +266,7 @@ export function Sidebar({
   connection: ConnectionStatus
   onRefresh: () => void
   onSettings: () => void
+  onPersonal?: () => void
   sessionMenu: (task: TaskSummary) => MenuSection[]
   now: number
 }) {
@@ -368,6 +370,14 @@ export function Sidebar({
           </div>
         </div>
       </div>
+      {onPersonal && (
+        <button type="button" className="approvals-row personal-navigation" onClick={onPersonal}>
+          <span className="sidebar-row-icon">
+            <UsersRound size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+          </span>
+          <span>个人助手</span>
+        </button>
+      )}
       {approvals > 0 && (
         <button type="button" className="approvals-row" onClick={onApprovals}>
           <span className="sidebar-row-icon">
@@ -476,6 +486,7 @@ export function Rail({
   onSearch,
   onApprovals,
   onSettings,
+  onPersonal,
   devMode = false,
 }: {
   approvals: number
@@ -486,6 +497,7 @@ export function Rail({
   onSearch: () => void
   onApprovals: () => void
   onSettings: () => void
+  onPersonal?: () => void
 }) {
   // The button shows only while something waits, so its count is told the value it rose from.
   const approvalsBefore = useLivePrevious(approvals)
@@ -500,6 +512,7 @@ export function Rail({
         onClick={onSessions}
       />
       <IconButton label="新建会话" icon={SquarePen} onClick={onNew} />
+      {onPersonal && <IconButton label="个人助手" icon={UsersRound} onClick={onPersonal} />}
       <IconButton label="搜索会话" icon={Search} onClick={onSearch} />
       {approvals > 0 && (
         <IconButton

@@ -23,7 +23,7 @@ export class SessionSearch {
     this.budget = source.budgetMs ?? 1000
   }
 
-  async search(query: string, limit = 30): Promise<SearchResults> {
+  async search(query: string, limit = 30, visible?: (summary: TaskSummary) => boolean): Promise<SearchResults> {
     const q = query.trim().toLocaleLowerCase()
     if (!q) return { hits: [], truncated: false }
     const started = this.now()
@@ -40,7 +40,7 @@ export class SessionSearch {
     for (const id of this.cache.keys()) if (!existing.has(id)) this.cache.delete(id)
     let truncated = false
     for (const summary of summaries) {
-      if (this.source.visible && !this.source.visible(summary)) continue
+      if ((visible && !visible(summary)) || (this.source.visible && !this.source.visible(summary))) continue
       if (this.now() - started >= this.budget) {
         truncated = true
         break
@@ -83,6 +83,7 @@ export class SessionSearch {
           clearTimeout(timer)
         }
       }
+      if (visible && !visible(summary)) continue
       for (const message of cached.messages) {
         if (this.now() - started >= this.budget) {
           truncated = true

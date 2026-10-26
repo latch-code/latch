@@ -111,6 +111,18 @@ function isAcceptableReference(value) {
 
 /** `{ sessionId, path }` or `{ sessionId, handle }`, with exactly those keys; anything else is refused whole. */
 function parseFileInput(input) {
+  if (hasOnlyKeys(input, ['workspaceId', 'harnessId', 'handle'])) {
+    if (
+      typeof input.workspaceId !== 'string'
+      || !/^[A-Za-z0-9_-]{1,64}$/.test(input.workspaceId)
+      || typeof input.harnessId !== 'string'
+      || !/^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,127}$/.test(input.harnessId)
+      || typeof input.handle !== 'string'
+      || !HANDLE.test(input.handle)
+    )
+      return undefined
+    return { workspaceId: input.workspaceId, harnessId: input.harnessId, handle: input.handle }
+  }
   if (hasOnlyKeys(input, ['sessionId', 'path'])) {
     if (typeof input.sessionId !== 'string' || !SESSION_ID.test(input.sessionId) || !isAcceptableReference(input.path)) return undefined
     return { sessionId: input.sessionId, path: input.path }
@@ -349,7 +361,10 @@ function createFileActions({ request, show, quickLook, open, inspect, readHead, 
         if (typeof entry.file.handle !== 'string' || !HANDLE.test(entry.file.handle)) return { status: 'failed', code: 'host-unavailable' }
         handle = entry.file.handle
       }
-      const answer = await request('POST', `/link/api/files/${handle}/local`, { sessionId: parsed.sessionId, action })
+      const answer = await request('POST', `/link/api/files/${handle}/local`, {
+        ...(parsed.sessionId ? { sessionId: parsed.sessionId } : { workspaceId: parsed.workspaceId, harnessId: parsed.harnessId }),
+        action,
+      })
       if (answer.status !== 200) {
         const code = errorCodeOf(answer.json) ?? 'host-unavailable'
         return answer.status >= 400 && answer.status < 500 && answer.status !== 429

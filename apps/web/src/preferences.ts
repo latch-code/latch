@@ -7,6 +7,8 @@ export type ThemePreference = 'system' | 'light' | 'dark'
 export type SendKey = 'enter' | 'mod-enter'
 export interface Preferences {
   autoOpenDocuments: boolean
+  diffLayout: 'unified' | 'split'
+  diffScope: 'run' | 'history'
   onboarding: 'auto' | 'show' | 'hidden'
   theme: ThemePreference
   /** Desktop only; touch keyboards always insert a newline on Enter. */
@@ -19,7 +21,9 @@ export interface Preferences {
 
 const KEY = 'harness-link.preferences'
 const defaults: Preferences = {
-  autoOpenDocuments: false,
+  autoOpenDocuments: true,
+  diffLayout: 'unified',
+  diffScope: 'history',
   onboarding: 'auto',
   theme: 'system',
   sendKey: 'enter',
@@ -50,7 +54,9 @@ export function parsePreferences(raw: string | null): Preferences {
     if (typeof value !== 'object' || value === null) return { ...defaults }
     const item = value as Record<string, unknown>
     return {
-      autoOpenDocuments: item.autoOpenDocuments === true,
+      autoOpenDocuments: typeof item.autoOpenDocuments === 'boolean' ? item.autoOpenDocuments : defaults.autoOpenDocuments,
+      diffLayout: item.diffLayout === 'split' ? 'split' : 'unified',
+      diffScope: item.diffScope === 'run' ? 'run' : 'history',
       onboarding: item.onboarding === 'show' || item.onboarding === 'hidden' ? item.onboarding : 'auto',
       theme: item.theme === 'light' || item.theme === 'dark' ? item.theme : 'system',
       sendKey: item.sendKey === 'mod-enter' ? 'mod-enter' : 'enter',

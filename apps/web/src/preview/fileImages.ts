@@ -1,11 +1,13 @@
-import { isFileMetadata } from '@latch/protocol'
+import { isFileMetadata, type FileContext } from '@latch/protocol'
 import { api } from '../core/api.ts'
+import { fileContextBody, fileRoute } from './fileContext.ts'
 
 /** Resolve an image through the same session authorization as a clicked file reference. */
-export async function resolveFileImage(sessionId: string, reference: string, rootId: string | undefined, signal: AbortSignal) {
-  const result = await api<{ files?: Array<{ status?: string; file?: unknown }> }>(`tasks/${encodeURIComponent(sessionId)}/files/resolve`, {
+export async function resolveFileImage(scope: string | FileContext, reference: string, rootId: string | undefined, signal: AbortSignal) {
+  const context: FileContext = typeof scope === 'string' ? { kind: 'session', sessionId: scope } : scope
+  const result = await api<{ files?: Array<{ status?: string; file?: unknown }> }>(fileRoute(context, 'resolve'), {
     method: 'POST',
-    body: { paths: [reference], ...(rootId ? { rootId } : {}) },
+    body: { ...fileContextBody(context), paths: [reference], ...(rootId ? { rootId } : {}) },
     signal,
   })
   const answer = result.files?.[0]

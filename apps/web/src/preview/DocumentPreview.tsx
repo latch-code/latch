@@ -1,10 +1,11 @@
 import csvWorkerUrl from './csv.worker.ts?worker&url'
 import { trustedScriptUrl } from './runtime.ts'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowLeft, ArrowRight, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight } from 'lucide-react'
 import { Button, IconButton, InlineNotice } from '@latch/ui'
 import { isFrameEvent, type DocumentPreviewProps, type FrameCommand, type GridCell, type SheetInfo } from './types.ts'
 import { SheetGrid } from './SheetGrid.tsx'
+import { openDocumentLink } from './openLink.ts'
 const PdfPreview = lazy(() => import('./PdfPreview.tsx'))
 type Pending = { resolve: (rows: GridCell[][]) => void; reject: () => void; timer: ReturnType<typeof setTimeout> }
 function OfficePreview({ file, versionKey, read, renderFrame }: DocumentPreviewProps) {
@@ -16,8 +17,7 @@ function OfficePreview({ file, versionKey, read, renderFrame }: DocumentPreviewP
     [page, setPage] = useState({ index: 0, count: 0 }),
     [fit, setFit] = useState(true),
     [truncated, setTruncated] = useState(false),
-    [changes, setChanges] = useState(false),
-    [link, setLink] = useState('')
+    [changes, setChanges] = useState(false)
   const view = useRef({ pageIndex: 0, fit: true, zoomPercent: 100 })
   const identity = `${file.root}\n${file.path}\n${file.attachmentId ?? ''}`
   const loadKey = `${identity}\n${versionKey}\n${changes}`
@@ -27,7 +27,6 @@ function OfficePreview({ file, versionKey, read, renderFrame }: DocumentPreviewP
     const controller = new AbortController()
     setData(undefined)
     setError('')
-    setLink('')
     void read(undefined, undefined, controller.signal).then(
       value => {
         if (!controller.signal.aborted) {
@@ -106,14 +105,7 @@ function OfficePreview({ file, versionKey, read, renderFrame }: DocumentPreviewP
       view.current.zoomPercent = value.zoomPercent
       setFit(value.fit)
     }
-    if (value.type === 'link') {
-      try {
-        const url = new URL(value.href)
-        if (['http:', 'https:'].includes(url.protocol) && !url.username && !url.password) setLink(url.href)
-      } catch {
-        /* Invalid links stay inert. */
-      }
-    }
+    if (value.type === 'link') openDocumentLink(value.href)
     if (value.type === 'sheet-page') {
       const key = `${value.sheet}:${value.start}`,
         request = pending.current.get(key)
@@ -201,15 +193,6 @@ function OfficePreview({ file, versionKey, read, renderFrame }: DocumentPreviewP
         )}
       </div>
       <span className="document-preview-caption">只读预览，排版可能与原应用不同。</span>
-      {link && (
-        <InlineNotice>
-          文档链接：{new URL(link).hostname}{' '}
-          <Button size="xs" onClick={() => window.open(link, '_blank', 'noopener,noreferrer')}>
-            打开链接
-          </Button>
-          <IconButton size="xs" icon={X} label="关闭文档链接" onClick={() => setLink('')} />
-        </InlineNotice>
-      )}
       {truncated && <InlineNotice>文件较大，部分行、列或单元格内容未显示。</InlineNotice>}
       <div className={file.kind === 'xlsx' ? 'document-parser-frame' : 'document-frame'}>
         {renderFrame({

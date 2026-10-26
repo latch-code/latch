@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { mkdir, rename, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { tmpdir } from 'node:os'
 import { promisify } from 'node:util'
 import { latchCodeRoot } from '../src/paths.ts'
 
@@ -18,13 +19,14 @@ export async function buildFilesHelper(codeRoot = latchCodeRoot()): Promise<stri
     await run(
       '/usr/bin/xcrun',
       ['swiftc', '-swift-version', '6', '-O', '-parse-as-library', '-o', temporary, join(codeRoot, 'native', 'macos', 'LatchFiles.swift')],
-      { timeout: 120_000, maxBuffer: 1024 * 1024 },
+      { timeout: 120_000, maxBuffer: 1024 * 1024, env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', TMPDIR: tmpdir() } },
     )
     await run('/usr/bin/codesign', ['--force', '--sign', '-', '--options', 'runtime', '--identifier', 'dev.latch.files', temporary], {
       timeout: 30_000,
       maxBuffer: 1024 * 1024,
+      env: {},
     })
-    await run('/usr/bin/codesign', ['--verify', '--strict', temporary], { timeout: 30_000, maxBuffer: 1024 * 1024 })
+    await run('/usr/bin/codesign', ['--verify', '--strict', temporary], { timeout: 30_000, maxBuffer: 1024 * 1024, env: {} })
     await rename(temporary, output)
     return output
   } finally {

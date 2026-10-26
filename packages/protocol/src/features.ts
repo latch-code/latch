@@ -2,8 +2,14 @@ import type { TokenUsage } from './types.ts'
 
 /** Optional feature discovery; older Hosts omit these fields. */
 export interface HostFeatures {
+  personal?: true
+  personalRoutines?: true
+  personalGroups?: true
+  personalQueue?: true
   promptTemplates?: true
   fileSearch?: true
+  fileTree?: true
+  pluginPackages?: true
   filePreview?: true
   search?: true
   sessionBatch?: true

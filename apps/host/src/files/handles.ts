@@ -10,7 +10,12 @@ export const HANDLE_LIMIT = 4096
 
 export interface HandleEntry {
   deviceId: string
-  sessionId: string
+  sessionId?: string
+  workspaceId?: string
+  harnessId?: string
+  /** Freeze the authorized root identities and selected configuration, rather than retargeting a live handle. */
+  rootsHash?: string
+  revision?: string
   rootId: string
   relativePath: string
   /** A desktop reader explicitly chose to display a secret file. Never sufficient on a remote listener. */
@@ -36,6 +41,10 @@ export class FileHandles {
       if (
         value.deviceId === entry.deviceId
         && value.sessionId === entry.sessionId
+        && value.workspaceId === entry.workspaceId
+        && value.harnessId === entry.harnessId
+        && value.rootsHash === entry.rootsHash
+        && value.revision === entry.revision
         && value.rootId === entry.rootId
         && value.relativePath === entry.relativePath
       ) {

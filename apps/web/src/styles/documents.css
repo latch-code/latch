@@ -244,13 +244,13 @@
   background: var(--bg-app);
 }
 
-.session-panels:has(.file-preview) {
+.session-panels:has(.file-preview, .file-tree) {
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
 }
-.session-panels:has(.file-preview) > [role='tabpanel'] {
+.session-panels:has(.file-preview, .file-tree) > [role='tabpanel'] {
   flex: 1;
   min-height: 0;
 }
@@ -351,6 +351,110 @@
   font-size: var(--fs-label);
   line-height: var(--lh-label);
   font-weight: 500;
+}
+.code-review {
+  container-type: inline-size;
+  container-name: code-review;
+}
+.code-review-controls {
+  flex-wrap: wrap;
+}
+.code-review-layout {
+  display: flex;
+  gap: var(--sp-4);
+  margin-left: auto;
+}
+.code-review-content {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.code-review-files {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: var(--sp-4);
+  width: 180px;
+  padding: var(--sp-8);
+  overflow: auto;
+  border-right: 1px solid var(--line-subtle);
+}
+.code-review-files button {
+  justify-content: flex-start;
+  align-items: flex-start;
+  text-align: left;
+  height: auto;
+}
+.code-review-files button[aria-current] {
+  background: var(--fill);
+}
+.code-review-files button > span {
+  display: grid;
+  min-width: 0;
+}
+.code-review-files strong,
+.code-review-files small {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 400;
+}
+.code-review-files strong {
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.code-review-files small {
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+  line-height: var(--lh-micro);
+}
+.code-review-entries {
+  flex: 1;
+  min-width: 0;
+}
+.file-history-entry-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-12);
+}
+.file-history-entry-heading time {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.code-review .diff-body {
+  max-height: none;
+}
+.code-review .diff-view {
+  margin-bottom: 0;
+}
+@container code-review (max-width: 640px) {
+  .code-review-content {
+    flex-direction: column;
+  }
+  .code-review-files {
+    flex-direction: row;
+    width: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--line-subtle);
+  }
+  .code-review-files button {
+    flex: 0 0 180px;
+    max-width: 240px;
+  }
+}
+@media (max-width: 767.98px) {
+  .code-review .diff-line {
+    grid-template-columns: 28px 28px 14px minmax(0, 1fr);
+  }
+  .code-review .diff-ln-old,
+  .code-review .diff-ln-new {
+    display: block;
+  }
+  .code-review .diff-ln-one {
+    display: none;
+  }
 }
 ::highlight(latch-file-find) {
   background: var(--fill-press);
@@ -487,5 +591,97 @@
 @container (max-width: 479px) {
   .document-paged-controls {
     display: none;
+  }
+}
+
+.session-file-tree:not([hidden]) {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.file-tree {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.file-tree-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: var(--sp-8);
+}
+.file-tree-head > strong {
+  flex: 1;
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+  font-weight: 500;
+}
+.file-tree-items {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.file-tree-row {
+  --tree-depth: 0;
+  display: flex;
+  align-items: center;
+  min-height: var(--sp-32);
+  gap: var(--sp-8);
+  padding: 0 var(--sp-8);
+  padding-inline-start: calc(var(--sp-8) + var(--tree-depth) * var(--sp-12));
+  border-radius: var(--r-4);
+  corner-shape: var(--corner-shape);
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+  cursor: pointer;
+}
+.file-tree-row:hover {
+  background: var(--fill);
+}
+.file-tree-row[aria-selected='true'] {
+  background: var(--bg-selected-solid);
+}
+.file-tree-row[aria-disabled='true'] {
+  cursor: default;
+  color: var(--text-3);
+}
+.file-tree-row > svg {
+  flex-shrink: 0;
+  color: var(--icon);
+}
+.file-tree-chevron {
+  transition: rotate var(--d-fast) var(--ease);
+}
+.file-tree-row[aria-expanded='true'] .file-tree-chevron {
+  rotate: 90deg;
+}
+.file-tree-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.file-tree-row small,
+.file-tree-message {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.file-tree-message,
+.file-tree-more {
+  padding: var(--sp-8) var(--sp-16);
+}
+@media (hover: hover) and (pointer: fine) {
+  .file-tree-row:not(:hover):not(:focus-within) > div > button:not([aria-expanded='true']) {
+    opacity: 0;
+  }
+}
+@media (pointer: coarse) {
+  .file-tree-row {
+    min-height: 44px;
   }
 }

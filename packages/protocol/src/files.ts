@@ -8,6 +8,71 @@ export interface FileOpenTarget {
   line?: number
 }
 
+/** A workspace preview has no invented session; the selected harness determines its frozen roots. */
+export interface WorkspaceFileOpenTarget {
+  workspaceId: string
+  harnessId: string
+  reference: string
+  rootId?: string
+  line?: number
+}
+export type ContextFileOpenTarget = FileOpenTarget | WorkspaceFileOpenTarget
+export type FileContext = { kind: 'session'; sessionId: string } | { kind: 'workspace'; workspaceId: string; harnessId: string }
+export interface FileDirectoryEntry {
+  name: string
+  kind: 'file' | 'directory' | 'symlink' | 'other'
+  size: number
+  mtime: number
+}
+export interface FileDirectoryListing {
+  context: FileContext
+  roots: Array<{ id: string; name: string }>
+  rootId?: string
+  dir?: string
+  entries: FileDirectoryEntry[]
+  truncated: boolean
+}
+
+export function isFileDirectoryListing(value: unknown): value is FileDirectoryListing {
+  if (
+    !record(value)
+    || !record(value.context)
+    || !Array.isArray(value.roots)
+    || value.roots.length > 8
+    || !Array.isArray(value.entries)
+    || value.entries.length > 2000
+    || typeof value.truncated !== 'boolean'
+  )
+    return false
+  const context = value.context
+  const id = (item: unknown): item is string =>
+    typeof item === 'string' && item.length > 0 && item.length <= 256 && !/[\u0000-\u001f\u007f]/u.test(item)
+  if (
+    context.kind === 'session' ? !id(context.sessionId) : context.kind !== 'workspace' || !id(context.workspaceId) || !id(context.harnessId)
+  )
+    return false
+  const rootId = (item: unknown) => typeof item === 'string' && /^[A-Za-z0-9_-]{1,32}$/u.test(item)
+  if (
+    value.roots.some(root => !record(root) || !rootId(root.id) || !id(root.name))
+    || (value.rootId !== undefined && (!rootId(value.rootId) || !value.roots.some(root => record(root) && root.id === value.rootId)))
+    || (value.dir !== undefined
+      && (typeof value.dir !== 'string'
+        || value.dir.length > 4096
+        || (value.dir !== '' && !value.dir.split('/').every(part => id(part) && part !== '.' && part !== '..' && !part.includes('\\')))))
+  )
+    return false
+  return value.entries.every(
+    entry =>
+      record(entry)
+      && id(entry.name)
+      && !/[\\/]/u.test(entry.name)
+      && ['file', 'directory', 'symlink', 'other'].includes(String(entry.kind))
+      && Number.isSafeInteger(entry.size)
+      && Number(entry.size) >= 0
+      && Number.isSafeInteger(entry.mtime),
+  )
+}
+
 export type FileKind =
   | 'text'
   | 'code'

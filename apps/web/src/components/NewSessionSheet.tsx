@@ -1,8 +1,8 @@
 import { projectScopeCaption } from '../projects.tsx'
 import { VisibleText } from './VisibleText.tsx'
 import { useEffect, useRef, type ReactNode } from 'react'
-import { FlaskConical, LockKeyhole } from 'lucide-react'
-import type { AppSnapshot } from '@latch/protocol'
+import { FlaskConical, Folder, LockKeyhole } from 'lucide-react'
+import type { AppSnapshot, PersonalAssistantSummary } from '@latch/protocol'
 import { findHarness, type ComposerChoice } from '../composerChoice.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { ModelPicker, ModeSwitch, ProjectPicker } from './Pickers.tsx'
@@ -10,6 +10,7 @@ import { Badge, Button, ICON_STROKE, MOTION, Sheet, usePresence } from '@latch/u
 
 /** The phone's new-session sheet shares harness and setup controls with the desktop composer. */
 export function NewSessionSheet({
+  personal,
   open,
   onClose,
   snapshot,
@@ -30,7 +31,9 @@ export function NewSessionSheet({
   onManageWorkspaces,
   onCreateProject,
   startLabel,
+  onBrowseFiles,
 }: {
+  personal?: PersonalAssistantSummary
   open: boolean
   onClose: () => void
   snapshot: AppSnapshot
@@ -51,6 +54,7 @@ export function NewSessionSheet({
   onManageWorkspaces?: () => void
   onCreateProject?: () => void
   startLabel?: string
+  onBrowseFiles?(): void
 }) {
   const { present } = usePresence(open, MOTION.slow)
   const choices = useRef<HTMLElement>(null)
@@ -67,7 +71,7 @@ export function NewSessionSheet({
     <Sheet
       open={open}
       detent="large"
-      title="新会话"
+      title={personal ? '和' + personal.name + '聊聊' : '新会话'}
       className="new-session-sheet"
       onClose={onClose}
       action={
@@ -87,7 +91,7 @@ export function NewSessionSheet({
             <span className="new-sheet-label">电脑</span>
             <span className="new-sheet-value">{snapshot.hostName || '执行端'}</span>
           </div>
-          {catalog && choice.mode !== 'chat' && (
+          {!personal && catalog && choice.mode !== 'chat' && (
             <ProjectPicker
               access={access}
               harness={harness}
@@ -100,7 +104,7 @@ export function NewSessionSheet({
               onCreate={onCreateProject}
             />
           )}
-          {catalog && harness?.models === 'host' && (
+          {!personal && catalog && harness?.models === 'host' && (
             <ModelPicker
               variant="row"
               catalog={catalog}
@@ -111,6 +115,11 @@ export function NewSessionSheet({
               onManage={onManageProviders}
               onAdded={onProvidersChanged}
             />
+          )}
+          {onBrowseFiles && (
+            <Button variant="ghost" icon={Folder} onClick={onBrowseFiles}>
+              浏览项目文件
+            </Button>
           )}
           {!catalog && (
             <div className="new-sheet-row">

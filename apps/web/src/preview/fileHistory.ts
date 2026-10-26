@@ -5,7 +5,8 @@ export interface FileHistory {
   folder: string
   path: string
   target: FileOpenTarget
-  entries: Array<{ id: string; toolId: string; tool: string; at?: string; diff: FileDiff }>
+  currentTurnId?: string
+  entries: Array<{ id: string; toolId: string; tool: string; turnId?: string; at?: string; diff: FileDiff }>
 }
 /** Normalizes Host-recorded spellings only. It never resolves a filesystem or authorizes a new file read. */
 function normalize(path: string): string | undefined {
@@ -39,7 +40,9 @@ export function fileHistories(detail: Pick<TaskDetail, 'summary' | 'messages'>):
     return path ? [{ id: folder.id, path }] : []
   })
   const groups = new Map<string, FileHistory>()
+  let turnId: string | undefined
   for (const message of detail.messages) {
+    if (message.role === 'user') turnId = message.id
     if (message.role !== 'tool') continue
     let selected: (typeof folders)[number] | undefined = folders[0]
     try {
@@ -67,6 +70,7 @@ export function fileHistories(detail: Pick<TaskDetail, 'summary' | 'messages'>):
       history.entries.push({
         id: `${message.id}:${index}`,
         toolId: message.id,
+        ...(turnId ? { turnId } : {}),
         tool: message.tool?.toolTitle ?? message.tool?.title ?? '工具修改',
         ...(message.startedAt ? { at: message.startedAt } : {}),
         diff,
@@ -74,5 +78,6 @@ export function fileHistories(detail: Pick<TaskDetail, 'summary' | 'messages'>):
       groups.set(key, history)
     }
   }
+  for (const history of groups.values()) history.currentTurnId = turnId
   return [...groups.values()]
 }

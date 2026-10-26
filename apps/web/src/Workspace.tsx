@@ -1,17 +1,17 @@
 import { dropAttachments } from './components/AttachmentDrafts.tsx'
-import { hasFileMention } from './fileMentions.ts'
+import { hasFileMention, mentionMarker } from './fileMentions.ts'
 import type { FileMention } from '@latch/protocol'
 import { useAttachments } from './hooks/useAttachments.ts'
 import { useFileTabs } from './preview/useFileTabs.ts'
-import { FileOpenContext } from './preview/fileContext.ts'
+import { FileOpenContext, fileContextKey } from './preview/fileContext.ts'
 import { placeFileColumn } from './preview/layout.ts'
 import { useAutoOpenOutputs } from './hooks/useAutoOpenOutputs.ts'
-import type { FileOpenTarget } from '@latch/protocol'
+import type { ContextFileOpenTarget, FileContext } from '@latch/protocol'
 import { VisibleText } from './components/VisibleText.tsx'
 import { projectScopeCaption } from './projects.tsx'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { ChevronLeft, Info, RefreshCw, ShieldAlert, SquarePen, X } from 'lucide-react'
-import type { Approval, AppSnapshot, ModelRef, TaskDetail, TaskSummary, SearchHit } from '@latch/protocol'
+import type { Approval, AppSnapshot, ModelRef, TaskDetail, TaskSummary, SearchHit, PersonalAssistantSummary } from '@latch/protocol'
 import { api, ApiError, errorMessage, inlineError, isUncertain } from './core/api.ts'
 import { choiceKind, DecisionRequests, settledOutcome } from './core/approvalDecision.ts'
 import { AUDIT_ROLLBACK_TEXT, useAuditCheckpoint } from './core/auditCheckpoint.ts'
@@ -81,6 +81,7 @@ import { useRejectionNote } from './hooks/useRejectionNote.ts'
 import { useStableCallback } from './hooks/useStableCallback.ts'
 import { useRunClock } from './hooks/useRunClock.ts'
 import { useSubmission } from './hooks/useSubmission.ts'
+import { usePersonalName } from './hooks/usePersonalName.ts'
 import { useSwitchFade } from './hooks/useSwitchFade.ts'
 import { openLayer, useBackLayer } from './hooks/backStack.ts'
 import { scopedTemplates, usePromptTemplates } from './hooks/usePromptTemplates.ts'
@@ -128,6 +129,7 @@ import {
   type ResizePhase,
 } from '@latch/ui'
 import { SettingsPage, type SettingsSection } from './settings/SettingsPage.tsx'
+import { PersonalPage } from './personal/PersonalPage.tsx'
 
 type Harness = ReturnType<typeof useHarness>
 type ToastMessage = { text: string; tone: 'ok' | 'error' }
@@ -161,6 +163,8 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
   const [infoPage, setInfoPage] = useState(false)
   /** Phones: the new-session sheet over the session list. */
   const [newSheet, setNewSheet] = useState(false)
+  const [personalOpen, setPersonalOpen] = useState(false)
+  const [personalDraft, setPersonalDraft] = useState<PersonalAssistantSummary | null>(null)
   /** Phones: the search row under the list's header. */
   const [phoneSearching, setPhoneSearching] = useState(false)
   /** Phones: the open session slides back to the list; it is let go once the slide ends. */
@@ -173,43 +177,15 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
   /** Shut by the person (its button, a drag past the snap point, the keyboard), as opposed to shut for the column. */
   const sidebarShut =
     widthClass !== null && (sidebarDrag !== null ? 'collapsed' in sidebarDrag : preferences.sidebar.collapsed[widthClass] === true)
-  const savedFileTabs = useFileTabs(snapshot.device.id, selectedId)
-  const fileTabs = snapshot.catalog?.features?.filePreview ? savedFileTabs : { ...savedFileTabs, tabs: [], active: undefined }
-  const [fileExpanded, setFileExpanded] = useState(false)
-  const fileIsDocument = fileTabs.active?.file
-    ? ['pptx', 'pdf', 'docx', 'xlsx', 'html'].includes(fileTabs.active.file.kind)
-    : /\.(?:pptx|pdf|docx|xlsx|html?)$/iu.test(fileTabs.active?.target.reference ?? '')
-  const fileWidthKey = `latch.file-width.${snapshot.device.id}.${widthClass ?? 'phone'}.${fileIsDocument ? 'document' : 'content'}`
-  const fileStored = Number(storageGet(fileWidthKey))
-  const current = detail?.summary.id === selectedId ? detail : null
-  const summary = current?.summary ?? snapshot.tasks.find(task => task.id === selectedId)
-  // 会话信息: a column beside the paper from 1024px (and on tablets wide enough), else a page in the conversation's place.
-  const inspectorClass = inspectorClassOf(windowWidth)
-  const storedSidebar = (widthClass ? preferences.sidebar.width[widthClass] : undefined) ?? defaultSidebarWidth(windowWidth)
-  const inspectorStored = inspectorDrag ?? (widthClass ? preferences.inspector.width[widthClass] : undefined)
-  const placement =
-    summary === undefined
-      ? null
-      : fileTabs.active && !fileExpanded
-        ? placeFileColumn(
-            windowWidth,
-            widthClass ? (sidebarShut ? 8 : clampSidebar(storedSidebar, windowWidth)) : 56,
-            inspectorDrag ?? (fileStored >= 280 && fileStored <= 4096 ? fileStored : undefined),
-            fileIsDocument,
-          )
-        : fileTabs.active && fileExpanded
-          ? { kind: 'page' as const }
-          : placeInspector({
-              windowWidth,
-              ...(inspectorStored !== undefined ? { width: inspectorStored } : {}),
-              ...(widthClass !== null ? { sidebar: sidebarShut ? 8 : clampSidebar(storedSidebar, windowWidth) } : {}),
-            })
-  const pageMode = placement?.kind === 'page'
-  const columnOpen = placement?.kind === 'column' && (fileTabs.active !== undefined || inspectorOpen(preferences.inspector, windowWidth))
-  const inspectorWidth = placement?.kind === 'column' ? placement.width : INSPECTOR_DEFAULT
-  // While the column is open on a window too narrow for both, the sidebar folds away; closing the column brings it back.
-  const sidebarMakesRoom = columnOpen && placement?.kind === 'column' && placement.shutSidebar
-  const sidebarCollapsed = sidebarShut || sidebarMakesRoom
+  const privateVisible = snapshot.device.dataScope === 'all' && snapshot.device.scopes.includes('view')
+  useLayoutEffect(() => {
+    if (!privateVisible) {
+      setPersonalDraft(null)
+      setPersonalOpen(false)
+    }
+  }, [privateVisible])
+  const current = detail?.summary.id === selectedId && (!detail.summary.personal || privateVisible) ? detail : null
+  const summary = current?.summary ?? snapshot.tasks.find(task => task.id === selectedId && (!task.personal || privateVisible))
   /**
    * A drag that has just snapped the column shut, or pulled it open again: for one track transition the column slides
    * instead of following the pointer. Each snap restarts the window.
@@ -235,25 +211,6 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
   const rail = useRef<HTMLElement>(null)
   const collapseButton = useRef<HTMLButtonElement>(null)
   const expandButton = useRef<HTMLButtonElement>(null)
-  const drawer = useDrawer({ enabled: drawerMode, navigation, inertWhenOpen: [main, rail], shut: sidebarCollapsed })
-  /** Where focus goes once the sidebar has opened or shut: after the drawer hook made the column usable or inert. */
-  const focusAfterToggle = useRef<{ target: RefObject<HTMLElement | null>; shut: boolean } | null>(null)
-  useEffect(() => {
-    const pending = focusAfterToggle.current
-    if (pending?.shut !== sidebarCollapsed) return
-    focusAfterToggle.current = null
-    pending.target.current?.focus({ preventScroll: true })
-  }, [sidebarCollapsed])
-  const saveSidebar = (patch: { width?: number | null; collapsed?: boolean }) => {
-    if (widthClass === null) return
-    const width = { ...preferences.sidebar.width }
-    const collapsed = { ...preferences.sidebar.collapsed }
-    if (patch.width === null) delete width[widthClass]
-    else if (patch.width !== undefined) width[widthClass] = patch.width
-    if (patch.collapsed === true) collapsed[widthClass] = true
-    else if (patch.collapsed === false) delete collapsed[widthClass]
-    setPreference('sidebar', { width, collapsed })
-  }
   const composerRef = useRef<HTMLTextAreaElement>(null)
   /** The new-session page's 「添加 Agent」 tile, which the line under the input opens as well. */
   const addAgentTrigger = useRef<HTMLButtonElement>(null)
@@ -299,10 +256,15 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
   const shell = currentShell()
   const lifecycle = useShellLifecycle()
   const host = hostView(snapshot)
-  const scopesKey = host ? `${snapshot.device.listener}:${snapshot.device.scopes.join(',')}` : 'legacy'
-  // Recomputed only when the device's listener or scopes change, so approval cards stay memoized across snapshots.
+  const scopesKey = host
+    ? `${snapshot.device.listener}:${snapshot.device.scopes.join(',')}:${snapshot.device.dataScope}:${snapshot.device.status}`
+    : 'legacy'
+  // Ignore last-seen churn, but invalidate every access boundary used by private editors.
   const access = useMemo(() => deviceAccess(snapshot, shell), [scopesKey, shell])
   const owner = access.admin
+  const canQueue = summary?.personal
+    ? !summary.personal.groupId && catalog?.features?.personalQueue === true
+    : catalog?.features?.queue === true
   const gateFor = useCallback((approval: Approval) => approvalActions(approval, access.device, shell), [access, shell])
   const audit = useAuditCheckpoint(host?.hostId, connection === 'connected')
   const approvals = useMemo(
@@ -311,8 +273,13 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
   )
   const active = isActive(summary?.status)
   const harnessInfo = sessionHarness(catalog, summary)
+  const personalName = usePersonalName(summary?.personal?.assistantId, privateVisible, harness.refreshHints + harness.resyncs)
   // The built-in harness is 「Latch 内置」 wherever the page names it.
-  const harnessName = harnessInfo ? harnessLabel(harnessInfo) : (snapshot.harness?.name ?? 'Latch')
+  const harnessName = summary?.personal
+    ? (personalName ?? '个人助手')
+    : harnessInfo
+      ? harnessLabel(harnessInfo)
+      : (snapshot.harness?.name ?? 'Latch')
 
   const reading = useReadingPosition({
     sessionId: selectedId,
@@ -334,9 +301,11 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
     snapshot,
     access,
     selectedId,
+    assistantId: personalDraft?.id,
     select,
     refresh,
     onSent: sessionId => {
+      setPersonalDraft(null)
       setFilter('all')
       setSearch('')
       setNewSheet(false)
@@ -346,25 +315,101 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
     },
     onRefused: stopSession,
   })
+  const choice: typeof submission.choice = personalDraft
+    ? { mode: personalDraft.mode, harnessId: personalDraft.harnessId, model: personalDraft.model }
+    : submission.choice
+  const fileContext: FileContext | null = selectedId
+    ? { kind: 'session', sessionId: selectedId }
+    : !personalDraft && choice.mode !== 'chat' && choice.workspaceId && choice.workspaceId !== 'default'
+      ? { kind: 'workspace', workspaceId: choice.workspaceId, harnessId: choice.harnessId ?? catalog?.defaults.harnessId ?? 'standard' }
+      : null
+  const savedFileTabs = useFileTabs(snapshot.device.id, fileContext)
+  const fileTabs = snapshot.catalog?.features?.filePreview ? savedFileTabs : { ...savedFileTabs, tabs: [], active: undefined }
+  const [fileExpanded, setFileExpanded] = useState(false)
+  const [filesOpen, setFilesOpen] = useState(false)
+  const canBrowseFiles =
+    catalog?.features?.fileTree === true && snapshot.device.dataScope === 'all' && access.scopes.has('view') && fileContext !== null
+  const filesVisible = !!fileTabs.active || (filesOpen && canBrowseFiles)
+  const contextKey = fileContext ? fileContextKey(fileContext) : ''
+  useLayoutEffect(() => {
+    setFilesOpen(false)
+    setInfoPage(false)
+    setFileExpanded(false)
+  }, [contextKey])
+  const fileIsDocument = fileTabs.active?.file
+    ? ['pptx', 'pdf', 'docx', 'xlsx', 'html'].includes(fileTabs.active.file.kind)
+    : /\.(?:pptx|pdf|docx|xlsx|html?)$/iu.test(fileTabs.active?.target.reference ?? '')
+  const fileWidthKey = `latch.file-width.${snapshot.device.id}.${widthClass ?? 'phone'}.${fileIsDocument ? 'document' : 'content'}`
+  const fileStored = Number(storageGet(fileWidthKey))
+  // 会话信息: a column beside the paper from 1024px (and on tablets wide enough), else a page in the conversation's place.
+  const inspectorClass = inspectorClassOf(windowWidth)
+  const storedSidebar = (widthClass ? preferences.sidebar.width[widthClass] : undefined) ?? defaultSidebarWidth(windowWidth)
+  const inspectorStored = inspectorDrag ?? (widthClass ? preferences.inspector.width[widthClass] : undefined)
+  const placement =
+    !summary && !filesVisible
+      ? null
+      : filesVisible && !fileExpanded
+        ? placeFileColumn(
+            windowWidth,
+            widthClass ? (sidebarShut ? 8 : clampSidebar(storedSidebar, windowWidth)) : 56,
+            inspectorDrag ?? (fileStored >= 280 && fileStored <= 4096 ? fileStored : undefined),
+            fileIsDocument,
+          )
+        : filesVisible && fileExpanded
+          ? { kind: 'page' as const }
+          : placeInspector({
+              windowWidth,
+              ...(inspectorStored !== undefined ? { width: inspectorStored } : {}),
+              ...(widthClass !== null ? { sidebar: sidebarShut ? 8 : clampSidebar(storedSidebar, windowWidth) } : {}),
+            })
+  const pageMode = placement?.kind === 'page'
+  const columnOpen = placement?.kind === 'column' && (filesVisible || (!!summary && inspectorOpen(preferences.inspector, windowWidth)))
+  const inspectorWidth = placement?.kind === 'column' ? placement.width : INSPECTOR_DEFAULT
+  // While the column is open on a window too narrow for both, the sidebar folds away; closing the column brings it back.
+  const sidebarMakesRoom = columnOpen && placement?.kind === 'column' && placement.shutSidebar
+  const sidebarCollapsed = sidebarShut || sidebarMakesRoom
+  const drawer = useDrawer({ enabled: drawerMode, navigation, inertWhenOpen: [main, rail], shut: sidebarCollapsed })
+  /** Where focus goes once the sidebar has opened or shut: after the drawer hook made the column usable or inert. */
+  const focusAfterToggle = useRef<{ target: RefObject<HTMLElement | null>; shut: boolean } | null>(null)
+  useEffect(() => {
+    const pending = focusAfterToggle.current
+    if (pending?.shut !== sidebarCollapsed) return
+    focusAfterToggle.current = null
+    pending.target.current?.focus({ preventScroll: true })
+  }, [sidebarCollapsed])
+  const saveSidebar = (patch: { width?: number | null; collapsed?: boolean }) => {
+    if (widthClass === null) return
+    const width = { ...preferences.sidebar.width }
+    const collapsed = { ...preferences.sidebar.collapsed }
+    if (patch.width === null) delete width[widthClass]
+    else if (patch.width !== undefined) width[widthClass] = patch.width
+    if (patch.collapsed === true) collapsed[widthClass] = true
+    else if (patch.collapsed === false) delete collapsed[widthClass]
+    setPreference('sidebar', { width, collapsed })
+  }
   const attachmentDraft = useAttachments({
     enabled: catalog?.features?.attachments === true && access.scopes.has('run'),
     selection: {
-      harnessId:
-        selectedId === null
-          ? (submission.choice.harnessId ?? catalog?.defaults.harnessId ?? 'standard')
-          : (summary?.harnessId ?? 'standard'),
-      ...(selectedId === null ? { workspaceId: submission.choice.workspaceId ?? catalog?.defaults.workspaceId } : {}),
-      ...((selectedId === null ? submission.choice.model : (submission.override ?? sessionModel(summary)))
-        ? { model: selectedId === null ? submission.choice.model : (submission.override ?? sessionModel(summary)) }
+      harnessId: selectedId === null ? (choice.harnessId ?? catalog?.defaults.harnessId ?? 'standard') : (summary?.harnessId ?? 'standard'),
+      ...(selectedId === null && !personalDraft ? { workspaceId: choice.workspaceId ?? catalog?.defaults.workspaceId } : {}),
+      ...((selectedId === null ? choice.model : summary?.personal ? sessionModel(summary) : (submission.override ?? sessionModel(summary)))
+        ? {
+            model:
+              selectedId === null
+                ? choice.model
+                : summary?.personal
+                  ? sessionModel(summary)
+                  : (submission.override ?? sessionModel(summary)),
+          }
         : {}),
     },
     ...(selectedId ? { sessionId: selectedId } : {}),
+    draftScope: personalDraft?.id,
     locked: submission.sending || submission.pending !== null,
   })
   const [fileMentions, setFileMentions] = useState<FileMention[]>([])
   const mentionScope =
-    selectedId
-    ?? `${submission.choice.workspaceId ?? ''}:${submission.choice.harnessId ?? ''}:${submission.choice.mode}:${snapshot.device.dataScope}`
+    selectedId ?? `${personalDraft?.id ?? choice.workspaceId ?? ''}:${choice.harnessId ?? ''}:${choice.mode}:${snapshot.device.dataScope}`
   useLayoutEffect(() => {
     if (submission.pending === null) setFileMentions([])
   }, [mentionScope])
@@ -376,11 +421,12 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
     enabled:
       catalog?.features?.fileMentions === true
       && snapshot.device.dataScope === 'all'
-      && (selectedId === null ? submission.choice.mode === 'agent' : summary?.mode !== 'chat')
-      && (selectedId === null ? findHarness(catalog, submission.choice.harnessId)?.source : harnessInfo?.source) !== 'plugin',
+      && (selectedId !== null || !personalDraft)
+      && (selectedId === null ? choice.mode === 'agent' : summary?.mode !== 'chat')
+      && (selectedId === null ? findHarness(catalog, choice.harnessId)?.source : harnessInfo?.source) !== 'plugin',
     ...(selectedId ? { sessionId: selectedId } : {}),
-    ...(submission.choice.workspaceId && submission.choice.workspaceId !== 'default' ? { workspaceId: submission.choice.workspaceId } : {}),
-    harnessId: (selectedId === null ? submission.choice.harnessId : summary?.harnessId) ?? 'standard',
+    ...(choice.workspaceId && choice.workspaceId !== 'default' ? { workspaceId: choice.workspaceId } : {}),
+    harnessId: (selectedId === null ? choice.harnessId : summary?.harnessId) ?? 'standard',
     refs: fileMentions.filter(ref => hasFileMention(submission.draft, ref)),
     onRefs: setFileMentions,
   }
@@ -390,7 +436,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
       return
     }
     const ids = await attachmentDraft.wait()
-    if (ids && (await submission.submit(undefined, undefined, active && catalog?.features?.queue === true, ids, mentionChoice.refs))) {
+    if (ids && (await submission.submit(undefined, undefined, active && canQueue, ids, mentionChoice.refs))) {
       attachmentDraft.clear()
       setFileMentions([])
     }
@@ -463,6 +509,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
   }, [snapshot])
 
   const choose = useStableCallback((id: string | null) => {
+    setPersonalDraft(null)
     clearTimeout(popTimer.current)
     setPopping(false)
     setPushed(id !== null)
@@ -474,7 +521,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
     setActionError(previous => (previous?.sessionId === id ? previous : null))
     if (submission.pending === null) submission.setDraft('')
   })
-  const openFile = useStableCallback((target: FileOpenTarget, options?: { focus: false }) => {
+  const openFile = useStableCallback((target: ContextFileOpenTarget, options?: { focus: false }) => {
     if (snapshot.catalog?.features?.filePreview !== true) return
     if (
       options?.focus === false
@@ -483,6 +530,18 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
       && document.activeElement.closest('input,textarea,select,[contenteditable="true"]')
     )
       return
+    if (!('sessionId' in target)) {
+      if (
+        !fileContext
+        || fileContext.kind !== 'workspace'
+        || target.workspaceId !== fileContext.workspaceId
+        || target.harnessId !== fileContext.harnessId
+      )
+        return
+      fileTabs.open(target)
+      setInfoPage(true)
+      return
+    }
     if (target.sessionId !== selectedId) choose(target.sessionId)
     const task = current?.summary.id === target.sessionId ? current.summary : snapshot.tasks.find(item => item.id === target.sessionId)
     const roots = task?.folders?.length ? task.folders : task?.cwd ? [{ id: 'default', path: task.cwd }] : []
@@ -493,10 +552,11 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
     fileTabs.open({ ...target, reference, ...(root ? { rootId: root.id } : {}) })
     setInfoPage(true)
   })
+  const documentPlacement = placeFileColumn(windowWidth, sidebarShut ? 8 : storedSidebar)
   useAutoOpenOutputs({
     detail: current,
-    visible: fileTabs.active !== undefined && (columnOpen || (pageMode && infoPage)),
-    width: pageMode ? windowWidth : inspectorWidth,
+    available: snapshot.catalog?.features?.filePreview === true && documentPlacement.kind === 'column' && !settings && !fileExpanded,
+    width: documentPlacement.kind === 'column' ? documentPlacement.width : 0,
     onOpen: openFile,
   })
   const failAction = (sessionId: string, text: string) => {
@@ -507,6 +567,8 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
   }
   /** A new session starts where the person is: in the open session's project, else as last chosen. */
   const startNew = () => {
+    setPersonalDraft(null)
+    setPersonalOpen(false)
     submission.setFork(null)
     const project = selectedId === null ? undefined : projectFor(catalog, summary)
     // A phone keeps its list under the sheet, and what was being drafted there stays for the next time it opens.
@@ -556,6 +618,12 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
     setNewSheet(false)
     setSettings(section ? { section } : {})
   }
+  const openPersonal = catalog?.features?.personal
+    ? () => {
+        drawer.setOpen(false)
+        setPersonalOpen(true)
+      }
+    : undefined
   const openProjectSettings = (projectId: string) => {
     drawer.setOpen(false)
     setNewSheet(false)
@@ -880,7 +948,6 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
   )
 
   // Composer: new-session choices or the open session's next-turn settings.
-  const choice = submission.choice
   const block = selectedId === null ? startBlock(snapshot, choice, access) : null
   const chosenHarness = selectedId === null ? findHarness(catalog, choice.harnessId) : undefined
   const chosenScopeCaption =
@@ -1079,7 +1146,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
         : {})}
       {...(startsL3 && access.local ? { confirmStart: '开始会话' } : {})}
       below={
-        selectedId === null && catalog ? (
+        selectedId === null && catalog && !personalDraft ? (
           <>
             <ContextRow
               hostName={snapshot.hostName}
@@ -1124,7 +1191,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
       sendKey={preferences.sendKey}
       coarse={coarse}
       run={run}
-      queueable={catalog?.features?.queue === true && !noteComposer}
+      queueable={canQueue && !noteComposer}
       queueTray={
         selectedId !== null && current?.queue ? (
           <PromptQueue
@@ -1139,7 +1206,11 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
       }
       inline={phone && selectedId !== null}
       controls={
-        selectedId === null ? (
+        selectedId === null && personalDraft ? (
+          <Button variant="ghost" onClick={() => setPersonalOpen(true)}>
+            {personalDraft.name}
+          </Button>
+        ) : selectedId === null ? (
           <NewSessionControls
             phone={false}
             catalog={catalog}
@@ -1161,7 +1232,8 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
             access={access}
           />
         ) : (
-          summary && (
+          summary
+          && !summary.personal && (
             <SessionControls
               catalog={catalog}
               summary={summary}
@@ -1265,6 +1337,14 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
     setPreference('inspector', { ...preferences.inspector, open: { ...preferences.inspector.open, [inspectorClass]: open } })
   }
   const toggleInspector = () => {
+    if (filesOpen) {
+      setFilesOpen(false)
+      fileTabs.select(undefined)
+      setFileExpanded(false)
+      setColumnOpen(true)
+      setInfoPage(true)
+      return
+    }
     if (fileTabs.active) {
       fileTabs.select(undefined)
       setFileExpanded(false)
@@ -1296,7 +1376,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
       return
     }
     if (action === 'file-search') {
-      if (catalog?.features?.fileSearch && snapshot.device.dataScope === 'all' && summary) {
+      if (catalog?.features?.fileSearch && snapshot.device.dataScope === 'all' && fileContext) {
         event.preventDefault()
         setCommandMode('files')
         setCommandOpen(true)
@@ -1441,11 +1521,49 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
           ? `完全访问会话的选项只能在 ${snapshot.hostName} 上用 Latch 桌面端更改`
           : gate.text
         : undefined
-  const inspector = summary && (
+  const browseFiles = () => {
+    if (!canBrowseFiles) return
+    if (filesOpen && !fileTabs.active) {
+      setFilesOpen(false)
+      setInfoPage(false)
+      setColumnOpen(false)
+      return
+    }
+    setFilesOpen(true)
+    fileTabs.select(undefined)
+    setInfoPage(true)
+    setFileExpanded(false)
+    if (phone) setNewSheet(false)
+  }
+  const searchFiles = () => {
+    setCommandMode('files')
+    setCommandOpen(true)
+  }
+  const mentionFile = (mention: FileMention) => {
+    if (!mentionChoice.enabled || fileMentions.length >= 32) return
+    submission.setDraft(previous => `${previous.trimEnd()}${previous.trim() ? ' ' : ''}${mentionMarker(mention)} `)
+    setFileMentions(previous => [...previous.filter(ref => ref.root !== mention.root || ref.path !== mention.path), mention])
+    if (pageMode) setInfoPage(false)
+    if (phone && selectedId === null) setNewSheet(true)
+    requestAnimationFrame(() => (phone && selectedId === null ? sheetComposerRef : composerRef).current?.focus())
+  }
+  const workspaceForFiles =
+    fileContext?.kind === 'workspace' ? catalog?.workspaces.find(item => item.id === fileContext.workspaceId) : undefined
+  const inspector = (summary || filesVisible) && (
     <SessionPanels
+      key={contextKey}
+      fileContext={canBrowseFiles && fileContext ? fileContext : undefined}
+      fileRevision={JSON.stringify(summary?.folders ?? workspaceForFiles?.folders ?? workspaceForFiles?.path)}
+      showFiles={filesOpen}
+      onShowFiles={setFilesOpen}
+      onSearchFiles={searchFiles}
+      onMention={mentionChoice.enabled && !active && !submission.pending ? mentionFile : undefined}
+      folders={workspaceForFiles?.folders}
+      cwd={workspaceForFiles?.path}
       panels={catalog?.uiPanels ?? []}
       files={fileTabs.tabs}
       activeFile={fileTabs.active}
+      fileExpanded={fileExpanded}
       local={access.local}
       deviceId={snapshot.device.id}
       detail={current}
@@ -1474,45 +1592,47 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
         if (pageMode) setInfoPage(false)
         composerRef.current?.focus()
       }}>
-      <Inspector
-        snapshot={snapshot}
-        summary={summary}
-        detail={current}
-        local={access.local}
-        admin={access.admin}
-        onProjectsChanged={() => {
-          void refresh()
-        }}
-        onEditProject={owner ? openProjectSettings : undefined}
-        controls={{
-          ...(harnessInfo?.models === 'host' && (catalog?.providers.length ?? 0) > 0
-            ? {
-                model: {
-                  ...(effectiveModel ? { value: effectiveModel } : {}),
-                  ...(currentModel ? { current: currentModel } : {}),
-                  onChange: model => {
-                    submission.setOverride(summary.id, model)
+      {summary && (
+        <Inspector
+          snapshot={snapshot}
+          summary={summary}
+          detail={current}
+          local={access.local}
+          admin={access.admin}
+          onProjectsChanged={() => {
+            void refresh()
+          }}
+          onEditProject={owner ? openProjectSettings : undefined}
+          controls={{
+            ...(!summary.personal && harnessInfo?.models === 'host' && (catalog?.providers.length ?? 0) > 0
+              ? {
+                  model: {
+                    ...(effectiveModel ? { value: effectiveModel } : {}),
+                    ...(currentModel ? { current: currentModel } : {}),
+                    onChange: model => {
+                      submission.setOverride(summary.id, model)
+                    },
                   },
+                }
+              : {}),
+            config: summary.personal ? [] : (current?.config ?? []),
+            busy: configBusy.get(summary.id) ?? null,
+            onConfig: (configId, value) => setConfig(configId, value),
+            ...(infoLocked ? { locked: infoLocked } : {}),
+          }}
+          collapsed={new Set(preferences.inspector.collapsed)}
+          onToggleBlock={toggleBlock}
+          onReveal={revealFromInspector}
+          onSource={choose}
+          {...(owner && shell
+            ? {
+                onNewProject: () => {
+                  openSettings('workspaces')
                 },
               }
-            : {}),
-          config: current?.config ?? [],
-          busy: configBusy.get(summary.id) ?? null,
-          onConfig: (configId, value) => setConfig(configId, value),
-          ...(infoLocked ? { locked: infoLocked } : {}),
-        }}
-        collapsed={new Set(preferences.inspector.collapsed)}
-        onToggleBlock={toggleBlock}
-        onReveal={revealFromInspector}
-        onSource={choose}
-        {...(owner && shell
-          ? {
-              onNewProject: () => {
-                openSettings('workspaces')
-              },
-            }
-          : {})}
-      />
+            : {})}
+        />
+      )}
     </SessionPanels>
   )
   // The connection and the Host itself: over the open conversation, or at the top of a phone's list.
@@ -1569,8 +1689,8 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
     </>
   )
   /** Phones: a session is pushed over the list, which stays beneath it, inert, until the session slides away. */
-  const phoneSession = phone && selectedId !== null
-  const harnessChoices = catalog && (
+  const phoneSession = phone && (selectedId !== null || (infoPage && filesVisible))
+  const harnessChoices = !personalDraft && catalog && (
     <HarnessChoice
       addRef={addAgentTrigger}
       catalog={catalog}
@@ -1627,6 +1747,11 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
   const page = usePresence(pageMode && infoPage, 180)
   const closeInfoPage = () => {
     setInfoPage(false)
+    if (phone && selectedId === null) {
+      fileTabs.select(undefined)
+      setFilesOpen(false)
+      setNewSheet(true)
+    }
     inspectorToggle.current?.focus({ preventScroll: true })
   }
   // A pushed page holds a place in the browser's history, so the platform's back returns to the page under it.
@@ -1669,6 +1794,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
             {viewport === 'tablet' && (
               <nav ref={rail} className="rail" aria-label="快捷导航">
                 <Rail
+                  onPersonal={openPersonal}
                   approvals={snapshot.approvals.length}
                   drawerOpen={drawer.open}
                   onSessions={() => {
@@ -1703,6 +1829,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
                 data-covered={phoneSession && !popping ? '' : undefined}
                 inert={(phoneSession && !popping) || undefined}>
                 <PhoneSessionList
+                  onPersonal={openPersonal}
                   snapshot={snapshot}
                   searchResults={searchResults}
                   archiveBatch={archiveBatch}
@@ -1744,6 +1871,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
                 aria-modal={drawerMode && drawer.open ? true : undefined}
                 tabIndex={-1}>
                 <Sidebar
+                  onPersonal={openPersonal}
                   snapshot={snapshot}
                   searchResults={searchResults}
                   archiveBatch={archiveBatch}
@@ -1848,7 +1976,10 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
                   {/* Under the page of 会话信息 the conversation cannot be reached until the page is closed. */}
                   <div className="workspace-view" inert={(pageMode && infoPage) || undefined}>
                     <TopBar
+                      identity={summary?.personal ? harnessName : undefined}
                       inspectorRef={inspectorToggle}
+                      onFiles={canBrowseFiles ? browseFiles : undefined}
+                      filesOpen={filesVisible}
                       summary={summary}
                       harness={topHarness}
                       project={project}
@@ -1903,15 +2034,18 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
                       {selectedId === null ? (
                         <NewSession
                           onboarding={
-                            <GettingStarted
-                              sessionCount={snapshot.tasks.length}
-                              ready={!block}
-                              project={catalog?.workspaces.find(item => item.id === choice.workspaceId)?.name ?? ''}
-                              remote={!access.local}
-                              firstTask={() => composerRef.current?.focus()}
-                            />
+                            !personalDraft && (
+                              <GettingStarted
+                                sessionCount={snapshot.tasks.length}
+                                ready={!block}
+                                project={catalog?.workspaces.find(item => item.id === choice.workspaceId)?.name ?? ''}
+                                remote={!access.local}
+                                firstTask={() => composerRef.current?.focus()}
+                              />
+                            )
                           }
                           harnesses={harnessChoices}
+                          title={personalDraft ? '和' + personalDraft.name + '聊聊' : undefined}
                           composer={
                             <>
                               {sendingBubble}
@@ -2017,7 +2151,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
                       )}
                     </div>
                   </div>
-                  {page.present && summary && (
+                  {page.present && (summary || filesVisible) && (
                     <section
                       ref={infoPageRef}
                       className="info-page"
@@ -2038,8 +2172,16 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
                           </Button>
                         )}
                         <div className="info-page-title">
-                          <h2>{fileTabs.active ? '文件预览' : '会话信息'}</h2>
-                          <span>{summary.title || '未命名会话'}</span>
+                          <h2>
+                            {fileTabs.active?.target.view === 'changes'
+                              ? '代码审阅'
+                              : fileTabs.active
+                                ? '文件预览'
+                                : filesOpen
+                                  ? '文件'
+                                  : '会话信息'}
+                          </h2>
+                          <span>{summary?.title || workspaceForFiles?.name || '项目文件'}</span>
                         </div>
                       </header>
                       <div className="info-page-body">{inspector}</div>
@@ -2086,7 +2228,9 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
             </LiveChanges>
             {phone && (
               <NewSessionSheet
+                personal={personalDraft ?? undefined}
                 open={newSheet && selectedId === null}
+                onBrowseFiles={canBrowseFiles ? browseFiles : undefined}
                 onClose={() => {
                   setNewSheet(false)
                 }}
@@ -2134,12 +2278,37 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
                 }}
               />
             )}
+            {personalOpen && catalog?.features?.personal && (
+              <PersonalPage
+                canStart={!submission.pending && !submission.sending}
+                snapshot={snapshot}
+                access={access}
+                refreshHint={harness.refreshHints + harness.resyncs}
+                onClose={() => setPersonalOpen(false)}
+                onChanged={() => {
+                  void refresh()
+                }}
+                onSession={id => {
+                  setPersonalOpen(false)
+                  choose(id)
+                }}
+                onStart={assistant => {
+                  if (submission.pending || submission.sending) return
+                  choose(null)
+                  setPersonalDraft(assistant)
+                  submission.setFork(null)
+                  setPersonalOpen(false)
+                  if (phone) setNewSheet(true)
+                  else requestAnimationFrame(() => composerRef.current?.focus())
+                }}
+              />
+            )}
             {keyboardHelp && <KeyboardHelp onClose={() => setKeyboardHelp(false)} />}
             {commandOpen && (
               <CommandPalette
                 snapshot={snapshot}
                 mode={commandMode}
-                sessionId={selectedId ?? undefined}
+                fileContext={fileContext ?? undefined}
                 onOpenFile={catalog?.features?.filePreview ? openFile : undefined}
                 onSelect={choose}
                 onSearchHit={selectSearchHit}

@@ -300,7 +300,7 @@ export function GeneralSettings({ snapshot, admin, onChanged }: { snapshot: AppS
           <SwitchRow
             className="settings-row"
             title="运行结束后自动打开新生成的文档"
-            description="仅在文件列已经展开且宽度足够时打开，不移动输入焦点。只影响这台设备。"
+            description="在宽屏上展开新文档，保留正在输入的草稿和焦点。手机仍在对话中显示文件入口。只影响这台设备。"
             checked={preferences.autoOpenDocuments}
             onCheckedChange={enabled => setPreference('autoOpenDocuments', enabled)}
           />

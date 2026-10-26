@@ -27,6 +27,7 @@ const scopes = z.array(z.enum(['view', 'run', 'approve:standard', 'approve:eleva
 const dataScope = z.enum(['work', 'all'])
 const risk = z.enum(['R0', 'R1', 'R2'])
 const presenceAction = z.enum([
+  'plugin.package.apply',
   'device.enroll',
   'device.enroll-native',
   'device.grant',
@@ -55,7 +56,8 @@ const workspaceChange = z.strictObject({ workspaceId: opaqueId, pathHash: hex64 
 const folderId = z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/u)
 const folderVia = z.enum(['picker', 'drop', 'cli'])
 /** A desktop file action: the session, the real path's hash and the file's type (an allowed extension, other or none). */
-const fileAction = z.strictObject({ sessionId: opaqueId, pathHash: hex64, type: z.enum(AUDIT_FILE_TYPES) })
+const fileContext = { sessionId: opaqueId.optional(), workspaceId: opaqueId.optional(), harnessId: opaqueId.optional() }
+const fileAction = z.strictObject({ ...fileContext, pathHash: hex64, type: z.enum(AUDIT_FILE_TYPES) })
 
 /** Strict detail schema per action. */
 const attachmentEvent = z.strictObject({
@@ -65,6 +67,18 @@ const attachmentEvent = z.strictObject({
   type: z.enum(['image', 'text']),
 })
 export const AUDIT_DETAIL = {
+  'personal.changed': z.strictObject({
+    kind: z.enum(['assistant', 'memory', 'group', 'routine']),
+    operation: z.enum(['create', 'update', 'delete', 'start']),
+    before: hex64,
+    after: hex64,
+    assistantId: opaqueId.optional(),
+  }),
+  'plugin.package.changed': z.strictObject({
+    operation: z.enum(['create', 'save', 'trust', 'apply', 'enable', 'disable', 'delete']),
+    before: hex64,
+    after: hex64,
+  }),
   'task.question.answered': z.strictObject({ sessionId: opaqueId, questionId: opaqueId }),
   'task.prompt.queued': z.strictObject({ sessionId: opaqueId, itemId: opaqueId }),
   'task.prompt.sent': z.strictObject({ sessionId: opaqueId, itemId: opaqueId }),
@@ -209,6 +223,7 @@ export const AUDIT_DETAIL = {
   'file.quicklook': fileAction,
   'file.open': fileAction,
   'file.view': fileAction.extend({ bytes: count }),
+  'file.list': z.strictObject({ ...fileContext, rootHash: hex64, dirHash: hex64, hidden: z.boolean(), count, truncated: z.boolean() }),
   /** Best-effort follow-up when an action audited before taking effect then failed to commit. */
   'action.failed': z.strictObject({ refSeq: z.number().int().min(1) }),
 } as const

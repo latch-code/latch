@@ -6,7 +6,7 @@ export class AutoOpenOutputs {
   private runId: string | undefined
   private seenRunning = false
   private consumed = false
-  observe(detail: TaskDetail | null, options: { enabled: boolean; visible: boolean; width: number }): FileOpenTarget | undefined {
+  observe(detail: TaskDetail | null, options: { enabled: boolean; available: boolean; width: number }): FileOpenTarget | undefined {
     const sessionId = detail?.summary.id,
       runId = detail?.summary.runId
     if (this.sessionId !== sessionId || this.runId !== runId) {
@@ -24,7 +24,7 @@ export class AutoOpenOutputs {
     if (!this.seenRunning || this.consumed) return
     if (
       !options.enabled
-      || !options.visible
+      || !options.available
       || !Number.isFinite(options.width)
       || options.width < 480
       || detail.summary.status !== 'idle'

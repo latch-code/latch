@@ -24,6 +24,22 @@ const edit = (id: string, folder: string, path: string, state: Message['state'] 
   },
 })
 describe('per-file recorded history', () => {
+  it('identifies the current user turn without folding earlier tool edits into it', () => {
+    const result = fileHistories({
+      summary,
+      messages: [
+        { id: 'first', role: 'user', text: 'First change' },
+        edit('one', 'main', 'a.ts'),
+        { id: 'second', role: 'user', text: 'Next change' },
+        edit('two', 'main', 'b.ts'),
+        edit('three', 'main', 'a.ts'),
+      ],
+    })
+    expect(result.map(file => [file.path, file.currentTurnId, file.entries.map(entry => entry.turnId)])).toEqual([
+      ['a.ts', 'second', ['first', 'second']],
+      ['b.ts', 'second', ['second']],
+    ])
+  })
   it('keeps differently encoded filenames distinct instead of rewriting Host file identities', () => {
     const result = fileHistories({ summary, messages: [edit('one', 'main', 'café.txt'), edit('two', 'main', 'cafe\u0301.txt')] })
     expect(result.map(item => item.path)).toEqual(['café.txt', 'cafe\u0301.txt'])

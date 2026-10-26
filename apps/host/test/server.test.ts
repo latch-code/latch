@@ -3918,6 +3918,8 @@ describe('sessions, plugins and the change stream', () => {
       }
       await writeFile(join(dataDir, 'host.lock'), '{}', { mode: 0o600 })
       await expect(read.execute({ path: 'host.lock' }, context)).rejects.toThrow('私有数据目录')
+      for (const path of ['personal/personal.json', 'Personal/personal.json'])
+        await expect(read.execute({ path }, context)).rejects.toThrow('私有数据目录')
     } finally {
       lease.release()
     }

@@ -132,17 +132,19 @@ describe('isolated document renderers', () => {
     expect(await page.frameLocator('iframe[title="文档沙箱"]').locator('iframe').count()).toBe(0)
     expect(await page.frameLocator('iframe[title="文档沙箱"]').locator('a[href^="https://example.invalid"]').count()).toBe(0)
     expect(requested).toEqual([])
-    await page.frameLocator('iframe[title="文档沙箱"]').getByText('External link', { exact: true }).click()
-    await page.getByRole('button', { name: '打开链接', exact: true }).waitFor()
-    expect(requested).toEqual([])
     await page.evaluate(() => {
       window.open = url => {
         window.previewOpened.push(String(url))
         return null
       }
     })
-    await page.getByRole('button', { name: '打开链接', exact: true }).click()
-    expect(await page.evaluate(() => window.previewOpened.at(-1))).toBe('https://example.invalid/never-load')
+    const link = page.frameLocator('iframe[title="文档沙箱"]').getByText('External link', { exact: true })
+    await link.evaluate(element => element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
+    expect(await page.evaluate(() => window.previewOpened)).toEqual([])
+    await link.click()
+    await expect.poll(() => page.evaluate(() => window.previewOpened.at(-1))).toBe('https://example.invalid/never-load')
+    expect(await page.getByRole('button', { name: '打开链接', exact: true }).count()).toBe(0)
+    expect(requested).toEqual([])
     expect(await page.evaluate(() => Reflect.get(window, 'PWNED'))).toBeUndefined()
     expect(await page.locator('iframe').getAttribute('sandbox')).toBe('allow-scripts')
   })

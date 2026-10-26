@@ -52,6 +52,9 @@ do {
     let input = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
     var result: [String: Any] = [:]
     switch input["operation"] as? String {
+    case "nativePersonal":
+        stage = "personal"
+        result = try await runNativePersonal(input)
     case "nativeRelayProbe":
         stage = "relay-open"
         let invitation = try PairingInvitation.parse(input["payload"] as? String ?? "")
