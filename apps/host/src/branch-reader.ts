@@ -13,8 +13,21 @@ const inside = (root: string, path: string) => {
 }
 type Identity = { path: string; info: BigIntStats; owned: boolean }
 
-/** Reads Git metadata only. It never invokes Git, follows refs or reads the index/config/hooks. */
-export async function readGitBranch(cwd: string): Promise<string | undefined> {
+/** A work tree whose Git metadata passed the checks below. */
+export interface GitLayout {
+  /** The work tree's real path: the folder that was asked about. */
+  root: string
+  /** Its Git directory: `<root>/.git`, a gitdir inside the root, or the admin directory of a trusted linked worktree. */
+  gitdir: string
+  /** What HEAD names: a branch (`main`, `feature/x`) or a detached commit's full digest. */
+  head: { branch: string } | { detached: string }
+}
+
+/**
+ * Locates the Git metadata of a work tree rooted at `cwd`, by reading files only. It never invokes Git, follows refs or
+ * reads the index/config/hooks. Undefined for anything but the layouts BRANCHES.md lists.
+ */
+export async function readGitLayout(cwd: string): Promise<GitLayout | undefined> {
   if (constants.O_NOFOLLOW === undefined) return
   if (!isAbsolute(cwd) || Buffer.byteLength(cwd) > 4096 || /[\u0000-\u001f\u007f]/u.test(cwd)) return
   const checks: Identity[] = []
@@ -85,18 +98,26 @@ export async function readGitBranch(cwd: string): Promise<string | undefined> {
     const head = await text(join(gitdir, 'HEAD'), external)
     const symbolic = /^ref: refs\/heads\/([^\u0000-\u0020\u007f]+)\r?\n?$/u.exec(head)
     const detached = /^([a-f0-9]{40}|[a-f0-9]{64})\r?\n?$/iu.exec(head)
-    const branch = symbolic ? symbolic[1]! : detached ? `分离于 ${detached[1]!.slice(0, 7).toLowerCase()}` : undefined
-    if (!branch || branch.length > 256 || redactSecrets(branch) !== branch) return
+    if (!symbolic && !detached) return
     for (const check of checks) {
       const current = await lstat(check.path, { bigint: true })
       if (current.isSymbolicLink() || !(check.info.isDirectory() ? same(check.info, current) : unchanged(check.info, current))) return
       if (check.owned && ((current.mode & 0o022n) !== 0n || current.uid !== check.info.uid)) return
     }
     if (!same(checks[0]!.info, await stat(cwd, { bigint: true }))) return
-    return escapeSecurityText(branch)
+    return { root, gitdir, head: symbolic ? { branch: symbolic[1]! } : { detached: detached![1]!.toLowerCase() } }
   } catch {
     return undefined
   }
+}
+
+/** The branch label of a work tree rooted at `cwd`, or 「分离于 3f2a1c9」 for a detached HEAD; see `readGitLayout`. */
+export async function readGitBranch(cwd: string): Promise<string | undefined> {
+  const layout = await readGitLayout(cwd)
+  if (!layout) return
+  const branch = 'branch' in layout.head ? layout.head.branch : `分离于 ${layout.head.detached.slice(0, 7)}`
+  if (branch.length > 256 || redactSecrets(branch) !== branch) return
+  return escapeSecurityText(branch)
 }
 
 interface Cached {

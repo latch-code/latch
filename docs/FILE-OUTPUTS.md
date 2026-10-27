@@ -2,6 +2,7 @@
 description: 每轮冻结目录的有界变化观察、异步结算与产物引用。
 sources:
   - apps/host/src/files/output-tracker.ts
+  - apps/host/src/files/ignore.ts
   - apps/host/src/files/references.ts
   - apps/host/src/files/reference-store.ts
   - packages/core/src/file-tracking.ts
@@ -16,6 +17,8 @@ Latch 内置 Harness 与 ACP Harness 在 Agent 模式开始派发提示之前，
 macOS 与 Windows 使用递归文件监听；Linux、监听失败或目录事件不能直接定位文件时，在运行开始与结束各做一次有界扫描，比较文件身份、大小与时间。扫描只看冻结根内的普通文件，最多 50,000 个目录项、32 层、两秒。结果最多 1,000 个相对路径，路径总量最多 256 KiB；Host 同时最多保留 32 个观察器。秘密文件、Host 私有数据与生成目录不进入记录。
 
 运行真实结算后继续观察两秒，以覆盖 Agent 刚结束时尚在落盘的文件。此阶段不延迟取消回执或下一轮输入。递归监听下，macOS 仅在可靠的出生时间晚于本轮开始时标为「新增」；扫描回退无法证明创建时间时标为「修改」。已知文件消失才标为「已删除」。扫描预算不足、关闭中断或路径不可读会明确报告部分记录；观察服务失败报告不可用。
+
+忽略的名称与像密钥的路径定义在 `files/ignore.ts`，每轮改动快照（[CHANGES.md](CHANGES.md)）沿用同一套规则；快照另外保存内容，这里只观察元数据。
 
 这是一段时间窗口中的文件变化，可能包含其他编辑器或会话的写入，不能证明由 Agent 生成。界面使用「运行期间有变化的文件」，保留路径、变化类型与可选格式，删除项只显示路径；现存文件沿用统一文件预览及原生操作的鉴权检查。
 

@@ -3,13 +3,10 @@ import { lstat, opendir, realpath } from 'node:fs/promises'
 import { isAbsolute, join, relative, sep } from 'node:path'
 import { isFileMention, type FileChange } from '@latch/protocol'
 import type { FileTrackingHandle, FileTrackingInput, FileTrackingResult } from '@latch/sdk'
-import { redactSecrets } from '@latch/core/node-kit'
 import { isInsidePath } from '../paths.ts'
+import { isIgnoredPath, isSecretLookingPath } from './ignore.ts'
 import { fileFormat } from './metadata.ts'
 import { ProtectedPaths, resolveRecorded, type FileRoot } from './resolve.ts'
-import { isSecretPath } from './secrets.ts'
-const IGNORED = new Set(['.git', 'node_modules', 'dist', 'build', '.next', '.venv', '__pycache__', '.ds_store'])
-const EMPTY = new Uint8Array()
 type Stamp = { signature: string; birth: number }
 type WatchFiles = (root: string, changed: (path: string | null) => void, failed: () => void) => () => void
 interface TrackerOptions {
@@ -31,14 +28,7 @@ const splitKey = (key: string): { root: string; path: string } => {
   const at = key.indexOf('\n')
   return { root: key.slice(0, at), path: key.slice(at + 1) }
 }
-function ignored(path: string): boolean {
-  return (
-    path.split('/').some(part => IGNORED.has(part.toLowerCase()))
-    || path.toLowerCase().endsWith('.tmp')
-    || isSecretPath(path, EMPTY)
-    || redactSecrets(path) !== path
-  )
-}
+const ignored = (path: string): boolean => isIgnoredPath(path) || isSecretLookingPath(path)
 const watchFiles: WatchFiles = (root, changed, failed) => {
   const watcher = watch(root, { recursive: true, persistent: false, encoding: 'utf8' }, (_event, filename) => changed(filename))
   watcher.on('error', failed)

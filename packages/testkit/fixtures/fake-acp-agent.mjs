@@ -1,10 +1,12 @@
-// Deterministic ACP v1 agent for tests. No network, no model; it writes only FAKE_ACP_STATE and FAKE_ACP_LOG
-// (and reads FAKE_ACP_STORE, the client's own snapshot, to check what was durable when a prompt arrived).
+// Deterministic ACP v1 agent for tests. No network, no model; it writes only FAKE_ACP_STATE and FAKE_ACP_LOG (and reads
+// FAKE_ACP_STORE, the client's own snapshot, to check what was durable when a prompt arrived), except the `shell-edit`
+// turn, which writes two files in the session's working directory.
 // Process-wide behaviour comes from environment variables; each turn's behaviour from the prompt's first word.
 // Several processes may share FAKE_ACP_STATE (one per session), so every save merges into what is on disk.
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { appendFileSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 const env = process.env
 /** The content of FAKE_ACP_CAPS_FILE when set, so a later process of the same definition can advertise other capabilities. */
@@ -582,6 +584,32 @@ const scenarios = {
     process.stderr.write(`fatal: token=${env.FAKE_SECRET ?? ''}\n`)
     process.stdout.write('', () => process.exit(3))
     await new Promise(() => {})
+  },
+  // Two real edits in the session's folder: agent-edit.txt through the agent's own edit (reported with its diff), and
+  // command-edit.txt by a shell command it runs (reported without one), as an agent's build step or formatter would.
+  'shell-edit': async ({ session, say, tool }) => {
+    const own = join(session.cwd, 'agent-edit.txt')
+    const before = existsSync(own) ? readFileSync(own, 'utf8') : null
+    const after = 'edited by the agent\n'
+    writeFileSync(own, after)
+    tool({
+      toolCallId: 'call_1',
+      title: 'Edit agent-edit.txt',
+      kind: 'edit',
+      status: 'completed',
+      locations: [{ path: own }],
+      content: [{ type: 'diff', path: own, oldText: before, newText: after }],
+    })
+    const command = "printf 'written by a command\\n' > command-edit.txt"
+    tool({ toolCallId: 'call_2', title: 'Run a command', kind: 'execute', status: 'in_progress', rawInput: { command } })
+    const code = await new Promise(resolve =>
+      spawn('/bin/sh', ['-c', command], { cwd: session.cwd, stdio: 'ignore' })
+        .on('exit', resolve)
+        .on('error', () => resolve(-1)),
+    )
+    tool({ toolCallId: 'call_2', status: code === 0 ? 'completed' : 'failed', content: [text(`exit ${code}`)] }, 'tool_call_update')
+    say('edited')
+    return END
   },
   reuse: ({ input, tool }) => {
     tool({ toolCallId: 'call_1', title: input, kind: 'read', status: 'completed', content: [text(input)] })
