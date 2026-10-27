@@ -26,6 +26,15 @@ export interface HostFeatures {
   attachments?: true
   agentProbe?: true
   usage?: true
+  changes?: true
+  gitWrites?: true
+  terminal?: true
+  previewBrowser?: true
+  customAgents?: true
+  automations?: true
+  mentions?: true
+  pairingV3?: true
+  nativeElevation?: true
 }
 
 export interface SearchHit {

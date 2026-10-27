@@ -4,7 +4,18 @@ import { z } from 'zod'
 import { LISTENER_CLASSES, type ListenerClass } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
-import { AUDIT_FILE_TYPES } from './files/kinds.ts'
+import { AGENT_ACTIONS } from './audit-actions/agents.ts'
+import { CHANGE_ACTIONS } from './audit-actions/changes.ts'
+import { DEVICE_ACTIONS } from './audit-actions/devices.ts'
+import { deviceId, hex64, opaqueId } from './audit-actions/fields.ts'
+import { GIT_ACTIONS } from './audit-actions/git.ts'
+import { HOST_ACTIONS } from './audit-actions/host.ts'
+import { NATIVE_APPROVAL_ACTIONS } from './audit-actions/native-approvals.ts'
+import { NATIVE_ACTIONS } from './audit-actions/native.ts'
+import { PERSONAL_ACTIONS } from './audit-actions/personal.ts'
+import { PUSH_ACTIONS } from './audit-actions/push.ts'
+import { SESSION_ACTIONS } from './audit-actions/sessions.ts'
+import { TERMINAL_ACTIONS } from './audit-actions/terminal.ts'
 
 export type StepupMethod = 'none' | 'lpc-local' | 'shell-local' | 'offline'
 export interface AuditActor {
@@ -16,222 +27,19 @@ export interface AuditActor {
 const GENESIS = '0'.repeat(64)
 const FILE = 'audit.jsonl'
 
-// Detail values are limited to ids, hashes, enums, booleans and counts: never names, titles, paths, commands or secrets.
-const hex64 = z.string().regex(/^[0-9a-f]{64}$/u)
-const opaqueId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}$/u)
-const deviceId = z.string().regex(/^dev_[A-Za-z0-9_-]{22}$/u)
-const prefixed = (prefix: string) => z.string().regex(new RegExp(`^${prefix}_[A-Za-z0-9_-]{22}$`, 'u'))
-const count = z.number().int().min(0).max(1_000_000_000)
-const listener = z.enum(LISTENER_CLASSES)
-const scopes = z.array(z.enum(['view', 'run', 'approve:standard', 'approve:elevated', 'admin', 'secrets'])).max(6)
-const dataScope = z.enum(['work', 'all'])
-const risk = z.enum(['R0', 'R1', 'R2'])
-const presenceAction = z.enum([
-  'plugin.package.apply',
-  'device.enroll',
-  'device.enroll-native',
-  'device.grant',
-  'task.start-l3',
-  'task.mode-widen',
-  'agent.define',
-  'agent.probe',
-  'policy.change',
-  'provider.set-key',
-  'provider.confirm-origin',
-  'approval.r2',
-])
-const fieldPath = z
-  .string()
-  .regex(/^[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)*$/u)
-  .max(128)
-const policyChange = z.strictObject({
-  before: z.union([hex64, z.literal('')]),
-  after: hex64,
-  fields: z.array(fieldPath).max(64),
-  lowering: z.boolean(),
-})
-const deviceOnly = z.strictObject({ deviceId })
-const ticket = z.strictObject({ ticketId: prefixed('chl') })
-const workspaceChange = z.strictObject({ workspaceId: opaqueId, pathHash: hex64 })
-const folderId = z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/u)
-const folderVia = z.enum(['picker', 'drop', 'cli'])
-/** A desktop file action: the session, the real path's hash and the file's type (an allowed extension, other or none). */
-const fileContext = { sessionId: opaqueId.optional(), workspaceId: opaqueId.optional(), harnessId: opaqueId.optional() }
-const fileAction = z.strictObject({ ...fileContext, pathHash: hex64, type: z.enum(AUDIT_FILE_TYPES) })
-
-/** Strict detail schema per action. */
-const attachmentEvent = z.strictObject({
-  attachmentId: z.string().regex(/^[A-Za-z0-9_-]{22}$/u),
-  contentHash: hex64,
-  bytes: count,
-  type: z.enum(['image', 'text']),
-})
+/** Strict detail schema per action, assembled from the per-area files in `audit-actions/`; each action is in one of them. */
 export const AUDIT_DETAIL = {
-  'personal.changed': z.strictObject({
-    kind: z.enum(['assistant', 'memory', 'group', 'routine']),
-    operation: z.enum(['create', 'update', 'delete', 'start']),
-    before: hex64,
-    after: hex64,
-    assistantId: opaqueId.optional(),
-  }),
-  'plugin.package.changed': z.strictObject({
-    operation: z.enum(['create', 'save', 'trust', 'apply', 'enable', 'disable', 'delete']),
-    before: hex64,
-    after: hex64,
-  }),
-  'task.question.answered': z.strictObject({ sessionId: opaqueId, questionId: opaqueId }),
-  'task.prompt.queued': z.strictObject({ sessionId: opaqueId, itemId: opaqueId }),
-  'task.prompt.sent': z.strictObject({ sessionId: opaqueId, itemId: opaqueId }),
-  'task.prompt.edited': z.strictObject({ sessionId: opaqueId, itemId: opaqueId }),
-  'task.prompt.removed': z.strictObject({ sessionId: opaqueId, itemId: opaqueId }),
-  'attachment.add': attachmentEvent,
-  'attachment.view': attachmentEvent,
-  'native.relay.conflict': z.strictObject({ relayHash: hex64 }),
-  'native.network.remembered': z.strictObject({ networkHash: hex64 }),
-  'native.config.changed': z.strictObject({ before: hex64, after: hex64, lowering: z.boolean(), direct: z.boolean(), relayCount: count }),
-  'presence.launch-trusted': z.strictObject({ keyHash: hex64 }),
-  'host.started': z.strictObject({
-    hostId: z.string().regex(/^[a-z2-7]{52}$/u),
-    version: z.string().regex(/^[0-9A-Za-z.+-]{1,64}$/u),
-    policyHash: hex64,
-    settingsHash: hex64,
-    devMode: z.boolean(),
-  }),
-  'audit.torn-tail-removed': z.strictObject({ bytes: count }),
-  'policy.created': policyChange,
-  'policy.changed': policyChange,
-  'policy.changed-outside': z.strictObject({ expected: hex64, actual: hex64 }),
-  'presence.helper.pinned': z.strictObject({ cdhash: z.string().regex(/^[0-9a-f]{40}$/u) }),
-  'presence.result': z.strictObject({
-    confirmationId: prefixed('cfm'),
-    action: presenceAction,
-    result: z.enum(['denied', 'timeout', 'cancelled', 'error']),
-  }),
-  'device.enroll.requested': z.strictObject({
-    enrollmentId: prefixed('enr'),
-    listener,
-    fingerprint: z.string().regex(/^[A-Z2-7]{20}$/u),
-    scopes,
-    invitationId: prefixed('inv').optional(),
-  }),
-  'device.enrolled': z.strictObject({
-    deviceId,
-    enrollmentId: prefixed('enr'),
-    listener,
-    method: z.enum(['lpc', 'offline', 'invitation']),
-    scopes,
-    dataScope,
-    pairedByDeviceId: deviceId.optional(),
-  }),
-  'device.enroll.failed': z.strictObject({
-    enrollmentId: prefixed('enr'),
-    reason: z.enum(['denied', 'expired', 'cancelled', 'signature', 'commit']),
-  }),
-  'device.revoked': z.strictObject({ deviceId, reason: z.enum(['manual', 'self', 'replay', 'cascade', 'migration']), cascaded: count }),
-  'device.review': z.strictObject({ deviceId, causeDeviceId: deviceId }),
-  'device.scopes.changed': z.strictObject({ deviceId, added: scopes, removed: scopes, dataScope: dataScope.optional() }),
-  'device.renamed': deviceOnly,
-  /** A renewal answered with a new credential; it replaces the current one only when first used. */
-  'device.credential.issued': deviceOnly,
-  'device.native.verified': deviceOnly,
-  'native.inputs.paused': z.strictObject({}),
-  'native.inputs.resumed': z.strictObject({}),
-  /** The renewed credential was used for the first time and became current. */
-  'device.credential.rotated': deviceOnly,
-  /** `listener` is where the invitation can be used; records written before invitations were bound to one have none. */
-  'pairing.invited': z.strictObject({
-    invitationId: prefixed('inv'),
-    scopes,
-    listener: listener.optional(),
-    dataScope: dataScope.optional(),
-  }),
-  'offline.ticket.created': ticket,
-  'offline.ticket.consumed': ticket,
-  'migration.devices.v2': z.strictObject({ revoked: count, legacy: count }),
-  'approval.decided': z.strictObject({
-    approvalId: opaqueId,
-    sessionId: opaqueId,
-    harnessId: opaqueId,
-    risk,
-    advisory: z.boolean(),
-    decision: z.enum(['allow', 'reject']),
-    optionKind: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/u),
-    previewHash: hex64.optional(),
-  }),
-  'approval.stale': z.strictObject({ approvalId: opaqueId }),
-  /** Written before a full-access session is spawned; nothing is spawned without it. */
-  'task.l3.start-requested': z.strictObject({ harnessId: opaqueId, launchHash: hex64, folderCount: count.optional() }),
-  /** `definitionHash`: the launch fingerprint without the project's configuration, from drivers that report it. */
-  'task.l3.started': z.strictObject({
-    sessionId: opaqueId,
-    harnessId: opaqueId,
-    launchHash: hex64,
-    definitionHash: hex64.optional(),
-    folderCount: count.optional(),
-  }),
-  'task.l3.start-failed': z.strictObject({ harnessId: opaqueId, launchHash: hex64 }),
-  'task.cancelled': z.strictObject({ sessionId: opaqueId, runId: opaqueId.optional() }),
-  'task.config.changed': z.strictObject({ sessionId: opaqueId, configIdHash: hex64, toHash: hex64 }),
-  'task.mode.widened': z.strictObject({ sessionId: opaqueId, toHash: hex64 }),
-  'task.permission-drift': z.strictObject({ sessionId: opaqueId, observedHash: hex64 }),
-  'task.approval-auto-rejected': z.strictObject({ sessionId: opaqueId, reason: z.enum(['persistent-only', 'unknown-kind']) }),
-  'agent.probe.requested': z.strictObject({ agentId: opaqueId, launchHash: hex64 }),
-  'agent.probed': z.strictObject({ agentId: opaqueId, launchHash: hex64, status: z.enum(['ready', 'authentication-required', 'failed']) }),
-  'agent.defined': z.strictObject({ agentId: opaqueId, definitionHash: hex64, created: z.boolean() }),
-  'agent.deleted': z.strictObject({ agentId: opaqueId }),
-  'provider.secret.set': z.strictObject({ providerId: opaqueId, originHash: hex64 }),
-  'provider.secret.cleared': z.strictObject({
-    providerId: opaqueId,
-    reason: z.enum(['origin-changed', 'path-changed', 'manual', 'deleted']),
-  }),
-  /**
-   * A new project; `pathHash` is its primary folder's, `foldersHash` the canonical list of all its folders. `session`:
-   * a session's own folder that the desktop saved as a project.
-   */
-  'workspace.added': z.strictObject({
-    workspaceId: opaqueId,
-    pathHash: hex64,
-    folderCount: count.optional(),
-    foldersHash: hex64.optional(),
-    via: z.enum([...folderVia.options, 'session']).optional(),
-  }),
-  'workspace.removed': workspaceChange,
-  /** A folder joined a project, or (`replacesFolder`) took the place of one of its folders, keeping its ID. */
-  'workspace.folder-added': z.strictObject({
-    workspaceId: opaqueId,
-    folderId,
-    pathHash: hex64,
-    via: folderVia,
-    replacesFolder: z.boolean(),
-  }),
-  'workspace.folder-removed': z.strictObject({ workspaceId: opaqueId, folderId, pathHash: hex64 }),
-  /** A rename, a new glyph or a new folder order; the folder set is unchanged. */
-  'workspace.changed': z.strictObject({
-    workspaceId: opaqueId,
-    renamed: z.boolean(),
-    glyphChanged: z.boolean(),
-    primaryChanged: z.boolean(),
-    reordered: z.boolean(),
-  }),
-  /** A saved project that became unusable (a folder failing the rules, missing or unreadable); it stays in settings. */
-  'workspace.disabled': z.strictObject({
-    workspaceId: opaqueId,
-    reason: z.enum(['overlap', 'code-root', 'protected', 'invalid', 'missing', 'permission']),
-    folderIndex: count.optional(),
-  }),
-  /** A settings write by the Host, with the canonical hashes before and after. */
-  'settings.changed': z.strictObject({ before: z.union([hex64, z.literal('')]), after: hex64 }),
-  'settings.changed-outside': z.strictObject({ expected: z.union([hex64, z.literal('')]), actual: hex64 }),
-  /** An unterminated, unparsable last line of auth/revocations.jsonl (an append cut short) was moved aside. */
-  'device.revocations.torn-tail-removed': z.strictObject({ bytes: count }),
-  /** Written before the desktop app shows a file in Finder, previews it with Quick Look or opens it with its default app. */
-  'file.reveal': fileAction,
-  'file.quicklook': fileAction,
-  'file.open': fileAction,
-  'file.view': fileAction.extend({ bytes: count }),
-  'file.list': z.strictObject({ ...fileContext, rootHash: hex64, dirHash: hex64, hidden: z.boolean(), count, truncated: z.boolean() }),
-  /** Best-effort follow-up when an action audited before taking effect then failed to commit. */
-  'action.failed': z.strictObject({ refSeq: z.number().int().min(1) }),
+  ...HOST_ACTIONS,
+  ...SESSION_ACTIONS,
+  ...DEVICE_ACTIONS,
+  ...NATIVE_ACTIONS,
+  ...PERSONAL_ACTIONS,
+  ...AGENT_ACTIONS,
+  ...CHANGE_ACTIONS,
+  ...GIT_ACTIONS,
+  ...TERMINAL_ACTIONS,
+  ...NATIVE_APPROVAL_ACTIONS,
+  ...PUSH_ACTIONS,
 } as const
 
 export type AuditAction = keyof typeof AUDIT_DETAIL

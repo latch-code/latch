@@ -18,7 +18,7 @@ import { AttachmentStore } from './attachments.ts'
 import { createAttachmentRoutes, assertAttachmentCapability } from './attachment-routes.ts'
 import type { AttachmentSelection, AttachmentCapabilities, AttachmentRef } from '@latch/protocol'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { randomBytes, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 export { loadPluginPackage } from './plugin-packages.ts'
 import { lstat, mkdir, chmod, readFile, readdir, realpath, rm, rmdir, stat, unlink } from 'node:fs/promises'
 import { homedir, hostname } from 'node:os'
@@ -31,8 +31,6 @@ import {
   PROVIDER_PRESETS,
   isLocalListener,
   isNativeListener,
-  LISTENER_LABELS,
-  SCOPE_LABELS,
   rejectionNote,
   RISK_REASON_TEXT,
   type AgentPresetSettings,
@@ -46,21 +44,16 @@ import {
   type CancelReceipt,
   type ChangeEvent,
   type CurrentDevice,
-  type DataScope,
-  type Device,
   type DeviceScope,
   type FolderVia,
   type HarnessSource,
   type HostCatalog,
   type HostStateEvent,
   type HostView,
-  type EnrollmentView,
-  type ListenerClass,
   type ModelRef,
   type PermissionLevel,
   type PluginInfo,
   type PresenceAction,
-  type PresencePreview,
   type ProviderDestination,
   type ProviderSettings,
   type PresenceSubject,
@@ -89,35 +82,17 @@ import { canonicalJson, sha256Hex, redactSecrets } from '@latch/core/node-kit'
 import { createAcpAgentPlugin, forgetCommandLookups, resolveCommand, validateAgentDefinition } from '@latch/harness-acp'
 import { AuditLog, type AuditActor, type StepupMethod } from './audit.ts'
 import { excludeFromBackup } from './backup.ts'
-import { DeviceStore, EnrollmentService, type ConnectionContext, type DeviceScopeBase } from './auth.ts'
-import { hashDisplay, parseP256Spki, randomNonce, verifyP256 } from './crypto.ts'
-import {
-  discoveryEpochInput,
-  nativeRecoverySecret,
-  nativeRevocationInput,
-  nativeVerificationText,
-  nativeWindowSecret,
-} from '@latch/link-wire'
-import { nodeCrypto } from '@latch/link-client'
-import { startNativeHost, type NativeOpening } from './native.ts'
-import { NativePluginTransports } from './native-transports.ts'
-import { NativeNetwork } from './native-network.ts'
-import { NativeNetworks } from './native-networks.ts'
-import { MacNetworkBackend, type NativeNetworkBackend } from './native-network-backend.ts'
-import { NativeSettings, nativeAddresses } from './native-settings.ts'
+import { PRIVATE_ENTRIES, isPrivateEntry } from './data-entries.ts'
+import { DeviceStore, EnrollmentService, type ConnectionContext } from './auth.ts'
+import { hashDisplay } from './crypto.ts'
+import { discoveryEpochInput } from '@latch/link-wire'
+import type { NativeOpening } from './native.ts'
+import type { NativeNetworkBackend } from './native-network-backend.ts'
 import { NativeReplay } from './native-replay.ts'
 import { RelayProfiles, secretBytes } from './relay/profiles.ts'
 import { HostAddressBooks } from './relay/address-book.ts'
-import { HostRelayController } from './relay/controller.ts'
 import { HostRelayDirectory } from './relay/directory.ts'
-import {
-  createEgressFetch,
-  createEgressInspector,
-  createRelayEgress,
-  type EgressReason,
-  type FetchLike,
-  type LookupFunction,
-} from './egress.ts'
+import { createEgressFetch, createEgressInspector, type EgressReason, type FetchLike, type LookupFunction } from './egress.ts'
 import { loadOrCreateHostIdentity } from './identity.ts'
 import {
   DENY_READ_HOME_PATHS,
@@ -149,12 +124,9 @@ import {
 } from './presence.ts'
 import { classifyStandardCall, targetFolder, type CallFolder } from './risk.ts'
 import {
-  CLEARED_LEGACY_COOKIE,
   authFailure,
   ceilingExceeded,
-  clearedCredentialCookie,
   createRateLimits,
-  credentialCookie,
   hasAuthorization,
   hostDesktopRequired,
   isSocketTransport,
@@ -166,7 +138,6 @@ import {
   scopeRequired,
   stepupRequired,
   type AuthFailureCode,
-  type Presented,
 } from './access.ts'
 import {
   startListeners,
@@ -226,71 +197,33 @@ import { FileDirectoryReader } from './files/directory.ts'
 import { FileReferenceStore } from './files/reference-store.ts'
 import { PluginAssets } from './plugin-assets.ts'
 import { createPluginPackageRoutes, installedAssetPlugin } from './plugin-package-routes.ts'
+import { createRoutes } from './routes/index.ts'
+import { RENEW_INTERVAL_MS, UNIX_ADDRESS } from './routes/devices.ts'
+import {
+  BASE_RETRIES,
+  CONFIG_BODY_LIMIT,
+  type AuditEvent,
+  type Caller,
+  type CallerRequest,
+  type DeviceCaller,
+  type PreviewLine,
+  type RouteContext,
+  type RouteRequest,
+} from './routes/registry.ts'
 
 export type { TlsListenerOptions } from './listeners.ts'
 
 export const LATCH_VERSION = '0.1.0'
 
 const TASK_BODY_LIMIT = 256 * KIB
-const CONFIG_BODY_LIMIT = 128 * KIB
 const HARNESS_ID = /^[a-zA-Z0-9_-]{1,64}$/
 const LEGACY_PROVIDER_ID = 'openai-compatible'
 const STANDARD = 'standard'
-const RENEW_INTERVAL_MS = 24 * 60 * 60 * 1000
 const ACTIVE_STATUSES: ReadonlySet<TaskStatus> = new Set(['running', 'waiting-approval'])
-/** Attempts for a reduction whose base moved underneath it (a cascade or a helper pin landing first). */
-const BASE_RETRIES = 3
-const MAX_ISSUED_INVITATIONS = 256
-/** Data-directory entries holding credentials, identity, audit, settings or session data. */
-const PRIVATE_ENTRIES = [
-  'plugin-packages',
-  'auth',
-  'identity',
-  'native',
-  'personal',
-  'audit',
-  'policy.json',
-  'agents',
-  'backups',
-  'latch.db',
-  'latch.db-wal',
-  'latch.db-shm',
-  'sessions',
-  'harnesses',
-  'provider.json',
-  'providers.json',
-  'settings.json',
-  'sessions-meta.json',
-  'session-folders.json',
-  'project-context.json',
-  'launch-trust.json',
-  'host.json',
-  'host.log',
-  'host.lock',
-  'desktop-launch.json',
-]
-/**
- * Names the Host writes next to private entries for a moment: atomic-write temp files (the `prefix` their writers pass to
- * `writeFileAtomic`, or the default `.<file name>-`) and a stale lock moved aside.
- */
-const TRANSIENT_PREFIXES = [
-  '.host-',
-  '.policy-',
-  '.provider.json-',
-  '.providers.json-',
-  '.settings.json-',
-  'sessions-meta.json.',
-  '.project-context.json-',
-  '.launch-trust.json-',
-  '.session-folders.json-',
-  '.desktop-launch-',
-]
 const L3_WARNINGS = [
   '该会话可以读写 Latch 数据和 Host 身份私钥，并可以冒用本机 Electron 在其他电脑上的身份。',
   'Harness 自己发起的询问只是提示，不是安全边界。',
 ]
-const UNIX_ADDRESS = '本机 host.sock'
-const PAIRING_LABELS = { lpc: '本机确认', offline: '离线登记码', invitation: '配对邀请', migration: '旧版本迁移' } as const
 /** Unix connections without a credential may reach only these. */
 const ANONYMOUS_UNIX = new Set([
   'GET /link/api/devices',
@@ -369,31 +302,6 @@ const decisionSchema = z.strictObject({
 const cancelSchema = z.strictObject({
   requestId: requestIdSchema.optional(),
   runId: z.string().regex(RUN_ID).optional(),
-})
-const deviceNameSchema = z.object({ name: z.string().trim().min(1).max(80) })
-const scopeSchema = z.enum(['view', 'run', 'approve:standard', 'approve:elevated', 'admin', 'secrets'])
-const enrollmentSchema = z.object({
-  publicKey: z.string().min(1).max(1024),
-  /** Empty only when re-confirming a legacy browser, which keeps its old name. */
-  name: z.string().trim().max(80).default(''),
-  scopes: z.array(scopeSchema).max(6).optional(),
-  dataScope: z.enum(['work', 'all']).optional(),
-  invitation: z.string().min(1).max(64).optional(),
-  offlineCode: z.string().min(1).max(64).optional(),
-  native: z
-    .object({ certificate: z.string().min(1).max(8192), verificationKey: z.string().min(1).max(256) })
-    .strict()
-    .optional(),
-})
-const signatureSchema = z.object({ signature: z.string().min(1).max(256) })
-const renewSchema = z.object({ nonce: z.string().min(1).max(128), signature: z.string().min(1).max(256) })
-const deviceScopesSchema = z
-  .object({ scopes: z.array(scopeSchema).max(6).optional(), dataScope: z.enum(['work', 'all']).optional() })
-  .refine(value => value.scopes !== undefined || value.dataScope !== undefined, '没有要修改的内容')
-const invitationSchema = z.object({
-  scopes: z.array(scopeSchema).max(6).optional(),
-  /** `tls` (default): a phone or another computer; `loopback`: a browser on this computer. */
-  target: z.enum(['tls', 'loopback']).optional(),
 })
 const providerKind = z.enum(['openai-compatible', 'anthropic'])
 const modelList = z.array(modelId).max(1000)
@@ -618,19 +526,6 @@ export interface StartedHost {
   close(): Promise<void>
 }
 
-/** The authenticated party of one request. Anonymous only on host.sock, and only for a few routes. */
-interface Caller {
-  connection: ConnectionContext
-  device?: Device
-  /** Set only by the controlled native metadata/reduction routes. */
-  nativeWindowExempt?: boolean
-  nativeOpening?: NativeOpening
-  renewAfter?: number
-  presented?: Presented
-  /** Hash of the credential this request was admitted with; event streams stay bound to it. */
-  credentialHash?: string
-}
-
 interface EventStream {
   nativeOpening?: NativeOpening
   paddingObserved?: boolean
@@ -640,10 +535,6 @@ interface EventStream {
   lastSentRevision: number
   meter: StreamMeter
 }
-type DeviceCaller = Caller & { device: Device }
-
-type PreviewLine = PresencePreview['lines'][number]
-type AuditEvent = Parameters<AuditLog['append']>[0]
 
 /** Where a saved key may be sent: an origin and the path under it. */
 type KeyScope = { keyOrigin: string; keyPath: string }
@@ -835,17 +726,6 @@ async function identityOf(path: string): Promise<string | undefined> {
     if (codeOf(error) === 'ENOENT' || codeOf(error) === 'ENOTDIR') return undefined
     throw error
   }
-}
-
-/** Folds case and Unicode compatibility forms (`Providers.json`, `providerſ.json`), as case-insensitive disks may. */
-function foldName(name: string): string {
-  return name.normalize('NFKC').toLowerCase()
-}
-
-const FOLDED_PRIVATE = new Set(PRIVATE_ENTRIES.map(foldName))
-function isPrivateEntry(name: string): boolean {
-  const folded = foldName(name)
-  return FOLDED_PRIVATE.has(folded) || TRANSIENT_PREFIXES.some(prefix => folded.startsWith(prefix))
 }
 
 /**
@@ -1087,7 +967,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     const enrollments = new EnrollmentService({ hostId, devices, presence, audit, directory: authDir, now })
     const relayProfiles = await RelayProfiles.open(dataDir)
     await excludeFromBackup([join(dataDir, 'native')], { log })
-    let nativeNetwork: NativeNetwork | undefined
     const relayDirectory = await HostRelayDirectory.open({
       dataDir,
       profiles: relayProfiles,
@@ -1106,7 +985,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     const addressBooks = new HostAddressBooks(
       relayProfiles,
       identity,
-      () => nativeNetwork?.lan() ?? [],
+      () => nativeRoutes.lan(),
       () => relayDirectory.sources(),
     )
     const revokedDiscoveryHash = () =>
@@ -1132,7 +1011,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           changed ||= before !== relayProfiles.snapshot().discoveryKey
           if (hash === revokedDiscoveryHash()) break
         }
-        nativeNetwork?.invalidate()
+        nativeRoutes.invalidate()
         if (changed) refresh()
       })()
       discoveryRotation = operation
@@ -1144,23 +1023,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return operation
     }
     devices.onRevoked(() => {
-      nativeNetwork?.invalidate()
+      nativeRoutes.invalidate()
       void synchronizeNativeDiscovery().catch(() => log('Native discovery key rotation failed'))
     })
     const limits = createRateLimits(options.rateLimits ?? 'default', now)
-    /**
-     * Hashes of invitation codes this Host handed out, with their expiry and the listener they are for; only these, on
-     * that listener, get their own enrollment budget.
-     */
-    const issuedInvitations = new Map<string, { expiresAt: number; listener: ListenerClass }>()
-    function pruneInvitations(): void {
-      const current = now()
-      for (const [hash, issued] of issuedInvitations) if (issued.expiresAt < current) issuedInvitations.delete(hash)
-    }
-    function invitationIssued(hash: string, listener: ListenerClass): boolean {
-      pruneInvitations()
-      return issuedInvitations.get(hash)?.listener === listener
-    }
     const tlsKeyPath = options.tls ? resolve(options.tls.keyPath) : undefined
 
     const workspaceGuard: FolderGuardContext = {
@@ -1692,29 +1558,60 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     let listeners: ListenerSet | undefined
     let loopbackOrigin = ''
     let tlsOrigin: string | undefined
-    let nativeHost: Awaited<ReturnType<typeof startNativeHost>> | undefined
-    let nativePluginTransports: NativePluginTransports | undefined
-    let relayController: HostRelayController | undefined
-    let nativeSettings: NativeSettings | undefined
-    const nativeRequests = new WeakMap<IncomingMessage, NativeOpening>()
-    const nativeChallenges = new WeakMap<NativeOpening, { nonce: string; appOpenId: string; expiresAt: number; generation: number }>()
-    const nativeGenerations = new Map<string, number>()
-    const nativeWindows = new Map<
-      string,
-      { deviceId: string; appOpenId: string; expiresAt: number; generation: number; recoveryHash: string }
-    >()
-    const nativeWindowIssuer = randomBytes(32)
-    let nativeGeneration = 0
-    devices.onRevoked(id => {
-      nativeGenerations.delete(id)
-      for (const [hash, window] of nativeWindows) if (window.deviceId === id) nativeWindows.delete(hash)
-    })
-    function nativeVerifiedUntil(opening: NativeOpening | undefined): number {
-      const window = opening?.windowHash ? nativeWindows.get(opening.windowHash) : undefined
-      return window && window.deviceId === opening!.deviceId && window.generation === nativeGenerations.get(window.deviceId)
-        ? window.expiresAt
-        : 0
+    const routeContext: RouteContext = {
+      hostId,
+      hostId8,
+      dataDir,
+      codeRoot,
+      now,
+      log,
+      audit,
+      policy,
+      devices,
+      enrollments,
+      presence,
+      config,
+      plugins: registry,
+      hub: harnessHub,
+      limits,
+      closing: () => closing,
+      refresh,
+      actorOf,
+      requireDevice,
+      requireScope,
+      requireLocal,
+      recheck,
+      confirm,
+      serial,
+      audited,
     }
+    const { native: nativeRoutes, routes } = createRoutes(routeContext, {
+      native: {
+        options,
+        identity,
+        egressExtra,
+        relayProfiles,
+        relayDirectory,
+        addressBooks,
+        revokedDiscoveryHash,
+        synchronizeDiscovery: synchronizeNativeDiscovery,
+        authorizeBulk: (caller, handle, etag) => fileRoutes.authorizeBulk(caller, handle, etag),
+      },
+      devices: {
+        authenticate,
+        tls,
+        loopbackOrigin: () => loopbackOrigin,
+        tlsOrigin: () => tlsOrigin,
+        addressBooks,
+        endDisallowedStreams() {
+          for (const [stream, info] of streams)
+            if (!streamAllowed(info)) {
+              stream.end()
+              streams.delete(stream)
+            }
+        },
+      },
+    })
 
     // ---- Callers, scopes and audit ---------------------------------------------------------------
 
@@ -1768,7 +1665,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const native = isNativeListener(caller.connection.listener) ? devices.authenticateNative(caller.device.id) : undefined
       const current = native?.ok ? native.device : devices.get(caller.device.id)
       if (!current || (native ? !native.ok : !devices.isActive(current.id))) throw authFailure('device-revoked')
-      if (native?.ok && !caller.nativeWindowExempt && nativeVerifiedUntil(caller.nativeOpening) <= now())
+      if (native?.ok && !caller.nativeWindowExempt && nativeRoutes.verifiedUntil(caller.nativeOpening) <= now())
         throw new AppError(403, 'native-verification-required', '请先在手机上完成身份验证')
       if (scope && !current.scopes.includes(scope)) throw scopeRequired(scope)
     }
@@ -2171,26 +2068,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const native = isNativeListener(caller.connection.listener) ? devices.authenticateNative(caller.device.id) : undefined
       const device = native?.ok ? native.device : (devices.get(caller.device.id) ?? caller.device)
       return {
-        ...nativeDeviceView(device, caller.nativeOpening),
+        ...nativeRoutes.deviceView(device, caller.nativeOpening),
         current: true,
         renewAfter: new Date(caller.renewAfter ?? now() + RENEW_INTERVAL_MS).toISOString(),
       }
-    }
-    function nativeDeviceView(device: Device, opening?: NativeOpening): Device {
-      const state = devices.nativeStatus(device.id)
-      if (!state) return device
-      const expiresAt = opening
-        ? nativeVerifiedUntil(opening)
-        : Math.max(
-            0,
-            ...[...nativeWindows.values()]
-              .filter(
-                window =>
-                  window.deviceId === device.id && window.generation === nativeGenerations.get(device.id) && window.expiresAt > now(),
-              )
-              .map(window => window.expiresAt),
-          )
-      return { ...device, native: { ...state, ...(expiresAt ? { bodyVerifiedUntil: new Date(expiresAt).toISOString() } : {}) } }
     }
 
     async function presenceStatus(): Promise<HostView['presence']> {
@@ -2208,7 +2089,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         presence: await presenceStatus(),
         tls: tlsOrigin ? { origin: tlsOrigin } : null,
         native: {
-          enabled: nativeHost?.enabled ?? false,
+          enabled: nativeRoutes.enabled(),
           inputsPaused: devices.nativeInputsPaused(),
           discoveryEpoch: discoveryEpoch(),
           directoryEpoch: relayDirectory.epoch(),
@@ -3535,12 +3416,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           filePreview: true,
           personal: true,
           personalRoutines: true,
-          nativeBulk: true,
-          nativeBulkStream: true,
           personalGroups: true,
           personalQueue: true,
           configReceipts: true,
-          nativePairingScope: true,
+          ...routes.features(),
         },
         harnesses: hub!.drivers(),
         providers: usableProviders().map(provider => summarizeProvider(provider, providerKindOf(provider.id))),
@@ -3698,7 +3577,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const input = decisionSchema.parse(await jsonBody(req))
       if (isNativeListener(caller.connection.listener)) {
         if (input.decision === 'reject' && input.note === undefined) caller.nativeWindowExempt = true
-        else if (nativeVerifiedUntil(caller.nativeOpening) <= now())
+        else if (nativeRoutes.verifiedUntil(caller.nativeOpening) <= now())
           throw new AppError(403, 'native-verification-required', '请先在手机上完成身份验证')
       }
       for (let held = decisionLocks.get(approvalId); held; held = decisionLocks.get(approvalId)) await held.catch(() => undefined)
@@ -3970,7 +3849,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
      */
     function streamAllowed(stream: EventStream): boolean {
       return (
-        (!stream.nativeOpening || nativeVerifiedUntil(stream.nativeOpening) > now())
+        (!stream.nativeOpening || nativeRoutes.verifiedUntil(stream.nativeOpening) > now())
         && devices.get(stream.deviceId)?.scopes.includes('view') === true
         && devices.streamAllowed(stream.deviceId, stream.credentialHash)
       )
@@ -4126,7 +4005,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
 
     function refresh(sessionId?: string): void {
-      relayController?.reconcile()
+      nativeRoutes.reconcile()
       const nextRevision = ++revision
       if (sessionId) pendingTasks.set(sessionId, nextRevision)
       else pendingGlobal = true
@@ -4155,7 +4034,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         listener: listener.listener,
         origin: listener.origin,
         remoteAddress:
-          nativeRequests.get(req)?.source
+          nativeRoutes.opening(req)?.source
           ?? (isSocketTransport(listener.listener)
             ? UNIX_ADDRESS
             : (req.socket.remoteAddress ?? '').replace(/^::ffff:(?=\d+\.\d+\.\d+\.\d+$)/u, '')),
@@ -4173,7 +4052,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       renewal = false,
     ): Promise<Caller> {
       if (isNativeListener(listener.listener)) {
-        const opening = nativeRequests.get(req)
+        const opening = nativeRoutes.opening(req)
         if (!opening || opening.pairing) throw authFailure('unauthorized')
         const result = devices.authenticateNative(opening.deviceId)
         if (!result.ok) throw authFailure(result.code as AuthFailureCode)
@@ -4206,26 +4085,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       throw authFailure(outcome.code as AuthFailureCode)
     }
 
-    function setCredentialCookie(
-      res: ServerResponse,
-      caller: Pick<Caller, 'connection'>,
-      device: Device,
-      credential: string,
-      extra: string[] = [],
-    ): void {
-      res.setHeader('set-cookie', [
-        credentialCookie(caller.connection.listener, hostId8, credential, Date.parse(device.credentialExpiresAt), now()),
-        ...extra,
-      ])
-    }
-
     // ---- Security routes -------------------------------------------------------------------------
 
     async function handlePublic(
       req: IncomingMessage,
       res: ServerResponse,
       listener: ListenerContext,
-      connection: ConnectionContext,
       path: string,
       method: string,
     ): Promise<boolean> {
@@ -4266,440 +4131,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           activity: { running, waiting },
         }
         json(res, info)
-        return true
-      }
-      if ((path === '/link/api/login' || path === '/link/api/pair') && method === 'POST') {
-        throw new AppError(410, 'login-removed', '启动令牌登录已移除，请在本机确认这台设备')
-      }
-      if (path === '/link/api/enrollment-info' && method === 'GET') {
-        let legacyName: string | undefined
-        const presented = presentedCredential(req, listener, hostId8)
-        if (listener.listener === 'loopback-tcp' && presented?.kind === 'legacy-cookie') {
-          const outcome = await devices.authenticate(presented, connection)
-          if (!outcome.ok && outcome.code === 'legacy-reconfirm') legacyName = outcome.legacyName
-        }
-        json(res, await enrollments.info(connection, legacyName))
-        return true
-      }
-      if (path === '/link/api/enrollments' && method === 'POST') {
-        const local = isLocalListener(listener.listener)
-        if (local) limits.enrollmentCreate.take(listener.listener)
-        const input = enrollmentSchema.parse(await jsonBody(req))
-        const native = nativeRequests.get(req)
-        if (
-          isNativeListener(listener.listener)
-          && (!native?.pairing || native.enrollmentId || !input.invitation || sha256Hex(input.invitation) !== native.invitationHash)
-        )
-          throw authFailure('unauthorized')
-        // Off host.sock only an invitation can succeed. Each one this Host issued gets its own budget on its listener, so
-        // other requests cannot use up an invited device's; every other attempt, with or without a code, shares one budget
-        // per listener and adds no keys.
-        const invitationHash = !local && input.invitation !== undefined ? sha256Hex(input.invitation) : undefined
-        const issued = invitationHash !== undefined && invitationIssued(invitationHash, listener.listener)
-        if (!local)
-          limits.enrollmentCreate.take(issued ? `${listener.listener}:invitation:${invitationHash}` : `${listener.listener}:uninvited`)
-        const request = {
-          publicKey: input.publicKey,
-          name: input.name,
-          ...(input.scopes ? { scopes: input.scopes } : {}),
-          ...(input.dataScope ? { dataScope: input.dataScope } : {}),
-          ...(input.invitation ? { invitation: input.invitation } : {}),
-          ...(input.offlineCode ? { offlineCode: input.offlineCode } : {}),
-          ...(input.native ? { native: input.native } : {}),
-        }
-        const presented = presentedCredential(req, listener, hostId8)
-        const legacy = presented?.kind === 'legacy-cookie' ? presented : undefined
-        let enrollment: EnrollmentView
-        try {
-          enrollment = await enrollments.create(request, connection, legacy)
-        } catch (error) {
-          if (issued && codeOf(error) === 'invitation-invalid') issuedInvitations.delete(invitationHash)
-          throw error
-        }
-        // Single use: later attempts with this code share the per-listener budget.
-        if (issued) issuedInvitations.delete(invitationHash)
-        if (native) native.enrollmentId = enrollment.id
-        json(res, { enrollment }, 202)
-        return true
-      }
-      const enrollment = path.match(/^\/link\/api\/enrollments\/([^/]+)(\/(?:prepare|complete))?$/)
-      if (!enrollment) return false
-      const id = safeDecode(enrollment[1]!)
-      if (isNativeListener(listener.listener) && nativeRequests.get(req)?.enrollmentId !== id) throw authFailure('unauthorized')
-      if (id.length > 64) throw new AppError(404, 'enrollment-not-found', '找不到该登记请求')
-      if (method === 'GET' && !enrollment[2]) {
-        limits.enrollmentPoll.take(id)
-        json(res, { enrollment: enrollments.status(id, connection) })
-        return true
-      }
-      if (method === 'DELETE' && !enrollment[2]) {
-        enrollments.cancel(id, connection)
-        json(res, { cancelled: true })
-        return true
-      }
-      if (method === 'POST' && enrollment[2] === '/prepare') {
-        if (!isNativeListener(listener.listener)) throw authFailure('unauthorized')
-        limits.enrollmentPoll.take(id)
-        const input = signatureSchema.strict().parse(await jsonBody(req))
-        const deviceId = enrollments.prepareNative(id, input.signature, connection)
-        const addressBook = await addressBooks.issue(deviceId)
-        if (enrollments.prepareNative(id, input.signature, connection) !== deviceId) throw authFailure('unauthorized')
-        json(res, { deviceId, addressBook })
-        return true
-      }
-      if (method === 'POST' && enrollment[2] === '/complete') {
-        limits.enrollmentPoll.take(id)
-        const input = signatureSchema.parse(await jsonBody(req))
-        const presented = presentedCredential(req, listener, hostId8)
-        const { device, credential } = await enrollments.complete(id, input.signature, connection)
-        refresh()
-        if (isNativeListener(listener.listener)) {
-          json(res, { device })
-          return true
-        }
-        if (isSocketTransport(listener.listener)) {
-          json(res, { device, credential })
-          return true
-        }
-        setCredentialCookie(res, { connection }, device, credential, presented?.kind === 'legacy-cookie' ? [CLEARED_LEGACY_COOKIE] : [])
-        json(res, { device })
-        return true
-      }
-      return false
-    }
-
-    async function handleCredentials(req: IncomingMessage, res: ServerResponse, caller: Caller, path: string): Promise<void> {
-      requireDevice(caller)
-      if (path === '/link/api/credentials/challenge') {
-        const challenge = devices.challenge(caller.device.id, caller.credentialHash)
-        json(res, { nonce: challenge.nonce, expiresAt: new Date(challenge.expiresAt).toISOString() })
-        return
-      }
-      const input = renewSchema.parse(await jsonBody(req))
-      const { device, credential } = await devices.renew({
-        deviceId: caller.device.id,
-        nonce: input.nonce,
-        signature: input.signature,
-        connection: caller.connection,
-        ...(caller.credentialHash ? { credentialHash: caller.credentialHash } : {}),
-      })
-      const renewed: CurrentDevice = { ...device, current: true, renewAfter: new Date(now() + RENEW_INTERVAL_MS).toISOString() }
-      refresh()
-      if (isSocketTransport(caller.connection.listener)) {
-        json(res, { device: renewed, credential })
-        return
-      }
-      setCredentialCookie(res, caller, device, credential)
-      json(res, { device: renewed })
-    }
-
-    /** Revokes and reports whether the device store's audit record was written (it never blocks a revocation). */
-    async function revokeDevice(res: ServerResponse, caller: Caller, id: string, reason: 'manual' | 'self') {
-      const result = await devices.revoke(id, reason, actorOf(caller))
-      if (!result.audited) res.setHeader('x-latch-audit', 'failed')
-      for (const [stream, info] of streams)
-        if (!streamAllowed(info)) {
-          stream.end()
-          streams.delete(stream)
-        }
-      refresh()
-      return result
-    }
-
-    function grantBase(device: Device): DeviceScopeBase {
-      return { scopes: [...device.scopes].sort(), dataScope: device.dataScope, status: device.status }
-    }
-
-    /** Host-derived facts come first: the name is chosen by the device itself and can imitate another. */
-    function grantLines(target: Device, added: DeviceScope[], removed: DeviceScope[], dataScope: DataScope): PreviewLine[] {
-      const label = (list: DeviceScope[]) => (list.length ? list.map(scope => SCOPE_LABELS[scope]).join('、') : '无')
-      const origin = isSocketTransport(target.listener)
-        ? UNIX_ADDRESS
-        : target.listener === 'loopback-tcp'
-          ? loopbackOrigin
-          : (tlsOrigin ?? '')
-      const inviter = target.pairedBy.deviceId ? devices.get(target.pairedBy.deviceId) : undefined
-      return [
-        { label: '连接方式', value: `${LISTENER_LABELS[target.listener]} · ${origin}` },
-        {
-          label: '配对方式',
-          value: inviter
-            ? `${PAIRING_LABELS[target.pairedBy.method]}（邀请设备：${inviter.name}）`
-            : PAIRING_LABELS[target.pairedBy.method],
-        },
-        { label: '当前状态', value: target.status === 'review' ? '待复核（邀请设备已被撤销）' : '正常' },
-        { label: '设备名称', value: target.name },
-        { label: '设备指纹', value: target.fingerprint },
-        { label: '新增权限', value: label(added) },
-        { label: '移除权限', value: label(removed) },
-        { label: '数据范围', value: dataScope === 'all' ? '全部' : '工作' },
-      ]
-    }
-
-    /** What the system sheet names for a raise: the added rights, all data, and a restored review. */
-    function grantSubject(target: Device, added: DeviceScope[], dataScope: DataScope): PresenceSubject {
-      const change = [
-        ...(target.status === 'review' ? ['恢复正常使用'] : []),
-        ...added.map(scope => SCOPE_LABELS[scope]),
-        ...(dataScope === 'all' && target.dataScope !== 'all' ? ['查看全部数据'] : []),
-      ]
-      return { form: 'device.grant', slots: { device: target.name, change: change.join('、') || '恢复正常使用' } }
-    }
-
-    /** Every device but the desktop app gets a locality warning; a loopback one may be a forwarded peer. */
-    function grantWarnings(target: Device, added: DeviceScope[]): string[] {
-      const where = isLocalListener(target.listener)
-        ? []
-        : target.listener === 'loopback-tcp'
-          ? ['该设备经回环端口连接，也可能是转发进来的连接，不能据此认定它在这台电脑上。']
-          : ['该设备通过网络连接，不在这台电脑上。']
-      return [
-        ...where,
-        ...(target.status === 'review' ? ['该设备的邀请设备已被撤销；确认后它将恢复正常使用。'] : []),
-        ...(added.includes('admin') ? ['确认后该设备可以管理此 Host：模型服务、插件、项目和其他设备。'] : []),
-      ]
-    }
-
-    async function handleDevices(
-      req: IncomingMessage,
-      res: ServerResponse,
-      caller: Caller,
-      path: string,
-      method: string,
-    ): Promise<boolean> {
-      if (path === '/link/api/devices/current') {
-        requireScope(caller, 'view')
-        if (method === 'PATCH') {
-          const input = deviceNameSchema.parse(await jsonBody(req))
-          recheck(caller)
-          const device = await devices.rename(caller.device.id, input.name, actorOf(caller))
-          refresh()
-          json(res, { device })
-          return true
-        }
-        if (method === 'DELETE') {
-          limits.classC.take(caller.device.id)
-          await revokeDevice(res, caller, caller.device.id, 'self')
-          if (!isSocketTransport(caller.connection.listener))
-            res.setHeader('set-cookie', clearedCredentialCookie(caller.connection.listener, hostId8))
-          json(res, { revoked: true })
-          return true
-        }
-        return false
-      }
-      if (path === '/link/api/devices' && method === 'GET') {
-        if (caller.device) requireScope(caller, 'admin')
-        json(res, { devices: devices.list().map(item => nativeDeviceView(item)) })
-        return true
-      }
-      const match = path.match(/^\/link\/api\/devices\/([^/]+)$/)
-      if (match && method === 'DELETE') {
-        if (caller.device) requireScope(caller, 'admin')
-        else limits.anonymousRevoke.take()
-        const id = safeDecode(match[1]!)
-        if (caller.device && id === caller.device.id) throw new AppError(409, 'current-device', '请使用「撤销此设备」撤销当前设备')
-        if (!devices.get(id)) throw new AppError(404, 'device-not-found', '找不到该设备')
-        const result = await revokeDevice(res, caller, id, 'manual')
-        json(res, { revoked: true, cascaded: result.cascaded.length })
-        return true
-      }
-      if (match && method === 'PATCH') {
-        requireScope(caller, 'admin')
-        const id = safeDecode(match[1]!)
-        const input = deviceScopesSchema.parse(await jsonBody(req))
-        recheck(caller, 'admin')
-        const target = devices.get(id)
-        if (!target || target.status === 'revoked' || target.status === 'legacy-pending')
-          throw new AppError(404, 'device-not-found', '找不到该设备')
-        const scopes = [...new Set<DeviceScope>(['view', ...(input.scopes ?? target.scopes)])].sort()
-        const dataScope: DataScope = input.dataScope ?? target.dataScope
-        if (!isLocalListener(target.listener) && scopes.some(scope => scope === 'approve:elevated' || scope === 'secrets')) {
-          throw new AppError(400, 'scope-not-grantable', '该权限在此连接方式下不可授予')
-        }
-        const added = scopes.filter(scope => !target.scopes.includes(scope))
-        const removed = target.scopes.filter(scope => !scopes.includes(scope))
-        const raising =
-          added.length > 0
-          || (dataScope === 'all' && target.dataScope !== 'all')
-          || (target.status === 'review' && scopes.some(scope => scope !== 'view'))
-        const base = grantBase(target)
-        let stepup: StepupMethod = 'none'
-        if (raising) {
-          requireLocal(caller)
-          // The preview shows a change against `base`, so the confirmation binds it too.
-          stepup = await confirm(
-            req,
-            caller,
-            'device.grant',
-            { deviceId: id, scopes, dataScope, base },
-            grantSubject(target, added, dataScope),
-            grantLines(target, added, removed, dataScope),
-            grantWarnings(target, added),
-          )
-        }
-        const { device, audited } = await serial(caller, 'admin', async () => {
-          // The store compares the base inside its own queue, where revocation cascades also run (409 device-changed).
-          if (raising) return devices.changeScopes(id, { scopes, dataScope }, actorOf(caller), stepup, grantBase(target))
-          // A reduction applies to the current record, so a concurrent change is narrowed further, never undone.
-          for (let attempt = 1; ; attempt++) {
-            const current = devices.get(id)
-            if (!current || current.status === 'revoked' || current.status === 'legacy-pending')
-              throw new AppError(404, 'device-not-found', '找不到该设备')
-            const kept = current.scopes.filter(scope => scopes.includes(scope))
-            try {
-              return await devices.changeScopes(
-                id,
-                { scopes: kept, dataScope: dataScope === 'work' ? 'work' : current.dataScope },
-                actorOf(caller),
-                'none',
-                grantBase(current),
-              )
-            } catch (error) {
-              if (attempt >= BASE_RETRIES || codeOf(error) !== 'device-changed') throw error
-            }
-          }
-        })
-        if (!audited) res.setHeader('x-latch-audit', 'failed')
-        refresh()
-        json(res, { device })
-        return true
-      }
-      if (path === '/link/api/enrollments' && method === 'GET') {
-        // The pairing panel compares fingerprints on this computer, so only the desktop's admins see who is waiting; it
-        // also says which full-access sessions a new pairing has to wait for (they refuse device.enroll).
-        requireLocal(caller)
-        requireScope(caller, 'admin')
-        json(res, { enrollments: enrollments.waiting(), blockingTasks: (await hub!.unsandboxedTasks()).slice(0, 8) })
-        return true
-      }
-      if (path === '/link/api/native/input/pause' && method === 'POST') {
-        if (caller.device) requireScope(caller, 'view')
-        else requireLocal(caller)
-        z.strictObject({}).parse(await optionalJsonBody(req))
-        const result = await devices.setNativeInputsPaused(true, actorOf(caller), 'none')
-        if (!result.audited) res.setHeader('x-latch-audit', 'failed')
-        refresh()
-        json(res, { paused: true })
-        return true
-      }
-      if (path === '/link/api/native/input/resume' && method === 'POST') {
-        requireLocal(caller)
-        requireScope(caller, 'admin')
-        z.strictObject({}).parse(await optionalJsonBody(req))
-        const stepup = await confirm(
-          req,
-          caller,
-          'policy.change',
-          { nativeInputPaused: false },
-          { form: 'policy.native-input', slots: {} },
-          [{ label: '手机输入', value: '恢复所有已登记原生手机的输入权限' }],
-        )
-        recheck(caller, 'admin')
-        await devices.setNativeInputsPaused(false, actorOf(caller), stepup)
-        refresh()
-        json(res, { paused: false })
-        return true
-      }
-      if (path === '/link/api/native/info' && method === 'GET') {
-        requireLocal(caller)
-        if (caller.device) requireScope(caller, 'admin')
-        if (!nativeSettings) throw new AppError(503, 'native-not-ready', '手机连接服务正在准备')
-        json(res, { ...nativeSettings.info(), ...(nativeHost?.port !== undefined ? { port: nativeHost.port } : {}) })
-        return true
-      }
-      if (path === '/link/api/native/config' && method === 'PUT') {
-        requireLocal(caller)
-        requireScope(caller, 'admin')
-        if (!nativeSettings) throw new AppError(503, 'native-not-ready', '手机连接服务正在准备')
-        const settings = nativeSettings,
-          input = await jsonBody(req, CONFIG_BODY_LIMIT)
-        recheck(caller, 'admin')
-        if (settings.alreadyApplied(input)) {
-          json(res, settings.info())
-          return true
-        }
-        const plan = settings.plan(input)
-        let stepup: StepupMethod = 'none'
-        if (!plan.lowering) {
-          const direct = plan.input.direct
-          stepup = await confirm(
-            req,
-            caller,
-            'policy.change',
-            { baseHash: plan.baseHash, afterHash: plan.afterHash, requestHash: plan.requestHash },
-            {
-              form: 'policy.native-link',
-              slots: {
-                direct: `${plan.directoryChanged ? (plan.directory ? `地址目录 ${plan.directory.mirrors.length} 个镜像；` : '关闭地址目录；') : ''}${direct ? `局域网直连 ${direct.host}:${direct.port || '自动端口'}` : '关闭局域网直连'}`,
-                count: String(plan.input.relays.length),
-              },
-            },
-            [
-              { label: '局域网直连', value: direct ? `${direct.host}:${direct.port || '自动端口'}` : '关闭' },
-              ...plan.input.relays.flatMap(node => [
-                { label: '自建中继', value: node.url },
-                { label: '节点身份', value: node.relayId },
-                { label: 'TLS 公钥指纹', value: node.spkiHash },
-                {
-                  label: '登记密钥',
-                  value: node.registrationKey === null ? '不使用' : node.registrationKey ? '已填写（不显示）' : '保持原设置',
-                },
-              ]),
-              ...(plan.directory
-                ? [
-                    ...plan.directory.anchors.map(value => ({ label: '地址发布根公钥', value })),
-                    ...plan.directory.mirrors.map(value => ({ label: '地址镜像', value })),
-                  ]
-                : []),
-            ],
-            ['中继与网络服务商可看到 IP、连接时间和数据量；正文仍由 Host 身份与端到端连接保护。'],
-          )
-        }
-        const result = await serial(caller, 'admin', () => settings.apply(plan, actorOf(caller), stepup, () => recheck(caller, 'admin')))
-        if (!result.audited) res.setHeader('x-latch-audit', 'failed')
-        refresh()
-        json(res, settings.info())
-        return true
-      }
-      if (path === '/link/api/native/pairings' && method === 'POST') {
-        requireLocal(caller)
-        if (caller.device) requireScope(caller, 'admin')
-        if (!nativeHost) throw new AppError(409, 'native-not-configured', '尚未配置原生设备连接入口')
-        const input = invitationSchema.extend({ dataScope: z.enum(['work', 'all']).optional() }).parse(await optionalJsonBody(req))
-        recheck(caller, 'admin')
-        const invitation = await nativeHost.invite(
-          {
-            ...(caller.device ? { inviter: caller.device } : {}),
-            ...(input.scopes ? { scopes: input.scopes } : {}),
-            ...(input.dataScope ? { dataScope: input.dataScope } : {}),
-          },
-          actorOf(caller),
-        )
-        json(res, { invitation }, 201)
-        return true
-      }
-      if (path === '/link/api/pairings' && method === 'POST') {
-        requireLocal(caller)
-        if (caller.device) requireScope(caller, 'admin')
-        const input = invitationSchema.parse(await optionalJsonBody(req))
-        recheck(caller, 'admin')
-        // `loopback`: a browser on this computer, which the desktop app opens with the invitation in the fragment.
-        const target: { listener: ListenerClass; origin: string } | undefined =
-          input.target === 'loopback'
-            ? { listener: 'loopback-tcp', origin: loopbackOrigin }
-            : tls && tlsOrigin
-              ? { listener: tls.listener, origin: tlsOrigin }
-              : undefined
-        if (!target) throw new AppError(409, 'tls-not-configured', '尚未配置 HTTPS 入口，无法生成手机配对码')
-        const invitation = await enrollments.createInvitation(
-          { ...(caller.device ? { inviter: caller.device } : {}), ...(input.scopes ? { scopes: input.scopes } : {}), ...target },
-          actorOf(caller),
-        )
-        pruneInvitations()
-        // The enrollment service caps live invitations; this bound only keeps the map small if that cap ever changes.
-        if (issuedInvitations.size >= MAX_ISSUED_INVITATIONS) issuedInvitations.delete(issuedInvitations.keys().next().value!)
-        issuedInvitations.set(sha256Hex(invitation.code), { expiresAt: Date.parse(invitation.expiresAt), listener: target.listener })
-        json(res, { invitation }, 201)
         return true
       }
       return false
@@ -4847,11 +4278,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
 
     async function assertSessionAccess(caller: DeviceCaller, sessionId: string): Promise<'L1' | 'L3'> {
-      if (isNativeListener(caller.connection.listener) && nativeVerifiedUntil(caller.nativeOpening) <= now())
+      if (isNativeListener(caller.connection.listener) && nativeRoutes.verifiedUntil(caller.nativeOpening) <= now())
         throw new AppError(403, 'native-verification-required', '请先在手机上完成身份验证')
       await checkPersonalSession(caller, sessionId, true)
       const level = hub!.levelOf(await hub!.harnessOf(sessionId))
-      if (isNativeListener(caller.connection.listener) && nativeVerifiedUntil(caller.nativeOpening) <= now())
+      if (isNativeListener(caller.connection.listener) && nativeRoutes.verifiedUntil(caller.nativeOpening) <= now())
         throw new AppError(403, 'native-verification-required', '请先在手机上完成身份验证')
       if (level === 'L3') requireLocal(caller)
       return level
@@ -5266,7 +4697,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     function queueActor(caller: DeviceCaller): QueueActor {
       const native = isNativeListener(caller.connection.listener)
-      if (native && nativeVerifiedUntil(caller.nativeOpening) <= now())
+      if (native && nativeRoutes.verifiedUntil(caller.nativeOpening) <= now())
         throw new AppError(403, 'native-verification-required', '请先在手机上完成身份验证')
       return {
         deviceId: caller.device.id,
@@ -5325,7 +4756,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             ...(actor.nativeWindowHash ? { windowHash: actor.nativeWindowHash } : {}),
           }
         : undefined
-      if (native && nativeVerifiedUntil(opening) <= now()) throw paused()
+      if (native && nativeRoutes.verifiedUntil(opening) <= now()) throw paused()
       const caller: DeviceCaller = {
         device,
         connection: { listener: actor.listener, origin: '', remoteAddress: '' },
@@ -6288,282 +5719,21 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       method: string,
     ): Promise<void> {
       const connection = connectionOf(req, listener)
-      const nativeOpening = nativeRequests.get(req)
-      if (nativeOpening && !nativeOpening.pairing) {
-        const revocation =
-          (path === '/link/api/native/revocation' && method === 'GET') || (path === '/link/api/native/revocation/ack' && method === 'POST')
-        const resume = path === '/link/api/native/verification/resume' && method === 'POST'
-        if (nativeOpening.bulk) {
-          const bulk = nativeOpening.bulk
-          const file = path === `/link/api/files/${bulk.handle}` && (method === 'GET' || method === 'HEAD')
-          const range = typeof req.headers.range === 'string' ? /^bytes=(\d+)-(\d+)$/u.exec(req.headers.range) : undefined
-          if (
-            !revocation
-            && !resume
-            && !(
-              file
-              && req.headers['if-range'] === undefined
-              && req.headers['if-match'] === bulk.etag
-              && (method === 'HEAD'
-                || (range
-                  && Number.isSafeInteger(Number(range[1]))
-                  && Number.isSafeInteger(Number(range[2]))
-                  && Number(range[2]) >= Number(range[1])
-                  && Number(range[2]) - Number(range[1]) < 1_048_576))
-            )
-          ) {
-            await nativeOpening.close?.()
-            return
-          }
-          if (
-            !revocation
-            && (bulk.windowHash !== nativeOpening.windowHash || bulk.expiresAt <= now() || nativeVerifiedUntil(nativeOpening) <= now())
-          ) {
-            await nativeOpening.close?.()
-            return
-          }
-        } else if (!revocation && !resume && !(path === '/link/api/native/bulk' && method === 'POST')) {
-          // A business request permanently prevents repurposing this connection, even when it later fails.
-          nativeOpening.controlUsed = true
-        }
-      }
-      if (nativeOpening && !nativeOpening.pairing) {
-        const revoked = devices.nativeRevocations().find(item => item.id === nativeOpening.deviceId)
-        if (revoked) {
-          const statement = nativeRevocationInput(hostId, revoked.id, revoked.revokedAt),
-            hash = sha256Hex(statement)
-          if (path === '/link/api/native/revocation' && method === 'GET') {
-            json(res, {
-              revocation: {
-                hostId,
-                deviceId: revoked.id,
-                revokedAt: revoked.revokedAt,
-                signature: Buffer.from(identity.sign(statement)).toString('base64url'),
-              },
-            })
-            return
-          }
-          if (path === '/link/api/native/revocation/ack' && method === 'POST') {
-            const input = z
-              .strictObject({ requestId: z.uuid(), tombstoneHash: z.string().regex(/^[a-f0-9]{64}$/u) })
-              .parse(await jsonBody(req))
-            if (input.tombstoneHash !== hash) throw authFailure('unauthorized')
-            await devices.acknowledgeNativeRevocation(revoked.id, revoked.revokedAt)
-            json(res, { acknowledged: true })
-            return
-          }
-          throw authFailure('device-revoked')
-        }
-        if (path === '/link/api/native/revocation' && method === 'GET') {
-          if (!devices.authenticateNative(nativeOpening.deviceId).ok) throw authFailure('unauthorized')
-          json(res, { revocation: null })
-          return
-        }
-      }
-      if (path === '/link/api/native/pairing' && method === 'GET') {
-        if (!nativeOpening?.pairing) throw authFailure('unauthorized')
-        json(res, { enrollment: nativeOpening.enrollmentId ? enrollments.nativeStatus(nativeOpening.enrollmentId, connection) : null })
-        return
-      }
-      if (
-        nativeOpening?.pairing
-        && !(
-          path === '/link/api/enrollment-info'
-          || (path === '/link/api/enrollments' && method === 'POST')
-          || (nativeOpening.enrollmentId && path.startsWith(`/link/api/enrollments/${nativeOpening.enrollmentId}`))
-        )
-      )
-        throw authFailure('unauthorized')
-      if (await handlePublic(req, res, listener, connection, path, method)) return
-      if (nativeOpening && path.startsWith('/link/api/credentials/'))
-        throw new AppError(403, 'native-credential-route', '原生身份不使用浏览器凭据续期')
-      if (path === '/link/api/credentials/challenge' || path === '/link/api/credentials/renew') {
-        if (method !== 'POST') throw new AppError(404, 'not-found', '接口不存在')
-        const caller = await authenticate(req, listener, connection, true)
-        if (!caller.device) throw authFailure('unauthorized')
-        await handleCredentials(req, res, caller, path)
-        return
-      }
+      const nativeOpening = nativeRoutes.opening(req)
+      const request: RouteRequest = { req, res, listener, connection, opening: nativeOpening, path, method }
+      if (await routes.screen(request)) return
+      if (await handlePublic(req, res, listener, path, method)) return
+      if (await routes.unauthenticated(request)) return
       const caller = await authenticate(req, listener, connection)
-      if (path === '/link/api/native/bulk' && method === 'POST') {
-        if (!nativeOpening || nativeOpening.pairing) throw authFailure('unauthorized')
-        try {
-          if (nativeOpening.listener.listener !== 'native-relay' || nativeOpening.controlUsed || nativeOpening.bulkAttempted)
-            throw new AppError(409, 'native-bulk-unavailable', '请重新打开这个文件')
-          nativeOpening.bulkAttempted = true
-          requireScope(caller, 'view')
-          recheck(caller, 'view')
-          const windowHash = nativeOpening.windowHash
-          const expiresAt = Math.min(nativeVerifiedUntil(nativeOpening), now() + 60_000)
-          if (!windowHash || expiresAt <= now()) throw new AppError(403, 'native-verification-required', '请先在手机上完成身份验证')
-          const input = z
-            .strictObject({
-              handle: z.string().regex(/^[A-Za-z0-9_-]{22}$/u),
-              etag: z.string().regex(/^"[a-f0-9]{32}"$/u),
-              requestId: z.uuid(),
-            })
-            .parse(await jsonBody(req))
-          const { size } = await fileRoutes.authorizeBulk(caller, input.handle, input.etag)
-          recheck(caller, 'view')
-          if (nativeOpening.controlUsed || nativeOpening.windowHash !== windowHash || expiresAt <= now())
-            throw new AppError(409, 'native-bulk-unavailable', '请重新打开这个文件')
-          if (!nativeOpening.activateBulk) throw new AppError(503, 'native-bulk-unavailable', '文件连接暂时不可用')
-          nativeOpening.activateBulk()
-          nativeOpening.bulk = { ...input, windowHash, expiresAt }
-          json(res, { size, expiresAt: new Date(expiresAt).toISOString() })
-          return
-        } catch {
-          await nativeOpening.close?.()
-          return
-        }
-      }
-      if (path === '/link/api/native/address-book' && method === 'POST') {
-        if (!nativeOpening || nativeOpening.pairing) throw authFailure('unauthorized')
-        requireScope(caller, 'view')
-        recheck(caller, 'view')
-        z.strictObject({}).parse(await optionalJsonBody(req))
-        const addressBook = await addressBooks.issue(caller.device!.id)
-        recheck(caller, 'view')
-        json(res, { addressBook })
-        return
-      }
-      if (nativeOpening && !nativeOpening.pairing) {
-        if (path === '/link/api/native/proximity' && method === 'POST') {
-          requireScope(caller, 'view')
-          recheck(caller, 'view')
-          const input = z.strictObject({ gatewayHash: z.string().regex(/^[a-f0-9]{64}$/u) }).parse(await jsonBody(req))
-          const nearby =
-            (await nativeNetwork?.nearby(nativeOpening, Buffer.from(input.gatewayHash, 'hex'), () => recheck(caller, 'view'))) ?? false
-          recheck(caller, 'view')
-          json(res, { nearby })
-          return
-        }
-        if (path === '/link/api/native/verification/challenge' && method === 'POST') {
-          const input = z
-            .object({ appOpenId: z.string().regex(/^[A-Za-z0-9_-]{16,80}$/u) })
-            .strict()
-            .parse(await jsonBody(req))
-          if (nativeGeneration >= Number.MAX_SAFE_INTEGER) throw new AppError(503, 'native-generation-exhausted', '请重启 Host 后重新验证')
-          const challenge = { nonce: randomNonce(), appOpenId: input.appOpenId, expiresAt: now() + 60_000, generation: ++nativeGeneration }
-          nativeGenerations.set(nativeOpening.deviceId, challenge.generation)
-          nativeChallenges.set(nativeOpening, challenge)
-          json(res, challenge)
-          return
-        }
-        if (path === '/link/api/native/verification' && method === 'POST') {
-          const input = signatureSchema.parse(await jsonBody(req)),
-            challenge = nativeChallenges.get(nativeOpening)
-          nativeChallenges.delete(nativeOpening)
-          const key = devices.nativeVerificationKey(nativeOpening.deviceId)
-          if (
-            !challenge
-            || challenge.expiresAt < now()
-            || challenge.generation !== nativeGenerations.get(nativeOpening.deviceId)
-            || !key
-            || !verifyP256(
-              parseP256Spki(key).key,
-              nativeVerificationText(hostId, nativeOpening.deviceId, challenge.nonce, challenge.expiresAt, challenge.appOpenId),
-              input.signature,
-            )
-          )
-            throw new AppError(403, 'native-verification-invalid', '手机身份验证已过期或签名无效')
-          const verifiedUntil = await devices.markNativeVerified(nativeOpening.deviceId, listener.listener)
-          if (!devices.authenticateNative(nativeOpening.deviceId).ok) throw authFailure('device-revoked')
-          if (challenge.generation !== nativeGenerations.get(nativeOpening.deviceId))
-            throw new AppError(409, 'native-verification-superseded', '此验证已被更新的 App 打开代次替换')
-          for (const [hash, window] of nativeWindows)
-            if (window.expiresAt <= now() || window.deviceId === nativeOpening.deviceId) nativeWindows.delete(hash)
-          const statement = nativeVerificationText(
-            hostId,
-            nativeOpening.deviceId,
-            challenge.nonce,
-            challenge.expiresAt,
-            challenge.appOpenId,
-          )
-          const recoveryToken = `lnp1.${Buffer.from(await nativeRecoverySecret(nodeCrypto, statement, Buffer.from(input.signature, 'base64url'))).toString('base64url')}`
-          const recoveryHash = sha256Hex(recoveryToken)
-          const windowToken = `lnw1.${Buffer.from(await nativeWindowSecret(nodeCrypto, nativeWindowIssuer, Buffer.from(recoveryHash, 'hex'))).toString('base64url')}`
-          // Even platform crypto adapters may yield; never install a window after a newer opening or revocation.
-          if (
-            !devices.authenticateNative(nativeOpening.deviceId).ok
-            || challenge.generation !== nativeGenerations.get(nativeOpening.deviceId)
-          )
-            throw new AppError(409, 'native-verification-superseded', '此验证已被更新的 App 打开代次替换')
-          const hash = sha256Hex(windowToken)
-          nativeWindows.set(hash, {
-            deviceId: nativeOpening.deviceId,
-            appOpenId: challenge.appOpenId,
-            expiresAt: verifiedUntil,
-            generation: challenge.generation,
-            recoveryHash,
-          })
-          nativeOpening.windowHash = hash
-          json(res, { verifiedUntil: new Date(verifiedUntil).toISOString(), windowToken })
-          return
-        }
-        if (path === '/link/api/native/verification/recover' && method === 'POST') {
-          const input = z
-            .strictObject({
-              appOpenId: z.string().regex(/^[A-Za-z0-9_-]{16,80}$/u),
-              proofReceipt: z.string().regex(/^lnp1\.[A-Za-z0-9_-]{43}$/u),
-            })
-            .parse(await jsonBody(req))
-          const recoveryHash = sha256Hex(input.proofReceipt)
-          const found = [...nativeWindows.entries()].find(
-            ([, window]) =>
-              window.deviceId === nativeOpening.deviceId && window.recoveryHash === recoveryHash && window.appOpenId === input.appOpenId,
-          )
-          if (!found || found[1].expiresAt <= now() || found[1].generation !== nativeGenerations.get(nativeOpening.deviceId))
-            throw new AppError(403, 'native-verification-invalid', '验证窗口已失效，请重新验证')
-          const [hash, window] = found
-          const windowToken = `lnw1.${Buffer.from(await nativeWindowSecret(nodeCrypto, nativeWindowIssuer, Buffer.from(recoveryHash, 'hex'))).toString('base64url')}`
-          if (
-            !devices.authenticateNative(nativeOpening.deviceId).ok
-            || window.expiresAt <= now()
-            || window.generation !== nativeGenerations.get(nativeOpening.deviceId)
-            || nativeWindows.get(hash) !== window
-          )
-            throw new AppError(403, 'native-verification-invalid', '验证窗口已失效，请重新验证')
-          nativeOpening.windowHash = hash
-          json(res, { verifiedUntil: new Date(window.expiresAt).toISOString(), windowToken })
-          return
-        }
-        if (path === '/link/api/native/verification/resume' && method === 'POST') {
-          const input = z
-            .strictObject({
-              appOpenId: z.string().regex(/^[A-Za-z0-9_-]{16,80}$/u),
-              windowToken: z.string().regex(/^lnw1\.[A-Za-z0-9_-]{43}$/u),
-            })
-            .parse(await jsonBody(req))
-          const hash = sha256Hex(input.windowToken),
-            window = nativeWindows.get(hash)
-          if (
-            !window
-            || (nativeOpening.bulk && nativeOpening.bulk.windowHash !== hash)
-            || window.deviceId !== nativeOpening.deviceId
-            || window.appOpenId !== input.appOpenId
-            || window.expiresAt <= now()
-            || window.generation !== nativeGenerations.get(nativeOpening.deviceId)
-          )
-            throw new AppError(403, 'native-verification-invalid', '验证窗口已失效，请重新验证')
-          nativeOpening.windowHash = hash
-          json(res, { verifiedUntil: new Date(window.expiresAt).toISOString() })
-          return
-        }
-        const cancel =
-          method === 'POST'
-          && (/^\/link\/api\/tasks\/[^/]+\/cancel$/u.test(path) || /^\/link\/api\/personal\/groups\/grp_[a-f0-9-]{36}\/cancel$/u.test(path))
-        const reject = method === 'POST' && /^\/link\/api\/approvals\/[^/]+$/u.test(path)
-        caller.nativeWindowExempt =
-          (path === '/link/api/snapshot' && method === 'GET') || cancel || (path === '/link/api/native/input/pause' && method === 'POST')
-        if (nativeVerifiedUntil(nativeOpening) <= now() && !caller.nativeWindowExempt && !reject)
-          throw new AppError(403, 'native-verification-required', '请先在手机上完成身份验证')
-        if (path.startsWith('/link/api/credentials/')) throw new AppError(403, 'native-credential-route', '原生身份不使用浏览器凭据续期')
-      }
+      const authenticated: CallerRequest = { ...request, caller }
+      if (await routes.authenticated(authenticated)) return
       if (!caller.device) {
         const route = `${method} ${path.replace(/^\/link\/api\/devices\/[^/]+$/u, '/link/api/devices/:id')}`
         if (!ANONYMOUS_UNIX.has(route) || path === '/link/api/devices/current') throw authFailure('unauthorized')
       }
+      const privateTaskId = /^\/link\/api\/tasks\/([^/]+)/u.exec(path)?.[1]
+      if (privateTaskId && !path.endsWith('/cancel') && hub!.personalOf(safeDecode(privateTaskId))) personalAccess(caller)
+      if (await routes.route(authenticated)) return
       if (path === '/link/api/snapshot' && method === 'GET') {
         requireScope(caller, 'view')
         const snapshotRevision = revision
@@ -6674,8 +5844,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         return
       }
       if (await personalRoutes.handle(req, res, caller, path, method)) return
-      const privateTaskId = /^\/link\/api\/tasks\/([^/]+)/u.exec(path)?.[1]
-      if (privateTaskId && !path.endsWith('/cancel') && hub!.personalOf(safeDecode(privateTaskId))) personalAccess(caller)
       if (await handleQueue(req, res, caller, path, method)) return
       if (await handleQuestion(req, res, caller, path, method)) return
       if (await sessionRoutes.handle(req, res, caller, path, method)) return
@@ -6806,7 +5974,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         json(res, { workspaces: await projectInfos() })
         return
       }
-      if (await handleDevices(req, res, caller, path, method)) return
       if (path === '/link/api/policy') {
         requireDevice(caller)
         await handlePolicy(req, res, caller, method)
@@ -6821,7 +5988,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (isSocketTransport(listener.listener)) return true
       if (isNativeListener(listener.listener)) {
         if (
-          !nativeRequests.has(req)
+          !nativeRoutes.opening(req)
           || req.headers.origin
           || req.headers.cookie
           || req.headers.authorization
@@ -6961,100 +6128,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         void handle(req, res, listener).catch(error => fail(res, error, listener))
       },
     })
-    {
-      nativeHost = await startNativeHost({
-        tlsBinary: join(codeRoot, 'dist/native/latch-native-tls'),
-        identity,
-        devices,
-        enrollments,
-        bind:
-          options.native
-          ?? (nativeAddresses().some(item => item.address === relayProfiles.snapshot().direct?.host)
-            ? (relayProfiles.snapshot().direct ?? undefined)
-            : undefined),
-        allowUnavailableBind: !options.native,
-        relayAvailable: () => relayProfiles.snapshot().profiles.length > 0,
-        relayInvites: (id, expiresAt) => relayController?.invitation(id, expiresAt) ?? Promise.resolve([]),
-        handler(req, res, opening) {
-          const permitted = () =>
-            (!opening.windowHash || nativeVerifiedUntil(opening) > now()) && (!opening.bulk || opening.bulk.expiresAt > now())
-          opening.padding?.guard(permitted)
-          opening.guardTransportWrites?.(permitted)
-          nativeRequests.set(req, opening)
-          return handle(req, res, opening.listener).catch(async error => {
-            if (opening.bulkAttempted || opening.bulk) await opening.close?.()
-            else fail(res, error, opening.listener)
-          })
-        },
-      })
-      const native = nativeHost
-      startupCleanup.push(() => native.close())
-      nativePluginTransports = new NativePluginTransports({
-        registry,
-        enabled: () => !closing && native.enabled,
-        accept: (stream, binding) => native.acceptCarrier(stream, binding),
-      })
-      const pluginTransports = nativePluginTransports
-      startupCleanup.push(() => pluginTransports.close())
-      await pluginTransports.sync()
-      relayController = new HostRelayController({
-        profiles: relayProfiles,
-        devices,
-        enrollments,
-        audit,
-        resolve: createRelayEgress({
-          allow: () => [...policy.get().hostEgressAllow, ...egressExtra],
-          ...(options.egressLookup ? { lookup: options.egressLookup } : {}),
-        }),
-        directory: relayDirectory,
-        resolvePublic: (url, address) =>
-          createRelayEgress({
-            allow: () => [],
-            lookup: (_host, _options, callback) => callback(null, [{ address, family: address.includes(':') ? 6 : 4 }]),
-          })(url),
-        accept: (stream, binding, expected) => native.acceptRelay(stream, binding, expected),
-        closePaths: id => native.closeRelay(id),
-        ...(options.nativeRelayCa ? { ca: options.nativeRelayCa } : {}),
-      })
-      const controller = relayController
-      startupCleanup.push(() => controller.close())
-      if (options.nativeNetwork !== false && (process.platform === 'darwin' || options.nativeNetwork)) {
-        nativeNetwork = new NativeNetwork({
-          profiles: relayProfiles,
-          networks: await NativeNetworks.open(dataDir),
-          audit,
-          backend: options.nativeNetwork || (() => MacNetworkBackend.open(join(codeRoot, 'dist/native/latch-network'))),
-          direct: () => native.direct,
-          automatic: () => !options.native && relayProfiles.snapshot().direct?.host === 'auto',
-          rebind: snapshot =>
-            nativeSettings?.syncNetwork(snapshot, () => !closing && nativeNetwork?.currentEpoch() === snapshot.epoch) ?? Promise.resolve(),
-          pairing: () => enrollments.nativeInvitations().length > 0,
-          discoveryReady: () => relayProfiles.snapshot().discoveryRevocationsHash === revokedDiscoveryHash(),
-          synchronizeDiscovery: synchronizeNativeDiscovery,
-          now,
-        })
-        const network = nativeNetwork
-        startupCleanup.push(() => network.close())
-      }
-      nativeSettings = new NativeSettings({
-        profiles: relayProfiles,
-        native,
-        controller,
-        directory: relayDirectory,
-        audit,
-        managedDirect: options.native,
-        inputsPaused: () => devices.nativeInputsPaused(),
-        changed: () => nativeNetwork?.invalidate(),
-        resolveDirect: direct => {
-          if (!nativeNetwork) throw new AppError(503, 'native-network-unavailable', '手机连接组件不可用，请更新并重新构建 Latch 后重试')
-          return nativeNetwork.resolveDirect(direct, native.direct)
-        },
-      })
-    }
+    await nativeRoutes.start({ handle, fail, cleanup: dispose => startupCleanup.push(dispose) })
     const started = listeners
     startupCleanup.push(() => started.close())
     loopbackOrigin = started.loopbackOrigin
     tlsOrigin = started.tlsOrigin
+    const nativePort = nativeRoutes.port()
     if (options.egressAllow?.length) log(`进程级出站白名单：${options.egressAllow.join('、')}`)
 
     await audit.append({
@@ -7085,7 +6164,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       origin: loopbackOrigin,
       loopbackPort: started.loopbackPort,
       ...(tlsOrigin ? { tlsOrigin } : {}),
-      ...(nativeHost?.port !== undefined ? { nativePort: nativeHost.port } : {}),
+      ...(nativePort !== undefined ? { nativePort } : {}),
       socketPath: runtime.socketPath,
       runtimeDir: runtime.runtimeDir,
       startedAt,
@@ -7096,11 +6175,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       close() {
         return (shutdown ??= (async () => {
           closing = true
-          await nativeNetwork?.close()
-          await nativePluginTransports?.close()
-          await relayDirectory.close()
-          await relayController?.close()
-          await nativeHost?.close()
+          await nativeRoutes.close()
           clearInterval(heartbeat)
           clearTimeout(eventTimer)
           unsubscribe()

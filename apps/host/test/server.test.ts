@@ -3930,6 +3930,22 @@ describe('sessions, plugins and the change stream', () => {
     }
   })
 
+  it('keeps the private entries no store has written yet out of reach when the workspace is the data directory', async () => {
+    const root = await temporaryDirectory()
+    const dataDir = join(root, 'data')
+    const t = await testHost({ dataDir, workspaceRoot: dataDir })
+    const lease = t.host.registry.acquire('demo')
+    try {
+      const write = lease.tools.find(tool => tool.name === 'write_file')!
+      const context = { sessionId: 's', callId: 'c', workspaceRoot: dataDir, signal: new AbortController().signal }
+      for (const path of ['snapshots/turn.json', 'Automations/x.json', 'automations.json', `.automations.json-${randomUUID()}.tmp`])
+        await expect(write.execute({ path, content: '{}' }, context), path).rejects.toThrow('私有数据目录')
+      await write.execute({ path: 'snapshot-notes.txt', content: 'ok' }, context)
+    } finally {
+      lease.release()
+    }
+  })
+
   it('closes the audit log when the Host stops and when it fails to start', async () => {
     const t = await testHost()
     const audit = t.host.security.audit

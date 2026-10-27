@@ -1,12 +1,12 @@
 # @latch/protocol
 
-浏览器与 Host 共用的数据：浏览器 DTO（`src/types.ts`，含 `PluginInfo`，及只在 Host 使用的 `AgentRecord` 与本机确认的 `PresencePreview`）、模型服务预设 `src/presets.ts` 与 Agent 预设 `src/agent-presets.ts`、`escapeSecurityText` 与设备名称规则 `src/text.ts`、「这台电脑」的判定 `isLocalListener`（`src/listeners.ts`）、拒绝说明的规则 `rejectionNote`（`src/decision.ts`），以及高风险原因的文字 `RISK_REASON_TEXT`（`src/risk.ts`，审批卡与本机确认共用）。`src/ui.ts` 定义插件面板与技能的展示数据，以及数据面板的有限文档校验；`src/files.ts` 定义预览句柄元数据与打开目标。不做持久化或 I/O。
+浏览器与 Host 共用的数据。浏览器 DTO 按领域分文件：会话、消息与审批 `src/sessions.ts`，快照（含 `HostCatalog`）与事件 `src/snapshot.ts`，设备、登记、邀请、本机确认与 `ApiFailure` `src/devices.ts`，Harness 与 Agent 定义 `src/harnesses.ts`（`AgentRecord` 只在 Host 使用），模型服务、项目、默认值与插件 `src/settings.ts`，能力开关 `src/features.ts`。另有模型服务预设 `src/presets.ts` 与 Agent 预设 `src/agent-presets.ts`、`escapeSecurityText` 与设备名称规则 `src/text.ts`、「这台电脑」的判定 `isLocalListener`（`src/listeners.ts`）、拒绝说明的规则 `rejectionNote`（`src/decision.ts`），以及高风险原因的文字 `RISK_REASON_TEXT`（`src/risk.ts`，审批卡与本机确认共用）。`src/ui.ts` 定义插件面板与技能的展示数据，以及数据面板的有限文档校验；`src/files.ts` 定义预览句柄元数据与打开目标。不做持久化或 I/O。
 
-运行环境 isomorphic：只用 ECMAScript 标准库，不导入 `node:*`，不用 DOM 或 Node 的全局变量（`tsconfig.isomorphic.json`、`.oxlintrc.json`）。没有依赖，不使用其他 workspace 包；模块没有副作用。入口 `@latch/protocol` 与只含类型和常量的 `@latch/protocol/types`。
+运行环境 isomorphic：只用 ECMAScript 标准库，不导入 `node:*`，不用 DOM 或 Node 的全局变量（`tsconfig.isomorphic.json`、`.oxlintrc.json`）。没有依赖，不使用其他 workspace 包；模块没有副作用。入口 `@latch/protocol` 导出类型与值；`@latch/protocol/types`（`src/types.ts`）只有类型。
 
 不变量：
 
-- `@latch/sdk` 的类型文件只用 `@latch/protocol/types`，外部项目才能检查兼容入口（`tests/plugin-sdk.test.ts#type-check in an outside TypeScript project that does not allow .ts import extensions`）。
+- `@latch/sdk` 的类型文件只用 `@latch/protocol/types`，外部项目才能检查兼容入口（`tests/plugin-sdk.test.ts#type-check in an outside TypeScript project that does not allow .ts import extensions`）。外部项目只接受仅含类型的 .ts 路径导入与导出，所以 `src/types.ts` 只写 `export type`，值由 `src/index.ts` 导出；新模块两处都要加。
 - 目录中的技能不含正文，React 面板只有模块摘要，模块源码经认证另取；数据面板不接受 HTML、脚本或样式。
 - 旧 Host 不返回新字段：客户端读取的新字段写成可选，缺少时降级（`apps/web/test/client-legacy.test.ts#offers only settings the Host can serve, with the single-provider form for model setup`）。
 - `agent-presets.ts` 只放浏览器可用的展示与启动数据；权限行为写在 `packages/harness-acp/src/profiles/`。

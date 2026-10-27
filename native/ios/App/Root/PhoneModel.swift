@@ -4,12 +4,7 @@ import Network
 import SwiftUI
 import UIKit
 
-struct PhonePreviewProgress: Equatable { let completed: Int; let total: Int }
-
 enum PhoneArea: String { case personal, projects }
-struct PhoneGroupControl { let groupId: String; let turnId: String; var state: String
-    var active: Bool { ["running", "waiting-approval"].contains(state) }
-}
 
 @MainActor final class PhoneModel: ObservableObject {
     @Published var hosts: [RegisteredHost] = []
@@ -27,8 +22,8 @@ struct PhoneGroupControl { let groupId: String; let turnId: String; var state: S
     @Published var personalPlugins: [NativeJSON] = []
     @Published var personalPluginsLoaded = false
     @Published var previewProgress: PhonePreviewProgress?
-    private var previewJob: UUID?
-    private var personalLoadId: UUID?
+    var previewJob: UUID?
+    var personalLoadId: UUID?
     @Published var sessionId: String?
     @Published var pending: [NativePendingWrite] = []
     @Published var controlPending = NativeJSON.null
@@ -41,37 +36,26 @@ struct PhoneGroupControl { let groupId: String; let turnId: String; var state: S
     @Published var verifying = false
     @Published var verifiedUntil: Date?
     @Published var contentGeneration = UUID()
-    var supportsPersonal: Bool { snapshot["catalog"]["features"]["personal"].bool }
-    var supportsGroups: Bool { snapshot["catalog"]["features"]["personalGroups"].bool }
-    var supportsRoutines: Bool { snapshot["catalog"]["features"]["personalRoutines"].bool }
-    var canQueueCurrent: Bool { currentSummary["personal"]["groupId"].string == nil && (currentSummary["personal"] == .null ? snapshot["catalog"]["features"]["queue"].bool : snapshot["catalog"]["features"]["personalQueue"].bool) }
-    var workspaceTasks: [NativeJSON] {
-        snapshot["tasks"].array.filter { task in
-            area == .personal ? task["personal"]["assistantId"].string == assistantId && task["personal"]["groupId"].string == nil
-                : task["personal"]["assistantId"].string == nil
-        }
-    }
-    var currentSummary: NativeJSON { snapshot["tasks"].array.first { $0["id"].string == sessionId } ?? detail["summary"] }
     var canRun: Bool { connected && snapshot["device"]["status"].string == "active" && hasScope("run") && !snapshot["host"]["native"]["inputsPaused"].bool }
     var canApproveStandard: Bool { connected && snapshot["device"]["status"].string == "active" && hasScope("approve:standard") && !snapshot["host"]["native"]["inputsPaused"].bool }
-    private func hasScope(_ scope: String) -> Bool { snapshot["device"]["scopes"].array.contains(.string(scope)) }
-    private var store: PhoneStore?
-    private var workspace: NativeWorkspace?
+    func hasScope(_ scope: String) -> Bool { snapshot["device"]["scopes"].array.contains(.string(scope)) }
+    private(set) var store: PhoneStore?
+    private(set) var workspace: NativeWorkspace?
     private let paths = NativePathOwner()
     private let discovery = NativeDiscovery()
-    private var generation = UUID()
-    private var networkGeneration = UUID()
-    private var freshPairings: [String: (PairingInvitation, UUID)] = [:]
+    private(set) var generation = UUID()
+    private(set) var networkGeneration = UUID()
+    var freshPairings: [String: (PairingInvitation, UUID)] = [:]
     private var eventTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
     private var streamGeneration = UUID()
-    private var previewing = false
+    var previewing = false
     private var refreshId: UUID?
     private var pendingEvent: (NativeEvent, NativeWorkspaceEvents, String?)?
     private var expiryTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
-    private var pairingTask: Task<Void, Never>?
-    private var pairingConnection: NativeHTTPConnection?
+    var pairingTask: Task<Void, Never>?
+    var pairingConnection: NativeHTTPConnection?
     private var monitor: NWPathMonitor?
     private var monitorGeneration = UUID()
     private var currentNetworkPath: NWPath?
@@ -151,115 +135,6 @@ struct PhoneGroupControl { let groupId: String; let turnId: String; var state: S
             startReconnect()
         }
     }
-    func beginPairing(payload: String, name: String) async {
-        guard let store, !busy else { return }
-        busy = true; defer { if pairingTask == nil { busy = false } }
-        let current = generation
-        do {
-            _ = try PairingInvitation.parse(payload)
-            if draft != nil { throw NativeFailure.resultUnknown }
-            let keys = try SecureDeviceKeys.create(), next = PairingDraft(payload: payload, keys: keys, name: name)
-            do { try await store.saveDraft(next) }
-            catch { SecureDeviceKeys.remove(keys); throw error }
-            guard current == generation else { return }
-            draft = next; busy = false; resumePairing()
-        } catch { report(error) }
-    }
-    func resumePairing() {
-        guard let draft, let store, pairingTask == nil else { return }
-        error = nil; busy = true
-        let current = generation
-        pairingTask = Task {
-            var owned: NativeHTTPConnection?
-            defer { if generation == current { busy = false }; pairingTask = nil }
-            do {
-                let invitation = try PairingInvitation.parse(draft.payload), keys = SecureIdentityProvider(reference: draft.keys)
-                let connection = try await pairingTransport(invitation)
-                owned = connection
-                guard generation == current, !Task.isCancelled else { await connection.close(); return }
-                pairingConnection = connection
-                let pairing = try NativePairing(invitation: invitation, keys: keys)
-                let enrollment = try await pairing.begin(on: connection, name: UIDevice.current.name)
-                guard current == generation, !Task.isCancelled else { await connection.close(); return }
-                comparisonCode = enrollment.comparisonCode; status = "请在 Mac 输入这组六位码并确认"
-                for _ in 0..<600 {
-                    try Task.checkCancellation()
-                    guard let view = try await pairing.status(on: connection) else { throw NativeFailure.unavailable }
-                    if ["approved", "completed"].contains(view.status) {
-                        let device = try await pairing.complete(on: connection) { device in
-                            try await store.save(RegisteredHost(name: draft.name, device: device, keys: draft.keys, prepared: true))
-                        }
-                        let saved = RegisteredHost(name: draft.name, device: device, keys: draft.keys, prepared: false)
-                        try await store.save(saved); try await store.clearDraft(matching: draft.payload)
-                        guard current == generation, !Task.isCancelled else { await connection.close(); return }
-                        hosts = await store.list(); self.draft = nil; comparisonCode = nil; status = "电脑已登记"
-                        freshPairings[saved.id] = (invitation, networkGeneration)
-                        await connection.close(); pairingConnection = nil
-                        busy = false; await connect(saved)
-                        return
-                    }
-                    guard view.status == "pending" else { throw NativeFailure.expired }
-                    try await Task.sleep(for: .seconds(1))
-                }
-                throw NativeFailure.expired
-            } catch {
-                if generation != current || Task.isCancelled { await owned?.close(); return }
-                comparisonCode = nil
-                if (error as? NativeFailure) == .expired {
-                    do {
-                        try await store.abandonDraft()
-                        if generation == current { self.draft = nil; comparisonCode = nil; self.error = "配对资料已过期，请重新扫描电脑上的二维码。" }
-                    } catch { report(error) }
-                } else { report(error) }
-                await owned?.close()
-                if pairingConnection === owned { pairingConnection = nil }
-            }
-        }
-    }
-    func openPersonalHome() async {
-        area = .personal; assistantId = nil; groupId = nil; groupControl = nil; groupDetail = .null; sessionId = nil; detail = .null; assistantDetail = .null
-        contentGeneration = UUID(); PreviewFiles.clear(); startEvents()
-        await refreshPersonal()
-    }
-    func openProjects() {
-        area = .projects; assistantId = nil; groupId = nil; groupControl = nil; groupDetail = .null; sessionId = nil; detail = .null; assistantDetail = .null
-        contentGeneration = UUID(); PreviewFiles.clear(); startEvents()
-    }
-    func openAssistant(_ id: String) async {
-        guard id.range(of: "^asst_[a-f0-9-]{36}$", options: .regularExpression) != nil else { return }
-        area = .personal; assistantId = id; groupId = nil; groupControl = nil; groupDetail = .null; sessionId = nil; detail = .null; assistantDetail = .null
-        contentGeneration = UUID(); PreviewFiles.clear(); startEvents()
-        await refreshPersonal()
-    }
-    func openGroup(_ id: String) async {
-        guard supportsGroups, id.range(of: "^grp_[a-f0-9-]{36}$", options: .regularExpression) != nil else { return }
-        area = .personal; assistantId = nil; groupId = id; groupControl = nil; sessionId = nil
-        groupDetail = .null; detail = .null; assistantDetail = .null; contentGeneration = UUID(); PreviewFiles.clear(); startEvents()
-        await refreshPersonal()
-    }
-    func sendGroup(text: String, assistantIds: [String]) async -> Bool {
-        guard let groupId, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, text.count <= 16000 else { return false }
-        var fields: [String: NativeJSON] = ["prompt": .string(text)]
-        if !assistantIds.isEmpty { fields["assistantIds"] = .array(assistantIds.map(NativeJSON.string)) }
-        return await mutate(.post, path: "/link/api/personal/groups/" + groupId + "/messages", fields: fields)
-    }
-    func stopGroup() async {
-        guard let workspace, let control = groupControl, control.groupId == groupId, !busy else { return }
-        let current = generation, path = "/link/api/personal/groups/" + control.groupId + "/cancel"
-        busy = true; defer { if generation == current { busy = false } }
-        do {
-            var fields: [String: NativeJSON] = ["requestId": .string(UUID().uuidString), "turnId": .string(control.turnId)]
-            if let previous = try await workspace.pendingControl() {
-                guard previous["path"].string == path, previous["fields"]["turnId"].string == control.turnId else { throw NativeFailure.resultUnknown }
-                fields = previous["fields"].object
-            }
-            let value = try await workspace.freeAction(path: path, fields: fields)
-            guard generation == current, groupControl?.turnId == control.turnId else { return }
-            groupControl?.state = value["state"].string ?? control.state
-            await refreshControlPending()
-            if verifiedUntil != nil { await refreshPersonal() }
-        } catch { if generation == current { await refreshControlPending(); report(error) } }
-    }
     func refreshControlPending() async {
         guard let workspace else { return }
         let current = generation
@@ -276,70 +151,6 @@ struct PhoneGroupControl { let groupId: String; let turnId: String; var state: S
             guard generation == current else { return }
             await refreshControlPending(); _ = await refresh()
         } catch { if generation == current { await refreshControlPending(); report(error) } }
-    }
-    private func performControl(path: String, fields: [String: NativeJSON]) async {
-        guard let workspace else { return }
-        let current = generation
-        do {
-            var body = fields
-            if let saved = try await workspace.pendingControl() {
-                var previous = saved["fields"].object, requested = fields
-                previous.removeValue(forKey: "requestId"); requested.removeValue(forKey: "requestId")
-                guard saved["path"].string == path, previous == requested else { throw NativeFailure.resultUnknown }
-                body = saved["fields"].object
-            }
-            _ = try await workspace.freeAction(path: path, fields: body)
-            guard generation == current else { return }
-            await refreshControlPending(); _ = await refresh()
-        } catch { if generation == current { await refreshControlPending(); report(error) } }
-    }
-    func refreshPersonal() async {
-        guard let workspace, connected, supportsPersonal, !verifying else { return }
-        let current = generation, selected = assistantId, selectedGroup = groupId, reading = contentGeneration, load = UUID()
-        personalLoadId = load; personalLoading = true
-        defer { if personalLoadId == load { personalLoading = false; personalLoadId = nil } }
-        do {
-            try await ensureVerified()
-            guard generation == current, area == .personal, assistantId == selected, groupId == selectedGroup, contentGeneration == reading, personalLoadId == load,
-                  let lease = await workspace.lease() else { return }
-            let value = try await workspace.read("/link/api/personal", body: true)
-            guard generation == current, area == .personal, assistantId == selected, groupId == selectedGroup, contentGeneration == reading, personalLoadId == load else { return }
-            try lease.requireValid(); personalOverview = value
-            if case .array(let plugins) = value["plugins"] { personalPlugins = plugins; personalPluginsLoaded = true }
-            else if hasScope("admin") {
-                let plugins = try await workspace.read("/link/api/plugins", body: true)
-                guard generation == current, area == .personal, assistantId == selected, groupId == selectedGroup, contentGeneration == reading, personalLoadId == load else { return }
-                try lease.requireValid(); personalPlugins = plugins["plugins"].array.filter { $0["enabled"].bool }; personalPluginsLoaded = true
-            } else { personalPlugins = []; personalPluginsLoaded = false }
-            if let selected {
-                let value = try await workspace.read("/link/api/personal/assistants/" + selected, body: true)
-                guard generation == current, area == .personal, assistantId == selected, groupId == selectedGroup, contentGeneration == reading, personalLoadId == load else { return }
-                try lease.requireValid(); assistantDetail = value
-            }
-            if let selectedGroup {
-                let value = try await workspace.read("/link/api/personal/groups/" + selectedGroup, body: true)
-                guard generation == current, area == .personal, groupId == selectedGroup, assistantId == selected, contentGeneration == reading, personalLoadId == load else { return }
-                try lease.requireValid(); groupDetail = value
-                if let turnId = value["turn"]["id"].string, let state = value["turn"]["state"].string {
-                    groupControl = PhoneGroupControl(groupId: selectedGroup, turnId: turnId, state: state)
-                } else { groupControl = nil }
-            }
-        } catch { if generation == current, area == .personal, assistantId == selected, groupId == selectedGroup, contentGeneration == reading, personalLoadId == load { report(error) } }
-    }
-    func openSession(_ id: String) async {
-        guard let workspace else { return }
-        let current = generation
-        let reading = UUID()
-        sessionId = id; detail = .null; contentGeneration = reading; PreviewFiles.clear()
-        do {
-            try await ensureVerified()
-            guard current == generation, sessionId == id, contentGeneration == reading,
-                  let lease = await workspace.lease() else { return }
-            let value = try await workspace.detail(id)
-            guard current == generation, sessionId == id, contentGeneration == reading else { return }
-            try lease.requireValid()
-            detail = value; startEvents()
-        } catch { report(error) }
     }
     func ensureVerified() async throws {
         guard let workspace, !verifying else { throw NativeFailure.unavailable }
@@ -372,77 +183,6 @@ struct PhoneGroupControl { let groupId: String; let turnId: String; var state: S
             status = "解锁后继续"; eventTask?.cancel(); startEvents()
         }
     }
-    @discardableResult func send(text: String, queue: Bool = false) async -> Bool {
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, text.count <= 16_000 else { return false }
-        let current = generation
-        do {
-            guard canRun else { throw NativeFailure.forbidden }
-            try await ensureVerified()
-            guard current == generation else { return false }
-            guard pending.isEmpty else { throw NativeFailure.resultUnknown }
-            let path = sessionId.map { "/link/api/tasks/" + $0 + "/prompt" } ?? "/link/api/tasks"
-            var fields: [String: NativeJSON] = ["prompt": .string(text)]
-            if queue { fields["queue"] = .bool(true) }
-            else if sessionId == nil {
-                if area == .personal {
-                    guard let assistantId else { throw NativeFailure.invalidRecord }
-                    fields["assistantId"] = .string(assistantId)
-                } else { fields["mode"] = .string("agent") }
-            }
-            return await submit(try NativePendingWrite(method: .post, path: path, fields: fields))
-        } catch { report(error); return false }
-    }
-    @discardableResult func submit(_ request: NativePendingWrite) async -> Bool {
-        guard let workspace, !busy else { return false }
-        let current = generation, initialReading = contentGeneration
-        do { try await ensureVerified() } catch { report(error); return false }
-        guard current == generation, initialReading == contentGeneration else { return false }
-        let selected = sessionId, reading = contentGeneration, owner = assistantId, surface = area
-        busy = true; defer { if generation == current { busy = false } }
-        do {
-            if !pending.contains(where: { $0.requestId == request.requestId }) { pending.append(request) }
-            let value = try await workspace.submit(request)
-            guard generation == current else { return false }
-            pending.removeAll { $0.requestId == request.requestId }
-            guard contentGeneration == reading else { return false }
-            if sessionId == selected, contentGeneration == reading, assistantId == owner, area == surface, let id = value["sessionId"].string { sessionId = id }
-            await refresh()
-            return true
-        } catch {
-            guard generation == current, contentGeneration == reading else { return false }
-            if (error as? NativeFailure) != .resultUnknown { pending.removeAll { $0.requestId == request.requestId } }
-            report(error)
-            return (error as? NativeFailure) == .resultUnknown
-        }
-    }
-    @discardableResult func mutate(_ method: NativeHTTPMethod, path: String, fields: [String: NativeJSON]) async -> Bool {
-        let current = generation, reading = contentGeneration
-        do {
-            guard (path.hasPrefix("/link/api/approvals/") ? canApproveStandard : canRun) else { throw NativeFailure.forbidden }
-            try await ensureVerified()
-            guard current == generation, contentGeneration == reading else { return false }
-            guard pending.isEmpty else { throw NativeFailure.resultUnknown }
-            return await submit(try NativePendingWrite(method: method, path: path, fields: fields))
-        }
-        catch { report(error); return false }
-    }
-    func stop() async {
-        guard workspace != nil, let id = sessionId else { return }
-        var fields: [String: NativeJSON] = ["requestId": .string(UUID().uuidString)]
-        let summary = snapshot["tasks"].array.first { $0["id"].string == id } ?? detail["summary"]
-        if let run = summary["runId"].string { fields["runId"] = .string(run) }
-        await performControl(path: "/link/api/tasks/\(id)/cancel", fields: fields)
-    }
-    func reject(_ id: String) async {
-        guard workspace != nil else { return }
-        await performControl(path: "/link/api/approvals/" + id, fields: ["decision": .string("reject"), "requestId": .string(UUID().uuidString)])
-    }
-    func pauseInput() async {
-        guard let workspace else { return }
-        do { _ = try await workspace.freeAction(path: "/link/api/native/input/pause", fields: [:]); await refresh() }
-        catch { report(error) }
-    }
-    func newSession() { sessionId = nil; detail = .null; contentGeneration = UUID(); PreviewFiles.clear(); startEvents() }
     @discardableResult func refresh(personal: Bool = true) async -> Bool {
         guard let workspace else { return false }
         let current = generation, selected = sessionId
@@ -468,32 +208,7 @@ struct PhoneGroupControl { let groupId: String; let turnId: String; var state: S
             return true
         } catch { report(error); return false }
     }
-    func cancelPreview() { previewJob = nil; previewing = false; previewProgress = nil }
-    func previewFailed(_ failure: Error) {
-        guard !Task.isCancelled, !(failure is CancellationError) else { return }
-        if [.expired, .forbidden, .contextChanged].contains(failure as? NativeFailure) { report(failure) }
-        else { error = "此文件暂不能在手机预览。文本与 PNG/JPEG 可用；PDF、Office 和网页格式尚未完成 iOS 预览验证。" }
-    }
-    func preview(reference: String, root: String?) async throws -> PreviewItem {
-        guard !previewing, let workspace, let sessionId else { throw NativeFailure.unavailable }
-        let job = UUID(), current = generation, reading = contentGeneration
-        previewJob = job; previewing = true; previewProgress = PhonePreviewProgress(completed: 0, total: 0)
-        defer { if previewJob == job { cancelPreview() } }
-        try await ensureVerified(); try Task.checkCancellation()
-        guard generation == current, contentGeneration == reading, previewJob == job else { throw NativeFailure.contextChanged }
-        let item = try await PreviewFiles.load(reference: reference, root: root, session: sessionId, workspace: workspace) { [weak self] done, total in
-            Task { @MainActor [weak self] in
-                guard let self, self.generation == current, self.contentGeneration == reading, self.previewJob == job else { return }
-                self.previewProgress = PhonePreviewProgress(completed: done, total: total)
-            }
-        }
-        do {
-            try Task.checkCancellation(); try item.lease.requireValid()
-            guard generation == current, contentGeneration == reading, previewJob == job else { throw NativeFailure.contextChanged }
-            return item
-        } catch { PreviewFiles.discard(item); throw error }
-    }
-    private func startEvents() {
+    func startEvents() {
         eventTask?.cancel()
         refreshTask?.cancel(); refreshTask = nil; refreshId = nil; pendingEvent = nil
         streamGeneration = UUID()
@@ -696,18 +411,7 @@ struct PhoneGroupControl { let groupId: String; let turnId: String; var state: S
             status = "请重新连接电脑"
         }
     }
-    private func pairingTransport(_ invitation: PairingInvitation) async throws -> NativeHTTPConnection {
-        let key = LinkBytes.hash(Data(invitation.invitation.utf8))
-        for address in invitation.direct.prefix(2) {
-            if let connection = try? await NativeHTTPConnection.open(host: address.host, port: address.port, rootSpki: invitation.rootSpki, knockKey: key) { return connection }
-        }
-        for relay in invitation.relays.prefix(2) {
-            if let pass = relay.passes.first,
-               let connection = try? await NativeHTTPConnection.relay(endpoint: relay, admission: pass, rootSpki: invitation.rootSpki, knockKey: key) { return connection }
-        }
-        throw NativeFailure.unavailable
-    }
-    private func report(_ failure: Error) {
+    func report(_ failure: Error) {
         guard !(failure is CancellationError) else { return }
         if (failure as? NativeFailure) == .expired {
             verifiedUntil = nil; clearPrivateContent(); startEvents()

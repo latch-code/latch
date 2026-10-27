@@ -1,142 +1,7 @@
 import LatchNativeCore
 import SwiftUI
 
-struct PhoneRootView: View {
-    @EnvironmentObject private var model: PhoneModel
-    @State private var scan = false
-    @State private var settings = false
-    var body: some View {
-        NavigationSplitView {
-            List {
-                if model.selectedHost != nil {
-                    Section {
-                        Button("个人助手", systemImage: "person.crop.circle") { Task { await model.openPersonalHome() } }
-                            .foregroundStyle(.primary)
-                        Button("项目工作", systemImage: "folder") { model.openProjects() }.foregroundStyle(.primary)
-                    }
-                }
-                if model.hosts.isEmpty {
-                    ContentUnavailableView("把电脑带在身边", systemImage: "laptopcomputer", description: Text("在电脑上的 Latch 打开手机配对，扫描二维码连接。"))
-                        .listRowBackground(Color.clear)
-                }
-                ForEach(model.hosts) { host in
-                    Button { Task { await model.connect(host) } } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: "laptopcomputer").font(.system(size: 18)).foregroundStyle(.secondary).frame(width: 24)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(host.name).foregroundStyle(.primary)
-                                Text(model.selectedHost?.id == host.id ? model.status : host.prepared ? "登记待核对" : "已登记").font(.caption).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            if model.selectedHost?.id == host.id { Image(systemName: "checkmark").font(.footnote.weight(.semibold)) }
-                        }.padding(.vertical, 3)
-                    }.disabled(model.busy || model.verifying)
-                }
-                if model.draft != nil {
-                    Button("继续未完成的登记", systemImage: "arrow.clockwise") { model.resumePairing() }.disabled(model.busy)
-                }
-                Button("添加电脑", systemImage: "plus") { scan = true }.disabled(model.busy)
-            }
-            .navigationTitle("电脑")
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("设置", systemImage: "gearshape") { settings = true }.labelStyle(.iconOnly) } }
-        } detail: {
-            if model.selectedHost != nil {
-                if let group = model.groupId, model.sessionId == nil { PersonalGroupView(id: group) }
-                else if model.area == .personal && model.assistantId == nil && model.sessionId == nil { PersonalHomeView() }
-                else { SessionWorkspaceView() }
-            }
-            else {
-                VStack(spacing: 20) {
-                    Image("LatchMark").resizable().frame(width: 42, height: 42).clipShape(RoundedRectangle(cornerRadius: 10))
-                    Text("你的工作，随时继续").font(.title2.weight(.semibold))
-                    Text("连接已登记的电脑，查看进展、回答问题并继续会话。").foregroundStyle(.secondary).multilineTextAlignment(.center)
-                    Button("添加电脑") { scan = true }.buttonStyle(.borderedProminent).controlSize(.large)
-                }.padding(32).frame(maxWidth: 460)
-            }
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if model.controlPending != .null {
-                HStack(spacing: 12) {
-                    Label("上次操作结果待确认", systemImage: "clock").font(.caption).foregroundStyle(.orange)
-                    Spacer()
-                    Button("重试这次操作") { Task { await model.retryControl() } }.font(.caption).disabled(model.busy || !model.connected)
-                }.padding(12).background(.bar)
-            }
-        }
-        .sheet(isPresented: $scan) { PairingView() }
-        .sheet(isPresented: $settings) { PhoneSettingsView() }
-        .sheet(isPresented: Binding(get: { model.comparisonCode != nil }, set: { _ in })) {
-            if let code = model.comparisonCode {
-                VStack(spacing: 24) {
-                    Text("在 Mac 上确认").font(.title2.weight(.semibold))
-                    Text("在电脑显示的 Latch 确认窗口中输入：").foregroundStyle(.secondary)
-                    Text(code).font(.system(size: 38, weight: .medium, design: .monospaced)).tracking(6).accessibilityLabel(code.map(String.init).joined(separator: " "))
-                    Label("确认前不会授予手机操作权限", systemImage: "lock").font(.footnote).foregroundStyle(.secondary)
-                    ProgressView().controlSize(.small)
-                }.padding(32).interactiveDismissDisabled()
-                    .presentationDetents([.medium])
-            }
-        }
-        .alert("暂时无法完成", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
-            Button("知道了") { model.error = nil }
-        } message: { Text(model.error ?? "") }
-        .onReceive(NotificationCenter.default.publisher(for: .latchStatusHint)) { _ in Task { await model.refresh() } }
-    }
-}
-
-struct SessionWorkspaceView: View {
-    @EnvironmentObject private var model: PhoneModel
-    @State private var editingAssistant = false
-    var body: some View {
-        NavigationStack {
-            Group {
-                if let id = model.sessionId { SessionDetailView(id: id) }
-                else {
-                    List {
-                        if !model.connected { Label(model.status, systemImage: "wifi.slash").foregroundStyle(.secondary) }
-                        if model.workspaceTasks.isEmpty { ContentUnavailableView("还没有会话", systemImage: "text.bubble", description: Text("开始一个新任务，或等待电脑上的会话同步。")) }
-                        ForEach(model.workspaceTasks, id: \.id) { task in
-                            Button { if let id = task["id"].string { Task { await model.openSession(id) } } } label: {
-                                HStack(alignment: .top, spacing: 10) {
-                                    Circle().fill(task["status"].string == "running" ? Color.blue : Color.secondary.opacity(0.4)).frame(width: 6, height: 6).padding(.top, 7)
-                                    VStack(alignment: .leading, spacing: 5) {
-                                        Text(task["title"].string ?? "会话").foregroundStyle(.primary).lineLimit(2)
-                                        Text(statusText(task["status"].string)).font(.caption).foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                    if (task["pendingQuestions"].integer ?? 0) > 0 { Image(systemName: "questionmark.bubble").foregroundStyle(.orange).font(.footnote) }
-                                }.padding(.vertical, 5)
-                            }
-                        }
-                    }.refreshable { await model.refresh() }
-                }
-            }
-            .navigationTitle(model.sessionId == nil ? (model.area == .personal ? model.assistantDetail["assistant"]["name"].string ?? "个人助手" : "项目工作") : model.detail["summary"]["title"].string ?? "会话")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    if model.sessionId != nil { Button(model.groupId == nil ? "会话" : "群聊", systemImage: "chevron.left") { model.newSession() } }
-                    else if model.area == .personal { Button("个人助手", systemImage: "chevron.left") { Task { await model.openPersonalHome() } } }
-                }
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    if model.verifying { ProgressView().controlSize(.small) }
-                    if model.area == .personal && model.assistantId != nil { Button("助手设置", systemImage: "slider.horizontal.3") { editingAssistant = true }.labelStyle(.iconOnly).disabled(model.assistantDetail == .null) }
-                    if model.groupId == nil { Button("新会话", systemImage: "square.and.pencil") { model.newSession() }.labelStyle(.iconOnly) }
-                }
-            }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                if model.groupId == nil && model.currentSummary["personal"]["groupId"].string == nil { PromptComposer() }
-            }
-            .sheet(isPresented: $editingAssistant) { PersonalAssistantEditor(assistant: model.assistantDetail["assistant"]) }
-            .onChange(of: model.contentGeneration) { _, _ in editingAssistant = false }
-        }
-    }
-    private func statusText(_ value: String?) -> String {
-        switch value { case "running": "正在工作"; case "waiting-approval": "等你处理"; case "failed": "运行失败"; case "cancelled": "已停止"; case "interrupted": "执行中断"; default: "已就绪" }
-    }
-}
-
-private struct SessionDetailView: View {
+struct SessionDetailView: View {
     @EnvironmentObject private var model: PhoneModel
     let id: String
     @State private var preview: PreviewItem?
@@ -224,39 +89,6 @@ private struct MessageRow: View {
                 }
             }
         }.frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-private struct PromptComposer: View {
-    @EnvironmentObject private var model: PhoneModel
-    @State private var text = ""
-    var body: some View {
-        VStack(spacing: 10) {
-            ForEach(model.pending, id: \.requestId) { pending in
-                HStack {
-                    Label("提交结果待确认", systemImage: "clock").font(.caption).foregroundStyle(.orange)
-                    Spacer()
-                    Button("重试这次提交") { Task { await model.submit(pending) } }.font(.caption).disabled(model.busy || !model.connected)
-                }
-            }
-            HStack(alignment: .bottom, spacing: 10) {
-                LocalTextEditor(text: $text, placeholder: "继续说说你的想法…")
-                    .overlay(alignment: .topLeading) { if text.isEmpty { Text("继续说说你的想法…").foregroundStyle(.secondary).allowsHitTesting(false).accessibilityHidden(true) } }.padding(12)
-                    .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
-                if ["running", "waiting-approval"].contains(model.currentSummary["status"].string ?? "") {
-                    Button("停止", systemImage: "stop.fill") { Task { await model.stop() } }.labelStyle(.iconOnly).buttonStyle(.bordered).controlSize(.large)
-                }
-                Button("发送", systemImage: "arrow.up") {
-                    let input = text
-                    Task { if await model.send(text: input, queue: ["running", "waiting-approval"].contains(model.currentSummary["status"].string ?? "") && model.canQueueCurrent), text == input { text = "" } }
-                }.labelStyle(.iconOnly).buttonStyle(.borderedProminent).controlSize(.large)
-                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.canRun || model.busy || !model.pending.isEmpty || (["running", "waiting-approval"].contains(model.currentSummary["status"].string ?? "") && !model.canQueueCurrent))
-            }
-            if !model.connected { Text(model.status).font(.caption).foregroundStyle(.secondary) }
-        }.padding(.horizontal, 16).padding(.vertical, 12).background(.bar)
-            .onChange(of: model.sessionId) { _, _ in text = "" }
-            .onChange(of: model.selectedHost?.id) { _, _ in text = "" }
-            .onChange(of: model.verifiedUntil) { _, value in if value == nil { text = "" } }
     }
 }
 
@@ -381,8 +213,4 @@ private struct QueueList: View {
         .onChange(of: model.contentGeneration) { _, _ in editing = nil; text = "" }
         .onChange(of: model.selectedHost?.id) { _, _ in editing = nil; text = "" }
     }
-}
-
-extension NativeJSON: @retroactive Identifiable {
-    public var id: String { self["id"].string ?? "invalid" }
 }
