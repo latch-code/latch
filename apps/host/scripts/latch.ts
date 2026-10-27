@@ -49,6 +49,7 @@ import {
   PRESENCE_ACTIONS,
   type PresenceBackend,
 } from '../src/presence.ts'
+import { isLatchTerminal } from '../src/terminal/environment.ts'
 import { TRAFFIC_KINDS, type TrafficKind, type TrafficSummary } from '../src/traffic.ts'
 
 export interface CliIO {
@@ -67,6 +68,16 @@ export interface CliIO {
 }
 
 class CliError extends Error {}
+
+/**
+ * Why a pairing link or an offline code may not be shown here: only a terminal someone reads at this computer shows one.
+ * A Latch terminal does not count, since devices elsewhere may watch its output.
+ */
+function codeRefusal(io: CliIO, what: '配对链接' | '离线登记码'): string | undefined {
+  if (isLatchTerminal(io.env)) return `其他设备可能看到 Latch 终端里的输出，${what}不在这里显示；请使用 --code-file <路径>`
+  if (!io.stdout.isTTY) return `${what}只输出到终端；非交互环境请使用 --code-file <路径>`
+  return undefined
+}
 
 const run = promisify(execFile)
 const CLI_ACTOR: AuditActor = { listener: 'cli', via: 'cli' }
@@ -680,7 +691,8 @@ export async function runLatch(argv: string[], io: CliIO): Promise<number> {
     }
     if (key === 'device invite') {
       const codeFile = flags.get('--code-file')
-      if (!io.stdout.isTTY && typeof codeFile !== 'string') throw new CliError('配对链接只输出到终端；非交互环境请使用 --code-file <路径>')
+      const refusal = typeof codeFile === 'string' ? undefined : codeRefusal(io, '配对链接')
+      if (refusal) throw new CliError(refusal)
       // A browser on this computer enrolls over loopback, which takes an invitation like any listener but host.sock.
       const loopback = flags.has('--loopback')
       const scopes = scopesFlag(flags.get('--scopes')) ?? (loopback ? [...BROWSER_SCOPES] : undefined)
@@ -714,8 +726,8 @@ export async function runLatch(argv: string[], io: CliIO): Promise<number> {
     if (key === 'device enroll') {
       if (!flags.has('--offline')) throw new CliError('device enroll 目前只支持 --offline')
       const codeFile = flags.get('--code-file')
-      if (!io.stdout.isTTY && typeof codeFile !== 'string')
-        throw new CliError('离线登记码只输出到终端；非交互环境请使用 --code-file <路径>')
+      const refusal = typeof codeFile === 'string' ? undefined : codeRefusal(io, '离线登记码')
+      if (refusal) throw new CliError(refusal)
       const codePath = typeof codeFile === 'string' ? resolve(io.cwd, codeFile) : undefined
       const lock = await lockStopped(dataDir)
       let file: SecretFile | undefined
