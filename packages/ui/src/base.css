@@ -1,7 +1,7 @@
 /*
  * Element defaults under every page of the design system, imported into the base layer (ui.css does that): box
  * sizing, the type and colours of the document, form controls inheriting their text, the keyboard focus ring, the
- * screen-reader-only helper, keys, and reduced motion.
+ * screen-reader-only helper, keys, the switch of theme and reduced motion.
  */
 *,
 *::before,
@@ -10,20 +10,21 @@
 }
 
 html {
-  font-family: var(--font-sans);
+  font-family: var(--font);
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   -webkit-text-size-adjust: 100%;
-  color: var(--text-1);
-  background: var(--bg-app);
+  color: var(--ink);
+  background: var(--sidebar);
 }
 
 body {
   margin: 0;
-  background: var(--bg-app);
+  background: var(--sidebar);
 }
 
 button,
@@ -41,11 +42,21 @@ button:disabled,
 [aria-disabled='true'] {
   cursor: default;
 }
+/* A heading that wraps shares its words between the lines instead of leaving one alone on the last. */
 h1,
 h2,
 h3,
 h4,
 h5,
+h6 {
+  text-wrap: balance;
+}
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
 p,
 ol,
 ul,
@@ -64,23 +75,30 @@ img {
 code,
 kbd,
 pre {
-  font-family: var(--font-mono);
+  font-family: var(--mono);
 }
+/* Links are accent-ink words without a rule; hovering draws a dotted one under them. */
 a {
-  color: var(--accent-text);
+  color: var(--accent-ink);
+  text-decoration: none;
 }
 a:hover {
-  color: var(--accent-text-hover);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+::selection {
+  background: var(--accent-soft);
 }
 
 /*
- * Keyboard focus only: a 2px gap that shows whatever surface is underneath (paper, ground, a dialog), then 2px of the
- * focus colour, following the element's corners. An outline needs no ring colour per surface and stays visible in
- * forced-colours mode. Rows in scrolling lists draw the inset ring instead, so their container does not clip it.
+ * Keyboard focus only: a 2px accent ring drawn 2px inside the element's own edge, following its corners, so a
+ * scrolling list or a clipped panel never cuts it off. An outline needs no colour per surface and stays visible in
+ * forced-colours mode. A control filled in the accent (a primary button, the send circle, a switch, a checked box or
+ * radio) draws it 2px outside instead, where it shows against the surface around it.
  */
 :focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 /* Content hidden until the browser's find reaches it (a closed disclosure) keeps its box; everything else hidden goes. */
 [hidden]:not([hidden='until-found']) {
@@ -99,39 +117,40 @@ a:hover {
   border: 0;
 }
 
-/* A key: only in tooltips, menu item ends, the search row and an approval card's hint line, never inside a button. */
+/*
+ * A key: 18px, 4px corners, raised with a hairline ring and a 1px line under it, 11/14·500 in muted ink. Only in
+ * tooltips, menu item ends, the search row and an approval's hint line, never inside a button.
+ */
 kbd {
   display: inline-flex;
   align-items: center;
-  height: 16px;
+  justify-content: center;
+  height: 18px;
+  min-width: 18px;
   padding: 0 var(--sp-4);
   border-radius: var(--r-4);
-  corner-shape: var(--corner-shape);
-  background: transparent;
-  box-shadow: inset 0 0 0 1px var(--kbd-ring);
-  color: var(--text-3);
-  font-family: var(--font-sans);
-  font-size: var(--fs-micro);
-  line-height: var(--lh-micro);
+  background: var(--raised);
+  box-shadow:
+    inset 0 0 0 1px var(--line),
+    0 1px 0 var(--line);
+  color: var(--muted);
+  font-family: var(--font);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
   font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+/* While the theme changes (switchTheme in theme.ts) nothing transitions, so colours switch at once instead of sweeping. */
+:root[data-theme-switching],
+:root[data-theme-switching] *,
+:root[data-theme-switching] *::before,
+:root[data-theme-switching] *::after {
+  transition: none !important;
 }
 
 /*
- * Reduced motion keeps colour changes and the spinners (with the turning arc of a tile's indeterminate progress ring),
- * and drops movement, stretching, scaling and sliding.
+ * Reduced motion has no global rule here: the motion tokens shorten every duration to 120ms or less, and each
+ * stylesheet keeps only the fades of what it moves (no slide, scale, growth or turn) and stops its loops on a still
+ * frame that still reads.
  */
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 1ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 1ms !important;
-  }
-  .ui-spinner {
-    animation: ui-spin 900ms linear infinite !important;
-  }
-  .ui-tile-progress:not([data-determinate]) .ui-tile-progress-arc {
-    animation: ui-tile-progress 1.4s linear infinite !important;
-  }
-}

@@ -10,7 +10,7 @@ export const sessionFilterLabels: Record<SessionFilter, string> = { all: '全部
  * The one thing a session row's status slot shows, by priority: waiting for the person, failed (a session whose
  * permission mode changed is drawn as failed too, with its own words), running, unread, then the time. A cancelled or
  * interrupted session shows its time; the top bar names that state when it is open. The open session's row leaves out
- * the comet, since its run bar says it is running.
+ * 运行中, since the conversation says it is running.
  */
 export function sessionSlot(task: TaskSummary, selected: boolean, unread: boolean): SlotStatus {
   if (task.status === 'waiting-approval') return 'waiting'
@@ -22,13 +22,13 @@ export function sessionSlot(task: TaskSummary, selected: boolean, unread: boolea
 
 /**
  * What a phone's row says on its second line after the harness: the one fact its status slot does not already say. A
- * running session says so in words (the slot only turns); a cancelled or interrupted one names that state (its slot
- * shows the time); one that waits, failed or has something new keeps its time there (its slot shows that instead); a
- * finished one says nothing more. Never a preview of the conversation: the Host sends none.
+ * running or cancelling session says nothing more (the slot's words do); a cancelled or interrupted one names that
+ * state (its slot shows the time); one that waits, failed or has something new keeps its time there (its slot shows that
+ * instead); a finished one says nothing more. Never a preview of the conversation: the Host sends none.
  */
 export function sessionFact(task: TaskSummary, slot: SlotStatus, cancelling: boolean, time: string): string | undefined {
+  if (slot === 'running') return undefined
   if (cancelling) return '正在取消'
-  if (slot === 'running') return '正在运行'
   if (slot === 'time') return task.status === 'cancelled' ? '已取消' : task.status === 'interrupted' ? '已中断' : undefined
   if (slot === 'none') return undefined
   return time || undefined

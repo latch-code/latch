@@ -212,7 +212,8 @@ describe('permission states in a browser', () => {
       card,
       `${card} .tool-card-header`,
       `${card} .tool-card-title`,
-      `${card} .tool-card-header .ui-status-pill`,
+      `${card} .tool-card-header .ui-status-word`,
+      `${card} .tool-card-header .ui-status-word-glyph`,
       `${card} .approval-panel`,
       `${card} .approval-meta`,
       `${card} .approval-preview .muted-line`,
@@ -239,15 +240,26 @@ describe('permission states in a browser', () => {
       }
       const ms = (token: string) => Math.round(parseFloat(computed('transitionDuration', token)) * 1000)
       const result = {
-        fast: ms('--d-fast'),
-        base: ms('--d-base'),
-        ease: computed('transitionTimingFunction', '--ease'),
-        exit: computed('transitionTimingFunction', '--ease-exit'),
+        micro: ms('--m-micro'),
+        enter: ms('--m-enter'),
+        panel: ms('--m-panel'),
+        eEnter: computed('transitionTimingFunction', '--e-enter'),
+        ePanel: computed('transitionTimingFunction', '--e-panel'),
+        exit: computed('transitionTimingFunction', '--e-exit'),
       }
       probe.remove()
       return result
     })
-    expect(tokens).toEqual({ fast: 120, base: 180, ease: 'cubic-bezier(0.2, 0, 0, 1)', exit: 'cubic-bezier(0.4, 0, 1, 1)' })
+    expect(tokens).toEqual({
+      micro: 120,
+      enter: 160,
+      panel: 200,
+      eEnter: 'cubic-bezier(0.2, 0.8, 0.2, 1)',
+      ePanel: 'cubic-bezier(0.32, 0.72, 0, 1)',
+      exit: 'cubic-bezier(0.4, 0, 1, 1)',
+    })
+    /** An exit takes 70% of its entrance. */
+    const exit = (ms: number) => Math.round(ms * 0.7)
 
     /**
      * From now on, pauses every transition of an approval slot within a frame of its start, so a card that the page
@@ -280,7 +292,8 @@ describe('permission states in a browser', () => {
           )
           .map(animation => ({
             property: animation instanceof CSSTransition ? animation.transitionProperty : '',
-            duration: Number(animation.effect!.getTiming().duration),
+            // An exit is calc(token * 0.7), which the browser reports with floating-point noise (139.99999999999997).
+            duration: Math.round(Number(animation.effect!.getTiming().duration)),
             easing: String(animation.effect!.getTiming().easing),
           }))
           .toSorted((a, b) => a.property.localeCompare(b.property)),
@@ -307,28 +320,29 @@ describe('permission states in a browser', () => {
       })
     }
 
-    // Arrival: the card fades in over 180ms on the entry curve and does not grow, so nothing above it moves.
+    // Arrival: the card fades in over --m-enter and does not grow, so nothing above it moves.
     await hold()
     await open(arriving)
-    expect(await held()).toEqual([{ property: 'opacity', duration: tokens.base, easing: tokens.ease }])
+    expect(await held()).toEqual([{ property: 'opacity', duration: tokens.enter, easing: tokens.eEnter }])
     await frames('arrival', card)
 
-    // Settled: the slot folds by its height over 180ms while its content fades over 120ms, both on the exit curve. The
-    // folding copy stays until those transitions end, so the held frames show it. The first 拒绝 asks for a note.
+    // Settled: the slot folds by its height (70% of --m-panel) while its content fades (70% of --m-micro), both on the
+    // exit curve. The folding copy stays until those transitions end, so the held frames show it. The first 拒绝 asks
+    // for a note.
     await card.getByRole('button', { name: '拒绝', exact: true }).click()
     await card.getByText('在输入框里告诉 Agent 改做什么，再按「拒绝」；不写也可以。', { exact: true }).waitFor()
     await hold()
     await card.getByRole('button', { name: '拒绝', exact: true }).click()
     await page.locator('.approval-slot[data-leaving]').waitFor()
     expect(await held()).toEqual([
-      { property: 'grid-template-rows', duration: tokens.base, easing: tokens.exit },
-      { property: 'opacity', duration: tokens.fast, easing: tokens.exit },
+      { property: 'grid-template-rows', duration: exit(tokens.panel), easing: tokens.exit },
+      { property: 'opacity', duration: exit(tokens.micro), easing: tokens.exit },
     ])
     await frames('settle', page.locator('.tool-card', { has: page.locator('.approval-slot') }))
     await page.locator('.approval-slot').waitFor({ state: 'detached' })
     await expect.poll(async () => (await detail(arriving)).summary.status).toBe('idle')
 
-    // The preview's disclosure opens over 180ms on the entry curve and folds over 120ms on the exit curve.
+    // The preview's disclosure opens over --m-panel and folds in 70% of it on the exit curve.
     await open(quiet)
     await card.getByText('高风险 · 未登记的工具', { exact: true }).waitFor()
     const disclosure = await page.evaluate(() => {
@@ -344,18 +358,22 @@ describe('permission states in a browser', () => {
       return { folded, open: opened }
     })
     expect(disclosure).toEqual({
-      folded: `grid-template-rows ${tokens.fast / 1000}s ${tokens.exit}`,
-      open: `grid-template-rows ${tokens.base / 1000}s ${tokens.ease}`,
+      folded: `grid-template-rows ${exit(tokens.panel) / 1000}s ${tokens.exit}`,
+      open: `grid-template-rows ${tokens.panel / 1000}s ${tokens.ePanel}`,
     })
 
-    // Reduced motion: no slide or growth, every transition here as good as instant.
+    // Reduced motion: no slide or growth; only fades of 120ms or less remain.
     await page.emulateMedia({ reducedMotion: 'reduce' })
     const reduced = await page.evaluate(() =>
-      ['.approval-slot', '.approval-preview'].map(
-        selector => getComputedStyle(document.querySelector(`[data-approval-id] ${selector}`)!).transitionDuration,
-      ),
+      ['.approval-slot', '.approval-preview'].map(selector => {
+        const style = getComputedStyle(document.querySelector(`[data-approval-id] ${selector}`)!)
+        return { properties: style.transitionProperty, durations: style.transitionDuration }
+      }),
     )
-    expect(reduced.every(value => value.split(', ').every(part => parseFloat(part) <= 0.001))).toBe(true)
+    for (const { properties, durations } of reduced) {
+      expect(properties).not.toMatch(/grid-template-rows|transform|translate|scale/u)
+      expect(durations.split(', ').every(part => parseFloat(part) <= 0.12)).toBe(true)
+    }
     await page.emulateMedia({ reducedMotion: 'no-preference' })
     await rejectWithoutNote(card)
     await expect.poll(async () => (await detail(quiet)).summary.status).toBe('idle')

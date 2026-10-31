@@ -283,7 +283,7 @@ function NativeCode({ autoStart = false, scopeSelection = false }: { autoStart?:
       width: 600,
       margin: 2,
       errorCorrectionLevel: 'L',
-      color: { dark: '#1d1c1a', light: '#ffffff' },
+      color: { dark: '#18181b', light: '#ffffff' },
     })
       .then(value => {
         if (active) setQr(value)

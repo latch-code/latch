@@ -1,78 +1,72 @@
 /*
- * Switch: a 32×18 track with a 14px thumb (44×26 and 22 on touch) in a box at least 24px (44px on touch) tall. Off is
- * the solid track plus a 1px ring in the icon colour, which reaches 3:1 against the paper; on is the accent without a
- * ring. The thumb is raised white; it slides over 180ms, the track colour changes over 120ms, and while pressed the
- * thumb stretches 4px toward where it is going.
+ * Switch: a 30×18 track with a 14px thumb (44×26 and 22 on touch) in a box at least 24px (44px on touch) tall. Off is
+ * a soft neutral track, on the accent. The thumb is white with its own small shadow; it slides and the track changes
+ * colour over --m-micro, and while pressed the thumb stretches 4px toward where it is going. The keyboard ring follows
+ * the track, 2px outside it.
  */
 .ui-switch {
+  --track-width: 30px;
+  --track-height: 18px;
+  --thumb-size: 14px;
   position: relative;
   display: inline-grid;
   place-items: center;
   flex-shrink: 0;
-  width: 32px;
+  width: var(--track-width);
   height: 24px;
   padding: 0;
   border: 0;
   background: transparent;
-  --track-width: 32px;
-  --track-height: 18px;
-  --thumb: 14px;
 }
 .ui-switch::before {
   content: '';
   width: var(--track-width);
   height: var(--track-height);
-  border-radius: var(--r-pill);
-  background: var(--track-off);
-  box-shadow: var(--ring-switch-off);
-  transition:
-    background-color var(--d-fast) var(--ease),
-    box-shadow var(--d-fast) var(--ease);
+  border-radius: var(--r-full);
+  background: var(--switch-off);
+  transition: background-color var(--m-micro) var(--e-micro);
 }
 .ui-switch-thumb {
   position: absolute;
-  top: calc(50% - var(--thumb) / 2);
+  top: calc(50% - var(--thumb-size) / 2);
   left: calc((100% - var(--track-width)) / 2 + 2px);
-  width: var(--thumb);
-  height: var(--thumb);
-  border-radius: var(--r-pill);
+  width: var(--thumb-size);
+  height: var(--thumb-size);
+  border-radius: var(--r-full);
   background: var(--on-accent);
-  box-shadow: var(--sh-raised);
+  box-shadow: var(--sh-thumb);
   transition:
-    translate var(--d-base) var(--ease),
-    width var(--d-fast) var(--ease);
+    translate var(--m-micro) var(--e-micro),
+    width var(--m-micro) var(--e-micro);
 }
 .ui-switch[aria-checked='true']::before {
   background: var(--accent);
-  box-shadow: none;
 }
 .ui-switch[aria-checked='true'] > .ui-switch-thumb {
-  translate: calc(var(--track-width) - var(--thumb) - 4px) 0;
+  translate: calc(var(--track-width) - var(--thumb-size) - 4px) 0;
 }
 .ui-switch:active:not([aria-disabled='true']) > .ui-switch-thumb {
-  width: calc(var(--thumb) + 4px);
+  width: calc(var(--thumb-size) + 4px);
 }
 .ui-switch[aria-checked='true']:active:not([aria-disabled='true']) > .ui-switch-thumb {
-  translate: calc(var(--track-width) - var(--thumb) - 8px) 0;
+  translate: calc(var(--track-width) - var(--thumb-size) - 8px) 0;
 }
 .ui-switch[aria-disabled='true'] {
   opacity: 0.45;
 }
-/* Keyboard focus rings the track, so the ring follows the pill and not the larger box around it. */
 .ui-switch:focus-visible {
   outline: none;
 }
 .ui-switch:focus-visible::before {
-  outline: 2px solid var(--focus);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 @media (pointer: coarse) {
   .ui-switch {
-    width: 44px;
-    height: 44px;
     --track-width: 44px;
     --track-height: 26px;
-    --thumb: 22px;
+    --thumb-size: 22px;
+    height: 44px;
   }
 }
 
@@ -81,7 +75,7 @@
   display: flex;
   align-items: center;
   gap: var(--sp-12);
-  min-height: 56px;
+  min-height: 52px;
   cursor: pointer;
 }
 .ui-switch-row[data-locked] {
@@ -93,15 +87,23 @@
   min-width: 0;
 }
 .ui-switch-row-title {
-  color: var(--text-1);
+  color: var(--ink);
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
+  font-weight: 500;
 }
 .ui-switch-row-description {
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
 }
 .ui-switch-row-lock {
-  color: var(--icon);
+  color: var(--muted);
+}
+
+/* Reduced motion: the thumb moves at once; the track still changes colour. */
+@media (prefers-reduced-motion: reduce) {
+  .ui-switch-thumb {
+    transition: none;
+  }
 }

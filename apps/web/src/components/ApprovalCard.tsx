@@ -9,7 +9,7 @@ import {
   Kbd,
   Menu,
   StatusPill,
-  WaitingPill,
+  StatusWord,
   type MenuItem,
   type MenuTriggerProps,
 } from '@latch/ui'
@@ -69,9 +69,9 @@ export function approvalHidesText(approval: Approval, title: string, diffs: File
 }
 
 /**
- * The card's state pill: red 高风险 for a high-risk request, amber for every other one while it waits. Hidden
- * characters turn an ordinary request's pill into 需要核对; a high-risk or advisory request keeps its own, since the
- * kind of request decides what allowing means.
+ * The card's state in words: red 高风险 for a high-risk request, amber words after the shield for every other one while
+ * it waits. Hidden characters turn an ordinary request's words into 需要核对; a high-risk or advisory request keeps its
+ * own, since the kind of request decides what allowing means.
  */
 export function ApprovalPill({ gate, hidden, className }: { gate: ApprovalGate; hidden: boolean; className?: string }) {
   if (gate.badge?.tone === 'err') {
@@ -83,7 +83,11 @@ export function ApprovalPill({ gate, hidden, className }: { gate: ApprovalGate; 
   }
   const label =
     hidden && (gate.kind === 'R1' || gate.kind === 'legacy') ? APPROVAL_COPY.check : (gate.badge?.label ?? APPROVAL_COPY.waiting)
-  return <WaitingPill className={className}>{label}</WaitingPill>
+  return (
+    <StatusWord tone="waiting" className={className}>
+      {label}
+    </StatusWord>
+  )
 }
 
 const isAllow = (option: ApprovalOption) => option.kind.startsWith('allow')

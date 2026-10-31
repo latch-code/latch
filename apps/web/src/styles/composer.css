@@ -11,26 +11,25 @@
   align-items: center;
   gap: var(--sp-12);
   padding: var(--sp-8) var(--sp-12);
-  border: 1px solid var(--warn-border);
+  border: 1px solid var(--amber-line);
   border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
-  background: var(--warn-bg);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  background: var(--amber-soft);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
 }
 .pending-submission > div {
   flex: 1;
   min-width: 0;
 }
 .pending-submission strong {
-  color: var(--warn-text);
+  color: var(--amber);
   font-weight: 500;
 }
 .pending-submission p {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-2);
+  color: var(--ink-2);
 }
 
 /*
@@ -41,8 +40,7 @@
   position: relative;
   min-width: 0;
   border-radius: var(--r-16);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-raised);
+  background: var(--raised);
 }
 .composer::before,
 .composer::after {
@@ -51,32 +49,34 @@
   inset: 0;
   z-index: 1;
   border-radius: inherit;
-  corner-shape: var(--corner-shape);
   pointer-events: none;
 }
 .composer::before {
-  box-shadow: var(--sh-composer);
-  transition: opacity var(--d-fast) var(--ease);
+  box-shadow:
+    0 0 0 1px var(--line),
+    var(--sh-1);
+  transition: opacity var(--m-micro) var(--e-micro);
 }
 .composer::after {
-  box-shadow: var(--sh-composer-focus);
+  box-shadow:
+    0 0 0 1px var(--line-strong),
+    var(--sh-1);
   opacity: 0;
-  transition: opacity var(--d-fast-exit) var(--ease-exit);
+  transition: opacity calc(var(--m-micro) * 0.7) var(--e-exit);
 }
 .composer:focus-within::before {
   opacity: 0;
-  transition: opacity var(--d-fast-exit) var(--ease-exit);
+  transition: opacity calc(var(--m-micro) * 0.7) var(--e-exit);
 }
 .composer:focus-within::after {
   opacity: 1;
-  transition: opacity var(--d-fast) var(--ease);
+  transition: opacity var(--m-micro) var(--e-micro);
 }
 
 /* The bar on top of the input while a session runs, only when it has something to act on: approvals out of view
  * (amber), the stop's states and the plan chip. It folds away with the disclosure's motion when it has nothing. */
 .run-bar-collapse {
   border-radius: var(--r-16) var(--r-16) 0 0;
-  corner-shape: var(--corner-shape);
 }
 .run-bar {
   display: flex;
@@ -84,11 +84,10 @@
   gap: var(--sp-8);
   min-height: 32px;
   padding: 0 var(--sp-8) 0 var(--sp-12);
-  border-bottom: 1px solid var(--line-subtle);
+  border-bottom: 1px solid var(--line);
   border-radius: var(--r-16) var(--r-16) 0 0;
-  corner-shape: var(--corner-shape);
-  background: var(--bg-sunken);
-  color: var(--text-2);
+  background: var(--sunken);
+  color: var(--ink-2);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
@@ -106,12 +105,12 @@
 }
 .run-bar-dot {
   flex-shrink: 0;
-  color: var(--text-3);
+  color: var(--muted);
 }
 .run-bar.is-waiting {
-  border-bottom-color: var(--warn-border);
-  background: var(--warn-bg);
-  color: var(--warn-text);
+  border-bottom-color: var(--amber-line);
+  background: var(--amber-soft);
+  color: var(--amber);
 }
 /* What the oldest waiting request would do, after its count: hint ink, cut at the end. */
 .run-bar-detail {
@@ -119,9 +118,9 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-3);
+  color: var(--muted);
 }
-.run-bar-what > .ui-comet {
+.run-bar-what > .ui-spinner {
   flex-shrink: 0;
 }
 .run-bar-end {
@@ -173,37 +172,36 @@
 .composer textarea {
   display: block;
   width: 100%;
-  min-height: calc(var(--lh-body) + 16px);
+  min-height: calc(var(--lh-prose) + 16px);
   max-height: 292px;
   padding: var(--sp-12) var(--sp-16) var(--sp-4);
   overflow-y: auto;
   resize: none;
   border: 0;
   border-radius: var(--r-16);
-  corner-shape: var(--corner-shape);
   background: transparent;
-  color: var(--text-1);
-  font-size: var(--fs-body);
-  line-height: var(--lh-body);
+  color: var(--ink);
+  font-size: var(--fs-prose);
+  line-height: var(--lh-prose);
   outline: none;
 }
-/* The input's height follows its lines over 120ms (Composer measures and sets it), not with every key. */
+/* The input's height follows its lines over --m-micro (Composer measures and sets it), not with every key. */
 @media (prefers-reduced-motion: no-preference) {
   .composer textarea {
-    transition: height var(--d-fast) var(--ease);
+    transition: height var(--m-micro) var(--e-micro);
   }
 }
 .composer.is-running textarea {
   border-radius: 0;
 }
 .composer-new textarea {
-  min-height: calc(var(--lh-body) * 3 + 16px);
+  min-height: calc(var(--lh-prose) * 3 + 16px);
 }
 .composer textarea::placeholder {
-  color: var(--text-3);
+  color: var(--muted);
 }
 .composer textarea:disabled {
-  color: var(--text-2);
+  color: var(--ink-2);
 }
 
 .composer-toolbar {
@@ -227,25 +225,25 @@
   flex-shrink: 0;
 }
 /* A picker that comes or goes with the harness (the project for 只对话, the model for an agent with its own) fades in
- * over 120ms and out over 90ms; under reduced motion it changes at once. */
+ * over --m-micro and out in 70% of it; under reduced motion it changes at once. */
 .composer-fade {
   display: inline-flex;
   min-width: 0;
 }
 @media (prefers-reduced-motion: no-preference) {
   .composer-fade[data-enter] {
-    animation: fade-in var(--d-fast) var(--ease);
+    animation: fade-in var(--m-micro) var(--e-micro);
   }
   .composer-fade[data-leaving] {
     opacity: 0;
-    transition: opacity var(--d-fast-exit) var(--ease-exit);
+    transition: opacity calc(var(--m-micro) * 0.7) var(--e-exit);
   }
 }
 /* A model switch the next message will carry: the picker rests on a fill until it is sent or undone. */
 .model-picker.is-pending,
 .model-picker.is-pending:hover {
-  background: var(--fill);
-  color: var(--text-1);
+  background: var(--hover);
+  color: var(--ink);
 }
 
 /* Send is the composer's one blue action; when there is nothing to send it falls back to a neutral fill. */
@@ -261,20 +259,23 @@
   background: var(--accent);
   color: var(--on-accent);
   transition:
-    background-color var(--d-fast) var(--ease-exit),
-    color var(--d-fast) var(--ease-exit);
+    background-color var(--m-micro) var(--e-micro),
+    color var(--m-micro) var(--e-micro);
 }
 .send-button:hover:not([aria-disabled='true']) {
   background: var(--accent-hover);
-  transition-duration: 0s;
 }
 .send-button:active:not([aria-disabled='true']) {
-  background: var(--accent-press);
+  background: var(--accent-hover);
+}
+/* The ring goes 2px outside the circle, where it shows; inside it would be blue on blue. */
+.send-button:focus-visible {
+  outline-offset: 2px;
 }
 /* Nothing to send yet: a neutral fill that still takes focus and says why in its tooltip. */
 .send-button[aria-disabled='true'] {
-  background: var(--fill);
-  color: var(--text-3);
+  background: var(--hover);
+  color: var(--muted);
   cursor: default;
 }
 .send-button .ui-spinner {
@@ -292,7 +293,7 @@
 }
 .composer-hint {
   padding: 0 var(--sp-6);
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
 }
@@ -300,25 +301,25 @@
  * lock kept, still focusable with its reason as its tooltip. */
 .composer-slot .start-button[aria-disabled='true'] {
   opacity: 1;
-  background: var(--fill);
-  color: var(--text-3);
+  background: var(--hover);
+  color: var(--muted);
 }
 /* Stopping is not a risk, so the stop button is never red. */
 .stop-button {
-  background: var(--bg-raised);
+  background: var(--raised);
   box-shadow: inset 0 0 0 1px var(--line-strong);
-  color: var(--text-1);
+  color: var(--ink);
 }
 .stop-button:hover:not([aria-disabled='true']) {
-  background: linear-gradient(var(--bg-hover), var(--bg-hover)) var(--bg-raised);
-  color: var(--text-1);
+  background: linear-gradient(var(--hover), var(--hover)) var(--raised);
+  color: var(--ink);
 }
 .stop-button:active:not([aria-disabled='true']) {
-  background: linear-gradient(var(--bg-press), var(--bg-press)) var(--bg-raised);
+  background: linear-gradient(var(--press), var(--press)) var(--raised);
 }
 .stop-button[aria-disabled='true'] {
-  background: var(--bg-raised);
-  color: var(--text-2);
+  background: var(--raised);
+  color: var(--ink-2);
 }
 /* Stop is a filled 10×10 square with a 2px radius, not a stroked glyph. */
 .stop-glyph {
@@ -401,7 +402,7 @@
 /*
  * Under a new session's input, 8 below its frame: the context row (28; where it runs, and a full-access level in amber
  * that leads to 设置 › 电脑), then captions. Values in the row are ghost values like a picker with a single value: an
- * icon for a label, the value in text-2.
+ * icon for a label, the value in ink-2.
  */
 .composer-context {
   display: flex;
@@ -419,38 +420,36 @@
   padding: 0 var(--sp-8) 0 var(--sp-6);
   border: 0;
   border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
   background: transparent;
-  color: var(--text-2);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
   white-space: nowrap;
 }
 .context-value > svg {
   flex-shrink: 0;
-  color: var(--icon);
+  color: var(--muted);
 }
 .context-value > .context-risk {
-  color: var(--warn-text);
+  color: var(--amber);
 }
 /* The full-access level comes in as the harness is chosen (its caption and the line under it open as disclosures). */
 @media (prefers-reduced-motion: no-preference) {
   .context-link {
-    animation: fade-in var(--d-fast) var(--ease);
+    animation: fade-in var(--m-micro) var(--e-micro);
   }
 }
 .context-link {
   transition:
-    background-color var(--d-fast) var(--ease-exit),
-    color var(--d-fast) var(--ease-exit);
+    background-color var(--m-micro) var(--e-micro),
+    color var(--m-micro) var(--e-micro);
 }
 .context-link:hover {
-  background: var(--bg-hover);
-  color: var(--text-1);
-  transition-duration: 0s;
+  background: var(--hover);
+  color: var(--ink);
 }
 .context-link:active {
-  background: var(--bg-press);
+  background: var(--press);
 }
 /*
  * The captions under the row start where the toolbar's first glyph does: the toolbar's 8 plus a picker's 6 inside.
@@ -468,20 +467,19 @@
   padding: 0 calc(var(--sp-8) + var(--sp-6));
   border: 0;
   background: none;
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
   text-decoration: underline;
   text-decoration-color: transparent;
   text-underline-offset: 3px;
   transition:
-    color var(--d-fast) var(--ease-exit),
-    text-decoration-color var(--d-fast) var(--ease-exit);
+    color var(--m-micro) var(--e-micro),
+    text-decoration-color var(--m-micro) var(--e-micro);
 }
 .new-session-hint:hover {
-  color: var(--text-1);
+  color: var(--ink);
   text-decoration-color: currentColor;
-  transition-duration: 0s;
 }
 
 /*
@@ -496,7 +494,7 @@
 }
 /* Each step of a panel, and the list it starts from, fades in where the last one was. */
 .ui-popover :is(.setup-panel, .setup-list) {
-  animation: fade-in var(--d-fast) var(--ease);
+  animation: fade-in var(--m-micro) var(--e-micro);
 }
 .setup-panel-head {
   display: flex;
@@ -512,9 +510,9 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-1);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  color: var(--ink);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
   font-weight: 500;
 }
 .setup-panel-body {
@@ -523,12 +521,12 @@
   min-width: 0;
 }
 .setup-panel-text {
-  color: var(--text-2);
+  color: var(--ink-2);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
 }
 .setup-panel-caption {
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
 }
@@ -536,14 +534,14 @@
   display: flex;
   align-items: flex-start;
   gap: var(--sp-6);
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
 }
 .setup-panel-note > .ui-icon {
   flex-shrink: 0;
   margin-top: var(--sp-2);
-  color: var(--icon);
+  color: var(--muted);
 }
 .setup-panel-link {
   justify-self: start;
@@ -574,12 +572,11 @@
   padding: var(--sp-12) var(--sp-4) var(--sp-8);
   border: 0;
   border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
   background: transparent;
-  color: var(--text-2);
+  color: var(--ink-2);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
-  transition: background-color var(--d-fast) var(--ease-exit);
+  transition: background-color var(--m-micro) var(--e-micro);
 }
 .setup-grid-item > span {
   max-width: 100%;
@@ -588,17 +585,16 @@
   white-space: nowrap;
 }
 .setup-grid-item:hover {
-  background: var(--bg-hover);
-  color: var(--text-1);
-  transition-duration: 0s;
+  background: var(--hover);
+  color: var(--ink);
 }
 .setup-grid-item:active {
-  background: var(--bg-press);
+  background: var(--press);
 }
 .setup-grid-item:focus-visible,
 .setup-list-item:focus-visible {
-  outline: none;
-  box-shadow: var(--ring-focus-inset);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 /* The presets not added yet: rows of 56, the tile, the name with its licence and one line about it. */
 .setup-list {
@@ -611,7 +607,7 @@
   gap: var(--sp-8);
   min-height: 28px;
   padding: 0 var(--sp-8);
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   font-weight: 500;
@@ -628,15 +624,14 @@
   padding: var(--sp-8);
   border: 0;
   border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
   background: transparent;
   text-align: start;
 }
 .setup-list-item:hover {
-  background: var(--bg-hover);
+  background: var(--hover);
 }
 .setup-list-item:active {
-  background: var(--bg-press);
+  background: var(--press);
 }
 .setup-list-text {
   display: grid;
@@ -646,16 +641,16 @@
   display: flex;
   align-items: center;
   gap: var(--sp-6);
-  color: var(--text-1);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  color: var(--ink);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
   font-weight: 500;
 }
 .setup-list-description {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
@@ -663,12 +658,12 @@
   display: inline-flex;
   align-items: center;
   gap: var(--sp-4);
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
 .setup-list-end > .ui-icon {
-  color: var(--icon);
+  color: var(--muted);
 }
 /* In a sheet the sheet's title already says 添加 Agent: the head keeps only what the list is. */
 .ui-sheet-body .setup-list-title {
@@ -679,7 +674,7 @@
   display: grid;
   margin-top: var(--sp-4);
   padding-top: var(--sp-4);
-  border-top: 1px solid var(--line-subtle);
+  border-top: 1px solid var(--line);
 }
 
 /* The shared model-service form inside the picker's scrollable panel. */
@@ -698,15 +693,15 @@
 .prompt-queue {
   padding: var(--sp-8) var(--sp-12);
   border-bottom: 1px solid var(--line);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label-para);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui-para);
 }
 .prompt-queue-title {
   margin: 0 0 var(--sp-4);
-  color: var(--text-2);
+  color: var(--ink-2);
 }
 .prompt-queue[data-paused] .prompt-queue-title {
-  color: var(--warn-text);
+  color: var(--amber);
 }
 .prompt-queue ol {
   margin: 0;
@@ -731,7 +726,7 @@
 }
 .prompt-queue-reason {
   display: block;
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   overflow: hidden;
   text-overflow: ellipsis;

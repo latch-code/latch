@@ -164,7 +164,7 @@ describe('value picker', () => {
     expect(screen.container.querySelector('.lucide-chevrons-up-down')).toBeNull()
   })
 
-  it('ends in chevrons-up-down and writes an unchosen value in text-3, never in a warning colour', async () => {
+  it('ends in chevrons-up-down and writes an unchosen value in muted ink, never in a warning colour', async () => {
     const screen = await render(
       <ValuePicker label="模型" value={undefined} placeholder="选择模型" options={MODELS} onValueChange={() => {}} />,
     )
@@ -172,7 +172,7 @@ describe('value picker', () => {
     expect(trigger.element().querySelector('.lucide-chevrons-up-down')).not.toBeNull()
     expect(trigger.element().querySelector('.lucide-chevron-down')).toBeNull()
     const text = trigger.element().querySelector('.ui-value-picker-text[data-shown]')
-    expect(text && getComputedStyle(text).color).toBe('rgb(96, 95, 93)')
+    expect(text && getComputedStyle(text).color).toBe('rgb(113, 113, 122)')
   })
 })
 
@@ -302,7 +302,7 @@ describe('permission menu', () => {
     await expect.element(screen.getByRole('button', { name: '权限：完全访问' })).not.toHaveAttribute('aria-busy')
     expect(screen.getByRole('button', { name: '权限：完全访问' }).element().getBoundingClientRect().width).toBe(width)
     const shield = screen.getByRole('button', { name: '权限：完全访问' }).element().querySelector('.lucide-shield-alert')
-    expect(shield && getComputedStyle(shield).color).toBe('rgb(154, 83, 0)')
+    expect(shield && getComputedStyle(shield).color).toBe('rgb(245, 158, 11)')
   })
 
   it('keeps the value when a verification is cancelled', async () => {
@@ -452,7 +452,7 @@ describe('menu rows', () => {
     expect(centre(note?.querySelector('.lucide-lock') ?? null)).toBe(centre(actions?.querySelector('.ui-menu-item-lead') ?? null))
     const danger = screen.getByRole('menuitem', { name: '删除…' }).element()
     expect(getComputedStyle(danger.querySelector('.lucide-trash-2')!).color).toBe(getComputedStyle(danger).color)
-    expect(getComputedStyle(danger).color).toBe('rgb(160, 29, 20)')
+    expect(getComputedStyle(danger).color).toBe('rgb(185, 28, 28)')
   })
 
   it('draws a footer note with the lock unless it is no restriction, which keeps its own glyph in the same slot', async () => {
@@ -482,7 +482,7 @@ describe('menu rows', () => {
     }
   })
 
-  it('turns an action glyph from the icon colour to text-1 while its item is hovered, and keeps a destructive glyph red', async () => {
+  it('turns an action glyph from muted to ink while its item is hovered, and keeps a destructive glyph red', async () => {
     const screen = await render(
       <div className="ui-popover">
         <MenuPanel
@@ -501,12 +501,12 @@ describe('menu rows', () => {
     )
     const rename = screen.getByRole('menuitem', { name: '重命名' })
     const glyph = () => getComputedStyle(rename.element().querySelector('.lucide-pencil')!).color
-    expect(glyph()).toBe('rgb(124, 124, 122)')
+    expect(glyph()).toBe('rgb(113, 113, 122)')
     await userEvent.hover(rename)
     await expect.poll(glyph).toBe(getComputedStyle(document.documentElement).color)
     const danger = screen.getByRole('menuitem', { name: '删除…' })
     await userEvent.hover(danger)
-    expect(getComputedStyle(danger.element().querySelector('.lucide-trash-2')!).color).toBe('rgb(160, 29, 20)')
+    expect(getComputedStyle(danger.element().querySelector('.lucide-trash-2')!).color).toBe('rgb(185, 28, 28)')
   })
 
   it('names a menu by its label and whom it acts on, and describes it with the header meta', async () => {
@@ -672,7 +672,7 @@ describe('on phones', () => {
       const [first, second] = Array.from(screen.container.querySelectorAll('.ui-value-picker'))
       expect(first && getComputedStyle(first, '::before').content).toBe('none')
       const line = getComputedStyle(second ?? document.body, '::before')
-      expect([line.top, line.left, line.height, line.backgroundColor]).toEqual(['0px', '16px', '1px', 'rgba(29, 28, 26, 0.06)'])
+      expect([line.top, line.left, line.height, line.backgroundColor]).toEqual(['0px', '16px', '1px', 'rgb(235, 235, 237)'])
     } finally {
       await page.viewport(1280, 800)
     }

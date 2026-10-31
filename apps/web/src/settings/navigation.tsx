@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronLeft } from 'lucide-react'
-import { IconButton } from '@latch/ui'
+import { IconButton, MOTION } from '@latch/ui'
 import { useBackLayer } from '../hooks/backStack.ts'
 import { BackLink } from './common.tsx'
 
@@ -42,8 +42,8 @@ function LevelEntry({ onBack }: { onBack: () => void }) {
   return null
 }
 
-/** How long a phone page takes to slide away before it is dropped: --d-slow, plus a frame. */
-const LEAVE_MS = 260
+/** How long a phone page takes to slide away before it is dropped: --m-push, plus a frame. */
+const LEAVE_MS = MOTION.push + 20
 
 /**
  * A section's main content and the pages open inside it, the last one on top. Going back to the main content plays the

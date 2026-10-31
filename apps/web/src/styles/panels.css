@@ -21,7 +21,7 @@
   gap: var(--sp-16);
   min-width: 0;
   padding: var(--sp-12);
-  color: var(--text-1);
+  color: var(--ink);
   font-size: var(--fs-ui);
   line-height: var(--lh-ui-para);
 }
@@ -36,19 +36,19 @@
 }
 .plugin-panel-head h2 {
   overflow-wrap: anywhere;
-  font-size: var(--fs-card-title);
-  line-height: var(--lh-card-title);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
   font-weight: 500;
 }
 .plugin-panel-caption {
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
 }
 .plugin-panel-description {
-  color: var(--text-2);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label-para);
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui-para);
 }
 .plugin-panel-content {
   display: grid;
@@ -75,7 +75,7 @@
   gap: var(--sp-12);
 }
 .plugin-panel-content dt {
-  color: var(--text-3);
+  color: var(--muted);
 }
 .plugin-panel-content dd {
   min-width: 0;
@@ -89,11 +89,10 @@
   max-height: 480px;
   overflow: auto;
   padding: var(--sp-12);
-  border: 1px solid var(--line-subtle);
+  border: 1px solid var(--line);
   border-radius: var(--r-6);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-sunken);
-  font-family: var(--font-mono);
+  background: var(--sunken);
+  font-family: var(--mono);
   font-size: var(--fs-code);
   line-height: var(--lh-code);
 }
@@ -104,22 +103,22 @@
 .plugin-panel-table table {
   width: 100%;
   border-collapse: collapse;
-  font-size: var(--fs-label);
-  line-height: var(--lh-label-para);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui-para);
 }
 .plugin-panel-table :is(th, td) {
   padding: var(--sp-6) var(--sp-8);
-  border-bottom: 1px solid var(--line-subtle);
+  border-bottom: 1px solid var(--line);
   text-align: left;
   vertical-align: top;
 }
 .plugin-panel-table th {
-  color: var(--text-2);
+  color: var(--ink-2);
   font-weight: 500;
 }
 
 .info-path[data-unused] {
-  color: var(--text-3);
+  color: var(--muted);
 }
 .info-path-name {
   display: flex;

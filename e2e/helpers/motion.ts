@@ -11,30 +11,59 @@ export interface Motion {
   easing: string
 }
 
-/** The duration and easing tokens of @latch/ui, as the page resolves them. */
+/** The motion tokens of @latch/ui, as the page resolves them: each duration, its exit (70%) and each easing. */
 export interface Tokens {
-  fast: string
-  base: string
-  slow: string
-  ease: string
+  micro: string
+  enter: string
+  panel: string
+  sheet: string
+  push: string
+  microExit: string
+  enterExit: string
+  panelExit: string
+  sheetExit: string
+  pushExit: string
+  eMicro: string
+  eEnter: string
+  ePanel: string
+  eSheet: string
+  ePush: string
   exit: string
 }
 
-/** The duration and easing tokens, resolved through a probe element so they read exactly as computed styles report them. */
+/** The motion tokens, resolved through a probe element so they read exactly as computed styles report them. */
 export const tokens = (page: Page): Promise<Tokens> =>
   page.evaluate(() => {
     const probe = document.createElement('div')
     document.body.append(probe)
-    const read = (duration: string, easing: string) => {
-      probe.style.transition = `opacity var(${duration}) var(${easing})`
-      const style = getComputedStyle(probe)
-      return { duration: style.transitionDuration, easing: style.transitionTimingFunction }
+    const duration = (value: string) => {
+      probe.style.transitionDuration = value
+      return getComputedStyle(probe).transitionDuration
     }
-    const fast = read('--d-fast', '--ease')
-    const base = read('--d-base', '--ease')
-    const slow = read('--d-slow', '--ease-exit')
+    const easing = (token: string) => {
+      probe.style.transitionTimingFunction = `var(${token})`
+      return getComputedStyle(probe).transitionTimingFunction
+    }
+    const result = {
+      micro: duration('var(--m-micro)'),
+      enter: duration('var(--m-enter)'),
+      panel: duration('var(--m-panel)'),
+      sheet: duration('var(--m-sheet)'),
+      push: duration('var(--m-push)'),
+      microExit: duration('calc(var(--m-micro) * 0.7)'),
+      enterExit: duration('calc(var(--m-enter) * 0.7)'),
+      panelExit: duration('calc(var(--m-panel) * 0.7)'),
+      sheetExit: duration('calc(var(--m-sheet) * 0.7)'),
+      pushExit: duration('calc(var(--m-push) * 0.7)'),
+      eMicro: easing('--e-micro'),
+      eEnter: easing('--e-enter'),
+      ePanel: easing('--e-panel'),
+      eSheet: easing('--e-sheet'),
+      ePush: easing('--e-push'),
+      exit: easing('--e-exit'),
+    }
     probe.remove()
-    return { fast: fast.duration, base: base.duration, slow: slow.duration, ease: fast.easing, exit: slow.easing }
+    return result
   })
 
 /** Every transition and animation that starts while `act` runs and for 400ms after it. */

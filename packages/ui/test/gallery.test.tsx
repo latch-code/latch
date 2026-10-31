@@ -14,11 +14,19 @@ const styled = new Set(
 
 describe('gallery of the primitives', () => {
   it('shows every primitive the stylesheets draw', async () => {
-    const screen = await render(<Gallery />)
-    await expect.element(screen.getByRole('main', { name: '@latch/ui' })).toBeVisible()
-    expect(styled.size).toBeGreaterThan(100)
-    // The one-shots of the live indicators replay a frame after the gallery mounts.
-    await expect.poll(() => [...styled].filter(name => document.getElementsByClassName(name).length === 0)).toEqual([])
+    // The gallery's layout holds a few cross-fades halfway, so what leaves in them stays to be seen.
+    const sheet = document.createElement('style')
+    sheet.textContent = `@layer app { ${layout} }`
+    document.head.append(sheet)
+    try {
+      const screen = await render(<Gallery />)
+      await expect.element(screen.getByRole('main', { name: '@latch/ui' })).toBeVisible()
+      expect(styled.size).toBeGreaterThan(100)
+      // The cross-fades of the status vocabulary replay a frame after the gallery mounts.
+      await expect.poll(() => [...styled].filter(name => document.getElementsByClassName(name).length === 0)).toEqual([])
+    } finally {
+      sheet.remove()
+    }
   })
 
   it('names every control it shows', async () => {
@@ -83,28 +91,36 @@ describe('gallery of the primitives', () => {
     }
   })
 
-  it('keeps the accent and turns the surfaces in the dark theme', async () => {
+  it('lifts the accent and turns the surfaces in the dark theme', async () => {
     const screen = await render(<Gallery />)
     const primary = () => getComputedStyle(screen.getByRole('button', { name: '允许一次' }).first().element()).backgroundColor
     const surface = () => getComputedStyle(screen.container.querySelector('.ui-dialog-surface')!).backgroundColor
     expect([primary(), surface()]).toEqual(['rgb(36, 97, 224)', 'rgb(255, 255, 255)'])
     await protocol().send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] })
     try {
-      expect([primary(), surface()]).toEqual(['rgb(36, 97, 224)', 'rgb(37, 36, 35)'])
+      // The button's fill eases over --m-micro when the system flips (a page switches without it, theme.ts).
+      await expect.poll(() => [primary(), surface()]).toEqual(['rgb(47, 111, 235)', 'rgb(24, 24, 27)'])
     } finally {
       await protocol().send('Emulation.setEmulatedMedia', { features: [] })
     }
   })
 
-  it('keeps the spinner turning and drops the movement of layers when motion is reduced', async () => {
+  it('holds the loops still and keeps only short fades when motion is reduced', async () => {
     const screen = await render(<Gallery />)
     await protocol().send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] })
     try {
-      const spinner = screen.container.querySelector('.ui-spinner')!
-      expect(getComputedStyle(spinner).animationDuration).toBe('0.9s')
-      expect(getComputedStyle(spinner).animationIterationCount).toBe('infinite')
-      const thumb = screen.container.querySelector('.ui-segmented-thumb')!
-      expect(getComputedStyle(thumb).transitionDuration).toBe('0.001s')
+      // The spinner and the thinking shimmer stand on their still frames.
+      expect(getComputedStyle(screen.container.querySelector('.ui-spinner')!).animationName).toBe('none')
+      expect(getComputedStyle(screen.container.querySelector('.ui-shimmer')!).animationName).toBe('none')
+      // Transitions keep only fades and colour changes, at 120ms or less; nothing moves or scales.
+      for (const selector of ['.ui-switch-thumb', '.ui-button', '.ui-collapse']) {
+        const style = getComputedStyle(screen.container.querySelector(selector)!)
+        expect(style.transitionProperty, selector).not.toMatch(/translate|transform|scale|grid-template-rows|width/u)
+        expect(
+          style.transitionDuration.split(', ').every(value => parseFloat(value) <= 0.12),
+          selector,
+        ).toBe(true)
+      }
     } finally {
       await protocol().send('Emulation.setEmulatedMedia', { features: [] })
     }

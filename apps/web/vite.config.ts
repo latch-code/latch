@@ -72,7 +72,7 @@ export async function buildOfficeFrame(directory = resolve('dist/web/preview-fra
   const scriptHash = `sha256-${createHash('sha256').update(script).digest('base64')}`
   const tokens = await readFile(fileURLToPath(import.meta.resolve('@latch/ui/tokens.css')), 'utf8')
   const styles =
-    'html,body{margin:0;min-height:100%;background:var(--bg-app);color:var(--text-1);font-family:var(--font-sans)}#document{min-height:100vh;box-sizing:border-box;padding:var(--sp-12)}[data-latch-notes]{font-size:var(--fs-label);line-height:var(--lh-label-para);color:var(--text-1);padding:var(--sp-12);background:var(--bg-pane);position:relative}[data-latch-notes] p{white-space:pre-wrap}section.docx{margin-inline:auto;max-width:100%;box-sizing:border-box}#document[data-fit=false] section.docx{max-width:none}.docx-wrapper{padding:var(--sp-8)!important;background:var(--bg-app)!important}'
+    'html,body{margin:0;min-height:100%;background:var(--sidebar);color:var(--ink);font-family:var(--font)}#document{min-height:100vh;box-sizing:border-box;padding:var(--sp-12)}[data-latch-notes]{font-size:var(--fs-ui);line-height:var(--lh-ui-para);color:var(--ink);padding:var(--sp-12);background:var(--canvas);position:relative}[data-latch-notes] p{white-space:pre-wrap}section.docx{margin-inline:auto;max-width:100%;box-sizing:border-box}#document[data-fit=false] section.docx{max-width:none}.docx-wrapper{padding:var(--sp-8)!important;background:var(--sidebar)!important}'
   await mkdir(directory, { recursive: true })
   await writeFile(
     resolve(directory, 'office.html'),

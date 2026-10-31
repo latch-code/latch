@@ -4,10 +4,9 @@ export { LiveChanges, useLiveChange, useLivePrevious } from './changes.ts'
 export { Checkbox, ChoiceList, Radio, type ChoiceOption } from './choice.tsx'
 export { Dialog, DialogSurface, LayerHistory, Sheet, SheetSurface, type DialogSize, type OpenLayer, type SheetDetent } from './dialog.tsx'
 export { SearchField, TextAreaField, TextField } from './field.tsx'
-export { ICON_STROKE, Icon, Spinner, type IconSize, type LucideIcon } from './icon.tsx'
-export { Comet, StatusGlyph, StatusSlot, StatusWords, WaitingPill, type CometSize, type SlotStatus } from './live.tsx'
+export { ICON_STROKE, Icon, Spinner, type IconSize, type LucideIcon, type SpinnerSize } from './icon.tsx'
 export { DemoMark, DevMark } from './marks.tsx'
-export { Collapse, MOTION, Shimmer, Swap, usePresence } from './motion.tsx'
+export { Collapse, EASING, MOTION, Shimmer, Swap, usePresence } from './motion.tsx'
 export {
   Menu,
   MenuFooterLink,
@@ -32,8 +31,10 @@ export { InlineNotice, Toast, type NoticeTone, type ToastTone } from './notice.t
 export { Badge, Count, Kbd, StatusDot, StatusPill, type CountTone, type Tone } from './pill.tsx'
 export { ResizeHandle, type ResizePhase } from './resize.tsx'
 export { SegmentedControl, type SegmentOption } from './segmented.tsx'
+export { StatusGlyph, StatusSlot, StatusWord, StatusWords, type SlotStatus, type StatusTone } from './status.tsx'
 export { EmptyState, ErrorState, Loading, Skeleton } from './state.tsx'
 export { Switch, SwitchRow } from './switch.tsx'
+export { followSystemTheme, switchTheme } from './theme.ts'
 export { FilterPills, Tabs, type TabOption } from './tabs.tsx'
 export { Tile, type TileArt, type TileMark, type TileSize, type TileState } from './tile.tsx'
 export { TileAction, TileChoice, type TileChoiceOption } from './tile-choice.tsx'

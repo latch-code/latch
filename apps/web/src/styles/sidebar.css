@@ -40,7 +40,7 @@
 }
 
 /*
- * The search is a ghost row: no fill at rest, the hover background at once, the raised well only while it has focus.
+ * The search is a ghost row: no fill at rest, the hover background over --m-micro, the raised field only while it has focus.
  * Its filter pills unfold under it while it is in use or a filter is on (the disclosure's height and fade), so the
  * column stays quiet otherwise.
  */
@@ -56,15 +56,15 @@
   grid-template-rows: 0fr;
   opacity: 0;
   transition:
-    grid-template-rows var(--d-fast) var(--ease-exit),
-    opacity var(--d-fast) var(--ease-exit);
+    grid-template-rows var(--m-micro) var(--e-micro),
+    opacity var(--m-micro) var(--e-micro);
 }
 .sidebar-filters[data-open] {
   grid-template-rows: 1fr;
   opacity: 1;
   transition:
-    grid-template-rows var(--d-base) var(--ease),
-    opacity var(--d-fast) var(--ease) 40ms;
+    grid-template-rows var(--m-panel) var(--e-panel),
+    opacity var(--m-micro) var(--e-micro) 40ms;
 }
 .sidebar-filters-inner {
   min-height: 0;
@@ -88,33 +88,31 @@
   padding: 0 var(--sp-8);
   border: 0;
   border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
   background: transparent;
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
   text-align: left;
-  transition: background-color var(--d-fast) var(--ease-exit);
+  transition: background-color var(--m-micro) var(--e-micro);
 }
 .approvals-row:hover,
 .archived-row:hover {
-  background: var(--bg-hover);
-  transition-duration: 0s;
+  background: var(--hover);
 }
 .approvals-row:active,
 .archived-row:active {
-  background: var(--bg-press);
+  background: var(--press);
 }
 .sidebar-row-icon {
   display: grid;
   place-items: center;
   flex-shrink: 0;
   width: 16px;
-  color: var(--icon);
+  color: var(--muted);
 }
 /* Waiting: one amber mark per row, the count; the icon and the words stay neutral. */
 .approvals-row {
   margin-top: var(--sp-8);
-  color: var(--text-1);
+  color: var(--ink);
   font-weight: 500;
 }
 .approvals-row .ui-count {
@@ -147,7 +145,7 @@
 .archived-row {
   width: 100%;
   margin-top: var(--sp-12);
-  color: var(--text-3);
+  color: var(--muted);
 }
 .archived-count {
   margin-left: auto;
@@ -178,7 +176,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   font-weight: 500;
@@ -188,11 +186,10 @@
   min-width: 0;
   min-height: 0;
   opacity: 0;
-  transition: opacity var(--d-fast) var(--ease-exit);
+  transition: opacity var(--m-micro) var(--e-micro);
 }
 .session-group-head:is(:hover, :focus-within) .session-group-new {
   opacity: 1;
-  transition-duration: 0s;
 }
 /* A single track bounded by the list: a long nowrap title must not size the column. */
 .session-group ul {
@@ -206,8 +203,8 @@
   display: grid;
   grid-template-rows: 1fr;
   transition:
-    grid-template-rows var(--d-fast) var(--ease-exit),
-    opacity var(--d-fast) var(--ease-exit);
+    grid-template-rows var(--m-micro) var(--e-micro),
+    opacity var(--m-micro) var(--e-micro);
 }
 .session-entry[data-leaving] {
   grid-template-rows: 0fr;
@@ -215,10 +212,10 @@
 }
 
 /*
- * Session rows (36): the harness tile (20), the title and the status slot. Titles are text-2, quieter than the reading
+ * Session rows (36): the harness tile (20), the title and the status slot. Titles are ink-2, quieter than the reading
  * column; the selected row is the neutral selection of a list row with a 500 title; an unread row turns its title to
- * text-1 at the same weight. The slot shows one thing (the design system's StatusSlot): waiting, failed, running,
- * unread or the time. The selection changes in 120ms; a hover shows at once and leaves in 120ms.
+ * ink at the same weight. The slot shows one thing (the design system's StatusSlot): waiting, failed, running,
+ * unread or the time. The selection and a hover both fade over --m-micro.
  */
 .session-item {
   position: relative;
@@ -228,22 +225,20 @@
   min-height: 0;
   overflow: hidden;
   border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
-  transition: background-color var(--d-fast) var(--ease);
+  transition: background-color var(--m-micro) var(--e-micro);
 }
 .session-item:hover {
-  background: var(--bg-hover);
-  transition-duration: 0s;
+  background: var(--hover);
 }
 /* The row whose menu is open stays marked while the pointer is in the menu. */
 .session-item:not(.is-selected):has(.session-item-more[aria-expanded='true']) {
-  background: var(--bg-hover);
-  transition-duration: 0s;
+  background: var(--hover);
 }
 .session-item.is-selected {
-  background: var(--bg-selected-solid);
+  background: var(--selected);
+  box-shadow: var(--selected-ring);
   /* The row just clicked is still under the pointer: its selection fades in too. */
-  transition-duration: var(--d-fast);
+  transition-duration: var(--m-micro);
 }
 .session-item-main {
   display: flex;
@@ -255,23 +250,22 @@
   padding: 0 var(--sp-8);
   border: 0;
   border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
   background: transparent;
-  color: var(--text-2);
+  color: var(--ink-2);
   text-align: left;
-  font-size: var(--fs-list-title);
-  line-height: var(--lh-list-title);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
 }
 .session-item-main:focus-visible {
-  outline: none;
-  box-shadow: var(--ring-focus-inset);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 .session-item.is-selected .session-item-main {
-  color: var(--text-1);
+  color: var(--ink);
   font-weight: 500;
 }
 .session-item.is-unread .session-item-main {
-  color: var(--text-1);
+  color: var(--ink);
 }
 .session-title {
   flex: 1;
@@ -284,7 +278,7 @@
 }
 /* The status fades out in 120ms when ⋯ takes its place. */
 .session-status {
-  transition: opacity var(--d-fast) var(--ease-exit);
+  transition: opacity var(--m-micro) var(--e-micro);
 }
 .session-item-more {
   position: absolute;
@@ -335,14 +329,14 @@
 .list-empty {
   padding: var(--sp-32) var(--sp-12);
   text-align: center;
-  color: var(--text-2);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
 }
 .list-empty span {
   display: block;
   margin-top: var(--sp-4);
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
 }
@@ -362,16 +356,16 @@
 }
 .host-icon {
   flex-shrink: 0;
-  color: var(--icon);
+  color: var(--muted);
 }
 .host-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-2);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
   font-weight: 500;
 }
 .sidebar-footer-spacer {
@@ -386,12 +380,12 @@
   height: 16px;
   padding: 0 var(--sp-6);
   border: 0;
-  border-radius: var(--r-pill);
-  background: var(--warn-bg);
-  box-shadow: inset 0 0 0 1px var(--warn-border);
-  color: var(--warn-text);
-  font-size: var(--fs-micro);
-  line-height: var(--lh-micro);
+  border-radius: var(--r-full);
+  background: var(--amber-soft);
+  box-shadow: inset 0 0 0 1px var(--amber-line);
+  color: var(--amber);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
   font-weight: 500;
   white-space: nowrap;
 }
@@ -409,10 +403,10 @@
   padding: 0;
   background: none;
   box-shadow: none;
-  color: var(--text-3);
+  color: var(--muted);
 }
 .connection-badge.connection-connected:hover {
-  color: var(--text-1);
+  color: var(--ink);
 }
 
 .projects-navigation {
@@ -425,7 +419,7 @@
   gap: var(--sp-6);
   min-height: 28px;
   padding: 0 var(--sp-4) 0 var(--sp-8);
-  color: var(--text-2);
+  color: var(--ink-2);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   font-weight: 500;
@@ -440,7 +434,7 @@
 }
 .project-group-heading > .ui-icon {
   flex-shrink: 0;
-  color: var(--icon);
+  color: var(--muted);
 }
 .projects-navigation-empty,
 .project-group-caption {
@@ -448,7 +442,7 @@
   justify-items: start;
   gap: var(--sp-4);
   padding: var(--sp-4) var(--sp-8);
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
   font-weight: 400;
@@ -461,4 +455,13 @@
 }
 .project-inline-name .ui-field {
   min-width: 0;
+}
+
+/* Reduced motion: the filters and a leaving row fade without folding. */
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-filters,
+  .sidebar-filters[data-open],
+  .session-entry {
+    transition: opacity var(--m-micro) var(--e-micro);
+  }
 }

@@ -1,4 +1,5 @@
-import { useLayoutEffect } from 'react'
+import { useEffect, useLayoutEffect } from 'react'
+import { followSystemTheme } from '@latch/ui'
 import { applyTheme, usePreferences } from './preferences.ts'
 import { useHarness } from './core/useHarness.ts'
 import { viewportFor } from './breakpoints.ts'
@@ -16,6 +17,8 @@ export function App() {
   useLayoutEffect(() => {
     applyTheme(preferences.theme)
   }, [preferences.theme])
+  // A flip of the system's light or dark preference switches the colours at once too.
+  useEffect(() => followSystemTheme(), [])
   const page =
     harness.snapshot !== null ? (
       <ErrorBoundary

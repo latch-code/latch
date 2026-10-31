@@ -1,8 +1,9 @@
 /*
- * Buttons. Hover appears at once and fades out over --d-fast; pressing darkens one step and never moves or scales.
- * Sizes: xs 24 (notices, tray rows, inspector), sm 28 (desktop default), md 32 (dialog and panel footers), lg 44
- * (phones). A leading glyph takes 4px off the start padding. A disabled button (aria-disabled, still focusable) is the
- * whole control at 45%; a running one keeps its colours and ignores the pointer.
+ * Buttons. Fills change over --m-micro and a press scales the button to .97 (not one that opens a menu). Sizes: xs 24
+ * (6px corners, 12/16), sm 28 (the desktop default), md 32 (dialog and panel footers), lg 44 (phones, a pill). A
+ * leading glyph takes 4px off the start padding. A disabled button (aria-disabled, still focusable) is the whole
+ * control at 45%; a running one keeps its colours and ignores the pointer. The keyboard ring is drawn inside the edge,
+ * and outside a filled button, where it shows against the surface.
  */
 .ui-button {
   position: relative;
@@ -12,32 +13,34 @@
   gap: var(--sp-6);
   flex-shrink: 0;
   min-height: 28px;
-  padding: 0 var(--sp-12);
+  padding: 0 var(--sp-10);
   border: 0;
   border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
   background: transparent;
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  color: var(--ink);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
   font-weight: 500;
   white-space: nowrap;
   text-decoration: none;
+  user-select: none;
   transition:
-    background-color var(--d-fast) var(--ease-exit),
-    color var(--d-fast) var(--ease-exit);
+    background-color var(--m-micro) var(--e-micro),
+    color var(--m-micro) var(--e-micro),
+    box-shadow var(--m-micro) var(--e-micro),
+    transform var(--m-micro) var(--e-micro);
 }
-.ui-button:hover {
-  transition-duration: 0s;
+.ui-button:active:not([aria-disabled='true'], [aria-busy='true'], [data-menu], [aria-haspopup], [aria-expanded]) {
+  transform: scale(0.97);
 }
 .ui-button[data-leading] {
-  padding-inline-start: var(--sp-8);
+  padding-inline-start: var(--sp-6);
 }
 .ui-button[data-size='xs'] {
   gap: var(--sp-4);
   min-height: 24px;
   padding: 0 var(--sp-8);
   border-radius: var(--r-6);
-  corner-shape: var(--corner-shape);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
@@ -46,22 +49,19 @@
 }
 .ui-button[data-size='md'] {
   min-height: 32px;
-  padding: 0 var(--sp-16);
+  padding: 0 var(--sp-12);
 }
 .ui-button[data-size='md'][data-leading] {
-  padding-inline-start: var(--sp-12);
+  padding-inline-start: var(--sp-8);
 }
 .ui-button[data-size='lg'] {
   gap: var(--sp-8);
   min-height: 44px;
-  padding: 0 var(--sp-16);
-  border-radius: var(--r-12);
-  corner-shape: var(--corner-shape);
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui);
+  padding: 0 var(--sp-20);
+  border-radius: var(--r-full);
 }
 .ui-button[data-size='lg'][data-leading] {
-  padding-inline-start: var(--sp-12);
+  padding-inline-start: var(--sp-16);
 }
 .ui-button[data-block] {
   width: 100%;
@@ -73,71 +73,79 @@
   opacity: 0.45;
 }
 
+/* Primary: the accent with its inner highlight and a tinted drop; the ring sits outside it. */
 .ui-button[data-variant='primary'] {
   background: var(--accent);
   color: var(--on-accent);
+  box-shadow: var(--sh-accent);
 }
 .ui-button[data-variant='primary']:hover:not([aria-disabled='true'], [aria-busy='true']) {
   background: var(--accent-hover);
 }
-.ui-button[data-variant='primary']:active:not([aria-disabled='true'], [aria-busy='true']) {
-  background: var(--accent-press);
+
+/* Secondary: a soft neutral fill without a ring. */
+.ui-button[data-variant='secondary'] {
+  background: var(--hover);
+}
+.ui-button[data-variant='secondary']:hover:not([aria-disabled='true'], [aria-busy='true']) {
+  background: var(--press);
 }
 
-.ui-button:is([data-variant='secondary'], [data-variant='danger']) {
-  background: var(--fill);
-  color: var(--text-1);
+/* Outline (and danger, its red-worded twin): raised with a line-strong ring; hover lays the hover fill over it. */
+.ui-button:is([data-variant='outline'], [data-variant='danger']) {
+  background: var(--raised);
+  box-shadow:
+    inset 0 0 0 1px var(--line-strong),
+    var(--sh-1);
 }
 .ui-button[data-variant='danger'] {
-  color: var(--err-text);
+  color: var(--red);
 }
-.ui-button:is([data-variant='secondary'], [data-variant='danger']):hover:not([aria-disabled='true'], [aria-busy='true']) {
-  background: var(--fill-hover);
-}
-.ui-button:is([data-variant='secondary'], [data-variant='danger']):active:not([aria-disabled='true'], [aria-busy='true']) {
-  background: var(--fill-press);
+.ui-button:is([data-variant='outline'], [data-variant='danger']):hover:not([aria-disabled='true'], [aria-busy='true']) {
+  background: linear-gradient(var(--hover), var(--hover)) var(--raised);
 }
 
-/* Translucent ink turns muddy over amber or red, so a secondary button inside a tint is raised white instead. */
+/* Translucent ink turns muddy over amber or red, so a secondary button inside a tint is outlined instead. */
 :is([data-tint='warn'], [data-tint='err']) .ui-button[data-variant='secondary'] {
-  background: var(--bg-raised);
-  box-shadow: var(--sh-raised);
+  background: var(--raised);
+  box-shadow:
+    inset 0 0 0 1px var(--line-strong),
+    var(--sh-1);
 }
 :is([data-tint='warn'], [data-tint='err']) .ui-button[data-variant='secondary']:hover:not([aria-disabled='true'], [aria-busy='true']) {
-  background: linear-gradient(var(--bg-hover), var(--bg-hover)) var(--bg-raised);
-}
-:is([data-tint='warn'], [data-tint='err']) .ui-button[data-variant='secondary']:active:not([aria-disabled='true'], [aria-busy='true']) {
-  background: linear-gradient(var(--bg-press), var(--bg-press)) var(--bg-raised);
-  box-shadow: 0 0 0 1px var(--line);
+  background: linear-gradient(var(--hover), var(--hover)) var(--raised);
 }
 
+/* Ghost: no fill until hovered, ink-2 words that turn ink. */
 .ui-button[data-variant='ghost'] {
-  color: var(--text-2);
+  color: var(--ink-2);
 }
 .ui-button[data-variant='ghost']:hover:not([aria-disabled='true'], [aria-busy='true']) {
-  background: var(--bg-hover);
-  color: var(--text-1);
+  background: var(--hover);
+  color: var(--ink);
 }
 .ui-button[data-variant='ghost']:active:not([aria-disabled='true'], [aria-busy='true']) {
-  background: var(--bg-press);
+  background: var(--press);
 }
 
-/* A link goes to another page or place; it has no fill and underlines on hover. */
+/* A link goes to another page or place: accent-ink words, a dotted rule on hover. */
 .ui-button[data-variant='link'] {
   min-height: 28px;
   padding: 0 var(--sp-2);
-  color: var(--accent-text);
+  color: var(--accent-ink);
 }
 .ui-button[data-variant='link']:hover:not([aria-disabled='true']) {
-  color: var(--accent-text-hover);
-  text-decoration: underline;
+  text-decoration: underline dotted;
   text-underline-offset: 3px;
 }
 
 /* The destructive confirmation inside a confirmation dialog: the only solid red. */
 .ui-button[data-variant='destroy'] {
-  background: var(--err-solid);
+  background: var(--red-solid);
   color: var(--on-accent);
+}
+.ui-button:is([data-variant='primary'], [data-variant='destroy']):focus-visible {
+  outline-offset: 2px;
 }
 
 .ui-button > .ui-spinner {
@@ -154,15 +162,16 @@
 }
 
 /*
- * Icon buttons: squares of 24, 28, 32 and 44 with the corners of the same button size; the composer's are circles.
- * The face (the hover, press and on fills, and the keyboard focus ring) is drawn by ::before at the button's own size
- * and centred, so it looks the same on every screen. On touch screens the box grows to 44×44 around it: neighbours in
- * a toolbar or rail are laid out 44 apart and their targets never overlap. Where a dense row keeps a smaller box, the
- * transparent ::after still reaches 44×44 around the face.
+ * Icon buttons: squares of 24 and 28 with 6px corners, 32 with 8, and a 44 circle on phones; the composer's are
+ * circles. Muted glyphs (14 at 24, 16 at 28 and 32, 20 at 44) turn ink on hover. The face (the hover, press and on
+ * fills, and the keyboard ring) is drawn by ::before at the button's own size and centred, so it looks the same on
+ * every screen. On touch screens the box grows to 44×44 around it: neighbours in a toolbar or rail are laid out 44
+ * apart and their targets never overlap. Where a dense row keeps a smaller box, the transparent ::after still reaches
+ * 44×44 around the face.
  */
 .ui-icon-button {
   --icon-button-size: 28px;
-  --icon-button-radius: var(--r-8);
+  --icon-button-radius: var(--r-6);
   position: relative;
   isolation: isolate;
   display: inline-grid;
@@ -173,8 +182,8 @@
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--icon);
-  transition: color var(--d-fast) var(--ease-exit);
+  color: var(--muted);
+  transition: color var(--m-micro) var(--e-micro);
 }
 .ui-icon-button::before {
   content: '';
@@ -185,50 +194,44 @@
   width: var(--icon-button-size);
   height: var(--icon-button-size);
   border-radius: var(--icon-button-radius);
-  corner-shape: var(--corner-shape);
-  transition: background-color var(--d-fast) var(--ease-exit);
+  transition: background-color var(--m-micro) var(--e-micro);
 }
 .ui-icon-button[data-size='xs'] {
   --icon-button-size: 24px;
-  --icon-button-radius: var(--r-6);
 }
 .ui-icon-button[data-size='md'] {
   --icon-button-size: 32px;
+  --icon-button-radius: var(--r-8);
 }
 .ui-icon-button[data-size='lg'] {
   --icon-button-size: 44px;
-  --icon-button-radius: var(--r-12);
+  --icon-button-radius: var(--r-full);
 }
 .ui-icon-button[data-round] {
-  --icon-button-radius: var(--r-pill);
-}
-.ui-icon-button[data-round]::before {
-  corner-shape: round;
+  --icon-button-radius: var(--r-full);
 }
 .ui-icon-button:hover:not([aria-disabled='true']) {
-  color: var(--text-1);
-  transition-duration: 0s;
+  color: var(--ink);
 }
 .ui-icon-button:hover:not([aria-disabled='true'])::before {
-  background-color: var(--bg-hover);
-  transition-duration: 0s;
+  background-color: var(--hover);
 }
 .ui-icon-button:active:not([aria-disabled='true'])::before {
-  background-color: var(--bg-press);
+  background-color: var(--press);
 }
-/* A toggle that is on, or a trigger whose menu is open: a neutral press, never blue. */
+/* A toggle that is on, or a trigger whose menu is open: the hover fill with ink, never blue. */
 .ui-icon-button:is([aria-pressed='true'], [aria-expanded='true']) {
-  color: var(--text-1);
+  color: var(--ink);
 }
 .ui-icon-button:is([aria-pressed='true'], [aria-expanded='true'])::before {
-  background-color: var(--bg-press);
+  background-color: var(--hover);
 }
 .ui-icon-button:focus-visible {
   outline: none;
 }
 .ui-icon-button:focus-visible::before {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 .ui-icon-button[aria-disabled='true'] {
   opacity: 0.45;
@@ -243,7 +246,10 @@
   top: calc(50% - var(--icon-button-size) / 2 - var(--sp-4));
   right: calc(50% - var(--icon-button-size) / 2 - var(--sp-4));
   display: flex;
-  border-radius: var(--r-pill);
+  min-width: 16px;
+  justify-content: center;
+  padding: 0 var(--sp-4);
+  border-radius: var(--r-full);
   background: var(--surface);
   box-shadow: 0 0 0 2px var(--surface);
 }
@@ -259,5 +265,18 @@
     left: calc(50% - 22px);
     width: 44px;
     height: 44px;
+  }
+}
+
+/* Reduced motion: a press does not scale; the fills still change. */
+@media (prefers-reduced-motion: reduce) {
+  .ui-button {
+    transition:
+      background-color var(--m-micro) var(--e-micro),
+      color var(--m-micro) var(--e-micro),
+      box-shadow var(--m-micro) var(--e-micro);
+  }
+  .ui-button:active:not([aria-disabled='true'], [aria-busy='true'], [data-menu], [aria-haspopup], [aria-expanded]) {
+    transform: none;
   }
 }

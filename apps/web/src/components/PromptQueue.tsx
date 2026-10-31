@@ -46,7 +46,7 @@ function QueueRows({
     .join(',')
   useEffect(() => {
     if (!leaving) return undefined
-    const timer = setTimeout(() => setRows(current => current.filter(row => row.open)), MOTION.baseExit)
+    const timer = setTimeout(() => setRows(current => current.filter(row => row.open)), MOTION.panelExit)
     return () => clearTimeout(timer)
   }, [leaving])
   return (

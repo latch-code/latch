@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import { EASING, MOTION } from '@latch/ui'
 
-const EASE = 'cubic-bezier(0.2, 0, 0, 1)'
-/** How long a leaving row takes to fold away (the stylesheet's fast duration, plus a frame). */
-const LEAVE_MS = 140
+/** How long a leaving row takes to fold away (--m-micro in the stylesheets, plus a frame). */
+const LEAVE_MS = MOTION.micro + 20
 
 const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
 
 /**
- * Motion for a list the Host reorders: a row that moves slides from where it was (180ms) and a row that arrives fades
- * in while the rows it pushes slide down. Each `[data-flip-id]` element is measured against its scope (the nearest
+ * Motion for a list the Host reorders: a row that moves slides from where it was and a row that arrives fades in while
+ * the rows it pushes slide down, both over --m-enter. Each `[data-flip-id]` element is measured against its scope (the nearest
  * `[data-flip-scope]` above it, else the list), so a row that moves with its group does not slide twice. Measures again
  * whenever `signature` (the rendered order) changes. A change of `context` (a new filter or search) and the first render
  * only measure: the list is redrawn, not moved. Rows never move while reduced motion is on.
@@ -40,15 +40,18 @@ function measureRows(container: HTMLElement | null, previous: Map<string, number
     tops.set(id, top)
     if (previous === null) continue
     const before = previous.get(id)
-    if (before === undefined) element.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: EASE })
+    if (before === undefined) element.animate([{ opacity: 0 }, { opacity: 1 }], { duration: MOTION.enter, easing: EASING.enter })
     else if (Math.abs(before - top) >= 1)
-      element.animate([{ transform: `translateY(${before - top}px)` }, { transform: 'none' }], { duration: 180, easing: EASE })
+      element.animate([{ transform: `translateY(${before - top}px)` }, { transform: 'none' }], {
+        duration: MOTION.enter,
+        easing: EASING.enter,
+      })
   }
   return tops
 }
 
 /**
- * Keeps items that left the list for one fold (140ms) at the place they had, marked `leaving`, so the list can fold
+ * Keeps items that left the list for one fold (--m-micro) at the place they had, marked `leaving`, so the list can fold
  * them away instead of dropping them; `settled` runs once they are gone. When `context` changed (a filter or search)
  * they go at once.
  */

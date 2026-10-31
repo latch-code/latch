@@ -12,34 +12,33 @@
   padding: 0 var(--sp-6) 0 var(--sp-4);
   border: 0;
   border-radius: var(--r-4);
-  corner-shape: var(--corner-shape);
-  background: var(--fill);
-  color: var(--text-1);
+  background: var(--hover);
+  color: var(--ink);
   font: inherit;
-  font-size: var(--fs-mono);
-  line-height: var(--lh-mono);
+  font-size: var(--fs-code);
+  line-height: var(--lh-code);
   text-align: start;
   vertical-align: text-bottom;
   cursor: pointer;
 }
 .file-chip:hover {
-  background: var(--fill-hover);
+  background: var(--press);
 }
 .file-chip:active,
 .file-chip[aria-expanded='true'] {
-  background: var(--fill-press);
+  background: var(--press);
 }
 .file-chip-icon {
   flex: none;
   display: inline-flex;
-  color: var(--icon);
+  color: var(--muted);
 }
 .file-chip:hover .file-chip-icon {
-  color: var(--text-1);
+  color: var(--ink);
 }
 .file-chip-prefix {
   flex: none;
-  color: var(--text-2);
+  color: var(--ink-2);
 }
 /* The full path is in the tooltip and in what the chip copies; the chip keeps to the line's width. */
 .file-chip-text {
@@ -49,7 +48,7 @@
   white-space: nowrap;
 }
 :is(.file-chip-text, .file-chip-meta)[data-mono] {
-  font-family: var(--font-mono);
+  font-family: var(--mono);
 }
 /* A path gives way in its folders: they end in an ellipsis and the file name, the part that tells files apart, stays. */
 .file-chip-path {
@@ -72,12 +71,12 @@
   flex: 0 0 auto;
   max-width: 60%;
   overflow: hidden;
-  color: var(--text-3);
+  color: var(--muted);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .file-chip-tip-path {
-  font-family: var(--font-mono);
+  font-family: var(--mono);
   overflow-wrap: anywhere;
 }
 /* The files a finished tool read or wrote, at the top of its opened card. */

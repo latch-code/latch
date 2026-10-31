@@ -27,7 +27,7 @@ function PhonePairing({ phone }: { phone: boolean }) {
     if (invitation === null) return undefined
     let active = true
     // Dark modules on white in both themes: scanners need the contrast.
-    void pairingQr(invitation.url, { width: 400, margin: 1, color: { dark: '#1d1c1a', light: '#ffffff' } })
+    void pairingQr(invitation.url, { width: 400, margin: 1, color: { dark: '#18181b', light: '#ffffff' } })
       .then(value => {
         if (active) setQr(value)
       })

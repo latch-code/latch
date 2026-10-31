@@ -386,8 +386,8 @@ describe('streamed messages in the real workspace', () => {
       const tokens = await page.evaluate(() => {
         const probe = document.createElement('div')
         document.body.append(probe)
-        probe.style.transitionDuration = 'var(--d-fast)'
-        probe.style.transitionTimingFunction = 'var(--ease)'
+        probe.style.transitionDuration = 'var(--m-micro)'
+        probe.style.transitionTimingFunction = 'var(--e-micro)'
         const style = getComputedStyle(probe)
         const value = `${style.transitionDuration} ${style.transitionTimingFunction}`
         probe.remove()
@@ -401,7 +401,7 @@ describe('streamed messages in the real workspace', () => {
       await page.waitForTimeout(200)
       expect(await runs()).toEqual([])
       expect(await height()).toBe(resting)
-      // Two more lines than it holds: the height follows over 120ms on the entry curve.
+      // Two more lines than it holds: the height follows over --m-micro.
       await input.fill('一\n二\n三\n四\n五')
       await expect.poll(runs).toEqual([tokens])
       await expect.poll(height).toBeGreaterThan(resting + 40)
@@ -410,8 +410,8 @@ describe('streamed messages in the real workspace', () => {
       const grown = await height()
       await input.fill('一\n二\n三\n四\n五\n六')
       await expect.poll(height).toBeGreaterThan(grown)
-      // The shared reduced-motion rule keeps transitions at 1ms so their completion events still fire.
-      for (const run of (await runs()).slice(1)) expect(parseFloat(run) * 1000).toBeLessThanOrEqual(1)
+      // The shared reduced-motion rule keeps only fades, so the height starts no transition at all.
+      expect(await runs()).toEqual([tokens])
     } finally {
       await context.close()
     }

@@ -7,16 +7,17 @@ import { Tooltip } from './tooltip.tsx'
 
 /**
  * primary: the one blue action of a card, dialog or page, only for something that executes or creates.
- * secondary: a neutral fill with no ring or shadow; inside an amber or red tint (`data-tint` on the container) it is
- * raised white instead. ghost: no fill until hovered, for toolbars, row ends and quiet actions such as 重置.
- * link: accent text, only for going to another page or place. danger: an action with consequences on a page, a
- * secondary button with red text. destroy: the solid red confirmation, only inside a confirmation dialog.
+ * secondary: a soft neutral fill with no ring; inside an amber or red tint (`data-tint` on the container) it is
+ * outlined instead. outline: raised with a line-strong ring, the quiet partner of a primary (拒绝 beside 允许).
+ * ghost: no fill until hovered, for toolbars, row ends and quiet actions such as 重置. link: accent text, only for
+ * going to another page or place. danger: an action with consequences on a page, an outline button with red words.
+ * destroy: the solid red confirmation, only inside a confirmation dialog.
  */
-export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'link' | 'danger' | 'destroy'
+export type ButtonVariant = 'primary' | 'secondary' | 'outline' | 'ghost' | 'link' | 'danger' | 'destroy'
 /** xs 24 (notices, tray rows, inspector), sm 28 (the desktop default), md 32 (dialog and panel footers), lg 44 (phones). */
 export type ButtonSize = 'xs' | 'sm' | 'md' | 'lg'
 
-const GLYPH: Record<ButtonSize, Exclude<IconSize, 24>> = { xs: 12, sm: 14, md: 16, lg: 20 }
+const GLYPH: Record<ButtonSize, Exclude<IconSize, 24>> = { xs: 12, sm: 14, md: 14, lg: 20 }
 
 type ButtonProps = Omit<ComponentProps<'button'>, 'disabled'> & {
   variant?: ButtonVariant
@@ -48,9 +49,9 @@ function guard(inactive: boolean, onClick: ((event: MouseEvent<HTMLButtonElement
 }
 
 /**
- * A text button. Pressing darkens it one step and never moves it. Keep to two visible buttons per card, dialog footer
- * or panel header (the secondary first, the primary last); a third action goes into a ⋯ menu. Keyboard shortcuts go
- * in the tooltip, never inside the button.
+ * A text button. Pressing scales it to .97 for a moment (not a button that opens a menu). Keep to two visible buttons
+ * per card, dialog footer or panel header (the quieter one first, the primary last); a third action goes into a ⋯
+ * menu. Keyboard shortcuts go in the tooltip, never inside the button.
  */
 export function Button({
   variant = 'secondary',
@@ -94,6 +95,7 @@ export function Button({
       data-size={size}
       data-leading={lead ? '' : undefined}
       data-block={block ? '' : undefined}
+      data-menu={menu ? '' : undefined}
       // A running button is busy, not disabled: it keeps its colours (the primary its blue) even when the caller also
       // disables it for the duration, and it still takes no clicks.
       aria-disabled={(disabled && !loading) || undefined}
@@ -133,16 +135,16 @@ export function ButtonLink({
   )
 }
 
-/** Square icon buttons: 24, 28, 32 and 44, with 12, 16, 16 and 20 glyphs. */
+/** Square icon buttons: 24, 28, 32 and a 44 circle, with 14, 16, 16 and 20 glyphs. */
 export type IconButtonSize = ButtonSize
-const ICON_GLYPH: Record<IconButtonSize, IconSize> = { xs: 12, sm: 16, md: 16, lg: 20 }
+const ICON_GLYPH: Record<IconButtonSize, IconSize> = { xs: 14, sm: 16, md: 16, lg: 20 }
 
 type IconButtonProps = Omit<ComponentProps<'button'>, 'children' | 'disabled'> & {
   /** The accessible name and the tooltip. */
   label: string
   icon: LucideIcon
   size?: IconButtonSize
-  /** A toggle: on is a neutral press (bg-press, text-1), never blue. */
+  /** A toggle: on is the hover fill with ink, never blue. */
   pressed?: boolean
   /** A circle, for the composer's send and stop. */
   round?: boolean

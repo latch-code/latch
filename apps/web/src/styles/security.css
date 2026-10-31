@@ -25,14 +25,14 @@
   justify-items: start;
   gap: var(--sp-6);
 }
-.inspector-permission > .ui-status-pill + .ui-status-pill {
+.inspector-permission > .ui-status-word + .ui-status-word {
   margin-top: -2px;
 }
 .inspector-facts {
   list-style: none;
   display: grid;
   gap: var(--sp-2);
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
 }
@@ -47,37 +47,42 @@
 .tool-card[data-secure] {
   display: block !important;
   opacity: 1 !important;
-  border-color: var(--line-subtle) !important;
-  background: var(--bg-sunken) !important;
-  color: var(--text-1) !important;
-  font-size: var(--fs-label) !important;
-  line-height: var(--lh-label-para) !important;
+  border-color: var(--line) !important;
+  background: var(--sunken) !important;
+  color: var(--ink) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui-para) !important;
 }
+/* The tint lies on an opaque surface, so nothing behind the card can show through its words. Quiet lines take ink-2:
+ * muted falls under 4.5:1 on this ground. */
 .tool-card[data-secure].is-r2 {
-  border-color: var(--err-border) !important;
-  background: var(--err-bg) !important;
+  border-color: var(--red-line) !important;
+  background: linear-gradient(var(--red-soft), var(--red-soft)) var(--canvas) !important;
+}
+.tool-card[data-secure].is-r2 :is(.tool-card-name, .approval-meta, .approval-footnote, .approval-keys) {
+  color: var(--ink-2) !important;
 }
 .tool-card.has-approval .tool-card-header,
 .tool-card.has-approval .tool-card-header:hover {
   display: flex !important;
   background: transparent !important;
-  color: var(--text-1) !important;
-  font-size: var(--fs-label) !important;
-  line-height: var(--lh-label) !important;
+  color: var(--ink) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui) !important;
 }
 .tool-card.has-approval .tool-card-title {
   display: block !important;
-  color: var(--text-1) !important;
-  font-size: var(--fs-card-title) !important;
-  line-height: var(--lh-card-title) !important;
+  color: var(--ink) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui) !important;
   font-weight: 600 !important;
 }
 .tool-card.has-approval .tool-card-name {
   display: block !important;
-  color: var(--text-3) !important;
-  font-family: var(--font-mono) !important;
-  font-size: var(--fs-mono-sm) !important;
-  line-height: var(--lh-mono-sm) !important;
+  color: var(--muted) !important;
+  font-family: var(--mono) !important;
+  font-size: var(--fs-mono) !important;
+  line-height: var(--lh-mono) !important;
 }
 .tool-card.has-approval .tool-card-state {
   display: inline-flex !important;
@@ -87,8 +92,8 @@
   display: grid !important;
   grid-template-rows: 1fr;
   transition:
-    grid-template-rows var(--d-base) var(--ease-exit),
-    opacity var(--d-fast) var(--ease-exit);
+    grid-template-rows calc(var(--m-panel) * 0.7) var(--e-exit),
+    opacity calc(var(--m-micro) * 0.7) var(--e-exit);
 }
 .approval-slot:not([data-leaving]) {
   grid-template-rows: 1fr !important;
@@ -101,7 +106,7 @@
 /* It arrives by fading in, never by growing: the transcript keeps the reading position it was given. */
 @media (prefers-reduced-motion: no-preference) {
   .approval-slot:not([data-leaving]) {
-    transition: opacity var(--d-base) var(--ease);
+    transition: opacity var(--m-enter) var(--e-enter);
   }
   @starting-style {
     [data-secure] > .approval-slot:not([data-leaving]) {
@@ -119,9 +124,9 @@
   display: grid !important;
   padding: 0 var(--sp-4) var(--sp-4);
   opacity: 1 !important;
-  color: var(--text-1) !important;
-  font-size: var(--fs-label) !important;
-  line-height: var(--lh-label-para) !important;
+  color: var(--ink) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui-para) !important;
 }
 .approval-notes {
   display: grid !important;
@@ -130,26 +135,26 @@
 }
 .approval-reason {
   display: block !important;
-  color: var(--text-2) !important;
-  font-size: var(--fs-label) !important;
-  line-height: var(--lh-label-para) !important;
+  color: var(--ink-2) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui-para) !important;
 }
 .approval-meta {
   display: block !important;
-  color: var(--text-3) !important;
-  font-size: var(--fs-meta) !important;
-  line-height: var(--lh-meta) !important;
+  color: var(--muted) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption) !important;
 }
 /* The tone carries the note, so it stays caption-sized and regular beside the reason. */
 .approval-note,
 .approval-warning {
   display: block !important;
-  color: var(--warn-text) !important;
+  color: var(--amber) !important;
   font-size: var(--fs-caption) !important;
   line-height: var(--lh-caption-para) !important;
 }
 .tool-card.is-r2 .approval-warning {
-  color: var(--err-text) !important;
+  color: var(--red) !important;
 }
 .approval-toggle {
   display: inline-flex !important;
@@ -160,40 +165,38 @@
   padding: 0 var(--sp-8);
   border: 0;
   border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
   background: transparent !important;
-  color: var(--text-2) !important;
-  font-size: var(--fs-label) !important;
-  line-height: var(--lh-label) !important;
+  color: var(--ink-2) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui) !important;
   transition:
-    background-color var(--d-fast) var(--ease-exit),
-    color var(--d-fast) var(--ease-exit);
+    background-color var(--m-micro) var(--e-micro),
+    color var(--m-micro) var(--e-micro);
 }
 .approval-toggle:hover {
-  background: var(--bg-hover) !important;
-  color: var(--text-1) !important;
-  transition-duration: 0s;
+  background: var(--hover) !important;
+  color: var(--ink) !important;
 }
 .approval-toggle .chevron {
   flex-shrink: 0;
-  color: var(--icon);
-  transition: transform var(--d-base) var(--ease);
+  color: var(--muted);
+  transition: transform var(--m-panel) var(--e-panel);
 }
 .approval-toggle[aria-expanded='true'] .chevron {
   transform: rotate(90deg);
 }
 /*
- * The preview folds by its height; the head stays where it is and the paper grows down (180ms). Folding is quicker
- * (120ms, exit curve), its content fading as it closes.
+ * The preview folds by its height like any disclosure; the head stays where it is and the card grows down over
+ * --m-panel with its content fading in. Folding takes 70% of that on the exit curve, its content fading as it closes.
  */
 .approval-preview {
   display: grid !important;
   grid-template-rows: 0fr;
-  transition: grid-template-rows var(--d-fast) var(--ease-exit);
+  transition: grid-template-rows calc(var(--m-panel) * 0.7) var(--e-exit);
 }
 .approval-preview[data-open] {
   grid-template-rows: 1fr !important;
-  transition: grid-template-rows var(--d-base) var(--ease);
+  transition: grid-template-rows var(--m-panel) var(--e-panel);
 }
 .approval-preview-inner {
   display: grid !important;
@@ -202,50 +205,49 @@
   overflow: clip;
   overflow-clip-margin: var(--sp-6);
   opacity: 0;
-  transition: opacity var(--d-fast) var(--ease-exit);
+  transition: opacity calc(var(--m-panel) * 0.7) var(--e-exit);
 }
 .approval-preview[data-open] > .approval-preview-inner {
   padding-top: var(--sp-4);
   opacity: 1 !important;
-  transition: opacity var(--d-fast) var(--ease) 40ms;
+  transition: opacity var(--m-panel) var(--e-panel);
 }
 /* What the approval would do, on paper inside the tray. */
 .approval-preview .argument-list,
 .approval-preview .tool-pre,
 .approval-preview .muted-line {
   padding: var(--sp-8) var(--sp-12);
-  border: 1px solid var(--line-subtle);
+  border: 1px solid var(--line);
   border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-pane) !important;
+  background: var(--canvas) !important;
 }
 .approval-preview .argument-list {
   display: grid !important;
 }
 .approval-preview :is(.argument-list dt, .muted-line) {
   display: block !important;
-  color: var(--text-3) !important;
+  color: var(--muted) !important;
 }
 .approval-preview .argument-list dt {
-  font-family: var(--font-mono) !important;
-  font-size: var(--fs-mono-sm) !important;
-  line-height: var(--lh-mono-sm) !important;
+  font-family: var(--mono) !important;
+  font-size: var(--fs-mono) !important;
+  line-height: var(--lh-mono) !important;
 }
 .approval-preview :is(.argument-list dd pre, .tool-pre) {
   display: block !important;
-  color: var(--text-1) !important;
-  font-family: var(--font-mono) !important;
+  color: var(--ink) !important;
+  font-family: var(--mono) !important;
   font-size: var(--fs-code) !important;
   line-height: var(--lh-code) !important;
 }
 .approval-preview .muted-line {
-  font-size: var(--fs-label) !important;
-  line-height: var(--lh-label) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui) !important;
 }
 /* The diff under review: its file, every line and its signs keep their colours and type. */
 .approval-preview .diff-file {
   display: block !important;
-  background: var(--bg-pane) !important;
+  background: var(--canvas) !important;
 }
 /* One sheet, so the first rows and the fold bar stay within 240. */
 .approval-preview .diff-file[data-open] {
@@ -257,10 +259,10 @@
 /* The file name leads and its folder follows, quieter, as in every diff. */
 .approval-preview .diff-path {
   display: inline-flex !important;
-  color: var(--text-1) !important;
-  font-family: var(--font-mono) !important;
-  font-size: var(--fs-mono-sm) !important;
-  line-height: var(--lh-mono-sm) !important;
+  color: var(--ink) !important;
+  font-family: var(--mono) !important;
+  font-size: var(--fs-mono) !important;
+  line-height: var(--lh-mono) !important;
 }
 .approval-preview :is(.diff-path-name, .diff-path-folder) {
   display: block !important;
@@ -269,37 +271,37 @@
   line-height: inherit !important;
 }
 .approval-preview .diff-path-name {
-  color: var(--text-1) !important;
+  color: var(--ink) !important;
 }
 .approval-preview .diff-path-folder {
-  color: var(--text-3) !important;
+  color: var(--muted) !important;
 }
 .approval-preview .diff-file-header {
-  background: var(--bg-sunken) !important;
-  color: var(--text-2) !important;
+  background: var(--sunken) !important;
+  color: var(--ink-2) !important;
   font-size: var(--fs-caption) !important;
   line-height: var(--lh-caption) !important;
 }
 .approval-preview .diff-stat {
-  font-family: var(--font-mono) !important;
-  font-size: var(--fs-mono-sm) !important;
-  line-height: var(--lh-mono-sm) !important;
+  font-family: var(--mono) !important;
+  font-size: var(--fs-mono) !important;
+  line-height: var(--lh-mono) !important;
 }
 .approval-preview :is(.diff-hunk-header, .diff-ln, .diff-sign) {
-  color: var(--text-3) !important;
+  color: var(--muted) !important;
 }
 .approval-preview .diff-hunk-header {
-  background: var(--bg-sunken) !important;
+  background: var(--sunken) !important;
 }
 .approval-preview .diff-body {
   display: block !important;
-  font-family: var(--font-mono) !important;
+  font-family: var(--mono) !important;
   font-size: var(--fs-code) !important;
   line-height: var(--lh-code) !important;
 }
 .approval-preview .diff-line {
   display: grid !important;
-  color: var(--text-1) !important;
+  color: var(--ink) !important;
 }
 /* Every cell of a line reads at the line's code size and in its font. */
 .approval-preview :is(.diff-table, .diff-hunk, .diff-hunk-header, .diff-line, .diff-ln, .diff-sign, .diff-text) {
@@ -308,49 +310,49 @@
   line-height: inherit !important;
 }
 .approval-preview .diff-add {
-  background: var(--diff-add-bg) !important;
+  background: var(--diff-add) !important;
 }
 .approval-preview .diff-remove {
-  background: var(--diff-del-bg) !important;
+  background: var(--diff-del) !important;
 }
 .approval-preview .diff-text {
-  color: var(--text-1) !important;
+  color: var(--ink) !important;
 }
 .approval-preview .diff-add .diff-sign {
-  color: var(--ok-text) !important;
+  color: var(--green) !important;
 }
 .approval-preview .diff-remove .diff-sign {
-  color: var(--err-text) !important;
+  color: var(--red) !important;
 }
 .approval-preview .diff-fold {
   display: block !important;
   background: transparent !important;
-  color: var(--text-3) !important;
-  font-family: var(--font-sans) !important;
+  color: var(--muted) !important;
+  font-family: var(--font) !important;
   font-size: var(--fs-caption) !important;
   line-height: var(--lh-caption) !important;
 }
 .approval-preview .diff-fold:hover {
-  background: var(--bg-hover) !important;
-  color: var(--text-1) !important;
+  background: var(--hover) !important;
+  color: var(--ink) !important;
 }
 .approval-preview .diff-note {
   display: block !important;
-  background: var(--warn-bg) !important;
-  color: var(--warn-text) !important;
-  font-family: var(--font-sans) !important;
+  background: var(--amber-soft) !important;
+  color: var(--amber) !important;
+  font-family: var(--font) !important;
 }
 /* A control, bidirectional or zero-width character, shown as \u{XXXX}. */
 [data-secure] .hidden-char {
   display: inline !important;
-  background: var(--warn-bg) !important;
-  color: var(--warn-text) !important;
-  font-family: var(--font-mono) !important;
+  background: var(--amber-soft) !important;
+  color: var(--amber) !important;
+  font-family: var(--mono) !important;
 }
 .approval-footnote {
   display: block !important;
   padding: var(--sp-8) var(--sp-8) 0;
-  color: var(--text-3) !important;
+  color: var(--muted) !important;
   font-size: var(--fs-caption) !important;
   line-height: var(--lh-caption-para) !important;
 }
@@ -383,14 +385,14 @@
   align-items: flex-start;
   gap: var(--sp-6);
   min-width: 0;
-  color: var(--text-2) !important;
+  color: var(--ink-2) !important;
   font-size: var(--fs-caption) !important;
   line-height: var(--lh-caption-para) !important;
 }
 .approval-hint > svg {
   flex-shrink: 0;
   margin-top: var(--sp-2);
-  color: var(--icon);
+  color: var(--muted);
 }
 /* The shortcuts, shown only while the card holds focus. */
 .approval-keys {
@@ -398,16 +400,16 @@
   align-items: center;
   gap: var(--sp-4);
   min-width: 0;
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   white-space: nowrap;
   opacity: 0;
-  transition: opacity var(--d-fast) var(--ease-exit);
+  transition: opacity var(--m-micro) var(--e-micro);
 }
 .approval-panel:focus-within .approval-keys {
   opacity: 1;
-  transition-timing-function: var(--ease);
+  transition-timing-function: var(--e-micro);
 }
 @media (max-width: 767.98px) {
   .approval-toggle {
@@ -420,8 +422,8 @@
   }
   .approval-hint,
   .approval-footnote {
-    font-size: var(--fs-meta) !important;
-    line-height: var(--lh-meta-para) !important;
+    font-size: var(--fs-caption) !important;
+    line-height: var(--lh-caption-para) !important;
   }
   .approval-buttons {
     display: grid !important;
@@ -438,7 +440,7 @@
 .composer:has(> .composer-readonly, > .composer-row > .composer-readonly),
 .composer:has(> .composer-readonly, > .composer-row > .composer-readonly):focus-within {
   border: 1px dashed var(--line-strong);
-  background: var(--bg-sunken);
+  background: var(--sunken);
 }
 .composer:has(> .composer-readonly)::before,
 .composer:has(> .composer-readonly)::after {
@@ -449,14 +451,14 @@
   align-items: flex-start;
   gap: var(--sp-8);
   padding: var(--sp-12) var(--sp-16) var(--sp-4);
-  color: var(--text-2);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label-para);
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui-para);
 }
 .composer-readonly > svg {
   flex-shrink: 0;
   margin-top: 3px;
-  color: var(--icon);
+  color: var(--muted);
 }
 /* The full-access caption under a new session's input: its shield on the toolbar's first glyph (8 plus a picker's 6). */
 .composer-notice {
@@ -464,7 +466,7 @@
   align-items: flex-start;
   gap: var(--sp-6);
   padding: 0 calc(var(--sp-8) + var(--sp-6));
-  color: var(--warn-text);
+  color: var(--amber);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
 }
@@ -488,49 +490,25 @@
   width: 36px;
   height: 36px;
   border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
-  background: var(--fill) !important;
-  color: var(--text-2) !important;
+  background: var(--hover) !important;
+  color: var(--ink-2) !important;
 }
 .presence-icon[data-tone='warn'] {
-  background: var(--warn-bg) !important;
-  color: var(--warn-text) !important;
+  background: var(--amber-soft) !important;
+  color: var(--amber) !important;
 }
 .presence-icon[data-tone='ok'] {
-  background: var(--ok-bg) !important;
-  color: var(--ok-text) !important;
+  background: var(--hover) !important;
+  color: var(--green) !important;
 }
 .presence-icon[data-tone='err'] {
-  background: var(--err-bg) !important;
-  color: var(--err-text) !important;
+  background: var(--red-soft) !important;
+  color: var(--red) !important;
 }
-/* The enrollment page's wait: a halo leaves the tile every 1.6s; the still frame is the amber tile alone. */
-.enroll-status .presence-icon[data-tone='warn']::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  corner-shape: var(--corner-shape);
-  box-shadow: 0 0 0 1px var(--warn-border);
-  opacity: 0;
-  pointer-events: none;
-}
+/* Waiting does not move: the amber tile, its words and the countdown say it. A new state swaps the glyph in. */
 @media (prefers-reduced-motion: no-preference) {
-  .enroll-status .presence-icon[data-tone='warn']::after {
-    animation: presence-halo 1.6s var(--ease) infinite;
-  }
   .presence-icon > svg {
-    animation: presence-swap var(--d-fast) var(--ease);
-  }
-}
-@keyframes presence-halo {
-  from {
-    opacity: 1;
-    transform: scale(1);
-  }
-  to {
-    opacity: 0;
-    transform: scale(1.35);
+    animation: presence-swap var(--m-micro) var(--e-micro);
   }
 }
 @keyframes presence-swap {
@@ -544,13 +522,13 @@
   height: 2px;
   overflow: hidden;
   border-radius: var(--r-2);
-  background: var(--warn-bg) !important;
+  background: var(--amber-soft) !important;
 }
 .presence-track > i {
   --fraction: 1;
   display: block !important;
   height: 100%;
-  background: var(--warn-dot) !important;
+  background: var(--amber-icon) !important;
   transform: scaleX(var(--fraction));
   transform-origin: left center;
   transition: transform 1s linear;
@@ -573,37 +551,37 @@
   display: inline-flex !important;
 }
 [data-secure] .settings-card {
-  background-color: var(--bg-pane) !important;
+  background-color: var(--canvas) !important;
 }
 [data-secure] .settings-icon-tile {
-  background-color: var(--bg-hover) !important;
-  color: var(--text-2) !important;
+  background-color: var(--hover) !important;
+  color: var(--ink-2) !important;
 }
 [data-secure] .settings-group-head h3 {
   display: block !important;
-  color: var(--text-2) !important;
-  font-size: var(--fs-label) !important;
-  line-height: var(--lh-label) !important;
+  color: var(--ink-2) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui) !important;
 }
 [data-secure] .settings-row-title {
   display: block !important;
-  color: var(--text-1) !important;
+  color: var(--ink) !important;
   font-size: var(--fs-ui) !important;
   line-height: var(--lh-ui) !important;
 }
 [data-secure] .settings-row-description {
   display: block !important;
-  color: var(--text-3) !important;
+  color: var(--muted) !important;
   font-size: var(--fs-caption) !important;
   line-height: var(--lh-caption) !important;
 }
 [data-secure] .settings-caption {
-  color: var(--text-3) !important;
+  color: var(--muted) !important;
   font-size: var(--fs-caption) !important;
   line-height: var(--lh-caption-para) !important;
 }
 [data-secure] .settings-caption > .ui-icon {
-  color: var(--icon) !important;
+  color: var(--muted) !important;
 }
 [data-secure] .settings-caption > span {
   display: block !important;
@@ -616,9 +594,9 @@
 [data-secure] .pair-section {
   display: grid !important;
   opacity: 1 !important;
-  color: var(--text-1) !important;
-  font-size: var(--fs-label) !important;
-  line-height: var(--lh-label-para) !important;
+  color: var(--ink) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui-para) !important;
 }
 /*
  * Pairing a phone: the intro and 生成配对二维码 (the section's one blue action); once created, the code on white (dark
@@ -641,7 +619,7 @@
   margin: 0;
 }
 .native-config-group + .native-config-group {
-  border-top: 1px solid var(--line-subtle);
+  border-top: 1px solid var(--line);
   padding-top: var(--sp-16);
 }
 .native-config-heading {
@@ -649,29 +627,29 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-8);
-  font-size: var(--fs-label) !important;
+  font-size: var(--fs-ui) !important;
 }
 .native-connect-dialog[open] {
   display: block !important;
   opacity: 1 !important;
-  color: var(--text-1) !important;
+  color: var(--ink) !important;
   background: transparent !important;
   font-size: var(--fs-ui) !important;
   line-height: var(--lh-ui) !important;
   scale: none !important;
 }
 .native-connect-dialog :is(.ui-modal-surface, form, .native-config-body, .native-config-group, .ui-modal-footer) {
-  color: var(--text-1) !important;
+  color: var(--ink) !important;
   font-size: var(--fs-ui) !important;
   line-height: var(--lh-ui) !important;
 }
 .native-config-heading {
-  color: var(--text-1) !important;
+  color: var(--ink) !important;
   line-height: var(--lh-ui) !important;
 }
 .native-connect-dialog > .ui-modal-surface {
   display: flex !important;
-  background: var(--bg-raised) !important;
+  background: var(--raised) !important;
 }
 .native-connect-dialog form {
   display: flex !important;
@@ -685,19 +663,19 @@
 }
 .native-connect-dialog .ui-modal-header h2 {
   display: block !important;
-  color: var(--text-1) !important;
-  font-size: var(--fs-title-sm) !important;
-  line-height: var(--lh-title-sm) !important;
+  color: var(--ink) !important;
+  font-size: var(--fs-heading) !important;
+  line-height: var(--lh-heading) !important;
 }
 .native-config-heading strong {
   display: block !important;
-  color: var(--text-1) !important;
-  font-size: var(--fs-label) !important;
-  line-height: var(--lh-label) !important;
+  color: var(--ink) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui) !important;
 }
 .native-config-body .settings-hint {
   display: block !important;
-  color: var(--text-2) !important;
+  color: var(--ink-2) !important;
   font-size: var(--fs-caption) !important;
   line-height: var(--lh-caption-para) !important;
 }
@@ -706,9 +684,9 @@
   background: var(--line-strong) !important;
 }
 .pair-empty p {
-  color: var(--text-2) !important;
-  font-size: var(--fs-label) !important;
-  line-height: var(--lh-label-para) !important;
+  color: var(--ink-2) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui-para) !important;
 }
 .pair-empty .ui-notice {
   justify-self: stretch;
@@ -727,7 +705,6 @@
   padding: var(--sp-12);
   border: 1px solid var(--line);
   border-radius: var(--r-12);
-  corner-shape: var(--corner-shape);
   background: #ffffff !important;
 }
 .pair-qr img {
@@ -746,9 +723,9 @@
   list-style: none;
   display: grid !important;
   gap: var(--sp-8);
-  color: var(--text-2) !important;
-  font-size: var(--fs-label) !important;
-  line-height: var(--lh-label-para) !important;
+  color: var(--ink-2) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui-para) !important;
 }
 .pair-steps li {
   display: flex !important;
@@ -763,16 +740,16 @@
   height: 16px;
   margin-top: var(--sp-2);
   flex-shrink: 0;
-  border-radius: var(--r-pill);
-  background: var(--fill) !important;
-  color: var(--text-2) !important;
-  font-size: var(--fs-micro) !important;
-  line-height: var(--lh-micro) !important;
+  border-radius: var(--r-full);
+  background: var(--hover) !important;
+  color: var(--ink-2) !important;
+  font-size: var(--fs-meta) !important;
+  line-height: var(--lh-meta) !important;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 .pair-expiry {
-  color: var(--text-3) !important;
+  color: var(--muted) !important;
   font-size: var(--fs-caption) !important;
   line-height: var(--lh-caption) !important;
   font-variant-numeric: tabular-nums;
@@ -806,10 +783,10 @@
   gap: var(--sp-8);
 }
 .pair-setup p {
-  color: var(--text-2) !important;
+  color: var(--ink-2) !important;
 }
 .pair-setup .pair-pending {
-  color: var(--text-3) !important;
+  color: var(--muted) !important;
   font-size: var(--fs-caption) !important;
   line-height: var(--lh-caption-para) !important;
 }
@@ -825,26 +802,24 @@
   padding: 0 var(--sp-8);
   border: 0;
   border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
   background: transparent !important;
-  color: var(--text-2) !important;
-  font-size: var(--fs-label) !important;
-  line-height: var(--lh-label) !important;
+  color: var(--ink-2) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui) !important;
   text-align: left;
-  transition: background-color var(--d-fast) var(--ease);
+  transition: background-color var(--m-micro) var(--e-micro);
 }
 /* Only a pointer that hovers: a tap would leave the hover on. */
 @media (hover: hover) {
   .pair-toggle:hover {
-    background: var(--bg-hover) !important;
-    color: var(--text-1) !important;
-    transition-duration: 0s;
+    background: var(--hover) !important;
+    color: var(--ink) !important;
   }
 }
 .pair-toggle .chevron {
   flex-shrink: 0;
-  color: var(--icon);
-  transition: transform var(--d-base) var(--ease);
+  color: var(--muted);
+  transition: transform var(--m-panel) var(--e-panel);
 }
 .pair-toggle[aria-expanded='true'] .chevron {
   transform: rotate(90deg);
@@ -860,8 +835,7 @@
   gap: var(--sp-4);
   padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-8);
   border-radius: var(--r-6);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-sunken) !important;
+  background: var(--sunken) !important;
 }
 .pair-flags code {
   flex: 1;
@@ -869,10 +843,10 @@
   padding: var(--sp-2) 0;
   white-space: pre-wrap;
   overflow-wrap: break-word;
-  color: var(--text-1) !important;
-  font-family: var(--font-mono) !important;
-  font-size: var(--fs-mono-sm) !important;
-  line-height: var(--lh-mono-sm) !important;
+  color: var(--ink) !important;
+  font-family: var(--mono) !important;
+  font-size: var(--fs-mono) !important;
+  line-height: var(--lh-mono) !important;
 }
 @media (max-width: 767.98px) {
   .pair-toggle {
@@ -881,16 +855,16 @@
 }
 /* Providers: keys that this device cannot set, and the address-change warning. */
 .key-state.is-locked {
-  color: var(--text-3);
+  color: var(--muted);
 }
 .key-state.is-locked > svg {
-  color: var(--text-3);
+  color: var(--muted);
 }
 .field-hint.is-warn {
-  color: var(--warn-text);
+  color: var(--amber);
 }
 .field-hint.is-error {
-  color: var(--err-text);
+  color: var(--red);
 }
 
 /*
@@ -900,7 +874,7 @@
  */
 [data-secure] {
   visibility: visible !important;
-  font-family: var(--font-sans) !important;
+  font-family: var(--font) !important;
   filter: none !important;
   clip-path: none !important;
   mix-blend-mode: normal !important;
@@ -949,13 +923,13 @@
   line-height: inherit !important;
 }
 [data-secure] .diff-stat-add {
-  color: var(--ok-text) !important;
+  color: var(--green) !important;
 }
 [data-secure] .diff-stat-remove {
-  color: var(--err-text) !important;
+  color: var(--red) !important;
 }
 [data-secure] .diff-stat-zero {
-  color: var(--text-3) !important;
+  color: var(--muted) !important;
 }
 /* The boxes that hold the parts: each keeps its own display. */
 [data-secure] :is(.approval-notes, .argument-list, .ui-dialog-heading, .ui-field-control, .ui-check-text, .enroll-header) {
@@ -986,7 +960,7 @@
   display: grid !important;
 }
 /* The individual transforms, apart from transform: a minifier folds a block holding both into one transform. */
-:where([data-secure]:not(dialog, svg), [data-secure] :not(.sr-only, svg, svg *, dialog)) {
+:where([data-secure]:not(dialog, svg), [data-secure] :not(.sr-only, svg, svg *, dialog, .ui-spinner)) {
   scale: none !important;
   translate: none !important;
   rotate: none !important;
@@ -1030,13 +1004,19 @@
 }
 
 /* The primitives inside a security surface, pinned like the surface itself. */
+:is(dialog[data-secure]:not(.ui-modal-page) > .ui-modal-surface, [data-secure] :is(.ui-dialog-surface, .ui-sheet-surface)) {
+  box-shadow: var(--sh-dialog) !important;
+}
+[data-secure] :is(.ui-modal-footer:not(.ui-modal-sheet *), .ui-dialog-footer) {
+  box-shadow: inset 0 1px 0 var(--line) !important;
+}
 [data-secure] .ui-button {
   display: inline-flex !important;
   min-height: 28px !important;
-  color: var(--text-1) !important;
-  font-family: var(--font-sans) !important;
-  font-size: var(--fs-label) !important;
-  line-height: var(--lh-label) !important;
+  color: var(--ink) !important;
+  font-family: var(--font) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui) !important;
   font-weight: 500 !important;
 }
 [data-secure] .ui-button[data-size='xs'] {
@@ -1061,62 +1041,60 @@
 [data-secure] .ui-button[data-variant='primary'] {
   background: var(--accent) !important;
   color: var(--on-accent) !important;
+  box-shadow: var(--sh-accent) !important;
 }
 [data-secure] .ui-button[data-variant='primary']:hover:not([aria-disabled='true'], [aria-busy='true']) {
   background: var(--accent-hover) !important;
 }
-[data-secure] .ui-button[data-variant='primary']:active:not([aria-disabled='true'], [aria-busy='true']) {
-  background: var(--accent-press) !important;
-}
 [data-secure] .ui-button[data-variant='secondary'] {
-  background: var(--fill) !important;
+  background: var(--hover) !important;
 }
 [data-secure] .ui-button[data-variant='secondary']:hover:not([aria-disabled='true'], [aria-busy='true']) {
-  background: var(--fill-hover) !important;
+  background: var(--press) !important;
 }
-[data-secure] .ui-button[data-variant='secondary']:active:not([aria-disabled='true'], [aria-busy='true']) {
-  background: var(--fill-press) !important;
+/* Outlined, as are a danger button and a secondary one inside amber or red, as in the primitive. */
+:is(
+  [data-secure] .ui-button:is([data-variant='outline'], [data-variant='danger']),
+  :is([data-secure][data-tint], [data-secure] [data-tint]) .ui-button[data-variant='secondary']
+) {
+  background: var(--raised) !important;
+  box-shadow:
+    inset 0 0 0 1px var(--line-strong),
+    var(--sh-1) !important;
 }
-/* Inside amber or red the secondary button is raised white, as in the primitive. */
-:is([data-secure][data-tint], [data-secure] [data-tint]) .ui-button[data-variant='secondary'] {
-  background: var(--bg-raised) !important;
-}
-:is([data-secure][data-tint], [data-secure] [data-tint])
-  .ui-button[data-variant='secondary']:hover:not([aria-disabled='true'], [aria-busy='true']) {
-  background: linear-gradient(var(--bg-hover), var(--bg-hover)) var(--bg-raised) !important;
-}
-:is([data-secure][data-tint], [data-secure] [data-tint])
-  .ui-button[data-variant='secondary']:active:not([aria-disabled='true'], [aria-busy='true']) {
-  background: linear-gradient(var(--bg-press), var(--bg-press)) var(--bg-raised) !important;
+:is(
+    [data-secure] .ui-button:is([data-variant='outline'], [data-variant='danger']),
+    :is([data-secure][data-tint], [data-secure] [data-tint]) .ui-button[data-variant='secondary']
+  ):hover:not([aria-disabled='true'], [aria-busy='true']) {
+  background: linear-gradient(var(--hover), var(--hover)) var(--raised) !important;
 }
 [data-secure] .ui-button[data-variant='ghost'] {
   background: transparent !important;
-  color: var(--text-2) !important;
+  color: var(--ink-2) !important;
 }
 [data-secure] .ui-button[data-variant='ghost']:hover:not([aria-disabled='true'], [aria-busy='true']) {
-  background: var(--bg-hover) !important;
-  color: var(--text-1) !important;
+  background: var(--hover) !important;
+  color: var(--ink) !important;
 }
 [data-secure] .ui-button[data-variant='ghost']:active:not([aria-disabled='true'], [aria-busy='true']) {
-  background: var(--bg-press) !important;
+  background: var(--press) !important;
 }
-/* A link keeps the link colour and a destructive action its red; the text-1 above is for the filled buttons. */
-[data-secure] .ui-button[data-variant='link'] {
-  background: transparent !important;
-  color: var(--accent-text) !important;
-}
+/* A link keeps the link colour and a destructive action its red; the ink above is for the filled buttons. */
+[data-secure] .ui-button[data-variant='link'],
 [data-secure] .ui-button[data-variant='link']:hover:not([aria-disabled='true']) {
-  color: var(--accent-text-hover) !important;
+  background: transparent !important;
+  color: var(--accent-ink) !important;
 }
 [data-secure] .ui-button[data-variant='danger'] {
-  color: var(--err-text) !important;
+  color: var(--red) !important;
 }
 [data-secure] .ui-button[data-variant='destroy'] {
+  background: var(--red-solid) !important;
   color: var(--on-accent) !important;
 }
 [data-secure] .ui-icon-button {
   display: inline-grid !important;
-  color: var(--icon) !important;
+  color: var(--muted) !important;
 }
 [data-secure] .ui-icon-button:not([aria-disabled='true']) {
   opacity: 1 !important;
@@ -1125,63 +1103,71 @@
   opacity: 0.45 !important;
 }
 [data-secure] .ui-icon-button:is(:hover:not([aria-disabled='true']), [aria-pressed='true'], [aria-expanded='true']) {
-  color: var(--text-1) !important;
+  color: var(--ink) !important;
 }
-[data-secure] .ui-status-pill {
+[data-secure] .ui-status-word {
   display: inline-flex !important;
-  height: 20px !important;
   opacity: 1 !important;
-  background: var(--fill) !important;
-  color: var(--text-2) !important;
+  background: transparent !important;
+  color: var(--muted) !important;
   font-size: var(--fs-caption) !important;
   line-height: var(--lh-caption) !important;
   font-weight: 500 !important;
 }
-[data-secure] .ui-status-pill[data-tone='warn'] {
-  background: var(--warn-bg) !important;
-  color: var(--warn-text) !important;
+[data-secure] .ui-status-word:is([data-tone='running'], [data-tone='done']) {
+  color: var(--ink) !important;
 }
-[data-secure] .ui-status-pill[data-tone='err'] {
-  background: var(--err-bg) !important;
-  color: var(--err-text) !important;
+[data-secure] .ui-status-word:is([data-tone='waiting'], [data-tone='warn']) {
+  color: var(--amber) !important;
 }
-[data-secure] .ui-status-pill[data-tone='ok'] {
-  background: var(--ok-bg) !important;
-  color: var(--ok-text) !important;
+[data-secure] .ui-status-word > .ui-status-word-glyph {
+  background: transparent !important;
+  color: inherit !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption) !important;
+}
+[data-secure] .ui-status-word[data-tone='waiting'] > .ui-status-word-glyph {
+  color: var(--amber-icon) !important;
+}
+[data-secure] .ui-status-word[data-tone='failed'] {
+  color: var(--red) !important;
 }
 :is(.ui-notice[data-secure], [data-secure] .ui-notice) {
   display: flex !important;
   opacity: 1 !important;
   border-color: var(--line) !important;
-  background: var(--bg-sunken) !important;
-  color: var(--text-2) !important;
+  background: var(--raised) !important;
+  color: var(--ink-2) !important;
   font-size: var(--fs-caption) !important;
   line-height: var(--lh-caption-para) !important;
 }
 :is(.ui-notice[data-secure], [data-secure] .ui-notice)[data-tone='warn'] {
-  border-color: var(--warn-border) !important;
-  background: var(--warn-bg) !important;
+  border-color: var(--amber-line) !important;
+  background: linear-gradient(var(--amber-soft), var(--amber-soft)) var(--raised) !important;
 }
 :is(.ui-notice[data-secure], [data-secure] .ui-notice)[data-tone='error'] {
-  border-color: var(--err-border) !important;
-  background: var(--err-bg) !important;
+  border-color: var(--red-line) !important;
+  background: linear-gradient(var(--red-soft), var(--red-soft)) var(--raised) !important;
 }
 :is(.ui-notice[data-secure], [data-secure] .ui-notice) .ui-notice-title {
   display: inline !important;
-  color: var(--text-1) !important;
-  font-size: var(--fs-label) !important;
-  line-height: var(--lh-label) !important;
+  color: var(--ink) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui) !important;
   font-weight: 500 !important;
 }
-:is(.ui-notice[data-secure], [data-secure] .ui-notice)[data-tone='warn'] :is(.ui-notice-title, .ui-notice-glyph) {
-  color: var(--warn-text) !important;
+:is(.ui-notice[data-secure], [data-secure] .ui-notice)[data-tone='warn'] .ui-notice-title {
+  color: var(--amber) !important;
+}
+:is(.ui-notice[data-secure], [data-secure] .ui-notice)[data-tone='warn'] .ui-notice-glyph {
+  color: var(--amber-icon) !important;
 }
 :is(.ui-notice[data-secure], [data-secure] .ui-notice)[data-tone='error'] :is(.ui-notice-title, .ui-notice-glyph) {
-  color: var(--err-text) !important;
+  color: var(--red) !important;
 }
 :is(.ui-notice[data-secure], [data-secure] .ui-notice) .ui-notice-text {
   display: block !important;
-  color: var(--text-2) !important;
+  color: var(--ink-2) !important;
   font-size: var(--fs-caption) !important;
   line-height: var(--lh-caption-para) !important;
 }
@@ -1193,46 +1179,60 @@
 }
 [data-secure] .ui-field-label {
   display: block !important;
-  color: var(--text-2) !important;
+  color: var(--ink-2) !important;
   font-size: var(--fs-caption) !important;
   line-height: var(--lh-caption) !important;
   font-weight: 500 !important;
 }
 [data-secure] .ui-input {
-  background-color: var(--well) !important;
+  display: block !important;
+  background-color: var(--raised) !important;
+  color: var(--ink) !important;
+  font-size: var(--fs-input) !important;
+  line-height: var(--lh-input) !important;
+  box-shadow: inset 0 0 0 1px var(--line-strong) !important;
 }
 [data-secure] .ui-input:focus {
-  background-color: var(--bg-raised) !important;
+  box-shadow:
+    inset 0 0 0 1px var(--accent),
+    0 0 0 3px var(--accent-soft) !important;
 }
-[data-secure] .ui-checkbox {
-  background-color: var(--bg-raised) !important;
+[data-secure] .ui-input[aria-invalid='true'] {
+  box-shadow: inset 0 0 0 1px var(--red) !important;
+}
+[data-secure] .ui-input[aria-invalid='true']:focus {
+  box-shadow:
+    inset 0 0 0 1px var(--red),
+    0 0 0 3px var(--red-soft) !important;
+}
+[data-secure] :is(.ui-checkbox, .ui-radio) {
+  background-color: var(--raised) !important;
+  box-shadow: inset 0 0 0 1.5px var(--line-strong) !important;
 }
 [data-secure] .ui-checkbox:checked {
   background-color: var(--accent) !important;
+  box-shadow: none !important;
 }
-[data-secure] .ui-input {
-  display: block !important;
-  color: var(--text-1) !important;
-  font-size: var(--fs-input) !important;
-  line-height: var(--lh-input) !important;
+[data-secure] .ui-radio:checked {
+  box-shadow: inset 0 0 0 5px var(--accent) !important;
 }
 [data-secure] :is(.ui-input, .ui-checkbox):not(:disabled) {
   opacity: 1 !important;
 }
 [data-secure] :is(.ui-field-hint, .ui-field-error) {
   display: block !important;
-  color: var(--text-3) !important;
+  color: var(--muted) !important;
   font-size: var(--fs-caption) !important;
   line-height: var(--lh-caption-para) !important;
 }
 [data-secure] .ui-field-error {
-  color: var(--err-text) !important;
+  color: var(--red) !important;
 }
 [data-secure] .ui-check-label {
   display: block !important;
-  color: var(--text-1) !important;
-  font-size: var(--fs-label) !important;
-  line-height: var(--lh-label-para) !important;
+  color: var(--ink) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui-para) !important;
 }
 [data-secure] .ui-menu-item {
   display: grid !important;
@@ -1241,5 +1241,20 @@
   opacity: 1 !important;
 }
 [data-secure] .ui-menu-item-title {
-  color: var(--text-1) !important;
+  color: var(--ink) !important;
+}
+
+/* Reduced motion: the approval slot and its preview open and fold at once, the slot fading as it goes; chevrons turn
+ * at once and the countdown steps without sliding. */
+@media (prefers-reduced-motion: reduce) {
+  .approval-slot {
+    transition: opacity calc(var(--m-micro) * 0.7) var(--e-exit);
+  }
+  .approval-preview,
+  .approval-preview[data-open],
+  .approval-toggle .chevron,
+  .pair-toggle .chevron,
+  .presence-track > i {
+    transition: none;
+  }
 }

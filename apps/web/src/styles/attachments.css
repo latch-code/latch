@@ -15,7 +15,6 @@
 .attachment-draft {
   border: 1px solid var(--line);
   border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
   padding: var(--sp-4);
 }
 .attachment-draft > .ui-button {
@@ -29,7 +28,7 @@
 }
 .attachment-state,
 .attachment-intro {
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
@@ -41,7 +40,7 @@
   overflow-wrap: anywhere;
 }
 .attachment-draft[data-state='failed'] .attachment-state {
-  color: var(--err-text);
+  color: var(--red);
 }
 .attachment-intro > span,
 .attachment-draft > .attachment-state {
@@ -88,7 +87,7 @@
   margin: var(--sp-8);
 }
 .file-mentions > p {
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
@@ -105,9 +104,8 @@
   place-items: center;
   border: 2px dashed var(--line-strong);
   border-radius: var(--r-12);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-pane);
-  color: var(--text-2);
+  background: var(--canvas);
+  color: var(--ink-2);
   pointer-events: none;
 }
 

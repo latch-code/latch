@@ -102,17 +102,25 @@ describe('dialog', () => {
     expect(closed).toHaveBeenCalled()
   })
 
-  it('draws the 56px header, the 24px body and the 64px footer on a raised surface with 16px corners', async () => {
+  it('draws the 56px header, the body and a 56px footer on the sidebar grey, on a raised surface with 16px corners', async () => {
     const screen = await render(<Project />)
     await userEvent.click(screen.getByRole('button', { name: '添加项目…' }))
-    const surface = screen.getByRole('dialog').element().querySelector('.ui-dialog-surface')!
+    const dialog = screen.getByRole('dialog').element()
+    const surface = dialog.querySelector('.ui-dialog-surface')!
     const style = getComputedStyle(surface)
-    expect(style.borderTopLeftRadius).toBe('16px')
-    expect(style.width).toBe('560px')
-    // Layout sizes: the dialog scales from 98% while it opens.
+    expect([style.borderTopLeftRadius, style.width, style.backgroundColor]).toEqual(['16px', '560px', 'rgb(255, 255, 255)'])
+    // Layout sizes: the dialog scales from .985 while it opens.
     expect(surface.querySelector<HTMLElement>('.ui-dialog-header')!.offsetHeight).toBe(56)
-    expect(surface.querySelector<HTMLElement>('.ui-dialog-footer')!.offsetHeight).toBe(64)
-    expect(getComputedStyle(surface.querySelector('.ui-dialog-body')!).paddingTop).toBe('24px')
+    const footer = surface.querySelector<HTMLElement>('.ui-dialog-footer')!
+    expect([footer.offsetHeight, getComputedStyle(footer).backgroundColor]).toEqual([56, 'rgb(247, 247, 248)'])
+    const body = getComputedStyle(surface.querySelector('.ui-dialog-body')!)
+    expect([body.paddingTop, body.paddingInlineStart]).toEqual(['4px', '24px'])
+    // It opens from a scale of .985 over --m-sheet, over a scrim that blurs the page by 4px.
+    expect([getComputedStyle(dialog).transitionDuration.split(', ')[0], getComputedStyle(dialog, '::backdrop').backdropFilter]).toEqual([
+      '0.26s',
+      'blur(4px)',
+    ])
+    await expect.poll(() => getComputedStyle(dialog).scale).toBe('1')
   })
 
   it('docks 400 wide above the bottom edge with its state tile, and marks a security surface', async () => {

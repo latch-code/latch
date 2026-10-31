@@ -1,25 +1,25 @@
 /*
  * Phones (below 768px) stack their pages instead of placing columns. The session list is the root page, on the ground:
  * 会话 with settings, search and 新建会话, the filter pills, then paper cards (等你处理, and one per group of sessions).
- * Opening a session pushes its page over the list: the new page slides in from the right over 240ms while the list
- * moves a quarter to the left and dims; going back slides it away over 180ms and the list returns. The page's header is
+ * Opening a session pushes its page over the list: the new page slides in from the right over --m-push while the list
+ * moves a quarter to the left and dims; going back slides it away in 70% of that and the list returns. The page's header is
  * on the ground and the conversation is a sheet of paper rising under it, rounded 16 at the top. A new session is a
- * bottom sheet over the list. Under reduced motion the page cross-fades in 120ms and nothing moves.
+ * bottom sheet over the list. Under reduced motion the page only fades in and nothing moves.
  */
 @media (max-width: 767.98px) {
   .phone-list {
-    --surface: var(--bg-app);
+    --surface: var(--sidebar);
     position: absolute;
     inset: 0;
     z-index: 1;
     display: flex;
     flex-direction: column;
-    background: var(--bg-app);
-    transition: translate var(--d-slow-exit) var(--ease);
+    background: var(--sidebar);
+    transition: translate calc(var(--m-push) * 0.7) var(--e-exit);
   }
   .phone-list[data-covered] {
     translate: -24% 0;
-    transition-duration: var(--d-slow);
+    transition: translate var(--m-push) var(--e-push);
   }
   .phone-list::after {
     content: '';
@@ -28,26 +28,26 @@
     background: var(--scrim);
     opacity: 0;
     pointer-events: none;
-    transition: opacity var(--d-slow-exit) var(--ease);
+    transition: opacity calc(var(--m-push) * 0.7) var(--e-exit);
   }
   .phone-list[data-covered]::after {
     opacity: 1;
-    transition-duration: var(--d-slow);
+    transition: opacity var(--m-push) var(--e-push);
   }
 
   .workspace.has-task {
     position: absolute;
     inset: 0;
     z-index: 2;
-    background: var(--bg-app);
+    background: var(--sidebar);
   }
   /* Only a page pushed while the person watches slides in; one restored with the page is simply there. */
   .workspace.has-task[data-pushed] {
-    animation: page-in var(--d-slow) var(--ease);
+    animation: page-in var(--m-push) var(--e-push);
   }
   .workspace.has-task[data-leaving] {
     pointer-events: none;
-    animation: page-out var(--d-slow-exit) var(--ease-exit) forwards;
+    animation: page-out calc(var(--m-push) * 0.7) var(--e-exit) forwards;
   }
 }
 @media (max-width: 767.98px) and (prefers-reduced-motion: reduce) {
@@ -56,10 +56,10 @@
     translate: none;
   }
   .workspace.has-task[data-pushed] {
-    animation: fade-in var(--d-fast) var(--ease);
+    animation: fade-in var(--m-micro) var(--e-micro);
   }
   .workspace.has-task[data-leaving] {
-    animation: page-fade-out var(--d-fast-exit) var(--ease-exit) forwards;
+    animation: page-fade-out calc(var(--m-micro) * 0.7) var(--e-exit) forwards;
   }
 }
 @keyframes page-fade-out {
@@ -88,15 +88,15 @@
 .phone-list-head h1 {
   flex: 1;
   min-width: 0;
-  color: var(--text-1);
-  font-size: var(--fs-display);
-  line-height: var(--lh-display);
+  color: var(--ink);
+  font-size: var(--fs-hero);
+  line-height: var(--lh-hero);
   font-weight: 600;
 }
 .phone-list-head .ui-icon-button,
 .topbar[data-phone] .ui-icon-button,
 .info-page-head > .ui-icon-button[data-size='lg'] {
-  color: var(--text-1);
+  color: var(--ink);
 }
 /* The search unfolds under the header with the disclosure's motion; 取消 clears it and folds it away. */
 .phone-search {
@@ -124,8 +124,8 @@
 }
 /* On the ground the chosen pill is lifted: the raised layer with its own shadow. */
 .phone-filters .ui-tab[aria-pressed='true'] {
-  background: var(--bg-raised);
-  box-shadow: var(--sh-raised);
+  background: var(--seg-on);
+  box-shadow: var(--seg-on-shadow);
 }
 .phone-list-scroll {
   flex: 1;
@@ -146,7 +146,7 @@
 
 /* 等你处理: a paper card (52) with the inbox, its words, the amber count and the way in. */
 .phone-inbox {
-  --surface: var(--bg-pane);
+  --surface: var(--canvas);
   display: flex;
   align-items: center;
   gap: var(--sp-12);
@@ -155,27 +155,23 @@
   padding: 0 var(--sp-12) 0 var(--sp-16);
   border: 0;
   border-radius: var(--r-12);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-pane);
+  background: var(--canvas);
   box-shadow: inset 0 0 0 1px var(--line);
-  color: var(--text-1);
+  color: var(--ink);
   text-align: left;
-  transition: background-color var(--d-fast) var(--ease-exit);
+  transition: background-color var(--m-micro) var(--e-micro);
 }
 .phone-inbox:active {
-  background: linear-gradient(var(--bg-press), var(--bg-press)) var(--bg-pane);
-  transition-duration: 0s;
+  background: linear-gradient(var(--press), var(--press)) var(--canvas);
 }
 .phone-inbox:focus-visible {
-  outline: none;
-  box-shadow:
-    inset 0 0 0 1px var(--line),
-    var(--ring-focus-inset);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 .phone-inbox-icon,
 .phone-inbox-chevron {
   flex-shrink: 0;
-  color: var(--icon);
+  color: var(--muted);
 }
 .phone-inbox-label {
   flex: 1;
@@ -199,9 +195,9 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-3);
-  font-size: var(--fs-meta);
-  line-height: var(--lh-meta);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
   font-weight: 500;
 }
 .phone-group-new.ui-icon-button {
@@ -210,14 +206,13 @@
   margin-bottom: calc(-1 * var(--sp-4));
 }
 .phone-card {
-  --surface: var(--bg-pane);
+  --surface: var(--canvas);
   list-style: none;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   overflow: hidden;
   border-radius: var(--r-12);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-pane);
+  background: var(--canvas);
   box-shadow: inset 0 0 0 1px var(--line);
 }
 /* A row that leaves (archived, deleted, moved to another group) folds its height away and fades. */
@@ -227,14 +222,14 @@
   grid-template-rows: 1fr;
   min-height: 0;
   transition:
-    grid-template-rows var(--d-fast) var(--ease-exit),
-    opacity var(--d-fast) var(--ease-exit);
+    grid-template-rows var(--m-micro) var(--e-micro),
+    opacity var(--m-micro) var(--e-micro);
 }
 .phone-entry[data-leaving] {
   grid-template-rows: 0fr;
   opacity: 0;
 }
-/* Rows are separated by line-subtle from the text's start. */
+/* Rows are separated by a line from the text's start. */
 .phone-entry + .phone-entry::before {
   content: '';
   position: absolute;
@@ -243,7 +238,7 @@
   right: 0;
   left: var(--sp-16);
   height: 1px;
-  background: var(--line-subtle);
+  background: var(--line);
 }
 
 /*
@@ -263,21 +258,20 @@
   overflow: hidden;
   border: 0;
   background: transparent;
-  color: var(--text-1);
+  color: var(--ink);
   text-align: left;
   user-select: none;
   -webkit-touch-callout: none;
-  transition: background-color var(--d-fast) var(--ease-exit);
+  transition: background-color var(--m-micro) var(--e-micro);
 }
 .phone-row:active,
 .phone-row.is-selected,
 .phone-row.is-held {
-  background: var(--bg-selected-solid);
-  transition-duration: 0s;
+  background: var(--hover);
 }
 .phone-row:focus-visible {
-  outline: none;
-  box-shadow: var(--ring-focus-inset);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 .phone-row-line {
   display: flex;
@@ -291,8 +285,8 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--fs-list-title);
-  line-height: var(--lh-list-title);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
   font-weight: 500;
 }
 .phone-row-meta {
@@ -300,9 +294,9 @@
   align-items: center;
   gap: var(--sp-6);
   min-width: 0;
-  color: var(--text-3);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  color: var(--muted);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
 }
 .phone-row-meta-text {
   min-width: 0;
@@ -317,12 +311,12 @@
   justify-items: start;
   gap: var(--sp-4);
   padding: var(--sp-8) var(--sp-16) var(--sp-16);
-  color: var(--text-2);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
 }
 .phone-empty span {
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
 }
@@ -337,13 +331,13 @@
   gap: var(--sp-6);
   min-width: 0;
   padding: var(--sp-16) var(--sp-8) 0 var(--sp-16);
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
 .phone-list-foot-icon {
   flex-shrink: 0;
-  color: var(--icon);
+  color: var(--muted);
 }
 .phone-list-host {
   flex: 1;
@@ -354,7 +348,7 @@
 }
 .phone-list-foot > .ui-button {
   flex-shrink: 0;
-  color: var(--text-2);
+  color: var(--ink-2);
 }
 
 /* ---- A session's page ------------------------------------------------------------------------------------------ */
@@ -378,8 +372,8 @@
 .topbar[data-phone] .topbar-title h1 {
   justify-content: center;
   max-width: 100%;
-  font-size: var(--fs-title-sm);
-  line-height: var(--lh-title-sm);
+  font-size: var(--fs-heading);
+  line-height: var(--lh-heading);
   font-weight: 600;
 }
 .topbar[data-phone] .topbar-title h1 > .topbar-title-text {
@@ -402,11 +396,11 @@
   gap: var(--sp-6);
   max-width: 100%;
   min-width: 0;
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
-.topbar-subline > .ui-status-pill,
+.topbar-subline > .ui-status-word,
 .topbar-subline > .connection-pill {
   flex-shrink: 0;
 }
@@ -414,14 +408,13 @@
 @media (max-width: 767.98px) {
   /* The conversation is one sheet of paper under the header, its top corners rounded 16 and its edge a line. */
   .workspace.has-task .workspace-body {
-    --surface: var(--bg-pane);
+    --surface: var(--canvas);
     margin-top: var(--sp-4);
     overflow: clip;
     border: 1px solid var(--line);
     border-bottom: 0;
     border-radius: var(--r-16) var(--r-16) 0 0;
-    corner-shape: var(--corner-shape);
-    background: var(--bg-pane);
+    background: var(--canvas);
   }
   .workspace.has-task .banner-region {
     padding-top: var(--sp-12);
@@ -450,12 +443,11 @@
   gap: var(--sp-8);
 }
 .new-sheet-card {
-  --surface: var(--bg-pane);
+  --surface: var(--canvas);
   display: grid;
   overflow: hidden;
   border-radius: var(--r-12);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-pane);
+  background: var(--canvas);
   box-shadow: inset 0 0 0 1px var(--line);
 }
 .new-sheet-row {
@@ -475,18 +467,18 @@
   right: 0;
   left: var(--sp-16);
   height: 1px;
-  background: var(--line-subtle);
+  background: var(--line);
 }
 .new-sheet-label {
   flex: 1;
-  color: var(--text-1);
+  color: var(--ink);
 }
 .new-sheet-value {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-3);
+  color: var(--muted);
 }
 .new-sheet-row > .mode-switch {
   flex-shrink: 0;
@@ -497,13 +489,13 @@
   gap: var(--sp-6);
   margin-top: calc(-1 * var(--sp-8));
   padding: 0 var(--sp-16);
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
 }
 .new-sheet-note > svg {
   flex-shrink: 0;
-  color: var(--icon);
+  color: var(--muted);
 }
 .new-session-sheet .setup-card,
 .new-session-sheet .suggestions {
@@ -512,4 +504,11 @@
 .composer-sheet .composer textarea {
   min-height: calc(var(--lh-input) * 5 + 16px);
   padding-bottom: var(--sp-12);
+}
+
+/* Reduced motion: a row that leaves fades without folding. */
+@media (prefers-reduced-motion: reduce) {
+  .phone-entry {
+    transition: opacity var(--m-micro) var(--e-micro);
+  }
 }

@@ -58,7 +58,7 @@ export function NewSessionSheet({
   onBrowseFiles?(): void
   focusComposer?: RefObject<HTMLTextAreaElement | null>
 }) {
-  const { present } = usePresence(open, MOTION.slow)
+  const { present } = usePresence(open, MOTION.sheet)
   const choices = useRef<HTMLElement>(null)
   useEffect(() => {
     if (!open || !present) return undefined

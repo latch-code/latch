@@ -196,8 +196,9 @@ interface DialogContent {
 
 /**
  * A desktop dialog: 480 for a confirmation, 560 for a form, 720 for two columns. A 56px header (title, optional
- * subtitle, close), a 24px body, a 64px footer with up to two md buttons on the right and a note on the left. It fades
- * in from 98% over 240ms on the scrim. A panel whose changes apply at once has no 确定 button.
+ * subtitle, close), the body with 24px sides, and a 56px footer on the sidebar's grey with up to two md buttons on the
+ * right and a note on the left. It fades in from a scale of .985 over --m-sheet on the blurred scrim. A panel whose
+ * changes apply at once has no 确定 button.
  */
 export function Dialog({
   open,
@@ -323,8 +324,8 @@ interface SheetContent {
 }
 
 /**
- * A phone bottom sheet on the ground colour: a grabber, a 52px header (取消 · title · action) and the body. It slides
- * up over 240ms and follows a drag on its top: dragged down past a third of its height or flicked, it closes; a tall
+ * A phone bottom sheet on the sidebar's grey: a grabber, a 52px header (取消 · title · action) and the body. It slides
+ * up over --m-sheet and follows a drag on its top: dragged down past a third of its height or flicked, it closes; a tall
  * sheet opens at 65% of the window and dragging up takes it to 92%. A form that needs the room (a new session) stands
  * at 92% with `detent="large"`, whatever it holds, so its header never moves as its content changes.
  */

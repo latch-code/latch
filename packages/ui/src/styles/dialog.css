@@ -1,7 +1,8 @@
 /*
- * Dialogs: native modal <dialog> elements over the scrim. The element itself is only a transparent frame; the surface
- * inside carries the raised colour, the 16px corners and the modal shadow, so a design sheet can show it in place.
- * A dialog fades in from 98% over 240ms and the scrim over 180ms; closing fades out over 120ms.
+ * Dialogs: native modal <dialog> elements over the scrim, which blurs what is behind it by 4px. The element itself is
+ * only a transparent frame; the surface inside carries the raised colour, the 16px corners and the dialog shadow, so a
+ * design sheet can show it in place. A dialog fades in from a scale of .985 over --m-sheet and the scrim with it;
+ * closing plays it backwards in 70% of the time on the exit curve.
  */
 .ui-dialog,
 .ui-sheet {
@@ -11,62 +12,56 @@
   overflow: visible;
   border: 0;
   background: transparent;
-  color: var(--text-1);
+  color: var(--ink);
 }
 .ui-dialog {
   margin: auto;
   opacity: 0;
-  scale: 0.98;
+  scale: 0.985;
   transition:
-    opacity var(--d-fast) var(--ease-exit),
-    scale var(--d-fast) var(--ease-exit),
-    display var(--d-fast) allow-discrete,
-    overlay var(--d-fast) allow-discrete;
+    opacity calc(var(--m-sheet) * 0.7) var(--e-exit),
+    scale calc(var(--m-sheet) * 0.7) var(--e-exit),
+    display calc(var(--m-sheet) * 0.7) allow-discrete,
+    overlay calc(var(--m-sheet) * 0.7) allow-discrete;
 }
 .ui-dialog[open] {
   opacity: 1;
   scale: 1;
   transition:
-    opacity var(--d-slow) var(--ease),
-    scale var(--d-slow) var(--ease),
-    display var(--d-slow) allow-discrete,
-    overlay var(--d-slow) allow-discrete;
+    opacity var(--m-sheet) var(--e-sheet),
+    scale var(--m-sheet) var(--e-sheet),
+    display var(--m-sheet) allow-discrete,
+    overlay var(--m-sheet) allow-discrete;
 }
 @starting-style {
   .ui-dialog[open] {
     opacity: 0;
-    scale: 0.98;
+    scale: 0.985;
   }
 }
-/* The dock: 24px above the bottom edge, rising 12px as it fades in over 240ms and dropping 8px as it goes. */
+/* The dock: 24px above the bottom edge, rising 12px as it fades in over --m-sheet and dropping 8px as it goes. */
 .ui-dialog[data-placement='dock'] {
   margin: auto auto var(--sp-24);
   scale: 1;
   translate: 0 var(--sp-8);
   transition:
-    opacity var(--d-base) var(--ease-exit),
-    translate var(--d-base) var(--ease-exit),
-    display var(--d-base) allow-discrete,
-    overlay var(--d-base) allow-discrete;
+    opacity calc(var(--m-sheet) * 0.7) var(--e-exit),
+    translate calc(var(--m-sheet) * 0.7) var(--e-exit),
+    display calc(var(--m-sheet) * 0.7) allow-discrete,
+    overlay calc(var(--m-sheet) * 0.7) allow-discrete;
 }
 .ui-dialog[data-placement='dock'][open] {
   translate: 0 0;
   transition:
-    opacity var(--d-slow) var(--ease),
-    translate var(--d-slow) var(--ease),
-    display var(--d-slow) allow-discrete,
-    overlay var(--d-slow) allow-discrete;
+    opacity var(--m-sheet) var(--e-sheet),
+    translate var(--m-sheet) var(--e-sheet),
+    display var(--m-sheet) allow-discrete,
+    overlay var(--m-sheet) allow-discrete;
 }
 @starting-style {
   .ui-dialog[data-placement='dock'][open] {
     opacity: 0;
     translate: 0 var(--sp-12);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .ui-dialog[data-placement='dock'],
-  .ui-dialog[data-placement='dock'][open] {
-    translate: 0 0;
   }
 }
 @media (max-width: 767.98px) {
@@ -77,19 +72,21 @@
 .ui-dialog::backdrop,
 .ui-sheet::backdrop {
   background: var(--scrim);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
   opacity: 0;
   transition:
-    opacity var(--d-fast) var(--ease-exit),
-    display var(--d-fast) allow-discrete,
-    overlay var(--d-fast) allow-discrete;
+    opacity calc(var(--m-sheet) * 0.7) var(--e-exit),
+    display calc(var(--m-sheet) * 0.7) allow-discrete,
+    overlay calc(var(--m-sheet) * 0.7) allow-discrete;
 }
 .ui-dialog[open]::backdrop,
 .ui-sheet[open]::backdrop {
   opacity: 1;
   transition:
-    opacity var(--d-base) var(--ease),
-    display var(--d-base) allow-discrete,
-    overlay var(--d-base) allow-discrete;
+    opacity var(--m-sheet) var(--e-sheet),
+    display var(--m-sheet) allow-discrete,
+    overlay var(--m-sheet) allow-discrete;
 }
 @starting-style {
   .ui-dialog[open]::backdrop,
@@ -104,16 +101,15 @@
 
 /* 480 for a confirmation, 560 for a form, 720 for two columns; never wider than the window less 16px a side. */
 .ui-dialog-surface {
-  --surface: var(--bg-raised);
+  --surface: var(--raised);
   display: flex;
   flex-direction: column;
   width: min(480px, calc(100vw - 2 * var(--sp-16)));
   max-height: calc(100dvh - 2 * var(--sp-32));
   overflow: hidden;
   border-radius: var(--r-16);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-raised);
-  box-shadow: var(--sh-modal);
+  background: var(--raised);
+  box-shadow: var(--sh-dialog);
 }
 .ui-dialog-surface[data-size='form'] {
   width: min(560px, calc(100vw - 2 * var(--sp-16)));
@@ -121,6 +117,7 @@
 .ui-dialog-surface[data-size='wide'] {
   width: min(720px, calc(100vw - 2 * var(--sp-16)));
 }
+/* A 56px header (title 15/22·600, an optional subtitle, close) without a rule under it; the body follows 4px below. */
 .ui-dialog-header {
   display: flex;
   align-items: center;
@@ -128,7 +125,6 @@
   flex-shrink: 0;
   min-height: 56px;
   padding: 0 var(--sp-12) 0 var(--sp-24);
-  box-shadow: inset 0 -1px 0 var(--line-subtle);
 }
 .ui-dialog-heading {
   display: grid;
@@ -136,28 +132,30 @@
   min-width: 0;
 }
 .ui-dialog-title {
-  color: var(--text-1);
-  font-size: var(--fs-title-sm);
-  line-height: var(--lh-title-sm);
+  text-wrap: balance;
+  color: var(--ink);
+  font-size: var(--fs-heading);
+  line-height: var(--lh-heading);
   font-weight: 600;
 }
 .ui-dialog-subtitle {
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
 .ui-dialog-body {
   flex: 1;
   min-height: 0;
-  padding: var(--sp-24);
+  padding: var(--sp-4) var(--sp-24) var(--sp-24);
   overflow: auto;
-  color: var(--text-2);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label-para);
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui-para);
 }
 .ui-dialog-surface[data-bare] .ui-dialog-body {
   display: grid;
   gap: var(--sp-8);
+  padding: var(--sp-24);
 }
 .ui-dialog-surface[data-placement='dock'] {
   width: min(400px, calc(100vw - 2 * var(--sp-16)));
@@ -179,9 +177,8 @@
   height: 36px;
   flex-shrink: 0;
   border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
-  background: var(--fill);
-  color: var(--text-2);
+  background: var(--hover);
+  color: var(--ink-2);
 }
 .ui-dialog-footer,
 .ui-dialog-actions {
@@ -191,59 +188,87 @@
   gap: var(--sp-8);
   flex-shrink: 0;
 }
+/* The footer: the sidebar's grey under a hairline, 56px, buttons on the right and a note on the left. */
 .ui-dialog-footer {
-  min-height: 64px;
-  padding: 0 var(--sp-24);
-  box-shadow: inset 0 1px 0 var(--line-subtle);
+  min-height: 56px;
+  padding: var(--sp-12) var(--sp-16);
+  background: var(--sidebar);
+  box-shadow: inset 0 1px 0 var(--line);
 }
 .ui-dialog-actions {
   margin-top: var(--sp-16);
 }
 .ui-dialog-note {
   margin-inline-end: auto;
-  color: var(--text-3);
+  padding-inline-start: var(--sp-8);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
 }
 
 /*
- * Bottom sheets (phones): the ground colour with 16px top corners, a grabber, a 52px header (取消 · title · action)
- * and the body. They slide up over 240ms and down when closed. A tall sheet opens at 65% of the window and reaches
- * 92% when dragged up; a form that needs the room stands at 92% from the start.
+ * Bottom sheets (phones): the sidebar's grey with 16px top corners, so the raised cards inside stand out; a grabber, a
+ * 52px header (取消 · title · action) and the body. They slide up over --m-sheet and down in 70% of it. A tall sheet
+ * opens at 65% of the window and reaches 92% when dragged up; a form that needs the room stands at 92% from the
+ * start. Reduced motion only fades them.
  */
 .ui-sheet {
   width: 100%;
   margin: auto 0 0;
   translate: 0 100%;
   transition:
-    translate var(--d-slow) var(--ease-exit),
-    display var(--d-slow) allow-discrete,
-    overlay var(--d-slow) allow-discrete;
+    translate calc(var(--m-sheet) * 0.7) var(--e-exit),
+    display var(--m-sheet) allow-discrete,
+    overlay var(--m-sheet) allow-discrete;
 }
 .ui-sheet[open] {
   translate: 0 0;
   transition:
-    translate var(--d-slow) var(--ease),
-    display var(--d-slow) allow-discrete,
-    overlay var(--d-slow) allow-discrete;
+    translate var(--m-sheet) var(--e-sheet),
+    display var(--m-sheet) allow-discrete,
+    overlay var(--m-sheet) allow-discrete;
 }
 @starting-style {
   .ui-sheet[open] {
     translate: 0 100%;
   }
 }
+@media (prefers-reduced-motion: reduce) {
+  .ui-sheet,
+  .ui-sheet[open] {
+    translate: none;
+  }
+  .ui-sheet {
+    opacity: 0;
+    transition:
+      opacity calc(var(--m-sheet) * 0.7) var(--e-exit),
+      display calc(var(--m-sheet) * 0.7) allow-discrete,
+      overlay calc(var(--m-sheet) * 0.7) allow-discrete;
+  }
+  .ui-sheet[open] {
+    opacity: 1;
+    transition:
+      opacity var(--m-sheet) var(--e-sheet),
+      display var(--m-sheet) allow-discrete,
+      overlay var(--m-sheet) allow-discrete;
+  }
+  @starting-style {
+    .ui-sheet[open] {
+      opacity: 0;
+    }
+  }
+}
 .ui-sheet-surface {
-  --surface: var(--bg-app);
+  --surface: var(--sidebar);
   display: flex;
   flex-direction: column;
   max-height: 65dvh;
   padding-bottom: env(safe-area-inset-bottom);
   overflow: hidden;
   border-radius: var(--r-16) var(--r-16) 0 0;
-  corner-shape: var(--corner-shape);
-  background: var(--bg-app);
-  box-shadow: var(--sh-modal);
-  transition: max-height var(--d-slow) var(--ease);
+  background: var(--sidebar);
+  box-shadow: var(--sh-dialog);
+  transition: max-height var(--m-sheet) var(--e-sheet);
 }
 .ui-sheet[data-detent='large'] > .ui-sheet-surface {
   max-height: 92dvh;
@@ -278,10 +303,11 @@
   padding: 0 var(--sp-16) 0 var(--sp-8);
 }
 .ui-sheet-title {
+  text-wrap: balance;
   overflow: hidden;
-  color: var(--text-1);
-  font-size: var(--fs-title-sm);
-  line-height: var(--lh-title-sm);
+  color: var(--ink);
+  font-size: var(--fs-heading);
+  line-height: var(--lh-heading);
   font-weight: 600;
   text-align: center;
   text-overflow: ellipsis;
@@ -314,4 +340,25 @@
   padding: 0 var(--sp-16) var(--sp-16);
   overflow: auto;
   overscroll-behavior: contain;
+}
+
+/* Reduced motion: a dialog only fades, without the scale or the rise, and a sheet changes its height at once. */
+@media (prefers-reduced-motion: reduce) {
+  .ui-dialog,
+  .ui-dialog[open],
+  .ui-dialog[data-placement='dock'],
+  .ui-dialog[data-placement='dock'][open] {
+    scale: none;
+    translate: none;
+  }
+  @starting-style {
+    .ui-dialog[open],
+    .ui-dialog[data-placement='dock'][open] {
+      scale: none;
+      translate: none;
+    }
+  }
+  .ui-sheet-surface {
+    transition: none;
+  }
 }

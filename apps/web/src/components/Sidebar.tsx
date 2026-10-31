@@ -10,18 +10,7 @@ import type { ConnectionStatus } from '../core/useHarness.ts'
 import { HarnessTile } from './BrandTile.tsx'
 import { DevModeChip } from './DevModeChip.tsx'
 import { Menu, type MenuSection } from './overlays.tsx'
-import {
-  Button,
-  Count,
-  FilterPills,
-  ICON_STROKE,
-  IconButton,
-  Kbd,
-  SearchField,
-  StatusSlot,
-  useLivePrevious,
-  type CometSize,
-} from '@latch/ui'
+import { Button, Count, FilterPills, ICON_STROKE, IconButton, Kbd, SearchField, StatusSlot, useLivePrevious } from '@latch/ui'
 import { BrandMark } from './ui.tsx'
 
 export const connectionLabels: Record<ConnectionStatus, string> = {
@@ -61,7 +50,6 @@ const SessionItem = memo(function SessionItem({
   cancelling,
   leaving,
   now,
-  size,
   onSelect,
   menu,
 }: {
@@ -73,8 +61,6 @@ const SessionItem = memo(function SessionItem({
   /** Removed from the list: it folds away and takes no input. */
   leaving: boolean
   now: number
-  /** The status slot's size: 12 in the sidebar. */
-  size: CometSize
   onSelect: (id: string) => void
   menu: (task: TaskSummary) => MenuSection[]
 }) {
@@ -97,8 +83,7 @@ const SessionItem = memo(function SessionItem({
           <StatusSlot
             className="session-status"
             status={sessionSlot(task, selected, unread)}
-            size={size}
-            waiting={task.pendingQuestions ? '等你回答' : statusLabels['waiting-approval']}
+            running={cancelling ? '正在取消' : undefined}
             failed={task.permissionDrift && task.status !== 'failed' ? '权限已变化' : statusLabels.failed}
             time={time}
             dateTime={task.updatedAt}
@@ -139,7 +124,6 @@ function SessionGroupView({
   isUnread,
   cancelling,
   now,
-  size,
   onSelect,
   onNewIn,
   onEditProject,
@@ -156,7 +140,6 @@ function SessionGroupView({
   isUnread: (task: TaskSummary) => boolean
   cancelling: ReadonlySet<string>
   now: number
-  size: CometSize
   onSelect: (id: string) => void
   onNewIn?: (workspaceId: string) => void
   menu: (task: TaskSummary) => MenuSection[]
@@ -200,7 +183,6 @@ function SessionGroupView({
             cancelling={cancelling.has(task.id)}
             leaving={leaving}
             now={now}
-            size={size}
             onSelect={onSelect}
             menu={menu}
           />
@@ -441,7 +423,6 @@ export function Sidebar({
                 isUnread={isUnread}
                 cancelling={cancelling}
                 now={now}
-                size={12}
                 onSelect={onSelect}
                 onNewIn={onNewIn}
                 menu={sessionMenu}

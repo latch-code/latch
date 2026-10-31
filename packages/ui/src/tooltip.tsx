@@ -2,22 +2,27 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactElement,
 import { pinLayer, setPopover } from './internal.ts'
 
 /** Hovering waits this long before a tooltip appears. */
-const HOVER_DELAY = 500
-/** After a tooltip hides, another one within this window appears at once: moving along a toolbar switches instantly. */
+const HOVER_DELAY = 400
+/**
+ * After a tooltip hides, another one within this window appears at once and glides from where the last one stood:
+ * moving along a toolbar carries one tooltip from button to button.
+ */
 const WARM_WINDOW = 300
-const warm = { until: 0 }
+const warm = { until: 0, left: 0, top: 0 }
 const isWarm = () => performance.now() < warm.until
-const markWarm = () => {
-  warm.until = performance.now() + WARM_WINDOW
+const markWarm = (element: HTMLElement) => {
+  const box = element.getBoundingClientRect()
+  Object.assign(warm, { until: performance.now() + WARM_WINDOW, left: box.left, top: box.top })
 }
 
 /**
  * A tooltip on its trigger, the element just before it: the action's name, a shortcut after it, or why a disabled
- * control cannot be used. It appears after 500ms of hover, at once on keyboard focus or when the pointer moves on from
- * a neighbour's tooltip, and goes as soon as the pointer leaves, the trigger is pressed or Escape is pressed. It
- * follows the theme (raised surface, never inverted) and never takes the pointer. Its text describes the trigger for
- * screen readers unless `describe` is false, as for an icon button whose name is already the same text. Touch never
- * shows it.
+ * control cannot be used. It appears after 400ms of hover with a fade from a scale of .98 (--m-enter), at once on
+ * keyboard focus, and when the pointer moves on from a neighbour's tooltip it glides there from where that one stood
+ * (--m-micro). It goes as soon as the pointer leaves, the trigger is pressed or Escape is pressed. It is inverted (ink
+ * on light, a lifted grey on dark), 12/16 with 6px corners, and never takes the pointer. Its text describes the
+ * trigger for screen readers unless `describe` is false, as for an icon button whose name is already the same text.
+ * Touch never shows it.
  */
 export function Tooltip({
   content,
@@ -38,6 +43,8 @@ export function Tooltip({
   const id = useId()
   const [open, setOpen] = useState(false)
   const layer = useRef<HTMLSpanElement>(null)
+  // Shown because a neighbour's tooltip had just gone: it glides from where that one stood.
+  const glide = useRef(false)
 
   // Shown before it is placed: a hidden popover has no size to measure.
   useLayoutEffect(() => {
@@ -45,7 +52,18 @@ export function Tooltip({
     setPopover(element, open)
     const anchor = element?.previousElementSibling
     if (!open || !element || !anchor) return undefined
-    return pinLayer(anchor, element, { align: 'center', side, gap: 6 })
+    if (glide.current) {
+      element.dataset.glide = ''
+      element.style.left = `${warm.left}px`
+      element.style.top = `${warm.top}px`
+      // Laid out where the last one stood, so placing it next to its own trigger transitions from there.
+      void element.offsetWidth
+    }
+    const unpin = pinLayer(anchor, element, { align: 'center', side, gap: 6 })
+    return () => {
+      unpin()
+      delete element.dataset.glide
+    }
   }, [open, side])
 
   useEffect(() => {
@@ -56,7 +74,8 @@ export function Tooltip({
     let timer: ReturnType<typeof setTimeout> | undefined
     const show = (immediate: boolean) => {
       clearTimeout(timer)
-      if (immediate || isWarm()) setOpen(true)
+      glide.current = !immediate && isWarm()
+      if (immediate || glide.current) setOpen(true)
       else
         timer = setTimeout(() => {
           setOpen(true)
@@ -64,7 +83,7 @@ export function Tooltip({
     }
     const hide = () => {
       clearTimeout(timer)
-      if (element.matches(':popover-open')) markWarm()
+      if (element.matches(':popover-open')) markWarm(element)
       setOpen(false)
     }
     const enter = (event: PointerEvent) => {

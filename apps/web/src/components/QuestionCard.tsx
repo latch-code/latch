@@ -1,6 +1,6 @@
 import { useId, useState } from 'react'
 import type { AgentQuestion, QuestionAnswer, QuestionReceipt, QuestionResult, QuestionSubmission } from '@latch/protocol'
-import { Button, Checkbox, InlineNotice, Radio, TextAreaField, WaitingPill } from '@latch/ui'
+import { Button, Checkbox, InlineNotice, Radio, StatusWord, TextAreaField } from '@latch/ui'
 import { api, inlineError } from '../core/api.ts'
 import { VisibleText } from './VisibleText.tsx'
 
@@ -122,7 +122,7 @@ export function QuestionCard({ question, sessionId, actions }: { question: Agent
   return (
     <section className="question-card" aria-label="Agent 提问" data-message-id={`tool:${question.toolCallId}`}>
       <div className="question-heading">
-        <WaitingPill>等你回答</WaitingPill>
+        <StatusWord tone="waiting">等你回答</StatusWord>
         <span>
           第 {draft.step + 1} 题，共 {question.questions.length} 题
         </span>

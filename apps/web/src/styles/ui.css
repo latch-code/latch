@@ -6,7 +6,7 @@
 /*
  * Brand artwork: the app icon keeps its own shape. Its charcoal tile fills the image only up to a transparent margin
  * (about 7.4% at the sides, 8.5% above and 8.3% below, corners about 20% of the tile), so the ring is an overlay on
- * the tile's own edge, never on the image box. --brand-ring is transparent in the light theme.
+ * the tile's own edge, never on the image box. --app-ring is transparent in the light theme.
  */
 .brand-mark {
   position: relative;
@@ -22,7 +22,7 @@
   position: absolute;
   inset: 8.5% 7.4% 8.3%;
   border-radius: 20%;
-  box-shadow: inset 0 0 0 1px var(--brand-ring);
+  box-shadow: inset 0 0 0 1px var(--app-ring);
   pointer-events: none;
 }
 
@@ -49,28 +49,28 @@
   flex-shrink: 0;
   overflow: hidden;
   border-radius: var(--r-2);
-  background: var(--bg-press);
+  background: var(--press);
 }
 .progress > i {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: var(--text-2);
-  transition: width var(--d-base) var(--ease);
+  background: var(--ink-2);
+  transition: width var(--m-panel) var(--e-panel);
 }
 
 .muted-line {
-  color: var(--text-3);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label-para);
+  color: var(--muted);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui-para);
 }
 
-/* Form controls: a value sits in a well with a 1px ring; focus raises it and rings it in the focus colour. */
+/* Form controls: a value sits on the raised surface in a line-strong ring; focus rings it in the accent with a halo. */
 .field {
   display: grid;
   gap: var(--sp-6);
   min-width: 0;
-  color: var(--text-2);
+  color: var(--ink-2);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   font-weight: 500;
@@ -82,7 +82,7 @@
 }
 .field small,
 .field-hint {
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
   font-weight: 400;
@@ -100,22 +100,21 @@
   padding: var(--sp-6) var(--sp-12);
   border: 0;
   border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
-  background: var(--well);
-  box-shadow: var(--ring-field);
-  color: var(--text-1);
+  background: var(--raised);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  color: var(--ink);
   font-size: var(--fs-input);
   line-height: var(--lh-input);
   font-weight: 400;
   transition:
-    background-color var(--d-fast) var(--ease-exit),
-    box-shadow var(--d-fast) var(--ease-exit);
+    background-color var(--m-micro) var(--e-micro),
+    box-shadow var(--m-micro) var(--e-micro);
 }
 .field textarea {
   resize: vertical;
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
-  line-height: var(--lh-mono);
+  font-family: var(--mono);
+  font-size: var(--fs-code);
+  line-height: var(--lh-code);
 }
 .field input::placeholder,
 .field textarea::placeholder,
@@ -123,7 +122,7 @@
 .model-manual input::placeholder,
 .env-new input::placeholder,
 .model-available input::placeholder {
-  color: var(--text-3);
+  color: var(--muted);
 }
 .field :is(input, select, textarea):focus,
 .key-input input:focus,
@@ -131,11 +130,13 @@
 .env-new input:focus,
 .model-available input:focus {
   outline: none;
-  background: var(--bg-raised);
-  box-shadow: var(--ring-field-focus);
+  background: var(--raised);
+  box-shadow:
+    inset 0 0 0 1px var(--accent),
+    0 0 0 3px var(--accent-soft);
 }
 /*
- * A select picks a value in place, so it shows chevrons-up-down (12, icon colour) 12px from its end instead of the
+ * A select picks a value in place, so it shows chevrons-up-down (12, muted) 12px from its end instead of the
  * system arrow, matching the 12px text inset. The glyph is the field's own pseudo-element, laid in the select's grid
  * cell; every select sits in a .field after its label.
  */
@@ -154,7 +155,7 @@
   width: 12px;
   height: 12px;
   margin-inline-end: var(--sp-12);
-  background: var(--icon);
+  background: var(--muted);
   mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 15 5 5 5-5'/%3E%3Cpath d='m7 9 5-5 5 5'/%3E%3C/svg%3E");
   mask-size: 12px 12px;
   mask-repeat: no-repeat;
@@ -170,7 +171,6 @@
   .model-available input {
     min-height: 44px;
     border-radius: var(--r-12);
-    corner-shape: var(--corner-shape);
   }
   /* Every phone input is 16px so iOS does not zoom on focus; the argument field keeps its mono family. */
   .field textarea {
@@ -181,7 +181,7 @@
 
 /*
  * Value picker: shows the current value in place and opens a menu of the others. The value is regular weight; hover
- * and an open menu darken the ground and turn the value to text-1.
+ * lays the hover fill under it, an open menu the press fill, and both turn the value to ink.
  */
 .chip {
   display: inline-flex;
@@ -193,33 +193,31 @@
   padding: 0 var(--sp-8);
   border: 0;
   border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
   background: transparent;
-  color: var(--text-2);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
   font-weight: 400;
   white-space: nowrap;
   transition:
-    background-color var(--d-fast) var(--ease-exit),
-    color var(--d-fast) var(--ease-exit);
+    background-color var(--m-micro) var(--e-micro),
+    color var(--m-micro) var(--e-micro);
 }
 .chip:hover:not(:disabled) {
-  background: var(--bg-hover);
-  color: var(--text-1);
-  transition-duration: 0s;
+  background: var(--hover);
+  color: var(--ink);
 }
 .chip[aria-expanded='true'],
 .chip:active:not(:disabled) {
-  background: var(--bg-press);
-  color: var(--text-1);
+  background: var(--press);
+  color: var(--ink);
 }
 .chip:disabled {
   opacity: 0.45;
 }
 .chip > svg {
   flex-shrink: 0;
-  color: var(--icon);
+  color: var(--muted);
 }
 .chip-text {
   min-width: 0;
@@ -229,8 +227,8 @@
 /* A model switch that the next message will carry. */
 .chip.is-pending,
 .chip.is-pending:hover:not(:disabled) {
-  background: var(--fill);
-  color: var(--text-1);
+  background: var(--hover);
+  color: var(--ink);
 }
 .chip.is-pending > svg {
   color: currentColor;
@@ -269,4 +267,11 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Reduced motion: progress steps without sliding. */
+@media (prefers-reduced-motion: reduce) {
+  .progress > i {
+    transition: none;
+  }
 }

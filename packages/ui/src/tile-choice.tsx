@@ -20,9 +20,9 @@ export interface TileChoiceOption<T extends string> {
 }
 
 /**
- * Picks one of a few peers shown by their tiles, as a row of items (a tile, its name and one short line): the harness
- * of a new session. The chosen item stands on the neutral selection ground with its name in text-1 at 500, never blue
- * and never ringed; the ground cross-fades in 120ms. One tab stop (the chosen item, else the first that can be
+ * Picks one of a few peers shown by their tiles, as a row of items (a tile, its name and one short line): the agent of
+ * a new session. The chosen item is the selected card (white with a hairline ring, a soft fill in dark) with its name
+ * in ink at 500, never blue; it cross-fades in over --m-micro. One tab stop (the chosen item, else the first that can be
  * chosen); the arrow keys move and choose, skipping items that cannot be chosen, Home and End go to the ends. An item
  * that cannot be chosen dims its tile and name, keeps its line at full strength and says why in its tooltip; pressed
  * (touch screens have no tooltip) it says why in a line that opens under the row like a disclosure. The row

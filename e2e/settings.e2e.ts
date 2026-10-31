@@ -63,15 +63,15 @@ describe('settings navigation motion', () => {
         kind: 'transition',
         target: 'settings-panel',
         name: 'transform',
-        duration: token.slow,
-        easing: token.ease,
+        duration: token.push,
+        easing: token.ePush,
       })
       expect(push).toContainEqual({
         kind: 'transition',
         target: 'settings-nav-pane',
         name: 'transform',
-        duration: token.slow,
-        easing: token.ease,
+        duration: token.push,
+        easing: token.ePush,
       })
       // A page inside the section: its own bar and back, sliding in over the section, which moves aside.
       const deeper = await motions(page, () => settings.getByRole('button', { name: /^其他设备可用的 Agent/ }).click())
@@ -79,15 +79,15 @@ describe('settings navigation motion', () => {
         kind: 'transition',
         target: 'settings-level',
         name: 'transform',
-        duration: token.slow,
-        easing: token.ease,
+        duration: token.push,
+        easing: token.ePush,
       })
       expect(deeper).toContainEqual({
         kind: 'transition',
         target: 'settings-panel',
         name: 'transform',
-        duration: token.slow,
-        easing: token.ease,
+        duration: token.push,
+        easing: token.ePush,
       })
       const level = settings.locator('.settings-level[data-state="top"]')
       await level.getByRole('heading', { name: '其他设备可用的 Agent', exact: true }).waitFor()
@@ -100,15 +100,15 @@ describe('settings navigation motion', () => {
         kind: 'transition',
         target: 'settings-level',
         name: 'transform',
-        duration: token.slow,
-        easing: token.ease,
+        duration: token.push,
+        easing: token.ePush,
       })
       expect(back).toContainEqual({
         kind: 'transition',
         target: 'settings-panel',
         name: 'transform',
-        duration: token.slow,
-        easing: token.ease,
+        duration: token.push,
+        easing: token.ePush,
       })
       await expect.poll(() => settings.locator('.settings-level').count()).toBe(0)
       expect(await settings.locator('.settings-layout').getAttribute('data-level')).toBe('section')
@@ -127,16 +127,16 @@ describe('settings navigation motion', () => {
         kind: 'transition',
         target: 'settings-panel',
         name: 'opacity',
-        duration: token.fast,
-        easing: token.ease,
+        duration: token.micro,
+        easing: token.eMicro,
       })
       const deeper = await motions(page, () => settings.getByRole('button', { name: /^其他设备可用的 Agent/ }).click())
       expect(deeper).toContainEqual({
         kind: 'transition',
         target: 'settings-level',
         name: 'opacity',
-        duration: token.fast,
-        easing: token.ease,
+        duration: token.micro,
+        easing: token.eMicro,
       })
       // Nothing in settings moves (the session drawer behind it shuts at once, which is not settings' own motion).
       const moving = [...push, ...deeper].filter(
@@ -159,20 +159,20 @@ describe('settings navigation motion', () => {
         kind: 'animation',
         target: 'settings-subpage settings-enter',
         name: 'settings-enter',
-        duration: token.fast,
-        easing: token.ease,
+        duration: token.micro,
+        easing: token.eMicro,
       })
       const back = await motions(page, () => backToSection(settings))
       expect(back).toContainEqual({
         kind: 'animation',
         target: 'settings-subpage settings-enter',
         name: 'settings-enter',
-        duration: token.fast,
-        easing: token.ease,
+        duration: token.micro,
+        easing: token.eMicro,
       })
       await settings.getByRole('button', { name: /^在这台电脑上发起：/ }).waitFor()
 
-      // Leaving: the page fades out (90ms, the exit curve), and only then is the conversation back.
+      // Leaving: the page fades out (70% of --m-micro, the exit curve), and only then is the conversation back.
       const leave = await motions(page, async () => {
         await settings.getByRole('button', { name: /^返回会话/ }).click()
         await settings.waitFor({ state: 'detached' })
@@ -181,7 +181,7 @@ describe('settings navigation motion', () => {
         kind: 'animation',
         target: 'ui-modal ui-modal-page settings-page is-leaving',
         name: 'settings-leave',
-        duration: '0.09s',
+        duration: token.microExit,
         easing: token.exit,
       })
     } finally {

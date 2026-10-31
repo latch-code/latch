@@ -149,7 +149,7 @@ export function NewSessionControls({
  * render) and fades out before it goes. Under reduced motion it changes at once.
  */
 function Fading({ show, children }: { show: boolean; children: ReactNode }) {
-  const { present, leaving } = usePresence(show, MOTION.fastExit)
+  const { present, leaving } = usePresence(show, MOTION.microExit)
   // Shown from the start, it needs no entrance; once it has gone, every return fades in.
   const [entering, setEntering] = useState(false)
   if (!show && !entering) setEntering(true)

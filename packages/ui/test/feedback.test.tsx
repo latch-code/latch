@@ -58,8 +58,12 @@ describe('notices and toasts', () => {
     const alert = screen.getByRole('alert')
     await expect.element(alert).toBeVisible()
     expect(alert.element().querySelector('.ui-notice-text')?.textContent).toBe('审计记录被回滚上次看到的记录不在了。')
-    expect(color(alert.element().querySelector('.ui-notice-title'))).toBe('rgb(160, 29, 20)')
-    expect(color(alert.element().querySelector('.ui-notice-text'))).toBe('rgb(68, 68, 66)')
+    expect(color(alert.element().querySelector('.ui-notice-title'))).toBe('rgb(185, 28, 28)')
+    expect(color(alert.element().querySelector('.ui-notice-text'))).toBe('rgb(63, 63, 70)')
+    // The raised surface under a red tint and edge; the warning's glyph in the amber of icons.
+    expect(getComputedStyle(alert.element()).backgroundImage).toMatch(/^linear-gradient/u)
+    expect(getComputedStyle(alert.element()).borderTopColor).toBe('rgba(220, 38, 38, 0.2)')
+    expect(color(screen.getByRole('status').element().querySelector('.ui-notice-glyph'))).toBe('rgb(245, 158, 11)')
     expect(screen.getByRole('status').element().textContent).toBe('连接已中断已显示的内容都在。')
     press(screen.getByRole('button', { name: '关闭' }))
     expect(closed).toHaveBeenCalledOnce()
@@ -77,28 +81,32 @@ describe('notices and toasts', () => {
   })
 })
 
-describe('pills, counts and marks', () => {
-  it('keeps pills round and never blue, and caps counts at 99+', async () => {
+describe('badges, counts and marks', () => {
+  it('draws a state as words without a pill, a badge as an 18px tag with 4px corners, and caps counts at 99+', async () => {
     const screen = await render(
       <div>
-        <StatusPill tone="warn">等你批准</StatusPill>
+        <StatusPill tone="warn">原内容未知</StatusPill>
         <Count value={128} tone="warn" />
         <DemoMark />
       </div>,
     )
-    const pill = screen.getByText('等你批准').element()
-    expect(getComputedStyle(pill).borderTopLeftRadius).toBe('999px')
-    expect(getComputedStyle(pill).height).toBe('20px')
-    expect(color(pill)).toBe('rgb(154, 83, 0)')
+    const state = screen.getByText('原内容未知').element()
+    expect([getComputedStyle(state).backgroundColor, color(state)]).toEqual(['rgba(0, 0, 0, 0)', 'rgb(180, 83, 9)'])
     await expect.element(screen.getByText('99+')).toBeVisible()
-    expect(getComputedStyle(screen.getByText('演示模型').element()).height).toBe('16px')
+    const badge = getComputedStyle(screen.getByText('演示模型').element())
+    expect([badge.height, badge.borderTopLeftRadius, badge.backgroundColor, badge.color]).toEqual([
+      '18px',
+      '4px',
+      'rgba(245, 158, 11, 0.1)',
+      'rgb(180, 83, 9)',
+    ])
   })
 
   it('names the development mark with its whole sentence and keeps it neutral', async () => {
     const screen = await render(<DevMark description="开发模式：Host 代码可被本机修改" />)
     const mark = screen.getByRole('note', { name: '开发模式：Host 代码可被本机修改' })
     await expect.element(mark).toHaveTextContent('开发版')
-    expect(color(mark.element())).toBe('rgb(68, 68, 66)')
+    expect([color(mark.element()), getComputedStyle(mark.element()).backgroundColor]).toEqual(['rgb(113, 113, 122)', 'rgba(0, 0, 0, 0.04)'])
   })
 
   it('hides a status dot from screen readers unless it is labelled', async () => {
@@ -142,7 +150,7 @@ describe('empty, loading and error states', () => {
     )
     const card = screen.getByRole('alert')
     await expect.element(screen.getByRole('heading', { name: '界面出错，当前内容无法显示。' })).toBeVisible()
-    expect(color(card.element().querySelector('.lucide-triangle-alert'))).toBe('rgb(160, 29, 20)')
+    expect(color(card.element().querySelector('.lucide-triangle-alert'))).toBe('rgb(185, 28, 28)')
     expect(card.element().querySelectorAll('button')).toHaveLength(2)
   })
 })
@@ -162,40 +170,39 @@ describe('tiles', () => {
     expect(screen.container.textContent).toBe('')
   })
 
-  it('draws glyphs and one-colour marks in text-1 on the shared plate, and a plain glyph in the ink of the paper', async () => {
+  it('draws a mark on the raised surface, a glyph in ink on the hover fill, both under a hairline ring, and a plain glyph in ink-2', async () => {
     const screen = await render(
-      <div className="paper" style={{ background: 'var(--bg-pane)' }}>
+      <div className="canvas" style={{ background: 'var(--canvas)' }}>
         <Tile size={16} plain icon={ShieldCheck} />
         <Tile size={32} icon={ShieldCheck} />
         <Tile size={32} mark={{ src: MONO_MARK, mono: true }} />
         <Tile size={32} mark={{ src: COLOUR_MARK }} />
       </div>,
     )
-    const paper = () => getComputedStyle(screen.container.querySelector('.paper')!).backgroundColor
-    // A one-colour mark is the file as a mask, filled with text-1; a coloured one is the file itself. Neither is markup.
+    // A one-colour mark is the file as a mask, filled with ink; a coloured one is the file itself. Neither is markup.
     const mask = screen.container.querySelector<HTMLElement>('.ui-tile-mark')!
     expect(getComputedStyle(mask).maskImage).toBe(`url("${MONO_MARK}")`)
     const image = screen.container.querySelector('.ui-tile img')!
     expect([image.getAttribute('src'), image.getAttribute('alt')]).toEqual([COLOUR_MARK, ''])
     expect(screen.container.querySelectorAll('.ui-tile-face svg')).toHaveLength(2)
-    const faces = () => {
-      const [bare, plated] = Array.from(screen.container.querySelectorAll('.ui-tile-face'), face => getComputedStyle(face))
-      if (!bare || !plated) throw new Error('Expected a plain and a plated tile')
-      return { bare, plated, ink: getComputedStyle(document.documentElement).color }
+    const check = (raised: string, hover: string, ink: string, ink2: string, line: string) => {
+      const [bare, glyph, mono] = Array.from(screen.container.querySelectorAll('.ui-tile-face'), face => getComputedStyle(face))
+      expect([glyph?.backgroundColor, glyph?.color, mono?.backgroundColor, getComputedStyle(mask).backgroundColor]).toEqual([
+        hover,
+        ink,
+        raised,
+        ink,
+      ])
+      expect([bare?.backgroundColor, bare?.color]).toEqual(['rgba(0, 0, 0, 0)', ink2])
+      // The ring lies over the artwork, not under it.
+      const ring = getComputedStyle(screen.container.querySelectorAll('.ui-tile-face')[2]!, '::after')
+      expect(ring.boxShadow).toBe(`${line} 0px 0px 0px 1px inset`)
+      expect(contrast(ink, getComputedStyle(screen.container.querySelector('.canvas')!).backgroundColor)).toBeGreaterThanOrEqual(4.5)
     }
-    const check = (plate: string, text1: string) => {
-      const { bare, plated, ink } = faces()
-      expect([plated.backgroundColor, plated.color, getComputedStyle(mask).backgroundColor, ink]).toEqual([plate, text1, text1, text1])
-      expect(contrast(plated.color, plated.backgroundColor)).toBeGreaterThanOrEqual(4.5)
-      // The plain glyph has no plate under it and reads on the paper.
-      expect(bare.backgroundColor).toBe('rgba(0, 0, 0, 0)')
-      expect(contrast(bare.color, paper())).toBeGreaterThanOrEqual(4.5)
-    }
-    check('rgb(255, 255, 255)', 'rgb(29, 28, 26)')
+    check('rgb(255, 255, 255)', 'rgba(0, 0, 0, 0.04)', 'rgb(24, 24, 27)', 'rgb(63, 63, 70)', 'rgb(235, 235, 237)')
     await protocol().send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] })
     try {
-      // The dark plate is a neutral grey a step lighter than the paper, so the mark turns soft white with the text.
-      check('rgb(46, 46, 45)', 'rgb(234, 233, 231)')
+      check('rgb(24, 24, 27)', 'rgba(255, 255, 255, 0.05)', 'rgb(244, 244, 245)', 'rgb(212, 212, 216)', 'rgba(255, 255, 255, 0.08)')
     } finally {
       await protocol().send('Emulation.setEmulatedMedia', { features: [] })
     }
@@ -215,7 +222,8 @@ describe('tiles', () => {
       const width = glyph.getBoundingClientRect().width
       return Math.round(((Number(glyph.getAttribute('stroke-width')) * width) / 24) * 100) / 100
     })
-    expect(lines).toEqual([1.25, 1.25, 1.25, 1.5, 1.5, 1.5, 1.25])
+    // A glyph is 60% of its tile: 9.6, 12, 14.4, 19.2, 24 and 33.6, at stroke 2.2 in the smallest tile and 1.75 otherwise.
+    expect(lines).toEqual([0.88, 0.88, 1.05, 1.4, 1.75, 2.45, 1.17])
   })
 
   it("shows the brand's own dark file in the dark theme, by preference or by choice", async () => {
@@ -254,15 +262,15 @@ describe('tiles', () => {
       </div>,
     )
     const [app, margin, plain] = Array.from(screen.container.querySelectorAll('.ui-tile-face'), face => getComputedStyle(face))
-    expect([app?.backgroundColor, app?.boxShadow, app?.borderTopLeftRadius, app?.overflow]).toEqual([
-      'rgba(0, 0, 0, 0)',
-      'none',
-      '0px',
-      'visible',
-    ])
+    expect([app?.backgroundColor, app?.borderTopLeftRadius, app?.overflow]).toEqual(['rgba(0, 0, 0, 0)', '0px', 'visible'])
+    expect(getComputedStyle(screen.container.querySelector('.ui-tile-face')!, '::after').content).toBe('none')
     expect(margin?.backgroundColor).toBe('rgb(255, 255, 255)')
-    const widths = Array.from(screen.container.querySelectorAll('.ui-tile img'), image => image.getBoundingClientRect().width)
-    expect(widths).toEqual([32, 32, 20])
+    // A mark sits at 72% of its tile; a file with its own margin, and an app icon, span it.
+    const widths = Array.from(
+      screen.container.querySelectorAll('.ui-tile img'),
+      image => Math.round(image.getBoundingClientRect().width * 10) / 10,
+    )
+    expect(widths).toEqual([32, 32, 23])
     expect(plain?.overflow).toBe('hidden')
   })
 
@@ -279,7 +287,22 @@ describe('tiles', () => {
     expect(arriving).toBe('grayscale(1) opacity(0.7)')
     expect(screen.container.querySelector('.ui-tile-progress-arc')?.getAttribute('stroke-dasharray')).toBe('60 100')
     await expect.element(screen.getByRole('img', { name: 'goose：上次运行异常' })).toBeVisible()
-    expect(getComputedStyle(screen.container.querySelector('.ui-tile-dot')!).backgroundColor).toBe('rgb(217, 45, 32)')
+    expect(getComputedStyle(screen.container.querySelector('.ui-tile-dot')!).backgroundColor).toBe('rgb(185, 28, 28)')
+  })
+
+  it('pauses a skeleton and a tile arc out of view, and keeps them going in view', async () => {
+    const screen = await render(
+      <div style={{ height: 80, overflow: 'auto' }} data-testid="scroller">
+        <div style={{ height: 400 }} />
+        <Skeleton width={120} />
+        <Tile mark={{ src: MONO_MARK, mono: true }} state="arriving" />
+      </div>,
+    )
+    const loops = [screen.container.querySelector('.ui-skeleton')!, screen.container.querySelector('.ui-tile-progress-arc')!]
+    const states = () => loops.map(loop => loop.getAnimations()[0]?.playState)
+    await expect.poll(states).toEqual(['paused', 'paused'])
+    screen.getByTestId('scroller').element().scrollTop = 400
+    await expect.poll(states).toEqual(['running', 'running'])
   })
 
   it('keeps a 2px gap between an arriving tile and its 2px progress ring', async () => {
@@ -293,7 +316,7 @@ describe('tiles', () => {
     expect(track.getAttribute('rx')).toBe('10')
   })
 
-  it("starts the progress arc at 12 o'clock and keeps an indeterminate ring turning when motion is reduced", async () => {
+  it("starts the progress arc at 12 o'clock, turns an indeterminate ring, and holds it still when motion is reduced", async () => {
     const screen = await render(
       <div>
         <Tile mark={{ src: MONO_MARK, mono: true }} size={32} state="arriving" progress={0.25} />
@@ -307,15 +330,18 @@ describe('tiles', () => {
     const quarter = determinate?.getPointAtLength((determinate.getTotalLength() * 25) / 100)
     expect([Math.round(quarter?.x ?? 0), Math.round(quarter?.y ?? 0)]).toEqual([39, 20])
     expect(determinate?.getAttribute('stroke-dasharray')).toBe('25 100')
+    const turning = getComputedStyle(indeterminate)
+    expect([turning.animationName, turning.animationDuration, turning.animationIterationCount]).toEqual([
+      'ui-tile-progress',
+      '1.4s',
+      'infinite',
+    ])
+    expect(getComputedStyle(determinate).animationName).toBe('none')
     await protocol().send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] })
     try {
-      const turning = getComputedStyle(indeterminate)
-      expect([turning.animationName, turning.animationDuration, turning.animationIterationCount]).toEqual([
-        'ui-tile-progress',
-        '1.4s',
-        'infinite',
-      ])
-      expect(getComputedStyle(determinate).animationName).toBe('none')
+      // Still, the arc keeps its quarter, which reads as being checked.
+      expect(getComputedStyle(indeterminate).animationName).toBe('none')
+      expect(indeterminate.getAttribute('stroke-dasharray')).toBe('25 100')
     } finally {
       await protocol().send('Emulation.setEmulatedMedia', { features: [] })
     }
@@ -324,7 +350,7 @@ describe('tiles', () => {
   it('cuts a dot or a count out in the colour of the layer it sits on, in both themes', async () => {
     const screen = await render(
       <div>
-        <div className="ui-popover">
+        <div className="ui-popover" role="dialog">
           <Tile mark={{ src: MONO_MARK, mono: true }} size={24} state="failed" />
           <IconButton label="2 项待批准" icon={ShieldCheck} badge={<Count value={2} tone="warn" />} />
         </div>
@@ -345,9 +371,9 @@ describe('tiles', () => {
     await protocol().send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] })
     try {
       expect(cutOuts()).toEqual([true, true, true, true])
-      // In the dark theme a raised layer (#252423) is lighter than the paper (#1c1c1b): the ring is not the paper's.
+      // In the dark theme a raised layer (#18181b) is lighter than the canvas (#111113): the ring is not the canvas's.
       const dot = screen.container.querySelector('.ui-popover .ui-tile-dot')!
-      expect(getComputedStyle(dot).boxShadow).toMatch(/^rgb\(37, 36, 35\) /u)
+      expect(getComputedStyle(dot).boxShadow).toMatch(/^rgb\(24, 24, 27\) /u)
     } finally {
       await protocol().send('Emulation.setEmulatedMedia', { features: [] })
     }

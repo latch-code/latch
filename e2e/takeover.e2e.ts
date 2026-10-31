@@ -221,7 +221,7 @@ describe('desktop to phone takeover', () => {
     const detail = await host.bridge.detail(id)
     expect(new Set(detail.messages.map(m => m.id)).size).toBe(detail.messages.length)
     await mobile.reload()
-    await mobile.locator('.topbar .ui-status-pill', { hasText: '已取消' }).waitFor()
+    await mobile.locator('.topbar .ui-status-word', { hasText: '已取消' }).waitFor()
     expect((await host.bridge.detail(id)).messages).toEqual(detail.messages)
     await mobile.screenshot({ path: 'test-results/mobile-cancelled.png', fullPage: true, animations: 'disabled' })
   })

@@ -1,39 +1,39 @@
 /*
- * Motion that explains a change: a disclosure that opens downward under its header, an icon that swaps in, and
- * something that leaves. Height moves only through the grid row (0fr to 1fr) and everything else only through opacity
- * and transform, so nothing laid out above a disclosure moves. Reduced motion makes every one of them instant
- * (base.css).
+ * Motion that explains a change: a disclosure that opens downward under its header, an icon that swaps in, something
+ * that leaves, and the thinking shimmer. Height moves only through the grid row (0fr to 1fr) and everything else only
+ * through opacity and transform, so nothing laid out above a disclosure moves. Reduced motion keeps only the fades
+ * (the rules at the end of this file), and they last 120ms or less.
  */
 
-/* A disclosure's body: the grid row opens over 180ms on the entry curve and closes over 140ms on the exit curve; the
- * content fades in 40ms behind the box and fades out first. */
+/* A disclosure's body: the grid row and the content's fade open together over --m-panel and close over 70% of it on
+ * the exit curve. */
 .ui-collapse {
   display: grid;
   grid-template-rows: 0fr;
   min-width: 0;
-  transition: grid-template-rows var(--d-base-exit) var(--ease-exit);
+  transition: grid-template-rows calc(var(--m-panel) * 0.7) var(--e-exit);
 }
 .ui-collapse[data-state='open'] {
   grid-template-rows: 1fr;
-  transition: grid-template-rows var(--d-base) var(--ease);
+  transition: grid-template-rows var(--m-panel) var(--e-panel);
 }
 .ui-collapse-inner {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   opacity: 0;
-  transition: opacity var(--d-fast-exit) var(--ease-exit);
+  transition: opacity calc(var(--m-panel) * 0.7) var(--e-exit);
 }
 .ui-collapse[data-state='open'] > .ui-collapse-inner {
   opacity: 1;
-  transition: opacity var(--d-fast) var(--ease) var(--d-stagger);
+  transition: opacity var(--m-panel) var(--e-panel);
 }
 /* Open and still: focus rings and rows that reach past the column are no longer clipped. */
 .ui-collapse[data-settled] > .ui-collapse-inner {
   overflow: visible;
 }
 
-/* Swapped content scales in from 80% as it fades in (a copy icon turning into a check). */
+/* Swapped content over --m-micro: a glyph scales in from 80% as it fades in, words fade in place. */
 .ui-swap {
   display: inline-flex;
   align-items: center;
@@ -42,13 +42,11 @@
 .ui-swap[data-effect='fade'] {
   display: inline;
 }
-@media (prefers-reduced-motion: no-preference) {
-  .ui-swap[data-swapped] {
-    animation: ui-swap-in var(--d-fast) var(--ease);
-  }
-  .ui-swap[data-swapped][data-effect='fade'] {
-    animation-name: ui-swap-fade;
-  }
+.ui-swap[data-swapped] {
+  animation: ui-swap-in var(--m-micro) var(--e-micro);
+}
+.ui-swap[data-swapped][data-effect='fade'] {
+  animation-name: ui-fade-in;
 }
 @keyframes ui-swap-in {
   from {
@@ -56,8 +54,100 @@
     transform: scale(0.8);
   }
 }
-@keyframes ui-swap-fade {
+
+/*
+ * The thinking shimmer: words in muted ink with a light crossing them. A 300%-wide gradient moves behind the clipped
+ * text: after 600ms it crosses once over 1s (the first quarter of a 4s cycle) and then rests until the cycle comes
+ * round. It pauses out of view; the still frame is the plain muted words.
+ */
+.ui-shimmer {
+  color: var(--muted);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .ui-shimmer {
+    background: linear-gradient(90deg, var(--muted) 0%, var(--muted) 40%, var(--ink) 50%, var(--muted) 60%, var(--muted) 100%) 0 0 / 300%
+      100% no-repeat;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: ui-think 4s linear 600ms infinite;
+  }
+  .ui-shimmer[data-offscreen] {
+    animation-play-state: paused;
+  }
+}
+@keyframes ui-think {
+  0% {
+    background-position: 100% 0;
+  }
+  25%,
+  100% {
+    background-position: 0 0;
+  }
+}
+
+/*
+ * The shared entrances and exits. fade: opacity alone. pop: a menu, popover or tooltip, scale .98 and a fade (enter).
+ * rise: a row, a message or a toast arriving, 4px up and a fade (enter). sheet: a dialog, scale .985 and a fade
+ * (sheet). An exit plays the same frames backwards in 70% of the time, on the exit curve.
+ */
+@keyframes ui-fade-in {
   from {
     opacity: 0;
+  }
+}
+/* From full strength, so it also plays on what rests hidden once it has left. */
+@keyframes ui-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@keyframes ui-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+@keyframes ui-rise {
+  from {
+    opacity: 0;
+    translate: 0 4px;
+  }
+}
+@keyframes ui-sheet-in {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+}
+
+/* Reduced motion: a disclosure opens and closes at once while its content fades, and every entrance only fades in. */
+@media (prefers-reduced-motion: reduce) {
+  .ui-collapse,
+  .ui-collapse[data-state='open'] {
+    transition: none;
+  }
+  @keyframes ui-swap-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes ui-pop {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes ui-rise {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes ui-sheet-in {
+    from {
+      opacity: 0;
+    }
   }
 }

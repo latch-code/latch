@@ -58,9 +58,9 @@ interface ControlProps {
 }
 
 /**
- * A labelled text field: a well with a 1px ring that rises and takes the focus ring while focused. The placeholder
- * shows an example or the purpose (「例如：工作电脑」), never 「请输入…」. 32px on desktop; 44px with 16px text on phones, so iOS
- * does not zoom on focus.
+ * A labelled text field: raised inside a 1px line-strong ring that turns accent, with a soft halo, while focused. The
+ * placeholder (in faint ink) shows an example or the purpose (「例如：工作电脑」), never 「请输入…」. 32px on desktop; 44px
+ * with 16px text on phones, so iOS does not zoom on focus.
  */
 export function TextField({ label, hint, error, className, ...props }: FieldText & InputProps) {
   return (
@@ -75,7 +75,7 @@ export function TextField({ label, hint, error, className, ...props }: FieldText
   )
 }
 
-/** The multi-line text field: the same well, ring and notes as TextField, resizable in height. */
+/** The multi-line text field: the same surface, ring and notes as TextField, resizable in height. */
 export function TextAreaField({ label, hint, error, className, ...props }: FieldText & TextAreaProps) {
   return (
     <Field
@@ -90,10 +90,11 @@ export function TextAreaField({ label, hint, error, className, ...props }: Field
 }
 
 /**
- * A search field inside a page: the well of a text field with a leading search glyph and, once there is text, a
- * clear button. Escape clears it first. `trailing` shows while it is empty, for example the key that focuses it. The
- * `ghost` variant is a row of a column on the ground, such as the sidebar's search: no well at rest, the hover
- * background under the pointer, and the raised well with its focus ring only while it has focus.
+ * A search field inside a page: a soft fill with a leading search glyph and, once there is text, a clear button;
+ * focused, it rises with the accent ring of a text field. Escape clears it first. `trailing` shows while it is
+ * empty, for example the key that focuses it. The `ghost` variant is a row of a column on the sidebar, such as the
+ * sidebar's search: nothing at rest, the hover fill under the pointer, and the raised field with its ring only while
+ * it has focus.
  */
 export function SearchField({
   label,
@@ -101,7 +102,7 @@ export function SearchField({
   onValueChange,
   clearLabel = '清除搜索',
   trailing,
-  variant = 'well',
+  variant = 'fill',
   className,
   ref,
   onKeyDown,
@@ -113,7 +114,7 @@ export function SearchField({
   onValueChange: (value: string) => void
   clearLabel?: string
   trailing?: ReactNode
-  variant?: 'well' | 'ghost'
+  variant?: 'fill' | 'ghost'
 }) {
   const input = useRef<HTMLInputElement>(null)
   return (

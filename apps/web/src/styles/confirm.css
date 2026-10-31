@@ -10,17 +10,16 @@
   display: grid !important;
   gap: var(--sp-12);
   opacity: 1 !important;
-  color: var(--text-1) !important;
-  font-size: var(--fs-label) !important;
-  line-height: var(--lh-label-para) !important;
+  color: var(--ink) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui-para) !important;
 }
 section.inline-confirm[data-secure] {
   margin-top: var(--sp-8);
   padding: var(--sp-12);
-  border: 1px solid var(--line-subtle) !important;
+  border: 1px solid var(--line) !important;
   border-radius: var(--r-12);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-raised) !important;
+  background: var(--raised) !important;
 }
 /* A request that did not run, or could not start, is one notice: no paper around it. */
 section.inline-confirm[data-secure]:is([data-confirmation-phase='failed'], [data-confirmation-phase='paused']) {
@@ -40,14 +39,14 @@ section.inline-confirm[data-secure]:is([data-confirmation-phase='failed'], [data
 }
 .confirm-title {
   display: block !important;
-  color: var(--text-1) !important;
-  font-size: var(--fs-card-title) !important;
-  line-height: var(--lh-card-title) !important;
+  color: var(--ink) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui) !important;
   font-weight: 600 !important;
 }
 .confirm-line {
   display: block !important;
-  color: var(--text-2) !important;
+  color: var(--ink-2) !important;
   font-size: var(--fs-caption) !important;
   line-height: var(--lh-caption-para) !important;
 }
@@ -57,21 +56,20 @@ section.inline-confirm[data-secure]:is([data-confirmation-phase='failed'], [data
   gap: var(--sp-4);
   padding: var(--sp-8) var(--sp-12);
   border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-sunken) !important;
+  background: var(--sunken) !important;
 }
 .confirm-sheet-label,
 .confirm-sheet-check {
   display: block !important;
-  color: var(--text-3) !important;
+  color: var(--muted) !important;
   font-size: var(--fs-caption) !important;
   line-height: var(--lh-caption-para) !important;
 }
 .confirm-sheet-text {
   display: block !important;
-  color: var(--text-1) !important;
-  font-size: var(--fs-label) !important;
-  line-height: var(--lh-label-para) !important;
+  color: var(--ink) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui-para) !important;
   font-weight: 500 !important;
   overflow-wrap: anywhere;
 }
@@ -82,7 +80,7 @@ section.inline-confirm[data-secure]:is([data-confirmation-phase='failed'], [data
 }
 .confirm-warnings li {
   display: block !important;
-  color: var(--warn-text) !important;
+  color: var(--amber) !important;
   font-size: var(--fs-caption) !important;
   line-height: var(--lh-caption-para) !important;
 }
@@ -100,24 +98,22 @@ section.inline-confirm[data-secure]:is([data-confirmation-phase='failed'], [data
   margin-left: calc(-1 * var(--sp-8));
   border: 0;
   border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
   background: transparent !important;
-  color: var(--text-2) !important;
-  font-size: var(--fs-label) !important;
-  line-height: var(--lh-label) !important;
+  color: var(--ink-2) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui) !important;
   transition:
-    background-color var(--d-fast) var(--ease-exit),
-    color var(--d-fast) var(--ease-exit);
+    background-color var(--m-micro) var(--e-micro),
+    color var(--m-micro) var(--e-micro);
 }
 .confirm-details-toggle:hover {
-  background: var(--bg-hover) !important;
-  color: var(--text-1) !important;
-  transition-duration: 0s;
+  background: var(--hover) !important;
+  color: var(--ink) !important;
 }
 .confirm-details-toggle .chevron {
   flex-shrink: 0;
-  color: var(--icon);
-  transition: transform var(--d-base) var(--ease);
+  color: var(--muted);
+  transition: transform var(--m-panel) var(--e-panel);
 }
 .confirm-details-toggle[aria-expanded='true'] .chevron {
   transform: rotate(90deg);
@@ -127,8 +123,7 @@ section.inline-confirm[data-secure]:is([data-confirmation-phase='failed'], [data
   gap: var(--sp-6);
   padding: var(--sp-8) var(--sp-12);
   border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-sunken) !important;
+  background: var(--sunken) !important;
 }
 .confirm-details-row {
   display: grid !important;
@@ -137,24 +132,24 @@ section.inline-confirm[data-secure]:is([data-confirmation-phase='failed'], [data
 }
 .confirm-details-row dt {
   display: block !important;
-  color: var(--text-3) !important;
+  color: var(--muted) !important;
   font-size: var(--fs-caption) !important;
-  line-height: var(--lh-mono-sm) !important;
+  line-height: var(--lh-mono) !important;
 }
 .confirm-details-row dd {
   display: block !important;
   min-width: 0;
-  color: var(--text-1) !important;
-  font-family: var(--font-mono) !important;
-  font-size: var(--fs-mono-sm) !important;
-  line-height: var(--lh-mono-sm) !important;
+  color: var(--ink) !important;
+  font-family: var(--mono) !important;
+  font-size: var(--fs-mono) !important;
+  line-height: var(--lh-mono) !important;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 .confirm-details-note {
   display: block !important;
   padding: var(--sp-6) 0 0;
-  color: var(--text-3) !important;
+  color: var(--muted) !important;
   font-size: var(--fs-caption) !important;
   line-height: var(--lh-caption-para) !important;
 }
@@ -182,30 +177,36 @@ section.inline-confirm[data-secure]:is([data-confirmation-phase='failed'], [data
   justify-items: start;
   gap: var(--sp-6);
   padding: var(--sp-12);
-  border: 1px solid var(--line-subtle) !important;
+  border: 1px solid var(--line) !important;
   border-radius: var(--r-12);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-sunken) !important;
+  background: var(--sunken) !important;
 }
 [data-secure] .pair-waiting .fingerprint {
   justify-content: start;
 }
 .pair-waiting-title {
   display: block !important;
-  color: var(--text-1) !important;
-  font-size: var(--fs-label) !important;
-  line-height: var(--lh-label-para) !important;
+  color: var(--ink) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui-para) !important;
   font-weight: 600 !important;
 }
 .pair-waiting-note {
   display: block !important;
-  color: var(--text-2) !important;
+  color: var(--ink-2) !important;
   font-size: var(--fs-caption) !important;
   line-height: var(--lh-caption-para) !important;
 }
 /* The enrollment page: the computer's sentence under the fingerprint, which names it. */
 .fingerprint-hash q {
   display: inline !important;
-  color: var(--text-2) !important;
+  color: var(--ink-2) !important;
   quotes: '「' '」';
+}
+
+/* Reduced motion: the chevron turns at once. */
+@media (prefers-reduced-motion: reduce) {
+  .confirm-details-toggle .chevron {
+    transition: none;
+  }
 }

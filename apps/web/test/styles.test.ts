@@ -103,7 +103,7 @@ describe('page stylesheets', () => {
   })
 
   it('keeps padding, margins and gaps off the values between the spacing steps', () => {
-    const between = /(?:^|[^\d.])(?:10|14|18|22|26)px/u
+    const between = /(?:^|[^\d.])(?:14|18|22|26)px/u
     const wrong = declarations().filter(
       item => /^(?:padding|margin|gap|row-gap|column-gap)/u.test(item.property) && between.test(item.value),
     )
@@ -119,13 +119,13 @@ describe('page stylesheets', () => {
     expect(wrong.map(where)).toEqual([])
   })
 
-  it('colours the browser bar with the ground at every width, in both themes', () => {
+  it('colours the browser bar with the sidebar grey, the colour of the window, at every width, in both themes', () => {
     const dark = tokens.slice(tokens.indexOf(":root[data-theme='dark']"))
     const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8')
     const metas = [...html.matchAll(/<meta name="theme-color" content="([^"]+)" media="([^"]+)" \/>/gu)]
     expect(metas.map(match => [match[2], match[1]])).toEqual([
-      ['(prefers-color-scheme: light)', hexOf(tokens, '--bg-app')],
-      ['(prefers-color-scheme: dark)', hexOf(dark, '--bg-app')],
+      ['(prefers-color-scheme: light)', hexOf(tokens, '--sidebar')],
+      ['(prefers-color-scheme: dark)', hexOf(dark, '--sidebar')],
     ])
     // A chosen theme overrides the scheme of each media query.
     for (const [, content, media] of metas) {
@@ -137,21 +137,74 @@ describe('page stylesheets', () => {
     }
   })
 
-  it('gives rounded rectangles the corner shape and keeps pills and circles round', () => {
-    const rules = new Map<string, Declaration[]>()
-    for (const item of declarations())
-      rules.set(`${item.file} ${item.selector}`, [...(rules.get(`${item.file} ${item.selector}`) ?? []), item])
-    const wrong: string[] = []
-    for (const [rule, items] of rules) {
-      const radii = items.filter(item => /^border(?:-[a-z]+)*-radius$/u.test(item.property)).map(item => item.value)
-      const shaped = items.some(item => item.property === 'corner-shape')
-      if (radii.length === 0) continue
-      const round = radii.some(value => /--r-pill|50%/u.test(value))
-      // 4px bars (radius 2) are pills in effect; the app icon's ring follows its own artwork's corner.
-      const rectangle = radii.some(value => !/^(?:0|inherit|var\(--r-2\)|20%|var\(--r-pill\)|50%)$/u.test(value))
-      if (round && shaped) wrong.push(`${rule}: a pill or circle with a corner shape`)
-      if (rectangle && !round && !shaped) wrong.push(`${rule}: a rounded rectangle without the corner shape`)
+  it('draws the keyboard ring outside every control filled in the accent, where it shows', () => {
+    const all = declarations()
+    const filled = all.filter(
+      item =>
+        (/^background(-color)?$/u.test(item.property) && /^var\(--accent(-hover)?\)$/u.test(item.value))
+        || (item.property === 'box-shadow' && /^inset 0 0 0 \d+px var\(--accent\)$/u.test(item.value) && item.selector.includes('radio'))
+        || item.property === 'accent-color',
+    )
+    const firstClass = (selector: string) => /\.(?!ui-input)[\w-]+/u.exec(selector.replace(/\[data-secure\]\s*/u, ''))?.[0]
+    const ringed = all.filter(
+      item => item.selector.includes(':focus-visible') && item.property === 'outline-offset' && item.value === '2px',
+    )
+    const missing = filled.filter(item => {
+      const name = firstClass(item.selector)
+      return !name || !ringed.some(ring => ring.selector.includes(name))
+    })
+    expect(filled.length).toBeGreaterThan(5)
+    expect(missing.map(where)).toEqual([])
+  })
+
+  it('runs every loop only under no-preference, so reduced motion stands still', () => {
+    const outsideNoPreference = (text: string) => {
+      let rest = text
+      for (;;) {
+        const start = rest.indexOf('@media (prefers-reduced-motion: no-preference)')
+        if (start < 0) return rest
+        let depth = 0
+        let end = rest.indexOf('{', start)
+        do {
+          if (rest[end] === '{') depth++
+          else if (rest[end] === '}') depth--
+          end++
+        } while (depth > 0)
+        rest = rest.slice(0, start) + rest.slice(end)
+      }
     }
-    expect(wrong).toEqual([])
+    const loops = [...sheets].filter(([, text]) => /\binfinite\b/u.test(outsideNoPreference(text))).map(([name]) => name)
+    expect(loops).toEqual([])
+  })
+
+  it('fades hover and press fills over --m-micro both ways: no rule snaps them on', () => {
+    expect(
+      declarations()
+        .filter(item => item.property === 'transition-duration' && /^0s/u.test(item.value))
+        .map(where),
+    ).toEqual([])
+  })
+
+  it('balances headings and keeps the sticky search row of a menu opaque, so rows do not show through', () => {
+    const all = declarations()
+    expect(all.some(item => item.selector.includes('h1') && item.property === 'text-wrap' && item.value === 'balance')).toBe(true)
+    expect(all.find(item => item.selector === '.ui-menu-search' && item.property === 'background')?.value).toBe('var(--raised)')
+  })
+
+  it('rounds corners only on the radius scale, without a corner shape', () => {
+    // The scale (4, 6, 8, 12, 16, full and 2 for bars), circles, and what follows from it: a tile's size × 0.225, a
+    // nested radius, a primitive's own radius property and the app icon's ring, which follows its own artwork's corner.
+    const allowed = (value: string) => {
+      // A value per corner, each a step of the scale or 0, or one value that follows from the scale.
+      const steps = value.replace(/var\(--r-(?:2|4|6|8|12|16|full)\)/gu, 'R')
+      return (
+        /^(?:(?:R|0)(?: |$))+$/u.test(steps)
+        || /^(?:inherit|50%|20%|var\(--[\w-]+-radius\)|round\(calc\(.*\* 0\.225\), 1px\)|calc\(.*\))$/u.test(value)
+      )
+    }
+    const wrong = declarations().filter(
+      item => (/^border(?:-[a-z]+)*-radius$/u.test(item.property) && !allowed(item.value)) || item.property === 'corner-shape',
+    )
+    expect(wrong.map(where)).toEqual([])
   })
 })

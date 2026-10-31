@@ -37,12 +37,12 @@ function CheckField({ type, label, description, className, ...props }: CheckProp
   )
 }
 
-/** A 16px checkbox: a 1px ring in the icon colour; checked, the accent with a white tick. A native input. */
+/** A 16px checkbox: a 1.5px line-strong ring; checked, the accent with a white tick. A native input. */
 export function Checkbox(props: CheckProps) {
   return <CheckField {...props} type="checkbox" />
 }
 
-/** A 16px radio: a 1px ring in the icon colour; selected, a 5px accent ring. A native input; group it by `name`. */
+/** A 16px radio: a 1.5px line-strong ring; selected, a 5px accent ring. A native input; group it by `name`. */
 export function Radio(props: CheckProps) {
   return <CheckField {...props} type="radio" />
 }

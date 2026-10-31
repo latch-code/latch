@@ -666,7 +666,7 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
     }
     setPopping(true)
     clearTimeout(popTimer.current)
-    popTimer.current = setTimeout(arrive, MOTION.slowExit)
+    popTimer.current = setTimeout(arrive, MOTION.pushExit)
   }
   // The confirmation dock opens the session that holds a confirmation back, from settings too.
   useEffect(
@@ -1915,8 +1915,8 @@ export function Workspace({ harness, snapshot }: { harness: Harness; snapshot: A
     submission.setDraft(prompt)
     ;(phone ? sheetComposerRef : composerRef).current?.focus()
   }
-  const column = usePresence(columnOpen, 180)
-  const page = usePresence(pageMode && infoPage, 180)
+  const column = usePresence(columnOpen, MOTION.panel)
+  const page = usePresence(pageMode && infoPage, MOTION.pushExit)
   const closeInfoPage = () => {
     setInfoPage(false)
     if (phone && selectedId === null) {

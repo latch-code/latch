@@ -1,18 +1,22 @@
 /*
- * Native <dialog> variants: centered dialog, phone bottom sheet, full page. Every ui-modal is raised
- * material with the ui-modal shadow over the scrim.
+ * Native <dialog> variants whose content owns its layout: a centred dialog, a phone bottom sheet and a full page. A
+ * dialog and a sheet are raised with 16px corners and the dialog shadow over the blurred scrim; a dialog fades in from
+ * a scale of .985 and a sheet rises from below, both over --m-sheet; a page covers the window without a shadow.
  */
 .ui-modal {
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--text-1);
+  color: var(--ink);
   max-width: none;
   max-height: none;
   overflow: visible;
 }
 .ui-modal::backdrop {
   background: var(--scrim);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+  animation: ui-fade-in var(--m-sheet) var(--e-sheet);
 }
 .ui-modal-surface {
   display: flex;
@@ -20,8 +24,8 @@
   min-height: 0;
   max-height: inherit;
   overflow: hidden;
-  background: var(--bg-raised);
-  box-shadow: var(--sh-modal);
+  background: var(--raised);
+  box-shadow: var(--sh-dialog);
 }
 
 .ui-modal-dialog {
@@ -31,13 +35,7 @@
 }
 .ui-modal-dialog > .ui-modal-surface {
   border-radius: var(--r-16);
-  corner-shape: var(--corner-shape);
-}
-@keyframes dialog-in {
-  from {
-    opacity: 0;
-    transform: scale(0.98);
-  }
+  animation: ui-sheet-in var(--m-sheet) var(--e-sheet);
 }
 
 .ui-modal-sheet {
@@ -47,9 +45,21 @@
   margin: auto 0 0;
 }
 .ui-modal-sheet > .ui-modal-surface {
-  border-radius: var(--r-16) var(--r-16) 0 0;
-  corner-shape: var(--corner-shape);
   padding-bottom: env(safe-area-inset-bottom);
+  border-radius: var(--r-16) var(--r-16) 0 0;
+  animation: ui-sheet-up var(--m-sheet) var(--e-sheet);
+}
+@keyframes ui-sheet-up {
+  from {
+    translate: 0 100%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  @keyframes ui-sheet-up {
+    from {
+      opacity: 0;
+    }
+  }
 }
 .ui-modal-grabber {
   align-self: center;
@@ -60,12 +70,6 @@
   border-radius: var(--r-2);
   background: var(--line-strong);
 }
-@keyframes sheet-in {
-  from {
-    transform: translateY(24px);
-    opacity: 0;
-  }
-}
 
 .ui-modal-page {
   width: 100vw;
@@ -73,6 +77,10 @@
   max-width: 100vw;
   max-height: 100dvh;
   margin: 0;
+}
+.ui-modal-page::backdrop {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 .ui-modal-page > .ui-modal-surface {
   height: 100%;
@@ -86,7 +94,6 @@
   flex-shrink: 0;
   min-height: 56px;
   padding: var(--sp-8) var(--sp-12) var(--sp-8) var(--sp-24);
-  border-bottom: 1px solid var(--line-subtle);
 }
 .ui-modal-header h2 {
   flex: 1;
@@ -94,8 +101,8 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--fs-title-sm);
-  line-height: var(--lh-title-sm);
+  font-size: var(--fs-heading);
+  line-height: var(--lh-heading);
   font-weight: 600;
 }
 .ui-modal-body,
@@ -106,13 +113,13 @@
   overscroll-behavior: contain;
   padding: var(--sp-16) var(--sp-20);
 }
-/* Desktop dialogs: a 56 header, a 24 body inset and a 64 footer, the header and footer each set off by a subtle
- * line. Phone sheets keep the tighter 16/20 inset. */
+/* Desktop dialogs: a 56 header, the body with 24px sides and a 56 footer on the sidebar's grey under a hairline.
+ * Phone sheets keep the tighter 16/20 inset. */
 .ui-modal-body {
   display: grid;
   gap: var(--sp-12);
   align-content: start;
-  padding: var(--sp-24);
+  padding: var(--sp-4) var(--sp-24) var(--sp-24);
 }
 .ui-modal-footer {
   display: flex;
@@ -120,9 +127,10 @@
   justify-content: flex-end;
   gap: var(--sp-8);
   flex-shrink: 0;
-  min-height: 64px;
-  padding: 0 var(--sp-24);
-  border-top: 1px solid var(--line-subtle);
+  min-height: 56px;
+  padding: var(--sp-12) var(--sp-16);
+  background: var(--sidebar);
+  box-shadow: inset 0 1px 0 var(--line);
 }
 .ui-modal-sheet .ui-modal-body {
   padding: var(--sp-16) var(--sp-20);
@@ -130,13 +138,15 @@
 .ui-modal-sheet .ui-modal-footer {
   min-height: 0;
   padding: var(--sp-12) var(--sp-20) var(--sp-16);
+  background: transparent;
+  box-shadow: none;
 }
 .ui-modal-sheet .ui-modal-footer .ui-button {
   flex: 1;
   min-height: 44px;
 }
 .ui-confirm-message {
-  color: var(--text-2);
+  color: var(--ink-2);
   font-size: var(--fs-ui);
   line-height: var(--lh-ui-para);
 }
@@ -144,16 +154,4 @@
   display: grid;
   gap: var(--sp-12);
   padding-top: var(--sp-4);
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .ui-modal::backdrop {
-    animation: fade-in var(--d-base) var(--ease);
-  }
-  .ui-modal-dialog > .ui-modal-surface {
-    animation: dialog-in var(--d-slow) var(--ease);
-  }
-  .ui-modal-sheet > .ui-modal-surface {
-    animation: sheet-in var(--d-slow) var(--ease);
-  }
 }

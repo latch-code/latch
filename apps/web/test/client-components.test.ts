@@ -640,9 +640,11 @@ describe('approval cards', () => {
     expect(html).toMatch(/class="approval-preview" id="[^"]+" data-open=""/)
   })
 
-  it('carries the waiting in the header pill alone, as text without an icon', () => {
+  it('carries the waiting in the header as one amber status word after its shield', () => {
     const html = renderToStaticMarkup(createElement(ToolCard, { message: tool(), approval: approval({ risk: 'R1' }), onDecide: noop }))
-    expect(html).toContain('<span class="ui-status-pill ui-waiting-pill tool-card-waiting" data-tone="warn">待批准</span>')
+    expect(html).toMatch(
+      /<span class="ui-status-word tool-card-waiting" data-tone="waiting"><svg[^>]*lucide-shield[^>]*>.*?<\/svg>待批准<\/span>/u,
+    )
   })
 
   it('keeps blue off a high-risk card: allowing is a secondary button led by a lock', () => {
@@ -683,7 +685,7 @@ describe('approval cards', () => {
       }),
     )
     expect(html).not.toContain('>新文件<')
-    expect(html).toContain(`<span class="ui-status-pill" data-tone="warn" title="${PREVIOUS_UNKNOWN_TEXT}">原内容未知</span>`)
+    expect(html).toContain(`<span class="ui-status-word" data-tone="warn" title="${PREVIOUS_UNKNOWN_TEXT}">原内容未知</span>`)
     expect(html).toContain(`<p class="approval-warning" role="note">${PREVIOUS_UNKNOWN_TEXT}</p>`)
     expect(html).toContain('@@ +1,1 @@')
     expect(html).not.toContain('−0')
@@ -698,7 +700,7 @@ describe('approval cards', () => {
     expect(created).toContain('@@ -0,0 +1,1 @@')
     expect(created).not.toContain('data-tone="warn"')
     const hidden = render({ previous: 'unavailable' })
-    expect(hidden).toContain(`<span class="ui-status-pill" data-tone="warn" title="${PREVIOUS_UNAVAILABLE_TEXT}">原内容未显示</span>`)
+    expect(hidden).toContain(`<span class="ui-status-word" data-tone="warn" title="${PREVIOUS_UNAVAILABLE_TEXT}">原内容未显示</span>`)
     expect(hidden).toContain(`<p class="diff-note">${PREVIOUS_UNAVAILABLE_TEXT}</p>`)
     expect(hidden).toContain('@@ +1,1 @@')
     for (const html of [hidden, render({})]) expect(html).not.toContain('>新文件<')
@@ -799,14 +801,14 @@ describe('plan', () => {
     { content: 'Write', status: 'in_progress' as const },
   ]
   it('marks the step in progress with a still mark, which reads as unfinished once the session settles', () => {
-    // The running tool turns its comets on its own row and in the run bar; the plan adds none.
+    // The running tool turns its spinner on its own row; the plan adds none.
     const running = renderToStaticMarkup(createElement(PlanList, { plan, active: true }))
     expect(running).toContain('lucide-circle-dot')
     expect(running).toContain('，进行中')
-    expect(running).not.toMatch(/ui-comet|ui-spinner/)
+    expect(running).not.toMatch(/ui-spinner/)
     const settled = renderToStaticMarkup(createElement(PlanList, { plan, active: false }))
     expect(settled).toContain('class="plan-list is-settled"')
-    expect(settled).not.toMatch(/ui-comet|ui-spinner/)
+    expect(settled).not.toMatch(/ui-spinner/)
     expect(settled).toContain('，未完成')
   })
 })
@@ -1023,7 +1025,7 @@ describe('top bar', () => {
   it('names full access and leaves the default level, asking before each step, to the session details', () => {
     const full = renderToStaticMarkup(createElement(TopBar, { ...topBar, level: 'L3' }))
     expect(full).toMatch(
-      /<span class="ui-status-pill level-pill" data-tone="warn" title="完全访问（L3）"><svg[^>]*lucide-shield-alert[^>]*>.*<\/svg>完全访问<\/span>/,
+      /<span class="ui-status-word level-pill" data-tone="warn" title="完全访问（L3）"><svg[^>]*lucide-shield-alert[^>]*>.*<\/svg>完全访问<\/span>/,
     )
     const asking = renderToStaticMarkup(createElement(TopBar, { ...topBar, level: 'L1' }))
     expect(asking).not.toContain('逐项询问')
@@ -1032,13 +1034,13 @@ describe('top bar', () => {
 
   it('shows the state only when it is not the default, and where the session runs', () => {
     const pill = (status: TaskSummary['status'], cancelling = false) =>
-      /class="ui-status-pill" data-tone="(\w+)">([^<]+)</u
+      /class="ui-status-word" data-tone="(\w+)">(?:<svg.*?<\/svg>)?([^<]+)</u
         .exec(renderToStaticMarkup(createElement(TopBar, { ...topBar, summary: session({ status }), cancelling })))
         ?.slice(1)
     expect(pill('running')).toBeUndefined()
     expect(pill('idle')).toBeUndefined()
     expect(pill('waiting-approval')).toBeUndefined()
-    expect(pill('failed')).toEqual(['err', '失败'])
+    expect(pill('failed')).toEqual(['failed', '失败'])
     expect(pill('cancelled')).toEqual(['neutral', '已取消'])
     expect(pill('interrupted')).toEqual(['neutral', '已中断'])
     expect(pill('running', true)).toEqual(['neutral', '正在取消'])
@@ -1066,8 +1068,8 @@ describe('top bar', () => {
     expect(html).toMatch(/^<header class="topbar" data-phone=""><button[^>]*aria-label="返回会话列表"/)
     // The title opens the session's menu (a sheet on a phone), 同步最新状态 included.
     expect(html).toMatch(/<h1[^>]*><button[^>]*aria-haspopup="(?:menu|dialog)"[^>]*class="topbar-title-button">/)
-    expect(html).toContain(
-      '<div class="topbar-subline"><span class="topbar-source-text">Codex · latch-app</span><span class="ui-status-pill" data-tone="err">失败</span><span class="ui-status-pill level-pill"',
+    expect(html).toMatch(
+      /<div class="topbar-subline"><span class="topbar-source-text">Codex · latch-app<\/span><span class="ui-status-word" data-tone="failed"><svg[^>]*lucide-circle-alert[^>]*>.*?<\/svg>失败<\/span><span class="ui-status-word level-pill"/u,
     )
     expect(html).toMatch(/<button[^>]*aria-label="会话信息"[^>]*>.*<\/header>$/)
     expect(html).not.toContain('新建会话')
@@ -1176,7 +1178,7 @@ describe('workspace settings', () => {
       }),
     )
     expect(html).toContain('class="settings-card project-card is-unavailable"')
-    expect(html).toContain('<span class="ui-status-pill" data-tone="warn">不可用</span>')
+    expect(html).toContain('<span class="ui-status-word" data-tone="warn">不可用</span>')
     expect(html).toContain(`<span class="workspace-unavailable">${reason}</span>`)
     // Removing is in the project's ⋯ menu; a browser copies the folder's path instead of showing it in Finder.
     expect(html).toContain('aria-label="hooks 的操作"')

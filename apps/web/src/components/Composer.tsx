@@ -10,7 +10,7 @@ import { DECISION_COPY } from '../core/securityCopy.ts'
 import { SlashCommands, useSlashCommands } from './SlashCommands.tsx'
 import { PlanChip } from './PlanCard.tsx'
 import { VisibleText } from './VisibleText.tsx'
-import { Button, Collapse, Comet, ICON_STROKE, InlineNotice, MOTION, Spinner, Swap, Tooltip, useLiveChange } from '@latch/ui'
+import { Button, Collapse, EASING, ICON_STROKE, InlineNotice, MOTION, Spinner, Swap, Tooltip, useLiveChange } from '@latch/ui'
 
 /**
  * What a running session's bar above the input carries: only what can be acted on. What the run is doing and for how
@@ -223,7 +223,7 @@ export function Composer({
           { opacity: 0, transform: 'scale(0.9)' },
           { opacity: 1, transform: 'none' },
         ],
-        { duration: MOTION.fast, easing: 'cubic-bezier(0.2, 0, 0, 1)' },
+        { duration: MOTION.micro, easing: EASING.micro },
       )
   })
 
@@ -431,7 +431,7 @@ function StopButton({ run }: { run: RunState }) {
 /**
  * The bar on top of the input while a session runs, when it has something to act on: approvals waiting while none of
  * their cards is in view (amber, 「1 项待批准 · 写入 docs/notes.md」 and 查看), the stop's own states (正在停止… with the
- * running comet; 尚未确认 with 重试) and the plan chip. With nothing to say it folds away (its height animates with the
+ * spinner; 尚未确认 with 重试) and the plan chip. With nothing to say it folds away (its height animates with the
  * disclosure, which the reading position follows as a resize).
  */
 function RunBar({ run }: { run?: RunState }) {
@@ -467,7 +467,7 @@ function RunBar({ run }: { run?: RunState }) {
           </>
         ) : stopping ? (
           <span className="run-bar-what">
-            <Comet size={12} />
+            <Spinner size={12} />
             <span role="status" className="run-bar-status">
               正在停止…
             </span>

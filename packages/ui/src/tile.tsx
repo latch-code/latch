@@ -1,22 +1,25 @@
+import { useRef } from 'react'
 import type { LucideIcon } from 'lucide-react'
+import { ICON_STROKE } from './icon.tsx'
 import { cx } from './internal.ts'
+import { usePausedOffscreen } from './motion.tsx'
 
 export type TileSize = 16 | 20 | 24 | 32 | 40 | 56
 /**
- * How ready a harness or model is, drawn on the tile itself; ready (the default) adds nothing. cold: not usable (its
- * command is missing, for example), at 40% and in greyscale. arriving: starting or being checked, at 70% in greyscale inside a 2px
- * progress ring 2px out (determinate with `progress`, otherwise turning once every 1.4s). failed: an 8px red dot on
- * the top-right corner, cut out of the surface.
+ * How ready an agent or model is, drawn on the tile itself; ready (the default) adds nothing. cold: not usable (its
+ * command is missing, for example), at 40% and in greyscale. arriving: starting or being checked, at 70% in greyscale
+ * inside a 2px progress ring 2px out (determinate with `progress`, otherwise turning once every 1.4s; it pauses out of
+ * view and stands still under reduced motion). failed: an 8px red dot on the top-right corner, cut out of the surface.
  */
 export type TileState = 'ready' | 'cold' | 'arriving' | 'failed'
 
 /**
  * A brand's mark, from a file the page ships with, never inlined as markup. A coloured mark is placed as it is, and
  * `dark` names the brand's own file for the dark theme where it has one. A one-colour mark (`mono`) is the brand's
- * one-colour reproduction, drawn in text-1 through a CSS mask, so it reads near-black on the light plate and soft white
- * on the dark one. `tile` marks the brand's own app icon, which brings its background and its shape: it shows as it is,
- * without the plate, the ring or the tile's corners. `margin` marks a file that already holds a wide margin around the
- * mark: it spans the plate instead of sitting at 62.5%.
+ * one-colour reproduction, drawn in ink through a CSS mask, so it reads near-black in the light theme and soft white in
+ * the dark one. `tile` marks the brand's own app icon, which brings its background and its shape: it shows as it is,
+ * without the surface, the ring or the tile's corners. `margin` marks a file that already holds a wide margin around
+ * the mark: it spans the tile instead of sitting at 72%.
  */
 export interface TileMark {
   src: string
@@ -67,25 +70,47 @@ function Mark({ mark }: { mark: TileMark }) {
 /** What the tile shows: a brand's mark, or a glyph where the thing has no icon of its own. Never a letter. */
 export type TileArt = { mark: TileMark; icon?: undefined } | { icon: LucideIcon; mark?: undefined }
 
-/** The plate holds a glyph at 62.5% of the tile; a plain tile is the glyph alone. */
-const glyphSize = (size: TileSize, plain: boolean) => (plain ? size : size * 0.625)
+/** The tile holds a glyph at 60% of its size; a plain tile is the glyph alone. */
+const glyphSize = (size: TileSize, plain: boolean) => (plain ? size : size * 0.6)
 
-/**
- * A glyph's line, in px, whatever size it is drawn at: 1.25 below 20 and 1.5 from 20, the weight of the icon scale, so
- * a small glyph does not fill in and a large one does not turn hairline.
- */
-const glyphStroke = (size: number) => (size < 20 ? 1.25 : 1.5)
+/** A glyph's stroke follows the icon scale; in the smallest tiles it is 2.2, so a 10px glyph still reads. */
+const glyphStroke = (size: TileSize, plain: boolean) => (size <= 16 && !plain ? 2.2 : ICON_STROKE[16])
 
-function Glyph({ icon: Drawn, size }: { icon: LucideIcon; size: number }) {
-  return <Drawn size={size} strokeWidth={glyphStroke(size)} absoluteStrokeWidth aria-hidden="true" />
+function Glyph({ icon: Drawn, size, strokeWidth }: { icon: LucideIcon; size: number; strokeWidth: number }) {
+  return <Drawn size={size} strokeWidth={strokeWidth} aria-hidden="true" />
+}
+
+/** The progress ring around an arriving tile; its arc pauses out of view. */
+function ProgressRing({ size, progress }: { size: TileSize; progress: number | undefined }) {
+  const own = useRef<SVGSVGElement>(null)
+  usePausedOffscreen(own)
+  // The ring's 2px stroke is centred 3px outside the tile, which leaves a 2px gap; the box reaches 4px out to hold it.
+  const ring = size + 8
+  return (
+    <svg
+      ref={own}
+      className="ui-tile-progress"
+      width={ring}
+      height={ring}
+      viewBox={`0 0 ${ring} ${ring}`}
+      data-determinate={progress === undefined ? undefined : ''}>
+      <rect className="ui-tile-progress-track" x="1" y="1" width={size + 6} height={size + 6} rx={radius(size) + 3} />
+      <path
+        className="ui-tile-progress-arc"
+        d={ringPath(size + 6, radius(size) + 3)}
+        pathLength="100"
+        strokeDasharray={progress === undefined ? '25 100' : `${Math.round(Math.min(1, Math.max(0, progress)) * 100)} 100`}
+      />
+    </svg>
+  )
 }
 
 /**
- * The square tile of a harness or a model: the shared tile plate with a 1px ring and corners of round(size × 0.225).
- * It shows the brand's `mark`, or, for something without an icon of its own, the caller's `icon` (a Lucide glyph,
- * drawn in text-1 on the plate with a line that keeps its weight at every size). `plain` (14 or 16) is the glyph
- * alone, without the tile. The tile is decorative next to the
- * name unless `label` names it, and its state must also be said in words wherever it matters.
+ * The square tile of an agent or a model: a 1px line ring laid over it and corners of round(size × 0.225). It shows
+ * the brand's `mark` on the raised surface, or, for something without an icon of its own, the caller's `icon` (a
+ * Lucide glyph at 60%, in ink on the hover fill). `plain` (14 or 16)
+ * is the glyph alone, without the tile. The tile is decorative next to the name unless `label` names it, and its
+ * state must also be said in words wherever it matters.
  */
 export function Tile({
   size = 32,
@@ -105,34 +130,20 @@ export function Tile({
   label?: string
   className?: string
 }) {
-  // The ring's 2px stroke is centred 3px outside the tile, which leaves a 2px gap; the box reaches 4px out to hold it.
-  const ring = size + 8
   return (
     <span
       className={cx('ui-tile', className)}
       data-size={size}
       data-state={state}
       data-plain={plain ? '' : undefined}
+      data-glyph={mark ? undefined : ''}
       data-app-icon={mark?.tile ? '' : undefined}
       data-margin={mark?.margin ? '' : undefined}
       {...(label ? { role: 'img', 'aria-label': label } : { 'aria-hidden': true })}>
-      <span className="ui-tile-face">{mark ? <Mark mark={mark} /> : <Glyph icon={icon} size={glyphSize(size, plain)} />}</span>
-      {state === 'arriving' && !plain && (
-        <svg
-          className="ui-tile-progress"
-          width={ring}
-          height={ring}
-          viewBox={`0 0 ${ring} ${ring}`}
-          data-determinate={progress === undefined ? undefined : ''}>
-          <rect className="ui-tile-progress-track" x="1" y="1" width={size + 6} height={size + 6} rx={radius(size) + 3} />
-          <path
-            className="ui-tile-progress-arc"
-            d={ringPath(size + 6, radius(size) + 3)}
-            pathLength="100"
-            strokeDasharray={progress === undefined ? '25 100' : `${Math.round(Math.min(1, Math.max(0, progress)) * 100)} 100`}
-          />
-        </svg>
-      )}
+      <span className="ui-tile-face">
+        {mark ? <Mark mark={mark} /> : <Glyph icon={icon} size={glyphSize(size, plain)} strokeWidth={glyphStroke(size, plain)} />}
+      </span>
+      {state === 'arriving' && !plain && <ProgressRing size={size} progress={progress} />}
       {state === 'failed' && <span className="ui-tile-dot" />}
     </span>
   )

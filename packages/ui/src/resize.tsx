@@ -5,7 +5,7 @@ export type ResizePhase = 'drag' | 'commit'
 
 /**
  * The edge of a side column that changes its width, as in a code editor: an invisible 6px hit zone straddling the
- * edge with the col-resize cursor, which shows a 2px line in line-strong after a 300ms hover (at once while dragging,
+ * edge with the col-resize cursor, which shows a 1px line in line-strong after a 300ms hover (at once while dragging,
  * and with the focus ring from the keyboard). It never moves the layout and is never blue.
  *
  * It reports widths and leaves the rules to its owner: a drag reports the raw width under the pointer as it moves and

@@ -14,8 +14,9 @@ export interface SegmentOption<T extends string> {
 /**
  * Two or three equal views or modes (对话 / Agent; 跟随系统 / 浅色 / 深色), and only those: an ordered level, a choice
  * with consequences or four or more options take a value picker or a single-choice list. The type allows two or three
- * options. A radio group with one tab stop: ←/→ move and select at once, Home and End go to the ends. The selected
- * segment is a raised white thumb that slides to its place; the track is a well without a ring.
+ * options. A radio group with one tab stop: ←/→ move and select at once, Home and End go to the ends. The track is a
+ * soft fill; the selected segment stands on it as a raised white face (a lifted grey in the dark theme), which
+ * cross-fades to its new place over --m-micro and never slides.
  */
 export function SegmentedControl<T extends string>({
   label,
@@ -30,7 +31,7 @@ export function SegmentedControl<T extends string>({
   value: T
   options: readonly [SegmentOption<T>, SegmentOption<T>] | readonly [SegmentOption<T>, SegmentOption<T>, SegmentOption<T>]
   onValueChange: (value: T) => void
-  /** sm: 28 overall (24 segments), md: 32 (28 segments); phones are 36 (32 segments) at either size. */
+  /** sm: 28 overall (24px segments, 12/16), md: 32 (28px segments, 13/18); phones are 36 (32px segments) at either size. */
   size?: 'sm' | 'md'
   disabled?: boolean
   className?: string
@@ -56,9 +57,7 @@ export function SegmentedControl<T extends string>({
       aria-label={label}
       aria-disabled={disabled || undefined}
       data-size={size}
-      style={{ '--count': options.length, '--index': Math.max(0, selected) }}
       onKeyDown={keydown}>
-      {selected >= 0 && <span className="ui-segmented-thumb" aria-hidden="true" />}
       {options.map((option, index) => (
         <Tooltip key={option.value} content={option.title}>
           <button

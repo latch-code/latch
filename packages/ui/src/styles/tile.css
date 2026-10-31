@@ -1,11 +1,10 @@
 /*
- * Harness and model tiles: one plate for every tile (white, and in the dark theme a neutral grey one step lighter than
- * the paper) with a 1px ring, squircle corners of round(size × 0.225) (16→4, 20→5, 24→5, 32→7, 40→9, 56→13). A brand's
- * mark sits in the middle at 62.5% (edge to edge when its file holds its own margin); a glyph stands in only where
- * there is no icon, never a letter. Glyphs and one-colour marks on the plate are text-1, so they read near-black on the
- * light plate and soft white on the dark one; a coloured mark keeps its colours, with the brand's own dark file in the
- * dark theme where it has one. A brand's app icon brings its own background and shape and shows as it is. Readiness
- * is drawn on the tile itself.
+ * Agent and model tiles: a brand's mark on the raised surface, a glyph on the hover fill, both under a 1px line ring
+ * laid over the artwork, with corners of round(size × 0.225) (16→4, 20→5, 24→5, 32→7, 40→9, 56→13). A mark sits in the
+ * middle at 72% (edge to edge when its file holds its own margin); a glyph (60%) stands in only where there is no icon,
+ * never a letter. Glyphs and one-colour marks are ink, so they read near-black in the light theme and soft white in
+ * the dark one; a coloured mark keeps its colours, with the brand's own dark file in the dark theme where it has one. A
+ * brand's app icon brings its own background and shape and shows as it is. Readiness is drawn on the tile itself.
  */
 .ui-tile {
   --tile-size: 32px;
@@ -32,20 +31,32 @@
   --tile-size: 56px;
 }
 .ui-tile-face {
+  position: relative;
   display: grid;
   place-items: center;
   width: 100%;
   height: 100%;
   overflow: hidden;
   border-radius: round(calc(var(--tile-size) * 0.225), 1px);
-  corner-shape: var(--corner-shape);
-  background: var(--tile-plate);
-  box-shadow: inset 0 0 0 1px var(--tile-ring);
-  color: var(--text-1);
+  background: var(--raised);
+  color: var(--ink);
 }
-.ui-tile-face > :is(img, svg, .ui-tile-mark) {
-  width: 62.5%;
-  height: 62.5%;
+/* The ring lies over the artwork, so a mark that reaches the edge keeps its hairline. */
+.ui-tile-face::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px var(--line);
+  pointer-events: none;
+}
+.ui-tile-face > :is(img, .ui-tile-mark) {
+  width: 72%;
+  height: 72%;
+}
+/* A glyph, where the thing has no icon of its own, stands on the hover fill. */
+.ui-tile[data-glyph] .ui-tile-face {
+  background: var(--hover);
 }
 /* A file that holds its own margin around the mark spans the plate. */
 .ui-tile[data-margin] .ui-tile-face > :is(img, .ui-tile-mark) {
@@ -57,7 +68,9 @@
   overflow: visible;
   border-radius: 0;
   background: none;
-  box-shadow: none;
+}
+.ui-tile[data-app-icon] .ui-tile-face::after {
+  content: none;
 }
 .ui-tile[data-app-icon] .ui-tile-face > img {
   width: 100%;
@@ -81,19 +94,21 @@
 :root[data-theme='dark'] .ui-tile-face > [data-theme-art='dark'] {
   display: block;
 }
-/* A one-colour mark: the file is the mask (its shape, unchanged), filled with text-1 in either theme. */
+/* A one-colour mark: the file is the mask (its shape, unchanged), filled with ink in either theme. */
 .ui-tile-mark {
   display: block;
-  background-color: var(--text-1);
+  background-color: var(--ink);
   mask-position: center;
   mask-repeat: no-repeat;
   mask-size: contain;
 }
-/* Plain: the glyph alone on whatever surface it sits on, in that surface's quieter ink instead of the plate's. */
+/* Plain: the glyph alone on whatever surface it sits on, in ink-2. */
 .ui-tile[data-plain] .ui-tile-face {
   background: transparent;
-  box-shadow: none;
-  color: var(--text-2);
+  color: var(--ink-2);
+}
+.ui-tile[data-plain] .ui-tile-face::after {
+  content: none;
 }
 .ui-tile[data-plain] .ui-tile-face > :is(img, svg, .ui-tile-mark) {
   width: 100%;
@@ -114,15 +129,22 @@
   stroke-width: 2px;
 }
 .ui-tile-progress-track {
-  stroke: var(--bg-press);
+  stroke: var(--press);
 }
 .ui-tile-progress-arc {
-  stroke: var(--text-2);
+  stroke: var(--ink-2);
   stroke-linecap: round;
-  transition: stroke-dasharray var(--d-base) var(--ease);
 }
-.ui-tile-progress:not([data-determinate]) .ui-tile-progress-arc {
-  animation: ui-tile-progress 1.4s linear infinite;
+@media (prefers-reduced-motion: no-preference) {
+  .ui-tile-progress-arc {
+    transition: stroke-dasharray var(--m-enter) var(--e-enter);
+  }
+  .ui-tile-progress:not([data-determinate]) .ui-tile-progress-arc {
+    animation: ui-tile-progress 1.4s linear infinite;
+  }
+}
+.ui-tile-progress[data-offscreen] .ui-tile-progress-arc {
+  animation-play-state: paused;
 }
 @keyframes ui-tile-progress {
   to {
@@ -137,6 +159,6 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--err-solid);
+  background: var(--red);
   box-shadow: 0 0 0 2px var(--surface);
 }

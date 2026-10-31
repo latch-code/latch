@@ -1,19 +1,21 @@
 /*
  * Latch design tokens: every colour, shadow, type size, space, radius and duration the browser client uses.
  *
- * Each colour means one thing. Blue is for actions, focus, links and checked controls, never for a selected row,
- * running work, counts or decoration. Amber means a warning or something waiting for the person; red means real risk
- * or an actual failure; both always come with text. Running state, counts, selected rows and every resting icon are
- * neutral.
+ * Colour is restrained: neutral ink on near-white or near-black. Blue (accent) is only for the primary action, focus,
+ * links and checked controls; amber only for 等你处理 and warnings; red only for a real failure or a real risk; green
+ * only for added lines and a short-lived success tick. Amber and red always come with words. Running work, counts,
+ * selected rows and every resting icon are neutral.
  *
- * The neutrals are near-neutral greys with the faintest warm cast: a flat ground, paper a step lighter, raised layers
- * lighter still (in the dark theme each layer up is lighter too). Text is a soft black or a soft white, never pure.
- * Every translucent neutral is the theme's ink at an alpha (light 29, 28, 26; dark 234, 233, 231), so it reads the same
- * on every surface; dark drop shadows and the dark well stay black.
+ * Surfaces: the canvas holds the work (conversation, panels); the sidebar and the settings navigation sit on a grey a
+ * step darker; raised layers (menus, popovers, the composer, cards, dialogs) are white in the light theme and a step
+ * lighter than the canvas in the dark one; sunken wells hold code and table headers. Hover and press are ink at a low
+ * alpha, so they read the same on every surface. A selected row is a white card on the grey sidebar (a soft fill in
+ * dark), never blue. No gradients, no tinted grounds.
  *
  * Light values sit on :root; the dark theme redefines every token that holds a colour, both under the system
  * preference (unless the page chose light) and under data-theme="dark", and the two dark blocks stay identical.
- * Tokens built only from other tokens (the comet, the focus rings) are written once and follow the theme.
+ * Tokens built only from other tokens (the cut-out surface, the plain syntax ink) are written once and follow the
+ * theme.
  *
  * Breakpoints (apps/web/src/breakpoints.ts): phone < 768 ≤ tablet < 1024 ≤ laptop < 1280 ≤ desktop; the widest
  * sidebar starts at 1440.
@@ -27,171 +29,139 @@
   :root {
     color-scheme: light;
 
-    --font-sans:
-      -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text', 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI',
-      'Noto Sans SC', sans-serif;
-    --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+    --font:
+      -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI', system-ui, sans-serif;
+    --mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
 
-    /* Ink. text-1 is the content, text-2 information about it, text-3 hints; icon is for shapes only, never for
-     * anything read. textDisabled always comes with the whole control at 45% opacity. */
-    --text-1: #1d1c1a;
-    --text-2: #444442;
-    --text-3: #605f5d;
-    --syn-plain: #1d1c1a;
-    --syn-keyword: #1d1c1a;
-    --syn-string: #4b5d4e;
-    --syn-comment: #605f5d;
-    --syn-number: #65566b;
-    --syn-function: #465e60;
-    --syn-constant: #65566b;
-    --syn-punctuation: #444442;
-    --icon: #7c7c7a;
-    --text-disabled: #adacaa;
+    /* Ink. ink is the content, ink-2 prose at rest and secondary emphasis, muted secondary text and every resting icon,
+     * faint placeholders, disabled words and rows already read. */
+    --ink: #18181b;
+    --ink-2: #3f3f46;
+    --muted: #71717a;
+    --faint: #a1a1aa;
 
-    /* Surfaces, darkest first in the light theme: the flat ground (window, sidebar, rail), the tray (sits only on
-     * paper and always has a subtle line), the paper inset on the ground, and raised layers (composer, menus,
-     * dialogs). */
-    --bg-app: #f2f1ee;
-    --bg-pane: #fbfbfa;
-    --bg-raised: #ffffff;
-    --bg-sunken: #f6f5f3;
+    /* Surfaces. canvas: the conversation and the panels; sidebar: the sidebar and the settings navigation; raised:
+     * menus, popovers, the composer, cards and dialogs; sunken: code, table headers and wells. */
+    --canvas: #ffffff;
+    --sidebar: #f7f7f8;
+    --raised: #ffffff;
+    --sunken: #f7f7f8;
+    --hover: rgba(0, 0, 0, 0.04);
+    --press: rgba(0, 0, 0, 0.07);
+    /* A selected row: a white card with a hairline ring on the grey sidebar (a soft fill in the dark theme). */
+    --selected: #ffffff;
+    --selected-ring: 0 0 0 1px rgba(0, 0, 0, 0.07), 0 1px 1px rgba(0, 0, 0, 0.04);
+    --bubble: #f1f1f3;
+    /* Glass, only for floating layers (menus, the composer): raised at 88% behind a blur. */
+    --glass: rgba(255, 255, 255, 0.88);
+    --scrim: rgba(0, 0, 0, 0.24);
+    /* The surface under an element, for rings that cut a dot or a count out of what it sits on; a container on another
+     * surface (a menu, a dialog, the sidebar) sets it to that surface. */
+    --surface: var(--canvas);
     --preview-light-a: #ffffff;
     --preview-light-b: #ededed;
     --preview-dark-a: #242424;
     --preview-dark-b: #303030;
-    --well: rgba(29, 28, 26, 0.04);
-    --bg-hover: rgba(29, 28, 26, 0.04);
-    --bg-press: rgba(29, 28, 26, 0.07);
-    --fill: rgba(29, 28, 26, 0.06);
-    --fill-hover: rgba(29, 28, 26, 0.09);
-    --fill-press: rgba(29, 28, 26, 0.12);
-    --track-off: rgba(29, 28, 26, 0.18);
-    /* A selected row in any list, on the ground or on paper: an opaque neutral, never blue. */
-    --bg-selected-solid: #dfdedc;
-    --bubble-user: rgba(29, 28, 26, 0.05);
-    --scrim: rgba(20, 20, 19, 0.32);
-    /* Harness and model tiles all sit on one plate; a one-colour mark or a glyph on it is drawn in text-1. */
-    --tile-plate: #ffffff;
-    --tile-ring: rgba(29, 28, 26, 0.1);
-    /* Live indicators (live.css): the running comet and its track, the warm sweep over a waiting pill and the one-shot
-     * ripple of a waiting count. */
-    --comet: var(--text-2);
-    --comet-track: rgba(29, 28, 26, 0.12);
-    --sweep: rgba(245, 165, 36, 0.2);
-    --ripple-ink: rgba(232, 150, 15, 0.55);
-    --kbd-ring: rgba(29, 28, 26, 0.12);
-    /* The surface under an element, for rings that cut a dot out of what it sits on; a container on another surface
-     * (the ground, a raised layer) sets it to that surface, as the primitives' menus, dialogs, sheets and toasts do. */
-    --surface: var(--bg-pane);
-    /* The app icon needs no edge on light surfaces; on dark ones its charcoal tile would merge with the paper. */
-    --brand-ring: transparent;
+    /* The app icon needs no edge on light surfaces; on dark ones its charcoal tile would merge with the sidebar. */
+    --app-ring: transparent;
 
-    /* Lines: always 1px. line edges resting containers, line-subtle separates rows, line-strong is decoration only
-     * (never a control's only edge). */
-    --line: rgba(29, 28, 26, 0.1);
-    --line-subtle: rgba(29, 28, 26, 0.06);
-    --line-strong: rgba(29, 28, 26, 0.16);
+    /* Lines, always 1px: line for hairlines and borders, line-strong for inputs and outlined controls. */
+    --line: #ebebed;
+    --line-strong: #dcdce0;
 
-    /* Shadows carry their own hairline ring, so a shadowed element has no border. Raised: segmented thumb, switch thumb
-     * and secondary buttons on an amber or red tint. Float: popovers, menus, toasts, "back to latest", the drawer.
-     * Composer: the message input. Modal: dialogs and sheets, over the scrim. Resting things have no shadow. */
-    --sh-raised: 0 0 0 1px rgba(29, 28, 26, 0.08), 0 1px 2px rgba(29, 28, 26, 0.06);
-    --sh-float: 0 0 0 1px rgba(29, 28, 26, 0.08), 0 2px 4px -1px rgba(29, 28, 26, 0.06), 0 12px 32px -6px rgba(29, 28, 26, 0.14);
-    --sh-composer: 0 0 0 1px rgba(29, 28, 26, 0.1), 0 1px 2px rgba(29, 28, 26, 0.04), 0 8px 24px -12px rgba(29, 28, 26, 0.16);
-    --sh-composer-focus: 0 0 0 1px rgba(29, 28, 26, 0.16), 0 1px 2px rgba(29, 28, 26, 0.04), 0 8px 24px -12px rgba(29, 28, 26, 0.16);
-    --sh-modal: 0 0 0 1px rgba(29, 28, 26, 0.08), 0 2px 6px -2px rgba(29, 28, 26, 0.08), 0 24px 56px -12px rgba(29, 28, 26, 0.28);
+    /* Shadows. sh-1: the composer and outlined controls at rest. sh-pop: menus, popovers, tooltips and toasts, with
+     * its own hairline ring. sh-dialog: dialogs, sheets and the palette, over the scrim. In the dark theme every
+     * floating layer adds an inset top line. Static rows and cards have none. */
+    --sh-1: 0 1px 2px rgba(0, 0, 0, 0.05);
+    --sh-pop: 0 12px 32px -12px rgba(0, 0, 0, 0.22), 0 0 0 1px var(--line);
+    --sh-dialog: 0 24px 64px -24px rgba(0, 0, 0, 0.4), 0 0 0 1px var(--line);
+    /* The primary button's inner highlight and tinted drop; the switch thumb; the chosen segment. */
+    --sh-accent: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 1px 2px rgba(36, 97, 224, 0.24);
+    --sh-thumb: 0 1px 2px rgba(0, 0, 0, 0.22), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
+    --seg-on: #ffffff;
+    --seg-on-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+    --switch-off: rgba(0, 0, 0, 0.12);
+    /* Tooltips are inverted: near-black in the light theme, a lifted grey in the dark one. */
+    --tip-bg: #18181b;
+    --tip-ink: #fafafa;
+    --sh-tip: 0 6px 16px -6px rgba(0, 0, 0, 0.3);
 
-    /* Accent: primary buttons and send, a checked option (switch, checkbox, radio, menu check), focus, and link text
-     * (accent-text). */
+    /* Accent: fills under white words (the primary button and send), focus rings and checked controls (switch,
+     * checkbox, radio); a hover is darker. accent-ink is blue words on a surface (links), at 4.5:1 or more on each.
+     * accent-soft is the focus halo of a field and the tint of a text selection. */
     --accent: #2461e0;
     --accent-hover: #1d53c8;
-    --accent-press: #1846aa;
-    --accent-text: #1f55c7;
-    --accent-text-hover: #1846aa;
+    --accent-ink: #215bd5;
+    --accent-soft: rgba(36, 97, 224, 0.1);
     --on-accent: #ffffff;
-    --focus: #2461e0;
-    --focus-halo: rgba(36, 97, 224, 0.16);
 
-    /* Semantic pairs: text, background, border and a solid for dots and fills. Ink, never white, goes on warn-fill. */
-    --warn-text: #9a5300;
-    --warn-bg: #fff6e5;
-    --warn-border: rgba(217, 119, 6, 0.3);
-    --warn-dot: #e8960f;
-    --warn-fill: #f5a524;
-    --on-warn-fill: #1e2230;
-    --err-text: #a01d14;
-    --err-bg: #fef1f0;
-    --err-border: rgba(217, 45, 32, 0.28);
-    --err-solid: #d92d20;
-    --ok-text: #176b31;
-    --ok-bg: #eef8f1;
-    --ok-border: rgba(26, 127, 55, 0.24);
-    --ok-solid: #1f9145;
+    /* Amber: 等你处理 and warnings. amber is text, amber-icon a glyph or dot, amber-soft a tint and amber-line its ring. */
+    --amber: #b45309;
+    --amber-icon: #f59e0b;
+    --amber-soft: rgba(245, 158, 11, 0.1);
+    --amber-line: rgba(217, 119, 6, 0.24);
+    /* Red: a real failure or risk. red is text, glyphs and dots; red-solid fills the one destructive confirmation. */
+    --red: #b91c1c;
+    --red-solid: #b91c1c;
+    --red-soft: rgba(220, 38, 38, 0.07);
+    --red-line: rgba(220, 38, 38, 0.2);
+    /* Green: added lines and a short-lived success tick. Diff rows are tinted and keep their ink; the word tint marks
+     * the changed part. */
+    --green: #15803d;
+    --diff-add: rgba(22, 163, 74, 0.09);
+    --diff-del: rgba(220, 38, 38, 0.07);
+    --diff-add-word: rgba(22, 163, 74, 0.22);
+    --diff-del-word: rgba(220, 38, 38, 0.17);
 
-    /* Diffs tint the row and keep its text in text-1; the word-level tint marks the changed part. */
-    --diff-add-bg: rgba(26, 127, 55, 0.08);
-    --diff-add-tok: rgba(26, 127, 55, 0.2);
-    --diff-del-bg: rgba(180, 35, 24, 0.07);
-    --diff-del-tok: rgba(180, 35, 24, 0.16);
+    /* Syntax: quiet hues on the code ink, readable on the canvas and on sunken code. */
+    --syn-plain: var(--ink-2);
+    --syn-keyword: #7c3aa8;
+    --syn-string: #9a5a16;
+    --syn-comment: #8b8b94;
+    --syn-number: #b4541b;
+    --syn-function: #0f6e78;
+    --syn-constant: #b4541b;
+    --syn-punctuation: var(--ink-2);
 
-    /* Focus, shown for keyboard focus only (:focus-visible): a 2px gap that shows whatever surface is underneath, then
-     * 2px of --focus, drawn as an outline with a 2px offset (base.css). An outline needs no per-surface ring colour and,
-     * unlike a box shadow, stays visible in forced-colours mode. Rows in a scrolling list use the inset ring so the
-     * container does not clip it. Text fields show their ring whenever they have focus; the composer turns its ring to
-     * line-strong instead (sh-composer-focus). */
-    --ring-focus-inset: inset 0 0 0 2px var(--focus);
-    --ring-field: inset 0 0 0 1px var(--line);
-    --ring-field-focus: inset 0 0 0 1px var(--focus), 0 0 0 3px var(--focus-halo);
-    /* A switch that is off: the solid track plus a ring in the icon colour, which reaches 3:1 against the paper. */
-    --ring-switch-off: inset 0 0 0 1px var(--icon);
-
-    /* Type: each role has a size and a line height for one line, and a paragraph line height (≥ 1.5) for text that can
-     * wrap. Weights are 400, 500 and 600; 600 only for card titles, titles, display, the check code, count digits and
-     * the brand name. Letter spacing is 0 everywhere but the check code. Phones use the next size (below). */
-    --fs-micro: 11px;
-    --lh-micro: 14px;
+    /* Type: each role has a size and a line height, and a paragraph line height for text that can wrap. Weights are
+     * 400, 500 and 600; 600 only for headings, titles and the check code. Letter spacing is 0 but for the check code.
+     * Phones take larger sizes (below). */
+    --fs-meta: 11px;
+    --lh-meta: 14px;
     --fs-caption: 12px;
     --lh-caption: 16px;
     --lh-caption-para: 18px;
-    --fs-meta: 12px;
-    --lh-meta: 16px;
-    --lh-meta-para: 18px;
-    --fs-label: 13px;
-    --lh-label: 18px;
-    --lh-label-para: 20px;
-    --fs-ui: 14px;
-    --lh-ui: 20px;
-    --lh-ui-para: 22px;
-    --fs-list-title: 14px;
-    --lh-list-title: 20px;
-    --fs-body: 15px;
-    --lh-body: 26px;
+    --fs-ui: 13px;
+    --lh-ui: 18px;
+    --lh-ui-para: 20px;
     --fs-input: 13px;
     --lh-input: 18px;
-    --fs-card-title: 14px;
-    --lh-card-title: 20px;
-    --fs-title-sm: 15px;
-    --lh-title-sm: 22px;
-    --fs-title: 18px;
-    --lh-title: 26px;
-    --fs-display: 24px;
-    --lh-display: 32px;
-    --fs-mono-sm: 12px;
-    --lh-mono-sm: 18px;
+    --fs-prose: 14px;
+    --lh-prose: 24px;
+    --fs-heading: 15px;
+    --lh-heading: 22px;
+    --fs-title: 20px;
+    --lh-title: 28px;
+    --fs-hero: 24px;
+    --lh-hero: 32px;
+    --fs-mono: 12px;
+    --lh-mono: 18px;
     --fs-code: 12px;
     --lh-code: 20px;
-    --fs-mono: 13px;
-    --lh-mono: 20px;
+    --fs-term: 12.5px;
+    --lh-term: 18px;
     --fs-mono-display: 24px;
     --lh-mono-display: 32px;
     --ls-mono-display: 0.08em;
 
-    /* Spacing steps. 2 and 6 only inside controls; 10, 14, 18, 22 and 26 are not steps. Bleed is the one named
-     * negative margin: a hoverable row reaches 6px past the column so its text stays on the column's edge. */
+    /* Spacing on a 4-point scale: 2, 4, 6, 8, 10, 12, 16, 20, 24, 32, 40, 48, 64; 14, 18, 22 and 26 are not steps.
+     * Bleed is the one named negative margin: a hoverable row reaches 6px past the column so its text stays on the
+     * column's edge. */
     --sp-2: 2px;
     --sp-4: 4px;
     --sp-6: 6px;
     --sp-8: 8px;
+    --sp-10: 10px;
     --sp-12: 12px;
     --sp-16: 16px;
     --sp-20: 20px;
@@ -202,35 +172,36 @@
     --sp-64: 64px;
     --bleed: 6px;
 
-    /* Radii. A pill or a circle means a state, a view or an identity; a rounded rectangle means an action, a value or
-     * a container. 2 only for 4px bars and small glyphs. A nested radius is the outer radius minus the padding. Rounded
-     * rectangles also take `corner-shape: var(--corner-shape)` (set below where the browser supports it); pills and
-     * circles never do. */
+    /* Radii: 4 kbd and badge; 6 rows, tabs, small buttons and tooltips; 8 buttons, inputs, menus, code and toasts; 12
+     * cards, groups and popovers; 16 the composer, dialogs, the palette and the user's bubble; full for send and stop,
+     * dots and pills. 2 only for bars and small glyphs. A brand tile rounds by size × 0.225. */
     --r-2: 2px;
     --r-4: 4px;
     --r-6: 6px;
     --r-8: 8px;
     --r-12: 12px;
     --r-16: 16px;
-    --r-pill: 999px;
+    --r-full: 999px;
 
-    /* Motion: one curve in, one curve out, three durations, and an exit for each at about 70% of it. Pressing only
-     * darkens a step; nothing moves or scales. The stagger delays content behind the box that opens for it; the
-     * shimmer is one pass of a live label's light; the hint delay holds back what hovering reveals. Scripts read the
-     * same values from MOTION (motion.tsx), which a test keeps equal to these. */
-    --ease: cubic-bezier(0.2, 0, 0, 1);
-    --ease-exit: cubic-bezier(0.4, 0, 1, 1);
-    --d-fast: 120ms;
-    --d-base: 180ms;
-    --d-slow: 240ms;
-    --d-fast-exit: 90ms;
-    --d-base-exit: 140ms;
-    --d-slow-exit: 180ms;
-    --d-stagger: 40ms;
-    --d-shimmer: 1.6s;
-    --delay-hint: 300ms;
+    /* Motion: short, calm and physical; it confirms a cause and its effect, never idles. micro: hover and press fills,
+     * icon swaps and cross-fades of status words and tab content. enter: menus, popovers and tooltips (scale .98 → 1
+     * and a fade), rows and messages arriving (a fade and a 4px rise). panel: side panels, collapsing columns and
+     * disclosures (grid rows). sheet: dialogs and phone sheets (scale .985 → 1 and a fade). push: phone pages pushed
+     * and popped. Leaving takes 70% of the time on the exit curve. Scripts read the same values from MOTION
+     * (motion.tsx), which a test keeps equal to these. */
+    --m-micro: 120ms;
+    --m-enter: 160ms;
+    --m-panel: 200ms;
+    --m-sheet: 260ms;
+    --m-push: 320ms;
+    --e-micro: cubic-bezier(0.2, 0, 0, 1);
+    --e-enter: cubic-bezier(0.2, 0.8, 0.2, 1);
+    --e-panel: cubic-bezier(0.32, 0.72, 0, 1);
+    --e-sheet: cubic-bezier(0.32, 0.72, 0, 1);
+    --e-push: cubic-bezier(0.32, 0.72, 0, 1);
+    --e-exit: cubic-bezier(0.4, 0, 1, 1);
 
-    /* Layout. The content paper is inset from the window by --shell-inset on every side but the sidebar's. From
+    /* Layout. The content canvas is inset from the window by --shell-inset on every side but the sidebar's. From
      * 1024px the page sets the sidebar's width (it can be dragged, and is 0 while shut) and the width its content
      * keeps while the column slides shut, --sidebar-open-width. */
     --sidebar-width: 300px;
@@ -242,12 +213,6 @@
     --topbar-height: 48px;
     --shell-inset: 8px;
     --touch: 32px;
-  }
-
-  @supports (corner-shape: superellipse(1.2)) {
-    :root {
-      --corner-shape: superellipse(1.2);
-    }
   }
 
   @media (max-width: 1439.98px) {
@@ -271,32 +236,23 @@
 
   @media (max-width: 767.98px) {
     :root {
-      --fs-meta: 13px;
-      --lh-meta: 18px;
-      --lh-meta-para: 20px;
-      --fs-label: 14px;
-      --lh-label: 20px;
-      --lh-label-para: 22px;
+      --fs-caption: 13px;
+      --lh-caption: 18px;
+      --lh-caption-para: 20px;
       --fs-ui: 15px;
-      --lh-ui: 22px;
-      --lh-ui-para: 24px;
-      --fs-list-title: 16px;
-      --lh-list-title: 22px;
-      --fs-body: 16px;
-      --lh-body: 27px;
+      --lh-ui: 20px;
+      --lh-ui-para: 22px;
       /* 16px inputs keep iOS from zooming on focus. */
       --fs-input: 16px;
       --lh-input: 24px;
-      --fs-card-title: 16px;
-      --lh-card-title: 22px;
-      --fs-title-sm: 16px;
-      --lh-title-sm: 22px;
+      --fs-prose: 16px;
+      --lh-prose: 26px;
+      --fs-heading: 16px;
+      --lh-heading: 22px;
       --fs-title: 17px;
       --lh-title: 24px;
-      --fs-display: 22px;
-      --lh-display: 30px;
-      --fs-mono: 14px;
-      --lh-mono: 20px;
+      --fs-hero: 22px;
+      --lh-hero: 30px;
       --gutter: 16px;
       --topbar-height: 52px;
     }
@@ -308,286 +264,235 @@
     }
   }
 
+  /* Reduced motion: only fades remain, and none is longer than 120ms (each stylesheet drops its movement and loops). */
+  @media (prefers-reduced-motion: reduce) {
+    :root {
+      --m-micro: 100ms;
+      --m-enter: 120ms;
+      --m-panel: 120ms;
+      --m-sheet: 120ms;
+      --m-push: 120ms;
+    }
+  }
+
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme='light']) {
       color-scheme: dark;
-      --text-1: #eae9e7;
-      --text-2: #c2c1bf;
-      --text-3: #999896;
-      --syn-plain: #eae9e7;
-      --syn-keyword: #eae9e7;
-      --syn-string: #bec8bf;
-      --syn-comment: #aaa9a6;
-      --syn-number: #c6bfcc;
-      --syn-function: #b6c9c9;
-      --syn-constant: #c6bfcc;
-      --syn-punctuation: #c2c1bf;
-      --icon: #828180;
-      --text-disabled: #535251;
-      --bg-app: #141413;
-      --bg-pane: #1c1c1b;
-      --bg-raised: #252423;
-      --bg-sunken: #181716;
+      --ink: #f4f4f5;
+      --ink-2: #d4d4d8;
+      --muted: #a1a1aa;
+      --faint: #71717a;
+      --canvas: #111113;
+      --sidebar: #0a0a0b;
+      --raised: #18181b;
+      --sunken: #0e0e10;
+      --hover: rgba(255, 255, 255, 0.05);
+      --press: rgba(255, 255, 255, 0.09);
+      --selected: rgba(255, 255, 255, 0.08);
+      --selected-ring: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+      --bubble: #1e1e21;
+      --glass: rgba(24, 24, 27, 0.88);
+      --scrim: rgba(0, 0, 0, 0.56);
       --preview-light-a: #ffffff;
       --preview-light-b: #ededed;
       --preview-dark-a: #242424;
       --preview-dark-b: #303030;
-      --well: rgba(0, 0, 0, 0.24);
-      --bg-hover: rgba(234, 233, 231, 0.05);
-      --bg-press: rgba(234, 233, 231, 0.08);
-      --fill: rgba(234, 233, 231, 0.07);
-      --fill-hover: rgba(234, 233, 231, 0.1);
-      --fill-press: rgba(234, 233, 231, 0.13);
-      --track-off: rgba(234, 233, 231, 0.2);
-      --bg-selected-solid: #2e2e2d;
-      --bubble-user: rgba(234, 233, 231, 0.07);
-      --scrim: rgba(0, 0, 0, 0.56);
-      --tile-plate: #2e2e2d;
-      --tile-ring: rgba(234, 233, 231, 0.1);
-      --comet-track: rgba(234, 233, 231, 0.12);
-      --sweep: rgba(255, 214, 140, 0.12);
-      --ripple-ink: rgba(245, 182, 66, 0.35);
-      --kbd-ring: rgba(234, 233, 231, 0.14);
-      --brand-ring: rgba(234, 233, 231, 0.12);
-      --line: rgba(234, 233, 231, 0.1);
-      --line-subtle: rgba(234, 233, 231, 0.06);
-      --line-strong: rgba(234, 233, 231, 0.16);
-      --sh-raised: 0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.05);
-      --sh-float: 0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.05), 0 12px 32px -6px rgba(0, 0, 0, 0.56);
-      --sh-composer: 0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.04), 0 8px 24px -12px rgba(0, 0, 0, 0.6);
-      --sh-composer-focus:
-        0 0 0 1px rgba(234, 233, 231, 0.16), inset 0 1px 0 rgba(234, 233, 231, 0.04), 0 8px 24px -12px rgba(0, 0, 0, 0.6);
-      --sh-modal: 0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.05), 0 24px 56px -12px rgba(0, 0, 0, 0.64);
-      --accent: #2461e0;
-      --accent-hover: #2f6be8;
-      --accent-press: #1d53c8;
-      --accent-text: #8db2ff;
-      --accent-text-hover: #a9c4ff;
+      --app-ring: rgba(255, 255, 255, 0.12);
+      --line: rgba(255, 255, 255, 0.08);
+      --line-strong: rgba(255, 255, 255, 0.14);
+      --sh-1: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      --sh-pop: 0 16px 40px -12px rgba(0, 0, 0, 0.72), 0 0 0 1px var(--line), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      --sh-dialog: 0 28px 80px -20px rgba(0, 0, 0, 0.88), 0 0 0 1px var(--line), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      --sh-accent: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 1px 2px rgba(0, 0, 0, 0.4);
+      --sh-thumb: 0 1px 2px rgba(0, 0, 0, 0.4), 0 0 0 0.5px rgba(0, 0, 0, 0.1);
+      --seg-on: #2c2c31;
+      --seg-on-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      --switch-off: rgba(255, 255, 255, 0.16);
+      --tip-bg: #2a2a2e;
+      --tip-ink: #f4f4f5;
+      --sh-tip: 0 6px 16px -6px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      --accent: #2f6feb;
+      --accent-hover: #2a63d4;
+      --accent-ink: #6b9bfa;
+      --accent-soft: rgba(59, 118, 246, 0.18);
       --on-accent: #ffffff;
-      --focus: #8db2ff;
-      --focus-halo: rgba(141, 178, 255, 0.24);
-      --warn-text: #f5b642;
-      --warn-bg: rgba(245, 182, 66, 0.1);
-      --warn-border: rgba(245, 182, 66, 0.3);
-      --warn-dot: #f5b642;
-      --warn-fill: #f5b642;
-      --on-warn-fill: #1e2230;
-      --err-text: #ff7168;
-      --err-bg: rgba(255, 123, 114, 0.1);
-      --err-border: rgba(255, 123, 114, 0.3);
-      --err-solid: #d92d20;
-      --ok-text: #5ccb7a;
-      --ok-bg: rgba(76, 199, 106, 0.1);
-      --ok-border: rgba(76, 199, 106, 0.28);
-      --ok-solid: #4cc76a;
-      --diff-add-bg: rgba(76, 199, 106, 0.1);
-      --diff-add-tok: rgba(76, 199, 106, 0.22);
-      --diff-del-bg: rgba(255, 123, 114, 0.1);
-      --diff-del-tok: rgba(255, 123, 114, 0.22);
+      --amber: #fbbf24;
+      --amber-icon: #fbbf24;
+      --amber-soft: rgba(251, 191, 36, 0.12);
+      --amber-line: rgba(251, 191, 36, 0.24);
+      --red: #f87171;
+      --red-solid: #dc2626;
+      --red-soft: rgba(248, 113, 113, 0.12);
+      --red-line: rgba(248, 113, 113, 0.24);
+      --green: #4ade80;
+      --diff-add: rgba(74, 222, 128, 0.1);
+      --diff-del: rgba(248, 113, 113, 0.1);
+      --diff-add-word: rgba(74, 222, 128, 0.24);
+      --diff-del-word: rgba(248, 113, 113, 0.24);
+      --syn-keyword: #c8a2f0;
+      --syn-string: #e6b47c;
+      --syn-comment: #6e6e78;
+      --syn-number: #f2a072;
+      --syn-function: #79d0d6;
+      --syn-constant: #f2a072;
     }
   }
 
   :root[data-theme='dark'] {
     color-scheme: dark;
-    --text-1: #eae9e7;
-    --text-2: #c2c1bf;
-    --text-3: #999896;
-    --syn-plain: #eae9e7;
-    --syn-keyword: #eae9e7;
-    --syn-string: #bec8bf;
-    --syn-comment: #aaa9a6;
-    --syn-number: #c6bfcc;
-    --syn-function: #b6c9c9;
-    --syn-constant: #c6bfcc;
-    --syn-punctuation: #c2c1bf;
-    --icon: #828180;
-    --text-disabled: #535251;
-    --bg-app: #141413;
-    --bg-pane: #1c1c1b;
-    --bg-raised: #252423;
-    --bg-sunken: #181716;
+    --ink: #f4f4f5;
+    --ink-2: #d4d4d8;
+    --muted: #a1a1aa;
+    --faint: #71717a;
+    --canvas: #111113;
+    --sidebar: #0a0a0b;
+    --raised: #18181b;
+    --sunken: #0e0e10;
+    --hover: rgba(255, 255, 255, 0.05);
+    --press: rgba(255, 255, 255, 0.09);
+    --selected: rgba(255, 255, 255, 0.08);
+    --selected-ring: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+    --bubble: #1e1e21;
+    --glass: rgba(24, 24, 27, 0.88);
+    --scrim: rgba(0, 0, 0, 0.56);
     --preview-light-a: #ffffff;
     --preview-light-b: #ededed;
     --preview-dark-a: #242424;
     --preview-dark-b: #303030;
-    --well: rgba(0, 0, 0, 0.24);
-    --bg-hover: rgba(234, 233, 231, 0.05);
-    --bg-press: rgba(234, 233, 231, 0.08);
-    --fill: rgba(234, 233, 231, 0.07);
-    --fill-hover: rgba(234, 233, 231, 0.1);
-    --fill-press: rgba(234, 233, 231, 0.13);
-    --track-off: rgba(234, 233, 231, 0.2);
-    --bg-selected-solid: #2e2e2d;
-    --bubble-user: rgba(234, 233, 231, 0.07);
-    --scrim: rgba(0, 0, 0, 0.56);
-    --tile-plate: #2e2e2d;
-    --tile-ring: rgba(234, 233, 231, 0.1);
-    --comet-track: rgba(234, 233, 231, 0.12);
-    --sweep: rgba(255, 214, 140, 0.12);
-    --ripple-ink: rgba(245, 182, 66, 0.35);
-    --kbd-ring: rgba(234, 233, 231, 0.14);
-    --brand-ring: rgba(234, 233, 231, 0.12);
-    --line: rgba(234, 233, 231, 0.1);
-    --line-subtle: rgba(234, 233, 231, 0.06);
-    --line-strong: rgba(234, 233, 231, 0.16);
-    --sh-raised: 0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.05);
-    --sh-float: 0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.05), 0 12px 32px -6px rgba(0, 0, 0, 0.56);
-    --sh-composer: 0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.04), 0 8px 24px -12px rgba(0, 0, 0, 0.6);
-    --sh-composer-focus: 0 0 0 1px rgba(234, 233, 231, 0.16), inset 0 1px 0 rgba(234, 233, 231, 0.04), 0 8px 24px -12px rgba(0, 0, 0, 0.6);
-    --sh-modal: 0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.05), 0 24px 56px -12px rgba(0, 0, 0, 0.64);
-    --accent: #2461e0;
-    --accent-hover: #2f6be8;
-    --accent-press: #1d53c8;
-    --accent-text: #8db2ff;
-    --accent-text-hover: #a9c4ff;
+    --app-ring: rgba(255, 255, 255, 0.12);
+    --line: rgba(255, 255, 255, 0.08);
+    --line-strong: rgba(255, 255, 255, 0.14);
+    --sh-1: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    --sh-pop: 0 16px 40px -12px rgba(0, 0, 0, 0.72), 0 0 0 1px var(--line), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    --sh-dialog: 0 28px 80px -20px rgba(0, 0, 0, 0.88), 0 0 0 1px var(--line), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    --sh-accent: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 1px 2px rgba(0, 0, 0, 0.4);
+    --sh-thumb: 0 1px 2px rgba(0, 0, 0, 0.4), 0 0 0 0.5px rgba(0, 0, 0, 0.1);
+    --seg-on: #2c2c31;
+    --seg-on-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    --switch-off: rgba(255, 255, 255, 0.16);
+    --tip-bg: #2a2a2e;
+    --tip-ink: #f4f4f5;
+    --sh-tip: 0 6px 16px -6px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    --accent: #2f6feb;
+    --accent-hover: #2a63d4;
+    --accent-ink: #6b9bfa;
+    --accent-soft: rgba(59, 118, 246, 0.18);
     --on-accent: #ffffff;
-    --focus: #8db2ff;
-    --focus-halo: rgba(141, 178, 255, 0.24);
-    --warn-text: #f5b642;
-    --warn-bg: rgba(245, 182, 66, 0.1);
-    --warn-border: rgba(245, 182, 66, 0.3);
-    --warn-dot: #f5b642;
-    --warn-fill: #f5b642;
-    --on-warn-fill: #1e2230;
-    --err-text: #ff7168;
-    --err-bg: rgba(255, 123, 114, 0.1);
-    --err-border: rgba(255, 123, 114, 0.3);
-    --err-solid: #d92d20;
-    --ok-text: #5ccb7a;
-    --ok-bg: rgba(76, 199, 106, 0.1);
-    --ok-border: rgba(76, 199, 106, 0.28);
-    --ok-solid: #4cc76a;
-    --diff-add-bg: rgba(76, 199, 106, 0.1);
-    --diff-add-tok: rgba(76, 199, 106, 0.22);
-    --diff-del-bg: rgba(255, 123, 114, 0.1);
-    --diff-del-tok: rgba(255, 123, 114, 0.22);
+    --amber: #fbbf24;
+    --amber-icon: #fbbf24;
+    --amber-soft: rgba(251, 191, 36, 0.12);
+    --amber-line: rgba(251, 191, 36, 0.24);
+    --red: #f87171;
+    --red-solid: #dc2626;
+    --red-soft: rgba(248, 113, 113, 0.12);
+    --red-line: rgba(248, 113, 113, 0.24);
+    --green: #4ade80;
+    --diff-add: rgba(74, 222, 128, 0.1);
+    --diff-del: rgba(248, 113, 113, 0.1);
+    --diff-add-word: rgba(74, 222, 128, 0.24);
+    --diff-del-word: rgba(248, 113, 113, 0.24);
+    --syn-keyword: #c8a2f0;
+    --syn-string: #e6b47c;
+    --syn-comment: #6e6e78;
+    --syn-number: #f2a072;
+    --syn-function: #79d0d6;
+    --syn-constant: #f2a072;
   }
 
   /*
    * Security surfaces (data-secure: approval cards, the local confirmation, enrollment, pairing and security banners)
    * lock the tokens they read. Important declarations of the first layer win over every later layer and over styles
-   * outside the layers, important or not, so a later declaration of a token (on the root, an ancestor or the element
-   * itself) cannot change what these surfaces show. The values repeat the theme's (packages/ui/test/tokens.test.ts
-   * checks that they match); layout, motion and the contextual --surface stay free.
+   * outside the layers, so a later declaration of a token (on the root, an ancestor or the element itself) cannot
+   * change what these surfaces show. The values repeat the theme's (packages/ui/test/tokens.test.ts checks that they
+   * match); layout, motion and the contextual --surface stay free.
    */
   :where([data-secure], [data-secure] *) {
-    --font-sans:
-      -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text', 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI',
-      'Noto Sans SC', sans-serif !important;
-    --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace !important;
-    --text-1: #1d1c1a !important;
-    --text-2: #444442 !important;
-    --text-3: #605f5d !important;
-    --syn-plain: #1d1c1a !important;
-    --syn-keyword: #1d1c1a !important;
-    --syn-string: #4b5d4e !important;
-    --syn-comment: #605f5d !important;
-    --syn-number: #65566b !important;
-    --syn-function: #465e60 !important;
-    --syn-constant: #65566b !important;
-    --syn-punctuation: #444442 !important;
-    --icon: #7c7c7a !important;
-    --text-disabled: #adacaa !important;
-    --bg-app: #f2f1ee !important;
-    --bg-pane: #fbfbfa !important;
-    --bg-raised: #ffffff !important;
-    --bg-sunken: #f6f5f3 !important;
+    --font:
+      -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI', system-ui, sans-serif !important;
+    --mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace !important;
+    --ink: #18181b !important;
+    --ink-2: #3f3f46 !important;
+    --muted: #71717a !important;
+    --faint: #a1a1aa !important;
+    --canvas: #ffffff !important;
+    --sidebar: #f7f7f8 !important;
+    --raised: #ffffff !important;
+    --sunken: #f7f7f8 !important;
+    --hover: rgba(0, 0, 0, 0.04) !important;
+    --press: rgba(0, 0, 0, 0.07) !important;
+    --selected: #ffffff !important;
+    --selected-ring: 0 0 0 1px rgba(0, 0, 0, 0.07), 0 1px 1px rgba(0, 0, 0, 0.04) !important;
+    --bubble: #f1f1f3 !important;
+    --glass: rgba(255, 255, 255, 0.88) !important;
+    --scrim: rgba(0, 0, 0, 0.24) !important;
     --preview-light-a: #ffffff !important;
     --preview-light-b: #ededed !important;
     --preview-dark-a: #242424 !important;
     --preview-dark-b: #303030 !important;
-    --well: rgba(29, 28, 26, 0.04) !important;
-    --bg-hover: rgba(29, 28, 26, 0.04) !important;
-    --bg-press: rgba(29, 28, 26, 0.07) !important;
-    --fill: rgba(29, 28, 26, 0.06) !important;
-    --fill-hover: rgba(29, 28, 26, 0.09) !important;
-    --fill-press: rgba(29, 28, 26, 0.12) !important;
-    --track-off: rgba(29, 28, 26, 0.18) !important;
-    --bg-selected-solid: #dfdedc !important;
-    --bubble-user: rgba(29, 28, 26, 0.05) !important;
-    --scrim: rgba(20, 20, 19, 0.32) !important;
-    --tile-plate: #ffffff !important;
-    --tile-ring: rgba(29, 28, 26, 0.1) !important;
-    --comet: var(--text-2) !important;
-    --comet-track: rgba(29, 28, 26, 0.12) !important;
-    --sweep: rgba(245, 165, 36, 0.2) !important;
-    --ripple-ink: rgba(232, 150, 15, 0.55) !important;
-    --kbd-ring: rgba(29, 28, 26, 0.12) !important;
-    --brand-ring: transparent !important;
-    --line: rgba(29, 28, 26, 0.1) !important;
-    --line-subtle: rgba(29, 28, 26, 0.06) !important;
-    --line-strong: rgba(29, 28, 26, 0.16) !important;
-    --sh-raised: 0 0 0 1px rgba(29, 28, 26, 0.08), 0 1px 2px rgba(29, 28, 26, 0.06) !important;
-    --sh-float: 0 0 0 1px rgba(29, 28, 26, 0.08), 0 2px 4px -1px rgba(29, 28, 26, 0.06), 0 12px 32px -6px rgba(29, 28, 26, 0.14) !important;
-    --sh-composer: 0 0 0 1px rgba(29, 28, 26, 0.1), 0 1px 2px rgba(29, 28, 26, 0.04), 0 8px 24px -12px rgba(29, 28, 26, 0.16) !important;
-    --sh-composer-focus:
-      0 0 0 1px rgba(29, 28, 26, 0.16), 0 1px 2px rgba(29, 28, 26, 0.04), 0 8px 24px -12px rgba(29, 28, 26, 0.16) !important;
-    --sh-modal:
-      0 0 0 1px rgba(29, 28, 26, 0.08), 0 2px 6px -2px rgba(29, 28, 26, 0.08), 0 24px 56px -12px rgba(29, 28, 26, 0.28) !important;
+    --app-ring: transparent !important;
+    --line: #ebebed !important;
+    --line-strong: #dcdce0 !important;
+    --sh-1: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
+    --sh-pop: 0 12px 32px -12px rgba(0, 0, 0, 0.22), 0 0 0 1px var(--line) !important;
+    --sh-dialog: 0 24px 64px -24px rgba(0, 0, 0, 0.4), 0 0 0 1px var(--line) !important;
+    --sh-accent: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 1px 2px rgba(36, 97, 224, 0.24) !important;
+    --sh-thumb: 0 1px 2px rgba(0, 0, 0, 0.22), 0 0 0 0.5px rgba(0, 0, 0, 0.04) !important;
+    --seg-on: #ffffff !important;
+    --seg-on-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 0 0 0.5px rgba(0, 0, 0, 0.06) !important;
+    --switch-off: rgba(0, 0, 0, 0.12) !important;
+    --tip-bg: #18181b !important;
+    --tip-ink: #fafafa !important;
+    --sh-tip: 0 6px 16px -6px rgba(0, 0, 0, 0.3) !important;
     --accent: #2461e0 !important;
     --accent-hover: #1d53c8 !important;
-    --accent-press: #1846aa !important;
-    --accent-text: #1f55c7 !important;
-    --accent-text-hover: #1846aa !important;
+    --accent-ink: #215bd5 !important;
+    --accent-soft: rgba(36, 97, 224, 0.1) !important;
     --on-accent: #ffffff !important;
-    --focus: #2461e0 !important;
-    --focus-halo: rgba(36, 97, 224, 0.16) !important;
-    --warn-text: #9a5300 !important;
-    --warn-bg: #fff6e5 !important;
-    --warn-border: rgba(217, 119, 6, 0.3) !important;
-    --warn-dot: #e8960f !important;
-    --warn-fill: #f5a524 !important;
-    --on-warn-fill: #1e2230 !important;
-    --err-text: #a01d14 !important;
-    --err-bg: #fef1f0 !important;
-    --err-border: rgba(217, 45, 32, 0.28) !important;
-    --err-solid: #d92d20 !important;
-    --ok-text: #176b31 !important;
-    --ok-bg: #eef8f1 !important;
-    --ok-border: rgba(26, 127, 55, 0.24) !important;
-    --ok-solid: #1f9145 !important;
-    --diff-add-bg: rgba(26, 127, 55, 0.08) !important;
-    --diff-add-tok: rgba(26, 127, 55, 0.2) !important;
-    --diff-del-bg: rgba(180, 35, 24, 0.07) !important;
-    --diff-del-tok: rgba(180, 35, 24, 0.16) !important;
-    --ring-focus-inset: inset 0 0 0 2px var(--focus) !important;
-    --ring-field: inset 0 0 0 1px var(--line) !important;
-    --ring-field-focus: inset 0 0 0 1px var(--focus), 0 0 0 3px var(--focus-halo) !important;
-    --ring-switch-off: inset 0 0 0 1px var(--icon) !important;
-    --fs-micro: 11px !important;
-    --lh-micro: 14px !important;
+    --amber: #b45309 !important;
+    --amber-icon: #f59e0b !important;
+    --amber-soft: rgba(245, 158, 11, 0.1) !important;
+    --amber-line: rgba(217, 119, 6, 0.24) !important;
+    --red: #b91c1c !important;
+    --red-solid: #b91c1c !important;
+    --red-soft: rgba(220, 38, 38, 0.07) !important;
+    --red-line: rgba(220, 38, 38, 0.2) !important;
+    --green: #15803d !important;
+    --diff-add: rgba(22, 163, 74, 0.09) !important;
+    --diff-del: rgba(220, 38, 38, 0.07) !important;
+    --diff-add-word: rgba(22, 163, 74, 0.22) !important;
+    --diff-del-word: rgba(220, 38, 38, 0.17) !important;
+    --syn-plain: var(--ink-2) !important;
+    --syn-keyword: #7c3aa8 !important;
+    --syn-string: #9a5a16 !important;
+    --syn-comment: #8b8b94 !important;
+    --syn-number: #b4541b !important;
+    --syn-function: #0f6e78 !important;
+    --syn-constant: #b4541b !important;
+    --syn-punctuation: var(--ink-2) !important;
+    --fs-meta: 11px !important;
+    --lh-meta: 14px !important;
     --fs-caption: 12px !important;
     --lh-caption: 16px !important;
     --lh-caption-para: 18px !important;
-    --fs-meta: 12px !important;
-    --lh-meta: 16px !important;
-    --lh-meta-para: 18px !important;
-    --fs-label: 13px !important;
-    --lh-label: 18px !important;
-    --lh-label-para: 20px !important;
-    --fs-ui: 14px !important;
-    --lh-ui: 20px !important;
-    --lh-ui-para: 22px !important;
-    --fs-list-title: 14px !important;
-    --lh-list-title: 20px !important;
-    --fs-body: 15px !important;
-    --lh-body: 26px !important;
+    --fs-ui: 13px !important;
+    --lh-ui: 18px !important;
+    --lh-ui-para: 20px !important;
     --fs-input: 13px !important;
     --lh-input: 18px !important;
-    --fs-card-title: 14px !important;
-    --lh-card-title: 20px !important;
-    --fs-title-sm: 15px !important;
-    --lh-title-sm: 22px !important;
-    --fs-title: 18px !important;
-    --lh-title: 26px !important;
-    --fs-display: 24px !important;
-    --lh-display: 32px !important;
-    --fs-mono-sm: 12px !important;
-    --lh-mono-sm: 18px !important;
+    --fs-prose: 14px !important;
+    --lh-prose: 24px !important;
+    --fs-heading: 15px !important;
+    --lh-heading: 22px !important;
+    --fs-title: 20px !important;
+    --lh-title: 28px !important;
+    --fs-hero: 24px !important;
+    --lh-hero: 32px !important;
+    --fs-mono: 12px !important;
+    --lh-mono: 18px !important;
     --fs-code: 12px !important;
     --lh-code: 20px !important;
-    --fs-mono: 13px !important;
-    --lh-mono: 20px !important;
+    --fs-term: 12.5px !important;
+    --lh-term: 18px !important;
     --fs-mono-display: 24px !important;
     --lh-mono-display: 32px !important;
     --ls-mono-display: 0.08em !important;
@@ -595,6 +500,7 @@
     --sp-4: 4px !important;
     --sp-6: 6px !important;
     --sp-8: 8px !important;
+    --sp-10: 10px !important;
     --sp-12: 12px !important;
     --sp-16: 16px !important;
     --sp-20: 20px !important;
@@ -610,196 +516,149 @@
     --r-8: 8px !important;
     --r-12: 12px !important;
     --r-16: 16px !important;
-    --r-pill: 999px !important;
+    --r-full: 999px !important;
   }
 
   @media (max-width: 767.98px) {
     :where([data-secure], [data-secure] *) {
-      --fs-meta: 13px !important;
-      --lh-meta: 18px !important;
-      --lh-meta-para: 20px !important;
-      --fs-label: 14px !important;
-      --lh-label: 20px !important;
-      --lh-label-para: 22px !important;
+      --fs-caption: 13px !important;
+      --lh-caption: 18px !important;
+      --lh-caption-para: 20px !important;
       --fs-ui: 15px !important;
-      --lh-ui: 22px !important;
-      --lh-ui-para: 24px !important;
-      --fs-list-title: 16px !important;
-      --lh-list-title: 22px !important;
-      --fs-body: 16px !important;
-      --lh-body: 27px !important;
+      --lh-ui: 20px !important;
+      --lh-ui-para: 22px !important;
       --fs-input: 16px !important;
       --lh-input: 24px !important;
-      --fs-card-title: 16px !important;
-      --lh-card-title: 22px !important;
-      --fs-title-sm: 16px !important;
-      --lh-title-sm: 22px !important;
+      --fs-prose: 16px !important;
+      --lh-prose: 26px !important;
+      --fs-heading: 16px !important;
+      --lh-heading: 22px !important;
       --fs-title: 17px !important;
       --lh-title: 24px !important;
-      --fs-display: 22px !important;
-      --lh-display: 30px !important;
-      --fs-mono: 14px !important;
-      --lh-mono: 20px !important;
+      --fs-hero: 22px !important;
+      --lh-hero: 30px !important;
     }
   }
 
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme='light']) :where([data-secure], [data-secure] *) {
-      --text-1: #eae9e7 !important;
-      --text-2: #c2c1bf !important;
-      --text-3: #999896 !important;
-      --syn-plain: #eae9e7 !important;
-      --syn-keyword: #eae9e7 !important;
-      --syn-string: #bec8bf !important;
-      --syn-comment: #aaa9a6 !important;
-      --syn-number: #c6bfcc !important;
-      --syn-function: #b6c9c9 !important;
-      --syn-constant: #c6bfcc !important;
-      --syn-punctuation: #c2c1bf !important;
-      --icon: #828180 !important;
-      --text-disabled: #535251 !important;
-      --bg-app: #141413 !important;
-      --bg-pane: #1c1c1b !important;
-      --bg-raised: #252423 !important;
-      --bg-sunken: #181716 !important;
+      --ink: #f4f4f5 !important;
+      --ink-2: #d4d4d8 !important;
+      --muted: #a1a1aa !important;
+      --faint: #71717a !important;
+      --canvas: #111113 !important;
+      --sidebar: #0a0a0b !important;
+      --raised: #18181b !important;
+      --sunken: #0e0e10 !important;
+      --hover: rgba(255, 255, 255, 0.05) !important;
+      --press: rgba(255, 255, 255, 0.09) !important;
+      --selected: rgba(255, 255, 255, 0.08) !important;
+      --selected-ring: inset 0 1px 0 rgba(255, 255, 255, 0.03) !important;
+      --bubble: #1e1e21 !important;
+      --glass: rgba(24, 24, 27, 0.88) !important;
+      --scrim: rgba(0, 0, 0, 0.56) !important;
       --preview-light-a: #ffffff !important;
       --preview-light-b: #ededed !important;
       --preview-dark-a: #242424 !important;
       --preview-dark-b: #303030 !important;
-      --well: rgba(0, 0, 0, 0.24) !important;
-      --bg-hover: rgba(234, 233, 231, 0.05) !important;
-      --bg-press: rgba(234, 233, 231, 0.08) !important;
-      --fill: rgba(234, 233, 231, 0.07) !important;
-      --fill-hover: rgba(234, 233, 231, 0.1) !important;
-      --fill-press: rgba(234, 233, 231, 0.13) !important;
-      --track-off: rgba(234, 233, 231, 0.2) !important;
-      --bg-selected-solid: #2e2e2d !important;
-      --bubble-user: rgba(234, 233, 231, 0.07) !important;
-      --scrim: rgba(0, 0, 0, 0.56) !important;
-      --tile-plate: #2e2e2d !important;
-      --tile-ring: rgba(234, 233, 231, 0.1) !important;
-      --comet-track: rgba(234, 233, 231, 0.12) !important;
-      --sweep: rgba(255, 214, 140, 0.12) !important;
-      --ripple-ink: rgba(245, 182, 66, 0.35) !important;
-      --kbd-ring: rgba(234, 233, 231, 0.14) !important;
-      --brand-ring: rgba(234, 233, 231, 0.12) !important;
-      --line: rgba(234, 233, 231, 0.1) !important;
-      --line-subtle: rgba(234, 233, 231, 0.06) !important;
-      --line-strong: rgba(234, 233, 231, 0.16) !important;
-      --sh-raised: 0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.05) !important;
-      --sh-float:
-        0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.05), 0 12px 32px -6px rgba(0, 0, 0, 0.56) !important;
-      --sh-composer:
-        0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.04), 0 8px 24px -12px rgba(0, 0, 0, 0.6) !important;
-      --sh-composer-focus:
-        0 0 0 1px rgba(234, 233, 231, 0.16), inset 0 1px 0 rgba(234, 233, 231, 0.04), 0 8px 24px -12px rgba(0, 0, 0, 0.6) !important;
-      --sh-modal:
-        0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.05), 0 24px 56px -12px rgba(0, 0, 0, 0.64) !important;
-      --accent: #2461e0 !important;
-      --accent-hover: #2f6be8 !important;
-      --accent-press: #1d53c8 !important;
-      --accent-text: #8db2ff !important;
-      --accent-text-hover: #a9c4ff !important;
+      --app-ring: rgba(255, 255, 255, 0.12) !important;
+      --line: rgba(255, 255, 255, 0.08) !important;
+      --line-strong: rgba(255, 255, 255, 0.14) !important;
+      --sh-1: inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
+      --sh-pop: 0 16px 40px -12px rgba(0, 0, 0, 0.72), 0 0 0 1px var(--line), inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
+      --sh-dialog: 0 28px 80px -20px rgba(0, 0, 0, 0.88), 0 0 0 1px var(--line), inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+      --sh-accent: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 1px 2px rgba(0, 0, 0, 0.4) !important;
+      --sh-thumb: 0 1px 2px rgba(0, 0, 0, 0.4), 0 0 0 0.5px rgba(0, 0, 0, 0.1) !important;
+      --seg-on: #2c2c31 !important;
+      --seg-on-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
+      --switch-off: rgba(255, 255, 255, 0.16) !important;
+      --tip-bg: #2a2a2e !important;
+      --tip-ink: #f4f4f5 !important;
+      --sh-tip: 0 6px 16px -6px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
+      --accent: #2f6feb !important;
+      --accent-hover: #2a63d4 !important;
+      --accent-ink: #6b9bfa !important;
+      --accent-soft: rgba(59, 118, 246, 0.18) !important;
       --on-accent: #ffffff !important;
-      --focus: #8db2ff !important;
-      --focus-halo: rgba(141, 178, 255, 0.24) !important;
-      --warn-text: #f5b642 !important;
-      --warn-bg: rgba(245, 182, 66, 0.1) !important;
-      --warn-border: rgba(245, 182, 66, 0.3) !important;
-      --warn-dot: #f5b642 !important;
-      --warn-fill: #f5b642 !important;
-      --on-warn-fill: #1e2230 !important;
-      --err-text: #ff7168 !important;
-      --err-bg: rgba(255, 123, 114, 0.1) !important;
-      --err-border: rgba(255, 123, 114, 0.3) !important;
-      --err-solid: #d92d20 !important;
-      --ok-text: #5ccb7a !important;
-      --ok-bg: rgba(76, 199, 106, 0.1) !important;
-      --ok-border: rgba(76, 199, 106, 0.28) !important;
-      --ok-solid: #4cc76a !important;
-      --diff-add-bg: rgba(76, 199, 106, 0.1) !important;
-      --diff-add-tok: rgba(76, 199, 106, 0.22) !important;
-      --diff-del-bg: rgba(255, 123, 114, 0.1) !important;
-      --diff-del-tok: rgba(255, 123, 114, 0.22) !important;
+      --amber: #fbbf24 !important;
+      --amber-icon: #fbbf24 !important;
+      --amber-soft: rgba(251, 191, 36, 0.12) !important;
+      --amber-line: rgba(251, 191, 36, 0.24) !important;
+      --red: #f87171 !important;
+      --red-solid: #dc2626 !important;
+      --red-soft: rgba(248, 113, 113, 0.12) !important;
+      --red-line: rgba(248, 113, 113, 0.24) !important;
+      --green: #4ade80 !important;
+      --diff-add: rgba(74, 222, 128, 0.1) !important;
+      --diff-del: rgba(248, 113, 113, 0.1) !important;
+      --diff-add-word: rgba(74, 222, 128, 0.24) !important;
+      --diff-del-word: rgba(248, 113, 113, 0.24) !important;
+      --syn-keyword: #c8a2f0 !important;
+      --syn-string: #e6b47c !important;
+      --syn-comment: #6e6e78 !important;
+      --syn-number: #f2a072 !important;
+      --syn-function: #79d0d6 !important;
+      --syn-constant: #f2a072 !important;
     }
   }
 
   :root[data-theme='dark'] :where([data-secure], [data-secure] *) {
-    --text-1: #eae9e7 !important;
-    --text-2: #c2c1bf !important;
-    --text-3: #999896 !important;
-    --syn-plain: #eae9e7 !important;
-    --syn-keyword: #eae9e7 !important;
-    --syn-string: #bec8bf !important;
-    --syn-comment: #aaa9a6 !important;
-    --syn-number: #c6bfcc !important;
-    --syn-function: #b6c9c9 !important;
-    --syn-constant: #c6bfcc !important;
-    --syn-punctuation: #c2c1bf !important;
-    --icon: #828180 !important;
-    --text-disabled: #535251 !important;
-    --bg-app: #141413 !important;
-    --bg-pane: #1c1c1b !important;
-    --bg-raised: #252423 !important;
-    --bg-sunken: #181716 !important;
+    --ink: #f4f4f5 !important;
+    --ink-2: #d4d4d8 !important;
+    --muted: #a1a1aa !important;
+    --faint: #71717a !important;
+    --canvas: #111113 !important;
+    --sidebar: #0a0a0b !important;
+    --raised: #18181b !important;
+    --sunken: #0e0e10 !important;
+    --hover: rgba(255, 255, 255, 0.05) !important;
+    --press: rgba(255, 255, 255, 0.09) !important;
+    --selected: rgba(255, 255, 255, 0.08) !important;
+    --selected-ring: inset 0 1px 0 rgba(255, 255, 255, 0.03) !important;
+    --bubble: #1e1e21 !important;
+    --glass: rgba(24, 24, 27, 0.88) !important;
+    --scrim: rgba(0, 0, 0, 0.56) !important;
     --preview-light-a: #ffffff !important;
     --preview-light-b: #ededed !important;
     --preview-dark-a: #242424 !important;
     --preview-dark-b: #303030 !important;
-    --well: rgba(0, 0, 0, 0.24) !important;
-    --bg-hover: rgba(234, 233, 231, 0.05) !important;
-    --bg-press: rgba(234, 233, 231, 0.08) !important;
-    --fill: rgba(234, 233, 231, 0.07) !important;
-    --fill-hover: rgba(234, 233, 231, 0.1) !important;
-    --fill-press: rgba(234, 233, 231, 0.13) !important;
-    --track-off: rgba(234, 233, 231, 0.2) !important;
-    --bg-selected-solid: #2e2e2d !important;
-    --bubble-user: rgba(234, 233, 231, 0.07) !important;
-    --scrim: rgba(0, 0, 0, 0.56) !important;
-    --tile-plate: #2e2e2d !important;
-    --tile-ring: rgba(234, 233, 231, 0.1) !important;
-    --comet-track: rgba(234, 233, 231, 0.12) !important;
-    --sweep: rgba(255, 214, 140, 0.12) !important;
-    --ripple-ink: rgba(245, 182, 66, 0.35) !important;
-    --kbd-ring: rgba(234, 233, 231, 0.14) !important;
-    --brand-ring: rgba(234, 233, 231, 0.12) !important;
-    --line: rgba(234, 233, 231, 0.1) !important;
-    --line-subtle: rgba(234, 233, 231, 0.06) !important;
-    --line-strong: rgba(234, 233, 231, 0.16) !important;
-    --sh-raised: 0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.05) !important;
-    --sh-float:
-      0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.05), 0 12px 32px -6px rgba(0, 0, 0, 0.56) !important;
-    --sh-composer:
-      0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.04), 0 8px 24px -12px rgba(0, 0, 0, 0.6) !important;
-    --sh-composer-focus:
-      0 0 0 1px rgba(234, 233, 231, 0.16), inset 0 1px 0 rgba(234, 233, 231, 0.04), 0 8px 24px -12px rgba(0, 0, 0, 0.6) !important;
-    --sh-modal:
-      0 0 0 1px rgba(234, 233, 231, 0.1), inset 0 1px 0 rgba(234, 233, 231, 0.05), 0 24px 56px -12px rgba(0, 0, 0, 0.64) !important;
-    --accent: #2461e0 !important;
-    --accent-hover: #2f6be8 !important;
-    --accent-press: #1d53c8 !important;
-    --accent-text: #8db2ff !important;
-    --accent-text-hover: #a9c4ff !important;
+    --app-ring: rgba(255, 255, 255, 0.12) !important;
+    --line: rgba(255, 255, 255, 0.08) !important;
+    --line-strong: rgba(255, 255, 255, 0.14) !important;
+    --sh-1: inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
+    --sh-pop: 0 16px 40px -12px rgba(0, 0, 0, 0.72), 0 0 0 1px var(--line), inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
+    --sh-dialog: 0 28px 80px -20px rgba(0, 0, 0, 0.88), 0 0 0 1px var(--line), inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+    --sh-accent: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 1px 2px rgba(0, 0, 0, 0.4) !important;
+    --sh-thumb: 0 1px 2px rgba(0, 0, 0, 0.4), 0 0 0 0.5px rgba(0, 0, 0, 0.1) !important;
+    --seg-on: #2c2c31 !important;
+    --seg-on-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
+    --switch-off: rgba(255, 255, 255, 0.16) !important;
+    --tip-bg: #2a2a2e !important;
+    --tip-ink: #f4f4f5 !important;
+    --sh-tip: 0 6px 16px -6px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
+    --accent: #2f6feb !important;
+    --accent-hover: #2a63d4 !important;
+    --accent-ink: #6b9bfa !important;
+    --accent-soft: rgba(59, 118, 246, 0.18) !important;
     --on-accent: #ffffff !important;
-    --focus: #8db2ff !important;
-    --focus-halo: rgba(141, 178, 255, 0.24) !important;
-    --warn-text: #f5b642 !important;
-    --warn-bg: rgba(245, 182, 66, 0.1) !important;
-    --warn-border: rgba(245, 182, 66, 0.3) !important;
-    --warn-dot: #f5b642 !important;
-    --warn-fill: #f5b642 !important;
-    --on-warn-fill: #1e2230 !important;
-    --err-text: #ff7168 !important;
-    --err-bg: rgba(255, 123, 114, 0.1) !important;
-    --err-border: rgba(255, 123, 114, 0.3) !important;
-    --err-solid: #d92d20 !important;
-    --ok-text: #5ccb7a !important;
-    --ok-bg: rgba(76, 199, 106, 0.1) !important;
-    --ok-border: rgba(76, 199, 106, 0.28) !important;
-    --ok-solid: #4cc76a !important;
-    --diff-add-bg: rgba(76, 199, 106, 0.1) !important;
-    --diff-add-tok: rgba(76, 199, 106, 0.22) !important;
-    --diff-del-bg: rgba(255, 123, 114, 0.1) !important;
-    --diff-del-tok: rgba(255, 123, 114, 0.22) !important;
+    --amber: #fbbf24 !important;
+    --amber-icon: #fbbf24 !important;
+    --amber-soft: rgba(251, 191, 36, 0.12) !important;
+    --amber-line: rgba(251, 191, 36, 0.24) !important;
+    --red: #f87171 !important;
+    --red-solid: #dc2626 !important;
+    --red-soft: rgba(248, 113, 113, 0.12) !important;
+    --red-line: rgba(248, 113, 113, 0.24) !important;
+    --green: #4ade80 !important;
+    --diff-add: rgba(74, 222, 128, 0.1) !important;
+    --diff-del: rgba(248, 113, 113, 0.1) !important;
+    --diff-add-word: rgba(74, 222, 128, 0.24) !important;
+    --diff-del-word: rgba(248, 113, 113, 0.24) !important;
+    --syn-keyword: #c8a2f0 !important;
+    --syn-string: #e6b47c !important;
+    --syn-comment: #6e6e78 !important;
+    --syn-number: #f2a072 !important;
+    --syn-function: #79d0d6 !important;
+    --syn-constant: #f2a072 !important;
   }
 }

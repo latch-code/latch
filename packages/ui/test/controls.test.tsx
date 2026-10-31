@@ -4,6 +4,7 @@ import { userEvent } from 'vitest/browser'
 import { render } from 'vitest-browser-react'
 import {
   Checkbox,
+  Radio,
   ChoiceList,
   DevMark,
   FilterPills,
@@ -31,18 +32,23 @@ function Toggle({ disabled = false }: { disabled?: boolean }) {
 }
 
 describe('switch', () => {
-  it('is a switch that Space toggles, drawn with a 3:1 icon ring when off and the accent when on', async () => {
+  it('is a 30×18 switch that Space toggles, a soft track when off and the accent when on, its white thumb sliding over --m-micro', async () => {
     const screen = await render(<Toggle />)
     const toggle = screen.getByRole('switch', { name: '允许其他设备' })
     await expect.element(toggle).toHaveAttribute('aria-checked', 'false')
     const off = style(toggle.element(), '::before')
-    expect(off.boxShadow).toContain('rgb(124, 124, 122)')
+    expect([off.width, off.height, off.backgroundColor]).toEqual(['30px', '18px', 'rgba(0, 0, 0, 0.12)'])
+    const thumb = toggle.element().querySelector('.ui-switch-thumb')!
+    expect([style(thumb).width, style(thumb).backgroundColor, style(thumb).transitionDuration]).toEqual([
+      '14px',
+      'rgb(255, 255, 255)',
+      '0.12s, 0.12s',
+    ])
     await userEvent.tab()
     await userEvent.keyboard(' ')
     await expect.element(toggle).toHaveAttribute('aria-checked', 'true')
-    // The track's colour eases over 120ms.
     await expect.poll(() => style(toggle.element(), '::before').backgroundColor).toBe('rgb(36, 97, 224)')
-    expect(style(toggle.element(), '::before').boxShadow).toBe('none')
+    await expect.poll(() => style(thumb).translate).toBe('12px')
   })
 
   it('rings the track on keyboard focus, so the ring follows the pill and not the box around it', async () => {
@@ -130,7 +136,6 @@ describe('segmented control', () => {
     const agent = screen.getByRole('radio', { name: 'Agent' })
     await expect.element(agent).toHaveFocus()
     await expect.element(agent).toHaveAttribute('aria-checked', 'true')
-    expect(group.element().style.getPropertyValue('--index')).toBe('1')
     await userEvent.keyboard('{Home}')
     await expect.element(screen.getByRole('radio', { name: '对话' })).toHaveAttribute('aria-checked', 'true')
     await userEvent.keyboard('{End}')
@@ -146,13 +151,21 @@ describe('segmented control', () => {
     await expect.element(screen.getByRole('radio', { name: 'Agent' })).toHaveAttribute('aria-checked', 'false')
   })
 
-  it('raises the selected segment on a white thumb in a well without a ring', async () => {
+  it('raises the selected 24px segment on its own face on a soft track, and never slides it', async () => {
     const screen = await render(<Modes />)
     const group = screen.getByRole('radiogroup').element()
-    expect(style(group).boxShadow).toBe('none')
-    const thumb = group.querySelector('.ui-segmented-thumb')!
-    expect(style(thumb).backgroundColor).toBe('rgb(255, 255, 255)')
-    expect(style(thumb).boxShadow).not.toBe('none')
+    expect([style(group).boxShadow, style(group).backgroundColor, style(group).padding]).toEqual(['none', 'rgba(0, 0, 0, 0.04)', '2px'])
+    expect(group.querySelector('.ui-segmented-thumb')).toBeNull()
+    const chosen = screen.getByRole('radio', { name: '对话' }).element()
+    const other = screen.getByRole('radio', { name: 'Agent' }).element()
+    expect([chosen.getBoundingClientRect().height, style(chosen).backgroundColor, style(chosen).color]).toEqual([
+      24,
+      'rgb(255, 255, 255)',
+      'rgb(24, 24, 27)',
+    ])
+    expect(style(chosen).boxShadow).not.toBe('none')
+    expect([style(other).backgroundColor, style(other).color]).toEqual(['rgba(0, 0, 0, 0)', 'rgb(113, 113, 122)'])
+    expect(style(chosen).transitionProperty).not.toMatch(/translate|transform|left/u)
   })
 })
 
@@ -186,7 +199,7 @@ function Sections() {
 }
 
 describe('tabs and filter pills', () => {
-  it('makes tabs a tab list whose arrows select, with the fill on the selected tab', async () => {
+  it('makes 24px tabs a tab list whose arrows select, the selected one on the hover fill, never sliding', async () => {
     const screen = await render(<Sections />)
     const list = screen.getByRole('tablist', { name: '工具详情' })
     expect(tabStops(list.element())).toBe(1)
@@ -196,11 +209,14 @@ describe('tabs and filter pills', () => {
     await expect.element(output).toHaveAttribute('aria-selected', 'true')
     await expect.element(output).toHaveFocus()
     const tab = output.element()
-    expect(tab).toBeInstanceOf(HTMLElement)
-    expect(list.element().style.getPropertyValue('--tab-x')).toBe(`${tab instanceof HTMLElement ? tab.offsetLeft : NaN}px`)
-    // Selection is neutral: never blue, never underlined.
-    expect(style(list.element().querySelector('.ui-tab-fill')!).backgroundColor).toBe('rgba(29, 28, 26, 0.06)')
-    expect(style(output.element()).textDecorationLine).toBe('none')
+    expect(list.element().querySelector('.ui-tab-fill')).toBeNull()
+    // Selection is neutral: never blue, never underlined; the others are muted.
+    // The fill and the ink cross-fade in over --m-micro.
+    await expect
+      .poll(() => [tab.getBoundingClientRect().height, style(tab).backgroundColor, style(tab).color, style(tab).borderTopLeftRadius])
+      .toEqual([24, 'rgba(0, 0, 0, 0.04)', 'rgb(24, 24, 27)', '6px'])
+    expect(style(screen.getByRole('tab', { name: '参数' }).element()).color).toBe('rgb(113, 113, 122)')
+    expect(style(tab).textDecorationLine).toBe('none')
   })
 
   it('makes filters pressed toggle buttons, not tabs, that share one tab stop', async () => {
@@ -305,6 +321,26 @@ describe('choice controls', () => {
     expect(Math.abs(middle(single) - middle(single.querySelector('.ui-choice-title')))).toBeLessThan(1)
   })
 
+  it('rings a chosen box or radio outside its accent fill, and an unchosen one inside its edge', async () => {
+    const screen = await render(
+      <div>
+        <Checkbox aria-label="未选" />
+        <Checkbox aria-label="已选" defaultChecked />
+        <Radio aria-label="单选" defaultChecked />
+      </div>,
+    )
+    const offsetOnTab = async (name: string, role: 'checkbox' | 'radio') => {
+      await userEvent.tab()
+      const element = screen.getByRole(role, { name }).element()
+      expect(document.activeElement).toBe(element)
+      expect(style(element).outlineColor).toBe('rgb(36, 97, 224)')
+      return style(element).outlineOffset
+    }
+    expect(await offsetOnTab('未选', 'checkbox')).toBe('-2px')
+    expect(await offsetOnTab('已选', 'checkbox')).toBe('2px')
+    expect(await offsetOnTab('单选', 'radio')).toBe('2px')
+  })
+
   it('draws a chosen option in the accent: the checked box and the radio ring', async () => {
     const screen = await render(
       <div>
@@ -312,7 +348,8 @@ describe('choice controls', () => {
       </div>,
     )
     const box = screen.getByRole('checkbox', { name: '管理此 Host' })
-    expect(style(box.element()).boxShadow).toContain('rgb(124, 124, 122)')
+    // Unchecked: the raised surface inside a 1.5px line-strong ring.
+    expect(style(box.element()).boxShadow).toBe('rgb(220, 220, 224) 0px 0px 0px 1.5px inset')
     await userEvent.click(screen.getByText('管理此 Host'))
     await expect.element(box).toBeChecked()
     await expect.poll(() => style(box.element()).backgroundColor).toBe('rgb(36, 97, 224)')

@@ -4,28 +4,39 @@
 }
 
 /*
- * The spinner turns on its HTML box, not on the SVG, once every 900ms. Running work is ink (text-2); inside a button
- * or a loading line it takes that text's colour. Reduced motion keeps it turning (base.css).
+ * The spinner: a ring of the current colour at 22% with its top quarter in full, turning once every 800ms. 1.5px up
+ * to 16, 2px at 20. It pauses out of view (data-offscreen); reduced motion stops it on the still frame.
  */
 .ui-spinner {
-  display: inline-grid;
-  place-items: center;
+  --spinner-size: 14px;
+  display: inline-block;
   flex-shrink: 0;
-  color: var(--text-2);
-  animation: ui-spin 900ms linear infinite;
+  width: var(--spinner-size);
+  height: var(--spinner-size);
+  border: 1.5px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
 }
-.ui-spinner > svg {
-  display: block;
+@media (prefers-reduced-motion: no-preference) {
+  .ui-spinner {
+    animation: ui-spin 800ms linear infinite;
+  }
+}
+.ui-spinner[data-size='12'] {
+  --spinner-size: 12px;
+}
+.ui-spinner[data-size='16'] {
+  --spinner-size: 16px;
+}
+.ui-spinner[data-size='20'] {
+  --spinner-size: 20px;
+  border-width: 2px;
+}
+.ui-spinner[data-offscreen] {
+  animation-play-state: paused;
 }
 @keyframes ui-spin {
   to {
     rotate: 360deg;
-  }
-}
-
-/* Shared entrances: fade, and fade while moving 4px from the side a layer opens from. */
-@keyframes ui-fade-in {
-  from {
-    opacity: 0;
   }
 }

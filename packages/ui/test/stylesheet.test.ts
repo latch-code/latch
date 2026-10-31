@@ -40,13 +40,8 @@ describe('design system stylesheet', () => {
   it('puts every primitive rule in the ui layer of the page, under the app and security layers', () => {
     const own = rules().filter(rule => /\.ui-/u.test(rule.selector))
     expect(own.length).toBeGreaterThan(100)
-    // The element defaults may name a primitive too: reduced motion keeps the spinners turning, the spinner itself and
-    // the arc of a tile's indeterminate progress ring.
-    expect(own.filter(rule => !['ui', 'base'].includes(rule.layers.join('.'))).map(rule => rule.selector)).toEqual([])
-    expect(own.filter(rule => rule.layers.join('.') === 'base').map(rule => rule.selector)).toEqual([
-      '.ui-spinner',
-      '.ui-tile-progress:not([data-determinate]) .ui-tile-progress-arc',
-    ])
+    // The element defaults name no primitive: each primitive handles reduced motion in its own stylesheet.
+    expect(own.filter(rule => rule.layers.join('.') !== 'ui').map(rule => rule.selector)).toEqual([])
     // The order of the layers is the first statement of the tokens: a later layer wins whatever its specificity.
     const order = Array.from(document.styleSheets)
       .flatMap(sheet => Array.from(sheet.cssRules))

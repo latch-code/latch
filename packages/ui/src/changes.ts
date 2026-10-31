@@ -2,13 +2,14 @@ import { createContext, useContext, useLayoutEffect, useRef, useState } from 're
 
 /**
  * The page's resynchronization epoch: a value that changes whenever the state on screen is established again rather
- * than changed as it happened (the first load, a reconnect, a switch to another session). One-shot indicators (the
- * ripple and roll of a count, the settling of a row's status) play only for a change made while the epoch stayed the
- * same, so never on a first render, a resynchronization or a session switch; without a provider they never play.
+ * than changed as it happened (the first load, a reconnect, a switch to another session). One-shot cross-fades (a
+ * count's new number, a row's new status, a process row's new glyph and words) play only for a change made while the
+ * epoch stayed the same, so never on a first render, a resynchronization or a session switch; without a provider they
+ * never play.
  */
 export const LiveChanges = createContext<string | number | null>(null)
 
-/** Motion is allowed unless the person asked for less; the indicators' animations exist only then (styles/live.css). */
+/** Motion is allowed unless the person asked for less; one-shot cross-fades play only then. */
 export const motionAllowed = (): boolean =>
   typeof matchMedia !== 'function' || matchMedia('(prefers-reduced-motion: no-preference)').matches
 

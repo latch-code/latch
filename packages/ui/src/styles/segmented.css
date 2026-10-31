@@ -1,69 +1,59 @@
 /*
- * Segmented control, only for two or three equal views or modes: a well without a ring (radius 8, 2px inside), equal
- * segments (radius 6 = 8 − 2), and a raised white thumb that slides to the selected one over 180ms. sm is 28 overall,
- * md 32, phones 36; on touch every segment's hit box reaches 44 tall without leaving the track.
+ * Segmented control, only for two or three equal views or modes: a soft fill (radius 8, 2px inside, 2px between)
+ * holding equal segments (radius 6 = 8 − 2), 24px tall with 12/16·500 words. The selected segment is a raised face
+ * (seg-on with its own shadow) in ink; the others are muted and turn ink on hover. The selection cross-fades over
+ * --m-micro and never slides. md has 28px segments; phones 32; on touch every segment's hit box reaches 44 tall
+ * without leaving the track.
  */
 .ui-segmented {
-  /* The number of segments and the selected one, set by the component. */
-  --count: 2;
-  --index: 0;
-  position: relative;
   display: inline-grid;
   grid-auto-flow: column;
   grid-auto-columns: 1fr;
+  gap: var(--sp-2);
   flex-shrink: 0;
   padding: var(--sp-2);
   border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
-  background: var(--well);
-}
-.ui-segmented-thumb {
-  position: absolute;
-  top: var(--sp-2);
-  bottom: var(--sp-2);
-  left: var(--sp-2);
-  width: calc((100% - 2 * var(--sp-2)) / var(--count));
-  translate: calc(var(--index) * 100%) 0;
-  border-radius: var(--r-6);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-raised);
-  box-shadow: var(--sh-raised);
-  transition: translate var(--d-base) var(--ease);
+  background: var(--hover);
 }
 .ui-segmented-option {
   position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: var(--sp-6);
   height: 24px;
-  padding: 0 var(--sp-12);
+  padding: 0 var(--sp-10);
   border: 0;
   border-radius: var(--r-6);
-  corner-shape: var(--corner-shape);
   background: transparent;
-  color: var(--text-2);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   font-weight: 500;
   white-space: nowrap;
-  transition: color var(--d-fast) var(--ease-exit);
+  transition:
+    background-color var(--m-micro) var(--e-micro),
+    box-shadow var(--m-micro) var(--e-micro),
+    color var(--m-micro) var(--e-micro);
 }
 .ui-segmented[data-size='md'] .ui-segmented-option {
   height: 28px;
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  padding: 0 var(--sp-12);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
 }
 .ui-segmented-option[aria-checked='true'] {
-  color: var(--text-1);
+  background: var(--seg-on);
+  box-shadow: var(--seg-on-shadow);
+  color: var(--ink);
 }
 .ui-segmented-option:hover:not([aria-checked='true'], [aria-disabled='true']) {
-  color: var(--text-1);
-  transition-duration: 0s;
+  color: var(--ink);
 }
 .ui-segmented-option[aria-disabled='true'] {
   opacity: 0.45;
 }
-.ui-segmented[aria-disabled='true'] .ui-segmented-thumb {
+.ui-segmented[aria-disabled='true'] .ui-segmented-option[aria-checked='true'] {
   opacity: 0.45;
 }
 @media (max-width: 767.98px) {
@@ -71,8 +61,8 @@
   .ui-segmented[data-size='md'] .ui-segmented-option {
     height: 32px;
     padding: 0 var(--sp-16);
-    font-size: var(--fs-label);
-    line-height: var(--lh-label);
+    font-size: var(--fs-ui);
+    line-height: var(--lh-ui);
   }
 }
 @media (pointer: coarse) {

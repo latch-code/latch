@@ -6,11 +6,11 @@
 .content-search h3 {
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
-  color: var(--text-3);
+  color: var(--muted);
   font-weight: 500;
 }
 .content-search p {
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
@@ -20,25 +20,24 @@
   text-align: start;
   padding: var(--sp-8);
   border-radius: var(--r-6);
-  corner-shape: var(--corner-shape);
 }
 .content-search > button:hover {
-  background: var(--bg-hover);
+  background: var(--hover);
 }
 .content-search small {
-  color: var(--text-3);
+  color: var(--muted);
   margin-inline-start: var(--sp-8);
 }
 .search-snippet {
-  color: var(--text-2);
+  color: var(--ink-2);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   overflow-wrap: anywhere;
 }
 .search-snippet mark,
 [data-search-target] {
-  background: var(--fill-press);
-  color: var(--text-1);
+  background: var(--press);
+  color: var(--ink);
 }
 .archive-batch {
   padding: var(--sp-12);
@@ -72,18 +71,18 @@
   flex: 1;
 }
 .find-bar > span {
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   white-space: nowrap;
 }
 ::highlight(latch-find) {
-  background: var(--fill-press);
-  color: var(--text-1);
+  background: var(--press);
+  color: var(--ink);
 }
 ::highlight(latch-find-current) {
-  background: var(--fill-press);
-  color: var(--text-1);
+  background: var(--press);
+  color: var(--ink);
   text-decoration: underline;
 }
 .command-palette :is(.modal-surface, .ui-modal-surface) {
@@ -102,7 +101,7 @@
   gap: var(--sp-4);
 }
 .command-results h3 {
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   padding: var(--sp-8);
@@ -114,11 +113,10 @@
   text-align: start;
   padding: var(--sp-8);
   border-radius: var(--r-6);
-  corner-shape: var(--corner-shape);
 }
 .command-results button[aria-selected='true'],
 .command-results button:hover {
-  background: var(--bg-hover);
+  background: var(--hover);
 }
 .command-results button span {
   flex: 1;
@@ -142,17 +140,17 @@
   flex: 1;
 }
 .getting-started strong {
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
   font-weight: 500;
 }
 .getting-started p {
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
 }
 .getting-started-step {
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
@@ -189,7 +187,7 @@
 }
 .slash-commands p,
 .slash-commands span {
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
@@ -199,11 +197,10 @@
   padding: var(--sp-8);
   text-align: start;
   border-radius: var(--r-6);
-  corner-shape: var(--corner-shape);
 }
 .slash-commands button:hover,
 .slash-commands button[aria-selected='true'] {
-  background: var(--bg-hover);
+  background: var(--hover);
 }
 .slash-commands strong {
   font-weight: 500;
@@ -230,8 +227,8 @@
 .usage-table table {
   width: 100%;
   border-collapse: collapse;
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
 }
 .usage-table th,
 .usage-table td {
@@ -246,7 +243,7 @@
 }
 .usage-table small {
   display: block;
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }

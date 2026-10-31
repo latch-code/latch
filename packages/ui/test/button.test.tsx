@@ -100,7 +100,7 @@ describe('buttons', () => {
     await expect.poll(openTooltips).toEqual([])
   })
 
-  it('shows a tooltip after half a second of hover, at once when moving on from a neighbour, and hides it on leaving', async () => {
+  it('shows a tooltip after 400ms of hover, glides it to a neighbour at once, and hides it on leaving', async () => {
     const screen = await render(
       <div>
         <IconButton label="设置" icon={Settings} />
@@ -115,11 +115,18 @@ describe('buttons', () => {
     await wait(250)
     expect(openTooltips()).toEqual([])
     await expect.poll(openTooltips, { timeout: 2000 }).toEqual(['设置'])
+    // It fades in from a scale of .98 over --m-enter, inverted.
+    const first = document.querySelector<HTMLElement>('.ui-tooltip:popover-open')!
+    expect(first.getAnimations().map(item => (item as CSSAnimation).animationName)).toEqual(['ui-pop'])
+    expect([style(first).backgroundColor, style(first).color]).toEqual(['rgb(24, 24, 27)', 'rgb(250, 250, 250)'])
     // The label already names the button, so the tooltip does not describe it a second time.
     expect(settings.element().hasAttribute('aria-describedby')).toBe(false)
     await userEvent.hover(screen.getByRole('button', { name: '添加' }))
     await wait(100)
     expect(openTooltips()).toEqual(['添加'])
+    // The neighbour's tooltip glides from where the last one stood instead of popping in again.
+    const next = document.querySelector<HTMLElement>('.ui-tooltip:popover-open')!
+    expect([next.hasAttribute('data-glide'), style(next).transitionProperty]).toEqual([true, 'left, top'])
     await userEvent.hover(screen.getByText('别处'))
     expect(openTooltips()).toEqual([])
   })
@@ -128,8 +135,9 @@ describe('buttons', () => {
     const screen = await render(<IconButton label="会话信息" icon={Settings} pressed />)
     const button = screen.getByRole('button', { name: '会话信息' })
     await expect.element(button).toHaveAttribute('aria-pressed', 'true')
-    // On: the pressed fill and text-1, never the accent.
-    expect(style(button.element(), '::before').backgroundColor).toBe('rgba(29, 28, 26, 0.07)')
+    // On: the hover fill and ink, never the accent.
+    expect(style(button.element(), '::before').backgroundColor).toBe('rgba(0, 0, 0, 0.04)')
+    expect(style(button.element()).color).toBe('rgb(24, 24, 27)')
     expect(button.element().getBoundingClientRect().width).toBe(28)
     await onTouchScreen(async () => {
       const box = button.element().getBoundingClientRect()
@@ -148,7 +156,7 @@ describe('buttons', () => {
     )
     const open = screen.getByRole('button', { name: '更多' }).element()
     const closed = screen.getByRole('button', { name: '收起' }).element()
-    expect(style(open, '::before').backgroundColor).toBe('rgba(29, 28, 26, 0.07)')
+    expect(style(open, '::before').backgroundColor).toBe('rgba(0, 0, 0, 0.04)')
     expect(getComputedStyle(open).color).toBe(getComputedStyle(document.documentElement).color)
     expect(style(closed, '::before').backgroundColor).toBe('rgba(0, 0, 0, 0)')
   })
@@ -162,8 +170,8 @@ describe('buttons', () => {
     const badge = button.querySelector('.ui-icon-button-badge')!
     // The count's corner sits 4px past the face's, on an opaque pill of the surface with a 2px cut-out ring.
     expect([badge.getBoundingClientRect().right - face.right, face.top - badge.getBoundingClientRect().top]).toEqual([4, 4])
-    expect(style(badge).backgroundColor).toBe('rgb(251, 251, 250)')
-    expect(style(badge).boxShadow).toBe('rgb(251, 251, 250) 0px 0px 0px 2px')
+    expect(style(badge).backgroundColor).toBe('rgb(255, 255, 255)')
+    expect(style(badge).boxShadow).toBe('rgb(255, 255, 255) 0px 0px 0px 2px')
     await onTouchScreen(async () => {
       expect([button.getBoundingClientRect().width, style(button, '::after').width, style(button, '::after').height]).toEqual([
         28,
@@ -173,19 +181,56 @@ describe('buttons', () => {
     })
   })
 
-  it('draws a secondary button as a fill on paper and as raised white inside an amber or red tint', async () => {
+  it('draws a secondary button as a soft fill, and outlined (raised inside a line-strong ring) as outline or inside a tint', async () => {
     const screen = await render(
       <div>
-        <Button>拒绝</Button>
+        <Button>稍后</Button>
+        <Button variant="outline">拒绝</Button>
+        <Button variant="danger">撤销此设备</Button>
         <InlineNotice tone="warn" title="连接已中断" action={<Button size="xs">重试</Button>} />
       </div>,
     )
-    const plain = style(screen.getByRole('button', { name: '拒绝' }).element())
-    expect(plain.backgroundColor).toBe('rgba(29, 28, 26, 0.06)')
-    expect(plain.boxShadow).toBe('none')
-    const tinted = style(screen.getByRole('button', { name: '重试' }).element())
-    expect(tinted.backgroundColor).toBe('rgb(255, 255, 255)')
-    expect(tinted.boxShadow).not.toBe('none')
+    const plain = style(screen.getByRole('button', { name: '稍后' }).element())
+    expect([plain.backgroundColor, plain.boxShadow]).toEqual(['rgba(0, 0, 0, 0.04)', 'none'])
+    for (const name of ['拒绝', '撤销此设备', '重试']) {
+      const outlined = style(screen.getByRole('button', { name }).element())
+      expect([outlined.backgroundColor, outlined.boxShadow.startsWith('rgb(220, 220, 224) 0px 0px 0px 1px inset')], name).toEqual([
+        'rgb(255, 255, 255)',
+        true,
+      ])
+    }
+    expect(style(screen.getByRole('button', { name: '撤销此设备' }).element()).color).toBe('rgb(185, 28, 28)')
+  })
+
+  it('presses a button to .97 over --m-micro, but not one that opens a menu, and rings the keyboard focus in the accent', async () => {
+    const screen = await render(
+      <div>
+        <Button variant="primary">允许</Button>
+        <Button menu>计划</Button>
+      </div>,
+    )
+    const button = screen.getByRole('button', { name: '允许' }).element()
+    expect(style(button).transitionProperty).toContain('transform')
+    // The press, as the stylesheet declares it: every button but a disabled, busy or menu-opening one.
+    const presses: CSSStyleRule[] = []
+    const walk = (rules: CSSRuleList) => {
+      for (const rule of Array.from(rules)) {
+        if (rule instanceof CSSStyleRule && /^\.ui-button:active/u.test(rule.selectorText)) presses.push(rule)
+        else if (rule instanceof CSSGroupingRule) walk(rule.cssRules)
+      }
+    }
+    for (const sheet of Array.from(document.styleSheets)) walk(sheet.cssRules)
+    expect(presses.map(rule => [rule.style.transform, /\[data-menu\]/u.test(rule.selectorText)])).toContainEqual(['scale(0.97)', true])
+    // A filled button draws the keyboard ring outside it; a quiet one inside its own edge.
+    await userEvent.tab()
+    expect(document.activeElement).toBe(button)
+    expect([style(button).outlineColor, style(button).outlineWidth, style(button).outlineOffset]).toEqual([
+      'rgb(36, 97, 224)',
+      '2px',
+      '2px',
+    ])
+    await userEvent.tab()
+    expect(style(screen.getByRole('button', { name: '计划' }).element()).outlineOffset).toBe('-2px')
   })
 
   it('sizes buttons on the scale of 24, 28, 32 and 44', async () => {

@@ -4,7 +4,7 @@ import { ICON_STROKE, Popover, StatusGlyph, type MenuTriggerProps } from '@latch
 
 /**
  * `active`: the session is still running, so the step in progress is drawn in ink; once it settles that step reads as
- * unfinished. The step in progress is a still mark: the running tool already turns its comet on its row. Nearer to now
+ * unfinished. The step in progress is a still mark: the running tool already turns its spinner on its row. Nearer to now
  * reads stronger: done steps are the faintest. A step whose state changes while the page watches cross-fades its mark.
  */
 export function PlanList({ plan, active }: { plan: PlanEntry[]; active: boolean }) {

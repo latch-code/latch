@@ -1,36 +1,48 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode, type RefObject } from 'react'
 import { motionAllowed } from './changes.ts'
-import { cx } from './internal.ts'
+import { cx, mergeRefs } from './internal.ts'
 
 /**
- * The motion tokens of tokens.css in milliseconds, for scripts that time something to a transition. A test keeps the
- * two equal.
+ * The motion tokens of tokens.css in milliseconds, for scripts that time something to a transition, with each exit at
+ * 70% of its entrance. A test keeps them equal to the stylesheet.
  */
 export const MOTION = {
-  fast: 120,
-  base: 180,
-  slow: 240,
-  fastExit: 90,
-  baseExit: 140,
-  slowExit: 180,
-  stagger: 40,
-  shimmer: 1600,
-  hint: 300,
+  micro: 120,
+  enter: 160,
+  panel: 200,
+  sheet: 260,
+  push: 320,
+  microExit: 84,
+  enterExit: 112,
+  panelExit: 140,
+  sheetExit: 182,
+  pushExit: 224,
+} as const
+
+/** The easing tokens of tokens.css, for animations started from scripts (the Web Animations API). */
+export const EASING = {
+  micro: 'cubic-bezier(0.2, 0, 0, 1)',
+  enter: 'cubic-bezier(0.2, 0.8, 0.2, 1)',
+  panel: 'cubic-bezier(0.32, 0.72, 0, 1)',
+  sheet: 'cubic-bezier(0.32, 0.72, 0, 1)',
+  push: 'cubic-bezier(0.32, 0.72, 0, 1)',
+  exit: 'cubic-bezier(0.4, 0, 1, 1)',
 } as const
 
 /** How long a closing disclosure may take before it counts as closed even without its transitionend. */
-const CLOSE_FALLBACK = MOTION.baseExit + 200
+const CLOSE_FALLBACK = MOTION.panelExit + 200
 
 /**
- * A disclosure's body. Opening, the box grows downward under its fixed header (its grid row goes from 0fr to 1fr over
- * 180ms on the entry curve) while the content fades in over 120ms, 40ms behind; closing takes 140ms on the exit curve
- * with the content fading first. Height is animated only through the grid row, so whatever is laid out above it never
- * moves; the reading position keeps the reader's place across the frames (a resize of the content it watches).
+ * A disclosure's body. Opening, the box grows downward under its fixed header (its grid row goes from 0fr to 1fr) while
+ * its content fades in, both over --m-panel; closing takes 70% of that on the exit curve. Height is animated only
+ * through the grid row, so whatever is laid out above it never moves; the reading position keeps the reader's place
+ * across the frames (a resize of the content it watches).
  *
- * While closed the body stays in the document as `hidden="until-found"`, out of the focus order and the accessibility
- * tree yet reachable by the browser's find, which asks to open it (`onReveal`); while it closes it is inert. With
- * `lazy` the body is first rendered when it first opens and kept after that, for heavy content such as a tool's output.
- * Without motion it opens and closes at once.
+ * The first render shows the state it is given at once, so a restored page never animates. While closed the body
+ * stays in the document as `hidden="until-found"`, out of the focus
+ * order and the accessibility tree yet reachable by the browser's find, which asks to open it (`onReveal`); while it
+ * closes it is inert. With `lazy` the body is first rendered when it first opens and kept after that, for heavy
+ * content such as a tool's output. Without motion it only fades, within 120ms.
  */
 export function Collapse({
   open,
@@ -83,7 +95,7 @@ export function Collapse({
         () => {
           setSettled(true)
         },
-        motionAllowed() ? MOTION.base + 200 : 0,
+        motionAllowed() ? MOTION.panel + 200 : 0,
       )
       return () => {
         clearTimeout(timer)
@@ -132,9 +144,9 @@ export function Collapse({
 }
 
 /**
- * Swaps what it shows when `value` changes: the new content fades in over 120ms, scaling up from 80% for a glyph (a copy
- * icon turning into a check) or in place for words (`effect="fade"`, a label that changes its tense). The first render
- * and reduced motion show it at once.
+ * Swaps what it shows when `value` changes, over --m-micro: a glyph scales up from 80% as it fades in (a copy icon
+ * turning into a check), words fade in place (`effect="fade"`, a label that changes its tense). The first render
+ * shows it at once; reduced motion only fades.
  */
 export function Swap({
   value,
@@ -161,7 +173,7 @@ export function Swap({
  * Keeps something on screen while it leaves: `present` stays true for `exit` milliseconds after `show` turns false,
  * with `leaving` true meanwhile so its stylesheet can fade it out. Without motion it leaves at once.
  */
-export function usePresence(show: boolean, exit: number = MOTION.fastExit): { present: boolean; leaving: boolean } {
+export function usePresence(show: boolean, exit: number = MOTION.microExit): { present: boolean; leaving: boolean } {
   const [present, setPresent] = useState(show)
   if (show && !present) setPresent(true)
   useEffect(() => {
@@ -179,14 +191,39 @@ export function usePresence(show: boolean, exit: number = MOTION.fastExit): { pr
   return { present: show || present, leaving: !show && present }
 }
 
+/** The loops on the page that are out of view, paused by their stylesheets through `data-offscreen`. */
+let offscreen: IntersectionObserver | undefined
+
 /**
- * A short live label (正在思考, a run's phase) with a narrow light crossing its words from left to right, once every
- * 1.6s, by moving the gradient behind the clipped text. It is the only text that moves; its still frame (and reduced
- * motion) is the plain label in hint ink.
+ * Pauses a loop (a spinner, the thinking shimmer, a skeleton, a tile's arc) while it is out of the window, so nothing loops where nobody sees it.
+ * A loop keeps its phase while paused.
  */
-export function Shimmer({ className, children, ...props }: ComponentProps<'span'>) {
+export function usePausedOffscreen(ref: RefObject<Element | null>): void {
+  useLayoutEffect(() => {
+    const element = ref.current
+    if (!element || typeof IntersectionObserver !== 'function') return undefined
+    offscreen ??= new IntersectionObserver(entries => {
+      for (const entry of entries) entry.target.toggleAttribute('data-offscreen', !entry.isIntersecting)
+    })
+    const observer = offscreen
+    observer.observe(element)
+    return () => {
+      observer.unobserve(element)
+      element.removeAttribute('data-offscreen')
+    }
+  }, [ref])
+}
+
+/**
+ * Live words that are thinking (正在思考, a run's phase): after 600ms a light crosses them once over 1s, then they
+ * rest until the next 4s cycle; only the gradient behind the clipped text moves, and it pauses out of view. Its still
+ * frame, and what reduced motion shows, is the plain words in muted ink.
+ */
+export function Shimmer({ className, children, ref, ...props }: ComponentProps<'span'>) {
+  const own = useRef<HTMLSpanElement>(null)
+  usePausedOffscreen(own)
   return (
-    <span {...props} className={cx('ui-shimmer', className)}>
+    <span {...props} ref={mergeRefs(ref, own)} className={cx('ui-shimmer', className)}>
       {children}
     </span>
   )

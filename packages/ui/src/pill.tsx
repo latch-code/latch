@@ -1,13 +1,18 @@
 import { useState, type ComponentProps, type ReactNode } from 'react'
 import { useLiveChange } from './changes.ts'
 import { cx } from './internal.ts'
+import { StatusWord, type StatusTone } from './status.tsx'
 
-/** Neutral is a fill; amber means waiting or a warning, red a real risk or failure, green an added line or a success. */
+/** Neutral is a soft fill; amber means a warning, red a real risk or failure, green a success. */
 export type Tone = 'neutral' | 'warn' | 'err' | 'ok'
 
+const STATE_TONE: Record<Tone, StatusTone> = { neutral: 'neutral', warn: 'warn', err: 'failed', ok: 'done' }
+
 /**
- * A 20px status pill: the state of a card, a row or a session (待批准, 失败, 已取消). A pill means a state, a view or
- * an identity and a rounded rectangle an action, so pills and buttons never share a shape. No leading dot, no blue.
+ * The state of a card, a row or a session in words (已取消, 不可用, 高风险), drawn as a status word: neutral muted, amber
+ * words for a warning, red words after circle-alert for a risk or failure, ink words after a check for done. The
+ * plugin panels' `ui` hands it to trusted panels under this name; pages use it where the state needs no glyph of
+ * waiting or running (those are StatusWord's).
  */
 export function StatusPill({
   tone = 'neutral',
@@ -16,13 +21,16 @@ export function StatusPill({
   ...props
 }: Omit<ComponentProps<'span'>, 'children'> & { tone?: Tone; children: ReactNode }) {
   return (
-    <span className={cx('ui-status-pill', className)} data-tone={tone} {...props}>
+    <StatusWord tone={STATE_TONE[tone]} className={className} {...props}>
       {children}
-    </span>
+    </StatusWord>
   )
 }
 
-/** A 16px small badge: an attribute that follows a name (本机, 默认, 内置, 离线), never a card's or row's state. */
+/**
+ * A badge: an attribute that follows a name (本机, 默认, 内置, 离线), 18px with 4px corners, 11/14·500 on a soft
+ * fill. Never a card's or row's state, which is a status word.
+ */
 export function Badge({
   tone = 'neutral',
   className,
@@ -36,15 +44,17 @@ export function Badge({
   )
 }
 
-/** neutral: a passive count. strong: unread messages on phones. warn: what waits for the person. */
+/**
+ * neutral: a passive count, in the ink of the words around it. strong: what is new for the person (unread results), in
+ * ink. warn: what waits for the person, in amber.
+ */
 export type CountTone = 'neutral' | 'strong' | 'warn'
 
 /**
- * A count in a 16px pill with tabular digits; above `max` it reads 「99+」. A change the page saw happen moves once: a
- * step of one rolls the digits (up for +1, down for −1, 240ms), and a rise of a waiting (amber) count sends out one
- * 1px ripple. On the first render, after a resynchronization and with reduced motion the new value just shows. A count
- * shown only above zero takes `from`, its value before it appeared (`useLivePrevious`), so the first arrival seen live
- * ripples too; it does not roll, since the old value was not on screen.
+ * A count in tabular digits, 12/16·500; above `max` it reads 「99+」. A change the page saw happen cross-fades the new
+ * number in over --m-micro; on the first render, after a resynchronization and with reduced motion it just shows. A
+ * count shown only above zero takes `from`, its value before it appeared (`useLivePrevious`), so its arrival seen live
+ * fades in too.
  */
 export function Count({
   value,
@@ -60,46 +70,22 @@ export function Count({
   from?: number
 }) {
   const text = value > max ? `${max}+` : String(value)
-  const [shot, setShot] = useState<{ key: number; from: string; roll: 'up' | 'down' | null; ripple: boolean } | null>(null)
+  const [shift, setShift] = useState(0)
   useLiveChange(
     value,
-    (previous, live, appeared) => {
-      const step = value - previous
-      const roll = !appeared && Math.abs(step) === 1 && Math.max(value, previous) <= max ? (step > 0 ? 'up' : 'down') : null
-      const ripple = step > 0 && tone === 'warn'
-      if (!live || (roll === null && !ripple)) {
-        setShot(null)
-        return
-      }
-      setShot(current => ({ key: (current?.key ?? 0) + 1, from: String(previous), roll, ripple }))
+    (_previous, live) => {
+      setShift(current => (live ? current + 1 : 0))
     },
     from,
   )
   return (
     <span
+      key={shift}
       className="ui-count"
       data-tone={tone}
-      data-wide={text.length > 1 ? '' : undefined}
+      data-shift={shift > 0 ? '' : undefined}
       {...(label ? { role: 'img', 'aria-label': label } : {})}>
-      {shot?.roll ? (
-        <>
-          {/* The stack holds the old and the new digits; its resting place shows the new one. */}
-          <span key={shot.key} className="ui-count-roll" data-direction={shot.roll} aria-hidden="true">
-            <span>
-              <span>{shot.roll === 'up' ? shot.from : text}</span>
-              <span>{shot.roll === 'up' ? text : shot.from}</span>
-            </span>
-          </span>
-          <span className="sr-only">{text}</span>
-        </>
-      ) : (
-        text
-      )}
-      {shot?.ripple && (
-        <svg key={`ripple-${shot.key}`} className="ui-count-ripple" aria-hidden="true">
-          <rect x="0" y="0" width="100%" height="100%" rx="8" />
-        </svg>
-      )}
+      {text}
     </span>
   )
 }
@@ -120,7 +106,7 @@ export function StatusDot({ tone, ring = false, label }: { tone: 'warn' | 'err' 
   )
 }
 
-/** A key or shortcut: only in tooltips, menu item ends, the search row and an approval card's hint line, never in a button. */
+/** A key or shortcut: only in tooltips, menu item ends, the search row and an approval's hint line, never in a button. */
 export function Kbd({ children }: { children: ReactNode }) {
   return <kbd className="ui-kbd">{children}</kbd>
 }

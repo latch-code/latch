@@ -74,16 +74,17 @@ describe('tile choice', () => {
     await expect.poll(line).toBe('closed')
   })
 
-  it('draws the chosen tile on the neutral selection ground, never ringed, and dims only the tile and name of one that cannot be chosen', async () => {
+  it('draws the chosen tile as the selected card, never blue, and dims only the tile and name of one that cannot be chosen', async () => {
     const screen = await render(<Harnesses />)
     const chosen = screen.getByRole('radio', { name: /Agent$/ }).element()
     const root = getComputedStyle(document.documentElement)
     const probe = document.createElement('span')
-    probe.style.backgroundColor = root.getPropertyValue('--bg-selected-solid')
+    probe.style.backgroundColor = root.getPropertyValue('--selected')
     document.body.append(probe)
     expect(getComputedStyle(chosen).backgroundColor).toBe(getComputedStyle(probe).backgroundColor)
     probe.remove()
-    expect(getComputedStyle(chosen).boxShadow).toBe('none')
+    // White with a hairline ring on the canvas, never the accent.
+    expect(getComputedStyle(chosen).boxShadow).toBe('rgba(0, 0, 0, 0.07) 0px 0px 0px 1px, rgba(0, 0, 0, 0.04) 0px 1px 1px 0px')
     expect(getComputedStyle(chosen.querySelector('.ui-tile-choice-label')!).fontWeight).toBe('500')
     const codex = screen.getByRole('radio', { name: /Codex/ }).element()
     expect(getComputedStyle(codex.querySelector('.ui-tile-choice-tile')!).opacity).toBe('0.45')

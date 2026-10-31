@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react'
+import { switchTheme } from '@latch/ui'
 import { readStorage } from './core/storageKeys.ts'
 import { parseInspectorPreference, type InspectorPreference } from './inspectorLayout.ts'
 import { parseSidebarPreference, type SidebarPreference } from './sidebarLayout.ts'
@@ -94,10 +95,10 @@ export function usePreferences(): Preferences {
 }
 
 /**
- * The browser bar takes the colour of the ground (bg-app) at every width: from 768px the page is paper inset on it, and
- * a phone's pages put their headers on it.
+ * The browser bar takes the sidebar's grey (--sidebar), the window's own colour, at every width: from 768px the canvas
+ * is inset on it, and a phone's pages put their headers on it.
  */
-const themeColors = { light: '#f2f1ee', dark: '#141413' }
+const themeColors = { light: '#f7f7f8', dark: '#0a0a0b' }
 
 /** The colour for one theme-color meta, read from its media query (index.html qualifies each by scheme). */
 export function themeColorFor(media: string, theme: ThemePreference): string {
@@ -105,10 +106,16 @@ export function themeColorFor(media: string, theme: ThemePreference): string {
   return themeColors[scheme]
 }
 
-/** `system` leaves the media query in charge; explicit choices pin `data-theme`. */
+/**
+ * `system` leaves the media query in charge; explicit choices pin `data-theme`. The colours switch at once, without
+ * the transitions of hover fills and fields.
+ */
 export function applyTheme(theme: ThemePreference): void {
-  const root = document.documentElement
-  if (theme === 'system') root.removeAttribute('data-theme')
-  else root.dataset.theme = theme
-  for (const meta of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) meta.content = themeColorFor(meta.media, theme)
+  switchTheme(() => {
+    const root = document.documentElement
+    if (theme === 'system') root.removeAttribute('data-theme')
+    else root.dataset.theme = theme
+    for (const meta of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]'))
+      meta.content = themeColorFor(meta.media, theme)
+  })
 }

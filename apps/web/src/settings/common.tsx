@@ -65,7 +65,7 @@ export function SettingsGroup({
   )
 }
 
-/** A 32px tile for a row that leads with an icon instead of a brand: the hover ground, a 16px glyph in text-2. */
+/** A 32px tile for a row that leads with an icon instead of a brand: the hover fill, a 16px glyph in ink-2. */
 export function IconTile({ icon }: { icon: LucideIcon }) {
   return (
     <span className="settings-icon-tile" aria-hidden="true">
@@ -81,7 +81,7 @@ interface RowContent {
   description?: ReactNode
   /** Record names are 500; preferences 400. */
   record?: boolean
-  /** Offline or unavailable: the tile dims and the name turns text-2; the state is in the description. */
+  /** Offline or unavailable: the tile dims and the name turns ink-2; the state is in the description. */
   dim?: boolean
   className?: string
 }

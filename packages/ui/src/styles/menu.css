@@ -1,11 +1,12 @@
 /*
- * Layers pinned to a trigger (menus, pickers, popovers): the raised surface with the float shadow, 12px corners and
- * 4px inside, at least 220 wide, 6px from the trigger. They live in the top layer, so no scrolling list or dialog
- * clips them. Opening moves them 4px in from the trigger's side while fading in over 180ms; closing only fades, over
- * 120ms. A dot or count inside is cut out in the raised colour.
+ * Layers pinned to a trigger. A menu or a picker is glass (the raised colour at 88% over a blur) with 8px corners and
+ * 4px inside; a popover with content of its own (role=dialog) and a form shown in a picker's place are solid raised
+ * with 12px corners. Both carry the pop shadow, are at least 220 wide and sit 6px from the trigger, in the top layer,
+ * so no scrolling list or dialog clips them. Opening fades them in from a scale of .98 toward the trigger over
+ * --m-enter; closing plays it backwards in 70% of the time. A dot or count inside is cut out in the raised colour.
  */
 .ui-popover {
-  --surface: var(--bg-raised);
+  --surface: var(--raised);
   position: fixed;
   inset: auto;
   min-width: 220px;
@@ -15,33 +16,56 @@
   overflow: auto;
   overscroll-behavior: contain;
   border: 0;
-  border-radius: var(--r-12);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-raised);
-  color: var(--text-1);
-  box-shadow: var(--sh-float);
+  border-radius: var(--r-8);
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(16px) saturate(1.1);
+  backdrop-filter: blur(16px) saturate(1.1);
+  color: var(--ink);
+  box-shadow: var(--sh-pop);
   opacity: 0;
+  transform: scale(0.98);
+  transform-origin: top left;
   transition:
-    opacity var(--d-fast) var(--ease-exit),
-    display var(--d-fast) allow-discrete,
-    overlay var(--d-fast) allow-discrete;
+    opacity calc(var(--m-enter) * 0.7) var(--e-exit),
+    transform calc(var(--m-enter) * 0.7) var(--e-exit),
+    display calc(var(--m-enter) * 0.7) allow-discrete,
+    overlay calc(var(--m-enter) * 0.7) allow-discrete;
+}
+.ui-popover:is([role='dialog'], [data-panel]) {
+  border-radius: var(--r-12);
+  background: var(--raised);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+/* It grows out of the trigger's corner: the side it opens from, and the edge it lines up with. */
+.ui-popover[data-align='end'] {
+  transform-origin: top right;
+}
+.ui-popover[data-align='center'] {
+  transform-origin: top center;
+}
+.ui-popover[data-side='top'] {
+  transform-origin: bottom left;
+}
+.ui-popover[data-side='top'][data-align='end'] {
+  transform-origin: bottom right;
+}
+.ui-popover[data-side='top'][data-align='center'] {
+  transform-origin: bottom center;
 }
 .ui-popover:popover-open {
   opacity: 1;
-  translate: 0 0;
+  transform: none;
   transition:
-    opacity var(--d-base) var(--ease),
-    translate var(--d-base) var(--ease),
-    display var(--d-base) allow-discrete,
-    overlay var(--d-base) allow-discrete;
+    opacity var(--m-enter) var(--e-enter),
+    transform var(--m-enter) var(--e-enter),
+    display var(--m-enter) allow-discrete,
+    overlay var(--m-enter) allow-discrete;
 }
 @starting-style {
   .ui-popover:popover-open {
     opacity: 0;
-    translate: 0 -4px;
-  }
-  .ui-popover[data-side='top']:popover-open {
-    translate: 0 4px;
+    transform: scale(0.98);
   }
 }
 .ui-popover:focus-visible {
@@ -52,6 +76,7 @@
   position: relative;
   display: inline-block;
   opacity: 1;
+  transform: none;
 }
 /* A searchable picker: the search row spans the layer's width and the list keeps the 4px inside. */
 .ui-popover:has(> .ui-menu-search) {
@@ -65,6 +90,7 @@
   display: grid;
   min-width: 212px;
 }
+/* Headings and group labels: 12/16·500 in muted ink. */
 .ui-menu-header {
   display: flex;
   align-items: center;
@@ -72,7 +98,7 @@
   gap: var(--sp-8);
   min-height: 28px;
   padding: 0 var(--sp-8);
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   font-weight: 500;
@@ -89,45 +115,45 @@
   gap: var(--sp-6);
   min-height: 28px;
   padding: 0 var(--sp-8);
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   font-weight: 500;
 }
+/* A separator runs from edge to edge of the layer. */
 .ui-menu-separator {
   height: 1px;
-  margin: var(--sp-4) var(--sp-8);
-  background: var(--line-subtle);
+  margin: var(--sp-4) calc(-1 * var(--sp-4));
+  background: var(--line);
 }
 
 /*
- * Items: 32px (48 with a description), radius 8 (the layer's 12 minus its 4px inside), a 16px leading slot (the
- * accent check of the chosen value, or an action's glyph), the label (400; 500 when chosen), and one trailing element.
- * The highlight is instant. A disabled item dims its slot, label and description; the reason under it stays readable.
+ * Items: 28px (44 with a description), 6px corners, a 16px leading slot (the ink check of the chosen value, or an
+ * action's glyph), the label (13/18; 500 when chosen), and one trailing element. The highlight is instant. A disabled
+ * item dims its slot, label and description; the reason under it stays readable.
  */
 .ui-menu-item {
   /* The height of the title's line, on which a two-line item keeps its check and its trailing element. */
-  --item-line: var(--lh-label);
+  --item-line: var(--lh-ui);
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr) auto;
   column-gap: var(--sp-8);
   align-items: center;
   width: 100%;
-  min-height: 32px;
+  min-height: 28px;
   padding: 0 var(--sp-8);
   border: 0;
-  border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
+  border-radius: var(--r-6);
   background: transparent;
-  color: var(--text-1);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  color: var(--ink);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
   font-weight: 400;
   text-align: start;
 }
 .ui-menu-item[data-two-line] {
   align-items: start;
-  min-height: 48px;
+  min-height: 44px;
   padding: var(--sp-6) var(--sp-8);
 }
 /* The check (or glyph) and the trailing element sit on the title's line, not between the title and the description. */
@@ -138,14 +164,14 @@
 }
 .ui-menu-item:hover,
 .ui-menu-item:focus-visible {
-  background: var(--bg-hover);
+  background: var(--hover);
 }
 .ui-menu-item:focus-visible {
-  outline: none;
-  box-shadow: var(--ring-focus-inset);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 .ui-menu-item:active:not([aria-disabled='true']) {
-  background: var(--bg-press);
+  background: var(--press);
 }
 .ui-menu-item[aria-disabled='true']:hover {
   background: transparent;
@@ -153,7 +179,7 @@
 .ui-menu-item-lead {
   display: grid;
   place-items: center;
-  color: var(--icon);
+  color: var(--muted);
 }
 /* The value's own picture (a harness's or a model service's tile) between the check slot and the label. */
 .ui-menu-item[data-media] {
@@ -179,12 +205,12 @@
 .ui-menu[data-no-lead] :is(.ui-menu-item, .ui-menu-footer-link) > .ui-menu-item-lead {
   display: none;
 }
-/* A glyph is the icon colour at rest and text-1 while its item is hovered, highlighted or pressed. */
+/* A glyph is muted at rest and ink while its item is hovered, highlighted or pressed. */
 .ui-menu-item:is(:hover, :focus-visible, :active):not([aria-disabled='true'], [data-danger]) .ui-menu-item-lead {
-  color: var(--text-1);
+  color: var(--ink);
 }
 .ui-menu-check {
-  color: var(--accent);
+  color: var(--ink);
 }
 .ui-menu-item-text {
   display: grid;
@@ -206,7 +232,7 @@
 }
 .ui-menu-item-description {
   overflow: hidden;
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   text-overflow: ellipsis;
@@ -217,34 +243,34 @@
   align-items: center;
   gap: var(--sp-6);
   margin-top: var(--sp-4);
-  color: var(--text-2);
+  color: var(--ink-2);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
 .ui-menu-item-reason > .ui-icon {
-  color: var(--icon);
+  color: var(--muted);
 }
 .ui-menu-item[aria-disabled='true'] :is(.ui-menu-item-lead, .ui-menu-item-media, .ui-menu-item-label, .ui-menu-item-description) {
   opacity: 0.45;
 }
 .ui-menu-item-meta {
-  color: var(--text-3);
+  color: var(--faint);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   font-variant-numeric: tabular-nums;
 }
 .ui-menu-item[data-danger] {
-  color: var(--err-text);
+  color: var(--red);
 }
 /* A glyph next to text takes the text's colour, so a destructive item reads as one red line. */
 .ui-menu-item[data-danger] .ui-menu-item-lead {
-  color: var(--err-text);
+  color: var(--red);
 }
 
 /*
- * The footer row under a separator, 32px on the items' grid so its text starts on their titles' column: a link to where
- * the setting lives (13/18 text-1, an empty leading slot, chevron-right at the end), or a note (12/16 text-3) with its
- * lock centred in the leading slot.
+ * The footer row under a separator, 28px on the items' grid so its text starts on their titles' column: a link to where
+ * the setting lives (13/18 in ink, an empty leading slot, chevron-right at the end), or a note (12/16 in muted ink)
+ * with its lock centred in the leading slot.
  */
 .ui-menu-footer {
   display: grid;
@@ -255,7 +281,7 @@
   grid-template-columns: 16px minmax(0, 1fr) auto;
   column-gap: var(--sp-8);
   align-items: center;
-  min-height: 32px;
+  min-height: 28px;
   padding: 0 var(--sp-8);
 }
 /* Outside a menu's list a row without a glyph starts its text at its own padding. */
@@ -264,32 +290,31 @@
 }
 .ui-menu-footer-note {
   grid-template-columns: 16px minmax(0, 1fr);
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
 .ui-menu-footer-link {
   width: 100%;
   border: 0;
-  border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
+  border-radius: var(--r-6);
   background: transparent;
-  color: var(--text-1);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  color: var(--ink);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
   font-weight: 400;
   text-align: start;
 }
 .ui-menu-footer-link:hover,
 .ui-menu-footer-link:focus-visible {
-  background: var(--bg-hover);
+  background: var(--hover);
 }
 .ui-menu-footer-link:active {
-  background: var(--bg-press);
+  background: var(--press);
 }
 .ui-menu-footer-link:focus-visible {
-  outline: none;
-  box-shadow: var(--ring-focus-inset);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 .ui-menu-footer-text {
   min-width: 0;
@@ -297,19 +322,19 @@
 .ui-menu-footer-link > .ui-icon,
 .ui-menu-footer-note > .ui-icon {
   justify-self: center;
-  color: var(--icon);
+  color: var(--muted);
 }
 .ui-menu-footer-link:is(:hover, :focus-visible, :active) > .ui-icon {
-  color: var(--text-1);
+  color: var(--ink);
 }
 
-/* The search row of a long picker: 36px, no field of its own, a subtle line under it. */
+/* The search row of a long picker: 36px, no field of its own, a hairline under it. */
 .ui-menu-search {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: var(--bg-raised);
-  box-shadow: inset 0 -1px 0 var(--line-subtle);
+  background: var(--raised);
+  box-shadow: inset 0 -1px 0 var(--line);
 }
 .ui-menu-search > input {
   width: 100%;
@@ -317,23 +342,23 @@
   padding: 0 var(--sp-12);
   border: 0;
   background: transparent;
-  color: var(--text-1);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  color: var(--ink);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
   outline: none;
 }
 .ui-menu-search > input::placeholder {
-  color: var(--text-3);
+  color: var(--faint);
 }
 .ui-menu-search > input::-webkit-search-cancel-button {
   display: none;
 }
 
 /*
- * Value picker: a ghost control that shows the current value (13/18·400, text-2) and ends in chevrons-up-down, the
- * three 6 apart. Hover and an open menu darken it and turn the value to text-1. One possible value is plain text
- * without an arrow. The value fades in over 120ms when it changes (the component animates it); 「等待验证…」 takes its
- * place while a raise is verified, without moving the arrow.
+ * Value picker: a ghost control that shows the current value (13/18·400 in ink-2) and ends in chevrons-up-down, the
+ * three 6 apart. Hover and an open menu lay the hover fill under it and turn the value to ink. One possible value is
+ * plain text without an arrow. The value fades in over --m-micro when it changes (the component animates it);
+ * 「等待验证…」 takes its place while a raise is verified, without moving the arrow.
  */
 .ui-value-picker {
   display: inline-flex;
@@ -345,29 +370,27 @@
   padding: 0 var(--sp-8);
   border: 0;
   border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
   background: transparent;
-  color: var(--text-2);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
   font-weight: 400;
   white-space: nowrap;
   transition:
-    background-color var(--d-fast) var(--ease-exit),
-    color var(--d-fast) var(--ease-exit);
+    background-color var(--m-micro) var(--e-micro),
+    color var(--m-micro) var(--e-micro);
 }
 .ui-value-picker[data-leading] {
   padding-inline-start: var(--sp-6);
 }
-.ui-value-picker:not([data-static], [aria-disabled='true']):hover {
-  background: var(--bg-hover);
-  color: var(--text-1);
-  transition-duration: 0s;
+.ui-value-picker:not([data-static], [aria-disabled='true']):hover,
+.ui-value-picker[aria-expanded='true'] {
+  background: var(--hover);
+  color: var(--ink);
 }
-.ui-value-picker[aria-expanded='true'],
 .ui-value-picker:not([data-static], [aria-disabled='true']):active {
-  background: var(--bg-press);
-  color: var(--text-1);
+  background: var(--press);
+  color: var(--ink);
 }
 .ui-value-picker[aria-disabled='true'] {
   opacity: 0.45;
@@ -378,16 +401,19 @@
   place-items: center;
   flex-shrink: 0;
   min-width: 14px;
-  color: var(--icon);
+  color: var(--muted);
 }
+/* The spinner keeps its round 12px box and takes the slot's 14 with a pixel either side. */
 .ui-value-picker-lead.ui-spinner {
-  color: var(--text-2);
+  min-width: 0;
+  margin-inline: 1px;
+  color: var(--ink-2);
 }
 .ui-value-picker-risk {
-  color: var(--warn-text);
+  color: var(--amber-icon);
 }
 .ui-value-picker-chevron {
-  color: var(--icon);
+  color: var(--muted);
 }
 /*
  * The value starts right after the leading slot (or the picker's edge), so a column of values lines up. A toolbar
@@ -413,13 +439,12 @@
 }
 .ui-value-picker[data-placeholder] .ui-value-picker-text,
 .ui-value-picker-text[data-pending] {
-  color: var(--text-3);
+  color: var(--muted);
 }
 .ui-value-picker[data-size='xs'] {
   height: 24px;
   padding: 0 var(--sp-6);
   border-radius: var(--r-6);
-  corner-shape: var(--corner-shape);
 }
 .ui-value-picker[data-chevron='hover'] > .ui-value-picker-chevron {
   opacity: 0;
@@ -443,8 +468,8 @@
   padding-inline: var(--bleed);
 }
 /*
- * The phone row of a settings sheet: the label in text-1, the value in text-3, a 16px arrow; 48px tall. Rows that
- * follow one another in a card are parted by a line-subtle hairline that starts at the text, never at the card's edge.
+ * The phone row of a settings sheet: the label in ink, the value in muted ink, a 16px arrow; 48px tall. Rows that
+ * follow one another in a card are parted by a hairline that starts at the text, never at the card's edge.
  */
 .ui-value-picker[data-variant='row'] {
   position: relative;
@@ -452,7 +477,7 @@
   height: 48px;
   padding: 0 var(--sp-16);
   border-radius: 0;
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
 }
@@ -463,11 +488,11 @@
   right: 0;
   left: var(--sp-16);
   height: 1px;
-  background: var(--line-subtle);
+  background: var(--line);
 }
 .ui-value-row-label {
   flex: 1;
-  color: var(--text-1);
+  color: var(--ink);
   text-align: start;
 }
 /* In a phone row the value ends 6 before the arrow, so the values of a card share their right edge. */
@@ -499,14 +524,14 @@
   justify-content: space-between;
   gap: var(--sp-8);
   padding: 0 var(--sp-16);
-  color: var(--text-2);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
   font-weight: 500;
 }
 /* The menu header's meta (「goose · MacBook Pro」) at the heading's end, as in the menu. */
 .ui-sheet-group-meta {
-  color: var(--text-3);
+  color: var(--muted);
   font-weight: 400;
 }
 .ui-sheet-footer {
@@ -522,12 +547,11 @@
   padding: 0 0 0 1px;
 }
 .ui-sheet-body > .ui-menu {
-  --surface: var(--bg-pane);
+  --surface: var(--raised);
   min-width: 0;
   padding: var(--sp-4);
   border-radius: var(--r-12);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-pane);
+  background: var(--raised);
 }
 .ui-sheet-body .ui-menu-item {
   --item-line: var(--lh-ui);
@@ -537,4 +561,17 @@
 }
 .ui-sheet-body .ui-menu-item[data-two-line] {
   min-height: 64px;
+}
+
+/* Reduced motion: a layer only fades in and out. */
+@media (prefers-reduced-motion: reduce) {
+  .ui-popover,
+  .ui-popover:popover-open {
+    transform: none;
+  }
+  @starting-style {
+    .ui-popover:popover-open {
+      transform: none;
+    }
+  }
 }

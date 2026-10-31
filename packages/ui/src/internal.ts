@@ -128,8 +128,9 @@ export function layerSide(height: number, above: number, below: number, side: 'b
  * Places `layer` (a fixed-position element, usually in the top layer) next to `anchor` now, on every resize of the
  * window and whenever the layer itself changes size (its content turns into a taller panel, or it widens), until the
  * returned function is called. It writes the position straight onto the element and sets `data-side` to the side it
- * chose, which the entrance animation reads. A layer taller than the room on its side keeps inside the window with a
- * max-height and scrolls within. Call it once the layer is shown: a hidden layer has no size.
+ * chose and `data-align` to the edge it lines up with, which the entrance reads to grow out of the trigger's corner.
+ * A layer taller than the room on its side keeps inside the window with a max-height and scrolls within. Call it once
+ * the layer is shown: a hidden layer has no size.
  */
 export function pinLayer(anchor: Element, layer: HTMLElement, { align, side, gap }: AnchorOptions): () => void {
   // Once placed, the layer prefers the side it is on, so content that changes height does not make it jump across.
@@ -151,6 +152,7 @@ export function pinLayer(anchor: Element, layer: HTMLElement, { align, side, gap
     layer.style.left = `${Math.round(left)}px`
     layer.style.maxHeight = height > room ? `${Math.floor(room)}px` : ''
     layer.dataset.side = up ? 'top' : 'bottom'
+    layer.dataset.align = align
   }
   place()
   addEventListener('resize', place)

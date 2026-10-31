@@ -9,22 +9,32 @@ import type { Page } from '@playwright/test'
 const INJECTED_STYLES = `
 :root, body, *, [data-secure], [data-secure] * {
   --accent: rgb(0, 160, 0) !important; --on-accent: rgb(0, 0, 0) !important; --accent-hover: rgb(0, 160, 0) !important;
-  --err-bg: transparent !important; --err-border: transparent !important; --err-text: rgb(68, 68, 66) !important;
-  --warn-bg: transparent !important; --warn-border: transparent !important; --warn-text: rgb(68, 68, 66) !important;
-  --text-1: transparent !important; --text-2: transparent !important; --text-3: transparent !important;
-  --bg-pane: rgb(255, 0, 0) !important; --bg-raised: rgb(255, 0, 0) !important; --bg-sunken: rgb(255, 0, 0) !important;
-  --fill: rgb(0, 160, 0) !important; --line: transparent !important; --line-subtle: transparent !important;
-  --fs-label: 1px !important; --fs-caption: 1px !important; --fs-card-title: 1px !important; --fs-ui: 1px !important;
-  --fs-title-sm: 1px !important; --fs-display: 1px !important; --fs-mono-display: 1px !important; --lh-label: 1px !important;
-  --font-mono: serif !important; --font-sans: cursive !important;
+  --accent-ink: rgb(0, 160, 0) !important; --amber-icon: transparent !important; --red-solid: rgb(0, 160, 0) !important;
+  --green: rgb(255, 0, 0) !important; --diff-add: rgb(255, 0, 0) !important; --diff-del: rgb(0, 160, 0) !important;
+  --press: rgb(0, 160, 0) !important; --sh-accent: none !important; --sh-1: none !important;
+  --fs-code: 1px !important; --fs-input: 1px !important; --fs-mono: 1px !important; --fs-meta: 1px !important;
+  --lh-caption: 1px !important; --lh-caption-para: 1px !important; --lh-code: 1px !important; --lh-heading: 1px !important;
+  --lh-input: 1px !important; --lh-meta: 1px !important; --lh-mono: 1px !important; --lh-ui-para: 1px !important;
+  --red-soft: transparent !important; --red-line: transparent !important; --red: rgb(68, 68, 66) !important;
+  --amber-soft: transparent !important; --amber-line: transparent !important; --amber: rgb(68, 68, 66) !important;
+  --ink: transparent !important; --ink-2: transparent !important; --muted: transparent !important;
+  --canvas: rgb(255, 0, 0) !important; --raised: rgb(255, 0, 0) !important; --sunken: rgb(255, 0, 0) !important;
+  --hover: rgb(0, 160, 0) !important; --line: transparent !important; --line-strong: transparent !important;
+  --fs-ui: 1px !important; --fs-caption: 1px !important; --fs-heading: 1px !important; --fs-prose: 1px !important;
+  --fs-title: 1px !important; --fs-hero: 1px !important; --fs-mono-display: 1px !important; --lh-ui: 1px !important;
+  --mono: serif !important; --font: cursive !important;
 }
-* { visibility: hidden !important; color: transparent !important; font-size: 1px !important; line-height: 1px !important }
+* {
+  visibility: hidden !important; color: transparent !important; font-size: 1px !important; line-height: 1px !important;
+  background-image: none !important; box-shadow: none !important;
+}
+svg, .ui-spinner { color: rgb(0, 160, 0) !important }
 p, span, div, code, strong, pre, dt, dd, time, label, legend, h1, h2, h3, h4, section, article, dialog, main, button, input {
   display: none !important; opacity: 0 !important; filter: blur(8px) !important; transform: scale(0) !important;
   scale: 0 !important; clip-path: inset(50%) !important; text-indent: -9999px !important;
 }
 [class], [data-secure] { filter: opacity(0) !important; clip-path: inset(50%) !important; mix-blend-mode: difference !important }
-.ui-button, .ui-status-pill, .ui-notice { background: rgb(0, 160, 0) !important; display: none !important }
+.ui-button, .ui-status-word, .ui-notice { background: rgb(0, 160, 0) !important; display: none !important }
 @layer app { button, p { display: none; color: rgb(255, 0, 0) } }
 @layer security { * { color: rgb(255, 0, 0); background: rgb(255, 0, 0) } }
 `
@@ -35,6 +45,8 @@ const PROPERTIES = [
   'opacity',
   'color',
   'background-color',
+  'background-image',
+  'box-shadow',
   'border-top-color',
   'font-size',
   'line-height',
@@ -60,7 +72,7 @@ async function look(page: Page, selector: string): Promise<Array<Record<string, 
 
 /**
  * Adds INJECTED_STYLES to the page and checks that every element of `selectors` (each must match at least one) keeps
- * its computed display, visibility, opacity, colours, type, filter, transform and clipping; then removes them.
+ * its computed display, visibility, opacity, colours, tints, rings, type, filter, transform and clipping; then removes them.
  */
 export async function expectUnmovedByInjectedStyles(page: Page, selectors: readonly string[]): Promise<void> {
   // Injected styles can move the layout: keep the pointer away so the comparison does not also change hover.

@@ -1,7 +1,8 @@
 /*
- * Inline notices and banners: 8px corners, 8px 12px inside, a tint with a 1px ring in the same tone (neutral is a
- * tray with a line). The tone colours only the glyph and the title; the text stays text-2 at the caption's paragraph
- * height. At most one xs action, raised white inside amber and red (data-tint).
+ * Inline notices and banners: 8px corners, 8px 12px inside, on the raised surface with a 1px line; a warning lays
+ * amber-soft over it with an amber-line edge, an error red-soft with a red-line edge. The tone colours only the glyph
+ * and the title; the text stays ink-2 at the caption's paragraph height. At most one xs action, outlined inside amber
+ * and red (data-tint).
  */
 .ui-notice {
   display: flex;
@@ -10,19 +11,18 @@
   padding: var(--sp-8) var(--sp-12);
   border: 1px solid var(--line);
   border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-sunken);
-  color: var(--text-2);
+  background: var(--raised);
+  color: var(--ink-2);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
 }
 .ui-notice[data-tone='warn'] {
-  border-color: var(--warn-border);
-  background: var(--warn-bg);
+  border-color: var(--amber-line);
+  background: linear-gradient(var(--amber-soft), var(--amber-soft)) var(--raised);
 }
 .ui-notice[data-tone='error'] {
-  border-color: var(--err-border);
-  background: var(--err-bg);
+  border-color: var(--red-line);
+  background: linear-gradient(var(--red-soft), var(--red-soft)) var(--raised);
 }
 .ui-notice-body {
   display: flex;
@@ -34,13 +34,16 @@
 /* (18 − 14) / 2: centred on the first line. */
 .ui-notice-glyph {
   margin-top: var(--sp-2);
-  color: var(--icon);
+  color: var(--muted);
 }
-.ui-notice[data-tone='warn'] :is(.ui-notice-glyph, .ui-notice-title) {
-  color: var(--warn-text);
+.ui-notice[data-tone='warn'] .ui-notice-glyph {
+  color: var(--amber-icon);
+}
+.ui-notice[data-tone='warn'] .ui-notice-title {
+  color: var(--amber);
 }
 .ui-notice[data-tone='error'] :is(.ui-notice-glyph, .ui-notice-title) {
-  color: var(--err-text);
+  color: var(--red);
 }
 .ui-notice-text {
   flex: 1;
@@ -49,9 +52,9 @@
 }
 .ui-notice-title {
   margin-inline-end: var(--sp-6);
-  color: var(--text-1);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  color: var(--ink);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
   font-weight: 500;
 }
 .ui-notice-action {
@@ -62,30 +65,34 @@
   min-height: 24px;
 }
 
-/* Toasts: the float surface as a 36px pill, 13/18 text after a 14px glyph in its tone. */
+/* Toasts: raised with 8px corners and the pop shadow, 13/18 ink after a 14px glyph in its tone; they rise 4px in. */
 .ui-toast {
-  --surface: var(--bg-raised);
+  --surface: var(--raised);
   display: inline-flex;
   align-items: center;
   gap: var(--sp-8);
   max-width: min(420px, calc(100vw - 2 * var(--sp-16)));
   min-height: 36px;
-  padding: var(--sp-8) var(--sp-16) var(--sp-8) var(--sp-12);
-  border-radius: var(--r-pill);
-  background: var(--bg-raised);
-  color: var(--text-1);
-  box-shadow: var(--sh-float);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  padding: var(--sp-8) var(--sp-12);
+  border-radius: var(--r-8);
+  background: var(--raised);
+  color: var(--ink);
+  box-shadow: var(--sh-pop);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  animation: ui-rise var(--m-enter) var(--e-enter);
 }
 .ui-toast-glyph {
-  color: var(--icon);
+  color: var(--muted);
 }
 .ui-toast[data-tone='error'] .ui-toast-glyph {
-  color: var(--err-text);
+  color: var(--red);
 }
 
-/* Tooltips: 24px, 6px corners, 12/16 text-1 on the raised surface with the float shadow; they follow the theme. */
+/*
+ * Tooltips: inverted (tip-bg with tip-ink), 6px corners, 4px 8px inside, 12/16, at most 320 wide. They fade in from a
+ * scale of .98 over --m-enter; one that follows a neighbour's glides from where that one stood over --m-micro.
+ */
 .ui-tooltip {
   display: inline-flex;
   align-items: center;
@@ -94,10 +101,9 @@
   max-width: 320px;
   padding: var(--sp-4) var(--sp-8);
   border-radius: var(--r-6);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-raised);
-  color: var(--text-1);
-  box-shadow: var(--sh-float);
+  background: var(--tip-bg);
+  color: var(--tip-ink);
+  box-shadow: var(--sh-tip);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   pointer-events: none;
@@ -108,7 +114,27 @@
   margin: 0;
   border: 0;
   overflow: visible;
+  animation: ui-pop var(--m-enter) var(--e-enter);
 }
 .ui-tooltip[popover]:not(:popover-open) {
   display: none;
+}
+.ui-tooltip[data-glide] {
+  animation: none;
+  transition:
+    left var(--m-micro) var(--e-micro),
+    top var(--m-micro) var(--e-micro);
+}
+/* A key inside the inverted tooltip: a quiet ring of the tooltip's own ink. */
+.ui-tooltip kbd {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tip-ink) 24%, transparent);
+  color: color-mix(in srgb, var(--tip-ink) 64%, transparent);
+}
+
+/* Reduced motion: a tooltip that follows a neighbour appears in its place instead of gliding there. */
+@media (prefers-reduced-motion: reduce) {
+  .ui-tooltip[data-glide] {
+    transition: none;
+  }
 }

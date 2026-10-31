@@ -4,7 +4,7 @@
 }
 .sheet-group h3 {
   margin-bottom: var(--sp-6);
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   font-weight: 500;

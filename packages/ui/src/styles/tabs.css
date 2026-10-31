@@ -1,7 +1,8 @@
 /*
- * Text tabs and filter pills: pills without a track, 28px (32 on phones, inside a 44px hit box), 13/18·500. The
- * selected one is a neutral fill with text-1; the others are text-3 and take the hover fill. Never underlined, never
- * blue. The tab fill is one element that slides between tabs over 180ms.
+ * Tabs and filters: 24px (32 on phones, inside a 44px hit box) with 6px corners and 12/16·500 words after an optional
+ * 12px glyph, without a track. The selected one stands on the hover fill in ink; the others are muted and take the
+ * hover fill with ink-2. The selection moves at once (a cross-fade of the fills over --m-micro), never slides, is
+ * never underlined and never blue.
  */
 .ui-tabs {
   display: flex;
@@ -9,17 +10,12 @@
   gap: var(--sp-8);
   min-width: 0;
 }
-.ui-tab-list {
-  /* Measured from the selected tab by the component. */
-  --tab-x: 0px;
-  --tab-width: 0px;
-}
 .ui-tab-list,
 .ui-filters {
   position: relative;
   display: flex;
   align-items: center;
-  gap: var(--sp-4);
+  gap: var(--sp-2);
   min-width: 0;
 }
 .ui-tabs-actions {
@@ -32,45 +28,30 @@
   position: relative;
   display: inline-flex;
   align-items: center;
+  gap: var(--sp-6);
   flex-shrink: 0;
-  height: 28px;
-  padding: 0 var(--sp-12);
+  height: 24px;
+  padding: 0 var(--sp-8);
   border: 0;
-  border-radius: var(--r-pill);
+  border-radius: var(--r-6);
   background: transparent;
-  color: var(--text-3);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
   font-weight: 500;
   white-space: nowrap;
   transition:
-    background-color var(--d-fast) var(--ease-exit),
-    color var(--d-fast) var(--ease-exit);
+    background-color var(--m-micro) var(--e-micro),
+    color var(--m-micro) var(--e-micro);
 }
 .ui-tab:hover:not([aria-selected='true'], [aria-pressed='true']) {
-  background: var(--bg-hover);
-  color: var(--text-2);
-  transition-duration: 0s;
+  background: var(--hover);
+  color: var(--ink-2);
 }
 .ui-tab[aria-selected='true'],
 .ui-tab[aria-pressed='true'] {
-  color: var(--text-1);
-}
-.ui-filters > .ui-tab[aria-pressed='true'] {
-  background: var(--fill);
-}
-.ui-tab-fill {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: var(--tab-width);
-  translate: var(--tab-x) 0;
-  border-radius: var(--r-pill);
-  background: var(--fill);
-  transition:
-    translate var(--d-base) var(--ease),
-    width var(--d-base) var(--ease);
+  background: var(--hover);
+  color: var(--ink);
 }
 @media (max-width: 767.98px) {
   .ui-tab-list,
@@ -79,6 +60,7 @@
   }
   .ui-tab {
     height: 32px;
+    padding: 0 var(--sp-12);
   }
 }
 @media (pointer: coarse) {

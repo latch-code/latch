@@ -94,7 +94,7 @@ const PhoneRow = memo(function PhoneRow({
 }) {
   const title = task.title || '未命名会话'
   const time = relativeTime(task.updatedAt, new Date(now))
-  // The list is the phone's root: a running session always turns its comet here.
+  // The list is the phone's root: a running session always says 运行中 here.
   const slot = sessionSlot(task, false, unread)
   const name = harnessLabel(harness)
   const fact = sessionFact(task, slot, cancelling, time)
@@ -121,8 +121,7 @@ const PhoneRow = memo(function PhoneRow({
           <StatusSlot
             className="phone-row-status"
             status={slot}
-            size={16}
-            waiting={task.pendingQuestions ? '等你回答' : statusLabels['waiting-approval']}
+            running={cancelling ? '正在取消' : undefined}
             failed={task.permissionDrift && task.status !== 'failed' ? '权限已变化' : statusLabels.failed}
             time={time}
             dateTime={task.updatedAt}

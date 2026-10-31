@@ -24,7 +24,7 @@ import { FileChip, FileRootContext } from './FileChip.tsx'
 import { toolFileTargets, useKnownFiles } from './FileReferences.tsx'
 import { CopyButton } from './ui.tsx'
 import { DecisionRecord, DecisionWords } from './DecisionRecord.tsx'
-import { Collapse, ICON_STROKE, StatusGlyph, StatusWords, WaitingPill } from '@latch/ui'
+import { Collapse, ICON_STROKE, StatusGlyph, StatusWord, StatusWords } from '@latch/ui'
 import { VisibleText } from './VisibleText.tsx'
 import { useReportApprovalVisibility } from '../hooks/useApprovalsInView.ts'
 
@@ -95,7 +95,7 @@ function ToolOutput({ text, running }: { text: string; running: boolean }) {
 }
 
 /**
- * One tool call. At rest it is a quiet row of the process: the kind's icon (the comet while it runs), what it does in
+ * One tool call. At rest it is a quiet row of the process: the kind's icon (the spinner while it runs), what it does in
  * the tense of its state with its object, the tool's ID when it has no title of its own, how long it ran and, when it
  * did not simply finish, its state. A decided approval folds into the row: a call its approval kept from running says
  * the record in the state slot, an allowed one keeps it in the tooltip, and a call an agent reports as run after a
@@ -163,7 +163,7 @@ export const ToolCard = memo(
       ) : (
         <KindIcon size={14} strokeWidth={ICON_STROKE[14]} />
       )
-    // A state change the page saw happen: the comet and the result icon cross-fade and the new words rise in.
+    // A state change the page saw happen: the spinner and the result icon cross-fade and the new words fade in.
     const heading = (
       <>
         <StatusGlyph className="tool-card-icon process-slot" running={state === 'running'} state={shown}>
@@ -196,7 +196,9 @@ export const ToolCard = memo(
               gate ? (
                 <ApprovalPill gate={gate} hidden={hidden} className="tool-card-waiting" />
               ) : (
-                <WaitingPill className="tool-card-waiting">{stateWords[state]}</WaitingPill>
+                <StatusWord tone="waiting" className="tool-card-waiting">
+                  {stateWords[state]}
+                </StatusWord>
               )
             ) : unrun && decision ? (
               <DecisionWords decision={decision} />

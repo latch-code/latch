@@ -2,7 +2,7 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: var(--bg-app);
+  background: var(--sidebar);
 }
 .personal-bar {
   display: flex;
@@ -15,10 +15,10 @@
 .personal-bar-title {
   flex: 1;
   text-align: center;
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
   font-weight: 500;
-  color: var(--text-2);
+  color: var(--ink-2);
 }
 .personal-scroll {
   flex: 1;
@@ -39,20 +39,19 @@
   gap: var(--sp-12);
 }
 .personal-assistant {
-  corner-shape: var(--corner-shape);
   display: flex;
   text-align: left;
   align-items: flex-start;
   gap: var(--sp-12);
   padding: var(--sp-20);
-  background: var(--bg-pane);
+  background: var(--canvas);
   border: 1px solid var(--line);
   border-radius: var(--r-12);
   min-width: 0;
-  transition: background var(--d-fast) var(--ease);
+  transition: background var(--m-micro) var(--e-micro);
 }
 .personal-assistant:hover {
-  background: var(--bg-hover);
+  background: var(--hover);
 }
 .personal-assistant > span:last-child {
   min-width: 0;
@@ -60,20 +59,19 @@
   gap: var(--sp-8);
 }
 .personal-assistant strong {
-  font-size: var(--fs-body);
-  line-height: var(--lh-body);
+  font-size: var(--fs-prose);
+  line-height: var(--lh-prose);
   font-weight: 500;
 }
 .personal-avatar {
-  corner-shape: var(--corner-shape);
   display: grid;
   place-items: center;
   width: 32px;
   height: 32px;
   border-radius: var(--r-8);
-  background: var(--bg-hover);
+  background: var(--hover);
   flex-shrink: 0;
-  color: var(--text-2);
+  color: var(--ink-2);
 }
 .personal-role {
   display: -webkit-box;
@@ -81,18 +79,18 @@
   -webkit-line-clamp: 2;
   overflow: hidden;
   white-space: pre-line;
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
-  color: var(--text-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  color: var(--ink-2);
 }
 .personal-facts,
 .personal-unavailable {
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
-  color: var(--text-3);
+  color: var(--muted);
 }
 .personal-unavailable {
-  color: var(--warn-text);
+  color: var(--amber);
 }
 .personal-actions {
   display: flex;
@@ -106,9 +104,9 @@
   justify-content: space-between;
   flex-wrap: wrap;
   gap: var(--sp-12);
-  color: var(--text-2);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
 }
 .personal-memory-heading p {
   margin: 0;
@@ -118,9 +116,8 @@
   gap: var(--sp-12);
 }
 .personal-memory {
-  corner-shape: var(--corner-shape);
   padding: var(--sp-16);
-  background: var(--bg-pane);
+  background: var(--canvas);
   border: 1px solid var(--line);
   border-radius: var(--r-12);
 }
@@ -128,17 +125,17 @@
   margin: 0 0 var(--sp-12);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font-size: var(--fs-body);
-  line-height: var(--lh-body);
+  font-size: var(--fs-prose);
+  line-height: var(--lh-prose);
 }
 .personal-memory > .personal-actions {
   justify-content: flex-end;
 }
 .personal-empty {
   padding: var(--sp-24) var(--sp-16);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
-  color: var(--text-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  color: var(--ink-2);
   margin: 0;
 }
 .personal-delete {
@@ -158,15 +155,15 @@
   gap: var(--sp-12);
 }
 .personal-plugin-options h3 {
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
   font-weight: 500;
   margin: 0;
 }
 .personal-plugin-options p {
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
-  color: var(--text-2);
+  color: var(--ink-2);
   margin: 0;
 }
 .phone-personal-entry {
@@ -194,21 +191,21 @@
   gap: var(--sp-12);
 }
 .personal-shared-message strong {
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
   font-weight: 500;
 }
 .personal-shared-message time {
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
 .personal-shared-text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  color: var(--text-1);
-  font-size: var(--fs-body);
-  line-height: var(--lh-body);
+  color: var(--ink);
+  font-size: var(--fs-prose);
+  line-height: var(--lh-prose);
 }
 @media (max-width: 767.98px) {
   .personal-content {

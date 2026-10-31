@@ -1,0 +1,95 @@
+/*
+ * The status vocabulary. A state is words, 12/16·500 with tabular digits, led by at most one 12px glyph in its colour:
+ * waiting amber with a shield (the glyph in amber-icon), running ink with the spinner, failed red with circle-alert,
+ * done ink with a check, a warning amber words, the rest muted. A change the page sees cross-fades over --m-micro;
+ * only the running spinner moves.
+ */
+.ui-status-word {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  flex-shrink: 0;
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ui-status-word:is([data-tone='running'], [data-tone='done']) {
+  color: var(--ink);
+}
+.ui-status-word:is([data-tone='waiting'], [data-tone='warn']) {
+  color: var(--amber);
+}
+.ui-status-word[data-tone='waiting'] > .ui-status-word-glyph {
+  color: var(--amber-icon);
+}
+.ui-status-word[data-tone='failed'] {
+  color: var(--red);
+}
+
+/*
+ * A row's status slot: one thing, right-aligned, at least 24 wide. Unread is a 12px ink check; at rest the time in
+ * faint ink at the regular weight. What leaves when the status changes stays in the same cell, fading out.
+ */
+.ui-status-slot {
+  display: inline-grid;
+  flex-shrink: 0;
+  align-items: center;
+  justify-items: end;
+  min-width: 24px;
+}
+.ui-status-slot > * {
+  display: inline-flex;
+  grid-area: 1 / 1;
+}
+.ui-status-unread {
+  color: var(--ink);
+}
+.ui-status-time {
+  color: var(--faint);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ui-status-leaving {
+  opacity: 0;
+  pointer-events: none;
+}
+.ui-status-slot[data-shift] > .ui-status-leaving {
+  animation: ui-fade-out calc(var(--m-micro) * 0.7) var(--e-exit) both;
+}
+.ui-status-slot[data-shift] > .ui-status-shown {
+  animation: ui-fade-in var(--m-micro) var(--e-micro);
+}
+
+/*
+ * A process row's status glyph: the spinner or the row's icon, and after a change of state the one that leaves, in one
+ * cell. The old glyph fades out as the new one scales in from 80%; the state's words fade in place.
+ */
+.ui-status-glyph {
+  display: inline-grid;
+  flex-shrink: 0;
+  place-items: center;
+}
+.ui-status-glyph > * {
+  display: grid;
+  grid-area: 1 / 1;
+  place-items: center;
+}
+.ui-status-glyph-leaving {
+  opacity: 0;
+  pointer-events: none;
+}
+.ui-status-glyph[data-shift] > .ui-status-glyph-leaving {
+  animation: ui-fade-out calc(var(--m-micro) * 0.7) var(--e-exit) both;
+}
+.ui-status-glyph[data-shift] > .ui-status-glyph-current {
+  animation: ui-swap-in var(--m-micro) var(--e-micro);
+}
+.ui-status-words[data-shift] {
+  animation: ui-fade-in var(--m-micro) var(--e-micro);
+}

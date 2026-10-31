@@ -161,7 +161,7 @@ function listSummary(listed: string[] | null, entries: ListEntry[], unit: string
   return `${listed.length} 个${unit}`
 }
 
-/** Why an entry cannot be checked: the 12px circle-slash and the reason in text-2, at full strength. */
+/** Why an entry cannot be checked: the 12px circle-slash and the reason in ink-2, at full strength. */
 function Reason({ children }: { children: ReactNode }) {
   return (
     <span className="settings-row-reason">

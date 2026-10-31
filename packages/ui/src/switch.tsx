@@ -19,9 +19,9 @@ interface SwitchProps {
 }
 
 /**
- * A switch, only for something that turns on or off at once. 32×18 with a 14px thumb on desktop, 44×26 with 22 on
- * touch. Off is the solid track with a 1px ring in the icon colour, which reaches 3:1 against the paper; on is the
- * accent. The thumb is raised white and stretches 4px toward where it is going while pressed. Space toggles it.
+ * A switch, only for something that turns on or off at once. 30×18 with a 14px thumb on desktop, 44×26 with 22 on
+ * touch. Off is a soft neutral track, on the accent; the white thumb slides over --m-micro and stretches 4px toward
+ * where it is going while pressed. Space toggles it.
  */
 export function Switch({
   checked,

@@ -1,6 +1,6 @@
 /*
  * The resize handle of a side column: a 6px hit zone straddling the column's edge (the owner places it), showing a
- * 2px line-strong line down its middle after a 300ms hover so that passing over it does not flicker, at once while
+ * 1px line-strong line down its middle after a 300ms hover so that passing over it does not flicker, at once while
  * dragging, and with the focus ring from the keyboard. Neither the line nor the zone takes any room in the layout.
  */
 .ui-resize-handle {
@@ -15,15 +15,15 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 2px;
-  width: 2px;
+  left: 3px;
+  width: 1px;
   background: var(--line-strong);
   opacity: 0;
-  transition: opacity var(--d-fast) var(--ease-exit);
+  transition: opacity var(--m-micro) var(--e-micro);
 }
 .ui-resize-handle:hover::after {
   opacity: 1;
-  transition: opacity var(--d-fast) var(--ease) 300ms;
+  transition: opacity var(--m-micro) var(--e-micro) 300ms;
 }
 .ui-resize-handle:is([data-dragging], :focus-visible)::after {
   opacity: 1;

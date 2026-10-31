@@ -1,6 +1,6 @@
 /*
- * Checkboxes and radios are 16px native inputs: a 1px ring in the icon colour; checked, the accent (a filled box with
- * a white tick, or a 5px ring). A label beside them toggles them as well.
+ * Checkboxes and radios are 16px native inputs on the raised surface inside a 1.5px line-strong ring; checked, the
+ * accent (a filled box with a white tick, or a 5px ring). A label beside them toggles them too.
  */
 .ui-checkbox,
 .ui-radio,
@@ -12,15 +12,14 @@
   width: 16px;
   height: 16px;
   margin: 0;
-  background: var(--bg-raised);
-  box-shadow: inset 0 0 0 1px var(--icon);
+  background: var(--raised);
+  box-shadow: inset 0 0 0 1.5px var(--line-strong);
   transition:
-    background-color var(--d-fast) var(--ease),
-    box-shadow var(--d-fast) var(--ease);
+    background-color var(--m-micro) var(--e-micro),
+    box-shadow var(--m-micro) var(--e-micro);
 }
 .ui-checkbox {
   border-radius: var(--r-4);
-  corner-shape: var(--corner-shape);
 }
 .ui-radio,
 .ui-choice-radio {
@@ -42,6 +41,10 @@
 [aria-checked='true'] > .ui-choice-radio {
   box-shadow: inset 0 0 0 5px var(--accent);
 }
+/* The accent fill would swallow a ring inside the edge: it goes 2px outside, where it shows. */
+:is(.ui-checkbox, .ui-radio):checked:focus-visible {
+  outline-offset: 2px;
+}
 .ui-checkbox:disabled,
 .ui-radio:disabled {
   opacity: 0.45;
@@ -62,12 +65,12 @@
   display: grid;
 }
 .ui-check-label {
-  color: var(--text-1);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label-para);
+  color: var(--ink);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui-para);
 }
 .ui-check-description {
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
 }
@@ -78,12 +81,11 @@
  * title; its reason stays at full strength.
  */
 .ui-choice-list {
-  --surface: var(--bg-pane);
+  --surface: var(--raised);
   display: grid;
   border: 1px solid var(--line);
   border-radius: var(--r-12);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-pane);
+  background: var(--raised);
   overflow: hidden;
 }
 /*
@@ -103,7 +105,7 @@
   background: transparent;
   color: inherit;
   text-align: start;
-  transition: background-color var(--d-fast) var(--ease-exit);
+  transition: background-color var(--m-micro) var(--e-micro);
 }
 .ui-choice + .ui-choice::before {
   content: '';
@@ -112,15 +114,14 @@
   right: 0;
   left: calc(var(--sp-16) + 16px + var(--sp-12));
   height: 1px;
-  background: var(--line-subtle);
+  background: var(--line);
 }
 .ui-choice:hover:not([aria-disabled='true']) {
-  background: var(--bg-hover);
-  transition-duration: 0s;
+  background: var(--hover);
 }
 .ui-choice:focus-visible {
-  outline: none;
-  box-shadow: var(--ring-focus-inset);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 .ui-choice > .ui-choice-radio {
   margin-top: calc((var(--lh-ui) - 16px) / 2);
@@ -145,7 +146,7 @@
   min-width: 0;
 }
 .ui-choice-title {
-  color: var(--text-1);
+  color: var(--ink);
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
 }
@@ -160,20 +161,20 @@
   display: flex;
   align-items: center;
   gap: var(--sp-4);
-  color: var(--text-3);
-  font-size: var(--fs-meta);
-  line-height: var(--lh-meta);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
 }
 .ui-choice-reason {
   gap: var(--sp-6);
   margin-top: var(--sp-4);
-  color: var(--text-2);
+  color: var(--ink-2);
 }
 .ui-choice-reason > .ui-icon {
-  color: var(--icon);
+  color: var(--muted);
 }
 .ui-choice-risk {
-  color: var(--warn-text);
+  color: var(--amber-icon);
 }
 .ui-choice[aria-disabled='true'] :is(.ui-choice-radio, .ui-choice-media, .ui-choice-label > *, .ui-choice-description) {
   opacity: 0.45;

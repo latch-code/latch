@@ -1,8 +1,8 @@
 /* First connection keeps its technical identity inside a deliberate disclosure. */
 .connection-details {
   margin: var(--sp-8) var(--sp-16);
-  color: var(--text-2);
-  font-size: var(--fs-label);
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
 }
 .connection-details summary {
   padding-block: var(--sp-8);
@@ -18,9 +18,9 @@
   height: 100%;
   overflow-y: auto;
   padding: max(var(--sp-32), env(safe-area-inset-top)) var(--sp-16) max(var(--sp-32), env(safe-area-inset-bottom));
-  background: var(--bg-app);
+  background: var(--sidebar);
 }
-/* A resting sheet of paper on the ground: a line, no shadow, no decorative tint. */
+/* A resting canvas card on the sidebar grey: a line, no shadow, no decorative tint. */
 .enroll-card {
   display: grid !important;
   gap: var(--sp-20);
@@ -28,11 +28,10 @@
   padding: var(--sp-32);
   border: 1px solid var(--line) !important;
   border-radius: var(--r-12);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-pane) !important;
-  color: var(--text-1) !important;
-  font-size: var(--fs-label) !important;
-  line-height: var(--lh-label-para) !important;
+  background: var(--canvas) !important;
+  color: var(--ink) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui-para) !important;
   opacity: 1 !important;
 }
 .enroll-header {
@@ -45,14 +44,14 @@
 }
 .enroll-header h1 {
   display: block !important;
-  color: var(--text-1) !important;
-  font-size: var(--fs-display) !important;
-  line-height: var(--lh-display) !important;
+  color: var(--ink) !important;
+  font-size: var(--fs-hero) !important;
+  line-height: var(--lh-hero) !important;
   font-weight: 600 !important;
 }
 .enroll-description {
   display: block !important;
-  color: var(--text-2) !important;
+  color: var(--ink-2) !important;
   font-size: var(--fs-ui) !important;
   line-height: var(--lh-ui-para) !important;
 }
@@ -85,7 +84,7 @@
   display: block !important;
   margin-bottom: var(--sp-6);
   padding: 0;
-  color: var(--text-2) !important;
+  color: var(--ink-2) !important;
   font-size: var(--fs-caption) !important;
   line-height: var(--lh-caption) !important;
   font-weight: 500;
@@ -96,12 +95,12 @@
   gap: var(--sp-12);
   min-height: 32px;
   padding: var(--sp-4) 0;
-  color: var(--text-2) !important;
-  font-size: var(--fs-label) !important;
-  line-height: var(--lh-label) !important;
+  color: var(--ink-2) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui) !important;
 }
 .enroll-scope.is-choice {
-  color: var(--text-1) !important;
+  color: var(--ink) !important;
 }
 .enroll-scopes:disabled .enroll-scope.is-choice {
   opacity: 0.45;
@@ -114,9 +113,8 @@
   height: 16px;
   flex-shrink: 0;
   border-radius: var(--r-4);
-  corner-shape: var(--corner-shape);
-  background: var(--fill) !important;
-  color: var(--text-2) !important;
+  background: var(--hover) !important;
+  color: var(--ink-2) !important;
 }
 @media (pointer: coarse) {
   .enroll-scope {
@@ -136,7 +134,7 @@
 .scope-list legend {
   margin-bottom: var(--sp-6);
   padding: 0;
-  color: var(--text-2);
+  color: var(--ink-2);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   font-weight: 500;
@@ -147,9 +145,9 @@
   gap: var(--sp-12);
   min-height: 32px;
   padding: var(--sp-4) var(--sp-2);
-  color: var(--text-1);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  color: var(--ink);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
 }
 .scope-item input[type='checkbox'] {
   width: 16px;
@@ -157,6 +155,9 @@
   margin: 0;
   flex-shrink: 0;
   accent-color: var(--accent);
+}
+.scope-item input[type='checkbox']:checked:focus-visible {
+  outline-offset: 2px;
 }
 label.scope-item {
   cursor: pointer;
@@ -184,20 +185,20 @@ label.scope-item {
 .enroll-status h2 {
   display: block !important;
   flex: 1;
-  color: var(--text-1) !important;
-  font-size: var(--fs-title-sm) !important;
-  line-height: var(--lh-title-sm) !important;
+  color: var(--ink) !important;
+  font-size: var(--fs-heading) !important;
+  line-height: var(--lh-heading) !important;
   font-weight: 600 !important;
 }
 .enroll-timer {
-  color: var(--warn-text) !important;
-  font-size: var(--fs-label) !important;
-  line-height: var(--lh-label) !important;
+  color: var(--amber) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui) !important;
   font-variant-numeric: tabular-nums;
 }
 .enroll-compare {
   display: block !important;
-  color: var(--text-2) !important;
+  color: var(--ink-2) !important;
   font-size: var(--fs-ui) !important;
   line-height: var(--lh-ui-para) !important;
 }
@@ -208,14 +209,13 @@ label.scope-item {
   justify-items: center;
   gap: var(--sp-8);
   padding: var(--sp-16);
-  border: 1px solid var(--line-subtle);
+  border: 1px solid var(--line);
   border-radius: var(--r-12);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-sunken) !important;
+  background: var(--sunken) !important;
 }
 .fingerprint-label {
   display: block !important;
-  color: var(--text-3) !important;
+  color: var(--muted) !important;
   font-size: var(--fs-caption) !important;
   line-height: var(--lh-caption) !important;
   font-weight: 500;
@@ -227,8 +227,8 @@ label.scope-item {
   justify-content: center;
   gap: var(--sp-4) var(--sp-12);
   max-width: 100%;
-  color: var(--text-1) !important;
-  font-family: var(--font-mono) !important;
+  color: var(--ink) !important;
+  font-family: var(--mono) !important;
   font-size: var(--fs-mono-display) !important;
   line-height: var(--lh-mono-display) !important;
   font-weight: 600 !important;
@@ -237,15 +237,15 @@ label.scope-item {
 }
 .fingerprint-hash {
   display: block !important;
-  color: var(--text-3) !important;
+  color: var(--muted) !important;
   font-size: var(--fs-caption) !important;
   line-height: var(--lh-caption) !important;
 }
 .fingerprint-hash code {
-  color: var(--text-2) !important;
-  font-family: var(--font-mono) !important;
-  font-size: var(--fs-mono-sm) !important;
-  line-height: var(--lh-mono-sm) !important;
+  color: var(--ink-2) !important;
+  font-family: var(--mono) !important;
+  font-size: var(--fs-mono) !important;
+  line-height: var(--lh-mono) !important;
 }
 @media (max-width: 767.98px) {
   .enroll-form .ui-button[data-block],

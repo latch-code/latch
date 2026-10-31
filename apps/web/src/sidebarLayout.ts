@@ -1,3 +1,4 @@
+import { MOTION } from '@latch/ui'
 import type { Viewport } from './breakpoints.ts'
 
 /**
@@ -10,10 +11,10 @@ export const SIDEBAR_MAX = 480
 /** Dragged narrower than this, the sidebar snaps shut, as the collapse button closes it. */
 export const SIDEBAR_SNAP = 160
 /**
- * How long a drag that snaps the column shut or open lets the track slide instead of following the pointer: the base
- * duration (180ms) and a frame, so the slide is not cut short.
+ * How long a drag that snaps the column shut or open lets the track slide instead of following the pointer: --m-panel
+ * and a frame, so the slide is not cut short.
  */
-export const SIDEBAR_SNAP_MS = 200
+export const SIDEBAR_SNAP_MS = MOTION.panel + 20
 export const PAPER_MIN = 520
 /** The window inset on the paper's far side (and the inline column's, when one is open). */
 const SHELL_INSET = 8

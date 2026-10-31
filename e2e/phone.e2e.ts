@@ -80,16 +80,22 @@ describe('the phone stack', () => {
       await noHorizontalOverflow(page)
 
       const token = await tokens(page)
-      // The page slides in from the right over 240ms while the list beneath moves a quarter to the left and dims.
+      // The page slides in from the right over --m-push while the list beneath moves a quarter to the left and dims.
       const push = await motions(page, () => list.locator(`[data-task-id="${sessions[0]}"]`).click())
       expect(push).toContainEqual({
         kind: 'animation',
         target: 'workspace has-task',
         name: 'page-in',
-        duration: token.slow,
-        easing: token.ease,
+        duration: token.push,
+        easing: token.ePush,
       })
-      expect(push).toContainEqual({ kind: 'transition', target: 'phone-list', name: 'translate', duration: token.slow, easing: token.ease })
+      expect(push).toContainEqual({
+        kind: 'transition',
+        target: 'phone-list',
+        name: 'translate',
+        duration: token.push,
+        easing: token.ePush,
+      })
       await page.locator('main.workspace[data-pushed]').waitFor()
       expect(await list.evaluate(element => getComputedStyle(element).translate)).toMatch(/^-24%/)
       expect(await list.evaluate(element => element instanceof HTMLElement && element.inert)).toBe(true)
@@ -119,16 +125,23 @@ describe('the phone stack', () => {
       })
       expect(row).toEqual({ height: 52, sendInside: true, sendAfter: true })
 
-      // Back: the page slides away over 180ms on the exit curve, the list returns and focus lands on the row it opened.
+      // Back: the page slides away in 70% of the time on the exit curve, the list returns and focus lands on the row it
+      // opened.
       const pop = await motions(page, () => header.getByRole('button', { name: '返回会话列表', exact: true }).click())
       expect(pop).toContainEqual({
         kind: 'animation',
         target: 'workspace has-task',
         name: 'page-out',
-        duration: token.base,
+        duration: token.pushExit,
         easing: token.exit,
       })
-      expect(pop).toContainEqual({ kind: 'transition', target: 'phone-list', name: 'translate', duration: token.base, easing: token.ease })
+      expect(pop).toContainEqual({
+        kind: 'transition',
+        target: 'phone-list',
+        name: 'translate',
+        duration: token.pushExit,
+        easing: token.exit,
+      })
       await page.locator('main.workspace').waitFor({ state: 'detached' })
       expect(await list.evaluate(element => element instanceof HTMLElement && element.inert)).toBe(false)
       await expect
@@ -153,8 +166,8 @@ describe('the phone stack', () => {
         kind: 'animation',
         target: 'workspace has-task',
         name: 'fade-in',
-        duration: token.fast,
-        easing: token.ease,
+        duration: token.micro,
+        easing: token.eMicro,
       })
       // Nothing slides: neither the page nor the list beneath it.
       expect(push.filter(motion => /^(page-in|translate|transform)$/u.test(motion.name))).toEqual([])

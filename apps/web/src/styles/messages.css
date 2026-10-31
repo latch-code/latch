@@ -27,15 +27,15 @@
 
 /*
  * Arrival, only for what the page saw appear (never on a load, a reconnect or a session switch): the person's bubble
- * rises 6px as it fades in over 180ms, a reply's source line and first block fade in over 120ms. Text that streams
+ * rises 6px as it fades in over --m-enter, a reply's source line and first block fade in over --m-micro. Text that streams
  * into a block is not animated. Under reduced motion they appear at once.
  */
 @media (prefers-reduced-motion: no-preference) {
   .message-user[data-arrived] > .user-bubble {
-    animation: message-rise var(--d-base) var(--ease);
+    animation: message-rise var(--m-enter) var(--e-enter);
   }
   .turn-reply[data-arrived] {
-    animation: message-fade var(--d-fast) var(--ease);
+    animation: message-fade var(--m-micro) var(--e-micro);
   }
 }
 @keyframes message-rise {
@@ -56,7 +56,7 @@
   align-self: stretch;
   justify-content: center;
   margin: var(--sp-24) 0 var(--sp-16);
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   font-variant-numeric: tabular-nums;
@@ -68,7 +68,6 @@
 .message-meta time,
 .turn-fact {
   border-radius: var(--r-4);
-  corner-shape: var(--corner-shape);
 }
 
 /* The person's message: a neutral bubble on the right; its time and copy sit under it in the gap below, so revealing
@@ -83,11 +82,10 @@
   max-width: min(80%, 560px);
   padding: var(--sp-8) var(--sp-16);
   border-radius: var(--r-16) var(--r-16) var(--r-4) var(--r-16);
-  corner-shape: var(--corner-shape);
-  background: var(--bubble-user);
-  color: var(--text-1);
-  font-size: var(--fs-body);
-  line-height: var(--lh-body);
+  background: var(--bubble);
+  color: var(--ink);
+  font-size: var(--fs-prose);
+  line-height: var(--lh-prose);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -100,7 +98,7 @@
   gap: var(--sp-4);
   height: 20px;
   margin-top: var(--sp-4);
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   font-variant-numeric: tabular-nums;
@@ -120,13 +118,13 @@
 .message-meta,
 .turn-footer {
   opacity: 0;
-  transition: opacity var(--d-fast) var(--ease-exit);
+  transition: opacity var(--m-micro) var(--e-micro);
 }
 .message-user:is(:hover, :focus-within, [data-shown]) .message-meta,
 .turn-reply:is(:hover, :focus-within, [data-shown]) .turn-footer,
 .turn-footer[data-pinned] {
   opacity: 1;
-  transition: opacity var(--d-fast) var(--ease);
+  transition: opacity var(--m-micro) var(--e-micro);
 }
 @media (hover: none) {
   .turn:last-child .message-meta {
@@ -148,13 +146,13 @@
   gap: var(--sp-6);
   height: 20px;
   min-width: 0;
-  color: var(--text-3);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  color: var(--muted);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
 }
 .assistant-meta-name {
   flex-shrink: 0;
-  color: var(--text-2);
+  color: var(--ink-2);
   font-weight: 500;
 }
 .assistant-meta-model {
@@ -169,9 +167,9 @@
   gap: var(--sp-8);
 }
 .message-text {
-  font-size: var(--fs-body);
-  line-height: var(--lh-body);
-  color: var(--text-1);
+  font-size: var(--fs-prose);
+  line-height: var(--lh-prose);
+  color: var(--ink);
 }
 
 /* A blinking caret after the live text; ::after never enters the message's textContent. */
@@ -183,8 +181,14 @@
   height: 1em;
   margin-left: var(--sp-2);
   vertical-align: -0.15em;
-  background: var(--text-2);
-  animation: caret 1s steps(1) infinite;
+  background: var(--ink-2);
+}
+/* Reduced motion: the caret stands still and still says the reply is coming. */
+@media (prefers-reduced-motion: no-preference) {
+  .message-assistant.is-live .message-content > :is(p, h1, h2, h3, h4, h5, h6):last-child::after,
+  .message-assistant.is-live .message-content > :is(ul, ol):last-child > li:last-child::after {
+    animation: caret 1s steps(1) infinite;
+  }
 }
 @keyframes caret {
   50% {
@@ -201,14 +205,14 @@
   gap: var(--sp-6);
   min-height: 28px;
   margin: var(--sp-4) 0;
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
   text-align: center;
 }
 .message-system > svg {
   flex-shrink: 0;
-  color: var(--icon);
+  color: var(--muted);
 }
 .message-system p {
   white-space: pre-wrap;
@@ -220,22 +224,21 @@
   gap: var(--sp-8);
   margin: var(--sp-8) 0;
   padding: var(--sp-8) var(--sp-12);
-  border: 1px solid var(--err-border);
+  border: 1px solid var(--red-line);
   border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
-  background: var(--err-bg);
-  color: var(--text-2);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label-para);
+  background: var(--red-soft);
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui-para);
   text-align: left;
 }
 .message-system.is-failed > svg {
   margin-top: 3px;
-  color: var(--err-text);
+  color: var(--red);
 }
 
 /*
- * A process row: 28 high (32 on phones), a 16px slot for the icon or the comet, then the verb in hint ink and its
+ * A process row: 28 high (32 on phones), a 16px slot for the icon or the spinner, then the verb in muted ink and its
  * object (paths and commands in mono), a flexible gap, its duration and its state. No fill and no rail; under the
  * pointer it takes the hover fill, reaching 6px past the column so its text stays on the column's edge.
  */
@@ -256,23 +259,21 @@
   padding: 0 var(--bleed);
   border: 0;
   border-radius: var(--r-6);
-  corner-shape: var(--corner-shape);
   background: transparent;
-  color: var(--text-3);
+  color: var(--muted);
   text-align: left;
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
-  transition: background-color var(--d-fast) var(--ease-exit);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  transition: background-color var(--m-micro) var(--e-micro);
 }
 .process-row:hover,
 .tool-card:not([data-open]) > .tool-tray > .tool-card-header:hover {
-  background: var(--bg-hover);
-  transition-duration: 0s;
+  background: var(--hover);
 }
 .process-row:focus-visible,
 .tool-tray > .tool-card-header:focus-visible {
-  outline: none;
-  box-shadow: var(--ring-focus-inset);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 @media (max-width: 767.98px) {
   .process-row,
@@ -285,7 +286,7 @@
   place-items: center;
   width: 16px;
   flex-shrink: 0;
-  color: var(--icon);
+  color: var(--muted);
 }
 .process-label {
   display: inline-flex;
@@ -297,18 +298,18 @@
 }
 .process-verb {
   flex-shrink: 0;
-  color: var(--text-3);
+  color: var(--muted);
 }
 .process-object {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--text-2);
+  color: var(--ink-2);
 }
 .process-object.is-mono {
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono-sm);
-  line-height: var(--lh-mono-sm);
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
 }
 .process-fill {
   flex: 1;
@@ -323,27 +324,26 @@
 }
 .process-time {
   flex-shrink: 0;
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 .process-failed {
-  color: var(--err-text);
+  color: var(--red);
 }
 /* The chevron shows on hover or focus on desktop; touch keeps it. Opening turns it a quarter. */
 .process-chevron {
   flex-shrink: 0;
-  color: var(--icon);
+  color: var(--muted);
   opacity: 0;
   transition:
-    opacity var(--d-fast) var(--ease-exit),
-    transform var(--d-base) var(--ease);
+    opacity var(--m-micro) var(--e-micro),
+    transform var(--m-panel) var(--e-panel);
 }
 :is(.process-row, .tool-card-header):is(:hover, :focus-visible) > .process-chevron {
   opacity: 1;
-  transition-duration: 0s, var(--d-base);
 }
 :is(.process-row, .tool-card-header)[aria-expanded='true'] > .process-chevron {
   transform: rotate(90deg);
@@ -371,11 +371,11 @@
     min-width: calc(var(--sp-8) + 12px + var(--sp-6));
   }
   .tool-tray > .tool-card-header > .process-end {
-    transition: transform var(--d-fast) var(--ease-exit);
+    transition: transform var(--m-micro) var(--e-micro);
   }
   .tool-tray > .tool-card-header:is(:hover, :focus-visible) > .process-end {
     transform: translateX(calc(-12px - var(--sp-6)));
-    transition: transform var(--d-fast) var(--ease);
+    transition: transform var(--m-micro) var(--e-micro);
   }
 }
 
@@ -385,7 +385,7 @@
   flex-direction: column;
 }
 .thinking-label {
-  color: var(--text-3);
+  color: var(--muted);
 }
 .thinking-body {
   display: grid;
@@ -405,7 +405,7 @@
   flex-direction: column-reverse;
 }
 .reasoning-text {
-  color: var(--text-2);
+  color: var(--ink-2);
   font-size: var(--fs-ui);
   line-height: var(--lh-ui-para);
   white-space: pre-wrap;
@@ -459,7 +459,7 @@
   align-items: center;
   gap: 0 var(--sp-6);
   min-width: 0;
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   font-variant-numeric: tabular-nums;
@@ -467,17 +467,17 @@
 .turn-facts > :not(.sr-only) ~ :not(.sr-only)::before {
   content: '·';
   margin-right: var(--sp-6);
-  color: var(--text-3);
+  color: var(--muted);
 }
 .turn-outcome.outcome-failed {
-  color: var(--err-text);
+  color: var(--red);
 }
 .turn-phase {
-  color: var(--text-2);
+  color: var(--ink-2);
   font-weight: 500;
 }
 .turn-phase.phase-approval {
-  color: var(--warn-text);
+  color: var(--amber);
 }
 
 .sending-message {
@@ -490,17 +490,17 @@
   justify-content: flex-end;
   gap: var(--sp-4);
   font-size: var(--fs-caption);
-  color: var(--text-3);
+  color: var(--muted);
   margin: var(--sp-4) 0;
 }
 .sending-message-status[data-state='unknown'] {
-  color: var(--warn-text);
+  color: var(--amber);
 }
 .turn-footer .copy-button {
   margin-left: var(--sp-2);
 }
 .turn-retry {
-  color: var(--text-2);
+  color: var(--ink-2);
 }
 /* Before resending a turn that may have changed something, one line says what may run again. */
 .turn-retry-confirm {
@@ -508,13 +508,12 @@
   gap: var(--sp-8);
   margin-top: var(--sp-4);
   padding: var(--sp-8) var(--sp-12);
-  border: 1px solid var(--line-subtle);
+  border: 1px solid var(--line);
   border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-sunken);
-  color: var(--text-2);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label-para);
+  background: var(--sunken);
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui-para);
 }
 .turn-retry-actions {
   display: flex;
@@ -540,23 +539,21 @@
   text-align: left;
   border: 1px solid var(--line);
   border-radius: var(--r-12);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-pane);
-  color: var(--text-1);
+  background: var(--canvas);
+  color: var(--ink);
   transition:
-    background-color var(--d-fast) var(--ease-exit),
-    border-color var(--d-fast) var(--ease-exit);
+    background-color var(--m-micro) var(--e-micro),
+    border-color var(--m-micro) var(--e-micro);
 }
 .suggestion-card > svg {
-  color: var(--icon);
+  color: var(--muted);
 }
 .suggestion-card:hover {
   border-color: var(--line-strong);
-  background: var(--bg-hover);
-  transition-duration: 0s;
+  background: var(--hover);
 }
 .suggestion-card:active {
-  background: var(--bg-press);
+  background: var(--press);
 }
 .suggestion-title {
   display: flex;
@@ -567,7 +564,7 @@
   font-weight: 500;
 }
 .suggestion-description {
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
 }
@@ -580,10 +577,9 @@
 .setup-card {
   display: grid;
   padding: var(--sp-12) var(--sp-16);
-  border: 1px solid var(--line-subtle);
+  border: 1px solid var(--line);
   border-radius: var(--r-12);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-sunken);
+  background: var(--sunken);
 }
 .setup-card-row {
   display: flex;
@@ -596,7 +592,7 @@
 }
 .setup-card-panel > .setup-panel {
   padding: var(--sp-12) 0 0;
-  border-top: 1px solid var(--line-subtle);
+  border-top: 1px solid var(--line);
 }
 /* An icon tile: round(32 × 0.225) = 7. */
 .setup-card-icon {
@@ -605,11 +601,11 @@
   width: 32px;
   height: 32px;
   flex-shrink: 0;
-  border-radius: 7px;
-  corner-shape: var(--corner-shape);
-  background: var(--bg-pane);
+  /* A 32 tile's corner. */
+  border-radius: round(calc(32px * 0.225), 1px);
+  background: var(--canvas);
   box-shadow: inset 0 0 0 1px var(--line);
-  color: var(--text-2);
+  color: var(--ink-2);
 }
 .setup-card-text {
   flex: 1;
@@ -618,14 +614,14 @@
   gap: var(--sp-2);
 }
 .setup-card-text strong {
-  font-size: var(--fs-card-title);
-  line-height: var(--lh-card-title);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
   font-weight: 600;
 }
 .setup-card-text p {
-  color: var(--text-2);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label-para);
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui-para);
 }
 @media (max-width: 767.98px) {
   .setup-card-row {
@@ -652,7 +648,7 @@
   flex: none;
   min-width: 0;
   border: 0;
-  border-bottom: 1px solid var(--line-subtle);
+  border-bottom: 1px solid var(--line);
   background: transparent;
 }
 .info-block-head {
@@ -670,24 +666,22 @@
   padding: 0 var(--sp-6);
   border: 0;
   border-radius: var(--r-6);
-  corner-shape: var(--corner-shape);
   background: transparent;
-  color: var(--text-2);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
   font-weight: 500;
   transition:
-    background-color var(--d-fast) var(--ease-exit),
-    color var(--d-fast) var(--ease-exit);
+    background-color var(--m-micro) var(--e-micro),
+    color var(--m-micro) var(--e-micro);
 }
 .info-block-title:hover {
-  background: var(--bg-hover);
-  color: var(--text-1);
-  transition-duration: 0s;
+  background: var(--hover);
+  color: var(--ink);
 }
 .info-block-chevron {
-  color: var(--icon);
-  transition: transform var(--d-base) var(--ease);
+  color: var(--muted);
+  transition: transform var(--m-panel) var(--e-panel);
 }
 .info-block-title[aria-expanded='false'] .info-block-chevron {
   transform: rotate(-90deg);
@@ -695,7 +689,7 @@
 .info-block-meta {
   margin-left: auto;
   padding-right: var(--sp-6);
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   font-variant-numeric: tabular-nums;
@@ -709,8 +703,8 @@
   gap: var(--sp-8);
   min-height: 32px;
   padding: 0 var(--sp-12);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
 }
 .info-row.is-two {
   align-items: flex-start;
@@ -721,20 +715,20 @@
 .info-row.is-two > .info-key {
   display: flex;
   align-items: center;
-  height: var(--lh-label);
+  height: var(--lh-ui);
 }
 .info-icon {
   display: flex;
   flex: none;
-  color: var(--icon);
+  color: var(--muted);
 }
 .info-icon.is-warn {
-  color: var(--warn-text);
+  color: var(--amber);
 }
 .info-key {
   flex: none;
   min-width: 44px;
-  color: var(--text-3);
+  color: var(--muted);
   white-space: nowrap;
 }
 .info-value {
@@ -743,7 +737,7 @@
   gap: var(--sp-6);
   flex: 1;
   min-width: 0;
-  color: var(--text-1);
+  color: var(--ink);
 }
 .info-text {
   min-width: 0;
@@ -755,7 +749,7 @@
   font-variant-numeric: tabular-nums;
 }
 .info-number.is-warn {
-  color: var(--warn-text);
+  color: var(--amber);
 }
 .info-who {
   display: flex;
@@ -768,7 +762,7 @@
   min-width: 0;
 }
 .info-who-name {
-  color: var(--text-1);
+  color: var(--ink);
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
   font-weight: 500;
@@ -777,18 +771,17 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   white-space: nowrap;
 }
 .info-who-command {
   border-radius: var(--r-4);
-  corner-shape: var(--corner-shape);
-  color: var(--text-2);
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono-sm);
-  line-height: var(--lh-mono-sm);
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
 }
 .info-path {
   display: grid;
@@ -808,16 +801,16 @@
   height: 24px;
 }
 .info-path-full {
-  color: var(--text-3);
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono-sm);
-  line-height: var(--lh-mono-sm);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
 }
 .info-path-line .copy-button {
   margin-right: calc(-1 * var(--bleed));
 }
 .info-caption {
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
@@ -831,15 +824,15 @@
   gap: var(--sp-6);
   margin: var(--sp-2) var(--sp-12) var(--sp-4);
   padding-top: var(--sp-6);
-  border-top: 1px solid var(--line-subtle);
-  color: var(--text-3);
+  border-top: 1px solid var(--line);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
 }
 .info-note > svg {
   flex-shrink: 0;
   margin-top: 2px;
-  color: var(--icon);
+  color: var(--muted);
 }
 /* A model switch the next message will carry, with the way back to the session's own model at the line's end. */
 .info-note-pending {
@@ -860,20 +853,20 @@
   padding: 0 var(--sp-12);
   border: 0;
   background: transparent;
-  color: var(--text-2);
+  color: var(--ink-2);
   text-align: left;
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
 }
 .info-disclosure:hover {
-  color: var(--text-1);
+  color: var(--ink);
 }
 .info-disclosure .info-icon {
   justify-content: center;
   width: 16px;
 }
 .info-disclosure-chevron {
-  transition: transform var(--d-base) var(--ease);
+  transition: transform var(--m-panel) var(--e-panel);
 }
 .info-disclosure[aria-expanded='true'] .info-disclosure-chevron {
   transform: rotate(90deg);
@@ -882,7 +875,7 @@
   display: grid;
   gap: var(--sp-2);
   padding: 0 var(--sp-12) var(--sp-6) var(--sp-40);
-  color: var(--text-2);
+  color: var(--ink-2);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
   list-style: none;
@@ -898,7 +891,7 @@
   width: 3px;
   height: 3px;
   border-radius: 50%;
-  background: var(--icon);
+  background: var(--muted);
 }
 /* The context an agent reported: a 4px track whose bar is ink, amber from 80%. */
 .info-meter {
@@ -912,17 +905,17 @@
   height: 4px;
   overflow: hidden;
   border-radius: var(--r-2);
-  background: var(--fill);
+  background: var(--hover);
 }
 .info-track > i {
   display: block;
   height: 100%;
-  background: var(--text-2);
+  background: var(--ink-2);
   transform-origin: left center;
-  transition: transform var(--d-base) var(--ease);
+  transition: transform var(--m-panel) var(--e-panel);
 }
 .info-track.is-warn > i {
-  background: var(--warn-text);
+  background: var(--amber);
 }
 /* 变更: one row per file, revealing its tool in the conversation. */
 .info-changes {
@@ -958,23 +951,21 @@
   padding: 0 var(--bleed);
   border: 0;
   border-radius: var(--r-6);
-  corner-shape: var(--corner-shape);
   background: transparent;
-  color: var(--text-1);
+  color: var(--ink);
   text-align: left;
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono-sm);
-  line-height: var(--lh-mono-sm);
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
   font-variant-numeric: tabular-nums;
-  transition: background-color var(--d-fast) var(--ease-exit);
+  transition: background-color var(--m-micro) var(--e-micro);
 }
 .info-change:hover {
-  background: var(--bg-hover);
-  transition-duration: 0s;
+  background: var(--hover);
 }
 .info-change:focus-visible {
-  outline: none;
-  box-shadow: var(--ring-focus-inset);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 .info-change-path {
   flex: 1;
@@ -984,7 +975,7 @@
   white-space: nowrap;
 }
 .info-change-folder {
-  color: var(--text-3);
+  color: var(--muted);
 }
 
 /* The page of 会话信息 (phones, and tablets too narrow for the column): the same blocks at touch density. */
@@ -997,7 +988,6 @@
     height: 32px;
     padding: 0 var(--sp-8);
     border-radius: var(--r-8);
-    corner-shape: var(--corner-shape);
     font-size: var(--fs-ui);
     line-height: var(--lh-ui);
   }
@@ -1031,9 +1021,9 @@
 
 .fork-context {
   margin-bottom: var(--sp-8);
-  color: var(--text-2);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label-para);
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui-para);
 }
 .fork-context summary {
   cursor: pointer;
@@ -1043,9 +1033,9 @@
   overflow: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
-  line-height: var(--lh-mono);
+  font-family: var(--mono);
+  font-size: var(--fs-code);
+  line-height: var(--lh-code);
 }
 
 .file-outputs {
@@ -1053,11 +1043,11 @@
   gap: var(--sp-8);
   min-width: 0;
   margin-top: var(--sp-16);
-  font-size: var(--fs-label);
+  font-size: var(--fs-ui);
 }
 .file-outputs-heading {
   width: fit-content;
-  color: var(--text-2);
+  color: var(--ink-2);
 }
 .file-outputs ul {
   display: grid;
@@ -1074,17 +1064,17 @@
 }
 .file-output-change {
   flex: none;
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
 }
 .file-output-deleted {
   overflow-wrap: anywhere;
-  color: var(--text-3);
-  font-family: var(--font-mono);
+  color: var(--muted);
+  font-family: var(--mono);
 }
 .file-outputs p {
   margin: 0;
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
 }
 .file-outputs > .ui-button {
@@ -1094,7 +1084,7 @@
 .file-output-size {
   flex: none;
   margin-inline-start: auto;
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   white-space: nowrap;
 }
@@ -1119,4 +1109,18 @@
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+
+/* Reduced motion: chevrons turn and row ends shift at once; the chevron still fades in. */
+@media (prefers-reduced-motion: reduce) {
+  .process-chevron {
+    transition: opacity var(--m-micro) var(--e-micro);
+  }
+  .tool-tray > .tool-card-header > .process-end,
+  .tool-tray > .tool-card-header:is(:hover, :focus-visible) > .process-end,
+  .info-block-chevron,
+  .info-disclosure-chevron,
+  .info-track > i {
+    transition: none;
+  }
 }

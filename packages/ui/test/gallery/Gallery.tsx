@@ -38,7 +38,6 @@ import {
   Checkbox,
   ChoiceList,
   Collapse,
-  Comet,
   Count,
   DemoMark,
   DevMark,
@@ -74,6 +73,7 @@ import {
   StatusGlyph,
   StatusPill,
   StatusSlot,
+  StatusWord,
   StatusWords,
   Swap,
   Switch,
@@ -87,7 +87,6 @@ import {
   Toast,
   TooltipSurface,
   ValuePicker,
-  WaitingPill,
   useLivePrevious,
   type ButtonSize,
   type TileMark,
@@ -139,7 +138,8 @@ function Cell({ caption, force, at, children }: { caption?: string; force?: stri
 
 const VARIANTS: Array<[ButtonVariant, string, string]> = [
   ['primary', '主', '允许一次'],
-  ['secondary', '次', '拒绝'],
+  ['secondary', '次', '稍后'],
+  ['outline', '描边', '拒绝'],
   ['ghost', '幽灵', '重置'],
   ['link', '链接', '管理模型服务'],
   ['danger', '危险操作', '撤销此设备'],
@@ -158,7 +158,7 @@ function Icons() {
     <Section title="图标">
       <Row label="尺寸 / 描边">
         {sizes.map(size => (
-          <Cell key={size} caption={`${size} / ${{ 12: 2.5, 14: 2.15, 16: 1.9, 20: 1.8, 24: 1.5 }[size]}`}>
+          <Cell key={size} caption={`${size} / ${ICON_STROKE[size]}`}>
             <span className="gallery-icons">
               <Icon icon={SquarePen} size={size} />
               <Icon icon={Search} size={size} />
@@ -266,7 +266,7 @@ function Buttons() {
         <Cell caption="最多两个按钮，其余进 ⋯">
           <div className="gallery-actions">
             <IconButton label="更多批准选项" icon={Ellipsis} />
-            <Button variant="secondary">拒绝</Button>
+            <Button variant="outline">拒绝</Button>
             <Button variant="primary" shortcut="⌘⏎">
               允许一次
             </Button>
@@ -309,14 +309,22 @@ function Buttons() {
 
 function Pills() {
   return (
-    <Section title="胶囊、徽标、计数与状态点">
-      <Row label="状态胶囊">
+    <Section title="状态词、徽标、计数与状态点">
+      <Row label="状态词">
+        <StatusWord tone="waiting">等你处理</StatusWord>
+        <StatusWord tone="running">运行中 1:12</StatusWord>
+        <StatusWord tone="failed">失败</StatusWord>
+        <StatusWord tone="done">已完成</StatusWord>
+        <StatusWord tone="warn">不可用</StatusWord>
+        <StatusWord>已取消</StatusWord>
+      </Row>
+      <Row label="状态">
         <StatusPill>已取消</StatusPill>
-        <StatusPill tone="warn">等你批准</StatusPill>
+        <StatusPill tone="warn">原内容未知</StatusPill>
         <StatusPill tone="err">高风险</StatusPill>
         <StatusPill tone="ok">已确认</StatusPill>
       </Row>
-      <Row label="小徽标">
+      <Row label="徽标">
         <Badge>本机</Badge>
         <Badge>默认</Badge>
         <Badge tone="warn">离线</Badge>
@@ -325,25 +333,36 @@ function Pills() {
         <DemoMark compact />
       </Row>
       <Row label="计数">
-        <Count value={3} />
-        <Count value={12} tone="strong" />
-        <Count value={2} tone="warn" />
-        <Count value={128} tone="warn" />
-      </Row>
-      <Row label="状态点">
+        <Cell caption="被动">
+          <span className="gallery-inline">
+            排队 <Count value={3} /> 条
+          </span>
+        </Cell>
+        <Cell caption="新结果">
+          <span className="gallery-inline">
+            自动化 <Count value={2} tone="strong" />
+          </span>
+        </Cell>
         <Cell caption="等你处理">
           <span className="gallery-inline">
-            <StatusDot tone="warn" />
-            待批准
+            等你处理 <Count value={128} tone="warn" />
           </span>
         </Cell>
-        <Cell caption="失败">
+      </Row>
+      <Row label="状态点">
+        <Cell caption="正在重新连接">
+          <span className="gallery-inline">
+            <StatusDot tone="warn" />
+            正在重新连接
+          </span>
+        </Cell>
+        <Cell caption="不在线">
           <span className="gallery-inline">
             <StatusDot tone="err" />
-            失败
+            Mac 不在线
           </span>
         </Cell>
-        <Cell caption="未读">
+        <Cell caption="新文档">
           <StatusDot tone="unread" label="未读" />
         </Cell>
       </Row>
@@ -737,7 +756,7 @@ function Inputs() {
         </Cell>
       </Row>
       <Row label="搜索行">
-        <Cell caption="静止（地面上的一行）">
+        <Cell caption="静止（侧栏里的一行）">
           <div className="gallery-ground gallery-column">
             <SearchField variant="ghost" label="搜索会话" value="" onValueChange={() => {}} trailing={<Kbd>⌘K</Kbd>} />
           </div>
@@ -958,9 +977,6 @@ function Choices() {
             <Switch label="选项" checked onCheckedChange={() => {}} />
             <Checkbox aria-label="选项" defaultChecked />
             <Radio aria-label="选项" defaultChecked />
-            <span className="gallery-accent">
-              <Icon icon={Check} size={14} />
-            </span>
           </span>
         </Cell>
         <Cell caption="视图：中性">
@@ -1542,7 +1558,7 @@ const svg = (body: string, viewBox = '0 0 24 24') =>
   `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}">${body}</svg>`)}`
 
 /**
- * Stand-ins for brand marks, as the files a page ships: a one-colour shape (drawn in text-1 through a mask), one that
+ * Stand-ins for brand marks, as the files a page ships: a one-colour shape (drawn in ink through a mask), one that
  * brings its own colours (placed as it is), a coloured one with the brand's own dark file, one whose file holds a wide
  * margin, and an app icon with its own background and corners.
  */
@@ -1584,12 +1600,12 @@ function Replay<T>({ before, after, children }: { before: T; after: T; children:
   return <LiveChanges value="gallery">{children(value)}</LiveChanges>
 }
 
-/** A row that shows its waiting count only above zero, as the sidebar's 待批准 row does. */
+/** A row that shows its waiting count only above zero, as the sidebar's 等你处理 row does. */
 function Arrival({ value }: { value: number }) {
   const before = useLivePrevious(value)
   return (
     <span className="gallery-inline">
-      待批准
+      等你处理
       {value > 0 && <Count value={value} tone="warn" from={before} />}
     </span>
   )
@@ -1597,21 +1613,21 @@ function Arrival({ value }: { value: number }) {
 
 const SLOTS: Array<[SlotStatus, string]> = [
   ['running', '运行中'],
-  ['waiting', '待批准'],
+  ['waiting', '等你处理'],
   ['failed', '失败'],
   ['unread', '未读'],
   ['time', '时间'],
   ['none', '打开的会话运行中'],
 ]
 
-/** A few rows of a session list on the ground, as the relay sees them: three running, two waiting, one at rest. */
-const RELAY_ROWS: Array<[string, SlotStatus, string?]> = [
-  ['补充 e2e 截图', 'running'],
-  ['排查 ACP 会话恢复', 'waiting'],
-  ['首页文案改版', 'running'],
+/** A few rows of a session list on the sidebar, each with its status slot. */
+const SIDEBAR_ROWS: Array<[string, SlotStatus, string?]> = [
+  ['补充审批的端到端测试', 'waiting'],
+  ['修复设置页密钥丢失', 'none'],
+  ['侧栏按项目分组', 'unread'],
+  ['升级 Electron 到 44.9', 'failed'],
   ['迁移文档站构建', 'running'],
-  ['压缩首页图片', 'waiting'],
-  ['解释阅读位置的实现', 'time', '09:15'],
+  ['每日依赖检查', 'time', '09:00'],
 ]
 
 type ProcessState = 'running' | 'completed' | 'failed'
@@ -1621,7 +1637,7 @@ const PROCESS_WORDS: Record<ProcessState, string> = { running: '执行中', comp
 function ProcessRow({ state }: { state: ProcessState }) {
   return (
     <span className="gallery-process">
-      <StatusGlyph running={state === 'running'} relay={false}>
+      <StatusGlyph running={state === 'running'}>
         <Icon icon={Terminal} size={14} />
       </StatusGlyph>
       <span>运行测试</span>
@@ -1648,107 +1664,72 @@ function PlanStep({ state }: { state: PlanState }) {
 
 function Live() {
   return (
-    <Section title="活的指示">
+    <Section title="状态">
       <Row label="运行中">
-        {([12, 14, 16] as const).map(size => (
-          <Cell key={size} caption={`彗星 ${size}`}>
-            <Comet size={size} relay={false} />
+        {([12, 14, 16, 20] as const).map(size => (
+          <Cell key={size} caption={`转圈 ${size}`}>
+            <Spinner size={size} />
           </Cell>
         ))}
         <Cell caption="运行条">
           <span className="gallery-inline">
-            <Comet relay={false} />
-            正在执行 运行测试
-          </span>
-        </Cell>
-        <Cell caption="停下（运行结束时离开）">
-          <Comet held />
-        </Cell>
-      </Row>
-      <Row label="等你处理">
-        <Cell caption="待批准">
-          <WaitingPill relay={false}>待批准</WaitingPill>
-        </Cell>
-        <Cell caption="暖光经过（定格）">
-          <span className="gallery-frame-sweep">
-            <WaitingPill relay={false}>待批准</WaitingPill>
+            <Spinner size={12} />
+            正在停止…
           </span>
         </Cell>
       </Row>
       <Row label="状态槽">
         {SLOTS.map(([status, caption]) => (
           <Cell key={status} caption={caption}>
-            <StatusSlot status={status} time="09:15" relay={false} />
+            <StatusSlot status={status} time="2 分钟" />
           </Cell>
         ))}
         <Cell caption="权限模式已变化">
           <StatusSlot status="failed" failed="权限已变化" />
         </Cell>
-        <Cell caption="较早">
-          <StatusSlot status="time" time="周三" />
+        <Cell caption="运行中带时间">
+          <StatusSlot status="running" running="运行中 1:12" />
         </Cell>
       </Row>
-      <Row label="接力">
-        {/* The only relayed items of the section, so these rows take their turns on their own. */}
-        <Cell caption="同一相位，轮流多转一圈或扫过一次">
-          <ul className="gallery-relay" aria-label="接力">
-            {RELAY_ROWS.map(([title, status, time], index) => (
-              <li key={title} aria-current={index === 0 ? 'page' : undefined}>
+      <Row label="侧栏">
+        <Cell caption="每行只说一件事；选中的行是白色卡片">
+          <ul className="gallery-sidebar" aria-label="会话">
+            {SIDEBAR_ROWS.map(([title, status, time], index) => (
+              <li key={title} aria-current={index === 1 ? 'page' : undefined}>
                 <span>{title}</span>
-                <StatusSlot status={index === 0 ? 'none' : status} time={time} />
+                <StatusSlot status={status} time={time} />
               </li>
             ))}
           </ul>
         </Cell>
       </Row>
-      <Row label="新到">
-        <Cell caption="计数 +1：上滚与涟漪">
-          <Replay before={2} after={3}>
-            {value => <Count value={value} tone="warn" label={`${value} 项待批准`} />}
-          </Replay>
-        </Cell>
-        <Cell caption="首次到达 0 → 1：只有涟漪">
-          <Replay before={0} after={1}>
-            {value => <Arrival value={value} />}
-          </Replay>
-        </Cell>
-        <Cell caption="两位数">
-          <Replay before={11} after={12}>
-            {value => <Count value={value} tone="warn" />}
-          </Replay>
-        </Cell>
-        <Cell caption="涟漪（定格）">
-          <span className="gallery-frame-ripple">
-            <Replay before={2} after={3}>
-              {value => <Count value={value} tone="warn" />}
-            </Replay>
-          </span>
-        </Cell>
-        <Cell caption="下滚（定格）">
-          <span className="gallery-frame-roll">
-            <Replay before={3} after={2}>
-              {value => <Count value={value} tone="warn" />}
-            </Replay>
-          </span>
-        </Cell>
-      </Row>
-      <Row label="收拢与沉淀">
-        <Cell caption="运行 → 未读">
+      <Row label="变化">
+        <Cell caption="运行 → 未读：交叉淡化">
           <Replay<SlotStatus> before="running" after="unread">
-            {status => <StatusSlot status={status} relay={false} />}
+            {status => <StatusSlot status={status} />}
           </Replay>
         </Cell>
         <Cell caption="未读 → 时间">
           <Replay<SlotStatus> before="unread" after="time">
-            {status => <StatusSlot status={status} time="09:15" relay={false} />}
+            {status => <StatusSlot status={status} time="2 分钟" />}
           </Replay>
         </Cell>
-        <Cell caption="收拢（定格）">
-          <span className="gallery-frame-settle">
-            <Replay<SlotStatus> before="running" after="unread">
-              {status => <StatusSlot status={status} relay={false} />}
+        <Cell caption="交叉淡化（定格）">
+          <span className="gallery-frame-slot">
+            <Replay<SlotStatus> before="waiting" after="running">
+              {status => <StatusSlot status={status} />}
             </Replay>
           </span>
+        </Cell>
+        <Cell caption="计数 +1：新数字淡入">
+          <Replay before={2} after={3}>
+            {value => <Count value={value} tone="warn" label={`${value} 项等你处理`} />}
+          </Replay>
+        </Cell>
+        <Cell caption="首次到达 0 → 1">
+          <Replay before={0} after={1}>
+            {value => <Arrival value={value} />}
+          </Replay>
         </Cell>
       </Row>
       <Row label="过程行">
@@ -1761,7 +1742,7 @@ function Live() {
         <Cell caption="失败">
           <ProcessRow state="failed" />
         </Cell>
-        <Cell caption="运行 → 完成：交叉淡化，文字上移">
+        <Cell caption="运行 → 完成：交叉淡化">
           <Replay<ProcessState> before="running" after="completed">
             {state => <ProcessRow state={state} />}
           </Replay>
@@ -1777,6 +1758,16 @@ function Live() {
           <Replay<PlanState> before="in_progress" after="completed">
             {state => <PlanStep state={state} />}
           </Replay>
+        </Cell>
+      </Row>
+      <Row label="思考">
+        <Cell caption="600ms 后每 4 秒扫过一次；离开视野时暂停">
+          <Shimmer>正在思考</Shimmer>
+        </Cell>
+        <Cell caption="扫过中（定格）">
+          <span className="gallery-frame-think">
+            <Shimmer>正在思考</Shimmer>
+          </span>
         </Cell>
       </Row>
     </Section>
@@ -1836,11 +1827,6 @@ function Motion() {
           </Replay>
         </Cell>
       </Row>
-      <Row label="进行中的文字">
-        <Cell caption="光带扫过（减少动效时静止）">
-          <Shimmer>正在思考</Shimmer>
-        </Cell>
-      </Row>
     </Section>
   )
 }
@@ -1849,10 +1835,10 @@ function Focus() {
   return (
     <Section title="焦点">
       <Row label="所在面">
-        <Cell caption="纸" force="focus-visible">
-          <Button>拒绝</Button>
+        <Cell caption="画布" force="focus-visible">
+          <Button variant="outline">拒绝</Button>
         </Cell>
-        <Cell caption="地面" force="focus-visible" at=".ui-button">
+        <Cell caption="侧栏" force="focus-visible" at=".ui-button">
           <div className="gallery-ground">
             <Button variant="ghost" icon={X}>
               关闭
@@ -1874,7 +1860,7 @@ export function Gallery() {
     <main className="gallery" aria-label="@latch/ui">
       <header className="gallery-header">
         <h1>Latch 界面原语</h1>
-        <p>蓝色只给动作与选择，琥珀只表示等待，红色只表示风险；胶囊是状态，方角是动作。</p>
+        <p>蓝色只给动作、焦点与勾选，琥珀只表示等你处理，红色只表示真实的失败与风险；状态是一个词，最多带一个图形。</p>
       </header>
       <div className="gallery-grid">
         <Buttons />

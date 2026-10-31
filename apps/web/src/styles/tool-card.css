@@ -22,12 +22,11 @@
   position: absolute;
   inset: 0;
   z-index: -1;
-  border: 1px solid var(--line-subtle);
+  border: 1px solid var(--line);
   border-radius: var(--r-12);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-sunken);
+  background: var(--sunken);
   opacity: 0;
-  transition: opacity var(--d-fast-exit) var(--ease-exit);
+  transition: opacity calc(var(--m-micro) * 0.7) var(--e-exit);
 }
 /* The tray's line is drawn by the layer behind, so the head and the paper sit 1px further in. */
 .tool-card[data-open] > .tool-tray {
@@ -36,7 +35,7 @@
 }
 .tool-card[data-open] > .tool-tray::before {
   opacity: 1;
-  transition: opacity var(--d-fast) var(--ease);
+  transition: opacity var(--m-micro) var(--e-micro);
 }
 .tool-card[data-open] > .tool-tray > .tool-card-header {
   width: 100%;
@@ -57,17 +56,17 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-3);
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono-sm);
-  line-height: var(--lh-mono-sm);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
 }
 .tool-card-state {
   display: inline-flex;
   align-items: center;
   gap: var(--sp-4);
   flex-shrink: 0;
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   white-space: nowrap;
@@ -76,7 +75,7 @@
   display: none;
 }
 .tool-card-state.state-failed {
-  color: var(--err-text);
+  color: var(--red);
 }
 @media (max-width: 767.98px) {
   .tool-card-name {
@@ -89,13 +88,12 @@
   display: grid;
   gap: var(--sp-12);
   padding: var(--sp-12);
-  border: 1px solid var(--line-subtle);
+  border: 1px solid var(--line);
   border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-pane);
+  background: var(--canvas);
 }
 .tool-card-body h4 {
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   font-weight: 500;
@@ -117,9 +115,8 @@
   padding: var(--sp-8) var(--sp-12);
   overflow: auto;
   border-radius: var(--r-6);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-sunken);
-  color: var(--text-2);
+  background: var(--sunken);
+  color: var(--ink-2);
   font-size: var(--fs-code);
   line-height: var(--lh-code);
   white-space: pre-wrap;
@@ -132,8 +129,7 @@
   overflow: auto;
   overscroll-behavior: contain;
   border-radius: var(--r-6);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-sunken);
+  background: var(--sunken);
 }
 .tool-output-scroll.is-live {
   display: flex;
@@ -156,17 +152,17 @@
 }
 .argument-list dt {
   padding-top: var(--sp-2);
-  color: var(--text-3);
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono-sm);
-  line-height: var(--lh-mono-sm);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
 }
 .argument-list dd pre {
   max-height: 160px;
   margin: 0;
   padding: var(--sp-2) 0;
   overflow: auto;
-  color: var(--text-1);
+  color: var(--ink);
   font-size: var(--fs-code);
   line-height: var(--lh-code);
   white-space: pre-wrap;
@@ -176,10 +172,9 @@
 /* A pending approval is always the card: the tray is the card's own surface. */
 .tool-card.has-approval {
   margin: var(--sp-4) 0;
-  border: 1px solid var(--line-subtle);
+  border: 1px solid var(--line);
   border-radius: var(--r-12);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-sunken);
+  background: var(--sunken);
 }
 .tool-card.has-approval > .tool-card-header {
   display: flex;
@@ -187,19 +182,18 @@
   gap: var(--sp-6);
   min-height: 36px;
   padding: var(--sp-4) var(--sp-8) var(--sp-4) var(--sp-12);
-  color: var(--text-3);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  color: var(--muted);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
 }
 /* A control, bidirectional or zero-width character shown as \u{XXXX} instead of being applied. */
 .hidden-char {
   padding: 0 var(--sp-2);
   border-radius: var(--r-4);
-  corner-shape: var(--corner-shape);
-  background: var(--warn-bg);
-  box-shadow: inset 0 0 0 1px var(--warn-border);
-  color: var(--warn-text);
-  font-family: var(--font-mono);
+  background: var(--amber-soft);
+  box-shadow: inset 0 0 0 1px var(--amber-line);
+  color: var(--amber);
+  font-family: var(--mono);
 }
 /* A diff an approval would apply, or the changes section of an opened tool card, is paper inside the card's tray, not
  * a tray of its own. */
@@ -208,14 +202,13 @@
 }
 :is(.approval-panel, .tool-card-body) .diff-file {
   padding: 0;
-  border-color: var(--line-subtle);
+  border-color: var(--line);
   border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-pane);
+  background: var(--canvas);
 }
 :is(.approval-panel, .tool-card-body) .diff-paper {
   border: 0;
-  border-top: 1px solid var(--line-subtle);
+  border-top: 1px solid var(--line);
   border-radius: 0;
 }
 
@@ -223,7 +216,7 @@
  * A file's change, evidence that stays in view under its tool: a tray (sunken, subtle line, 12 corners, 4 inside) whose
  * 32 head (8 inside, as an opened tool card's) names the file (the name in ink, its folder quieter), what the Host said
  * about the previous file and the line counts; the diff is a sheet of paper inside the tray. Rows are tinted, their
- * text stays text-1, the signs take the tone. Phones keep one line-number column: the new line's number, or the old
+ * text stays ink, the signs take the tone. Phones keep one line-number column: the new line's number, or the old
  * one on a removed line.
  */
 .diff-view {
@@ -236,10 +229,9 @@
   min-width: 0;
   overflow: hidden;
   padding: 0;
-  border: 1px solid var(--line-subtle);
+  border: 1px solid var(--line);
   border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-sunken);
+  background: var(--sunken);
 }
 .diff-file[data-open] {
   padding-bottom: 0;
@@ -253,20 +245,19 @@
   padding: 0 var(--sp-8);
   border: 0;
   border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
   background: transparent;
-  color: var(--text-2);
+  color: var(--ink-2);
   text-align: left;
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
 .diff-file-header:focus-visible {
-  outline: none;
-  box-shadow: var(--ring-focus-inset);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 .diff-file-header > svg:first-child {
   flex-shrink: 0;
-  color: var(--icon);
+  color: var(--muted);
 }
 .diff-path {
   display: inline-flex;
@@ -275,16 +266,16 @@
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono-sm);
-  line-height: var(--lh-mono-sm);
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
 }
 .diff-path-name {
   flex-shrink: 0;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--text-1);
+  color: var(--ink);
   font-weight: 500;
 }
 .diff-stat {
@@ -292,25 +283,25 @@
   gap: var(--sp-6);
   margin-left: auto;
   flex-shrink: 0;
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono-sm);
-  line-height: var(--lh-mono-sm);
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
   font-variant-numeric: tabular-nums;
 }
 .diff-stat-add {
-  color: var(--ok-text);
+  color: var(--green);
 }
 .diff-stat-remove {
-  color: var(--err-text);
+  color: var(--red);
 }
 /* A count of zero marks no change, so it takes no tone. */
 .diff-stat-zero {
-  color: var(--text-3);
+  color: var(--muted);
 }
 .diff-file-header .chevron {
   flex-shrink: 0;
-  color: var(--icon);
-  transition: transform var(--d-base) var(--ease);
+  color: var(--muted);
+  transition: transform var(--m-panel) var(--e-panel);
 }
 .diff-file-header[aria-expanded='true'] .chevron {
   transform: rotate(90deg);
@@ -319,20 +310,20 @@
   min-width: 0;
   overflow: hidden;
   border: 0;
-  border-top: 1px solid var(--line-subtle);
-  background: var(--bg-pane);
+  border-top: 1px solid var(--line);
+  background: var(--canvas);
 }
 .diff-body {
   position: relative;
   max-height: 360px;
   overflow: auto;
   overscroll-behavior: contain;
-  font-family: var(--font-mono);
+  font-family: var(--mono);
   font-size: var(--fs-code);
   line-height: var(--lh-code);
 }
 .diff-body:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
 .diff-table {
@@ -352,13 +343,13 @@
   overscroll-behavior-x: contain;
 }
 .diff-split-side + .diff-split-side {
-  border-left: 1px solid var(--line-subtle);
+  border-left: 1px solid var(--line);
 }
 .diff-side-title {
   padding: var(--sp-2) var(--sp-8);
-  background: var(--bg-sunken);
-  color: var(--text-3);
-  font-family: var(--font-sans);
+  background: var(--sunken);
+  color: var(--muted);
+  font-family: var(--font);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
@@ -371,12 +362,12 @@
   white-space: pre;
 }
 .diff-absent {
-  background: var(--bg-sunken);
+  background: var(--sunken);
 }
 .diff-hunk-header {
   padding: var(--sp-2) var(--sp-8);
-  background: var(--bg-sunken);
-  color: var(--text-3);
+  background: var(--sunken);
+  color: var(--muted);
 }
 .diff-line {
   display: grid;
@@ -385,42 +376,42 @@
 }
 .diff-ln {
   padding-right: var(--sp-6);
-  color: var(--text-3);
+  color: var(--muted);
   text-align: right;
   user-select: none;
 }
 .diff-sign {
-  color: var(--text-3);
+  color: var(--muted);
   text-align: center;
   user-select: none;
 }
 .diff-text {
   padding-right: var(--sp-12);
-  color: var(--text-1);
+  color: var(--ink);
 }
 .diff-add {
-  background: var(--diff-add-bg);
+  background: var(--diff-add);
 }
 .diff-add .diff-sign {
-  color: var(--ok-text);
+  color: var(--green);
 }
 .diff-remove {
-  background: var(--diff-del-bg);
+  background: var(--diff-del);
 }
 .diff-remove .diff-sign {
-  color: var(--err-text);
+  color: var(--red);
 }
 .diff-empty {
   padding: var(--sp-8) var(--sp-12);
-  color: var(--text-3);
-  font-family: var(--font-sans);
+  color: var(--muted);
+  font-family: var(--font);
 }
 .diff-note {
   padding: var(--sp-6) var(--sp-8);
-  border-bottom: 1px solid var(--line-subtle);
-  background: var(--warn-bg);
-  color: var(--warn-text);
-  font-family: var(--font-sans);
+  border-bottom: 1px solid var(--line);
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-family: var(--font);
   white-space: normal;
 }
 /* The fold bar under a long diff: 「展开其余 n 行」, centred, under a subtle line. */
@@ -432,15 +423,15 @@
   height: 28px;
   padding: 0;
   border: 0;
-  border-top: 1px solid var(--line-subtle);
+  border-top: 1px solid var(--line);
   background: transparent;
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
 .diff-more:hover {
-  background: var(--bg-hover);
-  color: var(--text-1);
+  background: var(--hover);
+  color: var(--ink);
 }
 .diff-ln-one {
   display: none;
@@ -452,24 +443,23 @@
   min-height: 28px;
   padding: 0 var(--sp-8);
   border: 0;
-  border-top: 1px solid var(--line-subtle);
+  border-top: 1px solid var(--line);
   background: transparent;
-  color: var(--text-3);
-  font-family: var(--font-sans);
+  color: var(--muted);
+  font-family: var(--font);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   text-align: center;
   transition:
-    background-color var(--d-fast) var(--ease-exit),
-    color var(--d-fast) var(--ease-exit);
+    background-color var(--m-micro) var(--e-micro),
+    color var(--m-micro) var(--e-micro);
 }
 .diff-fold:hover {
-  background: var(--bg-hover);
-  color: var(--text-1);
-  transition-duration: 0s;
+  background: var(--hover);
+  color: var(--ink);
 }
 .diff-fold:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
 @media (max-width: 767.98px) {
@@ -498,26 +488,24 @@
   padding: 0 var(--sp-6) 0 var(--sp-8);
   border: 0;
   border-radius: var(--r-6);
-  corner-shape: var(--corner-shape);
   background: transparent;
-  color: var(--text-2);
+  color: var(--ink-2);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   transition:
-    background-color var(--d-fast) var(--ease-exit),
-    color var(--d-fast) var(--ease-exit);
+    background-color var(--m-micro) var(--e-micro),
+    color var(--m-micro) var(--e-micro);
 }
 .plan-chip:hover,
 .plan-chip[aria-expanded='true'] {
-  background: var(--bg-hover);
-  color: var(--text-1);
-  transition-duration: 0s;
+  background: var(--hover);
+  color: var(--ink);
 }
 .plan-chip > svg {
-  color: var(--icon);
+  color: var(--muted);
 }
 .plan-popover {
   display: grid;
@@ -529,9 +517,9 @@
   justify-content: space-between;
   align-items: center;
   height: 28px;
-  color: var(--text-2);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
   font-weight: 500;
 }
 /* In the phone sheet the title says 「计划 0/2」, so the list's own head is not repeated; the steps stand in a paper card
@@ -540,11 +528,10 @@
   display: none;
 }
 .ui-sheet-body .plan-popover {
-  --surface: var(--bg-pane);
+  --surface: var(--canvas);
   padding: var(--sp-4) var(--sp-16);
   border-radius: var(--r-12);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-pane);
+  background: var(--canvas);
   box-shadow: inset 0 0 0 1px var(--line);
 }
 .ui-sheet-body .plan-entry {
@@ -554,18 +541,18 @@
   line-height: var(--lh-ui);
 }
 .ui-sheet-body .plan-entry + .plan-entry {
-  box-shadow: inset 0 1px var(--line-subtle);
+  box-shadow: inset 0 1px var(--line);
 }
 .ui-sheet-body .plan-icon {
   height: var(--lh-ui);
 }
 .plan-sheet-count {
-  color: var(--text-3);
+  color: var(--muted);
   font-weight: 400;
   font-variant-numeric: tabular-nums;
 }
 .plan-popover-count {
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   font-weight: 400;
@@ -581,9 +568,9 @@
   gap: var(--sp-8);
   min-height: 28px;
   padding: var(--sp-4) 0;
-  color: var(--text-2);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label-para);
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui-para);
 }
 .inspector .plan-entry {
   padding: var(--sp-4) var(--sp-12);
@@ -592,26 +579,26 @@
   display: grid;
   place-items: center;
   width: 16px;
-  height: var(--lh-label-para);
+  height: var(--lh-ui-para);
   flex-shrink: 0;
-  color: var(--icon);
+  color: var(--muted);
 }
 .plan-in_progress {
-  color: var(--text-1);
+  color: var(--ink);
   font-weight: 500;
 }
 .plan-in_progress .plan-icon {
-  color: var(--text-1);
+  color: var(--ink);
 }
 .plan-list.is-settled .plan-in_progress {
-  color: var(--text-2);
+  color: var(--ink-2);
   font-weight: 400;
 }
 .plan-list.is-settled .plan-in_progress .plan-icon {
-  color: var(--icon);
+  color: var(--muted);
 }
 .plan-completed .plan-text {
-  color: var(--text-3);
+  color: var(--muted);
 }
 
 /*
@@ -624,12 +611,19 @@
   gap: var(--sp-6);
   min-height: 28px;
   margin: 0;
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
 .tool-decision .ui-icon {
   flex-shrink: 0;
   margin: 0 1px;
-  color: var(--icon);
+  color: var(--muted);
+}
+
+/* Reduced motion: the chevron turns at once. */
+@media (prefers-reduced-motion: reduce) {
+  .diff-file-header .chevron {
+    transition: none;
+  }
 }

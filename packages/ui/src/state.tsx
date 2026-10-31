@@ -1,10 +1,11 @@
-import type { ReactNode } from 'react'
+import { useRef, type ReactNode } from 'react'
 import { TriangleAlert } from 'lucide-react'
 import { Icon, Spinner } from './icon.tsx'
 import { cx } from './internal.ts'
+import { usePausedOffscreen } from './motion.tsx'
 
 /**
- * An empty list or area: a short noun phrase (「还没有会话」) in text-2, one line of text-3 and at most one xs action,
+ * An empty list or area: a short noun phrase (「还没有会话」) in ink-2, one line in muted ink and at most one xs action,
  * left-aligned. No illustration.
  */
 export function EmptyState({
@@ -28,7 +29,7 @@ export function EmptyState({
 }
 
 /**
- * Loading. inline: a 14px spinner in text-3 next to what loads. page: the 20px spinner and its line centred in the
+ * Loading. inline: a 14px spinner in muted ink next to what loads. page: the 20px spinner and its line centred in the
  * area, as while the first connection to the host computer is made (「正在连接执行端…」). Announced politely.
  */
 export function Loading({ label, variant = 'inline', className }: { label: ReactNode; variant?: 'inline' | 'page'; className?: string }) {
@@ -41,7 +42,7 @@ export function Loading({ label, variant = 'inline', className }: { label: React
 }
 
 /**
- * A placeholder block while a list loads: it breathes (opacity .55 to 1 over 1.6s) and never sweeps. Give it the size
+ * A placeholder block while a list loads: it breathes (opacity 1 to .55 in four steps over 2.4s) and never sweeps. Give it the size
  * of what it stands for, so the content replaces it without a jump.
  */
 export function Skeleton({
@@ -55,7 +56,17 @@ export function Skeleton({
   round?: boolean
   className?: string
 }) {
-  return <span className={cx('ui-skeleton', className)} data-round={round ? '' : undefined} style={{ width, height }} aria-hidden="true" />
+  const own = useRef<HTMLSpanElement>(null)
+  usePausedOffscreen(own)
+  return (
+    <span
+      ref={own}
+      className={cx('ui-skeleton', className)}
+      data-round={round ? '' : undefined}
+      style={{ width, height }}
+      aria-hidden="true"
+    />
+  )
 }
 
 /**

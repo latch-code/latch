@@ -1,7 +1,6 @@
 .question-card {
   border: 1px solid var(--line);
   border-radius: var(--r-12);
-  corner-shape: var(--corner-shape);
   background: var(--surface);
   padding: 16px;
   margin-block: 8px;
@@ -15,11 +14,11 @@
 }
 .question-heading {
   justify-content: space-between;
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
 }
 .question-prompt {
-  font-size: var(--fs-body);
+  font-size: var(--fs-prose);
   margin-block: 12px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -31,7 +30,7 @@
   min-width: 0;
 }
 .question-card legend {
-  font-size: var(--fs-body);
+  font-size: var(--fs-prose);
   font-weight: 500;
   margin-bottom: 12px;
   overflow-wrap: anywhere;
@@ -39,7 +38,7 @@
 .question-hint {
   margin-left: 8px;
   font-weight: 400;
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
 }
 .question-options {
@@ -52,12 +51,12 @@
   flex-wrap: wrap;
 }
 .question-actions > span {
-  font-size: var(--fs-micro);
-  color: var(--text-3);
+  font-size: var(--fs-meta);
+  color: var(--muted);
 }
 .question-result {
   font-size: var(--fs-caption);
-  color: var(--text-2);
+  color: var(--ink-2);
   padding-block: 8px;
 }
 .question-result summary {
@@ -69,7 +68,7 @@
   margin: 12px 0 0;
 }
 .question-result dt {
-  color: var(--text-3);
+  color: var(--muted);
 }
 .question-result dd {
   margin: 2px 0 0;
@@ -78,5 +77,5 @@
 }
 
 .turn-phase.phase-question {
-  color: var(--warn-text);
+  color: var(--amber);
 }

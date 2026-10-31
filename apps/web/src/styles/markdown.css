@@ -24,8 +24,8 @@
   line-height: var(--lh-title);
 }
 .message-content h2 {
-  font-size: var(--fs-title-sm);
-  line-height: var(--lh-title-sm);
+  font-size: var(--fs-heading);
+  line-height: var(--lh-heading);
 }
 .message-content :is(h3, h4, h5, h6) {
   font-size: inherit;
@@ -50,7 +50,7 @@
   margin-block: var(--sp-6);
 }
 .message-content li::marker {
-  color: var(--text-3);
+  color: var(--muted);
 }
 .message-content .task-list-item {
   list-style: none;
@@ -59,15 +59,17 @@
   margin-inline: -1.4em 0.45em;
   accent-color: var(--accent);
 }
+.message-content .task-list-item > input:checked:focus-visible {
+  outline-offset: 2px;
+}
 /* A quote is a tray inside the reading column. */
 .message-content blockquote {
   margin: var(--sp-12) 0;
   padding: var(--sp-8) var(--sp-12);
-  border: 1px solid var(--line-subtle);
+  border: 1px solid var(--line);
   border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-sunken);
-  color: var(--text-2);
+  background: var(--sunken);
+  color: var(--ink-2);
 }
 .message-content blockquote > :last-child {
   margin-bottom: 0;
@@ -78,25 +80,25 @@
   border-top: 1px solid var(--line);
 }
 .message-content a {
-  color: var(--accent-text);
+  color: var(--accent-ink);
   text-decoration: underline;
   text-underline-offset: 3px;
   text-decoration-thickness: 1px;
 }
 .message-content a:hover {
-  color: var(--accent-text-hover);
+  text-decoration-thickness: 2px;
 }
 /* Images are never loaded; a web image is an ordinary link the reader opens. */
 .message-content .message-image {
-  color: var(--text-3);
+  color: var(--muted);
 }
 .message-content a.message-image {
-  color: var(--accent-text);
+  color: var(--accent-ink);
 }
 /* Text too deeply nested for Markdown, shown as written. */
 .message-content .message-plain-note {
   margin: 0 0 var(--sp-8);
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
@@ -109,9 +111,8 @@
 .message-content :not(pre) > code {
   padding: 1px var(--sp-4);
   border-radius: var(--r-4);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-hover);
-  font-size: var(--fs-mono);
+  background: var(--hover);
+  font-size: var(--fs-code);
   white-space: break-spaces;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
@@ -123,10 +124,9 @@
   max-width: 100%;
   margin: var(--sp-12) 0;
   overflow: hidden;
-  border: 1px solid var(--line-subtle);
+  border: 1px solid var(--line);
   border-radius: var(--r-12);
-  corner-shape: var(--corner-shape);
-  background: var(--bg-sunken);
+  background: var(--sunken);
 }
 .message-code-toolbar {
   display: flex;
@@ -135,14 +135,14 @@
   gap: var(--sp-12);
   min-height: 32px;
   padding: 0 var(--sp-4) 0 var(--sp-12);
-  border-bottom: 1px solid var(--line-subtle);
+  border-bottom: 1px solid var(--line);
 }
 .message-code-language {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
@@ -155,9 +155,8 @@
   flex-shrink: 0;
   border: 0;
   border-radius: var(--r-6);
-  corner-shape: var(--corner-shape);
   background: transparent;
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
@@ -167,15 +166,15 @@
 }
 .message-code-hidden {
   margin-left: auto;
-  color: var(--warn-text);
+  color: var(--amber);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   white-space: nowrap;
 }
 .message-code-copy:hover,
 .message-code-expand:hover {
-  color: var(--text-1);
-  background: var(--bg-hover);
+  color: var(--ink);
+  background: var(--hover);
 }
 .message-code-copy:disabled {
   opacity: 0.45;
@@ -187,8 +186,8 @@
   overflow: auto;
   overscroll-behavior-inline: contain;
   background: transparent;
-  color: var(--text-1);
-  font-family: var(--font-mono);
+  color: var(--ink);
+  font-family: var(--mono);
   font-size: var(--fs-code);
   line-height: var(--lh-code);
   white-space: pre;
@@ -209,15 +208,15 @@
   width: 100%;
   min-height: 32px;
   padding: var(--sp-6) var(--sp-12);
-  border-top: 1px solid var(--line-subtle);
+  border-top: 1px solid var(--line);
   border-radius: 0;
 }
 .message-content .message-copy-error {
   margin: 0;
   padding: var(--sp-8) var(--sp-12);
-  border-top: 1px solid var(--err-border);
-  background: var(--err-bg);
-  color: var(--err-text);
+  border-top: 1px solid var(--red-line);
+  background: var(--red-soft);
+  color: var(--red);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
 }
@@ -238,28 +237,27 @@
   overscroll-behavior-inline: contain;
   border: 1px solid var(--line);
   border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
   scrollbar-width: thin;
 }
 .message-content table {
   width: max-content;
   min-width: 100%;
   border-collapse: collapse;
-  font-size: var(--fs-label);
-  line-height: var(--lh-label-para);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui-para);
 }
 .message-content :is(th, td) {
   min-width: 7em;
   max-width: 25em;
   padding: var(--sp-8) var(--sp-12);
-  border-bottom: 1px solid var(--line-subtle);
-  border-right: 1px solid var(--line-subtle);
+  border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--line);
   text-align: left;
   vertical-align: top;
   overflow-wrap: anywhere;
 }
 .message-content th {
-  background: var(--bg-sunken);
+  background: var(--sunken);
   font-weight: 500;
 }
 .message-content :is(th, td):last-child {
@@ -272,7 +270,7 @@
   margin-top: var(--sp-24);
   padding-top: var(--sp-12);
   border-top: 1px solid var(--line);
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
 }
@@ -284,7 +282,7 @@
   margin-block: var(--sp-6);
 }
 .message-content :is(pre, .message-table-scroll):focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
 

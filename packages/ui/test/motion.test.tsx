@@ -3,13 +3,22 @@ import { describe, expect, it } from 'vitest'
 import { render } from 'vitest-browser-react'
 import { commands } from 'vitest/browser'
 import { Check, Copy } from 'lucide-react'
-import { Collapse, IconButton, MOTION, Shimmer, Swap, usePresence } from '../src/index.ts'
+import { Collapse, EASING, IconButton, MOTION, Shimmer, Swap, switchTheme, usePresence } from '../src/index.ts'
 import { protocol } from './helpers.ts'
 
 const frames = () => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))
 const pause = (ms: number) => new Promise(done => setTimeout(done, ms))
 /** The first CSS animation running on an element. */
 const cssAnimation = (element: Element) => element.getAnimations().find((item): item is CSSAnimation => item instanceof CSSAnimation)
+/** Emulates `prefers-reduced-motion: reduce` for the duration of `run`. */
+async function reducedMotion(run: () => Promise<void>): Promise<void> {
+  await protocol().send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] })
+  try {
+    await run()
+  } finally {
+    await protocol().send('Emulation.setEmulatedMedia', { features: [] })
+  }
+}
 
 function Disclosure({ initial = false, onReveal }: { initial?: boolean; onReveal?: () => void }) {
   const [open, setOpen] = useState(initial)
@@ -35,7 +44,7 @@ function Disclosure({ initial = false, onReveal }: { initial?: boolean; onReveal
 }
 
 function Leaving({ show }: { show: boolean }) {
-  const { present, leaving } = usePresence(show, MOTION.fastExit)
+  const { present, leaving } = usePresence(show, MOTION.microExit)
   return <div>{present && <span data-leaving={leaving ? '' : undefined}>pill</span>}</div>
 }
 
@@ -55,29 +64,104 @@ function Copying() {
 }
 
 describe('motion tokens', () => {
-  it('gives scripts the same durations as the stylesheet', async () => {
+  it('gives scripts the durations and curves of the stylesheet, each exit at 70% of its entrance', async () => {
     const tokens = (await commands.readFile('packages/ui/src/tokens.css')).replace(/\/\*[\s\S]*?\*\//gu, '')
     const value = (name: string) => {
       const match = new RegExp(`${name}:\\s*([\\d.]+)(ms|s);`, 'u').exec(tokens)
       if (!match) throw new Error(`${name} is not in tokens.css`)
       return Number(match[1]) * (match[2] === 's' ? 1000 : 1)
     }
+    const curve = (name: string) => new RegExp(`${name}:\\s*(cubic-bezier\\([^)]*\\));`, 'u').exec(tokens)?.[1]
+    const durations = {
+      micro: value('--m-micro'),
+      enter: value('--m-enter'),
+      panel: value('--m-panel'),
+      sheet: value('--m-sheet'),
+      push: value('--m-push'),
+    }
+    const exits = Object.fromEntries(Object.entries(durations).map(([name, ms]) => [`${name}Exit`, Math.round(ms * 0.7)]))
+    expect({ ...durations, ...exits }).toEqual(MOTION)
     expect({
-      fast: value('--d-fast'),
-      base: value('--d-base'),
-      slow: value('--d-slow'),
-      fastExit: value('--d-fast-exit'),
-      baseExit: value('--d-base-exit'),
-      slowExit: value('--d-slow-exit'),
-      stagger: value('--d-stagger'),
-      shimmer: value('--d-shimmer'),
-      hint: value('--delay-hint'),
-    }).toEqual(MOTION)
+      micro: curve('--e-micro'),
+      enter: curve('--e-enter'),
+      panel: curve('--e-panel'),
+      sheet: curve('--e-sheet'),
+      push: curve('--e-push'),
+      exit: curve('--e-exit'),
+    }).toEqual(EASING)
+  })
+
+  it('resolves to the same values on the page', () => {
+    const probe = document.createElement('div')
+    document.body.append(probe)
+    try {
+      const read = (duration: string, easing: string) => {
+        probe.style.transition = `opacity ${duration} var(${easing})`
+        const style = getComputedStyle(probe)
+        return [style.transitionDuration, style.transitionTimingFunction]
+      }
+      expect([
+        read('var(--m-micro)', '--e-micro'),
+        read('var(--m-enter)', '--e-enter'),
+        read('var(--m-panel)', '--e-panel'),
+        read('var(--m-sheet)', '--e-sheet'),
+        read('var(--m-push)', '--e-push'),
+        read('calc(var(--m-sheet) * 0.7)', '--e-exit'),
+      ]).toEqual([
+        ['0.12s', EASING.micro],
+        ['0.16s', EASING.enter],
+        ['0.2s', EASING.panel],
+        ['0.26s', EASING.sheet],
+        ['0.32s', EASING.push],
+        ['0.182s', EASING.exit],
+      ])
+    } finally {
+      probe.remove()
+    }
+  })
+
+  it('shortens every duration to 120ms or less under reduced motion', async () => {
+    await reducedMotion(async () => {
+      await pause(20)
+      const root = getComputedStyle(document.documentElement)
+      const durations = ['--m-micro', '--m-enter', '--m-panel', '--m-sheet', '--m-push'].map(name =>
+        parseFloat(root.getPropertyValue(name)),
+      )
+      expect(durations.every(ms => ms <= 120)).toBe(true)
+    })
+  })
+
+  it('switches a theme without transitions, and lets them back on two frames later', async () => {
+    const button = document.createElement('button')
+    button.className = 'ui-button'
+    button.dataset.variant = 'secondary'
+    document.body.append(button)
+    const previous = document.documentElement.dataset.theme
+    try {
+      switchTheme(() => {
+        document.documentElement.dataset.theme = 'dark'
+      })
+      expect(document.documentElement.hasAttribute('data-theme-switching')).toBe(true)
+      expect(
+        getComputedStyle(button)
+          .transitionDuration.split(', ')
+          .every(value => value === '0s'),
+      ).toBe(true)
+      expect(button.getAnimations()).toHaveLength(0)
+      await frames()
+      await frames()
+      expect(document.documentElement.hasAttribute('data-theme-switching')).toBe(false)
+      expect(getComputedStyle(button).transitionDuration).toContain('0.12s')
+    } finally {
+      button.remove()
+      if (previous === undefined) delete document.documentElement.dataset.theme
+      else document.documentElement.dataset.theme = previous
+    }
   })
 })
 
 describe('disclosures', () => {
-  it('grows downward through its grid row on the entry curve and closes on the exit curve, staying in the page', async () => {
+  it('grows downward through its grid row over --m-panel and closes in 70% of it on the exit curve, staying in the page', async () => {
     const screen = await render(<Disclosure />)
     const box = screen.container.querySelector<HTMLElement>('.ui-collapse')!
     const inner = box.querySelector<HTMLElement>('.ui-collapse-inner')!
@@ -89,10 +173,13 @@ describe('disclosures', () => {
     expect(box.dataset.state).toBe('open')
     expect(inner.hasAttribute('hidden')).toBe(false)
     const opening = getComputedStyle(box)
-    expect(opening.transitionProperty).toBe('grid-template-rows')
-    expect(opening.transitionDuration).toBe(`${MOTION.base / 1000}s`)
-    expect(opening.transitionTimingFunction).toBe('cubic-bezier(0.2, 0, 0, 1)')
-    expect(getComputedStyle(inner).transitionDelay).toBe(`${MOTION.stagger / 1000}s`)
+    expect([opening.transitionProperty, opening.transitionDuration, opening.transitionTimingFunction]).toEqual([
+      'grid-template-rows',
+      `${MOTION.panel / 1000}s`,
+      EASING.panel,
+    ])
+    // The content fades in with the box, not after it.
+    expect([getComputedStyle(inner).transitionDuration, getComputedStyle(inner).transitionDelay]).toEqual([`${MOTION.panel / 1000}s`, '0s'])
     await expect.poll(() => box.hasAttribute('data-settled'), { timeout: 2000 }).toBe(true)
 
     await screen.getByRole('button', { name: 'toggle' }).click()
@@ -100,11 +187,22 @@ describe('disclosures', () => {
     // Closing, the body is inert; once closed it is hidden until found.
     expect(inner.inert).toBe(true)
     const closing = getComputedStyle(box)
-    expect(closing.transitionDuration).toBe(`${MOTION.baseExit / 1000}s`)
-    expect(closing.transitionTimingFunction).toBe('cubic-bezier(0.4, 0, 1, 1)')
+    expect([closing.transitionDuration, closing.transitionTimingFunction]).toEqual([`${MOTION.panelExit / 1000}s`, EASING.exit])
     await expect.poll(() => box.dataset.state, { timeout: 2000 }).toBe('closed')
     expect(inner.inert).toBe(false)
     expect(inner.getAttribute('hidden')).toBe('until-found')
+  })
+
+  it('only fades under reduced motion: the box opens at once', async () => {
+    await reducedMotion(async () => {
+      const screen = await render(<Disclosure />)
+      await screen.getByRole('button', { name: 'toggle' }).click()
+      const box = screen.container.querySelector<HTMLElement>('.ui-collapse')!
+      expect(getComputedStyle(box).transitionProperty).not.toContain('grid-template-rows')
+      const inner = getComputedStyle(box.querySelector('.ui-collapse-inner')!)
+      expect(inner.transitionProperty).toContain('opacity')
+      expect(parseFloat(inner.transitionDuration)).toBeLessThanOrEqual(0.12)
+    })
   })
 
   it('opens when the browser finds text inside it', async () => {
@@ -122,11 +220,12 @@ describe('disclosures', () => {
     expect(revealed).toBe(1)
   })
 
-  it('shows an open body at once on its first render and renders a lazy body only once it opens', async () => {
+  it('shows an open body at once on its first render, as a restored page does, and renders a lazy body only once it opens', async () => {
     const screen = await render(<Disclosure initial />)
     const box = screen.container.querySelector<HTMLElement>('.ui-collapse')!
     expect(box.dataset.state).toBe('open')
     expect(box.hasAttribute('data-settled')).toBe(true)
+    expect(box.getAnimations({ subtree: true })).toHaveLength(0)
     const lazy = await render(
       <Collapse open={false} lazy>
         <p>heavy</p>
@@ -137,7 +236,7 @@ describe('disclosures', () => {
 })
 
 describe('swaps and presence', () => {
-  it('swaps a copy icon for a check that scales in, but not on the first render', async () => {
+  it('swaps a copy icon for a check that scales in over --m-micro, but not on the first render', async () => {
     const screen = await render(<Copying />)
     const swap = () => screen.container.querySelector<HTMLElement>('.ui-swap')!
     expect(swap().hasAttribute('data-swapped')).toBe(false)
@@ -146,7 +245,7 @@ describe('swaps and presence', () => {
     await expect.poll(() => swap().hasAttribute('data-swapped')).toBe(true)
     const animation = cssAnimation(swap())
     expect(animation?.animationName).toBe('ui-swap-in')
-    expect(animation?.effect?.getTiming().duration).toBe(MOTION.fast)
+    expect(animation?.effect?.getTiming().duration).toBe(MOTION.micro)
   })
 
   it('cross-fades words in place without scaling them', async () => {
@@ -161,7 +260,7 @@ describe('swaps and presence', () => {
       </Swap>,
     )
     const swap = screen.container.querySelector<HTMLElement>('.ui-swap')!
-    expect(cssAnimation(swap)?.animationName).toBe('ui-swap-fade')
+    expect(cssAnimation(swap)?.animationName).toBe('ui-fade-in')
   })
 
   it('keeps what leaves on screen for its exit, marked as leaving', async () => {
@@ -173,27 +272,48 @@ describe('swaps and presence', () => {
   })
 })
 
-describe('the live label', () => {
-  it('moves only the light behind its words, once every 1.6s, and stands still under reduced motion', async () => {
+describe('the thinking shimmer', () => {
+  it('waits 600ms, then sweeps the light behind its words once over 1s of every 4s', async () => {
     const screen = await render(<Shimmer>正在思考</Shimmer>)
     const label = screen.container.querySelector<HTMLElement>('.ui-shimmer')!
     await frames()
     const moving = cssAnimation(label)
-    expect(moving?.animationName).toBe('ui-shimmer')
-    expect(moving?.effect?.getTiming().duration).toBe(MOTION.shimmer)
+    expect(moving?.animationName).toBe('ui-think')
+    const timing = moving?.effect?.getTiming()
+    expect([timing?.duration, timing?.delay, timing?.iterations]).toEqual([4000, 600, Infinity])
     const keyframes = moving?.effect instanceof KeyframeEffect ? moving.effect.getKeyframes() : []
+    // Only the gradient behind the text moves, and the sweep is the first quarter of the cycle: 1s.
     expect(
       new Set(
         keyframes.flatMap(frame => Object.keys(frame).filter(key => !['offset', 'computedOffset', 'easing', 'composite'].includes(key))),
       ),
     ).toEqual(new Set(['backgroundPositionX', 'backgroundPositionY']))
-    await protocol().send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] })
-    try {
+    expect(keyframes.map(frame => frame.computedOffset)).toContain(0.25)
+  })
+
+  it('pauses while it is out of view and goes on when it comes back', async () => {
+    const screen = await render(
+      <div style={{ height: 120, overflow: 'auto' }} data-testid="scroller">
+        <div style={{ height: 600 }} />
+        <Shimmer>正在思考</Shimmer>
+      </div>,
+    )
+    const label = screen.container.querySelector<HTMLElement>('.ui-shimmer')!
+    await expect.poll(() => label.hasAttribute('data-offscreen')).toBe(true)
+    await expect.poll(() => cssAnimation(label)?.playState).toBe('paused')
+    screen.getByTestId('scroller').element().scrollTop = 600
+    await expect.poll(() => label.hasAttribute('data-offscreen')).toBe(false)
+    await expect.poll(() => cssAnimation(label)?.playState).toBe('running')
+  })
+
+  it('stands still under reduced motion, as plain words in muted ink', async () => {
+    const screen = await render(<Shimmer>正在思考</Shimmer>)
+    const label = screen.container.querySelector<HTMLElement>('.ui-shimmer')!
+    await reducedMotion(async () => {
       await pause(50)
       expect(label.getAnimations()).toHaveLength(0)
-      expect(getComputedStyle(label).color).not.toBe('rgba(0, 0, 0, 0)')
-    } finally {
-      await protocol().send('Emulation.setEmulatedMedia', { features: [] })
-    }
+      expect(getComputedStyle(label).backgroundImage).toBe('none')
+      expect(getComputedStyle(label).color).toBe('rgb(113, 113, 122)')
+    })
   })
 })

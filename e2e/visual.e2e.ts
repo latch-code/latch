@@ -692,16 +692,14 @@ describe('visual capture of the real product', () => {
     const filters = list.getByRole('group', { name: '筛选会话', exact: true })
     for (const name of ['全部', '对话', 'Agent']) await reachable(filters.getByRole('button', { name, exact: true }))
     await reachable(list.locator('.phone-inbox'))
-    // The rows draw their status slots at 16; the second line adds what the slot does not say, never a preview.
+    // The rows say their state in status words; the second line adds what the slot does not say, never a preview.
     const row = (id: string) => list.locator(`[data-task-id="${id}"]`)
-    await row(sessions.running).locator('.ui-comet[data-size="16"]').waitFor()
-    await row(sessions.running)
-      .getByText(/ · 正在运行$/)
-      .waitFor()
+    await row(sessions.running).locator('.ui-status-word[data-tone="running"] .ui-spinner').waitFor()
+    expect(await row(sessions.running).locator('.phone-row-meta-text').textContent()).not.toContain('·')
     await row(sessions.cancelled)
       .getByText(/ · 已取消$/)
       .waitFor()
-    await row(sessions.r1).locator('.ui-waiting-pill', { hasText: '待批准' }).waitFor()
+    await row(sessions.r1).locator('.ui-status-word[data-tone="waiting"]', { hasText: '等你处理' }).waitFor()
     await noHorizontalOverflow(target)
     await settleMotion(target)
     await recorder.capture(target, viewport, 'navigation', 'the session list, the root page')
@@ -959,18 +957,18 @@ describe('visual capture of the real product', () => {
     const cancelled = await start(PROMPTS.cancelled)
     await allow(await pendingApproval(cancelled))
     await toolRunning(cancelled)
-    // The desktop page watches the run end: its tool row's comet cross-fades into the tool's icon and the words of the
-    // new state rise into place.
+    // The desktop page watches the run end: its tool row's spinner cross-fades into the tool's icon and the words of
+    // the new state fade in.
     const watching = pages.get('desktop')!.page
     await openSession(
       watching,
       VISUAL_VIEWPORTS.find(item => item.name === 'desktop')!,
       cancelled,
     )
-    await watching.locator('.tool-card .tool-card-icon .ui-comet').waitFor()
+    await watching.locator('.tool-card .tool-card-icon .ui-spinner').waitFor()
     await local.json(`tasks/${cancelled}/cancel`, { method: 'POST' })
     await settled(cancelled, 'cancelled')
-    await watching.locator('.tool-card-icon[data-shift] > .ui-status-glyph-leaving .ui-comet').waitFor({ state: 'attached' })
+    await watching.locator('.tool-card-icon[data-shift] > .ui-status-glyph-leaving .ui-spinner').waitFor({ state: 'attached' })
     await watching.locator('.tool-card-state[data-shift]', { hasText: '已取消' }).waitFor()
     await home(watching)
 
@@ -995,13 +993,9 @@ describe('visual capture of the real product', () => {
     const hidden = await start(PROMPTS.hidden)
     await pendingApproval(hidden)
     // The first approval to arrive while the pages watch: the 待批准 row (the rail's button on tablets) appears with its
-    // count, which ripples once because the page saw it arrive.
-    await pages
-      .get('desktop')!
-      .page.locator('.approvals-row .ui-count', { hasText: '1' })
-      .locator('.ui-count-ripple')
-      .waitFor({ state: 'attached' })
-    await pages.get('tablet')!.page.locator('.rail .ui-count', { hasText: '1' }).locator('.ui-count-ripple').waitFor({ state: 'attached' })
+    // count, which fades in because the page saw it arrive.
+    await pages.get('desktop')!.page.locator('.approvals-row .ui-count[data-shift]', { hasText: '1' }).waitFor({ state: 'attached' })
+    await pages.get('tablet')!.page.locator('.rail .ui-count[data-shift]', { hasText: '1' }).waitFor({ state: 'attached' })
     const r2 = await start(PROMPTS.r2)
     await pendingApproval(r2)
     expect((await detail(r2)).approvals[0].risk).toBe('R2')
@@ -1026,18 +1020,18 @@ describe('visual capture of the real product', () => {
     async viewport => {
       const target = page(viewport)
       // A person who has looked at every session but one: that one keeps its unread mark. On the desktop, a session
-      // read while the page watches lets its row's dot sink as its time fades in.
-      const settles: Array<string | null> = []
+      // read while the page watches cross-fades its row's check into its time.
+      const settles: boolean[] = []
       for (const seen of Object.values(sessions).filter(id => id !== sessions.unread)) {
         const row = target.locator(`#session-navigation [data-task-id="${seen}"]`)
-        const wasUnread = viewport.name === 'desktop' && (await row.locator('.ui-status-dot').count()) > 0
+        const wasUnread = viewport.name === 'desktop' && (await row.locator('.ui-status-unread').count()) > 0
         await openSession(target, viewport, seen)
-        if (wasUnread && (await row.locator('.ui-status-time').count()) > 0)
-          settles.push(await row.locator('.ui-status-slot').getAttribute('data-settle'))
+        if (wasUnread && (await row.locator('.ui-status-shown > .ui-status-time').count()) > 0)
+          settles.push((await row.locator('.ui-status-slot[data-shift]').count()) > 0)
       }
       if (viewport.name === 'desktop') {
         expect(settles.length).toBeGreaterThan(0)
-        expect(new Set(settles)).toEqual(new Set(['dot-time']))
+        expect(new Set(settles)).toEqual(new Set([true]))
       }
       await home(target)
       await expect
@@ -1289,15 +1283,15 @@ describe('visual capture of the real product', () => {
       await openSession(target, viewport, sessions.running)
       await shows(target, '用例覆盖了省略密钥的情况，运行一次确认。')
       await reachable(target.getByRole('button', { name: '停止', exact: true }))
-      // Running work turns the comet on its tool row and the turn ends with the live line, which says how long the run
-      // has worked; the bar above the input says nothing then, and the open session's own row leaves its comet out.
-      await target.locator('.tool-card .ui-comet').first().waitFor()
+      // Running work turns the spinner on its tool row and the turn ends with the live line, which says how long the run
+      // has worked; the bar above the input says nothing then, and the open session's own row leaves its running out.
+      await target.locator('.tool-card .ui-spinner').first().waitFor()
       await target
         .locator('.turn-footer.is-live')
         .getByText(/^已运行 /)
         .waitFor()
       expect(await target.locator('.run-bar-collapse[data-state="open"]').count()).toBe(0)
-      if (sidebar) expect(await sidebar.locator(`[data-task-id="${sessions.running}"] .ui-comet`).count()).toBe(0)
+      if (sidebar) expect(await sidebar.locator(`[data-task-id="${sessions.running}"] .ui-spinner`).count()).toBe(0)
       await settleMotion(target)
       await recorder.capture(target, viewport, 'session-running', 'tool running')
       if (sidebar) await recorder.capture(target, viewport, 'sidebar-running', 'running session selected', sidebar)
@@ -1367,15 +1361,15 @@ describe('visual capture of the real product', () => {
       await openSession(target, viewport, sessions.done)
       await shows(target, /建议再补一条/)
       if (sidebar) {
-        // Each row's status slot shows one thing: the running comet, the waiting pill, failed, unread or the time, which
-        // is also what a cancelled session shows.
+        // Each row's status slot shows one thing in status words: 运行中 with its spinner, 等你处理 with its shield,
+        // 失败, the unread check or the time, which is also what a cancelled session shows.
         const row = (id: string) => sidebar.locator(`[data-task-id="${id}"]`)
-        await row(sessions.running).locator('.ui-comet').waitFor()
+        await row(sessions.running).locator('.ui-status-word[data-tone="running"]', { hasText: '运行中' }).waitFor()
         for (const id of [sessions.r1, sessions.r2, sessions.hidden, sessions.advisory])
-          await row(id).locator('.ui-waiting-pill', { hasText: '待批准' }).waitFor()
-        await row(sessions.failed).locator('.ui-status-failed', { hasText: '失败' }).waitFor()
+          await row(id).locator('.ui-status-word[data-tone="waiting"]', { hasText: '等你处理' }).waitFor()
+        await row(sessions.failed).locator('.ui-status-word[data-tone="failed"]', { hasText: '失败' }).waitFor()
         await row(sessions.cancelled).locator('.ui-status-time').waitFor()
-        await row(sessions.unread).locator('.ui-status-dot').waitFor()
+        await row(sessions.unread).locator('.ui-status-unread').waitFor()
         await row(sessions.plan).locator('.ui-status-time').waitFor()
         // The rows above the list are ghost rows: the open session's neutral selection is the column's only resting fill.
         const fills = await sidebar
@@ -1513,8 +1507,8 @@ describe('visual capture of the real product', () => {
       const r1 = target.locator('[data-approval-id]')
       await reachable(r1.getByRole('button', { name: '允许一次', exact: true }))
       await reachable(r1.getByRole('button', { name: '拒绝', exact: true }))
-      // The card waits for the person with the one amber pill in its header.
-      await r1.locator('.tool-card-header .ui-waiting-pill', { hasText: '待批准' }).waitFor()
+      // The card waits for the person with the one amber status word in its header.
+      await r1.locator('.tool-card-header .ui-status-word[data-tone="waiting"]', { hasText: '待批准' }).waitFor()
       await recorder.capture(target, viewport, 'approval-r1', 'R1 waiting for approval')
       if (sidebar) await recorder.capture(target, viewport, 'sidebar-waiting', 'session waiting for approval selected', sidebar)
       if (viewport.name === 'desktop') {
@@ -1685,7 +1679,7 @@ describe('visual capture of the real product', () => {
       const locked = target.locator('[data-approval-id]')
       await locked.getByText('此设备没有「批准普通操作」权限', { exact: true }).waitFor()
       expect(await locked.getByRole('button', { name: /允许/ }).count()).toBe(0)
-      await locked.locator('.tool-card-header .ui-waiting-pill', { hasText: '待批准' }).waitFor()
+      await locked.locator('.tool-card-header .ui-status-word[data-tone="waiting"]', { hasText: '待批准' }).waitFor()
       await reachable(locked.getByRole('button', { name: '拒绝', exact: true }))
       await recorder.capture(target, viewport, 'approval-r1-locked', 'R1 on a device without 批准普通操作')
       await target.unroute('**/link/api/snapshot')
@@ -1719,8 +1713,8 @@ describe('visual capture of the real product', () => {
         await home(target)
         const drawer = await openDrawer(target)
         for (const name of ['新建会话', '设置', '关闭会话列表']) await reachable(drawer.getByRole('button', { name, exact: true }))
-        // The tablet's sliding sidebar draws its status slots at 12.
-        await drawer.locator(`[data-task-id="${sessions.running}"] .ui-comet[data-size="12"]`).waitFor()
+        // The tablet's sliding sidebar says its states in status words.
+        await drawer.locator(`[data-task-id="${sessions.running}"] .ui-status-word[data-tone="running"] .ui-spinner`).waitFor()
         await noHorizontalOverflow(target, drawer)
         await settleMotion(target)
         await recorder.capture(target, viewport, 'navigation', 'session list drawer')
@@ -2008,7 +2002,7 @@ describe('visual capture of the real product', () => {
               .getByRole('switch')
               .first()
               .evaluate(element => getComputedStyle(element, '::before').width)
-            expect(switchTrack).toBe(viewport.touch ? '44px' : '32px')
+            expect(switchTrack).toBe(viewport.touch ? '44px' : '30px')
             await recorder.capture(target, viewport, `ui-gallery-${name}`, `design system: ${name}`, section)
           }
         } finally {

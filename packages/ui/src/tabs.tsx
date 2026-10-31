@@ -1,4 +1,5 @@
-import { useLayoutEffect, useRef, type KeyboardEvent, type ReactNode } from 'react'
+import { useRef, type KeyboardEvent, type ReactNode } from 'react'
+import { Icon, type LucideIcon } from './icon.tsx'
 import { cx, nextIndex } from './internal.ts'
 
 export interface TabOption<T extends string> {
@@ -6,12 +7,15 @@ export interface TabOption<T extends string> {
   label: string
   /** The id of the panel this tab shows. */
   controls?: string
+  /** A 12px glyph before the label. */
+  icon?: LucideIcon
 }
 
 /**
- * Text tabs that switch the content of one area: pills without a track, the selected one a neutral fill that slides to
- * its place. Never underlined, never blue. One tab stop; ←/→ move and select, Home and End go to the ends. `actions`
- * sits at the end of the row, for quiet xs ghost buttons.
+ * Tabs that switch the content of one area: 24px with 6px corners and 12/16·500 words after an optional 12px glyph,
+ * without a track; the selected tab stands on the hover fill in ink, the others are muted. The selection moves at once
+ * and never slides; the area's content cross-fades. Never underlined, never blue. One tab stop; ←/→ move and select,
+ * Home and End go to the ends. `actions` sits at the end of the row, for quiet xs ghost buttons.
  */
 export function Tabs<T extends string>({
   label,
@@ -28,23 +32,8 @@ export function Tabs<T extends string>({
   actions?: ReactNode
   className?: string
 }) {
-  const list = useRef<HTMLDivElement>(null)
   const tabs = useRef<Array<HTMLButtonElement | null>>([])
   const selected = options.findIndex(option => option.value === value)
-
-  // The fill is one element that moves between tabs of different widths, so it is measured from the selected tab.
-  useLayoutEffect(() => {
-    const tab = tabs.current[selected]
-    const element = list.current
-    if (!element) return
-    if (!tab) {
-      element.style.removeProperty('--tab-x')
-      element.style.removeProperty('--tab-width')
-      return
-    }
-    element.style.setProperty('--tab-x', `${tab.offsetLeft}px`)
-    element.style.setProperty('--tab-width', `${tab.offsetWidth}px`)
-  })
 
   const keydown = (event: KeyboardEvent<HTMLDivElement>) => {
     const focused = tabs.current.findIndex(tab => tab === event.target)
@@ -58,8 +47,7 @@ export function Tabs<T extends string>({
 
   return (
     <div className={cx('ui-tabs', className)}>
-      <div ref={list} className="ui-tab-list" role="tablist" aria-label={label} onKeyDown={keydown}>
-        {selected >= 0 && <span className="ui-tab-fill" aria-hidden="true" />}
+      <div className="ui-tab-list" role="tablist" aria-label={label} onKeyDown={keydown}>
         {options.map((option, index) => (
           <button
             key={option.value}
@@ -75,6 +63,7 @@ export function Tabs<T extends string>({
             onClick={() => {
               if (option.value !== value) onValueChange(option.value)
             }}>
+            {option.icon && <Icon icon={option.icon} size={12} />}
             {option.label}
           </button>
         ))}
@@ -85,8 +74,8 @@ export function Tabs<T extends string>({
 }
 
 /**
- * Filter pills: the same pills as tabs, for narrowing a list. They are toggle buttons (aria-pressed), not tabs, and
- * share one tab stop; ←/→ move and choose.
+ * Filters: drawn as tabs, for narrowing a list. They are toggle buttons (aria-pressed), not tabs, and share one tab
+ * stop; ←/→ move and choose.
  */
 export function FilterPills<T extends string>({
   label,

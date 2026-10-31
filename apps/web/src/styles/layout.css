@@ -14,7 +14,7 @@ body {
  * information sit on it without a divider, and from 768px the conversation is a sheet of paper inset by --shell-inset.
  * The page sets --sidebar-width from 1024px (the inset while the sidebar is shut) with --sidebar-open-width (the width
  * its content keeps), and --inspector-width (the inset while the column is closed) with --inspector-open-width: opening
- * and shutting slide the tracks (180ms) while the content stays as wide as it was and is clipped, and a drag moves
+ * and shutting slide the tracks (--m-panel) while the content stays as wide as it was and is clipped, and a drag moves
  * nothing but its track.
  */
 .app-shell {
@@ -24,8 +24,8 @@ body {
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
-  background: var(--bg-app);
-  transition: grid-template-columns var(--d-base) var(--ease);
+  background: var(--sidebar);
+  transition: grid-template-columns var(--m-panel) var(--e-panel);
 }
 .app-shell[data-resizing] {
   transition: none;
@@ -36,7 +36,7 @@ body {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  background: var(--bg-app);
+  background: var(--sidebar);
 }
 .sidebar:focus {
   outline: none;
@@ -47,7 +47,7 @@ body {
   }
   .app-shell[data-sidebar='collapsed'] .sidebar {
     visibility: hidden;
-    transition: visibility 0s linear var(--d-base);
+    transition: visibility 0s linear var(--m-panel);
   }
 }
 
@@ -56,7 +56,7 @@ body {
   top: var(--shell-inset);
   bottom: var(--shell-inset);
   left: max(0px, calc(var(--sidebar-width) - 3px));
-  transition: left var(--d-base) var(--ease);
+  transition: left var(--m-panel) var(--e-panel);
 }
 .app-shell[data-resizing] .sidebar-resize {
   transition: none;
@@ -67,7 +67,7 @@ body {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  background: var(--bg-pane);
+  background: var(--canvas);
 }
 @media (min-width: 768px) {
   .workspace {
@@ -76,7 +76,6 @@ body {
     overflow: clip;
     border: 1px solid var(--line);
     border-radius: var(--r-12);
-    corner-shape: var(--corner-shape);
   }
 }
 /* The rest of the main column; it has no box of its own, so the page layout is unchanged. */
@@ -94,7 +93,7 @@ body {
 
 .rail {
   /* Counts on the rail's buttons are cut out of the ground. */
-  --surface: var(--bg-app);
+  --surface: var(--sidebar);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -102,7 +101,7 @@ body {
   width: 56px;
   min-height: 0;
   padding: var(--sp-12) 0 calc(var(--sp-12) + env(safe-area-inset-bottom));
-  background: var(--bg-app);
+  background: var(--sidebar);
 }
 .rail > .brand-mark {
   margin-bottom: var(--sp-12);
@@ -117,12 +116,12 @@ body {
   padding: 0;
   border: 0;
   background: var(--scrim);
-  animation: fade-in var(--d-base) var(--ease);
+  animation: fade-in var(--m-sheet) var(--e-sheet);
 }
 
 /*
  * Tablets: the session list slides over from the left as a floating sheet of the ground, set in by the paper's own 8px
- * and rounded like it (12), with the floating shadow over the scrim; it slides in over 240ms and out over 180ms.
+ * and rounded like it (12), with the floating shadow over the scrim; it slides in over --m-sheet and out in 70% of it.
  */
 @media (max-width: 1023.98px) {
   .app-shell {
@@ -137,20 +136,19 @@ body {
     width: min(calc(100vw - 2 * var(--shell-inset)), 300px);
     overflow: hidden;
     border-radius: var(--r-12);
-    corner-shape: var(--corner-shape);
-    box-shadow: var(--sh-float);
+    box-shadow: var(--sh-pop);
     transform: translateX(calc(-100% - 2 * var(--shell-inset)));
     visibility: hidden;
     transition:
-      transform var(--d-slow-exit) var(--ease-exit),
-      visibility 0s linear var(--d-slow-exit);
+      transform calc(var(--m-sheet) * 0.7) var(--e-exit),
+      visibility 0s linear calc(var(--m-sheet) * 0.7);
   }
   /* `none` (not translateX(0)) so fixed popovers inside position against the viewport. */
   .sidebar.is-open {
     transform: none;
     visibility: visible;
     transition:
-      transform var(--d-slow) var(--ease),
+      transform var(--m-sheet) var(--e-sheet),
       visibility 0s;
   }
   /* Its head row lines up with the paper's top bar beside it. */
@@ -164,13 +162,13 @@ body {
     transform: none;
     opacity: 0;
     transition:
-      opacity var(--d-fast) var(--ease),
-      visibility 0s linear var(--d-fast);
+      opacity var(--m-micro) var(--e-micro),
+      visibility 0s linear var(--m-micro);
   }
   .sidebar.is-open {
     opacity: 1;
     transition:
-      opacity var(--d-fast) var(--ease),
+      opacity var(--m-micro) var(--e-micro),
       visibility 0s;
   }
 }
@@ -183,7 +181,7 @@ body {
 
 /*
  * Conversation pane. The top bar (48) inside the paper: the title, a ghost button with chevron-down (shown on hover)
- * that opens the session's menu, then where it runs (the harness tile, harness · project in text-3) and its state
+ * that opens the session's menu, then where it runs (the harness tile, harness · project in muted ink) and its state
  * when that is not the default; on the right, the connection only when it is lost, full access, the demo model, the
  * inspector toggle and ⋯. While the sidebar is shut, its opener and 新建会话 lead the bar.
  */
@@ -194,12 +192,12 @@ body {
   flex-shrink: 0;
   height: var(--topbar-height);
   padding: 0 var(--sp-12);
-  background: var(--bg-pane);
+  background: var(--canvas);
 }
 /*
  * The sidebar's opener, 新建会话 and 等你处理 stay in the bar from 1024px and unfold in step with the sidebar's track:
- * their width moves with it (180ms either way), so the title glides with the paper in one direction instead of
- * jumping; they fade in over the same 180ms and out in 120ms. The bar's gap after them is inside the clipped row and
+ * their width moves with it (--m-panel either way), so the title glides with the paper in one direction instead of
+ * jumping; they fade in over the same --m-panel and out over --m-micro. The bar's gap after them is inside the clipped row and
  * folds away with them. The row clips only sideways and starts 4px early, so focus rings and counts are not cut off.
  */
 .topbar-sidebar-actions {
@@ -210,17 +208,17 @@ body {
   opacity: 0;
   visibility: hidden;
   transition:
-    grid-template-columns var(--d-base) var(--ease),
-    opacity var(--d-fast) var(--ease-exit),
-    visibility 0s linear var(--d-base);
+    grid-template-columns var(--m-panel) var(--e-panel),
+    opacity var(--m-micro) var(--e-micro),
+    visibility 0s linear var(--m-panel);
 }
 .topbar-sidebar-actions[data-open] {
   grid-template-columns: 1fr;
   opacity: 1;
   visibility: visible;
   transition:
-    grid-template-columns var(--d-base) var(--ease),
-    opacity var(--d-base) var(--ease),
+    grid-template-columns var(--m-panel) var(--e-panel),
+    opacity var(--m-panel) var(--e-panel),
     visibility 0s;
 }
 .topbar-sidebar-actions-inner {
@@ -261,7 +259,7 @@ body {
   padding: 0 var(--sp-8);
 }
 .workspace.is-new .topbar-title h1 {
-  color: var(--text-3);
+  color: var(--muted);
 }
 .topbar-title-button {
   display: inline-flex;
@@ -272,26 +270,23 @@ body {
   padding: 0 var(--sp-4) 0 var(--sp-8);
   border: 0;
   border-radius: var(--r-8);
-  corner-shape: var(--corner-shape);
   background: transparent;
-  color: var(--text-1);
+  color: var(--ink);
   font-weight: 500;
-  transition: background-color var(--d-fast) var(--ease-exit);
+  transition: background-color var(--m-micro) var(--e-micro);
 }
 .topbar-title-button:hover,
 .topbar-title-button[aria-expanded='true'] {
-  background: var(--bg-hover);
-  transition-duration: 0s;
+  background: var(--hover);
 }
 .topbar-title-chevron {
   flex-shrink: 0;
-  color: var(--icon);
+  color: var(--muted);
   opacity: 0;
-  transition: opacity var(--d-fast) var(--ease-exit);
+  transition: opacity var(--m-micro) var(--e-micro);
 }
 .topbar-title-button:is(:hover, :focus-visible, [aria-expanded='true']) .topbar-title-chevron {
   opacity: 1;
-  transition-duration: 0s;
 }
 /* Where the session runs: plain meta text after the harness tile, not a pill. */
 .topbar-source {
@@ -300,9 +295,9 @@ body {
   gap: var(--sp-6);
   min-width: 0;
   max-width: 320px;
-  color: var(--text-3);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  color: var(--muted);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
 }
 .topbar-source-text {
   min-width: 0;
@@ -316,7 +311,7 @@ body {
   gap: var(--sp-4);
   flex-shrink: 0;
 }
-.topbar-actions > .ui-status-pill,
+.topbar-actions > .ui-status-word,
 .topbar-actions > .connection-pill {
   margin-right: var(--sp-4);
 }
@@ -329,10 +324,10 @@ body {
   height: 20px;
   padding: 0 var(--sp-8);
   border: 0;
-  border-radius: var(--r-pill);
-  background: var(--warn-bg);
-  box-shadow: inset 0 0 0 1px var(--warn-border);
-  color: var(--warn-text);
+  border-radius: var(--r-full);
+  background: var(--amber-soft);
+  box-shadow: inset 0 0 0 1px var(--amber-line);
+  color: var(--amber);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   font-weight: 500;
@@ -373,8 +368,8 @@ body {
   mask-image: linear-gradient(to bottom, transparent 0, #000 16px, #000 calc(100% - 16px), transparent 100%);
 }
 .transcript:focus-visible {
-  outline: none;
-  box-shadow: var(--ring-focus-inset);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 /* The column: its first line 16 under the top bar, clear of the 16px fade; turns space themselves (messages.css). */
 .transcript-content {
@@ -386,13 +381,13 @@ body {
   padding: var(--sp-16) var(--gutter) var(--sp-32);
 }
 .transcript-empty {
-  color: var(--text-3);
+  color: var(--muted);
   text-align: center;
   padding: var(--sp-48) 0;
 }
 /*
- * 「回到最新」: a floating pill 12 above the input. It rises 8px as it fades in (180ms) and fades out as the reader
- * arrives (120ms). While a turn runs it carries the comet, the phase and the time so far, at most 280 wide.
+ * 「回到最新」: a floating pill 12 above the input. It rises as it fades in (--m-enter) and fades out as the reader
+ * arrives. While a turn runs it carries the spinner, the phase and the time so far, at most 280 wide.
  */
 .jump-latest {
   position: absolute;
@@ -407,23 +402,23 @@ body {
   height: 32px;
   padding: 0 var(--sp-16) 0 var(--sp-12);
   border: 0;
-  border-radius: var(--r-pill);
-  background: var(--bg-raised);
-  color: var(--text-1);
-  box-shadow: var(--sh-float);
-  font-size: var(--fs-label);
-  line-height: var(--lh-label);
+  border-radius: var(--r-full);
+  background: var(--raised);
+  color: var(--ink);
+  box-shadow: var(--sh-pop);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
   font-weight: 500;
   white-space: nowrap;
-  animation: jump-in var(--d-base) var(--ease);
+  animation: jump-in var(--m-enter) var(--e-enter);
 }
 .jump-latest.is-live {
   padding: 0 var(--sp-12);
-  color: var(--text-2);
+  color: var(--ink-2);
 }
 .jump-latest[data-leaving] {
   opacity: 0;
-  transition: opacity var(--d-fast) var(--ease-exit);
+  transition: opacity calc(var(--m-enter) * 0.7) var(--e-exit);
 }
 .jump-latest-phase {
   min-width: 0;
@@ -432,7 +427,7 @@ body {
 }
 .jump-latest-time {
   flex-shrink: 0;
-  color: var(--text-3);
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 @media (max-width: 359.98px) {
@@ -478,8 +473,8 @@ body {
 }
 .new-session-title {
   justify-self: start;
-  font-size: var(--fs-display);
-  line-height: var(--lh-display);
+  font-size: var(--fs-hero);
+  line-height: var(--lh-hero);
   font-weight: 600;
   text-align: left;
 }
@@ -517,7 +512,7 @@ body {
 }
 .app-shell:not([data-inspector]) .inspector-column {
   visibility: hidden;
-  transition: visibility 0s linear var(--d-base);
+  transition: visibility 0s linear var(--m-panel);
 }
 .inspector-resize {
   top: var(--shell-inset);
@@ -532,7 +527,7 @@ body {
 
 /*
  * The page of 会话信息 (phones, and tablets too narrow for the column): pushed over the conversation from the right
- * (240ms), which moves a quarter to the left beneath it; going back reverses it (180ms). The same blocks sit on the
+ * (--m-push), which moves a quarter to the left beneath it; going back reverses it in 70% of that. The same blocks sit on the
  * ground under a header with the way back.
  */
 .info-page {
@@ -541,14 +536,14 @@ body {
   z-index: 6;
   display: flex;
   flex-direction: column;
-  background: var(--bg-app);
-  animation: page-in var(--d-slow) var(--ease);
+  background: var(--sidebar);
+  animation: page-in var(--m-push) var(--e-push);
 }
 .info-page[data-leaving] {
-  animation: page-out var(--d-slow-exit) var(--ease-exit) forwards;
+  animation: page-out calc(var(--m-push) * 0.7) var(--e-exit) forwards;
 }
 .workspace-view > * {
-  transition: translate var(--d-slow) var(--ease);
+  transition: translate var(--m-push) var(--e-push);
 }
 .workspace[data-info-page] .workspace-view > * {
   translate: -24% 0;
@@ -566,7 +561,7 @@ body {
   min-width: 0;
 }
 .info-page-title h2 {
-  color: var(--text-1);
+  color: var(--ink);
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
   font-weight: 500;
@@ -575,7 +570,7 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-3);
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
@@ -624,5 +619,36 @@ body {
   bottom: calc(24px + env(safe-area-inset-bottom));
   z-index: 60;
   transform: translateX(-50%);
-  animation: rise-in var(--d-base) var(--ease);
+  animation: rise-in var(--m-enter) var(--e-enter);
+}
+
+/* Reduced motion: the columns and the resize handle move at once; pages and floating pieces only fade. */
+@media (prefers-reduced-motion: reduce) {
+  .app-shell,
+  .sidebar-resize {
+    transition: none;
+  }
+  .topbar-sidebar-actions {
+    transition:
+      opacity var(--m-micro) var(--e-micro),
+      visibility 0s linear var(--m-micro);
+  }
+  .topbar-sidebar-actions[data-open] {
+    transition:
+      opacity var(--m-micro) var(--e-micro),
+      visibility 0s;
+  }
+  .jump-latest,
+  .info-page,
+  .toast {
+    animation: fade-in var(--m-micro) var(--e-micro);
+  }
+  .info-page[data-leaving] {
+    animation: page-fade-out calc(var(--m-micro) * 0.7) var(--e-exit) forwards;
+  }
+  .workspace-view > *,
+  .workspace[data-info-page] .workspace-view > * {
+    translate: none;
+    transition: none;
+  }
 }

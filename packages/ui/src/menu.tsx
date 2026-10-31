@@ -111,7 +111,7 @@ export interface MenuItem {
   meta?: ReactNode
   /** A tile or avatar between the leading slot and the label: the value's own picture (a harness, a model service). */
   media?: ReactNode
-  /** Selection menus: the chosen item, with an accent check and its label at 500. */
+  /** Selection menus: the chosen item, with an ink check and its label at 500. */
   checked?: boolean
   /** A destructive action (删除…): red text, placed last after a separator. */
   danger?: boolean
@@ -166,8 +166,8 @@ function itemsOf(container: HTMLElement): HTMLButtonElement[] {
 }
 
 /**
- * The list of a menu, inside the layer that draws its surface (a raised layer, 12px corners and 4px inside, at least
- * 220 wide; the width a caller gives is the layer's outer width). Rows are 32 (48 with a description), radius 8; the
+ * The list of a menu, inside the layer that draws its surface (glass, 8px corners and 4px inside, at least 220 wide;
+ * the width a caller gives is the layer's outer width). Rows are 28 (44 with a description), radius 6; the
  * hover is instant. The leading slot is there only when something can fill it (a selection's check, an item's glyph);
  * a menu of plain actions starts its text at the menu's padding. ↑/↓ move through every item (a disabled one too,
  * which reads out its reason), Home and End go to the ends, typing jumps to the next label that starts with the typed
@@ -533,7 +533,7 @@ export interface ValuePickerProps<T extends string> extends LayerPlacement {
   onValueChange: (value: T) => void | Promise<void>
   /** A 14px glyph that serves as the label where there is no text label (the context row), or a 16px tile or avatar. */
   leading?: LucideIcon | ReactNode
-  /** Shown in text-3 when nothing is chosen (「选择模型」), never in a warning colour. */
+  /** Shown in muted ink when nothing is chosen (「选择模型」), never in a warning colour. */
   placeholder?: string
   /** xs: 24 with 6px corners, for the inspector. */
   size?: 'sm' | 'xs'
@@ -590,9 +590,9 @@ function isGlyph(value: unknown): value is LucideIcon {
 }
 
 /**
- * Picks one of a set of values in place and shows only the current one: 13/18 at weight 400 in text-2, ending in
+ * Picks one of a set of values in place and shows only the current one: 13/18 at weight 400 in ink-2, ending in
  * chevrons-up-down (never chevron-down, which belongs to action menus). A ghost 28px control: hover and an open menu
- * darken it and turn the value to text-1. With a single possible value it is plain text without an arrow. Space,
+ * lay the hover fill under it and turn the value to ink. With a single possible value it is plain text without an arrow. Space,
  * Enter or ↓ open the menu on the current value; ↑/↓ move, Enter chooses, Escape closes and returns focus, typing
  * jumps to a value. A changed value cross-fades; nothing pops up to confirm it. On phones the menu is a single-choice
  * sheet.

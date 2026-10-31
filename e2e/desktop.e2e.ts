@@ -202,8 +202,8 @@ async function holdCardFold(page: Page) {
 }
 
 /**
- * The held arrival: the fold opens by its height on the entry curve while the card fades in; captures `target` with
- * them at 0, 60, 120 and 180 ms, then lets every transition finish.
+ * The held arrival: the fold opens by its height while the card fades in with it, both over --m-panel; captures
+ * `target` with them at 0, 60, 120 and 200 ms, then lets every transition finish.
  */
 async function cardArrivalFrames(page: Page, target: Locator, name: string) {
   await page.waitForTimeout(400)
@@ -214,16 +214,16 @@ async function cardArrivalFrames(page: Page, target: Locator, name: string) {
         .filter(animation => animation.effect instanceof KeyframeEffect && animation.effect.target?.matches(selector))
         .map(animation => ({
           property: animation instanceof CSSTransition ? animation.transitionProperty : '',
-          duration: Number(animation.effect!.getTiming().duration),
+          duration: Math.round(Number(animation.effect!.getTiming().duration)),
         }))
         .toSorted((a, b) => a.property.localeCompare(b.property)),
     CARD_FOLD,
   )
   expect(held).toEqual([
-    { property: 'grid-template-rows', duration: 180 },
-    { property: 'opacity', duration: 120 },
+    { property: 'grid-template-rows', duration: 200 },
+    { property: 'opacity', duration: 200 },
   ])
-  for (const ms of [0, 60, 120, 180]) {
+  for (const ms of [0, 60, 120, 200]) {
     await page.evaluate(
       ([selector, at]) => {
         for (const animation of document.getAnimations()) {
@@ -624,7 +624,8 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await card.locator('.confirm-sheet-text', { hasText: confirmation.preview.reason }).waitFor()
       // The card keeps its look under styles added to the page while it waits.
       await expectUnmovedByInjectedStyles(page, [
-        '[data-approval-id] .tool-card-header .ui-status-pill',
+        '[data-approval-id] .tool-card-header .ui-status-word',
+        '[data-approval-id] .tool-card-header .ui-status-word-glyph',
         '[data-approval-id] .approval-footnote',
         '[data-approval-id] .confirm-sheet-text',
         '[data-approval-id] .ui-button',
@@ -670,7 +671,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           const context = canvas.getContext('2d')!
           context.fillStyle = '#ffffff'
           context.fillRect(0, 0, 400, 400)
-          context.fillStyle = '#1d1c1a'
+          context.fillStyle = '#18181b'
           const cell = 400 / (modules + 2)
           let seed = 7
           for (let y = 0; y < modules; y++)
@@ -688,7 +689,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
             context.fillRect((x + 1) * cell, (y + 1) * cell, 7 * cell, 7 * cell)
             context.fillStyle = '#ffffff'
             context.fillRect((x + 2) * cell, (y + 2) * cell, 5 * cell, 5 * cell)
-            context.fillStyle = '#1d1c1a'
+            context.fillStyle = '#18181b'
             context.fillRect((x + 3) * cell, (y + 3) * cell, 3 * cell, 3 * cell)
           }
           image.src = canvas.toDataURL('image/png')

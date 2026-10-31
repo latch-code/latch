@@ -299,7 +299,7 @@ export function InlineConfirm({ active, rank, className }: { active: boolean; ra
     if (flowId === undefined || !card.current?.closest('.ui-popover')) return undefined
     // A new card can grow below the visible part of a picker. Reveal it after the fold opens;
     // polling the same flow must not pull the reader back while they inspect its details.
-    const timer = setTimeout(() => card.current?.scrollIntoView({ block: 'start' }), MOTION.base + MOTION.stagger)
+    const timer = setTimeout(() => card.current?.scrollIntoView({ block: 'start' }), MOTION.panel)
     return () => {
       clearTimeout(timer)
     }

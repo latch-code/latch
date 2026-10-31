@@ -18,6 +18,6 @@
 @import './styles/state.css' layer(ui);
 @import './styles/tile.css' layer(ui);
 @import './styles/tile-choice.css' layer(ui);
-@import './styles/live.css' layer(ui);
+@import './styles/status.css' layer(ui);
 @import './styles/resize.css' layer(ui);
 @import './styles/motion.css' layer(ui);

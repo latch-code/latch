@@ -145,7 +145,7 @@ function fact(status: TaskSummary['status'], options: { unread?: boolean; cancel
 }
 
 describe('session status slot', () => {
-  it("shows one thing by priority and leaves the comet out of the open session's row", () => {
+  it("shows one thing by priority and leaves 运行中 out of the open session's row", () => {
     expect(slot('waiting-approval', { selected: true, unread: true })).toBe('waiting')
     expect(slot('failed', { unread: true })).toBe('failed')
     expect(slot('running', { unread: true })).toBe('running')
@@ -162,8 +162,9 @@ describe('session status slot', () => {
     expect(slot('waiting-approval', { drift: true })).toBe('waiting')
   })
   it("adds on a phone's second line only what the slot does not already say, never a preview", () => {
-    expect(fact('running')).toBe('正在运行')
-    expect(fact('running', { cancelling: true })).toBe('正在取消')
+    // The slot says these in its own words, so the line does not repeat them.
+    expect(fact('running')).toBeUndefined()
+    expect(fact('running', { cancelling: true })).toBeUndefined()
     // The slot shows the waiting pill, the failure or the dot, so the time moves to the second line.
     expect([fact('waiting-approval'), fact('failed'), fact('idle', { unread: true }), fact('cancelled', { drift: true })]).toEqual([
       '09:15',
