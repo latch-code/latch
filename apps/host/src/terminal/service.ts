@@ -1,12 +1,12 @@
 // The Host's terminals: one login shell per terminal, in the session's primary folder, on a pty that latch-pty
 // (native/macos/LatchTerminal.swift) owns. The shell runs as the user, like any terminal: no approval, path rule or
-// outbound policy applies to what runs in it. Only this computer (host.sock) opens, types in, resizes and closes a
-// terminal; every other device may only watch. Routes stay thin: each method takes the requester and does its own checks.
+// outbound policy applies to what runs in it. Everything here, reading output included, is for this computer (host.sock)
+// alone: output is raw and may hold keys. Routes stay thin: each method takes the requester and does its own checks.
 import { randomUUID } from 'node:crypto'
 import { lstat, stat } from 'node:fs/promises'
 import { constants } from 'node:os'
 import { basename, isAbsolute, join } from 'node:path'
-import { isLocalListener, type DataScope, type ListenerClass } from '@latch/protocol'
+import { isLocalListener, type ListenerClass } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { redactSecrets } from '@latch/core/node-kit'
 import { localOnly } from '../access.ts'
@@ -22,7 +22,7 @@ import {
 } from './helper.ts'
 import { LocalServiceDetector, type LocalService } from './localhost.ts'
 import { Scrollback } from './scrollback.ts'
-import { ATTACH_LINE_LIMIT, attachmentText, tailOfLines, type TerminalText } from './text.ts'
+import { ATTACH_LINE_LIMIT, attachmentText, fromFirstWholeLine, type TerminalText } from './text.ts'
 
 export const TERMINALS_PER_SESSION = 8
 export const SCROLLBACK_BYTES = 512 * 1024
@@ -36,16 +36,10 @@ const SIZE_LIMIT = 1000
 const SELECTION_BYTES = 256 * 1024
 /** Of the scrollback, 「加入对话」 decodes at most the newest this many bytes. */
 const EXTRACT_BYTES = 256 * 1024
-/** 「加入对话」 per device: at most this many in a window. */
+/** 「加入对话」: at most this many in a window. */
 const EXTRACT_WINDOW_MS = 10_000
 const EXTRACTS_PER_WINDOW = 20
-/**
- * Watchers per terminal. This computer has slots of its own, so watchers elsewhere can never lock it out of its own
- * terminal, and no device takes more than its share.
- */
-const LOCAL_STREAMS = 8
-const REMOTE_STREAMS = 8
-const STREAMS_PER_DEVICE = 4
+const STREAMS_PER_TERMINAL = 8
 const STREAM_CHUNK_BYTES = 64 * 1024
 /**
  * A terminal that prints more than this in a window is not read again until the window ends (8 MiB/s): a runaway
@@ -62,8 +56,6 @@ export interface TerminalRequester {
   listener: ListenerClass
   /** The requesting device; the device that opened a terminal decides its size. */
   deviceId: string
-  /** Away from host.sock, output reaches only a device whose data scope is `all`, as file contents do. */
-  dataScope: DataScope
 }
 
 /** A terminal is always addressed together with its session, which the route has already authorized. */
@@ -94,8 +86,6 @@ export interface TerminalSummary {
   foreground?: string
   /** Development servers the output announced, newest first. */
   services: LocalService[]
-  /** The requester may open, type in and close terminals (this computer only). */
-  writable: boolean
   /** The requester decides this terminal's size. */
   sizeOwner: boolean
   createdAt: string
@@ -218,7 +208,7 @@ export class TerminalService {
   private readonly terminals = new Map<string, Terminal>()
   /** Closing terminals still count against the limits until their helper has really exited. */
   private readonly ending = new Set<Terminal>()
-  private readonly extracts = new Map<string, { start: number; count: number }>()
+  private extracts = { start: 0, count: 0 }
   private stopping = false
   private readonly now: () => number
 
@@ -244,6 +234,7 @@ export class TerminalService {
   }
 
   list(sessionId: string, requester: TerminalRequester): TerminalSummary[] {
+    this.admit(requester)
     return [...this.terminals.values()]
       .filter(terminal => terminal.sessionId === sessionId && terminal.status !== 'starting')
       .map(terminal => this.summary(terminal, requester))
@@ -382,9 +373,9 @@ export class TerminalService {
 
   /** Replays what is kept from `from` (or from the start), then live output, honouring the sink's back-pressure. */
   stream(ref: TerminalRef, requester: TerminalRequester, sink: TerminalStreamSink, options: { from?: number } = {}): TerminalStream {
-    this.admitOutput(requester)
+    this.admit(requester)
     const terminal = this.find(ref)
-    this.admitStream(terminal, requester)
+    this.admitStream(terminal)
     const { scrollback } = terminal
     const from = options.from
     const resumes = from !== undefined && Number.isSafeInteger(from) && from >= scrollback.start && from <= scrollback.end
@@ -415,57 +406,41 @@ export class TerminalService {
 
   /**
    * 「加入对话」: the selection the client sends, or the last lines of the output, as plain text through redactSecrets.
-   * Its work is linear in input of bounded size, and each device may ask EXTRACTS_PER_WINDOW times per window.
+   * Its work is linear in input of bounded size, and it runs at most EXTRACTS_PER_WINDOW times per window.
    */
   extract(ref: TerminalRef, requester: TerminalRequester, options: { lines?: number; selection?: string } = {}): TerminalText {
-    this.admitOutput(requester)
+    this.admit(requester)
     const terminal = this.find(ref)
     const lines = options.lines ?? ATTACH_LINE_LIMIT
     if (!Number.isInteger(lines) || lines < 1 || lines > ATTACH_LINE_LIMIT)
       throw new AppError(400, 'terminal-lines-invalid', `一次最多加入 ${ATTACH_LINE_LIMIT} 行`)
     if (options.selection !== undefined && Buffer.byteLength(options.selection) > SELECTION_BYTES)
       throw new AppError(413, 'terminal-selection-too-large', '选中的内容过多')
-    this.meterExtract(requester.deviceId)
+    this.meterExtract()
     if (options.selection !== undefined) return attachmentText(options.selection, lines)
     const { scrollback } = terminal
-    const start = Math.max(scrollback.replayStart(), scrollback.end - EXTRACT_BYTES)
-    const raw = tailOfLines(scrollback.read(start, scrollback.end - start), lines + 1)
-    return attachmentText(raw.toString('utf8'), lines)
+    const start = Math.max(scrollback.start, scrollback.end - EXTRACT_BYTES)
+    const raw = scrollback.read(start, scrollback.end - start)
+    const onLine = start === 0 || (start > scrollback.start && scrollback.read(start - 1, 1)[0] === 0x0a)
+    // All of the window, not only its last lines: redaction needs what surrounds them, and the work is linear.
+    const text = attachmentText((onLine ? raw : fromFirstWholeLine(raw)).toString('utf8'), lines)
+    return start === 0 ? text : { ...text, truncated: true }
   }
 
   private admit(requester: TerminalRequester): void {
     if (!isLocalListener(requester.listener)) throw localOnly()
   }
 
-  /** A terminal shows anything the shell prints, files and keys included. */
-  private admitOutput(requester: TerminalRequester): void {
-    if (!isLocalListener(requester.listener) && requester.dataScope !== 'all')
-      throw new AppError(403, 'terminal-scope', '这台设备的数据范围不包括终端的输出')
-  }
-
-  private admitStream(terminal: Terminal, requester: TerminalRequester): void {
-    const local = isLocalListener(requester.listener)
-    let pool = 0
-    let device = 0
-    for (const state of terminal.streams) {
-      if (isLocalListener(state.requester.listener) === local) pool++
-      if (state.requester.deviceId === requester.deviceId) device++
-    }
-    if (pool >= (local ? LOCAL_STREAMS : REMOTE_STREAMS) || device >= STREAMS_PER_DEVICE)
+  private admitStream(terminal: Terminal): void {
+    if (terminal.streams.size >= STREAMS_PER_TERMINAL)
       throw new AppError(429, 'terminal-streams', '同时查看这个终端的窗口过多，请先关闭其他窗口')
   }
 
-  private meterExtract(deviceId: string): void {
+  private meterExtract(): void {
     const now = this.now()
-    let window = this.extracts.get(deviceId)
-    if (!window || now - window.start >= EXTRACT_WINDOW_MS) {
-      // Windows that ended go, so the map holds only devices that asked in the last window.
-      for (const [id, entry] of this.extracts) if (now - entry.start >= EXTRACT_WINDOW_MS) this.extracts.delete(id)
-      window = { start: now, count: 0 }
-      this.extracts.set(deviceId, window)
-    }
-    if (window.count >= EXTRACTS_PER_WINDOW) throw new AppError(429, 'terminal-extract-busy', '加入对话太频繁，请稍后再试')
-    window.count++
+    if (now - this.extracts.start >= EXTRACT_WINDOW_MS) this.extracts = { start: now, count: 0 }
+    if (this.extracts.count >= EXTRACTS_PER_WINDOW) throw new AppError(429, 'terminal-extract-busy', '加入对话太频繁，请稍后再试')
+    this.extracts.count++
   }
 
   private find(ref: TerminalRef): Terminal {
@@ -482,7 +457,6 @@ export class TerminalService {
   }
 
   private summary(terminal: Terminal, requester: TerminalRequester): TerminalSummary {
-    const local = isLocalListener(requester.listener)
     return {
       id: terminal.id,
       sessionId: terminal.sessionId,
@@ -496,8 +470,7 @@ export class TerminalService {
       busy: terminal.busy,
       ...(terminal.foreground !== undefined ? { foreground: terminal.foreground } : {}),
       services: terminal.services.map(service => ({ ...service })),
-      writable: local,
-      sizeOwner: local && requester.deviceId === terminal.owner,
+      sizeOwner: requester.deviceId === terminal.owner,
       createdAt: new Date(terminal.createdAt).toISOString(),
     }
   }

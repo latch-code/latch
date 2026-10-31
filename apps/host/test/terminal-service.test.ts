@@ -15,9 +15,9 @@ import {
   type TerminalStreamEvent,
 } from '../src/terminal/service.ts'
 
-const mac: TerminalRequester = { listener: 'unix', deviceId: 'dev_mac', dataScope: 'all' }
-const secondDevice: TerminalRequester = { listener: 'unix', deviceId: 'dev_other', dataScope: 'all' }
-const phone: TerminalRequester = { listener: 'native-direct', deviceId: 'dev_phone', dataScope: 'all' }
+const mac: TerminalRequester = { listener: 'unix', deviceId: 'dev_mac' }
+const secondDevice: TerminalRequester = { listener: 'unix', deviceId: 'dev_other' }
+const phone: TerminalRequester = { listener: 'native-direct', deviceId: 'dev_phone' }
 const remote = LISTENER_CLASSES.filter(listener => listener !== 'unix')
 // Assembled at run time, so the source never holds a key-shaped line.
 const modelKey = ['sk', 'proj', 'a1B2'.repeat(8)].join('-')
@@ -139,24 +139,30 @@ afterEach(async () => {
   await rm(folder, { recursive: true, force: true })
 })
 
+const coloured = (bytes: number) => '\x1b[31mx\x1b[0m'.repeat(Math.ceil(bytes / 10)).slice(0, bytes)
+
 describe('terminal service', () => {
   it('opens, types in, resizes, signals and closes terminals only for this computer; every other listener only watches', async () => {
     const terminals = await service()
     for (const listener of remote) {
-      const requester: TerminalRequester = { listener, deviceId: 'dev_remote', dataScope: 'all' }
+      const requester: TerminalRequester = { listener, deviceId: 'dev_remote' }
       expect((await rejection(terminals.create('s1', requester, { cols: 80, rows: 24 }))).code).toBe('local-only')
     }
     expect(launched).toHaveLength(0)
     const opened = await terminals.create('s1', mac, { cols: 80, rows: 24 })
-    expect(opened).toMatchObject({ status: 'running', writable: true, sizeOwner: true, cols: 80, rows: 24 })
+    expect(opened).toMatchObject({ status: 'running', sizeOwner: true, cols: 80, rows: 24 })
     const ref = { sessionId: 's1', terminalId: opened.id }
     for (const listener of remote) {
-      const requester: TerminalRequester = { listener, deviceId: 'dev_mac', dataScope: 'all' }
+      const requester: TerminalRequester = { listener, deviceId: 'dev_mac' }
       expect((await rejection(() => terminals.input(ref, requester, Buffer.from('rm -rf ~\r')))).code).toBe('local-only')
       expect((await rejection(() => terminals.resize(ref, requester, { cols: 40, rows: 10 }))).code).toBe('local-only')
       expect((await rejection(() => terminals.signal(ref, requester, 'SIGINT'))).code).toBe('local-only')
       expect((await rejection(terminals.close(ref, requester, { force: true }))).code).toBe('local-only')
-      expect(terminals.list('s1', requester)).toMatchObject([{ id: opened.id, writable: false, sizeOwner: false }])
+      expect((await rejection(() => terminals.list('s1', requester))).code).toBe('local-only')
+      const watcher = recorder()
+      expect((await rejection(() => terminals.stream(ref, requester, watcher))).code).toBe('local-only')
+      expect(watcher.events).toEqual([])
+      expect((await rejection(() => terminals.extract(ref, requester))).code).toBe('local-only')
     }
     const helper = helperAt(0)
     expect([helper.inputs, helper.sizes, helper.signals]).toEqual([[], [], []])
@@ -232,7 +238,7 @@ describe('terminal service', () => {
     const { id } = await terminals.create('s1', mac, { cols: 80, rows: 24 })
     const ref = { sessionId: 's1', terminalId: id }
     const watcher = recorder()
-    terminals.stream(ref, phone, watcher)
+    terminals.stream(ref, mac, watcher)
     expect((await rejection(() => terminals.resize(ref, secondDevice, { cols: 50, rows: 20 }))).code).toBe('terminal-size-owner')
     expect((await rejection(() => terminals.resize(ref, phone, { cols: 50, rows: 20 }))).code).toBe('local-only')
     const helper = helperAt(0)
@@ -255,7 +261,7 @@ describe('terminal service', () => {
     helper.print('$ pnpm test\r\n')
     const slow = recorder()
     slow.full = true
-    const handle = terminals.stream(ref, phone, slow)
+    const handle = terminals.stream(ref, mac, slow)
     helper.print('a'.repeat(100_000))
     helper.print('b'.repeat(100_000))
     // One output event went out before the transport filled; the rest waits in the scrollback, not in memory per stream.
@@ -273,7 +279,7 @@ describe('terminal service', () => {
     expect(slow.output().endsWith('live\r\n')).toBe(true)
     // A reconnect from the last offset gets only what came after it.
     const again = recorder()
-    terminals.stream(ref, phone, again, { from: next })
+    terminals.stream(ref, mac, again, { from: next })
     expect(again.output()).toBe('live\r\n')
     handle.close()
     helper.print('after close\r\n')
@@ -360,12 +366,18 @@ describe('terminal service', () => {
     const ref = { sessionId: 's1', terminalId: id }
     const rows = Array.from({ length: 300 }, (_, row) => `row ${row}\r\n`).join('')
     helperAt(0).print(`\x1b[32m$\x1b[0m cat .env\r\nOPENAI_API_KEY=${modelKey}\r\n${rows}`)
-    const tail = terminals.extract(ref, phone)
+    const tail = terminals.extract(ref, mac)
     expect(tail).toMatchObject({ lines: 200, truncated: true, redacted: false })
     expect(tail.text.split('\n').at(-1)).toBe('row 299')
     expect(terminals.extract(ref, mac, { lines: 3 }).text).toBe('row 297\nrow 298\nrow 299')
     const selection = terminals.extract(ref, mac, { selection: `$ cat .env\nOPENAI_API_KEY=${modelKey}\n` })
-    expect(selection).toEqual({ text: '$ cat .env\nOPENAI_API_KEY=[redacted]', lines: 2, truncated: false, redacted: true })
+    expect(selection).toEqual({
+      text: '$ cat .env\nOPENAI_API_KEY=[redacted]',
+      lines: 2,
+      truncated: false,
+      redacted: true,
+      mayContainSecret: true,
+    })
     expect((await rejection(() => terminals.extract(ref, mac, { lines: 201 }))).code).toBe('terminal-lines-invalid')
     expect((await rejection(() => terminals.extract({ sessionId: 'other', terminalId: id }, mac))).code).toBe('terminal-not-found')
   })
@@ -388,50 +400,20 @@ describe('terminal service', () => {
     for (let asked = 4; asked < 20; asked++) terminals.extract(ref, mac, { lines: 1 })
     const busy = await rejection(() => terminals.extract(ref, mac, { lines: 1 }))
     expect([busy.status, busy.code]).toEqual([429, 'terminal-extract-busy'])
-    // Another device has its own allowance, and the window ends.
-    terminals.extract(ref, phone, { lines: 1 })
+    // The window ends.
     clock += 10_000
     terminals.extract(ref, mac, { lines: 1 })
   })
 
-  it('shows output away from this computer only to devices whose data scope is all, as file contents', async () => {
+  it('caps the watchers of a terminal', async () => {
     const terminals = await service()
     const { id } = await terminals.create('s1', mac, { cols: 80, rows: 24 })
     const ref = { sessionId: 's1', terminalId: id }
-    helperAt(0).print('$ cat .env\r\n')
-    for (const listener of remote) {
-      const work: TerminalRequester = { listener, deviceId: 'dev_work', dataScope: 'work' }
-      const watched = recorder()
-      const refused = await rejection(() => terminals.stream(ref, work, watched))
-      expect([refused.status, refused.code]).toEqual([403, 'terminal-scope'])
-      expect(watched.events).toEqual([])
-      expect((await rejection(() => terminals.extract(ref, work))).code).toBe('terminal-scope')
-      expect(terminals.list('s1', work)).toMatchObject([{ id, writable: false }])
-    }
-    // On host.sock the desktop app reads what it shows anyway.
-    const local = recorder()
-    terminals.stream(ref, { ...mac, dataScope: 'work' }, local)
-    expect(local.output()).toBe('$ cat .env\r\n')
-  })
-
-  it('keeps watcher slots for this computer, and caps them per device, so watchers elsewhere never lock it out', async () => {
-    const terminals = await service()
-    const { id } = await terminals.create('s1', mac, { cols: 80, rows: 24 })
-    const ref = { sessionId: 's1', terminalId: id }
-    const tablet: TerminalRequester = { listener: 'lan-tls', deviceId: 'dev_tablet', dataScope: 'all' }
-    const laptop: TerminalRequester = { listener: 'native-relay', deviceId: 'dev_laptop', dataScope: 'all' }
-    const phoneStreams = Array.from({ length: 4 }, () => terminals.stream(ref, phone, recorder()))
-    expect((await rejection(() => terminals.stream(ref, phone, recorder()))).code).toBe('terminal-streams')
-    for (let index = 0; index < 4; index++) terminals.stream(ref, tablet, recorder())
-    // The slots of devices elsewhere are full ...
-    const full = await rejection(() => terminals.stream(ref, laptop, recorder()))
+    const watchers = Array.from({ length: 8 }, () => terminals.stream(ref, mac, recorder()))
+    const full = await rejection(() => terminals.stream(ref, secondDevice, recorder()))
     expect([full.status, full.code]).toEqual([429, 'terminal-streams'])
-    // ... and this computer still has its own.
-    for (let index = 0; index < 4; index++) terminals.stream(ref, mac, recorder())
+    watchers[0].close()
     terminals.stream(ref, secondDevice, recorder())
-    expect((await rejection(() => terminals.stream(ref, mac, recorder()))).code).toBe('terminal-streams')
-    phoneStreams[0].close()
-    terminals.stream(ref, laptop, recorder())
   })
 
   it('refuses oversized input and input the terminal has not caught up with', async () => {
@@ -441,6 +423,48 @@ describe('terminal service', () => {
     expect((await rejection(() => terminals.input(ref, mac, Buffer.alloc(64 * 1024 + 1)))).code).toBe('terminal-input-too-large')
     helperAt(0).pendingInput = 1024 * 1024
     expect((await rejection(() => terminals.input(ref, mac, Buffer.from('x')))).code).toBe('terminal-input-busy')
+  })
+
+  it('attaches the last lines of a cut window however few line breaks it holds', async () => {
+    for (const width of [3913, 3000, 5000]) {
+      const terminals = await service()
+      const { id } = await terminals.create('s1', mac, { cols: 80, rows: 24 })
+      helperAt(launched.length - 1).print(`${'x'.repeat(width - 2)}\r\n`.repeat(Math.ceil(700_000 / width)))
+      const text = terminals.extract({ sessionId: 's1', terminalId: id }, mac)
+      expect(text.truncated).toBe(true)
+      expect(text.lines).toBe(Math.floor((32_000 + 1) / (width - 1)))
+    }
+  })
+
+  it('never attaches the tail of a secret that the read window cut', async () => {
+    const window = 256 * 1024
+    const key = `sk-proj-${'Ab12'.repeat(40)}`
+    for (const cutInto of [8, 20, 100]) {
+      const terminals = await service()
+      const { id } = await terminals.create('s1', mac, { cols: 80, rows: 24 })
+      const ref = { sessionId: 's1', terminalId: id }
+      const after = window - (key.length - cutInto)
+      helperAt(launched.length - 1).print(`first ${key}${coloured(after - 8)}\r\nkept\r\n`)
+      const text = terminals.extract(ref, mac)
+      expect(text.text).toBe('kept')
+      expect(text.truncated).toBe(true)
+      const unbroken = await terminals.create('s1', mac, { cols: 80, rows: 24 })
+      helperAt(launched.length - 1).print(`first ${key}${coloured(after)}`)
+      expect(terminals.extract({ sessionId: 's1', terminalId: unbroken.id }, mac)).toEqual({
+        text: '',
+        lines: 0,
+        truncated: true,
+        redacted: false,
+        mayContainSecret: false,
+      })
+    }
+    const terminals = await service()
+    const { id } = await terminals.create('s1', mac, { cols: 80, rows: 24 })
+    // The window starts right after a line break: that first line is whole, so it stays.
+    helperAt(launched.length - 1).print(`older\nwhole ${coloured(window - 7)}\n`)
+    const whole = terminals.extract({ sessionId: 's1', terminalId: id }, mac)
+    expect(whole.text.startsWith('whole x')).toBe(true)
+    expect(whole.truncated).toBe(true)
   })
 
   it('reports a shell that could not start, and frees its place', async () => {

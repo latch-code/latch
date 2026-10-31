@@ -11,8 +11,8 @@ import { RESERVED_ENV_PREFIXES } from '@latch/protocol'
 export const LOGIN_PATH = '/usr/bin:/bin:/usr/sbin:/sbin'
 const FALLBACK_SHELL = '/bin/zsh'
 /**
- * Marks a Latch terminal, whose output devices elsewhere may watch: `TERM_PROGRAM` as other terminals set it, and
- * `LC_TERMINAL`, which ssh forwards to remote shells by default.
+ * Marks a Latch terminal, whose output stays in memory and can be attached to a conversation: `TERM_PROGRAM` as other
+ * terminals set it, and `LC_TERMINAL`, which ssh forwards to remote shells by default.
  */
 const TERMINAL_MARK = 'Latch'
 

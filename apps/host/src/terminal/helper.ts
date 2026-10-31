@@ -2,6 +2,7 @@
 // frame and the helper itself runs with an empty one, so the Host decides every variable the shell sees.
 import { spawn } from 'node:child_process'
 import { constants } from 'node:os'
+import { Writable } from 'node:stream'
 import { z } from 'zod'
 import { FRAME_PAYLOAD_LIMIT, FROM_HELPER, FrameReader, TO_HELPER, encodeFrame, encodeSize, type Frame } from './frames.ts'
 
@@ -78,7 +79,11 @@ export function helperLauncher(binary: string): LaunchTerminal {
         JSON.stringify({ file: launch.file, argv: launch.argv, env: launch.env, cwd: launch.cwd, cols: launch.cols, rows: launch.rows }),
       ),
     )
-    const child = spawn(binary, [], { env: {}, stdio: ['pipe', 'pipe', 'ignore'] })
+    // Fd 3 carries resize and signal frames, so input a program does not read cannot hold them back.
+    const child = spawn(binary, [], { env: {}, stdio: ['pipe', 'pipe', 'ignore', 'pipe'] })
+    const { stdin, stdout } = child
+    const control = child.stdio[3]
+    if (!stdin || !stdout || !(control instanceof Writable)) throw new TypeError('No pipes for the terminal helper')
     const reader = new FrameReader()
     let started = false
     /** `exit` or `failed` was reported. */
@@ -94,15 +99,19 @@ export function helperLauncher(binary: string): LaunchTerminal {
       onEvent(event)
     }
     const write = (frame: Buffer) => {
-      if (!gone && !closing) child.stdin.write(frame)
+      if (!gone && !closing) stdin.write(frame)
+    }
+    const writeControl = (frame: Buffer) => {
+      if (!gone && !closing) control.write(frame)
     }
     const close = (): Promise<void> => {
       if (gone) return Promise.resolve()
       closing ??= new Promise<void>(resolve => {
         waiters.push(resolve)
         // The helper writes its exit frame before it exits: keep reading.
-        child.stdout.resume()
-        child.stdin.end()
+        stdout.resume()
+        stdin.end()
+        control.end()
         child.kill('SIGTERM')
         deadline = setTimeout(() => child.kill('SIGKILL'), CLOSE_DEADLINE_MS)
       })
@@ -145,8 +154,9 @@ export function helperLauncher(binary: string): LaunchTerminal {
     }
 
     // EPIPE once the helper has exited; `close` reports that.
-    child.stdin.on('error', () => {})
-    child.stdout.on('data', (chunk: Buffer) => {
+    stdin.on('error', () => {})
+    control.on('error', () => {})
+    stdout.on('data', (chunk: Buffer) => {
       if (ended) return
       let frames: Frame[]
       try {
@@ -165,7 +175,7 @@ export function helperLauncher(binary: string): LaunchTerminal {
       if (child.pid === undefined) markGone()
     })
     child.once('close', markGone)
-    child.stdin.write(start)
+    stdin.write(start)
 
     return {
       input(data) {
@@ -173,19 +183,19 @@ export function helperLauncher(binary: string): LaunchTerminal {
           write(encodeFrame(TO_HELPER.input, data.subarray(offset, offset + FRAME_PAYLOAD_LIMIT)))
       },
       get pendingInput() {
-        return child.stdin.writableLength
+        return stdin.writableLength
       },
       resize(cols, rows) {
-        write(encodeFrame(TO_HELPER.resize, encodeSize(cols, rows)))
+        writeControl(encodeFrame(TO_HELPER.resize, encodeSize(cols, rows)))
       },
       signal(signal) {
-        write(encodeFrame(TO_HELPER.signal, Uint8Array.of(constants.signals[signal])))
+        writeControl(encodeFrame(TO_HELPER.signal, Uint8Array.of(constants.signals[signal])))
       },
       pauseOutput() {
-        if (!closing) child.stdout.pause()
+        if (!closing) stdout.pause()
       },
       resumeOutput() {
-        child.stdout.resume()
+        stdout.resume()
       },
       close,
     }

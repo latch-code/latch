@@ -54,7 +54,7 @@ describe('terminal environment', () => {
     expect(Object.keys(env).filter(name => /^(?:latch|node|electron|npm|dyld)_/iu.test(name))).toEqual([])
   })
 
-  it('marks the terminal so commands in it, and over ssh from it, know devices elsewhere may watch', () => {
+  it('marks the terminal so commands in it, and over ssh from it, know their output is kept', () => {
     const env = terminalEnvironment({ hostEnv: {}, shell: '/bin/zsh', folder: '/tmp' })
     expect(isLatchTerminal(env)).toBe(true)
     // ssh forwards LC_* by default; TERM_PROGRAM alone marks a local shell.

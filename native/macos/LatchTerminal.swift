@@ -3,10 +3,10 @@
 // closes the terminal or goes away, ends every process group on it.
 //
 // A frame is one type byte, the payload's length as a 4-byte big-endian integer, then the payload.
-// Host to helper: 1 start (JSON with the shell's file, argv, env, cwd, cols and rows; first and only once), 2 input
-// (bytes), 3 resize (columns and rows, 2 bytes each),
-// 4 signal (1 byte: SIGHUP, SIGINT, SIGTERM or SIGKILL, for the foreground process group). End of stdin, or SIGTERM,
-// closes the terminal.
+// Host to helper, on stdin: 1 start (JSON with the shell's file, argv, env, cwd, cols and rows; first and only once),
+// 2 input (bytes). On fd 3, so input a program does not read cannot hold them back: 3 resize (columns and rows, 2 bytes
+// each), 4 signal (1 byte: SIGHUP, SIGINT, SIGTERM or SIGKILL, for the foreground process group). The end of either
+// pipe, or SIGTERM, closes the terminal.
 // Helper to Host: 1 started {"pid"}, 2 output (bytes), 3 foreground {"busy","name"}, 4 exit {"code"} or {"signal"},
 // 5 error {"error"}.
 import CoreFoundation
@@ -26,6 +26,7 @@ private let outputHighWater = 262_144
 /** Input waiting for the pty beyond this stops reading frames: the Host's pipe fills instead. */
 private let inputHighWater = 262_144
 private let pathLimit = 4096
+private let controlDescriptor: Int32 = 3
 private let variableLimit = 256
 private let sizeLimit: ClosedRange<Int64> = 1...1000
 private let allowedSignals: Set<Int32> = [SIGHUP, SIGINT, SIGTERM, SIGKILL]
@@ -210,6 +211,8 @@ private final class Terminal {
   private var hostGone = false
   private var protocolFailed = false
   private var inbound: [UInt8] = []
+  private var controlInbound: [UInt8] = []
+  private var readingControl = true
   private var input: [UInt8] = []
   private var inputStart = 0
   private var output: [UInt8] = []
@@ -347,7 +350,7 @@ private final class Terminal {
     if phase == .running || phase == .draining { setReadingPty(pendingOutput < outputHighWater) }
   }
 
-  /** Checks the foreground soon after activity, and every second while a program holds the terminal. */
+  /** Checks the foreground soon after activity, every second while a program holds the terminal, else every two. */
   private func scheduleForeground(after milliseconds: Int = 100) {
     let at = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) + UInt64(milliseconds) * 1_000_000
     if let pending = foregroundAt, pending <= at { return }
@@ -368,35 +371,45 @@ private final class Terminal {
         name = String(decoding: bytes.prefix(while: { $0 != 0 }).map { UInt8(bitPattern: $0) }, as: UTF8.self)
       }
     }
-    if busy { scheduleForeground(after: 1000) }
+    // A silent program may take the terminal long after the last activity, and closing it must still ask first.
+    scheduleForeground(after: busy ? 1000 : 2000)
     if let reported, reported.busy == busy && reported.name == name { return }
     reported = (busy, name)
     send(.foreground, json(["busy": busy, "name": name]))
   }
 
-  private func readFrames() {
-    let count = buffer.withUnsafeMutableBytes { Darwin.read(STDIN_FILENO, $0.baseAddress, $0.count) }
+  private func stopReadingControl() {
+    guard readingControl else { return }
+    readingControl = false
+    watch(controlDescriptor, EVFILT_READ, false)
+  }
+
+  private func readFrames(from descriptor: Int32) {
+    let control = descriptor == controlDescriptor
+    let count = buffer.withUnsafeMutableBytes { Darwin.read(descriptor, $0.baseAddress, $0.count) }
     if count < 0 && (errno == EAGAIN || errno == EINTR) { return }
     guard count > 0 else {
-      // End of stdin: the Host closed the terminal, or exited.
+      // End of a pipe: the Host closed the terminal, or exited.
       beginClose()
       return
     }
-    inbound += buffer.prefix(count)
+    var pending = control ? controlInbound : inbound
+    pending += buffer.prefix(count)
     var offset = 0
     while phase == .running || phase == .draining {
-      guard inbound.count - offset >= 5 else { break }
-      let length = Int(inbound[offset + 1]) << 24 | Int(inbound[offset + 2]) << 16 | Int(inbound[offset + 3]) << 8
-        | Int(inbound[offset + 4])
-      guard length <= frameLimit, let type = Inbound(rawValue: inbound[offset]), type != .start else {
+      guard pending.count - offset >= 5 else { break }
+      let length = Int(pending[offset + 1]) << 24 | Int(pending[offset + 2]) << 16 | Int(pending[offset + 3]) << 8
+        | Int(pending[offset + 4])
+      guard length <= frameLimit, let type = Inbound(rawValue: pending[offset]), control == (type == .resize || type == .signal), type != .start else {
         failProtocol()
         return
       }
-      guard inbound.count - offset - 5 >= length else { break }
-      handle(type, Array(inbound[(offset + 5)..<(offset + 5 + length)]))
+      guard pending.count - offset - 5 >= length else { break }
+      handle(type, Array(pending[(offset + 5)..<(offset + 5 + length)]))
       offset += 5 + length
     }
-    inbound.removeFirst(min(offset, inbound.count))
+    pending.removeFirst(min(offset, pending.count))
+    if control { controlInbound = pending } else { inbound = pending }
   }
 
   private func handle(_ type: Inbound, _ payload: [UInt8]) {
@@ -467,6 +480,10 @@ private final class Terminal {
     }
     if pendingInput == 0 {
       input.removeAll(keepingCapacity: true)
+      inputStart = 0
+    } else if inputStart >= frameLimit {
+      // What was written goes, so a long paste into a slow reader holds only what is still to be written.
+      input.removeFirst(inputStart)
       inputStart = 0
     }
     setWritingPty(pendingInput > 0)
@@ -542,6 +559,7 @@ private final class Terminal {
   private func beginClose() {
     guard phase == .running || phase == .draining else { return }
     setReadingFrames(false)
+    stopReadingControl()
     if status != nil {
       finish()
       return
@@ -582,6 +600,7 @@ private final class Terminal {
     guard phase != .flushing else { return }
     closePty()
     setReadingFrames(false)
+    stopReadingControl()
     phase = .flushing
     startTicking()
     let value = status ?? SIGKILL
@@ -598,16 +617,18 @@ private final class Terminal {
 
   func run() -> Never {
     guard queue >= 0 else { abandon() }
-    for descriptor in [STDIN_FILENO, STDOUT_FILENO, master] {
+    for descriptor in [STDIN_FILENO, STDOUT_FILENO, controlDescriptor, master] {
       _ = fcntl(descriptor, F_SETFL, fcntl(descriptor, F_GETFL) | O_NONBLOCK)
     }
     change(UInt(STDIN_FILENO), EVFILT_READ, EV_ADD | EV_ENABLE)
+    change(UInt(controlDescriptor), EVFILT_READ, EV_ADD | EV_ENABLE)
     change(UInt(master), EVFILT_READ, EV_ADD | EV_ENABLE)
     change(UInt(SIGTERM), EVFILT_SIGNAL, EV_ADD | EV_ENABLE)
     change(UInt(shell), EVFILT_PROC, EV_ADD | EV_ENABLE | EV_ONESHOT, fflags: NOTE_EXIT)
     send(.started, json(["pid": Int(shell)]))
     // A shell that exited before its exit could be watched is found here.
     reap()
+    scheduleForeground()
     var events = [Event](repeating: Event(ident: 0, filter: 0, flags: 0, fflags: 0, data: 0, udata: nil), count: 16)
     while true {
       flushOrWait()
@@ -621,7 +642,9 @@ private final class Terminal {
       for event in events.prefix(Int(count)) {
         switch Int32(event.filter) {
         case EVFILT_READ where event.ident == UInt(STDIN_FILENO):
-          if readingFrames { readFrames() }
+          if readingFrames { readFrames(from: STDIN_FILENO) }
+        case EVFILT_READ where event.ident == UInt(controlDescriptor):
+          if readingControl { readFrames(from: controlDescriptor) }
         case EVFILT_READ:
           if ptyOpen && event.ident == UInt(master) { readPty() }
         case EVFILT_WRITE where event.ident == UInt(STDOUT_FILENO):

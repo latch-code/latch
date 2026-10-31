@@ -70,11 +70,14 @@ export interface CliIO {
 class CliError extends Error {}
 
 /**
- * Why a pairing link or an offline code may not be shown here: only a terminal someone reads at this computer shows one.
- * A Latch terminal does not count, since devices elsewhere may watch its output.
+ * Why a pairing link or an offline code may not be shown here. A Latch terminal keeps its output in memory, and
+ * 「加入对话」 can pass it to a model; a code rendered as a QR would pass the redaction.
  */
 function codeRefusal(io: CliIO, what: '配对链接' | '离线登记码'): string | undefined {
-  if (isLatchTerminal(io.env)) return `其他设备可能看到 Latch 终端里的输出，${what}不在这里显示；请使用 --code-file <路径>`
+  if (isLatchTerminal(io.env)) return `Latch 终端的输出可能被加入对话，${what}不在这里显示；请使用 --code-file <路径>`
+  // A pane keeps the environment of the terminal that started the multiplexer, so it may be attached from a Latch terminal unmarked.
+  if (io.env.TMUX !== undefined || io.env.STY !== undefined || io.env.ZELLIJ !== undefined)
+    return `终端复用器的窗格可能显示在 Latch 终端里，${what}不在这里显示；请使用 --code-file <路径>`
   if (!io.stdout.isTTY) return `${what}只输出到终端；非交互环境请使用 --code-file <路径>`
   return undefined
 }

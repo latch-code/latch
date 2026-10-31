@@ -1,7 +1,7 @@
 // Frames between the Host and latch-pty (native/macos/LatchTerminal.swift): one type byte, the payload's length as a
 // 4-byte big-endian integer, then the payload. Control frames carry JSON; input and output carry raw bytes.
 
-/** Frames the Host writes. End of the helper's stdin closes the terminal. */
+/** Frames the Host writes: start and input on stdin, resize and signal on fd 3. The end of either pipe closes the terminal. */
 export const TO_HELPER = { start: 1, input: 2, resize: 3, signal: 4 } as const
 /** Frames the helper writes. */
 export const FROM_HELPER = { started: 1, output: 2, foreground: 3, exit: 4, error: 5 } as const

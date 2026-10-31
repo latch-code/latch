@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
-import type { Readable, Writable } from 'node:stream'
+import { Writable, type Readable } from 'node:stream'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { buildTerminalHelper } from '../scripts/build-terminal.ts'
@@ -20,25 +20,33 @@ let compiled = '',
   folder = ''
 const children: ChildProcess[] = []
 const message = z.record(z.string(), z.unknown())
-const mac: TerminalRequester = { listener: 'unix', deviceId: 'dev_mac', dataScope: 'all' }
+const mac: TerminalRequester = { listener: 'unix', deviceId: 'dev_mac' }
 
 /** Speaks the frame protocol to one helper and records every frame it sends. */
 class Helper {
   readonly frames: Array<{ type: number; payload: Buffer }> = []
   readonly child: ChildProcess
   readonly stdin: Writable
+  readonly control: Writable
   readonly stdout: Readable
   readonly closed: Promise<number | null>
   private readonly reader = new FrameReader()
 
   constructor(start: object | Buffer | undefined, options: { extraPipe?: boolean } = {}) {
     // As the Host runs it: the helper's own environment is empty, the shell's comes in the start frame.
-    const child = spawn(binary, [], { env: {}, stdio: options.extraPipe ? ['pipe', 'pipe', 'ignore', 'pipe'] : ['pipe', 'pipe', 'ignore'] })
+    // Resize and signal frames go on fd 3, so input a program does not read cannot hold them back.
+    const child = spawn(binary, [], {
+      env: {},
+      stdio: options.extraPipe ? ['pipe', 'pipe', 'ignore', 'pipe', 'pipe'] : ['pipe', 'pipe', 'ignore', 'pipe'],
+    })
     const { stdin, stdout } = child
-    if (!stdin || !stdout) throw new Error('no pipes')
+    const control = child.stdio[3]
+    if (!stdin || !stdout || !(control instanceof Writable)) throw new Error('no pipes')
     this.child = child
     this.stdin = stdin
     this.stdout = stdout
+    this.control = control
+    control.on('error', () => {})
     children.push(child)
     stdin.on('error', () => {})
     stdout.on('data', (chunk: Buffer) => {
@@ -49,7 +57,8 @@ class Helper {
   }
 
   send(type: number, payload: Uint8Array = new Uint8Array(0)): void {
-    this.stdin.write(encodeFrame(type, payload))
+    const channel = type === TO_HELPER.resize || type === TO_HELPER.signal ? this.control : this.stdin
+    channel.write(encodeFrame(type, payload))
   }
 
   output(): string {
@@ -126,6 +135,14 @@ async function openTerminal(script: string) {
   return { terminals, ref, output, until }
 }
 
+async function withUnreadInput(script: string) {
+  const helper = new Helper(shell(`echo ready; ${script}`))
+  await helper.until(() => helper.output().includes('ready'))
+  for (let frame = 0; frame < 8; frame++) helper.send(TO_HELPER.input, Buffer.alloc(65_536, 0x61))
+  await new Promise(resolve => setTimeout(resolve, 300))
+  return helper
+}
+
 describe.skipIf(process.platform !== 'darwin')('latch-pty', () => {
   beforeAll(async () => {
     compiled = await mkdtemp(join(tmpdir(), 'latch-pty-build-'))
@@ -147,7 +164,7 @@ describe.skipIf(process.platform !== 'darwin')('latch-pty', () => {
   it('runs the command in the folder it was given, with exactly the environment the Host sent, and reports its exit', async () => {
     const helper = new Helper(shell('pwd; env; exit 3', { PATH: '/usr/bin:/bin', PROBE: 'value' }))
     expect(await helper.closed).toBe(0)
-    expect(helper.frames.map(frame => frame.type).filter(type => type !== FROM_HELPER.output)).toEqual([
+    expect(helper.frames.map(frame => frame.type).filter(type => type !== FROM_HELPER.output && type !== FROM_HELPER.foreground)).toEqual([
       FROM_HELPER.started,
       FROM_HELPER.exit,
     ])
@@ -231,6 +248,49 @@ describe.skipIf(process.platform !== 'darwin')('latch-pty', () => {
     // Output is coalesced: far fewer frames than the pty's 1 KiB reads.
     expect(helper.frames.filter(frame => frame.type === FROM_HELPER.output).length).toBeLessThan(400)
   })
+
+  it('still takes signals and resizes while input waits for a program that does not read it', async () => {
+    const stopped = await withUnreadInput('exec sleep 30')
+    stopped.send(TO_HELPER.resize, encodeSize(100, 30))
+    stopped.send(TO_HELPER.signal, Uint8Array.of(2))
+    await stopped.until(() => stopped.frames.some(frame => frame.type === FROM_HELPER.exit), 3000)
+    expect(stopped.messages(FROM_HELPER.exit)).toEqual([{ signal: 2 }])
+  })
+
+  it('ends the terminal when the Host goes away while input waits', async () => {
+    const helper = await withUnreadInput('exec sleep 31')
+    const { pid } = helper
+    helper.control.end()
+    expect(await Promise.race([helper.closed, new Promise(resolve => setTimeout(() => resolve('alive'), 4000))])).toBe(0)
+    await gone([pid])
+  })
+
+  it('notices a silent program that takes the terminal after the last activity', async () => {
+    const helper = new Helper(shell('set -m; sleep 0.4; sleep 32'))
+    await helper.until(() => {
+      const last = helper.messages(FROM_HELPER.foreground).at(-1)
+      return last?.busy === true && last.name === 'sleep'
+    }, 5000)
+  })
+
+  it('delivers a long paste whole, and frees what it has written while more waits', async () => {
+    const total = 12 * 1024 * 1024
+    const helper = new Helper(shell(`stty raw -echo; echo ready; head -c ${total} | wc -c`))
+    await helper.until(() => helper.output().includes('ready'))
+    const chunk = Buffer.alloc(65_536, 0x61)
+    let peak = 0
+    let sent = 0
+    while (sent < total) {
+      helper.send(TO_HELPER.input, chunk)
+      sent += chunk.length
+      if (helper.stdin.writableNeedDrain) await new Promise(resolve => helper.stdin.once('drain', resolve))
+      if (sent % (1024 * 1024) === 0 && helper.child.pid) {
+        peak = Math.max(peak, Number((await run('/bin/ps', ['-o', 'rss=', '-p', String(helper.child.pid)])).stdout))
+      }
+    }
+    expect(peak).toBeLessThan(16 * 1024)
+    await helper.until(() => helper.output().includes(String(total)), 30_000)
+  }, 60_000)
 
   it('refuses a malformed start and reports why a start failed, before anything runs', async () => {
     const oversized = Buffer.alloc(5)
