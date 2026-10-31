@@ -35,13 +35,13 @@ describe('host state announcements', () => {
     const notice = (event: Partial<HostStateEvent>) => noticeOf(parseHostState(frame(event))!)!
     expect(noticeOf(parseHostState(frame({ state: 'awake' }))!)).toBeNull()
     expect(hostNoticeCopy(notice({ state: 'sleeping', reason: 'sleep', retryAfter: 10 }))).toEqual({
-      title: `电脑已休眠（${localTime} 起）`,
-      body: '电脑唤醒后会自动重新连接。',
+      title: `Mac 已休眠（${localTime} 起）`,
+      body: 'Mac 唤醒后会自动重新连接。',
     })
-    expect(hostNoticeCopy(notice({ state: 'stopping', reason: 'restart', retryAfter: 2 })).title).toBe('电脑上的 Latch 正在重启')
-    expect(hostNoticeCopy(notice({ state: 'stopping', reason: 'update', retryAfter: 10 })).title).toBe('电脑上的 Latch 正在更新')
+    expect(hostNoticeCopy(notice({ state: 'stopping', reason: 'restart', retryAfter: 2 })).title).toBe('Mac 上的 Latch 正在重启')
+    expect(hostNoticeCopy(notice({ state: 'stopping', reason: 'update', retryAfter: 10 })).title).toBe('Mac 上的 Latch 正在更新')
     expect(hostNoticeCopy(notice({ state: 'stopping', reason: 'shutdown', retryAfter: 15 }))).toEqual({
-      title: `电脑上的 Latch 已停止（${localTime} 起）`,
+      title: `Mac 上的 Latch 已停止（${localTime} 起）`,
       body: 'Latch 再次启动后会自动重新连接。',
     })
     expect(notice({ state: 'stopping', reason: 'restart', retryAfter: 2 })).toEqual({

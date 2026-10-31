@@ -12,7 +12,7 @@ import { ApprovalStatuses, type ApprovalStatus } from '../src/components/Approva
 import { ToolCard } from '../src/components/ToolCard.tsx'
 import type { ApprovalGate } from '../src/core/permissions.ts'
 import { APPROVAL_COPY, CODE_ROOT_COPY, CONFIRMATION_COPY, CONFIRMATION_RESULT_TEXT } from '../src/core/securityCopy.ts'
-import { ConfirmationContent, detailsOpenAtFirst } from '../src/components/InlineConfirm.tsx'
+import { ConfirmationContent } from '../src/components/InlineConfirm.tsx'
 import type { ConfirmationActions, ConfirmationView } from '../src/core/confirmations.ts'
 import { ProjectCard, WorkspacesSettings } from '../src/settings/WorkspacesSettings.tsx'
 
@@ -144,7 +144,7 @@ describe('decided approvals', () => {
 
   it('keeps an allowance in the row’s tooltip, and says nobody’s answer without claiming the call did not run', () => {
     const allowed = decided({ outcome: 'allowed', at, via: 'this-mac' }, 'completed', { startedAt: at, completedAt: at })
-    expect(allowed).toMatch(/<button type="button" class="tool-card-header"[^>]*title="[^"]*已允许 · [^"]*在运行 Latch 的电脑上决定"/u)
+    expect(allowed).toMatch(/<button type="button" class="tool-card-header"[^>]*title="[^"]*已允许 · [^"]*在这台 Mac 上决定"/u)
     expect(allowed).not.toContain('tool-decision')
     expect(stateSlot(allowed)).toBe('')
     expect(allowed).toContain('diff-view')
@@ -308,40 +308,11 @@ describe('approval cards', () => {
       ],
       confirms: true,
     }
-    const resting = approvalCard({ risk: 'R2' }, undefined, gate)
-    expect(resting).toContain(APPROVAL_COPY.localNote)
-    // An older Host's ticket has no sentence: the card still says it waits for Touch ID.
-    const older = approvalCard({ risk: 'R2' }, { confirming: 'waiting' }, gate)
-    expect(older).toContain(CONFIRMATION_COPY.waitingShell)
-    expect(older).not.toContain(APPROVAL_COPY.localNote)
-    expect(buttonLabels(older)).toEqual(['拒绝', APPROVAL_COPY.allowLocal])
-    // With the ticket: the sentence the system sheet shows, 取消 and the Host's details, in the card itself.
-    const waiting = approvalCard(
-      { risk: 'R2' },
-      {
-        confirming: 'waiting',
-        cancel: () => {},
-        ticket: {
-          id: 'cfm_1',
-          action: 'approval.r2',
-          title: '允许一次高风险操作',
-          status: 'pending',
-          hashDisplay: 'a1b2-c3d4-e5f6-0718',
-          expiresAt: new Date().toISOString(),
-          reason: '批准写入 slides.html（Latch 程序目录内）',
-          form: 'approval.write',
-          lines: [{ label: '工作目录', value: '/Users/u/latch' }],
-          warnings: [],
-        },
-      },
-      gate,
-    )
-    // Rendered here without the desktop shell, the sentence is introduced as one to read on the computer running Latch.
-    expect(waiting).toContain(CONFIRMATION_COPY.browser)
-    expect(waiting).toContain('批准写入 slides.html（Latch 程序目录内）')
-    expect(waiting).toContain(CONFIRMATION_COPY.details)
-    expect(waiting).toContain('/Users/u/latch')
-    expect(waiting).toMatch(/class="ui-button approval-confirm-cancel"[^>]*>取消<\/button>/u)
+    // The system sheet is the only window: nothing of its sentence, its details or a way to cancel appears in the card.
+    const waiting = approvalCard({ risk: 'R2' }, { confirming: 'waiting' }, gate)
+    expect(waiting).toContain(CONFIRMATION_COPY.waiting)
+    expect(waiting).toMatch(/class="sr-only" role="status"/u)
+    expect(waiting).not.toContain('确认详情')
     expect(buttonLabels(waiting)).toEqual(['拒绝', APPROVAL_COPY.allowLocal])
     const failed = approvalCard({ risk: 'R2' }, { failure: { text: CONFIRMATION_RESULT_TEXT.denied, tone: 'error' } }, gate)
     expect(failed).toMatch(/class="ui-notice approval-failure" data-tone="error"/)
@@ -349,7 +320,7 @@ describe('approval cards', () => {
     expect(buttonLabels(failed)).toEqual(['拒绝', APPROVAL_COPY.allowLocal])
   })
 
-  it('shows a confirmation in place: the sheet sentence, the warnings in view and the details, never a check code', () => {
+  it('shows no card of its own while the sheet is open: only the warnings the sheet leaves out, never its sentence or details', () => {
     const actions: ConfirmationActions = { cancel: () => {}, dismiss: () => {} }
     const render = (view: ConfirmationView) => renderToStaticMarkup(createElement(ConfirmationContent, { view, actions }))
     const ticket = {
@@ -359,35 +330,66 @@ describe('approval cards', () => {
       status: 'pending' as const,
       hashDisplay: 'a1b2-c3d4-e5f6-0718',
       expiresAt: new Date().toISOString(),
-      reason: '允许 Codex 读写这台 Mac 上的文件并运行命令（项目「Acme」）：~/proj/node_modules/.bin/codex-acp',
-      form: 'start.first' as const,
-      lines: [
-        { label: '命令', value: '/Users/u/proj/node_modules/.bin/codex-acp' },
-        { label: '工作目录', value: '/Users/u/proj' },
-        { label: '说明', value: '项目配置可以覆盖询问设置' },
-      ],
-      warnings: ['该会话可以读写 Latch 数据和 Host 身份私钥。', 'Harness 自己发起的询问只是提示，不是安全边界。'],
+      reason: '允许「修复登录」改用「完全访问」',
+      form: 'mode.widen' as const,
+      lines: [{ label: '工作目录', value: '/Users/u/proj' }],
+      warnings: ['这个地址不使用 HTTPS，发给它的内容会以明文经过网络。'],
     }
     const waiting = render({ phase: 'waiting', ticket })
-    expect(waiting).toContain(CONFIRMATION_COPY.waiting)
-    expect(waiting).toContain(ticket.reason)
     for (const warning of ticket.warnings) expect(waiting).toContain(warning)
-    // A first start opens its details at once: the full command, the folder and the notes.
-    expect(detailsOpenAtFirst(ticket)).toBe(true)
-    expect(waiting).toMatch(/aria-expanded="true"[^>]*>[\s\S]*确认详情/u)
-    for (const line of ticket.lines) expect(waiting).toContain(line.value)
-    expect(waiting).not.toContain('核对码')
-    expect(waiting).not.toContain(ticket.hashDisplay)
-    // Another confirmation keeps them folded, and a sentence cut short opens them again.
-    expect(detailsOpenAtFirst({ form: 'mode.widen', reason: '允许「修复登录」改用「完全访问」' })).toBe(false)
-    expect(detailsOpenAtFirst({ form: 'approval.tool', reason: '批准运行工具 a（未登记的工具）：{…；完整参数见 Latch 里的确认详情' })).toBe(
-      true,
-    )
-    const sending = render({ phase: 'sending', ticket })
-    expect(sending).toContain(`${CONFIRMATION_COPY.confirmed}开启会话…`)
+    for (const hidden of [ticket.reason, ticket.title, ticket.lines[0]!.value, ticket.hashDisplay, '确认详情', '系统表单', '取消'])
+      expect(waiting).not.toContain(hidden)
+    expect(render({ phase: 'waiting', ticket: { ...ticket, warnings: [] } })).toBe('')
+    expect(render({ phase: 'sending', ticket })).toBe('')
     const failed = render({ phase: 'failed', ticket, message: CONFIRMATION_RESULT_TEXT.denied, reason: 'denied' })
     expect(failed).toContain(CONFIRMATION_RESULT_TEXT.denied)
     expect(failed).not.toContain(ticket.reason)
+    expect(failed).not.toContain(ticket.title)
+  })
+
+  it('shows what a system form leaves out for a start or a cut sentence, without hashes, and nothing beside a native sheet', () => {
+    const actions: ConfirmationActions = { cancel: () => {}, dismiss: () => {} }
+    const render = (view: ConfirmationView) => renderToStaticMarkup(createElement(ConfirmationContent, { view, actions }))
+    const command = '/Users/u/a/very/long/path/that/did/not/fit/in/the/sentence/bin/codex-acp'
+    const ticket = {
+      id: 'cfm_2',
+      action: 'task.start-l3' as const,
+      title: '开启完全访问会话',
+      status: 'pending' as const,
+      hashDisplay: 'a1b2-c3d4-e5f6-0718',
+      expiresAt: new Date().toISOString(),
+      reason: '允许 Codex 读写这台 Mac 上的文件并运行命令：/opt/bin/codex-acp',
+      form: 'start.first' as const,
+      lines: [
+        { label: '命令', value: command },
+        { label: '工作目录', value: '/Users/u/proj' },
+        { label: '说明', value: '项目配置可以覆盖询问设置' },
+        { label: '启动指纹', value: 'f00d-f00d-f00d-f00d' },
+      ],
+    }
+    // Every start: the system form names the program, not the folder or what the project can change.
+    for (const form of ['start.first', 'start.first-mode', 'start.changed', 'start.changed-mode'] as const) {
+      const waiting = render({ phase: 'waiting', ticket: { ...ticket, form } })
+      expect(waiting).toContain('确认详情')
+      for (const line of ticket.lines.slice(0, 3)) expect(waiting).toContain(line.value)
+      expect(waiting).not.toContain('f00d-f00d-f00d-f00d')
+      expect(waiting).not.toContain(ticket.reason)
+    }
+    // A slot the Host cut ends or begins with 「…」, the only mark a sentence carries.
+    const cut = {
+      ...ticket,
+      action: 'provider.confirm-origin' as const,
+      form: 'origin.confirm' as const,
+      reason: '允许 Latch 连接 …a-very-long-subdomain-of-the-service.example.com',
+      lines: [{ label: '地址', value: 'https://not-the-service.a-very-long-subdomain-of-the-service.example.com' }],
+    }
+    expect(render({ phase: 'waiting', ticket: cut })).toContain(cut.lines[0]!.value)
+    expect(render({ phase: 'waiting', ticket: { ...cut, reason: '允许 Latch 连接 service.example.com' } })).toBe('')
+    expect(render({ phase: 'waiting', ticket: { ...ticket, lines: [] } })).toBe('')
+    expect(render({ phase: 'sending', ticket })).toBe('')
+    // The native sheet lists the Host's lines itself.
+    for (const sheet of [ticket, cut])
+      expect(render({ phase: 'waiting', ticket: { ...sheet, confirmationMethod: 'shell-local' as const } })).toBe('')
   })
 
   it('names the session a refused confirmation waits for, in one line', () => {
@@ -399,7 +401,7 @@ describe('approval cards', () => {
       message: 'x',
       blocked: { action: 'device.enroll', tasks: [{ id: 'acp-1', title: '修复设置页密钥丢失', harnessId: 'codex' }] },
     })
-    expect(named).toContain('要等「修复设置页密钥丢失」结束，才能配对新设备。')
+    expect(named).toContain('正在运行「修复设置页密钥丢失」，结束后才能配对新设备。')
     const several = render({
       phase: 'paused',
       reason: 'blocked',
@@ -412,7 +414,7 @@ describe('approval cards', () => {
         ],
       },
     })
-    expect(several).toContain('等 2 个会话结束，才能放宽安全策略。')
+    expect(several).toContain('等 2 个会话，结束后才能放宽设置。')
     // A title that hides characters shows them as markers.
     expect(several).toContain('\\u{202E}')
     const unnamed = render({ phase: 'paused', reason: 'blocked', message: 'x', blocked: { tasks: [] } })
@@ -436,7 +438,7 @@ describe('approval cards', () => {
   it('carries the waiting in the header as one amber status word after its shield', () => {
     const html = renderToStaticMarkup(createElement(ToolCard, { message: tool(), approval: approval({ risk: 'R1' }), onDecide: noop }))
     expect(html).toMatch(
-      /<span class="ui-status-word tool-card-waiting" data-tone="waiting"><svg[^>]*lucide-shield[^>]*>.*?<\/svg>待批准<\/span>/u,
+      /<span class="ui-status-word tool-card-waiting" data-tone="waiting"><svg[^>]*lucide-shield[^>]*>.*?<\/svg>等你允许<\/span>/u,
     )
   })
 
@@ -452,7 +454,7 @@ describe('approval cards', () => {
           explicit: false,
           options: [
             { id: 'reject_once', label: '拒绝', kind: 'reject_once' },
-            { id: 'allow_once', label: '用 Touch ID 允许', kind: 'allow_once' },
+            { id: 'allow_once', label: '在这台 Mac 上允许', kind: 'allow_once' },
           ],
           confirms: true,
         }),
@@ -462,7 +464,7 @@ describe('approval cards', () => {
     expect(html).not.toContain('data-variant="primary"')
     expect(html).toMatch(/<button type="button" class="ui-button" data-variant="secondary" data-size="sm">拒绝<\/button>/)
     expect(html).toMatch(
-      /<button type="button" class="ui-button" data-variant="secondary" data-size="sm" data-leading="">(?:(?!<\/button>).)*?<svg[^>]*lucide-lock-keyhole[^>]*>.*?<\/svg>用 Touch ID 允许<\/button>/,
+      /<button type="button" class="ui-button" data-variant="secondary" data-size="sm" data-leading="">(?:(?!<\/button>).)*?<svg[^>]*lucide-lock-keyhole[^>]*>.*?<\/svg>在这台 Mac 上允许<\/button>/,
     )
   })
 
@@ -721,11 +723,9 @@ describe('composer', () => {
   })
 
   it('shows a device that may only watch a dashed frame with the reason instead of the input', () => {
-    const html = renderToStaticMarkup(
-      createElement(Composer, { ...base, variant: 'session', readOnly: '此设备没有「发起和继续会话」权限' }),
-    )
+    const html = renderToStaticMarkup(createElement(Composer, { ...base, variant: 'session', readOnly: '这台设备不能发送消息' }))
     expect(html).toContain('data-variant="read-only"')
-    expect(html).toContain('此设备没有「发起和继续会话」权限')
+    expect(html).toContain('这台设备不能发送消息')
     expect(html).not.toContain('<textarea')
     expect(html).not.toContain('aria-label="发送"')
   })

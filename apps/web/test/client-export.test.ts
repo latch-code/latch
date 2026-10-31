@@ -88,7 +88,7 @@ describe('Markdown export', () => {
     }
     const markdown = transcriptMarkdown(rejected, { harness: 'Latch 内置' })
     expect(markdown).toContain('<summary>工具：写入文件 notes/plan.md（已拒绝）</summary>')
-    expect(markdown).toContain('审批：已拒绝 · 2026年10月23日 周五 14:32:00 · 在运行 Latch 的电脑上决定')
+    expect(markdown).toContain('审批：已拒绝 · 2026年10月23日 周五 14:32:00 · 在这台 Mac 上决定')
     expect(markdown).not.toContain('变更：')
     expect(markdown).toContain('- Harness：Latch 内置')
   })

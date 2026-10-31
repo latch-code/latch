@@ -137,7 +137,7 @@ it('uses true image pixels, retains zoom on refresh, refuses unknown or excessiv
         expect(await preview.locator('img').count()).toBe(0)
         await close()
         await open('oversize.png')
-        await preview.getByText('文件或图片超过这台设备的预览上限，请在执行端电脑上查看。', { exact: true }).waitFor()
+        await preview.getByText('文件或图片超过这台设备的预览上限，请在 Mac 上查看。', { exact: true }).waitFor()
         expect(await preview.locator('img').count()).toBe(0)
         await close()
         await open('picture.svg')

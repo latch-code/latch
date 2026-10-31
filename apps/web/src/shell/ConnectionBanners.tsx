@@ -36,7 +36,7 @@ export function ConnectionBanners({ shell }: { shell: ShellState }) {
                     if (message) setToast({ text: message, tone: 'error' })
                   })
                 }}>
-                启动 Host
+                启动 Latch
               </Button>
             ) : (
               <Button

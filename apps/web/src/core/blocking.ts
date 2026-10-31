@@ -69,13 +69,14 @@ export function shownTitle(title: string): string {
 }
 
 /**
- * A blocking session as the copy names it: its title shortened and escaped, and its agent's name from the catalog,
- * escaped (left out on an older Host or for a harness it no longer lists).
+ * A blocking session as the copy names it: its title shortened and escaped, its agent's name from the catalog, escaped
+ * (left out on an older Host or for a harness it no longer lists), and whether it waits for the person rather than runs.
  */
-export function namedSession(task: BlockingTask, snapshot: Pick<AppSnapshot, 'catalog'> | null): NamedSession {
+export function namedSession(task: BlockingTask, snapshot: Pick<AppSnapshot, 'catalog' | 'tasks'> | null): NamedSession {
   const name = snapshot?.catalog?.harnesses.find(harness => harness.id === task.harnessId)?.name
   const agent = name ? escapeSecurityText(name) : ''
-  return { title: shownTitle(task.title), ...(agent ? { agent } : {}) }
+  const waiting = snapshot?.tasks.find(item => item.id === task.id)?.status === 'waiting-approval'
+  return { title: shownTitle(task.title), ...(agent ? { agent } : {}), ...(waiting ? { waiting } : {}) }
 }
 
 /** Asks the Host to stop a session; it settles on the Host, so the caller watches the snapshot for the outcome. */

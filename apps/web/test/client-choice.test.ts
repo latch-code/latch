@@ -117,7 +117,7 @@ describe('composer choice', () => {
     expect(browser.map(option => [option.harness.id, option.mode, option.note ?? null])).toEqual([
       ['standard', 'agent', 'Agent'],
       ['standard', 'chat', '只对话'],
-      ['codex', 'agent', '仅本机桌面端'],
+      ['codex', 'agent', '在 Mac 上开始'],
       ['pi', 'agent', '不可用'],
     ])
     expect(browser.find(option => option.harness.id === 'pi')?.disabledReason).toBe('未找到命令 pi-acp')
@@ -351,7 +351,7 @@ describe('harness entries', () => {
     expect(entries.map(entry => [entry.label, entry.mode, entry.note, entry.disabledReason])).toEqual([
       ['Latch 内置', 'agent', 'Agent', undefined],
       ['Latch 内置', 'chat', '只对话', undefined],
-      ['Codex', 'agent', '仅本机桌面端', '仅本机桌面端'],
+      ['Codex', 'agent', '在 Mac 上开始', '在 Mac 上开始'],
       ['pi', 'agent', '不可用', '未找到命令 pi-acp'],
     ])
     expect(entries[1]?.description).toBe('不读写文件、不运行命令')

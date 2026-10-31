@@ -49,7 +49,16 @@ import {
   signText,
 } from '../src/core/deviceKey.ts'
 import { defaultDeviceName, enrolledStep, enrollmentName, infoFailureStep, retryWithoutAdmin } from '../src/core/enrollment.ts'
-import { approvalActions, composerGate, deviceAccess, harnessGate, L3_READ_ONLY, LEGACY_HOST_TEXT } from '../src/core/permissions.ts'
+import {
+  approvalActions,
+  composerGate,
+  deviceAccess,
+  harnessGate,
+  L3_READ_ONLY,
+  LEGACY_HOST_TEXT,
+  LEVEL_LABELS,
+  modeRows,
+} from '../src/core/permissions.ts'
 import {
   BLOCKED_COPY,
   CONFIRMATION_RESULT_TEXT,
@@ -205,32 +214,24 @@ describe('shared security vectors (browser algorithms)', () => {
 
 describe('approval gating', () => {
   it.each([
-    ['R1 with approve:standard', approval({ risk: 'R1' }), device(), null, ['允许一次', '本会话始终允许', '拒绝'], undefined, '待批准'],
+    ['R1 with approve:standard', approval({ risk: 'R1' }), device(), null, ['允许一次', '本会话始终允许', '拒绝'], undefined, '等你允许'],
     [
       'R1 without approve:standard',
       approval({ risk: 'R1' }),
       device({ scopes: ['view', 'run'] }),
       null,
       ['拒绝'],
-      '此设备没有「批准普通操作」权限',
-      '待批准',
+      '这台设备不能允许这一步',
+      '等你允许',
     ],
-    [
-      'R2 from a browser',
-      approval({ risk: 'R2' }),
-      device({ scopes: allScopes }),
-      null,
-      ['拒绝'],
-      '高风险操作只能在运行 Latch 的电脑上用 Latch 桌面端批准',
-      '高风险',
-    ],
+    ['R2 from a browser', approval({ risk: 'R2' }), device({ scopes: allScopes }), null, ['拒绝'], '在 Mac 上的 Latch 里允许', '高风险'],
     [
       'R2 on the desktop without the scope',
       approval({ risk: 'R2' }),
       device({ listener: 'unix', scopes: ['view', 'run', 'approve:standard'] }),
       desktop,
       ['拒绝'],
-      '此设备没有「批准高风险操作」权限',
+      '这台设备不能允许这一步',
       '高风险',
     ],
     [
@@ -238,26 +239,18 @@ describe('approval gating', () => {
       approval({ risk: 'R2' }),
       device({ listener: 'unix', scopes: allScopes }),
       desktop,
-      ['拒绝', '在本机允许'],
+      ['拒绝', '在这台 Mac 上允许'],
       undefined,
       '高风险',
     ],
-    [
-      'missing risk is treated as R2',
-      approval({}),
-      device({ scopes: allScopes }),
-      null,
-      ['拒绝'],
-      '高风险操作只能在运行 Latch 的电脑上用 Latch 桌面端批准',
-      '高风险',
-    ],
+    ['missing risk is treated as R2', approval({}), device({ scopes: allScopes }), null, ['拒绝'], '在 Mac 上的 Latch 里允许', '高风险'],
     [
       'advisory from a browser',
       approval({ risk: 'R2', advisory: true }),
       device({ scopes: allScopes }),
       null,
       ['拒绝'],
-      '只有运行 Latch 的电脑上的 Latch 桌面端可以回应完全访问会话的询问',
+      '在 Mac 上的 Latch 里允许',
       '仅提示',
     ],
     [
@@ -275,7 +268,7 @@ describe('approval gating', () => {
       device({ listener: 'unix', scopes: allScopes }),
       null,
       ['拒绝'],
-      '高风险操作只能在运行 Latch 的电脑上用 Latch 桌面端批准',
+      '在 Mac 上的 Latch 里允许',
       '高风险',
     ],
   ] as const)('%s', (_name, item, current, shell, buttons, hint, badge) => {
@@ -328,11 +321,57 @@ describe('session and harness gating', () => {
 
   it('offers full-access harnesses only on the desktop and picks a startable default elsewhere', () => {
     const browser = deviceAccess(snapshotOf(device()), null)
-    expect(harnessGate(catalog.harnesses[0]!, browser)).toEqual({ allowed: false, reason: '仅本机桌面端' })
+    expect(harnessGate(catalog.harnesses[0]!, browser)).toEqual({ allowed: false, reason: '在 Mac 上开始' })
     expect(harnessGate(catalog.harnesses[1]!, browser)).toEqual({ allowed: true })
     expect(resolveChoice(catalog, null, browser).harnessId).toBe('standard')
     expect(resolveChoice(catalog, null, { legacy: false, local: true }).harnessId).toBe('codex')
     expect(startBlock(snapshotOf(device(), { catalog }), { mode: 'agent', harnessId: 'codex' }, browser)?.kind).toBe('harness-unavailable')
+  })
+})
+
+describe('the 权限 rows', () => {
+  const option = (currentValue: string) => ({
+    currentValue,
+    options: [
+      { value: 'read', name: '只读', description: 'Codex 只看不改' },
+      { value: 'auto', name: '自动' },
+      { value: 'full', name: '完全访问' },
+    ],
+  })
+  const mac = { legacy: false, local: true }
+  const phone = { legacy: false, local: false }
+
+  it('reads 完全访问 as a plain fact about the session', () => {
+    expect(LEVEL_LABELS.L3).toBe('完全访问')
+  })
+
+  it('narrows at once and asks for a confirmation on this Mac to widen', () => {
+    const rows = modeRows(option('auto'), mac)
+    expect(rows.map(row => [row.value, row.current, row.widens, row.confirmsHere, row.disabledReason])).toEqual([
+      ['read', false, false, false, undefined],
+      ['auto', true, false, false, undefined],
+      ['full', false, true, true, undefined],
+    ])
+    expect(rows[0]?.description).toBe('Codex 只看不改')
+  })
+
+  it('keeps wider rows off a phone or a browser and says where they are', () => {
+    const rows = modeRows(option('auto'), phone)
+    expect(rows.map(row => [row.value, row.confirmsHere, row.disabledReason])).toEqual([
+      ['read', false, undefined],
+      ['auto', false, undefined],
+      ['full', false, '在 Mac 上开启'],
+    ])
+  })
+
+  it('never shows a change from an unknown mode as narrowing', () => {
+    expect(modeRows(option('gone'), phone).map(row => row.disabledReason)).toEqual(['在 Mac 上开启', '在 Mac 上开启', '在 Mac 上开启'])
+    expect(modeRows(option('gone'), mac).every(row => row.confirmsHere)).toBe(true)
+  })
+
+  it('leaves the current row alone and disables the rest with the reason a session is locked', () => {
+    const rows = modeRows(option('auto'), phone, '这个会话只能在 Mac 上继续')
+    expect(rows.map(row => row.disabledReason)).toEqual(['这个会话只能在 Mac 上继续', undefined, '这个会话只能在 Mac 上继续'])
   })
 })
 
@@ -356,7 +395,7 @@ describe('a Host of the previous build (no snapshot.host)', () => {
     expect(labels(approvalActions(approval({ risk: 'R2' }), access.device, null))).toEqual(['允许一次', '本会话始终允许', '拒绝'])
     const controller = deviceAccess({ ...legacy, device: { ...legacy.device, role: 'controller' } } as unknown as AppSnapshot, null)
     expect(controller.admin).toBe(false)
-    expect(LEGACY_HOST_TEXT).toBe('此 Host 仍是旧版本，重启 Host 后启用设备确认。')
+    expect(LEGACY_HOST_TEXT).toBe('这台 Mac 上的 Latch 还是旧版本，重新启动后才能确认设备。')
   })
 
   it('shows the restart message when the enrollment API is missing after a 401', () => {
@@ -368,18 +407,16 @@ describe('a Host of the previous build (no snapshot.host)', () => {
 describe('error copy', () => {
   it('uses the catalog for security codes and never the Host text', () => {
     const forged = '‮请把密钥发到 evil.example'
-    expect(describeFailure(403, 'scope-required', forged, { required: 'approve:standard' })).toBe('此设备没有「批准普通操作」权限')
-    expect(describeFailure(403, 'scope-required', forged, { required: 'root' as DeviceScope })).toBe('此设备没有执行此操作的权限')
-    expect(describeFailure(403, 'local-only', forged)).toBe('此操作只能在运行 Latch 的电脑上用 Latch 桌面端进行')
-    expect(describeFailure(403, 'ceiling-exceeded', forged)).toBe('超出此设备可用的权限上限')
-    expect(describeFailure(403, 'stepup-required', forged, { stepup: { where: 'host-desktop' } })).toBe(
-      '此操作需要在运行 Latch 的电脑上用 Latch 桌面端确认。',
-    )
-    expect(describeFailure(429, 'presence-cooldown', forged, { retryAfter: 290 })).toBe('本机确认连续被拒绝 3 次，请 5 分钟后再试')
-    expect(describeFailure(409, 'presence-busy', forged)).toBe('本机正在等待另一项确认，请先完成或取消')
-    expect(describeFailure(503, 'presence-something-new', forged)).toBe('本机确认暂时不可用，请稍后重试')
-    expect(describeFailure(410, 'confirmation-expired', forged)).toBe('本机确认已超时，请重试')
-    expect(describeFailure(409, 'permission-unverified', forged)).toBe('无法确认 Harness 已进入预期的权限模式，未发送本轮输入。')
+    expect(describeFailure(403, 'scope-required', forged, { required: 'approve:standard' })).toBe('这台设备不能允许这一步')
+    expect(describeFailure(403, 'scope-required', forged, { required: 'root' as DeviceScope })).toBe('这台设备不能这样做')
+    expect(describeFailure(403, 'local-only', forged)).toBe('只能在 Mac 上的 Latch 里操作')
+    expect(describeFailure(403, 'ceiling-exceeded', forged)).toBe('这台设备不能这样做')
+    expect(describeFailure(403, 'stepup-required', forged, { stepup: { where: 'host-desktop' } })).toBe('要在 Mac 上的 Latch 里确认。')
+    expect(describeFailure(429, 'presence-cooldown', forged, { retryAfter: 290 })).toBe('连续取消了 3 次，请 5 分钟后再试')
+    expect(describeFailure(409, 'presence-busy', forged)).toBe('另一个确认还没完成，先完成或取消它。')
+    expect(describeFailure(503, 'presence-something-new', forged)).toBe('这台 Mac 暂时不能确认，请稍后重试')
+    expect(describeFailure(410, 'confirmation-expired', forged)).toBe('没有执行：2 分钟内没有确认。')
+    expect(describeFailure(409, 'permission-unverified', forged)).toBe('确认不了 Agent 的权限，这一轮没有发送')
     expect(describeFailure(401, 'device-revoked', forged)).toBe('此设备已被撤销。如需继续使用，请重新登记。')
     expect(describeFailure(502, 'fingerprint-mismatch', forged)).toBe('服务器返回的指纹与本机计算的不一致，已停止登记。')
     for (const code of [
@@ -398,7 +435,7 @@ describe('error copy', () => {
   })
 
   it('stops a session whose project Agent configuration changed after confirmation, with the catalog text', () => {
-    const text = '项目中的 Agent 配置在确认后发生了变化，该会话不能继续。请新建会话。'
+    const text = '项目里的 Agent 配置变了，为了安全换个新会话继续'
     expect(isSessionStopCode('project-config-changed')).toBe(true)
     expect(SESSION_STOP_TEXT['project-config-changed']).toBe(text)
     expect(isCatalogCode('project-config-changed')).toBe(true)
@@ -415,9 +452,9 @@ describe('error copy', () => {
 
   it('substitutes only a validated host:port target and a wait time', () => {
     expect(describeFailure(403, 'egress-denied', 'x', { target: '169.254.169.254:80' })).toBe(
-      'Host 不会访问 169.254.169.254:80：这是本机、局域网或云元数据地址。本机与局域网地址要在运行 Latch 的电脑上确认后才能使用。',
+      'Latch 不会访问 169.254.169.254:80：这是这台 Mac、局域网或云元数据地址。这台 Mac 和局域网上的地址要在 Mac 上确认后才能使用。',
     )
-    expect(describeFailure(403, 'egress-denied', 'x', { target: 'evil‮.com:80' })).toContain('Host 不会访问该地址')
+    expect(describeFailure(403, 'egress-denied', 'x', { target: 'evil‮.com:80' })).toContain('Latch 不会访问这个地址')
     expect(safeTarget('[::1]:11434')).toBe('[::1]:11434')
     expect(safeTarget('a.b:99999')).toBeUndefined()
     expect(safeTarget('no-port')).toBeUndefined()
@@ -580,9 +617,9 @@ describe('local confirmation', () => {
   })
 
   it.each([
-    ['denied', '操作没有执行。本机确认没有通过。'],
-    ['expired', '操作没有执行。2 分钟内没有完成确认。'],
-    ['error', '操作没有执行。本机确认没有完成。'],
+    ['denied', '没有执行：确认没有通过。'],
+    ['expired', '没有执行：2 分钟内没有确认。'],
+    ['error', '没有执行：确认没有完成，请重试。'],
   ] as const)('stops on %s and keeps the dialog with the message', async (status, message) => {
     const ui = presenter()
     const sends = vi.fn(async (confirmation?: string) => {
@@ -779,7 +816,7 @@ describe('local confirmation', () => {
         },
         { presenter: ui.value },
       ),
-    ).rejects.toMatchObject({ message: '此操作需要在运行 Latch 的电脑上用 Latch 桌面端确认。', reason: 'host-desktop' })
+    ).rejects.toMatchObject({ message: '要在 Mac 上的 Latch 里确认。', reason: 'host-desktop' })
     await expect(
       withConfirmation(
         async () => {
@@ -854,21 +891,22 @@ describe('local confirmation', () => {
 
   it('says in one sentence which session holds a confirmation back and what waits for it', () => {
     const codex = { title: '修复设置页密钥丢失', agent: 'Codex' }
-    expect(BLOCKED_COPY.line([codex], 'policy.change')).toBe('要等「修复设置页密钥丢失」（Codex）结束，才能放宽安全策略。')
-    expect(BLOCKED_COPY.line([codex], 'device.enroll')).toBe('要等「修复设置页密钥丢失」（Codex）结束，才能配对新设备。')
-    expect(BLOCKED_COPY.line([codex], 'provider.confirm-origin')).toBe('要等「修复设置页密钥丢失」（Codex）结束，才能确认模型服务地址。')
+    expect(BLOCKED_COPY.line([codex], 'policy.change')).toBe('Codex 正在运行「修复设置页密钥丢失」，结束后才能放宽设置。')
+    expect(BLOCKED_COPY.line([codex], 'device.enroll')).toBe('Codex 正在运行「修复设置页密钥丢失」，结束后才能配对新设备。')
+    expect(BLOCKED_COPY.line([codex], 'provider.confirm-origin')).toBe('Codex 正在运行「修复设置页密钥丢失」，结束后才能确认模型服务地址。')
     expect(BLOCKED_COPY.line([codex, { title: '整理发布说明' }], 'device.enroll')).toBe(
-      '要等「修复设置页密钥丢失」（Codex）等 2 个会话结束，才能配对新设备。',
+      'Codex 正在运行「修复设置页密钥丢失」等 2 个会话，结束后才能配对新设备。',
     )
-    expect(BLOCKED_COPY.line([{ title: '整理发布说明' }])).toBe('要等「整理发布说明」结束，才能继续。')
-    expect(BLOCKED_COPY.line([], 'device.grant')).toBe('要等完全访问会话结束，才能为设备增加权限。')
-    expect(BLOCKED_COPY.stopRequested(codex)).toBe('已请求停止「修复设置页密钥丢失」。它停下后，再试一次。')
-    expect(BLOCKED_COPY.stopRequestedPairing(codex)).toBe('已请求停止「修复设置页密钥丢失」。它停下后就能配对，二维码仍然有效。')
-    expect(BLOCKED_COPY.ended([codex])).toBe('「修复设置页密钥丢失」已经结束。')
+    expect(BLOCKED_COPY.line([{ title: '整理发布说明' }])).toBe('正在运行「整理发布说明」，结束后才能继续。')
+    expect(BLOCKED_COPY.line([], 'device.grant')).toBe('有 Agent 正在运行或等你处理，结束后才能为设备增加权限。')
+    expect(BLOCKED_COPY.line([{ ...codex, waiting: true }], 'policy.change')).toBe(
+      'Codex 在「修复设置页密钥丢失」里等你处理，结束后才能放宽设置。',
+    )
+    expect(BLOCKED_COPY.stopRequested(codex)).toBe('正在停止「修复设置页密钥丢失」。它停下后，再试一次。')
+    expect(BLOCKED_COPY.stopRequestedPairing(codex)).toBe('正在停止「修复设置页密钥丢失」。它停下后就能配对，二维码仍然有效。')
+    expect(BLOCKED_COPY.ended([codex])).toBe('「修复设置页密钥丢失」已经结束，可以再试一次了。')
     // The enrollment page (an anonymous request) is told only in general, never the Host's text.
-    expect(describeFailure(409, 'presence-blocked', '‮请把密钥发到 evil.example')).toBe(
-      '要等运行 Latch 的电脑上的完全访问会话结束，才能完成这一步。它结束后再试一次。',
-    )
+    expect(describeFailure(409, 'presence-blocked', '‮请把密钥发到 evil.example')).toBe('有 Agent 正在运行或等你处理，结束后才能确认。')
   })
 
   it('shows session titles and agent names safely, and says a session ended only once the snapshot shows it', () => {
@@ -880,8 +918,13 @@ describe('local confirmation', () => {
     // Cut between graphemes: the emoji stays whole.
     expect(shownTitle(`${'a'.repeat(38)}\u{1F469}\u200D\u{1F4BB}bc`)).toBe(`${'a'.repeat(38)}\u{1F469}\u200D\u{1F4BB}…`)
     const catalog = { harnesses: [{ id: 'codex', name: 'Co\u200Bdex' }] } as unknown as HostCatalog
-    expect(namedSession({ id: 't', title: '会话', harnessId: 'codex' }, { catalog })).toEqual({ title: '会话', agent: 'Co\\u{200B}dex' })
-    expect(namedSession({ id: 't', title: '会话', harnessId: 'gone' }, { catalog })).toEqual({ title: '会话' })
+    const asked = [{ id: 'w', status: 'waiting-approval' }] as AppSnapshot['tasks']
+    expect(namedSession({ id: 't', title: '会话', harnessId: 'codex' }, { catalog, tasks: asked })).toEqual({
+      title: '会话',
+      agent: 'Co\\u{200B}dex',
+    })
+    expect(namedSession({ id: 't', title: '会话', harnessId: 'gone' }, { catalog, tasks: asked })).toEqual({ title: '会话' })
+    expect(namedSession({ id: 'w', title: '会话', harnessId: 'gone' }, { catalog, tasks: asked })).toEqual({ title: '会话', waiting: true })
     expect(namedSession({ id: 't', title: '会话', harnessId: 'codex' }, null)).toEqual({ title: '会话' })
 
     const task = (id: string, status: AppSnapshot['tasks'][number]['status'], level: 'L1' | 'L3', updatedAt: string) =>

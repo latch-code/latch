@@ -47,14 +47,14 @@ function clock(at: string): string {
 
 /** The state line shown while the Host does not answer, instead of a generic reconnecting message. */
 export function hostNoticeCopy(notice: HostNotice): { title: string; body: string } {
-  if (notice.state === 'sleeping') return { title: `电脑已休眠（${clock(notice.at)} 起）`, body: '电脑唤醒后会自动重新连接。' }
+  if (notice.state === 'sleeping') return { title: `Mac 已休眠（${clock(notice.at)} 起）`, body: 'Mac 唤醒后会自动重新连接。' }
   switch (notice.reason) {
     case 'restart':
-      return { title: '电脑上的 Latch 正在重启', body: '几秒后会自动重新连接。' }
+      return { title: 'Mac 上的 Latch 正在重启', body: '几秒后会自动重新连接。' }
     case 'update':
-      return { title: '电脑上的 Latch 正在更新', body: '更新完成后会自动重新连接。' }
+      return { title: 'Mac 上的 Latch 正在更新', body: '更新完成后会自动重新连接。' }
     case 'sleep':
     case 'shutdown':
-      return { title: `电脑上的 Latch 已停止（${clock(notice.at)} 起）`, body: 'Latch 再次启动后会自动重新连接。' }
+      return { title: `Mac 上的 Latch 已停止（${clock(notice.at)} 起）`, body: 'Latch 再次启动后会自动重新连接。' }
   }
 }

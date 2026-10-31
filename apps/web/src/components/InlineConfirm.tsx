@@ -1,7 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { Check, ChevronRight, Fingerprint, LockKeyhole } from 'lucide-react'
 import type { BlockingTask, ConfirmationTicket } from '@latch/protocol'
-import { Button, Collapse, ICON_STROKE, InlineNotice, MOTION } from '@latch/ui'
+import { Button, Collapse, InlineNotice, MOTION } from '@latch/ui'
 import {
   useInlineConfirmation,
   type Blocked,
@@ -13,38 +12,14 @@ import { BLOCKED_COPY, BLOCKED_VERBS, CONFIRMATION_COPY as COPY, CONFIRMATION_VE
 import { useSessionLinks } from '../core/sessionLinks.ts'
 import { namedSession, stillBlocking } from '../core/blocking.ts'
 import { errorMessage, isUncertain } from '../core/api.ts'
-import { currentShell } from '../core/shell.ts'
 import { useCountdown } from '../hooks/useCountdown.ts'
 import { VisibleText } from './VisibleText.tsx'
 
-/** A confirmed request stays on screen this long, so 已在本机确认 can be read before the card folds away. */
-const SUCCESS_HOLD_MS = 400
 /** The fold's own transition before the content is dropped. */
 const EXIT_MS = 240
 
-/** Starts of a command the owner has not confirmed in this form before: their details open at once. */
-const NEW_COMMAND = new Set<string>([
-  'start.first',
-  'start.first-custom',
-  'start.changed',
-  'start.changed-custom',
-  'start.project-config',
-  'start.first-plugin',
-  'start.changed-plugin',
-])
-/** The sheet's sentence ends like this when a slot was cut: the rest is in the details. */
-const CUT_SHORT = /；完整(?:命令|参数)见 Latch 里的确认详情$/u
-
-/** Whether a ticket's details open by themselves: a new or changed command, or a sentence the Host had to cut. */
-export function detailsOpenAtFirst(ticket: Pick<ConfirmationTicket, 'form' | 'reason'>): boolean {
-  return (ticket.form !== undefined && NEW_COMMAND.has(ticket.form)) || CUT_SHORT.test(ticket.reason ?? '')
-}
-
-/**
- * Keeps the last flow on screen while its card folds away, and a confirmed one a moment longer. `open` drives the
- * fold; the flow stays rendered until the fold has closed.
- */
-export function useHeldFlow(live: ConfirmationFlow | null): { shown: ConfirmationFlow | null; open: boolean } {
+/** Keeps the last flow on screen while its line folds away. `open` drives the fold; the flow stays until it has closed. */
+function useHeldFlow(live: ConfirmationFlow | null): { shown: ConfirmationFlow | null; open: boolean } {
   const [shown, setShown] = useState<ConfirmationFlow | null>(live)
   const [open, setOpen] = useState(live !== null)
   if (live !== null && live !== shown) {
@@ -52,80 +27,20 @@ export function useHeldFlow(live: ConfirmationFlow | null): { shown: Confirmatio
     setOpen(true)
   }
   const closing = live === null && shown !== null
-  const confirmed = shown?.view.phase === 'sending'
   useEffect(() => {
     if (!closing) return undefined
-    const hold = setTimeout(
-      () => {
-        setOpen(false)
-      },
-      confirmed ? SUCCESS_HOLD_MS : 0,
-    )
-    const drop = setTimeout(
-      () => {
-        setShown(null)
-      },
-      (confirmed ? SUCCESS_HOLD_MS : 0) + EXIT_MS,
-    )
+    setOpen(false)
+    const drop = setTimeout(() => {
+      setShown(null)
+    }, EXIT_MS)
     return () => {
-      clearTimeout(hold)
       clearTimeout(drop)
     }
-  }, [closing, confirmed])
+  }, [closing])
   return { shown, open }
 }
 
-/** The one sentence the macOS system sheet shows, which is what the person checks there. */
-export function SheetSentence({ reason }: { reason: string }) {
-  const browser = currentShell() === null
-  return (
-    <div className="confirm-sheet">
-      <span className="confirm-sheet-label">{browser ? COPY.browser : COPY.sheet}</span>
-      <p className="confirm-sheet-text">
-        <VisibleText text={reason} />
-      </p>
-      <span className="confirm-sheet-check">{COPY.check}</span>
-    </div>
-  )
-}
-
-/** The facts behind the sentence, from the Host, in a disclosure: command, arguments, folders, hashes. */
-export function ConfirmationDetails({ ticket }: { ticket: ConfirmationTicket }) {
-  const id = useId()
-  const [open, setOpen] = useState(() => detailsOpenAtFirst(ticket))
-  const lines = ticket.lines ?? []
-  if (lines.length === 0) return null
-  return (
-    <div className="confirm-details">
-      <button
-        type="button"
-        className="confirm-details-toggle"
-        aria-expanded={open}
-        aria-controls={id}
-        onClick={() => {
-          setOpen(!open)
-        }}>
-        <ChevronRight className="chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
-        {COPY.details}
-      </button>
-      <Collapse id={id} open={open}>
-        <dl className="confirm-details-list">
-          {lines.map((line, index) => (
-            <div key={`${index}-${line.label}`} className="confirm-details-row">
-              <dt>{line.label}</dt>
-              <dd>
-                <VisibleText text={line.value} />
-              </dd>
-            </div>
-          ))}
-        </dl>
-        <p className="confirm-details-note">{COPY.detailsNote}</p>
-      </Collapse>
-    </div>
-  )
-}
-
-/** The Host's warnings for this request, always in view while it waits: they say what the person is allowing. */
+/** The Host's warnings for this request: the system sheet shows one sentence and leaves them out, so they stay in view. */
 function ConfirmationWarnings({ ticket }: { ticket: ConfirmationTicket }) {
   const warnings = ticket.warnings ?? []
   if (warnings.length === 0) return null
@@ -140,12 +55,43 @@ function ConfirmationWarnings({ ticket }: { ticket: ConfirmationTicket }) {
   )
 }
 
+/**
+ * What a system form's one sentence leaves out. A start names the program there, not its folder or what the project can
+ * change; a slot the Host cut carries 「…」, its only mark, and a slot's own 「…」 merely shows these too. The native sheet
+ * lists the lines itself. Hashes bind the request and are nothing to read.
+ */
+function detailsLeftOut(ticket: ConfirmationTicket) {
+  if (ticket.confirmationMethod === 'shell-local') return []
+  if (!ticket.form?.startsWith('start.') && !ticket.reason?.includes('…')) return []
+  return (ticket.lines ?? []).filter(line => !/指纹|哈希/u.test(line.label))
+}
+
+function DetailsLeftOut({ ticket }: { ticket: ConfirmationTicket }) {
+  const lines = detailsLeftOut(ticket)
+  if (lines.length === 0) return null
+  return (
+    <div className="confirm-details">
+      <span className="confirm-details-title">{COPY.details}</span>
+      <dl className="confirm-details-list">
+        {lines.map((line, index) => (
+          <div key={`${index}-${line.label}`} className="confirm-details-row">
+            <dt>{line.label}</dt>
+            <dd>
+              <VisibleText text={line.value} />
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  )
+}
+
 function CooldownWait({ until }: { until: number }) {
   const { seconds } = useCountdown(new Date(until).toISOString(), 300)
   return <>{seconds > 0 ? COPY.cooldownWait(waitText(seconds)) : COPY.cooldownOver}</>
 }
 
-/** 「要等「…」结束，才能配对新设备。」 with the ways out, or the plain sentence when the sessions are not named. */
+/** 「Codex 正在运行「…」，结束后才能配对新设备。」 with the ways out, or the plain sentence when the sessions are not named. */
 export function BlockedLine({ blocked, onDismiss }: { blocked: Blocked | undefined; onDismiss?: () => void }) {
   const links = useSessionLinks()
   const [stopping, setStopping] = useState(false)
@@ -160,7 +106,6 @@ export function BlockedLine({ blocked, onDismiss }: { blocked: Blocked | undefin
       <InlineNotice
         tone="neutral"
         secure
-        title={BLOCKED_COPY.endedTitle}
         action={
           onDismiss && (
             <Button size="xs" onClick={onDismiss}>
@@ -173,7 +118,7 @@ export function BlockedLine({ blocked, onDismiss }: { blocked: Blocked | undefin
     )
   if (!first || !valid)
     return (
-      <InlineNotice tone="neutral" secure title={COPY.blockedTitle} {...dismiss}>
+      <InlineNotice tone="neutral" secure {...dismiss}>
         {COPY.blocked}
       </InlineNotice>
     )
@@ -222,23 +167,24 @@ export function BlockedLine({ blocked, onDismiss }: { blocked: Blocked | undefin
   )
 }
 
-/** What the card says in one state; the dock shows the same parts. */
+/** Whether a state has anything to read: a line where the person acted, or what the sheet leaves out while it is open. */
+const hasLine = (view: ConfirmationView) =>
+  view.phase === 'failed'
+  || view.phase === 'paused'
+  || (view.phase === 'waiting' && ((view.ticket.warnings ?? []).length > 0 || detailsLeftOut(view.ticket).length > 0))
+
+/** What one state shows. Waiting and sending have no line of their own: the button that asked shows them. */
 export function ConfirmationContent({ view, actions }: { view: ConfirmationView; actions: ConfirmationActions }): ReactNode {
   if (view.phase === 'failed')
     return (
-      <InlineNotice tone="error" secure title={view.ticket.title} onClose={actions.dismiss} closeLabel={COPY.close}>
+      <InlineNotice tone="error" secure onClose={actions.dismiss} closeLabel={COPY.close}>
         {view.message}
       </InlineNotice>
     )
   if (view.phase === 'paused') {
     if (view.reason === 'blocked') return <BlockedLine blocked={view.blocked} onDismiss={actions.dismiss} />
     return (
-      <InlineNotice
-        tone={view.reason === 'cooldown' ? 'warn' : 'neutral'}
-        secure
-        title={view.reason === 'cooldown' ? COPY.cooldownTitle : COPY.busyTitle}
-        onClose={actions.dismiss}
-        closeLabel={COPY.close}>
+      <InlineNotice tone={view.reason === 'cooldown' ? 'warn' : 'neutral'} secure onClose={actions.dismiss} closeLabel={COPY.close}>
         {view.reason === 'cooldown' ? COPY.cooldown : COPY.busy}
         {view.until !== undefined && (
           <>
@@ -249,74 +195,67 @@ export function ConfirmationContent({ view, actions }: { view: ConfirmationView;
       </InlineNotice>
     )
   }
-  const { ticket } = view
-  const waiting = view.phase === 'waiting'
-  const verb = Object.hasOwn(CONFIRMATION_VERBS, ticket.action) ? CONFIRMATION_VERBS[ticket.action] : CONFIRMATION_VERBS['approval.r2']
+  if (view.phase !== 'waiting') return null
   return (
     <>
-      <div className="confirm-status">
-        <span className="presence-icon" data-tone={waiting ? 'warn' : 'ok'} aria-hidden="true">
-          {waiting ? (
-            ticket.confirmationMethod === 'shell-local' ? (
-              <LockKeyhole size={20} strokeWidth={ICON_STROKE[20]} />
-            ) : (
-              <Fingerprint size={20} strokeWidth={ICON_STROKE[20]} />
-            )
-          ) : (
-            <Check size={20} strokeWidth={ICON_STROKE[20]} />
-          )}
-        </span>
-        <div className="confirm-status-text">
-          <strong className="confirm-title">{ticket.title}</strong>
-          <span className="confirm-line" aria-live="polite">
-            {waiting ? (ticket.confirmationMethod === 'shell-local' ? COPY.waitingShell : COPY.waiting) : `${COPY.confirmed}${verb}…`}
-          </span>
-        </div>
-        <Button size="sm" disabled={!waiting} onClick={actions.cancel}>
-          {COPY.cancel}
-        </Button>
-      </div>
-      {ticket.reason && <SheetSentence reason={ticket.reason} />}
-      <ConfirmationWarnings ticket={ticket} />
-      <ConfirmationDetails ticket={ticket} />
+      <ConfirmationWarnings ticket={view.ticket} />
+      <DetailsLeftOut ticket={view.ticket} />
     </>
   )
 }
 
+/** Told to a screen reader only, since a pending button says nothing by itself. Outside the fold, which hides its content. */
+function ConfirmationStatus({ view }: { view: ConfirmationView | undefined }) {
+  let text = ''
+  if (view?.phase === 'waiting') text = COPY.waiting
+  else if (view?.phase === 'sending') {
+    const { action } = view.ticket
+    text = `${COPY.confirmed}${Object.hasOwn(CONFIRMATION_VERBS, action) ? CONFIRMATION_VERBS[action] : CONFIRMATION_VERBS['approval.r2']}…`
+  }
+  return (
+    <p className="sr-only" role="status">
+      {text}
+    </p>
+  )
+}
+
 /**
- * The local confirmation where the action happened: a card in the page, never a window of its own. While `active` (the
- * place has a request in flight) it takes the confirmation that request starts; it then shows waiting for Touch ID
- * with 取消, the sentence the system sheet shows, the Host's warnings and the details, then folds into nothing once the
- * request went through, or leaves one line on why it did not. The gate is the Host and the system sheet, never this card.
+ * The local confirmation where the action happened, with nothing of its own to look at: the button that asked shows
+ * pending and the system sheet is the only window. While `active` (the place has a request in flight) it takes the
+ * confirmation that request starts. A request that did not run, or could not start, leaves one line here. The gate is
+ * the Host and the system sheet, never this element.
  */
 export function InlineConfirm({ active, rank, className }: { active: boolean; rank?: number; className?: string }) {
   const id = useId()
-  const card = useRef<HTMLElement>(null)
+  const line = useRef<HTMLElement>(null)
   const live = useInlineConfirmation(id, active, rank)
   const { shown, open } = useHeldFlow(live)
   const flowId = live?.id
+  const visible = live !== null && hasLine(live.view)
   useEffect(() => {
-    if (flowId === undefined || !card.current?.closest('.ui-popover')) return undefined
-    // A new card can grow below the visible part of a picker. Reveal it after the fold opens;
-    // polling the same flow must not pull the reader back while they inspect its details.
-    const timer = setTimeout(() => card.current?.scrollIntoView({ block: 'start' }), MOTION.panel)
+    if (flowId === undefined || !visible || !line.current?.closest('.ui-popover')) return undefined
+    // A new line can grow below the visible part of a picker. Reveal it after the fold opens.
+    const timer = setTimeout(() => line.current?.scrollIntoView({ block: 'start' }), MOTION.panel)
     return () => {
       clearTimeout(timer)
     }
-  }, [flowId])
+  }, [flowId, visible])
   return (
-    <Collapse open={open} className={className}>
-      {shown && (
-        <section
-          ref={card}
-          className="inline-confirm"
-          data-secure=""
-          data-confirmation-phase={shown.view.phase}
-          data-paused-reason={shown.view.phase === 'paused' ? shown.view.reason : undefined}
-          aria-label={COPY.label}>
-          <ConfirmationContent view={shown.view} actions={shown.actions} />
-        </section>
-      )}
-    </Collapse>
+    <>
+      <ConfirmationStatus view={live?.view} />
+      <Collapse open={open && shown !== null && hasLine(shown.view)} className={className}>
+        {shown && (
+          <section
+            ref={line}
+            className="inline-confirm"
+            data-secure=""
+            data-confirmation-phase={shown.view.phase}
+            data-paused-reason={shown.view.phase === 'paused' ? shown.view.reason : undefined}
+            aria-label={COPY.label}>
+            <ConfirmationContent view={shown.view} actions={shown.actions} />
+          </section>
+        )}
+      </Collapse>
+    </>
   )
 }

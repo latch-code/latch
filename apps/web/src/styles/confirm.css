@@ -1,14 +1,13 @@
 /*
- * The local confirmation in place (InlineConfirm), a security surface: a card of paper under the control that asked for
- * it. Its head is a still state tile (amber fingerprint while Touch ID waits, green check once confirmed), the request's
- * title, one line on what is happening and 取消; then the sentence the macOS system sheet shows, set apart as the one
- * thing to check; the Host's warnings, always in view; and the details behind a disclosure. A request that did not run
- * leaves one inline notice. The dock (the fallback) shows the same parts. What decides whether the parts can be seen and
- * read is pinned, as for every security surface (security.css).
+ * The local confirmation in place (InlineConfirm), a security surface with nothing of its own while the system sheet is
+ * open: the button that asked shows pending. A request that did not run, or could not start, leaves one inline notice
+ * where the person acted. The Host's warnings stay in view while the sheet is open, and so do the details a system
+ * form's sentence leaves out. What decides whether these can be seen and read is pinned, as for every security surface
+ * (security.css).
  */
 .inline-confirm[data-secure] {
   display: grid !important;
-  gap: var(--sp-12);
+  gap: var(--sp-8);
   opacity: 1 !important;
   color: var(--ink) !important;
   font-size: var(--fs-ui) !important;
@@ -16,62 +15,7 @@
 }
 section.inline-confirm[data-secure] {
   margin-top: var(--sp-8);
-  padding: var(--sp-12);
-  border: 1px solid var(--line) !important;
-  border-radius: var(--r-12);
-  background: var(--raised) !important;
-}
-/* A request that did not run, or could not start, is one notice: no paper around it. */
-section.inline-confirm[data-secure]:is([data-confirmation-phase='failed'], [data-confirmation-phase='paused']) {
-  padding: 0;
-  border: 0 !important;
   background: transparent !important;
-}
-.confirm-status {
-  display: flex !important;
-  align-items: center;
-  gap: var(--sp-12);
-}
-.confirm-status-text {
-  display: grid !important;
-  flex: 1;
-  min-width: 0;
-}
-.confirm-title {
-  display: block !important;
-  color: var(--ink) !important;
-  font-size: var(--fs-ui) !important;
-  line-height: var(--lh-ui) !important;
-  font-weight: 600 !important;
-}
-.confirm-line {
-  display: block !important;
-  color: var(--ink-2) !important;
-  font-size: var(--fs-caption) !important;
-  line-height: var(--lh-caption-para) !important;
-}
-/* The sentence on the system sheet: the card's one large text after the title, on its own sunken sheet. */
-.confirm-sheet {
-  display: grid !important;
-  gap: var(--sp-4);
-  padding: var(--sp-8) var(--sp-12);
-  border-radius: var(--r-8);
-  background: var(--sunken) !important;
-}
-.confirm-sheet-label,
-.confirm-sheet-check {
-  display: block !important;
-  color: var(--muted) !important;
-  font-size: var(--fs-caption) !important;
-  line-height: var(--lh-caption-para) !important;
-}
-.confirm-sheet-text {
-  display: block !important;
-  color: var(--ink) !important;
-  font-size: var(--fs-ui) !important;
-  line-height: var(--lh-ui-para) !important;
-  font-weight: 500 !important;
-  overflow-wrap: anywhere;
 }
 .confirm-warnings {
   list-style: none;
@@ -88,35 +32,11 @@ section.inline-confirm[data-secure]:is([data-confirmation-phase='failed'], [data
   display: grid !important;
   gap: var(--sp-4);
 }
-.confirm-details-toggle {
-  display: inline-flex !important;
-  align-items: center;
-  justify-self: start;
-  gap: var(--sp-6);
-  min-height: 28px;
-  padding: 0 var(--sp-8);
-  margin-left: calc(-1 * var(--sp-8));
-  border: 0;
-  border-radius: var(--r-8);
-  background: transparent !important;
+.confirm-details-title {
+  display: block !important;
   color: var(--ink-2) !important;
-  font-size: var(--fs-ui) !important;
-  line-height: var(--lh-ui) !important;
-  transition:
-    background-color var(--m-micro) var(--e-micro),
-    color var(--m-micro) var(--e-micro);
-}
-.confirm-details-toggle:hover {
-  background: var(--hover) !important;
-  color: var(--ink) !important;
-}
-.confirm-details-toggle .chevron {
-  flex-shrink: 0;
-  color: var(--muted);
-  transition: transform var(--m-panel) var(--e-panel);
-}
-.confirm-details-toggle[aria-expanded='true'] .chevron {
-  transform: rotate(90deg);
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption-para) !important;
 }
 .confirm-details-list {
   display: grid !important;
@@ -146,25 +66,9 @@ section.inline-confirm[data-secure]:is([data-confirmation-phase='failed'], [data
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
-.confirm-details-note {
-  display: block !important;
-  padding: var(--sp-6) 0 0;
-  color: var(--muted) !important;
-  font-size: var(--fs-caption) !important;
-  line-height: var(--lh-caption-para) !important;
-}
 .confirm-blocked-actions {
   display: inline-flex !important;
   gap: var(--sp-6);
-}
-/* In the approval card: under the footnote, the same sentence and details. */
-.approval-confirm {
-  display: grid !important;
-  gap: var(--sp-8);
-  padding: var(--sp-8) var(--sp-8) 0;
-}
-.approval-confirm-cancel {
-  margin-left: var(--sp-8);
 }
 /* In the composer: above the input; in the inspector: under the Agent block's options. */
 .composer-confirm > .ui-collapse-inner > .inline-confirm {
@@ -202,11 +106,4 @@ section.inline-confirm[data-secure]:is([data-confirmation-phase='failed'], [data
   display: inline !important;
   color: var(--ink-2) !important;
   quotes: '「' '」';
-}
-
-/* Reduced motion: the chevron turns at once. */
-@media (prefers-reduced-motion: reduce) {
-  .confirm-details-toggle .chevron {
-    transition: none;
-  }
 }

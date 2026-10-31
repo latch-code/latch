@@ -3,9 +3,9 @@ import { api, auditFailed, ClientError } from './api.ts'
 import { withConfirmation } from './confirmations.ts'
 
 /**
- * The Host's permission ceilings as Settings › 电脑 shows and changes them through `PATCH /link/api/policy`. Display
- * only: the Host decides again whether a change lowers (any admin device) or raises (the desktop app on host.sock plus
- * a local confirmation), and refuses everything else.
+ * The Host's stored policy, read and changed through `PATCH /link/api/policy`, for display gating only: this page never
+ * draws a ladder of its own, and the Host decides again whether a change lowers (any admin device) or raises (the
+ * desktop app on host.sock plus a confirmation), and refuses everything else.
  */
 
 /** The levels a ceiling stores; 完全访问 is the separate switch `local.allowL3`. */
@@ -61,7 +61,7 @@ export function parsePolicy(value: unknown): PolicyView | null {
 }
 
 /**
- * 在这台电脑上发起 is one ladder over two stored fields: 完全访问 while full-access sessions are allowed, otherwise
+ * 在这台 Mac 上开始 is one ladder over two stored fields: 完全访问 while full-access sessions are allowed, otherwise
  * the built-in harness's ceiling.
  */
 export function localLadder(local: PolicyView['local']): PermissionLevel {
@@ -70,14 +70,14 @@ export function localLadder(local: PolicyView['local']): PermissionLevel {
 
 /**
  * One request, and so one confirmation, for both fields: 完全访问 allows full-access sessions and keeps the built-in
- * harness at no less than 逐项询问; any lower step turns full access off and sets the built-in ceiling.
+ * harness at no less than 需要时询问; any lower step turns full access off and sets the built-in ceiling.
  */
 export function localLadderPatch(local: PolicyView['local'], chosen: PermissionLevel): PolicyPatch {
   if (chosen === 'L3') return { local: { maxLevel: RANK[local.maxLevel] >= RANK.L1 ? local.maxLevel : 'L1', allowL3: true } }
   return { local: { maxLevel: chosen, allowL3: false } }
 }
 
-/** 从手机和其他电脑发起 never reaches 完全访问: full-access sessions start only in the desktop app. */
+/** 从手机和其他电脑开始 never reaches 完全访问: full-access sessions start only in the desktop app. */
 export function remoteLadderPatch(chosen: StandardLevel): PolicyPatch {
   return { remote: { maxLevel: chosen } }
 }
@@ -160,7 +160,7 @@ export interface PolicyState {
 
 function policyOf(body: unknown): PolicyView {
   const policy = isRecord(body) ? parsePolicy(body.policy) : null
-  if (policy === null) throw new ClientError('执行端返回的安全策略无法识别，请刷新后重试。', 'policy-unreadable')
+  if (policy === null) throw new ClientError('读不懂这台 Mac 返回的设置，请刷新后重试。', 'policy-unreadable')
   return policy
 }
 
@@ -190,57 +190,56 @@ export async function changePolicy(patch: PolicyPatch): Promise<PolicyState> {
 
 // ---- Copy ----------------------------------------------------------------------------------------------------------
 
-export const LEVEL_TITLES: Record<PermissionLevel, string> = { L0: '只读', L1: '逐项询问', L2: '自动编辑', L3: '完全访问' }
+export const LEVEL_TITLES: Record<PermissionLevel, string> = { L0: '只读', L1: '需要时询问', L2: '自动编辑', L3: '完全访问' }
 
 /** What each step of a ceiling allows, in one line. 自动编辑 has no behaviour of its own yet, and says so. */
 export const LEVEL_EFFECTS: Record<PermissionLevel, string> = {
   L0: '只能查看、拒绝和停止会话',
-  L1: '改文件、运行命令前先问你',
-  L2: '尚未实现，目前按逐项询问执行',
-  L3: '允许 Agent 成员不经询问改动整台电脑',
+  L1: '改文件或运行命令前会问你',
+  L2: '尚未实现，目前按需要时询问执行',
+  L3: 'Agent 不再询问，直接读写这台 Mac 上的文件并运行命令',
 }
 
 export const CEILING_COPY = {
-  localTitle: '在这台电脑上发起',
-  localScope: '在这台电脑上发起的会话',
-  /** Full access allowed: each full-access session is still confirmed on its own when it starts. */
-  localNote: '在 Latch 桌面端发起；每个完全访问的会话仍要单独确认',
-  /** Full access off: the agents (all full access) cannot start here. */
-  agentsBlocked: 'Agent 成员（完全访问）不能在这台电脑上发起会话',
+  localTitle: '在这台 Mac 上开始',
+  localScope: '在这台 Mac 上开始的会话',
+  /** Full access allowed: each session is still confirmed on its own when it starts. */
+  localNote: '在 Mac 上的 Latch 里开始；每个完全访问的会话仍要单独确认',
+  /** Full access off: agents cannot start here. */
+  agentsBlocked: '已安装的 Agent 不能在这台 Mac 上开始会话',
   /** 只读 with full access off: nothing can start, only what runs can be looked at, rejected and stopped. */
   viewOnly: '只能查看、拒绝和停止会话',
-  remoteTitle: '从手机和其他电脑发起',
-  remoteScope: '从手机和其他电脑发起的会话',
-  remoteNote: '也包括这台电脑上的浏览器',
-  /** Shown under a stored 自动编辑, which runs like 逐项询问 today. */
-  automaticNote: '自动编辑尚未实现，目前按逐项询问执行',
+  remoteTitle: '从手机和其他电脑开始',
+  remoteScope: '从手机和其他电脑开始的会话',
+  remoteNote: '也包括这台 Mac 上的浏览器',
+  /** Shown under a stored 自动编辑, which runs like 需要时询问 today. */
+  automaticNote: '自动编辑尚未实现，目前按需要时询问执行',
   /** Full access is allowed while the built-in ceiling stays 只读 (possible only by editing the file). */
-  builtinBlocked: '完全访问已允许；Latch 内置会话的上限为只读，不能发起',
-  remoteFullAccess: '完全访问会话只能在这台电脑的 Latch 桌面端发起',
-  raiseHere: '调高要在这台电脑上验证身份',
-  raiseOnDesktop: '只能在这台电脑的 Latch 桌面端调高',
-  turnOnOnDesktop: '只能在这台电脑的 Latch 桌面端开启',
-  addOnDesktop: '只能在这台电脑的 Latch 桌面端添加',
-  presenceMissing: '本机确认不可用，不能在这里调高',
-  caption: '调高上限要在这台电脑上的 Latch 桌面端验证身份。高风险操作只能在这台电脑上批准。',
+  builtinBlocked: '完全访问已允许；内置 Agent 的会话只读，不能开始',
+  remoteFullAccess: '完全访问的会话只能在 Mac 上开始',
+  raiseHere: '放宽要用 Touch ID 确认',
+  raiseOnDesktop: '在 Mac 上放宽',
+  turnOnOnDesktop: '在 Mac 上开启',
+  addOnDesktop: '在 Mac 上添加',
+  presenceMissing: '这台 Mac 暂时不能确认，不能在这里放宽',
+  caption: '放宽要在这台 Mac 上用 Touch ID 确认。',
   /** Under a list page: what adding to it takes. */
-  listCaption: '加入 Agent 或改为全部要在这台电脑的 Latch 桌面端验证身份',
-  listCaptionProjects: '加入项目或改为全部要在这台电脑的 Latch 桌面端验证身份',
-  readOnly: '只有能管理此 Host 的设备可以修改上限。',
-  remoteStartTitle: '允许其他设备在这里新建会话',
-  remoteStartNote: '关闭后只能查看、批准或停止已有会话',
-  harnessesTitle: '其他设备可用的 Agent',
-  workspacesTitle: '其他设备可用的项目',
-  /** Under those two headings: who the lists hold back (a browser on loopback is one of them, as in remoteNote). */
-  harnessesNote:
-    '手机、这台电脑上的浏览器和其他电脑只能用这里允许的 Agent 发起或继续会话。完全访问的会话只能在这台电脑的 Latch 桌面端发起。',
-  workspacesNote: '手机、这台电脑上的浏览器和其他电脑只能在这里允许的项目中发起或继续会话。',
+  listCaption: '加入 Agent 或改为全部要在 Mac 上用 Touch ID 确认',
+  listCaptionProjects: '加入项目或改为全部要在 Mac 上用 Touch ID 确认',
+  readOnly: '只有能管理这台 Mac 的设备可以修改。',
+  remoteStartTitle: '手机可以开始新会话',
+  remoteStartNote: '关闭后只能查看、允许或停止已有会话',
+  harnessesTitle: '手机可用的 Agent',
+  workspacesTitle: '手机可用的项目',
+  /** Under those two headings: who the lists hold back (a browser on this Mac is one of them, as in remoteNote). */
+  harnessesNote: '手机、这台 Mac 上的浏览器和其他电脑只能用这里允许的 Agent 开始或继续会话。完全访问的会话只能在 Mac 上开始。',
+  workspacesNote: '手机、这台 Mac 上的浏览器和其他电脑只能在这里允许的项目中开始或继续会话。',
 } as const
 
 /**
- * The consequence of 在这台电脑上发起 as the Host stores it, in one sentence. Full access allowed: each full-access
+ * The consequence of 在这台 Mac 上开始 as the Host stores it, in one sentence. Full access allowed: each full-access
  * session is still confirmed when it starts (or, under 只读, only agents can start). Full access off: agents cannot
- * start here, and under 只读 nothing can; a stored 自动编辑 says that it runs as 逐项询问 too.
+ * start here, and under 只读 nothing can; a stored 自动编辑 says that it runs as 需要时询问 too.
  */
 export function localNote(local: PolicyView['local']): string {
   if (local.allowL3) return local.maxLevel === 'L0' ? CEILING_COPY.builtinBlocked : CEILING_COPY.localNote
@@ -249,7 +248,7 @@ export function localNote(local: PolicyView['local']): string {
   return CEILING_COPY.agentsBlocked
 }
 
-/** The consequence of 从手机和其他电脑发起: who it covers, what 只读 leaves, or that 自动编辑 runs as 逐项询问. */
+/** The consequence of 从手机和其他电脑开始: who it covers, what 只读 leaves, or that 自动编辑 runs as 需要时询问. */
 export function remoteNote(level: StandardLevel): string {
   if (level === 'L0') return `${CEILING_COPY.viewOnly}；${CEILING_COPY.remoteNote}`
   if (level === 'L2') return CEILING_COPY.automaticNote

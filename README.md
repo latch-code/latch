@@ -133,7 +133,7 @@ pnpm desktop -- --tailnet \
 **ACP Agent** 是与 Host 同权限运行的本机代码，Latch 不提供操作系统沙箱：
 
 - 在运行 Host 的电脑上安装并登录 Agent，再在桌面端「设置 → Agent 成员」选择预设或填写自定义命令并保存，不需要确认；在第一次用它开始会话之前，定义显示「还没有启动过」。Latch 不下载、不安装 Agent，也不代为登录。
-- 新建会话时，Latch 在输入框上方列出完整命令、参数、环境变量名、工作目录、项目中找到的 Agent 配置与启动指纹；Touch ID 表单写「允许 Codex 读写这台 Mac 上的文件并运行命令（项目「Acme」）：/opt/homebrew/bin/codex-acp …」，命令或项目配置变了时写「再次允许 Codex 读写这台 Mac 上的文件并运行命令（启动方式已变化，项目「Acme」）：…」。之后定义或这些项目配置变化，会话就不能继续。
+- 新建会话时，Latch 在输入框上方列出完整命令、参数、环境变量名、工作目录与项目中找到的 Agent 配置；Touch ID 表单写「允许 Codex 读写这台 Mac 上的文件并运行命令（项目「Acme」）：/opt/homebrew/bin/codex-acp …」，命令或项目配置变了时写「再次允许 Codex 读写这台 Mac 上的文件并运行命令（启动方式已变化，项目「Acme」）：…」。之后定义或这些项目配置变化，会话就不能继续。
 - 启动前 Latch 把 Agent 设到预设规定的权限模式，每轮输入前读回核对，发现 Agent 自行放宽时停止会话，并隐藏会持久保存授权的「始终允许 / 始终拒绝」类选项。pi 与 DeepSeek Harness 无法读回模式，pi 执行工具前也不请求审批。
 - Agent 进程只继承 `PATH`、`HOME`、`LANG`、`TERM`、`USER`、`SHELL`、`LC_*`，每个会话有私有临时目录，代理变量被清空。Agent 需要的 API Key 等变量请写在 Agent 定义里；`PATH`、`HOME`、代理、`NODE_OPTIONS`、`LATCH_*`、`npm_*`、`DYLD_*`、`LD_*`、`GIT_CONFIG_*` 等由 Latch 管理的变量不能在定义中设置。
 - 任何 L3 会话运行或等待审批时，登记新设备、为设备增加权限、放宽安全策略与确认新的模型服务地址会被拒绝：桌面端写出是哪个会话，可以查看或停止它，结束后再试。批准 R2、再开一个 Agent 会话与放宽会话的权限模式照常确认。

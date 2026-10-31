@@ -2,7 +2,7 @@ import type { RefObject } from 'react'
 import { ChevronDown, ChevronLeft, Ellipsis, Folder, PanelRight, Pencil, RefreshCw, ShieldAlert } from 'lucide-react'
 import { escapeSecurityText, type HarnessInfo, type TaskSummary } from '@latch/protocol'
 import { harnessName } from '../composerChoice.ts'
-import { LEVEL_LABELS } from '../core/permissions.ts'
+import { LEVEL_LABELS, LEVEL_TOOLTIPS } from '../core/permissions.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { Menu, type MenuSection } from '../components/overlays.tsx'
@@ -59,9 +59,9 @@ function TitleMenu({ title, sections }: { title: string; sections: MenuSection[]
 }
 
 const fullAccessPill = (
-  <StatusPill tone="warn" className="level-pill" title={LEVEL_LABELS.L3}>
+  <StatusPill tone="neutral" className="level-pill" title={LEVEL_TOOLTIPS.L3}>
     <ShieldAlert size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
-    完全访问
+    {LEVEL_LABELS.L3}
   </StatusPill>
 )
 

@@ -39,10 +39,10 @@ describe('top bar', () => {
   it('names full access and leaves the default level, asking before each step, to the session details', () => {
     const full = renderToStaticMarkup(createElement(SessionHeader, { ...topBar, level: 'L3' }))
     expect(full).toMatch(
-      /<span class="ui-status-word level-pill" data-tone="warn" title="完全访问（L3）"><svg[^>]*lucide-shield-alert[^>]*>.*<\/svg>完全访问<\/span>/,
+      /<span class="ui-status-word level-pill" data-tone="neutral" title="Agent 可以读写这台 Mac 上的文件并运行命令，不再询问"><svg[^>]*lucide-shield-alert[^>]*>.*<\/svg>完全访问<\/span>/,
     )
     const asking = renderToStaticMarkup(createElement(SessionHeader, { ...topBar, level: 'L1' }))
-    expect(asking).not.toContain('逐项询问')
+    expect(asking).not.toContain('需要时询问')
     expect(asking).not.toContain('level-pill')
   })
 

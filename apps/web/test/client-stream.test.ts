@@ -276,7 +276,7 @@ describe('api()', () => {
     vi.stubGlobal('fetch', fetchMock)
     await expect(api('policy', { method: 'PATCH', body: {}, confirmation: 'cfm_x' })).rejects.toMatchObject({
       code: 'scope-required',
-      message: '此设备没有「管理此 Host」权限',
+      message: '这台设备不能改设置',
       details: { required: 'admin' },
     })
   })

@@ -170,9 +170,7 @@ describe('responsive workspace controls', () => {
         await reachable(input)
       }
       // OpenAI needs a key: the form says before saving where it is typed and that the service waits for it.
-      await settings
-        .getByText('这个服务需要密钥：保存后，在运行 Latch 的电脑上 设置 › 模型服务 填写密钥，它才能使用。', { exact: true })
-        .waitFor()
+      await settings.getByText('这个服务需要密钥：保存后，在 Mac 上的 Latch 里填写密钥，它才能使用。', { exact: true }).waitFor()
       await reachable(settings.getByRole('button', { name: '检测连接', exact: true }))
       await reachable(settings.getByRole('button', { name: '保存服务', exact: true }))
       await noHorizontalOverflow(page, settings)

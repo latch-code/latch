@@ -447,13 +447,11 @@ export function useSessionController({
           return next
         })
       }
-      // The card is where this confirmation shows: its button waits, the line under the preview says what to do on
-      // this computer, and a confirmation that did not pass or could not start leaves its reason in the card. Once
-      // confirmed, the line says so until the card folds away; any other ending is settled below.
+      // The card's button waits while the system sheet is open, and a confirmation that did not pass or could not start
+      // leaves its reason in the card. Any other ending is settled below.
       const inCard: ConfirmationPresenter = {
-        show: (view, actions) => {
-          if (view.phase === 'waiting' || view.phase === 'sending')
-            mark({ confirming: view.phase, ticket: view.ticket, cancel: actions.cancel })
+        show: view => {
+          if (view.phase === 'waiting' || view.phase === 'sending') mark({ confirming: view.phase })
           else mark({ failure: { text: view.message, tone: view.phase === 'failed' ? 'error' : 'warn' } })
         },
         close: () => {},
@@ -583,7 +581,7 @@ export function useSessionController({
       if (!request || configRequests.current.reconcile(id, request, next.config ?? [], receipt?.state))
         setConfigFeedback(previous => {
           const updated = new Map(previous)
-          if (receipt?.state === 'failed') updated.set(id, { kind: 'failed', message: '设置未能切换，当前仍使用执行端显示的值。' })
+          if (receipt?.state === 'failed') updated.set(id, { kind: 'failed', message: '设置未能切换，当前仍是原来的值。' })
           else updated.delete(id)
           return updated
         })
@@ -783,7 +781,7 @@ export function useSessionController({
   // Starting a full-access session takes the local confirmation: the send slot says so, and is blocked while this
   // computer cannot confirm.
   const presenceDown = startsL3 && host?.presence.status === 'unavailable'
-  const startReason = presenceDown ? `本机确认不可用${host?.presence.message ? `：${host.presence.message}` : ''}` : undefined
+  const startReason = presenceDown ? `在 Mac 上确认不可用${host?.presence.message ? `：${host.presence.message}` : ''}` : undefined
 
   return {
     privateVisible,

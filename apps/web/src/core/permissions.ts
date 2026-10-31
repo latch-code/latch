@@ -7,10 +7,11 @@ import {
   type DeviceScope,
   type HarnessInfo,
   type HostView,
+  type SessionConfigOption,
   type SessionPermission,
   type TaskSummary,
 } from '@latch/protocol'
-import { APPROVAL_COPY, highRiskLabel } from './securityCopy.ts'
+import { APPROVAL_COPY, highRiskLabel, HOVER_REASONS, MODE_COPY } from './securityCopy.ts'
 import type { LatchShell } from './shell.ts'
 
 /**
@@ -59,11 +60,13 @@ export function deviceAccess(snapshot: AppSnapshot, shell: LatchShell | null): D
 export const harnessLevel = (harness: Pick<HarnessInfo, 'level' | 'source'>): 'L1' | 'L3' =>
   harness.level ?? (harness.source === 'builtin' ? 'L1' : 'L3')
 
-export const LEVEL_LABELS = { L1: '逐项询问（L1）', L3: '完全访问（L3）' } as const
-export const LOCAL_ONLY_HARNESS = '仅本机桌面端'
-export const L3_READ_ONLY = '完全访问会话只接受执行端电脑上 Latch 桌面端的输入。此设备可以查看、拒绝和取消。'
-export const DEV_MODE_TEXT = '开发模式：Host 代码可被本机修改'
-export const LEGACY_HOST_TEXT = '此 Host 仍是旧版本，重启 Host 后启用设备确认。'
+/** The session's level as words, in neutral ink: 完全访问 is a fact about the agent, not a warning. */
+export const LEVEL_LABELS = { L1: MODE_COPY.askWhenNeeded, L3: MODE_COPY.fullAccess } as const
+export const LEVEL_TOOLTIPS = { L1: MODE_COPY.askWhenNeededTooltip, L3: MODE_COPY.fullAccessTooltip } as const
+export const LOCAL_ONLY_HARNESS = HOVER_REASONS.startOnMac
+export const L3_READ_ONLY = '这个会话只能在 Mac 上继续。这台设备可以查看、拒绝和停止。'
+export const DEV_MODE_TEXT = '开发模式：这台 Mac 上的程序可以修改 Latch 的代码'
+export const LEGACY_HOST_TEXT = '这台 Mac 上的 Latch 还是旧版本，重新启动后才能确认设备。'
 
 /** New sessions on a full-access harness can only be started from the Host's own desktop. */
 export function harnessGate(
@@ -91,7 +94,7 @@ export interface ApprovalGate {
   explicit: boolean
   /** Why allowing is not offered on this device. */
   hint?: string
-  /** Allowing opens the local confirmation (Touch ID or the login password on this computer). */
+  /** Allowing opens a system sheet on this Mac. */
   confirms?: boolean
 }
 
@@ -162,6 +165,50 @@ export function composerGate(input: {
   if (input.stopped || input.summary?.permissionDrift || input.permission?.drift) return { kind: 'stopped' }
   const level = input.permission?.level ?? input.summary?.level
   if (level === 'L3' && !input.access.local) return { kind: 'read-only', text: L3_READ_ONLY }
-  if (!input.access.scopes.has('run')) return { kind: 'read-only', text: '此设备没有「发起和继续会话」权限' }
+  if (!input.access.scopes.has('run')) return { kind: 'read-only', text: '这台设备不能发送消息' }
   return { kind: 'open' }
+}
+
+/** One row of the 权限 chip's list. */
+export interface ModeRow {
+  value: string
+  name: string
+  description?: string
+  current: boolean
+  /** Wider than the current mode, as this page can tell: the Host judges again and asks for the sheet when it agrees. */
+  widens: boolean
+  /** Choosing it asks for a confirmation on this Mac, which is the desktop's own sheet and takes no Touch ID. */
+  confirmsHere: boolean
+  /** Why this device cannot choose it. */
+  disabledReason?: string
+}
+
+/**
+ * The agent's permission modes as rows, strictest first (the order the agent's profile lists them). Narrowing applies
+ * at once. Widening takes a confirmation on this Mac (`task.mode-widen`, or the start sentence that names the mode in a
+ * draft); on a phone or in a browser, a wider row is disabled and says where to do it. A device that may not touch this
+ * session at all (`locked`) gets every other row disabled with that reason.
+ */
+export function modeRows(
+  option: Pick<SessionConfigOption, 'currentValue' | 'options'>,
+  access: Pick<DeviceAccess, 'legacy' | 'local'>,
+  locked?: string,
+): ModeRow[] {
+  const at = option.options.findIndex(row => row.value === option.currentValue)
+  return option.options.map((row, index) => {
+    const current = index === at
+    // An unknown current mode cannot show that a change narrows, so it counts as wider until the Host says otherwise.
+    const widens = !current && (at < 0 || index > at)
+    const remoteWiden = widens && !access.local && !access.legacy
+    const disabledReason = current ? undefined : (locked ?? (remoteWiden ? MODE_COPY.widenOnMac : undefined))
+    return {
+      value: row.value,
+      name: row.name,
+      ...(row.description ? { description: row.description } : {}),
+      current,
+      widens,
+      confirmsHere: widens && access.local,
+      ...(disabledReason ? { disabledReason } : {}),
+    }
+  })
 }

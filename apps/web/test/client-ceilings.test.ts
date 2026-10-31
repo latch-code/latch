@@ -63,23 +63,23 @@ describe('the ceilings of Settings › 电脑', () => {
 
   it('says what each step of a ceiling leaves possible, as the Host stores it', () => {
     // Full access allowed: full-access sessions start here, each still confirmed (only they can start under 只读).
-    expect(localNote({ maxLevel: 'L2', allowL3: true })).toBe('在 Latch 桌面端发起；每个完全访问的会话仍要单独确认')
-    expect(localNote({ maxLevel: 'L1', allowL3: true })).toBe('在 Latch 桌面端发起；每个完全访问的会话仍要单独确认')
-    expect(localNote({ maxLevel: 'L0', allowL3: true })).toBe('完全访问已允许；Latch 内置会话的上限为只读，不能发起')
+    expect(localNote({ maxLevel: 'L2', allowL3: true })).toBe('在 Mac 上的 Latch 里开始；每个完全访问的会话仍要单独确认')
+    expect(localNote({ maxLevel: 'L1', allowL3: true })).toBe('在 Mac 上的 Latch 里开始；每个完全访问的会话仍要单独确认')
+    expect(localNote({ maxLevel: 'L0', allowL3: true })).toBe('完全访问已允许；内置 Agent 的会话只读，不能开始')
     // Full access off: the agents cannot start here, and under 只读 nothing can.
     expect(localNote({ maxLevel: 'L2', allowL3: false })).toBe(
-      '自动编辑尚未实现，目前按逐项询问执行；Agent 成员（完全访问）不能在这台电脑上发起会话',
+      '自动编辑尚未实现，目前按需要时询问执行；已安装的 Agent 不能在这台 Mac 上开始会话',
     )
-    expect(localNote({ maxLevel: 'L1', allowL3: false })).toBe('Agent 成员（完全访问）不能在这台电脑上发起会话')
+    expect(localNote({ maxLevel: 'L1', allowL3: false })).toBe('已安装的 Agent 不能在这台 Mac 上开始会话')
     expect(localNote({ maxLevel: 'L0', allowL3: false })).toBe('只能查看、拒绝和停止会话')
     for (const level of ['L0', 'L1', 'L2'] as const)
       expect(localNote({ maxLevel: level, allowL3: false })).not.toContain('每个完全访问的会话仍要单独确认')
-    expect(remoteNote('L0')).toBe('只能查看、拒绝和停止会话；也包括这台电脑上的浏览器')
-    expect(remoteNote('L1')).toBe('也包括这台电脑上的浏览器')
-    expect(remoteNote('L2')).toBe('自动编辑尚未实现，目前按逐项询问执行')
+    expect(remoteNote('L0')).toBe('只能查看、拒绝和停止会话；也包括这台 Mac 上的浏览器')
+    expect(remoteNote('L1')).toBe('也包括这台 Mac 上的浏览器')
+    expect(remoteNote('L2')).toBe('自动编辑尚未实现，目前按需要时询问执行')
   })
 
-  it('writes both local fields in one request: full access keeps the built-in ceiling at least 逐项询问', () => {
+  it('writes both local fields in one request: full access keeps the built-in ceiling at least 需要时询问', () => {
     expect(localLadderPatch({ maxLevel: 'L0', allowL3: false }, 'L3')).toEqual({ local: { maxLevel: 'L1', allowL3: true } })
     expect(localLadderPatch({ maxLevel: 'L1', allowL3: false }, 'L3')).toEqual({ local: { maxLevel: 'L1', allowL3: true } })
     expect(localLadderPatch({ maxLevel: 'L2', allowL3: false }, 'L3')).toEqual({ local: { maxLevel: 'L2', allowL3: true } })
@@ -261,8 +261,8 @@ describe('Settings › 电脑 on a current Host', () => {
     // Phone access says where it is set up, in words, and never with the start options.
     expect(html).toContain('连接设置在 设置 › 设备 中')
     expect(html).not.toContain('--tls-cert')
-    expect(html).toContain('只有能管理此 Host 的设备可以修改上限。')
-    expect(html.match(/自动编辑尚未实现，目前按逐项询问执行/gu)).toHaveLength(2)
+    expect(html).toContain('只有能管理这台 Mac 的设备可以修改。')
+    expect(html.match(/自动编辑尚未实现，目前按需要时询问执行/gu)).toHaveLength(2)
     expect(html).not.toContain('aria-haspopup')
     expect(html).not.toContain('role="switch"')
   })

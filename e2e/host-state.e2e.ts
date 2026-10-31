@@ -77,9 +77,9 @@ describe('the Host announcing it stops answering', () => {
     requests.length = 0
     const announced = Date.now()
     expect((await report({ state: 'sleeping' })).status).toBe(200)
-    const asleep = banner.getByText(/^电脑已休眠（\d{2}:\d{2} 起）$/u)
+    const asleep = banner.getByText(/^Mac 已休眠（\d{2}:\d{2} 起）$/u)
     await asleep.waitFor()
-    await banner.getByText('电脑唤醒后会自动重新连接。').waitFor()
+    await banner.getByText('Mac 唤醒后会自动重新连接。').waitFor()
     expect(await page.locator('.app-shell').getAttribute('data-connection')).toBe('reconnecting')
     await page.screenshot({ path: 'test-results/host-state-sleeping.png', animations: 'disabled' })
     // This Host never slept, so the first attempt after the wait connects and the line goes away.
@@ -94,7 +94,7 @@ describe('the Host announcing it stops answering', () => {
       expect((await report({ state: 'sleeping' })).status).toBe(200)
       const title = await target.page
         .locator('.banner-region')
-        .getByText(/^电脑已休眠（\d{2}:\d{2} 起）$/u)
+        .getByText(/^Mac 已休眠（\d{2}:\d{2} 起）$/u)
         .textContent()
       await captureBothThemes(target.page, `host-state-sleeping-${target.label}`, title!)
     }
@@ -110,13 +110,13 @@ describe('the Host announcing it stops answering', () => {
     // A restart said ahead: the Host's last frame names it, and the page says so instead of a generic line.
     expect((await report({ state: 'stopping', reason: 'restart' })).status).toBe(200)
     await testHost.host.close()
-    await banner.getByText('电脑上的 Latch 正在重启', { exact: true }).waitFor()
+    await banner.getByText('Mac 上的 Latch 正在重启', { exact: true }).waitFor()
     await banner.getByText('几秒后会自动重新连接。').waitFor()
     expect(await banner.getByText('连接已中断，正在重连…', { exact: true }).count()).toBe(0)
     await page.screenshot({ path: 'test-results/host-state-restarting.png', animations: 'disabled' })
     // This Host does not come back, so the line stays while each page is captured.
     for (const target of [...narrow, { label: 'desktop', page }])
-      await captureBothThemes(target.page, `host-state-restarting-${target.label}`, '电脑上的 Latch 正在重启')
+      await captureBothThemes(target.page, `host-state-restarting-${target.label}`, 'Mac 上的 Latch 正在重启')
   }, 120_000)
 })
 
@@ -140,7 +140,7 @@ describe('a Host refusing the device after it announced a stop', () => {
       await enrollBrowser(page, testHost, { name: '撤销测试浏览器' })
       const device = testHost.host.security.devices.list().find(item => item.name === '撤销测试浏览器')!
       expect((await testHost.raw('unix', 'api/host/state', { method: 'POST', body: { state: 'sleeping' } })).status).toBe(200)
-      const asleep = page.locator('.banner-region').getByText(/^电脑已休眠（\d{2}:\d{2} 起）$/u)
+      const asleep = page.locator('.banner-region').getByText(/^Mac 已休眠（\d{2}:\d{2} 起）$/u)
       await asleep.waitFor()
       // Revoked while the page waits out the announced ten seconds: the next stream attempt gets 401 device-revoked.
       expect((await testHost.raw('unix', `api/devices/${device.id}`, { method: 'DELETE' })).status).toBe(200)

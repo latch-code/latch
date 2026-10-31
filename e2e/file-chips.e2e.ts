@@ -21,7 +21,7 @@ const REPLY = [
   '- 参考：[Latch 文档](https://example.com/docs)',
 ].join('\n')
 const LONG_NAME = 'deck-final.pptx'
-const ELSEWHERE = '在运行 Latch 的 Mac 上用桌面端可以快速查看和打开。'
+const ELSEWHERE = '在 Mac 上的 Latch 里可以快速查看和打开。'
 
 describe('file references with an older Host without content preview', () => {
   let testHost: TestHost

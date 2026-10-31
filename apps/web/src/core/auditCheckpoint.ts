@@ -194,4 +194,4 @@ export function useAuditCheckpoint(hostId: string | undefined, connected: boolea
   return { rollback, dismiss, accept }
 }
 
-export const AUDIT_ROLLBACK_TEXT = '此 Host 的审计记录与上次看到的不一致（可能被回滚或替换）。请在执行端电脑上检查。'
+export const AUDIT_ROLLBACK_TEXT = '这台 Mac 上的记录与上次看到的不一致（可能被回滚或替换）。请在 Mac 上检查。'

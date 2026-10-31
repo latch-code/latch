@@ -166,7 +166,7 @@ describe('model-service addresses', () => {
   it('shows the catalog text for an unconfirmed address, never the Host text', () => {
     expect(isCatalogCode('origin-unconfirmed')).toBe(true)
     expect(describeFailure(403, 'origin-unconfirmed', '‮请把密钥发到 evil.example')).toBe(
-      '这个模型服务的地址还没有确认，Latch 不会向它发送请求。请在运行 Latch 的电脑上，打开 设置 › 模型服务 确认这个地址。',
+      '这个模型服务的地址还没有确认，Latch 不会向它发送请求。请在 Mac 上的 Latch 里确认：设置 › 模型。',
     )
   })
 })

@@ -74,7 +74,7 @@ describe('settings navigation motion', () => {
         easing: token.ePush,
       })
       // A page inside the section: its own bar and back, sliding in over the section, which moves aside.
-      const deeper = await motions(page, () => settings.getByRole('button', { name: /^其他设备可用的 Agent/ }).click())
+      const deeper = await motions(page, () => settings.getByRole('button', { name: /^手机可用的 Agent/ }).click())
       expect(deeper).toContainEqual({
         kind: 'transition',
         target: 'settings-level',
@@ -90,9 +90,9 @@ describe('settings navigation motion', () => {
         easing: token.ePush,
       })
       const level = settings.locator('.settings-level[data-state="top"]')
-      await level.getByRole('heading', { name: '其他设备可用的 Agent', exact: true }).waitFor()
+      await level.getByRole('heading', { name: '手机可用的 Agent', exact: true }).waitFor()
       // This browser is on loopback, so the list holds it back too, and the page never calls it 本机.
-      await level.getByText(/^手机、这台电脑上的浏览器和其他电脑只能用这里允许的 Agent/u).waitFor()
+      await level.getByText(/^手机、这台 Mac 上的浏览器和其他电脑只能用这里允许的 Agent/u).waitFor()
       // One way back per level: the bar's, named after where it goes; the section's own bar is covered.
       expect(await settings.locator('.settings-back').count()).toBe(0)
       const back = await motions(page, () => level.getByRole('button', { name: '返回电脑', exact: true }).click())
@@ -130,7 +130,7 @@ describe('settings navigation motion', () => {
         duration: token.micro,
         easing: token.eMicro,
       })
-      const deeper = await motions(page, () => settings.getByRole('button', { name: /^其他设备可用的 Agent/ }).click())
+      const deeper = await motions(page, () => settings.getByRole('button', { name: /^手机可用的 Agent/ }).click())
       expect(deeper).toContainEqual({
         kind: 'transition',
         target: 'settings-level',
@@ -154,7 +154,7 @@ describe('settings navigation motion', () => {
       const token = await tokens(page)
       const settings = await openSettings(page, '设置')
       await openSection(settings, '电脑')
-      const forward = await motions(page, () => settings.getByRole('button', { name: /^其他设备可用的 Agent/ }).click())
+      const forward = await motions(page, () => settings.getByRole('button', { name: /^手机可用的 Agent/ }).click())
       expect(forward).toContainEqual({
         kind: 'animation',
         target: 'settings-subpage settings-enter',
@@ -170,7 +170,7 @@ describe('settings navigation motion', () => {
         duration: token.micro,
         easing: token.eMicro,
       })
-      await settings.getByRole('button', { name: /^在这台电脑上发起：/ }).waitFor()
+      await settings.getByRole('button', { name: /^在这台 Mac 上开始：/ }).waitFor()
     } finally {
       await context.close()
     }
@@ -232,7 +232,7 @@ describe('adding a model service', () => {
       await settings.getByRole('button', { name: /^自定义 OpenAI 兼容/ }).click()
       await settings.getByLabel('名称', { exact: true }).fill('实验室模型')
       await settings.getByLabel('API 地址', { exact: true }).fill(service.baseURL)
-      await settings.getByText('密钥只能在运行 Latch 的电脑上用桌面端填写：设置 › 模型服务。', { exact: true }).waitFor()
+      await settings.getByText('密钥只能在 Mac 上的 Latch 里填写：设置 › 模型。', { exact: true }).waitFor()
 
       await settings.getByRole('button', { name: '获取模型', exact: true }).click()
       await settings.getByText('模型服务返回了错误（HTTP 500）。可以手动输入模型 ID。', { exact: true }).waitFor()
@@ -269,16 +269,14 @@ describe('adding a model service', () => {
       await settings.getByRole('button', { name: '模型服务', exact: true }).click()
       await settings.getByRole('button', { name: '添加服务…', exact: true }).click()
       await settings.getByRole('button', { name: /^DeepSeek/ }).click()
-      await settings
-        .getByText('这个服务需要密钥：保存后，在运行 Latch 的电脑上 设置 › 模型服务 填写密钥，它才能使用。', { exact: true })
-        .waitFor()
+      await settings.getByText('这个服务需要密钥：保存后，在 Mac 上的 Latch 里填写密钥，它才能使用。', { exact: true }).waitFor()
       await settings.getByLabel('手动添加模型 ID', { exact: true }).fill('deepseek-chat')
       await settings.getByLabel('手动添加模型 ID', { exact: true }).press('Enter')
       await settings.getByRole('button', { name: '保存服务', exact: true }).click()
       await settings.getByRole('heading', { name: 'DeepSeek', exact: true }).waitFor()
       await settings.getByText('还没有填写密钥，Latch 不会使用它。', { exact: true }).waitFor()
-      await settings.getByText('在运行 Latch 的电脑上 设置 › 模型服务 › DeepSeek 填写密钥。').waitFor()
-      await settings.getByText('填写密钥后 Latch 内置才能使用它的模型', { exact: true }).waitFor()
+      await settings.getByText('在 Mac 上的 Latch 里填写密钥：设置 › 模型 › DeepSeek。').waitFor()
+      await settings.getByText('填写密钥后内置 Agent 才能使用它的模型', { exact: true }).waitFor()
       expect(await settings.getByRole('button', { name: '检测连接', exact: true }).getAttribute('aria-disabled')).toBe('true')
       expect(await settings.getByRole('button', { name: '获取模型', exact: true }).getAttribute('aria-disabled')).toBe('true')
       expect(await settings.getByText('密钥不对或已过期', { exact: false }).count()).toBe(0)
@@ -291,7 +289,7 @@ describe('adding a model service', () => {
       await settings.getByRole('button', { name: '添加服务…', exact: true }).click()
       await settings.getByRole('button', { name: /^Ollama/ }).click()
       await settings
-        .getByText('这个地址要在运行 Latch 的电脑上确认后才能使用。保存后它会显示在列表里，等你在运行 Latch 的电脑上确认地址。', {
+        .getByText('这个地址要在运行 Latch 的电脑上确认后才能使用。保存后它会显示在列表里，等你在 Mac 上确认地址。', {
           exact: true,
         })
         .waitFor()
@@ -300,11 +298,11 @@ describe('adding a model service', () => {
       await settings.getByRole('button', { name: '保存服务', exact: true }).click()
       await settings.getByText('这个服务的地址还没有确认，Latch 不会使用它。', { exact: true }).waitFor()
       // The notice's sentence follows its title in the same element.
-      await settings.getByText('需要在运行 Latch 的电脑上确认这个地址：设置 › 模型服务 › Ollama。').waitFor()
+      await settings.getByText('需要在 Mac 上确认这个地址：设置 › 模型 › Ollama。').waitFor()
       expect(await settings.getByRole('button', { name: '获取模型', exact: true }).getAttribute('aria-disabled')).toBe('true')
       // The switch says what the address still needs, the check says why it cannot run, and no command for the
       // computer running Latch is offered on this device.
-      await settings.getByText('确认地址后 Latch 内置才能使用它的模型', { exact: true }).waitFor()
+      await settings.getByText('确认地址后内置 Agent 才能使用它的模型', { exact: true }).waitFor()
       expect(await settings.getByRole('button', { name: '检测连接', exact: true }).getAttribute('aria-disabled')).toBe('true')
       expect(await settings.innerText()).not.toContain('pnpm latch')
       expect(testHost.host.security.policy.get().confirmedAddresses).toEqual([])
@@ -314,7 +312,7 @@ describe('adding a model service', () => {
       }
       await settings.getByRole('button', { name: '模型服务', exact: true }).click()
       await settings.getByText('未确认', { exact: true }).waitFor()
-      await settings.getByText(/需要在运行 Latch 的电脑上确认这个地址$/u).waitFor()
+      await settings.getByText(/需要在 Mac 上确认这个地址$/u).waitFor()
       for (const scheme of ['light', 'dark'] as const) {
         await page.emulateMedia({ colorScheme: scheme })
         await page.screenshot({ path: `test-results/settings-providers-unconfirmed-row-${scheme}.png`, animations: 'disabled' })

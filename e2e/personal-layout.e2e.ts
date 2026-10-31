@@ -233,7 +233,7 @@ describe('personal group and routine layout with real child-session navigation',
         expect(routine.enabled).toBe(false)
         expect(routine.state).toBe('disabled')
         expect(await personal.getByRole('button', { name: /^(开启每日执行|重新开启)$/u }).count()).toBe(0)
-        await personal.getByText('开启例行任务：此操作只能在运行 Latch 的电脑上用 Latch 桌面端进行。', { exact: true }).waitFor()
+        await personal.getByText('开启例行任务：只能在 Mac 上的 Latch 里操作。', { exact: true }).waitFor()
         await noHorizontalOverflow(page, personal.locator('.personal-content'))
         await capture(page, 'routine-disabled-' + suffix)
         const refused = await page.evaluate(

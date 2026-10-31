@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import { ChevronRight, Ellipsis, LockKeyhole } from 'lucide-react'
-import type { Approval, ApprovalOption, ConfirmationTicket, FileDiff } from '@latch/protocol'
+import type { Approval, ApprovalOption, FileDiff } from '@latch/protocol'
 import {
   Button,
   ICON_STROKE,
@@ -20,7 +20,6 @@ import type { ApprovalGate } from '../core/permissions.ts'
 import { APPROVAL_COPY, APPROVAL_OPTION_LABELS, DECISION_COPY, CONFIRMATION_COPY } from '../core/securityCopy.ts'
 import { ArgumentList } from './ArgumentList.tsx'
 import { diffRows, DiffView, PREVIOUS_NOTES } from './DiffView.tsx'
-import { ConfirmationDetails, SheetSentence } from './InlineConfirm.tsx'
 import { hasHiddenCharacters, VisibleText } from './VisibleText.tsx'
 
 /**
@@ -48,9 +47,6 @@ export interface ApprovalStatus {
   uncertain?: UncertainChoice
   /** The pressed allow's local confirmation: open on this computer, or passed with the choice on its way. */
   confirming?: 'waiting' | 'sending'
-  /** Its ticket (the sentence the system sheet shows and the details), and how to cancel it while it waits. */
-  ticket?: ConfirmationTicket
-  cancel?: () => void
   /** Why the choice did not go through: a confirmation that did not pass (error) or could not start (warn). */
   failure?: { text: string; tone: 'error' | 'warn' }
   /** 拒绝 was pressed and the composer asks what to do instead; the next 拒绝 sends the rejection. */
@@ -225,17 +221,11 @@ function ApprovalPanel({
   const footnote =
     status?.noting && !running
       ? DECISION_COPY.noteCard
-      : status?.confirming === 'waiting'
-        ? CONFIRMATION_COPY.waitingShell
-        : status?.confirming === 'sending'
-          ? APPROVAL_COPY.confirmedLocal
-          : allow === undefined
-            ? undefined
-            : gate.confirms
-              ? APPROVAL_COPY.localNote
-              : gate.kind === 'R1' && allow.kind === 'allow_once'
-                ? APPROVAL_COPY.onceNote
-                : undefined
+      : status?.confirming || allow === undefined || gate.confirms
+        ? undefined
+        : gate.kind === 'R1' && allow.kind === 'allow_once'
+          ? APPROVAL_COPY.onceNote
+          : undefined
   const uncertainOption =
     uncertain && (gate.options.find(option => option.id === uncertain.optionId) ?? (uncertain.decision === 'allow' ? allow : reject))
   const keys = (event: KeyboardEvent<HTMLElement>) => {
@@ -342,21 +332,15 @@ function ApprovalPanel({
         </>
       )}
       {footnote && (
-        <p className="approval-footnote" aria-live="polite" data-confirming={status?.confirming}>
-          <span>{footnote}</span>
-          {status?.confirming === 'waiting' && status.cancel && (
-            <Button size="xs" variant="link" className="approval-confirm-cancel" onClick={status.cancel}>
-              {CONFIRMATION_COPY.cancel}
-            </Button>
-          )}
+        <p className="approval-footnote" aria-live="polite">
+          {footnote}
         </p>
       )}
-      {/* While Touch ID waits: the sentence the system sheet shows, and the Host's facts behind it. */}
-      {status?.confirming && status.ticket && (
-        <div className="approval-confirm">
-          {status.ticket.reason && <SheetSentence reason={status.ticket.reason} />}
-          <ConfirmationDetails ticket={status.ticket} />
-        </div>
+      {/* The pressed button shows pending and the system sheet is the only window; this is for a screen reader. */}
+      {status?.confirming && (
+        <p className="sr-only" role="status">
+          {status.confirming === 'waiting' ? CONFIRMATION_COPY.waiting : APPROVAL_COPY.confirmedLocal}
+        </p>
       )}
       {failure && (
         <InlineNotice tone={failure.tone} className="approval-failure">

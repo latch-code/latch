@@ -622,8 +622,8 @@ describe('visual capture of the real product', () => {
    */
   async function captureCeilings(target: Page, viewport: VisualViewport, settings: Locator): Promise<void> {
     for (const [surface, name, description] of [
-      ['settings-computer-local-menu', '在这台电脑上发起', 'the ceiling for sessions started on this computer'],
-      ['settings-computer-remote-menu', '从手机和其他电脑发起', 'the ceiling for other devices; raising is not possible here'],
+      ['settings-computer-local-menu', '在这台 Mac 上开始', 'the ceiling for sessions started on this computer'],
+      ['settings-computer-remote-menu', '从手机和其他电脑开始', 'the ceiling for other devices; raising is not possible here'],
     ] as const) {
       await settings.getByRole('button', { name: new RegExp(`^${name}：`) }).click()
       const layer =
@@ -639,8 +639,8 @@ describe('visual capture of the real product', () => {
     }
     // The list pages: a page of its own, pushed with its own bar on phones and with a way back above it elsewhere.
     for (const [surface, row, all, description] of [
-      ['settings-computer-agents', /^其他设备可用的 Agent/, '全部 Agent', 'the agents other devices may use'],
-      ['settings-computer-workspaces', /^其他设备可用的项目/, '全部项目', 'the projects other devices may use'],
+      ['settings-computer-agents', /^手机可用的 Agent/, '全部 Agent', 'the agents other devices may use'],
+      ['settings-computer-workspaces', /^手机可用的项目/, '全部项目', 'the projects other devices may use'],
     ] as const) {
       await settings.getByRole('button', { name: row }).click()
       const list = viewport.name === 'phone' ? settings.locator('.settings-level[data-state="top"]') : settings
@@ -651,7 +651,7 @@ describe('visual capture of the real product', () => {
       await noHorizontalOverflow(target, settings)
       await recorder.capture(target, viewport, surface, description)
       await back.click()
-      await settings.getByRole('button', { name: /^在这台电脑上发起：/ }).waitFor()
+      await settings.getByRole('button', { name: /^在这台 Mac 上开始：/ }).waitFor()
       await expect.poll(() => settings.locator('.settings-layout').getAttribute('data-level')).not.toBe('page')
     }
 
@@ -660,10 +660,10 @@ describe('visual capture of the real product', () => {
     const append = audit.append.bind(audit)
     audit.append = () => Promise.reject(new AppError(503, 'audit-unavailable', '审计记录写入失败，操作未执行'))
     try {
-      const remoteStart = settings.getByRole('switch', { name: '允许其他设备在这里新建会话', exact: true })
+      const remoteStart = settings.getByRole('switch', { name: '手机可以开始新会话', exact: true })
       await remoteStart.click()
       await expect.poll(() => host.security.policy.get().remote.allowRemoteStart).toBe(false)
-      await settings.getByText(/没有写入审计记录/).waitFor()
+      await settings.getByText('改动已生效，但没有写入记录', { exact: false }).waitFor()
     } finally {
       audit.append = append
     }
@@ -1054,7 +1054,7 @@ describe('visual capture of the real product', () => {
       const agentTile = harnesses.getByRole('radio', { name: /本地 ACP Agent/ })
       await reachable(agentTile, { allowDisabled: true })
       expect(await agentTile.getAttribute('aria-disabled')).toBe('true')
-      expect(await agentTile.textContent()).toContain('仅本机桌面端')
+      expect(await agentTile.textContent()).toContain('在 Mac 上开始')
       await recorder.capture(target, viewport, 'new-session', 'empty')
       await target.getByRole('textbox', { name: '新会话消息', exact: true }).blur()
       await settleMotion(target)
@@ -1115,7 +1115,7 @@ describe('visual capture of the real product', () => {
         // A browser cannot set keys: the panel says where it can be done.
         await target
           .getByRole('region', { name: 'DeepSeek', exact: true })
-          .locator('.setup-panel-note', { hasText: '密钥只能在运行 Latch 的电脑上用桌面端填写' })
+          .locator('.setup-panel-note', { hasText: '密钥只能在 Mac 上的 Latch 里填写' })
           .waitFor()
         await settleMotion(target)
         await recorder.capture(target, viewport, 'new-session-model-add-key', 'a service that needs a key, on a device that cannot set one')
@@ -1132,7 +1132,7 @@ describe('visual capture of the real product', () => {
       await presetList.getByRole('button', { name: /^Codex/ }).click()
       const codex = target.getByRole('region', { name: 'Codex', exact: true })
       await reachable(codex.getByRole('button', { name: '复制安装命令', exact: true }))
-      await codex.getByText('在运行 Latch 的电脑上添加：设置 › Agent 成员').waitFor()
+      await codex.getByText('在 Mac 上的 Latch 里添加：设置 › Agent').waitFor()
       await settleMotion(target)
       await recorder.capture(target, viewport, 'new-session-add-agent', 'one preset: what is missing and where to add it')
       await target.keyboard.press('Escape')
@@ -1151,7 +1151,7 @@ describe('visual capture of the real product', () => {
       await recorder.capture(target, viewport, 'new-session-chat', 'the built-in harness for conversation only: no project')
       // Pressed, a tile that cannot be chosen says why under the row.
       await agentTile.click({ force: true })
-      await target.locator('.harness-choice .ui-tile-choice-reason', { hasText: '仅本机桌面端' }).waitFor()
+      await target.locator('.harness-choice .ui-tile-choice-reason', { hasText: '在 Mac 上开始' }).waitFor()
       await recorder.capture(target, viewport, 'new-session-harness-unavailable', 'why a harness cannot be chosen here')
       await harnesses.getByRole('radio', { name: /^Latch 内置\s*Agent$/ }).click()
 
@@ -1233,7 +1233,7 @@ describe('visual capture of the real product', () => {
         await desktopApp.getByRole('textbox', { name: '新会话消息', exact: true }).fill('列出项目根目录')
         await reachable(desktopApp.getByRole('button', { name: '发送', exact: true }))
         await reachable(desktopApp.getByRole('button', { name: '权限：完全访问，查看电脑与权限上限', exact: true }))
-        expect(await desktopApp.getByText('开启完全访问会话需要本机确认。该会话可以读写 Latch 数据和 Host 身份私钥。').count()).toBe(0)
+        expect(await desktopApp.getByText('它可以读写这台 Mac 上的文件并运行命令，Latch 不隔离它。').count()).toBe(0)
         await desktopApp.getByRole('textbox', { name: '新会话消息', exact: true }).blur()
         await desktopApp.evaluate(() => new Promise(done => setTimeout(done, 400)))
         await recorder.capture(desktopApp, viewport, 'new-session-full-access', 'starting a full-access session in the desktop app')
@@ -1506,7 +1506,7 @@ describe('visual capture of the real product', () => {
       await reachable(r1.getByRole('button', { name: '允许一次', exact: true }))
       await reachable(r1.getByRole('button', { name: '拒绝', exact: true }))
       // The card waits for the person with the one amber status word in its header.
-      await r1.locator('.tool-card-header .ui-status-word[data-tone="waiting"]', { hasText: '待批准' }).waitFor()
+      await r1.locator('.tool-card-header .ui-status-word[data-tone="waiting"]', { hasText: '等你允许' }).waitFor()
       await recorder.capture(target, viewport, 'approval-r1', 'R1 waiting for approval')
       if (sidebar) await recorder.capture(target, viewport, 'sidebar-waiting', 'session waiting for approval selected', sidebar)
       if (viewport.name === 'desktop') {
@@ -1635,14 +1635,14 @@ describe('visual capture of the real product', () => {
 
       await openSession(target, viewport, sessions.r2)
       const r2 = target.locator('[data-approval-id]')
-      await r2.getByText('高风险操作只能在运行 Latch 的电脑上用 Latch 桌面端批准', { exact: true }).waitFor()
+      await r2.getByText('在 Mac 上的 Latch 里允许', { exact: true }).waitFor()
       expect(await r2.getByRole('button', { name: /允许/ }).count()).toBe(0)
       await reachable(r2.getByRole('button', { name: '拒绝', exact: true }))
       await recorder.capture(target, viewport, 'approval-r2-locked', 'R2 on a device that cannot approve it')
 
       await openSession(target, viewport, sessions.hidden)
       const hidden = target.locator('[data-approval-id]')
-      await hidden.getByText(/^内容包含不可见或改变显示方向的字符/).waitFor()
+      await hidden.getByText('含有不可见字符，已标出', { exact: true }).waitFor()
       await reachable(hidden.getByRole('button', { name: '允许一次', exact: true }))
       // Nothing broader than allowing once is one tap away from content that may read as something else.
       expect(await hidden.locator('.approval-more').count()).toBe(0)
@@ -1675,9 +1675,9 @@ describe('visual capture of the real product', () => {
       })
       await openSession(target, viewport, sessions.r1)
       const locked = target.locator('[data-approval-id]')
-      await locked.getByText('此设备没有「批准普通操作」权限', { exact: true }).waitFor()
+      await locked.getByText('这台设备不能允许这一步', { exact: true }).waitFor()
       expect(await locked.getByRole('button', { name: /允许/ }).count()).toBe(0)
-      await locked.locator('.tool-card-header .ui-status-word[data-tone="waiting"]', { hasText: '待批准' }).waitFor()
+      await locked.locator('.tool-card-header .ui-status-word[data-tone="waiting"]', { hasText: '等你允许' }).waitFor()
       await reachable(locked.getByRole('button', { name: '拒绝', exact: true }))
       await recorder.capture(target, viewport, 'approval-r1-locked', 'R1 on a device without 批准普通操作')
       await target.unroute('**/link/api/snapshot')
@@ -1698,7 +1698,7 @@ describe('visual capture of the real product', () => {
       })
       await openSession(target, viewport, sessions.r1)
       const legacy = target.locator('[data-approval-id]')
-      await target.getByText('此 Host 仍是旧版本，重启 Host 后启用设备确认。', { exact: true }).waitFor()
+      await target.getByText('这台 Mac 上的 Latch 还是旧版本，重新启动后才能确认设备。', { exact: true }).waitFor()
       await reachable(legacy.getByRole('button', { name: '允许一次', exact: true }))
       await reachable(legacy.getByRole('button', { name: '拒绝', exact: true }))
       expect(await legacy.locator('.approval-more').count()).toBe(0)
@@ -1869,7 +1869,7 @@ describe('visual capture of the real product', () => {
       await settings.getByRole('heading', { name: '新会话默认值' }).waitFor()
       await recorder.capture(target, viewport, 'settings-general', 'general')
       for (const [surface, section, ready] of [
-        ['settings-computer', '电脑', settings.getByRole('button', { name: /^在这台电脑上发起：/ })],
+        ['settings-computer', '电脑', settings.getByRole('button', { name: /^在这台 Mac 上开始：/ })],
         ['settings-providers', '模型服务', settings.getByText('本地模型服务').first()],
         ['settings-agents', 'Agent 成员', settings.getByText('本地 ACP Agent').first()],
         ['settings-workspaces', '项目', settings.getByText('website').first()],
@@ -1913,9 +1913,7 @@ describe('visual capture of the real product', () => {
             top().getByRole('button', { name: '保存服务', exact: true }),
           ])
             await reachable(control, { allowDisabled: true })
-          await top()
-            .getByText('这个服务需要密钥：保存后，在运行 Latch 的电脑上 设置 › 模型服务 填写密钥，它才能使用。', { exact: true })
-            .waitFor()
+          await top().getByText('这个服务需要密钥：保存后，在 Mac 上的 Latch 里填写密钥，它才能使用。', { exact: true }).waitFor()
           await noHorizontalOverflow(target, settings)
           await recorder.capture(target, viewport, 'settings-provider-add', 'adding a model service from a preset')
           await backToSection(settings)
@@ -1950,8 +1948,8 @@ describe('visual capture of the real product', () => {
         await openSection(settings, '电脑')
         await settings.getByRole('heading', { name: '权限上限', exact: true }).waitFor()
         // The ceilings are values here, with no picker; the caption says who can change them.
-        expect(await settings.getByRole('button', { name: /^在这台电脑上发起：/ }).count()).toBe(0)
-        await settings.getByText('只有能管理此 Host 的设备可以修改上限。', { exact: true }).waitFor()
+        expect(await settings.getByRole('button', { name: /^在这台 Mac 上开始：/ }).count()).toBe(0)
+        await settings.getByText('只有能管理这台 Mac 的设备可以修改。', { exact: true }).waitFor()
         await noHorizontalOverflow(target, settings)
         await recorder.capture(target, viewport, 'settings-computer-readonly', 'the ceilings for a device that cannot manage the Host')
         await closeSettings(settings)

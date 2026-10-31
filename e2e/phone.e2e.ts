@@ -200,7 +200,7 @@ describe('the phone stack', () => {
       await sheet.getByRole('button', { name: /^添加 Agent/ }).click()
       const adder = page.getByRole('dialog', { name: '添加 Agent', exact: true })
       await adder.getByRole('button', { name: /^Codex/ }).click()
-      await adder.getByText('在运行 Latch 的电脑上添加：设置 › Agent 成员', { exact: true }).waitFor()
+      await adder.getByText('在 Mac 上的 Latch 里添加：设置 › Agent', { exact: true }).waitFor()
       await page.keyboard.press('Escape')
       await adder.waitFor({ state: 'hidden' })
       expect(Math.round((await surface.boundingBox())!.height)).toBe(standing)

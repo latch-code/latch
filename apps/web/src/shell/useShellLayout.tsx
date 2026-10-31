@@ -434,7 +434,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
           const added = result.added[0]
           const refused = result.refused[0]
           if (refused)
-            setToast({ text: `没有加入 ${basename(refused.path)}：${refused.message ?? '执行端拒绝了这个文件夹。'}`, tone: 'error' })
+            setToast({ text: `没有加入 ${basename(refused.path)}：${refused.message ?? 'Latch 拒绝了这个文件夹。'}`, tone: 'error' })
           await refresh()
           if (added) {
             if (start) startNew()
@@ -695,8 +695,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const connectionTitle = connection === 'offline' ? '当前设备已离线' : (hostProblem?.text ?? notice?.title ?? '连接已中断，正在重连…')
   const connectionText =
     connection === 'offline'
-      ? '已读内容仍可查看；恢复连接后会同步执行端状态。'
-      : (notice?.body ?? (hostProblem ? '恢复后会同步执行端的最新状态。' : harness.error || '恢复后会同步执行端的最新状态。'))
+      ? '已读内容仍可查看；恢复连接后会同步最新状态。'
+      : (notice?.body ?? (hostProblem ? '恢复后会同步最新状态。' : harness.error || '恢复后会同步最新状态。'))
   const devMode = host?.devMode === true
   const level = current?.permission?.level ?? summary?.level
 

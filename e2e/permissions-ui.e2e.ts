@@ -109,7 +109,7 @@ describe('permission states in a browser', () => {
     await open(sessionId)
     const card = page.locator('[data-approval-id]')
     await card.getByText('高风险 · Latch 不认识的工具', { exact: true }).waitFor()
-    await card.getByText('高风险操作只能在运行 Latch 的电脑上用 Latch 桌面端批准', { exact: true }).waitFor()
+    await card.getByText('在 Mac 上的 Latch 里允许', { exact: true }).waitFor()
     expect(await card.getByRole('button', { name: /允许/ }).count()).toBe(0)
     await page.screenshot({ path: `${OUTPUT}/r2-browser-desktop.png`, fullPage: true, animations: 'disabled' })
     // 拒绝 asks what to do instead; pressing it again rejects without a note.
@@ -442,12 +442,12 @@ describe('permission states in a browser', () => {
     await open(sessionId)
 
     await page.locator('.topbar').getByText('完全访问', { exact: true }).waitFor()
-    await page.getByText('完全访问会话只接受执行端电脑上 Latch 桌面端的输入。此设备可以查看、拒绝和取消。', { exact: true }).waitFor()
+    await page.getByText('这个会话只能在 Mac 上继续。这台设备可以查看、拒绝和停止。', { exact: true }).waitFor()
     expect(await page.getByRole('textbox', { name: '继续对话' }).count()).toBe(0)
     const card = page.locator('[data-approval-id]')
     await card.getByText('仅提示', { exact: true }).waitFor()
-    await card.getByText('完全访问会话中，Agent 的询问只是提示：拒绝会转达给它，但不能阻止它执行其他操作。', { exact: true }).waitFor()
-    await card.getByText('只有运行 Latch 的电脑上的 Latch 桌面端可以回应完全访问会话的询问', { exact: true }).waitFor()
+    await card.getByText('Agent 的询问只是提示：拒绝会转达给它，但不能阻止它执行其他操作。', { exact: true }).waitFor()
+    await card.getByText('在 Mac 上的 Latch 里允许', { exact: true }).waitFor()
     expect(await card.getByRole('button', { name: /允许/ }).count()).toBe(0)
     await page.screenshot({ path: `${OUTPUT}/l3-read-only-desktop.png`, fullPage: true, animations: 'disabled' })
     await page.setViewportSize({ width: 390, height: 844 })
@@ -463,7 +463,7 @@ describe('permission states in a browser', () => {
       body: { prompt: 'drift plan', requestId: randomUUID() },
     })
     await expect.poll(async () => (await detail(sessionId)).summary.permissionDrift, { timeout: 15_000 }).toBe(true)
-    await page.getByText('检测到权限模式变化，本轮已取消，挂起的询问已拒绝。该会话不再接受输入，请新建会话。', { exact: true }).waitFor()
+    await page.getByText('这个 Agent 的设置变了，为了安全换个新会话继续', { exact: true }).waitFor()
     expect(await page.getByRole('textbox', { name: '继续对话' }).count()).toBe(0)
     await page.screenshot({ path: `${OUTPUT}/l3-drift-desktop.png`, fullPage: true, animations: 'disabled' })
     // The banner that stops the session is a security surface too.
@@ -484,10 +484,10 @@ describe('permission states in a browser', () => {
     expect(await item.getAttribute('aria-disabled')).toBe('true')
     expect(await item.getAttribute('aria-checked')).toBe('false')
     // Its line says so on the tile; pressed, the reason is said under the row (touch screens have no tooltip).
-    expect(await item.textContent()).toContain('仅本机桌面端')
+    expect(await item.textContent()).toContain('在 Mac 上开始')
     await item.click({ force: true })
     expect(await item.getAttribute('aria-checked')).toBe('false')
-    await page.locator('.harness-choice .ui-tile-choice-reason', { hasText: '仅本机桌面端' }).waitFor()
+    await page.locator('.harness-choice .ui-tile-choice-reason', { hasText: '在 Mac 上开始' }).waitFor()
     await page.screenshot({ path: `${OUTPUT}/harness-picker-desktop.png`, animations: 'disabled' })
   })
 
@@ -498,48 +498,48 @@ describe('permission states in a browser', () => {
     expect(policy().remote).toMatchObject({ maxLevel: 'L1', allowRemoteStart: true })
     const settings = await openSettings(page)
     await openSection(settings, '电脑')
-    const raiseHere = '只能在这台电脑的 Latch 桌面端调高'
+    const raiseHere = '在 Mac 上放宽'
 
-    // Lowering applies at once from any admin device: 完全访问 → 逐项询问 writes both local fields in one change.
+    // Lowering applies at once from any admin device: 完全访问 → 需要时询问 writes both local fields in one change.
     const menu = (name: string) => page.getByRole('menu', { name: new RegExp(`^${name}：`) })
-    await settings.getByRole('button', { name: '在这台电脑上发起：完全访问', exact: true }).click()
-    await menu('在这台电脑上发起')
-      .getByRole('menuitemradio', { name: /^逐项询问/ })
+    await settings.getByRole('button', { name: '在这台 Mac 上开始：完全访问', exact: true }).click()
+    await menu('在这台 Mac 上开始')
+      .getByRole('menuitemradio', { name: /^需要时询问/ })
       .click()
     await expect.poll(() => policy().local).toEqual({ maxLevel: 'L1', allowL3: false })
-    await settings.getByRole('button', { name: '在这台电脑上发起：逐项询问', exact: true }).waitFor()
-    await settings.getByRole('button', { name: '从手机和其他电脑发起：逐项询问', exact: true }).click()
-    await menu('从手机和其他电脑发起')
+    await settings.getByRole('button', { name: '在这台 Mac 上开始：需要时询问', exact: true }).waitFor()
+    await settings.getByRole('button', { name: '从手机和其他电脑开始：需要时询问', exact: true }).click()
+    await menu('从手机和其他电脑开始')
       .getByRole('menuitemradio', { name: /^只读/ })
       .click()
     await expect.poll(() => policy().remote.maxLevel).toBe('L0')
 
     // Raising is not offered in a browser: every higher step says why before anything is sent.
-    await settings.getByRole('button', { name: '从手机和其他电脑发起：只读', exact: true }).click()
+    await settings.getByRole('button', { name: '从手机和其他电脑开始：只读', exact: true }).click()
     // An item's name is its title and its 默认 badge.
-    for (const level of ['逐项询问', '自动编辑']) {
-      const item = menu('从手机和其他电脑发起').getByRole('menuitemradio', { name: new RegExp(`^${level}`) })
+    for (const level of ['需要时询问', '自动编辑']) {
+      const item = menu('从手机和其他电脑开始').getByRole('menuitemradio', { name: new RegExp(`^${level}`) })
       expect(await item.getAttribute('aria-disabled')).toBe('true')
       expect(await item.textContent()).toContain(raiseHere)
     }
-    const full = menu('从手机和其他电脑发起').getByRole('menuitemradio', { name: /^完全访问/ })
-    expect(await full.textContent()).toContain('完全访问会话只能在这台电脑的 Latch 桌面端发起')
+    const full = menu('从手机和其他电脑开始').getByRole('menuitemradio', { name: /^完全访问/ })
+    expect(await full.textContent()).toContain('完全访问的会话只能在 Mac 上开始')
     await full.click({ force: true })
     await page.keyboard.press('Escape')
-    await settings.getByRole('button', { name: '在这台电脑上发起：逐项询问', exact: true }).click()
+    await settings.getByRole('button', { name: '在这台 Mac 上开始：需要时询问', exact: true }).click()
     expect(
-      await menu('在这台电脑上发起')
+      await menu('在这台 Mac 上开始')
         .getByRole('menuitemradio', { name: /^完全访问/ })
         .textContent(),
     ).toContain(raiseHere)
     await page.keyboard.press('Escape')
 
     // Turning remote starts off is a lowering; turning it back on is locked here.
-    const remoteStart = settings.getByRole('switch', { name: '允许其他设备在这里新建会话', exact: true })
+    const remoteStart = settings.getByRole('switch', { name: '手机可以开始新会话', exact: true })
     await remoteStart.click()
     await expect.poll(() => policy().remote.allowRemoteStart).toBe(false)
     await expect.poll(() => remoteStart.getAttribute('aria-disabled')).toBe('true')
-    await settings.getByText('只能在这台电脑的 Latch 桌面端开启', { exact: true }).waitFor()
+    await settings.getByText('在 Mac 上开启', { exact: true }).waitFor()
     await page.screenshot({ path: `${OUTPUT}/ceilings-browser.png`, animations: 'disabled' })
 
     // The Host refuses a raise from a browser whatever the page shows; nothing changed.
