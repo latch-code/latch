@@ -82,6 +82,53 @@ const fileCall = channel => (sessionId, target) => {
   return input ? ipcRenderer.invoke(channel, input) : Promise.resolve(INVALID)
 }
 
+// `browser`: the preview tabs, which main keeps (browser.cjs). Every call names a tab main handed out (or a project);
+// only these plain values cross to main, and only checked events come back.
+const BROWSER_TAB = /^brw_[A-Za-z0-9_-]{22}$/
+const BROWSER_INVALID = Object.freeze({ ok: false, error: 'invalid' })
+const BROWSER_NOTICES = new Set(['permission', 'download', 'popup', 'navigation', 'certificate'])
+const browserNumber = (value, min, max) => typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max
+const browserCall = (channel, input) => (input ? ipcRenderer.invoke(channel, input) : Promise.resolve(BROWSER_INVALID))
+const browserTab = tabId => (typeof tabId === 'string' && BROWSER_TAB.test(tabId) ? { tabId } : undefined)
+const browserProject = projectId => (typeof projectId === 'string' && PROJECT_ID.test(projectId) ? projectId : undefined)
+const browserAddress = url => (typeof url === 'string' && url.length > 0 && url.length <= 2048 ? url : undefined)
+const browserGo = action => tabId => {
+  const tab = browserTab(tabId)
+  return browserCall('latch:browser:go', tab && { tabId: tab.tabId, action })
+}
+
+/** Exactly x, y, width and height, finite: the panel's rectangle in the page's CSS pixels. */
+function browserRect(value) {
+  if (!value || typeof value !== 'object' || Object.keys(value).length !== 4) return undefined
+  const { x, y, width, height } = value
+  if (!browserNumber(x, -100_000, 100_000) || !browserNumber(y, -100_000, 100_000)) return undefined
+  return browserNumber(width, 0, 100_000) && browserNumber(height, 0, 100_000) ? { x, y, width, height } : undefined
+}
+
+function browserState(value) {
+  if (!value || typeof value !== 'object') return undefined
+  const { url, title, loading, canGoBack, canGoForward, zoom, crashed, error } = value
+  if (typeof url !== 'string' || url.length > 8192 || typeof title !== 'string' || title.length > 256) return undefined
+  if (![loading, canGoBack, canGoForward, crashed].every(item => typeof item === 'boolean') || !browserNumber(zoom, 0.25, 5))
+    return undefined
+  if (error !== null && !(Number.isInteger(error) && error < 0 && error > -1000)) return undefined
+  return { url, title, loading, canGoBack, canGoForward, zoom, crashed, error }
+}
+
+/** A tab's state, a notice (with the permission or the reason it names) or its end; anything else is dropped. */
+function browserEvent(value) {
+  if (!value || typeof value !== 'object' || typeof value.tabId !== 'string' || !BROWSER_TAB.test(value.tabId)) return undefined
+  const tabId = value.tabId
+  if (value.type === 'closed') return { type: 'closed', tabId }
+  if (value.type === 'state') {
+    const state = browserState(value.state)
+    return state ? { type: 'state', tabId, state } : undefined
+  }
+  if (value.type !== 'notice' || !BROWSER_NOTICES.has(value.notice)) return undefined
+  const detail = typeof value.detail === 'string' && /^[A-Za-z][A-Za-z-]{0,39}$/.test(value.detail) ? value.detail : undefined
+  return { type: 'notice', tabId, notice: value.notice, ...(detail ? { detail } : {}) }
+}
+
 /** The disk paths of dropped File objects; anything that is not a File backed by a file on disk drops the whole set. */
 function diskPaths(files) {
   let list
@@ -106,9 +153,9 @@ function diskPaths(files) {
   return paths
 }
 
-// The channels are OPEN_IN_BROWSER in proxy.cjs and LIFECYCLE_CHANNELS in lifecycle.cjs, which a sandboxed preload
-// cannot load, and the latch:folders:* handlers in main.cjs; main accepts each only from the latch://app/ page in a
-// window's top frame.
+// The channels are OPEN_IN_BROWSER in proxy.cjs, LIFECYCLE_CHANNELS in lifecycle.cjs and CHANNELS in browser.cjs, which
+// a sandboxed preload cannot load, and the latch:folders:* handlers in main.cjs; main accepts each only from the
+// latch://app/ page in a window's top frame.
 contextBridge.exposeInMainWorld(
   'latchShell',
   Object.freeze({
@@ -212,6 +259,72 @@ contextBridge.exposeInMainWorld(
       reveal: fileCall('latch:files:reveal'),
       quickLook: fileCall('latch:files:quicklook'),
       open: fileCall('latch:files:open'),
+    }),
+    // The 浏览器 tab. Main lays each tab's page over the panel rectangle the page sends and keeps every way a guest page
+    // could reach the shell or the Host shut; see docs/PREVIEW-BROWSER.md for each call's answer.
+    browser: Object.freeze({
+      protocolVersion: 1,
+      /** A new tab in the project's own partition, empty or at an address as typed in the address field. */
+      open: (projectId, url) => {
+        const project = browserProject(projectId)
+        const address = url === undefined || url === null ? null : browserAddress(url)
+        return browserCall('latch:browser:open', project && address !== undefined ? { projectId: project, url: address } : undefined)
+      },
+      close: tabId => browserCall('latch:browser:close', browserTab(tabId)),
+      navigate: (tabId, url) => {
+        const tab = browserTab(tabId)
+        const address = browserAddress(url)
+        return browserCall('latch:browser:navigate', tab && address ? { tabId: tab.tabId, url: address } : undefined)
+      },
+      back: browserGo('back'),
+      forward: browserGo('forward'),
+      reload: browserGo('reload'),
+      stop: browserGo('stop'),
+      /** The panel's rectangle in CSS pixels of the page; null hides the tab. */
+      setBounds: (tabId, bounds) => {
+        const tab = browserTab(tabId)
+        const rect = bounds === null ? null : browserRect(bounds)
+        return browserCall('latch:browser:bounds', tab && rect !== undefined ? { tabId: tab.tabId, bounds: rect } : undefined)
+      },
+      /** While an overlay of the page covers the panel: the tab hides, and the frame it showed comes back to stand in. */
+      occlude: (tabId, occluded) => {
+        const tab = browserTab(tabId)
+        return browserCall('latch:browser:occlude', tab && typeof occluded === 'boolean' ? { tabId: tab.tabId, occluded } : undefined)
+      },
+      focus: tabId => browserCall('latch:browser:focus', browserTab(tabId)),
+      capture: tabId => browserCall('latch:browser:capture', browserTab(tabId)),
+      /** 标注: the element at a point of the tab, in CSS pixels of the page from the tab's top-left corner. */
+      annotate: (tabId, point) => {
+        const tab = browserTab(tabId)
+        const valid =
+          point
+          && typeof point === 'object'
+          && Object.keys(point).length === 2
+          && browserNumber(point.x, 0, 100_000)
+          && browserNumber(point.y, 0, 100_000)
+        return browserCall('latch:browser:annotate', tab && valid ? { tabId: tab.tabId, point: { x: point.x, y: point.y } } : undefined)
+      },
+      zoom: (tabId, direction) => {
+        const tab = browserTab(tabId)
+        const valid = direction === 'in' || direction === 'out' || direction === 'reset'
+        return browserCall('latch:browser:zoom', tab && valid ? { tabId: tab.tabId, direction } : undefined)
+      },
+      devTools: tabId => browserCall('latch:browser:devtools', browserTab(tabId)),
+      /** 清除数据 of a project's partition: its storage, cookies, cache and saved credentials. */
+      clearData: projectId => {
+        const project = browserProject(projectId)
+        return browserCall('latch:browser:clear-data', project && { projectId: project })
+      },
+      state: tabId => browserCall('latch:browser:state', browserTab(tabId)),
+      subscribe: callback => {
+        if (typeof callback !== 'function') return () => {}
+        const listener = (_event, value) => {
+          const event = browserEvent(value)
+          if (event) callback(event)
+        }
+        ipcRenderer.on('latch:browser:event', listener)
+        return () => ipcRenderer.removeListener('latch:browser:event', listener)
+      },
     }),
   }),
 )

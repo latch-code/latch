@@ -1,14 +1,15 @@
 import { _electron, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
-import { createServer as createHttpServer } from 'node:http'
+import { createServer as createHttpServer, type Server } from 'node:http'
+import { createServer as createHttpsServer } from 'node:https'
 import { createServer, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { AgentSettings, WorkspaceInfo } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
-import { FAKE_ACP_AGENT, testDeviceKey } from '@latch/testkit'
+import { FAKE_ACP_AGENT, makeTestTls, testDeviceKey } from '@latch/testkit'
 import { createOfflineTicket } from '@latch/host/auth'
 import { writeHostState } from '@latch/host/host-state'
 import { desktopShellEnvironment } from '@latch/host/desktop-host'
@@ -137,6 +138,88 @@ async function connectionCounter() {
         server.close(() => done())
       }),
   }
+}
+
+async function listen(server: Server) {
+  await new Promise<void>(done => server.listen(0, '127.0.0.1', done))
+  const address = server.address()
+  if (!address || typeof address === 'string') throw new Error('Expected a TCP address')
+  return {
+    port: address.port,
+    close: () =>
+      new Promise<void>(done => {
+        server.closeAllConnections()
+        server.close(() => done())
+      }),
+  }
+}
+
+/** A long run of words, for a text that 标注 must cut. */
+const LONG_TEXT = '很长的说明文字 '.repeat(600)
+
+/**
+ * Elements whose names can shadow DOM members: `document.<name>` for images, `form.<name>` for controls, which does so
+ * in the isolated world too. The form has a labelled empty span at its left and is otherwise empty.
+ */
+const NAMED_ELEMENTS = [
+  ...['elementFromPoint', 'querySelectorAll', 'createTreeWalker', 'Document', 'CSS'].map(name => `<img name="${name}" hidden>`),
+  '<form class="labelled" aria-label="表单标签" style="position:absolute;left:300px;top:20px;width:200px;height:60px;margin:0">',
+  ...['id', 'localName', 'classList', 'children', 'parentElement', 'getAttribute', 'getBoundingClientRect'].map(
+    name => `<input type="hidden" name="${name}">`,
+  ),
+  '<span class="deep" title="里面的标签" style="position:absolute;left:0;top:0;width:50px;height:60px"></span></form>',
+].join('')
+
+/**
+ * A local web app for the preview browser, at known positions: a button and two links on its first page, a second
+ * page, a page that tries to get in the way of 标注, a download, and a redirect to another private address. The site
+ * answers under any name (the tests also reach it as `site.test`); the paths it was asked for are recorded.
+ */
+async function previewSite() {
+  const paths: string[] = []
+  let port = 0
+  const server = createHttpServer((request, response) => {
+    const { pathname } = new URL(request.url ?? '/', 'http://site.invalid')
+    paths.push(pathname)
+    const page = (title: string, body: string) => {
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+      response.end(
+        `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>body{margin:0;font:14px sans-serif}a,button{position:absolute;left:20px;width:160px;height:40px;display:block}</style></head><body>${body}</body></html>`,
+      )
+    }
+    if (pathname === '/')
+      page(
+        '预览夹具',
+        `<button id="save" class="primary wide" style="top:20px">保存设置</button><a id="popup" target="_blank" href="/second" style="top:100px">新窗口打开</a><a id="local" href="http://127.0.0.1:${port}/second" style="top:160px">本地服务</a>`,
+      )
+    else if (pathname === '/second') page('第二页', '<p>第二页</p>')
+    else if (pathname === '/hostile')
+      page(
+        '标注夹具',
+        `<button id="target" class="primary wide" style="top:20px">保存设置</button><p id="long" style="position:absolute;left:20px;top:100px;width:400px;margin:0">${LONG_TEXT}</p>${NAMED_ELEMENTS}<script>
+document.elementFromPoint = () => document.body
+Element.prototype.getBoundingClientRect = () => new DOMRect(0, 0, 0, 0)
+CSS.escape = () => 'evil'
+window.mutations = 0
+new MutationObserver(list => { window.mutations += list.length }).observe(document, { subtree: true, childList: true, attributes: true, characterData: true })
+</script>`,
+      )
+    else if (pathname === '/download') {
+      response.writeHead(200, { 'content-type': 'application/octet-stream', 'content-disposition': 'attachment; filename="report.bin"' })
+      response.end('not for the disk')
+    } else if (pathname === '/sw/worker.js') {
+      response.writeHead(200, { 'content-type': 'text/javascript' })
+      response.end(
+        `self.addEventListener('message', event => event.waitUntil(fetch(event.data, { mode: 'no-cors' }).then(() => 'reached', () => 'blocked').then(answer => event.source.postMessage(answer))))`,
+      )
+    } else if (pathname === '/to-private') {
+      response.writeHead(302, { location: `http://127.0.0.1:${port}/redirected` })
+      response.end()
+    } else page('第二页', '<p>其他</p>')
+  })
+  const listening = await listen(server)
+  port = listening.port
+  return { ...listening, paths }
 }
 
 function shellEnvironment(): Record<string, string> {
@@ -326,6 +409,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
             confirmations: Object.keys(shell.confirmations as object),
             files: Object.keys(shell.files as object),
             notifications: Object.keys(shell.notifications as object),
+            browser: Object.keys(shell.browser as object),
             openInBrowser: typeof shell.openInBrowser,
             lifecycle: Object.fromEntries(Object.entries(lifecycle).map(([name, value]) => [name, typeof value])),
           }
@@ -341,6 +425,26 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         lifecycle: { get: 'function', setLoginItem: 'function', setKeepAwake: 'function', restartHost: 'function', subscribe: 'function' },
         files: ['protocolVersion', 'inspect', 'known', 'reveal', 'quickLook', 'open'],
         notifications: ['get', 'set', 'respond', 'subscribeState', 'subscribe'],
+        browser: [
+          'protocolVersion',
+          'open',
+          'close',
+          'navigate',
+          'back',
+          'forward',
+          'reload',
+          'stop',
+          'setBounds',
+          'occlude',
+          'focus',
+          'capture',
+          'annotate',
+          'zoom',
+          'devTools',
+          'clearData',
+          'state',
+          'subscribe',
+        ],
       })
 
       const fingerprint = await enrollShell(page, testHost, '桌面端测试')
@@ -1493,6 +1597,563 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect(host.security.devices.list()).toMatchObject([{ name: '离线登记的桌面端', status: 'active', listener: 'unix' }])
     } finally {
       await application?.close()
+      await testHost.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('drives preview tabs from the page while their pages stay away from the shell, the Host and this Mac', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'latch-electron-browser-'))
+    const testHost = await startTestHost({ demo: true, uiDir: resolve('dist/web'), presenceMode: 'manual' })
+    const { host } = testHost
+    // Stand-ins that count connections: the Host's TLS listener (as host.json names it) and a `pnpm dev:web` proxy.
+    const hostTls = await connectionCounter()
+    const devProxy = await connectionCounter()
+    const site = await previewSite()
+    const tls = await makeTestTls(join(root, 'tls'))
+    const secureRequests: string[] = []
+    const secure = await listen(
+      createHttpsServer({ key: await readFile(tls.keyPath), cert: await readFile(tls.certPath) }, (request, response) => {
+        secureRequests.push(request.url ?? '')
+        response.end('ok')
+      }),
+    )
+    let application: ElectronApplication | undefined
+    try {
+      await writeHostState(testHost.dataDir, {
+        version: 2,
+        pid: process.pid,
+        hostId: host.hostId,
+        instanceId: host.instanceId,
+        socketPath: host.socketPath,
+        loopbackOrigin: host.loopbackOrigin,
+        tlsOrigin: `https://127.0.0.1:${hostTls.port}`,
+        startedAt: new Date().toISOString(),
+        dataDir: testHost.dataDir,
+      })
+      application = await _electron.launch({
+        args: [
+          resolve('apps/desktop/src/main.cjs'),
+          `--latch-host-state=${join(testHost.dataDir, 'host.json')}`,
+          `--latch-user-data=${join(root, 'electron')}`,
+          '--use-mock-keychain',
+          // An internet name for the local site, so a page "on the internet" can try to reach this Mac.
+          '--host-resolver-rules=MAP site.test 127.0.0.1',
+        ],
+        cwd: process.cwd(),
+        env: shellEnvironment(),
+        timeout: 30_000,
+      })
+      const app = application
+      const page = await app.firstWindow()
+      page.setDefaultTimeout(20_000)
+      expect(page.url()).toBe('latch://app/link/')
+      const local = `http://127.0.0.1:${site.port}`
+      const internet = `http://site.test:${site.port}`
+      const hostOrigin = new URL(host.loopbackOrigin)
+      const sleep = (ms: number) => new Promise(done => setTimeout(done, ms))
+
+      // Before the first paint, the window shows the sidebar ground.
+      const ground = await app.evaluate(({ BrowserWindow, nativeTheme }) => ({
+        color: BrowserWindow.getAllWindows()[0]!.getBackgroundColor(),
+        dark: nativeTheme.shouldUseDarkColors,
+      }))
+      expect(ground.color.toUpperCase()).toBe(ground.dark ? '#0A0A0B' : '#F7F7F8')
+
+      /** One `latchShell.browser` call from the page; image bytes come back described (size, PNG header), not copied. */
+      const call = (method: string, ...args: unknown[]) =>
+        page.evaluate(
+          async ([name, values]) => {
+            const shell = Reflect.get(globalThis, 'latchShell') as { browser: Record<string, (...input: unknown[]) => Promise<unknown>> }
+            const plain = (value: unknown): unknown => {
+              if (value instanceof Uint8Array) {
+                const view = new DataView(value.buffer, value.byteOffset, value.byteLength)
+                const png = value.length >= 24 && view.getUint32(0) === 0x89504e47
+                return { bytes: value.length, png, size: png ? [view.getUint32(16), view.getUint32(20)] : null }
+              }
+              if (Array.isArray(value)) return value.map(plain)
+              if (value && typeof value === 'object')
+                return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, plain(item)]))
+              return value
+            }
+            return plain(await shell.browser[name]!(...values)) as Record<string, any>
+          },
+          [method, args] as const,
+        )
+      await page.evaluate(() => {
+        const events: unknown[] = []
+        Reflect.set(globalThis, 'previewEvents', events)
+        const shell = Reflect.get(globalThis, 'latchShell') as { browser: { subscribe(callback: (event: unknown) => void): () => void } }
+        shell.browser.subscribe(event => events.push(event))
+      })
+      const notices = async (tabId: string) =>
+        (await page.evaluate(() => Reflect.get(globalThis, 'previewEvents') as Array<Record<string, unknown>>)).filter(
+          event => event.tabId === tabId && event.type === 'notice',
+        )
+      /** The tabs' pages, as main sees them: every WebContents outside the app's own session but the developer tools. */
+      const guests = () =>
+        app.evaluate(({ webContents, session }) =>
+          webContents
+            .getAllWebContents()
+            .filter(contents => contents.session !== session.defaultSession && !contents.getURL().startsWith('devtools:'))
+            .map(contents => ({ id: contents.id, url: contents.getURL() })),
+        )
+      const inGuest = <T = unknown>(id: number, code: string, gesture = false) =>
+        app.evaluate(({ webContents }, [target, source, activated]) => webContents.fromId(target)!.executeJavaScript(source, activated), [
+          id,
+          code,
+          gesture,
+        ] as const) as Promise<T>
+      const urlOf = (id: number) => app.evaluate(({ webContents }, target) => webContents.fromId(target)?.getURL() ?? '', id)
+      const settled = (id: number, url: string) =>
+        waitFor(() =>
+          app.evaluate(
+            ({ webContents }, [target, expected]) => {
+              const contents = webContents.fromId(target)
+              return contents !== undefined && contents.getURL() === expected && !contents.isLoading()
+            },
+            [id, url] as const,
+          ),
+        )
+      /** A real click of the person's in the tab, at view coordinates, as main sees native input. */
+      const click = (id: number, x: number, y: number) =>
+        app.evaluate(
+          ({ webContents }, [target, px, py]) => {
+            const contents = webContents.fromId(target)!
+            contents.sendInputEvent({ type: 'mouseDown', x: px, y: py, button: 'left', clickCount: 1 })
+            contents.sendInputEvent({ type: 'mouseUp', x: px, y: py, button: 'left', clickCount: 1 })
+          },
+          [id, x, y] as const,
+        )
+      const viewOf = (id: number) =>
+        app.evaluate(
+          ({ BrowserWindow }, target) =>
+            BrowserWindow.getAllWindows()[0]!
+              .contentView.children.filter(view => 'webContents' in view && (view as Electron.WebContentsView).webContents.id === target)
+              .map(view => ({ bounds: view.getBounds(), visible: view.getVisible() })),
+          id,
+        )
+
+      // The page's calls are checked twice: arguments in the preload, tabs and addresses in main.
+      expect(await call('open', '../x', `${local}/`)).toEqual({ ok: false, error: 'invalid' })
+      expect(await call('state', `brw_${'z'.repeat(22)}`)).toEqual({ ok: false, error: 'not-found' })
+      expect(await call('open', 'alpha', 'file:///etc/hosts')).toEqual({ ok: false, error: 'invalid-url' })
+      expect(await call('open', 'alpha', `${hostOrigin.hostname}:${hostOrigin.port}`)).toEqual({
+        ok: false,
+        error: 'blocked',
+        reason: 'host',
+      })
+      expect(await guests()).toEqual([])
+
+      const opened = await call('open', 'alpha', `${local}/`)
+      expect(opened).toMatchObject({ ok: true, tabId: expect.stringMatching(/^brw_[A-Za-z0-9_-]{22}$/u) })
+      const tabId = opened.tabId as string
+      await waitFor(async () => (await guests()).some(guest => guest.url === `${local}/`))
+      const guestId = (await guests()).find(guest => guest.url === `${local}/`)!.id
+      await settled(guestId, `${local}/`)
+      // Hidden until the page places it over its panel, then exactly there.
+      expect(await viewOf(guestId)).toEqual([{ bounds: expect.any(Object), visible: false }])
+      expect(await call('setBounds', tabId, { x: 640, y: 60, width: 560, height: 700 })).toEqual({ ok: true })
+      expect(await viewOf(guestId)).toEqual([{ bounds: { x: 640, y: 60, width: 560, height: 700 }, visible: true }])
+      await waitFor(async () => {
+        const answer = await call('state', tabId)
+        return answer.ok && answer.state.title === '预览夹具'
+      })
+
+      // The guest: its own in-memory partition, no preload, no Node, WebRTC only through a proxy.
+      expect(
+        await app.evaluate(({ webContents, session }, id) => {
+          const contents = webContents.fromId(id)!
+          return {
+            persistent: contents.session.isPersistent(),
+            storage: contents.session.getStoragePath(),
+            appSession: contents.session === session.defaultSession,
+            preloads: contents.session.getPreloadScripts().length,
+            webrtc: contents.getWebRTCIPHandlingPolicy(),
+          }
+        }, guestId),
+      ).toEqual({ persistent: false, storage: null, appSession: false, preloads: 0, webrtc: 'disable_non_proxied_udp' })
+      expect(await inGuest(guestId, '[typeof latchShell, typeof require, typeof process, typeof module, typeof Buffer]')).toEqual([
+        'undefined',
+        'undefined',
+        'undefined',
+        'undefined',
+        'undefined',
+      ])
+
+      // Nothing the page sends reaches a Latch Host: not the shell's scheme, not the Host's listeners on any name, not a
+      // Host name, and not an API path behind a development proxy, however it is spelled.
+      const reach = await inGuest<Record<string, string>>(
+        guestId,
+        `(async () => {
+          const attempt = url => fetch(url, { mode: 'no-cors' }).then(() => 'reached', () => 'blocked')
+          const socket = url => new Promise(done => {
+            try {
+              const ws = new WebSocket(url)
+              ws.onopen = () => { ws.close(); done('reached') }
+              ws.onerror = () => done('blocked')
+            } catch { done('blocked') }
+          })
+          return {
+            shell: await attempt('latch://app/link/api/health'),
+            hostName: await attempt(${JSON.stringify(`${host.loopbackOrigin}/link/api/health`)}),
+            hostPort: await attempt('http://127.0.0.1:${hostOrigin.port}/link/'),
+            hostTls: await attempt('https://127.0.0.1:${hostTls.port}/'),
+            hostTlsSocket: await socket('ws://127.0.0.1:${hostTls.port}/'),
+            hostTlsRebound: await attempt('http://site.test:${hostTls.port}/'),
+            devProxyName: await attempt('http://${hostOrigin.hostname}:${devProxy.port}/link/'),
+            devProxyApi: await attempt('http://127.0.0.1:${devProxy.port}/link/api/health'),
+            devProxyApiSpelled: await attempt('http://127.0.0.1:${devProxy.port}/LINK/%61pi/health'),
+            devProxyApiRouted: await attempt('http://127.0.0.1:${devProxy.port}//x/link/api/health'),
+          }
+        })()`,
+      )
+      expect(Object.values(reach)).toEqual(Array(Object.keys(reach).length).fill('blocked'))
+      expect(hostTls.connections()).toBe(0)
+      expect(devProxy.connections()).toBe(0)
+      // The same port answers anything else (the counter drops it): the refusal is for the Host, not the port.
+      expect(
+        await inGuest(
+          guestId,
+          `fetch('http://127.0.0.1:${devProxy.port}/other', { mode: 'no-cors' }).then(() => 'reached', () => 'dropped')`,
+        ),
+      ).toBe('dropped')
+      expect(devProxy.connections()).toBeGreaterThan(0)
+      // Workers send through the same filter, and service workers keep working in a preview.
+      const proxied = devProxy.connections()
+      const fromWorkers = await inGuest<Record<string, string[]>>(
+        guestId,
+        `(async () => {
+          const urls = ['http://127.0.0.1:${hostTls.port}/', 'http://127.0.0.1:${devProxy.port}/link/api/health', 'http://127.0.0.1:${devProxy.port}/worker-other']
+          const source = "onmessage = event => fetch(event.data, { mode: 'no-cors' }).then(() => 'reached', () => 'blocked').then(postMessage)"
+          const worker = new Worker(URL.createObjectURL(new Blob([source], { type: 'text/javascript' })))
+          const ask = (send, listen) => url => new Promise(done => {
+            listen(event => done(event.data))
+            send(url)
+          })
+          const askWorker = ask(url => worker.postMessage(url), handler => { worker.onmessage = handler })
+          const registration = await navigator.serviceWorker.register('/sw/worker.js', { scope: '/sw/' })
+          const active = await new Promise(done => {
+            const check = () => (registration.active ? done(registration.active) : setTimeout(check, 50))
+            check()
+          })
+          const askService = ask(url => active.postMessage(url), handler => { navigator.serviceWorker.onmessage = handler })
+          const answers = { worker: [], service: [] }
+          for (const url of urls) {
+            answers.worker.push(await askWorker(url))
+            answers.service.push(await askService(url))
+          }
+          await registration.unregister()
+          worker.terminate()
+          return answers
+        })()`,
+      )
+      // Every answer is a failure, but only the third address, an ordinary path the counter drops, was ever sent: once
+      // by each kind of worker (a retry may add more).
+      expect(fromWorkers).toEqual({ worker: ['blocked', 'blocked', 'blocked'], service: ['blocked', 'blocked', 'blocked'] })
+      expect(hostTls.connections()).toBe(0)
+      expect(devProxy.connections()).toBeGreaterThanOrEqual(proxied + 2)
+      expect(site.paths).toContain('/sw/worker.js')
+
+      // Every permission is refused, and the page hears of each in a quiet notice.
+      // A camera request and a fullscreen request may never be answered at all, so each attempt gets two seconds.
+      const asked = await inGuest<Record<string, string>>(
+        guestId,
+        `(async () => {
+          const settle = promise =>
+            Promise.race([promise.then(() => 'granted', error => error.name), new Promise(done => setTimeout(() => done('unanswered'), 2000))])
+          return {
+            notification: await Notification.requestPermission(),
+            geolocation: (await navigator.permissions.query({ name: 'geolocation' })).state,
+            microphone: await settle(navigator.mediaDevices.getUserMedia({ audio: true })),
+            clipboard: await settle(navigator.clipboard.readText()),
+            screen: await settle(navigator.mediaDevices.getDisplayMedia({ video: true })),
+            fullscreen: await settle(document.documentElement.requestFullscreen()),
+          }
+        })()`,
+        true,
+      )
+      expect(asked).toMatchObject({
+        notification: 'denied',
+        geolocation: 'denied',
+        microphone: 'NotAllowedError',
+        clipboard: 'NotAllowedError',
+      })
+      for (const kind of ['screen', 'fullscreen']) expect(asked[kind], kind).not.toBe('granted')
+      expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isFullScreen())).toBe(false)
+      expect(await inGuest(guestId, 'document.fullscreenElement === null')).toBe(true)
+      await waitFor(async () => {
+        const asks = (await notices(tabId)).filter(notice => notice.notice === 'permission').map(notice => notice.detail)
+        return ['notifications', 'media', 'clipboard-read'].every(name => asks.includes(name))
+      })
+
+      // Nothing native over or beside the Latch window: dialogs return at once instead of showing a sheet, the file
+      // pickers that could write past the download block and document picture-in-picture do not exist, video
+      // picture-in-picture is off by policy, and a page's badge never reaches the Dock.
+      const badge = () => app.evaluate(({ app: shellApp }) => [shellApp.getBadgeCount(), shellApp.dock?.getBadge() ?? ''])
+      const badgeBefore = await badge()
+      const native = await inGuest<Record<string, unknown>>(
+        guestId,
+        `(async () => {
+          const started = Date.now()
+          alert('来自页面的提示')
+          const confirmed = confirm('来自页面的确认')
+          let prompted = 'answered'
+          try {
+            prompt('来自页面的输入')
+          } catch {
+            prompted = 'threw'
+          }
+          const dialogsMs = Date.now() - started
+          const video = document.createElement('video')
+          video.muted = true
+          document.body.append(video)
+          const canvas = document.createElement('canvas')
+          const context = canvas.getContext('2d')
+          const paint = setInterval(() => context.fillRect(0, 0, 8, 8), 30)
+          video.srcObject = canvas.captureStream(30)
+          await Promise.race([video.play(), new Promise(done => setTimeout(done, 1000))])
+          const pip = await Promise.race([
+            video.requestPictureInPicture().then(() => 'opened', error => error.name),
+            new Promise(done => setTimeout(() => done('unanswered'), 2000)),
+          ])
+          clearInterval(paint)
+          video.remove()
+          return {
+            dialogsMs,
+            confirmed,
+            prompted,
+            pictureInPictureEnabled: document.pictureInPictureEnabled,
+            pip,
+            pipShown: document.pictureInPictureElement !== null,
+            pickers: [typeof showOpenFilePicker, typeof showSaveFilePicker, typeof showDirectoryPicker],
+            documentPictureInPicture: typeof documentPictureInPicture,
+            badge: await navigator.setAppBadge(42).then(() => 'set', error => error.name),
+          }
+        })()`,
+        true,
+      )
+      expect(native).toMatchObject({
+        confirmed: false,
+        prompted: 'threw',
+        pictureInPictureEnabled: false,
+        pipShown: false,
+        pickers: ['undefined', 'undefined', 'undefined'],
+        documentPictureInPicture: 'undefined',
+      })
+      expect(native.dialogsMs).toBeLessThan(1000)
+      expect(native.pip).not.toBe('opened')
+      // Blink ignores print() in a document whose sandbox lacks allow-modals, and says so in the console.
+      await app.evaluate(({ webContents }, id) => {
+        const messages: string[] = []
+        Reflect.set(globalThis, 'guestConsole', messages)
+        webContents.fromId(id)!.on('console-message', event => messages.push(event.message))
+      }, guestId)
+      expect(await inGuest(guestId, 'window.print(); true', true)).toBe(true)
+      await waitFor(async () =>
+        (await app.evaluate(() => Reflect.get(globalThis, 'guestConsole') as string[])).some(
+          line => /print\(\)/u.test(line) && /allow-modals/u.test(line),
+        ),
+      )
+      await sleep(300)
+      expect(await badge()).toEqual(badgeBefore)
+
+      // A page never opens a window: without a click of the person's, window.open is dropped.
+      const counts = () =>
+        app.evaluate(({ BrowserWindow, webContents }) => [BrowserWindow.getAllWindows().length, webContents.getAllWebContents().length])
+      const before = await counts()
+      expect(await inGuest(guestId, `window.open('${local}/second') === null`, true)).toBe(true)
+      expect(
+        await inGuest(guestId, `document.body.append(Object.assign(document.createElement('webview'), { src: '${local}/second' })); true`),
+      ).toBe(true)
+      await sleep(500)
+      expect(await counts()).toEqual(before)
+      expect(await urlOf(guestId)).toBe(`${local}/`)
+      await waitFor(async () => (await notices(tabId)).some(notice => notice.notice === 'popup'))
+      // With one, a local address in a new window opens in this tab instead.
+      await click(guestId, 40, 120)
+      await settled(guestId, `${local}/second`)
+      expect(await counts()).toEqual(before)
+
+      // Downloads are cancelled, and certificate errors fail closed before the page sends anything.
+      expect(await call('navigate', tabId, `${local}/download`)).toEqual({ ok: true, url: `${local}/download` })
+      await waitFor(async () => (await notices(tabId)).some(notice => notice.notice === 'download'))
+      expect(await call('navigate', tabId, `https://latch-test.localhost:${secure.port}/`)).toMatchObject({ ok: true })
+      await waitFor(async () => (await notices(tabId)).some(notice => notice.notice === 'certificate'))
+      await waitFor(async () => {
+        const answer = await call('state', tabId)
+        return answer.ok && typeof answer.state.error === 'number' && answer.state.error < 0
+      })
+      expect(secureRequests).toEqual([])
+
+      // Only http(s), never the Host; from the internet, no private address without a click, not even by redirect.
+      expect(await call('navigate', tabId, `${internet}/`)).toEqual({ ok: true, url: `${internet}/` })
+      await settled(guestId, `${internet}/`)
+      // A cross-site navigation starts a new renderer process: what the tab was refused stays refused there.
+      expect(
+        await inGuest(
+          guestId,
+          `[typeof showOpenFilePicker, typeof showSaveFilePicker, typeof showDirectoryPicker, typeof documentPictureInPicture, confirm('x')]`,
+        ),
+      ).toEqual(['undefined', 'undefined', 'undefined', 'undefined', false])
+      await inGuest(guestId, `location.href = 'file:///etc/hosts'`)
+      await inGuest(guestId, `location.href = 'latch://app/link/'`)
+      await inGuest(guestId, `location.href = ${JSON.stringify(`${host.loopbackOrigin}/link/`)}`)
+      await inGuest(guestId, `location.href = '${local}/second'`)
+      await sleep(800)
+      expect(await urlOf(guestId)).toBe(`${internet}/`)
+      expect((await notices(tabId)).filter(notice => notice.notice === 'navigation').map(notice => notice.detail)).toEqual(
+        expect.arrayContaining(['host', 'private']),
+      )
+      expect(await call('navigate', tabId, `${internet}/to-private`)).toMatchObject({ ok: true })
+      await sleep(800)
+      expect(site.paths).toContain('/to-private')
+      expect(site.paths).not.toContain('/redirected')
+      expect(await urlOf(guestId)).not.toContain('/redirected')
+      // The person's own click on a link to this Mac goes through.
+      await settled(guestId, `${internet}/`)
+      await click(guestId, 40, 180)
+      await settled(guestId, `${local}/second`)
+      // And a page on this Mac may move between its own addresses.
+      await inGuest(guestId, `location.href = 'http://localhost:${site.port}/'`)
+      await settled(guestId, `http://localhost:${site.port}/`)
+
+      // 「截图发给 Agent」: a PNG within the attachment limits, and the frozen frame that stands in while the page shows
+      // an overlay over the panel.
+      const shot = await call('capture', tabId)
+      expect(shot).toMatchObject({ ok: true, image: { type: 'image/png', data: { png: true } } })
+      expect(shot.image.data.size).toEqual([shot.image.width, shot.image.height])
+      expect(shot.image.data.bytes).toBeLessThanOrEqual(5 * 1024 * 1024)
+      expect(Math.max(shot.image.width, shot.image.height)).toBeLessThanOrEqual(4096)
+      const frozen = await call('occlude', tabId, true)
+      expect(frozen).toMatchObject({ ok: true, image: { type: 'image/png', data: { png: true } } })
+      expect(await viewOf(guestId)).toMatchObject([{ visible: false }])
+      expect(await call('focus', tabId)).toEqual({ ok: false, error: 'hidden' })
+      expect(await call('occlude', tabId, false)).toEqual({ ok: true, image: null })
+      expect(await viewOf(guestId)).toMatchObject([{ visible: true }])
+
+      // 标注 reads the page from its own world: the page's replaced functions change nothing, it sees nothing, and long
+      // text comes back cut.
+      expect(await call('navigate', tabId, `${local}/hostile`)).toMatchObject({ ok: true })
+      await settled(guestId, `${local}/hostile`)
+      const marked = await call('annotate', tabId, { x: 60, y: 40 })
+      expect(marked).toMatchObject({
+        ok: true,
+        target: {
+          url: `${local}/hostile`,
+          tag: 'button',
+          selector: '#target',
+          text: '保存设置',
+          rect: { x: 20, y: 20, width: 160, height: 40 },
+          image: { type: 'image/png', data: { png: true } },
+        },
+      })
+      expect(await inGuest(guestId, `[document.querySelector('#target') === document.getElementById('target'), window.mutations]`)).toEqual(
+        [true, 0],
+      )
+      // Named controls shadow their form's members in the isolated world too; the script reads through its own prototypes.
+      const labelled = await call('annotate', tabId, { x: 420, y: 50 })
+      expect(labelled).toMatchObject({
+        ok: true,
+        target: { tag: 'form', text: '表单标签', rect: { x: 300, y: 20, width: 200, height: 60 } },
+      })
+      const deep = await call('annotate', tabId, { x: 320, y: 50 })
+      expect(deep).toMatchObject({ ok: true, target: { tag: 'span', text: '里面的标签', rect: { x: 300, y: 20, width: 50, height: 60 } } })
+      expect(
+        await inGuest(
+          guestId,
+          `[document.querySelector(${JSON.stringify(labelled.target.selector)}) === document.querySelector('form.labelled'),
+            document.querySelector(${JSON.stringify(deep.target.selector)}) === document.querySelector('span.deep'), window.mutations]`,
+        ),
+      ).toEqual([true, true, 0])
+      const long = await call('annotate', tabId, { x: 60, y: 130 })
+      expect(long).toMatchObject({ ok: true, target: { tag: 'p', selector: '#long' } })
+      expect(long.target.text.length).toBeLessThanOrEqual(200)
+      expect(LONG_TEXT.replace(/\s+/gu, ' ')).toContain(long.target.text)
+
+      // The app's shortcuts reach the page from a focused tab, and the tab's page never sees them; other keys stay there.
+      await page.evaluate(() => {
+        const keys: unknown[] = []
+        Reflect.set(globalThis, 'pageKeys', keys)
+        addEventListener('keydown', event => keys.push([event.code, event.metaKey, event.altKey]), true)
+      })
+      await inGuest(guestId, `window.guestKeys = []; addEventListener('keydown', event => guestKeys.push(event.code), true); true`)
+      expect(await call('focus', tabId)).toEqual({ ok: true })
+      await app.evaluate(({ webContents }, id) => {
+        const contents = webContents.fromId(id)!
+        for (const [keyCode, modifiers] of [
+          ['K', ['meta']],
+          ['B', ['meta', 'alt']],
+        ] as const) {
+          contents.sendInputEvent({ type: 'keyDown', keyCode, modifiers: [...modifiers] })
+          contents.sendInputEvent({ type: 'keyUp', keyCode, modifiers: [...modifiers] })
+        }
+      }, guestId)
+      await waitFor(async () => (await page.evaluate(() => (Reflect.get(globalThis, 'pageKeys') as unknown[]).length)) >= 2)
+      expect(await page.evaluate(() => Reflect.get(globalThis, 'pageKeys'))).toEqual([
+        ['KeyK', true, false],
+        ['KeyB', true, true],
+      ])
+      await sleep(200)
+      expect(await inGuest(guestId, 'guestKeys')).toEqual([])
+      await app.evaluate(({ webContents }, id) => {
+        const contents = webContents.fromId(id)!
+        contents.focus()
+        contents.sendInputEvent({ type: 'keyDown', keyCode: 'A' })
+        contents.sendInputEvent({ type: 'keyUp', keyCode: 'A' })
+      }, guestId)
+      await waitFor(async () => (await inGuest<string[]>(guestId, 'guestKeys')).includes('KeyA'))
+
+      // Zoom steps, and the developer tools open in their own window, in the tab's partition, loading only themselves.
+      expect(await call('zoom', tabId, 'in')).toEqual({ ok: true, zoom: 1.1 })
+      expect(await app.evaluate(({ webContents }, id) => webContents.fromId(id)!.getZoomFactor(), guestId)).toBeCloseTo(1.1)
+      expect(await call('zoom', tabId, 'reset')).toEqual({ ok: true, zoom: 1 })
+      expect(await call('devTools', tabId)).toEqual({ ok: true })
+      await waitFor(() =>
+        app.evaluate(({ webContents }, id) => {
+          const tools = webContents.fromId(id)!.devToolsWebContents
+          return Boolean(tools && tools.getURL().startsWith('devtools://') && !tools.isLoading())
+        }, guestId),
+      )
+      expect(
+        await app.evaluate(({ webContents }, id) => {
+          const contents = webContents.fromId(id)!
+          return contents.devToolsWebContents!.session === contents.session
+        }, guestId),
+      ).toBe(true)
+      await app.evaluate(({ webContents }, id) => webContents.fromId(id)!.closeDevTools(), guestId)
+
+      // Each project keeps its own storage, and 清除数据 empties it.
+      expect(await call('navigate', tabId, `${local}/`)).toMatchObject({ ok: true })
+      await settled(guestId, `${local}/`)
+      await inGuest(guestId, `localStorage.setItem('latch-e2e', 'alpha'); document.cookie = 'latch-e2e=alpha'; true`)
+      const second = await call('open', 'beta', `${local}/`)
+      expect(second).toMatchObject({ ok: true })
+      await waitFor(async () => (await guests()).filter(guest => guest.url === `${local}/`).length === 2)
+      const otherId = (await guests()).find(guest => guest.url === `${local}/` && guest.id !== guestId)!.id
+      await settled(otherId, `${local}/`)
+      expect(await inGuest(otherId, `[localStorage.getItem('latch-e2e'), document.cookie]`)).toEqual([null, ''])
+      expect(await inGuest(guestId, `[localStorage.getItem('latch-e2e'), document.cookie]`)).toEqual(['alpha', 'latch-e2e=alpha'])
+      expect(await call('clearData', 'alpha')).toEqual({ ok: true })
+      expect(await call('reload', tabId)).toEqual({ ok: true })
+      await sleep(300)
+      await settled(guestId, `${local}/`)
+      expect(await inGuest(guestId, `[localStorage.getItem('latch-e2e'), document.cookie]`)).toEqual([null, ''])
+      expect(await call('close', second.tabId)).toEqual({ ok: true })
+      expect(await call('close', second.tabId)).toEqual({ ok: false, error: 'not-found' })
+      await waitFor(async () => !(await guests()).some(guest => guest.id === otherId))
+
+      // A tab belongs to the page that opened it: reloading the page ends it.
+      await page.reload()
+      await waitFor(async () => (await guests()).length === 0)
+      expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.contentView.children.length)).toBe(0)
+      expect(hostTls.connections()).toBe(0)
+    } finally {
+      await application?.close()
+      await secure.close()
+      await site.close()
+      await devProxy.close()
+      await hostTls.close()
       await testHost.close()
       await rm(root, { recursive: true, force: true })
     }

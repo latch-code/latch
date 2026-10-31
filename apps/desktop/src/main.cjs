@@ -24,6 +24,7 @@ const {
   safeStorage,
   session,
   shell,
+  WebContentsView,
 } = electron
 const { constants: fsConstants } = require('node:fs')
 const { lstat, open: openFile, realpath, stat } = require('node:fs/promises')
@@ -40,6 +41,7 @@ const {
 } = require('./notifications.cjs')
 const { createFileActions } = require('./files.cjs')
 const { createNetworkSink } = require('./network.cjs')
+const { createPreviewBrowser, handleBrowserRequests } = require('./browser.cjs')
 const {
   LIFECYCLE_CHANNELS,
   createHostSupervisor,
@@ -166,6 +168,7 @@ const trusted = event => isTrustedSender(event, mainWindow?.webContents)
 
 function openWindow() {
   mainWindow = createWindow()
+  previewBrowser.attach(mainWindow)
   void mainWindow.loadURL(APP_URL)
 }
 
@@ -208,8 +211,23 @@ const openExternal = createExternalOpener({
   log,
 })
 
+/** The 浏览器 tab: untrusted pages in their own partitions and with their own rules, driven by `latchShell.browser`. */
+const previewBrowser = createPreviewBrowser({
+  WebContentsView,
+  fromPartition: partition => session.fromPartition(partition),
+  window: () => mainWindow,
+  // browser.cjs hands over only an internet address the person clicked in the tab a moment ago.
+  openExternal: url => openExternal(url, mainWindow, { userGesture: true }),
+  log,
+})
+
 app.on('web-contents-created', (_event, contents) => {
   contents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp')
+  // A preview tab, or the developer tools opened for one, never gets the app page's rules or network.
+  if (previewBrowser.owns(contents)) {
+    previewBrowser.guard(contents)
+    return
+  }
   const gesture = createExternalGesture()
   contents.on('before-mouse-event', (_event, input) => gesture.mouse(input))
   contents.on('before-input-event', (_event, input) => gesture.key(input))
@@ -309,7 +327,11 @@ function hostSupervisor(hostId, statePath, hooks) {
   const dataDir = dirname(statePath)
   return createHostSupervisor({
     hostId,
-    readState: () => readHostStateFile(statePath),
+    async readState() {
+      const state = await readHostStateFile(statePath)
+      previewBrowser.blockHost(state)
+      return state
+    },
     inspect: state => inspectHostState(state),
     alive: isAlive,
     readLaunch: () => readLaunchRecord(dataDir, { script: HOST_SCRIPT }),
@@ -479,6 +501,7 @@ async function start() {
   }
   if (!state) return fatal('找不到正在运行的 Latch Host（host.json 缺失或格式不正确）。请用 pnpm desktop 启动。')
   if (!checked?.ok) return fatal(`无法验证 Latch Host：${checked?.reason ?? '未知原因'}。请用 pnpm desktop 启动。`)
+  previewBrowser.blockHost(state)
   if (!supervisor || supervisedId !== state.hostId) supervisor = hostSupervisor(state.hostId, hostStatePath, hooks)
 
   let store
@@ -499,6 +522,7 @@ async function start() {
       // After a connection error, accept a restarted Host only if host.json still names the same identity.
       verifying ??= (async () => {
         const next = await readHostStateFile(hostStatePath)
+        previewBrowser.blockHost(next)
         if (!next || next.hostId !== state.hostId) throw new Error('Latch Host 未运行')
         const result = await inspectHostState(next)
         if (!result.ok) throw new Error(result.reason)
@@ -543,6 +567,7 @@ async function start() {
       : { ok: false, status: 403, error: 'browser-open-failed', message: '无法在浏览器中打开 Latch，请重试。' },
   )
   handleFiles(proxy)
+  handleBrowserRequests({ ipcMain, trusted, controller: previewBrowser })
   const notifications = createNotifications({
     save: value => writeNotificationPreferences(app.getPath('userData'), value),
     changed: value => {
