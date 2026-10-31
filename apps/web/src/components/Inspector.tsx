@@ -46,7 +46,7 @@ import { CodeRootNotice, codeRootWorkspace } from './CodeRootNotice.tsx'
 import { InlineConfirm } from './InlineConfirm.tsx'
 import { PlanList, planProgress } from './PlanCard.tsx'
 import { modelFromKey, modelGroups, modelKey } from './pickerOptions.tsx'
-import { CopyButton, MiddleText } from './ui.tsx'
+import { MiddleText } from './ui.tsx'
 import {
   Badge,
   Button,
@@ -58,6 +58,7 @@ import {
   Tooltip,
   ValuePicker,
   type LucideIcon,
+  CopyButton,
 } from '@latch/ui'
 import { VisibleText } from './VisibleText.tsx'
 import { FileOpenContext } from '../preview/fileContext.ts'

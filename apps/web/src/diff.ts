@@ -40,10 +40,16 @@ export function sideBySideLines(lines: readonly DiffLine[]): SideBySideLine[] {
   flush()
   return rows
 }
+/** Unchanged lines outside the hunks: `before` is the hunk they lead to, or `hunks.length` for those after the last. */
+export interface DiffGap {
+  before: number
+  lines: DiffLine[]
+}
 export interface LineDiff {
   added: number
   removed: number
   hunks: DiffHunk[]
+  gaps: DiffGap[]
 }
 
 /**
@@ -168,5 +174,108 @@ export function diffLines(oldText: string | undefined, newText: string, context 
       lines: slice,
     }
   })
-  return { added, removed, hunks }
+  const gaps: DiffGap[] = []
+  let at = 0
+  ranges.forEach(([first, last], index) => {
+    const from = Math.max(0, first - context)
+    if (from > at) gaps.push({ before: index, lines: lines.slice(at, from) })
+    at = Math.min(lines.length, last + context + 1)
+  })
+  if (ranges.length > 0 && at < lines.length) gaps.push({ before: ranges.length, lines: lines.slice(at) })
+  return { added, removed, hunks, gaps }
+}
+
+/**
+ * What a band of unchanged lines has opened: `opened` lines next to the change it borders (the end of a gap that leads
+ * to a hunk, the start of the one after the last), and how many are still folded.
+ */
+export function openedGap(gap: DiffGap, hunks: number, opened: number): { lines: DiffLine[]; hidden: number } {
+  const count = Math.min(opened, gap.lines.length)
+  return {
+    lines: gap.before === hunks ? gap.lines.slice(0, count) : gap.lines.slice(gap.lines.length - count),
+    hidden: gap.lines.length - count,
+  }
+}
+
+/** A half-open range of UTF-16 units in a line. */
+export type TextRange = [start: number, end: number]
+
+/** Words, one CJK character at a time, runs of space, and any other code point, each with the marks that follow it. */
+const WORD = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]\p{M}*|[\p{L}\p{N}_\p{M}]+|\s+|\P{M}\p{M}*|\p{M}+/gu
+/** Above this many cells a pair of lines is not worth comparing word by word. */
+const MAX_WORD_CELLS = 40_000
+/** Lines that share less than this are a rewrite: the whole line's tint says so, and scattered marks would only add noise. */
+const MIN_SHARED = 0.4
+
+/** The parts of two versions of a line that differ, or undefined when the lines are too long or too different to tell. */
+export function wordRanges(before: string, after: string): { before: TextRange[]; after: TextRange[] } | undefined {
+  const a = before.match(WORD) ?? []
+  const b = after.match(WORD) ?? []
+  if (a.length * b.length > MAX_WORD_CELLS) return undefined
+  const width = b.length + 1
+  const table = new Uint16Array((a.length + 1) * width)
+  for (let i = a.length - 1; i >= 0; i--) {
+    for (let j = b.length - 1; j >= 0; j--) {
+      table[i * width + j] =
+        a[i] === b[j] ? table[(i + 1) * width + j + 1]! + 1 : Math.max(table[(i + 1) * width + j]!, table[i * width + j + 1]!)
+    }
+  }
+  const out: { before: TextRange[]; after: TextRange[] } = { before: [], after: [] }
+  const push = (ranges: TextRange[], start: number, end: number) => {
+    const last = ranges.at(-1)
+    if (last && last[1] === start) last[1] = end
+    else ranges.push([start, end])
+  }
+  let [i, j, atA, atB, shared] = [0, 0, 0, 0, 0]
+  while (i < a.length || j < b.length) {
+    if (i < a.length && j < b.length && a[i] === b[j]) {
+      atA += a[i]!.length
+      atB += b[j]!.length
+      shared += a[i]!.length
+      i++
+      j++
+    } else if (j >= b.length || (i < a.length && table[(i + 1) * width + j]! >= table[i * width + j + 1]!)) {
+      push(out.before, atA, atA + a[i]!.length)
+      atA += a[i]!.length
+      i++
+    } else {
+      push(out.after, atB, atB + b[j]!.length)
+      atB += b[j]!.length
+      j++
+    }
+  }
+  return shared / Math.max(before.length, after.length, 1) < MIN_SHARED ? undefined : out
+}
+
+/** The changed words of each paired line in `lines`: a removed line with the added line across from it in its block. */
+export function wordHighlights(lines: readonly DiffLine[]): Map<DiffLine, TextRange[]> {
+  const found = new Map<DiffLine, TextRange[]>()
+  for (const { before, after } of sideBySideLines(lines)) {
+    if (!before || !after || before.kind !== 'remove' || after.kind !== 'add') continue
+    const ranges = wordRanges(before.text, after.text)
+    if (!ranges) continue
+    found.set(before, ranges.before)
+    found.set(after, ranges.after)
+  }
+  return found
+}
+
+/** A modified file's preview shows this many changed lines, a new file's this many lines. */
+export const COMPACT_CHANGED = 12
+export const COMPACT_NEW_FILE = 8
+
+/** The short preview of a change, without hunk headers, and how many changed lines it leaves out. */
+export function compactLines(view: LineDiff, isNewFile: boolean): { lines: DiffLine[]; remaining: number } {
+  const all = view.hunks.flatMap(hunk => hunk.lines)
+  if (isNewFile) return { lines: all.slice(0, COMPACT_NEW_FILE), remaining: Math.max(0, all.length - COMPACT_NEW_FILE) }
+  const lines: DiffLine[] = []
+  let changed = 0
+  for (const line of all) {
+    if (line.kind !== 'context') {
+      if (changed === COMPACT_CHANGED) break
+      changed++
+    }
+    lines.push(line)
+  }
+  return { lines, remaining: view.added + view.removed - changed }
 }

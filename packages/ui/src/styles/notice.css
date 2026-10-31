@@ -68,6 +68,7 @@
 /* Toasts: raised with 8px corners and the pop shadow, 13/18 ink after a 14px glyph in its tone; they rise 4px in. */
 .ui-toast {
   --surface: var(--raised);
+  --toast-bottom: var(--sp-24);
   display: inline-flex;
   align-items: center;
   gap: var(--sp-8);
@@ -81,6 +82,15 @@
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
   animation: ui-rise var(--m-enter) var(--e-enter);
+}
+/* Placed by the primitive: bottom centre of the window, and 12 above a composer through --toast-bottom. */
+.ui-toast[data-placement='bottom'] {
+  position: fixed;
+  z-index: 50;
+  inset-inline: 0;
+  bottom: var(--toast-bottom);
+  width: fit-content;
+  margin-inline: auto;
 }
 .ui-toast-glyph {
   color: var(--muted);
@@ -125,11 +135,33 @@
     left var(--m-micro) var(--e-micro),
     top var(--m-micro) var(--e-micro);
 }
-/* A key inside the inverted tooltip: a quiet ring of the tooltip's own ink. */
+/* A key inside the tooltip is the words' own line, 标签 (⌘X), in the tooltip's ink at a lower strength. */
 .ui-tooltip kbd {
-  background: transparent;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tip-ink) 24%, transparent);
+  all: unset;
+}
+.ui-tooltip > span:last-child:not(:first-child) {
   color: color-mix(in srgb, var(--tip-ink) 64%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* What a copy says for a second, anchored to its button: 11/14 in the tooltip's colours. */
+.ui-copied {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  padding: var(--sp-2) var(--sp-6);
+  border: 0;
+  border-radius: var(--r-6);
+  background: var(--tip-bg);
+  color: var(--tip-ink);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+  white-space: nowrap;
+  pointer-events: none;
+  animation: ui-pop var(--m-enter) var(--e-enter);
+}
+.ui-copied:not(:popover-open) {
+  display: none;
 }
 
 /* Reduced motion: a tooltip that follows a neighbour appears in its place instead of gliding there. */

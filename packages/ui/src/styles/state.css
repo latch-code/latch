@@ -97,3 +97,43 @@
   justify-self: stretch;
   margin-top: var(--sp-8);
 }
+
+/* The 2px line of work of unknown length, in neutral ink: eases to 90% and waits, completes in 150ms, then fades. */
+.ui-progress {
+  position: relative;
+  height: 2px;
+  overflow: hidden;
+  pointer-events: none;
+}
+.ui-progress-fill {
+  position: absolute;
+  inset: 0;
+  background: var(--ink-2);
+  transform-origin: left;
+  transform: scaleX(0.9);
+  transition: transform 8s cubic-bezier(0.1, 0.7, 0.2, 1);
+}
+@starting-style {
+  .ui-progress-fill {
+    transform: scaleX(0);
+  }
+}
+.ui-progress[data-state='done'] > .ui-progress-fill {
+  opacity: 0;
+  transform: scaleX(1);
+  transition:
+    transform 150ms var(--e-micro),
+    opacity var(--m-micro) var(--e-micro) 150ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ui-progress-fill,
+  .ui-progress[data-state='done'] > .ui-progress-fill {
+    transform: none;
+    transition: opacity var(--m-micro) var(--e-micro);
+  }
+  @starting-style {
+    .ui-progress-fill {
+      transform: none;
+    }
+  }
+}

@@ -1,6 +1,6 @@
 /*
  * Agent and model tiles: a brand's mark on the raised surface, a glyph on the hover fill, both under a 1px line ring
- * laid over the artwork, with corners of round(size × 0.225) (16→4, 20→5, 24→5, 32→7, 40→9, 56→13). A mark sits in the
+ * laid over the artwork, with corners of round(size × 0.225) (14→3, 16→4, 20→5, 24→5, 32→7, 40→9, 56→13). A mark sits in the
  * middle at 72% (edge to edge when its file holds its own margin); a glyph (60%) stands in only where there is no icon,
  * never a letter. Glyphs and one-colour marks are ink, so they read near-black in the light theme and soft white in
  * the dark one; a coloured mark keeps its colours, with the brand's own dark file in the dark theme where it has one. A
@@ -14,6 +14,9 @@
   flex-shrink: 0;
   width: var(--tile-size);
   height: var(--tile-size);
+}
+.ui-tile[data-size='14'] {
+  --tile-size: 14px;
 }
 .ui-tile[data-size='16'] {
   --tile-size: 16px;

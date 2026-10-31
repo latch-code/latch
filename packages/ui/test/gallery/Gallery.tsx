@@ -95,6 +95,8 @@ import {
   type PermissionLevel,
   type SlotStatus,
 } from '../../src/index.ts'
+import { Cell, Row, Section } from './parts.tsx'
+import { Kit } from './Kit.tsx'
 
 /**
  * Every primitive of @latch/ui in every state, on one page, for the design review and the visual capture (surface
@@ -105,36 +107,6 @@ import {
  */
 
 const DEV_TEXT = '开发模式：Host 代码可被本机修改'
-
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="gallery-section" aria-label={title}>
-      <h2>{title}</h2>
-      <div className="gallery-card">{children}</div>
-    </section>
-  )
-}
-
-function Row({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="gallery-row">
-      <span className="gallery-label">{label}</span>
-      <div className="gallery-items">{children}</div>
-    </div>
-  )
-}
-
-/** One sample with its caption; `force` holds a pseudo-class for the capture. */
-function Cell({ caption, force, at, children }: { caption?: string; force?: string; at?: string; children: ReactNode }) {
-  return (
-    <figure className="gallery-cell">
-      <div className="gallery-sample" data-force={force} data-force-at={at}>
-        {children}
-      </div>
-      {caption && <figcaption>{caption}</figcaption>}
-    </figure>
-  )
-}
 
 const VARIANTS: Array<[ButtonVariant, string, string]> = [
   ['primary', '主', '允许一次'],
@@ -1878,6 +1850,7 @@ export function Gallery() {
         <Resize />
         <Icons />
         <Focus />
+        <Kit />
       </div>
     </main>
   )

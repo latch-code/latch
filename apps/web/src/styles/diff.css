@@ -1,0 +1,473 @@
+/*
+ * A file's change, evidence that stays in view under its tool: a tray (sunken, subtle line, 12 corners, 4 inside) whose
+ * 32 head (8 inside, as an opened tool card's) names the file (the name in ink, its folder quieter), what the Host said
+ * about the previous file and the line counts; the diff is a sheet of paper inside the tray. Rows are tinted, their
+ * text stays ink, the signs take the tone. Phones keep one line-number column: the new line's number, or the old
+ * one on a removed line.
+ */
+.diff-view {
+  display: grid;
+  gap: var(--sp-8);
+  min-width: 0;
+  margin: var(--sp-8) 0 var(--sp-4);
+}
+.diff-file {
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-8);
+  background: var(--sunken);
+}
+.diff-file[data-open] {
+  padding-bottom: 0;
+}
+.diff-file-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  width: 100%;
+  min-height: 32px;
+  padding: 0 var(--sp-8);
+  border: 0;
+  border-radius: var(--r-8);
+  background: transparent;
+  color: var(--ink-2);
+  text-align: left;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.diff-file-header:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.diff-file-header > svg:first-child {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.diff-path {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--sp-6);
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
+}
+.diff-path-name {
+  flex-shrink: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--ink);
+  font-weight: 500;
+}
+.diff-stat {
+  display: flex;
+  gap: var(--sp-6);
+  margin-left: auto;
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
+  font-variant-numeric: tabular-nums;
+}
+.diff-stat-add {
+  color: var(--green);
+}
+.diff-stat-remove {
+  color: var(--red);
+}
+/* A count of zero marks no change, so it takes no tone. */
+.diff-stat-zero {
+  color: var(--muted);
+}
+.diff-file-header .chevron {
+  flex-shrink: 0;
+  color: var(--muted);
+  transition: transform var(--m-panel) var(--e-panel);
+}
+.diff-file-header[aria-expanded='true'] .chevron {
+  transform: rotate(90deg);
+}
+.diff-paper {
+  min-width: 0;
+  overflow: hidden;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: var(--canvas);
+}
+.diff-body {
+  position: relative;
+  max-height: 360px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  font-family: var(--mono);
+  font-size: var(--fs-code);
+  line-height: var(--lh-code);
+}
+.diff-body:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.diff-table {
+  min-width: max-content;
+  padding: 0;
+}
+.diff-file[data-layout='split'] .diff-table {
+  min-width: 0;
+}
+.diff-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.diff-split-side {
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+.diff-split-side + .diff-split-side {
+  border-left: 1px solid var(--line);
+}
+.diff-side-title {
+  padding: var(--sp-2) var(--sp-8);
+  background: var(--sunken);
+  color: var(--muted);
+  font-family: var(--font);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.diff-side-row {
+  display: grid;
+  grid-template-columns: 36px 16px minmax(max-content, 1fr);
+  min-width: 100%;
+  width: max-content;
+  min-height: var(--lh-code);
+  white-space: pre;
+}
+.diff-absent {
+  background: var(--sunken);
+}
+.diff-hunk-header {
+  padding: var(--sp-2) var(--sp-8);
+  background: var(--sunken);
+  color: var(--muted);
+}
+.diff-line {
+  display: grid;
+  grid-template-columns: 32px 32px 16px minmax(0, 1fr);
+  white-space: pre;
+}
+.diff-ln {
+  padding-right: var(--sp-6);
+  color: var(--muted);
+  text-align: right;
+  user-select: none;
+}
+.diff-sign {
+  color: var(--muted);
+  text-align: center;
+  user-select: none;
+}
+.diff-text {
+  padding-right: var(--sp-12);
+  color: var(--ink);
+}
+.diff-add {
+  background: var(--diff-add);
+}
+.diff-add .diff-sign {
+  color: var(--green);
+}
+.diff-remove {
+  background: var(--diff-del);
+}
+.diff-remove .diff-sign {
+  color: var(--red);
+}
+.diff-empty {
+  padding: var(--sp-8) var(--sp-12);
+  color: var(--muted);
+  font-family: var(--font);
+}
+.diff-note {
+  padding: var(--sp-6) var(--sp-8);
+  border-bottom: 1px solid var(--line);
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-family: var(--font);
+  white-space: normal;
+}
+/* The fold bar under a long diff: 「展开其余 n 行」, centred, under a subtle line. */
+.diff-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.diff-more:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+.diff-ln-one {
+  display: none;
+}
+/* The fold bar of a short diff: the rest of its lines, one press away (28, centred, a subtle line above). */
+.diff-fold {
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 var(--sp-8);
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--font);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  text-align: center;
+  transition:
+    background-color var(--m-micro) var(--e-micro),
+    color var(--m-micro) var(--e-micro);
+}
+.diff-fold:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+.diff-fold:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+@media (max-width: 767.98px) {
+  .diff-line {
+    grid-template-columns: 32px 16px minmax(0, 1fr);
+  }
+  .diff-fold {
+    min-height: 44px;
+  }
+  .diff-ln-old,
+  .diff-ln-new {
+    display: none;
+  }
+  .diff-ln-one {
+    display: block;
+  }
+}
+
+/* Reduced motion: the chevron turns at once. */
+@media (prefers-reduced-motion: reduce) {
+  .diff-file-header .chevron {
+    transition: none;
+  }
+}
+
+/*
+ * The review mode, in the right panel: one number column and no signs (a 3px bar in the tone says it), the words that
+ * changed on a stronger tint, a head that stays in view, and 「N 行未改动」 bands between the hunks. A new or deleted file
+ * is the file itself, with a 2px bar and no flood.
+ */
+.diff-view[data-mode='full'] {
+  gap: 0;
+  margin: 0;
+}
+.diff-view[data-mode='full'] .diff-file {
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.diff-view[data-mode='full'] .diff-file-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--canvas);
+  box-shadow:
+    inset 0 -1px 0 var(--line),
+    inset 0 1px 0 var(--line);
+}
+.diff-view[data-mode='full'] .diff-paper {
+  border-top: 0;
+}
+/* The panel scrolls the page of diffs and keeps the head in view; only a line's width scrolls in here. */
+.diff-view[data-mode='full'] .diff-body {
+  max-height: none;
+  overflow: auto hidden;
+}
+.diff-view[data-mode='full'] .diff-path-folder {
+  color: var(--muted);
+}
+.diff-file-head {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.diff-file-head > .diff-file-header {
+  flex: 1;
+  min-width: 0;
+}
+.diff-file-actions {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--sp-2);
+  padding-inline-end: var(--sp-8);
+  opacity: 0;
+  transition: opacity var(--m-micro) var(--e-micro);
+}
+.diff-file-head:hover > .diff-file-actions,
+.diff-file-actions:focus-within {
+  opacity: 1;
+}
+@media (hover: none) {
+  .diff-file-actions {
+    opacity: 1;
+  }
+}
+.diff-whole-tag {
+  flex-shrink: 0;
+  color: var(--green);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+}
+.diff-whole-tag[data-tone='deleted'] {
+  color: var(--red);
+}
+.diff-renamed {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+:is(.diff-view[data-mode='full'], .diff-compact) .diff-line {
+  position: relative;
+  grid-template-columns: 44px minmax(0, 1fr);
+}
+:is(.diff-view[data-mode='full'], .diff-compact) :is(.diff-ln-old, .diff-ln-new, .diff-line > .diff-sign) {
+  display: none;
+}
+:is(.diff-view[data-mode='full'], .diff-compact) .diff-ln-one {
+  display: block;
+}
+.diff-view[data-mode='full'] .diff-side-row {
+  position: relative;
+  grid-template-columns: 44px minmax(0, 1fr);
+}
+.diff-view[data-mode='full'] .diff-side-row > .diff-sign {
+  display: none;
+}
+:is(.diff-view[data-mode='full'], .diff-compact) .diff-add {
+  box-shadow: inset 3px 0 0 var(--green);
+}
+:is(.diff-view[data-mode='full'], .diff-compact) .diff-remove {
+  box-shadow: inset 3px 0 0 var(--red);
+}
+[data-whole] .diff-add,
+[data-whole] .diff-remove {
+  background: transparent;
+}
+[data-whole] .diff-add {
+  box-shadow: inset 2px 0 0 var(--green);
+}
+[data-whole] .diff-remove {
+  box-shadow: inset 2px 0 0 var(--red);
+}
+.diff-add .diff-word {
+  border-radius: var(--r-2);
+  background: var(--diff-add-word);
+}
+.diff-remove .diff-word {
+  border-radius: var(--r-2);
+  background: var(--diff-del-word);
+}
+.diff-gap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-6);
+  width: 100%;
+  min-height: 24px;
+  border: 0;
+  background: var(--sunken);
+  color: var(--muted);
+  font-family: var(--font);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+  transition: color var(--m-micro) var(--e-micro);
+}
+.diff-gap:hover {
+  color: var(--ink);
+}
+.diff-gap:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+@media (pointer: coarse) {
+  .diff-gap {
+    min-height: 44px;
+  }
+}
+/* Sits over the line's number until the line is hovered or the slot holds focus; a touch screen always shows it. */
+.diff-gutter {
+  position: absolute;
+  top: var(--sp-2);
+  left: var(--sp-24);
+  display: inline-flex;
+  opacity: 0;
+  transition: opacity var(--m-micro) var(--e-micro);
+}
+:is(.diff-line, .diff-side-row):hover > .diff-gutter,
+.diff-gutter:focus-within {
+  opacity: 1;
+}
+@media (hover: none) {
+  .diff-gutter {
+    opacity: 1;
+  }
+}
+.diff-annotation {
+  font-family: var(--font);
+  white-space: normal;
+}
+
+/* The conversation's short preview: paper with its own line, one line each cut at the edge, a foot for what is left. */
+.diff-compact {
+  min-width: 0;
+  overflow: hidden;
+  border-radius: var(--r-8);
+  background: var(--canvas);
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-family: var(--mono);
+  font-size: var(--fs-code);
+  line-height: var(--lh-code);
+}
+.diff-compact .diff-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.diff-compact-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-8);
+  min-height: 32px;
+  padding: 0 var(--sp-4) 0 var(--sp-12);
+  background: var(--sunken);
+  box-shadow: inset 0 1px 0 var(--line);
+  color: var(--muted);
+  font-family: var(--font);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}

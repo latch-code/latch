@@ -15,6 +15,7 @@
 @import './markdown.css' layer(app);
 @import './file-chip.css' layer(app);
 @import './tool-card.css' layer(app);
+@import './diff.css' layer(app);
 @import './composer.css' layer(app);
 @import './phone.css' layer(app);
 @import './overlays.css' layer(app);

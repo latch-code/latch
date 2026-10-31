@@ -2,7 +2,7 @@
  * Segmented control, only for two or three equal views or modes: a soft fill (radius 8, 2px inside, 2px between)
  * holding equal segments (radius 6 = 8 − 2), 24px tall with 12/16·500 words. The selected segment is a raised face
  * (seg-on with its own shadow) in ink; the others are muted and turn ink on hover. The selection cross-fades over
- * --m-micro and never slides. md has 28px segments; phones 32; on touch every segment's hit box reaches 44 tall
+ * --m-micro and never slides. xs has 20px segments in 11/14, 24 overall; md has 28px segments; phones 32; on touch every segment's hit box reaches 44 tall
  * without leaving the track.
  */
 .ui-segmented {
@@ -36,6 +36,12 @@
     box-shadow var(--m-micro) var(--e-micro),
     color var(--m-micro) var(--e-micro);
 }
+.ui-segmented[data-size='xs'] .ui-segmented-option {
+  height: 20px;
+  padding: 0 var(--sp-8);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+}
 .ui-segmented[data-size='md'] .ui-segmented-option {
   height: 28px;
   padding: 0 var(--sp-12);
@@ -58,6 +64,7 @@
 }
 @media (max-width: 767.98px) {
   .ui-segmented .ui-segmented-option,
+  .ui-segmented[data-size='xs'] .ui-segmented-option,
   .ui-segmented[data-size='md'] .ui-segmented-option {
     height: 32px;
     padding: 0 var(--sp-16);

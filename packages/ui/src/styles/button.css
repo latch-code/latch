@@ -28,6 +28,7 @@
     background-color var(--m-micro) var(--e-micro),
     color var(--m-micro) var(--e-micro),
     box-shadow var(--m-micro) var(--e-micro),
+    opacity var(--m-micro) var(--e-micro),
     transform var(--m-micro) var(--e-micro);
 }
 .ui-button:active:not([aria-disabled='true'], [aria-busy='true'], [data-menu], [aria-haspopup], [aria-expanded]) {
@@ -71,6 +72,23 @@
 }
 .ui-button[aria-disabled='true'] {
   opacity: 0.45;
+}
+
+/* Waiting on something of the system's: the words keep the width under a spinner in the middle. */
+.ui-button[data-pending] > .ui-button-words {
+  opacity: 0;
+}
+.ui-button-over {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+}
+/* The short-lived success tick. */
+.ui-button-tick {
+  color: var(--green);
+}
+.ui-button[data-variant='primary'] > .ui-button-tick {
+  color: inherit;
 }
 
 /* Primary: the accent with its inner highlight and a tinted drop; the ring sits outside it. */
@@ -279,4 +297,117 @@
   .ui-button:active:not([aria-disabled='true'], [aria-busy='true'], [data-menu], [aria-haspopup], [aria-expanded]) {
     transform: none;
   }
+}
+
+/*
+ * A split button: the action and, behind a hairline, the chevron that opens the rest of its menu, as one outline or
+ * primary face. The action keeps the outer corners; the chevron is 24 wide (20 at xs).
+ */
+.ui-split {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: stretch;
+}
+.ui-split > .ui-button {
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
+}
+.ui-split-more {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  padding: 0;
+  border: 0;
+  border-start-end-radius: var(--r-8);
+  border-end-end-radius: var(--r-8);
+  background: var(--raised);
+  color: var(--muted);
+  box-shadow:
+    inset 0 0 0 1px var(--line-strong),
+    var(--sh-1);
+  margin-inline-start: -1px;
+  transition:
+    background-color var(--m-micro) var(--e-micro),
+    color var(--m-micro) var(--e-micro);
+}
+.ui-split[data-size='xs'] > .ui-split-more {
+  width: 20px;
+  border-start-end-radius: var(--r-6);
+  border-end-end-radius: var(--r-6);
+}
+.ui-split-more:hover:not([aria-disabled='true']),
+.ui-split-more[aria-expanded='true'] {
+  background: linear-gradient(var(--hover), var(--hover)) var(--raised);
+  color: var(--ink);
+}
+.ui-split-more[aria-disabled='true'] {
+  opacity: 0.45;
+}
+.ui-split[data-variant='primary'] > .ui-split-more {
+  margin-inline-start: 1px;
+  background: var(--accent);
+  color: var(--on-accent);
+  box-shadow: var(--sh-accent);
+}
+.ui-split[data-variant='primary'] > .ui-split-more:hover:not([aria-disabled='true']),
+.ui-split[data-variant='primary'] > .ui-split-more[aria-expanded='true'] {
+  background: var(--accent-hover);
+  color: var(--on-accent);
+}
+.ui-split-more:focus-visible {
+  z-index: 1;
+}
+.ui-split[data-variant='primary'] > .ui-split-more:focus-visible {
+  outline-offset: 2px;
+}
+
+/*
+ * A button that holds a value in a settings row and opens its picker: a 28 outline face with an optional 16 tile or
+ * glyph, the value in ink at the regular weight, and a 14 muted chevron. An amber one says the value needs attention.
+ */
+.ui-select-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+  flex-shrink: 0;
+  max-width: 100%;
+  min-height: 28px;
+  padding: 0 var(--sp-8) 0 var(--sp-10);
+  border: 0;
+  border-radius: var(--r-8);
+  background: var(--raised);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  white-space: nowrap;
+  transition: background-color var(--m-micro) var(--e-micro);
+}
+.ui-select-button[data-leading] {
+  padding-inline-start: var(--sp-6);
+}
+.ui-select-button:hover:not([aria-disabled='true']),
+.ui-select-button[aria-expanded='true'] {
+  background: linear-gradient(var(--hover), var(--hover)) var(--raised);
+}
+.ui-select-button[aria-disabled='true'] {
+  opacity: 0.45;
+}
+.ui-select-button[data-tone='warn'] {
+  color: var(--amber);
+}
+.ui-select-button-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ui-select-button-chevron {
+  color: var(--muted);
+}
+
+/* A copy button keeps a 28px box on touch screens too, so a turn's footer and a row keep their height; the 44px target
+ * reaches past the box around it. */
+.ui-copy-button.ui-icon-button {
+  min-width: 0;
+  min-height: 0;
 }

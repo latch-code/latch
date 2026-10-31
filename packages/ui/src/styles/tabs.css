@@ -70,3 +70,130 @@
     inset: calc((100% - 44px) / 2) 0;
   }
 }
+
+/*
+ * A side panel's strip. The tab's face is a 24 button (at most 160 wide, the words ellipsized) that stands on the hover
+ * fill when selected. On a closable tab the × sits exactly over the 12px glyph, which fades out for it on hover; a
+ * touch screen shows × on the selected tab, since it cannot hover. The stat is 11/14 in the diff's green and red.
+ */
+.ui-panel-tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  min-width: 0;
+}
+.ui-panel-tab-list {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.ui-panel-tab {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  max-width: 160px;
+}
+.ui-panel-tab-face {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+  height: 24px;
+  max-width: 100%;
+  padding: 0 var(--sp-8);
+  border: 0;
+  border-radius: var(--r-6);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
+  white-space: nowrap;
+  transition:
+    background-color var(--m-micro) var(--e-micro),
+    color var(--m-micro) var(--e-micro);
+}
+.ui-panel-tab-face:hover {
+  background: var(--hover);
+  color: var(--ink-2);
+}
+.ui-panel-tab-face[aria-selected='true'] {
+  background: var(--hover);
+  color: var(--ink);
+}
+.ui-panel-tab-face:focus-visible {
+  outline-offset: -2px;
+}
+.ui-panel-tab-slot {
+  flex-shrink: 0;
+  width: 12px;
+}
+.ui-panel-tab-glyph {
+  transition: opacity var(--m-micro) var(--e-micro);
+}
+.ui-panel-tab-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ui-panel-tab-stat {
+  flex-shrink: 0;
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+  font-variant-numeric: tabular-nums;
+}
+.ui-panel-tab-stat > [data-tone='add'] {
+  color: var(--green);
+}
+.ui-panel-tab-stat > [data-tone='remove'] {
+  color: var(--red);
+}
+.ui-panel-tab-fresh {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-full);
+  background: var(--ink-2);
+}
+.ui-panel-tab-close {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: var(--sp-8);
+  display: inline-grid;
+  place-items: center;
+  width: 12px;
+  margin-block: auto;
+  height: 12px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--m-micro) var(--e-micro);
+}
+.ui-panel-tab-close::before {
+  content: '';
+  position: absolute;
+  inset: calc((100% - 24px) / 2);
+}
+@media (hover: hover) and (pointer: fine) {
+  .ui-panel-tab[data-closable]:hover .ui-panel-tab-glyph {
+    opacity: 0;
+  }
+  .ui-panel-tab[data-closable]:hover .ui-panel-tab-close {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+@media not ((hover: hover) and (pointer: fine)) {
+  .ui-panel-tab[data-closable]:has([aria-selected='true']) .ui-panel-tab-glyph {
+    opacity: 0;
+  }
+  .ui-panel-tab[data-closable]:has([aria-selected='true']) .ui-panel-tab-close {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}

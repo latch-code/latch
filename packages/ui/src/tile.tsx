@@ -4,7 +4,7 @@ import { ICON_STROKE } from './icon.tsx'
 import { cx } from './internal.ts'
 import { usePausedOffscreen } from './motion.tsx'
 
-export type TileSize = 16 | 20 | 24 | 32 | 40 | 56
+export type TileSize = 14 | 16 | 20 | 24 | 32 | 40 | 56
 /**
  * How ready an agent or model is, drawn on the tile itself; ready (the default) adds nothing. cold: not usable (its
  * command is missing, for example), at 40% and in greyscale. arriving: starting or being checked, at 70% in greyscale

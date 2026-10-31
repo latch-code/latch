@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, type ComponentProps, type MouseEvent, type ReactNode } from 'react'
-import { ChevronDown } from 'lucide-react'
+import { Check, ChevronDown } from 'lucide-react'
 import { Icon, Spinner, type IconSize, type LucideIcon } from './icon.tsx'
 import { cx, mergeRefs } from './internal.ts'
 import { Swap } from './motion.tsx'
@@ -29,6 +29,14 @@ type ButtonProps = Omit<ComponentProps<'button'>, 'disabled'> & {
   /** Running: the width stays, a spinner replaces the leading icon and `loadingLabel` (「检测中…」) the label. */
   loading?: boolean
   loadingLabel?: ReactNode
+  /**
+   * The action has opened something of the system's (Touch ID, a file dialog): a spinner stands in place of the leading
+   * glyph, or over the words of a button without one, while the width stays. It takes no clicks until it is lowered.
+   */
+  pending?: boolean
+  /** It worked: a green tick morphs in where the glyph stood and `doneLabel` replaces the words. It takes no clicks. */
+  done?: boolean
+  doneLabel?: ReactNode
   /** Stays focusable (aria-disabled) so its tooltip can say why; a click does nothing. */
   disabled?: boolean
   /** Shown on hover and keyboard focus: a shortcut's action, or the reason a disabled button cannot be used. */
@@ -60,6 +68,9 @@ export function Button({
   menu = false,
   loading = false,
   loadingLabel,
+  pending = false,
+  done = false,
+  doneLabel,
   disabled = false,
   tooltip,
   shortcut,
@@ -75,16 +86,27 @@ export function Button({
   const own = useRef<HTMLButtonElement>(null)
   const width = useRef(0)
   // While it runs the button keeps at least the width it had before: the running label may be wider, never narrower.
+  const held = loading || pending || done
   useLayoutEffect(() => {
     const element = own.current
     if (!element) return
-    if (loading) element.style.minWidth = `${width.current}px`
+    if (held) element.style.minWidth = `${width.current}px`
     else {
       element.style.removeProperty('min-width')
       width.current = element.offsetWidth
     }
   })
-  const lead = loading ? <Spinner size={GLYPH[size]} /> : icon ? <Icon icon={icon} size={GLYPH[size]} /> : null
+  // Words alone keep their place under the spinner, so a button without a glyph does not grow when it waits.
+  const over = pending && !loading && !icon
+  const glyph = loading || (pending && icon) ? <Spinner size={GLYPH[size]} /> : icon ? <Icon icon={icon} size={GLYPH[size]} /> : null
+  const lead = done ? (
+    <Swap value="done" className="ui-button-tick">
+      <Icon icon={Check} size={GLYPH[size]} />
+    </Swap>
+  ) : (
+    glyph
+  )
+  const words = done && doneLabel !== undefined ? doneLabel : loading && loadingLabel !== undefined ? loadingLabel : children
   const button = (
     <button
       {...props}
@@ -98,12 +120,20 @@ export function Button({
       data-menu={menu ? '' : undefined}
       // A running button is busy, not disabled: it keeps its colours (the primary its blue) even when the caller also
       // disables it for the duration, and it still takes no clicks.
-      aria-disabled={(disabled && !loading) || undefined}
-      aria-busy={loading || undefined}
+      aria-disabled={(disabled && !held) || undefined}
+      aria-busy={loading || pending || undefined}
+      data-pending={over ? '' : undefined}
       style={style}
-      onClick={guard(disabled || loading, onClick)}>
+      onClick={guard(disabled || held, onClick)}>
       {lead}
-      {loading && loadingLabel !== undefined ? loadingLabel : children}
+      {over ? (
+        <>
+          <span className="ui-button-words">{words}</span>
+          <Spinner size={GLYPH[size]} className="ui-button-over" />
+        </>
+      ) : (
+        words
+      )}
       {menu && <Icon icon={ChevronDown} size={12} className="ui-button-chevron" />}
     </button>
   )

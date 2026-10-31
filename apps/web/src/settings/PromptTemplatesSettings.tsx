@@ -52,12 +52,18 @@ export function PromptTemplatesSettings({ snapshot, onChanged }: { snapshot: App
           }
         />
       ))}
-      <Button
-        variant="ghost"
-        disabled={templates.length >= 200}
-        onClick={() => setEditing({ id: crypto.randomUUID(), name: '', content: '', scope: { kind: 'all' } })}>
-        添加提示模板
-      </Button>
+      <SettingsRow
+        title={templates.length ? '再加一个模板' : '还没有提示模板'}
+        trailing={
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={templates.length >= 200}
+            onClick={() => setEditing({ id: crypto.randomUUID(), name: '', content: '', scope: { kind: 'all' } })}>
+            添加提示模板
+          </Button>
+        }
+      />
       {editing && (
         <Modal
           label="编辑提示模板"

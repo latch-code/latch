@@ -85,6 +85,7 @@
     --tip-bg: #18181b;
     --tip-ink: #fafafa;
     --sh-tip: 0 6px 16px -6px rgba(0, 0, 0, 0.3);
+    --sh-drawer: 0 -8px 24px -18px rgba(0, 0, 0, 0.18);
 
     /* Accent: fills under white words (the primary button and send), focus rings and checked controls (switch,
      * checkbox, radio); a hover is darker. accent-ink is blue words on a surface (links), at 4.5:1 or more on each.
@@ -311,6 +312,7 @@
       --tip-bg: #2a2a2e;
       --tip-ink: #f4f4f5;
       --sh-tip: 0 6px 16px -6px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      --sh-drawer: 0 -8px 24px -18px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.04);
       --accent: #2f6feb;
       --accent-hover: #2a63d4;
       --accent-ink: #6b9bfa;
@@ -373,6 +375,7 @@
     --tip-bg: #2a2a2e;
     --tip-ink: #f4f4f5;
     --sh-tip: 0 6px 16px -6px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    --sh-drawer: 0 -8px 24px -18px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.04);
     --accent: #2f6feb;
     --accent-hover: #2a63d4;
     --accent-ink: #6b9bfa;
@@ -443,6 +446,7 @@
     --tip-bg: #18181b !important;
     --tip-ink: #fafafa !important;
     --sh-tip: 0 6px 16px -6px rgba(0, 0, 0, 0.3) !important;
+    --sh-drawer: 0 -8px 24px -18px rgba(0, 0, 0, 0.18) !important;
     --accent: #2461e0 !important;
     --accent-hover: #1d53c8 !important;
     --accent-ink: #215bd5 !important;
@@ -575,6 +579,7 @@
       --tip-bg: #2a2a2e !important;
       --tip-ink: #f4f4f5 !important;
       --sh-tip: 0 6px 16px -6px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
+      --sh-drawer: 0 -8px 24px -18px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
       --accent: #2f6feb !important;
       --accent-hover: #2a63d4 !important;
       --accent-ink: #6b9bfa !important;
@@ -636,6 +641,7 @@
     --tip-bg: #2a2a2e !important;
     --tip-ink: #f4f4f5 !important;
     --sh-tip: 0 6px 16px -6px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
+    --sh-drawer: 0 -8px 24px -18px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
     --accent: #2f6feb !important;
     --accent-hover: #2a63d4 !important;
     --accent-ink: #6b9bfa !important;

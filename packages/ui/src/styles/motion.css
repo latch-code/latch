@@ -33,6 +33,48 @@
   overflow: visible;
 }
 
+/* A disclosure's header: the 12px chevron turns over --m-panel; the rest of the line is the page's. */
+.ui-fold-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  width: 100%;
+  min-width: 0;
+  padding: var(--sp-4) 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  text-align: start;
+  transition: color var(--m-micro) var(--e-micro);
+}
+.ui-fold-header:hover {
+  color: var(--ink);
+}
+.ui-fold-chevron {
+  color: var(--muted);
+  transition: rotate calc(var(--m-panel) * 0.7) var(--e-exit);
+}
+.ui-fold-header[aria-expanded='true'] > .ui-fold-chevron {
+  rotate: 90deg;
+  transition: rotate var(--m-panel) var(--e-panel);
+}
+.ui-fold-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ui-fold-meta {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-variant-numeric: tabular-nums;
+}
+
 /* Swapped content over --m-micro: a glyph scales in from 80% as it fades in, words fade in place. */
 .ui-swap {
   display: inline-flex;
@@ -61,6 +103,7 @@
  * round. It pauses out of view; the still frame is the plain muted words.
  */
 .ui-shimmer {
+  --shimmer-phase: 0ms;
   color: var(--muted);
 }
 @media (prefers-reduced-motion: no-preference) {
@@ -72,8 +115,23 @@
     color: transparent;
     animation: ui-think 4s linear 600ms infinite;
   }
+}
+/* The label of running work: the light crosses in 30 steps every 2.2s with no rest, on the page's one clock. */
+@media (prefers-reduced-motion: no-preference) {
+  .ui-shimmer[data-variant='working'] {
+    animation: ui-think-across 2.2s steps(30) var(--shimmer-phase) infinite;
+  }
+  /* After both shorthands, each of which resets the play state. */
   .ui-shimmer[data-offscreen] {
     animation-play-state: paused;
+  }
+}
+@keyframes ui-think-across {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
   }
 }
 @keyframes ui-think {
@@ -127,7 +185,9 @@
 /* Reduced motion: a disclosure opens and closes at once while its content fades, and every entrance only fades in. */
 @media (prefers-reduced-motion: reduce) {
   .ui-collapse,
-  .ui-collapse[data-state='open'] {
+  .ui-collapse[data-state='open'],
+  .ui-fold-chevron,
+  .ui-fold-header[aria-expanded='true'] > .ui-fold-chevron {
     transition: none;
   }
   @keyframes ui-swap-in {

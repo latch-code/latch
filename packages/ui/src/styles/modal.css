@@ -1,7 +1,8 @@
 /*
  * Native <dialog> variants whose content owns its layout: a centred dialog, a phone bottom sheet and a full page. A
  * dialog and a sheet are raised with 16px corners and the dialog shadow over the blurred scrim; a dialog fades in from
- * a scale of .985 and a sheet rises from below, both over --m-sheet; a page covers the window without a shadow.
+ * a scale of .985 and a sheet rises from below, both over --m-sheet; a page covers the window without a shadow. A dialog
+ * and a sheet go the way they came in 70% of the time, through a still picture of them (useLeaveBehind in dialog.tsx).
  */
 .ui-modal {
   padding: 0;
@@ -154,4 +155,18 @@
   display: grid;
   gap: var(--sp-12);
   padding-top: var(--sp-4);
+}
+
+/* The dim layer behind a slide-over that is no dialog: in and out with the sheet's times. */
+.ui-scrim {
+  position: fixed;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  background: var(--scrim);
+  animation: ui-fade-in var(--m-sheet) var(--e-sheet);
+}
+.ui-scrim[data-leaving] {
+  pointer-events: none;
+  animation: ui-fade-out calc(var(--m-sheet) * 0.7) var(--e-exit) both;
 }

@@ -66,6 +66,15 @@ const frames = (count: number) =>
     step(count)
   })
 
+describe('ValuePicker placement', () => {
+  it('caps its panel at maxHeight', async () => {
+    const many = Array.from({ length: 30 }, (_, index) => ({ value: `m${index}`, label: `模型 ${index}` }))
+    const screen = await render(<ValuePicker label="模型" value="m0" options={many} maxHeight={200} onValueChange={() => {}} />)
+    await screen.getByRole('button', { name: /模型/u }).click()
+    await expect.poll(() => document.querySelector<HTMLElement>('.ui-popover:popover-open')?.style.maxHeight).toBe('200px')
+  })
+})
+
 describe('value picker', () => {
   it('opens on Enter, Space or ↓ with focus on the current value, and Escape closes it back onto the trigger', async () => {
     const screen = await render(<Model />)

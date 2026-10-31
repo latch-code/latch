@@ -13,7 +13,9 @@ import {
 } from 'react'
 import { X } from 'lucide-react'
 import { Button, IconButton } from './button.tsx'
+import { motionAllowed } from './changes.ts'
 import { cx, focusables } from './internal.ts'
+import { EASING, MOTION, usePresence } from './motion.tsx'
 
 /**
  * Opens and closes a native modal dialog with `open`. The browser makes the rest of the page inert; this keeps Tab
@@ -118,6 +120,127 @@ function giveBack(element: HTMLElement | null) {
   if (element?.isConnected) element.focus({ preventScroll: true })
 }
 
+/** What a modal's picture must not carry out of it: a security surface, a secret in a field, a frame that would load again. */
+const NO_PICTURE = '[data-secure], input[type="password"], iframe, object, embed'
+
+/** A still picture of a modal about to go, placed where it stands and out of everyone's way; null when it should not have one. */
+function modalPicture(dialog: HTMLDialogElement): HTMLElement | null {
+  const surface = dialog.querySelector<HTMLElement>(':scope > .ui-modal-surface')
+  if (!surface || !dialog.open || dialog.matches(NO_PICTURE) || dialog.querySelector(NO_PICTURE)) return null
+  const picture = document.createElement('div')
+  if (typeof picture.showPopover !== 'function') return null
+  const box = dialog.getBoundingClientRect()
+  picture.className = cx(dialog.className, 'ui-modal-ghost')
+  picture.popover = 'manual'
+  picture.inert = true
+  picture.setAttribute('aria-hidden', 'true')
+  Object.assign(picture.style, {
+    position: 'fixed',
+    inset: 'auto',
+    margin: '0',
+    left: `${box.left}px`,
+    top: `${box.top}px`,
+    width: `${box.width}px`,
+    height: `${box.height}px`,
+    maxHeight: 'none',
+    pointerEvents: 'none',
+  })
+  const copy = surface.cloneNode(true)
+  if (!(copy instanceof HTMLElement)) return null
+  // The source elements and the copies in document order, for what cloning leaves behind.
+  const sources = surface.querySelectorAll('*')
+  const copies = copy.querySelectorAll('*')
+  copies.forEach((element, index) => {
+    const source = sources[index]
+    if (source && (source.scrollTop || source.scrollLeft)) {
+      // Applied once it is in the document.
+      element.setAttribute('data-scroll', `${source.scrollLeft} ${source.scrollTop}`)
+    }
+    // The picture must not answer for the real page: no duplicate ids, and no radio joining a group on the page.
+    element.removeAttribute('id')
+    element.removeAttribute('name')
+  })
+  for (const nested of copy.querySelectorAll('dialog, [popover], video, audio')) nested.remove()
+  copy.style.animation = 'none'
+  copy.style.height = '100%'
+  copy.style.maxHeight = 'none'
+  picture.append(copy)
+  return picture
+}
+
+/** Plays the picture's exit: the scrim fades and the surface goes the way it came, each over 70% of --m-sheet. */
+function playExit(picture: HTMLElement) {
+  document.body.append(picture)
+  picture.showPopover()
+  for (const element of picture.querySelectorAll('[data-scroll]')) {
+    const [left, top] = (element.getAttribute('data-scroll') ?? '').split(' ').map(Number)
+    element.scrollTo(left ?? 0, top ?? 0)
+  }
+  const surface = picture.firstElementChild
+  const moving = motionAllowed()
+  const timing = { duration: moving ? MOTION.sheetExit : MOTION.microExit, easing: EASING.exit, fill: 'forwards' } as const
+  const leaving = moving
+    ? picture.classList.contains('ui-modal-sheet')
+      ? { translate: ['0 0', '0 100%'] }
+      : { opacity: [1, 0], transform: ['scale(1)', 'scale(0.985)'] }
+    : { opacity: [1, 0] }
+  const animations = [surface?.animate(leaving, timing), picture.animate({ opacity: [1, 0] }, { ...timing, pseudoElement: '::backdrop' })]
+  void Promise.allSettled(animations.map(animation => animation?.finished)).then(() => {
+    picture.remove()
+  })
+}
+
+/**
+ * A modal goes by being unmounted, which leaves nothing to animate. So a still picture of it, taken just before React
+ * removes it, plays the exit in the top layer: inert, hidden from assistive technology and letting the pointer through,
+ * while focus is already back where it belongs. Nothing on a security surface or holding a secret leaves a picture; it
+ * just goes.
+ */
+function useLeaveBehind(ref: RefObject<HTMLDialogElement | null>, enabled: boolean) {
+  useLayoutEffect(() => {
+    const dialog = ref.current
+    if (!enabled || !dialog) return undefined
+    return () => {
+      const picture = modalPicture(dialog)
+      // The development build's rehearsal of an unmount leaves the dialog in the document.
+      if (picture)
+        queueMicrotask(() => {
+          if (!dialog.isConnected) playExit(picture)
+        })
+    }
+  }, [ref, enabled])
+}
+
+/**
+ * The dim layer behind a slide-over that is not a native dialog. It fades in with --m-sheet, and stays to fade out in
+ * 70% of that after `open` turns false, taking no presses meanwhile. A press on it dismisses; the caller sets its z-index.
+ */
+export function Scrim({
+  open,
+  label,
+  onDismiss,
+  className,
+}: {
+  open: boolean
+  /** The dismissal's accessible name: 关闭会话列表. */
+  label: string
+  onDismiss: () => void
+  className?: string
+}) {
+  const { present, leaving } = usePresence(open, MOTION.sheetExit)
+  if (!present) return null
+  return (
+    <button
+      type="button"
+      className={cx('ui-scrim', className)}
+      aria-label={label}
+      tabIndex={-1}
+      data-leaving={leaving ? '' : undefined}
+      onClick={leaving ? undefined : onDismiss}
+    />
+  )
+}
+
 export type DialogSize = 'confirm' | 'form' | 'wide'
 
 /** A content-owned modal, including full-window pages such as settings. Shares dismissal and focus with Dialog. */
@@ -138,6 +261,7 @@ export function Modal({
 }) {
   const ref = useRef<HTMLDialogElement>(null)
   const modal = useModal(ref, true, onClose, true)
+  useLeaveBehind(ref, variant !== 'page')
   return (
     <dialog
       ref={ref}

@@ -11,11 +11,11 @@ import {
   type MenuItem,
   type MenuSection,
   type MenuTriggerProps,
+  useCopy,
 } from '@latch/ui'
 import { FILE_COPY, fileNote, type FileNote } from '../core/securityCopy.ts'
 import { currentShell, revealLabel, shellFiles, type FileActionResult, type FileInspection, type ShellFiles } from '../core/shell.ts'
 import { absoluteReference, referenceIcon, referenceName, splitPath } from '../fileReference.ts'
-import { useCopy } from './ui.tsx'
 
 /** The session whose replies are shown and its folder: the desktop app asks about a file of that session. */
 export interface FileSessionInfo {

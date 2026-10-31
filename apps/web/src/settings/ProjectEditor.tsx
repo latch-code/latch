@@ -8,7 +8,7 @@ import {
   type WorkspaceFolder,
   type WorkspaceInfo,
 } from '@latch/protocol'
-import { Badge, Button, Icon, IconButton, InlineNotice, Menu, ValuePicker } from '@latch/ui'
+import { Badge, Button, Icon, IconButton, InlineNotice, Menu, ValuePicker, useCopy } from '@latch/ui'
 import { api, errorMessage, isUncertain } from '../core/api.ts'
 import { describeFailure } from '../core/securityCopy.ts'
 import { currentShell, revealLabel, type FolderResult, type ShellFolders } from '../core/shell.ts'
@@ -18,7 +18,6 @@ import { folderAccessText, PROJECT_ICONS, ProjectIcon, projectFolders, projectNa
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { ConfirmDialog, PromptDialog } from '../components/overlays.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
-import { useCopy } from '../components/ui.tsx'
 import { IconTile, MiddleEllipsis, moreButton, NavRow, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
 
 function folderInUse(project: WorkspaceInfo, folder: WorkspaceFolder, snapshot: AppSnapshot): boolean {

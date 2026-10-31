@@ -306,6 +306,13 @@ describe('the thinking shimmer', () => {
     await expect.poll(() => cssAnimation(label)?.playState).toBe('running')
   })
 
+  it('pauses the working label out of view as well', async () => {
+    const screen = await render(<Shimmer variant="working">运行中</Shimmer>)
+    const label = screen.container.querySelector<HTMLElement>('.ui-shimmer')!
+    label.toggleAttribute('data-offscreen', true)
+    expect(getComputedStyle(label).animationPlayState).toBe('paused')
+  })
+
   it('stands still under reduced motion, as plain words in muted ink', async () => {
     const screen = await render(<Shimmer>正在思考</Shimmer>)
     const label = screen.container.querySelector<HTMLElement>('.ui-shimmer')!

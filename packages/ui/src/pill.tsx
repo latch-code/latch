@@ -106,7 +106,42 @@ export function StatusDot({ tone, ring = false, label }: { tone: 'warn' | 'err' 
   )
 }
 
+const MAC_KEYS: Record<string, string> = { mod: '⌘', cmd: '⌘', ctrl: '⌃', alt: '⌥', option: '⌥', shift: '⇧' }
+const OTHER_KEYS: Record<string, string> = { mod: 'Ctrl', cmd: 'Ctrl', ctrl: 'Ctrl', alt: 'Alt', option: 'Alt', shift: 'Shift' }
+const NAMED_KEYS: Record<string, string> = {
+  enter: '⏎',
+  esc: 'Esc',
+  backspace: '⌫',
+  delete: '⌦',
+  tab: '⇥',
+  space: 'Space',
+  up: '↑',
+  down: '↓',
+  left: '←',
+  right: '→',
+}
+const onMac = () => typeof navigator !== 'undefined' && /Mac|iPhone|iPad/u.test(navigator.platform)
+
+/**
+ * The glyphs of a shortcut written as `mod+shift+k`: 「⌘⇧K」 on a Mac, 「Ctrl+Shift+K」 elsewhere. `mod` is the platform's
+ * command key; `ctrl`, `alt` and `shift` mean those keys. What goes in a tooltip's `shortcut` and in `Kbd`.
+ */
+export function keyGlyphs(keys: string, mac: boolean = onMac()): string {
+  const names = mac ? MAC_KEYS : OTHER_KEYS
+  const glyphs = keys.split('+').map(key => {
+    const name = key.toLowerCase()
+    return names[name] ?? NAMED_KEYS[name] ?? key.toUpperCase()
+  })
+  return glyphs.join(mac ? '' : '+')
+}
+
 /** A key or shortcut: only in tooltips, menu item ends, the search row and an approval's hint line, never in a button. */
-export function Kbd({ children }: { children: ReactNode }) {
-  return <kbd className="ui-kbd">{children}</kbd>
+export function Kbd({
+  keys,
+  children,
+}: {
+  /** A shortcut for `keyGlyphs`, instead of the glyphs as children. */ keys?: string
+  children?: ReactNode
+}) {
+  return <kbd className="ui-kbd">{keys === undefined ? children : keyGlyphs(keys)}</kbd>
 }

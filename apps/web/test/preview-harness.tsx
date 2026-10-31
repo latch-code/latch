@@ -4,6 +4,7 @@ import type { FileMetadata } from '@latch/protocol'
 import { validMathDom } from '../src/preview/math.ts'
 import { MessageContent } from '../src/MessageContent.tsx'
 import { DocumentPreview } from '../src/preview/DocumentPreview.tsx'
+import { DiffView, type DiffViewFile } from '../src/components/DiffView.tsx'
 import { isFrameCommand, type FrameInput, type FrameCommand } from '../src/preview/types.ts'
 import type { PreviewQuote } from '../src/preview/quote.ts'
 import '../src/styles/index.css'
@@ -12,6 +13,7 @@ declare global {
     startPreview: (kind: FileMetadata['kind'], bytes: number[]) => void
     previewRanges: Array<[number | undefined, number | undefined]>
     startRichPreview: (text: string, streaming?: boolean, files?: boolean) => void
+    startFullDiff: (diff: DiffViewFile) => void
     validatePreviewMath: (node: Element) => boolean
     previewOpened: string[]
     previewImages: string[]
@@ -165,4 +167,13 @@ function Harness() {
 window.validatePreviewMath = validMathDom
 window.previewHoldPages = false
 window.previewDeferred = []
+// The review's own shape: a narrow panel that scrolls, with the diff in full mode.
+window.startFullDiff = diff => {
+  document.getElementById('diff-panel')?.remove()
+  const panel = document.createElement('div')
+  panel.id = 'diff-panel'
+  panel.style.cssText = 'width:500px;height:300px;overflow:auto'
+  document.body.append(panel)
+  createRoot(panel).render(<DiffView diffs={[diff]} mode="full" initiallyOpen />)
+}
 createRoot(document.getElementById('root')!).render(<Harness />)

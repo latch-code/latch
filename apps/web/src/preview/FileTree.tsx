@@ -1,11 +1,10 @@
 import { useCallback, useContext, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
 import { Check, ChevronRight, Copy, Ellipsis, File, Folder, FolderOpen, Link2, RefreshCw, Search, TextQuote } from 'lucide-react'
 import { isFileDirectoryListing, type FileChange, type FileContext, type FileDirectoryListing, type FileMention } from '@latch/protocol'
-import { Button, Icon, IconButton, InlineNotice, Loading, Menu, Tooltip } from '@latch/ui'
+import { Button, Icon, IconButton, InlineNotice, Loading, Menu, Tooltip, useCopy } from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
 import { currentShell, revealLabel, shellFiles } from '../core/shell.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
-import { useCopy } from '../components/ui.tsx'
 import { FileOpenContext, fileContextBody, fileContextKey, fileRoute, targetIn } from './fileContext.ts'
 import { readTreeFile, treeChanges, treeFullPath, treeKey as branchKey, treeLocation, type FileTreeView } from './treeFiles.ts'
 

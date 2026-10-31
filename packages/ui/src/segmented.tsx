@@ -31,8 +31,11 @@ export function SegmentedControl<T extends string>({
   value: T
   options: readonly [SegmentOption<T>, SegmentOption<T>] | readonly [SegmentOption<T>, SegmentOption<T>, SegmentOption<T>]
   onValueChange: (value: T) => void
-  /** sm: 28 overall (24px segments, 12/16), md: 32 (28px segments, 13/18); phones are 36 (32px segments) at either size. */
-  size?: 'sm' | 'md'
+  /**
+   * xs: 24 overall (20px segments, 11/14), for a panel's strip. sm: 28 overall (24px segments, 12/16), md: 32 (28px
+   * segments, 13/18); phones are 36 (32px segments) at any size.
+   */
+  size?: 'xs' | 'sm' | 'md'
   disabled?: boolean
   className?: string
 }) {

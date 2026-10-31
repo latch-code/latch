@@ -29,6 +29,9 @@ export const EASING = {
   exit: 'cubic-bezier(0.4, 0, 1, 1)',
 } as const
 
+/** The working label's sweep; ui-working in motion.css runs the same length. */
+const WORKING_SWEEP = 2200
+
 /** How long a closing disclosure may take before it counts as closed even without its transitionend. */
 const CLOSE_FALLBACK = MOTION.panelExit + 200
 
@@ -219,11 +222,28 @@ export function usePausedOffscreen(ref: RefObject<Element | null>): void {
  * rest until the next 4s cycle; only the gradient behind the clipped text moves, and it pauses out of view. Its still
  * frame, and what reduced motion shows, is the plain words in muted ink.
  */
-export function Shimmer({ className, children, ref, ...props }: ComponentProps<'span'>) {
+export function Shimmer({
+  variant = 'thinking',
+  className,
+  children,
+  ref,
+  style,
+  ...props
+}: ComponentProps<'span'> & {
+  /** working: the label of running work, a 2.2s sweep in 30 steps with no rest, on one clock shared across the page. */
+  variant?: 'thinking' | 'working'
+}) {
   const own = useRef<HTMLSpanElement>(null)
   usePausedOffscreen(own)
+  // Started part-way through by the page's clock, so every working label in view sweeps together.
+  const [phase] = useState(() => (typeof performance === 'undefined' ? 0 : performance.now() % WORKING_SWEEP))
   return (
-    <span {...props} ref={mergeRefs(ref, own)} className={cx('ui-shimmer', className)}>
+    <span
+      {...props}
+      ref={mergeRefs(ref, own)}
+      className={cx('ui-shimmer', className)}
+      data-variant={variant === 'working' ? variant : undefined}
+      style={variant === 'working' ? { ...style, '--shimmer-phase': `${-Math.round(phase)}ms` } : style}>
       {children}
     </span>
   )

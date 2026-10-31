@@ -20,9 +20,8 @@ import { destinationOf, type ProvidersResponse } from '../core/providerSetup.ts'
 import { hostView } from '../core/permissions.ts'
 import { InlineConfirm } from './InlineConfirm.tsx'
 import { missingText } from '../core/agentDetection.ts'
-import { Badge, Button, ButtonLink, Icon, IconButton, InlineNotice, Loading } from '@latch/ui'
+import { Badge, Button, ButtonLink, Icon, IconButton, InlineNotice, Loading, CopyButton } from '@latch/ui'
 import { HarnessTile, ProviderTile } from './BrandTile.tsx'
-import { CopyButton } from './ui.tsx'
 
 const ProviderAddForm = deferredComponent(
   async () => ({ default: (await import('../settings/ProvidersSettings.tsx')).ProviderAddForm }),

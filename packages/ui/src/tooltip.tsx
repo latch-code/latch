@@ -16,8 +16,8 @@ const markWarm = (element: HTMLElement) => {
 }
 
 /**
- * A tooltip on its trigger, the element just before it: the action's name, a shortcut after it, or why a disabled
- * control cannot be used. It appears after 400ms of hover with a fade from a scale of .98 (--m-enter), at once on
+ * A tooltip on its trigger, the element just before it: the action's name with its shortcut after it (标签 (⌘X)), or why
+ * a disabled control cannot be used. It appears after 400ms of hover with a fade from a scale of .98 (--m-enter), at once on
  * keyboard focus, and when the pointer moves on from a neighbour's tooltip it glides there from where that one stood
  * (--m-micro). It goes as soon as the pointer leaves, the trigger is pressed or Escape is pressed. It is inverted (ink
  * on light, a lifted grey on dark), 12/16 with 6px corners, and never takes the pointer. Its text describes the
@@ -135,7 +135,11 @@ function TooltipText({ content, shortcut }: { content: ReactNode; shortcut?: str
   return (
     <>
       <span>{content}</span>
-      {shortcut && <kbd>{shortcut}</kbd>}
+      {shortcut && (
+        <span>
+          (<kbd>{shortcut}</kbd>)
+        </span>
+      )}
     </>
   )
 }

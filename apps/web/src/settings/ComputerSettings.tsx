@@ -30,7 +30,6 @@ import { DEV_MODE_TEXT, harnessLevel, hostView, type DeviceAccess } from '../cor
 import { shownAddress } from '../core/providerSetup.ts'
 import { AUDIT_NOT_RECORDED_TEXT, PAIRING_COPY, PROVIDER_COPY } from '../core/securityCopy.ts'
 import { basename } from '../format.ts'
-import { CopyButton } from '../components/ui.tsx'
 import {
   Badge,
   Button,
@@ -45,6 +44,7 @@ import {
   SwitchRow,
   TextField,
   type PermissionLevel as MenuLevel,
+  CopyButton,
 } from '@latch/ui'
 import { FoldRows, IconTile, Loading, MiddleEllipsis, NavRow, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
 import { SettingsPages } from './navigation.tsx'

@@ -103,9 +103,11 @@ export function useTypeahead(): (key: string, labels: readonly string[], from: n
 export interface AnchorOptions {
   /** Which edge of the trigger the layer lines up with: the start (left) or the end (right). */
   align: 'start' | 'end' | 'center'
-  /** Preferred side; the layer flips when the other side has more room. */
-  side: 'bottom' | 'top'
+  /** Preferred side; the layer flips when the other side has more room. `auto` opens toward the side with more room. */
+  side: 'bottom' | 'top' | 'auto'
   gap: number
+  /** Scrolls within past this height, however much room the window has. */
+  maxHeight?: number
 }
 
 /** Keeps a layer 8px inside the window. */
@@ -132,9 +134,10 @@ export function layerSide(height: number, above: number, below: number, side: 'b
  * A layer taller than the room on its side keeps inside the window with a max-height and scrolls within. Call it once
  * the layer is shown: a hidden layer has no size.
  */
-export function pinLayer(anchor: Element, layer: HTMLElement, { align, side, gap }: AnchorOptions): () => void {
+export function pinLayer(anchor: Element, layer: HTMLElement, { align, side, gap, maxHeight = Infinity }: AnchorOptions): () => void {
   // Once placed, the layer prefers the side it is on, so content that changes height does not make it jump across.
-  let chosen = side
+  const box = anchor.getBoundingClientRect()
+  let chosen: 'bottom' | 'top' = side !== 'auto' ? side : box.top > innerHeight - box.bottom ? 'top' : 'bottom'
   const place = () => {
     const target = anchor.getBoundingClientRect()
     // The whole height, past any max-height it has now (the layer scrolls).
@@ -144,7 +147,7 @@ export function pinLayer(anchor: Element, layer: HTMLElement, { align, side, gap
     const above = target.top - gap - WINDOW_MARGIN
     chosen = layerSide(height, above, below, chosen)
     const up = chosen === 'top'
-    const room = Math.max(120, up ? above : below)
+    const room = Math.min(maxHeight, Math.max(120, up ? above : below))
     const top = up ? target.top - gap - Math.min(height, room) : target.bottom + gap
     const preferred = align === 'end' ? target.right - width : align === 'center' ? target.left + (target.width - width) / 2 : target.left
     const left = Math.min(Math.max(WINDOW_MARGIN, preferred), Math.max(WINDOW_MARGIN, innerWidth - width - WINDOW_MARGIN))

@@ -7,9 +7,8 @@ import { MessageContent } from '../MessageContent.tsx'
 import { hostNow, parseDuration, parseTime, useTicker } from '../core/hostClock.ts'
 import { absoluteTime, formatDuration, messageTime, separatorLabel } from '../format.ts'
 import { HarnessTile } from './BrandTile.tsx'
-import { CopyButton } from './ui.tsx'
 import { VisibleText } from './VisibleText.tsx'
-import { Collapse, ICON_STROKE, Shimmer, Swap, Tooltip } from '@latch/ui'
+import { Collapse, ICON_STROKE, Shimmer, Swap, Tooltip, CopyButton } from '@latch/ui'
 
 /** Times of the live reply's reasoning, which the Host reports on the detail while it streams. */
 export interface LiveReasoning {

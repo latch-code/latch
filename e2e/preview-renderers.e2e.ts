@@ -393,4 +393,33 @@ describe('isolated document renderers', () => {
     expect(await page.getByRole('status').filter({ hasText: '1 / 2 页' }).count()).toBe(1)
     expect(await page.getByRole('status').filter({ hasText: '2 / 3 页' }).count()).toBe(0)
   })
+  it('lets a full diff reach the end of a long line, with its head still in view', async () => {
+    const long = `const value = "${'x'.repeat(390)}" // END`
+    const lines = Array.from({ length: 80 }, (_, index) => `line ${index}`)
+    const after = [long, ...lines].join('\n') + '\n'
+    for (const diff of [
+      { path: 'src/new.ts', previous: 'none' as const, newText: after },
+      { path: 'src/edit.ts', previous: 'text' as const, oldText: `first\n${lines.join('\n')}\n`, newText: after },
+    ]) {
+      await page.evaluate(file => {
+        window.startFullDiff(file)
+      }, diff)
+      const reached = await page.locator('#diff-panel .diff-text', { hasText: '// END' }).evaluate(line => {
+        const panel = document.getElementById('diff-panel')!
+        const body = panel.querySelector<HTMLElement>('.diff-body')!
+        body.scrollLeft = 1e6
+        panel.scrollTop = 200
+        const text = document.createRange()
+        text.selectNodeContents(line)
+        return {
+          end: text.getBoundingClientRect().right - panel.getBoundingClientRect().right,
+          head: panel.querySelector('.diff-file-head')!.getBoundingClientRect().top - panel.getBoundingClientRect().top,
+          innerScroll: body.scrollHeight - body.clientHeight,
+        }
+      })
+      expect(reached.end).toBeLessThanOrEqual(0)
+      expect(reached.head).toBe(0)
+      expect(reached.innerScroll).toBe(0)
+    }
+  })
 })

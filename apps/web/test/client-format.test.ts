@@ -11,6 +11,7 @@ import {
   middleEllipsis,
   middleFit,
   relativeTime,
+  formatSize,
   separatorLabel,
   sumUsage,
   tokenAmount,
@@ -34,6 +35,7 @@ describe('client formatting', () => {
     expect(relativeTime(ago(3 * 3_600_000), now)).toBe('3 小时')
     expect(relativeTime(new Date(2026, 9, 22, 23).toISOString(), now)).toBe('昨天')
     expect(relativeTime(new Date(2026, 9, 19, 9).toISOString(), now)).toBe('4 天')
+    expect(relativeTime(new Date(2026, 9, 14, 9).toISOString(), now)).toBe('上周')
     expect(relativeTime(new Date(2026, 8, 3).toISOString(), now)).toBe('09/03')
     expect(relativeTime(new Date(2025, 0, 2).toISOString(), now)).toBe('2025/01/02')
     expect(relativeTime('not a date', now)).toBe('')
@@ -132,5 +134,17 @@ describe('client formatting', () => {
       ],
     })
     expect(argumentView('ls -la')).toEqual({ kind: 'text', text: 'ls -la' })
+  })
+})
+
+describe('file sizes', () => {
+  it('reads as people say them', () => {
+    expect([512, 12 * 1024, 1.8 * 1024 ** 2, 2 * 1024 ** 2, 1.2 * 1024 ** 3].map(formatSize)).toEqual([
+      '512 B',
+      '12 KB',
+      '1.8 MB',
+      '2 MB',
+      '1.2 GB',
+    ])
   })
 })

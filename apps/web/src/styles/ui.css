@@ -26,15 +26,6 @@
   pointer-events: none;
 }
 
-/*
- * Copy buttons keep a 28px box on touch screens too, so a turn's footer and a row keep their height; the primitive's
- * 44px target reaches past the box around them.
- */
-.copy-button.ui-icon-button {
-  min-width: 0;
-  min-height: 0;
-}
-
 /* The built-in harness's tile is the app icon at the tile's size. */
 .brand-tile {
   display: inline-flex;

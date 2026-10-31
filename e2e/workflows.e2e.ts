@@ -207,6 +207,9 @@ describe('session search and workbench navigation', () => {
       await openSection(settings, '通用')
       await settings.getByRole('button', { name: '管理显示的模型', exact: true }).click()
       const visible = settings.getByRole('switch', { name: 'gpt-5.0-mini', exact: true })
+      // A switch row straight in a settings card keeps the card's inset instead of touching its border.
+      const inset = await visible.evaluate(element => getComputedStyle(element.closest('.ui-switch-row') ?? element).paddingInlineStart)
+      expect(inset).toBe('16px')
       await visible.click()
       expect(await visible.getAttribute('aria-checked')).toBe('false')
       await settings.locator('.usage-table').waitFor()

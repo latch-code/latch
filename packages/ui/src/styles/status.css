@@ -67,6 +67,49 @@
 }
 
 /*
+ * The slot of a row that offers actions: hover or focus inside the row (data-status-row) fades the status out as the
+ * actions fade in, in the same cell, over --m-micro. Only a fine pointer swaps; a touch screen keeps the status.
+ */
+.ui-status-swap {
+  display: inline-grid;
+  flex-shrink: 0;
+  align-items: center;
+  justify-items: end;
+}
+.ui-status-swap > * {
+  grid-area: 1 / 1;
+}
+.ui-status-swap > .ui-status-slot {
+  transition: opacity var(--m-micro) var(--e-micro);
+}
+.ui-status-swap-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--m-micro) var(--e-micro);
+}
+@media (hover: hover) and (pointer: fine) {
+  :is([data-status-row]:hover, [data-status-row]:focus-within) .ui-status-swap > .ui-status-slot,
+  .ui-status-swap:hover > .ui-status-slot,
+  .ui-status-swap:focus-within > .ui-status-slot {
+    opacity: 0;
+  }
+  :is([data-status-row]:hover, [data-status-row]:focus-within) .ui-status-swap > .ui-status-swap-actions,
+  .ui-status-swap:hover > .ui-status-swap-actions,
+  .ui-status-swap:focus-within > .ui-status-swap-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+@media not ((hover: hover) and (pointer: fine)) {
+  .ui-status-swap-actions {
+    display: none;
+  }
+}
+
+/*
  * A process row's status glyph: the spinner or the row's icon, and after a change of state the one that leaves, in one
  * cell. The old glyph fades out as the new one scales in from 80%; the state's words fade in place.
  */

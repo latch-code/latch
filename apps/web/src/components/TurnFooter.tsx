@@ -19,9 +19,8 @@ import {
 import { hostNow, useTicker } from '../core/hostClock.ts'
 import { exactTokens, formatDuration, tokenAmount, tokenLines, tokenParts } from '../format.ts'
 import { TimeLabel } from './MessageRow.tsx'
-import { CopyButton } from './ui.tsx'
 import { Menu } from './overlays.tsx'
-import { Button, Collapse, IconButton, Shimmer, Swap, Tooltip } from '@latch/ui'
+import { Button, Collapse, IconButton, Shimmer, Swap, Tooltip, CopyButton } from '@latch/ui'
 
 /** A fact of the footer with its details in a tooltip; it takes keyboard focus so the details are reachable. */
 function Fact({ tip, className, children }: { tip?: ReactNode; className?: string; children: ReactNode }) {

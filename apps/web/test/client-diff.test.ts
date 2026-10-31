@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { diffLines, previousState, splitLines } from '../src/diff.ts'
+import { compactLines, diffLines, openedGap, previousState, splitLines, wordHighlights, wordRanges } from '../src/diff.ts'
 
 const numbered = (count: number, change?: (index: number) => string | undefined) =>
   Array.from({ length: count }, (_, index) => change?.(index + 1) ?? `line ${index + 1}`).join('\n') + '\n'
@@ -12,7 +12,7 @@ describe('line diff', () => {
   })
 
   it('reports no hunks for identical text', () => {
-    expect(diffLines('same\n', 'same\n')).toEqual({ added: 0, removed: 0, hunks: [] })
+    expect(diffLines('same\n', 'same\n')).toEqual({ added: 0, removed: 0, hunks: [], gaps: [] })
   })
 
   it('shows a missing old text as unknown previous content, never as proof of a new file', () => {
@@ -103,5 +103,90 @@ describe('line diff', () => {
     const diff = diffLines(before, after)
     expect(diff).toMatchObject({ added: 1200, removed: 1200 })
     expect(diff.hunks).toHaveLength(1)
+  })
+})
+
+describe('word ranges', () => {
+  const cut = (text: string, ranges: Array<[number, number]>) => ranges.map(([start, end]) => text.slice(start, end))
+
+  it('marks only what changed between two versions of a line', () => {
+    const before = 'const value = loadKey(name)'
+    const after = 'const value = loadApiKey(name, options)'
+    const ranges = wordRanges(before, after)!
+    expect(cut(before, ranges.before)).toEqual(['loadKey'])
+    expect(cut(after, ranges.after)).toEqual(['loadApiKey', ', options'])
+  })
+
+  it('compares Chinese a character at a time and keeps a mark with its base', () => {
+    const ranges = wordRanges('用户输入密钥', '用户保存密钥')!
+    expect(cut('用户保存密钥', ranges.after)).toEqual(['保存'])
+    const decomposed = 'the cafe\u0301 is open today'
+    expect(cut(decomposed, wordRanges(decomposed, 'the café is open today')!.before)).toEqual(['cafe\u0301'])
+  })
+
+  it('gives up on a rewrite and on lines too long to compare', () => {
+    expect(wordRanges('alpha beta gamma', 'one two three four')).toBeUndefined()
+    expect(wordRanges('a '.repeat(500), 'b '.repeat(500))).toBeUndefined()
+  })
+
+  it('pairs removed and added lines across a block', () => {
+    const { hunks } = diffLines('one two\nkeep\n', 'one three\nkeep\nnew line\n')
+    const lines = hunks.flatMap(hunk => hunk.lines)
+    const found = wordHighlights(lines)
+    expect(found.size).toBe(2)
+    const added = lines.find(line => line.text === 'one three')!
+    expect(cut(added.text, found.get(added)!)).toEqual(['three'])
+    expect(found.has(lines.find(line => line.text === 'new line')!)).toBe(false)
+  })
+})
+
+describe('hunk gaps', () => {
+  const base = numbered(60)
+  const view = diffLines(
+    base,
+    numbered(60, index => (index === 30 ? 'changed' : undefined)),
+  )
+
+  it('accounts for every unchanged line outside the hunks', () => {
+    expect(view.gaps.map(gap => [gap.before, gap.lines.length])).toEqual([
+      [0, 26],
+      [1, 27],
+    ])
+    const shown = view.hunks[0]!.lines.filter(line => line.kind !== 'add').length
+    expect(view.gaps.reduce((sum, gap) => sum + gap.lines.length, 0) + shown).toBe(60)
+    expect(view.gaps[0]!.lines[0]).toMatchObject({ kind: 'context', oldLine: 1, newLine: 1 })
+  })
+
+  it('opens from the side next to the change', () => {
+    const [lead, tail] = view.gaps
+    expect(openedGap(lead!, 1, 0)).toMatchObject({ lines: [], hidden: 26 })
+    const opened = openedGap(lead!, 1, 20)
+    expect([opened.lines[0]!.oldLine, opened.lines.at(-1)!.oldLine, opened.hidden]).toEqual([7, 26, 6])
+    const after = openedGap(tail!, 1, 20)
+    expect([after.lines[0]!.oldLine, after.lines.at(-1)!.oldLine, after.hidden]).toEqual([34, 53, 7])
+    expect(openedGap(tail!, 1, 40).hidden).toBe(0)
+  })
+})
+
+describe('the compact preview', () => {
+  it('stops after 12 changed lines and counts the rest', () => {
+    const view = diffLines(
+      numbered(40),
+      numbered(40, index => `changed ${index}`),
+    )
+    const { lines, remaining } = compactLines(view, false)
+    expect(lines.filter(line => line.kind !== 'context').length).toBe(12)
+    expect(remaining).toBe(80 - 12)
+  })
+
+  it('shows the first 8 lines of a new file', () => {
+    const view = diffLines('', numbered(20))
+    const { lines, remaining } = compactLines(view, true)
+    expect(lines.map(line => line.newLine)).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
+    expect(remaining).toBe(12)
+  })
+
+  it('has nothing left when the change is small', () => {
+    expect(compactLines(diffLines('a\n', 'b\n'), false)).toMatchObject({ remaining: 0 })
   })
 })

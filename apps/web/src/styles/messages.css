@@ -496,7 +496,7 @@
 .sending-message-status[data-state='unknown'] {
   color: var(--amber);
 }
-.turn-footer .copy-button {
+.turn-footer .ui-copy-button {
   margin-left: var(--sp-2);
 }
 .turn-retry {
@@ -806,7 +806,7 @@
   font-size: var(--fs-mono);
   line-height: var(--lh-mono);
 }
-.info-path-line .copy-button {
+.info-path-line .ui-copy-button {
   margin-right: calc(-1 * var(--bleed));
 }
 .info-caption {

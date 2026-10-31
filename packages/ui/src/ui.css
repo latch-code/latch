@@ -20,4 +20,6 @@
 @import './styles/tile-choice.css' layer(ui);
 @import './styles/status.css' layer(ui);
 @import './styles/resize.css' layer(ui);
+@import './styles/drawer.css' layer(ui);
+@import './styles/group.css' layer(ui);
 @import './styles/motion.css' layer(ui);

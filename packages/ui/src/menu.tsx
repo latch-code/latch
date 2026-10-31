@@ -25,7 +25,10 @@ import { Tooltip } from './tooltip.tsx'
 export interface LayerPlacement {
   /** Settings rows and the inspector line the layer's right edge up with the trigger; the composer its left edge. */
   align?: 'start' | 'end'
-  side?: 'bottom' | 'top'
+  /** `auto` opens toward the side with more room, for a picker that can sit anywhere on the page. */
+  side?: 'bottom' | 'top' | 'auto'
+  /** Scrolls within past this height. */
+  maxHeight?: number
 }
 
 /**
@@ -35,7 +38,7 @@ export interface LayerPlacement {
  * Closing with Escape or by choosing gives focus back to the trigger; a press elsewhere or Tab leaves it where it went.
  * A layer drawn as a bottom sheet (phones) has no popover element; the sheet handles its own dismissal.
  */
-function useLayer({ align = 'start', side = 'bottom' }: LayerPlacement, onOpenChange?: (open: boolean) => void) {
+function useLayer({ align = 'start', side = 'bottom', maxHeight }: LayerPlacement, onOpenChange?: (open: boolean) => void) {
   const trigger = useRef<HTMLButtonElement>(null)
   const layer = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
@@ -55,8 +58,8 @@ function useLayer({ align = 'start', side = 'bottom' }: LayerPlacement, onOpenCh
     const element = layer.current
     setPopover(element, open)
     if (!open || !element || !trigger.current) return undefined
-    return pinLayer(trigger.current, element, { align, side, gap: 6 })
-  }, [open, align, side])
+    return pinLayer(trigger.current, element, { align, side, gap: 6, maxHeight })
+  }, [open, align, side, maxHeight])
   useEffect(() => {
     const element = layer.current
     const anchor = trigger.current
@@ -624,6 +627,7 @@ export function ValuePicker<T extends string>({
   variant = 'inline',
   align,
   side = 'bottom',
+  maxHeight,
   className,
 }: ValuePickerProps<T>) {
   const phone = useMediaQuery(PHONE_QUERY)
@@ -636,7 +640,7 @@ export function ValuePicker<T extends string>({
     open,
     setOpen,
     close: closeLayer,
-  } = useLayer({ align: align ?? pickerAlign(size, bleed), side }, onOpenChange)
+  } = useLayer({ align: align ?? pickerAlign(size, bleed), side, maxHeight }, onOpenChange)
   const [waiting, setWaiting] = useState(false)
   const [query, setQuery] = useState('')
   const pending = pendingProp || waiting

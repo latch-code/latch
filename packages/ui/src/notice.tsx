@@ -59,20 +59,22 @@ const TOAST_GLYPH = { neutral: Info, error: CircleX } as const
 
 /**
  * A toast: a 36px floating pill, 13/18 text after a 14px glyph in its tone. Only for what happened elsewhere (「已由
- * 「iPhone」处理」) or failed; a local action that succeeded shows its result in place instead. It goes after 3 seconds
- * unless `duration` is null. The caller places it (bottom centre, 12px above the composer).
+ * 「iPhone」处理」) or failed; a local action that succeeded shows its result in place instead. It goes after 2.2 seconds
+ * unless `duration` is null. `placement="bottom"` puts it at the bottom centre of the window; otherwise the caller does.
  */
 export function Toast({
   tone = 'neutral',
   children,
   onDismiss,
-  duration = 3000,
+  duration = 2200,
+  placement,
   className,
 }: {
   tone?: ToastTone
   children: ReactNode
   onDismiss?: () => void
   duration?: number | null
+  placement?: 'bottom'
   className?: string
 }) {
   const dismiss = useRef(onDismiss)
@@ -87,7 +89,7 @@ export function Toast({
     }
   }, [duration])
   return (
-    <div className={cx('ui-toast', className)} data-tone={tone} role={tone === 'error' ? 'alert' : 'status'}>
+    <div className={cx('ui-toast', className)} data-tone={tone} data-placement={placement} role={tone === 'error' ? 'alert' : 'status'}>
       <Icon icon={TOAST_GLYPH[tone]} size={14} className="ui-toast-glyph" />
       <span>{children}</span>
     </div>

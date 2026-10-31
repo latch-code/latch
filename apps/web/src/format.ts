@@ -19,7 +19,7 @@ function parse(value: string): number | null {
 const startOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
 const pad = (value: number) => value.toString().padStart(2, '0')
 
-/** Compact sidebar time: "刚刚", "5 分钟", "3 小时", "昨天", "4 天", "10/23", "2025/10/23". */
+/** Compact sidebar time: "刚刚", "5 分钟", "3 小时", "昨天", "4 天", "上周", "10/23", "2025/10/23". */
 export function relativeTime(value: string, now = new Date()): string {
   const time = parse(value)
   if (time === null) return ''
@@ -30,6 +30,7 @@ export function relativeTime(value: string, now = new Date()): string {
   if (days <= 0) return `${Math.floor(elapsed / 3_600_000)} 小时`
   if (days === 1) return '昨天'
   if (days < 7) return `${days} 天`
+  if (days < 14) return '上周'
   const date = new Date(time)
   const day = `${pad(date.getMonth() + 1)}/${pad(date.getDate())}`
   return date.getFullYear() === now.getFullYear() ? day : `${date.getFullYear()}/${day}`
@@ -204,6 +205,14 @@ export function middleFit(text: string, width: number, measure: (value: string) 
     else high = middle - 1
   }
   return `${trimmed.slice(0, low)}…${tail}`
+}
+
+/** A file's size: 「512 B」, 「12 KB」, 「1.8 MB」, 「1.2 GB」. */
+export function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 ** 2) return `${Math.ceil(bytes / 1024)} KB`
+  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1).replace(/\.0$/u, '')} MB`
+  return `${(bytes / 1024 ** 3).toFixed(1).replace(/\.0$/u, '')} GB`
 }
 
 export function basename(path: string): string {

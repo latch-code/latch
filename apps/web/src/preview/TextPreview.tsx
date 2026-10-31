@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button, SearchField, TextField } from '@latch/ui'
+import { Button, SearchField, TextField, CopyButton } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
-import { CopyButton } from '../components/ui.tsx'
 import { SyntaxLine, useHighlightedTokens } from './HighlightedCode.tsx'
 import { languageForPath } from './highlight-protocol.ts'
 export function TextPreview({

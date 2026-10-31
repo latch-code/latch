@@ -2,7 +2,7 @@ import { useRef, type ReactNode } from 'react'
 import { TriangleAlert } from 'lucide-react'
 import { Icon, Spinner } from './icon.tsx'
 import { cx } from './internal.ts'
-import { usePausedOffscreen } from './motion.tsx'
+import { MOTION, usePausedOffscreen, usePresence } from './motion.tsx'
 
 /**
  * An empty list or area: a short noun phrase (「还没有会话」) in ink-2, one line in muted ink and at most one xs action,
@@ -90,6 +90,26 @@ export function ErrorState({
       <h2 className="ui-error-state-title">{title}</h2>
       {description && <p className="ui-error-state-description">{description}</p>}
       {actions && <div className="ui-error-state-actions">{actions}</div>}
+    </div>
+  )
+}
+
+/**
+ * A 2px line for work whose length nobody knows (a page loading in the browser panel): it eases to 90% and waits there,
+ * then completes in 150ms and fades. It stays indeterminate to assistive technology, since the 90% is not a measurement.
+ * Without motion it is a still line that fades when the work ends.
+ */
+export function ProgressBar({ active, label = '正在加载', className }: { active: boolean; label?: string; className?: string }) {
+  const { present, leaving } = usePresence(active, 150 + MOTION.micro)
+  if (!present) return null
+  return (
+    <div
+      className={cx('ui-progress', className)}
+      role="progressbar"
+      aria-label={label}
+      aria-busy={!leaving}
+      data-state={leaving ? 'done' : 'loading'}>
+      <span className="ui-progress-fill" />
     </div>
   )
 }

@@ -23,8 +23,8 @@ import {
   SwitchRow,
   TextAreaField,
   TextField,
+  CopyButton,
 } from '@latch/ui'
-import { CopyButton } from '../components/ui.tsx'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { IconTile, Loading, MiddleEllipsis, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
 import { FieldDialog } from './dialogs.tsx'

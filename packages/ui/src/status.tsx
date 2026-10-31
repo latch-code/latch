@@ -63,6 +63,7 @@ export function StatusSlot({
   failed = '失败',
   time,
   dateTime,
+  actions,
   className,
 }: {
   status: SlotStatus
@@ -75,6 +76,11 @@ export function StatusSlot({
   /** The time shown at rest, such as 09:15, 2 分钟 or 昨天. */
   time?: ReactNode
   dateTime?: string
+  /**
+   * What the row offers (归档, ⋯). On a row marked `data-status-row`, hover or focus inside it lets the status give way
+   * to these in the same place. A touch screen has no hover: the status stays, and the row reaches them another way.
+   */
+  actions?: ReactNode
   className?: string
 }) {
   const content = (shown: SlotStatus) =>
@@ -97,7 +103,7 @@ export function StatusSlot({
     setShift(current => (live ? { key: (current?.key ?? 0) + 1, leaving: previous } : null))
   })
   const key = shift?.key ?? 0
-  return (
+  const slot = (
     <span className={cx('ui-status-slot', className)} data-status={status} data-shift={shift ? '' : undefined} aria-hidden="true">
       {shift?.leaving != null && (
         <span
@@ -113,6 +119,13 @@ export function StatusSlot({
       <span key={`shown-${key}`} className="ui-status-shown">
         {content(status)}
       </span>
+    </span>
+  )
+  if (actions === undefined) return slot
+  return (
+    <span className="ui-status-swap">
+      {slot}
+      <span className="ui-status-swap-actions">{actions}</span>
     </span>
   )
 }
