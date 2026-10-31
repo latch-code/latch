@@ -2,7 +2,7 @@ import { createElement } from 'react'
 import { renderToReadableStream, renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { deferredComponent } from '../src/components/DeferredContent.tsx'
-import { settingsPanel, type SettingsSection } from '../src/settings/SettingsPage.tsx'
+import { entrySection, settingsPanel, type SettingsSection } from '../src/settings/SettingsPage.tsx'
 import { pairingQr } from '../src/settings/pairingQr.ts'
 
 describe('optional settings loading', () => {
@@ -40,5 +40,17 @@ describe('optional settings loading', () => {
     expect(bytes.readUInt32BE(20)).toBe(160)
     await expect(pairingQr('', options)).rejects.toThrow()
     expect(await pairingQr('Latch fixture one', options)).toBe(first)
+  })
+
+  it('names the section a page entry shows, for what stands over the page', () => {
+    const all: SettingsSection[] = ['general', 'agents', 'assistants', 'routines']
+    expect(entrySection({ entry: 'automations' }, all, false)).toBe('routines')
+    expect(entrySection({ entry: 'agents' }, all, false)).toBe('agents')
+    // A device without 管理此 Host has no Agent 成员, so the entry starts on 个人助手.
+    expect(entrySection({ entry: 'agents' }, ['general', 'assistants'], false)).toBe('assistants')
+    expect(entrySection({ entry: 'agents', section: 'agents' }, ['general', 'assistants'], false)).toBe('assistants')
+    expect(entrySection({ entry: 'agents', section: 'routines' }, all, true)).toBe('routines')
+    expect(entrySection({ entry: 'agents' }, all, true)).toBeNull()
+    expect(entrySection({ entry: 'sessions' }, all, false)).toBeNull()
   })
 })

@@ -4,13 +4,9 @@ export interface DesktopNotificationPreferences {
   approval: boolean
   title: boolean
 }
-export type DesktopNotificationConsent = 'unasked' | 'pending' | 'accepted' | 'declined'
+export type DesktopNotificationConsent = 'unasked' | 'accepted' | 'declined'
 export interface DesktopNotificationState extends DesktopNotificationPreferences {
   supported: boolean
-  needsConsent: boolean
   /** Absent on older desktop shells. */
   consent?: DesktopNotificationConsent
-}
-export interface DesktopNotificationResponse {
-  choice: 'enable' | 'decline'
 }

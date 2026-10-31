@@ -9,7 +9,7 @@ import type { TestDevice } from '@latch/testkit'
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { backToPhoneSessions, noHorizontalOverflow, reachable } from './helpers/layout.ts'
+import { backToPhoneSessions, noHorizontalOverflow, openPersonal, openSection, reachable } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/personal-workflows'
 const SHARED_REPLY =
@@ -133,10 +133,7 @@ describe('personal group and routine layout with real child-session navigation',
         await page.reload()
         await connected(page)
         await backToPhoneSessions(page)
-        const personalButton = page.getByRole('button', { name: '个人助手', exact: true }).filter({ visible: true }).first()
-        await reachable(personalButton)
-        await personalButton.click()
-        const personal = page.getByRole('dialog', { name: '个人助手', exact: true })
+        const personal = await openPersonal(page)
         const groupTab = personal.getByRole('tab', { name: '群聊', exact: true })
         await reachable(groupTab)
         await groupTab.click()
@@ -208,9 +205,7 @@ describe('personal group and routine layout with real child-session navigation',
         await noHorizontalOverflow(page, personal.locator('.personal-content'))
         await capture(page, 'group-returned-draft-' + suffix)
 
-        const routineTab = personal.getByRole('tab', { name: '例行任务', exact: true })
-        await reachable(routineTab)
-        await routineTab.click()
+        await openSection(page.locator('.settings-page'), '例行任务')
         const create = personal.getByRole('button', { name: '创建例行任务', exact: true })
         await reachable(create)
         const confirmations = host.presence.requests.length

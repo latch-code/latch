@@ -111,8 +111,7 @@ export interface NotificationPreferences {
   approval: boolean
   title: boolean
   supported: boolean
-  needsConsent: boolean
-  consent?: 'unasked' | 'pending' | 'accepted' | 'declined'
+  consent?: 'unasked' | 'accepted' | 'declined'
 }
 
 /** What the Electron preload exposes; nothing else crosses into the renderer. */
@@ -122,7 +121,6 @@ export interface LatchShell {
   notifications?: {
     get(): Promise<NotificationPreferences | undefined>
     set(value: Pick<NotificationPreferences, 'completion' | 'approval' | 'title'>): Promise<NotificationPreferences | undefined>
-    respond?(value: { choice: 'enable' | 'decline' }): Promise<NotificationPreferences | undefined>
     subscribeState?(callback: (state: NotificationPreferences) => void): () => void
     subscribe(callback: (sessionId: string) => void): () => void
   }

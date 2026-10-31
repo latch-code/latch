@@ -350,27 +350,26 @@ async function openDrawer(target: Page): Promise<Locator> {
   return drawer
 }
 
-/**
- * 会话信息: the column beside the paper on the desktop, where it is open by default from 1440px; on tablets as narrow
- * as the reference one and on phones, a page that takes the conversation's place.
- */
+/** 会话信息: the right panel beside the conversation on the desktop, a sheet over it on tablets, a pushed page on phones. */
 async function openDetails(target: Page, viewport: VisualViewport): Promise<void> {
   const toggle = target.locator('.topbar').getByRole('button', { name: '会话信息', exact: true })
   if ((await toggle.getAttribute('aria-pressed')) !== 'true') await toggle.click()
-  if (viewport.name === 'desktop')
-    await target.getByRole('complementary', { name: '会话信息', exact: true }).locator('.inspector').waitFor()
-  else await target.getByRole('region', { name: '会话信息', exact: true }).locator('.inspector').waitFor()
+  if (viewport.name === 'phone') await target.getByRole('region', { name: '会话信息', exact: true }).locator('.inspector').waitFor()
+  else await target.getByRole('complementary', { name: '会话信息', exact: true }).locator('.inspector').waitFor()
   await settleMotion(target)
 }
 
 async function closeDetails(target: Page, viewport: VisualViewport): Promise<void> {
-  // The desktop column stays open, as it is by default at that width.
-  if (viewport.name === 'desktop') return
-  await target.getByRole('button', { name: viewport.name === 'phone' ? '返回' : '返回对话', exact: true }).click()
-  await target.locator('.info-page').waitFor({ state: 'detached' })
+  if (viewport.name === 'phone') {
+    await target.getByRole('button', { name: '返回', exact: true }).click()
+    await target.locator('.info-page').waitFor({ state: 'detached' })
+    return
+  }
+  const toggle = target.locator('.topbar').getByRole('button', { name: '会话信息', exact: true })
+  if ((await toggle.getAttribute('aria-pressed')) === 'true') await toggle.click()
+  await settleMotion(target)
 }
 
-/** Waits until nothing on the page is moving but the live indicators, which keep turning by design. */
 async function settleMotion(target: Page): Promise<void> {
   await target.waitForFunction(() =>
     document.getAnimations().every(animation => animation.playState !== 'running' || animation.effect?.getTiming().iterations === Infinity),
@@ -688,7 +687,7 @@ describe('visual capture of the real product', () => {
     await home(target)
     const list = target.locator('#session-navigation')
     const head = list.locator('.phone-list-head')
-    for (const name of ['设置', '搜索会话', '新建会话']) await reachable(head.getByRole('button', { name, exact: true }))
+    for (const name of ['搜索会话', '新建会话']) await reachable(head.getByRole('button', { name, exact: true }))
     const filters = list.getByRole('group', { name: '筛选会话', exact: true })
     for (const name of ['全部', '对话', 'Agent']) await reachable(filters.getByRole('button', { name, exact: true }))
     await reachable(list.locator('.phone-inbox'))
@@ -995,7 +994,7 @@ describe('visual capture of the real product', () => {
     // The first approval to arrive while the pages watch: the 待批准 row (the rail's button on tablets) appears with its
     // count, which fades in because the page saw it arrive.
     await pages.get('desktop')!.page.locator('.approvals-row .ui-count[data-shift]', { hasText: '1' }).waitFor({ state: 'attached' })
-    await pages.get('tablet')!.page.locator('.rail .ui-count[data-shift]', { hasText: '1' }).waitFor({ state: 'attached' })
+    await pages.get('tablet')!.page.locator('.titlebar .ui-count[data-shift]', { hasText: '1' }).waitFor({ state: 'attached' })
     const r2 = await start(PROMPTS.r2)
     await pendingApproval(r2)
     expect((await detail(r2)).approvals[0].risk).toBe('R2')
@@ -1380,9 +1379,8 @@ describe('visual capture of the real product', () => {
         expect(await sidebar.locator('.session-item.is-selected').evaluate(item => getComputedStyle(item).backgroundColor)).not.toBe(
           'rgba(0, 0, 0, 0)',
         )
-        // The footer names the computer the Host runs on, and says nothing about a healthy connection.
-        expect(await sidebar.locator('.host-name').innerText()).toBe(HOST_NAME)
-        expect(await sidebar.locator('.connection-badge').count()).toBe(0)
+        // A healthy connection is not named: the panel has no footer.
+        expect(await sidebar.locator('.sidebar-footer').count()).toBe(0)
       }
       // The process before the answer has folded into one row; the write's diff stays in view as evidence.
       const fold = target.locator('.fold-toggle')
@@ -1623,7 +1621,7 @@ describe('visual capture of the real product', () => {
       }
       if (viewport.name === 'desktop') {
         // The column's edge toward the paper resizes it: its line under a held hover, and with keyboard focus.
-        const edge = target.getByRole('separator', { name: '调整会话信息宽度', exact: true })
+        const edge = target.getByRole('separator', { name: '调整侧边面板宽度', exact: true })
         await reachable(edge)
         let release = await forceState(target, '.inspector-resize', ['hover'])
         await target.evaluate(() => new Promise(done => setTimeout(done, 500)))
@@ -1712,7 +1710,7 @@ describe('visual capture of the real product', () => {
       if (viewport.name === 'tablet') {
         await home(target)
         const drawer = await openDrawer(target)
-        for (const name of ['新建会话', '设置', '关闭会话列表']) await reachable(drawer.getByRole('button', { name, exact: true }))
+        for (const name of ['新建会话', '关闭会话列表']) await reachable(drawer.getByRole('button', { name, exact: true }))
         // The tablet's sliding sidebar says its states in status words.
         await drawer.locator(`[data-task-id="${sessions.running}"] .ui-status-word[data-tone="running"] .ui-spinner`).waitFor()
         await noHorizontalOverflow(target, drawer)
@@ -1820,12 +1818,12 @@ describe('visual capture of the real product', () => {
         await expect.poll(() => sidebar.locator('[data-leaving]').count()).toBe(0)
 
         // Shut: the column slides away and the top bar offers to open it again.
-        await sidebar.getByRole('button', { name: '收起侧栏', exact: true }).click()
+        await target.getByRole('button', { name: '收起侧栏', exact: true }).click()
         await target.locator('.app-shell[data-sidebar="collapsed"]').waitFor()
         const expand = target.getByRole('button', { name: '展开侧栏', exact: true })
         await expect.poll(() => target.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('展开侧栏')
         await reachable(expand)
-        await reachable(target.locator('.topbar').getByRole('button', { name: '新建会话', exact: true }))
+        await reachable(target.locator('.titlebar').getByRole('button', { name: '新建会话', exact: true }))
         await shellSettled(target)
         await recorder.capture(target, viewport, 'sidebar-collapsed', 'the sidebar shut, opened again from the top bar')
         await expand.click()

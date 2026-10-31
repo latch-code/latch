@@ -35,7 +35,7 @@ describe('Host-authorized notifications', () => {
         changed,
       }),
       settled = vi.fn(),
-      pending = controller.respond({ choice: 'enable' })
+      pending = controller.set({ completion: true, approval: true, title: false })
     await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1))
     const closing = controller.close().then(settled)
     await Promise.resolve()
@@ -45,7 +45,7 @@ describe('Host-authorized notifications', () => {
     await closing
     expect(controller.view().consent).toBe('accepted')
     expect(changed).not.toHaveBeenCalled()
-    expect(await controller.respond({ choice: 'decline' })).toBeUndefined()
+    expect(await controller.set({ completion: false, approval: false, title: false })).toBeUndefined()
     expect(save).toHaveBeenCalledTimes(1)
   })
   it('does not ask for opt-in or pretend to send notifications on an unsupported system', async () => {
@@ -64,7 +64,7 @@ describe('Host-authorized notifications', () => {
     await controller.poll()
     task.status = 'failed'
     await controller.poll()
-    expect(controller.view()).toMatchObject({ supported: false, needsConsent: false, consent: 'unasked' })
+    expect(controller.view()).toMatchObject({ supported: false, consent: 'unasked' })
     expect(save).not.toHaveBeenCalled()
     expect(show).not.toHaveBeenCalled()
     controller.configure({ completion: true, approval: true, title: false })
@@ -123,7 +123,7 @@ describe('Host-authorized notifications', () => {
     await controller.poll()
     expect(show).toHaveBeenCalledTimes(1)
   })
-  it('persists the first background consent event and a declined choice across restart without exposing session data', async () => {
+  it('turns notifications on at the first real ending in the background and keeps a choice across restart', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'latch-notification-consent-'))
     cleanup.push(() => rm(directory, { recursive: true, force: true }))
     let focused = true
@@ -151,11 +151,12 @@ describe('Host-authorized notifications', () => {
     focused = false
     task.status = 'failed'
     await controller.poll()
-    expect(controller.view()).toMatchObject({ needsConsent: true, consent: 'pending', completion: false, approval: false })
+    expect(controller.view()).toMatchObject({ consent: 'accepted', completion: true, approval: true })
     expect(JSON.stringify(changed.mock.calls)).not.toContain(task.title)
-    expect(show).not.toHaveBeenCalled()
-    await controller.respond({ choice: 'decline' })
-    expect(controller.view()).toMatchObject({ needsConsent: false, consent: 'declined' })
+    expect(show).toHaveBeenCalledTimes(1)
+    show.mockClear()
+    await controller.set({ completion: false, approval: false, title: false })
+    expect(controller.view()).toMatchObject({ consent: 'accepted', completion: false, approval: false })
     const restarted = create()
     cleanup.push(() => restarted.close())
     restarted.configure(await readPreferences(directory))
@@ -163,10 +164,10 @@ describe('Host-authorized notifications', () => {
     await restarted.poll()
     task.status = 'failed'
     await restarted.poll()
-    expect(restarted.view()).toMatchObject({ consent: 'declined', completion: false, approval: false, needsConsent: false })
+    expect(restarted.view()).toMatchObject({ consent: 'accepted', completion: false, approval: false })
     expect((await stat(join(directory, 'notifications.json'))).mode & 0o077).toBe(0)
   })
-  it('serializes pending consent and explicit settings, keeps failed writes invisible, and preserves the title choice on enable', async () => {
+  it('serializes the first background ending and explicit settings, keeps failed writes invisible, and preserves the title choice on enable', async () => {
     const task = { id: 'a', status: 'running' },
       changed = vi.fn(),
       writes: unknown[] = [],
@@ -195,23 +196,21 @@ describe('Host-authorized notifications', () => {
     task.status = 'idle'
     const polling = controller.poll()
     await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1))
-    const decline = controller.respond({ choice: 'decline' }),
+    const off = controller.set({ completion: false, approval: false, title: false }),
       enable = controller.set({ completion: true, approval: true, title: true })
     expect(controller.view().consent).toBe('unasked')
     release()
     await polling
-    await decline
+    await off
     await enable
-    expect(controller.view()).toMatchObject({ consent: 'accepted', completion: true, approval: true, title: true, needsConsent: false })
+    expect(controller.view()).toMatchObject({ consent: 'accepted', completion: true, approval: true, title: true })
     expect((writes.at(-1) as { consent: string }).consent).toBe('accepted')
-    await controller.respond({ choice: 'enable' })
-    expect(controller.view().title).toBe(true)
     save.mockRejectedValueOnce(new Error('disk failed'))
-    await expect(controller.respond({ choice: 'decline' })).rejects.toThrow('disk failed')
+    await expect(controller.set({ completion: false, approval: false, title: true })).rejects.toThrow('disk failed')
     expect(controller.view()).toMatchObject({ consent: 'accepted', completion: true, approval: true })
-    await controller.respond({ choice: 'decline' })
-    expect(controller.view()).toMatchObject({ consent: 'declined', completion: false, approval: false })
-    expect(show).not.toHaveBeenCalled()
+    await controller.set({ completion: false, approval: false, title: true })
+    expect(controller.view()).toMatchObject({ consent: 'accepted', completion: false, approval: false, title: true })
+    expect(show).toHaveBeenCalledTimes(1)
   })
   it('migrates legacy preferences and refuses invalid or untrusted IPC without accepting notification text', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'latch-notification-legacy-'))
@@ -237,14 +236,11 @@ describe('Host-authorized notifications', () => {
       trusted: (event: unknown) => event === 'top-frame',
       controller,
     })
-    const respond = handlers.get('latch:notifications:respond')!,
-      set = handlers.get('latch:notifications:set')!
-    expect(await respond('child-frame', { choice: 'enable' })).toBeUndefined()
-    expect(await respond('top-frame', { choice: 'enable', body: 'Arbitrary text' })).toBeUndefined()
-    expect(await respond('top-frame', { choice: 'unknown' })).toBeUndefined()
+    const set = handlers.get('latch:notifications:set')!
+    expect(await set('child-frame', { completion: true, approval: true, title: false })).toBeUndefined()
     expect(await set('top-frame', Object.create({ completion: true, approval: true, title: true }))).toBeUndefined()
     expect(await set('top-frame', { completion: true, approval: true, title: false, sessionId: 'forged' })).toBeUndefined()
-    expect(await respond('top-frame', { choice: 'enable' })).toMatchObject({
+    expect(await set('top-frame', { completion: true, approval: true, title: false })).toMatchObject({
       completion: true,
       approval: true,
       title: false,
@@ -253,14 +249,14 @@ describe('Host-authorized notifications', () => {
     expect(handlers.get('latch:notifications:get')!('child-frame')).toBeUndefined()
   })
   it('exposes only finite state/choice values through the real preload and retains the old session-click subscription', async () => {
-    const state = { completion: false, approval: false, title: false, supported: true, needsConsent: true, consent: 'pending' },
+    const state = { completion: false, approval: false, title: false, supported: true, consent: 'unasked' },
       invoke = vi.fn(async () => state)
     const listeners = new Map<string, (event: unknown, value: unknown) => void>()
     let shell:
       | {
           notifications: {
             get: () => Promise<unknown>
-            respond: (input: unknown) => Promise<unknown>
+            set: (input: unknown) => Promise<unknown>
             subscribeState: (listener: (value: unknown) => void) => () => void
             subscribe: (listener: (value: unknown) => void) => () => void
           }
@@ -286,10 +282,8 @@ describe('Host-authorized notifications', () => {
       },
     })
     expect(await shell!.notifications.get()).toEqual(state)
-    expect(await shell!.notifications.respond({ choice: 'enable', text: 'never forwarded' })).toBeUndefined()
+    expect(await shell!.notifications.set({ completion: true, approval: true, title: false, text: 'never forwarded' })).toBeUndefined()
     expect(invoke).toHaveBeenCalledTimes(1)
-    await shell!.notifications.respond({ choice: 'decline' })
-    expect(invoke).toHaveBeenLastCalledWith('latch:notifications:respond', { choice: 'decline' })
     const changed = vi.fn(),
       clicked = vi.fn(),
       unsubscribe = shell!.notifications.subscribeState(changed),
@@ -345,7 +339,7 @@ describe('Host-authorized notifications', () => {
     expect(show).toHaveBeenCalledTimes(2)
     expect(badge).toHaveBeenLastCalledWith(3)
   })
-  it('fails closed on preferences and host errors and asks for consent without notifying by default', async () => {
+  it('fails closed on preferences and turns notifications on at the first real ending in the background', async () => {
     let snapshot = { tasks: [{ id: 'a', status: 'running' }], approvals: [] }
     const show = vi.fn(),
       controller = createNotifications({
@@ -360,7 +354,7 @@ describe('Host-authorized notifications', () => {
     await controller.poll()
     snapshot.tasks[0]!.status = 'idle'
     await controller.poll()
-    expect(show).not.toHaveBeenCalled()
-    expect(controller.view().needsConsent).toBe(true)
+    expect(show).toHaveBeenCalledTimes(1)
+    expect(controller.view()).toMatchObject({ consent: 'accepted', completion: true, approval: true, title: false })
   })
 })

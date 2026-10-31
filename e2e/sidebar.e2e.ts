@@ -7,8 +7,7 @@ import { startTestHost, type TestHost } from './helpers/host.ts'
 
 /**
  * The sidebar from 1024px: dragging its edge, double-click reset, the keyboard steps and snapping shut (sliding, not
- * jumping), with widths remembered on this device per breakpoint class and the conversation paper never narrower than
- * 520; the top bar's title moving one way as the column shuts and opens; and the filter pills under the search, which
+ * jumping), with the width remembered on this device and the conversation never narrower than 480; the title row's title moving one way as the column shuts and opens; and the filter pills under the search, which
  * must work where clicking a button does not focus it.
  */
 describe('resizable sidebar', () => {
@@ -38,9 +37,9 @@ describe('resizable sidebar', () => {
     await testHost?.close()
   })
 
-  /** The sidebar's width; shut, its track keeps only the window's 8px inset. */
+  /** The panel's width; shut, its track is empty. */
   const sidebarWidth = () => page.locator('#session-navigation').evaluate(element => Math.round(element.getBoundingClientRect().width))
-  const SHUT = 8
+  const SHUT = 0
   const paperWidth = () => page.locator('main.workspace').evaluate(element => Math.round(element.getBoundingClientRect().width))
   const handle = () => page.getByRole('separator', { name: '调整侧栏宽度', exact: true })
   /** Drags the handle by `dx` from its centre, as a person does: press, move in steps, release. */
@@ -108,53 +107,53 @@ describe('resizable sidebar', () => {
   }
 
   it('follows a drag, remembers the width and resets on a double click', async () => {
-    expect(await sidebarWidth()).toBe(300)
-    await expect.poll(() => handle().getAttribute('aria-valuenow')).toBe('300')
+    expect(await sidebarWidth()).toBe(248)
+    await expect.poll(() => handle().getAttribute('aria-valuenow')).toBe('248')
     await drag(60)
-    await expect.poll(sidebarWidth).toBe(360)
+    await expect.poll(sidebarWidth).toBe(308)
     // The text under the drag is not selected, and the page is no longer marked as resizing once released.
     expect(await page.evaluate(() => getSelection()?.toString() ?? '')).toBe('')
     expect(await page.evaluate(() => document.documentElement.hasAttribute('data-resizing'))).toBe(false)
     await reload()
-    expect(await sidebarWidth()).toBe(360)
+    expect(await sidebarWidth()).toBe(308)
     await drag(400)
-    await expect.poll(sidebarWidth).toBe(480)
+    await expect.poll(sidebarWidth).toBe(400)
     await handle().dblclick()
-    await expect.poll(sidebarWidth).toBe(300)
+    await expect.poll(sidebarWidth).toBe(248)
     await reload()
-    expect(await sidebarWidth()).toBe(300)
+    expect(await sidebarWidth()).toBe(248)
   })
 
   it('steps with the arrow keys, goes to the ends with Home and End, and shuts and opens with Enter', async () => {
     await handle().focus()
     await page.keyboard.press('ArrowRight')
-    await expect.poll(() => handle().getAttribute('aria-valuenow')).toBe('308')
+    await expect.poll(() => handle().getAttribute('aria-valuenow')).toBe('256')
     await page.keyboard.press('Shift+ArrowLeft')
-    await expect.poll(() => handle().getAttribute('aria-valuenow')).toBe('276')
+    await expect.poll(() => handle().getAttribute('aria-valuenow')).toBe('224')
     await page.keyboard.press('Home')
     await expect.poll(sidebarWidth).toBe(220)
     await page.keyboard.press('End')
-    await expect.poll(sidebarWidth).toBe(480)
+    await expect.poll(sidebarWidth).toBe(400)
     await page.keyboard.press('Enter')
     await page.locator('.app-shell[data-sidebar="collapsed"]').waitFor()
     await expect.poll(sidebarWidth).toBe(SHUT)
     expect(await page.locator('#session-navigation').evaluate(element => element instanceof HTMLElement && element.inert)).toBe(true)
     await page.keyboard.press('Enter')
-    await expect.poll(sidebarWidth).toBe(480)
+    await expect.poll(sidebarWidth).toBe(400)
     await handle().dblclick()
-    await expect.poll(sidebarWidth).toBe(300)
+    await expect.poll(sidebarWidth).toBe(248)
   })
 
   it('snaps shut when dragged past 160 and opens again at its last width, from the top bar or by dragging the edge', async () => {
     await drag(-20)
-    await expect.poll(sidebarWidth).toBe(280)
+    await expect.poll(sidebarWidth).toBe(228)
     await drag(-200)
     await page.locator('.app-shell[data-sidebar="collapsed"]').waitFor()
     await expect.poll(sidebarWidth).toBe(SHUT)
     await reload()
     await page.locator('.app-shell[data-sidebar="collapsed"]').waitFor()
     await page.getByRole('button', { name: '展开侧栏', exact: true }).click()
-    await expect.poll(sidebarWidth).toBe(280)
+    await expect.poll(sidebarWidth).toBe(228)
     await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('收起侧栏')
     await page.getByRole('button', { name: '收起侧栏', exact: true }).click()
     await page.locator('.app-shell[data-sidebar="collapsed"]').waitFor()
@@ -171,11 +170,11 @@ describe('resizable sidebar', () => {
     await expect.poll(sidebarWidth).toBe(250)
     await page.locator('.app-shell[data-sidebar="open"]').waitFor()
     await handle().dblclick()
-    await expect.poll(sidebarWidth).toBe(300)
+    await expect.poll(sidebarWidth).toBe(248)
   })
 
   it('slides shut when a drag passes the snap point and slides open when a drag pulls it out again', async () => {
-    expect(await sidebarWidth()).toBe(300)
+    expect(await sidebarWidth()).toBe(248)
     // Widths that follow the pointer are never under 220, so a frame between the inset and 200 is the column sliding.
     const sliding = (widths: number[]) => widths.filter(width => width > SHUT + 8 && width < 200)
     const shutting = await frames('#session-navigation', () => drag(-200))
@@ -187,7 +186,7 @@ describe('resizable sidebar', () => {
     await expect.poll(sidebarWidth).toBe(300)
     expect(sliding(opening).length).toBeGreaterThan(0)
     await handle().dblclick()
-    await expect.poll(sidebarWidth).toBe(300)
+    await expect.poll(sidebarWidth).toBe(248)
   })
 
   it('moves the top bar title one way while the sidebar shuts and opens, never jumping back', async () => {
@@ -280,21 +279,18 @@ describe('resizable sidebar', () => {
     }
   })
 
-  it('remembers widths per breakpoint class and keeps the paper at least 520 wide', async () => {
+  it('keeps one remembered width and the conversation at least 480 wide', async () => {
     await drag(80)
-    await expect.poll(sidebarWidth).toBe(380)
+    await expect.poll(sidebarWidth).toBe(328)
     await page.setViewportSize({ width: 1100, height: 900 })
-    // A laptop-width window starts from its own default, not the desktop width.
-    await expect.poll(sidebarWidth).toBe(248)
+    await expect.poll(sidebarWidth).toBe(328)
     await drag(400)
-    await expect.poll(sidebarWidth).toBe(480)
-    expect(await paperWidth()).toBeGreaterThanOrEqual(520)
+    await expect.poll(sidebarWidth).toBe(400)
     await page.setViewportSize({ width: 1024, height: 900 })
-    await expect.poll(sidebarWidth).toBe(480)
-    expect(await paperWidth()).toBeGreaterThanOrEqual(520)
+    await expect.poll(sidebarWidth).toBe(400)
+    expect(await paperWidth()).toBeGreaterThanOrEqual(480)
     await page.setViewportSize({ width: 1440, height: 900 })
-    await expect.poll(sidebarWidth).toBe(380)
     await handle().dblclick()
-    await expect.poll(sidebarWidth).toBe(300)
+    await expect.poll(sidebarWidth).toBe(248)
   })
 })

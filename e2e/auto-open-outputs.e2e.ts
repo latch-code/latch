@@ -10,6 +10,8 @@ import { closeSettings, openSection, openSettings, settleShell } from './helpers
 
 it.each([
   { width: 1440, enabled: true, opens: true },
+  // The desktop app's default window: the panel opens as a sheet there.
+  { width: 1250, enabled: true, opens: true },
   { width: 1440, enabled: false, opens: false },
   { width: 390, enabled: true, opens: false },
 ])('settles new documents at $width px with auto open=$enabled without losing the draft', async ({ width, enabled, opens }) => {

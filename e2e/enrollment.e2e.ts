@@ -186,6 +186,18 @@ describe('device enrollment in the browser', () => {
     expect(await page.evaluate(() => JSON.stringify(localStorage)).then(text => /ldc1\./.test(text))).toBe(false)
   })
 
+  it('keeps a way to move the desktop window before the shell is there', async () => {
+    const testHost = await host({ presenceMode: 'manual' })
+    const page = await (await context()).newPage()
+    await page.goto(`${testHost.host.loopbackOrigin}/link/`)
+    await page.locator('.enroll-page').waitFor()
+    const strip = await page.locator('.enroll-page').evaluate(element => {
+      const style = getComputedStyle(element, '::before')
+      return { region: style.getPropertyValue('-webkit-app-region'), height: style.height, events: style.pointerEvents }
+    })
+    expect(strip).toEqual({ region: 'drag', height: '52px', events: 'none' })
+  })
+
   it('keeps the enrollment page as it is under styles added to the page', async () => {
     const testHost = await host({ presenceMode: 'manual' })
     const page = await (await context()).newPage()

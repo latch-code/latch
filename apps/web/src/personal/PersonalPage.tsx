@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ChevronLeft, Pencil, Plus, UsersRound, X } from 'lucide-react'
+import { ChevronLeft, Pencil, Plus, UsersRound } from 'lucide-react'
 import type {
   AppSnapshot,
   PersonalAssistant,
@@ -20,7 +20,6 @@ import {
   IconButton,
   InlineNotice,
   Loading,
-  Modal,
   Tabs,
   TextAreaField,
   TextField,
@@ -31,6 +30,8 @@ import type { DeviceAccess } from '../core/permissions.ts'
 import { relativeTime } from '../format.ts'
 import { ModelPicker } from '../components/Pickers.tsx'
 import { NavRow, SectionHeading, SettingsGroup } from '../settings/common.tsx'
+import { useViewport } from '../breakpoints.ts'
+import { useBackLayer } from '../hooks/backStack.ts'
 import { deferredComponent } from '../components/DeferredContent.tsx'
 import { emptyGroupDraft, groupPath, type GroupDraft, type RoutineDraft, type PersonalMutation as Mutation } from './model.ts'
 
@@ -48,6 +49,7 @@ export function PersonalPage({
   refreshHint,
   canStart,
   open = true,
+  area: entryArea = 'assistants',
   initialGroupId,
   onGroupSession,
   onClose,
@@ -60,6 +62,8 @@ export function PersonalPage({
   refreshHint: number
   canStart: boolean
   open?: boolean
+  /** Which entry shows the page: 个人助手 with its groups, or 例行任务 alone. */
+  area?: 'assistants' | 'routines'
   initialGroupId?: string
   onGroupSession?: (sessionId: string, groupId: string) => void
   onClose: () => void
@@ -71,7 +75,9 @@ export function PersonalPage({
   const writable = allowed && access.scopes.has('run')
   const groupsEnabled = snapshot.catalog?.features?.personalGroups === true
   const routinesEnabled = snapshot.catalog?.features?.personalRoutines === true
-  const [area, setArea] = useState<Area>(initialGroupId && groupsEnabled ? 'groups' : 'assistants')
+  const [chosenArea, setArea] = useState<'assistants' | 'groups'>(initialGroupId && groupsEnabled ? 'groups' : 'assistants')
+  const area: Area = entryArea === 'routines' && routinesEnabled ? 'routines' : chosenArea
+  const phone = useViewport() === 'phone'
   const [groupId, setGroupId] = useState<string | null>(initialGroupId ?? null)
   const [routineId, setRoutineId] = useState<string | null>(null)
   const [groupDrafts, setGroupDrafts] = useState<Record<string, GroupDraft>>({})
@@ -351,32 +357,34 @@ export function PersonalPage({
     setGroupDrafts(previous => Object.fromEntries(Object.entries(previous).filter(([id]) => id === 'new' || groups.has(id))))
     setRoutineDrafts(previous => Object.fromEntries(Object.entries(previous).filter(([id]) => id === 'new' || routines.has(id))))
   }, [overview])
+  const nested =
+    (area === 'groups' && groupId !== null) || (area === 'routines' && routineId !== null) || (area === 'assistants' && selected !== null)
+  useBackLayer(phone && open && !nested, onClose)
   if (!open) return null
   return (
-    <Modal label="个人助手" variant="page" className="personal-page" onClose={onClose}>
-      <header className="personal-bar">
-        <Button variant="ghost" icon={ChevronLeft} onClick={back}>
-          {area === 'groups' && groupId
-            ? '所有群聊'
-            : area === 'routines' && routineId
-              ? '所有例行任务'
-              : area === 'assistants' && selected
-                ? '所有助手'
-                : '返回工作台'}
-        </Button>
-        <span className="personal-bar-title">个人助手</span>
-        <IconButton label="关闭个人助手" icon={X} onClick={onClose} />
-      </header>
+    <section aria-label="个人助手" className="personal-page">
+      {(phone || nested) && (
+        <header className="personal-bar">
+          <Button variant="ghost" icon={ChevronLeft} onClick={back}>
+            {area === 'groups' && groupId
+              ? '所有群聊'
+              : area === 'routines' && routineId
+                ? '所有例行任务'
+                : area === 'assistants' && selected
+                  ? '所有助手'
+                  : 'Agent'}
+          </Button>
+        </header>
+      )}
       <div className="personal-scroll">
         <div className="personal-content">
-          {allowed && (groupsEnabled || routinesEnabled) && (
+          {allowed && groupsEnabled && area !== 'routines' && (
             <Tabs
               label="个人助手内容"
-              value={area}
+              value={chosenArea}
               options={[
                 { value: 'assistants', label: '助手' },
-                ...(groupsEnabled ? [{ value: 'groups' as const, label: '群聊' }] : []),
-                ...(routinesEnabled ? [{ value: 'routines' as const, label: '例行任务' }] : []),
+                { value: 'groups', label: '群聊' },
               ]}
               onValueChange={setArea}
             />
@@ -696,7 +704,7 @@ export function PersonalPage({
           }}
         />
       )}
-    </Modal>
+    </section>
   )
 }
 

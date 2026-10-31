@@ -240,12 +240,12 @@ describe('Settings › 电脑 on a current Host', () => {
   it('says under the sections what a device without 管理此 Host does not see, and where it is granted', () => {
     const viewer = snapshot(['view', 'run'])
     expect(hiddenSectionsCaption(viewer, deviceAccess(viewer, null))).toBe(SETTINGS_ADMIN_HIDDEN)
-    const html = renderToStaticMarkup(createElement(SettingsPage, { snapshot: viewer, onClose: () => {}, onChanged: () => {} }))
+    const html = renderToStaticMarkup(createElement(SettingsPage, { snapshot: viewer, onSection: () => {}, onChanged: () => {} }))
     expect(html).toContain(`<span>${SETTINGS_ADMIN_HIDDEN}</span>`)
     // An administrator sees every section, so the line is not there.
     const admin = snapshot(['view', 'run', 'admin'])
     expect(hiddenSectionsCaption(admin, deviceAccess(admin, null))).toBeUndefined()
-    expect(renderToStaticMarkup(createElement(SettingsPage, { snapshot: admin, onClose: () => {}, onChanged: () => {} }))).not.toContain(
+    expect(renderToStaticMarkup(createElement(SettingsPage, { snapshot: admin, onSection: () => {}, onChanged: () => {} }))).not.toContain(
       SETTINGS_ADMIN_HIDDEN,
     )
   })

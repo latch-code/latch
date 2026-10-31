@@ -4,7 +4,7 @@ import { chromium, type Browser } from '@playwright/test'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
-import { closeSettings, openSettings } from './helpers/layout.ts'
+import { closeSettings, openEntry } from './helpers/layout.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 
 describe('optional settings chunk lifecycle', () => {
@@ -61,9 +61,12 @@ describe('optional settings chunk lifecycle', () => {
         if (new URL(request.url()).pathname === '/link/api/plugins') privateReads++
       })
       await page.setViewportSize({ width, height: 1000 })
-      const settings = await openSettings(page)
-      const tab = settings.getByRole('tab', { name: '插件', exact: true })
-      await tab.click()
+      const settings = page.locator('.settings-page')
+      // 插件 is an entry of its own on wide windows, and a section of 设置 on a phone.
+      if (width < 768) {
+        await openEntry(page, '设置')
+        await settings.getByRole('tab', { name: '插件', exact: true }).click()
+      } else await openEntry(page, '插件')
       await expect.poll(() => requested).toBe(true)
       expect(privateReads).toBe(0)
       await owner.json(`devices/${device.id}`, { method: 'PATCH', body: { scopes: ['view', 'run'] } })
@@ -96,7 +99,9 @@ describe('optional settings chunk lifecycle', () => {
           2,
         ),
       )
-      await closeSettings(settings)
+      // Without 管理此 Host a wide window's entry is gone, and the page with it.
+      if (width < 768) await closeSettings(settings)
+      else await settings.waitFor({ state: 'detached' })
       await page.setViewportSize({ width: 1440, height: 1000 })
       expect(await draft.inputValue()).toBe('Retain this unsent draft while settings loads')
     } finally {

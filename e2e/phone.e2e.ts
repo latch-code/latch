@@ -74,8 +74,9 @@ describe('the phone stack', () => {
       const list = page.locator('#session-navigation')
       await list.locator(`[data-task-id="${sessions[0]}"]`).waitFor()
       // The list is the page: its header, the pills and the waiting card, and no drawer anywhere.
-      for (const name of ['设置', '搜索会话', '新建会话']) await reachable(list.getByRole('button', { name, exact: true }))
+      for (const name of ['搜索会话', '新建会话']) await reachable(list.getByRole('button', { name, exact: true }))
       await reachable(list.locator('.phone-inbox'))
+      await reachable(page.locator('.phone-tabs').getByRole('button', { name: '设置', exact: true }))
       expect(await page.locator('.sidebar, .drawer-backdrop, main.workspace').count()).toBe(0)
       await noHorizontalOverflow(page)
 
@@ -258,10 +259,7 @@ describe('the phone stack', () => {
         if (label === '模型') {
           await picker.getByRole('button', { name: link, exact: true }).click()
           await sheet.waitFor({ state: 'hidden' })
-          await page
-            .getByRole('dialog', { name: '设置', exact: true })
-            .getByRole('heading', { name: '模型服务', exact: true, level: 2 })
-            .waitFor()
+          await page.locator('.settings-page').getByRole('heading', { name: '模型服务', exact: true, level: 2 }).waitFor()
         } else {
           await page.keyboard.press('Escape')
           await picker.waitFor({ state: 'hidden' })

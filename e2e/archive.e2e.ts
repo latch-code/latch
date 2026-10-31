@@ -104,6 +104,12 @@ describe('archived session management', () => {
         unreadElement = (id: string) => (width === 390 ? row(id) : row(id).locator('..')),
         first = selected[0]!,
         second = selected[1]!
+      // A press elsewhere folds the filter pills under the search, which moves the rows: let them settle first.
+      if (width !== 390) {
+        await page.locator('#session-navigation .session-list').click({ position: { x: 2, y: 2 } })
+        await page.locator('.sidebar-filters:not([data-open])').waitFor({ state: 'attached' })
+        await page.waitForTimeout(400)
+      }
       await row(first.id).click()
       await page.locator('.transcript').getByText(first.prompt, { exact: true }).waitFor()
       await showList(page)

@@ -61,7 +61,7 @@ describe('saved projects', () => {
           .getByRole('button', { name: `最近项目 ${width} 的项目操作`, exact: true })
           .click()
         await page.getByRole('menuitem', { name: '管理文件夹…', exact: true }).click()
-        const settings = page.getByRole('dialog', { name: '设置', exact: true }),
+        const settings = page.locator('.settings-page'),
           recent = settings.locator('.project-recent-sessions'),
           expected = (await owner.json<AppSnapshot>('snapshot')).tasks
             .filter(task => task.workspaceId === project.id && task.mode !== 'chat' && !task.personal)
@@ -120,7 +120,7 @@ describe('saved projects', () => {
         await renamed.waitFor()
         await renamed.getByRole('button', { name: `服务 ${width} 的项目操作`, exact: true }).click()
         await page.getByRole('menuitem', { name: '管理文件夹…', exact: true }).click()
-        const settings = page.getByRole('dialog', { name: '设置', exact: true })
+        const settings = page.locator('.settings-page')
         await settings.getByText('0 个会话', { exact: true }).last().waitFor()
         expect(await settings.getByRole('button', { name: '0 个会话' }).count()).toBe(0)
         const folders = settings.locator('.project-editor .project-folder')

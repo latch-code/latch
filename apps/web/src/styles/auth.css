@@ -11,6 +11,18 @@
 .enroll-waiting > .connection-details {
   margin-inline: 0;
 }
+/* No title row before the shell: this strip moves the desktop window, and elsewhere no pointer ever meets it. */
+.enroll-page::before {
+  content: '';
+  position: fixed;
+  inset: 0 0 auto;
+  height: 52px;
+  pointer-events: none;
+  -webkit-app-region: drag;
+}
+.enroll-card :is(button, a, input, select, textarea, [tabindex]) {
+  -webkit-app-region: no-drag;
+}
 .enroll-page {
   display: grid;
   place-items: center;

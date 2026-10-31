@@ -34,7 +34,6 @@ export function NotificationSettings() {
   }
   return (
     <SettingsGroup title="通知">
-      {value.needsConsent && !value.completion && <InlineNotice>会话曾在后台完成。你可以开启完成通知。</InlineNotice>}
       {!value.supported && <InlineNotice>当前系统不支持通知。</InlineNotice>}
       <SwitchRow
         title="会话完成时通知"

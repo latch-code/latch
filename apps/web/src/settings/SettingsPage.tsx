@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { createPortal } from 'react-dom'
 import {
   Bot,
   ChevronLeft,
@@ -8,22 +9,25 @@ import {
   Laptop,
   LockKeyhole,
   MonitorSmartphone,
+  AlarmClock,
   Puzzle,
+  UsersRound,
   SlidersHorizontal,
   Sparkles,
 } from 'lucide-react'
 import type { AppSnapshot } from '@latch/protocol'
 import { useViewport } from '../breakpoints.ts'
-import { deviceAccess, hostView, type DeviceAccess } from '../core/permissions.ts'
+import { deviceAccess, type DeviceAccess } from '../core/permissions.ts'
 import { SETTINGS_ADMIN_HIDDEN } from '../core/securityCopy.ts'
 import { currentShell } from '../core/shell.ts'
-import { DevModeChip } from '../components/DevModeChip.tsx'
-import { Modal } from '../components/overlays.tsx'
 import { useBackLayer } from '../hooks/backStack.ts'
 import { LegacyProviderSettings } from './LegacyProviderSettings.tsx'
 import { SettingsNavigationProvider, type SettingsNavigation } from './navigation.tsx'
 import { deferredComponent } from '../components/DeferredContent.tsx'
-import { Button, Count, Icon, IconButton, type LucideIcon } from '@latch/ui'
+import { Icon, IconButton, type LucideIcon } from '@latch/ui'
+import { entrySections, type PageEntry, type SettingsSection, type ShellRoute } from '../shell/routes.ts'
+
+export type { SettingsSection }
 
 const AboutSettings = deferredComponent(async () => ({ default: (await import('./AboutSettings.tsx')).AboutSettings }), '关于')
 const AgentsSettings = deferredComponent(async () => ({ default: (await import('./AgentsSettings.tsx')).AgentsSettings }), 'Agent 设置')
@@ -40,16 +44,28 @@ const WorkspacesSettings = deferredComponent(
   '项目设置',
 )
 
-export type SettingsSection = 'general' | 'computer' | 'providers' | 'agents' | 'workspaces' | 'plugins' | 'devices' | 'about'
+const ENTRY_LABELS: Record<PageEntry, string> = { agents: 'Agent', automations: '自动化', plugins: '插件', phone: '手机', settings: '设置' }
+
 /**
  * `admin`: needs the device's 管理此 Host scope. `catalog`: needs the Host APIs that come with a snapshot catalog.
  * `secured`: needs a Host with device confirmation (its policy and device APIs); older Hosts lack them.
+ * `feature`: needs a feature the Host reports, on a device that may read personal data.
  */
-const sections: Array<{ id: SettingsSection; label: string; icon: LucideIcon; admin: boolean; catalog?: boolean; secured?: boolean }> = [
+const sections: Array<{
+  id: SettingsSection
+  label: string
+  icon: LucideIcon
+  admin: boolean
+  catalog?: boolean
+  secured?: boolean
+  feature?: 'personal' | 'personalRoutines'
+}> = [
   { id: 'general', label: '通用', icon: SlidersHorizontal, admin: false },
   { id: 'computer', label: '电脑', icon: Laptop, admin: false, secured: true },
   { id: 'providers', label: '模型服务', icon: Sparkles, admin: true },
   { id: 'agents', label: 'Agent 成员', icon: Bot, admin: true, catalog: true },
+  { id: 'assistants', label: '个人助手', icon: UsersRound, admin: false, feature: 'personal' },
+  { id: 'routines', label: '例行任务', icon: AlarmClock, admin: false, feature: 'personalRoutines' },
   { id: 'workspaces', label: '项目', icon: Folder, admin: true, catalog: true },
   { id: 'plugins', label: '插件', icon: Puzzle, admin: true },
   { id: 'devices', label: '设备', icon: MonitorSmartphone, admin: false, secured: true },
@@ -64,7 +80,14 @@ export function hiddenSectionsCaption(snapshot: AppSnapshot, access: DeviceAcces
 
 export function settingsSections(snapshot: AppSnapshot, access: DeviceAccess = deviceAccess(snapshot, currentShell())): SettingsSection[] {
   return sections
-    .filter(section => (access.admin || !section.admin) && (snapshot.catalog || !section.catalog) && (!access.legacy || !section.secured))
+    .filter(
+      section =>
+        (access.admin || !section.admin)
+        && (snapshot.catalog || !section.catalog)
+        && (!access.legacy || !section.secured)
+        && (!section.feature
+          || (snapshot.catalog?.features?.[section.feature] === true && snapshot.device.dataScope === 'all' && access.scopes.has('view'))),
+    )
     .map(section => section.id)
 }
 
@@ -78,57 +101,62 @@ export function settingsPanel(
   active: SettingsSection | null
   panel: SettingsSection | null
 } {
-  const active = chosen && ids.includes(chosen) ? chosen : phone ? null : 'general'
+  const active = chosen && ids.includes(chosen) ? chosen : phone ? null : (ids[0] ?? null)
   const panel = active ?? (shown && ids.includes(shown) ? shown : null)
   return { active, panel }
 }
 
-/** 「返回会话」 names what waits there, so its count is read out as well. */
-const returnLabel = (waiting: number) => (waiting > 0 ? `返回会话（${waiting} 项等你处理）` : '返回会话')
+/** The section a page entry shows now, for what stands over the page (个人助手 and 例行任务 draw there). */
+export function entrySection(route: ShellRoute, allowed: readonly SettingsSection[], phone: boolean): SettingsSection | null {
+  if (route.entry === 'sessions') return null
+  const ids = entrySections(route.entry, phone).filter(id => allowed.includes(id))
+  return settingsPanel(ids, route.section ?? null, phone, null).active
+}
 
 /**
- * Full-page settings. From 768px the section navigation sits on the ground where the session list was, with 「返回会话」
- * and the waiting count on top, and the section is a sheet of paper beside it; on phones the section list is the root
- * and a section, and each page inside it, is pushed over the level before. It is a modal page, so the conversation
- * behind it keeps its state and the local confirmation dialog still opens over it. Leaving fades the page out before
- * the conversation shows again.
+ * A page entry of the shell: the entry's sections in the panel next to the rail and the chosen one in the main area, with
+ * its name in the title row. It covers the session's columns without unmounting them, so the conversation keeps its
+ * state. On phones the section list is the root and a section, and each page inside it, is pushed over the level before.
  */
 export function SettingsPage({
   snapshot,
   access: given,
-  initial,
+  entry = 'settings',
+  section: chosen = null,
   initialProjectId,
-  onClose,
+  titleSlot,
+  onSection,
   onChanged,
   onOpenSession,
 }: {
   snapshot: AppSnapshot
   access?: DeviceAccess
-  initial?: SettingsSection
+  entry?: PageEntry
+  /** The chosen section; absent, a wide window shows the first and a phone shows the list. */
+  section?: SettingsSection | null
   initialProjectId?: string
-  onClose: () => void
+  /** Where the page puts its title on wide windows. */
+  titleSlot?: HTMLElement | null
+  /** Opens a section, of this entry or another. Without an argument, goes back to this entry's list. */
+  onSection: (section?: SettingsSection) => void
   onChanged: () => void
   onOpenSession?: (id: string) => void
 }) {
   const phone = useViewport() === 'phone'
   const access = given ?? deviceAccess(snapshot, currentShell())
-  const ids = settingsSections(snapshot, access)
-  const available = sections.filter(section => ids.includes(section.id))
-  const caption = hiddenSectionsCaption(snapshot, access)
-  const [chosen, setChosen] = useState<SettingsSection | null>(
-    initial && available.some(section => section.id === initial) ? initial : null,
-  )
+  const allowed = settingsSections(snapshot, access)
+  const ids = entrySections(entry, phone).filter(id => allowed.includes(id))
+  const available = ids.flatMap(id => sections.filter(section => section.id === id))
+  const caption = entry === 'settings' ? hiddenSectionsCaption(snapshot, access) : undefined
   // On phones the last section stays laid out under the list, so going back slides it away instead of blanking it.
-  const [shown, setShown] = useState<SettingsSection | null>(chosen ?? (phone ? null : 'general'))
+  const [shown, setShown] = useState<SettingsSection | null>(chosen ?? (phone ? null : (ids[0] ?? null)))
   const { active, panel } = settingsPanel(ids, chosen, phone, shown)
   const chosenAllowed = chosen === null || ids.includes(chosen)
   const shownAllowed = shown === null || ids.includes(shown)
   useLayoutEffect(() => {
-    if (!chosenAllowed) setChosen(null)
     if (!shownAllowed) setShown(null)
     if (!chosenAllowed || !shownAllowed) {
-      const dialog = layout.current?.closest('dialog')
-      if (document.activeElement === document.body || document.activeElement === dialog)
+      if (document.activeElement === document.body)
         (tabs.current?.querySelector<HTMLButtonElement>('[aria-selected="true"]') ?? tabs.current?.querySelector('button'))?.focus({
           preventScroll: true,
         })
@@ -137,8 +165,6 @@ export function SettingsPage({
   const tabs = useRef<HTMLDivElement>(null)
   const layout = useRef<HTMLDivElement>(null)
   const current = available.find(section => section.id === panel)
-  const waiting = snapshot.approvals.length
-  const devMode = hostView(snapshot)?.devMode === true
   const pushed = phone && active !== null
 
   // Pages open inside the section on a phone, and the way back from the top one.
@@ -152,39 +178,9 @@ export function SettingsPage({
   const navigation: SettingsNavigation = { phone, section: current?.label ?? '', layers, setDepth }
   const level = !phone ? undefined : depth > 0 && pushed ? 'page' : pushed ? 'section' : 'root'
 
-  // Leaving fades the page out (120ms) and only then gives the window back to the conversation.
-  const [closing, setClosing] = useState(false)
-  const latestClose = useRef(onClose)
-  useEffect(() => {
-    latestClose.current = onClose
-  })
-  const leave = () => {
-    setClosing(true)
-  }
-  useEffect(() => {
-    if (!closing) return undefined
-    const dialog = layout.current?.closest('dialog')
-    let done = false
-    const finish = () => {
-      if (done) return
-      done = true
-      latestClose.current()
-    }
-    const ended = (event: AnimationEvent) => {
-      if (event.target === dialog && event.animationName === 'settings-leave') finish()
-    }
-    dialog?.addEventListener('animationend', ended)
-    // Should the fade not run at all (a hidden window), the page still goes.
-    const fallback = setTimeout(finish, 400)
-    return () => {
-      dialog?.removeEventListener('animationend', ended)
-      clearTimeout(fallback)
-    }
-  }, [closing])
-
   const open = (id: SettingsSection) => {
-    setChosen(id)
     setShown(id)
+    onSection(id)
   }
   const keydown = (event: KeyboardEvent<HTMLDivElement>) => {
     const keys = ['ArrowDown', 'ArrowUp', 'Home', 'End']
@@ -202,52 +198,41 @@ export function SettingsPage({
     tabs.current?.querySelector<HTMLButtonElement>(`#settings-tab-${target.id}`)?.focus()
   }
   const back = () => {
-    setChosen(null)
+    onSection()
     requestAnimationFrame(() => {
       tabs.current?.querySelector<HTMLButtonElement>(`#settings-tab-${panel}`)?.focus({ preventScroll: true })
     })
   }
-  const escape = () => {
+  const escape = (event: KeyboardEvent<HTMLElement>) => {
+    // A sheet or menu inside the page takes its own Esc; React would bubble it here through a portal too.
+    if (event.key !== 'Escape' || !phone || event.defaultPrevented) return
+    if (event.target instanceof Element && event.target.closest('dialog, [popover]')) return
     if (level === 'page') levelBack.current?.()
     else if (pushed) back()
-    else leave()
   }
-  // On a phone the page and the section pushed over its list each hold a place in the browser's history (the pages inside
-  // a section hold theirs in SettingsPages), so the platform's back returns one level.
-  useBackLayer(phone && !closing, leave)
-  useBackLayer(pushed && !closing, back)
+  // On a phone the section pushed over its list holds a place in the browser's history (the pages inside a section hold
+  // theirs in SettingsPages), so the platform's back returns one level.
+  useBackLayer(pushed, back)
 
   return (
-    <Modal label="设置" variant="page" className={closing ? 'settings-page is-leaving' : 'settings-page'} onClose={escape}>
+    <section aria-label={ENTRY_LABELS[entry]} className="settings-page" data-entry={entry} onKeyDown={escape}>
+      {!phone && titleSlot && current && createPortal(<h1 className="titlebar-page-title">{current.label}</h1>, titleSlot)}
       <SettingsNavigationProvider value={navigation}>
         <div ref={layout} className="settings-layout" data-level={level}>
           <div className="settings-nav-pane" inert={pushed || undefined}>
-            {phone ? (
+            {phone && (
               <header className="settings-bar">
-                <IconButton label={returnLabel(waiting)} icon={ChevronLeft} onClick={leave} />
-                {/* The button's name already says how many wait; the count beside it shows the same number. */}
-                {waiting > 0 && (
-                  <span className="settings-bar-count" aria-hidden="true">
-                    <Count value={waiting} tone="warn" />
-                  </span>
-                )}
-                <h2>设置</h2>
-                {devMode && !pushed && <DevModeChip />}
+                <span />
+                <h2>{ENTRY_LABELS[entry]}</h2>
               </header>
-            ) : (
-              <div className="settings-nav-head">
-                <Button variant="ghost" icon={ChevronLeft} className="settings-return" aria-label={returnLabel(waiting)} onClick={leave}>
-                  返回会话
-                  {waiting > 0 && <Count value={waiting} tone="warn" />}
-                </Button>
-              </div>
             )}
-            {!phone && (
-              <p className="settings-nav-label" aria-hidden="true">
-                设置
-              </p>
-            )}
-            <div ref={tabs} className="settings-nav" role="tablist" aria-orientation="vertical" aria-label="设置分类" onKeyDown={keydown}>
+            <div
+              ref={tabs}
+              className="settings-nav"
+              role="tablist"
+              aria-orientation="vertical"
+              aria-label={`${ENTRY_LABELS[entry]}分类`}
+              onKeyDown={keydown}>
               {available.map(section => (
                 <button
                   key={section.id}
@@ -286,7 +271,6 @@ export function SettingsPage({
                 <header className="settings-bar">
                   <IconButton label="返回" icon={ChevronLeft} onClick={back} />
                   <h2>{current?.label}</h2>
-                  {devMode && pushed && <DevModeChip />}
                 </header>
               )}
               <div className="settings-scroll">
@@ -307,11 +291,13 @@ export function SettingsPage({
                         access={access}
                         onChanged={onChanged}
                         initialProjectId={initialProjectId}
-                        onComputer={() => open('computer')}
+                        onComputer={() => onSection('computer')}
                         {...(access.scopes.has('view') && onOpenSession ? { onOpenSession } : {})}
                       />
                     )}
-                    {panel === 'plugins' && <PluginsSettings onManage={open} snapshot={snapshot} access={access} onChanged={onChanged} />}
+                    {panel === 'plugins' && (
+                      <PluginsSettings onManage={onSection} snapshot={snapshot} access={access} onChanged={onChanged} />
+                    )}
                     {panel === 'devices' && <DevicesSettings snapshot={snapshot} access={access} onChanged={onChanged} />}
                     {panel === 'about' && <AboutSettings snapshot={snapshot} />}
                   </div>
@@ -322,6 +308,6 @@ export function SettingsPage({
           {phone && <div ref={setLayers} className="settings-levels" />}
         </div>
       </SettingsNavigationProvider>
-    </Modal>
+    </section>
   )
 }

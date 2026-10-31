@@ -8,10 +8,8 @@ import { useListMotion, usePresence } from '../hooks/useListMotion.ts'
 import { filterSessions, groupSessions, sessionFilterLabels, sessionSlot, type SessionFilter, type SessionGroup } from '../sessions.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
 import { HarnessTile } from './BrandTile.tsx'
-import { DevModeChip } from './DevModeChip.tsx'
 import { Menu, type MenuSection } from './overlays.tsx'
 import { Button, Count, FilterPills, ICON_STROKE, IconButton, Kbd, SearchField, StatusSlot, useLivePrevious } from '@latch/ui'
-import { BrandMark } from './ui.tsx'
 
 export const connectionLabels: Record<ConnectionStatus, string> = {
   connected: '已连接',
@@ -219,22 +217,15 @@ export function Sidebar({
   onNextApproval,
   drawer,
   onClose,
-  onCollapse,
-  collapseRef,
   connection,
   onRefresh,
-  onSettings,
-  onPersonal,
   sessionMenu,
   now,
-  devMode = false,
   keepAwake,
 }: ProjectNavigationActions & {
   snapshot: AppSnapshot
   searchResults?: import('react').ReactNode
   archiveBatch?: import('react').ReactNode
-  /** Show the dev-build chip in the footer (wide layouts; tablets show it in the rail, phones in settings). */
-  devMode?: boolean
   /** The desktop app is keeping this Mac awake: why, for the title of the connection line. */
   keepAwake?: string
   selectedId: string | null
@@ -255,13 +246,8 @@ export function Sidebar({
   onNextApproval?: () => void
   drawer: boolean
   onClose: () => void
-  /** Shuts the column (from 1024px). */
-  onCollapse?: () => void
-  collapseRef?: RefObject<HTMLButtonElement | null>
   connection: ConnectionStatus
   onRefresh: () => void
-  onSettings: () => void
-  onPersonal?: () => void
   sessionMenu: (task: TaskSummary) => MenuSection[]
   now: number
 }) {
@@ -321,16 +307,16 @@ export function Sidebar({
   return (
     <div className="sidebar-body">
       <div className="sidebar-head">
-        <span className="sidebar-brand">
-          <BrandMark size={20} />
-          <span className="brand-name">Latch</span>
-        </span>
-        <IconButton label="新建会话" icon={SquarePen} pressed={drawer ? undefined : newActive} onClick={onNew} />
-        {drawer ? (
-          <IconButton label="关闭会话列表" icon={X} onClick={onClose} />
-        ) : (
-          onCollapse && <IconButton ref={collapseRef} label="收起侧栏" icon={PanelLeft} onClick={onCollapse} />
-        )}
+        <Button
+          className="sidebar-new"
+          variant="ghost"
+          icon={SquarePen}
+          aria-label="新建会话"
+          aria-pressed={drawer ? undefined : newActive}
+          onClick={onNew}>
+          新会话
+        </Button>
+        {drawer && <IconButton label="关闭会话列表" icon={X} onClick={onClose} />}
       </div>
       <div
         ref={searchBox}
@@ -365,14 +351,6 @@ export function Sidebar({
           </div>
         </div>
       </div>
-      {onPersonal && (
-        <button type="button" className="approvals-row personal-navigation" onClick={onPersonal}>
-          <span className="sidebar-row-icon">
-            <UsersRound size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-          </span>
-          <span>个人助手</span>
-        </button>
-      )}
       {approvals > 0 && (
         <div className="approvals-group">
           <button type="button" className="approvals-row" onClick={onApprovals}>
@@ -452,17 +430,12 @@ export function Sidebar({
           </button>
         )}
       </nav>
-      <footer className="sidebar-footer">
-        <Laptop className="host-icon" size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-        <span className="host-name" title={snapshot.hostName}>
-          {snapshot.hostName || '执行端'}
-        </span>
-        {devMode && <DevModeChip />}
-        {/*
-         * A healthy connection is not named. While the desktop app keeps this Mac awake the same place says so in a few
-         * quiet words that never shrink, as wide as the amber badge; the reason is in its title.
-         */}
-        {(connectionProblem(connection) || (keepAwake && connection === 'connected')) && (
+      {/*
+       * A healthy connection is not named. While the desktop app keeps this Mac awake the same place says so in a few
+       * quiet words; the reason is in its title.
+       */}
+      {(connectionProblem(connection) || (keepAwake && connection === 'connected')) && (
+        <footer className="sidebar-footer">
           <button
             type="button"
             className={`connection-badge connection-${connection}`}
@@ -470,62 +443,8 @@ export function Sidebar({
             onClick={onRefresh}>
             {connection === 'connected' ? KEEP_AWAKE_LABEL : connectionLabels[connection]}
           </button>
-        )}
-        <span className="sidebar-footer-spacer" />
-        <IconButton label="设置" icon={Settings} onClick={onSettings} />
-      </footer>
-    </div>
-  )
-}
-
-/** Tablet: a 56px rail keeps the main destinations one tap away; the list slides over. */
-export function Rail({
-  approvals,
-  drawerOpen,
-  onSessions,
-  onNew,
-  onSearch,
-  onApprovals,
-  onSettings,
-  onPersonal,
-  devMode = false,
-}: {
-  approvals: number
-  devMode?: boolean
-  drawerOpen: boolean
-  onSessions: () => void
-  onNew: () => void
-  onSearch: () => void
-  onApprovals: () => void
-  onSettings: () => void
-  onPersonal?: () => void
-}) {
-  // The button shows only while something waits, so its count is told the value it rose from.
-  const approvalsBefore = useLivePrevious(approvals)
-  return (
-    <>
-      <BrandMark size={24} />
-      <IconButton
-        label="打开会话列表"
-        icon={PanelLeft}
-        aria-controls="session-navigation"
-        aria-expanded={drawerOpen}
-        onClick={onSessions}
-      />
-      <IconButton label="新建会话" icon={SquarePen} onClick={onNew} />
-      {onPersonal && <IconButton label="个人助手" icon={UsersRound} onClick={onPersonal} />}
-      <IconButton label="搜索会话" icon={Search} onClick={onSearch} />
-      {approvals > 0 && (
-        <IconButton
-          label={`${approvals} 项等你处理`}
-          icon={Inbox}
-          badge={<Count tone="warn" value={approvals} from={approvalsBefore} />}
-          onClick={onApprovals}
-        />
+        </footer>
       )}
-      <span className="rail-spacer" />
-      {devMode && <DevModeChip compact />}
-      <IconButton label="设置" icon={Settings} onClick={onSettings} />
-    </>
+    </div>
   )
 }

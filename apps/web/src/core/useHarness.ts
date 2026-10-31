@@ -39,13 +39,10 @@ export function authStateFor(error: ApiError, renewalFailure: EnrollmentReason |
 }
 
 /**
- * HTTP establishes authority; streamed state replaces only the selected slice. A tab opens on the session it last showed;
- * a fresh one opens on the latest session unless `openLatest` says otherwise when the device first connects (a phone
- * opens on its session list).
+ * HTTP establishes authority; streamed state replaces only the selected slice. A tab opens on the session it last showed
+ * (a reload); a cold start opens on 新会话.
  */
-export function useHarness({ openLatest = () => true }: { openLatest?: () => boolean } = {}) {
-  // Read once, when the device first connects; the first one given is the one used.
-  const opensLatest = useRef(openLatest)
+export function useHarness() {
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null)
   const [detail, setDetail] = useState<TaskDetail | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -175,10 +172,7 @@ export function useHarness({ openLatest = () => true }: { openLatest?: () => boo
               restoredDevice.current = next.device.id
               // Selection still works without browser storage, which reads as nothing selected.
               const restored = readStorage('sessionStorage', `latch.selected.${location.origin}.${next.device.id}`)
-              const latest = opensLatest.current()
-                ? [...next.tasks].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0]
-                : undefined
-              const initial = restored !== null && next.tasks.some(task => task.id === restored) ? restored : (latest?.id ?? null)
+              const initial = restored !== null && next.tasks.some(task => task.id === restored) ? restored : null
               guard.current.select(initial)
               setSelectedId(initial)
               publishDetail(null)

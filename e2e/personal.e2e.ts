@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { TaskDetail } from '@latch/protocol'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
-import { backToPhoneSessions, noHorizontalOverflow, reachable } from './helpers/layout.ts'
+import { backToPhoneSessions, noHorizontalOverflow, reachable, openPersonal } from './helpers/layout.ts'
 
 describe('personal assistants across workbench sizes', () => {
   let host: TestHost, browser: Browser
@@ -39,8 +39,7 @@ describe('personal assistants across workbench sizes', () => {
         await page.reload()
         await connected(page)
         await backToPhoneSessions(page)
-        await page.getByRole('button', { name: '个人助手', exact: true }).first().click()
-        const personal = page.getByRole('dialog', { name: '个人助手', exact: true })
+        const personal = await openPersonal(page)
         await personal.getByRole('button', { name: '创建助手', exact: true }).click()
         const editor = page.getByRole('dialog', { name: '创建助手', exact: true })
         await editor.getByRole('textbox', { name: '名字', exact: true }).fill(name)
@@ -81,8 +80,7 @@ describe('personal assistants across workbench sizes', () => {
         expect(detail.messages.find(message => message.role === 'user')?.requestId).toBe(body.requestId)
         expect(detail.messages.some(message => message.text.includes(privateMemory))).toBe(false)
         await page.screenshot({ path: 'test-results/personal/chat-' + width + '-' + theme + '.png', animations: 'disabled' })
-        await backToPhoneSessions(page)
-        await page.getByRole('button', { name: '个人助手', exact: true }).first().click()
+        await openPersonal(page)
         await personal.getByRole('heading', { name, exact: true }).waitFor()
         await personal.getByRole('tab', { name: '记忆', exact: true }).click()
         await personal.getByText(privateMemory, { exact: true }).waitFor()

@@ -1,0 +1,14 @@
+/* The security parts of 设置: keys this device cannot set and the address-change warning. */
+/* Providers: keys that this device cannot set, and the address-change warning. */
+.key-state.is-locked {
+  color: var(--muted);
+}
+.key-state.is-locked > svg {
+  color: var(--muted);
+}
+.field-hint.is-warn {
+  color: var(--amber);
+}
+.field-hint.is-error {
+  color: var(--red);
+}

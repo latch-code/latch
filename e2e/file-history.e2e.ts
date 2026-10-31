@@ -85,7 +85,7 @@ it('opens every tool edit of a file in the same column and keeps history availab
         await enrollBrowser(page, host, { name: `History ${width}`, scopes: ['admin'] })
         if (width === 900) await page.getByRole('button', { name: '打开会话列表', exact: true }).click()
         await page.locator(`[data-task-id="${sessionId}"]`).first().click()
-        if (width < 1440) await page.getByRole('button', { name: '会话信息', exact: true }).click()
+        await page.getByRole('button', { name: '会话信息', exact: true }).click()
         await page.locator('.info-change').first().click()
         const history = page.getByRole('region', { name: '文件历史变更', exact: true })
         await history.getByText('2 次工具修改', { exact: false }).waitFor()

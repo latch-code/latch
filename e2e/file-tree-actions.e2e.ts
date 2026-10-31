@@ -113,7 +113,7 @@ it('keeps expanded directories while real run changes arrive and exposes the sam
               .evaluate(element => element === document.activeElement),
           )
           .toBe(true)
-        if (width < 1024) await page.getByRole('button', { name: /^返回(?:对话)?$/u }).click()
+        if (width < 768) await page.getByRole('button', { name: '返回', exact: true }).click()
         const input = page.getByRole('textbox', { name: '继续对话', exact: true })
         await input.fill(`新增 ${width}-${theme}`)
         await input.press('Meta+Enter')
@@ -126,7 +126,7 @@ it('keeps expanded directories while real run changes arrive and exposes the sam
             { timeout: 10_000 },
           )
           .toBe(true)
-        if (width < 1024) await page.keyboard.press('Alt+Shift+e')
+        if (width < 768) await page.keyboard.press('Alt+Shift+e')
         const generated = tree.getByRole('treeitem', { name: `generated-${width}-${theme}.txt`, exact: true })
         await generated.waitFor()
         expect(await tree.getByRole('treeitem', { name: 'src', exact: true }).getAttribute('aria-expanded')).toBe('true')

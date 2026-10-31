@@ -1,38 +1,21 @@
 /*
- * Full-page settings. A modal page over the whole window, so the conversation behind it keeps its state: from 768px the
- * section navigation is on the ground where the session list was (the sidebar's own width from 1024px) and the section
- * is a sheet of paper inset by --shell-inset; on phones the section list is the root page and a section, and each page
- * inside it, is pushed over the level before. The page fades in (--m-micro) over the conversation and fades out (70%)
- * when left; there is no scrim, so the two cross-fade. A section, or a page inside one, fades in from 4px lower.
+ * A page entry of the shell (设置, Agent, 自动化, 插件, 手机): it covers the session's columns from the panel to the right
+ * edge, so they keep their state. The entry's sections are in the panel, on the ground, and the chosen one is on the
+ * canvas; on phones the section list is the root page and a section, and each page inside it, is pushed over the level
+ * before. A section, or a page inside one, fades in from 4px lower.
  */
-.settings-page::backdrop {
-  background: transparent;
-}
-.settings-page.ui-modal-page > .ui-modal-surface {
-  background: var(--sidebar);
-  animation: fade-in var(--m-micro) var(--e-micro);
-}
-.settings-page.is-leaving {
-  pointer-events: none;
-  /* An exit takes 70% of its entrance. */
-  animation: settings-leave calc(var(--m-micro) * 0.7) var(--e-exit) both;
-}
-@keyframes settings-leave {
-  to {
-    opacity: 0;
-  }
+.settings-page {
+  grid-area: 2 / 2 / 3 / -1;
+  z-index: 5;
+  min-width: 0;
+  min-height: 0;
+  background: var(--canvas);
 }
 .settings-layout {
-  --settings-nav-width: 240px;
   display: grid;
-  grid-template-columns: var(--settings-nav-width) minmax(0, 1fr);
+  grid-template-columns: var(--entry-nav-width) minmax(0, 1fr);
   height: 100%;
   min-height: 0;
-}
-@media (min-width: 1024px) {
-  .settings-layout {
-    --settings-nav-width: var(--sidebar-open-width);
-  }
 }
 
 .settings-nav-pane {
@@ -40,30 +23,32 @@
   --surface: var(--sidebar);
   display: flex;
   flex-direction: column;
+  min-width: 0;
   min-height: 0;
-  padding: 0 var(--sp-8) var(--sp-8);
+  overflow-x: hidden;
   overflow-y: auto;
+  background: var(--sidebar);
 }
-/* The head row lines up with the paper's top edge and with the session list's head it replaces. */
-.settings-nav-head {
-  display: flex;
-  align-items: center;
-  height: 48px;
+.settings-nav-pane > * {
   flex-shrink: 0;
-  margin-top: var(--shell-inset);
 }
-.settings-return {
-  gap: var(--sp-6);
+@media (min-width: 768px) {
+  .settings-nav {
+    width: var(--entry-nav-width);
+    padding: var(--sp-8);
+  }
+  .settings-nav-pane {
+    box-shadow: inset -1px 0 var(--line);
+  }
+  /* Shut, the panel's width is 0 and its list leaves the reading order with it. */
+  .app-shell[data-sidebar='collapsed'] .settings-nav-pane {
+    visibility: hidden;
+  }
 }
-.settings-return > .ui-icon {
-  color: var(--muted);
-}
-.settings-nav-label {
-  padding: var(--sp-12) var(--sp-8) var(--sp-4);
-  color: var(--muted);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-  font-weight: 500;
+@media (min-width: 1024px) {
+  .settings-nav {
+    width: var(--sidebar-open-width);
+  }
 }
 .settings-nav {
   display: grid;
@@ -134,10 +119,7 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  margin: var(--shell-inset) var(--shell-inset) var(--shell-inset) 0;
   overflow: clip;
-  border: 1px solid var(--line);
-  border-radius: var(--r-12);
   background: var(--canvas);
 }
 .settings-scroll {
@@ -208,21 +190,18 @@
   line-height: var(--lh-heading);
   font-weight: 600;
 }
-.settings-bar .dev-chip {
-  margin-right: var(--sp-8);
-}
-/* The waiting count sits right after the way back to the conversation, cut out of the bar. */
-.settings-bar-count {
-  --surface: var(--canvas);
-  display: inline-flex;
-  margin-inline-start: calc(-1 * var(--sp-8));
-}
 .settings-levels {
   display: none;
 }
 @media (max-width: 767.98px) {
-  .settings-page.ui-modal-page > .ui-modal-surface {
-    background: var(--canvas);
+  /* The root list stands above the tab bar; a pushed level covers it. */
+  .settings-page {
+    position: absolute;
+    inset: 0 0 var(--phone-tabs-height);
+    z-index: 5;
+  }
+  .settings-page:has(.settings-layout:not([data-level='root'])) {
+    bottom: 0;
   }
   .settings-layout {
     position: relative;

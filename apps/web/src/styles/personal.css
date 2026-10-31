@@ -1,8 +1,25 @@
-.personal-page > .ui-modal-surface {
+/* Over a page entry's main area; on phones a page pushed over the Agent list. */
+.personal-page {
+  grid-area: 2 / 3 / 3 / -1;
+  z-index: 6;
   display: flex;
   flex-direction: column;
-  height: 100%;
-  background: var(--sidebar);
+  min-width: 0;
+  min-height: 0;
+  background: var(--canvas);
+}
+/* A tablet's entry list is drawn by the settings page, under this one, in no track of the shell: stay clear of it. */
+@media (min-width: 768px) and (max-width: 1023.98px) {
+  .personal-page {
+    margin-inline-start: var(--entry-nav-width);
+  }
+}
+@media (max-width: 767.98px) {
+  .personal-page {
+    position: absolute;
+    inset: 0;
+    z-index: 8;
+  }
 }
 .personal-bar {
   display: flex;

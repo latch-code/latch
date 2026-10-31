@@ -93,7 +93,7 @@ describe('a start directory inside Latch’s program directory', () => {
       } else await page.locator(`[data-task-id="${sessionId}"]`).first().click()
       // The conversation is read in, so the capture shows it beside the warning rather than the loading line.
       await page.locator('.transcript [data-message-id]').filter({ hasText: '你好' }).first().waitFor()
-      if (viewport.name === 'phone') await page.getByRole('button', { name: '会话信息', exact: true }).click()
+      await page.getByRole('button', { name: '会话信息', exact: true }).click()
       const info = page.locator('.info-code-root')
       await info.getByText(NOTICE, { exact: false }).waitFor()
       await page.screenshot({ path: `${OUTPUT}/session-info--${viewport.name}.png`, fullPage: true, animations: 'disabled' })

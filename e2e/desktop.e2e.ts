@@ -245,7 +245,7 @@ async function captureThemes(page: Page, name: string) {
 }
 
 /**
- * Captures the window at tablet width as well (the desktop window cannot be narrower than 760, so a confirmation never
+ * Captures the window at tablet width as well (the desktop window cannot be narrower than 768, so a confirmation never
  * shows at phone width), checks that nothing scrolls sideways there, then gives the window its size back.
  */
 async function captureTablet(application: ElectronApplication, page: Page, name: string) {
@@ -399,6 +399,9 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       const page = await application.firstWindow()
       page.setDefaultTimeout(20_000)
       expect(page.url()).toBe('latch://app/link/')
+      // The traffic lights sit inside the page's 52px title row, in its 78px inset, which no control overlaps.
+      const lights = await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.getWindowButtonPosition())
+      expect(lights).toEqual({ x: 16, y: 18 })
       // The shell's facts and its actions (functions, so only their names or types cross back here); nothing else.
       expect(
         await page.evaluate(() => {
@@ -425,7 +428,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         openInBrowser: 'function',
         lifecycle: { get: 'function', setLoginItem: 'function', setKeepAwake: 'function', restartHost: 'function', subscribe: 'function' },
         files: ['protocolVersion', 'inspect', 'known', 'reveal', 'quickLook', 'open'],
-        notifications: ['get', 'set', 'respond', 'subscribeState', 'subscribe'],
+        notifications: ['get', 'set', 'subscribeState', 'subscribe'],
         browser: [
           'protocolVersion',
           'open',
@@ -449,6 +452,18 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       })
 
       const fingerprint = await enrollShell(page, testHost, '桌面端测试')
+      const titleRow = await page.locator('.titlebar').evaluate(bar => {
+        const region = (element: Element) => getComputedStyle(element).getPropertyValue('-webkit-app-region')
+        const controls = [...bar.querySelectorAll('button')].filter(control => control.getBoundingClientRect().width > 0)
+        return {
+          height: bar.getBoundingClientRect().height,
+          region: region(bar),
+          controls: [...new Set(controls.map(region))],
+          firstControl: Math.min(...controls.map(control => control.getBoundingClientRect().left)),
+        }
+      })
+      expect(titleRow).toMatchObject({ height: 52, region: 'drag', controls: ['no-drag'] })
+      expect(titleRow.firstControl).toBeGreaterThanOrEqual(78)
       const devices = host.security.devices.list()
       expect(devices).toHaveLength(1)
       const device = devices[0]!
@@ -605,8 +620,6 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       // Single use: the same link does not work twice.
       expect((await enrollBrowser()).status).toBe(403)
       await closeSettings(browserHere)
-
-      await page.getByTestId('dev-mode').waitFor()
 
       // A Standard session with the demo tool runs through the proxied API and event stream.
       await page.getByRole('textbox', { name: '新会话消息' }).fill('运行可取消长任务')
@@ -898,9 +911,9 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       // was asked for names the session: 查看会话 leaves settings for it.
       const advisoryTitle = (await host.bridge.detail(advisoryId)).summary.title
       const confirmationsBefore = testHost.presence.requests.length
-      await page.locator('#session-navigation').getByRole('button', { name: '设置', exact: true }).click()
-      const heldBack = page.getByRole('dialog', { name: '设置', exact: true })
-      await heldBack.getByRole('tab', { name: '电脑', exact: true }).click()
+      await page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '设置', exact: true }).click()
+      const heldBack = page.locator('.settings-page')
+      await openSection(heldBack, '电脑')
       await heldBack.getByRole('button', { name: '添加…', exact: true }).click()
       const allowAddress = page.getByRole('dialog', { name: '加入出站白名单', exact: true })
       await allowAddress.getByRole('textbox', { name: '地址' }).fill('127.0.0.1:9')
@@ -972,10 +985,10 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       const hangTitle = (await host.bridge.detail(hangId)).summary.title
 
       // 设置 › 电脑 in the desktop app: lowering applies at once, raising takes the local confirmation.
-      await page.locator('#session-navigation').getByRole('button', { name: '设置', exact: true }).click()
-      const computer = page.getByRole('dialog', { name: '设置', exact: true })
+      await page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '设置', exact: true }).click()
+      const computer = page.locator('.settings-page')
       // Pairing starts here, so this is where the running agent that would hold a phone back is named.
-      await computer.getByRole('tab', { name: '设备', exact: true }).click()
+      await openSection(computer, '设备')
       await computer
         .getByText(`要等「${hangTitle}」（Fake Agent）结束，才能配对新设备。`, {
           exact: true,
@@ -986,7 +999,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect(await pairingBlocked.getByRole('button').allInnerTexts()).toEqual(['查看会话', '停止会话'])
       await computer.getByRole('button', { name: '连接手机', exact: true }).scrollIntoViewIfNeeded()
       await captureThemes(page, 'native-desktop-pairing-blocked')
-      await computer.getByRole('tab', { name: '电脑', exact: true }).click()
+      await openSection(computer, '电脑')
       await computer.getByRole('button', { name: '在这台电脑上发起：完全访问', exact: true }).click()
       await page.getByRole('menuitemradio', { name: /^逐项询问/ }).click()
       await waitFor(() => !policy().local.allowL3)
@@ -1036,7 +1049,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       const models = await localModels()
       try {
         const asked = testHost.presence.requests.length
-        await computer.getByRole('tab', { name: '模型服务', exact: true }).click()
+        await openSection(computer, '模型服务')
         await computer.getByRole('button', { name: '添加服务…', exact: true }).click()
         await computer.getByRole('button', { name: /^DeepSeek/ }).click()
         await computer.getByLabel('API Key', { exact: true }).fill('sk-e2e-preset-key')
@@ -1121,7 +1134,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await captureThemes(page, 'native-desktop-composer-provider-waiting')
         testHost.presence.approveNext()
         await custom.waitFor({ state: 'detached' })
-        expect(await page.getByRole('dialog', { name: '设置', exact: true }).count()).toBe(0)
+        expect(await page.locator('.settings-page').count()).toBe(0)
         await page.getByRole('button', { name: '模型：local-custom', exact: true }).waitFor()
         expect(host.config.providers().find(provider => provider.name === '本机自定义模型')).toMatchObject({
           baseURL: customURL,
@@ -1167,7 +1180,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           const record: FolderRecord = Reflect.get(globalThis, 'folderRecord')
           return record
         })
-      await computer.getByRole('tab', { name: '项目', exact: true }).click()
+      await openSection(computer, '项目')
       await computer.getByRole('button', { name: '新建项目…', exact: true }).click()
       await computer.locator('.project-editor').waitFor()
       await computer.getByRole('button', { name: '项目', exact: true }).click()
@@ -1312,7 +1325,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await waitFor(async () => (await host.bridge.detail(runningId)).summary.status === 'running')
       const runningTitle = (await host.bridge.detail(runningId)).summary.title
       const beforeRunningConfirmation = testHost.presence.requests.length
-      await computer.getByRole('tab', { name: '电脑', exact: true }).click()
+      await openSection(computer, '电脑')
       await computer.getByRole('button', { name: /^从手机和其他电脑发起：/ }).click()
       await page.getByRole('menuitemradio', { name: /^自动编辑/ }).click()
       const refused = page.locator('.inline-confirm[data-confirmation-phase="paused"]')
@@ -1469,7 +1482,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       )
       expect(created).toBe(201)
       const settings = await openSettings(page)
-      await settings.getByRole('tab', { name: 'Agent 成员', exact: true }).click()
+      await openSection(settings, 'Agent 成员')
       await settings.getByRole('button', { name: '编辑 Probe fixture', exact: true }).click()
       const probe = settings.locator('.settings-group', { has: page.getByRole('heading', { name: '测试启动', exact: true }) })
       for (const [width, height] of [

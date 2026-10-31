@@ -132,16 +132,23 @@ app.enableSandbox()
 const icon = nativeImage.createFromPath(join(__dirname, '../../web/public/icon.png'))
 let ready = false
 
+// Below the page's phone breakpoint it drops the title row, and with it what moves the window.
+const DESKTOP_MIN_WIDTH = 768
+
 function createWindow({ width = 1250, height = 850, preload = true } = {}) {
   return new BrowserWindow({
     width,
     height,
-    minWidth: Math.min(width, 760),
+    minWidth: Math.min(width, DESKTOP_MIN_WIDTH),
     minHeight: Math.min(height, 560),
     title: 'Latch',
     // The window's own colour (--sidebar in @latch/ui), so the window shows no flash before the first paint.
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#0a0a0b' : '#f7f7f8',
     icon,
+    // The page's 52px title row holds the traffic lights in its 78px inset and moves the window; before the shell the
+    // enrollment, connection and crash screens draw a strip of the same height. The local error page, which has neither,
+    // keeps the standard bar.
+    ...(preload && process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 18 } } : {}),
     webPreferences: {
       ...(preload ? { preload: join(__dirname, 'preload.cjs') } : {}),
       sandbox: true,

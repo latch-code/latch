@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
 import { chromium, type Browser, type Page } from '@playwright/test'
+import { openPersonal, openSection } from './helpers/layout.ts'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { PersonalAssistant, PersonalGroup, PersonalGroupDetail, PersonalOverview, PersonalRoutine } from '@latch/protocol'
 import type { HarnessPlugin, ModelMessage } from '@latch/sdk'
@@ -78,8 +79,7 @@ describe('real personal group and daily-task workflows', () => {
     expect((await owner.confirmed(`devices/${id}`, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
     await page.reload()
     await connected(page)
-    await page.getByRole('button', { name: '个人助手', exact: true }).first().click()
-    return { personal: page.getByRole('dialog', { name: '个人助手', exact: true }), id }
+    return { personal: await openPersonal(page), id }
   }
   it('creates a real group, recovers the exact send and stop requests and waits for execution settlement', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
@@ -199,7 +199,7 @@ describe('real personal group and daily-task workflows', () => {
     page.setDefaultTimeout(15000)
     try {
       const { personal, id } = await open(page, '例行浏览器')
-      await personal.getByRole('tab', { name: '例行任务', exact: true }).click()
+      await openSection(page.locator('.settings-page'), '例行任务')
       await personal.getByRole('button', { name: '创建例行任务', exact: true }).click()
       const editor = page.getByRole('dialog', { name: '例行任务设置', exact: true })
       await editor.getByLabel('任务名称', { exact: true }).fill('每日整理')

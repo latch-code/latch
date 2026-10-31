@@ -4,7 +4,7 @@ const { lstat, mkdir, open, rename, rm } = require('node:fs/promises')
 const { randomUUID } = require('node:crypto')
 const { join } = require('node:path')
 const DEFAULTS = Object.freeze({ completion: false, approval: false, title: false })
-const CONSENTS = new Set(['unasked', 'pending', 'accepted', 'declined'])
+const CONSENTS = new Set(['unasked', 'accepted', 'declined'])
 const fresh = () => ({ version: 1, preferences: { ...DEFAULTS }, consent: 'unasked' })
 function validPreferences(value) {
   return (
@@ -81,15 +81,6 @@ async function writePreferences(directory, value) {
     await rm(temporary, { force: true })
   }
 }
-function validConsent(value) {
-  return (
-    value !== null
-    && typeof value === 'object'
-    && Object.keys(value).length === 1
-    && Object.hasOwn(value, 'choice')
-    && (value.choice === 'enable' || value.choice === 'decline')
-  )
-}
 /** Only authenticated Host snapshots decide notification contents; the renderer never supplies text. */
 function createNotifications(options) {
   let previous,
@@ -102,7 +93,6 @@ function createNotifications(options) {
   const view = () => ({
     ...state.preferences,
     supported: options.supported(),
-    needsConsent: state.consent === 'pending',
     consent: state.consent,
   })
   const change = make => {
@@ -161,16 +151,7 @@ function createNotifications(options) {
       return change(current => ({
         ...current,
         preferences,
-        consent: preferences.completion || preferences.approval ? 'accepted' : current.consent,
-      }))
-    },
-    respond(value) {
-      if (!validConsent(value)) return Promise.resolve(undefined)
-      const enabled = value.choice === 'enable'
-      return change(current => ({
-        ...current,
-        preferences: { ...current.preferences, completion: enabled, approval: enabled },
-        consent: enabled ? 'accepted' : 'declined',
+        consent: 'accepted',
       }))
     },
     async poll() {
@@ -192,8 +173,13 @@ function createNotifications(options) {
                   ? 'completion'
                   : undefined
             if (!outcome) continue
+            // The first real ending seen in the background turns notifications on; the OS asks on the first one shown.
             if (!options.focused() && options.supported() && state.consent === 'unasked')
-              await change(value => (value.consent === 'unasked' ? { ...value, consent: 'pending' } : value))
+              await change(value =>
+                value.consent === 'unasked'
+                  ? { ...value, preferences: { ...value.preferences, completion: true, approval: true }, consent: 'accepted' }
+                  : value,
+              )
             notify(task, outcome)
           }
           for (const approval of snapshot.approvals)
@@ -220,6 +206,5 @@ function createNotifications(options) {
 function handleNotificationRequests({ ipcMain, trusted, controller }) {
   ipcMain.handle('latch:notifications:get', event => (trusted(event) ? controller.view() : undefined))
   ipcMain.handle('latch:notifications:set', (event, input) => (trusted(event) ? controller.set(input) : undefined))
-  ipcMain.handle('latch:notifications:respond', (event, input) => (trusted(event) ? controller.respond(input) : undefined))
 }
-module.exports = { createNotifications, readPreferences, writePreferences, validPreferences, validConsent, handleNotificationRequests }
+module.exports = { createNotifications, readPreferences, writePreferences, validPreferences, handleNotificationRequests }

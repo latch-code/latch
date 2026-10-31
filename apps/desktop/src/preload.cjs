@@ -11,9 +11,9 @@ const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/
 const FOLDER_LIMIT = 8
 const INVALID = Object.freeze({ status: 'failed', code: 'invalid' })
 const CANCELED = Object.freeze({ status: 'canceled' })
-const NOTIFICATION_CONSENT = new Set(['unasked', 'pending', 'accepted', 'declined'])
+const NOTIFICATION_CONSENT = new Set(['unasked', 'accepted', 'declined'])
 function notificationState(value) {
-  const bools = ['completion', 'approval', 'title', 'supported', 'needsConsent']
+  const bools = ['completion', 'approval', 'title', 'supported']
   if (
     !value
     || typeof value !== 'object'
@@ -27,7 +27,6 @@ function notificationState(value) {
     approval: value.approval,
     title: value.title,
     supported: value.supported,
-    needsConsent: value.needsConsent,
     ...(Object.hasOwn(value, 'consent') ? { consent: value.consent } : {}),
   }
 }
@@ -222,14 +221,6 @@ contextBridge.exposeInMainWorld(
           ? ipcRenderer
               .invoke('latch:notifications:set', { completion: value.completion, approval: value.approval, title: value.title })
               .then(notificationState)
-          : Promise.resolve(undefined),
-      respond: value =>
-        value
-        && typeof value === 'object'
-        && Object.keys(value).length === 1
-        && Object.hasOwn(value, 'choice')
-        && ['enable', 'decline'].includes(value.choice)
-          ? ipcRenderer.invoke('latch:notifications:respond', { choice: value.choice }).then(notificationState)
           : Promise.resolve(undefined),
       subscribeState: callback => {
         if (typeof callback !== 'function') return () => {}

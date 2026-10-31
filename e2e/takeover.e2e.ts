@@ -250,14 +250,12 @@ describe('desktop to phone takeover', () => {
     await choosePhone(task.id)
     await mobile.getByPlaceholder(/不读写文件、不运行命令/).waitFor()
     await mobile.screenshot({ path: 'test-results/mobile-chat.png', fullPage: true, animations: 'disabled' })
-    await desktop.getByRole('button', { name: '设置', exact: true }).click()
-    await desktop.getByRole('dialog', { name: '设置', exact: true }).waitFor()
-    await desktop.getByRole('tab', { name: '插件', exact: true }).click()
+    await desktop.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '插件', exact: true }).click()
+    await desktop.locator('.settings-page').waitFor()
     await desktop.getByRole('switch').first().waitFor()
     await desktop.screenshot({ path: 'test-results/desktop-plugins.png', fullPage: true, animations: 'disabled' })
-    await desktop.getByRole('button', { name: /^返回会话/ }).click()
-    // Settings fades out before the conversation takes input again.
-    await desktop.getByRole('dialog', { name: '设置', exact: true }).waitFor({ state: 'detached' })
+    await desktop.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '会话', exact: true }).click()
+    await desktop.locator('.settings-page').waitFor({ state: 'detached' })
   })
 
   it('renders the built-in streaming demonstration as readable Markdown on both devices', async () => {

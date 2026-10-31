@@ -243,8 +243,6 @@ export function PhoneSessionList({
   onEditProject,
   onProjectsChanged,
   onApprovals,
-  onSettings,
-  onPersonal,
   onRefresh,
   sessionMenu,
   now,
@@ -268,8 +266,6 @@ export function PhoneSessionList({
   onNew: () => void
   onNewIn?: (workspaceId: string) => void
   onApprovals: () => void
-  onSettings: () => void
-  onPersonal?: () => void
   /** 同步最新状态: reads the Host's state again. */
   onRefresh: () => Promise<void>
   sessionMenu: (task: TaskSummary) => MenuSection[]
@@ -306,7 +302,6 @@ export function PhoneSessionList({
     <div className="phone-list-page">
       <header className="phone-list-head">
         <h1>会话</h1>
-        <IconButton size="lg" label="设置" icon={Settings} onClick={onSettings} />
         <IconButton
           ref={searchButton}
           size="lg"
@@ -320,13 +315,6 @@ export function PhoneSessionList({
         />
         <IconButton size="lg" label="新建会话" icon={SquarePen} onClick={onNew} />
       </header>
-      {onPersonal && (
-        <div className="phone-personal-entry">
-          <Button variant="ghost" icon={UsersRound} onClick={onPersonal}>
-            个人助手
-          </Button>
-        </div>
-      )}
       <Collapse open={searching} className="phone-search-collapse">
         <div className="phone-search" inert={!searching || undefined}>
           <SearchField

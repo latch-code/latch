@@ -1,13 +1,16 @@
 import type { RefObject } from 'react'
-import { ChevronDown, ChevronLeft, Ellipsis, Folder, Inbox, PanelLeft, PanelRight, RefreshCw, ShieldAlert, SquarePen } from 'lucide-react'
+import { ChevronDown, ChevronLeft, Ellipsis, Folder, PanelRight, Pencil, RefreshCw, ShieldAlert } from 'lucide-react'
 import { escapeSecurityText, type HarnessInfo, type TaskSummary } from '@latch/protocol'
 import { harnessName } from '../composerChoice.ts'
 import { LEVEL_LABELS } from '../core/permissions.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
-import { HarnessTile } from './BrandTile.tsx'
-import { Menu, type MenuSection } from './overlays.tsx'
-import { connectionLabels, connectionProblem } from './Sidebar.tsx'
-import { Count, ICON_STROKE, IconButton, StatusPill, useLivePrevious } from '@latch/ui'
+import { HarnessTile } from '../components/BrandTile.tsx'
+import { Menu, type MenuSection } from '../components/overlays.tsx'
+import { connectionLabels, connectionProblem } from '../components/Sidebar.tsx'
+import { ICON_STROKE, IconButton, StatusPill } from '@latch/ui'
+import { currentShell } from '../core/shell.ts'
+import type { ConversationHeaderSlots, HeaderToggle } from './slots.ts'
+import type { ShellState } from './useShellLayout.tsx'
 
 /** The session's state when it is not the default: running and done say nothing here (the run bar says running). */
 function sessionPill(summary: TaskSummary, cancelling: boolean) {
@@ -127,12 +130,26 @@ function PhoneTopBar({
   )
 }
 
+function Toggle({ toggle }: { toggle: HeaderToggle }) {
+  return (
+    <IconButton
+      label={toggle.label}
+      icon={toggle.icon}
+      shortcut={toggle.shortcut}
+      pressed={toggle.pressed}
+      badge={toggle.dot ? <span className="topbar-toggle-dot" /> : undefined}
+      onClick={toggle.onToggle}
+    />
+  )
+}
+
 /**
- * Session identity and its controls. Left: the title (a button that opens the session's menu), then where it runs
- * (the harness tile, harness · project) and its state when that is not the default. Right: the connection only when
- * it is not healthy, full access, the demo model, the inspector toggle and ⋯. Phones draw their own header (above).
+ * The conversation's half of the title row. Left: the breadcrumb, project / title (a button that opens the session's
+ * menu, with the rename pencil on hover), then where it runs and its state when that is not the default. Right: the
+ * connection only when it is not healthy, full access, the demo model, the surfaces' slots, the panel toggle and ⋯.
+ * Phones draw their own header in the conversation's page (above).
  */
-export function TopBar({
+export function SessionHeader({
   identity,
   summary,
   harness,
@@ -142,12 +159,7 @@ export function TopBar({
   demo,
   phone,
   onBack,
-  onNew,
-  sidebarCollapsed,
-  onExpandSidebar,
-  expandRef,
-  approvals = 0,
-  onApprovals,
+  onRename,
   inspectorOpen,
   onInspector,
   inspectorRef,
@@ -157,6 +169,7 @@ export function TopBar({
   onRefresh,
   onFiles,
   filesOpen,
+  slots = {},
 }: {
   identity?: string
   summary?: TaskSummary
@@ -171,16 +184,8 @@ export function TopBar({
   phone: boolean
   /** Phones: back to the session list. */
   onBack?: () => void
-  onNew: () => void
-  /** From 1024px, the sidebar is shut: the top bar offers to open it and to start a new session. */
-  sidebarCollapsed?: boolean
-  /** Present from 1024px, where the sidebar can be shut. */
-  onExpandSidebar?: () => void
-  expandRef?: RefObject<HTMLButtonElement | null>
-  /** While the sidebar is shut, what waits for the person stays one click away here. */
-  approvals?: number
-  onApprovals?: () => void
-  /** 会话信息 is shown, as the column beside the paper or as a page in the conversation's place. */
+  onRename?: () => void
+  /** The panel is shown, beside the conversation or in its place. */
   inspectorOpen: boolean
   onInspector: () => void
   /** The toggle, which takes focus back when the page of 会话信息 closes. */
@@ -193,21 +198,22 @@ export function TopBar({
   onRefresh: () => void
   onFiles?: () => void
   filesOpen?: boolean
+  slots?: ConversationHeaderSlots
 }) {
-  // The button shows only while something waits, so its count is told the value it rose from.
-  const approvalsBefore = useLivePrevious(approvals)
   const title = summary ? summary.title || '未命名会话' : '新会话'
-  const source = [
-    identity ?? (harness ? [harnessName(harness), project].filter(Boolean).join(' · ') : undefined),
-    summary?.branch && escapeSecurityText(summary.branch),
-  ]
+  const source = [identity ?? (harness ? harnessName(harness) : undefined), summary?.branch && escapeSecurityText(summary.branch)]
     .filter(Boolean)
     .join(' · ')
   if (phone)
     return (
       <PhoneTopBar
         summary={summary}
-        source={source}
+        source={[
+          identity ?? (harness ? [harnessName(harness), project].filter(Boolean).join(' · ') : undefined),
+          summary?.branch && escapeSecurityText(summary.branch),
+        ]
+          .filter(Boolean)
+          .join(' · ')}
         cancelling={cancelling}
         level={level}
         demo={demo}
@@ -220,40 +226,23 @@ export function TopBar({
         onRefresh={onRefresh}
       />
     )
+  const desktop = currentShell() !== null
   return (
     <header className="topbar">
-      {onExpandSidebar && (
-        // Kept in place from 1024px and unfolded in step with the sidebar's track, so the title glides instead of jumping.
-        <div
-          className="topbar-sidebar-actions"
-          data-open={sidebarCollapsed ? '' : undefined}
-          inert={!sidebarCollapsed || undefined}
-          aria-hidden={sidebarCollapsed ? undefined : true}>
-          <div className="topbar-sidebar-actions-inner">
-            <IconButton
-              ref={expandRef}
-              label="展开侧栏"
-              icon={PanelLeft}
-              aria-controls="session-navigation"
-              aria-expanded={false}
-              onClick={onExpandSidebar}
-            />
-            <IconButton label="新建会话" icon={SquarePen} pressed={summary === undefined} onClick={onNew} />
-            {approvals > 0 && onApprovals && (
-              <IconButton
-                label={`${approvals} 项等你处理`}
-                icon={Inbox}
-                badge={<Count tone="warn" value={approvals} from={approvalsBefore} />}
-                onClick={onApprovals}
-              />
-            )}
-          </div>
-        </div>
-      )}
       <div className="topbar-title">
+        {summary && project && (
+          <span className="topbar-crumb" title={project}>
+            <Folder size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+            <span className="topbar-source-text">{project}</span>
+            <span className="topbar-crumb-separator" aria-hidden="true">
+              /
+            </span>
+          </span>
+        )}
         <h1 title={summary ? title : undefined}>
           <TitleMenu title={title} sections={summary ? sessionMenu : []} />
         </h1>
+        {summary && onRename && <IconButton className="topbar-rename" label="重命名会话" icon={Pencil} size="xs" onClick={onRename} />}
         {summary && harness && source && (
           <span className="topbar-source" title={source}>
             <HarnessTile harness={harness} size={16} />
@@ -263,7 +252,6 @@ export function TopBar({
         {summary && sessionPill(summary, cancelling)}
       </div>
       <div className="topbar-actions">
-        {onFiles && <IconButton label="浏览项目文件" icon={Folder} pressed={filesOpen} onClick={onFiles} />}
         <ConnectionPill connection={connection} onRefresh={onRefresh} />
         {summary && level === 'L3' && fullAccessPill}
         {demo && (
@@ -271,7 +259,20 @@ export function TopBar({
             演示模型
           </StatusPill>
         )}
-        {summary && <IconButton ref={inspectorRef} label="会话信息" icon={PanelRight} pressed={inspectorOpen} onClick={onInspector} />}
+        {slots.gitAction}
+        {slots.terminal && <Toggle toggle={slots.terminal} />}
+        {slots.changes && <Toggle toggle={slots.changes} />}
+        {onFiles && <IconButton label="浏览项目文件" icon={Folder} pressed={filesOpen} onClick={onFiles} />}
+        {summary && (
+          <IconButton
+            ref={inspectorRef}
+            label="会话信息"
+            icon={PanelRight}
+            shortcut={desktop ? '⌥⌘B' : 'Alt Shift B'}
+            pressed={inspectorOpen}
+            onClick={onInspector}
+          />
+        )}
         {menu.length > 0 && (
           <Menu
             label="会话操作"
@@ -282,5 +283,68 @@ export function TopBar({
         )}
       </div>
     </header>
+  )
+}
+
+/** The session header with the shell's state. */
+export function ConversationHeader({ shell }: { shell: ShellState }) {
+  const {
+    summary,
+    harnessName: identityName,
+    inspectorToggle,
+    canBrowseFiles,
+    browseFiles,
+    filesVisible,
+    topHarness,
+    project,
+    selectedId,
+    stopping,
+    access,
+    level,
+    demo,
+    phone,
+    back,
+    setRenaming,
+    columnOpen,
+    pageMode,
+    infoPage,
+    toggleInspector,
+    titleMenu,
+    topMenu,
+    connection,
+    resync,
+  } = shell
+  return (
+    <SessionHeader
+      identity={summary?.personal ? identityName : undefined}
+      inspectorRef={inspectorToggle}
+      onFiles={canBrowseFiles ? browseFiles : undefined}
+      filesOpen={filesVisible}
+      summary={summary}
+      harness={topHarness}
+      project={project}
+      cancelling={selectedId !== null && stopping.has(selectedId)}
+      level={access.legacy ? undefined : level}
+      demo={demo}
+      phone={phone}
+      onBack={() => {
+        back()
+      }}
+      {...(summary
+        ? {
+            onRename: () => {
+              setRenaming(summary)
+            },
+          }
+        : {})}
+      inspectorOpen={columnOpen || (pageMode && infoPage)}
+      onInspector={toggleInspector}
+      sessionMenu={titleMenu}
+      menu={topMenu}
+      connection={connection}
+      onRefresh={() => {
+        void resync()
+      }}
+    />
   )
 }

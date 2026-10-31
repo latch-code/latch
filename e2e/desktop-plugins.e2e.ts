@@ -7,7 +7,7 @@ import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { writeHostState } from '@latch/host/host-state'
 import { latchEnv } from '@latch/host/env'
 import { startTestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openSettings, reachable } from './helpers/layout.ts'
+import { noHorizontalOverflow, openSection, openSettings, reachable } from './helpers/layout.ts'
 
 describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 'darwin')(
   'custom plugin editor in the native desktop',
@@ -57,7 +57,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         host.presence.approveNext()
         await page.locator('.app-shell[data-connection="connected"]').waitFor()
         const settings = await openSettings(page)
-        await settings.getByRole('tab', { name: '插件', exact: true }).click()
+        await openSection(settings, '插件')
         await page.getByRole('button', { name: '创建插件', exact: true }).click()
         await page.getByRole('button', { name: '继续', exact: true }).click()
         const editor = page.locator('dialog.ui-dialog:has(> .ui-dialog-surface .plugin-editor)')

@@ -1,7 +1,6 @@
 /*
- * The session column on the ground: the brand row with 新建会话 and collapse (48), the search (32) with its filter
- * pills, 等你处理 (32) while something waits, the sessions in groups, and the footer (52) with the computer this Host
- * runs on. From 1024px the column keeps its own width while its grid track narrows, so collapsing clips it instead of
+ * The session panel: 新会话, the search (32) with its filter pills, 等你处理 (32) while something waits, the sessions in
+ * groups, and a footer only when the connection needs saying. From 1024px the column keeps its own width while its grid track narrows, so collapsing clips it instead of
  * reflowing it.
  */
 .sidebar-body {
@@ -23,20 +22,13 @@
   align-items: center;
   gap: var(--sp-4);
   flex-shrink: 0;
-  height: var(--topbar-height);
-  padding-left: var(--sp-8);
+  height: 36px;
 }
-.sidebar-brand {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-8);
+.sidebar-new.ui-button {
   flex: 1;
+  justify-content: flex-start;
   min-width: 0;
-}
-.brand-name {
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui);
-  font-weight: 600;
+  padding-inline: var(--sp-8);
 }
 
 /*

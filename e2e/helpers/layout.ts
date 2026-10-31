@@ -89,42 +89,51 @@ export async function backToPhoneSessions(page: Page): Promise<void> {
     await back.click()
     await page.locator('main.workspace').waitFor({ state: 'detached' })
   }
-  await page.locator('.phone-list:not([data-covered])').waitFor()
+  await page.locator('.phone-list:not([data-covered])').waitFor({ state: 'attached' })
   // The list has slid back into place.
   await page.locator('.phone-list').evaluate(element => Promise.all(element.getAnimations().map(animation => animation.finished)))
 }
 
+/** The rail, or a phone's tab bar. */
+const mainNavigation = (page: Page) => page.getByRole('navigation', { name: '主导航', exact: true })
+
 /**
- * Navigation may be persistent (desktop sidebar, tablet rail), behind a drawer, or a phone's root page (the session
- * list, reached back from an open session); tests do not select a breakpoint. Returns the opened settings page (a
- * modal page named 设置), on its 设备 section when `section` is 设备 (devices are reached through settings).
+ * Opens an entry of the rail, or the tab of a phone (from its session list when a session's page is pushed over it).
+ * Tests do not select a breakpoint.
  */
-export async function openSettings(page: Page, section: '设置' | '设备' = '设置'): Promise<Locator> {
+export async function openEntry(page: Page, name: string): Promise<void> {
   await settleShell(page)
-  const expandSidebar = page.getByRole('button', { name: '展开侧栏', exact: true })
-  if (await expandSidebar.isVisible()) {
-    await expandSidebar.click()
-    await settleShell(page)
-  }
-  // A closing drawer may remain visually visible while becoming inert. Use
-  // navigation semantics rather than the transient visibility of its children.
-  const rail = page.getByRole('navigation', { name: '快捷导航', exact: true })
-  const navigationButton = page.getByRole('button', { name: '打开会话列表', exact: true })
-  let button = page.locator('#session-navigation').getByRole('button', { name: '设置', exact: true })
-  if ((await page.locator('.phone-list').count()) > 0) await backToPhoneSessions(page)
-  else if (await rail.isVisible()) button = rail.getByRole('button', { name: '设置', exact: true })
-  else if (await navigationButton.isVisible()) {
-    await navigationButton.click()
-    const drawer = page.getByRole('dialog', { name: '会话导航', exact: true })
-    await drawer.waitFor()
-    button = drawer.getByRole('button', { name: '设置', exact: true })
-  }
+  await backToPhoneSessions(page)
+  const button = mainNavigation(page).getByRole('button', { name, exact: true })
   await reachable(button)
   await button.click()
-  const dialog = page.getByRole('dialog', { name: '设置', exact: true })
-  await dialog.waitFor()
-  if (section === '设备') await openSection(dialog, '设备')
-  return dialog
+}
+
+/** Back to the session list or conversation through the rail or the tab bar. */
+export async function openSessions(page: Page): Promise<void> {
+  await mainNavigation(page).getByRole('button', { name: '会话', exact: true }).click()
+  await page.locator('.settings-page').waitFor({ state: 'detached' })
+}
+
+/** Opens 个人助手, a section of the Agent entry. */
+export async function openPersonal(page: Page): Promise<Locator> {
+  await openEntry(page, 'Agent')
+  await page.locator('.settings-page').getByRole('tab', { name: '个人助手', exact: true }).click()
+  const personal = page.getByRole('region', { name: '个人助手', exact: true })
+  await personal.waitFor()
+  return personal
+}
+
+/**
+ * Returns the opened page of the 设置 entry, on the devices section when `section` is 设备 (the 手机 entry; on a phone,
+ * inside 设置).
+ */
+export async function openSettings(page: Page, section: '设置' | '设备' = '设置'): Promise<Locator> {
+  await openEntry(page, '设置')
+  const settings = page.locator('.settings-page')
+  await settings.waitFor()
+  if (section === '设备') await openSection(settings, '设备')
+  return settings
 }
 
 /**
@@ -157,22 +166,41 @@ export async function backToSection(settings: Locator): Promise<void> {
   }
 }
 
-/** Opens a section; on a phone, from the section list. */
+/** Where a section lives when it is not on the page shown: the rail's entry on wide windows, the tab on a phone. */
+const SECTION_ENTRIES: Record<string, { wide: string; phone: string }> = {
+  插件: { wide: '插件', phone: '设置' },
+  设备: { wide: '手机', phone: '设置' },
+  'Agent 成员': { wide: 'Agent', phone: 'Agent' },
+  个人助手: { wide: 'Agent', phone: 'Agent' },
+  例行任务: { wide: '自动化', phone: 'Agent' },
+}
+
+/** Opens a section, through its entry when another entry's page is showing; on a phone, from the section list. */
 export async function openSection(settings: Locator, name: string): Promise<void> {
+  const page = settings.page()
   const tab = settings.getByRole('tab', { name, exact: true })
+  // A phone's 个人助手 page lies over the section list.
+  const personalBack = page.locator('.personal-page .personal-bar').getByRole('button').first()
+  if ((await page.locator('.phone-tabs').count()) > 0)
+    while (await personalBack.isVisible()) {
+      await personalBack.click()
+      await page.waitForTimeout(50)
+    }
   await backToSections(settings)
+  if ((await tab.count()) === 0) {
+    const entry = SECTION_ENTRIES[name] ?? { wide: '设置', phone: '设置' }
+    const phone = (await page.locator('.phone-tabs').count()) > 0
+    await mainNavigation(page)
+      .getByRole('button', { name: phone ? entry.phone : entry.wide, exact: true })
+      .click()
+    await tab.waitFor()
+  }
   await reachable(tab)
   await tab.click()
 }
 
-/**
- * Leaves settings for the conversation through 「返回会话」 (its name also says how many approvals wait there), which
- * a phone shows on the section list. The page fades out before it goes.
- */
+/** Leaves a page entry for the conversation through 会话 in the rail or the tab bar. */
 export async function closeSettings(settings: Locator): Promise<void> {
   await backToSections(settings)
-  const button = settings.getByRole('button', { name: /^返回会话/ })
-  await reachable(button)
-  await button.click()
-  await settings.waitFor({ state: 'detached' })
+  await openSessions(settings.page())
 }

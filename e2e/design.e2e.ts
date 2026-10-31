@@ -79,15 +79,14 @@ describe('responsive workspace controls', () => {
     try {
       // Each viewport is a separate browser device; every one asks for 管理此 Host so settings stay reachable.
       await enrollBrowser(page, testHost, { name: `布局 ${label}`, scopes: ['view', 'run', 'approve:standard', 'admin'] })
-      // The dev-build chip sits in the sidebar footer (wide) or the rail (tablet); phones show it in settings.
-      if (width >= 768) await expect.poll(() => page.getByTestId('dev-mode').filter({ visible: true }).count()).toBe(1)
       const phone = width < 768
       if (phone) {
-        // A phone opens on its session list, whose header holds settings, search and a new session; a new session is a
+        // A phone opens on its session list, whose header holds search and a new session; a new session is a
         // sheet over the list. With no session yet there is nothing to filter: the list says so and offers to start one,
         // and its end still names the computer and syncs its state.
         const head = page.locator('.phone-list-head')
-        for (const name of ['设置', '搜索会话', '新建会话']) await reachable(head.getByRole('button', { name, exact: true }))
+        await reachable(page.locator('.phone-tabs').getByRole('button', { name: '设置', exact: true }))
+        for (const name of ['搜索会话', '新建会话']) await reachable(head.getByRole('button', { name, exact: true }))
         expect(await page.getByRole('group', { name: '筛选会话', exact: true }).count()).toBe(0)
         await page.locator('.phone-empty').getByText('还没有会话', { exact: true }).waitFor()
         await reachable(page.locator('.phone-empty').getByRole('button', { name: '新建会话', exact: true }))
@@ -147,7 +146,7 @@ describe('responsive workspace controls', () => {
         await navigationButton.click()
         const drawer = page.getByRole('dialog', { name: '会话导航', exact: true })
         await drawer.waitFor()
-        for (const name of ['新建会话', '设置', '关闭会话列表']) {
+        for (const name of ['新建会话', '关闭会话列表']) {
           await reachable(drawer.getByRole('button', { name, exact: true }))
         }
         await noHorizontalOverflow(page, drawer)
@@ -193,7 +192,6 @@ describe('responsive workspace controls', () => {
       // A browser cannot pair a phone: the page says where to, with no start options for a certificate.
       await devices.getByText(/^配对二维码要在 Latch 桌面端生成/).waitFor()
       expect(await devices.getByText(/--tls-cert/).count()).toBe(0)
-      if (width < 768) await devices.getByTestId('dev-mode').waitFor()
       await noHorizontalOverflow(page, devices)
       await capture(page, `${label}-devices`)
       await closeSettings(devices)

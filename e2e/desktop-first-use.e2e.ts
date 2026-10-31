@@ -140,7 +140,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         }
         const agents = page.getByRole('group', { name: '添加 Agent', exact: true })
         await agents.waitFor()
-        expect(await page.getByRole('dialog', { name: '设置', exact: true }).count()).toBe(0)
+        expect(await page.locator('.settings-page').count()).toBe(0)
         expect(await input.inputValue()).toBe(draft)
         expect((await owner.json<AppSnapshot>('snapshot')).tasks).toHaveLength(0)
         await page.keyboard.press('Escape')
@@ -188,7 +188,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
             .click()
         await setup.getByRole('region', { name: '添加模型服务', exact: true }).waitFor()
         await setup.getByRole('group', { name: '选择服务', exact: true }).waitFor()
-        expect(await page.getByRole('dialog', { name: '设置', exact: true }).count()).toBe(0)
+        expect(await page.locator('.settings-page').count()).toBe(0)
         expect(await input.inputValue()).toBe(missingDraft)
         expect((await owner.json<AppSnapshot>('snapshot')).tasks).toHaveLength(1)
         expect(calls.count).toBe(1)

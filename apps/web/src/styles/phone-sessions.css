@@ -1,0 +1,292 @@
+/* ---- The session list ------------------------------------------------------------------------------------------ */
+
+.phone-list-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding-top: env(safe-area-inset-top);
+}
+/* The header (52): the large title, then 44px ghost buttons in ink. */
+.phone-list-head {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  height: 52px;
+  padding: 0 var(--sp-4) 0 var(--sp-16);
+}
+.phone-list-head h1 {
+  flex: 1;
+  min-width: 0;
+  color: var(--ink);
+  font-size: var(--fs-hero);
+  line-height: var(--lh-hero);
+  font-weight: 600;
+}
+.phone-list-head .ui-icon-button,
+.topbar[data-phone] .ui-icon-button,
+.info-page-head > .ui-icon-button[data-size='lg'] {
+  color: var(--ink);
+}
+/* The search unfolds under the header with the disclosure's motion; 取消 clears it and folds it away. */
+.phone-search {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: var(--sp-4) var(--sp-8) var(--sp-4) var(--sp-16);
+}
+.phone-search-field {
+  flex: 1;
+  min-width: 0;
+}
+/* The pills (32, in a 44 target) start on the 16px column and scroll sideways when they do not fit. */
+.phone-filters {
+  flex-shrink: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.phone-filters::-webkit-scrollbar {
+  display: none;
+}
+.phone-filters > .ui-filters {
+  width: max-content;
+  padding: var(--sp-6) var(--sp-16);
+}
+/* On the ground the chosen pill is lifted: the raised layer with its own shadow. */
+.phone-filters .ui-tab[aria-pressed='true'] {
+  background: var(--seg-on);
+  box-shadow: var(--seg-on-shadow);
+}
+.phone-list-scroll {
+  flex: 1;
+  min-height: 0;
+  padding: var(--sp-8) var(--sp-16) calc(var(--sp-32) + env(safe-area-inset-bottom));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 8px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 8px);
+}
+.phone-list-scroll::-webkit-scrollbar {
+  display: none;
+}
+.phone-list-scroll > .ui-collapse .banner-region {
+  padding: 0 0 var(--sp-8);
+}
+
+/* 等你处理: a paper card (52) with the inbox, its words, the amber count and the way in. */
+.phone-inbox {
+  --surface: var(--canvas);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-12);
+  width: 100%;
+  height: 52px;
+  padding: 0 var(--sp-12) 0 var(--sp-16);
+  border: 0;
+  border-radius: var(--r-12);
+  background: var(--canvas);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--ink);
+  text-align: left;
+  transition: background-color var(--m-micro) var(--e-micro);
+}
+.phone-inbox:active {
+  background: linear-gradient(var(--press), var(--press)) var(--canvas);
+}
+.phone-inbox:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.phone-inbox-icon,
+.phone-inbox-chevron {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.phone-inbox-label {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  font-weight: 500;
+}
+
+/* A group: its name on the ground (40, the words at its foot), then its sessions in one paper card. */
+.phone-group-head {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--sp-8);
+  height: 40px;
+  padding: 0 var(--sp-4) var(--sp-8) var(--sp-16);
+}
+.phone-group-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
+}
+.phone-group-new.ui-icon-button {
+  min-width: 0;
+  min-height: 0;
+  margin-bottom: calc(-1 * var(--sp-4));
+}
+.phone-card {
+  --surface: var(--canvas);
+  list-style: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  overflow: hidden;
+  border-radius: var(--r-12);
+  background: var(--canvas);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+/* A row that leaves (archived, deleted, moved to another group) folds its height away and fades. */
+.phone-entry {
+  position: relative;
+  display: grid;
+  grid-template-rows: 1fr;
+  min-height: 0;
+  transition:
+    grid-template-rows var(--m-micro) var(--e-micro),
+    opacity var(--m-micro) var(--e-micro);
+}
+.phone-entry[data-leaving] {
+  transition:
+    grid-template-rows calc(var(--m-micro) * 0.7) var(--e-exit),
+    opacity calc(var(--m-micro) * 0.7) var(--e-exit);
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+/* Rows are separated by a line from the text's start. */
+.phone-entry + .phone-entry::before {
+  content: '';
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  right: 0;
+  left: var(--sp-16);
+  height: 1px;
+  background: var(--line);
+}
+
+/*
+ * A row (64): the title (16/22, 500) with its status slot, then the harness tile (16) with its name and one more fact
+ * in hint ink. A press darkens it; the session it opened keeps the neutral selection while its page covers the list
+ * and lets it go as the list returns.
+ */
+.phone-row {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  min-height: 0;
+  height: 64px;
+  padding: 0 var(--sp-16);
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  user-select: none;
+  -webkit-touch-callout: none;
+  transition: background-color var(--m-micro) var(--e-micro);
+}
+.phone-row:active,
+.phone-row.is-selected,
+.phone-row.is-held {
+  background: var(--hover);
+}
+.phone-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.phone-row-line {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  min-width: 0;
+}
+.phone-row-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  font-weight: 500;
+}
+.phone-row-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.phone-row-meta-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Nothing to list: what is missing in text2, one line in text3 and, with no session at all, 新建会话. Left-aligned. */
+.phone-empty {
+  display: grid;
+  justify-items: start;
+  gap: var(--sp-4);
+  padding: var(--sp-8) var(--sp-16) var(--sp-16);
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.phone-empty span {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
+}
+.phone-empty > .ui-button {
+  margin-top: var(--sp-8);
+}
+
+/* The list ends with the computer it comes from and the way to read its state again, in hint ink. */
+.phone-list-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+  padding: var(--sp-16) var(--sp-8) 0 var(--sp-16);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.phone-list-foot-icon {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.phone-list-host {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.phone-list-foot > .ui-button {
+  flex-shrink: 0;
+  color: var(--ink-2);
+}
+
+/* Reduced motion: a row that leaves fades without folding. */
+@media (prefers-reduced-motion: reduce) {
+  .phone-entry {
+    transition: opacity var(--m-micro) var(--e-micro);
+  }
+}

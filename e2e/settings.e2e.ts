@@ -148,7 +148,7 @@ describe('settings navigation motion', () => {
     }
   })
 
-  it('fades a section in again on the way back from a page, and fades settings out when leaving', async () => {
+  it('fades a section in again on the way back from a page', async () => {
     const { context, page } = await device({ phone: false, reducedMotion: 'no-preference' })
     try {
       const token = await tokens(page)
@@ -171,19 +171,6 @@ describe('settings navigation motion', () => {
         easing: token.eMicro,
       })
       await settings.getByRole('button', { name: /^在这台电脑上发起：/ }).waitFor()
-
-      // Leaving: the page fades out (70% of --m-micro, the exit curve), and only then is the conversation back.
-      const leave = await motions(page, async () => {
-        await settings.getByRole('button', { name: /^返回会话/ }).click()
-        await settings.waitFor({ state: 'detached' })
-      })
-      expect(leave).toContainEqual({
-        kind: 'animation',
-        target: 'ui-modal ui-modal-page settings-page is-leaving',
-        name: 'settings-leave',
-        duration: token.microExit,
-        easing: token.exit,
-      })
     } finally {
       await context.close()
     }
