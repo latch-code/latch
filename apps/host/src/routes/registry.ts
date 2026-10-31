@@ -11,6 +11,7 @@ import type { ListenerContext } from '../listeners.ts'
 import type { NativeOpening } from '../native.ts'
 import type { PolicyStore } from '../policy.ts'
 import type { PresenceService } from '../presence.ts'
+import type { LifecycleListeners } from '../session-lifecycle.ts'
 
 export const CONFIG_BODY_LIMIT = 128 * KIB
 /** Attempts for a reduction whose base moved underneath it (a cascade or a helper pin landing first). */
@@ -53,6 +54,8 @@ export interface RouteContext {
   config: HostConfig
   plugins: PluginRegistry
   hub: HarnessHub
+  /** Runs starting and settling, sessions archived or deleted, and the Host stopping (`session-lifecycle.ts`). */
+  lifecycle: LifecycleListeners
   limits: Record<BucketName, RateLimiter>
   /** True once the Host has begun to stop. */
   closing: () => boolean

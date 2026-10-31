@@ -69,6 +69,7 @@ import {
 } from '@latch/protocol'
 import {
   AppError,
+  type FileTrackingInput,
   type HarnessDriver,
   type HarnessSecurityEvent,
   type HostProject,
@@ -163,6 +164,7 @@ import {
   type WorkspaceRecord,
 } from './config.ts'
 import { HarnessHub, type HubCreateInput } from './hub.ts'
+import { SessionLifecycle, projectIdOf, type LifecycleBounds, type LifecycleListeners } from './session-lifecycle.ts'
 import { RUN_ID, type ApprovalRecord, type CancelRecord } from './session-meta.ts'
 import { sendNotFoundPage } from './not-found.ts'
 import { SessionFolders } from './session-folders.ts'
@@ -492,6 +494,8 @@ export interface ServerOptions {
   rateLimits?: 'default' | 'relaxed'
   /** Tests: runs after a file reference was resolved and checked, before the file is opened. Production never sets it. */
   fileHooks?: { afterResolve?(realPath: string): Promise<void> }
+  /** Tests: how long a run's first prompt and a stop wait for lifecycle listeners. Production never sets it. */
+  lifecycleBounds?: Partial<LifecycleBounds>
   /** Default `console.error('[Latch] ' + text)`; every line is redacted first. */
   log?: (text: string) => void
   /**
@@ -523,6 +527,8 @@ export interface StartedHost {
   registry: PluginRegistry
   config: HostConfig
   security: { devices: DeviceStore; enrollments: EnrollmentService; presence: PresenceService; audit: AuditLog; policy: PolicyStore }
+  /** The session lifecycle events route modules listen to, for tests. */
+  lifecycle: LifecycleListeners
   close(): Promise<void>
 }
 
@@ -1288,7 +1294,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
     }
 
-    const harnessHub = await HarnessHub.open({ dataDir, defaultId: defaultHarnessId, log, now })
+    const sessionLifecycle = new SessionLifecycle({ log, ...(options.lifecycleBounds ? { bounds: options.lifecycleBounds } : {}) })
+    const lifecycleListeners = sessionLifecycle.listenOnly()
+    const harnessHub = await HarnessHub.open({ dataDir, defaultId: defaultHarnessId, log, now, lifecycle: sessionLifecycle })
     hub = harnessHub
     const attachmentStore = await AttachmentStore.open(dataDir, { now, deferPrune: true })
     const fileReferences = await FileReferenceStore.open(dataDir)
@@ -1573,6 +1581,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       config,
       plugins: registry,
       hub: harnessHub,
+      lifecycle: lifecycleListeners,
       limits,
       closing: () => closing,
       refresh,
@@ -2615,6 +2624,28 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
     }
 
+    /**
+     * A driver tracks a run's files right before it sends the run's first prompt. With anyone listening, and when that
+     * run is the session's current one and the session is the driver's, `runStarted` goes out with the session's
+     * folders as the Host resolves them, and the prompt waits within the bound.
+     */
+    async function runStarting(harnessId: string, input: FileTrackingInput): Promise<void> {
+      if (!sessionLifecycle.listensToRuns()) return
+      const { sessionId, runId } = input
+      await sessionLifecycle.runStarted({
+        sessionId,
+        runId,
+        cancel: () => harnessHub.cancelRun(harnessId, sessionId, runId),
+        lookup: async () => {
+          const summary = await harnessHub.runSummary(harnessId, sessionId).catch(() => undefined)
+          if (summary?.runId === runId && ACTIVE_STATUSES.has(summary.status))
+            return { projectId: projectIdOf(summary), folders: scopeFolders(summary, workspaceRoot) }
+          log(`会话 ${sessionId} 报告的运行不是它当前的运行，未通知运行开始`)
+          return undefined
+        },
+      })
+    }
+
     async function mount(driver: HarnessDriver, required = false): Promise<void> {
       const source = sourceOf(driver)
       const lease = registry.acquireHarness(driver.id)
@@ -2634,7 +2665,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             tmpRoot: runtime.tmpRoot,
             securityEvent,
             clock,
-            trackFiles: input => fileTracking.start(input),
+            trackFiles: async input => {
+              await runStarting(driver.id, input)
+              return fileTracking.start(input)
+            },
             readAttachment: async (ref, signal) => {
               signal?.throwIfAborted()
               const content = await attachmentStore.read(ref)
@@ -6172,9 +6206,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       registry,
       config,
       security: { devices, enrollments, presence, audit, policy },
+      lifecycle: lifecycleListeners,
       close() {
         return (shutdown ??= (async () => {
           closing = true
+          await sessionLifecycle.hostStopping()
           await nativeRoutes.close()
           clearInterval(heartbeat)
           clearTimeout(eventTimer)

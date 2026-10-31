@@ -1,3 +1,4 @@
+import { setTimeout as delay } from 'node:timers/promises'
 import type { Approval, HarnessInfo, HarnessSource, SessionPermission, TaskDetail, TaskSummary } from '@latch/protocol'
 import {
   AppError,
@@ -14,6 +15,7 @@ import {
 } from '@latch/sdk'
 import { RUN_ID, SessionMetaStore, type SessionReceipts } from './session-meta.ts'
 import { BranchReader } from './branch-reader.ts'
+import { projectIdOf, type LifecycleEvent, type SessionLifecycle } from './session-lifecycle.ts'
 
 /**
  * `harnessId` is Host-only. `workspaceId` and `folders` reach only drivers that declare `projectFolders: 'all'`; the
@@ -56,6 +58,8 @@ export interface HubOptions {
   log?: (message: string) => void
   /** Clock for receipt expiry. */
   now?: () => number
+  /** Told when an announced run settles and when a session is archived or deleted. */
+  lifecycle?: SessionLifecycle
 }
 
 interface Entry {
@@ -79,6 +83,8 @@ type Member = Entry & { bridge: Bridge }
 const DEFAULT_CAPABILITIES: Pick<HarnessInfo, 'modes' | 'models' | 'attachments'> = { modes: ['chat', 'agent'], models: 'agent' }
 const ACTIVE = new Set<TaskSummary['status']>(['running', 'waiting-approval'])
 const MAX_DETAIL_APPROVALS = 1024
+/** As often as the Host's event stream reads a changed session. */
+const RUN_READ_MS = 40
 const PLUGIN_NOTE = '第三方 Harness 插件，Latch 无法核实其执行范围'
 
 /** Builtin runs under Latch's own approvals (L1); ACP agents and plugin harnesses run unsandboxed (L3). */
@@ -118,6 +124,8 @@ export class HarnessHub implements Bridge {
   private readonly detailApprovals = new Map<string, string>()
   private readonly listeners = new Set<(sessionId?: string) => void>()
   private readonly collisions = new Set<string>()
+  /** Sessions with a coalesced read of their announced run under way; `again`: another change arrived since it began. */
+  private readonly runReads = new Map<string, { again: boolean }>()
   private readonly log: (message: string) => void
   private readonly branches: BranchReader
   private closing?: Promise<void>
@@ -173,6 +181,7 @@ export class HarnessHub implements Bridge {
         if (this.entries.get(driver.id) !== entry) return
         if (sessionId && !this.claim(driver.id, sessionId)) return
         this.emit(sessionId)
+        if (sessionId && entry.bridge) this.readRun(entry.bridge, sessionId)
       })
       await bridge.start()
       // close() or detach() ran while this driver was starting; it was never visible, so retire it here.
@@ -349,6 +358,12 @@ export class HarnessHub implements Bridge {
     return merged.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
   }
 
+  /** A session's summary as its own driver lists it: no other driver is waited for, and the session is routed from here on. */
+  async runSummary(harnessId: string, sessionId: string): Promise<TaskSummary | undefined> {
+    const found = (await this.member(harnessId)?.bridge.listTasks())?.find(task => task.id === sessionId)
+    return found && this.claim(harnessId, sessionId) ? this.present(harnessId, found) : undefined
+  }
+
   /** One session's summary, without reading its messages. */
   async summary(sessionId: string): Promise<TaskSummary> {
     const member = await this.route(sessionId)
@@ -433,14 +448,28 @@ export class HarnessHub implements Bridge {
   }
 
   async prompt(sessionId: string, prompt: string, requestId: string, options?: PromptOptions): Promise<void> {
-    await this.accept(await this.route(sessionId), bridge =>
+    const member = await this.route(sessionId)
+    // Not a step of its own without a watched run: `accept` follows the route directly.
+    if (this.options.lifecycle?.watchedRun(sessionId)) await this.readRunNow(member.bridge, sessionId)
+    await this.accept(member, bridge =>
       options ? bridge.prompt(sessionId, prompt, requestId, options) : bridge.prompt(sessionId, prompt, requestId),
     )
   }
 
   async cancel(sessionId: string, options?: CancelOptions): Promise<boolean | void> {
     const member = await this.route(sessionId)
-    return options ? member.bridge.cancel(sessionId, options) : member.bridge.cancel(sessionId)
+    const cancelling = options ? member.bridge.cancel(sessionId, options) : member.bridge.cancel(sessionId)
+    this.options.lifecycle?.cancelRequested(sessionId, options?.runId)
+    const cancelled = await cancelling
+    await this.readRunNow(member.bridge, sessionId)
+    return cancelled
+  }
+
+  /** Asks a run's own driver to cancel it, without waiting for the run to settle. */
+  cancelRun(harnessId: string, sessionId: string, runId: string): void {
+    void this.member(harnessId)
+      ?.bridge.cancel(sessionId, { runId })
+      .catch(error => this.log(`会话 ${sessionId} 的运行未能取消：${message(error)}`))
   }
 
   approvals(): Approval[] {
@@ -495,10 +524,14 @@ export class HarnessHub implements Bridge {
   async remove(sessionId: string): Promise<void> {
     const member = await this.route(sessionId)
     if (!member.bridge.remove) throw new AppError(409, 'delete-unsupported', `${member.driver.name} 不支持删除会话`)
+    await this.readRunNow(member.bridge, sessionId)
+    // Read before the driver and the metadata forget it.
+    const projectId = await this.projectFor('sessionDeleted', member, sessionId)
     await member.bridge.remove(sessionId)
     this.routes.delete(sessionId)
     // The session is already gone; a stale overlay entry is harmless, a reported failure would mislead.
     if (this.meta.has(sessionId)) await this.meta.remove(sessionId).catch(error => this.log(`会话设置清理失败：${message(error)}`))
+    this.options.lifecycle?.sessionDeleted(sessionId, projectId)
   }
 
   async setConfig(sessionId: string, configId: string, value: string, options?: SetConfigOptions): Promise<void> {
@@ -513,6 +546,7 @@ export class HarnessHub implements Bridge {
   /** Applies a Host-level title, pin or archive change and returns the updated summary. */
   async updateMeta(sessionId: string, patch: SessionMetaPatch): Promise<TaskSummary> {
     const member = await this.route(sessionId)
+    let archived = false
     await this.meta.update(sessionId, current => {
       const next = { ...current }
       if (patch.title === null) delete next.title
@@ -525,8 +559,11 @@ export class HarnessHub implements Bridge {
         if (patch.archived) next.archived = true
         else delete next.archived
       }
+      // Updates run one at a time, so of two requests to archive the same session only one archives it.
+      archived = next.archived === true && current.archived !== true
       return next
     })
+    if (archived) this.options.lifecycle?.sessionArchived(sessionId, await this.projectFor('sessionArchived', member, sessionId))
     this.emit(sessionId)
     return this.present(member.driver.id, (await member.bridge.detail(sessionId)).summary)
   }
@@ -687,6 +724,53 @@ export class HarnessHub implements Bridge {
       ...(capabilities.attachments ? { attachments: structuredClone(capabilities.attachments) } : {}),
       level: levelFor(entry.source),
       ...folderInfo(driver),
+    }
+  }
+
+  /** The session's project for an event's listeners; the driver is asked only when one listens and the metadata has none. */
+  private async projectFor(event: LifecycleEvent, member: Member, sessionId: string): Promise<string> {
+    const workspaceId = this.meta.get(sessionId)?.workspaceId
+    if (workspaceId !== undefined || !this.options.lifecycle?.listens(event)) return projectIdOf({ workspaceId })
+    const listed = await member.bridge.listTasks().catch(() => [])
+    return projectIdOf({ workspaceId: listed.find(task => task.id === sessionId)?.workspaceId })
+  }
+
+  /**
+   * After a change a driver reports for a session whose run someone is waiting on, reads its summary, at most once per
+   * `RUN_READ_MS`: a listing clones every session, and drivers report each streamed chunk. A change during a read
+   * causes one more. `prompt`, `cancel` and `remove` read at once, so a run's end is seen before the next run hides it.
+   */
+  private readRun(bridge: Bridge, sessionId: string): void {
+    if (!this.options.lifecycle?.watchedRun(sessionId) || this.closing) return
+    const pending = this.runReads.get(sessionId)
+    if (pending) {
+      pending.again = true
+      return
+    }
+    const read = { again: true }
+    this.runReads.set(sessionId, read)
+    void (async () => {
+      try {
+        while (read.again && !this.closing) {
+          read.again = false
+          await delay(RUN_READ_MS, undefined, { ref: false })
+          await this.readRunNow(bridge, sessionId)
+        }
+      } finally {
+        this.runReads.delete(sessionId)
+      }
+    })()
+  }
+
+  private async readRunNow(bridge: Bridge, sessionId: string): Promise<void> {
+    const lifecycle = this.options.lifecycle
+    const runId = lifecycle?.watchedRun(sessionId)
+    if (!lifecycle || runId === undefined) return
+    try {
+      const summary = (await bridge.listTasks()).find(task => task.id === sessionId)
+      if (summary) lifecycle.observe(summary, runId)
+    } catch (error) {
+      this.log(`会话 ${sessionId} 的运行状态读取失败：${message(error)}`)
     }
   }
 
