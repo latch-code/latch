@@ -31,6 +31,9 @@ const fileAction = { sessionId, pathHash: hex, type: 'other' }
 /** One detail each action accepts. */
 const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'plugin.package.changed': { operation: 'apply', before: hex, after: hex },
+  'change.undo': { sessionId, turnId: 'run-1', restore: 1, remove: 0, skipped: 0, planHash: hex },
+  'change.redo': { sessionId, turnId: 'run-1', restore: 1, remove: 0, skipped: 0, planHash: hex },
+  'change.discard': { sessionId, scope: 'uncommitted', restore: 1, remove: 1, skipped: 0, planHash: hex },
   'presence.launch-trusted': { keyHash: hex },
   'host.started': { hostId: 'a'.repeat(52), version: '0.1.0', policyHash: hex, settingsHash: hex, devMode: true },
   'audit.torn-tail-removed': { bytes: 12 },

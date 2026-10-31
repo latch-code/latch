@@ -2,9 +2,11 @@
 // turn added or removed counts as the agent's when one of its edits added or removed the same line.
 import { createHash } from 'node:crypto'
 import { isAbsolute, posix, relative, sep } from 'node:path'
+import { redactSecrets } from '@latch/core/node-kit'
 import { isFileMention, type FileDiff } from '@latch/protocol'
+import { isIgnoredPath } from '../files/ignore.ts'
 import { diffLines, splitText, type DiffOp, type Text } from './diff.ts'
-import { AGENT_LINE_LIMIT, type Change } from './records.ts'
+import { AGENT_LINE_LIMIT, NAMED_FILE_LIMIT, type Change } from './records.ts'
 import { fileKey } from './walk.ts'
 
 export const lineHash = (line: string) => createHash('sha256').update(line).digest('hex').slice(0, 16)
@@ -39,6 +41,26 @@ export function editsByFile(edits: readonly FileDiff[], folders: readonly Folder
     }
   }
   return byFile
+}
+
+/**
+ * What the turn's edits name that no snapshot records, so no undo reaches it: a path outside every folder, or inside
+ * one under a name the snapshots ignore. Commands leave no such trace, so this cannot name what they wrote elsewhere.
+ */
+export function uncoveredEdits(edits: readonly FileDiff[], folders: readonly FolderSpellings[]): string[] {
+  const uncovered = new Set<string>()
+  for (const edit of edits) {
+    if (typeof edit.path !== 'string' || !edit.path) continue
+    const inside = isAbsolute(edit.path)
+      ? folders
+          .flatMap(folder => folder.paths)
+          .map(path => relative(path, edit.path))
+          .find(path => path && !path.startsWith('..') && !isAbsolute(path))
+      : posix.normalize(edit.path.replaceAll('\\', '/')).replace(/^\.\//u, '')
+    const path = inside?.split(sep).join('/')
+    if (path === undefined || path.startsWith('..') || isIgnoredPath(path)) uncovered.add(redactSecrets(edit.path).slice(0, 4096))
+  }
+  return [...uncovered].slice(0, NAMED_FILE_LIMIT)
 }
 
 type Lines = Map<string, number>

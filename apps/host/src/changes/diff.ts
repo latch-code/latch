@@ -1,6 +1,6 @@
 // Line diffs: Myers' O(ND) algorithm with a bound on the work, unified hunks, and the text of a patch. Pure; the web
 // client draws word-level ranges itself.
-import type { ChangeHunk, ChangeLine, ChangeLineKind } from './types.ts'
+import type { ChangeHunk, ChangeLine, ChangeLineKind } from '@latch/protocol'
 
 /** Above this size on either side a file is shown as one line, not as text. */
 export const TEXT_LIMIT = 1024 * 1024

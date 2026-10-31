@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { z } from 'zod'
 import { AppError } from '@latch/sdk'
 import { sha256Hex, writeFileAtomic } from '@latch/core/node-kit'
+import type { NotRestoredFile } from '@latch/protocol'
 import { RUN_ID } from '../session-meta.ts'
 
 export const SNAPSHOTS_DIR = 'snapshots'
@@ -15,6 +16,8 @@ export const SNAPSHOTS_DIR = 'snapshots'
 export const CHANGE_LIMIT = 20_000
 /** Line hashes of the agent's own edits kept per file. */
 export const AGENT_LINE_LIMIT = 5000
+/** Files a receipt names; `skipped` keeps the full count. */
+export const NAMED_FILE_LIMIT = 200
 
 /** One file at one moment. */
 export interface FileState {
@@ -67,7 +70,24 @@ export interface Receipt {
   restored: number
   removed: number
   skipped: number
+  notRestored: NotRestoredFile[]
+  notCovered: string[]
+  noteNextTurn: boolean
   at: string
+}
+/** Files written back behind the engine's memory, still to be told with the next message. */
+export interface TurnNote {
+  kind: 'undo' | 'redo' | 'files'
+  /** Files written or removed. */
+  files: number
+  /** Files a discard wrote or removed on top of an undo or redo: no redo takes these back. */
+  discarded?: number
+  /** Files that could not be. */
+  skipped: number
+  /** The message that carries it: a retry of that message must carry the same words. */
+  requestId?: string
+  /** A turn began with that message. */
+  told?: true
 }
 export interface TurnRecord {
   turnId: string
@@ -85,6 +105,9 @@ export interface TurnRecord {
   /** This turn's own changes, once settled. */
   changes: Change[]
   undone?: { at: string; requestId: string }
+  note?: TurnNote
+  /** Files the turn's own edits name that no snapshot covers: outside the session's folders, or ignored. */
+  notCovered?: string[]
   /** Recent undo and redo answers, replayed for a retried request ID. */
   receipts: Receipt[]
 }
@@ -125,6 +148,12 @@ const changeSchema = z.strictObject({
   by: z.enum(['agent', 'command', 'mixed']).optional(),
   agentLines: z.strictObject({ added: lineHashes, removed: lineHashes }).optional(),
 })
+const notRestored = z.strictObject({
+  root: folderId,
+  path: z.string().min(1).max(4096),
+  reason: z.enum(['not-retained', 'secret', 'folder-missing']),
+})
+const notCovered = z.array(z.string().min(1).max(4096)).max(NAMED_FILE_LIMIT)
 const receiptSchema = z.strictObject({
   sessionId: z.string().min(1).max(256),
   turnId: z.string().regex(RUN_ID),
@@ -133,7 +162,18 @@ const receiptSchema = z.strictObject({
   restored: count,
   removed: count,
   skipped: count,
+  notRestored: z.array(notRestored).max(NAMED_FILE_LIMIT),
+  notCovered,
+  noteNextTurn: z.boolean(),
   at: isoTime,
+})
+const noteSchema = z.strictObject({
+  kind: z.enum(['undo', 'redo', 'files']),
+  files: count,
+  discarded: count.optional(),
+  skipped: count,
+  requestId: z.string().min(1).max(256).optional(),
+  told: z.literal(true).optional(),
 })
 const turnSchema = z.strictObject({
   turnId: z.string().regex(RUN_ID),
@@ -146,11 +186,13 @@ const turnSchema = z.strictObject({
   between: z.array(changeSchema).max(CHANGE_LIMIT),
   changes: z.array(changeSchema).max(CHANGE_LIMIT),
   undone: z.strictObject({ at: isoTime, requestId }).optional(),
+  note: noteSchema.optional(),
+  notCovered: notCovered.optional(),
   receipts: z.array(receiptSchema).max(8),
 })
 const ownerShape = { v: z.literal(1), sessionId: z.string().min(1).max(256), projectId: z.string().min(1).max(256) }
 const headSchema = z.strictObject({ ...ownerShape, manifest: manifestSchema })
-const turnsSchema = z.strictObject({ ...ownerShape, turns: z.array(turnSchema).max(64) })
+const turnsSchema = z.strictObject({ ...ownerShape, turns: z.array(turnSchema).max(64), note: noteSchema.optional() })
 
 /** A directory name for an ID; IDs can hold any character or differ only in case, so they never become a path. */
 export const directoryKey = (id: string) => sha256Hex(id).slice(0, 32)
@@ -234,16 +276,22 @@ export class SessionFiles {
     return this.owns(file) ? (file!.turns as TurnRecord[]) : []
   }
 
+  /** The note owed for a discard in a session with no turn to hold it. */
+  async readNote(): Promise<TurnNote | undefined> {
+    const file = await load(join(this.directory, 'turns.json'), turnsSchema)
+    return this.owns(file) ? (file!.note as TurnNote | undefined) : undefined
+  }
+
   async writeHead(head: Manifest | undefined): Promise<void> {
     const path = join(this.directory, 'head.json')
     if (!head) await rm(path, { force: true })
     else await writeFileAtomic(path, JSON.stringify({ v: 1, sessionId: this.sessionId, projectId: this.projectId, manifest: head }))
   }
 
-  async writeTurns(turns: readonly TurnRecord[]): Promise<void> {
+  async writeTurns(turns: readonly TurnRecord[], note?: TurnNote): Promise<void> {
     await writeFileAtomic(
       join(this.directory, 'turns.json'),
-      JSON.stringify({ v: 1, sessionId: this.sessionId, projectId: this.projectId, turns }),
+      JSON.stringify({ v: 1, sessionId: this.sessionId, projectId: this.projectId, turns, ...(note ? { note } : {}) }),
     )
   }
 

@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Device, DeviceScope, HostFeatures, PresenceAction, PresencePreview, PresenceSubject } from '@latch/protocol'
 import type { PluginRegistry } from '@latch/core'
+import type { ProjectFolder } from '@latch/sdk'
 import type { BucketName, Presented, RateLimiter } from '../access.ts'
 import type { AuditActor, AuditLog, StepupMethod } from '../audit.ts'
 import type { ConnectionContext, DeviceStore, EnrollmentService } from '../auth.ts'
@@ -54,6 +55,15 @@ export interface RouteContext {
   config: HostConfig
   plugins: PluginRegistry
   hub: HarnessHub
+  /** Paths nothing outside the Host's own stores reads or writes. */
+  guardedPaths: readonly string[]
+  /**
+   * The folders a session may use, as file handles get them: undefined with no such session, `removed` once one of them
+   * has left its project or is gone.
+   */
+  sessionRoots: (sessionId: string) => Promise<ProjectFolder[] | 'removed' | undefined>
+  /** What a device must pass to send new input to a session: its level's ceiling, the remote lists, the session's folders. */
+  assertSessionInput: (caller: DeviceCaller, sessionId: string) => Promise<void>
   /** Runs starting and settling, sessions archived or deleted, and the Host stopping (`session-lifecycle.ts`). */
   lifecycle: LifecycleListeners
   limits: Record<BucketName, RateLimiter>

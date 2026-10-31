@@ -85,6 +85,20 @@ const ACTIVE = new Set<TaskSummary['status']>(['running', 'waiting-approval'])
 const MAX_DETAIL_APPROVALS = 1024
 /** As often as the Host's event stream reads a changed session. */
 const RUN_READ_MS = 40
+/** A longer prompt leaves no room for a note below the drivers' 1 MB limit; the note waits for the next message. */
+const PROMPT_NOTE_ROOM = 999_000
+const SLASH_COMMAND = /^\/\S/u
+
+/** As long as a run's first prompt waits for its snapshot: past this the message goes out and the note waits for the next one. */
+const PROMPT_NOTE_MS = 15_000
+/** The messages that went out without their note, so that a retry carries the same words. */
+const NOTELESS_PROMPTS = 256
+
+/**
+ * What a message must carry to the engine; a retry with the same request ID gets the same words. `signal` aborts when
+ * the message stops waiting, and from then on the read must leave the note due.
+ */
+export type PromptNote = (sessionId: string, requestId: string, signal: AbortSignal) => Promise<string | undefined>
 const PLUGIN_NOTE = '第三方 Harness 插件，Latch 无法核实其执行范围'
 
 /** Builtin runs under Latch's own approvals (L1); ACP agents and plugin harnesses run unsandboxed (L3). */
@@ -126,6 +140,9 @@ export class HarnessHub implements Bridge {
   private readonly collisions = new Set<string>()
   /** Sessions with a coalesced read of their announced run under way; `again`: another change arrived since it began. */
   private readonly runReads = new Map<string, { again: boolean }>()
+  private promptNote: PromptNote | undefined
+  private promptNoteMs = PROMPT_NOTE_MS
+  private readonly notelessPrompts = new Set<string>()
   private readonly log: (message: string) => void
   private readonly branches: BranchReader
   private closing?: Promise<void>
@@ -447,12 +464,43 @@ export class HarnessHub implements Bridge {
     await this.meta.update(sessionId, current => (current.workspaceId === undefined ? { ...current, workspaceId } : current))
   }
 
+  /** Registers what a message must carry to the engine, read just before each prompt is sent. */
+  notePrompts(note: PromptNote, boundMs = PROMPT_NOTE_MS): void {
+    this.promptNote = note
+    this.promptNoteMs = boundMs
+  }
+
+  /** The note in the message's own text: a plugin's driver delivers it too, and the conversation shows what was sent. */
+  private async withNote(read: PromptNote, sessionId: string, prompt: string, requestId: string): Promise<string> {
+    // A command must stay the first thing in its message, and text ahead of it would turn it into a plain message.
+    if (prompt.length > PROMPT_NOTE_ROOM || SLASH_COMMAND.test(prompt) || this.notelessPrompts.has(requestId)) return prompt
+    const abandon = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const overdue = new Promise<undefined>(resolve => {
+      timer = setTimeout(() => {
+        abandon.abort()
+        this.notelessPrompts.add(requestId)
+        if (this.notelessPrompts.size > NOTELESS_PROMPTS) this.notelessPrompts.delete(this.notelessPrompts.values().next().value!)
+        this.log(`会话 ${sessionId} 的撤销说明读取超时，留给下一条消息`)
+        resolve(undefined)
+      }, this.promptNoteMs)
+    })
+    const reading = read(sessionId, requestId, abandon.signal).catch((error: unknown) => {
+      this.log(`会话 ${sessionId} 的撤销说明读取失败：${message(error)}`)
+      return undefined
+    })
+    const note = await Promise.race([reading, overdue]).finally(() => clearTimeout(timer))
+    return note ? `${note}\n\n${prompt}` : prompt
+  }
+
   async prompt(sessionId: string, prompt: string, requestId: string, options?: PromptOptions): Promise<void> {
     const member = await this.route(sessionId)
     // Not a step of its own without a watched run: `accept` follows the route directly.
     if (this.options.lifecycle?.watchedRun(sessionId)) await this.readRunNow(member.bridge, sessionId)
+    // As above: without a note to read, `accept` follows the route directly.
+    const text = this.promptNote ? await this.withNote(this.promptNote, sessionId, prompt, requestId) : prompt
     await this.accept(member, bridge =>
-      options ? bridge.prompt(sessionId, prompt, requestId, options) : bridge.prompt(sessionId, prompt, requestId),
+      options ? bridge.prompt(sessionId, text, requestId, options) : bridge.prompt(sessionId, text, requestId),
     )
   }
 

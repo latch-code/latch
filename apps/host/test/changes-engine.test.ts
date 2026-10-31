@@ -196,7 +196,7 @@ describe('撤销本轮 and 恢复', () => {
         target: { scope: 'turn', turnId: 'run-1', files: [{ root: 'main', path: 'gone.txt' }] },
         beforeWrite: f.beforeWrite,
       }),
-    ).toEqual({ restored: 1, removed: 0, skipped: 0 })
+    ).toEqual({ restored: 1, removed: 0, skipped: 0, notRestored: [], noteNextTurn: true })
   })
 
   it('refuses while a turn runs, and never writes through a directory swapped for a symlink', async () => {
@@ -366,6 +366,8 @@ describe.skipIf(!git)('撤销全部改动 for uncommitted changes', () => {
       restored: 2,
       removed: 1,
       skipped: 1,
+      notRestored: [{ root: 'main', path: '.env.local', reason: 'secret' }],
+      noteNextTurn: true,
     })
     expect(writes).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'discard', scope: 'uncommitted', restore: 2, remove: 1, skipped: 1 }),
@@ -435,5 +437,223 @@ describe('an agent’s own edit and a command’s, from the fake ACP agent', () 
       { root: 'main', path: 'agent-edit.txt', status: 'A', add: 1, del: 0 },
       { root: 'main', path: 'command-edit.txt', status: 'A', add: 1, del: 0, byCommand: true },
     ])
+  })
+})
+
+describe('what an undo could not reach', () => {
+  it('names files not kept and edits no snapshot covers, and the note counts them', async () => {
+    const f = await fixture()
+    await writeFile(f.file('.env.local'), 'TOKEN=before\n')
+    await writeFile(f.file('kept.txt'), 'before\n')
+    await f.engine.beginTurn({ session: f.session, turnId: 'run-1' })
+    await writeFile(f.file('.env.local'), 'TOKEN=after\n')
+    await writeFile(f.file('kept.txt'), 'after\n')
+    const outside = '/somewhere/else/file.txt'
+    const edits: FileDiff[] = [
+      { path: outside, newText: 'x' },
+      { path: 'node_modules/pkg/index.js', newText: 'x' },
+      { path: f.file('kept.txt'), oldText: 'before\n', newText: 'after\n' },
+    ]
+    await f.engine.settleTurn({ session: f.session, turnId: 'run-1', outcome: 'completed', edits })
+    expect((await f.engine.list({ session: f.session, scope: 'turn' })).notCovered).toEqual([outside, 'node_modules/pkg/index.js'])
+    const receipt = await f.engine.undoTurn({ session: f.session, turnId: 'run-1', requestId: 'request-one', beforeWrite: f.beforeWrite })
+    expect(receipt).toMatchObject({
+      restored: 1,
+      skipped: 1,
+      notRestored: [{ root: 'main', path: '.env.local', reason: 'secret' }],
+      notCovered: [outside, 'node_modules/pkg/index.js'],
+      noteNextTurn: true,
+    })
+    const note = await f.engine.noteFor({ session: f.session, requestId: 'message-1' })
+    expect(note).toContain('用户撤销了 1 轮改动')
+    expect(note).toContain('有 1 个文件')
+    expect((await f.engine.turns({ session: f.session })).at(-1)?.notePending).toBe(true)
+    // Another attempt with a new request ID, before any turn began, still owes the note.
+    expect(await f.engine.noteFor({ session: f.session, requestId: 'message-2' })).toBe(note)
+    await f.engine.beginTurn({ session: f.session, turnId: 'run-2' })
+    // A retry of the message that started it gets the same words, and any other message none.
+    expect(await f.engine.noteFor({ session: f.session, requestId: 'message-2' })).toBe(note)
+    expect(await f.engine.noteFor({ session: f.session, requestId: 'message-3' })).toBeUndefined()
+  })
+})
+
+describe('a file whose content was not kept', () => {
+  const SECRET = ['-----BEGIN', 'PRIVATE', 'KEY-----'].join(' ')
+
+  it('is never removed or overwritten, in either direction, and the rest of the turn still goes back and forth', async () => {
+    const f = await fixture()
+    await writeFile(f.file('edited-to-secret.txt'), 'before\n')
+    await f.engine.beginTurn({ session: f.session, turnId: 'run-1' })
+    await writeFile(f.file('.env.local'), 'TOKEN=created\n')
+    await writeFile(f.file('edited-to-secret.txt'), SECRET)
+    await writeFile(f.file('kept.txt'), 'created\n')
+    await f.engine.settleTurn({ session: f.session, turnId: 'run-1', outcome: 'completed' })
+
+    const undone = await f.engine.undoTurn({ session: f.session, turnId: 'run-1', requestId: 'request-undo', beforeWrite: f.beforeWrite })
+    expect(undone).toMatchObject({
+      restored: 0,
+      removed: 1,
+      skipped: 2,
+      notRestored: [
+        { root: 'main', path: '.env.local', reason: 'secret' },
+        { root: 'main', path: 'edited-to-secret.txt', reason: 'secret' },
+      ],
+    })
+    expect(await readFile(f.file('.env.local'), 'utf8')).toBe('TOKEN=created\n')
+    expect(await readFile(f.file('edited-to-secret.txt'), 'utf8')).toBe(SECRET)
+    expect(existsSync(f.file('kept.txt'))).toBe(false)
+
+    const redone = await f.engine.redoTurn({ session: f.session, turnId: 'run-1', requestId: 'request-redo', beforeWrite: f.beforeWrite })
+    expect(redone).toMatchObject({ restored: 1, removed: 0, skipped: 2 })
+    expect(await readFile(f.file('kept.txt'), 'utf8')).toBe('created\n')
+    expect(await readFile(f.file('edited-to-secret.txt'), 'utf8')).toBe(SECRET)
+  })
+
+  it('refuses an undo with nothing it may touch, and does not call the turn undone', async () => {
+    const f = await fixture()
+    await f.engine.beginTurn({ session: f.session, turnId: 'run-1' })
+    await writeFile(f.file('.env.local'), 'TOKEN=created\n')
+    await f.engine.settleTurn({ session: f.session, turnId: 'run-1', outcome: 'completed' })
+
+    const listed = await f.engine.list({ session: f.session, scope: 'turn' })
+    expect(listed.undo).toEqual({ available: false, reason: 'not-retained' })
+    await expect(
+      f.engine.undoTurn({ session: f.session, turnId: 'run-1', requestId: 'request-undo', beforeWrite: f.beforeWrite }),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: 'change-not-retained',
+    })
+    expect(f.plans).toEqual([])
+    expect(await readFile(f.file('.env.local'), 'utf8')).toBe('TOKEN=created\n')
+    const [turn] = await f.engine.turns({ session: f.session })
+    expect(turn).not.toHaveProperty('undone')
+    expect(turn).not.toHaveProperty('notePending')
+    expect(await f.engine.noteFor({ session: f.session, requestId: 'message-1' })).toBeUndefined()
+
+    // 撤销此文件 answers with the same file named, because the person picked it.
+    const discarded = await f.engine.discard({
+      session: f.session,
+      target: { scope: 'turn', turnId: 'run-1', files: [{ root: 'main', path: '.env.local' }] },
+      beforeWrite: f.beforeWrite,
+    })
+    expect(discarded).toMatchObject({
+      removed: 0,
+      skipped: 1,
+      notRestored: [{ path: '.env.local', reason: 'secret' }],
+      noteNextTurn: false,
+    })
+    expect(await readFile(f.file('.env.local'), 'utf8')).toBe('TOKEN=created\n')
+  })
+})
+
+describe('the note for files written back', () => {
+  async function repository() {
+    const f = await fixture()
+    const run = (...args: string[]) =>
+      execFileSync(git!, ['-c', 'user.name=Latch', '-c', 'user.email=latch@example.invalid', '-c', 'init.defaultBranch=main', ...args], {
+        cwd: f.project,
+        env: { PATH: '/usr/bin:/bin', HOME: f.base, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
+      })
+    run('init', '-q')
+    await writeFile(f.file('edit.txt'), 'committed\n')
+    run('add', '-A')
+    run('commit', '-qm', 'init')
+    return f
+  }
+  type Repository = Awaited<ReturnType<typeof repository>>
+  const dropLoose = async (f: Repository) => {
+    await writeFile(f.file('loose.txt'), 'nobody committed this\n')
+    return f.engine.discard({
+      session: f.session,
+      target: { scope: 'uncommitted', files: [{ root: 'main', path: 'loose.txt' }] },
+      beforeWrite: f.beforeWrite,
+    })
+  }
+  const turnEditing = async (f: Repository) => {
+    await f.engine.beginTurn({ session: f.session, turnId: 'run-1' })
+    await writeFile(f.file('edit.txt'), 'edited\n')
+    await f.engine.settleTurn({ session: f.session, turnId: 'run-1', outcome: 'completed' })
+  }
+  const flip = (f: Repository, action: 'undoTurn' | 'redoTurn') =>
+    f.engine[action]({ session: f.session, turnId: 'run-1', requestId: `request-${action}`, beforeWrite: f.beforeWrite })
+
+  it('survives an undo and its redo when a discard happened between them', async () => {
+    const f = await repository()
+    await turnEditing(f)
+    await flip(f, 'undoTurn')
+    expect(await dropLoose(f)).toMatchObject({ removed: 1, noteNextTurn: true })
+    expect(await flip(f, 'redoTurn')).toMatchObject({ noteNextTurn: true })
+    const note = await f.engine.noteFor({ session: f.session, requestId: 'message-1' })
+    expect(note).toContain('用户撤销了 1 个文件的改动')
+    expect(note).not.toContain('轮改动')
+  })
+
+  it('survives an undo and its redo when the discard came first', async () => {
+    const f = await repository()
+    await turnEditing(f)
+    await dropLoose(f)
+    await flip(f, 'undoTurn')
+    const told = await f.engine.noteFor({ session: f.session, requestId: 'message-1' })
+    expect(told).toContain('用户撤销了 1 轮改动')
+    expect(told).toContain('用户撤销了 1 个文件的改动')
+    expect(await flip(f, 'redoTurn')).toMatchObject({ noteNextTurn: true })
+    expect(await f.engine.noteFor({ session: f.session, requestId: 'message-2' })).toContain('用户撤销了 1 个文件的改动')
+  })
+
+  it('is owed by a discard in a session with no turn, across a restart, and told once', async () => {
+    const f = await repository()
+    expect(await dropLoose(f)).toMatchObject({ removed: 1, noteNextTurn: true })
+    await f.engine.close()
+    const engine = await f.open()
+    cleanup.push(() => engine.close())
+    const note = await engine.noteFor({ session: f.session, requestId: 'message-1' })
+    expect(note).toContain('用户撤销了 1 个文件的改动')
+    await engine.beginTurn({ session: f.session, turnId: 'run-1' })
+    expect(await engine.noteFor({ session: f.session, requestId: 'message-1' })).toBe(note)
+    expect(await engine.noteFor({ session: f.session, requestId: 'message-2' })).toBeUndefined()
+  })
+})
+
+describe('confirming a discard of uncommitted changes', () => {
+  it('binds a modified tracked file too large to hash, so a later change makes the confirmation stale', async () => {
+    const f = await fixture({ cloneLimit: 16 })
+    const run = (...args: string[]) =>
+      execFileSync(git!, ['-c', 'user.name=Latch', '-c', 'user.email=latch@example.invalid', '-c', 'init.defaultBranch=main', ...args], {
+        cwd: f.project,
+        env: { PATH: '/usr/bin:/bin', HOME: f.base, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
+      })
+    run('init', '-q')
+    await writeFile(f.file('big.txt'), 'committed\n')
+    run('add', '-A')
+    run('commit', '-qm', 'init')
+    await writeFile(f.file('big.txt'), 'an edit longer than the limit\n')
+    const preview = await f.engine.previewDiscard({ session: f.session })
+    expect(preview.restore).toBe(1)
+    expect((await f.engine.previewDiscard({ session: f.session })).planHash).toBe(preview.planHash)
+    await writeFile(f.file('big.txt'), 'another edit, longer than the limit too\n')
+    expect((await f.engine.previewDiscard({ session: f.session })).planHash).not.toBe(preview.planHash)
+  })
+})
+
+describe('asking for a note', () => {
+  it('does not wait behind other work when none is due, and gives up on a message that left without it', async () => {
+    const f = await fixture()
+    await f.engine.beginTurn({ session: f.session, turnId: 'run-1' })
+    await writeFile(f.file('made.txt'), 'created\n')
+    await f.engine.settleTurn({ session: f.session, turnId: 'run-1', outcome: 'completed' })
+    let release = () => {}
+    const held = new Promise<void>(resolve => (release = resolve))
+    const reached = vi.fn(() => held)
+    const undoing = f.engine.undoTurn({ session: f.session, turnId: 'run-1', requestId: 'request-one', beforeWrite: reached })
+    await vi.waitFor(() => expect(reached).toHaveBeenCalled())
+    // The queue is held by the undo; nothing is due yet, so this answers at once.
+    expect(await f.engine.noteFor({ session: f.session, requestId: 'message-1' })).toBeUndefined()
+    release()
+    await undoing
+
+    const gaveUp = new AbortController()
+    gaveUp.abort()
+    expect(await f.engine.noteFor({ session: f.session, requestId: 'message-2', signal: gaveUp.signal })).toBeUndefined()
+    expect(await f.engine.noteFor({ session: f.session, requestId: 'message-3' })).toContain('用户撤销了 1 轮改动')
   })
 })

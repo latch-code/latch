@@ -9,7 +9,7 @@ import { isIgnoredPath } from '../files/ignore.ts'
 import type { FileRoot } from '../files/resolve.ts'
 import { GitError, blobId, type GitReader, type IndexListing, type TreeEntry } from './git.ts'
 import type { Pair, Side, WorkSide } from './sides.ts'
-import type { ChangeUnavailable } from './types.ts'
+import type { ChangeUnavailable } from '@latch/protocol'
 import { signature } from './walk.ts'
 
 const NOFOLLOW = constants.O_NOFOLLOW ?? 0

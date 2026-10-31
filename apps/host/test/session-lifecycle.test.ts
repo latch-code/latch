@@ -605,18 +605,13 @@ describe('reading a run from its driver', () => {
   })
 })
 
-describe('with no one listening', () => {
-  it('asks no driver anything before a run starts, and a hung listing elsewhere holds no run', async () => {
+describe('the lookup before a run', () => {
+  it('asks only the run’s own driver, so a hung listing elsewhere holds no run', async () => {
     const fixture = modelHost()
     const t = await fixture.start()
     const owner = await t.enroll({ listener: 'unix' })
-    const lookup = vi.spyOn(t.host.bridge, 'runSummary')
     const sessionId = await create(owner, 'First')
     await expect.poll(async () => (await summary(t, sessionId)).runOutcome, SLOW).toBe('completed')
-    expect(lookup).not.toHaveBeenCalled()
-
-    // With a listener, the lookup asks only the run's own driver.
-    t.host.lifecycle.on('runStarted', () => {})
     const hung: Bridge = {
       start: async () => {},
       close: async () => {},

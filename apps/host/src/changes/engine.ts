@@ -6,19 +6,37 @@ import type { BigIntStats } from 'node:fs'
 import { constants } from 'node:fs'
 import { lstat, open, readdir, unlink, type FileHandle } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { FileDiff, FileMention } from '@latch/protocol'
+import {
+  CHANGE_NOTE_PREFIX,
+  CHANGE_SCOPES,
+  type Availability,
+  type ChangedFile,
+  type ChangeList,
+  type ChangePatch,
+  type ChangeReceipt,
+  type ChangeScope,
+  type DiscardPreview,
+  type DiscardResult,
+  type FileChangeDetail,
+  type FileDiff,
+  type FileMention,
+  type NotRestoredFile,
+  type TurnChanges,
+  type UndoBlock,
+} from '@latch/protocol'
 import { AppError, type ProjectFolder } from '@latch/sdk'
 import { canonicalJson } from '@latch/core/node-kit'
 import { excludeFromBackup } from '../backup.ts'
 import type { FileRoot } from '../files/resolve.ts'
 import { RUN_ID } from '../session-meta.ts'
-import { attributeChange, editsByFile } from './attribution.ts'
+import { attributeChange, editsByFile, uncoveredEdits, type FolderSpellings } from './attribution.ts'
 import { capture, compare, sameState, stateOf } from './capture.ts'
 import { EMPTY_TEXT, TEXT_LIMIT } from './diff.ts'
 import { BlobIdCache, gitPairs, type GitScope } from './git-scope.ts'
 import { GitReader, blobId, findGit } from './git.ts'
 import { ObjectStore, hashHandle, type CloneFile } from './objects.ts'
 import {
+  NAMED_FILE_LIMIT,
   SNAPSHOTS_DIR,
   SessionFiles,
   directoryKey,
@@ -27,25 +45,12 @@ import {
   type FileState,
   type Manifest,
   type Receipt,
+  type TurnNote,
   type TurnRecord,
 } from './records.ts'
 import { removeFrom, writeInto, type Source } from './restore.ts'
 import { Contents, compareSides, describe, hunksOf, patchOf, readWorkFile, sha256, type Pair, type Side } from './sides.ts'
-import {
-  CHANGE_SCOPES,
-  type Availability,
-  type ChangedFile,
-  type ChangeList,
-  type ChangePatch,
-  type ChangeReceipt,
-  type ChangeScope,
-  type ChangeWritePlan,
-  type DiscardResult,
-  type DiscardTarget,
-  type FileChangeDetail,
-  type TurnChanges,
-  type UndoBlock,
-} from './types.ts'
+import type { ChangeWritePlan, DiscardTarget } from './types.ts'
 import { ProtectedIndex, fileKey, realRoots, signature, splitKey, walkFolders } from './walk.ts'
 
 const NOFOLLOW = constants.O_NOFOLLOW ?? 0
@@ -118,6 +123,8 @@ interface SessionState {
   files: SessionFiles
   head?: Manifest
   turns: TurnRecord[]
+  /** A note owed while the session had no turn to hold it. */
+  note?: TurnNote
   /** The turn this process saw start and not yet settle. */
   running?: string
 }
@@ -151,6 +158,15 @@ interface Step {
   to?: { mode: number; hash: string; source: Source }
   /** Recognises the file to remove. */
   expect?: (handle: FileHandle, info: BigIntStats) => Promise<boolean>
+  /** The content the plan saw there, so a plan confirmed earlier no longer matches once the file changes. */
+  seen?: string
+}
+
+/** What a plan leaves as it is. */
+interface Plan {
+  steps: Step[]
+  skipped: number
+  notRestored: NotRestoredFile[]
 }
 
 interface Scoped {
@@ -174,6 +190,7 @@ const BLOCKS: Record<UndoBlock, [string, string]> = {
   'no-changes': ['change-nothing', '这一轮没有改动文件。'],
   undone: ['change-undone', '这一轮的改动已经撤销。'],
   'not-undone': ['change-not-undone', '这一轮的改动没有撤销，无需恢复。'],
+  'not-retained': ['change-not-retained', '这一轮改动的文件没有留存或可能含密钥，无法撤销。'],
 }
 const blocked = (reason: UndoBlock) => new AppError(409, BLOCKS[reason][0], BLOCKS[reason][1])
 
@@ -196,6 +213,49 @@ function checkScope(scope: string): asserts scope is ChangeScope {
 
 const sameFolders = (a: readonly FileRoot[], b: readonly FileRoot[]) =>
   a.length === b.length && a.every((folder, index) => folder.id === b[index]!.id && folder.path === b[index]!.path)
+
+const notesOf = (state: Pick<SessionState, 'turns' | 'note'>): TurnNote[] => [
+  ...state.turns.flatMap(turn => (turn.note ? [turn.note] : [])),
+  ...(state.note ? [state.note] : []),
+]
+
+const reasonOf = (state: FileState): NotRestoredFile['reason'] => (state.kept === 'secret' ? 'secret' : 'not-retained')
+
+/** The note's words, from the notes of the turns it covers. */
+function noteText(notes: readonly TurnNote[]): string {
+  const of = (kind: TurnNote['kind']) => notes.filter(note => note.kind === kind)
+  const undone = of('undo').length,
+    redone = of('redo').length,
+    files = notes.reduce((sum, note) => sum + (note.kind === 'files' ? note.files : (note.discarded ?? 0)), 0),
+    skipped = notes.reduce((sum, note) => sum + note.skipped, 0)
+  const parts = [
+    ...(undone ? [`用户撤销了 ${undone} 轮改动，相关文件已回到${undone > 1 ? '那些轮次' : '那一轮'}开始时的内容`] : []),
+    ...(redone ? [`用户恢复了之前撤销的 ${redone} 轮改动，相关文件已回到${redone > 1 ? '那些轮次' : '那一轮'}结束时的内容`] : []),
+    ...(files ? [`用户撤销了 ${files} 个文件的改动`] : []),
+    ...(skipped ? [`有 ${skipped} 个文件没有留存或可能含密钥，没有改动`] : []),
+  ]
+  return `${CHANGE_NOTE_PREFIX}在这条消息之前，${parts.join('；')}。不要假定文件还是你上次看到的样子，需要时重新读取。`
+}
+
+/**
+ * A note after files were written for this turn. An undo and its redo cancel out while nothing has been told yet; what a
+ * discard wrote stays owed through both.
+ */
+function nextNote(current: TurnNote | undefined, kind: TurnNote['kind'], files: number, skipped: number): TurnNote | undefined {
+  const pending = current?.told ? undefined : current
+  if (kind === 'files') {
+    // A discard that wrote nothing changed nothing the engine knows about.
+    if (!files) return pending
+    if (!pending) return { kind, files, skipped }
+    return pending.kind === 'files'
+      ? { kind, files: pending.files + files, skipped: pending.skipped + skipped }
+      : { kind: pending.kind, files: pending.files, discarded: (pending.discarded ?? 0) + files, skipped: pending.skipped + skipped }
+  }
+  const discarded = pending?.kind === 'files' ? pending.files : (pending?.discarded ?? 0)
+  if (pending && pending.kind !== 'files' && pending.kind !== kind)
+    return discarded ? { kind: 'files', files: discarded, skipped: 0 } : undefined
+  return files || skipped ? { kind, files, skipped, ...(discarded ? { discarded } : {}) } : pending
+}
 
 /** A deleted file whose recorded content reappears at a new path in the same folder was renamed. */
 function renames(pairs: Pair[]): Pair[] {
@@ -285,8 +345,8 @@ export class ChangesEngine {
     if (!state) {
       state = (async (): Promise<SessionState> => {
         const files = new SessionFiles(join(project.directory, 'sessions', directoryKey(sessionId)), sessionId, project.id)
-        const [head, turns] = await Promise.all([files.readHead(), files.readTurns()])
-        return { id: sessionId, files, ...(head ? { head } : {}), turns }
+        const [head, turns, note] = await Promise.all([files.readHead(), files.readTurns(), files.readNote()])
+        return { id: sessionId, files, ...(head ? { head } : {}), turns, ...(note ? { note } : {}) }
       })()
       state.catch(() => project.sessions.delete(sessionId))
       project.sessions.set(sessionId, state)
@@ -311,7 +371,7 @@ export class ChangesEngine {
   private async save(project: ProjectState, state: SessionState): Promise<void> {
     await privateDirectory(state.files.directory)
     await state.files.writeHead(state.head)
-    await state.files.writeTurns(state.turns)
+    await state.files.writeTurns(state.turns, state.note)
     project.index?.set(state.id, this.indexOf(state))
   }
 
@@ -453,8 +513,12 @@ export class ChangesEngine {
       const head = await this.snapshot(project, roots, guard, previous)
       const between = previous ? compare(previous, head) : { changes: [], partial: false }
       state.head = head
+      // The message that carried a note has reached the engine with this turn; what no message carried stays due.
+      const told = <T extends { note?: TurnNote }>(holder: T): T =>
+        holder.note?.requestId && !holder.note.told ? { ...holder, note: { ...holder.note, told: true as const } } : holder
+      if (state.note) state.note = told({ note: state.note }).note!
       state.turns = [
-        ...state.turns,
+        ...state.turns.map(told),
         {
           turnId,
           startedAt: iso(startedAt),
@@ -502,14 +566,19 @@ export class ChangesEngine {
   ): Promise<void> {
     const start = state.head
     let changes: Change[] = [],
-      partial = turn.partial ?? false
+      partial = turn.partial ?? false,
+      notCovered: string[] = []
     if (start && state.turns.at(-1) === turn) {
       const guard = await ProtectedIndex.of(this.options.protectedPaths)
       const end = await this.snapshot(project, await realRoots(start.folders, guard), guard, start)
       const compared = compare(start, end)
       changes = compared.changes
       partial ||= compared.partial
-      if (edits) await this.attribute(project, changes, edits, start, folders)
+      if (edits) {
+        const spellings = this.spellings(start, folders)
+        await this.attribute(project, changes, edits, spellings)
+        notCovered = uncoveredEdits(edits, spellings)
+      }
       state.head = end
     } else partial = true
     const settled: TurnRecord = {
@@ -520,6 +589,7 @@ export class ChangesEngine {
       changes,
       attributed: edits !== undefined,
       ...(partial ? { partial: true as const } : {}),
+      ...(notCovered.length ? { notCovered } : {}),
     }
     state.turns = state.turns.map(item => (item === turn ? settled : item))
     if (state.running === turn.turnId) delete state.running
@@ -527,17 +597,14 @@ export class ChangesEngine {
     if (await this.enforceCap(project)) await this.collect(project)
   }
 
-  private async attribute(
-    project: ProjectState,
-    changes: Change[],
-    edits: readonly FileDiff[],
-    start: Manifest,
-    folders: readonly ProjectFolder[],
-  ) {
-    const spellings = start.folders.map(folder => ({
+  private spellings(start: Manifest, folders: readonly ProjectFolder[]): FolderSpellings[] {
+    return start.folders.map(folder => ({
       id: folder.id,
       paths: [folder.path, ...folders.filter(item => item.id === folder.id).map(item => item.path)],
     }))
+  }
+
+  private async attribute(project: ProjectState, changes: Change[], edits: readonly FileDiff[], spellings: readonly FolderSpellings[]) {
     const byFile = editsByFile(edits, spellings)
     const contents = new Contents({ objects: project.objects }, this.limits.readBytes)
     for (const change of changes) {
@@ -779,6 +846,7 @@ export class ChangesEngine {
       const list: ChangeList = { scope: input.scope, files, totals, ...scoped.list }
       if (input.scope === 'turn' && scoped.turn) {
         if (scoped.turn.undone) list.undone = true
+        if (scoped.turn.notCovered?.length) list.notCovered = scoped.turn.notCovered
         list.undo = await this.availability(scoped, input.session, 'undo')
         list.redo = await this.availability(scoped, input.session, 'redo')
       }
@@ -869,7 +937,41 @@ export class ChangesEngine {
         state: turn.state === 'settled' ? 'settled' : state.running === turn.turnId ? 'running' : 'interrupted',
         ...(turn.state === 'settled' ? { files: turn.changes.length } : {}),
         ...(turn.undone ? { undone: true as const } : {}),
+        ...(turn.note && !turn.note.told ? { notePending: true as const } : {}),
       }))
+    })
+  }
+
+  /**
+   * The note for this message (`requestId`), when files were written back behind the engine's memory since it last
+   * heard. A retry of the message gets the same words, because a driver refuses a request ID with different text; the
+   * note counts as told once a turn begins.
+   */
+  async noteFor(input: {
+    session: Pick<ChangesSession, 'id' | 'projectId'>
+    requestId: string
+    /** The message left without the note: it stays due for the next one. */
+    signal?: AbortSignal
+  }): Promise<string | undefined> {
+    const { session, requestId, signal } = input
+    const due = (state: SessionState) => notesOf(state).some(note => !note.told || note.requestId === requestId)
+    return this.track(async () => {
+      const project = await this.project(session.projectId)
+      // Every message asks, so one with no note due does not queue behind a snapshot of the project.
+      if (!due(await this.session(project, session.id))) return undefined
+      return this.locked(project, async () => {
+        if (signal?.aborted) return undefined
+        const state = await this.session(project, session.id)
+        const carried = notesOf(state).filter(note => note.requestId === requestId)
+        if (carried.length) return noteText(carried)
+        if (!due(state)) return undefined
+        const carrying = <T extends { note?: TurnNote }>(holder: T): T =>
+          holder.note && !holder.note.told ? { ...holder, note: { ...holder.note, requestId } } : holder
+        state.turns = state.turns.map(carrying)
+        if (state.note) state.note = carrying({ note: state.note }).note!
+        await this.save(project, state)
+        return noteText(notesOf(state).filter(note => note.requestId === requestId))
+      })
     })
   }
 
@@ -909,7 +1011,8 @@ export class ChangesEngine {
 
   /**
    * What undo (back to the turn's start) or redo (forward to its end) would write. A file already in the target state is
-   * left alone, one in neither state blocks the whole change, and one whose target content was not kept is skipped.
+   * left alone and one in neither state blocks the whole change. A file with either side not kept is skipped: writing
+   * over or removing it could not be reversed, and redo must find what undo left.
    */
   private async plan(
     scoped: { project: ProjectState; state: SessionState },
@@ -917,7 +1020,7 @@ export class ChangesEngine {
     session: ChangesSession,
     direction: 'undo' | 'redo',
     only?: ReadonlySet<string>,
-  ): Promise<{ steps: Step[]; skipped: number } | { block: UndoBlock }> {
+  ): Promise<Plan | { block: UndoBlock }> {
     const { project, state } = scoped
     if (state.running) return { block: 'running' }
     if (turn.state !== 'settled') return { block: 'not-settled' }
@@ -926,13 +1029,16 @@ export class ChangesEngine {
     const changes = turn.changes.filter(change => !only || only.has(fileKey(change.root, change.path)))
     if (!changes.length) return { block: 'no-changes' }
     const roots = await this.writableRoots(state, session, await ProtectedIndex.of(this.options.protectedPaths))
-    const steps: Step[] = []
+    const steps: Step[] = [],
+      notRestored: NotRestoredFile[] = []
     let skipped = 0
     for (const change of changes) {
       const from = direction === 'undo' ? change.after : change.before,
         to = direction === 'undo' ? change.before : change.after
-      if (to && (to.kept !== 'stored' || !to.hash)) {
+      const lost = [to, from].find(side => side && (side.kept !== 'stored' || !side.hash))
+      if (lost) {
         skipped++
+        if (notRestored.length < NAMED_FILE_LIMIT) notRestored.push({ root: change.root, path: change.path, reason: reasonOf(lost) })
         continue
       }
       const root = roots.find(item => item.id === change.root)
@@ -963,7 +1069,9 @@ export class ChangesEngine {
             this.matches({ mode: Number(info.mode & 0o777n), sig: signature(info), hash: await hashHandle(handle) }, from),
         })
     }
-    return { steps, skipped }
+    // A whole-turn change that may touch nothing is not an undo; 撤销此文件 still answers with the file it left.
+    if (!only && skipped === changes.length) return { block: 'not-retained' }
+    return { steps, skipped, notRestored }
   }
 
   private async availability(scoped: Scoped, session: ChangesSession, direction: 'undo' | 'redo'): Promise<Availability> {
@@ -978,7 +1086,7 @@ export class ChangesEngine {
     skipped: number,
     extra: Partial<ChangeWritePlan>,
   ): ChangeWritePlan {
-    const listed = steps.map(step => [step.root.id, step.path, step.to?.hash ?? null, step.to?.mode ?? null])
+    const listed = steps.map(step => [step.root.id, step.path, step.to?.hash ?? null, step.to?.mode ?? null, step.seen ?? null])
     return {
       action,
       sessionId: session.id,
@@ -1031,6 +1139,7 @@ export class ChangesEngine {
         this.writePlan(direction, session, plan.steps, plan.skipped, { turnId, scope: 'turn' }),
         input.beforeWrite,
       )
+      const note = nextNote(turn.note, direction, done.restored + done.removed, plan.skipped)
       const receipt: Receipt = {
         sessionId: session.id,
         turnId,
@@ -1038,9 +1147,14 @@ export class ChangesEngine {
         action: direction,
         ...done,
         skipped: plan.skipped,
+        notRestored: plan.notRestored,
+        notCovered: turn.notCovered ?? [],
+        noteNextTurn: note !== undefined,
         at: iso(this.now()),
       }
       const updated: TurnRecord = { ...turn, receipts: [...turn.receipts, receipt].slice(-8) }
+      if (note) updated.note = note
+      else delete updated.note
       if (direction === 'undo') updated.undone = { at: receipt.at, requestId }
       else delete updated.undone
       state.turns = state.turns.map(item => (item === turn ? updated : item))
@@ -1084,18 +1198,71 @@ export class ChangesEngine {
           this.writePlan('discard', session, plan.steps, plan.skipped, { turnId: turn.turnId, scope: 'turn' }),
           input.beforeWrite,
         )
-        return { ...done, skipped: plan.skipped }
+        return {
+          ...done,
+          skipped: plan.skipped,
+          notRestored: plan.notRestored,
+          noteNextTurn: await this.noteFiles(project, state, turn, done, plan.skipped),
+        }
       }
       if (state.running) throw blocked('running')
-      return this.discardUncommitted(session, target.files, input.beforeWrite)
+      const plan = await this.planUncommitted(session, target.files)
+      const done = await this.write(
+        plan.steps,
+        this.writePlan('discard', session, plan.steps, plan.skipped, { scope: 'uncommitted' }),
+        input.beforeWrite,
+      )
+      const last = state.turns.at(-1)
+      return {
+        ...done,
+        skipped: plan.skipped,
+        notRestored: plan.notRestored,
+        noteNextTurn: await this.noteFiles(project, state, last, done, plan.skipped),
+      }
     })
   }
 
-  private async discardUncommitted(
-    session: ChangesSession,
-    files: readonly FileMention[] | undefined,
-    beforeWrite: BeforeWrite,
-  ): Promise<DiscardResult> {
+  /** What discarding uncommitted changes would do, for the confirmation it needs. Writes nothing. */
+  async previewDiscard(input: { session: ChangesSession; files?: readonly FileMention[] }): Promise<Omit<DiscardPreview, 'warning'>> {
+    const { session } = input
+    checkSession(session)
+    return this.mutate(session.projectId, async project => {
+      if ((await this.session(project, session.id)).running) throw blocked('running')
+      const plan = await this.planUncommitted(session, input.files)
+      const written = this.writePlan('discard', session, plan.steps, plan.skipped, { scope: 'uncommitted' })
+      return {
+        restore: written.restore,
+        remove: written.remove,
+        skipped: written.skipped,
+        planHash: written.planHash,
+        removes: plan.steps
+          .filter(step => !step.to)
+          .slice(0, NAMED_FILE_LIMIT)
+          .map(step => ({ root: step.root.id, path: step.path })),
+        notRestored: plan.notRestored,
+      }
+    })
+  }
+
+  /** Records that files changed behind the engine's memory, on the turn the discard concerns or else the session; true when a note is due. */
+  private async noteFiles(
+    project: ProjectState,
+    state: SessionState,
+    turn: TurnRecord | undefined,
+    done: { restored: number; removed: number },
+    skipped: number,
+  ): Promise<boolean> {
+    const current = turn ? turn.note : state.note
+    const note = nextNote(current, 'files', done.restored + done.removed, skipped)
+    if (!note) return false
+    if (note === current) return true
+    if (turn) state.turns = state.turns.map(item => (item === turn ? { ...turn, note } : item))
+    else state.note = note
+    await this.save(project, state)
+    return true
+  }
+
+  private async planUncommitted(session: ChangesSession, files: readonly FileMention[] | undefined): Promise<Plan> {
     const git = await this.gitScope(session, 'uncommitted')
     if (git.unavailable) throw new AppError(409, 'change-not-git', '这些文件夹没有可以撤销的未提交改动。')
     const wanted = files ? new Set(files.map(file => fileKey(file.root, file.path))) : undefined
@@ -1108,36 +1275,51 @@ export class ChangesEngine {
     const blobs = await this.blobsFor({ ...git, pairs }, this.limits.discardBytes, this.limits.cloneLimit)
     const contents = new Contents({ blobs: oid => blobs.get(oid) }, this.limits.discardBytes)
     const roots = await realRoots(session.folders, await ProtectedIndex.of(this.options.protectedPaths))
-    const steps: Step[] = []
+    const steps: Step[] = [],
+      notRestored: NotRestoredFile[] = []
     let skipped = 0
+    const skip = (pair: Pair, reason: NotRestoredFile['reason'], path = pair.path) => {
+      skipped++
+      if (notRestored.length < NAMED_FILE_LIMIT) notRestored.push({ root: pair.root, path, reason })
+    }
     for (const pair of pairs) {
       const root = roots.find(item => item.id === pair.root)
+      if (!root) {
+        skip(pair, 'folder-missing')
+        continue
+      }
       // Content that may hold a secret is neither written nor removed here.
-      if (!root || (await compareSides(pair, contents)).hidden === 'secret') {
-        skipped++
+      if ((await compareSides(pair, contents)).hidden === 'secret') {
+        skip(pair, 'secret')
         continue
       }
       const id = pair.after ? git.workIds.get(pair.after) : undefined
       if (pair.after && (!pair.before || pair.oldPath)) {
         if (!id) {
-          skipped++
+          skip(pair, 'not-retained')
           continue
         }
         const format = id.length === 64 ? 'sha256' : 'sha1'
-        steps.push({ root, path: pair.path, expect: async handle => blobId(await handle.readFile(), format) === id })
+        steps.push({ root, path: pair.path, seen: id, expect: async handle => blobId(await handle.readFile(), format) === id })
       }
+      // A file too large to hash is still bound to what the plan saw, by its signature.
+      const seen =
+        id
+        ?? (pair.after
+          ? await lstat(join(root.path, ...pair.path.split('/')), { bigint: true }).then(signature, () => undefined)
+          : undefined)
       if (pair.before?.from === 'blob') {
         const bytes = blobs.get(pair.before.oid)
-        if (!bytes) skipped++
+        if (!bytes) skip(pair, 'not-retained', pair.oldPath ?? pair.path)
         else
           steps.push({
             root,
             path: pair.oldPath ?? pair.path,
+            ...(seen ? { seen } : {}),
             to: { mode: pair.before.mode === '100755' ? 0o755 : 0o644, hash: sha256(bytes), source: bytes },
           })
       }
     }
-    const done = await this.write(steps, this.writePlan('discard', session, steps, skipped, { scope: 'uncommitted' }), beforeWrite)
-    return { ...done, skipped }
+    return { steps, skipped, notRestored }
   }
 }

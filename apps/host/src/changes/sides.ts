@@ -23,7 +23,7 @@ import {
 } from './diff.ts'
 import type { ObjectStore } from './objects.ts'
 import type { Change, FileState } from './records.ts'
-import type { ChangedFile, ChangeHunk } from './types.ts'
+import type { ChangedFile, ChangeHunk } from '@latch/protocol'
 
 const NOFOLLOW = constants.O_NOFOLLOW ?? 0
 

@@ -1312,6 +1312,24 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     })
     startupCleanup.push(() => fileTracking.close())
     const directoryReader = await FileDirectoryReader.open()
+    // A file handle is usable only while the session's original folders remain available.
+    async function sessionRoots(sessionId: string): Promise<ProjectFolder[] | 'removed' | undefined> {
+      const task = (await harnessHub.listTasks()).find(item => item.id === sessionId)
+      if (!task) return undefined
+      try {
+        await assertSessionWorkspace(sessionId)
+      } catch (error) {
+        if (error instanceof AppError && ['workspace-changed', 'workspace-disabled'].includes(error.code)) return 'removed'
+        throw error
+      }
+      const available = await canonicalSet(usablePrimaries())
+      const folders = scopeFolders(task, workspaceRoot)
+      for (const folder of folders) {
+        const root = await canonicalPath(folder.path).catch(() => undefined)
+        if (root === undefined || !available.has(root)) return 'removed'
+      }
+      return folders
+    }
     const fileRoutes = createFileRoutes({
       requestSignal: caller => (caller as Caller).nativeOpening?.signal,
       contentChunkBytes: caller => ((caller as Caller).nativeOpening?.bulk ? 65_536 : undefined),
@@ -1348,24 +1366,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       now,
       audit,
       limiter: limits.files,
-      // A file handle is usable only while the session's original folders remain available.
-      async sessionRoots(sessionId) {
-        const task = (await harnessHub.listTasks()).find(item => item.id === sessionId)
-        if (!task) return undefined
-        try {
-          await assertSessionWorkspace(sessionId)
-        } catch (error) {
-          if (error instanceof AppError && ['workspace-changed', 'workspace-disabled'].includes(error.code)) return 'removed'
-          throw error
-        }
-        const available = await canonicalSet(usablePrimaries())
-        const folders = scopeFolders(task, workspaceRoot)
-        for (const folder of folders) {
-          const root = await canonicalPath(folder.path).catch(() => undefined)
-          if (root === undefined || !available.has(root)) return 'removed'
-        }
-        return folders
-      },
+      sessionRoots,
       recheck: (caller, scope) => {
         recheck(caller as Caller, scope)
         if (!caller.device || devices.get(caller.device.id)?.dataScope !== caller.device.dataScope)
@@ -1587,6 +1588,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       config,
       plugins: registry,
       hub: harnessHub,
+      guardedPaths,
+      sessionRoots,
+      async assertSessionInput(caller, sessionId) {
+        recheck(caller, 'run')
+        assertSessionCeiling(caller, await assertSessionAccess(caller, sessionId))
+        await assertRemoteSession(caller, sessionId)
+        await assertSessionWorkspace(sessionId)
+        recheck(caller, 'run')
+      },
       lifecycle: lifecycleListeners,
       limits,
       closing: () => closing,
