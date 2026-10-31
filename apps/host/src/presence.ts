@@ -23,6 +23,7 @@ import { presenceReason } from './presence-reason.ts'
 
 export {
   argumentsText,
+  enrollmentSubject,
   envNamesText,
   policySubject,
   presenceReason,
@@ -40,8 +41,9 @@ export {
  *
  * `duringFullAccess`: while a full-access (L3) session runs or waits for an answer, its unsandboxed process may be the
  * one asking. What outlives that session (another device, more rights for one, a wider policy, a new model-service
- * address) is refused until it ends. Approving a Standard R2 call, starting another agent and widening a session's mode
- * proceed: an agent with full access can already do the same on this computer itself. Every action has to say which.
+ * address, an automation's scheduled runs) is refused until it ends. Approving a Standard R2 call, starting another agent
+ * and widening a session's mode proceed: an agent with full access can already do the same on this computer itself.
+ * Every action has to say which.
  */
 export const PRESENCE_ACTIONS: Readonly<
   Record<
@@ -51,8 +53,9 @@ export const PRESENCE_ACTIONS: Readonly<
 > = {
   'plugin.package.apply': { title: '应用自定义插件', requireBiometric: true, duringFullAccess: 'refuse' },
   'device.enroll': { title: '允许新设备连接', requireBiometric: true, duringFullAccess: 'refuse' },
-  'device.enroll-native': { title: '配对原生设备', requireBiometric: true, duringFullAccess: 'proceed' },
+  'device.enroll-native': { title: '配对原生设备', requireBiometric: true, duringFullAccess: 'refuse' },
   'agent.probe': { title: '测试启动 Agent', requireBiometric: true, duringFullAccess: 'proceed' },
+  'automation.grant': { title: '允许自动化按时运行', requireBiometric: true, duringFullAccess: 'refuse' },
   'device.grant': { title: '为设备增加权限', requireBiometric: true, duringFullAccess: 'refuse' },
   'task.start-l3': { title: '开启完全访问会话', requireBiometric: true, duringFullAccess: 'proceed' },
   'task.mode-widen': { title: '放宽会话权限模式', requireBiometric: true, duringFullAccess: 'proceed' },
@@ -62,7 +65,7 @@ export const PRESENCE_ACTIONS: Readonly<
     duringFullAccess: 'refuse',
     target: target => `允许 Host 访问 ${target}`,
   },
-  // No longer asked for (keys save without one or with the address); kept for older audit records.
+  // No longer asked for (keys save without one or with the address), so no sentence names it; kept for older audit records.
   'provider.set-key': { title: '保存模型服务密钥', requireBiometric: false, duringFullAccess: 'refuse' },
   // The first use of a model-service address: the address, its key and its outbound allowance in one confirmation.
   'provider.confirm-origin': {
@@ -150,7 +153,6 @@ export interface PresenceBackend {
     previewHash: string
     hashDisplay: string
     requireBiometric: boolean
-    pairingCode?: string
     signal: AbortSignal
   }): Promise<PresenceOutcome>
 }
@@ -286,7 +288,6 @@ class MacHelperBackend implements PresenceBackend {
     previewHash: string
     hashDisplay: string
     requireBiometric: boolean
-    pairingCode?: string
     signal: AbortSignal
   }): Promise<PresenceOutcome> {
     if (request.signal.aborted) return { result: 'cancelled' }
@@ -301,7 +302,6 @@ class MacHelperBackend implements PresenceBackend {
       previewHash: request.previewHash,
       timeoutSeconds: HELPER_TIMEOUT_SECONDS,
       requireBiometric: request.requireBiometric,
-      ...(request.pairingCode !== undefined ? { pairingCode: request.pairingCode } : {}),
     })}\n`
     return await new Promise<PresenceOutcome>(resolve => {
       let child: ChildProcessLike
@@ -496,16 +496,7 @@ export class PresenceService {
     target?: string
     /** A refusal names the sessions holding it back only for a requester that may view sessions. */
     revealBlocking?: boolean
-    /** Private helper input; never copied into a public ticket or preview. */
-    pairingCode?: string
   }): Promise<ConfirmationRecord> {
-    const nativePairing = input.action === 'device.enroll-native' && input.subject.form === 'device.enroll-native'
-    if (
-      nativePairing
-        ? !/^[0-9]{6}$/u.test(input.pairingCode ?? '')
-        : input.pairingCode !== undefined || input.action === 'device.enroll-native' || input.subject.form === 'device.enroll-native'
-    )
-      throw new AppError(400, 'pairing-code-required', '原生配对需要在 Mac 输入核对码')
     const shell = input.confirmationMethod === 'shell-local'
     if (
       shell
@@ -604,7 +595,6 @@ export class PresenceService {
               previewHash,
               hashDisplay,
               requireBiometric: PRESENCE_ACTIONS[input.action].requireBiometric,
-              ...(input.pairingCode !== undefined ? { pairingCode: input.pairingCode } : {}),
               signal: controller.signal,
             })
       } catch (error) {

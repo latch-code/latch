@@ -108,7 +108,7 @@ describe('permission states in a browser', () => {
     expect((await detail(sessionId)).approvals[0]?.risk).toBe('R2')
     await open(sessionId)
     const card = page.locator('[data-approval-id]')
-    await card.getByText('高风险 · 未登记的工具', { exact: true }).waitFor()
+    await card.getByText('高风险 · Latch 不认识的工具', { exact: true }).waitFor()
     await card.getByText('高风险操作只能在运行 Latch 的电脑上用 Latch 桌面端批准', { exact: true }).waitFor()
     expect(await card.getByRole('button', { name: /允许/ }).count()).toBe(0)
     await page.screenshot({ path: `${OUTPUT}/r2-browser-desktop.png`, fullPage: true, animations: 'disabled' })
@@ -207,7 +207,7 @@ describe('permission states in a browser', () => {
     await expect.poll(async () => (await detail(sessionId)).approvals.length).toBe(1)
     await open(sessionId)
     const card = '[data-approval-id]'
-    await page.locator(card).getByText('高风险 · 未登记的工具', { exact: true }).waitFor()
+    await page.locator(card).getByText('高风险 · Latch 不认识的工具', { exact: true }).waitFor()
     await expectUnmovedByInjectedStyles(page, [
       card,
       `${card} .tool-card-header`,
@@ -229,7 +229,7 @@ describe('permission states in a browser', () => {
     const arriving = await startHighRisk('看它到达')
     await open(quiet)
     const card = page.locator('[data-approval-id]')
-    await card.getByText('高风险 · 未登记的工具', { exact: true }).waitFor()
+    await card.getByText('高风险 · Latch 不认识的工具', { exact: true }).waitFor()
     // The motion tokens as the browser resolves them (a probe reads each through a transition property).
     const tokens = await page.evaluate(() => {
       const probe = document.createElement('div')
@@ -344,7 +344,7 @@ describe('permission states in a browser', () => {
 
     // The preview's disclosure opens over --m-panel and folds in 70% of it on the exit curve.
     await open(quiet)
-    await card.getByText('高风险 · 未登记的工具', { exact: true }).waitFor()
+    await card.getByText('高风险 · Latch 不认识的工具', { exact: true }).waitFor()
     const disclosure = await page.evaluate(() => {
       const panel = document.querySelector('[data-approval-id] .approval-panel')!
       const probe = document.createElement('div')
@@ -387,7 +387,7 @@ describe('permission states in a browser', () => {
     try {
       await open(sessionId)
       const card = page.locator('[data-approval-id]')
-      await card.getByText('高风险 · 未登记的工具', { exact: true }).waitFor()
+      await card.getByText('高风险 · Latch 不认识的工具', { exact: true }).waitFor()
       const bar = page.locator('.run-bar-collapse')
       const transcript = page.locator('.transcript')
       const cardShows = () =>

@@ -18,7 +18,7 @@ export interface HostView {
     reason?: Extract<PresenceAvailability, { status: 'unavailable' }>['reason']
   }
   tls: { origin: string } | null
-  native?: { enabled: boolean; inputsPaused: boolean; discoveryEpoch?: string; directoryEpoch?: string }
+  native?: { enabled: boolean; discoveryEpoch?: string; directoryEpoch?: string }
   policy: { localMaxLevel: PermissionLevel; remoteMaxLevel: PermissionLevel; allowL3: boolean }
   /** The Host hands a rejection's note (「告诉 Agent 改做什么」) to the built-in harness; older Hosts drop it. */
   rejectionNote?: true

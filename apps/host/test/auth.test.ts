@@ -862,7 +862,7 @@ describe('this computer', () => {
       const params = { enrollmentId: 'enr_x' }
       await presence.request({
         action: 'device.enroll',
-        subject: { form: 'device.enroll', slots: { fingerprint: 'AAAA AAAA AAAA AAAA AAAA', device: '受邀' } },
+        subject: { form: 'device.enroll-named', slots: { device: '受邀' } },
         requester: { deviceName: '受邀', listener: 'lan-tls', remoteAddress: '192.168.1.20' },
         lines: [],
         warnings: [],
@@ -908,8 +908,8 @@ describe('enrollment', () => {
       nonce: expect.any(String),
       expiresAt: new Date(context.clock.now + 120_000).toISOString(),
       hashDisplay: expect.stringMatching(/^[0-9a-f]{4}(-[0-9a-f]{4}){3}$/u),
-      // The system sheet names the fingerprint before the name the device chose for itself.
-      reason: `允许指纹 ${fingerprint} 的新设备「我的浏览器」连接`,
+      // A loopback peer may arrive through a forwarded port: the sheet names the device, never where it is.
+      reason: '允许「我的浏览器」连接这台 Mac',
     })
     const { preview } = await context.presence.waitForRequest()
     expect(preview.title).toBe('允许新设备连接')

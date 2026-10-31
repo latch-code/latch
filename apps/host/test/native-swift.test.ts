@@ -31,6 +31,10 @@ import {
   relayAuthorityInput,
   relayDirectoryInput,
   directoryEpochInput,
+  formatPairingPayload,
+  gatewayHash,
+  invitationCode,
+  parsePairingPayload,
 } from '@latch/link-wire'
 import { nodeCrypto } from '@latch/link-client/crypto'
 import { startTestHost } from './helpers/host.ts'
@@ -287,13 +291,12 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     const vectors = JSON.parse(await readFile(join(root, 'packages/testkit/vectors/link-v1.json'), 'utf8')) as {
       knock: string
       serverBinding: string
-      pairing: { code: string; knockSecret: string }
+      pairing: { knockSecret: string }
       nativeVerification: { text: string; recoverySecret: string }
     }
     expect(await invoke({ ...vectors, operation: 'vectors' })).toEqual({
       knock: vectors.knock,
       serverBinding: vectors.serverBinding,
-      pairingCode: vectors.pairing.code,
       knockSecret: vectors.pairing.knockSecret,
       verificationText: vectors.nativeVerification.text,
       recoverySecret: vectors.nativeVerification.recoverySecret,
@@ -311,6 +314,58 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         'hex',
       ),
     )
+  })
+  it('reads the pairing QR as the shared vectors pin it, and refuses what is not one', async () => {
+    const vectors = JSON.parse(await readFile(join(root, 'packages/testkit/vectors/link-v1.json'), 'utf8')) as {
+      pairingQr: {
+        rootSpki: string
+        secret: string
+        expiresAt: number
+        lan: Array<{ address: string; port: number }>
+        code: string
+        knockKey: string
+        encoded: string
+        invalid: unknown[]
+      }
+    }
+    const qr = vectors.pairingQr
+    const publicAddress = Buffer.from(qr.encoded, 'hex')
+    // The first endpoint's address, made public; the vector's second endpoint is untouched.
+    publicAddress.set([8, 8, 8, 8], 114)
+    const value = (await invoke({ pairingQr: qr, publicAddress: publicAddress.toString('hex'), operation: 'pairingQr' })) as {
+      lan: Array<{ address: string; port: number }>
+    } & Record<string, unknown>
+    expect(value).toEqual({
+      rootSpki: qr.rootSpki,
+      secret: qr.secret,
+      expiresAt: qr.expiresAt,
+      code: qr.code,
+      knockKey: qr.knockKey,
+      lan: qr.lan,
+      rejected: qr.invalid.length,
+      oldRefused: true,
+      foreignRefused: true,
+      expired: true,
+      linkRefused: true,
+      longRefused: true,
+      publicRefused: true,
+      recognized: true,
+      foreignRecognized: false,
+    })
+  })
+  it('reports a matching gateway hash for a Wi-Fi client and for the phone that is the hotspot, and none off the subnet', async () => {
+    const mask = 'fffffff0',
+      peer = '172.20.10.2',
+      expected = Buffer.from(await gatewayHash(nodeCrypto, peer, 28, '172.20.10.1')).toString('hex')
+    const gateway = async (input: Record<string, unknown>) => (await invoke({ operation: 'pairingGateway', peer, ...input })).hash
+    expect(await gateway({ interfaces: [{ address: '172.20.10.5', mask }], routers: ['172.20.10.1'] })).toBe(expected)
+    // The hotspot itself has no router on that network: it is the router.
+    expect(await gateway({ interfaces: [{ address: '172.20.10.1', mask }], routers: ['10.1.2.3'] })).toBe(expected)
+    expect(await gateway({ interfaces: [{ address: '192.168.1.5', mask: 'ffffff00' }], routers: ['192.168.1.1'] })).toBeUndefined()
+    // IPv6: the router is link-local, outside the prefix, and the Mac hashes that same address.
+    const v6Mask = 'ffffffffffffffff0000000000000000'
+    const v6 = Buffer.from(await gatewayHash(nodeCrypto, 'fd00::2', 64, 'fe80::1')).toString('hex')
+    expect(await gateway({ peer: 'fd00::2', interfaces: [{ address: 'fd00::9', mask: v6Mask }], routers: ['fe80::1'] })).toBe(v6)
   })
   it('accepts a root proof only for the pinned root, nonce, actual transport key and system clock', async () => {
     const rootKey = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }),
@@ -372,16 +427,13 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         },
       })
       try {
-        const response = await host.raw('unix', 'api/native/pairings', { method: 'POST', body: {} })
+        const response = await (await host.enroll({ listener: 'unix' })).request('native/pairings', { method: 'POST', body: {} })
         const { invitation } = (await response.json()) as { invitation: { payload: string } }
-        const payload = JSON.parse(Buffer.from(invitation.payload.slice('LATCHPAIR1.'.length), 'base64url').toString()) as {
-          rootSpki: string
-          invitation: string
-        }
+        const payload = parsePairingPayload(invitation.payload)
         const input = {
           port: host.host.nativePort,
-          rootSpki: Buffer.from(payload.rootSpki, 'base64url').toString('hex'),
-          knockKey: createHash('sha256').update(payload.invitation).digest('hex'),
+          rootSpki: Buffer.from(payload.rootSpki).toString('hex'),
+          knockKey: createHash('sha256').update(invitationCode(payload.secret)).digest('hex'),
         }
         expect(await invoke({ ...input, operation: 'nativeProbe' })).toEqual({ status: 401 })
         await writeFile(join(host.workspaceRoot, 'notes.txt'), 'Swift file fixture')
@@ -481,20 +533,17 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       },
     })
     try {
-      const response = await host.raw('unix', 'api/native/pairings', { method: 'POST', body: {} })
+      const response = await (await host.enroll({ listener: 'unix' })).request('native/pairings', { method: 'POST', body: {} })
       const { invitation } = (await response.json()) as { invitation: { payload: string } }
-      const payload = JSON.parse(Buffer.from(invitation.payload.slice('LATCHPAIR1.'.length), 'base64url').toString()) as {
-        rootSpki: string
-        invitation: string
-      }
+      const payload = parsePairingPayload(invitation.payload)
       expect(
         await invoke({
           operation: 'nativeLeaseExpiry',
           rejectRecovery,
           directRecovery,
           port: faulty.port,
-          rootSpki: Buffer.from(payload.rootSpki, 'base64url').toString('hex'),
-          knockKey: createHash('sha256').update(payload.invitation).digest('hex'),
+          rootSpki: Buffer.from(payload.rootSpki).toString('hex'),
+          knockKey: createHash('sha256').update(invitationCode(payload.secret)).digest('hex'),
         }),
       ).toEqual({
         recoveredWithoutSigning: !rejectRecovery,
@@ -855,14 +904,12 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
           dsaEncoding: 'ieee-p1363',
         }).toString('base64url'),
       }))
-      const invitation = {
-        v: 1,
-        rootSpki: Buffer.from(first.profile.device.rootSpki, 'base64').toString('base64url'),
-        invitation: `lpi1-${'A'.repeat(26)}`,
-        direct: [{ host: '127.0.0.1', port: 1 }],
-        relays: [],
-        expiresAt: new Date(now + 600_000).toISOString(),
-      }
+      const draftPayload = formatPairingPayload({
+        rootSpki: Buffer.from(first.profile.device.rootSpki, 'base64'),
+        secret: Buffer.alloc(16, 1),
+        expiresAt: Math.floor(now / 1000) + 600,
+        lan: [{ address: '127.0.0.1', port: 1 }],
+      })
       const input = {
         operation: 'profiles',
         directory: temporary,
@@ -871,7 +918,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         revocation: revocations[0],
         secondRevocation: revocations[1],
         draft: {
-          payload: `LATCHPAIR1.${Buffer.from(JSON.stringify(invitation)).toString('base64url')}`,
+          payload: draftPayload,
           keys: first.profile.keys,
           name: 'fixture draft',
         },
@@ -926,18 +973,13 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       await rm(temporary, { recursive: true, force: true })
     }
   })
-  it('uses Personal APIs from the actual Swift workspace after a local private-data grant without persisting hidden memory in chats', async () => {
+  it('uses Personal APIs from the actual Swift workspace without persisting hidden memory in chats', async () => {
     const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
     try {
       const owner = await host.enroll({ listener: 'unix' })
-      const response = await host.raw('unix', 'api/native/pairings', { method: 'POST', body: {} })
+      const response = await (await host.enroll({ listener: 'unix' })).request('native/pairings', { method: 'POST', body: {} })
       const { invitation } = (await response.json()) as { invitation: { payload: string } }
-      const result = await invoke({ operation: 'nativePersonal', payload: invitation.payload, port: host.host.nativePort }, async () => {
-        const devices = await owner.json<{ devices: Array<{ id: string; native?: unknown }> }>('devices')
-        const device = devices.devices.find(item => item.native !== undefined)
-        expect(device).toBeDefined()
-        expect((await owner.confirmed(`devices/${device!.id}`, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
-      })
+      const result = await invoke({ operation: 'nativePersonal', payload: invitation.payload, port: host.host.nativePort })
       expect(result).toEqual({
         personal: true,
         group: true,
@@ -946,7 +988,6 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         personalQueue: true,
         controlRecovery: true,
         windowRequired: true,
-        privateScopeRequired: true,
         privateHistory: true,
         cachedClassification: true,
         sameRequest: true,

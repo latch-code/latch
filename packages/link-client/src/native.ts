@@ -94,8 +94,12 @@ export async function acceptNative(
     const prefix = `${device.id}:`,
       replayKey = `${prefix}${hex(opening.slice(0, 16))}`
     const identityEntries = [...options.replay.keys()].filter(key => key.startsWith(prefix)).length
-    if (options.replay.has(replayKey) || options.replay.size >= 4096 || identityEntries >= 32)
-      throw new Error('Native authentication failed')
+    if (options.replay.has(replayKey)) throw new Error('Native authentication failed')
+    // A pairing QR's holder can mint knocks, so its entries guard nothing against it, and refusing here would let it lock
+    // the real phone out for the QR's whole life. The oldest gives way; other identities keep the hard limit.
+    if (device.kind === 'pairing' && identityEntries >= 32)
+      options.replay.delete([...options.replay.keys()].find(key => key.startsWith(prefix))!)
+    else if (options.replay.size >= 4096 || identityEntries >= 32) throw new Error('Native authentication failed')
     options.onKnock?.(device.id)
     options.replay.set(replayKey, now + 180_000)
     const mac = await serverBinding(nodeCrypto, device.knockKey, binding, opening.slice(0, 16), options.certificate.der)

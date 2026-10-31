@@ -3,7 +3,7 @@ import { createHash, createPrivateKey, generateKeyPairSync, sign, type KeyObject
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createTransportCertificate, openNativeHttp, type NativeHttpClient } from '@latch/link-client'
 import { nodeCrypto } from '@latch/link-client/crypto'
-import { nativeKnockSecret, nativeVerificationText } from '@latch/link-wire'
+import { invitationCode, nativeKnockSecret, nativeVerificationText, parsePairingPayload } from '@latch/link-wire'
 import { testDeviceKey, type TestDevice } from '@latch/testkit'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 
@@ -39,15 +39,13 @@ async function responseOutcome(response: Response): Promise<Outcome> {
 
 /** A phone paired through the native entry the way the App pairs, with its pairing opening still open. */
 async function pairPhone(t: TestHost) {
-  const created = await t.raw('unix', 'api/native/pairings', { method: 'POST', body: {} })
+  const created = await (await t.enroll({ listener: 'unix' })).request('native/pairings', { method: 'POST', body: {} })
   expect(created.status).toBe(201)
   const { invitation } = (await created.json()) as { invitation: { payload: string } }
-  const payload = JSON.parse(Buffer.from(invitation.payload.slice('LATCHPAIR1.'.length), 'base64url').toString()) as {
-    rootSpki: string
-    invitation: string
-  }
-  const rootSpki = Buffer.from(payload.rootSpki, 'base64url')
-  const knockKey = createHash('sha256').update(payload.invitation).digest()
+  const payload = parsePairingPayload(invitation.payload),
+    code = invitationCode(payload.secret)
+  const rootSpki = payload.rootSpki
+  const knockKey = createHash('sha256').update(code).digest()
   const device = createTransportCertificate()
   const verification = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
   const verificationSpki = verification.publicKey.export({ format: 'der', type: 'spki' })
@@ -65,7 +63,8 @@ async function pairPhone(t: TestHost) {
       const answer = await pairing.request('POST', '/link/api/enrollments', {
         name: '守卫测试手机',
         publicKey: device.spki.toString('base64url'),
-        invitation: payload.invitation,
+        invitation: code,
+        gatewayHash: '0'.repeat(64),
         native: { certificate: device.cert, verificationKey: verificationSpki.toString('base64url') },
       })
       expect(answer.status).toBe(202)
@@ -212,20 +211,12 @@ describe('route guards', () => {
           anonymous: [201],
         },
       ],
-      ['POST', 'native/input/pause', {}, { loopback: [401, 'unauthorized'], tls: [401, 'unauthorized'] }],
-      [
-        'POST',
-        'native/input/resume',
-        {},
-        { anonymous: [401, 'unauthorized'], member: [403, 'scope-required'], viewer: [403, 'local-only'], browser: [403, 'local-only'] },
-      ],
       [
         'GET',
         'native/info',
         undefined,
         { member: [403, 'scope-required'], browser: [403, 'local-only'], phone: [403, 'local-only'], anonymous: [200] },
       ],
-      ['PUT', 'native/config', {}, { anonymous: [401, 'unauthorized'], member: [403, 'scope-required'], browser: [403, 'local-only'] }],
       [
         'POST',
         'native/pairings',
@@ -235,7 +226,79 @@ describe('route guards', () => {
           member: [403, 'scope-required'],
           browser: [403, 'local-only'],
           phone: [403, 'local-only'],
-          anonymous: [201],
+          anonymous: [401, 'unauthorized'],
+        },
+      ],
+      [
+        'GET',
+        `native/pairings/inv_${'A'.repeat(22)}`,
+        undefined,
+        {
+          loopback: [401, 'unauthorized'],
+          member: [403, 'scope-required'],
+          browser: [403, 'local-only'],
+          phone: [403, 'local-only'],
+          anonymous: [401, 'unauthorized'],
+        },
+      ],
+      [
+        'DELETE',
+        `native/pairings/inv_${'A'.repeat(22)}`,
+        undefined,
+        {
+          loopback: [401, 'unauthorized'],
+          member: [403, 'scope-required'],
+          browser: [403, 'local-only'],
+          phone: [403, 'local-only'],
+          anonymous: [401, 'unauthorized'],
+        },
+      ],
+      [
+        'DELETE',
+        `native/pairings/inv_${'A'.repeat(22)}/device`,
+        undefined,
+        {
+          loopback: [401, 'unauthorized'],
+          member: [403, 'scope-required'],
+          browser: [403, 'local-only'],
+          phone: [403, 'local-only'],
+          anonymous: [401, 'unauthorized'],
+        },
+      ],
+      [
+        'DELETE',
+        'native/directory',
+        undefined,
+        {
+          loopback: [401, 'unauthorized'],
+          member: [403, 'scope-required'],
+          browser: [403, 'local-only'],
+          phone: [403, 'local-only'],
+          anonymous: [401, 'unauthorized'],
+        },
+      ],
+      [
+        'DELETE',
+        `native/relays/${'a'.repeat(32)}`,
+        undefined,
+        {
+          loopback: [401, 'unauthorized'],
+          member: [403, 'scope-required'],
+          browser: [403, 'local-only'],
+          phone: [403, 'local-only'],
+          anonymous: [401, 'unauthorized'],
+        },
+      ],
+      [
+        'PATCH',
+        `devices/${UNKNOWN_DEVICE}/name`,
+        { name: '新名字' },
+        {
+          loopback: [401, 'unauthorized'],
+          member: [403, 'scope-required'],
+          browser: [403, 'local-only'],
+          phone: [403, 'local-only'],
+          anonymous: [401, 'unauthorized'],
         },
       ],
       ['GET', 'native/pairing', undefined, { anonymous: [401, 'unauthorized'], browser: [401, 'unauthorized'] }],
@@ -293,7 +356,6 @@ describe('route guards', () => {
       ['POST', 'native/proximity', { gatewayHash: '0'.repeat(64) }, { phone: [403, 'native-verification-required'] }],
       ['GET', 'devices', undefined, { phone: [403, 'native-verification-required'] }],
       ['GET', 'native/info', undefined, { phone: [403, 'native-verification-required'] }],
-      ['POST', 'native/input/resume', {}, { phone: [403, 'native-verification-required'] }],
       ['POST', 'pairings', {}, { phone: [403, 'native-verification-required'] }],
     ])
     await verifyPhone(t, phone, deviceId, verificationKey)
@@ -305,11 +367,8 @@ describe('route guards', () => {
       ['GET', 'enrollments', undefined, { phone: [403, 'local-only'] }],
       ['POST', 'pairings', {}, { phone: [403, 'local-only'] }],
       ['GET', 'native/info', undefined, { phone: [403, 'local-only'] }],
-      ['PUT', 'native/config', {}, { phone: [403, 'local-only'] }],
-      ['POST', 'native/input/resume', {}, { phone: [403, 'local-only'] }],
       ['POST', 'native/pairings', {}, { phone: [403, 'local-only'] }],
       ['POST', 'native/proximity', { gatewayHash: '0'.repeat(64) }, { phone: [200] }],
-      ['POST', 'native/input/pause', {}, { phone: [200] }],
     ])
     expect(results).toEqual(expected)
   })

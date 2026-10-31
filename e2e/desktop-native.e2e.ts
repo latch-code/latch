@@ -2,7 +2,11 @@ import { _electron, type ElectronApplication, type Page } from '@playwright/test
 import { mkdtemp, mkdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { createHash, createPrivateKey, generateKeyPairSync, sign } from 'node:crypto'
+import { connect } from 'node:net'
+import { describe, expect, it, vi } from 'vitest'
+import { createTransportCertificate, openNativeHttp } from '@latch/link-client'
+import { invitationCode, parsePairingPayload } from '@latch/link-wire'
 import { writeHostState } from '@latch/host/host-state'
 import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { latchEnv } from '@latch/host/env'
@@ -19,13 +23,13 @@ async function size(application: ElectronApplication, page: Page, width: number)
   await page.waitForFunction(next => innerWidth === next, width)
 }
 async function capture(page: Page, name: string) {
-  // This helper is used only before an invitation exists. A generated pairing QR is a secret.
+  // This helper is used only while no QR is on screen. A generated pairing QR is a secret.
   expect(await page.getByAltText('原生客户端配对二维码').count()).toBe(0)
   await page.screenshot({ path: `test-results/native-phone/${name}.png`, animations: 'disabled' })
 }
 
 describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 'darwin')('native desktop phone settings', () => {
-  it('configures through OS presence, displays bounded layouts, creates a native QR, and pauses inputs without confirmation', async () => {
+  it('shows phone access in bounded layouts, issues a QR that dies with its panel, and leaves nothing to configure', async () => {
     const root = await mkdtemp(join(tmpdir(), 'latch-electron-native-phone-'))
     const host = await startTestHost({
       native: { host: '127.0.0.1', port: 0 },
@@ -69,97 +73,95 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       host.presence.approveNext()
       await page.locator('.app-shell[data-connection="connected"]').waitFor()
       await openSettings(page, '设备')
-      await page.getByText('原生 App（开发预览）', { exact: true }).waitFor()
       await capture(page, 'ready-desktop')
-      await page.getByRole('button', { name: '设置连接', exact: true }).click()
-      await page.getByRole('button', { name: '添加自建中继', exact: true }).click()
-      const dialog = page.getByRole('dialog', { name: '设置连接', exact: true })
-      await dialog.getByRole('textbox', { name: '中继地址', exact: true }).fill('https://relay.example/')
-      await dialog.getByRole('textbox', { name: '节点身份', exact: true }).fill('1'.repeat(32))
-      await dialog.getByRole('textbox', { name: 'TLS 公钥指纹', exact: true }).fill('2'.repeat(64))
-      for (const width of [1280, 820, 390]) {
-        await size(application, page, width)
+      await page.getByText('iPhone 上的 Latch', { exact: true }).waitFor()
+      for (const text of ['设置连接', '暂停所有手机输入', '使用个人助手和项目文件', '浏览器配对'])
+        expect(await page.getByText(text, { exact: false }).count()).toBe(0)
+      for (const width of [1280, 820, 390])
         for (const theme of ['light', 'dark'] as const) {
+          await size(application, page, width)
           await page.emulateMedia({ colorScheme: theme })
           await page.waitForTimeout(300)
           expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-          const geometry = await dialog.evaluate(element => {
-            const box = element.getBoundingClientRect()
-            return { left: box.left, right: box.right, width: innerWidth }
-          })
-          expect(geometry.left).toBeGreaterThanOrEqual(-1)
-          expect(geometry.right).toBeLessThanOrEqual(geometry.width + 1)
-          await capture(page, `config-${width}-${theme}`)
+          await capture(page, `ready-${width}-${theme}`)
         }
-      }
       await size(application, page, 1280)
       await page.emulateMedia({ colorScheme: 'light' })
-      await dialog.getByRole('heading', { name: '设置连接', exact: true }).click()
       await expectUnmovedByInjectedStyles(page, [
-        '.native-connect-dialog[open]',
-        '.native-connect-dialog > .ui-modal-surface',
-        '.native-connect-dialog form',
-        '.native-config-group',
-        '.native-config-heading',
-        '.native-config-heading strong',
-        '.native-connect-dialog .ui-field-label',
-        '.native-connect-dialog .ui-input',
-        '.native-config-body .settings-hint',
-        '.native-connect-dialog .ui-modal-footer',
-        '.native-connect-dialog .ui-button',
+        '.settings-group[data-secure] .settings-row-title',
+        '.settings-group[data-secure] .ui-button',
       ])
-      await dialog.getByRole('textbox', { name: '节点身份', exact: true }).fill('invalid')
-      await dialog.getByRole('button', { name: '保存连接', exact: true }).click()
-      await dialog.getByRole('alert').waitFor()
-      await capture(page, 'config-failed')
-      await dialog.getByRole('textbox', { name: '节点身份', exact: true }).fill('1'.repeat(32))
-      await dialog.getByRole('button', { name: '保存连接', exact: true }).click()
-      const confirmation = await host.presence.waitForRequest()
-      expect(confirmation.preview.subject?.form).toBe('policy.native-link')
-      await page.getByText('等待 Touch ID…', { exact: true }).first().waitFor()
-      await capture(page, 'config-waiting')
-      host.presence.approveNext()
-      await dialog.waitFor({ state: 'hidden' })
-      // Technical endpoints stay inside the explicit connection options after saving.
-      expect(await page.getByText('relay.example', { exact: true }).count()).toBe(0)
       const response = page.waitForResponse(
         value => value.url().endsWith('/link/api/native/pairings') && value.request().method() === 'POST',
       )
-      const personalAccess = page.getByRole('checkbox', { name: '使用个人助手和项目文件', exact: true })
-      for (const width of [390, 900, 1440]) {
-        await size(application, page, width)
-        await page.emulateMedia({ colorScheme: width === 900 ? 'dark' : 'light' })
-        expect(await personalAccess.isChecked()).toBe(true)
-        await capture(page, 'pair-scope-' + width)
-      }
-      expect(await personalAccess.isChecked()).toBe(true)
-      await page.getByRole('button', { name: '生成配对二维码', exact: true }).click()
+      await page.getByRole('button', { name: '连接手机', exact: true }).click()
       const issued = await response
-      expect(issued.request().postDataJSON()).toEqual({ dataScope: 'all' })
-      const value = (await issued.json()) as { invitation: { payload: string; dataScope: string } }
-      expect(value.invitation.dataScope).toBe('all')
-      expect(value.invitation.payload.startsWith('LATCHPAIR1.')).toBe(true)
+      expect(issued.request().postDataJSON()).toEqual({})
+      const value = (await issued.json()) as { invitation: { id: string; payload: string } }
+      expect(value.invitation.payload.startsWith('LATCHPAIR2.')).toBe(true)
+      expect(Object.keys(value.invitation)).not.toContain('dataScope')
       await page.getByAltText('原生客户端配对二维码').waitFor()
-      expect((await page.locator('body').innerText()).includes(value.invitation.payload)).toBe(false)
-      await personalAccess.uncheck()
-      await page.getByAltText('原生客户端配对二维码').waitFor({ state: 'hidden' })
-      const workResponse = page.waitForResponse(
-        value => value.url().endsWith('/link/api/native/pairings') && value.request().method() === 'POST',
-      )
-      await page.getByRole('button', { name: '生成配对二维码', exact: true }).click()
-      const work = await workResponse
-      expect(work.request().postDataJSON()).toEqual({ dataScope: 'work' })
-      expect(((await work.json()) as { invitation: { dataScope: string } }).invitation.dataScope).toBe('work')
+      const body = await page.locator('body').innerText()
+      expect(body.includes(value.invitation.payload)).toBe(false)
+      for (const text of ['六位', '核对码', '剩余', '复制配对信息', '重新生成']) expect(body.includes(text)).toBe(false)
       const before = host.presence.requests.length
-      await page.getByRole('button', { name: '暂停所有手机输入', exact: true }).click()
-      await page.getByRole('button', { name: '恢复手机输入', exact: true }).waitFor()
-      expect(host.host.security.devices.nativeInputsPaused()).toBe(true)
+      expect(host.host.security.enrollments.nativePairingStatus(value.invitation.id).state).toBe('ready')
+      await page.getByRole('button', { name: '关闭', exact: true }).click()
+      await page.getByAltText('原生客户端配对二维码').waitFor({ state: 'hidden' })
+      await expect.poll(() => host.host.security.enrollments.nativePairingOpen()).toBe(false)
       expect(host.presence.requests.length).toBe(before)
-      await page.getByRole('button', { name: '恢复手机输入', exact: true }).click()
-      expect((await host.presence.waitForRequest()).preview.subject?.form).toBe('policy.native-input')
+      // After Touch ID the panel asks about the phone in hand, with no way to close but an answer.
+      const again = page.waitForResponse(value => value.url().endsWith('/link/api/native/pairings') && value.request().method() === 'POST')
+      await page.getByRole('button', { name: '连接手机', exact: true }).click()
+      const { invitation } = (await (await again).json()) as { invitation: { payload: string } }
+      const qr = parsePairingPayload(invitation.payload),
+        code = invitationCode(qr.secret),
+        socket = connect(host.host.nativePort!, '127.0.0.1')
+      socket.on('error', () => {})
+      const phone = await openNativeHttp(
+        socket,
+        { path: 'direct' },
+        { rootSpki: qr.rootSpki, knockKey: createHash('sha256').update(code).digest(), pairing: true },
+      )
+      const device = createTransportCertificate(),
+        verification = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
+      const created = await phone.request('POST', '/link/api/enrollments', {
+        name: '陌生的手机',
+        publicKey: device.spki.toString('base64url'),
+        invitation: code,
+        gatewayHash: '0'.repeat(64),
+        native: {
+          certificate: device.cert,
+          verificationKey: verification.publicKey.export({ format: 'der', type: 'spki' }).toString('base64url'),
+        },
+      })
+      expect(created.status).toBe(202)
+      const { enrollment } = created.body as { enrollment: { id: string; nonce: string } }
+      await host.presence.waitForRequest()
       host.presence.approveNext()
-      await page.getByRole('button', { name: '暂停所有手机输入', exact: true }).waitFor()
-      expect(host.host.security.devices.nativeInputsPaused()).toBe(false)
+      await vi.waitFor(async () =>
+        expect(
+          ((await phone.request('GET', `/link/api/enrollments/${enrollment.id}`)).body as { enrollment: { status: string } }).enrollment
+            .status,
+        ).toBe('approved'),
+      )
+      const signature = sign('sha256', Buffer.from(`latch-enroll-v1\n${host.host.hostId}\n${enrollment.id}\n${enrollment.nonce}`), {
+        key: createPrivateKey(device.key),
+        dsaEncoding: 'ieee-p1363',
+      }).toString('base64url')
+      const completed = await phone.request('POST', `/link/api/enrollments/${enrollment.id}/complete`, { signature })
+      expect(completed.status).toBe(200)
+      phone.close()
+      await page.getByText('手机上显示已连接了吗？', { exact: true }).waitFor()
+      await page.getByAltText('原生客户端配对二维码').waitFor({ state: 'hidden' })
+      expect(await page.getByRole('button', { name: '关闭', exact: true }).count()).toBe(0)
+      await capture(page, 'pairing-ask')
+      const shownBefore = host.presence.requests.length
+      await page.getByRole('button', { name: '没有，移除', exact: true }).click()
+      await page.getByText('它已断开，之后要重新扫码才能连接。', { exact: true }).waitFor()
+      expect(host.presence.requests.length).toBe(shownBefore)
+      const id = (completed.body as { device: { id: string } }).device.id
+      expect(host.host.security.devices.get(id)?.status).toBe('revoked')
     } finally {
       await application?.close()
       await host.close()

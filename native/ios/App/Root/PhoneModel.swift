@@ -28,7 +28,10 @@ enum PhoneArea: String { case personal, projects }
     @Published var pending: [NativePendingWrite] = []
     @Published var controlPending = NativeJSON.null
     @Published var draft: PairingDraft?
-    @Published var comparisonCode: String?
+    /** The pairing flow on screen; nil when there is none. */
+    @Published var pairing: PhonePairingPhase?
+    /** The Mac removed this phone. */
+    @Published var removedByMac = false
     @Published var status = "选择一台电脑"
     @Published var error: String?
     @Published var connected = false
@@ -36,12 +39,12 @@ enum PhoneArea: String { case personal, projects }
     @Published var verifying = false
     @Published var verifiedUntil: Date?
     @Published var contentGeneration = UUID()
-    var canRun: Bool { connected && snapshot["device"]["status"].string == "active" && hasScope("run") && !snapshot["host"]["native"]["inputsPaused"].bool }
-    var canApproveStandard: Bool { connected && snapshot["device"]["status"].string == "active" && hasScope("approve:standard") && !snapshot["host"]["native"]["inputsPaused"].bool }
+    var canRun: Bool { connected && snapshot["device"]["status"].string == "active" && hasScope("run") }
+    var canApproveStandard: Bool { connected && snapshot["device"]["status"].string == "active" && hasScope("approve:standard") }
     func hasScope(_ scope: String) -> Bool { snapshot["device"]["scopes"].array.contains(.string(scope)) }
     private(set) var store: PhoneStore?
     private(set) var workspace: NativeWorkspace?
-    private let paths = NativePathOwner()
+    let paths = NativePathOwner()
     private let discovery = NativeDiscovery()
     private(set) var generation = UUID()
     private(set) var networkGeneration = UUID()
@@ -58,7 +61,7 @@ enum PhoneArea: String { case personal, projects }
     var pairingConnection: NativeHTTPConnection?
     private var monitor: NWPathMonitor?
     private var monitorGeneration = UUID()
-    private var currentNetworkPath: NWPath?
+    private(set) var currentNetworkPath: NWPath?
     private var proximityTask: Task<Void, Never>?
     private var bookRefresher: NativeBookRefresher?
 
@@ -74,6 +77,7 @@ enum PhoneArea: String { case personal, projects }
             guard generation == current else { await opened.lock(); return }
             hosts = saved; draft = pending
             observeNetwork()
+            if pending != nil { resumePairing() }
         } catch { report(error) }
     }
     func lock() async {
@@ -82,14 +86,14 @@ enum PhoneArea: String { case personal, projects }
         currentNetworkPath = nil; proximityTask?.cancel(); proximityTask = nil
         resetBookRefresh()
         discovery.stop(); freshPairings.removeAll()
-        let previous = workspace, pairing = pairingConnection, previousStore = store
+        let previous = workspace, link = pairingConnection, previousStore = store
         store = nil; workspace = nil; pairingConnection = nil
         cancelPreview(); personalLoadId = nil; personalLoading = false; personalPlugins = []; personalPluginsLoaded = false
         personalOverview = .null; assistantDetail = .null; assistantId = nil; groupId = nil; groupDetail = .null; groupControl = nil
-        detail = .null; snapshot = .null; verifiedUntil = nil; comparisonCode = nil; pending = []; controlPending = .null; hosts = []; draft = nil; selectedHost = nil
+        detail = .null; snapshot = .null; verifiedUntil = nil; pairing = nil; pending = []; controlPending = .null; hosts = []; draft = nil; selectedHost = nil
         connected = false; busy = false; verifying = false; status = "已锁定，解锁后重新连接"
         PreviewFiles.clear()
-        await paths.close(); await previous?.closeOpening(); await pairing?.close(); await previousStore?.lock()
+        await paths.close(); await previous?.closeOpening(); await link?.close(); await previousStore?.lock()
     }
     func connect(_ host: RegisteredHost) async {
         guard let store, !busy else { return }
@@ -361,7 +365,7 @@ enum PhoneArea: String { case personal, projects }
             deviceId: host.device.deviceId, nowMs: UInt64(Date().timeIntervalSince1970 * 1000), priorGeneration: host.device.bookGeneration, priorHash: host.device.bookHash)
         try discovery.start(key: key)
     }
-    private func candidates(_ host: RegisteredHost) async throws -> [NativePathCandidate] {
+    func candidates(_ host: RegisteredHost) async throws -> [NativePathCandidate] {
         let host = hosts.first { $0.id == host.id } ?? host
         let now = UInt64(Date().timeIntervalSince1970 * 1000)
         let book = try? AddressBookCodec.verify(host.device.signedAddressBook, rootSpki: host.device.rootSpki,
@@ -370,7 +374,7 @@ enum PhoneArea: String { case personal, projects }
         // LAN entries are hints only. Direct candidates are supplied by current-network discovery, never old private IPs.
         var result = try await discovery.candidates(device: host.device, keys: keys)
         if let (invitation, network) = freshPairings[host.id], network == networkGeneration, invitation.expiresAt > Date() {
-            for (index, address) in invitation.direct.prefix(2).enumerated() {
+            for (index, address) in invitation.lan.enumerated() {
                 result.append(try NativePathCandidate(id: "pair-\(index)", kind: .direct) { [weak self] in
                     guard let self, await self.freshRoute(host.id, network: network) else { throw NativeFailure.unavailable }
                     return try await NativeHTTPConnection.open(host: address.host, port: address.port, rootSpki: host.device.rootSpki,
@@ -389,7 +393,7 @@ enum PhoneArea: String { case personal, projects }
     private func freshRoute(_ id: String, network: UUID) -> Bool {
         network == networkGeneration && (freshPairings[id]?.0.expiresAt ?? .distantPast) > Date()
     }
-    private func retire(_ host: RegisteredHost, proof: VerifiedNativeRevocation, retiredStore: PhoneStore? = nil) async {
+    func retire(_ host: RegisteredHost, proof: VerifiedNativeRevocation, retiredStore: PhoneStore? = nil, removedHere: Bool = false) async {
         let currentStore = retiredStore ?? store, isCurrent = selectedHost?.id == host.id
         if isCurrent {
             generation = UUID(); reconnectTask?.cancel(); eventTask?.cancel(); expiryTask?.cancel()
@@ -407,8 +411,8 @@ enum PhoneArea: String { case personal, projects }
         }
         catch { report(error) }
         if isCurrent || selectedHost == nil {
-            error = "这台电脑已移除此手机。重新扫描电脑上的二维码即可连接。"
-            status = "请重新连接电脑"
+            removedByMac = !removedHere
+            status = "选择一台电脑"
         }
     }
     func report(_ failure: Error) {

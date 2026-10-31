@@ -65,7 +65,8 @@ export class HostAddressBooks {
       relays: [],
       ...(source ? { directory: source } : {}),
     }
-    for (const profile of state.profiles) {
+    // The book holds four relays, the built-in ones first: more would not fit a phone's bounds.
+    for (const profile of state.profiles.slice(0, 4)) {
       const relayId = Buffer.from(profile.relayId, 'hex'),
         passes = []
       for (let offset = 0; offset <= 30; offset++)

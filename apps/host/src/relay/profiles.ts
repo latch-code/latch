@@ -6,6 +6,7 @@ import { isIP } from 'node:net'
 import { z } from 'zod'
 import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex, writeFileAtomic } from '@latch/core/node-kit'
+import type { OfficialRelay } from './official.ts'
 import {
   directoryConfigSchema,
   directoryConfigHash,
@@ -56,6 +57,8 @@ const profile = relayProfileInput.omit({ registrationKey: true }).extend({
   activeSlot: z.union([z.literal(0), z.literal(1)]),
   rotationDay: z.int().nonnegative(),
   rotations: z.int().min(0).max(2),
+  /** Compiled in (`official.ts`); no UI edits it, and it runs only while a phone is paired. */
+  builtIn: z.literal(true).optional(),
 })
 const schema = z.strictObject({
   version: z.literal(1),
@@ -75,7 +78,7 @@ const schema = z.strictObject({
     .optional(),
   profiles: z
     .array(profile)
-    .max(4)
+    .max(6)
     .refine(items => new Set(items.map(item => item.relayId)).size === items.length),
 })
 export type RelayProfile = z.infer<typeof profile>
@@ -177,7 +180,8 @@ export class RelayProfiles {
       draft.configRevision = (draft.configRevision ?? 0) + 1
       if (receipt)
         draft.configReceipts = [...(draft.configReceipts ?? []).filter(item => item.requestId !== receipt.requestId), receipt].slice(-32)
-      draft.profiles = checked.map(item => {
+      const builtIn = draft.profiles.filter(item => item.builtIn)
+      const custom = checked.map(item => {
         const previous = draft.profiles.find(old => old.relayId === item.relayId)
         return {
           relayId: item.relayId,
@@ -196,6 +200,32 @@ export class RelayProfiles {
           rotations: previous?.rotations ?? 0,
         }
       })
+      draft.profiles = [...builtIn, ...custom]
+      if (draft.generation >= Number.MAX_SAFE_INTEGER) throw new AppError(503, 'native-generation-exhausted', '连接簿代次已耗尽')
+      draft.generation++
+    })
+  }
+  /** Brings the persisted built-in relays in line with the compiled list. Their seeds survive, and only they change. */
+  syncOfficial(official: readonly OfficialRelay[]): Promise<void> {
+    const current = this.state.profiles.filter(item => item.builtIn)
+    if (canonicalJson(current.map(({ relayId, url, spkiHash }) => ({ relayId, url, spkiHash }))) === canonicalJson(official))
+      return Promise.resolve()
+    return this.change(draft => {
+      const builtIn = official.map(item => {
+        const previous = draft.profiles.find(old => old.relayId === item.relayId && old.builtIn)
+        return {
+          ...item,
+          seeds: previous?.seeds ?? ([secret('lrs1'), secret('lrs1')] as [string, string]),
+          activeSlot: previous?.activeSlot ?? (0 as const),
+          rotationDay: previous?.rotationDay ?? 0,
+          rotations: previous?.rotations ?? 0,
+          builtIn: true as const,
+        }
+      })
+      draft.profiles = [
+        ...builtIn,
+        ...draft.profiles.filter(item => !item.builtIn && !official.some(next => next.relayId === item.relayId)),
+      ]
       if (draft.generation >= Number.MAX_SAFE_INTEGER) throw new AppError(503, 'native-generation-exhausted', '连接簿代次已耗尽')
       draft.generation++
     })

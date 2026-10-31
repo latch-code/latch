@@ -190,11 +190,9 @@ describe('responsive workspace controls', () => {
       const devices = await openSettings(page, '设备')
       await reachable(devices.getByRole('button', { name: '撤销此设备', exact: true }))
       await devices.getByRole('heading', { name: /已登记的设备/ }).waitFor()
-      await devices.getByText('手机接入还没有配置。', { exact: true }).waitFor()
-      // The start options for an own certificate stay folded until asked for, and can be reached and opened.
-      const tlsOptions = devices.getByRole('button', { name: '用自己的 HTTPS 证书配置（需要重启 Host）' })
-      await reachable(tlsOptions)
-      expect(await devices.getByText(/--tls-cert/).isVisible()).toBe(false)
+      // A browser cannot pair a phone: the page says where to, with no start options for a certificate.
+      await devices.getByText(/^配对二维码要在 Latch 桌面端生成/).waitFor()
+      expect(await devices.getByText(/--tls-cert/).count()).toBe(0)
       if (width < 768) await devices.getByTestId('dev-mode').waitFor()
       await noHorizontalOverflow(page, devices)
       await capture(page, `${label}-devices`)

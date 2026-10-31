@@ -312,7 +312,7 @@ export function SettingsPage({
                       />
                     )}
                     {panel === 'plugins' && <PluginsSettings onManage={open} snapshot={snapshot} access={access} onChanged={onChanged} />}
-                    {panel === 'devices' && <DevicesSettings snapshot={snapshot} access={access} phone={phone} onChanged={onChanged} />}
+                    {panel === 'devices' && <DevicesSettings snapshot={snapshot} access={access} onChanged={onChanged} />}
                     {panel === 'about' && <AboutSettings snapshot={snapshot} />}
                   </div>
                 )}

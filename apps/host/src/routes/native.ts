@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { randomBytes } from 'node:crypto'
 import { join } from 'node:path'
 import { z } from 'zod'
-import type { Device, HostFeatures } from '@latch/protocol'
+import type { Device, HostFeatures, NativePairingStatus } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { sha256Hex } from '@latch/core/node-kit'
 import {
@@ -14,24 +14,24 @@ import {
 } from '@latch/link-wire'
 import { nodeCrypto } from '@latch/link-client'
 import { authFailure } from '../access.ts'
-import type { StepupMethod } from '../audit.ts'
 import { parseP256Spki, randomNonce, verifyP256 } from '../crypto.ts'
 import { createRelayEgress, type LookupFunction } from '../egress.ts'
-import { json, jsonBody, optionalJsonBody } from '../http-util.ts'
+import { json, jsonBody, optionalJsonBody, safeDecode } from '../http-util.ts'
 import type { HostIdentity } from '../identity.ts'
 import type { ListenerContext } from '../listeners.ts'
 import { startNativeHost, type NativeOpening } from '../native.ts'
 import { NativeNetwork } from '../native-network.ts'
 import { MacNetworkBackend, type NativeNetworkBackend } from '../native-network-backend.ts'
 import { NativeNetworks } from '../native-networks.ts'
-import { NativeSettings, nativeAddresses } from '../native-settings.ts'
+import { NativeSettings } from '../native-settings.ts'
 import { NativePluginTransports } from '../native-transports.ts'
 import type { HostAddressBooks } from '../relay/address-book.ts'
 import { HostRelayController } from '../relay/controller.ts'
 import type { HostRelayDirectory } from '../relay/directory.ts'
+import { OFFICIAL_RELAYS, type OfficialRelay } from '../relay/official.ts'
 import type { RelayProfiles } from '../relay/profiles.ts'
-import { invitationSchema, signatureSchema } from './devices.ts'
-import { CONFIG_BODY_LIMIT, type Caller, type CallerRequest, type RouteContext, type RouteModule, type RouteRequest } from './registry.ts'
+import { signatureSchema } from './devices.ts'
+import { type Caller, type CallerRequest, type RouteContext, type RouteModule, type RouteRequest } from './registry.ts'
 
 /** What the native routes need from the Host beyond the route context. */
 export interface NativeRouteDeps {
@@ -41,6 +41,8 @@ export interface NativeRouteDeps {
     nativeNetwork?: false | (() => Promise<NativeNetworkBackend>)
     nativeRelayCa?: string | Buffer
     egressLookup?: LookupFunction
+    nativeNearby?: (opening: NativeOpening, gatewayHash: Uint8Array) => boolean | Promise<boolean>
+    officialRelays?: readonly OfficialRelay[]
   }
   identity: HostIdentity
   /** Process-level outbound entries, allowed beside the policy's. */
@@ -73,6 +75,10 @@ export interface NativeRoutes extends RouteModule {
   port(): number | undefined
   /** The LAN addresses address books offer phones. */
   lan(): readonly NativeLanAddress[]
+  /** The proximity gate for a phone's pairing request, on the socket it came over. */
+  pairingNearby(opening: NativeOpening, gatewayHash: Uint8Array): Promise<string | false>
+  /** Marks a network known, once a phone proven on it has paired. */
+  rememberNetwork(networkHash: string): void
   /** Makes the network watcher look again, after a revocation or a discovery-key rotation. */
   invalidate(): void
   /** Lets the relay controller follow a change the Host announced. */
@@ -85,11 +91,11 @@ export interface NativeRoutes extends RouteModule {
 
 /**
  * The phone connection: native openings and their verification windows, revocation notices, bulk transfers, address
- * books, the input pause, the native entry's settings and invitations, and the relay wiring.
+ * books, the phone-access lifecycle and pairing QRs, and the relay wiring.
  */
 export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps): NativeRoutes {
   const { hostId, dataDir, codeRoot, now, audit, policy, devices, enrollments, plugins: registry, closing, refresh, actorOf } = context
-  const { requireLocal, recheck, confirm, serial } = context
+  const { requireLocal, recheck } = context
   const requireScope: RouteContext['requireScope'] = context.requireScope
   const { options, identity, egressExtra, relayProfiles, relayDirectory, addressBooks, revokedDiscoveryHash, authorizeBulk } = deps
   const synchronizeNativeDiscovery = deps.synchronizeDiscovery
@@ -400,7 +406,7 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
         && (/^\/link\/api\/tasks\/[^/]+\/cancel$/u.test(path) || /^\/link\/api\/personal\/groups\/grp_[a-f0-9-]{36}\/cancel$/u.test(path))
       const reject = method === 'POST' && /^\/link\/api\/approvals\/[^/]+$/u.test(path)
       caller.nativeWindowExempt =
-        (path === '/link/api/snapshot' && method === 'GET') || cancel || (path === '/link/api/native/input/pause' && method === 'POST')
+        (path === '/link/api/snapshot' && method === 'GET') || cancel || (path === '/link/api/devices/current' && method === 'DELETE')
       if (nativeVerifiedUntil(nativeOpening) <= now() && !caller.nativeWindowExempt && !reject)
         throw new AppError(403, 'native-verification-required', '请先在手机上完成身份验证')
       if (path.startsWith('/link/api/credentials/')) throw new AppError(403, 'native-credential-route', '原生身份不使用浏览器凭据续期')
@@ -409,105 +415,67 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
   }
 
   async function handleNative({ req, res, caller, path, method }: CallerRequest): Promise<boolean> {
-    if (path === '/link/api/native/input/pause' && method === 'POST') {
-      if (caller.device) requireScope(caller, 'view')
-      else requireLocal(caller)
-      z.strictObject({}).parse(await optionalJsonBody(req))
-      const result = await devices.setNativeInputsPaused(true, actorOf(caller), 'none')
-      if (!result.audited) res.setHeader('x-latch-audit', 'failed')
-      refresh()
-      json(res, { paused: true })
-      return true
-    }
-    if (path === '/link/api/native/input/resume' && method === 'POST') {
-      requireLocal(caller)
-      requireScope(caller, 'admin')
-      z.strictObject({}).parse(await optionalJsonBody(req))
-      const stepup = await confirm(req, caller, 'policy.change', { nativeInputPaused: false }, { form: 'policy.native-input', slots: {} }, [
-        { label: '手机输入', value: '恢复所有已登记原生手机的输入权限' },
-      ])
-      recheck(caller, 'admin')
-      await devices.setNativeInputsPaused(false, actorOf(caller), stepup)
-      refresh()
-      json(res, { paused: false })
-      return true
-    }
     if (path === '/link/api/native/info' && method === 'GET') {
       requireLocal(caller)
       if (caller.device) requireScope(caller, 'admin')
       if (!nativeSettings) throw new AppError(503, 'native-not-ready', '手机连接服务正在准备')
-      json(res, { ...nativeSettings.info(), ...(nativeHost?.port !== undefined ? { port: nativeHost.port } : {}) })
-      return true
-    }
-    if (path === '/link/api/native/config' && method === 'PUT') {
-      requireLocal(caller)
-      requireScope(caller, 'admin')
-      if (!nativeSettings) throw new AppError(503, 'native-not-ready', '手机连接服务正在准备')
-      const settings = nativeSettings,
-        input = await jsonBody(req, CONFIG_BODY_LIMIT)
-      recheck(caller, 'admin')
-      if (settings.alreadyApplied(input)) {
-        json(res, settings.info())
-        return true
-      }
-      const plan = settings.plan(input)
-      let stepup: StepupMethod = 'none'
-      if (!plan.lowering) {
-        const direct = plan.input.direct
-        stepup = await confirm(
-          req,
-          caller,
-          'policy.change',
-          { baseHash: plan.baseHash, afterHash: plan.afterHash, requestHash: plan.requestHash },
-          {
-            form: 'policy.native-link',
-            slots: {
-              direct: `${plan.directoryChanged ? (plan.directory ? `地址目录 ${plan.directory.mirrors.length} 个镜像；` : '关闭地址目录；') : ''}${direct ? `局域网直连 ${direct.host}:${direct.port || '自动端口'}` : '关闭局域网直连'}`,
-              count: String(plan.input.relays.length),
-            },
-          },
-          [
-            { label: '局域网直连', value: direct ? `${direct.host}:${direct.port || '自动端口'}` : '关闭' },
-            ...plan.input.relays.flatMap(node => [
-              { label: '自建中继', value: node.url },
-              { label: '节点身份', value: node.relayId },
-              { label: 'TLS 公钥指纹', value: node.spkiHash },
-              {
-                label: '登记密钥',
-                value: node.registrationKey === null ? '不使用' : node.registrationKey ? '已填写（不显示）' : '保持原设置',
-              },
-            ]),
-            ...(plan.directory
-              ? [
-                  ...plan.directory.anchors.map(value => ({ label: '地址发布根公钥', value })),
-                  ...plan.directory.mirrors.map(value => ({ label: '地址镜像', value })),
-                ]
-              : []),
-          ],
-          ['中继与网络服务商可看到 IP、连接时间和数据量；正文仍由 Host 身份与端到端连接保护。'],
-        )
-      }
-      const result = await serial(caller, 'admin', () => settings.apply(plan, actorOf(caller), stepup, () => recheck(caller, 'admin')))
-      if (!result.audited) res.setHeader('x-latch-audit', 'failed')
-      refresh()
-      json(res, settings.info())
+      json(res, nativeSettings.info())
       return true
     }
     if (path === '/link/api/native/pairings' && method === 'POST') {
+      // A device with 管理此 Host, never an anonymous process on this Mac: a QR with no sheet open skips the question that
+      // follows Touch ID, and closing the sheet ends a pairing.
       requireLocal(caller)
-      if (caller.device) requireScope(caller, 'admin')
-      if (!nativeHost) throw new AppError(409, 'native-not-configured', '尚未配置原生设备连接入口')
-      const input = invitationSchema.extend({ dataScope: z.enum(['work', 'all']).optional() }).parse(await optionalJsonBody(req))
+      requireScope(caller, 'admin')
+      if (!nativeHost || !nativeSettings) throw new AppError(503, 'native-not-ready', '手机连接服务正在准备')
+      const host = nativeHost
+      // No pairing can complete during full access, so nothing opens for it either.
+      await enrollments.assertCanPair()
+      z.strictObject({}).parse(await optionalJsonBody(req))
       recheck(caller, 'admin')
-      const invitation = await nativeHost.invite(
-        {
-          ...(caller.device ? { inviter: caller.device } : {}),
-          ...(input.scopes ? { scopes: input.scopes } : {}),
-          ...(input.dataScope ? { dataScope: input.dataScope } : {}),
-        },
-        actorOf(caller),
-      )
+      const invitation = await nativeSettings.whileOpen(() => host.invite({ inviter: caller.device }, actorOf(caller)))
+      nativeNetwork?.reconcile()
       json(res, { invitation }, 201)
+      return true
+    }
+    const rejected = /^\/link\/api\/native\/pairings\/([^/]+)\/device$/u.exec(path)
+    if (rejected && method === 'DELETE') {
+      requireLocal(caller)
+      requireScope(caller, 'admin')
+      const result = await enrollments.rejectNativePairing(safeDecode(rejected[1]!), actorOf(caller))
+      if (!result.audited) res.setHeader('x-latch-audit', 'failed')
+      nativeNetwork?.reconcile()
+      refresh()
+      json(res, { removed: true })
+      return true
+    }
+    const relay = /^\/link\/api\/native\/relays\/([a-f0-9]{32})$/u.exec(path)
+    if ((relay || path === '/link/api/native/directory') && method === 'DELETE') {
+      requireLocal(caller)
+      requireScope(caller, 'admin')
+      if (!nativeSettings) throw new AppError(503, 'native-not-ready', '手机连接服务正在准备')
+      const result = relay
+        ? await nativeSettings.removeRelay(relay[1]!, actorOf(caller))
+        : await nativeSettings.removeDirectory(actorOf(caller))
+      if (!result.audited) res.setHeader('x-latch-audit', 'failed')
+      refresh()
+      json(res, nativeSettings.info())
+      return true
+    }
+    const pairing = /^\/link\/api\/native\/pairings\/([^/]+)$/u.exec(path)
+    if (pairing && (method === 'GET' || method === 'DELETE')) {
+      requireLocal(caller)
+      requireScope(caller, 'admin')
+      const id = safeDecode(pairing[1]!)
+      if (method === 'GET') {
+        const status: NativePairingStatus = enrollments.nativePairingStatus(id)
+        json(res, status)
+        return true
+      }
+      enrollments.revokeNativeInvitation(id)
+      nativeNetwork?.reconcile()
+      refresh()
+      json(res, { revoked: true })
       return true
     }
     return false
@@ -519,14 +487,8 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
       identity,
       devices,
       enrollments,
-      bind:
-        options.native
-        ?? (nativeAddresses().some(item => item.address === relayProfiles.snapshot().direct?.host)
-          ? (relayProfiles.snapshot().direct ?? undefined)
-          : undefined),
-      allowUnavailableBind: !options.native,
-      relayAvailable: () => relayProfiles.snapshot().profiles.length > 0,
-      relayInvites: (id, expiresAt) => relayController?.invitation(id, expiresAt) ?? Promise.resolve([]),
+      ...(options.native ? { bind: options.native } : {}),
+      relayAvailable: () => relayProfiles.snapshot().profiles.some(profile => !profile.builtIn || devices.nativeReachable()),
       handler(req, res, opening) {
         const permitted = () =>
           (!opening.windowHash || nativeVerifiedUntil(opening) > now()) && (!opening.bulk || opening.bulk.expiresAt > now())
@@ -549,10 +511,10 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
     const pluginTransports = nativePluginTransports
     cleanup(() => pluginTransports.close())
     await pluginTransports.sync()
+    await relayProfiles.syncOfficial(options.officialRelays ?? OFFICIAL_RELAYS)
     relayController = new HostRelayController({
       profiles: relayProfiles,
       devices,
-      enrollments,
       audit,
       resolve: createRelayEgress({
         allow: () => [...policy.get().hostEgressAllow, ...egressExtra],
@@ -577,7 +539,8 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
         audit,
         backend: options.nativeNetwork || (() => MacNetworkBackend.open(join(codeRoot, 'dist/native/latch-network'))),
         direct: () => native.direct,
-        automatic: () => !options.native && relayProfiles.snapshot().direct?.host === 'auto',
+        automatic: () => nativeSettings?.following() ?? false,
+        release: () => nativeSettings?.release() ?? Promise.resolve(),
         rebind: snapshot =>
           nativeSettings?.syncNetwork(snapshot, () => !closing() && nativeNetwork?.currentEpoch() === snapshot.epoch) ?? Promise.resolve(),
         pairing: () => enrollments.nativeInvitations().length > 0,
@@ -592,16 +555,18 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
       profiles: relayProfiles,
       native,
       controller,
-      directory: relayDirectory,
       audit,
-      managedDirect: options.native,
-      inputsPaused: () => devices.nativeInputsPaused(),
+      directory: relayDirectory,
+      ...(options.native ? { managedDirect: options.native } : {}),
+      pairing: () => enrollments.nativePairingOpen(),
+      reachable: () => devices.nativeReachable(),
       changed: () => nativeNetwork?.invalidate(),
-      resolveDirect: direct => {
-        if (!nativeNetwork) throw new AppError(503, 'native-network-unavailable', '手机连接组件不可用，请更新并重新构建 Latch 后重试')
-        return nativeNetwork.resolveDirect(direct, native.direct)
+      resolveDirect: async (direct, current) => {
+        if (!nativeNetwork) throw new AppError(409, 'native-no-lan', '这台 Mac 没有连接 Wi‑Fi 或有线网络。')
+        return nativeNetwork.resolveDirect(direct, current)
       },
     })
+    nativeNetwork?.reconcile()
   }
 
   return {
@@ -609,13 +574,21 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
     unauthenticated,
     authenticated,
     route: handleNative,
-    features: (): HostFeatures => ({ nativeBulk: true, nativeBulkStream: true, nativePairingScope: true }),
+    features: (): HostFeatures => ({ nativeBulk: true, nativeBulkStream: true, pairingV3: true }),
     opening: req => nativeRequests.get(req),
     verifiedUntil: nativeVerifiedUntil,
     deviceView: nativeDeviceView,
     enabled: () => nativeHost?.enabled ?? false,
     port: () => nativeHost?.port,
     lan: () => nativeNetwork?.lan() ?? [],
+    async pairingNearby(opening, gatewayHash) {
+      if (opening.listener.listener !== 'native-direct' || !opening.pairing) return false
+      if (options.nativeNearby) return (await options.nativeNearby(opening, gatewayHash)) ? '' : false
+      return nativeNetwork?.pairingNearby(opening, gatewayHash) ?? false
+    },
+    rememberNetwork(networkHash) {
+      void nativeNetwork?.remember(networkHash).catch(() => {})
+    },
     invalidate: () => nativeNetwork?.invalidate(),
     reconcile: () => relayController?.reconcile(),
     start,

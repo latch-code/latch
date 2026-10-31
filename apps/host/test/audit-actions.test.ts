@@ -109,6 +109,7 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'native.config.changed': { before: hex, after: hex, lowering: false, direct: true, relayCount: 1 },
   'native.inputs.paused': {},
   'native.inputs.resumed': {},
+  'pairing.contended': { invitationId, cancelled: 1, removed: 0 },
   'personal.changed': { kind: 'routine', operation: 'start', before: hex, after: hex, assistantId: 'asst_1' },
   'agent.probe.requested': { agentId: 'codex', launchHash: hex },
   'agent.probed': { agentId: 'codex', launchHash: hex, status: 'authentication-required' },

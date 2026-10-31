@@ -14,7 +14,15 @@ import {
   verifyNativeRevocation,
   verifyAddressBook,
 } from '@latch/link-client'
-import { discoveryEpochInput, knock, nativeKnockSecret, nativeRevocationInput, nativeVerificationText, pairingCode } from '@latch/link-wire'
+import {
+  discoveryEpochInput,
+  invitationCode,
+  knock,
+  nativeKnockSecret,
+  nativeRevocationInput,
+  nativeVerificationText,
+  parsePairingPayload,
+} from '@latch/link-wire'
 import { nodeCrypto } from '@latch/link-client/crypto'
 import type { TestDevice } from '@latch/testkit'
 import type { TaskDetail, PersonalAssistant, PersonalGroup, PersonalGroupDetail } from '@latch/protocol'
@@ -38,55 +46,52 @@ function body<T>(result: { status: number; body: unknown }, status = 200): T {
   expect(result.status).toBe(status)
   return result.body as T
 }
+const desktops = new WeakMap<TestHost, TestDevice>()
+async function desktopOf(host: TestHost): Promise<TestDevice> {
+  const known = desktops.get(host)
+  if (known) return known
+  const desktop = await host.enroll({ listener: 'unix' })
+  desktops.set(host, desktop)
+  return desktop
+}
 async function pair(
   host: TestHost,
   inviter?: TestDevice,
   open?: (options: Parameters<typeof openNativeHttp>[2]) => Promise<NativeHttpClient>,
-  options: { dataScope?: 'work' | 'all'; requestedDataScope?: 'work' | 'all'; rejectUpgrade?: boolean } = {},
 ) {
-  const response = inviter
-    ? await inviter.request('native/pairings', { method: 'POST', body: options.dataScope ? { dataScope: options.dataScope } : {} })
-    : await host.raw('unix', 'api/native/pairings', { method: 'POST', body: options.dataScope ? { dataScope: options.dataScope } : {} })
+  const sheet = inviter ?? (await desktopOf(host))
+  const response = await sheet.request('native/pairings', { method: 'POST', body: {} })
   expect(response.status).toBe(201)
-  const { invitation } = (await response.json()) as { invitation: { payload: string; dataScope?: 'work' | 'all' } }
-  const payload = JSON.parse(Buffer.from(invitation.payload.slice('LATCHPAIR1.'.length), 'base64url').toString()) as {
-    rootSpki: string
-    invitation: string
-  }
+  const { invitation } = (await response.json()) as { invitation: { id: string; payload: string } }
+  const payload = parsePairingPayload(invitation.payload),
+    code = invitationCode(payload.secret)
   const device = createTransportCertificate(),
     verification = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
-  const knockKey = createHash('sha256').update(payload.invitation).digest()
-  const raw = open ? undefined : connect(host.host.nativePort!, '127.0.0.1')
-  raw?.on('error', () => {})
-  const temporaryOptions = { rootSpki: Buffer.from(payload.rootSpki, 'base64url'), knockKey, pairing: true as const }
-  const temporary = open ? await open(temporaryOptions) : await openNativeHttp(raw!, { path: 'direct' }, temporaryOptions)
+  const knockKey = createHash('sha256').update(code).digest()
+  const raw = connect(host.host.nativePort!, '127.0.0.1')
+  raw.on('error', () => {})
+  const temporary = await openNativeHttp(raw, { path: 'direct' }, { rootSpki: payload.rootSpki, knockKey, pairing: true })
   cleanup.push(() => temporary.close())
   const spy = vi.spyOn(host.presence as PresenceBackend, 'confirm')
-  const enrollmentBody = {
-    name: '原生测试手机',
-    publicKey: device.spki.toString('base64url'),
-    invitation: payload.invitation,
-    ...(options.requestedDataScope ? { dataScope: options.requestedDataScope } : {}),
-    native: {
-      certificate: device.cert,
-      verificationKey: verification.publicKey.export({ format: 'der', type: 'spki' }).toString('base64url'),
-    },
-  }
-  if (options.rejectUpgrade) {
-    const shown = spy.mock.calls.length
-    const rejected = await temporary.request('POST', '/link/api/enrollments', { ...enrollmentBody, dataScope: 'all' })
-    expect(rejected.status).toBe(400)
-    expect(rejected.body).toMatchObject({ error: 'scope-not-grantable' })
-    expect(spy.mock.calls).toHaveLength(shown)
-  }
   const enrollment = body<{ enrollment: { id: string; nonce: string; status: string } }>(
-    await temporary.request('POST', '/link/api/enrollments', enrollmentBody),
+    await temporary.request('POST', '/link/api/enrollments', {
+      name: '原生测试手机',
+      publicKey: device.spki.toString('base64url'),
+      invitation: code,
+      gatewayHash: '0'.repeat(64),
+      native: {
+        certificate: device.cert,
+        verificationKey: verification.publicKey.export({ format: 'der', type: 'spki' }).toString('base64url'),
+      },
+    }),
     202,
   ).enrollment
-  const expectedCode = await pairingCode(nodeCrypto, knockKey, device.spki, verification.publicKey.export({ format: 'der', type: 'spki' }))
-  expect(spy.mock.calls.at(-1)?.[0].pairingCode).toBe(expectedCode)
-  expect(spy.mock.calls.at(-1)?.[0].preview.action).toBe('device.enroll-native')
-  expect(JSON.stringify(spy.mock.calls.at(-1)?.[0].preview)).not.toContain(`"pairingCode"`)
+  // The Mac's sheet names the phone and asks for no code.
+  expect(spy.mock.calls.at(-1)?.[0]).not.toHaveProperty('pairingCode')
+  expect(spy.mock.calls.at(-1)?.[0].preview).toMatchObject({
+    action: 'device.enroll-native',
+    reason: expect.stringMatching(/^允许「原生测试手机(?: \(\d\))?」连接这台 Mac$/u),
+  })
   await vi.waitFor(async () => {
     expect(
       body<{ enrollment: { status: string } }>(await temporary.request('GET', `/link/api/enrollments/${enrollment.id}`)).enrollment.status,
@@ -100,10 +105,13 @@ async function pair(
     await temporary.request('POST', `/link/api/enrollments/${enrollment.id}/complete`, { signature }),
   )
   temporary.close()
+  // The sheet closes, so the next phone is a new pairing rather than contention.
+  const closed = await sheet.request(`native/pairings/${invitation.id}`, { method: 'DELETE' })
+  expect(closed.status).toBe(200)
   const nativeRaw = open ? undefined : connect(host.host.nativePort!, '127.0.0.1')
   nativeRaw?.on('error', () => {})
   const clientOptions = {
-    rootSpki: Buffer.from(payload.rootSpki, 'base64url'),
+    rootSpki: payload.rootSpki,
     knockKey: await nodeCrypto.hash(
       await nativeKnockSecret(nodeCrypto, knockKey, device.spki, verification.publicKey.export({ format: 'der', type: 'spki' })),
     ),
@@ -112,7 +120,7 @@ async function pair(
   }
   const client = open ? await open(clientOptions) : await openNativeHttp(nativeRaw!, { path: 'direct' }, clientOptions)
   cleanup.push(() => client.close())
-  return { client, deviceId: registered.device.id, verification, invitation: payload.invitation, invitationInfo: invitation, clientOptions }
+  return { client, deviceId: registered.device.id, verification, invitation: code, invitationInfo: invitation, clientOptions }
 }
 async function verifyDevice(
   host: TestHost,
@@ -131,25 +139,21 @@ async function verifyDevice(
   return { ...receipt, appOpenId: challenge.appOpenId }
 }
 describe('native Host entry with existing authorization', () => {
-  it('grants Mac-selected Personal range through exactly one Native enrollment confirmation while keeping the old QR wire', async () => {
+  it('grants the fixed phone scopes and all data through exactly one confirmation', async () => {
     const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
     cleanup.push(() => host.close())
     const owner = await host.enroll({ listener: 'unix' }),
       shown = host.presence.requests.length
-    const registered = await pair(host, owner, undefined, { dataScope: 'all' })
-    expect(registered.invitationInfo.dataScope).toBe('all')
-    const payload = JSON.parse(
-      Buffer.from(registered.invitationInfo.payload.slice('LATCHPAIR1.'.length), 'base64url').toString(),
-    ) as Record<string, unknown>
-    expect(Object.keys(payload).toSorted()).toEqual(['direct', 'expiresAt', 'invitation', 'relays', 'rootSpki', 'v'])
+    const registered = await pair(host, owner)
     expect(host.presence.requests.slice(shown).map(request => request.preview.action)).toEqual(['device.enroll-native'])
     expect(host.presence.requests.at(-1)?.preview.lines).toContainEqual({ label: '数据范围', value: '全部' })
     await verifyDevice(host, registered.client, registered.deviceId, registered.verification.privateKey)
-    const snapshot = body<{ device: { dataScope: string; status: string }; catalog: { features: { nativePairingScope?: boolean } } }>(
-      await registered.client.request('GET', '/link/api/snapshot'),
-    )
-    expect(snapshot.device).toMatchObject({ dataScope: 'all', status: 'active' })
-    expect(snapshot.catalog.features.nativePairingScope).toBe(true)
+    const snapshot = body<{
+      device: { dataScope: string; status: string; scopes: string[] }
+      catalog: { features: { pairingV3?: boolean } }
+    }>(await registered.client.request('GET', '/link/api/snapshot'))
+    expect(snapshot.device).toMatchObject({ dataScope: 'all', status: 'active', scopes: ['view', 'run', 'approve:standard'] })
+    expect(snapshot.catalog.features.pairingV3).toBe(true)
     expect((await registered.client.request('GET', '/link/api/personal')).status).toBe(200)
     const assistant = body<PersonalAssistant>(
       await registered.client.request('POST', '/link/api/personal/assistants', {
@@ -174,31 +178,7 @@ describe('native Host entry with existing authorization', () => {
       .poll(async () => body<TaskDetail>(await registered.client.request('GET', '/link/api/tasks/' + task.sessionId)).summary.status)
       .toBe('idle')
     expect(host.presence.requests).toHaveLength(shown + 1)
-  })
-
-  it('defaults old Native invitation requests to work and refuses a phone-side upgrade without consuming the invitation', async () => {
-    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
-    cleanup.push(() => host.close())
-    const registered = await pair(host, undefined, undefined, { rejectUpgrade: true })
-    expect(registered.invitationInfo.dataScope).toBe('work')
-    await verifyDevice(host, registered.client, registered.deviceId, registered.verification.privateKey)
-    expect(body<{ device: { dataScope: string } }>(await registered.client.request('GET', '/link/api/snapshot')).device.dataScope).toBe(
-      'work',
-    )
-    expect((await registered.client.request('GET', '/link/api/personal')).status).toBe(403)
-    expect(host.presence.requests.at(-1)?.preview.lines).toContainEqual({ label: '数据范围', value: '工作' })
-  })
-
-  it('allows the phone to explicitly reduce an all invitation and keeps remote QR creation forbidden', async () => {
-    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
-    cleanup.push(() => host.close())
-    const registered = await pair(host, undefined, undefined, { dataScope: 'all', requestedDataScope: 'work' })
-    await verifyDevice(host, registered.client, registered.deviceId, registered.verification.privateKey)
-    expect(body<{ device: { dataScope: string } }>(await registered.client.request('GET', '/link/api/snapshot')).device.dataScope).toBe(
-      'work',
-    )
-    expect((await registered.client.request('POST', '/link/api/native/pairings', { dataScope: 'all' })).status).toBe(403)
-    expect(host.presence.requests.at(-1)?.preview.lines).toContainEqual({ label: '数据范围', value: '工作' })
+    expect((await registered.client.request('POST', '/link/api/native/pairings', {})).status).toBe(403)
   })
 
   it('binds a pending configuration to its original native opening and never replays it after a new window', async () => {
@@ -315,7 +295,7 @@ describe('native Host entry with existing authorization', () => {
       managed.push(connection)
       return connection.client
     })
-    expect(body<{ device: { status: string } }>(await registered.client.request('GET', '/link/api/snapshot')).device.status).toBe('review')
+    expect(body<{ device: { status: string } }>(await registered.client.request('GET', '/link/api/snapshot')).device.status).toBe('active')
     await verifyDevice(host, registered.client, registered.deviceId, registered.verification.privateKey)
     expect((await registered.client.request('POST', '/link/api/native/address-book', {})).status).toBe(200)
     await host.host.registry.disable(module.default.id)
@@ -343,7 +323,7 @@ describe('native Host entry with existing authorization', () => {
       'transport:interactive-fixture',
     ])
   })
-  it('consumes a custom reliable message plugin through real TLS, remote review and the body window, then closes it on retirement', async () => {
+  it('consumes a custom reliable message plugin through real TLS and the body window, then closes it on retirement', async () => {
     let started = 0
     const fixture = messageCarrierFixture(),
       host = await startTestHost({
@@ -384,17 +364,12 @@ describe('native Host entry with existing authorization', () => {
       managed.push(connection)
       return connection.client
     })
-    expect(fixture.lost()).toBe(true)
     const snapshot = body<{ device: { status: string; scopes: string[] } }>(await registered.client.request('GET', '/link/api/snapshot'))
-    expect(snapshot.device).toMatchObject({ status: 'review', scopes: ['view'] })
+    expect(snapshot.device).toMatchObject({ status: 'active', scopes: ['view', 'run', 'approve:standard'] })
     const task = await host.host.bridge.createTask({ prompt: 'carrier body fixture', mode: 'chat', requestId: randomUUID() })
     expect((await registered.client.request('GET', `/link/api/tasks/${task.sessionId}`)).status).toBe(403)
     await verifyDevice(host, registered.client, registered.deviceId, registered.verification.privateKey)
     expect((await registered.client.request('GET', `/link/api/tasks/${task.sessionId}`)).status).toBe(200)
-    const owner = await host.enroll({ listener: 'unix' })
-    expect((await owner.confirmed(`devices/${registered.deviceId}`, { method: 'PATCH', body: { scopes: ['view', 'run'] } })).status).toBe(
-      200,
-    )
     const input = {
         prompt: 'one carrier run',
         mode: 'chat',
@@ -852,7 +827,7 @@ describe('native Host entry with existing authorization', () => {
     await expect(native.ensureTransport()).rejects.toMatchObject({ code: 'native-component-unavailable' })
     await expect(native.prepareBind({ host: '127.0.0.1', port: 0 })).rejects.toMatchObject({ code: 'native-component-unavailable' })
     expect(native.port).toBeUndefined()
-    await expect(native.invite({}, { listener: 'host' })).rejects.toMatchObject({ code: 'native-component-unavailable' })
+    await expect(native.invite({}, { listener: 'host' })).rejects.toMatchObject({ code: 'native-no-lan' })
     const disabled = await native.prepareBind(undefined)
     disabled.commit()
     expect(native.port).toBeUndefined()
@@ -1185,15 +1160,13 @@ describe('native Host entry with existing authorization', () => {
     cleanup.push(() => replacement.close())
     expect((await replacement.request('GET', '/link/api/snapshot')).status).toBe(200)
   })
-  it('bounds invitation issuance even when all local requests arrive before the first audit settles', async () => {
+  it('keeps at most two pairing QRs live even when local requests arrive before the first audit settles', async () => {
     const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
     cleanup.push(() => host.close())
-    const responses = await Promise.all(
-      Array.from({ length: 33 }, () => host.raw('unix', 'api/native/pairings', { method: 'POST', body: {} })),
-    )
-    expect(responses.filter(item => item.status === 201)).toHaveLength(32)
-    expect(responses.filter(item => item.status === 429)).toHaveLength(1)
-    expect(host.host.security.enrollments.nativeInvitations()).toHaveLength(32)
+    const desktop = await desktopOf(host)
+    const responses = await Promise.all(Array.from({ length: 5 }, () => desktop.request('native/pairings', { method: 'POST', body: {} })))
+    expect(responses.filter(item => item.status === 201)).toHaveLength(5)
+    expect(host.host.security.enrollments.nativeInvitations()).toHaveLength(2)
   })
   it('automatically reconnects one workspace after its Host restarts without sending a session write', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'latch-native-reconnect-'))
@@ -1412,7 +1385,7 @@ describe('native Host entry with existing authorization', () => {
     expect(await old).toBe(false)
     expect(workspace.checkpoint()?.instanceId).toBe(instanceId)
   })
-  it('pairs through the private Mac-code confirmation and only exposes session bodies after a signed verification', async () => {
+  it('pairs through one confirmation on the Mac and only exposes session bodies after a signed verification', async () => {
     const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
     cleanup.push(() => host.close())
     expect((await host.raw('loopback-tcp', 'api/native/pairings', { method: 'POST', body: {} })).status).toBe(401)
@@ -1453,36 +1426,7 @@ describe('native Host entry with existing authorization', () => {
     const renewed = body<{ device: { scopes: string[] } }>(await registered.client.request('GET', '/link/api/snapshot'))
     expect(renewed.device.scopes).toContain('run')
   })
-  it('keeps relay enrollment in review even when completion changes to the direct path', async () => {
-    const host = await startTestHost()
-    cleanup.push(() => host.close())
-    const origin = 'https://native-fixture.invalid',
-      direct = { listener: 'native-direct' as const, origin, remoteAddress: '192.0.2.4' },
-      relay = { ...direct, listener: 'native-relay' as const, remoteAddress: '中继路径' }
-    const invitation = await host.host.security.enrollments.createInvitation({ listener: 'native-direct', origin }, { listener: 'unix' })
-    const certificate = createTransportCertificate(),
-      verification = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
-    const enrollment = await host.host.security.enrollments.create(
-      {
-        name: '中继手机',
-        publicKey: certificate.spki.toString('base64url'),
-        invitation: invitation.code,
-        native: {
-          certificate: certificate.cert,
-          verificationKey: verification.publicKey.export({ format: 'der', type: 'spki' }).toString('base64url'),
-        },
-      },
-      relay,
-    )
-    await vi.waitFor(() => expect(host.host.security.enrollments.status(enrollment.id, direct).status).toBe('approved'))
-    const signature = sign('sha256', Buffer.from(`latch-enroll-v1\n${host.host.hostId}\n${enrollment.id}\n${enrollment.nonce}`), {
-      key: createPrivateKey(certificate.key),
-      dsaEncoding: 'ieee-p1363',
-    }).toString('base64url')
-    const registered = await host.host.security.enrollments.complete(enrollment.id, signature, direct)
-    expect(registered.device).toMatchObject({ listener: 'native-relay', status: 'review', scopes: ['view'] })
-  })
-  it('retains the native identity and global pause across Host restart while invalidating window receipts', async () => {
+  it('retains the native identity across Host restart while invalidating window receipts', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'latch-native-restart-'))
     cleanup.push(() => rm(directory, { recursive: true, force: true }))
     const options = {
@@ -1494,7 +1438,6 @@ describe('native Host entry with existing authorization', () => {
     cleanup.push(() => first.close())
     const registered = await pair(first),
       receipt = await verifyDevice(first, registered.client, registered.deviceId, registered.verification.privateKey)
-    body(await registered.client.request('POST', '/link/api/native/input/pause', {}))
     registered.client.close()
     await first.close()
     const second = await startTestHost(options)
@@ -1504,12 +1447,9 @@ describe('native Host entry with existing authorization', () => {
     raw.on('error', () => {})
     const resumed = await openNativeHttp(raw, { path: 'direct' }, registered.clientOptions)
     cleanup.push(() => resumed.close())
-    const snapshot = body<{ device: { id: string; scopes: string[] }; host: { native: { inputsPaused: boolean } } }>(
-      await resumed.request('GET', '/link/api/snapshot'),
-    )
+    const snapshot = body<{ device: { id: string; scopes: string[] } }>(await resumed.request('GET', '/link/api/snapshot'))
     expect(snapshot.device.id).toBe(registered.deviceId)
-    expect(snapshot.device.scopes).toEqual(['view'])
-    expect(snapshot.host.native.inputsPaused).toBe(true)
+    expect(snapshot.device.scopes).toContain('run')
     expect((await resumed.request('POST', '/link/api/native/verification/resume', receipt)).status).toBe(400)
     expect(
       (
@@ -1588,7 +1528,7 @@ describe('native Host entry with existing authorization', () => {
       ).status,
     ).toBe(403)
   })
-  it('allows controlled cancel, plain rejection and global input pause while the body window is locked', async () => {
+  it('allows controlled cancel, plain rejection and removing itself while the body window is locked', async () => {
     const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
     cleanup.push(() => host.close())
     const registered = await pair(host)
@@ -1608,25 +1548,15 @@ describe('native Host entry with existing authorization', () => {
     expect((await registered.client.request('POST', '/link/api/approvals/missing', { decision: 'reject', note: 'new input' })).status).toBe(
       403,
     )
-    expect((await registered.client.request('DELETE', '/link/api/devices/current')).status).toBe(403)
-    const append = host.host.security.audit.append.bind(host.host.security.audit)
-    vi.spyOn(host.host.security.audit, 'append').mockImplementation(event =>
-      event.action === 'native.inputs.paused' ? Promise.reject(new Error('audit fixture unavailable')) : append(event),
-    )
-    const paused = await registered.client.request('POST', '/link/api/native/input/pause', {})
-    expect(paused.status).toBe(200)
-    expect(paused.headers['x-latch-audit']).toBe('failed')
-    const snapshot = body<{ device: { scopes: string[] }; host: { native: { inputsPaused: boolean } } }>(
-      await registered.client.request('GET', '/link/api/snapshot'),
-    )
-    expect(snapshot.host.native.inputsPaused).toBe(true)
-    expect(snapshot.device.scopes).toEqual(['view'])
-    await verifyDevice(host, registered.client, registered.deviceId, registered.verification.privateKey)
-    expect((await registered.client.request('POST', '/link/api/native/input/resume', {})).status).toBe(403)
-    const owner = await host.enroll({ listener: 'unix' })
-    expect((await owner.confirmed('native/input/resume', { method: 'POST', body: {} })).status).toBe(200)
-    expect(body<{ device: { scopes: string[] } }>(await registered.client.request('GET', '/link/api/snapshot')).device.scopes).toContain(
-      'run',
+    // Removing itself needs no window. The connection closes with the revocation; the next one reads the tombstone.
+    await registered.client.request('DELETE', '/link/api/devices/current').catch(() => {})
+    expect(host.host.security.devices.get(registered.deviceId)?.status).toBe('revoked')
+    const raw = connect(host.host.nativePort!, '127.0.0.1')
+    raw.on('error', () => {})
+    const again = await openNativeHttp(raw, { path: 'direct' }, registered.clientOptions)
+    cleanup.push(() => again.close())
+    expect(body<{ revocation: { deviceId: string } }>(await again.request('GET', '/link/api/native/revocation')).revocation.deviceId).toBe(
+      registered.deviceId,
     )
   })
 })

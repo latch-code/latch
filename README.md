@@ -44,7 +44,7 @@ pnpm desktop    # 启动 Host 并打开 Latch 桌面端（推荐）
 **登记这台设备。** 第一次打开时页面是登记页：
 
 1. 填写设备名称并提交。桌面端总是获得全部权限；浏览器默认得到查看、发起会话与批准普通操作，需要时可勾选「管理此 Host」。
-2. 电脑上弹出 macOS 的 Touch ID 表单，写着「允许指纹 XXXX XXXX XXXX XXXX XXXX 的新设备「<名称>」连接」。核对其中的指纹与页面上显示的完全一致。
+2. 电脑上弹出 macOS 的 Touch ID 表单，写着「允许「<名称>」连接这台 Mac」。只在你正在登记这台设备时确认。
 3. 用 Touch ID 或登录密码确认（Touch ID 可用时，登记等操作必须用 Touch ID）。
 
 设备凭据每 24 小时自动续期，从登记起 30 天后失效，届时需要重新登记确认。
@@ -102,9 +102,9 @@ pnpm desktop -- --tailnet \
 
 **配对手机：**
 
-1. 在桌面端「设置 → 设备」生成配对二维码，或在 Host 运行时执行 `pnpm latch device invite`（终端显示二维码）。邀请 10 分钟内有效、只能使用一次，Host 重启后失效。
+1. 在 Host 运行时执行 `pnpm latch device invite`（终端显示二维码）。邀请 10 分钟内有效、只能使用一次，Host 重启后失效。
 2. 手机扫码打开页面并提交登记。
-3. 电脑上弹出 Touch ID 表单，核对其中的指纹与手机页面上的完全一致后确认。
+3. 电脑上弹出 Touch ID 表单，写出设备自报的名称，确认是你正在登记的设备后允许。
 
 邀请默认授予查看、发起会话与批准普通操作；`pnpm latch device invite --scopes view,run,approve:standard,admin` 可以加入管理权限。撤销某台设备时，由它邀请配对的设备降为仅查看，等待在桌面端复核。
 
@@ -133,7 +133,7 @@ pnpm desktop -- --tailnet \
 **ACP Agent** 是与 Host 同权限运行的本机代码，Latch 不提供操作系统沙箱：
 
 - 在运行 Host 的电脑上安装并登录 Agent，再在桌面端「设置 → Agent 成员」选择预设或填写自定义命令并保存，不需要确认；在第一次用它开始会话之前，定义显示「还没有启动过」。Latch 不下载、不安装 Agent，也不代为登录。
-- 新建会话时，Latch 在输入框上方列出完整命令、参数、环境变量名、工作目录、项目中找到的 Agent 配置与启动指纹；Touch ID 表单第一次启动时写出可执行文件的路径与参数（「首次以完全访问启动 Codex（在「Acme」）：/opt/homebrew/bin/codex-acp …」），命令变了写「命令已变化」，只有项目配置变了也会说明。之后定义或这些项目配置变化，会话就不能继续。
+- 新建会话时，Latch 在输入框上方列出完整命令、参数、环境变量名、工作目录、项目中找到的 Agent 配置与启动指纹；Touch ID 表单写「允许 Codex 读写这台 Mac 上的文件并运行命令（项目「Acme」）：/opt/homebrew/bin/codex-acp …」，命令或项目配置变了时写「再次允许 Codex 读写这台 Mac 上的文件并运行命令（启动方式已变化，项目「Acme」）：…」。之后定义或这些项目配置变化，会话就不能继续。
 - 启动前 Latch 把 Agent 设到预设规定的权限模式，每轮输入前读回核对，发现 Agent 自行放宽时停止会话，并隐藏会持久保存授权的「始终允许 / 始终拒绝」类选项。pi 与 DeepSeek Harness 无法读回模式，pi 执行工具前也不请求审批。
 - Agent 进程只继承 `PATH`、`HOME`、`LANG`、`TERM`、`USER`、`SHELL`、`LC_*`，每个会话有私有临时目录，代理变量被清空。Agent 需要的 API Key 等变量请写在 Agent 定义里；`PATH`、`HOME`、代理、`NODE_OPTIONS`、`LATCH_*`、`npm_*`、`DYLD_*`、`LD_*`、`GIT_CONFIG_*` 等由 Latch 管理的变量不能在定义中设置。
 - 任何 L3 会话运行或等待审批时，登记新设备、为设备增加权限、放宽安全策略与确认新的模型服务地址会被拒绝：桌面端写出是哪个会话，可以查看或停止它，结束后再试。批准 R2、再开一个 Agent 会话与放宽会话的权限模式照常确认。
@@ -194,12 +194,12 @@ pnpm desktop -- --tailnet \
 | `--port <端口>` | `LATCH_PORT` | `4317`（同时监听 `127.0.0.1` 与 `::1`） |
 | `--tls-cert`、`--tls-key`、`--public-origin` | `LATCH_TLS_CERT`、`LATCH_TLS_KEY`、`LATCH_PUBLIC_ORIGIN` | 不启用 HTTPS |
 | `--tls-host <IP>`、`--lan`、`--tailnet`、`--tls-port` | `LATCH_TLS_HOST`、`LATCH_TLS_PORT` | 端口 `4318` |
-| `--native-host <具体 IP>`、`--native-port <端口>` | — | 原生直连默认关闭；启用后端口默认 `4319` |
+| `--native-host <具体 IP>`、`--native-port <端口>` | — | 不指定时局域网入口自动选择并跟随手机接入；指定后固定在这个地址，端口默认 `4319` |
 | `--plugin <目录或模块>`、`--harness <id>`、`--provider <id>`、`--demo` | — | — |
 
-桌面端「设置 → 设备 → 连接手机」提供原生开发预览：选择局域网地址、配置自建中继、生成非 URL 配对二维码，或暂停手机输入。新增连接观察方要经 Mac 系统确认，停用与移除直接生效。原生客户端扫码后，在 Mac 系统窗口输入手机六位核对码；网页不接收核对码，浏览器仍使用自己的 HTTPS 入口。
+**连接 iPhone 上的 Latch：** 在桌面端打开「设置 → 设备 → 连接手机」，用 iPhone 上的 Latch 扫码，再用 Touch ID 确认一次。iPhone 需要和这台 Mac 连接同一个 Wi‑Fi；客户端隔离的网络上配对会失败，可以让 Mac 临时连 iPhone 的个人热点。之后不用再设置：有已配对的手机时局域网入口保持打开。官方中继尚未部署，不在同一网络时目前连不上。不需要时在「设备」里移除，手机也可以在设置里「断开这台 Mac」。
 
-原生入口使用固定 Host 根身份的 TLS 1.3 / HTTP/2，与浏览器入口分别配置。Mac 输入、配置界面与 Node 客户端已实现；手机 App、Secure Enclave / App Attest 和自动发现的实现与验收边界见 [docs/REMOTE.md](docs/REMOTE.md)。
+原生入口使用固定 Host 根身份的 TLS 1.3 / HTTP/2，与浏览器入口分别配置。Node 客户端已实现；手机 App、Secure Enclave / App Attest 和自动发现的实现与验收边界见 [docs/REMOTE.md](docs/REMOTE.md)。
 
 同时运行多个 Host 时，为每个 Host 使用不同的 `--data-dir` 与 `--port`。
 

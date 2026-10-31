@@ -7,7 +7,6 @@ export interface HostFeatures {
   personalGroups?: true
   personalQueue?: true
   configReceipts?: true
-  nativePairingScope?: true
   promptTemplates?: true
   fileSearch?: true
   fileTree?: true

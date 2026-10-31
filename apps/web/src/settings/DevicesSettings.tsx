@@ -485,17 +485,7 @@ function BrowserHere({ openInBrowser }: { openInBrowser: LatchShell['openInBrows
   )
 }
 
-export function DevicesSettings({
-  snapshot,
-  access,
-  phone,
-  onChanged,
-}: {
-  snapshot: AppSnapshot
-  access: DeviceAccess
-  phone: boolean
-  onChanged: () => void
-}) {
+export function DevicesSettings({ snapshot, access, onChanged }: { snapshot: AppSnapshot; access: DeviceAccess; onChanged: () => void }) {
   const host = hostView(snapshot)
   const shell = currentShell()
   // Only macOS hands the link to the browser without putting it on a command line (see the shell's main process).
@@ -506,7 +496,7 @@ export function DevicesSettings({
       <ThisDevice device={snapshot.device} devMode={host?.devMode === true} onChanged={onChanged} />
       {access.admin && <RegisteredDevices currentId={snapshot.device.id} local={access.local} onChanged={onChanged} />}
       {access.local && access.admin && <BrowserHere openInBrowser={openInBrowser} />}
-      <PairingSection tls={Boolean(host?.tls)} access={access} phone={phone} snapshot={snapshot} />
+      <PairingSection access={access} snapshot={snapshot} />
       <RevokeThisDevice device={snapshot.device} onChanged={onChanged} />
     </>
   )

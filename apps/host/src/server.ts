@@ -88,6 +88,7 @@ import { DeviceStore, EnrollmentService, type ConnectionContext } from './auth.t
 import { hashDisplay } from './crypto.ts'
 import { discoveryEpochInput } from '@latch/link-wire'
 import type { NativeOpening } from './native.ts'
+import type { OfficialRelay } from './relay/official.ts'
 import type { NativeNetworkBackend } from './native-network-backend.ts'
 import { NativeReplay } from './native-replay.ts'
 import { RelayProfiles, secretBytes } from './relay/profiles.ts'
@@ -231,9 +232,7 @@ const ANONYMOUS_UNIX = new Set([
   'GET /link/api/devices',
   'DELETE /link/api/devices/:id',
   'POST /link/api/pairings',
-  'POST /link/api/native/pairings',
   'GET /link/api/native/info',
-  'POST /link/api/native/input/pause',
   'GET /link/api/traffic',
 ])
 
@@ -490,6 +489,13 @@ export interface ServerOptions {
   clock?: () => number
   /** Tests: the computer's name in the snapshot; default the operating system's host name. */
   hostName?: string
+  /**
+   * Tests only: decides the pairing proximity gate, because a loopback socket can never prove it. Production never sets
+   * it and asks the network component, refusing when that cannot answer. Only the native-direct listener consults it.
+   */
+  nativeNearby?: (opening: NativeOpening, gatewayHash: Uint8Array) => boolean | Promise<boolean>
+  /** Tests; default the compiled list (`relay/official.ts`). */
+  officialRelays?: readonly OfficialRelay[]
   /** Tests: 'relaxed' multiplies every rate-limit bucket by 100. Production never sets it. */
   rateLimits?: 'default' | 'relaxed'
   /** Tests: runs after a file reference was resolved and checked, before the file is opened. Production never sets it. */
@@ -1610,6 +1616,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         authenticate,
         tls,
         loopbackOrigin: () => loopbackOrigin,
+        pairingNearby: (opening, gatewayHash) => nativeRoutes.pairingNearby(opening, gatewayHash),
+        rememberNetwork: networkHash => nativeRoutes.rememberNetwork(networkHash),
+        hostName: () => options.hostName ?? hostname(),
         tlsOrigin: () => tlsOrigin,
         addressBooks,
         endDisallowedStreams() {
@@ -2099,7 +2108,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         tls: tlsOrigin ? { origin: tlsOrigin } : null,
         native: {
           enabled: nativeRoutes.enabled(),
-          inputsPaused: devices.nativeInputsPaused(),
           discoveryEpoch: discoveryEpoch(),
           directoryEpoch: relayDirectory.epoch(),
         },
@@ -2456,9 +2464,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           providerId: input.provider?.id ?? null,
           keyHash: input.apiKey ? sha256Hex(input.apiKey) : null,
         },
-        input.provider && input.apiKey
-          ? { form: 'key.origin', slots: { provider: input.provider.name, target: input.baseURL } }
-          : { form: 'origin.confirm', slots: { target: input.baseURL } },
+        { form: 'origin.confirm', slots: { target: input.baseURL } },
         lines,
         warnings,
         plan.hostPort,
@@ -3590,8 +3596,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     /**
      * What the system sheet names for an R2 approval: the file the built-in writer would write (relative to the session
-     * directory when inside it, else as resolved or given); for any other tool, its name, the Host's risk reason and the
-     * start of the arguments, so two calls of one tool read differently.
+     * directory when inside it, else as resolved or given); for any other tool, its name and the start of the arguments,
+     * so two calls of one tool read differently.
      */
     function approvalSubject(
       toolName: string,
@@ -3599,11 +3605,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       raw: string | undefined,
       facts: Awaited<ReturnType<typeof approvalFacts>>,
     ): PresenceSubject {
-      const why = facts.reason ? RISK_REASON_TEXT[facts.reason] : '参数无法解析'
       const given = facts.builtinWrite && args && typeof args.path === 'string' && args.path ? args.path : undefined
-      if (given === undefined) return { form: 'approval.tool', slots: { tool: toolName, why, input: toolInputText(args, raw) } }
+      if (given === undefined) return { form: 'approval.tool', slots: { tool: toolName, input: toolInputText(args, raw) } }
       const path = facts.target && isWithin(facts.target, facts.realCwd) ? relative(facts.realCwd, facts.target) : (facts.target ?? given)
-      return { form: 'approval.write', slots: { path: path || given, why } }
+      return { form: 'approval.write', slots: { path: path || given } }
     }
 
     async function decideApproval(req: IncomingMessage, res: ServerResponse, caller: Caller, approvalId: string): Promise<void> {
@@ -4562,7 +4567,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         ]
         const foldersAudited = passed.length ? { folderCount: passed.length + 1 } : {}
         const project = chosen && chosen.id !== 'default' ? chosen.name : undefined
-        const place = { harness: harness.name, project: project ?? '', folder: project === undefined ? '启动目录' : '' }
+        // A session without a saved project leaves the place out of the sentence.
+        const place = { agent: harness.name, project: project ?? '' }
         let subject: PresenceSubject
         let launchHash: string
         let lines: PreviewLine[]
@@ -4573,31 +4579,18 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             harnessId,
             ...(preview.definitionHash ? { definitionHash: preview.definitionHash } : {}),
           })
-          // A repeat runs the very command the owner approved with this fingerprint; the same command with another project
-          // configuration says so; anything else names the executable's path, the arguments and the variables the
-          // definition sets (they change what the agent does as much as its arguments), as custom unless it is exactly the
-          // preset's own command at the place the Host finds it.
+          // Another command or another project configuration than this agent started with here before is a change. The
+          // sentence names what runs: the executable's path, its arguments and the variables the definition sets (they
+          // change what the agent does as much as its arguments).
           const command = {
             program: programText(preview.command),
             args: argumentsText(preview.args),
             env: envNamesText(preview.definitionEnvNames ?? []),
           }
-          subject =
-            before === 'launch'
-              ? { form: 'start.repeat', slots: place }
-              : before === 'definition'
-                ? { form: 'start.project-config', slots: place }
-                : {
-                    form:
-                      before === 'harness'
-                        ? preview.verified
-                          ? 'start.changed'
-                          : 'start.changed-custom'
-                        : preview.verified
-                          ? 'start.first'
-                          : 'start.first-custom',
-                    slots: { ...place, ...command },
-                  }
+          subject = {
+            form: before === 'harness' || before === 'definition' ? 'start.changed' : 'start.first',
+            slots: { ...place, ...command },
+          }
           lines = [
             { label: 'Harness', value: `${harness.name}（${harnessId}）` },
             { label: '命令', value: preview.command },
@@ -4618,13 +4611,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           const version = plugin?.version ?? ''
           launchHash = sha256Hex(canonicalJson({ harnessId, pluginId, version, ...(passed.length ? { folders: passed } : {}) }))
           const before = audit.startedBefore({ launchHash, harnessId })
-          subject =
-            before === 'launch'
-              ? { form: 'start.repeat', slots: place }
-              : {
-                  form: before === 'harness' ? 'start.changed-plugin' : 'start.first-plugin',
-                  slots: { ...place, plugin: `${pluginId}@${version}` },
-                }
+          subject = {
+            form: before === 'harness' ? 'start.changed' : 'start.first',
+            slots: { ...place, program: `插件 ${pluginId}@${version}`, args: '', env: '' },
+          }
           lines = [
             { label: 'Harness', value: `${harness.name}（${harnessId}）` },
             { label: '命令', value: `第三方 Harness 插件 ${pluginId}@${version}` },
@@ -5523,15 +5513,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           caller,
           'agent.probe',
           { agentId: id, requestId: input.requestId, launchHash: preview.launchHash, cwd: preview.cwd },
-          {
-            form: 'agent.probe',
-            slots: {
-              harness: agent.name,
-              program: programText(preview.command, home),
-              args: argumentsText(preview.args),
-              env: envNamesText(preview.definitionEnvNames ?? []),
-            },
-          },
+          { form: 'agent.probe', slots: { agent: agent.name } },
           [
             { label: 'Agent', value: agent.name },
             { label: '命令', value: preview.command },

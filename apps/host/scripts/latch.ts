@@ -494,9 +494,9 @@ async function presenceTest(backend: PresenceBackend, hostId: () => Promise<stri
     action: 'device.enroll',
     now: Date.now(),
     requester: { deviceName: '示例设备', listener: 'cli', remoteAddress: '命令行' },
-    // A sample fingerprint that no device key produces by chance: nothing is enrolled either way.
-    subject: { form: 'device.enroll', slots: { fingerprint: 'LATC HTES TAAA AAAA AAAA', device: '示例设备（不会登记）' } },
-    lines: [{ label: '设备名称', value: '示例设备（presence test，不会登记）' }],
+    // Nothing is enrolled either way.
+    subject: { form: 'device.enroll-named', slots: { device: '示例设备（只是检查）' } },
+    lines: [{ label: '设备名称', value: '示例设备（只是检查）' }],
     warnings: ['这是一次人工检查，确认或拒绝都不会改变任何设置。'],
   })
   out(`系统提示应显示：${preview.reason}`)

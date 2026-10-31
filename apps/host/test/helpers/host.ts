@@ -28,6 +28,8 @@ export function startTestHost(options: TestHostOptions = {}): Promise<TestHost> 
         runtimeParent: setup.runtimeParent,
         rateLimits: 'relaxed',
         nativeNetwork: false,
+        // A loopback socket cannot prove it is on the Mac's network; the gate's own tests inject a refusal or a fake backend.
+        nativeNearby: () => true,
         ...rest,
         dataDir: setup.dataDir,
         workspaceRoot: setup.workspaceRoot,

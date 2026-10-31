@@ -11,7 +11,8 @@ const githubToken = ['ghp', 'x'.repeat(36)].join('_')
 describe('redactSecrets', () => {
   it.each([
     [`credential ${credential} end`, 'credential [redacted] end'],
-    [`native QR LATCHPAIR1.${'a'.repeat(128)} end`, 'native QR [redacted] end'],
+    [`native QR LATCHPAIR2.${'a'.repeat(128)} end`, 'native QR [redacted] end'],
+    [`link https://latch.example/pair#2.${'a'.repeat(128)} end`, 'link https://latch.example[redacted] end'],
     [`native window lnw1.${'W'.repeat(43)} end`, 'native window [redacted] end'],
     [`native proof lnp1.${'P'.repeat(43)} end`, 'native proof [redacted] end'],
     [`native book LATCHBOOK1.${'B'.repeat(128)} end`, 'native book [redacted] end'],
@@ -35,7 +36,7 @@ describe('redactSecrets', () => {
     expect(redactSecrets(text)).toBe(text)
   })
   it('classifies encoded native pairing payloads and app-open receipts as secrets', () => {
-    expect(containsSecret(`LATCHPAIR1.${'a'.repeat(128)}`)).toBe(true)
+    expect(containsSecret(`LATCHPAIR2.${'a'.repeat(128)}`)).toBe(true)
     expect(containsSecret(`lnw1.${'W'.repeat(43)}`)).toBe(true)
     expect(containsSecret(`lnp1.${'P'.repeat(43)}`)).toBe(true)
     expect(containsSecret(`LATCHBOOK1.${'B'.repeat(128)}`)).toBe(true)

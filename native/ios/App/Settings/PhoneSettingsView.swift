@@ -1,4 +1,3 @@
-import CryptoKit
 import DeviceCheck
 import LatchNativeCore
 import SwiftUI
@@ -8,32 +7,73 @@ import UIKit
 struct PhoneSettingsView: View {
     @EnvironmentObject private var model: PhoneModel
     @Environment(\.dismiss) private var dismiss
+    let addComputer: () -> Void
+    @State private var copied = false
     var body: some View {
         NavigationStack {
             Form {
-                if let host = model.selectedHost {
-                    Section {
-                        LabeledContent("连接", value: model.status)
-                        Button("暂停所有手机输入", role: .destructive) { Task { await model.pauseInput() } }.disabled(!model.connected)
-                    } header: { Text(host.name) } footer: { Text("暂停后仍可查看和停止。恢复输入需要在电脑上确认。") }
+                Section("电脑") {
+                    ForEach(model.hosts) { host in
+                        NavigationLink {
+                            PhoneHostDetail(host: host)
+                        } label: {
+                            LabeledContent(host.name, value: model.selectedHost?.id == host.id ? model.status : "")
+                        }
+                    }
+                    Button("添加电脑", action: addComputer)
                 }
                 Section("通知") {
                     LabeledContent("状态通知", value: "这台电脑尚未开通")
                 }
-                Section("文件预览") {
-                    Text("文本可直接阅读，PNG/JPEG 在本机重绘后快速查看。PDF、Office 与网页格式尚未完成 iOS 预览验证。").font(.footnote).foregroundStyle(.secondary)
-                }
-                Section {
-                    DisclosureGroup("高级诊断") {
-                        LabeledContent("硬件密钥", value: SecureEnclave.isAvailable ? "Secure Enclave 可用" : "当前环境不可用")
-                        LabeledContent("App Attest", value: DCAppAttestService.shared.isSupported ? "平台支持，电脑尚未启用" : "当前环境不支持")
-                        if let until = model.verifiedUntil { LabeledContent("解锁期限") { Text(until, style: .time) } }
+                Section("关于") {
+                    LabeledContent("版本", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")
+                    Button(copied ? "已复制" : "复制诊断信息") {
+                        UIPasteboard.general.setItems([["public.utf8-plain-text": model.diagnostics()]],
+                            options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(120)])
+                        copied = true
                     }
                 }
             }
             .navigationTitle("设置").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
         }
+    }
+}
+
+private struct PhoneHostDetail: View {
+    @EnvironmentObject private var model: PhoneModel
+    @Environment(\.dismiss) private var dismiss
+    let host: RegisteredHost
+    @State private var confirming = false
+    @State private var working = false
+    @State private var failed = false
+    private var current: Bool { model.selectedHost?.id == host.id }
+    var body: some View {
+        Form {
+            Section {
+                LabeledContent("名称", value: host.name)
+                LabeledContent("状态", value: current && model.connected ? "在线" : "不在线")
+            }
+            Section {
+                Button("断开这台 Mac", role: .destructive) { confirming = true }
+                    .disabled(working || !current || !model.connected)
+            } footer: {
+                if failed { Text("没有断开。连上这台 Mac 后再试一次。") }
+                else if !current || !model.connected { Text("连上这台 Mac 后才能断开。") }
+            }
+        }
+        .navigationTitle(host.name).navigationBarTitleDisplayMode(.inline)
+        .alert("断开「\(host.name)」？", isPresented: $confirming) {
+            Button("断开", role: .destructive) {
+                working = true; failed = false
+                Task {
+                    let done = await model.disconnect(host)
+                    working = false; failed = !done
+                    if done { dismiss() }
+                }
+            }
+            Button("取消", role: .cancel) {}
+        } message: { Text("之后要在 Mac 上重新扫码才能连接。") }
     }
 }
 

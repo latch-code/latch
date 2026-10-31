@@ -18,15 +18,16 @@ import {
   type WaitingEnrollmentView,
   type InvitationView,
   type ListenerClass,
+  type NativePairingStatus,
 } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { sha256Hex, syncDirectory, writeFileAtomic } from '@latch/core/node-kit'
 import { isSocketTransport } from './access.ts'
 import type { AuditActor, AuditLog, StepupMethod } from './audit.ts'
 import { constantTimeEqualHex, deviceFingerprint, parseP256Spki, randomCode, randomId, randomNonce, verifyP256 } from './crypto.ts'
-import { paramsHash, type PresenceService } from './presence.ts'
+import { enrollmentSubject, paramsHash, type PresenceService } from './presence.ts'
 import { validateNativeIdentity, type NativeIdentityInput, type NativeRegistrationIdentity } from './native-identity.ts'
-import { nativeKnockSecret, pairingCode } from '@latch/link-wire'
+import { nativeKnockSecret } from '@latch/link-wire'
 import { nodeCrypto } from '@latch/link-client/crypto'
 
 export const CREDENTIAL_LIFETIME = 30 * 24 * 60 * 60_000
@@ -46,6 +47,16 @@ export const ENROLLMENT_LIFETIME = 120_000
 /** Once confirmed, the new device has at least this long to sign, however late in the 120 s the person touched the sensor. */
 export const ENROLLMENT_SIGNING_WINDOW = 60_000
 export const INVITATION_LIFETIME = 10 * 60_000
+/** A pairing QR's life; the Mac's sheet shows a fresh one every minute, so at most two are live. */
+export const NATIVE_INVITATION_LIFETIME = 120_000
+const MAX_NATIVE_INVITATIONS = 2
+const NATIVE_SHEET_MEMORY = 5 * 60_000
+/** The sheet asks every second; this much silence means the window closed or the app quit. */
+const NATIVE_SHEET_SILENCE = 8_000
+/** A device enrolled from a QR is removed if another device presents that QR within this long. */
+export const NATIVE_CONTENTION_WINDOW = 120_000
+/** How long a removed phone that has not read its tombstone keeps the Mac reachable for it. */
+const TOMBSTONE_DELIVERY_WINDOW = 7 * 24 * 60 * 60_000
 export const OFFLINE_TICKET_LIFETIME = 15 * 60_000
 const MAX_PENDING_ENROLLMENTS = 32
 const MAX_INVITATIONS = 32
@@ -69,6 +80,8 @@ export const ALL_SCOPES: readonly DeviceScope[] = ['view', 'run', 'approve:stand
 /** Grantable only to devices enrolled over host.sock until a remote step-up exists. */
 export const UNIX_ONLY_SCOPES: readonly DeviceScope[] = ['approve:elevated', 'secrets']
 const DEFAULT_REMOTE_SCOPES: readonly DeviceScope[] = ['view', 'run', 'approve:standard']
+/** What pairing a phone on the Mac's own network grants; there is no choice to make and nothing to grant later. */
+const NATIVE_PAIRED_SCOPES: readonly DeviceScope[] = ['view', 'run', 'approve:standard']
 const INVITABLE_SCOPES: readonly DeviceScope[] = ['view', 'run', 'approve:standard', 'admin']
 /** Name used when a migrated record's name cannot be shown in a confirmation dialog. */
 const DEFAULT_DEVICE_NAME = '未命名设备'
@@ -127,6 +140,7 @@ const devicesFile = z.strictObject({
   version: z.literal(2),
   hostId: z.string(),
   devices: z.array(storedDevice).max(1000),
+  /** Read once from files written while the global input pause existed, then dropped (see `load`). */
   nativeInputsPaused: z.boolean().optional(),
 })
 type DevicesFile = z.infer<typeof devicesFile>
@@ -206,6 +220,13 @@ const defaultFs: DeviceFs = { open: (path, flags, mode) => openFile(path, flags,
 
 const codeOf = (error: unknown) => (error as NodeJS.ErrnoException | undefined)?.code
 /** PresenceService refusals raised before it shows a window. */
+function notNearby(): AppError {
+  return new AppError(403, 'pairing-not-nearby', '手机需要和这台 Mac 连接同一个 Wi‑Fi')
+}
+function contended(): AppError {
+  return new AppError(409, 'pairing-contended', '有两台设备扫了同一个二维码，已全部取消。请重新扫码。')
+}
+
 const UNSHOWN_PRESENCE = new Set(['presence-unavailable', 'presence-blocked', 'presence-cooldown', 'presence-busy'])
 
 /** What a confirmation names as the source of a request made on host.sock. */
@@ -237,6 +258,8 @@ function deviceName(value: unknown): string {
   if (!name || name.length > 80) throw new AppError(400, 'invalid-device-name', '设备名称需要 1–80 个字符')
   // The name heads confirmation dialogs; anything the dialog would have to escape could imitate other lines there.
   if (!isAcceptableDeviceName(value as string)) throw new AppError(400, 'invalid-device-name', '设备名称不能包含控制字符或不可见字符')
+  // The sheet's sentence quotes the name with these: one inside it could close the quote and add words of its own.
+  if (/[「」]/u.test(name)) throw new AppError(400, 'invalid-device-name', '设备名称不能包含「」')
   return name
 }
 
@@ -368,6 +391,7 @@ export class DeviceStore {
       if (codeOf(error) !== 'ENOENT') throw corrupt(DEVICES_FILE, codeOf(error) ?? '读取失败')
     }
     let dirty = false
+    const loweredByPause: Array<{ deviceId: string; removed: StoredDevice['scopes'] }> = []
     if (text === undefined) dirty = true
     else {
       let raw: unknown
@@ -396,6 +420,20 @@ export class DeviceStore {
           }
         }
         this.state = parsed.data
+        // The pause is gone. A Host stopped while paused must not hand its phones their input back on upgrade: they stay
+        // read-only one by one, and pairing again is the way back.
+        if (this.state.nativeInputsPaused !== undefined) {
+          if (this.state.nativeInputsPaused)
+            for (const device of this.state.devices)
+              if (device.native && device.status !== 'revoked') {
+                const removed = device.scopes.filter(scope => scope !== 'view')
+                device.scopes = ['view']
+                delete device.scopesBeforeReview
+                if (removed.length) loweredByPause.push({ deviceId: device.id, removed })
+              }
+          delete this.state.nativeInputsPaused
+          dirty = true
+        }
       }
     }
     const replayed = await this.applyRevocationLog()
@@ -406,6 +444,10 @@ export class DeviceStore {
     for (const device of this.state.devices) this.lastPersistedSeen.set(device.id, Date.parse(device.lastSeenAt) || 0)
     // Best effort, like the cascade itself: these only take privilege away.
     const actor: AuditActor = { listener: 'host', via: 'startup' }
+    for (const { deviceId, removed } of loweredByPause)
+      await this.audit
+        .append({ action: 'device.scopes.changed', actor, target: deviceId, detail: { deviceId, added: [], removed } })
+        .catch(() => {})
     for (const review of replayed.reviews) {
       await this.audit.append({ action: 'device.review', actor, target: review.deviceId, detail: review }).catch(() => {})
     }
@@ -868,8 +910,32 @@ export class DeviceStore {
     })
   }
 
-  nativeInputsPaused(): boolean {
-    return this.state.nativeInputsPaused === true
+  /** A phone's self-reported name, told apart from the Host's other devices with 「(2)」 and so on. */
+  distinctName(name: string): string {
+    const taken = new Set(this.state.devices.filter(device => device.status !== 'revoked').map(device => device.name))
+    if (!taken.has(name)) return name
+    for (let number = 2; number < 100; number++) {
+      const suffix = ` (${number})`,
+        candidate = `${Array.from(name)
+          .slice(0, 80 - suffix.length)
+          .join('')}${suffix}`
+      if (!taken.has(candidate)) return candidate
+    }
+    return name
+  }
+
+  /** A paired phone exists, or a removed one has yet to read its tombstone: the Mac stays reachable for them. */
+  nativeReachable(): boolean {
+    const now = this.now()
+    return this.state.devices.some(
+      device =>
+        device.native
+        && (device.status === 'revoked'
+          ? device.revokedAt !== undefined
+            && device.native.revocationAcknowledgedAt === undefined
+            && now - device.revokedAt < TOMBSTONE_DELIVERY_WINDOW
+          : device.status === 'active' || device.status === 'review'),
+    )
   }
   nativeStatus(deviceId: string): Device['native'] | undefined {
     const device = this.find(deviceId)
@@ -881,36 +947,10 @@ export class DeviceStore {
           ? 'revoked'
           : device.status === 'review'
             ? 'review'
-            : this.nativeInputsPaused()
-              ? 'paused'
-              : this.now() - device.native.lastVerifiedAt > CREDENTIAL_LIFETIME
-                ? 'verification-required'
-                : 'ready',
+            : this.now() - device.native.lastVerifiedAt > CREDENTIAL_LIFETIME
+              ? 'verification-required'
+              : 'ready',
     }
-  }
-
-  setNativeInputsPaused(paused: boolean, actor: AuditActor, stepup: StepupMethod): Promise<{ audited: boolean }> {
-    return this.serialize(async () => {
-      if (this.nativeInputsPaused() === paused) return { audited: true }
-      let seq: number | undefined
-      if (!paused) seq = (await this.audit.append({ action: 'native.inputs.resumed', actor, stepup, detail: {} })).seq
-      this.state.nativeInputsPaused = paused
-      let audited = true
-      if (paused)
-        await this.audit.append({ action: 'native.inputs.paused', actor, stepup: 'none', detail: {} }).catch(() => {
-          audited = false
-        })
-      try {
-        await this.persist()
-      } catch (error) {
-        if (!paused) {
-          this.state.nativeInputsPaused = true
-          if (seq !== undefined) await this.audit.append({ action: 'action.failed', actor, detail: { refSeq: seq } }).catch(() => {})
-        }
-        throw error
-      }
-      return { audited }
-    })
   }
 
   nativeVerificationKey(deviceId: string): string | undefined {
@@ -922,7 +962,7 @@ export class DeviceStore {
     if (!device?.native || !device.credential || !isNativeListener(device.listener)) return { ok: false, code: 'unauthorized' }
     if (device.status === 'revoked' || device.status === 'legacy-pending') return { ok: false, code: 'device-revoked', deviceId }
     const result = publicDevice(device)
-    if (this.nativeInputsPaused() || this.now() - device.native.lastVerifiedAt > CREDENTIAL_LIFETIME) result.scopes = ['view']
+    if (this.now() - device.native.lastVerifiedAt > CREDENTIAL_LIFETIME) result.scopes = ['view']
     this.touch(device, this.now())
     return { ok: true, device: result, credentialHash: device.credential.hash, renewAfter: this.now() + RENEW_INTERVAL, renewDue: false }
   }
@@ -1028,13 +1068,12 @@ export class DeviceStore {
       const record: StoredDevice = {
         id,
         name,
-        status: native && input.connection.listener === 'native-relay' ? 'review' : 'active',
+        status: 'active',
         listener: input.connection.listener,
         origin: input.connection.origin,
         publicKey: der.toString('base64url'),
         fingerprint: deviceFingerprint(der),
-        scopes: native && input.connection.listener === 'native-relay' ? ['view'] : scopes,
-        ...(native && input.connection.listener === 'native-relay' ? { scopesBeforeReview: scopes } : {}),
+        scopes,
         dataScope: input.dataScope,
         pairedBy: { method, ...(input.pairedBy.deviceId ? { deviceId: input.pairedBy.deviceId } : {}) },
         createdAt: iso(now),
@@ -1383,6 +1422,43 @@ export interface EnrollmentRequest {
   /** 'lpo1-…' */
   offlineCode?: string
   native?: NativeIdentityInput
+  /** The phone's current network, as `gatewayHash` (link-wire) gives it. */
+  gatewayHash?: string
+}
+
+/** What only the route knows about a phone's pairing request: the socket it arrived on and that QR's own budget. */
+export interface NativePairingContext {
+  /** The proof that the peer of this socket is on the Mac's network: the network to remember if it pairs, else false. */
+  nearby(gatewayHash: Uint8Array): Promise<string | false>
+  /** Spends this QR's budget. Reached only by a request that would ask for a new confirmation. */
+  budget(): void
+  /** A contention's audit record could not be written; the burn went ahead. */
+  auditFailed(): void
+}
+
+/**
+ * One pairing sheet: every QR it showed shares one claim, so a second set of keys on any of them ends all of them. The
+ * sheet rotates its QR and the previous one stays valid, because the first scan can sit behind a system prompt.
+ */
+interface NativeSession {
+  /** Every QR of this sheet, by code hash, with its invitation. */
+  codes: Map<string, string>
+  claim?: {
+    invitationId: string
+    /** Connection and verification keys: the same phone retrying is not contention. */
+    keysHash: string
+    enrollmentId: string
+    /** Its enrollment is not recorded yet: the audit record and the confirmation request are still running. */
+    inFlight: boolean
+  }
+  burned: boolean
+  /** The sheet closed: its QRs are dead and nothing more can burn it. */
+  closed: boolean
+  closedAt?: number
+  /** The phone it paired, for the question that follows. Outlives the enrollment: the sheet waits for an answer. */
+  completed?: { deviceId: string; name: string }
+  /** When the sheet last asked. A sheet that stops asking has gone, whether or not it could say so. */
+  polled?: number
 }
 
 interface Enrollment {
@@ -1408,13 +1484,15 @@ interface Enrollment {
   completing: boolean
   native?: NativeRegistrationIdentity
   reservedNativeId?: string
-  nativeInvitationHash?: string
-  nativeInvitationExpiresAt?: number
+  /** Set when this enrollment's QR was contended: a completion still under way removes the device it just made. */
+  contended?: boolean
+  completedAt?: number
+  /** The network the proximity proof named, remembered only once this phone is actually paired. */
+  network?: string
+  session?: NativeSession
 }
 
 interface Invitation {
-  /** A Native invitation's maximum data range, selected on host.sock; never learned from the phone. */
-  dataScope?: DataScope
   id: string
   codeHash: string
   scopes: DeviceScope[]
@@ -1484,6 +1562,12 @@ export class EnrollmentService {
   private readonly now: () => number
   private readonly enrollments = new Map<string, Enrollment>()
   private readonly invitations = new Map<string, Invitation>()
+  /** Pairing sheets, by the code hash of each of their QRs. */
+  private readonly nativeSessions = new Map<string, NativeSession>()
+  /** The sheet new QRs join. */
+  private currentSession: NativeSession | undefined
+  /** What the Mac's sheet follows, by invitation; kept past expiry so it can still say what happened. */
+  private readonly nativeSheets = new Map<string, { expiresAt: number; offNetwork: boolean; session: NativeSession }>()
   private offlineQueue: Promise<unknown> = Promise.resolve()
   private invitationQueue: Promise<unknown> = Promise.resolve()
 
@@ -1534,26 +1618,54 @@ export class EnrollmentService {
   private prune(): void {
     const now = this.now()
     for (const [id, enrollment] of this.enrollments) {
-      if (now > Math.max(enrollment.expiresAt + ENROLLMENT_LIFETIME, enrollment.nativeInvitationExpiresAt ?? 0)) this.enrollments.delete(id)
+      if (now > enrollment.expiresAt + ENROLLMENT_LIFETIME) this.enrollments.delete(id)
     }
     for (const [id, invitation] of this.invitations) if (now > invitation.expiresAt) this.invitations.delete(id)
+    for (const session of new Set(this.nativeSessions.values()))
+      if (session.polled !== undefined && !session.closed && !session.burned && now - session.polled > NATIVE_SHEET_SILENCE)
+        this.closeSession(session)
+    for (const [hash, session] of this.nativeSessions) {
+      const sheet = this.nativeSheets.get(session.codes.get(hash) ?? '')
+      const live = sheet !== undefined && now <= sheet.expiresAt && !session.closed && !session.burned
+      if (!live && (!session.claim || (!session.claim.inFlight && !this.enrollments.has(session.claim.enrollmentId))))
+        this.nativeSessions.delete(hash)
+    }
+    for (const [id, sheet] of this.nativeSheets) {
+      const session = sheet.session
+      // A sheet still asking about its phone keeps what it asks about, however long the person takes.
+      if (session.polled !== undefined && !session.closed && !session.burned) continue
+      if (now > Math.max(sheet.expiresAt, session.closedAt ?? 0) + NATIVE_SHEET_MEMORY) this.nativeSheets.delete(id)
+    }
   }
 
-  /** The legacy cookie (loopback only) lets the new device take over the old name and retires the old record. */
-  async create(request: EnrollmentRequest, connection: ConnectionContext, legacy?: PresentedCredential): Promise<EnrollmentView> {
-    this.prune()
+  private assertPendingRoom(): void {
     if (
       [...this.enrollments.values()].filter(item => item.status === 'pending' || item.status === 'approved').length
       >= MAX_PENDING_ENROLLMENTS
-    ) {
+    )
       throw new AppError(429, 'rate-limited', '请求过于频繁，请稍后再试', { retryAfter: 20 })
-    }
+  }
+
+  /** The legacy cookie (loopback only) lets the new device take over the old name and retires the old record. */
+  async create(
+    request: EnrollmentRequest,
+    connection: ConnectionContext,
+    legacy?: PresentedCredential,
+    pairing?: NativePairingContext,
+  ): Promise<EnrollmentView> {
+    this.prune()
+    // A phone gets past this only after its claim is checked: another QR holder must not be able to fill it.
+    if (!isNativeListener(connection.listener)) this.assertPendingRoom()
     if (!request || typeof request !== 'object') throw new AppError(400, 'invalid-request', '登记请求无效')
     const { der } = parseP256Spki(request.publicKey)
     let native: NativeRegistrationIdentity | undefined
-    let sas: string | undefined
     if (!isNativeListener(connection.listener) && request.native)
       throw new AppError(400, 'native-identity-invalid', '此入口不接受原生设备身份')
+    if (isNativeListener(connection.listener)) {
+      // The result is fixed, so a phone asking for anything is not asking this Host.
+      if (request.scopes !== undefined || request.dataScope !== undefined)
+        throw new AppError(400, 'scope-not-grantable', '该权限在此连接方式下不可授予')
+    } else if (request.gatewayHash !== undefined) throw new AppError(400, 'invalid-request', '登记请求无效')
     const action = isNativeListener(connection.listener) ? 'device.enroll-native' : 'device.enroll'
     const legacyDevice =
       connection.listener === 'loopback-tcp' && legacy?.kind === 'legacy-cookie' ? this.devices.legacyMatch(legacy.value) : undefined
@@ -1561,7 +1673,9 @@ export class EnrollmentService {
     const name =
       legacyDevice && (typeof request.name !== 'string' || request.name.trim() === '')
         ? legacyName(legacyDevice.name)
-        : deviceName(request.name)
+        : isNativeListener(connection.listener)
+          ? this.devices.distinctName(deviceName(request.name))
+          : deviceName(request.name)
     if (request.scopes !== undefined && (!Array.isArray(request.scopes) || request.scopes.some(scope => typeof scope !== 'string'))) {
       throw new AppError(400, 'invalid-scope', '未知的设备权限')
     }
@@ -1570,12 +1684,22 @@ export class EnrollmentService {
     const local = isLocalListener(connection.listener)
     const id = randomId('enr')
     const now = this.now()
-    let scopes = request.scopes ? normalizeScopes(request.scopes) : local ? [...ALL_SCOPES] : [...DEFAULT_REMOTE_SCOPES]
-    let dataScope: DataScope = request.dataScope ?? (local ? 'all' : 'work')
+    const nativeRequest = isNativeListener(connection.listener)
+    let scopes = nativeRequest
+      ? [...NATIVE_PAIRED_SCOPES]
+      : request.scopes
+        ? normalizeScopes(request.scopes)
+        : local
+          ? [...ALL_SCOPES]
+          : [...DEFAULT_REMOTE_SCOPES]
+    let dataScope: DataScope = nativeRequest ? 'all' : (request.dataScope ?? (local ? 'all' : 'work'))
     requireGrantable(scopes, connection.listener)
     let method: Enrollment['method'] = 'lpc'
     let invitation: Invitation | undefined
     let ticket: OfflineTicket | undefined
+    let session: NativeSession | undefined
+    let keysHash = ''
+    let network: string | undefined
 
     if (request.offlineCode !== undefined) {
       // Offline codes skip the local confirmation, so only the desktop app's socket takes them.
@@ -1589,16 +1713,9 @@ export class EnrollmentService {
       // Without an invitation no listener but host.sock can make the Host show a confirmation.
       if (request.invitation === undefined)
         throw new AppError(403, 'invitation-required', '新设备需要一次性邀请：请在运行 Latch 的电脑上用 Latch 桌面端生成')
-      invitation = this.findInvitation(request.invitation, connection)
-      if (!invitation) throw new AppError(403, 'invitation-invalid', '配对码无效或已过期')
-      if (!request.scopes) scopes = scopes.filter(scope => invitation!.scopes.includes(scope))
-      if (scopes.some(scope => !invitation!.scopes.includes(scope)))
-        throw new AppError(400, 'scope-not-grantable', '该权限在此连接方式下不可授予')
-      if (isNativeListener(connection.listener)) {
-        const allowed = invitation.dataScope ?? 'work'
-        if (request.dataScope === 'all' && allowed !== 'all')
-          throw new AppError(400, 'scope-not-grantable', '这个配对邀请尚未在电脑上允许个人助手和项目文件。')
-        dataScope = request.dataScope ?? allowed
+      if (nativeRequest) {
+        // Relay and carrier paths never reach this: their knocks do not accept a QR.
+        if (connection.listener !== 'native-direct' || !pairing) throw notNearby()
         if (!request.native) throw new AppError(400, 'native-identity-required', '原生配对必须提供独立的连接密钥与验证密钥')
         const identity = validateNativeIdentity(request.native, der)
         const secret = await nativeKnockSecret(
@@ -1609,22 +1726,47 @@ export class EnrollmentService {
         )
         native = { ...identity, knockHash: sha256Hex(secret) }
         secret.fill(0)
-        sas = await pairingCode(
-          nodeCrypto,
-          Buffer.from(sha256Hex(request.invitation as string), 'hex'),
-          der,
-          Buffer.from(native.verificationKey, 'base64url'),
-        )
+        keysHash = sha256Hex(`${der.toString('base64url')}\n${identity.verificationKey}`)
+        const codeHash = sha256Hex(String(request.invitation))
+        session = this.nativeSessions.get(codeHash)
+        if (!session) throw new AppError(403, 'invitation-invalid', '配对码无效或已过期')
+        // The same keys get their own enrollment back, for free: a retry needs no proof and spends nothing.
+        const own = this.ownEnrollment(session, keysHash)
+        if (own) return own
+        const proof = await this.proveNearby(request, session, codeHash, pairing!)
+        network = proof
+        // Other keys that passed the gate burn the sheet here, before anything a QR holder could have spent.
+        const held = await this.checkClaim(session, keysHash, connection, pairing!)
+        if (held) return held
+        this.assertPendingRoom()
+        pairing!.budget()
+      }
+      invitation = this.findInvitation(request.invitation, connection)
+      if (!invitation) throw new AppError(403, 'invitation-invalid', '配对码无效或已过期')
+      if (!nativeRequest) {
+        if (!request.scopes) scopes = scopes.filter(scope => invitation!.scopes.includes(scope))
+        if (scopes.some(scope => !invitation!.scopes.includes(scope)))
+          throw new AppError(400, 'scope-not-grantable', '该权限在此连接方式下不可授予')
       }
       // A confirmation that cannot start (a full-access session holds it back, or the component is unavailable) must not
       // spend the invitation: the phone is told to try again once the session ends, with the same code. Checked only for
       // a valid invitation, so nobody without one learns that a session runs.
       await this.presence.assertCanRequest(action)
+      if (session) {
+        const held = await this.checkClaim(session, keysHash, connection, pairing!)
+        if (held) return held
+      }
       // Single use: consumed by the first create that passes validation and may ask for the confirmation. Another
       // create may have taken it during the check.
-      if (this.findInvitation(request.invitation, connection) !== invitation)
+      if (this.findInvitation(request.invitation, connection) !== invitation) {
+        if (session) {
+          const held = await this.checkClaim(session, keysHash, connection, pairing!)
+          if (held) return held
+        }
         throw new AppError(403, 'invitation-invalid', '配对码无效或已过期')
+      }
       this.invitations.delete(invitation.id)
+      if (session) session.claim = { invitationId: invitation.id, keysHash, enrollmentId: id, inFlight: true }
       method = 'invitation'
     }
     const fingerprint = deviceFingerprint(der)
@@ -1643,7 +1785,8 @@ export class EnrollmentService {
         },
       })
     } catch (error) {
-      this.restoreInvitation(invitation)
+      if (session) session.claim = undefined
+      this.restoreInvitation(invitation, session)
       throw error
     }
     const enrollment: Enrollment = {
@@ -1660,14 +1803,9 @@ export class EnrollmentService {
       method,
       failures: 0,
       completing: false,
-      ...(native
-        ? {
-            native,
-            reservedNativeId: randomId('dev'),
-            nativeInvitationHash: invitation!.codeHash,
-            nativeInvitationExpiresAt: invitation!.expiresAt,
-          }
-        : {}),
+      ...(native ? { native, reservedNativeId: randomId('dev') } : {}),
+      ...(network ? { network } : {}),
+      ...(session ? { session } : {}),
       ...(invitation?.inviterDeviceId ? { inviterDeviceId: invitation.inviterDeviceId } : {}),
       ...(invitation ? { invitationId: invitation.id } : {}),
       ...(legacyDevice ? { legacyDeviceId: legacyDevice.id } : {}),
@@ -1680,16 +1818,24 @@ export class EnrollmentService {
       return this.view(enrollment, true)
     }
 
-    const lines = [
-      { label: '设备名称', value: name },
-      { label: '设备指纹', value: fingerprint },
-      { label: '来源地址', value: sourceText(connection) },
-      { label: '连接方式', value: `${LISTENER_LABELS[connection.listener]} · ${connection.origin}` },
-      { label: '请求的权限', value: scopes.map(scope => SCOPE_LABELS[scope]).join('、') },
-      { label: '数据范围', value: dataScope === 'all' ? '全部' : '工作' },
-      ...(invitation ? [{ label: '邀请来源', value: invitation.inviterName ?? '命令行' }] : []),
-    ]
-    const warnings = ['只有在你正在登记这台设备、并且两边显示的指纹完全一致时才确认。']
+    const lines = nativeRequest
+      ? [
+          { label: '设备名称', value: name },
+          { label: '请求的权限', value: scopes.map(scope => SCOPE_LABELS[scope]).join('、') },
+          { label: '数据范围', value: '全部' },
+        ]
+      : [
+          { label: '设备名称', value: name },
+          { label: '设备指纹', value: fingerprint },
+          { label: '来源地址', value: sourceText(connection) },
+          { label: '连接方式', value: `${LISTENER_LABELS[connection.listener]} · ${connection.origin}` },
+          { label: '请求的权限', value: scopes.map(scope => SCOPE_LABELS[scope]).join('、') },
+          { label: '数据范围', value: dataScope === 'all' ? '全部' : '工作' },
+          ...(invitation ? [{ label: '邀请来源', value: invitation.inviterName ?? '命令行' }] : []),
+        ]
+    const warnings = nativeRequest
+      ? ['只有在你正在连接这台手机时才确认。']
+      : ['只有在你正在登记这台设备、并且两边显示的指纹完全一致时才确认。']
     if (scopes.includes('admin')) warnings.push('该设备将可以管理此 Host（模型服务、插件、项目和其他设备）。')
     const binding = paramsHash(action, {
       enrollmentId: id,
@@ -1706,17 +1852,16 @@ export class EnrollmentService {
     try {
       confirmation = await this.presence.request({
         action,
-        ...(sas ? { pairingCode: sas } : {}),
         requester: { deviceName: name, listener: connection.listener, remoteAddress: local ? LOCAL_SOURCE : connection.remoteAddress },
-        // The fingerprint comes first in the sheet: the name is chosen by the device asking and could imitate one.
-        subject: { form: native ? 'device.enroll-native' : 'device.enroll', slots: { fingerprint, device: name } },
+        subject: enrollmentSubject(connection.listener, name),
         lines,
         warnings,
         paramsHash: binding,
       })
     } catch (error) {
       // These refusals come before any window is shown, so the invitation is still unspent; anything else spends it.
-      if (UNSHOWN_PRESENCE.has(String(codeOf(error)))) this.restoreInvitation(invitation)
+      if (session) session.claim = undefined
+      if (UNSHOWN_PRESENCE.has(String(codeOf(error)))) this.restoreInvitation(invitation, session)
       await this.failed(id, 'cancelled', actor)
       throw error
     }
@@ -1724,6 +1869,17 @@ export class EnrollmentService {
     enrollment.hashDisplay = confirmation.hashDisplay
     enrollment.reason = confirmation.reason
     this.enrollments.set(id, enrollment)
+    if (session?.claim) {
+      session.claim.inFlight = false
+      // Another device presented a QR of this sheet, or the sheet closed, while the confirmation was being asked for.
+      if (session.burned || session.closed) {
+        enrollment.status = 'cancelled'
+        enrollment.contended = session.burned
+        this.presence.cancel(confirmation.id)
+        await this.failed(id, 'cancelled', actor)
+        throw session.burned ? contended() : new AppError(403, 'invitation-invalid', '配对码无效或已过期')
+      }
+    }
     void confirmation.settled.then(async outcome => {
       if (enrollment.status !== 'pending') return
       if (outcome.result === 'approved') {
@@ -1761,33 +1917,241 @@ export class EnrollmentService {
    * Puts back an invitation that a create took but that showed no confirmation, so the same link can be submitted again.
    * It keeps its own expiry, and the inviter is checked again when it is used.
    */
-  private restoreInvitation(invitation: Invitation | undefined): void {
+  private restoreInvitation(invitation: Invitation | undefined, session?: NativeSession): void {
     if (!invitation || invitation.expiresAt < this.now() || this.invitations.size >= MAX_INVITATIONS) return
+    // A closed sheet or a contended QR stays dead.
+    if (session?.burned || session?.closed || (session && !this.nativeSheets.has(invitation.id))) return
     if (invitation.inviterDeviceId !== undefined && !this.devices.isActive(invitation.inviterDeviceId)) return
     this.invitations.set(invitation.id, invitation)
   }
 
-  nativeInvitations(): Array<{ id: string; kind: 'pairing'; knockKey: Uint8Array; enrollmentId?: string }> {
+  /**
+   * The proximity gate. Only a code that is live or spent gets here, so nobody without a QR reaches the network helper.
+   * A refusal spends nothing another phone needs, and anything short of a proof fails closed.
+   */
+  private async proveNearby(
+    request: EnrollmentRequest,
+    session: NativeSession,
+    codeHash: string,
+    pairing: NativePairingContext,
+  ): Promise<string> {
+    const gateway =
+      typeof request.gatewayHash === 'string' && /^[a-f0-9]{64}$/u.test(request.gatewayHash)
+        ? Buffer.from(request.gatewayHash, 'hex')
+        : undefined
+    const proof = gateway ? await pairing.nearby(gateway).catch(() => false as const) : false
+    if (proof === false) {
+      const sheet = this.nativeSheets.get(session.codes.get(codeHash) ?? '')
+      if (sheet) sheet.offNetwork = true
+      throw notNearby()
+    }
+    return proof
+  }
+
+  /** This phone's own enrollment, when these keys hold the sheet's claim. No claim, or other keys: undefined. */
+  private ownEnrollment(session: NativeSession, keysHash: string): EnrollmentView | undefined {
+    const claim = session.claim
+    if (session.burned || !claim || !constantTimeEqualHex(claim.keysHash, keysHash)) return undefined
+    const enrollment = this.enrollments.get(claim.enrollmentId)
+    // Its own first request is still asking for the confirmation; the phone asks again.
+    if (!enrollment && claim.inFlight) throw new AppError(409, 'enrollment-pending', '本机尚未确认')
+    if (!enrollment) return undefined
+    return this.claimOpen(enrollment) ? this.view(enrollment, true) : undefined
+  }
+
+  /** The same keys get their own enrollment back; other keys burn the sheet. Nothing claimed: undefined. */
+  private async checkClaim(
+    session: NativeSession,
+    keysHash: string,
+    connection: ConnectionContext,
+    pairing: NativePairingContext,
+  ): Promise<EnrollmentView | undefined> {
+    if (session.burned) throw contended()
+    const own = this.ownEnrollment(session, keysHash)
+    if (own) return own
+    const claim = session.claim
+    if (!claim) return undefined
+    const enrollment = this.enrollments.get(claim.enrollmentId)
+    if (!claim.inFlight && (!enrollment || !this.claimOpen(enrollment))) {
+      // Denied, cancelled or timed out: nothing to burn, and the sheet's other QR is free. A device past its window stays.
+      if (session.completed) throw new AppError(403, 'invitation-invalid', '配对码无效或已过期')
+      session.claim = undefined
+      return undefined
+    }
+    // The sheet was closed, which counts as the person's answer: nothing more burns it.
+    if (session.closed) throw new AppError(403, 'invitation-invalid', '配对码无效或已过期')
+    await this.burn(session, connection, pairing)
+    throw contended()
+  }
+
+  /**
+   * Two sets of keys presented one sheet's QRs, and the Host cannot tell which is the person's: everything from that
+   * sheet ends. Only ever takes privilege away, so a failed audit record does not stop it.
+   */
+  private async burn(session: NativeSession, connection: ConnectionContext, pairing: NativePairingContext): Promise<void> {
+    session.burned = true
+    if (this.currentSession === session) this.currentSession = undefined
+    for (const id of session.codes.values()) this.invitations.delete(id)
+    const actor: AuditActor = { listener: connection.listener, via: 'http' }
+    const claim = session.claim!
+    let cancelled = 0,
+      removed = 0
+    const enrollment = this.enrollments.get(claim.enrollmentId)
+    if (enrollment) {
+      enrollment.contended = true
+      if (enrollment.status === 'pending' || enrollment.status === 'approved') {
+        enrollment.status = 'cancelled'
+        if (enrollment.confirmationId) this.presence.cancel(enrollment.confirmationId)
+        cancelled += 1
+        await this.failed(enrollment.id, 'cancelled', actor)
+      } else if (enrollment.status === 'completed' && enrollment.reservedNativeId) {
+        const device = this.devices.get(enrollment.reservedNativeId)
+        if (device && device.status !== 'revoked' && this.now() - Date.parse(device.createdAt) <= NATIVE_CONTENTION_WINDOW) {
+          if (!(await this.removeUnwanted(device.id, actor))) pairing.auditFailed()
+          removed += 1
+        }
+      }
+    }
+    await this.audit
+      .append({
+        action: 'pairing.contended',
+        actor,
+        target: claim.invitationId,
+        detail: { invitationId: claim.invitationId, cancelled, removed },
+      })
+      .catch(() => pairing.auditFailed())
+  }
+
+  private sessionContinues(session: NativeSession): boolean {
+    if (session.closed || session.burned || session.completed) return false
+    const claim = session.claim
+    const enrollment = claim && this.enrollments.get(claim.enrollmentId)
+    if (claim?.inFlight || (enrollment && this.claimOpen(enrollment))) return true
+    return [...session.codes.values()].some(id => this.invitations.has(id))
+  }
+
+  /** A device that should not have been paired: it goes at once, and the Mac stays open for no tombstone of its. */
+  private async removeUnwanted(deviceId: string, actor: AuditActor): Promise<boolean> {
+    const { audited } = await this.devices.revoke(deviceId, 'manual', actor)
+    const revocation = this.devices.nativeRevocations().find(item => item.id === deviceId)
+    if (revocation) await this.devices.acknowledgeNativeRevocation(deviceId, revocation.revokedAt).catch(() => {})
+    return audited
+  }
+
+  /** Whether a spent QR still answers its phone: while confirming, while signing, and briefly after completing. */
+  private claimOpen(enrollment: Enrollment): boolean {
+    const now = this.now()
+    if (enrollment.status === 'pending' || enrollment.status === 'approved') return now <= enrollment.expiresAt
+    return (
+      enrollment.status === 'completed'
+      && enrollment.completedAt !== undefined
+      && now - enrollment.completedAt <= NATIVE_CONTENTION_WINDOW
+      && this.devices.get(enrollment.reservedNativeId ?? '')?.status === 'active'
+    )
+  }
+
+  /**
+   * The knocks a sheet's QRs open: unused ones, and while a phone holds the claim every QR of that sheet, so a second phone
+   * can still present its own. A closed sheet opens only the claimed QR, for its own phone to finish. Never on relay or
+   * carrier paths.
+   */
+  nativeInvitations(): Array<{ id: string; kind: 'pairing'; knockKey: Uint8Array }> {
     this.prune()
-    const unused = [...this.invitations.values()]
-      .filter(item => isNativeListener(item.listener) && (!item.inviterDeviceId || this.devices.isActive(item.inviterDeviceId)))
-      .map(item => ({ id: item.id, kind: 'pairing' as const, knockKey: Buffer.from(item.codeHash, 'hex') }))
-    const recovering = [...this.enrollments.values()]
-      .filter(
-        item =>
-          item.nativeInvitationHash
-          && item.invitationId
-          && item.nativeInvitationExpiresAt! > this.now()
-          && ['pending', 'approved', 'completed'].includes(item.status)
-          && (!item.inviterDeviceId || this.devices.isActive(item.inviterDeviceId)),
-      )
-      .map(item => ({
-        id: item.invitationId!,
-        kind: 'pairing' as const,
-        knockKey: Buffer.from(item.nativeInvitationHash!, 'hex'),
-        enrollmentId: item.id,
-      }))
-    return [...unused, ...recovering]
+    const usable = (inviter?: string) => !inviter || this.devices.isActive(inviter)
+    const open = new Map<string, string>()
+    for (const item of this.invitations.values())
+      if (isNativeListener(item.listener) && usable(item.inviterDeviceId)) open.set(item.codeHash, item.id)
+    for (const [hash, session] of this.nativeSessions) {
+      const claim = session.claim
+      if (session.burned || !claim) continue
+      const enrollment = this.enrollments.get(claim.enrollmentId)
+      if (enrollment ? !this.claimOpen(enrollment) || !usable(enrollment.inviterDeviceId) : !claim.inFlight) continue
+      const id = session.codes.get(hash)
+      if (id && (!session.closed || id === claim.invitationId)) open.set(hash, id)
+    }
+    return Array.from(open, ([hash, id]) => ({ id, kind: 'pairing' as const, knockKey: Buffer.from(hash, 'hex') }))
+  }
+
+  /** A QR the sheet still shows, or a phone it let in that has not finished. */
+  nativePairingOpen(): boolean {
+    return this.nativeInvitations().length > 0
+  }
+
+  /** Whether a phone could finish pairing now: a full-access session holds the confirmation back. */
+  assertCanPair(): Promise<void> {
+    return this.presence.assertCanRequest('device.enroll-native')
+  }
+
+  /**
+   * Closing the sheet: all its QRs die, whichever one is named, and a pairing that has not completed ends with them.
+   * The person's answer comes after completion, so nothing unfinished is left to arrive unasked.
+   */
+  revokeNativeInvitation(id: string): void {
+    this.prune()
+    const session = this.nativeSheets.get(id)?.session
+    if (session) this.closeSession(session)
+    else this.invitations.delete(id)
+  }
+
+  private closeSession(session: NativeSession): void {
+    if (session.closed) return
+    session.closed = true
+    session.closedAt = this.now()
+    if (this.currentSession === session) this.currentSession = undefined
+    for (const code of session.codes.values()) this.invitations.delete(code)
+    const enrollment = session.claim && this.enrollments.get(session.claim.enrollmentId)
+    if (enrollment?.status === 'pending' || enrollment?.status === 'approved') {
+      enrollment.status = 'cancelled'
+      if (enrollment.confirmationId) this.presence.cancel(enrollment.confirmationId)
+      void this.failed(enrollment.id, 'cancelled', { listener: 'host' })
+    }
+  }
+
+  /**
+   * The person said the phone in their hand is not connected: the device goes, and the sheet with it. Answers only for
+   * what it did: a sheet that no longer knows its device says so, and the caller removes it by ID.
+   */
+  async rejectNativePairing(id: string, actor: AuditActor): Promise<{ audited: boolean }> {
+    const session = this.nativeSheets.get(id)?.session
+    if (!session?.completed) throw new AppError(404, 'pairing-device-unknown', '找不到这次连接的设备，请在设备列表里移除它')
+    this.closeSession(session)
+    const device = this.devices.get(session.completed.deviceId)
+    if (!device) throw new AppError(404, 'device-not-found', '找不到该设备')
+    if (device.status === 'revoked') return { audited: true }
+    return { audited: await this.removeUnwanted(device.id, actor) }
+  }
+
+  /** What the Mac's sheet shows for one of its QRs. Names only what the phone itself reported, for the sheet to escape. */
+  nativePairingStatus(id: string): NativePairingStatus {
+    this.prune()
+    const sheet = this.nativeSheets.get(id)
+    if (!sheet) return { state: 'expired', offNetwork: false }
+    const session = sheet.session,
+      base = { offNetwork: sheet.offNetwork }
+    if (!session.closed) session.polled = this.now()
+    if (session.burned) return { ...base, state: 'contended' }
+    if (session.completed) return { ...base, state: 'done', device: session.completed.name, deviceId: session.completed.deviceId }
+    let claim = session.claim
+    const enrollment = claim && this.enrollments.get(claim.enrollmentId)
+    if (claim?.inFlight && !enrollment) return { ...base, state: 'confirming' }
+    if (claim && !enrollment) {
+      // Its record is gone: it was refused long ago, and is no longer confirming anything.
+      session.claim = undefined
+      claim = undefined
+    }
+    const unused = session.closed || this.now() > sheet.expiresAt ? 'expired' : this.invitations.has(id) ? 'ready' : 'expired'
+    if (!claim || !enrollment) return { ...base, state: unused }
+    const device = { device: enrollment.name }
+    switch (enrollment.status) {
+      case 'pending':
+        return { ...base, ...device, state: 'confirming' }
+      case 'approved':
+        return { ...base, ...device, state: 'approved' }
+      case 'expired':
+        return claim.invitationId === id ? { ...base, ...device, state: 'timeout' } : { ...base, state: unused }
+      default:
+        return claim.invitationId === id ? { ...base, ...device, state: 'cancelled' } : { ...base, state: unused }
+    }
   }
 
   /** An unexpired invitation issued for exactly this listener and origin, from an inviter that is still active. */
@@ -1870,6 +2234,7 @@ export class EnrollmentService {
       expiresAt: iso(enrollment.expiresAt),
       ...(enrollment.hashDisplay ? { hashDisplay: enrollment.hashDisplay } : {}),
       ...(enrollment.reason ? { reason: enrollment.reason } : {}),
+      ...(enrollment.contended ? { contended: true } : {}),
     }
   }
 
@@ -1922,7 +2287,6 @@ export class EnrollmentService {
       !isNativeListener(connection.listener)
       || !enrollment.native
       || !enrollment.reservedNativeId
-      || (enrollment.nativeInvitationExpiresAt ?? 0) <= this.now()
       || !['approved', 'completed'].includes(enrollment.status)
     )
       throw new AppError(409, 'enrollment-not-ready', '请先在 Mac 完成本机确认')
@@ -1932,7 +2296,11 @@ export class EnrollmentService {
     return enrollment.reservedNativeId
   }
 
-  async complete(id: string, signature: string, connection: ConnectionContext): Promise<{ device: Device; credential: string }> {
+  async complete(
+    id: string,
+    signature: string,
+    connection: ConnectionContext,
+  ): Promise<{ device: Device; credential: string; network?: string }> {
     const enrollment = this.lookup(id, connection)
     switch (enrollment.status) {
       case 'pending':
@@ -1974,12 +2342,21 @@ export class EnrollmentService {
         actor,
         enrollment.method === 'offline' ? 'offline' : 'lpc-local',
       )
+      // Burned or cancelled while the device was being written: nobody will be asked about it, so it does not stay.
+      const ended = (enrollment.status as EnrollmentView['status']) === 'cancelled' || enrollment.contended
+      if (ended) {
+        await this.removeUnwanted(result.device.id, actor).catch(() => {})
+        enrollment.status = 'cancelled'
+        throw enrollment.contended ? contended() : new AppError(410, 'enrollment-cancelled', '登记请求已取消，请重新提交')
+      }
       enrollment.status = 'completed'
+      enrollment.completedAt = this.now()
+      if (enrollment.session) enrollment.session.completed = { deviceId: result.device.id, name: enrollment.name }
       if (enrollment.legacyDeviceId)
         await this.devices
           .retireLegacy(enrollment.legacyDeviceId, { deviceId: result.device.id, listener: connection.listener, via: 'http' })
           .catch(() => {})
-      return result
+      return { ...result, ...(enrollment.network ? { network: enrollment.network } : {}) }
     } catch (error) {
       await this.failed(enrollment.id, 'commit', actor)
       throw error
@@ -2007,7 +2384,7 @@ export class EnrollmentService {
   }
 
   private async issueInvitation(
-    input: { inviter?: Device; scopes?: DeviceScope[]; dataScope?: DataScope; listener: ListenerClass; origin: string },
+    input: { inviter?: Device; scopes?: DeviceScope[]; listener: ListenerClass; origin: string },
     actor: AuditActor,
   ): Promise<InvitationView> {
     // The Host's own listeners only: callers pass the TLS entry or the loopback origin it started with.
@@ -2024,35 +2401,46 @@ export class EnrollmentService {
       throw new AppError(409, 'tls-not-configured', '尚未配置 HTTPS 入口，无法生成手机配对码')
     }
     if (input.inviter && !this.devices.isActive(input.inviter.id)) throw unauthorized()
-    if (input.dataScope !== undefined && (!isNativeListener(input.listener) || !['work', 'all'].includes(input.dataScope)))
-      throw new AppError(400, 'invalid-data-scope', '配对数据范围无效。')
-    const dataScope = isNativeListener(input.listener) ? (input.dataScope ?? 'work') : undefined
-    const scopes = input.scopes ? normalizeScopes(input.scopes) : [...DEFAULT_REMOTE_SCOPES]
+    const nativeInvite = isNativeListener(input.listener)
+    const scopes = nativeInvite ? [...NATIVE_PAIRED_SCOPES] : input.scopes ? normalizeScopes(input.scopes) : [...DEFAULT_REMOTE_SCOPES]
     if (scopes.some(scope => !INVITABLE_SCOPES.includes(scope)))
       throw new AppError(400, 'scope-not-grantable', '该权限在此连接方式下不可授予')
     this.prune()
-    if (isNativeListener(input.listener) && this.nativeInvitations().length >= MAX_INVITATIONS)
-      throw new AppError(429, 'rate-limited', '原生配对正在等待完成，请稍后重试', { retryAfter: 60 })
+    if (nativeInvite) {
+      // The sheet refreshes its QR every minute; the oldest beyond two dies, so a photo of it is worth nothing sooner.
+      const live = [...this.invitations.values()].filter(item => isNativeListener(item.listener))
+      for (const item of live.slice(0, Math.max(0, live.length - MAX_NATIVE_INVITATIONS + 1))) this.invitations.delete(item.id)
+    }
     if (this.invitations.size >= MAX_INVITATIONS) throw new AppError(429, 'rate-limited', '请求过于频繁，请稍后再试', { retryAfter: 60 })
     const id = randomId('inv')
     const code = randomCode('lpi1')
-    const expiresAt = this.now() + INVITATION_LIFETIME
+    const expiresAt = this.now() + (nativeInvite ? NATIVE_INVITATION_LIFETIME : INVITATION_LIFETIME)
     await this.audit.append({
       action: 'pairing.invited',
       actor,
       target: id,
-      detail: { invitationId: id, scopes, listener: input.listener, ...(dataScope ? { dataScope } : {}) },
+      detail: { invitationId: id, scopes, listener: input.listener },
     })
     this.invitations.set(id, {
       id,
       codeHash: sha256Hex(code),
       scopes,
-      ...(dataScope ? { dataScope } : {}),
       expiresAt,
       listener: input.listener,
       origin: input.origin,
       ...(input.inviter ? { inviterDeviceId: input.inviter.id, inviterName: input.inviter.name } : {}),
     })
-    return { id, code, url: `${input.origin}/link/#pair=${code}`, scopes, expiresAt: iso(expiresAt), ...(dataScope ? { dataScope } : {}) }
+    if (nativeInvite) {
+      // A new QR joins the sheet only while that sheet is still pairing. One with no live QR left, or whose claim has ended,
+      // was left behind without a word, and its phone is nothing to do with this one.
+      const reusable = this.currentSession && this.sessionContinues(this.currentSession) ? this.currentSession : undefined
+      if (this.currentSession && !reusable) this.closeSession(this.currentSession)
+      const session: NativeSession = reusable ?? { codes: new Map(), burned: false, closed: false }
+      this.currentSession = session
+      session.codes.set(sha256Hex(code), id)
+      this.nativeSessions.set(sha256Hex(code), session)
+      this.nativeSheets.set(id, { expiresAt, offNetwork: false, session })
+    }
+    return { id, code, url: `${input.origin}/link/#pair=${code}`, scopes, expiresAt: iso(expiresAt) }
   }
 }

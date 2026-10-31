@@ -143,57 +143,6 @@ public enum AddressBookCodec {
     }
 }
 
-public struct PairingInvitation: Sendable {
-    public let rootSpki: Data
-    public let invitation: String
-    public let direct: [PairingAddress]
-    public let relays: [NativeRelayAddress]
-    public let expiresAt: Date
-    public let hostId: String
-    public struct PairingAddress: Codable, Sendable { public let host: String; public let port: UInt16 }
-    public static func parse(_ encoded: String, now: Date = Date()) throws -> PairingInvitation {
-        guard encoded.hasPrefix("LATCHPAIR1."), encoded.count <= 16_384 else { throw NativeFailure.invalidRecord }
-        let bytes = try LinkBytes.decode64(String(encoded.dropFirst(11)), maximum: 12_288)
-        guard let object = try JSONSerialization.jsonObject(with: bytes) as? [String: Any],
-              Set(object.keys) == Set(["v", "rootSpki", "invitation", "direct", "relays", "expiresAt"]),
-              let v = object["v"] as? NSNumber, CFGetTypeID(v) == CFNumberGetTypeID(), v.doubleValue == 1,
-              let rootText = object["rootSpki"] as? String, let invitation = object["invitation"] as? String,
-              LinkBytes.matches(invitation, "lpi1-[A-Z2-7]{26}"),
-              let entries = object["direct"] as? [[String: Any]], entries.count <= 8,
-              let relayEntries = object["relays"] as? [[String: Any]], relayEntries.count <= 2,
-              let deadline = object["expiresAt"] as? String, let expires = ISO8601DateFormatter.latch.date(from: deadline) else { throw NativeFailure.invalidRecord }
-        guard expires > now else { throw NativeFailure.expired }
-        guard expires.timeIntervalSince(now) <= 660 else { throw NativeFailure.invalidRecord }
-        let root = try LinkBytes.decode64(rootText, maximum: 256)
-        _ = try P256.Signing.PublicKey(derRepresentation: root)
-        var addresses: [PairingAddress] = []
-        for item in entries {
-            guard Set(item.keys) == Set(["host", "port"]), let host = item["host"] as? String, AddressBookCodec.isIP(host),
-                  let port = item["port"] as? NSNumber, CFGetTypeID(port) == CFNumberGetTypeID(), port.doubleValue.rounded(.down) == port.doubleValue,
-                  (1...65_535).contains(port.doubleValue) else { throw NativeFailure.invalidRecord }
-            addresses.append(PairingAddress(host: host, port: port.uint16Value))
-        }
-        var relays: [NativeRelayAddress] = [], known = Set<Data>()
-        for item in relayEntries {
-            guard Set(item.keys) == Set(["relayId", "url", "spkiHash", "pass", "holderSeed"]).union(item["profile"] == nil ? [] : ["profile"]),
-                  let id = item["relayId"] as? String, let rawURL = item["url"] as? String, let hash = item["spkiHash"] as? String,
-                  let rawPass = item["pass"] as? String, let rawSeed = item["holderSeed"] as? String else { throw NativeFailure.invalidRecord }
-            let profile: NativeRelayProfile?
-            if let rawProfile = item["profile"] {
-                guard let text = rawProfile as? String, let value = NativeRelayProfile(rawValue: text) else { throw NativeFailure.invalidRecord }
-                profile = value
-            } else { profile = nil }
-            let relayId = try LinkBytes.fixed(LinkBytes.unhex(id, maximum: 16), 16), spkiHash = try LinkBytes.fixed(LinkBytes.unhex(hash, maximum: 32), 32),
-                bytes = try LinkBytes.fixed(LinkBytes.decode64(rawPass, maximum: 174), 174), seed = try LinkBytes.fixed(LinkBytes.decode64(rawSeed, maximum: 32), 32), pass = try AdmissionPass.decode(bytes)
-            guard pass.pairing, LinkBytes.equal(pass.relayId, relayId), known.insert(relayId).inserted,
-                  LinkBytes.equal(try Curve25519.Signing.PrivateKey(rawRepresentation: seed).publicKey.rawRepresentation, pass.holderPublicKey) else { throw NativeFailure.identityMismatch }
-            relays.append(NativeRelayAddress(relayId: relayId, url: try AddressBookCodec.relayURL(rawURL), spkiHash: spkiHash, passes: [NativeRelayPass(bytes: bytes, holderSeed: seed)], profile: profile))
-        }
-        guard !addresses.isEmpty || !relays.isEmpty else { throw NativeFailure.unsupported }
-        return PairingInvitation(rootSpki: root, invitation: invitation, direct: addresses, relays: relays, expiresAt: expires, hostId: LinkBytes.base32(LinkBytes.hash(root)))
-    }
-}
-
 extension ISO8601DateFormatter {
     static var latch: ISO8601DateFormatter {
         let formatter = ISO8601DateFormatter()

@@ -1884,16 +1884,6 @@ describe('visual capture of the real product', () => {
         await noHorizontalOverflow(target, settings)
         await recorder.capture(target, viewport, surface, section)
         if (surface === 'settings-computer') await captureCeilings(target, viewport, settings)
-        if (surface === 'settings-devices') {
-          // Phone access without HTTPS: the start options open under their disclosure, one per line, never sideways.
-          const disclosure = settings.getByRole('button', { name: '用自己的 HTTPS 证书配置（需要重启 Host）', exact: true })
-          await disclosure.click()
-          await settings.locator('.pair-flags code').waitFor()
-          await settleMotion(target)
-          await noHorizontalOverflow(target, settings)
-          await recorder.capture(target, viewport, 'settings-devices-tls-open', 'the HTTPS start options opened')
-          await disclosure.click()
-        }
         const top = () => (viewport.name === 'phone' ? settings.locator('.settings-level[data-state="top"]') : settings)
         if (surface === 'settings-providers') {
           // A saved service's page: its connection, key, models and the red group, every value in a card.

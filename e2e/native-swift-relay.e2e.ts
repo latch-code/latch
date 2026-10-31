@@ -39,7 +39,6 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
     binary = join((await exec('swift', [...args, '--show-bin-path'])).stdout.trim(), 'LatchNativeFixture')
   })
   it.each([
-    ['nativeRelayProbe', { status: 401 }],
     [
       'nativeRelayLifecycle',
       {
@@ -48,7 +47,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
         mutualTLS: true,
         requiresWindow: true,
         verified: true,
-        reviewDeniedBeforeDesktopGrant: true,
+        relayPairingRefused: true,
         created: true,
         files: true,
         events: true,
@@ -144,7 +143,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
         dataDir,
         workspaceRoot: join(directory, 'workspace'),
         nativeRelayCa: tls.cert,
-        ...(operation === 'nativeDirectTransfer' ? { native: { host: '127.0.0.1', port: 0 } } : {}),
+        native: { host: '127.0.0.1', port: 0 },
         egressLookup: (_hostname, _options, callback) => callback(null, [{ address: '127.0.0.1', family: 4 }]),
       })
       const desktop = await host.enroll({ listener: 'unix' })
@@ -162,7 +161,6 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
       await writeFile(join(host.workspaceRoot, 'large.txt'), Buffer.alloc(1_048_576, 120))
       const input = {
         operation,
-        ...(operation === 'nativeRelayProbe' ? { iterations: 9 } : {}),
         requestId,
         payload: invitation.payload,
         trustAnchor: new X509Certificate(tls.cert).raw.toString('hex'),
@@ -170,7 +168,6 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
       const fixtureHost = host
       const response = await new Promise<unknown>((resolve, reject) => {
         const child = spawn(binary, [], { stdio: ['pipe', 'pipe', 'pipe'], env: {} })
-        let grant: Promise<void> | undefined
         let output = '',
           diagnostic = ''
         const timer = setTimeout(
@@ -186,26 +183,6 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
         })
         child.stderr.on('data', (data: Buffer) => {
           diagnostic = (diagnostic + data.toString()).slice(0, 4096)
-          if (operation !== 'nativeRelayProbe' && !grant && diagnostic.includes('Native fixture waiting for desktop grant\n')) {
-            grant = (async () => {
-              const candidates = fixtureHost.host.security.devices.list().filter(device => device.name === 'Swift relay fixture')
-              expect(candidates.length).toBe(1)
-              expect(candidates[0]!.status).toBe(operation === 'nativeDirectTransfer' ? 'active' : 'review')
-              if (operation !== 'nativeDirectTransfer') expect(candidates[0]!.scopes).toEqual(['view'])
-              expect(
-                (
-                  await desktop.confirmed(`devices/${candidates[0]!.id}`, {
-                    method: 'PATCH',
-                    body: { scopes: ['view', 'run'], dataScope: 'all' },
-                  })
-                ).status,
-              ).toBe(200)
-            })()
-            void grant.catch(error => {
-              child.kill('SIGKILL')
-              reject(error)
-            })
-          }
         })
         child.once('error', error => {
           clearTimeout(timer)
@@ -219,7 +196,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
           }
           try {
             const value: unknown = JSON.parse(output)
-            void (grant ?? Promise.resolve()).then(() => resolve(value), reject)
+            resolve(value)
           } catch {
             reject(new Error('Swift relay returned invalid JSON'))
           }

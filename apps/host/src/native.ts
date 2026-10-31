@@ -4,8 +4,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { once } from 'node:events'
 import { acceptNative, createTransportCertificate, validateNativeTlsBinary, RelayTunnel } from '@latch/link-client'
-import { hex, type KnockBinding } from '@latch/link-wire'
-import type { DataScope, Device, DeviceScope } from '@latch/protocol'
+import { formatPairingPayload, hex, invitationSecret, type KnockBinding } from '@latch/link-wire'
+import type { Device } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import type { DeviceStore, EnrollmentService } from './auth.ts'
 import type { HostIdentity } from './identity.ts'
@@ -18,7 +18,10 @@ export interface NativeOpening {
   source: string
   localAddress?: string
   invitationHash?: string
+  /** Set once this opening presented the keys of an enrollment. */
   enrollmentId?: string
+  /** Pairing requests this connection sent that could not prove proximity. */
+  gateRefusals?: number
   windowHash?: string
   controlUsed?: boolean
   bulkAttempted?: boolean
@@ -40,9 +43,7 @@ export interface NativeHostOptions {
   devices: DeviceStore
   enrollments: EnrollmentService
   bind?: { host: string; port: number }
-  allowUnavailableBind?: boolean
   relayAvailable?(): boolean
-  relayInvites?(id: string, expiresAt: string): Promise<unknown[]>
   handler(req: IncomingMessage, res: ServerResponse, opening: NativeOpening): void | Promise<void>
 }
 
@@ -53,7 +54,15 @@ export async function startNativeHost(options: NativeHostOptions) {
     bulkSettlements = new Set<Promise<void>>()
   const sockets = new Map<
       Duplex,
-      { id?: string; knockId?: string; relayId?: string; opened: number; revoked?: boolean; padding?: NativeOpening['padding'] }
+      {
+        id?: string
+        knockId?: string
+        relayId?: string
+        opened: number
+        source: string
+        revoked?: boolean
+        padding?: NativeOpening['padding']
+      }
     >(),
     replay = new Map<string, number>()
   let certificate = createTransportCertificate(),
@@ -74,15 +83,29 @@ export async function startNativeHost(options: NativeHostOptions) {
     expectedDeviceId?: string,
     localAddress?: string,
   ): Promise<void> => {
-    if (closing || sockets.size >= 64 || authenticating.size + helpers.size >= 64) {
+    if (closing) {
       stream.destroy()
       return
     }
-    const state = { opened: Date.now(), ...(binding.path === 'relay' ? { relayId: hex(binding.relayId!) } : {}) } as {
+    if (sockets.size >= 64 || authenticating.size + helpers.size >= 64) {
+      // While a QR is live, connections that have not even knocked must not keep the real phone out. They go oldest first.
+      const idle =
+        binding.path === 'direct' && options.enrollments.nativeInvitations().length > 0
+          ? [...sockets].filter(([, item]) => !item.knockId && !item.id).toSorted((a, b) => a[1].opened - b[1].opened)[0]
+          : undefined
+      if (!idle || helpers.size >= 64) {
+        stream.destroy()
+        return
+      }
+      sockets.delete(idle[0])
+      idle[0].destroy()
+    }
+    const state = { opened: Date.now(), source, ...(binding.path === 'relay' ? { relayId: hex(binding.relayId!) } : {}) } as {
       id?: string
       knockId?: string
       relayId?: string
       opened: number
+      source: string
       revoked?: boolean
       padding?: NativeOpening['padding']
     }
@@ -94,7 +117,9 @@ export async function startNativeHost(options: NativeHostOptions) {
         certificate = createTransportCertificate()
         rotatedAt = Date.now()
       }
-      const all = [...options.devices.nativeTransportCandidates(), ...options.enrollments.nativeInvitations()]
+      // Only the direct listener opens for a pairing QR: a relay or carrier path never reaches an enrollment.
+      const pairable = () => (binding.path === 'direct' ? options.enrollments.nativeInvitations() : [])
+      const all = [...options.devices.nativeTransportCandidates(), ...pairable()]
       const candidates = expectedDeviceId === undefined ? all : all.filter(item => item.id === expectedDeviceId)
       const accepted = await acceptNative(stream, binding, {
         tlsBinary: options.tlsBinary,
@@ -114,16 +139,31 @@ export async function startNativeHost(options: NativeHostOptions) {
           const related = [...sockets].filter(([socket, item]) => socket !== stream && !socket.destroyed && item.knockId === id)
           const pending = related.filter(([, item]) => !item.id).sort((a, b) => a[1].opened - b[1].opened)
           let total = related.length
-          while (pending.length >= 2 || total >= 4) {
-            const oldest = pending.shift()
-            if (!oldest) throw new Error('Native device connection limit')
-            oldest[0].destroy()
-            total--
-          }
+          if (candidates.find(item => item.id === id)?.kind === 'pairing') {
+            // A live QR never refuses a knock, or its holder could keep the real phone from presenting it. A peer loses its
+            // own oldest socket first, so one holder flooding knocks closes only what it opened.
+            const oldestFirst = related.toSorted((a, b) => a[1].opened - b[1].opened)
+            const evict = (list: typeof related) => {
+              const victim = list.find(([, item]) => item.source === source) ?? list[0]
+              if (!victim) return
+              victim[0].destroy()
+              list.splice(list.indexOf(victim), 1)
+              const at = oldestFirst.indexOf(victim)
+              if (at >= 0) oldestFirst.splice(at, 1)
+              total--
+            }
+            while (pending.length >= 2) evict(pending)
+            while (total >= 4) evict(oldestFirst)
+          } else
+            while (pending.length >= 2 || total >= 4) {
+              const oldest = pending.shift()
+              if (!oldest) throw new Error('Native device connection limit')
+              oldest[0].destroy()
+              total--
+            }
           state.knockId = id
         },
-        isActive: id =>
-          [...options.devices.nativeTransportCandidates(), ...options.enrollments.nativeInvitations()].some(item => item.id === id),
+        isActive: id => [...options.devices.nativeTransportCandidates(), ...pairable()].some(item => item.id === id),
       })
       if (closing || stream.destroyed || accepted.socket.destroyed) {
         accepted.socket.destroy()
@@ -176,12 +216,7 @@ export async function startNativeHost(options: NativeHostOptions) {
         source,
         ...(localAddress ? { localAddress } : {}),
         listener: { listener: binding.path === 'direct' ? 'native-direct' : 'native-relay', origin },
-        ...(candidate.kind === 'pairing'
-          ? {
-              invitationHash: Buffer.from(candidate.knockKey).toString('hex'),
-              ...('enrollmentId' in candidate && candidate.enrollmentId ? { enrollmentId: candidate.enrollmentId as string } : {}),
-            }
-          : {}),
+        ...(candidate.kind === 'pairing' ? { invitationHash: Buffer.from(candidate.knockKey).toString('hex') } : {}),
       }
       state.id = accepted.deviceId
       const h2 = createHttp2Server(
@@ -271,7 +306,8 @@ export async function startNativeHost(options: NativeHostOptions) {
       : undefined
     if (prepared && next) {
       staging.add(prepared)
-      prepared.maxConnections = 64
+      // Above the gate in `acceptOnce`, which decides who gives way while a QR is live.
+      prepared.maxConnections = 96
       try {
         prepared.listen(next.port, canonicalBindAddress(next.host))
         await once(prepared, 'listening', { signal: stopped.signal })
@@ -310,13 +346,7 @@ export async function startNativeHost(options: NativeHostOptions) {
       },
     }
   }
-  if (options.bind) {
-    try {
-      ;(await prepareBind(options.bind)).commit()
-    } catch (error) {
-      if (!options.allowUnavailableBind) throw error
-    }
-  }
+  if (options.bind) (await prepareBind(options.bind)).commit()
   return {
     origin,
     get enabled(): boolean {
@@ -330,30 +360,22 @@ export async function startNativeHost(options: NativeHostOptions) {
     },
     prepareBind,
     ensureTransport,
-    async invite(
-      input: { inviter?: Device; scopes?: DeviceScope[]; dataScope?: DataScope },
-      actor: Parameters<EnrollmentService['createInvitation']>[1],
-    ) {
-      if (!server && !options.relayAvailable?.()) throw new AppError(409, 'native-not-configured', '尚未配置原生设备连接入口')
+    async invite(input: { inviter?: Device }, actor: Parameters<EnrollmentService['createInvitation']>[1]) {
+      if (!server || !bind) throw new AppError(409, 'native-no-lan', '这台 Mac 没有连接 Wi‑Fi 或有线网络。')
       await ensureTransport()
-      const invitation = await options.enrollments.createInvitation(
-        { ...input, listener: server ? 'native-direct' : 'native-relay', origin },
-        actor,
-      )
-      const payload = {
-        v: 1,
-        rootSpki: options.identity.publicKeySpki.toString('base64url'),
-        invitation: invitation.code,
-        direct: server && bind ? [{ host: canonicalBindAddress(bind.host), port: (server.address() as AddressInfo).port }] : [],
-        relays: options.relayInvites ? await options.relayInvites(invitation.id, invitation.expiresAt) : [],
-        expiresAt: invitation.expiresAt,
-      }
+      const host = canonicalBindAddress(bind.host).replace(/^\[|\]$/gu, '')
+      if (host.includes('%')) throw new AppError(409, 'native-no-lan', '这台 Mac 没有连接 Wi‑Fi 或有线网络。')
+      const lan = [{ address: host, port: (server.address() as AddressInfo).port }]
+      const invitation = await options.enrollments.createInvitation({ ...input, listener: 'native-direct', origin }, actor)
       return {
         id: invitation.id,
-        payload: `LATCHPAIR1.${Buffer.from(JSON.stringify(payload)).toString('base64url')}`,
+        payload: formatPairingPayload({
+          rootSpki: options.identity.publicKeySpki,
+          secret: invitationSecret(invitation.code),
+          expiresAt: Math.floor(Date.parse(invitation.expiresAt) / 1000),
+          lan,
+        }),
         expiresAt: invitation.expiresAt,
-        scopes: invitation.scopes,
-        dataScope: invitation.dataScope ?? 'work',
       }
     },
     acceptCarrier(stream: Duplex, binding: KnockBinding): Promise<void> {

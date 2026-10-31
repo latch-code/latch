@@ -1,132 +1,70 @@
-import { networkInterfaces } from 'node:os'
-import { z } from 'zod'
-import { AppError } from '@latch/sdk'
-import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import type { NativeLinkInfo } from '@latch/protocol'
-import type { AuditActor, AuditLog, StepupMethod } from './audit.ts'
+import { AppError } from '@latch/sdk'
+import { canonicalJson } from '@latch/core/node-kit'
 import type { startNativeHost } from './native.ts'
 import type { HostRelayController } from './relay/controller.ts'
 import { selectAutoDirect } from './native-network.ts'
 import type { NativeNetworkSnapshot } from './native-network-backend.ts'
-import { RelayProfiles, relayProfileInput, nativeDirectSchema, type NativeDirect } from './relay/profiles.ts'
-import { directoryConfigSchema, type DirectoryConfig } from './relay/directory-config.ts'
+import type { RelayProfiles, NativeDirect } from './relay/profiles.ts'
+import type { AuditActor, AuditLog } from './audit.ts'
 import type { HostRelayDirectory } from './relay/directory.ts'
 
-export function nativeAddresses(): NativeLinkInfo['addresses'] {
-  return Object.entries(networkInterfaces())
-    .flatMap(([name, list]) =>
-      (list ?? [])
-        .filter(
-          item =>
-            !item.internal
-            && (/^(?:10\.|192\.168\.|172\.(?:1[6-9]|2[0-9]|3[01])\.|100\.(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.)/u.test(item.address)
-              || /^f[cd][a-f0-9]{2}:/iu.test(item.address)),
-        )
-        .map(item => ({ address: item.address, interface: name })),
-    )
-    .slice(0, 16)
-}
-const inputSchema = z.strictObject({
-  requestId: z.uuid(),
-  configHash: z.string().regex(/^[a-f0-9]{64}$/u),
-  direct: nativeDirectSchema.nullable(),
-  relays: z.array(relayProfileInput).max(4),
-  directory: directoryConfigSchema.nullable().optional(),
-})
 type NativeHost = Awaited<ReturnType<typeof startNativeHost>>
 
-/** Durable settings and the listening socket commit together. The renderer never receives transport secrets. */
+/**
+ * The phone-access lifecycle. The LAN listener binds a physical private address by itself and is open while the pairing
+ * sheet has a QR out or a phone can use it; nothing turns it on but that. A listener fixed by the Host's start options
+ * stays as it was started. The renderer never receives transport secrets.
+ */
 export class NativeSettings {
   private changes = Promise.resolve()
+  private opening = 0
+  private lastPort = 0
   constructor(
     private readonly options: {
       profiles: RelayProfiles
       native: NativeHost
       controller: HostRelayController
-      directory?: HostRelayDirectory
       audit: AuditLog
+      directory?: HostRelayDirectory
       managedDirect?: { host: string; port: number }
-      inputsPaused(): boolean
+      /** A QR is out, or a phone it let in has not finished. */
+      pairing(): boolean
+      /** A paired phone exists, or a removed one has yet to read its tombstone. */
+      reachable(): boolean
       changed?(): void
-      resolveDirect?(direct: NativeDirect | null): Promise<NativeDirect | undefined>
+      resolveDirect?(direct: NativeDirect, current: NativeDirect | null): Promise<NativeDirect | undefined>
     },
   ) {}
   info(): NativeLinkInfo {
-    const state = this.options.profiles.snapshot(),
-      statuses = this.options.controller.status()
+    const statuses = this.options.controller.status(),
+      state = this.options.profiles.snapshot()
     return {
       version: 1,
-      configHash: this.options.profiles.configHash(),
       enabled: this.options.native.enabled,
-      direct: this.options.managedDirect ?? state.direct ?? null,
-      listening: this.options.native.direct,
       directManaged: Boolean(this.options.managedDirect),
-      addresses: nativeAddresses(),
-      inputsPaused: this.options.inputsPaused(),
-      directory: state.directory
-        ? { ...state.directory, ...(this.options.directory?.status() ?? { ready: false, generation: 0, rootGeneration: 0 }) }
-        : null,
-      relays: state.profiles.map(item => {
-        const status = statuses.find(value => value.relayId === item.relayId)
-        return {
-          relayId: item.relayId,
-          url: item.url,
-          spkiHash: item.spkiHash,
-          hasRegistrationKey: Boolean(item.registrationKey),
-          status: status?.status ?? 'connecting',
-          ...(status?.retryAt === undefined ? {} : { retryAt: status.retryAt }),
-        }
-      }),
+      listening: this.options.native.direct,
+      directory: Boolean(state.directory),
+      relays: state.profiles
+        .filter(item => !item.builtIn)
+        .map(item => {
+          const status = statuses.find(value => value.relayId === item.relayId)
+          return {
+            relayId: item.relayId,
+            url: item.url,
+            status: status?.status ?? 'connecting',
+            ...(status?.retryAt === undefined ? {} : { retryAt: status.retryAt }),
+          }
+        }),
     }
   }
-  alreadyApplied(raw: unknown): boolean {
-    const input = inputSchema.parse(raw),
-      receipt = this.options.profiles.configReceipt(input.requestId)
-    if (!receipt) return false
-    if (receipt !== sha256Hex(canonicalJson(input))) throw new AppError(409, 'request-id-conflict', '这个请求编号已用于其他手机连接配置')
-    return true
+  /** Whether the listener should be open now. */
+  wanted(): boolean {
+    return this.opening > 0 || this.options.pairing() || this.options.reachable()
   }
-  plan(raw: unknown) {
-    const input = inputSchema.parse(raw),
-      state = this.options.profiles.snapshot(),
-      baseHash = this.options.profiles.configHash()
-    if (input.configHash !== baseHash) throw new AppError(409, 'native-config-changed', '手机连接配置已变化，请刷新后重试')
-    if (new Set(input.relays.map(item => item.relayId)).size !== input.relays.length)
-      throw new AppError(400, 'native-relay-duplicate', '每个中继节点只能添加一次')
-    const direct = this.options.managedDirect ? (state.direct ?? null) : input.direct
-    const directory: DirectoryConfig | null = input.directory === undefined ? (state.directory ?? null) : input.directory
-    if (this.options.managedDirect && canonicalJson(input.direct) !== canonicalJson(this.options.managedDirect))
-      throw new AppError(409, 'native-managed', '直连入口由启动参数管理，请停止 Host 后修改启动参数')
-    if (!this.options.managedDirect && direct && direct.host !== 'auto' && !nativeAddresses().some(item => item.address === direct.host))
-      throw new AppError(400, 'native-address-unavailable', '请选择这台电脑当前的局域网地址')
-    const lowering =
-      (direct === null || canonicalJson(direct) === canonicalJson(state.direct ?? null))
-      && (directory === null
-        || Boolean(
-          state.directory
-          && directory.anchors.every(key => state.directory!.anchors.includes(key))
-          && directory.mirrors.every(url => state.directory!.mirrors.includes(url)),
-        ))
-      && input.relays.every(item => {
-        const old = state.profiles.find(value => value.relayId === item.relayId)
-        return (
-          old
-          && item.url === old.url
-          && item.spkiHash === old.spkiHash
-          && (item.registrationKey === undefined || item.registrationKey === null || item.registrationKey === old.registrationKey)
-        )
-      })
-    const afterHash = sha256Hex(canonicalJson({ direct, relays: input.relays, directory }))
-    return {
-      input,
-      direct,
-      directory,
-      directoryChanged: canonicalJson(directory) !== canonicalJson(state.directory ?? null),
-      baseHash,
-      afterHash,
-      lowering,
-      requestHash: sha256Hex(canonicalJson(input)),
-    }
+  /** Whether the network watcher has anything to do for the lifecycle. */
+  following(): boolean {
+    return !this.options.managedDirect && (this.wanted() || this.options.native.direct !== null)
   }
   private serial<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.changes.then(operation)
@@ -136,97 +74,87 @@ export class NativeSettings {
     )
     return result
   }
+  private logical(): NativeDirect {
+    return { host: 'auto', port: this.lastPort || this.options.profiles.snapshot().direct?.port || 0 }
+  }
+  private async bind(target: NativeDirect | undefined, current: () => boolean): Promise<void> {
+    const before = this.options.native.direct
+    // The remembered port may be taken by now; another port costs phones nothing, they find this Mac again.
+    const prepared = await this.options.native.prepareBind(target).catch(error => {
+      if (!target?.port || (error as { code?: unknown }).code !== 'native-listener-unavailable') throw error
+      return this.options.native.prepareBind({ ...target, port: 0 })
+    })
+    if (!current()) {
+      await prepared.cancel()
+      return
+    }
+    prepared.commit()
+    const bound = this.options.native.direct
+    if (bound) this.lastPort = bound.port
+    if (canonicalJson(before) !== canonicalJson(bound)) this.options.changed?.()
+  }
+  /** The network watcher's turn: follow the network and the lifecycle. */
   syncNetwork(snapshot: NativeNetworkSnapshot, current: () => boolean): Promise<void> {
     return this.serial(async () => {
-      const config = this.options.profiles.snapshot().direct
-      if (this.options.managedDirect || config?.host !== 'auto' || !current()) return
-      const hash = this.options.profiles.configHash(),
-        before = this.options.native.direct
-      const prepared = await this.options.native.prepareBind(selectAutoDirect(snapshot, config, before))
-      if (!current() || this.options.profiles.configHash() !== hash) {
-        await prepared.cancel()
-        return
-      }
-      prepared.commit()
-      if (canonicalJson(before) !== canonicalJson(this.options.native.direct)) this.options.changed?.()
+      if (this.options.managedDirect || !current()) return
+      await this.bind(this.wanted() ? selectAutoDirect(snapshot, this.logical(), this.options.native.direct) : undefined, current)
     })
   }
-  apply(
-    plan: ReturnType<NativeSettings['plan']>,
-    actor: AuditActor,
-    stepup: StepupMethod,
-    recheck: () => void,
-  ): Promise<{ audited: boolean }> {
-    return this.serial(() => this.applyNow(plan, actor, stepup, recheck))
+  /** Closes the listener once nobody wants it, whatever state the network component is in. */
+  release(): Promise<void> {
+    return this.serial(async () => {
+      if (!this.options.managedDirect && !this.wanted() && this.options.native.direct) await this.bind(undefined, () => true)
+    })
   }
-  private async applyNow(
-    plan: ReturnType<NativeSettings['plan']>,
+  /** Saved custom relays and the address directory have no form until relay links exist; taking one away stays possible. */
+  removeRelay(relayId: string, actor: AuditActor): Promise<{ audited: boolean }> {
+    return this.lower(actor, input => input.filter(item => item.relayId !== relayId))
+  }
+  removeDirectory(actor: AuditActor): Promise<{ audited: boolean }> {
+    return this.lower(actor, input => input, null)
+  }
+  private lower(
     actor: AuditActor,
-    stepup: StepupMethod,
-    recheck: () => void,
+    edit: (custom: Array<{ relayId: string; url: string; spkiHash: string }>) => Array<{ relayId: string; url: string; spkiHash: string }>,
+    directory?: null,
   ): Promise<{ audited: boolean }> {
-    recheck()
-    if (this.alreadyApplied(plan.input)) return { audited: true }
-    if (!plan.lowering && stepup === 'none') throw new AppError(403, 'stepup-required', '需要在 Mac 确认手机连接配置')
-    if (this.options.profiles.configHash() !== plan.baseHash)
-      throw new AppError(409, 'native-config-changed', '手机连接配置已变化，请刷新后重试')
-    recheck()
-    let sequence: number | undefined,
-      audited = true
-    try {
-      sequence = (
-        await this.options.audit.append({
-          action: 'native.config.changed',
-          actor,
-          stepup,
-          detail: {
-            before: plan.baseHash,
-            after: plan.afterHash,
-            lowering: plan.lowering,
-            direct: Boolean(plan.direct),
-            relayCount: plan.input.relays.length,
-          },
-        })
-      ).seq
-    } catch (error) {
-      if (!plan.lowering) throw error
-      audited = false
-    }
-    let prepared: Awaited<ReturnType<NativeHost['prepareBind']>> | undefined
-    try {
-      if (!plan.lowering && (plan.input.relays.length || plan.direct)) await this.options.native.ensureTransport()
-      const logical = this.options.managedDirect ?? plan.direct
-      let actual = logical ?? undefined
-      if (logical?.host === 'auto') {
-        if (plan.lowering) actual = this.options.native.direct ?? undefined
-        else {
-          if (!this.options.resolveDirect)
-            throw new AppError(503, 'native-network-unavailable', '手机连接组件不可用，请更新并重新构建 Latch 后重试')
-          actual = await this.options.resolveDirect(logical)
-        }
-      }
-      prepared = await this.options.native.prepareBind(actual)
-      recheck()
-      await this.options.profiles.configure(
-        plan.direct,
-        plan.input.relays,
-        plan.baseHash,
-        {
-          requestId: plan.input.requestId,
-          requestHash: plan.requestHash,
-        },
-        plan.directory,
-      )
-      prepared.commit()
-      await this.options.directory?.configure()
+    return this.serial(async () => {
+      const state = this.options.profiles.snapshot(),
+        before = this.options.profiles.configHash(),
+        custom = state.profiles.filter(item => !item.builtIn).map(({ relayId, url, spkiHash }) => ({ relayId, url, spkiHash })),
+        kept = edit(custom)
+      await this.options.profiles.configure(state.direct ?? null, kept, undefined, undefined, directory)
+      if (directory === null) await this.options.directory?.configure()
       this.options.changed?.()
       this.options.controller.reconcile()
+      let audited = true
+      // A removal only takes an observer away, so a failed record does not stop it.
+      await this.options.audit
+        .append({
+          action: 'native.config.changed',
+          actor,
+          detail: { before, after: this.options.profiles.configHash(), lowering: true, direct: false, relayCount: kept.length },
+        })
+        .catch(() => {
+          audited = false
+        })
       return { audited }
-    } catch (error) {
-      await prepared?.cancel()
-      if (sequence !== undefined)
-        await this.options.audit.append({ action: 'action.failed', actor, detail: { refSeq: sequence } }).catch(() => {})
-      throw error
+    })
+  }
+  /** Runs `issue` with the listener open, the sheet's first act: it fails with the reason when there is no network. */
+  async whileOpen<T>(issue: () => Promise<T>): Promise<T> {
+    if (this.options.managedDirect) return issue()
+    this.opening++
+    try {
+      await this.serial(async () => {
+        if (!this.options.resolveDirect) throw new AppError(409, 'native-no-lan', '这台 Mac 没有连接 Wi‑Fi 或有线网络。')
+        const target = await this.options.resolveDirect(this.logical(), this.options.native.direct)
+        if (!target) throw new AppError(409, 'native-no-lan', '这台 Mac 没有连接 Wi‑Fi 或有线网络。')
+        await this.bind(target, () => true)
+      })
+      return await issue()
+    } finally {
+      this.opening--
     }
   }
 }

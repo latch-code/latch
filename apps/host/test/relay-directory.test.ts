@@ -16,7 +16,6 @@ import { HostRelayDirectory } from '../src/relay/directory.ts'
 import { HostAddressBooks } from '../src/relay/address-book.ts'
 import { loadOrCreateHostIdentity } from '../src/identity.ts'
 import type { FetchLike } from '../src/egress.ts'
-import type { NativeLinkInfo } from '@latch/protocol'
 import { startTestHost } from './helpers/host.ts'
 
 const failedStorage = vi.hoisted(() => ({ beforeCommit: false }))
@@ -239,66 +238,4 @@ it('does not turn a replacement Root set into an empty cache or a reset of the p
     }),
   ).rejects.toMatchObject({ code: 'native-directory-unavailable' })
   expect(f.profiles.snapshot().directoryFloor?.minimumOnline?.generation).toBe(1)
-})
-
-it('only accepts public roots/mirrors through Mac OS presence and never accepts user-supplied floors', async () => {
-  const f = await fixture(),
-    host = await startTestHost({
-      nativeDirectoryFetch: async () => {
-        throw new Error('offline fixture')
-      },
-    })
-  cleanup.push(() => host.close())
-  const desktop = await host.enroll({ listener: 'unix' }),
-    browser = await host.enroll({ listener: 'loopback-tcp' })
-  const initial = await desktop.json<NativeLinkInfo>('native/info'),
-    body = {
-      requestId: randomUUID(),
-      configHash: initial.configHash,
-      direct: initial.direct,
-      relays: [],
-      directory: { ...f.config, mirrors: [...f.config.mirrors, 'https://backup-directory.example/addresses.bin'] },
-    }
-  expect((await browser.request('native/config', { method: 'PUT', body })).status).toBe(403)
-  expect(
-    (
-      await desktop.request('native/config', {
-        method: 'PUT',
-        body: { ...body, directory: { ...f.config, minimum: { generation: 1, hash: 'a'.repeat(64) } } },
-      })
-    ).status,
-  ).toBe(400)
-  expect(
-    (
-      await desktop.request('native/config', {
-        method: 'PUT',
-        body: { ...body, directory: { ...f.config, mirrors: ['https://127.0.0.1/'] } },
-      })
-    ).status,
-  ).toBe(400)
-  const added = await desktop.confirmed('native/config', { method: 'PUT', body })
-  expect(added.status).toBe(200)
-  const preview = host.presence.requests.at(-1)!.preview
-  expect(preview.subject?.form).toBe('policy.native-link')
-  expect(preview.reason).toContain('地址目录 2 个镜像')
-  expect(JSON.stringify(preview)).toContain(f.config.anchors[0])
-  const info = (await added.json()) as NativeLinkInfo
-  expect(info.directory?.anchors).toEqual(f.config.anchors)
-  expect((await desktop.request('native/config', { method: 'PUT', body })).status).toBe(200)
-  const count = host.presence.requests.length
-  const reduced = await desktop.request('native/config', {
-    method: 'PUT',
-    body: { ...body, requestId: randomUUID(), configHash: info.configHash, directory: f.config },
-  })
-  expect(reduced.status).toBe(200)
-  const reducedInfo = (await reduced.json()) as NativeLinkInfo
-  expect(
-    (
-      await desktop.request('native/config', {
-        method: 'PUT',
-        body: { ...body, requestId: randomUUID(), configHash: reducedInfo.configHash, directory: null },
-      })
-    ).status,
-  ).toBe(200)
-  expect(host.presence.requests.length).toBe(count)
 })

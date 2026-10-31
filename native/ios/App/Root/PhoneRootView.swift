@@ -15,25 +15,19 @@ struct PhoneRootView: View {
                         Button("项目工作", systemImage: "folder") { model.openProjects() }.foregroundStyle(.primary)
                     }
                 }
-                if model.hosts.isEmpty {
-                    ContentUnavailableView("把电脑带在身边", systemImage: "laptopcomputer", description: Text("在电脑上的 Latch 打开手机配对，扫描二维码连接。"))
-                        .listRowBackground(Color.clear)
-                }
+                if model.hosts.isEmpty { PairingWelcome { scan = true }.listRowBackground(Color.clear) }
                 ForEach(model.hosts) { host in
                     Button { Task { await model.connect(host) } } label: {
                         HStack(spacing: 12) {
                             Image(systemName: "laptopcomputer").font(.system(size: 18)).foregroundStyle(.secondary).frame(width: 24)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(host.name).foregroundStyle(.primary)
-                                Text(model.selectedHost?.id == host.id ? model.status : host.prepared ? "登记待核对" : "已登记").font(.caption).foregroundStyle(.secondary)
+                                Text(model.selectedHost?.id == host.id ? model.status : "点按连接").font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
                             if model.selectedHost?.id == host.id { Image(systemName: "checkmark").font(.footnote.weight(.semibold)) }
                         }.padding(.vertical, 3)
                     }.disabled(model.busy || model.verifying)
-                }
-                if model.draft != nil {
-                    Button("继续未完成的登记", systemImage: "arrow.clockwise") { model.resumePairing() }.disabled(model.busy)
                 }
                 Button("添加电脑", systemImage: "plus") { scan = true }.disabled(model.busy)
             }
@@ -46,12 +40,7 @@ struct PhoneRootView: View {
                 else { SessionWorkspaceView() }
             }
             else {
-                VStack(spacing: 20) {
-                    Image("LatchMark").resizable().frame(width: 42, height: 42).clipShape(RoundedRectangle(cornerRadius: 10))
-                    Text("你的工作，随时继续").font(.title2.weight(.semibold))
-                    Text("连接已登记的电脑，查看进展、回答问题并继续会话。").foregroundStyle(.secondary).multilineTextAlignment(.center)
-                    Button("添加电脑") { scan = true }.buttonStyle(.borderedProminent).controlSize(.large)
-                }.padding(32).frame(maxWidth: 460)
+                PairingWelcome { scan = true }.padding(32).frame(maxWidth: 460)
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -63,20 +52,14 @@ struct PhoneRootView: View {
                 }.padding(12).background(.bar)
             }
         }
-        .sheet(isPresented: $scan) { PairingView() }
-        .sheet(isPresented: $settings) { PhoneSettingsView() }
-        .sheet(isPresented: Binding(get: { model.comparisonCode != nil }, set: { _ in })) {
-            if let code = model.comparisonCode {
-                VStack(spacing: 24) {
-                    Text("在 Mac 上确认").font(.title2.weight(.semibold))
-                    Text("在电脑显示的 Latch 确认窗口中输入：").foregroundStyle(.secondary)
-                    Text(code).font(.system(size: 38, weight: .medium, design: .monospaced)).tracking(6).accessibilityLabel(code.map(String.init).joined(separator: " "))
-                    Label("确认前不会授予手机操作权限", systemImage: "lock").font(.footnote).foregroundStyle(.secondary)
-                    ProgressView().controlSize(.small)
-                }.padding(32).interactiveDismissDisabled()
-                    .presentationDetents([.medium])
-            }
+        .fullScreenCover(isPresented: Binding(get: { scan || model.pairing != nil }, set: { if !$0 { scan = false } })) {
+            PairingView { scan = false }
         }
+        .sheet(isPresented: $settings) { PhoneSettingsView { settings = false; scan = true } }
+        .onOpenURL { url in if PairingInvitation.recognizes(url.absoluteString) { Task { await model.beginPairing(payload: url.absoluteString) } } }
+        .alert("这台 Mac 已移除这台 iPhone", isPresented: $model.removedByMac) {
+            Button("好") {}
+        } message: { Text("需要时在 Mac 上重新扫码。") }
         .alert("暂时无法完成", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
             Button("知道了") { model.error = nil }
         } message: { Text(model.error ?? "") }

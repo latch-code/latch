@@ -5,7 +5,8 @@ import { randomUUID } from 'node:crypto'
 import type { Duplex } from 'node:stream'
 import { afterEach, expect, it, vi } from 'vitest'
 import { NativeSettings } from '../src/native-settings.ts'
-import { AuditLog } from '../src/audit.ts'
+import { selectAutoDirect } from '../src/native-network.ts'
+import type { AuditLog } from '../src/audit.ts'
 import { RelayProfiles, type NativeDirect } from '../src/relay/profiles.ts'
 import type { HostRelayController } from '../src/relay/controller.ts'
 import type { NativeNetworkSnapshot } from '../src/native-network-backend.ts'
@@ -20,17 +21,16 @@ const snapshot: NativeNetworkSnapshot = {
   epoch: randomUUID(),
   interfaces: [{ name: 'en0', index: 3, address: '192.168.1.4', prefixLength: 24, kind: 'wifi', gateway: '192.168.1.1' }],
 }
-async function setup() {
+async function setup(options: { managedDirect?: { host: string; port: number } } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'latch-auto-'))
   cleanup.push(() => rm(directory, { recursive: true, force: true }))
-  const profiles = await RelayProfiles.open(directory),
-    audit = await AuditLog.open(directory)
-  cleanup.push(() => audit.close())
-  let bound: NativeDirect | null = null
+  const profiles = await RelayProfiles.open(directory)
+  let bound: NativeDirect | null = null,
+    pairing = false,
+    reachable = false
   const canceled = vi.fn(),
     committed = vi.fn(),
     prepare = vi.fn(),
-    ensure = vi.fn(),
     changed = vi.fn()
   const native: Awaited<ReturnType<typeof startNativeHost>> = {
     origin: 'https://native.invalid',
@@ -56,9 +56,7 @@ async function setup() {
         },
       }
     },
-    async ensureTransport() {
-      ensure()
-    },
+    async ensureTransport() {},
     async invite() {
       throw new Error('unused')
     },
@@ -71,92 +69,103 @@ async function setup() {
     closeRelay() {},
     async close() {},
   }
-  const resolve = vi.fn(async () => ({ host: snapshot.interfaces[0]!.address, port: 0 }))
+  const resolve = vi.fn(async (direct: NativeDirect, current: NativeDirect | null) => selectAutoDirect(snapshot, direct, current))
   const settings = new NativeSettings({
     profiles,
-    audit,
     native,
+    audit: { append: async () => ({ seq: 1 }) } as unknown as AuditLog,
     controller: { status: () => [], reconcile() {} } as unknown as HostRelayController,
-    inputsPaused: () => false,
+    pairing: () => pairing,
+    reachable: () => reachable,
     changed,
     resolveDirect: resolve,
+    ...options,
   })
-  return { directory, profiles, audit, native, settings, prepare, canceled, committed, ensure, resolve, changed }
+  return {
+    native,
+    settings,
+    prepare,
+    canceled,
+    resolve,
+    changed,
+    phones(value: boolean) {
+      reachable = value
+    },
+    sheet(value: boolean) {
+      pairing = value
+    },
+  }
 }
-const actor = { listener: 'unix' as const }
-const input = (profiles: RelayProfiles, direct: NativeDirect | null) => ({
-  requestId: randomUUID(),
-  configHash: profiles.configHash(),
-  direct,
-  relays: [],
-})
-it('persists logical auto only after Mac consent and audit while binding a concrete address', async () => {
-  const s = await setup(),
-    plan = s.settings.plan(input(s.profiles, { host: 'auto', port: 0 }))
-  expect(plan.lowering).toBe(false)
-  await expect(s.settings.apply(plan, actor, 'none', () => {})).rejects.toMatchObject({ code: 'stepup-required' })
-  expect(s.prepare).not.toHaveBeenCalled()
-  const audit = s.audit.append.bind(s.audit)
-  const written = vi.spyOn(s.audit, 'append').mockImplementation(async event => {
-    expect(s.prepare).not.toHaveBeenCalled()
-    return audit(event)
-  })
-  await s.settings.apply(plan, actor, 'lpc-local', () => {})
-  expect(written).toHaveBeenCalled()
-  expect(s.ensure).toHaveBeenCalledTimes(1)
-  expect(s.settings.info().direct).toEqual({ host: 'auto', port: 0 })
-  expect(s.settings.info().listening).toEqual({ host: '192.168.1.4', port: 54321 })
-  expect((await RelayProfiles.open(s.directory)).snapshot().direct).toEqual({ host: 'auto', port: 0 })
-})
-it('automatically follows a new physical network without changing logical configuration or reopening to tunnels', async () => {
+it('opens the listener for the sheet, keeps it while a phone exists, and closes it after the last one', async () => {
   const s = await setup()
-  await s.settings.apply(s.settings.plan(input(s.profiles, { host: 'auto', port: 0 })), actor, 'lpc-local', () => {})
-  const hash = s.profiles.configHash()
+  expect(s.settings.wanted()).toBe(false)
+  expect(s.settings.following()).toBe(false)
+  await expect(s.settings.whileOpen(async () => s.native.direct)).resolves.toEqual({ host: '192.168.1.4', port: 54321 })
+  // The QR is out: the listener stays through the watcher's turns.
+  s.sheet(true)
+  await s.settings.syncNetwork(snapshot, () => true)
+  expect(s.native.direct).toEqual({ host: '192.168.1.4', port: 54321 })
+  // The sheet closes with nobody paired.
+  s.sheet(false)
+  expect(s.settings.following()).toBe(true)
+  await s.settings.syncNetwork(snapshot, () => true)
+  expect(s.native.direct).toBeNull()
+  expect(s.settings.following()).toBe(false)
+  // A paired phone reopens it, on the same port, and only losing the last phone closes it.
+  s.phones(true)
+  expect(s.settings.following()).toBe(true)
+  await s.settings.syncNetwork(snapshot, () => true)
+  expect(s.native.direct).toEqual({ host: '192.168.1.4', port: 54321 })
+  s.phones(false)
+  await s.settings.syncNetwork(snapshot, () => true)
+  expect(s.native.direct).toBeNull()
+  expect(s.changed).toHaveBeenCalled()
+})
+it('follows a new physical network and never reopens to a tunnel', async () => {
+  const s = await setup()
+  s.phones(true)
+  await s.settings.syncNetwork(snapshot, () => true)
   await s.settings.syncNetwork(
     { ...snapshot, epoch: randomUUID(), interfaces: [{ ...snapshot.interfaces[0]!, address: '192.168.2.4' }] },
     () => true,
   )
   expect(s.native.direct).toEqual({ host: '192.168.2.4', port: 54321 })
-  expect(s.profiles.configHash()).toBe(hash)
   await s.settings.syncNetwork({ ...snapshot, interfaces: [{ ...snapshot.interfaces[0]!, name: 'utun5', kind: 'tunnel' }] }, () => true)
   expect(s.native.direct).toBeNull()
-  expect(s.profiles.snapshot().direct?.host).toBe('auto')
 })
-it('cancels a late prepared listener after a network epoch changes and serializes a free disable behind it', async () => {
+it('refuses a QR with the reason when the Mac has no network, and never binds a wildcard', async () => {
   const s = await setup()
-  await s.settings.apply(s.settings.plan(input(s.profiles, { host: 'auto', port: 0 })), actor, 'lpc-local', () => {})
-  const prepare = s.native.prepareBind.bind(s.native)
-  let release!: () => void,
-    current = true
-  vi.spyOn(s.native, 'prepareBind').mockImplementationOnce(async next => {
-    const result = await prepare(next)
-    await new Promise<void>(resolve => {
-      release = resolve
-    })
-    return result
-  })
-  const sync = s.settings.syncNetwork({ ...snapshot, interfaces: [{ ...snapshot.interfaces[0]!, address: '192.168.2.4' }] }, () => current)
-  await vi.waitFor(() => expect(release).toBeTypeOf('function'))
-  const disabling = s.settings.apply(s.settings.plan(input(s.profiles, null)), actor, 'none', () => {})
-  current = false
-  release()
-  await sync
-  await disabling
-  expect(s.canceled).toHaveBeenCalledWith({ host: '192.168.2.4', port: 54321 })
-  expect(s.native.direct).toBeNull()
-  expect(s.profiles.snapshot().direct).toBeNull()
+  s.resolve.mockResolvedValueOnce(undefined)
+  await expect(s.settings.whileOpen(async () => 'issued')).rejects.toMatchObject({ code: 'native-no-lan' })
+  expect(s.prepare).not.toHaveBeenCalled()
+})
+it('closes an unwanted listener without the network component, and takes another port when the remembered one is gone', async () => {
+  const s = await setup()
+  s.phones(true)
   await s.settings.syncNetwork(snapshot, () => true)
+  s.phones(false)
+  await s.settings.release()
   expect(s.native.direct).toBeNull()
+  s.phones(true)
+  const prepare = s.native.prepareBind.bind(s.native)
+  vi.spyOn(s.native, 'prepareBind').mockImplementationOnce(() =>
+    Promise.reject(Object.assign(new Error('taken'), { code: 'native-listener-unavailable' })),
+  )
+  await s.settings.syncNetwork(snapshot, () => true)
+  expect(s.native.direct).toEqual({ host: '192.168.1.4', port: 54321 })
+  expect(prepare).toBeDefined()
 })
-it('keeps reductions free when the network component or audit is unavailable', async () => {
+it('cancels a late prepared listener after a network epoch changes', async () => {
   const s = await setup()
-  await s.settings.apply(s.settings.plan(input(s.profiles, { host: 'auto', port: 0 })), actor, 'lpc-local', () => {})
-  s.resolve.mockRejectedValueOnce(new Error('component unavailable'))
-  vi.spyOn(s.audit, 'append').mockRejectedValue(new Error('audit unavailable'))
-  const unchanged = await s.settings.apply(s.settings.plan(input(s.profiles, { host: 'auto', port: 0 })), actor, 'none', () => {})
-  expect(unchanged.audited).toBe(false)
-  expect(s.resolve).toHaveBeenCalledTimes(1)
-  const disabled = await s.settings.apply(s.settings.plan(input(s.profiles, null)), actor, 'none', () => {})
-  expect(disabled.audited).toBe(false)
-  expect(s.native.direct).toBeNull()
+  s.phones(true)
+  await s.settings.syncNetwork(snapshot, () => true)
+  await s.settings.syncNetwork({ ...snapshot, interfaces: [{ ...snapshot.interfaces[0]!, address: '192.168.2.4' }] }, () => false)
+  expect(s.native.direct).toEqual({ host: '192.168.1.4', port: 54321 })
+})
+it('leaves a listener fixed by the start options alone', async () => {
+  const s = await setup({ managedDirect: { host: '127.0.0.1', port: 4319 } })
+  expect(s.settings.following()).toBe(false)
+  await s.settings.syncNetwork(snapshot, () => true)
+  await expect(s.settings.whileOpen(async () => 'issued')).resolves.toBe('issued')
+  expect(s.prepare).not.toHaveBeenCalled()
 })

@@ -27,7 +27,9 @@ import {
   CONFIRMATION_COPY,
   CONFIRMATION_RESULT_TEXT,
   ENROLLMENT_COPY,
+  NATIVE_LINK_COPY,
   PAIRING_COPY,
+  PAIRING_WAITING_COPY,
 } from '../src/core/securityCopy.ts'
 import { ConfirmationContent, detailsOpenAtFirst } from '../src/components/InlineConfirm.tsx'
 import type { ConfirmationActions, ConfirmationView } from '../src/core/confirmations.ts'
@@ -321,38 +323,17 @@ describe('phone pairing', () => {
   })
   const FLAG = /(?:^|[\s「（(])--[a-z]/u
 
-  it('explains browser access without HTTPS and folds the start options away', () => {
-    const html = renderToStaticMarkup(createElement(PairingSection, { tls: false, access: access(false), phone: false }))
-    const [body = '', folded = ''] = html.split('class="ui-collapse"')
-    expect(body).toContain(PAIRING_COPY.notConfigured)
-    expect(body).toContain('同一网络下扫码直连尚未实现：它需要 Host 在局域网中宣告自己并固定身份，正在开发。')
-    expect(body).toMatch(
-      /<button type="button" class="pair-toggle" aria-expanded="false"[^>]*>.*用自己的 HTTPS 证书配置（需要重启 Host）<\/button>/u,
-    )
-    expect(body).not.toMatch(FLAG)
-    expect(folded).toContain('--tls-cert')
-    expect(folded).toContain('aria-label="复制启动参数"')
-    // The flags show one per line; the copy is the one line to paste.
-    expect(folded).toContain('<code>--tailnet\n--tls-cert &lt;证书文件&gt;\n--tls-key &lt;私钥文件&gt;\n--public-origin https://')
-    // Closing the window does not stop the Host, so the steps say how to stop it before starting with the flags.
-    expect(folded).toContain('关闭窗口不会停止 Host：先在终端运行 pnpm stop，再用 pnpm desktop -- 加上这些参数启动：')
-    expect(html).not.toContain('在 Mac 上打开')
-  })
-
   it('names where to make the code, in words, on a device that cannot, and never a flag in any body text', () => {
-    const html = renderToStaticMarkup(createElement(PairingSection, { tls: true, access: access(false), phone: true }))
+    const html = renderToStaticMarkup(createElement(PairingSection, { access: access(false) }))
     // Read on the computer running Latch (in its browser) as well as on a phone.
     expect(html).toContain('配对二维码要在 Latch 桌面端生成：在运行 Latch 的电脑上打开桌面端的 设置 › 设备。')
     // A laptop has no camera flow: it uses the copied link.
     expect(ENROLLMENT_COPY.invitationRequired).toContain('其他电脑打开用「复制链接」得到的配对链接')
     expect(html).not.toContain('pnpm latch')
     const body = [
-      PAIRING_COPY.intro,
-      ...PAIRING_COPY.steps,
-      PAIRING_COPY.notConfigured,
+      NATIVE_LINK_COPY.intro,
+      ...NATIVE_LINK_COPY.steps,
       PAIRING_COPY.computerRow,
-      PAIRING_COPY.directPending,
-      PAIRING_COPY.tlsDisclosure,
       PAIRING_COPY.needsDesktop,
       PAIRING_COPY.needsAdmin,
       ENROLLMENT_COPY.invitationRequired,
@@ -361,6 +342,18 @@ describe('phone pairing', () => {
       expect(text).not.toMatch(FLAG)
       expect(text).not.toContain('pnpm ')
     }
+  })
+
+  it('tells nothing of codes, countdowns, addresses or fingerprints in the pairing words', () => {
+    const words = JSON.stringify([
+      NATIVE_LINK_COPY.title,
+      NATIVE_LINK_COPY.intro,
+      NATIVE_LINK_COPY.steps,
+      NATIVE_LINK_COPY.contended,
+      NATIVE_LINK_COPY.offNetwork,
+      PAIRING_WAITING_COPY.nativeConfirm,
+    ])
+    for (const word of ['六位', '核对码', '指纹', '剩余', '直连', '中继', '局域网']) expect(words).not.toContain(word)
   })
 })
 
@@ -566,8 +559,8 @@ describe('approval cards', () => {
       status: 'pending' as const,
       hashDisplay: 'a1b2-c3d4-e5f6-0718',
       expiresAt: new Date().toISOString(),
-      reason: '首次以完全访问启动 Codex（在「Acme」）：自定义命令 ~/proj/node_modules/.bin/codex-acp',
-      form: 'start.first-custom' as const,
+      reason: '允许 Codex 读写这台 Mac 上的文件并运行命令（项目「Acme」）：~/proj/node_modules/.bin/codex-acp',
+      form: 'start.first' as const,
       lines: [
         { label: '命令', value: '/Users/u/proj/node_modules/.bin/codex-acp' },
         { label: '工作目录', value: '/Users/u/proj' },
@@ -579,14 +572,14 @@ describe('approval cards', () => {
     expect(waiting).toContain(CONFIRMATION_COPY.waiting)
     expect(waiting).toContain(ticket.reason)
     for (const warning of ticket.warnings) expect(waiting).toContain(warning)
-    // A first start of a custom command opens its details at once: the full command, the folder and the notes.
+    // A first start opens its details at once: the full command, the folder and the notes.
     expect(detailsOpenAtFirst(ticket)).toBe(true)
     expect(waiting).toMatch(/aria-expanded="true"[^>]*>[\s\S]*确认详情/u)
     for (const line of ticket.lines) expect(waiting).toContain(line.value)
     expect(waiting).not.toContain('核对码')
     expect(waiting).not.toContain(ticket.hashDisplay)
-    // A repeat start keeps them folded, and a sentence cut short opens them again.
-    expect(detailsOpenAtFirst({ form: 'start.repeat', reason: '开启完全访问会话：Codex（在「Acme」）' })).toBe(false)
+    // Another confirmation keeps them folded, and a sentence cut short opens them again.
+    expect(detailsOpenAtFirst({ form: 'mode.widen', reason: '允许「修复登录」改用「完全访问」' })).toBe(false)
     expect(detailsOpenAtFirst({ form: 'approval.tool', reason: '批准运行工具 a（未登记的工具）：{…；完整参数见 Latch 里的确认详情' })).toBe(
       true,
     )

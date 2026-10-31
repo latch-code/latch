@@ -306,3 +306,57 @@ it('repairs a changed durable revocation set before advertising again, including
   expect(synchronize).toHaveBeenCalledTimes(2)
   expect(s.profiles.snapshot().discoveryRevocationsHash).toBe(revocationsHash)
 })
+const pairingOpening = (source: string): NativeOpening => ({
+  deviceId: `inv_${'A'.repeat(22)}`,
+  pairing: true,
+  source,
+  localAddress: row.address,
+  listener: { listener: 'native-direct', origin: 'https://native.invalid' },
+})
+it('proves a pairing socket only for a neighbour on this interface, and remembers the network only when told', async () => {
+  const s = await setup()
+  const network = knownNetworkHash(row, s.backend.gatewayMac!)
+  expect(await s.controller.pairingNearby(pairingOpening('192.168.1.9'), s.hash)).toBe(network)
+  expect((await NativeNetworks.open(s.directory)).has(network)).toBe(false)
+  await s.controller.remember(network)
+  expect((await NativeNetworks.open(s.directory)).has(network)).toBe(true)
+  // Another subnet, a phone on another network, and a routed peer the neighbour table does not show.
+  expect(await s.controller.pairingNearby(pairingOpening('10.0.0.9'), s.hash)).toBe(false)
+  expect(await s.controller.pairingNearby(pairingOpening('192.168.1.9'), new Uint8Array(32))).toBe(false)
+  s.backend.peerMac = null
+  expect(await s.controller.pairingNearby(pairingOpening('192.168.1.9'), s.hash)).toBe(false)
+  s.backend.peerMac = '00:22:33:44:55:66'
+  s.backend.gatewayMac = null
+  expect(await s.controller.pairingNearby(pairingOpening('192.168.1.9'), s.hash)).toBe(false)
+})
+it('accepts the gateway as the peer only when the peer really is the gateway, and only for pairing', async () => {
+  const s = await setup()
+  const hotspot = () => s.controller.pairingNearby(pairingOpening(row.gateway), s.hash)
+  s.backend.peerMac = s.backend.gatewayMac
+  expect(await hotspot()).toBeTypeOf('string')
+  // Something else behind the router's MAC: forwarded traffic, not a neighbour.
+  expect(await s.controller.pairingNearby(pairingOpening('192.168.1.9'), s.hash)).toBe(false)
+  // Daily proximity keeps the strict rule.
+  expect(await s.controller.nearby({ ...s.opening, source: row.gateway }, s.hash, () => {})).toBe(false)
+  // A gateway whose MAC differs from the peer's at the gateway's own address is not this case, and stays a plain neighbour.
+  s.backend.peerMac = '00:22:33:44:55:66'
+  expect(await hotspot()).toBeTypeOf('string')
+})
+it('fails closed for relay paths, without a local address, and when the neighbour lookup breaks', async () => {
+  const s = await setup()
+  const relay = pairingOpening('192.168.1.9')
+  relay.listener = { listener: 'native-relay', origin: 'https://native.invalid' }
+  expect(await s.controller.pairingNearby(relay, s.hash)).toBe(false)
+  const { localAddress: _none, ...unbound } = pairingOpening('192.168.1.9')
+  expect(await s.controller.pairingNearby(unbound, s.hash)).toBe(false)
+  vi.spyOn(s.backend, 'neighbors').mockRejectedValueOnce(new Error('helper gone'))
+  expect(await s.controller.pairingNearby(pairingOpening('192.168.1.9'), s.hash)).toBe(false)
+  // A changed network between lookup and answer proves nothing.
+  vi.spyOn(s.backend, 'neighbors').mockResolvedValueOnce({
+    epoch: randomUUID(),
+    peerMac: s.backend.peerMac,
+    gatewayMac: s.backend.gatewayMac,
+    gateway: row.gateway,
+  })
+  expect(await s.controller.pairingNearby(pairingOpening('192.168.1.9'), s.hash)).toBe(false)
+})

@@ -1,10 +1,10 @@
 import { setTimeout as delay } from 'node:timers/promises'
 import type { Duplex } from 'node:stream'
-import { ascii, hex, holder, issuePass, routeId, routeKey, UTC_DAY, type KnockBinding } from '@latch/link-wire'
+import { ascii, hex, holder, routeId, routeKey, UTC_DAY, type KnockBinding } from '@latch/link-wire'
 import { nodeCrypto, RelayClosed, RelayControl } from '@latch/link-client'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import type { AuditLog } from '../audit.ts'
-import type { DeviceStore, EnrollmentService } from '../auth.ts'
+import type { DeviceStore } from '../auth.ts'
 import { RelayProfiles, secretBytes, type RelayProfile } from './profiles.ts'
 import type { HostRelayDirectory } from './directory.ts'
 
@@ -22,7 +22,6 @@ interface NodeState {
 export interface RelayControllerOptions {
   profiles: RelayProfiles
   devices: DeviceStore
-  enrollments: EnrollmentService
   audit: AuditLog
   resolve(url: URL): Promise<Lease>
   directory?: HostRelayDirectory
@@ -54,43 +53,12 @@ export class HostRelayController {
       ...(state.retryAt === undefined ? {} : { retryAt: state.retryAt }),
     }))
   }
-  async invitation(
-    invitationId: string,
-    expiresAt: string,
-  ): Promise<Array<{ relayId: string; url: string; spkiHash: string; pass: string; holderSeed: string; profile: 'outer-pad-v2' }>> {
-    const now = Date.now(),
-      day = Math.floor(now / 1000 / UTC_DAY),
-      result = []
-    for (const profile of this.options.profiles.snapshot().profiles.slice(0, 2)) {
-      const relayId = Buffer.from(profile.relayId, 'hex'),
-        seed = secretBytes(profile.seeds[profile.activeSlot])
-      const key = await routeKey(nodeCrypto, seed, relayId, day),
-        device = await holder(nodeCrypto, seed, relayId, ascii(invitationId), day)
-      const pass = await issuePass(nodeCrypto, key, {
-        pairing: true,
-        relayId,
-        day,
-        notBefore: Math.floor(now / 1000),
-        notAfter: Math.floor(Date.parse(expiresAt) / 1000),
-        routePub: await nodeCrypto.publicKey(key),
-        holderPub: await nodeCrypto.publicKey(device.seed),
-        tag: device.tag,
-      })
-      result.push({
-        relayId: profile.relayId,
-        url: profile.url,
-        spkiHash: profile.spkiHash,
-        pass: Buffer.from(pass).toString('base64url'),
-        holderSeed: Buffer.from(device.seed).toString('base64url'),
-        profile: 'outer-pad-v2' as const,
-      })
-    }
-    return result
-  }
   /** Called synchronously after policy/config updates; old sockets cannot keep an allowance that was removed. */
   reconcile(): void {
     if (this.stopped) return
-    const profiles = this.options.profiles.snapshot().profiles
+    // The built-in relays run while a phone can use them, and only a phone paired on the LAN can get here.
+    const reachable = this.options.devices.nativeReachable()
+    const profiles = this.options.profiles.snapshot().profiles.filter(profile => !profile.builtIn || reachable)
     for (const [id, retained] of this.resumeTokens) {
       const profile = profiles.find(item => item.relayId === id)
       if (!profile || retained.fingerprint !== sha256Hex(canonicalJson(profile))) this.resumeTokens.delete(id)
@@ -250,7 +218,7 @@ export class HostRelayController {
           continue
         }
         let expected: string | undefined
-        for (const candidate of [...this.options.devices.nativeTransportCandidates(), ...this.options.enrollments.nativeInvitations()]) {
+        for (const candidate of this.options.devices.nativeTransportCandidates()) {
           const value = await holder(nodeCrypto, member.seed, relayId, ascii(candidate.id), member.day)
           if (hex(value.tag) === hex(setup.passTag)) {
             expected = candidate.id

@@ -27,38 +27,38 @@ export interface Device {
   revokedReason?: 'manual' | 'self' | 'replay' | 'cascade' | 'migration'
   native?: {
     lastVerifiedAt: string
-    input: 'ready' | 'paused' | 'verification-required' | 'review' | 'revoked'
+    input: 'ready' | 'verification-required' | 'review' | 'revoked'
     bodyVerifiedUntil?: string
   }
 }
 
 export interface NativeLinkInfo {
   version: 1
-  configHash: string
+  /** Phones can reach this Mac: its LAN listener is open, or a relay is configured. */
   enabled: boolean
-  direct: { host: string; port: number } | null
-  listening: { host: string; port: number } | null
+  /** The Host's start options fix the LAN listener; it does not follow the phone-access lifecycle. */
   directManaged: boolean
-  addresses: Array<{ address: string; interface: string }>
-  relays: Array<{
-    relayId: string
-    url: string
-    spkiHash: string
-    hasRegistrationKey: boolean
-    status: 'connecting' | 'connected' | 'waiting' | 'attention'
-    retryAt?: number
-  }>
-  inputsPaused: boolean
-  /** Public opt-in trust anchors and HTTPS mirrors, edited only on the execution Mac. */
-  directory?: { anchors: string[]; mirrors: string[]; ready: boolean; generation: number; rootGeneration: number } | null
+  listening: { host: string; port: number } | null
+  /** A saved address directory is in use. */
+  directory: boolean
+  relays: Array<{ relayId: string; url: string; status: 'connecting' | 'connected' | 'waiting' | 'attention'; retryAt?: number }>
 }
+/** One QR on the Mac's pairing sheet. Its payload is the secret: the sheet renders it and closes it, nothing else. */
 export interface NativePairingInvitation {
-  /** Host-bound maximum selected on the Mac; absent on older Hosts. Not added to the QR payload. */
-  dataScope?: DataScope
   id: string
   payload: string
   expiresAt: string
-  scopes: DeviceScope[]
+}
+/**
+ * What the sheet shows for one of its QRs (`GET /link/api/native/pairings/:id`). `device` is the phone's own word for
+ * itself; `offNetwork` says a device on another network tried this QR and was refused.
+ */
+export interface NativePairingStatus {
+  state: 'ready' | 'confirming' | 'approved' | 'done' | 'cancelled' | 'timeout' | 'contended' | 'expired'
+  device?: string
+  /** `done`: the device the sheet asks about, to remove if the phone in hand is not connected. */
+  deviceId?: string
+  offNetwork: boolean
 }
 
 /** The device making the request, as returned in the snapshot. */
@@ -74,6 +74,7 @@ export type PresenceAction =
   | 'device.enroll-native'
   | 'device.grant'
   | 'agent.probe'
+  | 'automation.grant'
   | 'task.start-l3'
   | 'task.mode-widen'
   | 'policy.change'
@@ -117,35 +118,30 @@ export interface ConfirmationTicket {
  * the macOS helper, which rebuilds the reason from the subject and refuses any difference.
  */
 export type PresenceReasonForm =
-  | 'plugin.package.apply'
-  | 'agent.probe'
   | 'approval.write'
   | 'approval.tool'
-  | 'key.save'
-  | 'key.origin'
+  | 'start.first'
+  | 'start.first-mode'
+  | 'start.changed'
+  | 'start.changed-mode'
+  | 'mode.widen'
+  | 'mode.widen-draft'
+  | 'agent.probe'
+  | 'automation.grant'
+  | 'device.enroll-named'
+  | 'device.enroll-native'
+  | 'device.grant'
   | 'origin.confirm'
-  | 'policy.egress'
   | 'policy.egress-many'
+  | 'policy.remote-start'
+  | 'policy.relay'
+  | 'policy.feishu'
   | 'policy.local'
   | 'policy.remote'
-  | 'policy.native-input'
-  | 'policy.native-link'
-  | 'policy.remote-start'
   | 'policy.remote-agents'
   | 'policy.remote-projects'
   | 'policy.several'
-  | 'start.first'
-  | 'start.first-custom'
-  | 'start.changed'
-  | 'start.changed-custom'
-  | 'start.project-config'
-  | 'start.first-plugin'
-  | 'start.changed-plugin'
-  | 'start.repeat'
-  | 'mode.widen'
-  | 'device.enroll'
-  | 'device.enroll-native'
-  | 'device.grant'
+  | 'plugin.package.apply'
 
 /** The Host-derived facts a confirmation names: one fixed form and the text of each of its slots (escaped). */
 export interface PresenceSubject {
@@ -210,16 +206,17 @@ export interface EnrollmentView {
   /** Present only in the creation response. */
   nonce?: string
   expiresAt: string
-  /** The confirmation's preview hash. The Host computer no longer shows it: the person compares `fingerprint`. */
+  /** The confirmation's preview hash. The Host computer no longer shows it. */
   hashDisplay?: string
-  /** The sentence the Host computer's system sheet shows, which names `fingerprint`. Absent from older Hosts. */
+  /** The sentence the Host computer's system sheet shows, which names the device. Absent from older Hosts. */
   reason?: string
+  /** `cancelled` because another device presented a QR of the same pairing sheet. */
+  contended?: true
 }
 
 /**
  * A device still waiting to be enrolled, for the desktop's pairing panel (`GET /link/api/enrollments`, desktop admins
- * only). Its fingerprint is the code the person compares: the new device shows it from its own key, and the Host
- * computer's system sheet names it in `reason`.
+ * only). The Host computer's system sheet names it by `name`, in `reason`.
  */
 export interface WaitingEnrollmentView {
   id: string
@@ -237,8 +234,6 @@ export interface WaitingEnrollmentView {
 }
 
 export interface InvitationView {
-  /** Present only for a Native invitation explicitly bound by the Host. */
-  dataScope?: DataScope
   /** 'inv_' + 22 base64url chars. */
   id: string
   /** 'lpi1-' + 26 base32 upper chars; returned once. */

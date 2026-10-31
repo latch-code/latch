@@ -36,7 +36,7 @@ async function granted(owner: TestDevice, host: TestHost, record: PluginPackageD
   expect(confirmation).toMatchObject({
     action: 'plugin.package.apply',
     form: 'plugin.package.apply',
-    reason: expect.stringContaining('可信代码'),
+    reason: expect.stringMatching(/^应用插件「.+」$/u),
   })
   expect(confirmation.confirmationMethod).toBeUndefined()
   await expect

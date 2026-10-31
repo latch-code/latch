@@ -17,7 +17,16 @@ import {
   RelayControl,
   type NativeHttpClient,
 } from '@latch/link-client'
-import { decodePass, nativeKnockSecret, nativeRevocationInput, nativeVerificationText, routeId } from '@latch/link-wire'
+import { connect as connectTcp } from 'node:net'
+import {
+  decodePass,
+  invitationCode,
+  nativeKnockSecret,
+  nativeRevocationInput,
+  nativeVerificationText,
+  parsePairingPayload,
+  routeId,
+} from '@latch/link-wire'
 import { startTestHost } from './helpers/host.ts'
 import { connectPluginTransport, createRelayTransportDriver } from '@latch/host/transports'
 
@@ -115,7 +124,7 @@ async function rawRequest(session: ClientHttp2Session, method: string, path: str
   })
 }
 
-it('pairs through a private relay and preserves recovery and revocation across lost acknowledgements and policy reconnects', async () => {
+it('pairs on the LAN only, then uses a private relay, and preserves recovery and revocation across lost acknowledgements and policy reconnects', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'latch-native-relay-e2e-'))
   cleanup.push(() => rm(directory, { recursive: true, force: true }))
   const tls = createTransportCertificate(Date.now(), 3_600_000, 'localhost'),
@@ -159,6 +168,7 @@ it('pairs through a private relay and preserves recovery and revocation across l
   const host = await startTestHost({
     dataDir,
     workspaceRoot: join(directory, 'workspace'),
+    native: { host: '127.0.0.1', port: 0 },
     nativeRelayCa: tls.cert,
     egressLookup: (_hostname, _options, callback) => callback(null, [{ address: '127.0.0.1', family: 4 }]),
   })
@@ -170,41 +180,28 @@ it('pairs through a private relay and preserves recovery and revocation across l
   host.presence.mode = 'manual'
   await vi.waitFor(() => expect(relay.status().routes).toBe(3), { timeout: 3000 })
   expect(relay.status().connections).toBe(1)
-  const invited = await desktop.request('native/pairings', { method: 'POST', body: { dataScope: 'all' } })
+  const invited = await desktop.request('native/pairings', { method: 'POST', body: {} })
   expect(invited.status).toBe(201)
-  const { invitation } = (await invited.json()) as { invitation: { payload: string; dataScope?: string } }
-  expect(invitation.dataScope).toBe('all')
-  const payload = JSON.parse(Buffer.from(invitation.payload.slice('LATCHPAIR1.'.length), 'base64url').toString()) as {
-    rootSpki: string
-    invitation: string
-    direct: unknown[]
-    relays: Array<{ pass: string; holderSeed: string; profile: 'outer-pad-v2' }>
-  }
-  expect(payload.direct).toHaveLength(0)
-  expect(payload.relays).toHaveLength(1)
-  expect(payload.relays[0]!.profile).toBe('outer-pad-v2')
+  const { invitation } = (await invited.json()) as { invitation: { payload: string } }
+  const payload = parsePairingPayload(invitation.payload),
+    code = invitationCode(payload.secret)
+  // The QR names the LAN endpoint and nothing else: no relay, no pass.
+  expect(payload.lan).toEqual([{ address: '127.0.0.1', port: host.host.nativePort }])
   const endpoint = {
     url: new URL(profile.url),
-    profile: payload.relays[0]!.profile,
+    profile: 'outer-pad-v2' as const,
     relayId,
     spki: Buffer.from(profile.spkiHash, 'hex'),
     ca: tls.cert,
     resolveAddress: async () => '127.0.0.1',
   }
-  const pairPass = Buffer.from(payload.relays[0]!.pass, 'base64url'),
-    pairKey = Buffer.from(payload.relays[0]!.holderSeed, 'base64url')
-  const binding = {
-    path: 'relay' as const,
-    profile: endpoint.profile,
-    relayId,
-    routeId: await routeId(nodeCrypto, decodePass(pairPass).routePub),
-  }
-  const knockKey = createHash('sha256').update(payload.invitation).digest(),
-    rootSpki = Buffer.from(payload.rootSpki, 'base64url')
+  const binding = { path: 'relay' as const, profile: endpoint.profile, relayId }
+  const knockKey = createHash('sha256').update(code).digest(),
+    rootSpki = payload.rootSpki
   const temporary = async (): Promise<NativeHttpClient> => {
-    const tunnel = await connectRelayTunnel({ ...endpoint, pass: pairPass, holderKey: pairKey })
-    tunnel.on('error', () => {})
-    const client = await openNativeHttp(tunnel, binding, { rootSpki, knockKey, pairing: true })
+    const socket = connectTcp(host.host.nativePort!, '127.0.0.1')
+    socket.on('error', () => {})
+    const client = await openNativeHttp(socket, { path: 'direct' }, { rootSpki, knockKey, pairing: true })
     cleanup.push(() => client.close())
     return client
   }
@@ -217,22 +214,27 @@ it('pairs through a private relay and preserves recovery and revocation across l
     first.close()
     return result
   })
-  await expect(
-    first.request('POST', '/link/api/enrollments', {
-      name: 'Relay phone fixture',
-      publicKey: device.spki.toString('base64url'),
-      invitation: payload.invitation,
-      native: {
-        certificate: device.cert,
-        verificationKey: verification.publicKey.export({ type: 'spki', format: 'der' }).toString('base64url'),
-      },
-    }),
-  ).rejects.toThrow()
+  const enrollmentBody = {
+    name: 'Relay phone fixture',
+    publicKey: device.spki.toString('base64url'),
+    invitation: code,
+    gatewayHash: '0'.repeat(64),
+    native: {
+      certificate: device.cert,
+      verificationKey: verification.publicKey.export({ type: 'spki', format: 'der' }).toString('base64url'),
+    },
+  }
+  await expect(first.request('POST', '/link/api/enrollments', enrollmentBody)).rejects.toThrow()
   createFault.mockRestore()
+  // The answer was lost. The same keys get their own enrollment back, with no second confirmation.
   const recovered = await temporary()
+  expect(ok<{ enrollment: null }>(await recovered.request('GET', '/link/api/native/pairing')).enrollment).toBeNull()
+  const shown = host.presence.requests.length
   const enrollment = ok<{ enrollment: { id: string; nonce: string; status: string } }>(
-    await recovered.request('GET', '/link/api/native/pairing'),
+    await recovered.request('POST', '/link/api/enrollments', enrollmentBody),
+    202,
   ).enrollment
+  expect(host.presence.requests).toHaveLength(shown)
   const signature = sign('sha256', Buffer.from(`latch-enroll-v1\n${host.host.hostId}\n${enrollment.id}\n${enrollment.nonce}`), {
     key: createPrivateKey(device.key),
     dsaEncoding: 'ieee-p1363',
@@ -268,6 +270,16 @@ it('pairs through a private relay and preserves recovery and revocation across l
   const selected = book.relays[0]!.passes[0]!,
     regular = decodePass(selected.pass)
   expect(regular.pairing).toBe(false)
+  // That QR is still good on the LAN, and opens nothing over the relay.
+  const refusedTunnel = await connectRelayTunnel({ ...endpoint, pass: selected.pass, holderKey: selected.holderSeed })
+  refusedTunnel.on('error', () => {})
+  await expect(
+    openNativeHttp(
+      refusedTunnel,
+      { ...binding, routeId: await routeId(nodeCrypto, regular.routePub) },
+      { rootSpki, knockKey, pairing: true },
+    ),
+  ).rejects.toThrow()
   const registeredTunnel = await connectRelayTunnel({ ...endpoint, pass: selected.pass, holderKey: selected.holderSeed })
   registeredTunnel.on('error', () => {})
   const regularOptions = {
@@ -315,8 +327,8 @@ it('pairs through a private relay and preserves recovery and revocation across l
     await registered.request('GET', '/link/api/snapshot'),
   )
   expect(snapshot.device.id).toBe(prepared.deviceId)
-  expect(snapshot.device.status).toBe('review')
-  expect(snapshot.device.scopes).toEqual(['view'])
+  expect(snapshot.device.status).toBe('active')
+  expect(snapshot.device.scopes).toEqual(['view', 'run', 'approve:standard'])
   expect(snapshot.device.dataScope).toBe('all')
   expect((await registered.request('POST', '/link/api/native/address-book', {})).status).toBe(403)
   const challenge = ok<{ nonce: string; appOpenId: string; expiresAt: number }>(
@@ -331,10 +343,8 @@ it('pairs through a private relay and preserves recovery and revocation across l
     await registered.request('POST', '/link/api/native/verification', { signature: verificationSignature }),
   )
   expect((await registered.request('POST', '/link/api/native/address-book', {})).status).toBe(200)
-  expect(ok<{ device: { scopes: string[] } }>(await registered.request('GET', '/link/api/snapshot')).device.scopes).toEqual(['view'])
   expect((await registered.request('POST', '/link/api/native/pairings', {})).status).toBe(403)
   host.presence.mode = 'approve'
-  expect((await registered.request('POST', '/link/api/tasks', { prompt: 'review cannot run', requestId: randomUUID() })).status).toBe(403)
   await writeFile(join(host.workspaceRoot, 'bulk.txt'), Buffer.alloc(2_097_152, 120))
   const task = await host.host.bridge.createTask({ prompt: 'bulk fixture', requestId: randomUUID(), mode: 'chat' })
   const metadata = ok<{ files: Array<{ file: { handle: string; etag: string } }> }>(
@@ -409,6 +419,7 @@ it('pairs through a private relay and preserves recovery and revocation across l
   await vi.waitFor(() => expect(rangeSocket.destroyed).toBe(true))
   host.presence.mode = 'manual'
   const retry = await temporary()
+  ok(await retry.request('POST', '/link/api/enrollments', enrollmentBody), 202)
   const repeated = ok<{ device: { id: string } }>(
     await retry.request('POST', `/link/api/enrollments/${enrollment.id}/complete`, { signature }),
   )
@@ -421,7 +432,7 @@ it('pairs through a private relay and preserves recovery and revocation across l
   expect(host.presence.requests.length).toBe(confirmations)
   await vi.waitFor(() => expect(registered.isClosed()).toBe(true), { timeout: 3000 })
   await vi.waitFor(() => expect(relay.status().connections).toBe(0), { timeout: 3000 })
-  expect(host.host.security.devices.get(prepared.deviceId)?.status).toBe('review')
+  expect(host.host.security.devices.get(prepared.deviceId)?.status).toBe('active')
   host.presence.mode = 'approve'
   expect(
     (await desktop.confirmed('policy', { method: 'PATCH', body: { hostEgressAllow: { add: [`localhost:${relay.port}`] } } })).status,
@@ -487,4 +498,116 @@ it('pairs through a private relay and preserves recovery and revocation across l
   expect([...observedTls.protocols]).toEqual(['TLSv1.3'])
   expect(observedTls.resumed).toBe(0)
   expect(observedTls.tickets).toBe(0)
+})
+
+it('registers a built-in relay from the first phone until the last one has read its removal', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'latch-official-relay-e2e-'))
+  cleanup.push(() => rm(directory, { recursive: true, force: true }))
+  const tls = createTransportCertificate(Date.now(), 3_600_000, 'localhost'),
+    relayId = randomBytes(16)
+  const relay = await startRelay({
+    host: '127.0.0.1',
+    port: 0,
+    cert: tls.cert,
+    key: tls.key,
+    relayId,
+    openRegistration: true,
+    registrationWork: { softRoutesPerPrefix: 1, minBits: 0, maxBits: 0, maxConcurrent: 2 },
+    maxConnections: 32,
+    gateway: {
+      binary: resolve('dist/relay/latch-relay-tls'),
+      maxHandshakes: 8,
+      handshakesPerSecond: 100,
+      handshakeBurst: 8,
+      prefixFraction: 1,
+    },
+  })
+  cleanup.push(() => relay.close())
+  const official = {
+    relayId: relayId.toString('hex'),
+    url: `https://localhost:${relay.port}/`,
+    spkiHash: createHash('sha256').update(tls.spki).digest('hex'),
+  }
+  const host = await startTestHost({
+    native: { host: '127.0.0.1', port: 0 },
+    officialRelays: [official],
+    nativeRelayCa: tls.cert,
+    egressLookup: (_hostname, _options, callback) => callback(null, [{ address: '127.0.0.1', family: 4 }]),
+  })
+  cleanup.push(() => host.close())
+  const desktop = await host.enroll({ listener: 'unix' })
+  expect(
+    (await desktop.confirmed('policy', { method: 'PATCH', body: { hostEgressAllow: { add: [`localhost:${relay.port}`] } } })).status,
+  ).toBe(200)
+  // Nothing to reach yet: a Mac with no phone stays off the relay, and the settings do not list it as a custom one.
+  await new Promise(done => setTimeout(done, 1500))
+  expect(relay.status().connections).toBe(0)
+  expect((await desktop.json<{ relays: unknown[] }>('native/info')).relays).toEqual([])
+
+  const { invitation } = (await (await desktop.request('native/pairings', { method: 'POST', body: {} })).json()) as {
+    invitation: { payload: string }
+  }
+  const payload = parsePairingPayload(invitation.payload),
+    code = invitationCode(payload.secret),
+    knockKey = createHash('sha256').update(code).digest()
+  const open = async (options: Parameters<typeof openNativeHttp>[2]) => {
+    const socket = connectTcp(host.host.nativePort!, '127.0.0.1')
+    socket.on('error', () => {})
+    const client = await openNativeHttp(socket, { path: 'direct' }, options)
+    cleanup.push(() => client.close())
+    return client
+  }
+  const pairing = await open({ rootSpki: payload.rootSpki, knockKey, pairing: true }),
+    device = createTransportCertificate(),
+    verification = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }),
+    verificationSpki = verification.publicKey.export({ type: 'spki', format: 'der' })
+  const enrollment = ok<{ enrollment: { id: string; nonce: string } }>(
+    await pairing.request('POST', '/link/api/enrollments', {
+      name: 'Official relay fixture',
+      publicKey: device.spki.toString('base64url'),
+      invitation: code,
+      gatewayHash: '0'.repeat(64),
+      native: { certificate: device.cert, verificationKey: verificationSpki.toString('base64url') },
+    }),
+    202,
+  ).enrollment
+  await vi.waitFor(async () =>
+    expect(
+      ok<{ enrollment: { status: string } }>(await pairing.request('GET', `/link/api/enrollments/${enrollment.id}`)).enrollment.status,
+    ).toBe('approved'),
+  )
+  const signature = sign('sha256', Buffer.from(`latch-enroll-v1\n${host.host.hostId}\n${enrollment.id}\n${enrollment.nonce}`), {
+    key: createPrivateKey(device.key),
+    dsaEncoding: 'ieee-p1363',
+  }).toString('base64url')
+  const prepared = ok<{ deviceId: string; addressBook: string }>(
+    await pairing.request('POST', `/link/api/enrollments/${enrollment.id}/prepare`, { signature }),
+  )
+  // The book a phone leaves with already names the relay, before any phone exists to use it.
+  expect(
+    verifyAddressBook(prepared.addressBook, payload.rootSpki, { hostId: host.host.hostId, deviceId: prepared.deviceId }).relays,
+  ).toHaveLength(1)
+  ok(await pairing.request('POST', `/link/api/enrollments/${enrollment.id}/complete`, { signature }))
+  await vi.waitFor(() => expect(relay.status().routes).toBe(3), { timeout: 5000 })
+
+  // Removing the last phone keeps the relay until that phone has read its removal, so it learns away from home too.
+  await host.host.security.devices.revoke(prepared.deviceId, 'manual', { listener: 'host' })
+  await new Promise(done => setTimeout(done, 1500))
+  expect(relay.status().connections).toBe(1)
+  const client = await open({
+    rootSpki: payload.rootSpki,
+    knockKey: await nodeCrypto.hash(await nativeKnockSecret(nodeCrypto, knockKey, device.spki, verificationSpki)),
+    certificate: device.cert,
+    key: device.key,
+  })
+  const revoked = ok<{ revocation: { revokedAt: number } }>(await client.request('GET', '/link/api/native/revocation')).revocation
+  ok(
+    await client.request('POST', '/link/api/native/revocation/ack', {
+      requestId: randomUUID(),
+      tombstoneHash: createHash('sha256')
+        .update(nativeRevocationInput(host.host.hostId, prepared.deviceId, revoked.revokedAt))
+        .digest('hex'),
+    }),
+  )
+  await vi.waitFor(() => expect(relay.status().connections).toBe(0), { timeout: 5000 })
 })

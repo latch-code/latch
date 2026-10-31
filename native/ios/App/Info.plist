@@ -32,11 +32,11 @@
 		<string>_latch._tcp</string>
 	</array>
 	<key>NSCameraUsageDescription</key>
-	<string>扫描这台电脑显示的 Latch 配对二维码。</string>
+	<string>扫描 Mac 上的配对二维码。</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>验证后查看并继续已登记电脑上的会话。</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>在当前网络发现并验证已登记的 Latch 电脑。</string>
+	<string>在同一个 Wi‑Fi 下直接连接你的 Mac。</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

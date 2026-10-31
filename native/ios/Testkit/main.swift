@@ -125,39 +125,43 @@ do {
             guard decoded == [try LinkBytes.unhex(payload, maximum: 1021)] else { throw NativeFailure.invalidRecord }
         }
         result = ["small": LinkBytes.hex(try NativePaddingWire.cell(LinkBytes.unhex(payload, maximum: 1021))), "largeDummyHash": LinkBytes.hex(LinkBytes.hash(try NativePaddingWire.cell(Data(), large: true)))]
-    case "nativeRelayProbe":
-        stage = "relay-open"
-        let invitation = try PairingInvitation.parse(input["payload"] as? String ?? "")
-        guard let endpoint = invitation.relays.first, let admission = endpoint.passes.first else { throw NativeFailure.invalidRecord }
-        let repetitions = (input["iterations"] as? NSNumber)?.intValue ?? 1
-        guard (1...9).contains(repetitions) else { throw NativeFailure.invalidRecord }
-        for _ in 0..<repetitions {
-            let connection = try await NativeHTTPConnection.relay(endpoint: endpoint, admission: admission,
-                rootSpki: invitation.rootSpki, knockKey: LinkBytes.hash(Data(invitation.invitation.utf8)),
-                trustAnchor: LinkBytes.unhex(input["trustAnchor"] as? String ?? ""))
-            stage = "relay-request"
-            let response = try await connection.request(.get, path: "/link/api/snapshot")
-            await connection.close()
-            result["status"] = response.status
+    case "pairingQr":
+        guard let vector = input["pairingQr"] as? [String: Any], let payload = vector["payload"] as? String, let encoded = vector["encoded"] as? String,
+              let invalid = vector["invalid"] as? [[String: Any]] else { throw NativeFailure.invalidRecord }
+        let qr = try PairingInvitation.parse(payload, now: Date(timeIntervalSince1970: (vector["expiresAt"] as? NSNumber)?.doubleValue ?? 0).addingTimeInterval(-60)), decoded = try PairingInvitation.decode(LinkBytes.unhex(encoded))
+        var rejected = 0
+        for item in invalid {
+            do { _ = try PairingInvitation.decode(LinkBytes.unhex(item["encoded"] as? String ?? "")) } catch { rejected += 1 }
         }
+        var oldRefused = false, foreignRefused = false, expired = false, linkRefused = false, longRefused = false, publicRefused = false
+        do { _ = try PairingInvitation.parse(payload, now: Date(timeIntervalSince1970: 0)) } catch { longRefused = (error as? NativeFailure) == .invalidRecord }
+        if let bytes = try? LinkBytes.unhex(input["publicAddress"] as? String ?? "") {
+            do { _ = try PairingInvitation.parse("LATCHPAIR2." + LinkBytes.base64url(bytes), now: Date(timeIntervalSince1970: (vector["expiresAt"] as? NSNumber)?.doubleValue ?? 0).addingTimeInterval(-60)) }
+            catch { publicRefused = (error as? NativeFailure) == .invalidRecord }
+        }
+        do { _ = try PairingInvitation.parse("LATCHPAIR1." + payload.dropFirst(11)) } catch { oldRefused = (error as? NativePairingFailure) == .hostTooOld }
+        do { _ = try PairingInvitation.parse("https://example.com/") } catch { foreignRefused = (error as? NativeFailure) == .invalidRecord }
+        do { _ = try PairingInvitation.parse(payload, now: Date(timeIntervalSince1970: 2_000_000_000)) } catch { expired = (error as? NativePairingFailure) == .expired }
+        do { _ = try PairingInvitation.parse("https://latch.invalid/pair#2." + payload.dropFirst(11)) } catch { linkRefused = (error as? NativeFailure) == .invalidRecord }
+        result = ["rootSpki": LinkBytes.hex(qr.rootSpki), "secret": LinkBytes.hex(qr.secret), "expiresAt": qr.expiresAt.timeIntervalSince1970,
+            "lan": qr.lan.map { ["address": $0.host, "port": Int($0.port)] }, "code": decoded.invitation, "knockKey": LinkBytes.hex(decoded.knockKey),
+            "rejected": rejected, "oldRefused": oldRefused, "foreignRefused": foreignRefused, "expired": expired, "linkRefused": linkRefused, "longRefused": longRefused, "publicRefused": publicRefused,
+            "recognized": PairingInvitation.recognizes(payload), "foreignRecognized": PairingInvitation.recognizes("https://example.com/")]
+    case "pairingGateway":
+        guard let rows = input["interfaces"] as? [[String: String]], let routers = input["routers"] as? [String], let peer = input["peer"] as? String else { throw NativeFailure.invalidRecord }
+        let hash = NativeDiscoveryWire.pairingGatewayHash(peer: peer, interfaces: try rows.map { (address: $0["address"] ?? "", mask: try LinkBytes.unhex($0["mask"] ?? "")) }, routers: routers)
+        result["hash"] = hash.map { LinkBytes.hex($0) }
     case "nativeRelayLifecycle", "nativeRelayTransferNormal", "nativeRelayTransferAfterCancel", "nativeRelayBulkNormal", "nativeRelayBulkLegacy", "nativeRelayBulkReauthenticate", "nativeRelayBulkAfterCancel", "nativeRelayBulkCancel", "nativeRelayBulkEarlyCancel", "nativeDirectTransfer":
         stage = "relay-pairing"
-        let invitation = try PairingInvitation.parse(input["payload"] as? String ?? ""), keys = try FixtureKeys()
+        let invitation = try PairingInvitation.parse(input["payload"] as? String ?? "", privateOnly: false), keys = try FixtureKeys()
         let anchor = try LinkBytes.unhex(input["trustAnchor"] as? String ?? "")
-        guard let invitationEndpoint = invitation.relays.first, let invitationPass = invitationEndpoint.passes.first else { throw NativeFailure.invalidRecord }
         let direct = input["operation"] as? String == "nativeDirectTransfer"
         let pairing = try NativePairing(invitation: invitation, keys: keys)
-        let temporary: NativeHTTPConnection
-        if direct, let location = invitation.direct.first {
-            temporary = try await NativeHTTPConnection.open(host: location.host, port: location.port, rootSpki: invitation.rootSpki,
-                knockKey: LinkBytes.hash(Data(invitation.invitation.utf8)))
-        } else {
-            temporary = try await NativeHTTPConnection.relay(endpoint: invitationEndpoint, admission: invitationPass,
-                rootSpki: invitation.rootSpki, knockKey: LinkBytes.hash(Data(invitation.invitation.utf8)), trustAnchor: anchor)
-        }
+        // Pairing happens on the LAN listener only; the relay is what the paired phone dials afterwards.
+        guard let location = invitation.lan.first else { throw NativeFailure.invalidRecord }
+        let temporary = try await NativeHTTPConnection.open(host: location.host, port: location.port, rootSpki: invitation.rootSpki, knockKey: invitation.knockKey)
         stage = "relay-begin"
-        let enrollment = try await pairing.begin(on: temporary, name: "Swift relay fixture")
-        guard enrollment.comparisonCode.count == 6 else { throw NativeFailure.invalidRecord }
+        _ = try await pairing.begin(on: temporary, name: "Swift relay fixture", gatewayHash: Data(repeating: 0, count: 32))
         stage = "relay-approve"
         var approved = false
         for _ in 0..<60 {
@@ -184,40 +188,32 @@ do {
         }
         guard let admission = usable else { throw NativeFailure.expired }
         let dial: @Sendable () async throws -> NativeHTTPConnection = {
-            if direct, let location = invitation.direct.first {
+            if direct {
                 return try await NativeHTTPConnection.open(host: location.host, port: location.port, rootSpki: device.rootSpki,
                     knockKey: device.knockKey, identity: keys.identity())
             }
             return try await NativeHTTPConnection.relay(endpoint: endpoint, admission: admission, rootSpki: device.rootSpki,
                 knockKey: device.knockKey, identity: keys.identity(), trustAnchor: anchor)
         }
+        stage = "relay-pairing-refused"
+        // The same QR knock, still valid on the LAN, opens nothing over the relay.
+        var relayPairingRefused = false
+        do {
+            let refused = try await NativeHTTPConnection.relay(endpoint: endpoint, admission: admission, rootSpki: invitation.rootSpki, knockKey: invitation.knockKey, trustAnchor: anchor)
+            await refused.close()
+        } catch { relayPairingRefused = true }
+        guard relayPairingRefused else { throw NativeFailure.identityMismatch }
         stage = "relay-mtls"
         let workspace = try NativeWorkspace(device: device, keys: keys, vault: vault)
         let review = try await workspace.install(dial)
-        if !direct { guard review["device"]["status"].string == "review", review["device"]["scopes"].array == [.string("view")] else { throw NativeFailure.identityMismatch } }
+        guard review["device"]["status"].string == "active", review["device"]["dataScope"].string == "all",
+              review["device"]["scopes"].array == [.string("view"), .string("run"), .string("approve:standard")] else { throw NativeFailure.identityMismatch }
         var requiresWindow = false
         do { _ = try await workspace.events() } catch { requiresWindow = (error as? NativeFailure) == .expired }
         guard requiresWindow else { throw NativeFailure.identityMismatch }
         stage = "relay-unlock"
         let lease = try await workspace.verify()
         try await vault.storeBody(Data("relay private body".utf8), name: "body", lease: lease)
-        if !direct {
-        var reviewDenied = false
-        do {
-            _ = try await workspace.submit(NativePendingWrite(method: .post, path: "/link/api/tasks",
-                fields: ["prompt": .string("Must remain review only")]))
-        } catch { reviewDenied = (error as? NativeFailure) == .forbidden }
-        guard reviewDenied else { throw NativeFailure.identityMismatch }
-        }
-        stage = "relay-desktop-grant"
-        FileHandle.standardError.write(Data("Native fixture waiting for desktop grant\n".utf8))
-        var granted = false
-        for _ in 0..<60 {
-            let value = try await workspace.snapshot()
-            if value["device"]["status"].string == "active", value["device"]["dataScope"].string == "all", value["device"]["scopes"].array.contains(.string("run")) { granted = true; break }
-            try await Task.sleep(for: .milliseconds(50))
-        }
-        guard granted else { throw NativeFailure.forbidden }
         stage = "relay-write"
         let create = try NativePendingWrite(method: .post, path: "/link/api/tasks",
             fields: ["prompt": .string("Swift relay fixture `notes.txt`")], requestId: input["requestId"] as? String ?? "")
@@ -342,7 +338,7 @@ do {
         guard closedBody else { throw NativeFailure.identityMismatch }
         await workspace.closeOpening()
         result = ["paired": true, "persistedBeforeComplete": true, "mutualTLS": true, "requiresWindow": true,
-            "verified": true, "reviewDeniedBeforeDesktopGrant": true, "created": true, "files": true, "events": true, "resumedWithoutSigning": true,
+            "verified": true, "relayPairingRefused": true, "created": true, "files": true, "events": true, "resumedWithoutSigning": true,
             "replayedAfterReconnect": true, "rootRevocationClosedLease": true]
     case "nativeLeaseExpiry":
         stage = "recovered-expiry"
@@ -389,13 +385,11 @@ do {
         result["status"] = response.status
     case "nativePair":
         stage = "parse-pairing"
-        let invitation = try PairingInvitation.parse(input["payload"] as? String ?? ""), port = try fixturePort(input)
+        let invitation = try PairingInvitation.parse(input["payload"] as? String ?? "", privateOnly: false), port = try fixturePort(input)
         let keys = try FixtureKeys(), pairing = try NativePairing(invitation: invitation, keys: keys)
-        let temporary = try await NativeHTTPConnection.open(host: "127.0.0.1", port: port, rootSpki: invitation.rootSpki,
-            knockKey: LinkBytes.hash(Data(invitation.invitation.utf8)))
+        let temporary = try await NativeHTTPConnection.open(host: "127.0.0.1", port: port, rootSpki: invitation.rootSpki, knockKey: invitation.knockKey)
         stage = "begin-pairing"
-        let enrollment = try await pairing.begin(on: temporary, name: "Swift fixture")
-        guard enrollment.comparisonCode.count == 6 else { throw NativeFailure.invalidRecord }
+        _ = try await pairing.begin(on: temporary, name: "Swift fixture", gatewayHash: Data(repeating: 0, count: 32))
         stage = "wait-pairing"
         var approved = false
         for _ in 0..<60 {
@@ -580,9 +574,9 @@ do {
         let offlineRename = try NativePendingWrite(method: .patch, path: "/link/api/tasks/" + taskId, fields: ["title": .string("Replayed fixture")])
         _ = try await workspace.submit(offlineRename)
         try await Task.sleep(for: .milliseconds(100))
-        stage = "offline-pause"
+        stage = "offline-rename"
         // Advancing the list checkpoint must not acknowledge the private session event.
-        _ = try await workspace.freeAction(path: "/link/api/native/input/pause", fields: [:])
+        _ = try await workspace.submit(NativePendingWrite(method: .patch, path: "/link/api/devices/current", fields: ["name": .string("Swift fixture renamed")]))
         try await Task.sleep(for: .milliseconds(100))
         stage = "offline-snapshot"
         let newerMetadata = try await workspace.snapshot()
@@ -782,7 +776,6 @@ do {
         }
         result["knock"] = try LinkBytes.hex(NativeCrypto.knock(key: bytes(input["knockKey"]), binding: binding, timeMs: (input["timeMs"] as? NSNumber)?.uint64Value ?? 0, nonce: bytes(input["nonce"])))
         result["serverBinding"] = try LinkBytes.hex(NativeCrypto.serverBinding(key: bytes(input["knockKey"]), binding: binding, nonce: bytes(input["nonce"]), certificate: Data((input["certificate"] as? String ?? "").utf8)))
-        result["pairingCode"] = try NativeCrypto.pairingCode(invitationHash: bytes(pairing["invitationHash"]), connectionSpki: bytes(pairing["connectionSpki"]), verificationSpki: bytes(pairing["verificationSpki"]))
         result["knockSecret"] = try LinkBytes.hex(NativeCrypto.knockSecret(invitationHash: bytes(pairing["invitationHash"]), connectionSpki: bytes(pairing["connectionSpki"]), verificationSpki: bytes(pairing["verificationSpki"])))
         let statement = try NativeCrypto.verificationText(hostId: verification["hostId"] as? String ?? "", deviceId: verification["deviceId"] as? String ?? "", nonce: verification["nonce"] as? String ?? "", expiresAt: (verification["expiresAt"] as? NSNumber)?.uint64Value ?? 0, appOpenId: verification["appOpenId"] as? String ?? "")
         result["verificationText"] = statement

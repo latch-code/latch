@@ -3,46 +3,104 @@ import LatchNativeCore
 import SwiftUI
 import VisionKit
 
+/** The first screen with no computers. */
+struct PairingWelcome: View {
+    let scan: () -> Void
+    var body: some View {
+        VStack(spacing: 20) {
+            Image("LatchMark").resizable().frame(width: 42, height: 42).clipShape(RoundedRectangle(cornerRadius: 10))
+            Text("连接你的 Mac").font(.title2.weight(.semibold))
+            Text("在 Mac 上的 Latch 中，打开 设置 › 手机与设备 › 连接手机。").foregroundStyle(.secondary).multilineTextAlignment(.center)
+            Button("扫码", action: scan).buttonStyle(.borderedProminent).controlSize(.large)
+        }.frame(maxWidth: .infinity)
+    }
+}
+
+/** Scanner, connecting, confirm on the Mac, connected, or one error with one action. */
 struct PairingView: View {
     @EnvironmentObject private var model: PhoneModel
-    @Environment(\.dismiss) private var dismiss
-    @State private var payload = ""
-    @State private var name = "我的电脑"
-    @State private var camera = false
-    @State private var cameraDenied = false
+    let close: () -> Void
     var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    Text("在 Mac 上打开 Latch → 设置 → 设备与连接，显示手机配对二维码。").foregroundStyle(.secondary)
-                    Button("扫描二维码", systemImage: "qrcode.viewfinder") { scan() }
-                        .disabled(!DataScannerViewController.isSupported)
-                    if cameraDenied { Text("请在系统设置中允许相机权限，或粘贴配对资料。").font(.footnote).foregroundStyle(.secondary) }
-                }
-                Section("或粘贴配对资料") {
-                    SecureField("LATCHPAIR1.…", text: $payload).textInputAutocapitalization(.never).autocorrectionDisabled()
-                    LocalTextEditor(text: $name, placeholder: "电脑名称", maximumLines: 1)
-                }
-                Section {
-                    Button("连接这台电脑") {
-                        let value = payload.trimmingCharacters(in: .whitespacesAndNewlines); payload = ""
-                        Task { await model.beginPairing(payload: value, name: name); if model.draft != nil { dismiss() } }
-                    }.disabled(payload.isEmpty || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.busy)
-                } footer: {
-                    Text("扫描后，在电脑确认即可开始使用。连接会自动选择可用路径。")
-                }
-            }
-            .navigationTitle("添加电脑").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } } }
-            .sheet(isPresented: $camera) { QRScanner { value in payload = value; camera = false } }
+        content.onChange(of: model.pairing) { previous, next in
+            if case .connected = previous, next == nil { close() }
         }
     }
-    private func scan() {
-        Task {
-            let allowed = await AVCaptureDevice.requestAccess(for: .video)
-            cameraDenied = !allowed
-            if allowed, DataScannerViewController.isAvailable { camera = true }
+    @ViewBuilder private var content: some View {
+        switch model.pairing {
+        case nil: PairingScanner(close: close)
+        case .connecting:
+            PairingStep {
+                ProgressView().controlSize(.large)
+                Text("正在连接 Mac…").font(.title3.weight(.semibold))
+                Button("取消") { model.cancelPairing(); close() }
+            }
+        case .confirming:
+            PairingStep {
+                Image(systemName: "laptopcomputer").font(.system(size: 44)).foregroundStyle(.secondary)
+                Text("在 Mac 上确认").font(.title2.weight(.semibold))
+                Text("用 Touch ID 允许这台 iPhone。").foregroundStyle(.secondary).multilineTextAlignment(.center)
+                Button("取消") { model.cancelPairing(); close() }
+            }
+        case let .connected(name):
+            PairingStep {
+                Image(systemName: "checkmark.circle.fill").font(.system(size: 44)).foregroundStyle(.tint)
+                Text("已连接「\(name)」").font(.title3.weight(.semibold)).multilineTextAlignment(.center)
+            }
+        case let .failed(failure):
+            PairingStep {
+                Text(failure.title).font(.title3.weight(.semibold)).multilineTextAlignment(.center)
+                if let message = failure.message { Text(message).foregroundStyle(.secondary).multilineTextAlignment(.center) }
+                switch failure {
+                case .localNetworkDenied:
+                    Button("打开设置") {
+                        if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                        model.dismissPairingFailure(); close()
+                    }.buttonStyle(.borderedProminent)
+                case .hostTooOld:
+                    Button("好") { model.dismissPairingFailure(); close() }.buttonStyle(.borderedProminent)
+                default:
+                    Button("重新扫码") { model.dismissPairingFailure() }.buttonStyle(.borderedProminent)
+                }
+            }
         }
+    }
+}
+
+private struct PairingStep<Content: View>: View {
+    @ViewBuilder let content: Content
+    var body: some View {
+        VStack(spacing: 20) { content }.padding(32).frame(maxWidth: 460, maxHeight: .infinity)
+    }
+}
+
+private struct PairingScanner: View {
+    @EnvironmentObject private var model: PhoneModel
+    let close: () -> Void
+    @State private var allowed: Bool?
+    @State private var foreign = false
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            if allowed == true, DataScannerViewController.isSupported, DataScannerViewController.isAvailable {
+                QRScanner { value in
+                    if PairingInvitation.recognizes(value) { Task { await model.beginPairing(payload: value) } }
+                    else { foreign = true }
+                }.ignoresSafeArea()
+            } else if allowed == false {
+                VStack(spacing: 16) {
+                    Text("需要相机权限").font(.title3.weight(.semibold))
+                    Text("在“设置”里允许 Latch 使用相机，才能扫描 Mac 上的二维码。").multilineTextAlignment(.center)
+                    Button("打开设置") { if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) } }
+                        .buttonStyle(.borderedProminent)
+                }.foregroundStyle(.white).padding(32)
+            }
+            VStack {
+                Text(foreign ? "这不是 Latch 的二维码" : "对准 Mac 上的二维码").foregroundStyle(.white).padding(.top, 24)
+                Spacer()
+                Button("取消", action: close).buttonStyle(.bordered).tint(.white).padding(.bottom, 24)
+            }
+        }
+        .task { allowed = await AVCaptureDevice.requestAccess(for: .video) }
     }
 }
 
@@ -67,10 +125,10 @@ private struct QRScanner: UIViewControllerRepresentable {
         func dataScanner(_ dataScanner: DataScannerViewController, didAdd addedItems: [RecognizedItem], allItems: [RecognizedItem]) {
             guard !handled else { return }
             for item in addedItems {
-                if case let .barcode(code) = item, let value = code.payloadStringValue,
-                   value.hasPrefix("LATCHPAIR1."), value.utf8.count <= 16_384 {
-                    handled = true; dataScanner.stopScanning(); found(value); return
-                }
+                guard case let .barcode(code) = item, let value = code.payloadStringValue, value.utf8.count <= 16_384 else { continue }
+                if PairingInvitation.recognizes(value) { handled = true; dataScanner.stopScanning() }
+                found(value)
+                return
             }
         }
     }

@@ -45,7 +45,7 @@ describe('Agent probe HTTP boundary', () => {
     const { t, desktop, log } = await fixture({ FAKE_ACP_CAPS: 'images,resume,dirs', FAKE_ACP_AUTH: 'new' })
     const input = { requestId: randomUUID() }
     const confirmation = await ticket(desktop, input, { 'x-latch-shell-confirmation': '1' })
-    expect(confirmation).toMatchObject({ action: 'agent.probe', form: 'agent.probe', reason: expect.stringContaining('不发送提示词') })
+    expect(confirmation).toMatchObject({ action: 'agent.probe', form: 'agent.probe', reason: '试运行 Fake，不发送内容' })
     expect(confirmation.confirmationMethod).toBeUndefined()
     await expect(readFile(log)).rejects.toMatchObject({ code: 'ENOENT' })
     const copies = await Promise.all(

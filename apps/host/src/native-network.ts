@@ -37,6 +37,8 @@ interface NetworkOptions {
   now?(): number
   automatic?(): boolean
   rebind?(snapshot: NativeNetworkSnapshot): Promise<void>
+  /** Closes a listener nobody wants, which must not wait for the network component. */
+  release?(): Promise<void>
 }
 function physical(row: NativeNetworkInterface): boolean {
   return row.kind !== 'tunnel' && /^en[0-9]+$/u.test(row.name) && isPrivateDiscoveryAddress(row.address)
@@ -84,6 +86,8 @@ export class NativeNetwork {
   private stopping = false
   private retryAt = 0
   private readonly proofs = new Set<NativeOpening>()
+  private readonly pairingProofs = new Set<NativeOpening>()
+  private pairingQueue: Promise<unknown> = Promise.resolve()
   private readonly routers = new Map<string, { epoch: string; hash: string; at: number }>()
   constructor(private readonly options: NetworkOptions) {
     this.timer = setInterval(() => this.reconcile(), 1000)
@@ -194,6 +198,7 @@ export class NativeNetwork {
       await this.disconnect()
       return
     }
+    if (automatic) await this.options.release?.()
     if (this.now() < this.retryAt) return
     await this.connect()
     const before = this.snapshot
@@ -278,34 +283,44 @@ export class NativeNetwork {
       this.proofs.delete(opening)
     }
   }
-  private async proveNearby(opening: NativeOpening, phoneGatewayHash: Uint8Array, recheck: () => void): Promise<boolean> {
-    recheck()
-    if (opening.listener.listener !== 'native-direct' || !opening.localAddress || !this.backend || !this.snapshot) return false
-    const backend = this.backend,
-      snapshot = this.snapshot,
-      generation = this.generation
-    const own = snapshot.interfaces.map(row => row.address),
-      row = this.rows().find(
-        item => sameIp(item.address, opening.localAddress!) && isDiscoveryPeer(opening.source, item.address, item.prefixLength, own),
-      )
-    if (!row?.gateway || phoneGatewayHash.byteLength !== 32) return false
-    const expected = await gatewayHash(nodeCrypto, row.address, row.prefixLength, row.gateway)
-    if (!equal(expected, phoneGatewayHash)) return false
-    const observed = await backend.neighbors(row.index, opening.source)
-    recheck()
-    if (
-      this.stopping
-      || generation !== this.generation
-      || observed.epoch !== snapshot.epoch
-      || this.snapshot?.epoch !== snapshot.epoch
-      || !observed.peerMac
-      || !observed.gatewayMac
-      || observed.peerMac === observed.gatewayMac
-      || !observed.gateway
-      || !sameIp(observed.gateway, row.gateway)
+  /**
+   * The pairing gate: `proveNearby` on the pairing socket. A phone sharing its own connection as a Personal Hotspot is
+   * the gateway, so here a peer may have the gateway's MAC when it also has the gateway's IP. Fails closed.
+   */
+  async pairingNearby(opening: NativeOpening, phoneGatewayHash: Uint8Array): Promise<string | false> {
+    if (this.pairingProofs.has(opening) || this.pairingProofs.size >= 16) return false
+    this.pairingProofs.add(opening)
+    // One at a time: the holder of a QR cannot use up the helper's request slots before the real phone's proof.
+    const proof = this.pairingQueue.then(() => this.proveNeighbour(opening, phoneGatewayHash, true))
+    this.pairingQueue = proof.then(
+      () => {},
+      () => {},
     )
+    try {
+      const network = await proof
+      return network ?? false
+    } catch {
       return false
-    const networkHash = knownNetworkHash(row, observed.gatewayMac)
+    } finally {
+      this.pairingProofs.delete(opening)
+    }
+  }
+  /** Marks a network known, once a phone proven on it has actually paired. Never blocks that pairing. */
+  async remember(networkHash: string): Promise<void> {
+    if (this.options.networks.has(networkHash)) return
+    await this.options.audit.append({
+      action: 'native.network.remembered',
+      actor: { listener: 'native-direct', via: 'http' },
+      detail: { networkHash },
+    })
+    await this.options.networks.remember(networkHash)
+    this.reconcile()
+  }
+  private async proveNearby(opening: NativeOpening, phoneGatewayHash: Uint8Array, recheck: () => void): Promise<boolean> {
+    const networkHash = await this.proveNeighbour(opening, phoneGatewayHash, false, recheck)
+    if (!networkHash) return false
+    const generation = this.generation,
+      epoch = this.snapshot?.epoch
     if (!this.options.networks.has(networkHash)) {
       await this.options.audit.append({
         action: 'native.network.remembered',
@@ -317,10 +332,48 @@ export class NativeNetwork {
       await this.options.networks.remember(networkHash)
     }
     recheck()
-    if (this.stopping || generation !== this.generation || this.snapshot?.epoch !== snapshot.epoch) return false
-    this.routers.delete(`${row.index}:${row.address}`)
+    if (this.stopping || generation !== this.generation || this.snapshot?.epoch !== epoch) return false
     this.reconcile()
     return true
+  }
+  /** The neighbour evidence for this socket: the known-network hash it proves, or undefined. */
+  private async proveNeighbour(
+    opening: NativeOpening,
+    phoneGatewayHash: Uint8Array,
+    pairing: boolean,
+    recheck: () => void = () => {},
+  ): Promise<string | undefined> {
+    recheck()
+    if (opening.listener.listener !== 'native-direct' || !opening.localAddress) return undefined
+    if (pairing) await this.connect()
+    if (!this.backend || !this.snapshot) return undefined
+    const backend = this.backend,
+      snapshot = this.snapshot,
+      generation = this.generation
+    const own = snapshot.interfaces.map(row => row.address),
+      row = this.rows().find(
+        item => sameIp(item.address, opening.localAddress!) && isDiscoveryPeer(opening.source, item.address, item.prefixLength, own),
+      )
+    if (!row?.gateway || phoneGatewayHash.byteLength !== 32) return undefined
+    const expected = await gatewayHash(nodeCrypto, row.address, row.prefixLength, row.gateway)
+    if (!equal(expected, phoneGatewayHash)) return undefined
+    const observed = await backend.neighbors(row.index, opening.source)
+    recheck()
+    if (
+      this.stopping
+      || generation !== this.generation
+      || observed.epoch !== snapshot.epoch
+      || this.snapshot?.epoch !== snapshot.epoch
+      || !observed.peerMac
+      || !observed.gatewayMac
+      || !observed.gateway
+      || !sameIp(observed.gateway, row.gateway)
+    )
+      return undefined
+    // A router forwarding traffic shows up with its own MAC. Only pairing lets that through, and only for its own IP.
+    if (observed.peerMac === observed.gatewayMac && !(pairing && sameIp(opening.source, observed.gateway))) return undefined
+    this.routers.delete(`${row.index}:${row.address}`)
+    return knownNetworkHash(row, observed.gatewayMac)
   }
   async close(): Promise<void> {
     this.stopping = true

@@ -516,36 +516,41 @@ public actor NativeWorkspace {
         let cancel = LinkBytes.matches(path, "/link/api/tasks/[A-Za-z0-9_-]{1,160}/cancel")
         let groupCancel = LinkBytes.matches(path, "/link/api/personal/groups/grp_[a-f0-9-]{36}/cancel")
         let reject = LinkBytes.matches(path, "/link/api/approvals/[A-Za-z0-9_-]{1,160}") && fields["decision"] == .string("reject")
-        let pause = path == "/link/api/native/input/pause"
-        guard cancel || groupCancel || reject || pause,
+        guard cancel || groupCancel || reject,
               Set(fields.keys).isSubset(of: groupCancel ? ["requestId", "turnId"] : cancel ? ["requestId", "runId"] : reject ? ["requestId", "decision"] : []) else { throw NativeFailure.invalidRecord }
         if groupCancel { guard let turn = fields["turnId"]?.string, UUID(uuidString: turn) != nil,
             LinkBytes.matches(turn, "[A-Fa-f0-9-]{36}") else { throw NativeFailure.invalidRecord } }
-        if !pause {
-            guard let id = fields["requestId"]?.string, LinkBytes.matches(id, "[A-Fa-f0-9-]{36}"), !controlBusy else { throw NativeFailure.invalidRecord }
-            if let run = fields["runId"]?.string { guard LinkBytes.matches(run, "[A-Za-z0-9_-]{1,160}") else { throw NativeFailure.invalidRecord } }
-            controlBusy = true
-        }
-        defer { if !pause { controlBusy = false } }
-        let previous = !pause ? try await pendingControl() : nil
+        guard let id = fields["requestId"]?.string, LinkBytes.matches(id, "[A-Fa-f0-9-]{36}"), !controlBusy else { throw NativeFailure.invalidRecord }
+        if let run = fields["runId"]?.string { guard LinkBytes.matches(run, "[A-Za-z0-9_-]{1,160}") else { throw NativeFailure.invalidRecord } }
+        controlBusy = true
+        defer { controlBusy = false }
+        let previous = try await pendingControl()
         if let previous {
             guard previous["fields"]["requestId"].string == fields["requestId"]?.string else { throw NativeFailure.resultUnknown }
             guard previous["path"].string == path, previous["fields"] == .object(fields) else { throw NativeFailure.invalidRecord }
         }
         let (connection, current) = try transport()
-        if !pause { try await vault.storeMetadata(NativeJSON.object(["path": .string(path), "fields": .object(fields)]).encoded(), name: "control-pending") }
+        try await vault.storeMetadata(NativeJSON.object(["path": .string(path), "fields": .object(fields)]).encoded(), name: "control-pending")
         let response: NativeHTTPResponse
         do { response = try await connection.request(.post, path: path, body: NativeJSON.object(fields).encoded()) }
         catch { throw NativeFailure.resultUnknown }
         guard epoch == current else { throw NativeFailure.resultUnknown }
         guard response.status == 200 else {
             if previous != nil { throw NativeFailure.resultUnknown }
-            if !pause && (400..<500).contains(response.status) && response.status != 408 { try? await vault.remove(name: "control-pending", body: false) }
+            if (400..<500).contains(response.status) && response.status != 408 { try? await vault.remove(name: "control-pending", body: false) }
             throw response.status >= 500 || response.status == 408 ? NativeFailure.resultUnknown : NativeFailure.unavailable
         }
         let value = try NativeJSON.decode(response.body)
-        if !pause { try? await vault.remove(name: "control-pending", body: false) }
+        try? await vault.remove(name: "control-pending", body: false)
         return value
+    }
+    /**
+     * Asks the Host to remove this phone. It needs no window, and the Host closes this connection as it does so, so a lost
+     * answer proves nothing: only the Root-signed tombstone on the next connection lets the caller wipe anything.
+     */
+    public func removeThisDevice() async {
+        guard let (connection, _) = try? transport() else { return }
+        _ = try? await connection.request(.delete, path: "/link/api/devices/current")
     }
     public func pendingControl() async throws -> NativeJSON? {
         guard let data = try await vault.metadata(name: "control-pending") else { return nil }

@@ -95,8 +95,8 @@ export function ConnectScreen({ error, onRetry }: { error: string; onRetry: () =
 }
 
 /**
- * The fingerprint this device computed from its own key, the one code to compare: the computer's system sheet names
- * the same one in its sentence (`reason`), which is shown under it when the Host says it.
+ * The fingerprint this device computed from its own key, and under it the sentence the computer's system sheet shows
+ * (`reason`), when the Host says it. The sheet names the device, not this fingerprint.
  */
 function Fingerprint({ value, reason }: { value: string; reason?: string }) {
   return (

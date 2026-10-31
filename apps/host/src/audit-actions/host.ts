@@ -11,6 +11,7 @@ const presenceAction = z.enum([
   'task.mode-widen',
   'agent.define',
   'agent.probe',
+  'automation.grant',
   'policy.change',
   'provider.set-key',
   'provider.confirm-origin',

@@ -10,11 +10,12 @@ const cleanup: Array<() => Promise<void>> = []
 afterEach(async () => {
   for (const close of cleanup.splice(0).toReversed()) await close()
 })
-async function fixture() {
+async function fixture(kind: 'pairing' | 'registered' = 'registered') {
   const directory = await mkdtemp(join(tmpdir(), 'latch-knock-budget-'))
   cleanup.push(() => rm(directory, { recursive: true, force: true }))
   const root = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }),
     keys = [new Uint8Array(32).fill(1), new Uint8Array(32).fill(2)]
+  const leaf = createTransportCertificate().cert
   let now = Date.now()
   const granted = vi.fn(),
     replay = new Map<string, number>()
@@ -25,7 +26,12 @@ async function fixture() {
       publicKeySpki: root.publicKey.export({ format: 'der', type: 'spki' }),
       sign: input => sign('sha256', input, { key: root.privateKey, dsaEncoding: 'ieee-p1363' }),
     },
-    devices: () => keys.map((key, index) => ({ id: `identity-${index}`, knockKey: key, kind: 'pairing' as const })),
+    devices: () =>
+      keys.map((key, index) =>
+        kind === 'pairing'
+          ? { id: `identity-${index}`, knockKey: key, kind: 'pairing' as const }
+          : { id: `identity-${index}`, knockKey: key, kind: 'registered' as const, certificate: leaf },
+      ),
     isActive: () => true,
     now: () => now,
     replay,
@@ -66,6 +72,14 @@ it('prevents one valid identity from filling the global replay cache and admits 
   f.advance()
   await f.attempt(0, 34)
   expect(f.replay.size).toBe(1)
+})
+it('lets a pairing QR keep taking knocks, because its holder could otherwise lock the real phone out', async () => {
+  const f = await fixture('pairing')
+  for (let nonce = 1; nonce <= 40; nonce++) await f.attempt(0, nonce)
+  expect(f.replay.size).toBe(32)
+  expect(f.granted).toHaveBeenCalledTimes(40)
+  await f.attempt(0, 40).catch(() => {})
+  expect(f.granted).toHaveBeenCalledTimes(40)
 })
 it('does not retain nonces rejected by the Host admission slot callback', async () => {
   const f = await fixture()

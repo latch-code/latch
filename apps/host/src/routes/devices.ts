@@ -27,6 +27,7 @@ import type { StepupMethod } from '../audit.ts'
 import type { ConnectionContext, DeviceScopeBase } from '../auth.ts'
 import { codeOf, json, jsonBody, optionalJsonBody, safeDecode } from '../http-util.ts'
 import type { ListenerContext, ValidatedTls } from '../listeners.ts'
+import type { NativeOpening } from '../native.ts'
 import type { HostAddressBooks } from '../relay/address-book.ts'
 import {
   BASE_RETRIES,
@@ -40,6 +41,7 @@ import {
 
 export const RENEW_INTERVAL_MS = 24 * 60 * 60 * 1000
 const MAX_ISSUED_INVITATIONS = 256
+const MAX_GATE_REFUSALS = 8
 export const UNIX_ADDRESS = '本机 host.sock'
 const PAIRING_LABELS = { lpc: '本机确认', offline: '离线登记码', invitation: '配对邀请', migration: '旧版本迁移' } as const
 
@@ -52,6 +54,10 @@ const enrollmentSchema = z.object({
   scopes: z.array(scopeSchema).max(6).optional(),
   dataScope: z.enum(['work', 'all']).optional(),
   invitation: z.string().min(1).max(64).optional(),
+  gatewayHash: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/u)
+    .optional(),
   offlineCode: z.string().min(1).max(64).optional(),
   native: z
     .object({ certificate: z.string().min(1).max(8192), verificationKey: z.string().min(1).max(256) })
@@ -85,6 +91,12 @@ export interface DeviceRouteDeps {
   endDisallowedStreams: () => void
   /** A device as clients see it, with the state of its native connection. */
   deviceView: (device: Device) => Device
+  /** The proximity gate for a phone's pairing request. */
+  pairingNearby: (opening: NativeOpening, gatewayHash: Uint8Array) => Promise<string | false>
+  /** A phone proven on this network has paired. */
+  rememberNetwork: (networkHash: string) => void
+  /** This computer's name, which a newly paired phone shows. */
+  hostName: () => string
 }
 
 /** Enrollment, credential renewal, devices and their scopes, and browser and HTTPS pairing invitations. */
@@ -142,15 +154,17 @@ export function createDeviceRoutes(context: RouteContext, deps: DeviceRouteDeps)
       const native = opening
       if (
         isNativeListener(listener.listener)
-        && (!native?.pairing || native.enrollmentId || !input.invitation || sha256Hex(input.invitation) !== native.invitationHash)
+        && (!native?.pairing || !input.invitation || sha256Hex(input.invitation) !== native.invitationHash)
       )
         throw authFailure('unauthorized')
       // Off host.sock only an invitation can succeed. Each one this Host issued gets its own budget on its listener, so
       // other requests cannot use up an invited device's; every other attempt, with or without a code, shares one budget
       // per listener and adds no keys.
+      // A phone's QR is proven by its knock and answers to its own budget, inside the enrollment service: what one holder
+      // of a QR spends must not stop another phone from presenting it.
       const invitationHash = !local && input.invitation !== undefined ? sha256Hex(input.invitation) : undefined
       const issued = invitationHash !== undefined && invitationIssued(invitationHash, listener.listener)
-      if (!local)
+      if (!local && !isNativeListener(listener.listener))
         limits.enrollmentCreate.take(issued ? `${listener.listener}:invitation:${invitationHash}` : `${listener.listener}:uninvited`)
       const request = {
         publicKey: input.publicKey,
@@ -160,12 +174,29 @@ export function createDeviceRoutes(context: RouteContext, deps: DeviceRouteDeps)
         ...(input.invitation ? { invitation: input.invitation } : {}),
         ...(input.offlineCode ? { offlineCode: input.offlineCode } : {}),
         ...(input.native ? { native: input.native } : {}),
+        ...(input.gatewayHash ? { gatewayHash: input.gatewayHash } : {}),
       }
       const presented = presentedCredential(req, listener, hostId8)
       const legacy = presented?.kind === 'legacy-cookie' ? presented : undefined
       let enrollment: EnrollmentView
       try {
-        enrollment = await enrollments.create(request, connection, legacy)
+        enrollment = await enrollments.create(
+          request,
+          connection,
+          legacy,
+          native?.pairing
+            ? {
+                async nearby(gatewayHash) {
+                  const proof = await deps.pairingNearby(native, gatewayHash)
+                  // Refusals cost only the connection asking; one that keeps asking loses it.
+                  if (proof === false && (native.gateRefusals = (native.gateRefusals ?? 0) + 1) >= MAX_GATE_REFUSALS) void native.close?.()
+                  return proof
+                },
+                budget: () => limits.enrollmentCreate.take(`native:${native.invitationHash}`),
+                auditFailed: () => res.setHeader('x-latch-audit', 'failed'),
+              }
+            : undefined,
+        )
       } catch (error) {
         if (issued && codeOf(error) === 'invitation-invalid') issuedInvitations.delete(invitationHash)
         throw error
@@ -198,14 +229,15 @@ export function createDeviceRoutes(context: RouteContext, deps: DeviceRouteDeps)
       const deviceId = enrollments.prepareNative(id, input.signature, connection)
       const addressBook = await addressBooks.issue(deviceId)
       if (enrollments.prepareNative(id, input.signature, connection) !== deviceId) throw authFailure('unauthorized')
-      json(res, { deviceId, addressBook })
+      json(res, { deviceId, addressBook, hostName: deps.hostName() })
       return true
     }
     if (method === 'POST' && enrollment[2] === '/complete') {
       limits.enrollmentPoll.take(id)
       const input = signatureSchema.parse(await jsonBody(req))
       const presented = presentedCredential(req, listener, hostId8)
-      const { device, credential } = await enrollments.complete(id, input.signature, connection)
+      const { device, credential, network } = await enrollments.complete(id, input.signature, connection)
+      if (network) deps.rememberNetwork(network)
       refresh()
       if (isNativeListener(listener.listener)) {
         json(res, { device })
@@ -335,6 +367,21 @@ export function createDeviceRoutes(context: RouteContext, deps: DeviceRouteDeps)
       return true
     }
     const match = path.match(/^\/link\/api\/devices\/([^/]+)$/)
+    const renamed = path.match(/^\/link\/api\/devices\/([^/]+)\/name$/)
+    if (renamed && method === 'PATCH') {
+      requireLocal(caller)
+      requireScope(caller, 'admin')
+      const id = safeDecode(renamed[1]!)
+      const input = deviceNameSchema.parse(await jsonBody(req))
+      recheck(caller, 'admin')
+      const target = devices.get(id)
+      if (!target || target.status === 'revoked' || target.status === 'legacy-pending')
+        throw new AppError(404, 'device-not-found', '找不到该设备')
+      const device = await devices.rename(id, input.name, actorOf(caller))
+      refresh()
+      json(res, { device })
+      return true
+    }
     if (match && method === 'DELETE') {
       if (caller.device) requireScope(caller, 'admin')
       else limits.anonymousRevoke.take()

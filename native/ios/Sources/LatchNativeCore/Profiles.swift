@@ -100,7 +100,7 @@ public actor NativeProfileStore {
     }
     private func saveDraftOnce(_ draft: NativePairingDraft) async throws {
         guard !closed, !draft.name.isEmpty, draft.name.count <= 80 else { throw NativeFailure.storageUnavailable }
-        _ = try PairingInvitation.parse(draft.payload); try validateKeys(draft.keys)
+        _ = try PairingInvitation.parseStored(draft.payload); try validateKeys(draft.keys)
         if let existing = try await self.draft() {
             guard existing.payload == draft.payload, existing.keys.connectionTag == draft.keys.connectionTag,
                   existing.keys.verificationTag == draft.keys.verificationTag, existing.name == draft.name else { throw NativeFailure.resultUnknown }
@@ -132,6 +132,13 @@ public actor NativeProfileStore {
     }
     public func retire(_ host: NativeRegisteredHost, proof: VerifiedNativeRevocation) async throws {
         try await serializeProfiles { try await self.retireHost(host, proof: proof) }
+    }
+    /** A host saved before `complete` that the Host refused: nothing can ever connect to it. Never one that finished. */
+    public func discardPrepared(keys: DeviceKeyReference) async throws {
+        try await serializeProfiles {
+            guard let host = await self.hosts.first(where: { $0.prepared && $0.keys.connectionTag == keys.connectionTag }) else { return }
+            try await self.retireStoredHost(host)
+        }
     }
     private func retireHost(_ host: NativeRegisteredHost, proof: VerifiedNativeRevocation) async throws {
         guard proof.hostId == host.device.hostId, proof.deviceId == host.device.deviceId else { throw NativeFailure.identityMismatch }

@@ -39,13 +39,18 @@ export const DEVICE_ACTIONS = {
   'device.native.verified': deviceOnly,
   /** The renewed credential was used for the first time and became current. */
   'device.credential.rotated': deviceOnly,
-  /** `listener` is where the invitation can be used; records written before invitations were bound to one have none. */
+  /**
+   * `listener` is where the invitation can be used; records written before invitations were bound to one have none.
+   * `dataScope` only appears in records from when a pairing could choose one.
+   */
   'pairing.invited': z.strictObject({
     invitationId: prefixed('inv'),
     scopes,
     listener: listener.optional(),
     dataScope: dataScope.optional(),
   }),
+  /** Two sets of keys presented one pairing QR: what came from it was cancelled and removed. */
+  'pairing.contended': z.strictObject({ invitationId: prefixed('inv'), cancelled: count, removed: count }),
   'offline.ticket.created': ticket,
   'offline.ticket.consumed': ticket,
   'migration.devices.v2': z.strictObject({ revoked: count, legacy: count }),

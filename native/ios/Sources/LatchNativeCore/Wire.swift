@@ -143,12 +143,6 @@ public enum NativeCrypto {
         let input = try Data("latch-server-bind-v1\0".utf8) + binding.encoded() + LinkBytes.fixed(nonce, 16) + LinkBytes.hash(certificate)
         return try LinkBytes.hmac(LinkBytes.fixed(key, 32), input)
     }
-    public static func pairingCode(invitationHash: Data, connectionSpki: Data, verificationSpki: Data) throws -> String {
-        guard connectionSpki.count <= 256, verificationSpki.count <= 256 else { throw NativeFailure.invalidRecord }
-        let input = try Data("latch-native-pair-code-v1\0".utf8) + LinkBytes.fixed(invitationHash, 32) + LinkBytes.field(connectionSpki) + LinkBytes.field(verificationSpki)
-        var reader = try LinkReader(LinkBytes.hash(input).prefix(4))
-        return String(format: "%06llu", try reader.integer(4) % 1_000_000)
-    }
     public static func knockSecret(invitationHash: Data, connectionSpki: Data, verificationSpki: Data) throws -> Data {
         guard connectionSpki.count <= 256, verificationSpki.count <= 256 else { throw NativeFailure.invalidRecord }
         return try LinkBytes.derive(LinkBytes.fixed(invitationHash, 32), salt: LinkBytes.hash(connectionSpki), info: Data("latch-native-knock-key-v1\0".utf8) + LinkBytes.field(verificationSpki))

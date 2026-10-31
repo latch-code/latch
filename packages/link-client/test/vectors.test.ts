@@ -38,7 +38,19 @@ import { NativeAddressBookCache } from '../src/address-book.ts'
 import { nodeCrypto } from '../src/crypto.ts'
 import { verifyNativeRevocation } from '../src/revocation.ts'
 import { nativeRevocationInput } from '@latch/link-wire'
-import { nativeKnockSecret, nativeRecoverySecret, nativeVerificationText, nativeWindowSecret, pairingCode } from '@latch/link-wire'
+import {
+  decodePairingQr,
+  encodePairingQr,
+  formatPairingPayload,
+  invitationCode,
+  invitationSecret,
+  nativeKnockSecret,
+  nativeRecoverySecret,
+  nativeVerificationText,
+  nativeWindowSecret,
+  parseIp,
+  parsePairingPayload,
+} from '@latch/link-wire'
 
 it('matches offline authority and online directory signing bytes with the shared Swift vector', async () => {
   const { directory: v } = JSON.parse(await readFile(new URL('../../testkit/vectors/link-v1.json', import.meta.url), 'utf8')) as {
@@ -225,13 +237,45 @@ it('matches the cross-platform KDF, pass, proof and knock vectors and rejects pa
   )
 })
 
-it('pins the native pairing code and P-256 verification statement across implementations', async () => {
+it('pins the pairing QR, the invitation code and the knock key across implementations', async () => {
+  const vector = JSON.parse(await readFile(new URL('../../testkit/vectors/link-v1.json', import.meta.url), 'utf8')) as {
+    pairingQr: {
+      rootSpki: string
+      secret: string
+      expiresAt: number
+      lan: Array<{ address: string; port: number }>
+      encoded: string
+      payload: string
+      code: string
+      knockKey: string
+      invalid: Array<{ name: string; encoded: string }>
+    }
+  }
+  const qr = vector.pairingQr,
+    decoded = decodePairingQr(unhex(qr.encoded))
+  expect(hex(decoded.rootSpki)).toBe(qr.rootSpki)
+  expect(hex(decoded.secret)).toBe(qr.secret)
+  expect(decoded.expiresAt).toBe(qr.expiresAt)
+  expect(decoded.lan.map(item => ({ ...parseIp(item.address), port: item.port }))).toEqual(
+    qr.lan.map(item => ({ ...parseIp(item.address), port: item.port })),
+  )
+  expect(hex(encodePairingQr(decoded))).toBe(qr.encoded)
+  expect(formatPairingPayload(decoded)).toBe(qr.payload)
+  expect(parsePairingPayload(qr.payload).expiresAt).toBe(qr.expiresAt)
+  expect(invitationCode(decoded.secret)).toBe(qr.code)
+  expect(hex(invitationSecret(qr.code))).toBe(qr.secret)
+  expect(hex(await nodeCrypto.hash(ascii(qr.code)))).toBe(qr.knockKey)
+  for (const item of qr.invalid) expect(() => decodePairingQr(unhex(item.encoded)), item.name).toThrow()
+  expect(() => parsePairingPayload(`LATCHPAIR1.${qr.payload.slice(11)}`)).toThrow()
+  expect(() => parsePairingPayload(`https://latch.invalid/pair#2.${qr.payload.slice(11)}`)).toThrow()
+})
+
+it('pins the native knock key and P-256 verification statement across implementations', async () => {
   const vector = JSON.parse(await readFile(new URL('../../testkit/vectors/link-v1.json', import.meta.url), 'utf8')) as {
     pairing: {
       invitationHash: string
       connectionSpki: string
       verificationSpki: string
-      code: string
       knockSecret: string
       knockHash: string
     }
@@ -255,9 +299,6 @@ it('pins the native pairing code and P-256 verification statement across impleme
   const secret = await nativeKnockSecret(nodeCrypto, unhex(pair.invitationHash), unhex(pair.connectionSpki), unhex(pair.verificationSpki))
   expect(hex(secret)).toBe(pair.knockSecret)
   expect(hex(await nodeCrypto.hash(secret))).toBe(pair.knockHash)
-  expect(await pairingCode(nodeCrypto, unhex(pair.invitationHash), unhex(pair.connectionSpki), unhex(pair.verificationSpki))).toBe(
-    pair.code,
-  )
   expect(nativeVerificationText(statement.hostId, statement.deviceId, statement.nonce, statement.expiresAt, statement.appOpenId)).toBe(
     statement.text,
   )

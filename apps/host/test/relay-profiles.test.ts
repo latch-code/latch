@@ -82,3 +82,27 @@ it('refuses symlink or overly readable configuration while preserving invalid by
   await symlink(join(directory, 'outside'), path)
   await expect(RelayProfiles.open(directory)).rejects.toMatchObject({ code: 'native-relay-invalid' })
 })
+it('keeps compiled-in relays as built-in profiles with lasting seeds, apart from configured ones', async () => {
+  const { directory, profiles } = await fixture()
+  const tokyo = { relayId: 'a'.repeat(32), url: 'https://tokyo.relay.example/', spkiHash: 'b'.repeat(64) }
+  const custom = { relayId: 'c'.repeat(32), url: 'https://home.example/', spkiHash: 'd'.repeat(64) }
+  await profiles.syncOfficial([])
+  expect(profiles.snapshot().profiles).toEqual([])
+  await profiles.replace([custom])
+  await profiles.syncOfficial([tokyo])
+  const seeded = profiles.snapshot().profiles.find(item => item.relayId === tokyo.relayId)!
+  expect(seeded.builtIn).toBe(true)
+  expect(profiles.snapshot().profiles.find(item => item.relayId === custom.relayId)?.builtIn).toBeUndefined()
+  // A restart with the same list changes nothing; the seeds outlive a moved address.
+  const generation = profiles.snapshot().generation
+  await profiles.syncOfficial([tokyo])
+  expect(profiles.snapshot().generation).toBe(generation)
+  await profiles.syncOfficial([{ ...tokyo, url: 'https://tokyo2.relay.example/' }])
+  expect(profiles.snapshot().profiles.find(item => item.relayId === tokyo.relayId)?.seeds).toEqual(seeded.seeds)
+  // Editing configured relays leaves them alone, and dropping one from the list removes it.
+  await profiles.replace([])
+  expect(profiles.snapshot().profiles.map(item => item.relayId)).toEqual([tokyo.relayId])
+  await profiles.syncOfficial([])
+  expect(profiles.snapshot().profiles).toEqual([])
+  expect((await RelayProfiles.open(directory)).snapshot().profiles).toEqual([])
+})

@@ -469,11 +469,11 @@ describe('approval gating', () => {
 
   it('names the Host’s reason after 高风险, and only 高风险 for no reason or a code this page does not know', () => {
     const label = (extra: Partial<Approval>) => approvalActions(approval({ risk: 'R2', ...extra }), device(), null).badge?.label
-    expect(label({ riskReason: 'code-root' })).toBe('高风险 · Latch 程序目录内')
-    expect(label({ riskReason: 'protected-path' })).toBe('高风险 · 受保护的路径')
-    expect(label({ riskReason: 'outside-workspace' })).toBe('高风险 · 在会话文件夹之外')
-    expect(label({ riskReason: 'unresolved-path' })).toBe('高风险 · 不是会话文件夹内的相对路径')
-    expect(label({ riskReason: 'unlisted-tool' })).toBe('高风险 · 未登记的工具')
+    expect(label({ riskReason: 'code-root' })).toBe('高风险 · Latch 自己的代码')
+    expect(label({ riskReason: 'protected-path' })).toBe('高风险 · 受保护的文件')
+    expect(label({ riskReason: 'outside-workspace' })).toBe('高风险 · 在项目文件夹之外')
+    expect(label({ riskReason: 'unresolved-path' })).toBe('高风险 · 不是项目里的相对路径')
+    expect(label({ riskReason: 'unlisted-tool' })).toBe('高风险 · Latch 不认识的工具')
     expect(label({ riskReason: 'unparsable-arguments' })).toBe('高风险 · 参数无法解析')
     for (const unknown of ['toString', '__proto__', 'some-new-reason', 42, '']) {
       expect(label({ riskReason: unknown as Approval['riskReason'] })).toBe('高风险')

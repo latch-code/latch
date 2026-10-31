@@ -361,8 +361,9 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       presenceMode: 'manual',
       plugins: [markPlugin(marks)],
       now: () => Date.now() + hostClockOffset,
-      // An HTTPS entry, so the desktop app can pair a phone.
+      // An HTTPS entry, for the invitation a CLI hands out; and the LAN entry, so the desktop app can show a pairing QR.
       tls: true,
+      native: { host: '127.0.0.1', port: 0 },
       // No name resolves: a check of a preset provider's address never leaves this computer.
       egressLookup: (_hostname, _options, done) => done(Object.assign(new Error('ENOTFOUND'), { code: 'ENOTFOUND' }), []),
     })
@@ -719,7 +720,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await card.locator('.ui-button[aria-busy="true"]', { hasText: '在本机允许' }).waitFor()
       await card.getByText('等待本机确认…', { exact: true }).waitFor()
       await card.locator('.confirm-sheet-text', { hasText: confirmation.preview.reason }).waitFor()
-      expect(confirmation.preview.reason).toMatch(/^批准/u)
+      expect(confirmation.preview.reason).toMatch(new RegExp(`^允许运行 ${MARK_TOOL}`, 'u'))
       await card.getByRole('button', { name: '确认详情', exact: true }).waitFor()
       expect(await page.locator('.presence-dock').count()).toBe(0)
       expect(Math.abs((await allow.boundingBox())!.width - resting)).toBeLessThanOrEqual(1)
@@ -750,21 +751,18 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await waitFor(() => marks.ran === 1)
       await waitFor(async () => (await host.bridge.detail(sessionId)).summary.status === 'idle')
 
-      // 设置 › 设备: pairing a phone over the HTTPS entry, and the confirmation of an action that does not show it in
-      // place yet (the dock).
+      // 设置 › 设备: the pairing panel, and the confirmation of an action that does not show it in place yet (the dock).
       const phone = await testHost.enroll({ name: '测试手机', scopes: ['view'] })
       const settings = await openSettings(page, '设备')
-      await settings.locator('.settings-row', { hasText: '浏览器配对' }).getByRole('button', { name: '展开', exact: true }).click()
-      const pairing = settings.locator('.pair-section')
+      const pairing = settings.locator('.settings-group', { hasText: 'iPhone 上的 Latch' })
       // The panel's end in view, so each capture shows all of it.
       const showPairing = () => pairing.evaluate(element => element.scrollIntoView({ block: 'end' }))
-      await pairing.getByRole('button', { name: '生成配对二维码', exact: true }).waitFor()
+      await pairing.getByRole('button', { name: '连接手机', exact: true }).waitFor()
       await showPairing()
       await captureThemes(page, 'native-desktop-pairing')
-      await pairing.getByRole('button', { name: '生成配对二维码', exact: true }).click()
-      const qr = pairing.getByRole('img', { name: '手机配对二维码', exact: true })
+      await pairing.getByRole('button', { name: '连接手机', exact: true }).click()
+      const qr = pairing.getByRole('img', { name: '原生客户端配对二维码', exact: true })
       await qr.waitFor()
-      await pairing.getByRole('timer').waitFor()
       // The QR code carries the invitation, which never enters a screenshot, even a test Host's: the capture shows a
       // fixed pattern of the same size and colours in its place.
       const maskQr = () =>
@@ -802,14 +800,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await maskQr()
       await showPairing()
       await captureThemes(page, 'native-desktop-pairing-ready')
-      // Ten minutes later on this computer's clock: the code has lapsed and the panel offers a new one.
-      await page.evaluate('globalThis.latchRealNow = Date.now; Date.now = () => globalThis.latchRealNow() + 11 * 60 * 1000')
-      await pairing.getByText('上一个二维码已过期。', { exact: true }).waitFor()
-      await showPairing()
-      await captureThemes(page, 'native-desktop-pairing-expired')
-      await page.evaluate('Date.now = globalThis.latchRealNow')
-      // A device that used an invitation waits in the panel with its fingerprint, to compare with its own screen while
-      // the system sheet names the same one; a denial takes it away.
+      // A device that used an invitation waits in the panel, while the system sheet names it; a denial takes it away.
       const invitation = await testHost.invite(['view'])
       const asked = await testHost.raw('tls', 'api/enrollments', {
         method: 'POST',
@@ -822,13 +813,16 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await waitingDevice.getByText('连接详情', { exact: true }).click()
       await waitingDevice.getByLabel(`设备指纹 ${enrollment.fingerprint}`, { exact: true }).waitFor()
       await waitingDevice.getByText('正在请求连接', { exact: false }).waitFor()
-      // The panel came back from its expired state with the real code: masked again before the capture.
       await maskQr()
       await showPairing()
       await captureThemes(page, 'native-desktop-pairing-waiting')
       testHost.presence.denyNext()
       await waitingDevice.waitFor({ state: 'detached' })
       expect(phone.device.scopes).toEqual(['view'])
+      // Closing the panel revokes its QRs at the Host.
+      await pairing.getByRole('button', { name: '关闭', exact: true }).click()
+      await qr.waitFor({ state: 'detached' })
+      await waitFor(() => !host.security.enrollments.nativePairingOpen())
       // A device's actions are in its row's ⋯ menu.
       const row = settings.locator(`[data-device-id="${phone.device.id}"]`)
       const deviceActions = row.getByRole('button', { name: '测试手机 的操作', exact: true })
@@ -946,8 +940,8 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await page.getByRole('button', { name: '发送', exact: true }).click()
       const start = await testHost.presence.waitForRequest(15_000)
       expect(start.preview.action).toBe('task.start-l3')
-      expect(start.preview.subject.form).toBe('start.first-custom')
-      expect(start.preview.reason).toMatch(/^首次以完全访问启动 Second Agent（在启动目录）：自定义命令 \S*node /u)
+      expect(start.preview.subject.form).toBe('start.first')
+      expect(start.preview.reason).toMatch(/^允许 Second Agent 读写这台 Mac 上的文件并运行命令：\S*node /u)
       const startCard = page.locator('.composer-confirm .inline-confirm[data-confirmation-phase="waiting"]')
       await startCard.waitFor()
       await startCard.locator('.confirm-sheet-text', { hasText: start.preview.reason }).waitFor()
@@ -982,8 +976,6 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       const computer = page.getByRole('dialog', { name: '设置', exact: true })
       // Pairing starts here, so this is where the running agent that would hold a phone back is named.
       await computer.getByRole('tab', { name: '设备', exact: true }).click()
-      const browserPairing = computer.locator('.settings-row', { hasText: '浏览器配对' }).getByRole('button')
-      if ((await browserPairing.getAttribute('aria-expanded')) === 'false') await browserPairing.click()
       await computer
         .getByText(`要等「${hangTitle}」（Fake Agent）结束，才能配对新设备。`, {
           exact: true,
@@ -992,7 +984,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       // One sentence, and both ways out: open the session, or stop it.
       const pairingBlocked = computer.locator('.ui-notice', { hasText: `要等「${hangTitle}」` })
       expect(await pairingBlocked.getByRole('button').allInnerTexts()).toEqual(['查看会话', '停止会话'])
-      await computer.getByRole('button', { name: '生成配对二维码', exact: true }).scrollIntoViewIfNeeded()
+      await computer.getByRole('button', { name: '连接手机', exact: true }).scrollIntoViewIfNeeded()
       await captureThemes(page, 'native-desktop-pairing-blocked')
       await computer.getByRole('tab', { name: '电脑', exact: true }).click()
       await computer.getByRole('button', { name: '在这台电脑上发起：完全访问', exact: true }).click()

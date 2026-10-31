@@ -2,11 +2,10 @@ import Foundation
 import LatchNativeCore
 
 @MainActor func runNativePersonal(_ input: [String: Any]) async throws -> [String: Any] {
-    let invitation = try PairingInvitation.parse(input["payload"] as? String ?? ""), port = try fixturePort(input), keys = try FixtureKeys()
+    let invitation = try PairingInvitation.parse(input["payload"] as? String ?? "", privateOnly: false), port = try fixturePort(input), keys = try FixtureKeys()
     let pairing = try NativePairing(invitation: invitation, keys: keys)
-    let temporary = try await NativeHTTPConnection.open(host: "127.0.0.1", port: port, rootSpki: invitation.rootSpki,
-        knockKey: LinkBytes.hash(Data(invitation.invitation.utf8)))
-    _ = try await pairing.begin(on: temporary, name: "Swift personal fixture")
+    let temporary = try await NativeHTTPConnection.open(host: "127.0.0.1", port: port, rootSpki: invitation.rootSpki, knockKey: invitation.knockKey)
+    _ = try await pairing.begin(on: temporary, name: "Swift personal fixture", gatewayHash: Data(repeating: 0, count: 32))
     var approved = false
     for _ in 0..<60 {
         if let view = try await pairing.status(on: temporary), view.status == "approved" { approved = true; break }
@@ -31,18 +30,6 @@ import LatchNativeCore
         catch { windowRequired = (error as? NativeFailure) == .expired }
         guard windowRequired else { throw NativeFailure.identityMismatch }
         _ = try await workspace.verify()
-        var privateScopeRequired = false
-        do { _ = try await workspace.read("/link/api/personal", body: true) }
-        catch { privateScopeRequired = (error as? NativeFailure) == .forbidden }
-        guard privateScopeRequired else { throw NativeFailure.identityMismatch }
-        FileHandle.standardError.write(Data("Native personal waiting for desktop grant\n".utf8))
-        var granted = false
-        for _ in 0..<60 {
-            let snapshot = try await workspace.snapshot()
-            if snapshot["device"]["dataScope"].string == "all" { granted = true; break }
-            try await Task.sleep(for: .milliseconds(50))
-        }
-        guard granted else { throw NativeFailure.forbidden }
         let assistant = try await workspace.submit(NativePendingWrite(method: .post, path: "/link/api/personal/assistants", fields: [
             "name": .string("Swift personal"), "role": .string("Swift private role"), "harnessId": .string("standard"),
             "mode": .string("chat"), "pluginIds": .array([]),
@@ -142,7 +129,7 @@ import LatchNativeCore
         _ = try await workspace.submit(NativePendingWrite(method: .delete, path: "/link/api/personal/assistants/" + assistantId, fields: [:]))
         guard try await workspace.pendingWrites().isEmpty else { throw NativeFailure.storageUnavailable }
         await workspace.closeOpening(); await vault.lock()
-        return ["personal": true, "windowRequired": true, "privateScopeRequired": true, "privateHistory": true, "cachedClassification": true, "sameRequest": true, "pendingCleared": true,"group":true,"strictGroupCancel":true,"routine":true,"personalQueue":true,"controlRecovery":true]
+        return ["personal": true, "windowRequired": true, "privateHistory": true, "cachedClassification": true, "sameRequest": true, "pendingCleared": true,"group":true,"strictGroupCancel":true,"routine":true,"personalQueue":true,"controlRecovery":true]
     } catch {
         await workspace.closeOpening(); await vault.lock(); throw error
     }

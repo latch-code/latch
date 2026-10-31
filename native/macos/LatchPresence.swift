@@ -2,11 +2,10 @@
 //
 // Reads one JSON request line from stdin, recomputes the preview hash and the reason sentence itself, asks for Touch ID
 // or the login password through the system's own LocalAuthentication sheet with that sentence, and writes one JSON
-// result line to stdout. Native pairing first collects a phone code in a local secure field. It reads nothing but stdin (and, in --self-test mode, the
+// result line to stdout. It draws no window of its own. It reads nothing but stdin (and, in --self-test mode, the
 // vectors file named on the command line, checking canonical JSON, preview hashes, the display escaping, the reason
 // sentences and request validation), writes nothing but stdout, makes no network calls and ignores its environment.
 
-import AppKit
 import CryptoKit
 import Foundation
 import LocalAuthentication
@@ -396,13 +395,12 @@ func visible(_ text: String) -> String {
 
 // MARK: - Reason: the sentence the system sheet shows, byte-for-byte equal to the Host's presenceReason
 
-/// A literal; a slot, escaped and cut to `max` grapheme clusters with "…" (at its start when `keepEnd`, so a path keeps
-/// its file name and a host name its domain); or text added only when one of the named slots was cut. A slot with a
-/// `lead` may be empty, and then neither it, its lead nor its `trail` appears; every other slot must have text.
+/// A literal, or a slot: escaped and cut to `max` grapheme clusters with "…" (at its start when `keepEnd`, so a path
+/// keeps its file name and a host name its domain). A slot with a `lead` may be empty, and then neither it, its lead
+/// nor its `trail` appears; every other slot must have text.
 enum Segment {
   case text(String)
   case slot(String, max: Int, keepEnd: Bool, lead: String?, trail: String?)
-  case cut([String], String)
 }
 
 struct ReasonForm {
@@ -414,82 +412,61 @@ func slot(_ name: String, _ max: Int, keepEnd: Bool = false, lead: String? = nil
   .slot(name, max: max, keepEnd: keepEnd, lead: lead, trail: trail)
 }
 
-let harnessSlot = slot("harness", 16)
-/// Where a session runs: a saved project by its name, or the Host's words for the folder of a session without one.
-let projectSlot = slot("project", 16, lead: "（在「", trail: "」）")
-let folderSlot = slot("folder", 16, lead: "（在", trail: "）")
-/// The resolved executable's absolute path (home as ~), keeping its end.
-let programSlot = slot("program", 52, keepEnd: true)
-let argsSlot = slot("args", 24, lead: " ")
-/// The names of the environment variables a definition sets; never their values.
-let envSlot = slot("env", 24, lead: "，另设 ")
-let fullCommand = Segment.cut(["program", "args", "env"], "；完整命令见 Latch 里的确认详情")
-let command: [Segment] = [programSlot, argsSlot, envSlot, fullCommand]
-let whySlot = slot("why", 16)
-let targetSlot = slot("target", 48, keepEnd: true)
+let agentSlot = slot("agent", 16)
+/// The saved project a session starts in, as a note: it names where the agent starts, never a limit on what it may
+/// reach. A session without one leaves the note out.
+let projectNote = slot("project", 16, lead: "（项目「", trail: "」）")
+let changedNote = slot("project", 16, lead: "，项目「", trail: "」")
+/// What a start runs: the resolved executable's absolute path (home as ~, keeping its end), or 插件 <id>@<version> for a
+/// third-party plugin harness; then its arguments, and the names of the variables its definition sets, never their values.
+let command: [Segment] = [slot("program", 52, keepEnd: true), slot("args", 24, lead: " "), slot("env", 24, lead: "，另设 ")]
+let fullAccess = "读写这台 Mac 上的文件并运行命令"
+/// A permission mode by the agent's own name for it.
+let modeSlot = slot("mode", 24)
+let deviceSlot = slot("device", 20)
+let nameSlot = slot("name", 20)
+let countSlot = slot("count", 4)
+let levelSlot = slot("level", 8)
+let deviceConnects: [Segment] = [.text("允许「"), deviceSlot, .text("」连接这台 Mac")]
 
 /// The same table as REASON_FORMS in apps/host/src/presence-reason.ts; the shared vectors pin both.
 let reasonForms: [String: ReasonForm] = [
-  "plugin.package.apply": ReasonForm(actions: ["plugin.package.apply"], segments: [.text("应用插件「"), slot("plugin", 24), .text("」，允许其可信代码访问 Host 进程或当前页面")]),
-  "agent.probe": ReasonForm(actions: ["agent.probe"], segments: [.text("测试启动 "), harnessSlot, .text("（不发送提示词）：")] + command),
-  "approval.write": ReasonForm(actions: ["approval.r2"], segments: [
-    .text("批准写入 "), slot("path", 40, keepEnd: true), .text("（"), whySlot, .text("）"),
-  ]),
-  "approval.tool": ReasonForm(actions: ["approval.r2"], segments: [
-    .text("批准运行工具 "), slot("tool", 24), .text("（"), whySlot, .text("）"), slot("input", 40, lead: "："),
-    .cut(["input"], "；完整参数见 Latch 里的确认详情"),
-  ]),
-  "key.save": ReasonForm(actions: ["provider.set-key"], segments: [
-    .text("保存 "), slot("provider", 24), .text(" 的密钥，只发往 "), slot("origin", 48, keepEnd: true),
-  ]),
-  "key.origin": ReasonForm(actions: ["provider.set-key", "policy.change", "provider.confirm-origin"], segments: [
-    .text("保存 "), slot("provider", 24), .text(" 并允许 Host 访问 "), targetSlot,
-  ]),
-  "origin.confirm": ReasonForm(actions: ["provider.confirm-origin"], segments: [.text("允许 Host 访问模型服务地址 "), targetSlot]),
-  "policy.egress": ReasonForm(actions: ["policy.change"], segments: [.text("允许 Host 访问 "), slot("target", 64, keepEnd: true)]),
-  "policy.egress-many": ReasonForm(actions: ["policy.change"], segments: [.text("允许 Host 访问 "), slot("count", 4), .text(" 个新地址")]),
-  "policy.local": ReasonForm(actions: ["policy.change"], segments: [.text("把在这台电脑上发起的上限放宽到"), slot("level", 8)]),
-  "policy.native-input": ReasonForm(actions: ["policy.change"], segments: [.text("恢复所有原生手机的输入权限")]),
-  "policy.native-link": ReasonForm(actions: ["policy.change"], segments: [.text("更改手机连接："), slot("direct", 48), .text("，"), slot("count", 1), .text(" 个中继节点；新中继可看到连接时间与 IP")]),
-  "policy.remote": ReasonForm(actions: ["policy.change"], segments: [.text("把从手机和其他电脑发起的上限放宽到"), slot("level", 8)]),
-  "policy.remote-start": ReasonForm(actions: ["policy.change"], segments: [.text("允许其他设备在这台电脑上新建会话")]),
-  "policy.remote-agents": ReasonForm(actions: ["policy.change"], segments: [.text("允许其他设备使用更多 Agent")]),
-  "policy.remote-projects": ReasonForm(actions: ["policy.change"], segments: [.text("允许其他设备使用更多项目")]),
-  "policy.several": ReasonForm(actions: ["policy.change"], segments: [.text("放宽本机安全策略："), slot("count", 4), .text(" 项更改")]),
-  "start.first": ReasonForm(actions: ["task.start-l3"], segments: [
-    .text("首次以完全访问启动 "), harnessSlot, projectSlot, folderSlot, .text("："),
-  ] + command),
-  "start.first-custom": ReasonForm(actions: ["task.start-l3"], segments: [
-    .text("首次以完全访问启动 "), harnessSlot, projectSlot, folderSlot, .text("：自定义命令 "),
+  "approval.write": ReasonForm(actions: ["approval.r2"], segments: [.text("允许写入 "), slot("path", 40, keepEnd: true)]),
+  "approval.tool": ReasonForm(actions: ["approval.r2"], segments: [.text("允许运行 "), slot("tool", 24), slot("input", 40, lead: "：")]),
+  "start.first": ReasonForm(actions: ["task.start-l3"], segments: [.text("允许 "), agentSlot, .text(" " + fullAccess), projectNote, .text("：")] + command),
+  "start.first-mode": ReasonForm(actions: ["task.start-l3"], segments: [
+    .text("允许 "), agentSlot, .text(" 以「"), modeSlot, .text("」" + fullAccess), projectNote, .text("："),
   ] + command),
   "start.changed": ReasonForm(actions: ["task.start-l3"], segments: [
-    .text("以完全访问启动 "), harnessSlot, projectSlot, folderSlot, .text("，命令已变化："),
+    .text("再次允许 "), agentSlot, .text(" " + fullAccess + "（启动方式已变化"), changedNote, .text("）："),
   ] + command),
-  "start.changed-custom": ReasonForm(actions: ["task.start-l3"], segments: [
-    .text("以完全访问启动 "), harnessSlot, projectSlot, folderSlot, .text("，命令已变化：自定义命令 "),
+  "start.changed-mode": ReasonForm(actions: ["task.start-l3"], segments: [
+    .text("再次允许 "), agentSlot, .text(" 以「"), modeSlot, .text("」" + fullAccess + "（启动方式已变化"), changedNote, .text("）："),
   ] + command),
-  "start.project-config": ReasonForm(actions: ["task.start-l3"], segments: [
-    .text("开启完全访问会话："), harnessSlot, projectSlot, folderSlot, .text("，项目配置与以前启动时不同"),
+  "mode.widen": ReasonForm(actions: ["task.mode-widen"], segments: [.text("允许「"), slot("session", 20), .text("」改用「"), modeSlot, .text("」")]),
+  "mode.widen-draft": ReasonForm(actions: ["task.mode-widen"], segments: [
+    .text("允许 "), agentSlot, .text(" 改用「"), modeSlot, .text("」"), projectNote,
   ]),
-  "start.first-plugin": ReasonForm(actions: ["task.start-l3"], segments: [
-    .text("首次以完全访问启动 "), harnessSlot, projectSlot, folderSlot, .text("：插件 "), slot("plugin", 40),
+  "agent.probe": ReasonForm(actions: ["agent.probe"], segments: [.text("试运行 "), agentSlot, .text("，不发送内容")]),
+  "automation.grant": ReasonForm(actions: ["automation.grant"], segments: [
+    .text("允许自动化「"), nameSlot, .text("」按时用 "), agentSlot, .text(" " + fullAccess),
   ]),
-  "start.changed-plugin": ReasonForm(actions: ["task.start-l3"], segments: [
-    .text("以完全访问启动 "), harnessSlot, projectSlot, folderSlot, .text("，插件已变化："), slot("plugin", 40),
+  "device.enroll-named": ReasonForm(actions: ["device.enroll"], segments: deviceConnects),
+  "device.enroll-native": ReasonForm(actions: ["device.enroll-native"], segments: deviceConnects),
+  "device.grant": ReasonForm(actions: ["device.grant"], segments: [.text("为「"), deviceSlot, .text("」增加权限："), slot("change", 40)]),
+  "origin.confirm": ReasonForm(actions: ["provider.confirm-origin", "policy.change"], segments: [
+    .text("允许 Latch 连接 "), slot("target", 48, keepEnd: true),
   ]),
-  "start.repeat": ReasonForm(actions: ["task.start-l3"], segments: [.text("开启完全访问会话："), harnessSlot, projectSlot, folderSlot]),
-  "mode.widen": ReasonForm(actions: ["task.mode-widen"], segments: [
-    .text("把会话「"), slot("session", 20), .text("」的权限模式放宽到 "), slot("mode", 24),
-  ]),
-  "device.enroll-native": ReasonForm(actions: ["device.enroll-native"], segments: [
-    .text("配对原生设备「"), slot("device", 20), .text("」，已在此 Mac 输入手机核对码，指纹 "), slot("fingerprint", 24),
-  ]),
-  "device.enroll": ReasonForm(actions: ["device.enroll"], segments: [
-    .text("允许指纹 "), slot("fingerprint", 24), .text(" 的新设备「"), slot("device", 20), .text("」连接"),
-  ]),
-  "device.grant": ReasonForm(actions: ["device.grant"], segments: [
-    .text("为设备「"), slot("device", 20), .text("」增加权限："), slot("change", 40),
-  ]),
+  "policy.egress-many": ReasonForm(actions: ["policy.change"], segments: [.text("允许 Latch 连接 "), countSlot, .text(" 个新地址")]),
+  "policy.remote-start": ReasonForm(actions: ["policy.change"], segments: [.text("允许手机和浏览器在这台 Mac 上开始新会话")]),
+  "policy.relay": ReasonForm(actions: ["policy.change"], segments: [.text("允许 Latch 使用中继「"), slot("relay", 24), .text("」")]),
+  "policy.feishu": ReasonForm(actions: ["policy.change"], segments: [.text("允许飞书用户「"), nameSlot, .text("」使用这台 Mac 上的 Latch")]),
+  "policy.local": ReasonForm(actions: ["policy.change"], segments: [.text("把在这台 Mac 上开始的会话上限放宽到"), levelSlot]),
+  "policy.remote": ReasonForm(actions: ["policy.change"], segments: [.text("把从手机和浏览器开始的会话上限放宽到"), levelSlot]),
+  "policy.remote-agents": ReasonForm(actions: ["policy.change"], segments: [.text("允许手机和浏览器使用更多 Agent")]),
+  "policy.remote-projects": ReasonForm(actions: ["policy.change"], segments: [.text("允许手机和浏览器使用更多项目")]),
+  "policy.several": ReasonForm(actions: ["policy.change"], segments: [.text("放宽这台 Mac 的安全设置："), countSlot, .text(" 项更改")]),
+  "plugin.package.apply": ReasonForm(actions: ["plugin.package.apply"], segments: [.text("应用插件「"), slot("plugin", 24), .text("」")]),
 ]
 
 /// The reason for `action` from a subject, or nil when the form, its action or its slots do not match exactly.
@@ -499,7 +476,6 @@ func presenceReason(action: String, form name: String, slots: [String: String]) 
   for segment in form.segments { if case .slot(let slot, _, _, _, _) = segment { names.append(slot) } }
   guard slots.count == names.count, Set(slots.keys) == Set(names) else { return nil }
   var reason = ""
-  var cut = Set<String>()
   for segment in form.segments {
     switch segment {
     case .text(let text): reason += text
@@ -509,14 +485,8 @@ func presenceReason(action: String, form name: String, slots: [String: String]) 
       // Swift's Character is an extended grapheme cluster, as Intl.Segmenter's graphemes are on the Host.
       let clusters = Array(visible(value))
       reason += lead ?? ""
-      if clusters.count <= max {
-        reason += String(clusters)
-      } else {
-        cut.insert(slot)
-        reason += keepEnd ? "…" + String(clusters.suffix(max - 1)) : String(clusters.prefix(max - 1)) + "…"
-      }
+      reason += clusters.count <= max ? String(clusters) : keepEnd ? "…" + String(clusters.suffix(max - 1)) : String(clusters.prefix(max - 1)) + "…"
       reason += trail ?? ""
-    case .cut(let names, let text): if names.contains(where: { cut.contains($0) }) { reason += text }
     }
   }
   return reason
@@ -542,7 +512,6 @@ struct Request {
   let reason: String
   let timeoutSeconds: Int
   let requireBiometric: Bool
-  let pairingCode: String?
 }
 
 struct Refusal: Error {
@@ -564,11 +533,7 @@ func strings(_ value: JSONValue?) -> [String]? {
 func parseRequest(_ bytes: [UInt8]) throws -> Request {
   let lineEnd = bytes.firstIndex(of: 0x0A) ?? bytes.count
   guard let root = try? JSONParser.parse(Array(bytes[..<lineEnd])) else { throw Refusal(code: "request-invalid") }
-  let pairingCode = root["pairingCode"]?.stringValue
-  let requestKeys: Set<String> = pairingCode == nil
-    ? ["v", "preview", "previewHash", "timeoutSeconds", "requireBiometric"]
-    : ["v", "preview", "previewHash", "timeoutSeconds", "requireBiometric", "pairingCode"]
-  guard Set(root.keys) == requestKeys, case .integer(2)? = root["v"],
+  guard Set(root.keys) == ["v", "preview", "previewHash", "timeoutSeconds", "requireBiometric"], case .integer(2)? = root["v"],
         let preview = root["preview"], case .object = preview, let previewHash = root["previewHash"]?.stringValue,
         case .integer(let timeout)? = root["timeoutSeconds"], (1...120).contains(timeout),
         case .bool(let requireBiometric)? = root["requireBiometric"] else { throw Refusal(code: "request-invalid") }
@@ -591,11 +556,7 @@ func parseRequest(_ bytes: [UInt8]) throws -> Request {
   }
   guard let reason = presenceReason(action: action, form: subject.form, slots: subject.slots) else { throw Refusal(code: "preview-invalid") }
   guard Array(reason.utf16) == given else { throw Refusal(code: "reason-mismatch") }
-  let nativePairing = action == "device.enroll-native" && subject.form == "device.enroll-native"
-  if nativePairing {
-    guard let code = pairingCode, code.utf8.count == 6, code.utf8.allSatisfy({ (48...57).contains($0) }), requireBiometric else { throw Refusal(code: "pairing-code-required") }
-  } else if pairingCode != nil { throw Refusal(code: "pairing-code-unexpected") }
-  return Request(nonce: nonce, previewHash: previewHash, reason: reason, timeoutSeconds: Int(timeout), requireBiometric: requireBiometric, pairingCode: pairingCode)
+  return Request(nonce: nonce, previewHash: previewHash, reason: reason, timeoutSeconds: Int(timeout), requireBiometric: requireBiometric)
 }
 
 /// Reads stdin until the first newline or end of input.
@@ -726,17 +687,13 @@ enum SelfTest {
 /// sentence is the step the person verifies. SIGTERM from the Host (cancelled or expired), the Host's exit and the
 /// helper's own timer all close the sheet.
 @MainActor
-final class Authentication: NSObject {
+final class Authentication {
   private let request: Request
   private let context = LAContext()
   private var sources: [DispatchSourceProtocol] = []
   private var finished = false
-  private var panel: NSPanel?
-  private lazy var codeField = NSSecureTextField()
-  private lazy var mismatch = NSTextField(labelWithString: " ")
-  private var codeFailures = 0
 
-  init(request: Request) { self.request = request; super.init() }
+  init(request: Request) { self.request = request }
 
   func start() {
     signal(SIGTERM, SIG_IGN)
@@ -755,49 +712,6 @@ final class Authentication: NSObject {
       MainActor.assumeIsolated { self.finish(result: "timeout") }
     }
 
-    if request.pairingCode != nil { showPairingInput(); return }
-    authenticate()
-  }
-
-  private func showPairingInput() {
-    NSApp.setActivationPolicy(.accessory)
-    let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 380, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
-    panel.title = "Latch 设备配对"
-    panel.sharingType = .none
-    let title = NSTextField(labelWithString: "输入手机上显示的六位核对码")
-    title.font = .systemFont(ofSize: 15, weight: .semibold)
-    codeField.placeholderString = "六位核对码"
-    codeField.font = .monospacedDigitSystemFont(ofSize: 20, weight: .medium)
-    codeField.alignment = .center
-    let approve = NSButton(title: "继续", target: self, action: #selector(continuePairing))
-    approve.keyEquivalent = "\r"
-    let cancel = NSButton(title: "取消", target: self, action: #selector(cancelPairing))
-    cancel.keyEquivalent = "\u{1b}"
-    let buttons = NSStackView(views: [cancel, approve]); buttons.orientation = .horizontal
-    let stack = NSStackView(views: [title, codeField, mismatch, buttons]); stack.orientation = .vertical; stack.spacing = 14
-    stack.translatesAutoresizingMaskIntoConstraints = false
-    panel.contentView!.addSubview(stack)
-    NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo: panel.contentView!.leadingAnchor, constant: 24), stack.trailingAnchor.constraint(equalTo: panel.contentView!.trailingAnchor, constant: -24), stack.topAnchor.constraint(equalTo: panel.contentView!.topAnchor, constant: 24), codeField.widthAnchor.constraint(equalToConstant: 180)])
-    self.panel = panel
-    panel.center(); panel.makeKeyAndOrderFront(nil); panel.makeFirstResponder(codeField)
-    NSApp.activate(ignoringOtherApps: true)
-  }
-
-  @objc private func continuePairing() {
-    guard !finished, let expected = request.pairingCode else { return }
-    guard codeField.stringValue == expected else {
-      codeFailures += 1
-      codeField.stringValue = ""
-      if codeFailures >= 3 { finish(result: "denied"); return }
-      mismatch.stringValue = "核对码不一致，请查看手机后重试"
-      return
-    }
-    if request.pairingCode != nil { codeField.stringValue = ""; panel?.orderOut(nil); panel = nil }
-    authenticate()
-  }
-  @objc private func cancelPairing() { finish(result: "cancelled") }
-
-  private func authenticate() {
     var policy = LAPolicy.deviceOwnerAuthentication
     var method = "password"
     var probe: NSError?
@@ -833,7 +747,6 @@ final class Authentication: NSObject {
     guard !finished else { return }
     finished = true
     context.invalidate()
-    if request.pairingCode != nil { codeField.stringValue = ""; panel?.orderOut(nil); panel = nil }
     var fields: [(String, String)] = [("nonce", request.nonce), ("previewHash", request.previewHash), ("result", result)]
     if let method, result == "approved" { fields.append(("method", method)) }
     if let error, result == "error" { fields.append(("error", error)) }
@@ -855,15 +768,11 @@ struct LatchPresence {
     } catch {
       emitError("request-invalid")
     }
-    if request.pairingCode != nil { _ = NSApplication.shared }
     let session = MainActor.assumeIsolated { () -> Authentication in
       let session = Authentication(request: request)
       session.start()
       return session
     }
-    withExtendedLifetime(session) {
-      if request.pairingCode != nil { MainActor.assumeIsolated { NSApplication.shared.run() } }
-      else { dispatchMain() }
-    }
+    withExtendedLifetime(session) { dispatchMain() }
   }
 }
