@@ -10,6 +10,7 @@ import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { AgentConnection, ConnectionStopping } from '../src/connection.ts'
 import { agentEnvironment } from '../src/environment.ts'
+import { commandName } from '../src/mapping.ts'
 import { createAcpAgentPlugin, forgetCommandLookups, resolveCommand, type AcpAgentOptions, type AgentRecord } from '../src/index.ts'
 import { classifyMode, filterPermissionOptions, launchHash, selectProfile, validateAgentDefinition } from '../src/permission.ts'
 import { profileFor } from '../src/profiles/index.ts'
@@ -1152,7 +1153,7 @@ describe('ACP project configuration', () => {
     const fixture = await opencode({ restartDelayMs: 1_500 })
     const bridge = await fixture.open()
     const crashed = await bridge.createTask({ prompt: 'crash', requestId: rid() })
-    expect((await settled(bridge, crashed.sessionId)).summary.status).toBe('interrupted')
+    expect((await settled(bridge, crashed.sessionId)).summary.status).toBe('failed')
     // After a crash the next start waits out the restart delay; the configuration appears meanwhile.
     const { sessionId } = await bridge.createTask({ prompt: 'echo', requestId: rid() })
     await new Promise(resolve => setTimeout(resolve, 300))
@@ -2398,6 +2399,11 @@ describe('ACP cancellation', () => {
     expect(detail.summary.status).toBe('interrupted')
     expect(systemText(detail)).toContain('强制结束')
     expect(tool(detail, 'tool:1:call_1')).toMatchObject({ state: 'failed', text: expect.stringContaining('TOOL_OUTCOME_UNKNOWN') })
+    expect(detail.summary.runEnd).toMatchObject({
+      reason: 'forced-stop',
+      unknownResults: [{ messageId: 'tool:1:call_1', name: 'Stuck job' }],
+    })
+    expect(detail.summary.live).toBeUndefined()
     // The other session runs in its own process and is untouched.
     expect((await bridge.detail(other.sessionId)).summary.status).toBe('running')
 
@@ -2480,15 +2486,102 @@ describe('ACP cancellation before the prompt is sent', () => {
   })
 })
 
+describe('what a turn is really doing', () => {
+  it('reports the model, then a command by name, and stays on a command still running when another ends', async () => {
+    const bridge = await (await setup()).open()
+    const { sessionId } = await bridge.createTask({ prompt: 'overlap', requestId: rid() })
+    const detail = await until(bridge, sessionId, item => item.liveText === 'still going')
+    expect(detail.activity?.phase).toBe('tool')
+    expect(detail.summary.live).toMatchObject({ activity: 'command', commandName: 'pnpm lint', runId: detail.summary.runId })
+    expect(Date.parse(detail.summary.live!.lastEventAt)).toBeGreaterThanOrEqual(Date.parse(detail.summary.live!.lastOutputAt!))
+    const row = (await bridge.listTasks()).find(task => task.id === sessionId)
+    expect(row?.live?.activity).toBe('command')
+    expect(bridge.liveRuns?.()).toEqual([{ sessionId, live: expect.objectContaining({ runId: detail.summary.runId }) }])
+    await bridge.cancel(sessionId)
+    expect(bridge.liveRuns?.()).toEqual([])
+    expect((await bridge.detail(sessionId)).summary.live).toBeUndefined()
+  })
+
+  it('puts a command on one line, preferring what it was given', () => {
+    const state = { id: 'x', content: [], locations: [], awaiting: 0 }
+    expect(commandName({ ...state, rawInput: { command: 'pnpm test\n--watch=false\u202e' } })).toBe('pnpm test --watch=false')
+    expect(commandName({ ...state, title: 'Run', rawInput: { command: ['bash', '-lc', 'ls'] } })).toBe('bash -lc ls')
+    expect(commandName({ ...state, title: 'Run', rawInput: { command: 7 } })).toBe('Run')
+    expect(commandName({ ...state, kind: 'execute' })).toBe('execute')
+  })
+
+  it('surfaces a request Latch does not recognise, answers it, and keeps its record without the secret', async () => {
+    const secret = 'super-secret-value-123'
+    const bridge = await (await setup({ FAKE_SECRET: secret })).open()
+    const { sessionId } = await bridge.createTask({ prompt: 'unknown', requestId: rid() })
+    const detail = await settled(bridge, sessionId)
+    // The agent got its answers and went on, so nothing was left waiting.
+    expect(detail.summary.status).toBe('idle')
+    expect(
+      assistants(detail)
+        .map(item => item.text)
+        .join(''),
+    ).toContain('codes -32601 -32602')
+    const notes = detail.messages.filter(item => item.role === 'system').map(item => item.text)
+    expect(notes).toHaveLength(2)
+    expect(notes[0]).toContain('terminal/create')
+    expect(notes[0]).toContain('make')
+    expect(notes[0]).not.toContain(secret)
+    expect(notes[1]).toContain('session/request_permission')
+  })
+
+  it('keeps the request out of the transcript for a turn with attachments', async () => {
+    const inputRef = {
+      id: 'abcdefghijklmnopqrstuv',
+      name: 'image.png',
+      kind: 'image' as const,
+      mime: 'image/png' as const,
+      size: 4,
+      sha256: 'a'.repeat(64),
+    }
+    const fixture = await setup(
+      { FAKE_ACP_CAPS: 'images,embedded,resume' },
+      {},
+      {},
+      { readAttachment: async () => ({ type: 'image', mimeType: 'image/png', data: 'aGVsbG8=' }) },
+    )
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'unknown', requestId: rid(), attachments: [inputRef] })
+    const notes = (await settled(bridge, sessionId)).messages.filter(item => item.role === 'system').map(item => item.text)
+    expect(notes[0]).toContain('terminal/create')
+    expect(notes[0]).not.toContain('make')
+  })
+
+  it('reports unrecognised requests on the live turn, with the method in detail', async () => {
+    const bridge = await (await setup()).open()
+    const { sessionId } = await bridge.createTask({ prompt: 'unknownhang', requestId: rid() })
+    const detail = await until(bridge, sessionId, item => (item.summary.live?.unrecognized?.count ?? 0) === 2)
+    const note = detail.messages.find(item => item.id === detail.summary.live?.unrecognized?.messageId)
+    expect(note?.text).toContain('terminal/create')
+    expect(detail.summary.live?.unrecognized).toMatchObject({ count: 2, method: 'terminal/create' })
+    expect(detail.summary.status).toBe('running')
+    await bridge.cancel(sessionId)
+  })
+})
+
 describe('ACP process failures', () => {
-  it('interrupts a turn when the agent crashes, redacts stderr, and restarts lazily', async () => {
+  it('fails a turn when the agent crashes, names what was running, redacts stderr, and restarts lazily', async () => {
     const fixture = await setup({ FAKE_SECRET: 'super-secret-value-123' })
     const bridge = await fixture.open()
     const { sessionId } = await bridge.createTask({ prompt: 'crash', requestId: rid() })
     const detail = await settled(bridge, sessionId)
-    expect(detail.summary.status).toBe('interrupted')
+    expect(detail.summary.status).toBe('failed')
+    // Nobody knows whether the running call took effect: automations must not treat this as a failure they can retry.
+    expect(detail.summary.runOutcome).toBe('interrupted')
+    expect(detail.summary.runEnd).toMatchObject({
+      reason: 'process-exited',
+      unknownResults: [{ messageId: 'tool:1:call_1', name: 'Running job' }],
+    })
     const note = systemText(detail)
     expect(note).toContain('退出码 3')
+    // The note states the same outcome as the status.
+    expect(note).toContain('本轮失败')
+    expect(note).not.toContain('已中断')
     expect(note).toContain('Host 日志')
     // stderr can print any inherited value, so it stays out of the transcript every paired device reads.
     expect(note).not.toContain('fatal')
@@ -2500,7 +2593,9 @@ describe('ACP process failures', () => {
     expect(fixture.driver.status?.()).toMatchObject({ status: 'ready', statusMessage: expect.stringContaining('意外退出') })
 
     const next = await bridge.createTask({ prompt: 'echo after crash', requestId: rid() })
-    expect((await settled(bridge, next.sessionId)).summary.status).toBe('idle')
+    const after = await settled(bridge, next.sessionId)
+    expect(after.summary.status).toBe('idle')
+    expect(after.summary.runEnd).toBeUndefined()
     expect(fixture.driver.status?.()).toEqual({ status: 'ready' })
     expect((await fixture.log()).filter(entry => entry.event === 'start')).toHaveLength(2)
   })
@@ -2540,7 +2635,7 @@ describe('ACP process failures', () => {
     const bridge = await fixture.open()
     for (let attempt = 0; attempt < 3; attempt++) {
       const { sessionId } = await bridge.createTask({ prompt: 'crash', requestId: rid() })
-      expect((await settled(bridge, sessionId)).summary.status).toBe('interrupted')
+      expect((await settled(bridge, sessionId)).summary.status).toBe('failed')
     }
     expect(fixture.driver.status?.()).toMatchObject({ status: 'unavailable', statusMessage: expect.stringContaining('暂停自动重启') })
     const { sessionId } = await bridge.createTask({ prompt: 'echo', requestId: rid() })
@@ -2554,7 +2649,8 @@ describe('ACP process failures', () => {
     const bridge = await (await setup({}, { maxLineBytes: 4096 })).open()
     const { sessionId } = await bridge.createTask({ prompt: 'big 10000', requestId: rid() })
     const detail = await settled(bridge, sessionId)
-    expect(detail.summary.status).toBe('interrupted')
+    expect(detail.summary.status).toBe('failed')
+    expect(detail.summary.runEnd?.reason).toBe('process-exited')
     expect(systemText(detail)).toContain('单行消息')
     const next = await bridge.createTask({ prompt: 'echo ok', requestId: rid() })
     expect((await settled(bridge, next.sessionId)).summary.status).toBe('idle')
@@ -2794,6 +2890,7 @@ describe('ACP sessions across processes', () => {
     expect(detail.summary.status).toBe('interrupted')
     expect(systemText(detail)).toContain('随 Latch 关闭')
     expect(tool(detail, 'tool:1:call_1')?.state).toBe('failed')
+    expect(detail.summary.runEnd?.reason).toBe('host-stopped')
   })
 
   it('recovers tasks that were running when the Host stopped abruptly', async () => {
@@ -2829,6 +2926,7 @@ describe('ACP sessions across processes', () => {
     })
     expect(tool(detail, 'tool:1:b')?.state).toBe('cancelled')
     expect(systemText(detail)).toContain('上次运行被中断')
+    expect(detail.summary.runEnd).toMatchObject({ reason: 'host-stopped', unknownResults: [{ messageId: 'tool:1:a', name: 'A' }] })
     const stored = JSON.parse(await readFile(join(fixture.dataDir, 'acp.json'), 'utf8'))
     expect(stored.tasks.stale.summary.status).toBe('interrupted')
     expect(await fixture.log()).toEqual([])

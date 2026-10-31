@@ -4,6 +4,7 @@ import type {
   Approval,
   ModelRef,
   PersonalExecutionContext,
+  RunLive,
   TaskDetail,
   TaskMode,
   TaskSummary,
@@ -123,6 +124,11 @@ export interface Bridge {
   approvals(): Approval[]
   decide(approvalId: string, decision: 'allow' | 'reject', options?: DecideOptions): Promise<boolean>
   subscribe(listener: (sessionId?: string) => void): () => void
+  /**
+   * Optional. The runs live now, from memory and without awaiting: the Host calls it on each change and when a silence
+   * threshold falls due, so it must cost no more than the number of live runs. `TaskSummary.live` carries the same facts.
+   */
+  liveRuns?(): Array<{ sessionId: string; live: RunLive }>
   /** Optional. Delete a settled session's data; reject with 409 `task-running` while it runs. */
   remove?(sessionId: string): Promise<void>
   /** Optional. Change one of `TaskDetail.config` for later turns. */

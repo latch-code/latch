@@ -1,13 +1,8 @@
 // Development servers on this computer that a terminal's output announces, such as Vite's
 // `➜  Local:   http://localhost:5173/`, for 「打开预览 localhost:5173」 and the browser's 「本地服务」. Only what the
 // output said: nothing checks that the server still listens.
+import type { LocalService } from '@latch/protocol'
 import { stripEscapes } from './text.ts'
-
-export interface LocalService {
-  /** `http://localhost:5173`: scheme, host and port only, so a token in the path or query never travels with it. */
-  origin: string
-  port: number
-}
 
 /** A line longer than this keeps only its end while it waits for its line break. */
 const PARTIAL_LINE_BYTES = 2048

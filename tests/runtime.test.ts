@@ -1665,6 +1665,101 @@ describe('Host risk classification', () => {
   })
 })
 
+describe('what a run is really doing', () => {
+  it('reports the model, then a command by name, and moves lastEventAt on anything the provider sends', async () => {
+    const dataDir = await directory()
+    let time = Date.parse('2026-10-24T06:00:00.000Z')
+    const heard = deferred()
+    const next = deferred()
+    const running = deferred()
+    const finish = deferred()
+    const provider: ModelProvider = {
+      id: 'fixture',
+      name: 'Fixture provider',
+      model: 'fixture-model',
+      async *stream({ messages }) {
+        if (messages.at(-1)?.role === 'tool') {
+          yield { type: 'text', text: 'done' }
+          yield { type: 'finish', reason: 'stop' }
+          return
+        }
+        time += 1000
+        yield { type: 'usage', inputTokens: 1, outputTokens: 1 }
+        heard.resolve()
+        await next.promise
+        yield { type: 'tool-call', call: { id: 'c1', name: 'run_tests', arguments: {} } }
+        yield { type: 'finish', reason: 'tool-calls' }
+      },
+    }
+    const command: ToolDefinition = {
+      name: 'run_tests',
+      title: '运行测试',
+      description: 'runs',
+      requiresApproval: false,
+      kind: 'execute',
+      parameters: { type: 'object', properties: {} },
+      async execute() {
+        running.resolve()
+        await finish.promise
+        return { text: 'ok' }
+      },
+    }
+    const bridge = own(
+      createRuntime({ dataDir, workspaceRoot: dataDir, registry: registry(provider, [command]), providerId: 'fixture', clock: () => time }),
+    )
+    const { sessionId } = await bridge.createTask({ prompt: 'go', requestId: 'live-1' })
+    await heard.promise
+    const waiting = (await bridge.detail(sessionId)).summary
+    expect(waiting.live).toMatchObject({ runId: waiting.runId, activity: 'model', lastEventAt: new Date(time).toISOString() })
+    // A usage report is a sign of life, not output.
+    expect(waiting.live?.lastOutputAt).toBeUndefined()
+    expect(bridge.liveRuns?.()).toEqual([{ sessionId, live: waiting.live }])
+    next.resolve()
+    await running.promise
+    expect((await bridge.listTasks())[0]?.live).toMatchObject({ activity: 'command', commandName: '运行测试' })
+    finish.resolve()
+    await vi.waitFor(async () => expect((await bridge.detail(sessionId)).summary.status).toBe('idle'))
+    expect((await bridge.detail(sessionId)).summary.live).toBeUndefined()
+    expect(bridge.liveRuns?.()).toEqual([])
+    const stored = JSON.parse(await readFile(join(dataDir, 'runtime.json'), 'utf8')) as { tasks: Record<string, { summary: object }> }
+    expect(stored.tasks[sessionId]?.summary).not.toHaveProperty('live')
+  })
+
+  it('names the calls left unknown when a restart cuts a run short', async () => {
+    const dataDir = await directory()
+    const at = new Date(0).toISOString()
+    await writeFile(
+      join(dataDir, 'runtime.json'),
+      JSON.stringify({
+        version: 1,
+        tasks: {
+          stale: {
+            summary: { id: 'stale', title: 'stale', status: 'running', updatedAt: at, cwd: dataDir, mode: 'agent' },
+            messages: [{ id: 'tool:a', role: 'tool', toolName: 'run_tests', text: '', state: 'running' }],
+            history: [],
+            batch: {
+              calls: [
+                { id: 'a', name: 'run_tests', arguments: {} },
+                { id: 'b', name: 'other', arguments: {} },
+              ],
+              started: ['a'],
+              completed: [],
+            },
+            revision: 1,
+          },
+        },
+        receipts: {},
+      }),
+    )
+    const bridge = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: registry(textProvider()), providerId: 'fixture' }))
+    await bridge.start()
+    expect((await bridge.detail('stale')).summary).toMatchObject({
+      status: 'interrupted',
+      runEnd: { reason: 'host-stopped', unknownResults: [{ messageId: 'tool:a', name: 'run_tests' }] },
+    })
+  })
+})
+
 describe('times and usage the runtime records', () => {
   const T0 = Date.parse('2026-10-24T06:00:00.000Z')
   const at = (ms: number) => new Date(T0 + ms).toISOString()

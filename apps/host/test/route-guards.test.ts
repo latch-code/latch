@@ -100,6 +100,29 @@ async function verifyPhone(t: TestHost, phone: NativeHttpClient, deviceId: strin
 }
 
 describe('route guards', () => {
+  it('keeps every terminal route from a verified phone on the native entry', async () => {
+    const t = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    cleanups.push(() => t.close())
+    const { phone, deviceId, verificationKey } = await (await pairPhone(t)).enroll()
+    await verifyPhone(t, phone, deviceId, verificationKey)
+    const base = '/link/api/tasks/session/terminals'
+    const routes: Array<[Method, string, unknown?]> = [
+      ['GET', base],
+      ['POST', base, { cols: 80, rows: 24 }],
+      ['GET', `${base}/term/stream`],
+      ['POST', `${base}/term/input`, { data: 'bHM=' }],
+      ['POST', `${base}/term/resize`, { cols: 80, rows: 24 }],
+      ['POST', `${base}/term/attach`, {}],
+      ['POST', `${base}/term/close`, {}],
+    ]
+    for (const [method, path, body] of routes) {
+      const answer = await phone.request(method, path, body)
+      expect([path, outcomeOf(answer.status, answer.body)]).toEqual([path, [403, 'local-only']])
+    }
+    const snapshot = await phone.request('GET', '/link/api/snapshot')
+    expect((snapshot.body as { catalog: { features: { terminal?: boolean } } }).catalog.features.terminal).toBeUndefined()
+  })
+
   it('keeps every device, enrollment, pairing and native route to its listeners and scopes', async () => {
     const t = await startTestHost({ tls: true, native: { host: '127.0.0.1', port: 0 } })
     cleanups.push(() => t.close())

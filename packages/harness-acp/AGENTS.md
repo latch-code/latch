@@ -2,7 +2,7 @@
 
 ACP HarnessDriver：每个启用的 Agent 定义一个 Driver（`createAcpAgentPlugin`）。`src/bridge.ts`（会话、启动指纹、权限模式）、`connection.ts` 与 `protocol.ts`（进程与 ACP v1）、`probe.ts`（仅握手诊断）、`mapping.ts`、`command.ts`、`environment.ts`（`agentEnvironment`）、`permission.ts`（`launchHash`）、`project-config.ts`、`store.ts`，以及每个预设的权限配置 `src/profiles/`。不负责浏览器可见的预设（`packages/protocol/src/agent-presets.ts`）、Agent 定义的保存与启动的本机确认（Host）。
 
-运行环境 node；依赖 `@latch/protocol`、`@latch/sdk`、`@latch/core`（只用 `./node-kit` 与 `./file-tracking`）与 `zod`，测试另用 `@latch/testkit`。只有 Host 依赖本包，且只经入口 `src/index.ts`。
+运行环境 node；依赖 `@latch/protocol`、`@latch/sdk`、`@latch/core`（只用 `./node-kit`、`./file-tracking` 与 `./run-end`）与 `zod`，测试另用 `@latch/testkit`。只有 Host 依赖本包，且只经入口 `src/index.ts`。
 
 不变量：
 

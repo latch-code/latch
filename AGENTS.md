@@ -57,7 +57,7 @@ pnpm stop -- --data-dir <同一数据目录>
 LATCH_DATA_DIR=<临时目录> pnpm dev:web        # 仅开发；按 Vite 打印的 http://h-<hostId>.localhost:<端口>/link/ 打开
 ```
 
-其余命令（各项检查、`docs:affected`、`security:scan`、`agents:sync`）见 [docs/TESTING.md](docs/TESTING.md#命令)。
+其余命令见 [docs/TESTING.md](docs/TESTING.md#命令)。
 
 每个克隆手动运行一次 `pnpm exec lefthook install` 与 `git config blame.ignoreRevsFile .git-blame-ignore-revs`；Git 已设置 `core.hooksPath` 时不加 `--force` 或 `--reset-hooks-path`，做法见 [docs/TESTING.md](docs/TESTING.md#git-钩子)。
 
@@ -99,6 +99,7 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web        # 仅开发；按 Vite 打印�
 | 改动 | 文档 |
 | --- | --- |
 | 模块边界、Harness 路由、持久化、HTTP API；监听入口、设备与凭据、本机确认、安全策略、出站策略、路径与项目目录、审计 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| 终端 | [docs/TERMINAL.md](docs/TERMINAL.md) |
 | ACP Agent 接入、进程与环境、项目配置与启动指纹、权限模式读回、取消与恢复 | [docs/HARNESSES.md](docs/HARNESSES.md) |
 | SSE、fetch 事件流、凭据续期、重连、消息身份、审批顺序、取消、阅读位置 | [docs/STREAMING.md](docs/STREAMING.md) |
 | Provider（出站与密钥）、Tool（风险分级）、插件生命周期、HarnessDriver | [docs/PLUGIN-DEVELOPMENT.md](docs/PLUGIN-DEVELOPMENT.md) |

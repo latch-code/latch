@@ -2,13 +2,12 @@ import { mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { LISTENER_CLASSES } from '@latch/protocol'
+import { LISTENER_CLASSES, TERMINALS_PER_SESSION } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import type { HelperEvent, LaunchTerminal, TerminalLaunch, TerminalProcess, TerminalSignal } from '../src/terminal/helper.ts'
 import {
   SCROLLBACK_BYTES,
   SCROLLBACK_TOTAL_BYTES,
-  TERMINALS_PER_SESSION,
   TerminalService,
   type TerminalRequester,
   type TerminalServiceOptions,

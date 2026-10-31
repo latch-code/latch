@@ -62,6 +62,7 @@ import {
   type SessionDefaults,
   type TaskDetail,
   type TaskStateEvent,
+  type RunEnd,
   type TaskStatus,
   type TaskSummary,
   type UnusableProvider,
@@ -164,7 +165,7 @@ import {
   type ProviderRecord,
   type WorkspaceRecord,
 } from './config.ts'
-import { HarnessHub, type HubCreateInput } from './hub.ts'
+import { HarnessHub, runEndOutline, type HubCreateInput } from './hub.ts'
 import { SessionLifecycle, projectIdOf, type LifecycleBounds, type LifecycleListeners } from './session-lifecycle.ts'
 import { RUN_ID, type ApprovalRecord, type CancelRecord } from './session-meta.ts'
 import { sendNotFoundPage } from './not-found.ts'
@@ -201,6 +202,7 @@ import { FileReferenceStore } from './files/reference-store.ts'
 import { PluginAssets } from './plugin-assets.ts'
 import { createPluginPackageRoutes, installedAssetPlugin } from './plugin-package-routes.ts'
 import { createRoutes } from './routes/index.ts'
+import { TerminalService, type TerminalServiceOptions } from './terminal/service.ts'
 import { RENEW_INTERVAL_MS, UNIX_ADDRESS } from './routes/devices.ts'
 import {
   BASE_RETRIES,
@@ -303,6 +305,11 @@ const decisionSchema = z.strictObject({
 const cancelSchema = z.strictObject({
   requestId: requestIdSchema.optional(),
   runId: z.string().regex(RUN_ID).optional(),
+})
+/** Names the threshold the person saw, so a retry or a second device cannot double it again. */
+const keepWaitingSchema = z.strictObject({
+  runId: z.string().regex(RUN_ID),
+  thresholdMs: z.number().int().positive(),
 })
 const providerKind = z.enum(['openai-compatible', 'anthropic'])
 const modelList = z.array(modelId).max(1000)
@@ -500,6 +507,8 @@ export interface ServerOptions {
   rateLimits?: 'default' | 'relaxed'
   /** Tests: runs after a file reference was resolved and checked, before the file is opened. Production never sets it. */
   fileHooks?: { afterResolve?(realPath: string): Promise<void> }
+  /** Tests: the terminal component (`binary`, default `dist/native/latch-pty`) or a stand-in for it. Production never sets it. */
+  terminal?: Pick<TerminalServiceOptions, 'launch' | 'shell' | 'hostEnv'> & { binary?: string }
   /** Tests: how long a run's first prompt and a stop wait for lifecycle listeners. Production never sets it. */
   lifecycleBounds?: Partial<LifecycleBounds>
   /** Default `console.error('[Latch] ' + text)`; every line is redacted first. */
@@ -577,6 +586,16 @@ function approvalReceipt(record: ApprovalRecord): ApprovalReceipt {
   }
 }
 
+/**
+ * What makes other devices read the list again. Every word of a stream moves `lastEventAt`, and a list read per word
+ * would cost far more than it tells: a row needs to know when the activity or the silence changes.
+ */
+function listSignature({ live, ...summary }: TaskSummary): unknown {
+  if (!live) return summary
+  const { activity, runId, silenceThresholdMs, silent, unrecognized } = live
+  return { ...summary, live: { activity, runId, silenceThresholdMs, silent, unrecognized: unrecognized?.count } }
+}
+
 function cancelReceipt(sessionId: string, record: Omit<CancelReceipt, 'sessionId' | 'replay'>): CancelReceipt {
   return {
     sessionId,
@@ -585,6 +604,7 @@ function cancelReceipt(sessionId: string, record: Omit<CancelReceipt, 'sessionId
     outcome: record.outcome,
     ...(record.status ? { status: record.status } : {}),
     at: record.at,
+    ...(record.runEnd ? { runEnd: record.runEnd } : {}),
   }
 }
 
@@ -1491,6 +1511,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           throw new AppError(403, 'personal-scope-required', '设备的数据范围已改变，请重新同步。')
       },
       checkRemove: assertSessionAccess,
+      checkEnd: (caller, id) => {
+        requireDevice(caller)
+        terminalRoutes.checkSessionEnd(caller, id)
+      },
       visible: personalVisible,
       checkRead: async (caller, id, write) => {
         checkPersonalSession(caller, id, write)
@@ -1610,7 +1634,24 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       serial,
       audited,
     }
-    const { native: nativeRoutes, routes } = createRoutes(routeContext, {
+    const { binary: terminalBinary, ...terminalSeams } = options.terminal ?? {}
+    const terminals = await TerminalService.open(
+      {
+        sessionFolder: terminalFolder,
+        // The service opens terminals for host.sock alone, so that is where this request came from.
+        beforeOpen: async ({ deviceId, ...detail }) => {
+          await audited({ action: 'terminal.open', actor: { deviceId, listener: 'unix', via: 'http' }, detail })
+        },
+        log,
+        ...terminalSeams,
+      },
+      terminalBinary,
+    )
+    const {
+      native: nativeRoutes,
+      terminal: terminalRoutes,
+      routes,
+    } = createRoutes(routeContext, {
       native: {
         options,
         identity,
@@ -1637,8 +1678,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               stream.end()
               streams.delete(stream)
             }
+          terminalRoutes.endDisallowedStreams()
         },
       },
+      terminals,
     })
 
     // ---- Callers, scopes and audit ---------------------------------------------------------------
@@ -3063,6 +3106,21 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return (await hub!.listTasks()).find(task => task.id === sessionId)
     }
 
+    /** Where a session's terminals open: its primary folder, while the session may still use it. */
+    async function terminalFolder(sessionId: string): Promise<{ path: string } | 'removed' | undefined> {
+      const task = await sessionTask(sessionId)
+      if (!task) return undefined
+      if (task.personal) throw new AppError(409, 'terminal-personal-session', '助手会话没有项目文件夹，不能打开终端')
+      if (task.archived) throw new AppError(409, 'terminal-session-archived', '这个会话已归档，不能打开终端')
+      try {
+        await assertSessionWorkspace(sessionId)
+      } catch (error) {
+        if (error instanceof AppError && error.status === 409) return 'removed'
+        throw error
+      }
+      return { path: sessionFolders(task, workspaceRoot)[0]! }
+    }
+
     /** Whether every folder a session recorded still resolves to a folder of `record`. */
     async function foldersStillIn(task: TaskSummary, record: WorkspaceRecord): Promise<boolean> {
       const current = await canonicalSet(record.folders.map(folder => folder.path))
@@ -3445,7 +3503,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       })
     }
 
-    async function catalog(): Promise<HostCatalog> {
+    async function catalog(caller: Caller): Promise<HostCatalog> {
       return {
         promptTemplatesVersion: templateStore.revision(),
         features: {
@@ -3469,7 +3527,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           personalGroups: true,
           personalQueue: true,
           configReceipts: true,
-          ...routes.features(),
+          runLiveness: true,
+          ...routes.features(caller),
         },
         harnesses: hub!.drivers(),
         providers: usableProviders().map(provider => summarizeProvider(provider, providerKindOf(provider.id))),
@@ -3852,10 +3911,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const before = await hub!.summary(sessionId).catch(() => undefined)
       let outcome: CancelOutcome = 'ended'
       let status: TaskStatus | undefined
+      let runEnd: RunEnd | undefined
       if (before && runId !== undefined && before.runId !== runId) {
         // The named run is over and another may be running; its final status is not known here.
       } else if (before && runId !== undefined && !ACTIVE_STATUSES.has(before.status)) {
         status = before.status
+        runEnd = before.runEnd && runEndOutline(before.runEnd)
       } else {
         // A cancel without runId keeps its earlier meaning: stop whatever is running, if anything.
         await audited(
@@ -3867,7 +3928,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         outcome = stopped ? 'stopped' : 'ended'
         // A different run id afterwards means another run began once this one settled.
         const after = await hub!.summary(sessionId).catch(() => undefined)
-        if (after && after.runId === (before ? before.runId : runId)) status = after.status
+        if (after && after.runId === (before ? before.runId : runId)) {
+          status = after.status
+          runEnd = after.runEnd && runEndOutline(after.runEnd)
+        }
       }
       const at = new Date(now()).toISOString()
       if (requestId) {
@@ -3878,6 +3942,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ...(runId ? { runId } : {}),
           outcome,
           ...(status ? { status } : {}),
+          ...(runEnd ? { runEnd } : {}),
           at,
         })
       }
@@ -3886,6 +3951,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         ...(runId ? { runId } : {}),
         outcome,
         ...(status ? { status } : {}),
+        ...(runEnd ? { runEnd } : {}),
         at,
       })
     }
@@ -4016,7 +4082,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             fallback = true
             continue
           }
-          const signature = JSON.stringify([detail.summary, detail.approvals])
+          const signature = JSON.stringify([listSignature(detail.summary), detail.approvals])
           const summaryChanged = summaries.get(sessionId) !== signature
           summaries.set(sessionId, signature)
           const sentAt = hostTime()
@@ -4908,12 +4974,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         requireScope(caller, 'run')
         const input = taskPatchSchema.parse(await jsonBody(req))
         recheck(caller, 'run')
+        if (input.archived) terminalRoutes.checkSessionEnd(caller, id)
         json(res, { summary: await hub!.updateMeta(id, input) })
         return true
       }
       if (method === 'DELETE' && !action) {
         requireScope(caller, 'run')
         await assertSessionAccess(caller, id)
+        terminalRoutes.checkSessionEnd(caller, id)
         await hub!.remove(id)
         await promptQueues.forgetSession(id)
         await questions.forgetSession(id)
@@ -5027,6 +5095,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         limits.classC.take(caller.device.id)
         const input = cancelSchema.parse(await optionalJsonBody(req))
         json(res, { accepted: true, receipt: await cancelTask(caller, id, input, res) })
+        return true
+      }
+      if (method === 'POST' && action === 'keep-waiting') {
+        requireScope(caller, 'view')
+        limits.classC.take(caller.device.id)
+        json(res, { accepted: true, ...(await hub!.keepWaiting(id, keepWaitingSchema.parse(await jsonBody(req)))) })
         return true
       }
       if (method === 'POST' && action === 'config') {
@@ -5791,7 +5865,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           hostName: options.hostName ?? hostname(),
           harness: { id: defaultId, name: hub!.info(defaultId)?.name ?? defaultId },
           execution,
-          catalog: await catalog(),
+          catalog: await catalog(caller),
           version: LATCH_VERSION,
           hostTime: hostTime(),
         }
@@ -5937,7 +6011,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         json(res, { state: configRequests.state(id, caller.device.id, configRequest[2]!) })
         return
       }
-      const task = path.match(/^\/link\/api\/tasks\/([^/]+)(?:\/(prompt|cancel|config))?$/)
+      const task = path.match(/^\/link\/api\/tasks\/([^/]+)(?:\/(prompt|cancel|keep-waiting|config))?$/)
       if (task && (await handleTask(req, res, caller, safeDecode(task[1]!), task[2], method))) return
       const approval = path.match(/^\/link\/api\/approvals\/([^/]+)$/)
       if (approval && method === 'POST') {

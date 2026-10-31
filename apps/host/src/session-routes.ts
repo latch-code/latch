@@ -25,6 +25,8 @@ interface Options<Caller> {
   authorize(caller: Caller, scope: DeviceScope): void
   recheck(caller: Caller, scope: DeviceScope): void
   checkRemove(caller: Caller, id: string): Promise<unknown>
+  /** Right before a session is archived or deleted; a rejection leaves it as it is. */
+  checkEnd(caller: Caller, id: string): void
 }
 
 export function createSessionRoutes<Caller>(options: Options<Caller>) {
@@ -95,8 +97,12 @@ export function createSessionRoutes<Caller>(options: Options<Caller>) {
           if (input.action === 'delete') {
             await options.checkRemove(caller, id)
             options.recheck(caller, 'run')
+            options.checkEnd(caller, id)
             await options.remove(id)
-          } else await options.patch(id, { archived: input.action === 'archive' })
+          } else {
+            if (input.action === 'archive') options.checkEnd(caller, id)
+            await options.patch(id, { archived: input.action === 'archive' })
+          }
           results.push({ id, ok: true })
         } catch (error) {
           results.push({

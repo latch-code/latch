@@ -6,6 +6,7 @@ import { isFileChange, type FileChange, isFileMention, type FileMention, isAttac
 import type { Message, SessionCommand, PlanEntry, SessionConfigOption, TaskSummary, UsageReport } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { writeFileAtomic } from '@latch/core/node-kit'
+import { runEndSchema } from '@latch/core/run-end'
 import type { ConfigSource } from './mapping.ts'
 
 export interface AcpRecord {
@@ -145,6 +146,7 @@ const stateSchema = z.object({
         folderAccess: z.enum(['all', 'primary']).optional(),
         runId: z.string().min(1).max(128).optional(),
         runOutcome: z.enum(['completed', 'failed', 'cancelled', 'interrupted']).optional(),
+        runEnd: runEndSchema.optional(),
       }),
       messages: z.array(message),
       plan: z

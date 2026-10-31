@@ -30,6 +30,7 @@ const fileAction = { sessionId, pathHash: hex, type: 'other' }
 
 /** One detail each action accepts. */
 const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
+  'terminal.open': { sessionId: 'task_1', terminalId: 'term_1' },
   'plugin.package.changed': { operation: 'apply', before: hex, after: hex },
   'change.undo': { sessionId, turnId: 'run-1', restore: 1, remove: 0, skipped: 0, planHash: hex },
   'change.redo': { sessionId, turnId: 'run-1', restore: 1, remove: 0, skipped: 0, planHash: hex },

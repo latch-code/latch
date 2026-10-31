@@ -231,14 +231,32 @@ describe('runs', () => {
     await desktop.json(`tasks/${sessionId}/prompt`, { method: 'POST', body: { prompt: 'hang', requestId: randomUUID() } })
     await expect.poll(prompts, SLOW).toBe(2)
     const { runId } = await summary(t, sessionId)
+    const requestId = randomUUID()
     const cancel = desktop.json<{ receipt: CancelReceipt }>(`tasks/${sessionId}/cancel`, {
       method: 'POST',
-      body: { requestId: randomUUID(), runId },
+      body: { requestId, runId },
     })
     await expect.poll(async () => (await t.host.bridge.detail(sessionId)).activity?.phase, SLOW).toBe('cancelling')
     await delay(200)
     expect(events.map(item => item.event)).toEqual(['runStarted', 'runSettled', 'runStarted'])
-    expect((await cancel).receipt).toMatchObject({ runId, outcome: 'stopped', status: 'interrupted' })
+    // A stop that had to be forced says so. What nobody can vouch for is named in the session, not on the way there.
+    const forced = await cancel
+    expect(forced.receipt).toMatchObject({ runId, outcome: 'stopped', status: 'interrupted' })
+    expect(forced.receipt.runEnd).toEqual({ reason: 'forced-stop', at: expect.any(String), unknownResultCount: 1 })
+    expect((await t.host.bridge.detail(sessionId)).summary.runEnd).toMatchObject({
+      unknownResults: [{ messageId: expect.stringContaining('call_1'), name: 'Stuck job' }],
+    })
+    const replay = await desktop.json<{ receipt: CancelReceipt }>(`tasks/${sessionId}/cancel`, {
+      method: 'POST',
+      body: { requestId, runId },
+    })
+    expect(replay.receipt).toMatchObject({ replay: true, runEnd: forced.receipt.runEnd })
+    const { tasks } = await desktop.json<{ tasks: TaskSummary[] }>('snapshot')
+    expect(tasks.find(task => task.id === sessionId)?.runEnd).toEqual({
+      reason: 'forced-stop',
+      at: expect.any(String),
+      unknownResultCount: 1,
+    })
     await expect.poll(() => events.at(-1), SLOW).toEqual({ event: 'runSettled', payload: { sessionId, runId, outcome: 'interrupted' } })
     expect(events).toHaveLength(4)
   })

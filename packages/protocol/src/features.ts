@@ -34,6 +34,8 @@ export interface HostFeatures {
   mentions?: true
   pairingV3?: true
   nativeElevation?: true
+  /** Summaries carry `live` and `runEnd`, and `POST /tasks/:id/keep-waiting` exists. */
+  runLiveness?: true
 }
 
 export interface SearchHit {

@@ -11,11 +11,15 @@ import type {
   ApprovalOptionKind,
   Message,
   SessionConfigOption,
+  RunEnd,
+  RunLive,
   SessionPermission,
   TaskDetail,
   TaskStatus,
   TaskSummary,
   ToolDecision,
+  UnknownResult,
+  UnrecognizedRequests,
 } from '@latch/protocol'
 import {
   AppError,
@@ -32,6 +36,7 @@ import {
   type SetConfigOptions,
 } from '@latch/sdk'
 import { isoTime, ReasoningTimer, RunClock, sha256Hex } from '@latch/core/node-kit'
+import { runEndRecord } from '@latch/core/run-end'
 import { redactor, resolveCommand } from './command.ts'
 import { AgentConnection, ConnectionClosed, ConnectionStopping, RequestTimeout, type ExitInfo } from './connection.ts'
 import { agentEnvironment } from './environment.ts'
@@ -49,6 +54,7 @@ import {
   settleToolMessage,
   TOOL_TEXT_LIMIT,
   toolDetail,
+  commandName,
   toolLabel,
   toolMessage,
   type ToolState,
@@ -91,6 +97,10 @@ import type { AgentHealth, AgentRecord, ResolvedOptions } from './types.ts'
 
 export const CLIENT_VERSION = '0.1.0'
 const CANCELLED_OUTCOME = { outcome: { outcome: 'cancelled' } }
+const COMMAND_NAME_LIMIT = 200
+const UNRECOGNIZED_METHOD_LIMIT = 200
+const UNRECOGNIZED_METHODS = 8
+const UNRECOGNIZED_PARAMS_LIMIT = 2000
 
 /** The agent process of one session (or of a removed session being deleted) and what `initialize` reported. */
 interface Live {
@@ -113,6 +123,8 @@ interface Live {
   idleTimer?: NodeJS.Timeout
   /** For choosing which idle process to stop when the process limit is reached. */
   lastUsed: number
+  /** Methods already recorded in the transcript while no turn was running. */
+  unrecognizedMethods?: Set<string>
 }
 
 interface Segment {
@@ -147,6 +159,15 @@ interface Run {
   userMessageId?: string
   /** The last change of visible output, in clock milliseconds. */
   lastOutputAt?: number
+  /** The last sign of life: anything the agent sent about this session, or the start of a phase. */
+  lastEventAt: number
+  /** The call the `tool` phase names. */
+  runningTool?: ToolState
+  /** Why the turn ended, when its process did. */
+  end?: RunEnd['reason']
+  unrecognized?: UnrecognizedRequests
+  /** Methods already recorded in the transcript for this turn. */
+  unrecognizedMethods?: Set<string>
   segment?: Segment
   graceTimer?: NodeJS.Timeout
   /** System notes appended once the turn settles, after its last reply. */
@@ -268,6 +289,9 @@ function confirmedOf(acp: AcpRecord): Confirmed {
   return { launchHash: acp.launchHash, definitionHash: acp.definitionHash, ...(folders ? { folders } : {}) }
 }
 
+function isActive(summary: TaskSummary): boolean {
+  return summary.status === 'running' || summary.status === 'waiting-approval'
+}
 function isObject(value: unknown): boolean {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -384,6 +408,47 @@ export class AcpBridge implements Bridge {
   private phase(run: Run, phase: NonNullable<TaskDetail['activity']>['phase'], toolName?: string, since?: string): void {
     if (run.activity.phase === phase && run.activity.toolName === toolName && run.activity.since) return
     run.activity = { phase, ...(toolName !== undefined ? { toolName } : {}), since: since ?? this.now() }
+    run.lastEventAt = this.clock()
+  }
+
+  /** Back to work after a call, a reply or an answer: a call still running is what the turn is doing. */
+  private working(run: Run): void {
+    const calls = this.tools.get(run.taskId)
+    const running =
+      calls?.seq === run.seq ? [...calls.calls.values()].findLast(state => state.status === 'in_progress' && !state.final) : undefined
+    run.runningTool = running
+    if (running) this.phase(run, 'tool', toolLabel(running))
+    else this.phase(run, 'model')
+  }
+
+  /** What a live turn is doing, for its summary; the Host adds the silence thresholds. */
+  private liveOf(run: Run): RunLive {
+    const { phase, since } = run.activity
+    const tool = phase === 'tool' ? run.runningTool : undefined
+    return {
+      runId: run.id,
+      activity: phase === 'tool' ? (tool?.kind === 'execute' ? 'command' : 'tool') : phase,
+      ...(tool ? { commandName: clip(this.redact(commandName(tool)), COMMAND_NAME_LIMIT) } : {}),
+      since: since ?? isoTime(run.clock.startedAt),
+      lastEventAt: isoTime(Math.max(run.lastEventAt, run.lastOutputAt ?? 0)),
+      ...(run.lastOutputAt !== undefined ? { lastOutputAt: isoTime(run.lastOutputAt) } : {}),
+      ...(run.unrecognized ? { unrecognized: run.unrecognized } : {}),
+    }
+  }
+
+  /** The stored summary with what only the live turn knows, which is never stored. */
+  private projected(task: AcpTask): TaskSummary {
+    const run = this.runs.get(task.summary.id)
+    return run && isActive(task.summary) ? { ...task.summary, live: this.liveOf(run) } : task.summary
+  }
+
+  liveRuns(): Array<{ sessionId: string; live: RunLive }> {
+    const found: Array<{ sessionId: string; live: RunLive }> = []
+    for (const [sessionId, run] of this.runs) {
+      const task = this.state.tasks[sessionId]
+      if (task && isActive(task.summary)) found.push({ sessionId, live: this.liveOf(run) })
+    }
+    return found
   }
 
   start(): Promise<void> {
@@ -402,8 +467,14 @@ export class AcpBridge implements Bridge {
           }
         if (task.summary.status !== 'running' && task.summary.status !== 'waiting-approval') continue
         const at = this.now()
+        const unknown = task.messages.flatMap(item =>
+          item.role === 'tool' && item.state === 'running'
+            ? [{ messageId: item.id, name: item.tool?.title ?? item.toolName ?? 'tool' }]
+            : [],
+        )
         for (const item of task.messages) settleToolMessage(item, at)
         task.summary.status = 'interrupted'
+        task.summary.runEnd = runEndRecord('host-stopped', at, unknown)
         // The turn did not settle, so its user message gets no times: its duration is unknown.
         task.messages.push({
           id: randomUUID(),
@@ -456,7 +527,7 @@ export class AcpBridge implements Bridge {
     await this.ready()
     return structuredClone(
       Object.values(this.state.tasks)
-        .map(task => task.summary)
+        .map(task => this.projected(task))
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
     )
   }
@@ -468,7 +539,7 @@ export class AcpBridge implements Bridge {
     const active = task.summary.status === 'running' || task.summary.status === 'waiting-approval'
     const segment = active ? run?.segment : undefined
     return structuredClone({
-      summary: task.summary,
+      summary: this.projected(task),
       messages: task.messages,
       approvals: this.openApprovals(sessionId),
       liveText: segment?.text ?? '',
@@ -778,6 +849,7 @@ export class AcpBridge implements Bridge {
         current.summary.status = 'running'
         current.summary.runId = run.id
         delete current.summary.runOutcome
+        delete current.summary.runEnd
         this.touch(current)
         this.state.receipts[key] = { taskId: sessionId, payloadHash, kind: 'prompt' }
         this.tools.set(sessionId, { seq: run.seq, calls: new Map() })
@@ -1475,6 +1547,7 @@ export class AcpBridge implements Bridge {
       sent: false,
       cancelRequested: false,
       activity: { phase: 'starting', since: isoTime(clock.startedAt) },
+      lastEventAt: clock.startedAt,
       clock,
       notes: [],
       done,
@@ -1582,8 +1655,11 @@ export class AcpBridge implements Bridge {
 
   private failure(run: Run, error: unknown, notes: string[]): TaskStatus {
     if (error instanceof ConnectionClosed) {
-      notes.push(this.exitNote(run, error.info))
-      return run.sent ? 'interrupted' : 'failed'
+      run.end = this.endOf(run, error.info)
+      // A stop the user asked for did not fail, and only a process that went away unasked is a failure of the turn.
+      const status = run.sent && (run.cancelRequested || run.end !== 'process-exited') ? 'interrupted' : 'failed'
+      notes.push(this.exitNote(run, error.info, status))
+      return status
     }
     if (run.cancelRequested) {
       // Before session/prompt nothing ran, so how the abandoned setup ended is not worth reporting.
@@ -1621,16 +1697,24 @@ export class AcpBridge implements Bridge {
     return 'failed'
   }
 
-  private exitNote(run: Run, info: ExitInfo): string {
+  private endOf(run: Run, info: ExitInfo): RunEnd['reason'] | undefined {
+    // A process that never started did not end anything; the turn's note says why it could not start.
+    if (info.reason === 'spawn') return undefined
+    if (info.reason === 'stop') return 'host-stopped'
+    return info.reason === 'kill' && info.cause === run.taskId ? 'forced-stop' : 'process-exited'
+  }
+
+  private exitNote(run: Run, info: ExitInfo, status: TaskStatus): string {
     const name = this.agent.name
+    const turn = status === 'interrupted' ? '本轮已中断' : '本轮失败'
     if (info.reason === 'kill') {
       if (info.cause === run.taskId)
-        return `取消未在 ${Math.ceil(this.limits.cancelGraceMs / 1000)} 秒内完成，已强制结束 ${name} 进程；本轮已中断。请核对工具副作用。`
-      return `${name} 进程已被强制结束；本轮已中断。请核对工具副作用。`
+        return `取消未在 ${Math.ceil(this.limits.cancelGraceMs / 1000)} 秒内完成，已强制结束 ${name} 进程；${turn}。请核对工具副作用。`
+      return `${name} 进程已被强制结束；${turn}。请核对工具副作用。`
     }
-    if (info.reason === 'stop') return `${name} 进程已随 Latch 关闭而结束；本轮已中断。请核对工具副作用。`
-    if (info.reason === 'overflow') return `${name} 输出了超过限制的单行消息，进程已被结束；本轮已中断。请核对工具副作用。`
-    return `${name} 进程意外退出（${describeExit(info)}）；本轮已中断。正在执行的工具结果未知，请核对实际副作用。${info.stderr ? '错误输出已记入 Host 日志。' : ''}`
+    if (info.reason === 'stop') return `${name} 进程已随 Latch 关闭而结束；${turn}。请核对工具副作用。`
+    if (info.reason === 'overflow') return `${name} 输出了超过限制的单行消息，进程已被结束；${turn}。请核对工具副作用。`
+    return `${name} 进程意外退出（${describeExit(info)}）；${turn}。正在执行的工具结果未知，请核对实际副作用。${info.stderr ? '错误输出已记入 Host 日志。' : ''}`
   }
 
   private finishTurn(run: Run, status: TaskStatus, notes: string[]): void {
@@ -1644,12 +1728,25 @@ export class AcpBridge implements Bridge {
       const at = this.now()
       if (run.segment) this.settleSegment(run, task, status === 'idle' ? 'completed' : status === 'cancelled' ? 'cancelled' : 'failed')
       const tools = this.tools.get(run.taskId)
+      const unknown: UnknownResult[] = []
       if (tools?.seq === run.seq) {
-        for (const state of tools.calls.values()) if (settleTool(state, at)) this.upsert(task, toolMessage(state))
+        for (const state of tools.calls.values()) {
+          if (state.status === 'in_progress' && !state.final)
+            unknown.push({ messageId: state.id, name: clip(this.redact(commandName(state)), COMMAND_NAME_LIMIT) })
+          if (settleTool(state, at)) this.upsert(task, toolMessage(state))
+        }
       }
       task.summary.status = status
+      // What ran when the process died took effect or not, nobody can say: automations treat it as unknown, not as a failure to retry.
       task.summary.runOutcome =
-        status === 'idle' ? 'completed' : status === 'cancelled' ? 'cancelled' : status === 'interrupted' ? 'interrupted' : 'failed'
+        status === 'idle'
+          ? 'completed'
+          : status === 'cancelled'
+            ? 'cancelled'
+            : status === 'interrupted' || (run.sent && run.end === 'process-exited')
+              ? 'interrupted'
+              : 'failed'
+      if (run.end || unknown.length) task.summary.runEnd = runEndRecord(run.end ?? 'turn-ended', at, unknown)
       for (const note of notes) {
         task.messages.push({
           id: randomUUID(),
@@ -2174,7 +2271,59 @@ export class AcpBridge implements Bridge {
   private onRequest(live: Live, method: string, params: unknown, id: RpcId): Promise<unknown> {
     if (method === 'session/request_permission') return this.onPermission(live, params, id)
     // File system, terminal and elicitation are not advertised, so agents must not call them.
+    this.noteUnrecognized(live, method, params)
     return Promise.reject(new RpcError(RPC.methodNotFound, `Method not found: ${clip(method, 200)}`))
+  }
+
+  /**
+   * A request Latch cannot act on gets an answer at once, so the agent is not left waiting for one, and stays visible: on
+   * the live turn, and as a system message that says what it asked. Agents repeat themselves, so each method is
+   * written once per turn and the number of methods is bounded.
+   */
+  private noteUnrecognized(live: Live, method: string, params: unknown): void {
+    const shown = clip(this.redact(method), UNRECOGNIZED_METHOD_LIMIT)
+    const asked = isObject(params) ? (params as { sessionId?: unknown }).sessionId : undefined
+    const named = typeof asked === 'string' ? live.sessions.get(asked) : undefined
+    const taskId = named ?? live.key
+    const task = this.state.tasks[taskId]
+    if (!task) {
+      // Before a session is recorded there is no transcript to write it in.
+      this.limits.log(`${this.agent.name} 在会话建立前发来 Latch 不认识的请求：${shown}`)
+      return
+    }
+    const candidate = this.runs.get(taskId)
+    const run = candidate && (!candidate.live || candidate.live === live) ? candidate : undefined
+    const seen = ((run ?? live).unrecognizedMethods ??= new Set())
+    const at = this.now()
+    let messageId: string | undefined
+    if (!seen.has(shown) && seen.size < UNRECOGNIZED_METHODS) {
+      seen.add(shown)
+      messageId = randomUUID()
+      const content =
+        run?.sensitiveOutput || run?.attachments?.length || task.messages.some(item => item.attachments?.length) || params === undefined
+          ? ''
+          : `\n\n${clip(this.redact(pretty(params)), UNRECOGNIZED_PARAMS_LIMIT)}`
+      if (run?.segment) this.settleSegment(run, task, 'completed')
+      task.messages.push({
+        id: messageId,
+        role: 'system',
+        text: `${this.agent.name} 发来一个 Latch 看不懂的请求：${shown}。已回复不支持；它可能因此停住，也可能换一种做法。${content}`,
+        createdAt: at,
+      })
+    }
+    if (run) {
+      run.lastEventAt = this.clock()
+      const lastMessage = messageId ?? run.unrecognized?.messageId
+      run.unrecognized = {
+        count: (run.unrecognized?.count ?? 0) + 1,
+        at,
+        method: shown,
+        ...(lastMessage ? { messageId: lastMessage } : {}),
+      }
+    }
+    this.touch(task)
+    this.mark()
+    this.notify(taskId)
   }
 
   private onNotification(live: Live, method: string, params: unknown): void {
@@ -2198,6 +2347,7 @@ export class AcpBridge implements Bridge {
     const update = envelope.data.update
     const candidate = this.runs.get(taskId)
     const run = candidate?.sent && candidate.live === live ? candidate : undefined
+    if (run) run.lastEventAt = this.clock()
     switch (update.sessionUpdate) {
       case 'agent_message_chunk':
       case 'agent_thought_chunk': {
@@ -2349,7 +2499,7 @@ export class AcpBridge implements Bridge {
       segment.reasoningTimer.reasoning()
     }
     run.lastOutputAt = this.clock()
-    if (!run.cancelRequested && run.activity.phase !== 'approval') this.phase(run, 'model')
+    if (!run.cancelRequested && run.activity.phase !== 'approval') this.working(run)
     this.notify(task.summary.id)
   }
 
@@ -2422,8 +2572,10 @@ export class AcpBridge implements Bridge {
     this.upsert(task, toolMessage(state))
     if (run) run.lastOutputAt = this.clock()
     if (run && !run.cancelRequested && !this.openApprovals(task.summary.id).length) {
-      if (state.status === 'in_progress') this.phase(run, 'tool', toolLabel(state))
-      else if (state.status === 'completed' || state.status === 'failed') this.phase(run, 'model')
+      if (state.status === 'in_progress') {
+        run.runningTool = state
+        this.phase(run, 'tool', toolLabel(state))
+      } else if (state.status === 'completed' || state.status === 'failed') this.working(run)
     }
     this.touch(task)
     this.mark()
@@ -2432,13 +2584,18 @@ export class AcpBridge implements Bridge {
 
   private onPermission(live: Live, params: unknown, rpcId: RpcId): Promise<unknown> {
     const parsed = permissionRequest.safeParse(params)
-    if (!parsed.success) return Promise.reject(new RpcError(RPC.invalidParams, 'Invalid params'))
+    if (!parsed.success) {
+      // A shape Latch cannot read would otherwise leave an agent waiting on a question nobody was shown.
+      this.noteUnrecognized(live, 'session/request_permission', params)
+      return Promise.reject(new RpcError(RPC.invalidParams, 'Invalid params'))
+    }
     const taskId = live.sessions.get(parsed.data.sessionId)
     const task = taskId ? this.state.tasks[taskId] : undefined
     const run = taskId ? this.runs.get(taskId) : undefined
     const filtered = filterPermissionOptions(this.profile, parsed.data.options)
     if (task?.acp.drift) return Promise.resolve(this.rejection(filtered.visible))
     if (!taskId || !task || !run?.sent || run.live !== live || run.cancelRequested || this.closed) return Promise.resolve(CANCELLED_OUTCOME)
+    run.lastEventAt = this.clock()
     if (run.segment) this.settleSegment(run, task, 'completed')
     const state = this.toolState(task, parsed.data.toolCall.toolCallId)
     mergeTool(state, parsed.data.toolCall, this.now())
@@ -2519,7 +2676,7 @@ export class AcpBridge implements Bridge {
       const run = this.runs.get(permission.taskId)
       if (!this.openApprovals(permission.taskId).length) {
         if (task.summary.status === 'waiting-approval') task.summary.status = 'running'
-        if (run && !run.cancelRequested) this.phase(run, 'model')
+        if (run && !run.cancelRequested) this.working(run)
       }
       this.touch(task)
       this.mark()

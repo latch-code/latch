@@ -114,6 +114,15 @@ export function toolLabel(state: ToolState): string {
   return clip(state.name || state.kind || 'tool', 200)
 }
 
+/** What a call runs, on one line: the command it was given when it says, otherwise what it calls itself. */
+export function commandName(state: ToolState): string {
+  const input =
+    typeof state.rawInput === 'object' && state.rawInput !== null ? (state.rawInput as { command?: unknown }).command : undefined
+  const given = Array.isArray(input) && input.every(part => typeof part === 'string') ? input.join(' ') : input
+  const text = typeof given === 'string' && given.trim() ? given : state.title || toolLabel(state)
+  return text.replace(/[\p{Cc}\p{Cf}\s]+/gu, ' ').trim()
+}
+
 export function toolDetail(state: ToolState): ToolDetail {
   const texts: string[] = []
   const diffs: FileDiff[] = []

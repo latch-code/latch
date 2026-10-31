@@ -104,6 +104,85 @@ export interface TaskSummary {
   forkOf?: { taskId: string; upToMessageId: string; title: string; turn: number; prefixLength: number; truncated?: true }
   /** Skills snapshotted for the current or latest Standard run. */
   skills?: string[]
+  /** While a run is live: what it is really doing. Never stored; absent on older Hosts and from drivers that do not report it. */
+  live?: RunLive
+  /** How the latest run ended when that took more than a plain answer. Cleared when the next run starts. */
+  runEnd?: RunEnd
+}
+
+/**
+ * The live run as the Host reads it. The driver reports what the engine is doing and when it last did anything; the
+ * Host adds `silenceThresholdMs` and `silent`. Silence only ever asks: nothing stops a run because of it.
+ */
+export interface RunLive {
+  runId: string
+  /**
+   * `starting`: the engine's process and session are being prepared. `model`: waiting on the model. `command`: a command
+   * runs. `tool`: another tool runs. `approval`: waiting on a person. `cancelling`: a stop waits for the engine to settle.
+   */
+  activity: 'starting' | 'model' | 'command' | 'tool' | 'approval' | 'cancelling'
+  /** With `command` and `tool`, session detail only: the list can be read without opening a session's content. */
+  commandName?: string
+  /** When this activity began. */
+  since: string
+  /** The engine's last sign of life for this run: any update, request or result, or the start of this activity. */
+  lastEventAt: string
+  /** The last change of visible output. */
+  lastOutputAt?: string
+  /** How long this activity may stay quiet before the Host says so; absent while waiting on a person or a stop. */
+  silenceThresholdMs?: number
+  /** `lastEventAt` is older than the threshold. The Host announces the crossing once, as an ordinary session change. */
+  silent?: true
+  /** The engine sent requests Latch does not recognise; each was answered as unsupported. Absent when none. */
+  unrecognized?: UnrecognizedRequests
+}
+
+/**
+ * Requests of this run Latch does not recognise. In session detail, compare `at` with `RunLive.lastEventAt` to see whether
+ * the engine went on; the list's `lastEventAt` can lag, so it cannot tell.
+ */
+export interface UnrecognizedRequests {
+  count: number
+  /** When the latest arrived. */
+  at: string
+  /** Session detail only: the latest request's method. */
+  method?: string
+  /** Session detail only: the system message that records it and what it asked. */
+  messageId?: string
+}
+
+/** A command or other tool whose result nobody can vouch for. */
+export interface UnknownResult {
+  /** The `Message.id` of its tool row. */
+  messageId: string
+  name: string
+}
+
+/**
+ * `process-exited`: the engine's process ended by itself or broke its protocol limits. `forced-stop`: a stop did not
+ * settle in time and Latch ended the process. `host-stopped`: the Host stopped or restarted during the run. `turn-ended`:
+ * the engine ended its turn and left calls unfinished.
+ */
+export interface RunEnd {
+  reason: 'process-exited' | 'forced-stop' | 'host-stopped' | 'turn-ended'
+  at: string
+  /** Session detail only: what was running when it ended. These may or may not have taken effect. */
+  unknownResults?: UnknownResult[]
+  /** In the list and a cancel receipt, which can be read without opening a session's content: how many `unknownResults` there are. */
+  unknownResultCount?: number
+  /** More than the Host keeps were unknown. */
+  unknownResultsTruncated?: true
+}
+
+/** The Host's answer to `POST /tasks/:id/keep-waiting`. */
+export interface KeepWaitingResult {
+  /**
+   * `extended`: the threshold the request saw was doubled. `unchanged`: it had already moved, by a retry or another device.
+   * `not-silent`: the run is not silent now. `ended`: the named run is no longer live.
+   */
+  outcome: 'extended' | 'unchanged' | 'not-silent' | 'ended'
+  /** The threshold now in force. */
+  thresholdMs?: number
 }
 
 /**
@@ -124,6 +203,8 @@ export interface CancelReceipt {
   status?: TaskStatus
   /** ISO time at which the Host settled the request. */
   at: string
+  /** How the named run ended, when it took more than a plain answer: a forced stop names the results left unknown. */
+  runEnd?: RunEnd
   /** A retry of a request the Host had already answered. */
   replay?: true
 }

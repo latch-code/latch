@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { Approval, TaskSummary } from '@latch/protocol'
+import type { Approval, RunLive, TaskSummary } from '@latch/protocol'
 import { AppError, type HarnessDriver, type ModelProvider, type Bridge } from '@latch/sdk'
 import { createRuntime } from '@latch/core'
 import { HarnessHub, type HarnessMount } from '../src/hub.ts'
@@ -84,6 +84,222 @@ function mount(bridge: Bridge, extra: Partial<HarnessMount> = {}): HarnessMount 
 function approval(id: string, sessionId: string): Approval {
   return { id, sessionId, toolName: 'write', reason: 'fixture', requestedAt: new Date().toISOString() }
 }
+
+describe('run silence', () => {
+  const T0 = Date.parse('2026-10-31T06:00:00.000Z')
+  const RUN = '11111111-1111-4111-8111-111111111111'
+  const iso = (ms: number) => new Date(T0 + ms).toISOString()
+  const thresholds = { model: 120_000, command: 600_000 }
+
+  async function silence(activity: RunLive['activity'], options: { runs?: boolean } = {}) {
+    let time = T0
+    const live: { current?: RunLive } = { current: { runId: RUN, activity, since: iso(0), lastEventAt: iso(0), commandName: 'pnpm test' } }
+    const tasks = [summary('s1', 'running')]
+    const listTasks = vi.fn(async () => tasks.map(task => ({ ...task, ...(live.current ? { live: live.current } : {}) })))
+    const source = external(tasks, [], {
+      listTasks,
+      detail: async () => ({
+        summary: { ...tasks[0]!, ...(live.current ? { live: live.current } : {}) },
+        messages: [],
+        approvals: [],
+        liveText: '',
+        cursor: 1,
+      }),
+      ...(options.runs === false ? {} : { liveRuns: () => (live.current ? [{ sessionId: 's1', live: live.current }] : []) }),
+    })
+    const value = await HarnessHub.open({
+      dataDir: await directory(),
+      defaultId: () => 'ext',
+      log: vi.fn(),
+      now: () => time,
+      silenceThresholds: thresholds,
+    })
+    cleanups.push(() => value.close())
+    await value.attach(driver('ext'), mount(source.bridge))
+    await value.listTasks()
+    listTasks.mockClear()
+    const changes: Array<string | undefined> = []
+    value.subscribe(id => changes.push(id))
+    return { hub: value, source, live, changes, listTasks, advance: (ms: number) => (time += ms), now: () => time }
+  }
+
+  it('says nothing below the threshold, then says it once, without a timer listing every session', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const f = await silence('model')
+      f.source.notify('s1')
+      f.changes.length = 0
+      expect((await f.hub.summary('s1')).live).toMatchObject({ silenceThresholdMs: 120_000 })
+      expect((await f.hub.summary('s1')).live?.silent).toBeUndefined()
+      f.listTasks.mockClear()
+
+      f.advance(120_000)
+      await vi.advanceTimersByTimeAsync(120_000)
+      expect(f.changes).toEqual(['s1'])
+      expect(f.listTasks).not.toHaveBeenCalled()
+      expect((await f.hub.summary('s1')).live?.silent).toBe(true)
+
+      // Silent, and told: no further timer, and no second announcement however often the run is looked at.
+      f.source.notify('s1')
+      await vi.advanceTimersByTimeAsync(3_600_000)
+      expect(f.changes).toEqual(['s1', 's1'])
+
+      // Anything from the engine ends the silence.
+      f.live.current = { ...f.live.current!, lastEventAt: iso(120_000) }
+      expect((await f.hub.summary('s1')).live?.silent).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('gives a command longer than the model, and never counts waiting on a person or a stop as silence', async () => {
+    const f = await silence('command')
+    f.advance(300_000)
+    expect((await f.hub.summary('s1')).live).toMatchObject({ silenceThresholdMs: 600_000 })
+    expect((await f.hub.summary('s1')).live?.silent).toBeUndefined()
+    f.advance(300_000)
+    expect((await f.hub.summary('s1')).live?.silent).toBe(true)
+    for (const activity of ['approval', 'cancelling'] as const) {
+      f.live.current = { ...f.live.current!, activity }
+      const live = (await f.hub.summary('s1')).live
+      expect(live?.silent).toBeUndefined()
+      expect(live?.silenceThresholdMs).toBeUndefined()
+    }
+  })
+
+  it('arms no timer while nothing runs', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const f = await silence('model')
+      f.live.current = undefined
+      f.source.notify('s1')
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('doubles the threshold the person saw, once, for this run and this kind of activity', async () => {
+    const f = await silence('model')
+    await expect(f.hub.keepWaiting('s1', { runId: RUN, thresholdMs: 120_000 })).resolves.toEqual({
+      outcome: 'not-silent',
+      thresholdMs: 120_000,
+    })
+    f.advance(130_000)
+    expect((await f.hub.summary('s1')).live?.silent).toBe(true)
+    f.changes.length = 0
+    await expect(f.hub.keepWaiting('s1', { runId: RUN, thresholdMs: 120_000 })).resolves.toEqual({
+      outcome: 'extended',
+      thresholdMs: 240_000,
+    })
+    expect(f.changes).toEqual(['s1'])
+    expect((await f.hub.summary('s1')).live).toMatchObject({ silenceThresholdMs: 240_000 })
+    expect((await f.hub.summary('s1')).live?.silent).toBeUndefined()
+    // A retry, or a second device that saw the same threshold.
+    await expect(f.hub.keepWaiting('s1', { runId: RUN, thresholdMs: 120_000 })).resolves.toEqual({
+      outcome: 'unchanged',
+      thresholdMs: 240_000,
+    })
+    // A command in the same run keeps its own threshold.
+    f.live.current = { ...f.live.current!, activity: 'command' }
+    expect((await f.hub.summary('s1')).live).toMatchObject({ silenceThresholdMs: 600_000 })
+    // Another run starts over.
+    f.live.current = {
+      ...f.live.current!,
+      activity: 'model',
+      runId: '22222222-2222-4222-8222-222222222222',
+      lastEventAt: new Date(f.now()).toISOString(),
+    }
+    expect((await f.hub.summary('s1')).live).toMatchObject({ silenceThresholdMs: 120_000 })
+    await expect(f.hub.keepWaiting('s1', { runId: RUN, thresholdMs: 240_000 })).resolves.toEqual({ outcome: 'ended' })
+  })
+
+  it('asks again no sooner than half the threshold after a late answer', async () => {
+    const f = await silence('model')
+    f.advance(235_000)
+    await expect(f.hub.keepWaiting('s1', { runId: RUN, thresholdMs: 120_000 })).resolves.toEqual({
+      outcome: 'extended',
+      thresholdMs: 480_000,
+    })
+  })
+
+  it('leaves out what a run is running from the list, and keeps it in the session', async () => {
+    const f = await silence('command')
+    f.live.current = { ...f.live.current!, unrecognized: { count: 1, at: iso(0), method: 'terminal/create', messageId: 'm1' } }
+    const [row] = await f.hub.listTasks()
+    expect(row?.live).toMatchObject({ activity: 'command', unrecognized: { count: 1, at: iso(0) } })
+    expect(row?.live?.commandName).toBeUndefined()
+    expect(row?.live?.unrecognized?.method).toBeUndefined()
+    expect((await f.hub.detail('s1')).summary.live).toMatchObject({ commandName: 'pnpm test', unrecognized: { method: 'terminal/create' } })
+  })
+
+  it('notices a silent run moving on without a notification, and its next silence', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const f = await silence('model')
+      f.source.notify('s1')
+      f.changes.length = 0
+      f.advance(120_000)
+      await vi.advanceTimersByTimeAsync(120_000)
+      expect(f.changes).toEqual(['s1'])
+
+      f.live.current = { ...f.live.current!, lastEventAt: iso(120_000) }
+      f.advance(30_000)
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(f.changes).toEqual(['s1', 's1'])
+      // A silence nothing changed in is not told again.
+      f.changes.length = 0
+
+      f.advance(90_000)
+      await vi.advanceTimersByTimeAsync(90_000)
+      expect(f.changes).toEqual(['s1'])
+      f.advance(300_000)
+      await vi.advanceTimersByTimeAsync(300_000)
+      expect(f.changes).toEqual(['s1'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps waiting for a live run of a driver that only reports it in its summary', async () => {
+    const f = await silence('model', { runs: false })
+    f.advance(120_000)
+    expect((await f.hub.summary('s1')).live?.silent).toBe(true)
+    await expect(f.hub.keepWaiting('s1', { runId: RUN, thresholdMs: 120_000 })).resolves.toEqual({
+      outcome: 'extended',
+      thresholdMs: 240_000,
+    })
+    expect((await f.hub.summary('s1')).live).toMatchObject({ silenceThresholdMs: 240_000 })
+    expect((await f.hub.summary('s1')).live?.silent).toBeUndefined()
+    delete f.live.current
+    await expect(f.hub.keepWaiting('s1', { runId: RUN, thresholdMs: 240_000 })).resolves.toEqual({ outcome: 'ended' })
+  })
+
+  it('tells the list how a run ended, and keeps what was running in the session', async () => {
+    const f = await silence('command')
+    const runEnd = {
+      reason: 'process-exited' as const,
+      at: iso(0),
+      unknownResults: [{ messageId: 'tool:1', name: 'curl https://user:hunter2@example.test' }],
+      unknownResultsTruncated: true as const,
+    }
+    f.listTasks.mockImplementation(async () => [{ ...summary('s1', 'failed'), runEnd }])
+    const [row] = await f.hub.listTasks()
+    expect(row?.runEnd).toEqual({ reason: 'process-exited', at: iso(0), unknownResultCount: 1, unknownResultsTruncated: true })
+    expect((await f.hub.summary('s1')).runEnd).toEqual(runEnd)
+  })
+
+  it('drops what a driver claims about silence, also from a driver that reports no live runs', async () => {
+    const f = await silence('model', { runs: false })
+    f.live.current = { ...f.live.current!, silent: true, silenceThresholdMs: 1 }
+    expect((await f.hub.summary('s1')).live).toMatchObject({ silenceThresholdMs: 120_000 })
+    expect((await f.hub.summary('s1')).live?.silent).toBeUndefined()
+    await expect(f.hub.keepWaiting('s1', { runId: RUN, thresholdMs: 120_000 })).resolves.toEqual({
+      outcome: 'not-silent',
+      thresholdMs: 120_000,
+    })
+  })
+})
 
 describe('harness hub routing', () => {
   it('routes sessions verbatim between the Standard runtime and an external driver without injecting Host fields', async () => {

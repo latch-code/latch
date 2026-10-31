@@ -132,8 +132,8 @@ export interface RouteModule {
   authenticated?(request: CallerRequest): Promise<boolean>
   /** Routes for a caller that passed every check, asked before the Host's own routes. */
   route?(request: CallerRequest): Promise<boolean>
-  /** The `catalog.features` flags of this module's routes. */
-  features?(): HostFeatures
+  /** The `catalog.features` flags of this module's routes, as this caller can use them. */
+  features?(caller: Caller): HostFeatures
 }
 
 export class RouteRegistry {
@@ -159,7 +159,7 @@ export class RouteRegistry {
     return false
   }
 
-  features(): HostFeatures {
-    return Object.assign({}, ...this.modules.map(entry => entry.features?.() ?? {}))
+  features(caller: Caller): HostFeatures {
+    return Object.assign({}, ...this.modules.map(entry => entry.features?.(caller) ?? {}))
   }
 }

@@ -11,6 +11,7 @@ import type {
   ModelRef,
   PersonalExecutionContext,
   RiskLevel,
+  RunLive,
   TaskDetail,
   TaskMode,
   TaskStatus,
@@ -18,6 +19,7 @@ import type {
   TokenUsage,
   ToolDecision,
   ToolDetail,
+  UnknownResult,
 } from '@latch/protocol'
 import {
   AppError,
@@ -39,6 +41,7 @@ import {
   type PromptOptions,
   type SessionFolder,
 } from '@latch/sdk'
+import { runEndRecord } from './run-end.ts'
 import { isoTime, ReasoningTimer, RunClock } from './node-kit/timing.ts'
 import { createSnapshotStore, emptyRuntimeState } from './store.ts'
 import type { RuntimeState, RuntimeStore, StoredTask } from './store.ts'
@@ -161,6 +164,10 @@ interface Run {
   clock: RunClock
   /** The last change of visible output, in clock milliseconds. */
   lastOutputAt?: number
+  /** The last sign of life: anything the provider sent, or the start of a phase. */
+  lastEventAt: number
+  /** The tool the `tool` phase is running. */
+  running?: { name: string; command: boolean }
   /** The session's working directory, passed to tools. */
   cwd: string
   /** The session's folders, frozen when it was created; `[0]` is at `cwd`. */
@@ -347,12 +354,15 @@ function recordResult(task: StoredTask, call: ToolCall, at: string, text: string
 }
 
 /** Balance unanswered calls without retrying an operation whose side effects are unknown. */
-function closeBatch(task: StoredTask, cancelled: boolean, at: string): void {
+/** Settles the calls a run left open, and names those that started: nobody can say whether they took effect. */
+function closeBatch(task: StoredTask, cancelled: boolean, at: string): UnknownResult[] {
   const batch = task.batch
-  if (!batch) return
+  if (!batch) return []
+  const unknownResults: UnknownResult[] = []
   for (const call of batch.calls) {
     if (batch.completed.includes(call.id)) continue
     const unknown = batch.started.includes(call.id)
+    if (unknown) unknownResults.push({ messageId: `tool:${call.id}`, name: toolMessage(task, call)?.tool?.toolTitle ?? call.name })
     recordResult(
       task,
       call,
@@ -365,6 +375,7 @@ function closeBatch(task: StoredTask, cancelled: boolean, at: string): void {
     )
   }
   delete task.batch
+  return unknownResults
 }
 
 function workspaceChanged(): AppError {
@@ -415,11 +426,48 @@ class HarnessRuntime implements Bridge {
   /** Records a phase of the run's live projection and when it began. */
   private phase(run: Run, activity: Omit<NonNullable<TaskDetail['activity']>, 'since'>): void {
     run.activity = { ...activity, since: this.now() }
+    run.lastEventAt = this.clock()
+  }
+
+  /** What a live run is doing, for its summary; the Host adds the silence thresholds. */
+  private liveOf(run: Run): RunLive | undefined {
+    const activity = run.activity
+    if (!activity?.since) return undefined
+    const tool = activity.phase === 'tool' ? run.running : undefined
+    return {
+      runId: run.id,
+      activity: activity.phase === 'tool' ? (tool?.command ? 'command' : 'tool') : activity.phase,
+      ...(tool ? { commandName: tool.name } : {}),
+      since: activity.since,
+      lastEventAt: isoTime(run.lastEventAt),
+      ...(run.lastOutputAt !== undefined ? { lastOutputAt: isoTime(run.lastOutputAt) } : {}),
+    }
+  }
+
+  private isActive(summary: TaskSummary): boolean {
+    return summary.status === 'running' || summary.status === 'waiting-approval'
+  }
+
+  /** The stored summary with what only the live run knows, which is never stored. */
+  private projected(task: StoredTask): TaskSummary {
+    const run = this.isActive(task.summary) ? this.runs.get(task.summary.id) : undefined
+    const live = run && this.liveOf(run)
+    return live ? { ...task.summary, live } : task.summary
+  }
+
+  liveRuns(): Array<{ sessionId: string; live: RunLive }> {
+    const found: Array<{ sessionId: string; live: RunLive }> = []
+    for (const [sessionId, run] of this.runs) {
+      const task = Object.hasOwn(this.state.tasks, sessionId) ? this.state.tasks[sessionId] : undefined
+      const live = task && this.isActive(task.summary) ? this.liveOf(run) : undefined
+      if (live) found.push({ sessionId, live })
+    }
+    return found
   }
 
   /** Visible output changed: text, reasoning, a tool's state or a new message. */
   private output(run: Run): void {
-    run.lastOutputAt = this.clock()
+    run.lastOutputAt = run.lastEventAt = this.clock()
   }
 
   start(): Promise<void> {
@@ -447,9 +495,10 @@ class HarnessRuntime implements Bridge {
           ? task.messages.find(message => message.id === `tool:${task.approval!.toolCallId}`)
           : undefined
         if (asked) asked.tool = { ...asked.tool, decision: { outcome: 'cancelled', at } }
-        closeBatch(task, false, at)
+        const unknown = closeBatch(task, false, at)
         delete task.approval
         task.summary.status = 'interrupted'
+        task.summary.runEnd = runEndRecord('host-stopped', at, unknown)
         task.summary.updatedAt = at
         task.revision++
         // The turn did not settle, so its user message gets no times: its duration is unknown.
@@ -604,7 +653,7 @@ class HarnessRuntime implements Bridge {
     await this.ready()
     return structuredClone(
       Object.values(this.state.tasks)
-        .map(task => task.summary)
+        .map(task => this.projected(task))
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
     )
   }
@@ -617,7 +666,7 @@ class HarnessRuntime implements Bridge {
     const visibleLive = active && live && !task.messages.some(message => message.id === live.id) ? live : undefined
     const run = active ? this.runs.get(sessionId) : undefined
     return structuredClone({
-      summary: task.summary,
+      summary: this.projected(task),
       messages: task.messages,
       approvals: task.approval ? [task.approval] : [],
       liveText: visibleLive?.text ?? '',
@@ -809,6 +858,7 @@ class HarnessRuntime implements Bridge {
         task.summary.status = 'running'
         task.summary.runId = run.id
         delete task.summary.runOutcome
+        delete task.summary.runEnd
         task.skillContext = skillContext(run.lease)
         if (run.lease.skills?.length) task.summary.skills = run.lease.skills.map(skill => skill.id)
         else delete task.summary.skills
@@ -887,6 +937,7 @@ class HarnessRuntime implements Bridge {
       done,
       resolveDone,
       activity: { phase: 'model', since: isoTime(clock.startedAt) },
+      lastEventAt: clock.startedAt,
     }
     // Reserve ownership before persistence publishes the new running task.
     this.runs.set(sessionId, run)
@@ -1114,6 +1165,7 @@ class HarnessRuntime implements Bridge {
         }
       }
     }
+    run.running = { name: toolTitleOf(tool) ?? call.name, command: tool.kind === 'execute' }
     this.phase(run, { phase: 'tool', toolName: call.name })
     this.output(run)
     await this.change(run.sessionId, task => {
@@ -1125,7 +1177,13 @@ class HarnessRuntime implements Bridge {
         if (preview) message.tool = { ...message.tool, ...preview }
       }
     })
-    signal.throwIfAborted()
+    if (signal.aborted) {
+      // The stop came before the tool was called: it did not run, so its result is not unknown.
+      await this.change(run.sessionId, task => {
+        if (task.batch) task.batch.started = task.batch.started.filter(id => id !== call.id)
+      })
+      signal.throwIfAborted()
+    }
     const waitKey = `tool:${call.id}`
     if (tool.waitsForUser) {
       run.clock.openWait(waitKey)
@@ -1230,6 +1288,7 @@ class HarnessRuntime implements Bridge {
         const calls: ToolCall[] = []
         let finished = false
         for await (const delta of run.lease.provider.stream({ messages, tools: [...availableTools], signal, model: run.model })) {
+          run.lastEventAt = this.clock()
           signal.throwIfAborted()
           if (finished) throw new AppError(502, 'provider-protocol', '模型在结束事件之后继续发送内容')
           if (delta.type === 'text' || delta.type === 'reasoning') {
@@ -1306,7 +1365,8 @@ class HarnessRuntime implements Bridge {
         const at = this.now()
         const reasoningMs = partial?.reasoningTimer.end()
         await this.change(run.sessionId, task => {
-          closeBatch(task, signal.aborted, at)
+          const unknown = closeBatch(task, signal.aborted, at)
+          if (unknown.length) task.summary.runEnd = runEndRecord(this.closed ? 'host-stopped' : 'turn-ended', at, unknown)
           delete task.approval
           if (partial && (partial.text || partial.reasoning) && !task.messages.some(message => message.id === partial.id)) {
             if (partial.text) task.history.push({ role: 'assistant', content: partial.text })

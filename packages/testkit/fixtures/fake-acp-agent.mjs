@@ -572,6 +572,38 @@ const scenarios = {
     tool({ toolCallId: 'call_1', status: 'completed', content: [text('stopped cleanly')] }, 'tool_call_update')
     return END
   },
+  // Asks for something it never negotiated (twice), then for permission in a shape nobody can read, then goes on.
+  unknown: async ({ sessionId, say }) => {
+    say('asking')
+    const first = await request('terminal/create', { sessionId, command: 'make', token: env.FAKE_SECRET ?? '' })
+    await request('terminal/create', { sessionId, command: 'make' })
+    const second = await request('session/request_permission', { sessionId, toolCall: 'not an object' })
+    say(`codes ${first.error?.code} ${second.error?.code}`)
+    return END
+  },
+  unknownhang: async ({ sessionId }) => {
+    await request('terminal/create', { sessionId })
+    await request('terminal/create', { sessionId })
+    await waitCancel(sessionId)
+    return END
+  },
+  // Two commands at once: when one finishes, the other is what the turn is doing.
+  overlap: async ({ sessionId, say, tool }) => {
+    tool({ toolCallId: 'call_1', title: 'Short job', kind: 'execute', status: 'in_progress', rawInput: { command: ['pnpm', 'lint'] } })
+    tool({
+      toolCallId: 'call_2',
+      title: 'Run the tests',
+      kind: 'execute',
+      status: 'in_progress',
+      rawInput: { command: 'pnpm test\n--watch=false' },
+    })
+    await delay(50)
+    tool({ toolCallId: 'call_2', status: 'completed' }, 'tool_call_update')
+    say('still going')
+    await waitCancel(sessionId)
+    tool({ toolCallId: 'call_1', status: 'completed' }, 'tool_call_update')
+    return END
+  },
   hang: async ({ say, tool }) => {
     say('working')
     tool({ toolCallId: 'call_1', title: 'Stuck job', kind: 'execute', status: 'in_progress' })

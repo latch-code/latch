@@ -15,6 +15,7 @@ import {
 } from '@latch/protocol'
 import { AppError, type ModelMessage, type ToolCall } from '@latch/sdk'
 import { writeFileAtomic } from './node-kit/atomic.ts'
+import { runEndSchema } from './run-end.ts'
 
 export interface StoredHistory extends Omit<ModelMessage, 'attachments'> {
   attachmentRefs?: AttachmentRef[]
@@ -147,6 +148,7 @@ const stateSchema = z.object({
         folders: z.array(z.object({ id: z.string(), path: z.string() })).optional(),
         runId: z.string().min(1).max(128).optional(),
         runOutcome: z.enum(['completed', 'failed', 'cancelled', 'interrupted']).optional(),
+        runEnd: runEndSchema.optional(),
         skills: z.array(z.string()).optional(),
         personal: z.strictObject({ assistantId: z.string().min(1).max(128), groupId: z.string().min(1).max(128).optional() }).optional(),
         pluginIds: z.array(z.string().min(1).max(64)).max(64).optional(),

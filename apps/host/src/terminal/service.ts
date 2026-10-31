@@ -6,7 +6,15 @@ import { randomUUID } from 'node:crypto'
 import { lstat, stat } from 'node:fs/promises'
 import { constants } from 'node:os'
 import { basename, isAbsolute, join } from 'node:path'
-import { isLocalListener, type ListenerClass } from '@latch/protocol'
+import {
+  TERMINALS_PER_SESSION,
+  isLocalListener,
+  type ListenerClass,
+  type LocalService,
+  type TerminalSize,
+  type TerminalSummary,
+  type TerminalText,
+} from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { redactSecrets } from '@latch/core/node-kit'
 import { localOnly } from '../access.ts'
@@ -20,20 +28,19 @@ import {
   type TerminalProcess,
   type TerminalSignal,
 } from './helper.ts'
-import { LocalServiceDetector, type LocalService } from './localhost.ts'
+import { LocalServiceDetector } from './localhost.ts'
 import { Scrollback } from './scrollback.ts'
-import { ATTACH_LINE_LIMIT, attachmentText, fromFirstWholeLine, type TerminalText } from './text.ts'
+import { ATTACH_LINE_LIMIT, attachmentText, fromFirstWholeLine } from './text.ts'
 
-export const TERMINALS_PER_SESSION = 8
 export const SCROLLBACK_BYTES = 512 * 1024
 /** All terminals' scrollback together, so at most 32 terminals on this computer at once. */
 export const SCROLLBACK_TOTAL_BYTES = 16 * 1024 * 1024
 /** The most one input call carries. */
-const INPUT_BYTES = 64 * 1024
+export const INPUT_BYTES = 64 * 1024
 /** Input the helper has not taken yet beyond this refuses more until the terminal catches up. */
 const PENDING_INPUT_BYTES = 1024 * 1024
 const SIZE_LIMIT = 1000
-const SELECTION_BYTES = 256 * 1024
+export const SELECTION_BYTES = 256 * 1024
 /** Of the scrollback, 「加入对话」 decodes at most the newest this many bytes. */
 const EXTRACT_BYTES = 256 * 1024
 /** 「加入对话」: at most this many in a window. */
@@ -62,33 +69,6 @@ export interface TerminalRequester {
 export interface TerminalRef {
   sessionId: string
   terminalId: string
-}
-
-export interface TerminalSize {
-  cols: number
-  rows: number
-}
-
-export interface TerminalSummary {
-  id: string
-  sessionId: string
-  /** The shell's name and the folder's, for the tab: 「zsh · latch」. */
-  shell: string
-  folder: string
-  cols: number
-  rows: number
-  status: 'running' | 'exited' | 'failed'
-  exitCode?: number
-  exitSignal?: string
-  /** A program other than the shell has the terminal: closing asks first. */
-  busy: boolean
-  /** That program's name, when the system reports one. */
-  foreground?: string
-  /** Development servers the output announced, newest first. */
-  services: LocalService[]
-  /** The requester decides this terminal's size. */
-  sizeOwner: boolean
-  createdAt: string
 }
 
 export type TerminalStreamEvent =
@@ -240,7 +220,8 @@ export class TerminalService {
       .map(terminal => this.summary(terminal, requester))
   }
 
-  async create(sessionId: string, requester: TerminalRequester, size: TerminalSize): Promise<TerminalSummary> {
+  /** `authorize` runs once the open has been audited, right before the shell starts, and refuses by throwing an AppError. */
+  async create(sessionId: string, requester: TerminalRequester, size: TerminalSize, authorize?: () => void): Promise<TerminalSummary> {
     this.admit(requester)
     if (this.unavailable === 'platform') throw new AppError(501, 'terminal-unsupported', '终端尚未实现：目前只支持 macOS')
     const launch = this.launch
@@ -283,6 +264,7 @@ export class TerminalService {
       if (terminal.ending) throw new AppError(409, 'terminal-closed', '终端已关闭')
       await this.options.beforeOpen?.({ sessionId, terminalId: terminal.id, deviceId: requester.deviceId })
       if (terminal.ending) throw new AppError(409, 'terminal-closed', '终端已关闭')
+      authorize?.()
       const env = terminalEnvironment({ hostEnv: this.options.hostEnv ?? process.env, shell: shell.file, folder })
       await new Promise<void>((resolve, reject) => {
         let timer: NodeJS.Timeout | undefined
@@ -349,19 +331,25 @@ export class TerminalService {
   }
 
   /**
-   * The session is archived or deleted. On this computer its terminals end under the rules of `close`. Elsewhere the
-   * request is refused while any of them runs, so archiving from another device never ends a shell on this one.
+   * Whether the session may be archived or deleted now. On this computer a busy terminal holds it back under the rules
+   * of `close`. Elsewhere any running terminal does, so archiving from another device never ends a shell on this one.
    */
-  async closeSession(sessionId: string, requester: TerminalRequester, options: { force?: boolean } = {}): Promise<void> {
-    const terminals = [...this.terminals.values()].filter(terminal => terminal.sessionId === sessionId)
-    const running = terminals.filter(terminal => terminal.status === 'running' || terminal.status === 'starting')
+  checkSessionEnd(sessionId: string, requester: TerminalRequester, options: { force?: boolean } = {}): void {
+    const running = [...this.terminals.values()].filter(
+      terminal => terminal.sessionId === sessionId && (terminal.status === 'running' || terminal.status === 'starting'),
+    )
     if (!isLocalListener(requester.listener)) {
       if (running.length > 0) throw new AppError(409, 'terminal-running', '这个会话还有终端在运行，请先在 Mac 上关闭终端')
     } else if (!options.force) {
       const occupied = running.find(terminal => terminal.busy)
       if (occupied) throw busyError(occupied)
     }
-    await Promise.all(terminals.map(terminal => this.end(terminal)))
+  }
+
+  /** The session is archived or deleted: its terminals end, once `checkSessionEnd` lets them. */
+  async closeSession(sessionId: string, requester: TerminalRequester, options: { force?: boolean } = {}): Promise<void> {
+    this.checkSessionEnd(sessionId, requester, options)
+    await Promise.all([...this.terminals.values()].filter(terminal => terminal.sessionId === sessionId).map(terminal => this.end(terminal)))
   }
 
   /** The Host stops: every terminal ends, and none opens again. */

@@ -9,7 +9,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./file-tracking": "./src/file-tracking.ts",
-    "./node-kit": "./src/node-kit/index.ts"
+    "./node-kit": "./src/node-kit/index.ts",
+    "./run-end": "./src/run-end.ts"
   },
   "dependencies": {
     "@latch/protocol": "workspace:*",

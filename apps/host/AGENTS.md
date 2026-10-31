@@ -9,21 +9,22 @@ Host 的监听、授权、配置与插件组合根。
 | `src/auth.ts`、`presence*.ts`、`launch-trust.ts`、`agent-probes.ts`、`audit.ts`、`policy.ts`、`egress.ts`、`risk.ts`、`paths.ts` | 设备与登记；本机确认与理由；审计；`policy.json`；出站策略；风险分级；路径与 `latchCodeRoot()` |
 | `src/host-state.ts`、`crypto.ts`、`identity.ts`、`hub.ts`、`session-meta.ts`、`prompt-queues.ts`、`questions.ts`、`personal-*.ts`、`config.ts`、`providers.ts` | Host 状态与锁、加密、会话路由及回执、个人助手、配置与插件（`plugin-packages.ts`） |
 | `src/plugins/<种类>/<id>/` | 内置插件：`providers/{openai-compatible,anthropic,demo}`（共用 `http.ts`）、`tools/{workspace-files,safe-tools}`、`standard` |
-| `scripts/` | 启停、CLI、桌面启动与构建；`build-files.ts` 构建只读目录组件 |
-| `test/` | Vitest；Host 夹具在 `test/helpers/host.ts` |
+| `scripts/` | 启停、CLI、桌面启动与构建（`build-files.ts`、`build-terminal.ts`） |
+| `test/` | Host 夹具在 `test/helpers/host.ts` |
 
 环境 node。
 
 不变量：
 
-- 请求上下文只来自监听入口：从不读取代理请求头（`forwarded`、`x-forwarded-*` 等），入口类别、来源与凭据形式由接受连接的 `ListenerContext` 决定（`test/server.test.ts`）。
+- 请求上下文只来自监听入口：从不读取代理请求头，入口类别、来源与凭据形式由接受连接的 `ListenerContext` 决定（`test/server.test.ts`）。
 - 先审计再执行：授予或执行权限的操作先写审计，写入失败就不执行；撤销、拒绝、取消、删除、移除权限与收紧策略从不因审计失败受阻，响应改带 `x-latch-audit: failed`。审计 detail 只含 ID、哈希、枚举、布尔与计数（`test/server.test.ts`）。
-- 出站只经注入的 `fetch`：内置模型协议只用 Host 传入的 `fetch`，只发往预置或已确认的地址并经出站策略；密钥只发往保存时绑定的源与路径（`test/providers.test.ts`）。
+- 出站只经注入的 `fetch`：内置模型协议只发往预置或已确认的地址并经出站策略；密钥只发往保存时绑定的源与路径（`test/providers.test.ts`）。
 - Standard 由 `classifyStandardCall` 分级；`requiresApproval` 不能降级，未列工具（含插件工具）、异常或未知值均按 R2（`test/risk.test.ts`）。
 - 插件目录只用 `@latch/sdk`、`@latch/protocol`、本目录与种类目录下的共用文件，不导入 Host 或其他插件目录；只有 `standard` 用 `@latch/core`（`.oxlintrc.json`）。
-- 程序目录由 `latchCodeRoot()` 定位仓库根，不随进程的项目目录变化；规则与离线项目校验的启动上下文见 [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md#路径与项目目录)。
+- 程序目录由 `latchCodeRoot()` 定位仓库根，不随进程的项目目录变化；规则见 [ARCHITECTURE](../../docs/ARCHITECTURE.md#路径与项目目录)。
 - 项目变更与启动串行，撤销和收紧仍可并行；旧会话保留冻结目录（`test/project-regressions.test.ts`）。只读分支规则见 [BRANCHES.md](../../docs/BRANCHES.md)。
 - 原生确认只由本机设备签名批准，仍经 PresenceService；首次启动信任绑定完整指纹和项目目录，规则见 ARCHITECTURE「本机确认服务」。
+- 终端限 `host.sock`、数据范围 `all`，环境只经 `terminalEnvironment`（[TERMINAL.md](../../docs/TERMINAL.md)）。
 - 根 `dist/` 构建拒绝测试代码（`test/security.test.ts`）。
 - `src/paths.ts`、`host-state.ts`、`env.ts` 只用可擦除语法（`tsconfig.strip.json`），供 Vite 与 Vitest 配置直接加载。
 - 附件字节只进私有存储，消息与 SSE 只存引用；上传逐块复查设备，下载句柄绑定设备（`test/attachment-routes.test.ts`）。

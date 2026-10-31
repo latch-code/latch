@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { AppError } from '@latch/sdk'
 import type { TaskSummary } from '@latch/protocol'
 import { writeFileAtomic } from '@latch/core/node-kit'
+import { runEndSchema } from '@latch/core/run-end'
 import { SESSION_FOLDER_NAME } from './session-folders.ts'
 
 export const SESSION_META_FILE = 'sessions-meta.json'
@@ -41,6 +42,7 @@ const cancelReceiptSchema = z.object({
   runId: runIdText.optional(),
   outcome: z.enum(['stopped', 'ended']),
   status: z.enum(TASK_STATUSES).optional(),
+  runEnd: runEndSchema.optional(),
   at: isoTime,
 })
 const configReceiptSchema = z.strictObject({

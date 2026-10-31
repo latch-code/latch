@@ -107,6 +107,8 @@ function needsOf(path: string, projects: readonly TestProject[]): Need[] | undef
   const project = projects.find(item => path.startsWith(`${item.dir}/`))
   if (project) return ['knip', `project:${project.name}`]
 
+  // The terminal component's own suite runs in the Host's project.
+  if (path === 'native/macos/LatchTerminal.swift') return ['build', 'project:@latch/host']
   if (path.startsWith('native/')) return ['build', 'presence']
   if (path.startsWith('apps/desktop/')) return ['knip', 'project:@latch/desktop', 'build', 'electron']
   if (path.startsWith('apps/web/')) {

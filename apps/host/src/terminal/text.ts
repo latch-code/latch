@@ -1,6 +1,7 @@
 // Terminal output as plain text: for 「加入对话」, which hands an agent the selection or the last lines, and for finding
 // local services in the output. Escape sequences go, carriage returns and line erases are applied as a terminal shows
 // them, and the result passes through redactLineSecrets and redactSecrets before it leaves the Host.
+import type { TerminalText } from '@latch/protocol'
 import { redactSecrets } from '@latch/core/node-kit'
 import { redactLineSecrets } from './line-secrets.ts'
 
@@ -193,20 +194,6 @@ export function plainLines(text: string): string[] {
   }
   if (line.length > 0 || wrapped !== '') commit()
   return lines
-}
-
-export interface TerminalText {
-  text: string
-  lines: number
-  /** Older lines or characters were left out to stay within the limits. */
-  truncated: boolean
-  /** Something was replaced because it holds or looks like a secret. */
-  redacted: boolean
-  /**
-   * Something was replaced, or the text still looks risky. Redaction is best effort: the client shows the exact text
-   * before it is attached, and warns on this. It blocks nothing.
-   */
-  mayContainSecret: boolean
 }
 
 /** A long unbroken run of mixed characters with little repetition, as a key's body is; not a hash, path or identifier. */

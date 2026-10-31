@@ -1,5 +1,14 @@
 import { setTimeout as delay } from 'node:timers/promises'
-import type { Approval, HarnessInfo, HarnessSource, SessionPermission, TaskDetail, TaskSummary } from '@latch/protocol'
+import type {
+  Approval,
+  HarnessInfo,
+  HarnessSource,
+  KeepWaitingResult,
+  RunEnd,
+  SessionPermission,
+  TaskDetail,
+  TaskSummary,
+} from '@latch/protocol'
 import {
   AppError,
   type HarnessDriver,
@@ -16,6 +25,7 @@ import {
 import { RUN_ID, SessionMetaStore, type SessionReceipts } from './session-meta.ts'
 import { BranchReader } from './branch-reader.ts'
 import { projectIdOf, type LifecycleEvent, type SessionLifecycle } from './session-lifecycle.ts'
+import { RunSilence, SILENCE_THRESHOLDS, type LiveRun } from './run-silence.ts'
 
 /**
  * `harnessId` is Host-only. `workspaceId` and `folders` reach only drivers that declare `projectFolders: 'all'`; the
@@ -60,6 +70,8 @@ export interface HubOptions {
   now?: () => number
   /** Told when an announced run settles and when a session is archived or deleted. */
   lifecycle?: SessionLifecycle
+  /** Silence thresholds other than the defaults, for tests. */
+  silenceThresholds?: typeof SILENCE_THRESHOLDS
 }
 
 interface Entry {
@@ -122,6 +134,30 @@ function levelFor(source: HarnessSource): 'L1' | 'L3' {
   return source === 'builtin' ? 'L1' : 'L3'
 }
 
+/**
+ * How a run ended, for what can be read without opening a session's content: the list and a cancel receipt. What was
+ * running is a command's text, and it stays in the session's detail.
+ */
+export function runEndOutline({ reason, at, unknownResults, unknownResultsTruncated }: RunEnd): RunEnd {
+  return {
+    reason,
+    at,
+    ...(unknownResults?.length ? { unknownResultCount: unknownResults.length } : {}),
+    ...(unknownResultsTruncated ? { unknownResultsTruncated } : {}),
+  }
+}
+
+/** A list entry: the list can be read without opening a session's content, so what a run is running stays in its detail. */
+function listed(task: TaskSummary): TaskSummary {
+  const entry = task.runEnd ? { ...task, runEnd: runEndOutline(task.runEnd) } : task
+  if (!entry.live) return entry
+  const { commandName: _commandName, unrecognized, ...live } = entry.live
+  return {
+    ...entry,
+    live: { ...live, ...(unrecognized ? { unrecognized: { count: unrecognized.count, at: unrecognized.at } } : {}) },
+  }
+}
+
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
@@ -145,6 +181,7 @@ export class HarnessHub implements Bridge {
   private readonly notelessPrompts = new Set<string>()
   private readonly log: (message: string) => void
   private readonly branches: BranchReader
+  private readonly silence: RunSilence
   private closing?: Promise<void>
 
   private constructor(
@@ -157,6 +194,17 @@ export class HarnessHub implements Bridge {
       changed: () => {
         if (!this.closing) this.emit()
       },
+    })
+    this.silence = new RunSilence({
+      now: options.now ?? Date.now,
+      ...(options.silenceThresholds ? { thresholds: options.silenceThresholds } : {}),
+      runs: () => this.members().flatMap(member => this.liveOf(member)),
+      reportsRuns: sessionId => {
+        const owner = this.routes.get(sessionId)
+        const bridge = owner ? this.member(owner)?.bridge : undefined
+        return !bridge || bridge.liveRuns !== undefined
+      },
+      changed: sessionId => this.emit(sessionId),
     })
   }
 
@@ -199,6 +247,7 @@ export class HarnessHub implements Bridge {
         if (sessionId && !this.claim(driver.id, sessionId)) return
         this.emit(sessionId)
         if (sessionId && entry.bridge) this.readRun(entry.bridge, sessionId)
+        if (sessionId) this.silence.check()
       })
       await bridge.start()
       // close() or detach() ran while this driver was starting; it was never visible, so retire it here.
@@ -342,6 +391,7 @@ export class HarnessHub implements Bridge {
 
   close(): Promise<void> {
     return (this.closing ??= (async () => {
+      this.silence.close()
       const failures: unknown[] = []
       for (const entry of [...this.entries.values()].reverse()) {
         if (!entry.bridge) continue
@@ -370,7 +420,7 @@ export class HarnessHub implements Bridge {
   async listTasks(): Promise<TaskSummary[]> {
     const merged: TaskSummary[] = []
     for (const [member, tasks] of await this.discover()) {
-      for (const task of tasks) if (this.routes.get(task.id) === member.driver.id) merged.push(this.present(member.driver.id, task))
+      for (const task of tasks) if (this.routes.get(task.id) === member.driver.id) merged.push(listed(this.present(member.driver.id, task)))
     }
     return merged.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
   }
@@ -511,6 +561,15 @@ export class HarnessHub implements Bridge {
     const cancelled = await cancelling
     await this.readRunNow(member.bridge, sessionId)
     return cancelled
+  }
+
+  /** 「继续等」: asks later about this run's silence; nothing else about the run changes. */
+  async keepWaiting(sessionId: string, input: { runId: string; thresholdMs: number }): Promise<KeepWaitingResult> {
+    const member = await this.route(sessionId)
+    const run = await this.liveRun(member, sessionId)
+    const result = this.silence.keepWaiting(run, input.thresholdMs, input.runId)
+    if (result.outcome === 'extended') this.emit(sessionId)
+    return result
   }
 
   /** Asks a run's own driver to cancel it, without waiting for the run to settle. */
@@ -713,16 +772,42 @@ export class HarnessHub implements Bridge {
     return { level: 'L3', enforcer: 'NONE', notes: [PLUGIN_NOTE] }
   }
 
+  private liveOf(member: Member): LiveRun[] {
+    try {
+      return (member.bridge.liveRuns?.() ?? []).filter(run => this.routes.get(run.sessionId) === member.driver.id)
+    } catch (error) {
+      this.log(`Harness ${member.driver.id} 无法报告运行状态：${message(error)}`)
+      return []
+    }
+  }
+
+  /** `liveRuns` is optional, and a driver without it says the same in `TaskSummary.live`. */
+  private async liveRun(member: Member, sessionId: string): Promise<LiveRun | undefined> {
+    if (member.bridge.liveRuns) return this.liveOf(member).find(item => item.sessionId === sessionId)
+    const live = (await member.bridge.listTasks()).find(task => task.id === sessionId)?.live
+    return live && typeof live.lastEventAt === 'string' ? { sessionId, live } : undefined
+  }
+
   private present(harnessId: string, summary: TaskSummary): TaskSummary {
     if (summary.personal) this.rememberPersonal(summary.id, summary.personal)
     // Only the Host makes a session's own folder: a driver's claim is dropped.
-    const { pinned: _pinned, archived: _archived, level: _level, sessionFolder: _sessionFolder, forkOf: _forkOf, runId, ...rest } = summary
+    const {
+      pinned: _pinned,
+      archived: _archived,
+      level: _level,
+      sessionFolder: _sessionFolder,
+      forkOf: _forkOf,
+      runId,
+      live,
+      ...rest
+    } = summary
     const meta = this.meta.get(summary.id)
     const personal = this.personalOf(summary.id)
     return this.branches.decorate({
       ...rest,
       // A run ID a cancel could not carry is left out, so the page sends a plain stop rather than one the Host refuses.
       ...(typeof runId === 'string' && RUN_ID.test(runId) ? { runId } : {}),
+      ...(live && typeof live.lastEventAt === 'string' ? { live: this.silence.evaluate(summary.id, live) } : {}),
       harnessId,
       level: this.levelOf(harnessId),
       ...(this.entries.get(harnessId)?.driver.projectFolders !== 'all' ? { folderAccess: 'primary' as const } : {}),
