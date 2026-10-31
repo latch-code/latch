@@ -25,9 +25,9 @@ electron-main 环境：CommonJS，不导入 TypeScript 源码。运行时只依�
 - 文件操作只收顶层页面的会话引用或句柄（`files.protocolVersion: 2` 另收项目/Harness）。Host 先裁决并审计，主进程复查普通文件、白名单与文件头后只调 `shell.openPath`、`previewFile` 或 `showItemInFolder`，不开目录或应用。页面只转发会话/项目的 resolve/search/list 与句柄内容/meta，`Origin: null` 拒绝。见 [ARCHITECTURE.md](../../docs/ARCHITECTURE.md#会话文件)、`test/desktop-files.test.ts`。
 - 只经 `host.json` + `host.sock` 找到并核对 Host，不经环境变量或参数传 URL 与凭据。`host.cjs` 镜像 `apps/host/src/host-state.ts` 的检查，两边同改。
 - 原生确认只收票据 ID，主进程取 Host 预览、验哈希并显示系统 sheet 后签名；批准路由对页面封闭，默认取消，共用对话框门禁。
-- 预览标签（`browser.cjs`）不可信：按项目内存分区、无 preload 与 Node，拒绝权限、下载、JS 对话框、打印与新窗口，请求到不了 Host；文件面板等例外见 [PREVIEW-BROWSER.md](../../docs/PREVIEW-BROWSER.md)。
+- 预览标签（`browser.cjs`）不可信：按项目内存分区、无 preload 与 Node，拒绝权限、下载、JS 对话框、打印与新窗口，请求到不了 Host；文件面板等另有例外。
 - 构建不含测试代码（TESTING.md）。
 
-先读 [STREAMING.md](../../docs/STREAMING.md)（转发与续期）与 [ARCHITECTURE.md](../../docs/ARCHITECTURE.md)。
+先读 [STREAMING.md](../../docs/STREAMING.md)（转发）与 [ARCHITECTURE.md](../../docs/ARCHITECTURE.md)。
 
 - 仅 `POST /link/api/attachments` 有界流式上传，不在主进程缓存字节；JSON 限 1 MiB，插件草稿 8 MiB + 64 KiB（[ATTACHMENTS.md](../../docs/ATTACHMENTS.md)、`test/desktop-uploads.test.ts`）。

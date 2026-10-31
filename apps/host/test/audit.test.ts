@@ -380,6 +380,26 @@ describe('audit chain', () => {
     await expect(log.append({ action: 'task.cancelled', actor, detail: { sessionId: 'task-1' } })).resolves.toMatchObject({ seq: 1 })
   })
 
+  it.each(['-', '_'])('records an attachment whose random id starts with %s, and the log still verifies', async first => {
+    const path = directory()
+    const log = await openLog(path)
+    const actor = { deviceId, listener: 'loopback-tcp', via: 'http' } as const
+    const attachmentId = first + 'a'.repeat(21)
+    const detail = { attachmentId, contentHash: hash('c'), bytes: 1, type: 'image' } as const
+    await log.append({ action: 'attachment.add', actor, target: attachmentId, detail })
+    await log.append({ action: 'attachment.view', actor, target: attachmentId, detail })
+    expect(await verifyAuditFile(join(path, 'audit.jsonl'))).toMatchObject({ ok: true, records: 2 })
+  })
+
+  it('accepts a leading dash or underscore only in the shape of a random id', async () => {
+    const log = await openLog(directory())
+    const actor = { listener: 'unix', via: 'cli' } as const
+    for (const target of ['-rf', `-${'a'.repeat(22)}`, `_${'a'.repeat(20)}`, `-${'a'.repeat(20)}.`])
+      await expect(log.append({ action: 'task.cancelled', actor, target, detail: { sessionId: 's' } }), target).rejects.toMatchObject({
+        code: 'audit-detail-invalid',
+      })
+  })
+
   it('leaves no stray files behind on a clean run', async () => {
     const { path } = await populated()
     expect(readdirSync(path)).toEqual(['audit.jsonl'])

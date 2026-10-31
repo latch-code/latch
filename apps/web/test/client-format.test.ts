@@ -3,6 +3,7 @@ import {
   absoluteTime,
   argumentView,
   basename,
+  currencyAmount,
   dayClockTime,
   formatDuration,
   formatElapsed,
@@ -146,5 +147,14 @@ describe('file sizes', () => {
       '2 MB',
       '1.2 GB',
     ])
+  })
+})
+
+describe('currency amounts', () => {
+  it('formats in the currency it was given, and refuses a code that is not one', () => {
+    expect(currencyAmount(1.5, 'USD')).toBe(currencyAmount(1.5, 'USD'))
+    expect(currencyAmount(1.5, 'USD')).toContain('1.50')
+    expect(currencyAmount(1.5, 'EUR')).toContain('€')
+    expect(() => currencyAmount(1, 'not a currency')).toThrow(RangeError)
   })
 })

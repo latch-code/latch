@@ -5,8 +5,8 @@ import { openRepository } from './repository.ts'
 
 /**
  * `pnpm check:agents`: structural facts about the agent instructions, skills and docs/ — byte budgets, CLAUDE.md
- * imports, links, the paths and tests the instructions name, skill links and the docs' front matter. It never checks
- * wording. Exits 1 on any problem.
+ * imports, links, the paths and tests the instructions name, skill links and the docs' front matter — and what must not
+ * be committed there (`doc-hygiene.ts`). The only wording it looks at is that list of blocked phrases. Exits 1 on any problem.
  */
 const root = fileURLToPath(new URL('..', import.meta.url))
 const repo = await openRepository(root)

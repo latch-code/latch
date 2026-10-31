@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { affectedDocs, BUDGET, checkAgentDocs, headingAnchors, readDocSources, skillLinkTarget } from '../scripts/agent-docs.ts'
+import { checkDocHygiene, wordHash } from '../scripts/doc-hygiene.ts'
 import { directoriesOf, type Repository } from '../scripts/repository.ts'
 
 const DOC = '---\ndescription: 测试\nsources:\n  - src\n---\n# 文档\n\n## 第一节\n'
@@ -29,6 +30,7 @@ function repository(contents: Record<string, string>, options: { links?: Record<
 /** A checkout that passes every check; each test changes one thing. */
 function valid(overrides: Record<string, string | undefined> = {}): Record<string, string> {
   const base: Record<string, string> = {
+    '.gitignore': '/dist/\n/docs/security/\n',
     'AGENTS.md': '# AGENTS.md\n\n| 路径 | 职责 |\n| --- | --- |\n| `apps/app/` | 应用 |\n\n见 [测试](docs/TESTING.md#第一节)。\n',
     'CLAUDE.md': '@AGENTS.md\n\n## Claude Code\n',
     'apps/app/AGENTS.md': '# app\n\n- 入口 `src/main.ts`（`test/main.test.ts#main > starts`）。\n',
@@ -47,6 +49,56 @@ function valid(overrides: Record<string, string | undefined> = {}): Record<strin
   }
   return merged
 }
+
+describe('document hygiene checks', () => {
+  const blocked = new Set([wordHash('zorblax'), wordHash('quux engine room'), wordHash('虚词')])
+
+  it('reports a tracked file in the local-only directory, also through the agent checks, whether or not the directory exists on disk', async () => {
+    const problems = await checkAgentDocs(repository(valid({ 'docs/security/NOTES.md': '# x\n' })))
+    expect(problems).toEqual(['docs/security/NOTES.md：这个目录只留在本机，不能被 Git 跟踪'])
+  })
+
+  it('requires the ignore line itself, and accepts it with CRLF line ends', async () => {
+    const missing = ['.gitignore：缺少 /docs/security/ 这一行']
+    expect(await checkDocHygiene(repository(valid({ '.gitignore': undefined })))).toEqual(missing)
+    expect(await checkDocHygiene(repository(valid({ '.gitignore': '# /docs/security/\n/docs/security\n' })))).toEqual(missing)
+    expect(await checkDocHygiene(repository(valid({ '.gitignore': '/dist/\r\n/docs/security/\r\n' })))).toEqual([])
+  })
+
+  it('reports a file under docs/ that is not a listed document', async () => {
+    expect(await checkDocHygiene(repository(valid({ 'docs/NOTES.md': DOC, 'docs/sub/TESTING.md': DOC })))).toEqual([
+      'docs/NOTES.md：docs/ 只放机制文档；新增文档要写进 scripts/doc-hygiene.ts 的列表',
+      'docs/sub/TESTING.md：docs/ 只放机制文档；新增文档要写进 scripts/doc-hygiene.ts 的列表',
+    ])
+  })
+
+  it('finds a blocked phrase across case, spacing and line ends, and Chinese inside a longer run', async () => {
+    const problems = await checkDocHygiene(
+      repository(
+        valid({
+          'README.md': 'see ZORBLAX here\n',
+          'apps/app/AGENTS.md': 'the Quux\n  engine,  room\n',
+          'docs/TESTING.md': `${DOC}这是虚词吗\n`,
+        }),
+      ),
+      blocked,
+    )
+    expect(problems).toEqual([
+      'README.md：含有不应写进仓库的词「zorblax」',
+      'apps/app/AGENTS.md：含有不应写进仓库的词「quux engine room」',
+      'docs/TESTING.md：含有不应写进仓库的词「虚词」',
+    ])
+  })
+
+  it('leaves a phrase alone when it only appears in part, or outside the scanned files', async () => {
+    const contents = valid({
+      'README.md': 'zorblaxes and the quux engine\n',
+      'apps/app/README.md': 'zorblax\n',
+      'src/index.ts': '// zorblax\n',
+    })
+    expect(await checkDocHygiene(repository(contents), blocked)).toEqual([])
+  })
+})
 
 describe('agent instruction checks', () => {
   it('accepts instructions within budget whose CLAUDE.md, links, paths and cited tests are all in place', async () => {

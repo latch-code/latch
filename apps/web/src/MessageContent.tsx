@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import { HighlightedCode } from './preview/HighlightedCode.tsx'
 import { MathFormula } from './preview/MathFormula.tsx'
+import { useSeen } from './preview/viewportGate.ts'
 import { Diagram } from './preview/Diagram.tsx'
 import type { FrameInput } from './preview/types.ts'
 import { normalizeMathDelimiters, restrictInlineMath } from './preview/math.ts'
@@ -68,16 +69,24 @@ const safeUrl: UrlTransform = (value, key) => {
 
 type CopyResult = { status: 'copied' | 'failed'; value: string } | null
 
+/** Lines a long block shows: its first ones once closed, its newest ones while they arrive, with a line saying so. */
+const COLLAPSED_LINES = 18
+const TAIL_LINES = COLLAPSED_LINES - 1
+
 const CodeBlock = memo(function CodeBlock({ code, language, closed = true }: { code: string; language?: string; closed?: boolean }) {
   const [expanded, setExpanded] = useState(false)
   const [copyResult, setCopyResult] = useState<CopyResult>(null)
   const [copying, setCopying] = useState(false)
   const codeId = useId()
+  const pre = useRef<HTMLPreElement>(null)
+  const seen = useSeen(pre)
   const mounted = useRef(false)
   const resetTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   const lines = useMemo(() => (code ? code.split('\n').length - (code.endsWith('\n') ? 1 : 0) : 0), [code])
   const hidden = useMemo(() => hasHiddenCharacters(code), [code])
-  const isLong = lines > 18
+  const isLong = lines > COLLAPSED_LINES
+  const collapsed = isLong && !expanded
+  const tail = collapsed && !closed
   const copied = copyResult?.status === 'copied' && copyResult.value === code
   const failed = copyResult?.status === 'failed'
 
@@ -107,7 +116,7 @@ const CodeBlock = memo(function CodeBlock({ code, language, closed = true }: { c
   }
 
   return (
-    <div className={`message-code${isLong && !expanded ? ' is-collapsed' : ''}`}>
+    <div className={`message-code${collapsed ? ' is-collapsed' : ''}${closed ? '' : ' is-open'}${tail ? ' is-tail' : ''}`}>
       <div className="message-code-toolbar">
         <span className="message-code-language">{language || '代码'}</span>
         {hidden && (
@@ -129,9 +138,16 @@ const CodeBlock = memo(function CodeBlock({ code, language, closed = true }: { c
           )}
         </button>
       </div>
-      <pre id={codeId} tabIndex={0} aria-label={language ? `${language} 代码` : '代码内容'}>
+      {tail && <p className="message-code-tail-note">前 {lines - TAIL_LINES} 行已收起</p>}
+      <pre ref={pre} id={codeId} tabIndex={0} aria-label={language ? `${language} 代码` : '代码内容'}>
         <code>
-          <HighlightedCode code={code} language={language} enabled={closed} />
+          <HighlightedCode
+            code={code}
+            language={language}
+            enabled={seen}
+            streaming={!closed}
+            {...(tail ? { tail: TAIL_LINES } : collapsed ? { colourLines: COLLAPSED_LINES + 1 } : {})}
+          />
         </code>
       </pre>
       {isLong && (
@@ -172,13 +188,22 @@ function textOf(node: { type: string; value?: string; children?: unknown[] } | u
 const ReplySettled = createContext(true)
 const SourceText = createContext('')
 const FrameRenderer = createContext<((input: FrameInput) => ReactNode) | undefined>(undefined)
+/** Whether the fence opening at `start` has closed. Inside a list item or a quote, every line of it carries that container's prefix. */
+function fenceClosed(source: string, start: number): boolean {
+  const block = source.slice(start)
+  const marker = /^ {0,3}(`{3,}|~{3,})[^\n]*\n/u.exec(block)?.[1]
+  if (!marker) return false
+  const container = source
+    .slice(source.lastIndexOf('\n', start - 1) + 1, start)
+    .replace(/[^>\s]/gu, ' ')
+    .replace(/> /gu, '> ?')
+  return new RegExp(`\\n${container} {0,3}${marker[0]}{${marker.length},}[^\\S\\n]*(?:\\n|$)`, 'u').test(block)
+}
 function ClosedCode({ code, language, start }: { code: string; language?: string; start?: number }) {
   const renderFrame = useContext(FrameRenderer)
   const source = useContext(SourceText),
     settled = useContext(ReplySettled)
-  const block = start === undefined ? '' : source.slice(start)
-  const marker = /^ {0,3}(`{3,}|~{3,})[^\n]*\n/u.exec(block)?.[1]
-  const closed = settled || Boolean(marker && new RegExp(`\\n {0,3}${marker[0]}{${marker.length},}[^\S\n]*(?:\\n|$)`, 'u').test(block))
+  const closed = settled || (start !== undefined && fenceClosed(source, start))
   if (language === 'mermaid' && closed && renderFrame) return <Diagram key={code} source={code} renderFrame={renderFrame} />
   return <CodeBlock code={code} language={language} closed={closed} />
 }

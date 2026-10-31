@@ -22,6 +22,12 @@ export function pdfScale(width: number, height: number, available: number, zoom:
   }
   return minimum
 }
+/**
+ * The first page still in view. Scroll positions snap to whole pixels while page starts are fractional, so scrolling to
+ * a page can stop just short of its start with the page before it reaching less than a pixel into view; that page is over.
+ */
+export const pdfPageAt = <Item extends { end: number }>(items: readonly Item[], scrollTop: number): Item | undefined =>
+  items.find(item => item.end - scrollTop > 1)
 export function pdfZoomKey(event: {
   key: string
   metaKey: boolean

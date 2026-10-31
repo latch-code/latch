@@ -4,6 +4,7 @@ node_modules/
 /release/
 /out/
 /.runtime*/
+/docs/security/
 /work/
 /test-results/
 # Vitest reports and attachments (json, junit, html, blob, attachments).

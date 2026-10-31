@@ -92,7 +92,6 @@ export class ReadingPositionController {
   layout(viewport: ReadingViewport): void {
     const position = this.position
     if (!this.ready || !position) return
-    const geometry = viewport.measure()
     if (position.mode === 'read' && this.readerActive) {
       // Do not counteract a drag, touch fling, or wheel sequence during layout.
       // Keep the last accepted scroll measurement until its native event arrives;
@@ -100,19 +99,19 @@ export class ReadingPositionController {
       this.capture(viewport)
       return
     }
-    const target =
-      position.mode === 'follow'
-        ? bottom(geometry)
-        : position.anchor
-          ? (viewport.positionFor(position.anchor) ?? position.top)
-          : position.top
+    // Before measuring: finding the anchor can change the extent.
+    const anchored = position.mode === 'read' && position.anchor ? viewport.positionFor(position.anchor) : null
+    const geometry = viewport.measure()
+    const target = position.mode === 'follow' ? bottom(geometry) : (anchored ?? position.top)
     const bounded = Math.max(0, Math.min(target, bottom(geometry)))
     if (!close(geometry.top, bounded)) {
       viewport.write(bounded)
       this.writtenTop = viewport.measure().top
     }
     this.previous = viewport.measure()
-    this.capture(viewport)
+    // The anchor stands until the reader moves: what is at the top now may be a turn that has yet to take its height.
+    if (anchored === null) this.capture(viewport)
+    else position.top = this.previous.top
   }
 
   input(direction: -1 | 0 | 1, viewport: ReadingViewport): void {
@@ -254,8 +253,23 @@ export function useReadingPosition({
   const controller = controllerRef.current
   const touchY = useRef<number | null>(null)
 
-  const viewport = useMemo<ReadingViewport>(
-    () => ({
+  const viewport = useMemo<ReadingViewport>(() => {
+    let drawn: Element[] = []
+    /**
+     * A far turn is a placeholder of a guessed height, so nothing measured through it holds. Draws the row's turn and the
+     * turns under it that the view would show, which also makes the extent true where the view is about to be.
+     */
+    const draw = (row: Element, viewBottom: number) => {
+      const next: Element[] = []
+      for (let turn = row.closest('[data-turn]'); turn; turn = turn.nextElementSibling) {
+        if (!turn.hasAttribute('data-drawn')) turn.setAttribute('data-drawn', '')
+        next.push(turn)
+        if (turn.getBoundingClientRect().bottom >= viewBottom) break
+      }
+      for (const turn of drawn) if (!next.includes(turn)) turn.removeAttribute('data-drawn')
+      drawn = next
+    }
+    return {
       measure: () => {
         const element = containerRef.current
         return { top: element?.scrollTop ?? 0, height: element?.clientHeight ?? 0, extent: element?.scrollHeight ?? 0 }
@@ -267,7 +281,9 @@ export function useReadingPosition({
         const top = container.getBoundingClientRect().top + container.clientTop
         for (const message of content.querySelectorAll<HTMLElement>('[data-message-id]')) {
           const rect = message.getBoundingClientRect()
-          if (rect.height > 0 && rect.bottom > top && rect.top < top + container.clientHeight) {
+          // A row of a turn not drawn measures in full and overflows its placeholder: it is only where the turn is.
+          const end = Math.min(rect.bottom, message.closest('[data-turn]')?.getBoundingClientRect().bottom ?? rect.bottom)
+          if (rect.height > 0 && end > top && rect.top < top + container.clientHeight) {
             return { messageId: message.dataset.messageId!, offset: rect.top - top }
           }
         }
@@ -278,24 +294,24 @@ export function useReadingPosition({
         const content = contentRef.current
         if (!container || !content) return null
         for (const message of content.querySelectorAll<HTMLElement>('[data-message-id]')) {
-          if (message.dataset.messageId === anchor.messageId) {
-            return (
-              container.scrollTop
-              + message.getBoundingClientRect().top
-              - container.getBoundingClientRect().top
-              - container.clientTop
-              - anchor.offset
-            )
-          }
+          if (message.dataset.messageId !== anchor.messageId) continue
+          if (message.getClientRects().length === 0) return null
+          draw(message, message.getBoundingClientRect().top - anchor.offset + container.clientHeight)
+          return (
+            container.scrollTop
+            + message.getBoundingClientRect().top
+            - container.getBoundingClientRect().top
+            - container.clientTop
+            - anchor.offset
+          )
         }
         return null
       },
       write: top => {
         if (containerRef.current) containerRef.current.scrollTop = top
       },
-    }),
-    [],
-  )
+    }
+  }, [])
 
   useLayoutEffect(() => {
     controller.sync(sessionId, ready, containerRef.current && contentRef.current ? viewport : null)

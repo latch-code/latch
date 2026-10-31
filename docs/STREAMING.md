@@ -1,0 +1,347 @@
+---
+description: 流式执行与阅读界面：三段链路、Host 的状态流、客户端的事件流与版本门禁、消息身份、审批与取消、时间与用量、阅读位置、Markdown 与代码渲染。
+sources:
+  - packages/core/src/runtime.ts
+  - packages/core/src/store.ts
+  - packages/sdk/src/bridge.ts
+  - packages/protocol/src/types.ts
+  - packages/harness-acp/src/mapping.ts
+  - packages/harness-acp/src/bridge.ts
+  - packages/core/src/node-kit/timing.ts
+  - apps/host/src/server.ts
+  - apps/host/src/hub.ts
+  - apps/host/src/run-silence.ts
+  - apps/host/src/session-meta.ts
+  - apps/host/src/traffic.ts
+  - apps/web/src/core
+  - apps/web/src/components
+  - apps/web/src/conversation.ts
+  - apps/web/src/MessageContent.tsx
+  - apps/desktop/src/proxy.cjs
+---
+# Latch 流式执行与阅读界面
+
+本文件描述当前源码的实现，是传输、消息投影、重连、审批决定和阅读位置的单一机制参考。核心架构与持久化保证见 [ARCHITECTURE.md](./ARCHITECTURE.md)，扩展契约见 [PLUGIN-DEVELOPMENT.md](./PLUGIN-DEVELOPMENT.md)，ACP Agent 的事件映射见 [HARNESSES.md](./HARNESSES.md)，界面表现见 [DESIGN.md](./DESIGN.md)。
+
+## 三段链路
+
+原生连接设置使用持久请求编号与配置哈希确认结果，页面重试原始内容，超时不生成新编号。设备原生访问状态由 Host 判定；手机当前快照的正文期限只属于当前连接，Mac 管理列表可展示当前 App 打开代次的有效期限。
+
+原生业务 SSE 在 Host 运行代次内使用独立连续序号，保留真实发布状态的有界重放日志，数量与字节分别封顶。它和界面批次 revision 分开：一个批次可有多个不同事件，列表快照更新也不能确认尚未应用的会话正文。客户端只在应用事件后推进选中流游标，换网后在同样的设备与正文窗口校验下接续；淘汰或重启明确要求快照/详情同步。浏览器的现有 revision SSE 保持兼容。
+
+Swift `NativeWorkspace` 将最多 16 个流的已应用 epoch/sequence/revision 加密保存，列表与各会话分别确认；`heartbeat` 和 `resumed` 的注释尾帧也携带游标。`accepts` 不推进进度，调用者应用状态后再 `acknowledge`；确认前复核流的连接代次和正文 lease。窗口过期、旧连接迟到或其他选中会话的事件不确认；缓冲溢出只清除该流的恢复游标并要求 checkpoint，不撤销登记身份。
+
+```text
+Provider.stream             Standard Runtime             Host                   浏览器
+  text 增量 ──────────────> 累计 liveText / 固定消息 ID
+                             notify(sessionId) ────────> 约 40ms 合并
+                                                       detail(sessionId)
+                                                       task-state 全状态 ───> 版本检查后替换
+  finish ─────────────────> 持久化最终消息、工具队列
+                             notify(sessionId) ────────> task-state 全状态 ───> 同一消息行结算
+  工具/审批/取消结算 ──────> 更新真实状态 ──────────────> 同上
+
+  连接重新打开：浏览器 GET snapshot → GET 当前 detail → 版本检查 → 标记已连接
+```
+
+模型流与浏览器状态流的协议不同。Provider 的 `text` 与 `reasoning` 是新增片段；浏览器接收的是带累计正文与思考的完整 `TaskDetail`，不是逐 token 追加事件。工具执行目前返回一次 `{ text }` 结果，没有通用 stdout 流或百分比进度 SDK。
+
+## Host 的状态流
+
+源码：[server.ts](../apps/host/src/server.ts)、[hub.ts](../apps/host/src/hub.ts)、[bridge.ts](../packages/sdk/src/bridge.ts)、[types.ts](../packages/protocol/src/types.ts)。多个 Harness 的变化通知先经 HarnessHub 汇合，再进入下面的合并流程。
+
+客户端用 `GET /link/api/events?sessionId=<当前任务>` 订阅，凭据与其他 API 请求相同（浏览器为设备 Cookie，桌面端由主进程附加），设备需要「查看」权限。Host 打开流后先发送一个 `refresh`。不传 sessionId 时只接收整体或列表变化，不接收其他任务正文。这里的“仅选中任务”是订阅与带宽策略，不是任务级权限控制；任何有「查看」权限的设备都可以读取此 Host 的全部任务。
+
+`Bridge.subscribe` 的通知进入待处理集合。Host 自首次待发通知起等待约 40ms，将同一任务的多次变化合并；一轮读取尚未完成时不并发执行另一轮，期间新增通知安排下一轮。该间隔不是严格帧率，也不保证每个中间状态都会发送。
+
+| SSE 事件 | 发送条件 | 客户端动作 |
+| --- | --- | --- |
+| `task-state` | 某任务变化，且此连接选中了该任务 | 校验事件和版本，替换当前 detail；同时合并该任务的摘要和审批 |
+| `tasks-invalidated` | 未选中的任务摘要或审批变化 | HTTP 只同步 snapshot；不逐 token 拉取当前 detail |
+| `refresh` | 设备、配置等整体变化，流刚打开，或读取任务失败后的回退 | HTTP 同步 snapshot 与选中 detail |
+| `host-state` | Host 宣布它即将不再应答：`stopping`（Host 关闭时，每条流的最后一帧）或 `sleeping`（电脑即将睡眠）；以及电脑醒来后的 `awake` | 见下文「Host 宣布的停止与睡眠」 |
+
+`task-state` 形状如下，正文省略：
+
+```ts
+{
+  type: 'task-state',
+  instanceId: string,
+  revision: number,
+  sessionId: string,
+  hostTime?: string,
+  detail: {
+    summary, messages, approvals, liveText, cursor,
+    activity?, liveMessageId?, liveReasoning?, liveReasoningStartedAt?, liveReasoningMs?,
+    runStartedAt?, runWaitMs?, runWaitingSince?, lastOutputAt?, usageReport?,
+    plan?, config?, permission?,
+    sync: { instanceId, revision, hostTime? }
+  }
+}
+```
+
+`hostTime` 是 Host 发出这一帧时自己的时钟（ISO 时间），同时写在事件与 `detail.sync` 上；快照（`GET /link/api/snapshot`）也带 `hostTime`。`GET` 单个会话的 detail 不带它，所以两台设备同时读到的 detail 仍完全相同。时间字段的含义见下文「时间与用量」。
+
+每个实例生成一个 `instanceId`，每次通知递增内存 `revision`。合并会跳过中间 revision，同一轮不同任务可以共享一个传输 revision；它不是连续增量日志。每帧的 SSE `id` 就是这个 revision，客户端不使用它。`TaskDetail.cursor` 则是 Driver 的状态版本，Standard 中随持久提交增加，不能用于区分每个内存文本片段。
+
+每条连接保存 `lastSentRevision`，丢弃比它更旧的待发事件，避免慢外部 Bridge 的旧 flush 在新订阅建立后倒序送达。同 revision 的不同事件仍允许发送。
+
+`host-state` 不参与 revision 顺序，也不带 SSE `id`，形状为 `{ type: 'host-state', instanceId, state: 'stopping' | 'sleeping' | 'awake', reason?: 'restart' | 'update' | 'sleep' | 'shutdown', retryAfter?: 秒, at }`；`stopping` 与 `sleeping` 必带原因与 `retryAfter`。谁报告、各原因的默认 `retryAfter` 见 [ARCHITECTURE.md](./ARCHITECTURE.md)「Host 的生命周期」。Host 关闭时先向每条仍被接受的流写出 `stopping`，再结束这些流，最多等 0.5 秒让最后一帧发出；`awake` 之后另发一次 `refresh`。
+
+某个会话的 detail 读取失败时，本轮只向各连接发送一次 `refresh`。Host 每 15 秒发送注释心跳。每次推送与心跳前，Host 检查打开该流的凭据是否仍会被接受，不再被接受时结束该流。若连接已积压超过 256 KiB，断开该慢连接，让客户端重新同步。这是积压保护，不是单个事件或总内存的硬上限。每个 task-state 仍包含该任务完整 messages 与累计 liveText，负载会随会话历史增长；40ms 合并减少发送次数，并没有消除长历史的序列化和带宽成本。同一轮发给多条连接的 task-state 只序列化一次。
+
+### 流量计数
+
+Host 从启动起计数自己发出的字节（[traffic.ts](../apps/host/src/traffic.ts)），作为以后改进同步方式时的基线，只在内存中，重启清零：
+
+- **计什么。** 事件流每一帧写出的文本（`task-state`、`tasks-invalidated`、`refresh`、`host-state` 与心跳），以及客户端重新同步时读取的快照（`GET /snapshot`）与会话详情（`GET /tasks/:id`）的响应体。HTTP 头、分块编码与 TLS 记录不计入：同一份内容经 TLS 发出时，线上字节还要多出记录头与握手。
+- **怎么分。** 每一类有次数、字节数与大小分布（≤256 B、1、4、16、64、256 KiB、1、4 MiB 与更大，共 9 档）；每个会话有点名它的帧（`task-state`、`tasks-invalidated`，所有连接合计）与它的详情响应；每条事件流有入口类别、打开与关闭时间、帧数（含心跳）、字节数与心跳数。会话最多保留 1000 个（最近计入的），已关闭的事件流保留最近 100 条。
+- **只有数字。** 计数只含次数、字节、时间、入口类别、Host 内的连接序号与会话 ID，不含正文、标题、设备 ID 或设备名。
+- **谁能看。** `GET /link/api/traffic` 只读，需要 `admin`，或 `host.sock` 上的匿名命令行；`pnpm latch traffic` 打印摘要（`--json` 打印原样）。
+
+## 客户端：事件流、凭据与版本门禁
+
+设置切换的未知结果按会话保留原始请求；模型菜单和会话信息共用同一道写入门禁，刷新只读取 Host。旧 Host 没有配置回执时，只有真实配置已经读回目标值才解除未知状态，不能把一个仍旧的值当成失败。项目目录失效的确定拒绝则由项目恢复面板承接，保留可编辑草稿；结果未知时不能转成一次新的分叉。实现见 [模型配置](./MODEL-CONFIGURATION.md) 与 [项目恢复](./WORKSPACE-RECOVERY.md)。
+
+提交捕获当前会话或新助手的选择代次。同一页面中的重试按原请求编号保留首次来源，卸载后失效。回执到达前切换过会话时，只结算原请求，不自动选回原会话、清空当前输入或修改当前分叉。普通发送消费原会话的草稿；重新发送旧消息不消费草稿。当前会话被另一设备删除时，选择清空也同时清除对应活动草稿。刷新恢复未知结果时，只有原目标匹配当前输入才恢复文字；其余只恢复原请求卡片和编号。
+
+源码：[useHarness.ts](../apps/web/src/core/useHarness.ts)、[eventStream.ts](../apps/web/src/core/eventStream.ts)、[credentials.ts](../apps/web/src/core/credentials.ts)、[api.ts](../apps/web/src/core/api.ts)、[projection.ts](../apps/web/src/core/projection.ts)。
+
+### 基于 fetch 的事件流
+
+客户端不使用 `EventSource`：`eventStream.ts` 用 `fetch(url, { credentials: 'same-origin', cache: 'no-store' })` 读取同一个 `text/event-stream` 响应，自带解析器处理 CR、LF、CRLF（包括跨数据块的行尾）、多行 `data`、`event`、`id`、注释与字节序标记。这样能看到 HTTP 状态：`401` 不会被当作“断线后无限重试”，而是交给认证处理；桌面端的事件流也经过主进程转发，与其他 API 请求一样。
+
+| 情况 | 行为 |
+| --- | --- |
+| 响应 2xx | 触发 open，之后逐帧派发 `refresh`、`tasks-invalidated`、`task-state`、`host-state` |
+| 连接失败、非 2xx、流结束，或 45 秒没有收到任何字节（含等待响应头的时间；Host 每 15 秒发心跳） | 视为断线，按 1、2、4、8 秒退避，之后每 15 秒重连；浏览器重新联网，或页面重新可见且在线时，跳过剩余等待立即重连 |
+| 浏览器 offline | 断开事件流、取消在途 HTTP，并停止重连，直到浏览器重新联网或页面重新可见且在线 |
+| `401 renewal-required` | 先续期凭据；续期成功后立即重连一次。续期失败、正在等待下一次续期（桌面端页面从不自己续期），或续期后流打开前 Host 仍要求续期，都按退避重连 |
+| 其他 `401` | 按退避重试；每次断线后的快照同步决定进入登记页还是只是暂时失败，页面离开工作区时关闭事件流 |
+| `deferReconnect(ms)` | 放下当前连接，此后每次重连前至少等待 `ms`（与退避取较大者），直到下一条流打开为止 |
+
+事件流 open 不直接标记“已连接”：先完成 HTTP snapshot/detail 同步，确认选择仍有效、事件流仍打开且浏览器在线，`.app-shell` 的 `data-connection` 才变为 `connected`；其他取值为 `connecting`、`reconnecting`、`offline`。网络错误显示重连中；浏览器 offline 时保留已读内容，显示离线。online 或页面重新可见时再同步。`refresh` 与 `tasks-invalidated` 只有在 `instanceId` 与当前 Host 相同且 revision 新于当前 snapshot 时才触发同步；`instanceId` 不同则立即重新同步并重新绑定。
+
+重新建立状态的同步（首次加载与连接页的「重试」、事件流每次打开、重新联网或页面重新可见、续期之后、任一请求发现凭据失效之后、断线时的同步，以及用户点「同步最新状态」、连接状态或横幅里的「重试」时的 `resync`）发布快照时，`useHarness` 的 `resyncs` 加一；跟随变化的同步（`refresh` 与 `tasks-invalidated` 事件、`task-state` 推送、用户操作之后的 `refresh`、选择会话）不加，排在一起的请求只要有一个是重新建立就算重新建立。工作区把 `resyncs` 作为外壳（侧栏与图标栏）的纪元交给 `LiveChanges`，对话区与会话详情的纪元另加打开的会话：计数的淡入、会话行状态的交叉淡化、工具卡的状态过渡这类一次性过渡只为同一纪元里的变化播放，首次加载与重连后的快照同步直接显示新值，切换会话时对话区也直接显示；会话列表跨会话存在，所以打开一个未读会话时它那一行的对勾照常淡出、时间淡入（[DESIGN.md](./DESIGN.md)「界面原语」）。
+
+凭据失效时事件流结束，客户端重连；消息内容按不可信文本显示。
+
+### Host 宣布的停止与睡眠
+
+收到实例与当前 Host 相同、形状正确的 `stopping` 或 `sleeping`（[hostState.ts](../apps/web/src/core/hostState.ts) 校验）时，页面记下这条通告，连接状态变为 `reconnecting`，并以 `retryAfter` 调用 `deferReconnect`：Host 已说明暂时不会应答，所以页面不按 1 秒起的退避猜测，也不在断线时立即请求快照；浏览器重新联网或页面重新可见时照常立即重连一次。横幅标题按通告给出原因与开始时间，替代「连接已中断，正在重连…」：`sleeping` 为「电脑已休眠（22:41 起）」，`restart` 为「电脑上的 Latch 正在重启」，`update` 为「电脑上的 Latch 正在更新」，`shutdown` 为「电脑上的 Latch 已停止（21:03 起）」。重连后的快照同步成功、页面标为 `connected` 时清除通告；收到 `awake` 时清除通告并立即同步。只有连接失败才按通告等待：重连得到 `401` 说明 Host 已经在应答，续期不能解决时页面清除通告，照常请求快照，由快照决定进入登记页（设备被撤销、凭据过期等）还是显示暂时故障，不会停在过时的「电脑已休眠」上。实例不同的通告被忽略。桌面端页面另外显示主进程对 Host 的判断（正在重启、反复崩溃后停止自动重启、已停止、没有响应），Host 停止或反复崩溃后横幅给出「启动 Host」。
+
+### 桌面端的转发与流
+
+桌面端页面加载自 `latch://app/link/`。`latch` 协议注册为支持 fetch 与流式响应，主进程（[proxy.cjs](../apps/desktop/src/proxy.cjs)）把请求经本机 `host.sock` 转发并附加设备凭据，响应体以流的形式回传；页面关闭或取消读取时主进程断开上游连接。因此桌面端与浏览器使用同一份事件流代码。
+
+### 版本门禁
+
+浏览器通过 `ProjectionGuard` 检查三件事：
+
+1. **选择代次**：切换会话、绑定新的 Host 实例或使旧请求失效时，更新 generation。旧 HTTP 请求和旧事件流不能覆盖新选择。
+2. **实例**：SSE/detail 的 sync.instanceId 必须等于当前 HTTP 确认的 Host。重启后的状态不能与旧实例混合。
+3. **版本与来源**：同一选择中，低于已接受 revision 的 detail 被丢弃。相同 revision 时 stream 优先于 HTTP：流可以更新此前的 HTTP 正文，迟到 HTTP 和重复 stream 都不能覆盖已接受的流正文。已经接受带版本状态后，不再接受无版本 detail 回退。
+
+切换会话会取消待处理 HTTP、清除当前 detail、重建带新 sessionId 的事件流。事件 JSON 至少验证事件类型、版本、session ID 与正文的基本形状；它不是对外提供的通用不可信 JSON 导入器。设备被撤销、登记满 30 天或凭据属于别的访问地址时，页面清除任务内容并进入登记页。
+
+snapshot 与 task-state 可能交错。摘要与审批只在 detail.revision 大于或等于 snapshot.revision 时由选中 detail 覆盖；更旧 detail 不得覆盖较新的 snapshot。这个列表合并规则与上述正文来源优先级分开处理，不会把一个任务的 detail 替换到另一个任务上。
+
+**当前没有 WAL、持久事件队列、Last-Event-ID 历史重放或逐事件缺口恢复。** 断线后通过当前快照收敛，不保证客户端看过所有短暂中间状态。SSE 关闭只移除订阅，不取消 run。创建/输入的幂等回执另由 Runtime 持久化，审批决定与取消的回执由 Host 随会话保存（见下文）；浏览器保存的待确认提交用于显式重试，不是自动离线任务队列。
+
+## 消息、审批与取消
+
+源码：[runtime.ts](../packages/core/src/runtime.ts)、[Transcript.tsx](../apps/web/src/components/Transcript.tsx)、[ToolCard.tsx](../apps/web/src/components/ToolCard.tsx)、[MessageRow.tsx](../apps/web/src/components/MessageRow.tsx)、[approvalDecision.ts](../apps/web/src/core/approvalDecision.ts)、[confirmations.ts](../apps/web/src/core/confirmations.ts)。
+
+- 每次模型调用在收到文字前创建 `liveMessageId`。文字只更新内存里的累计 `liveText`，思考更新 `liveReasoning`；正常完成或异常保留部分内容时，最终 assistant 消息沿用该 ID，思考保存在其 `reasoning` 中。detail 不同时暴露同 ID 的 live 与已提交消息。
+- React 按 message.id 渲染，并为消息行设置 `data-message-id`。消息组件比较 ID、正文、状态和角色等字段，未变化的历史行不因每次状态替换而重渲染。
+- 收到完整模型终止事件后，先持久化助手文字和工具批次，再串行执行工具。工具消息使用 `tool:<callId>`，按 `queued → awaiting-approval（若需要）→ running → completed/failed/cancelled` 更新同一行。拒绝不会经过 running。
+- 审批携带 `toolCallId` 时合并进 `tool:<toolCallId>` 对应的工具卡片；旧 Driver 未提供该字段或找不到工具行时，作为独立卡片放在最新一轮的末尾。审批按钮来自 `Approval.options`，缺省为允许一次与拒绝；当前设备能看到哪些按钮由风险等级与设备权限决定（见 [DESIGN.md](./DESIGN.md)）。工具行默认收起（带输出的失败自己展开），展开后显示参数、文件差异与纯文本输出（第一次展开时才渲染）；收起时文件差异作为证据显示在行下。
+- 客户端把消息按回合分组（一条用户消息与回答它的一切，[conversation.ts](../apps/web/src/conversation.ts)），只是排列方式：每一行仍按 message.id 渲染、带 `data-message-id`。正常完成的回合把答案前的过程折叠成一行时，被折叠的行仍挂载在 `hidden="until-found"` 的容器里，文档里行的顺序与身份不变。
+- `activity` 表达当前 `starting / model / tool / approval / cancelling`，用于区分正在启动 Agent（进程与会话在准备，还没有发出提示）、等待模型、执行工具、等待用户和取消中；`since` 是这个阶段开始的时间，只在阶段变化时更新。它不代表百分比进度。`plan` 为 Harness 报告的最新计划（整体替换）；`config` 为 Harness 允许修改的会话选项。
+- 审批认领在异步等待前完成，重复或迟到的决定失败；同一审批的决定在 Host 上串行处理。取消会请求 Provider/工具中止，等待实际结束与状态提交；如果仅网络请求失败，UI 不能宣称已取消。
+- 每次运行（创建或一次输入触发）有自己的 `TaskSummary.runId`，由 Driver 在运行开始时写入会话并持久化；取消用它指明要停止哪一次运行（见下文）。不记录运行的外部 Driver 不提供它。
+- 模型流截断或取消会尽量保留已经收到的正文，并标记失败或已停止。崩溃前尚未结算的内存文字仍可能丢失。中断的工具结果可能未知，不会自动重放或自动回滚。
+
+Provider 不能在 finish 后继续发送内容，缺少 finish 也视为失败；Standard 不会派发该次未确认的工具调用。普通 chat 模式遇到工具调用会明确失败，而非执行后隐藏记录。
+
+### 审批决定的请求 ID 与回执
+
+`POST /link/api/approvals/:id` 的请求体为 `{ decision, optionId?, requestId?, note? }`（`note` 是拒绝时「告诉 Agent 改做什么」的说明，同一说明的重试用同一个 `requestId`，换一句说明算换一个选择）。浏览器总是带上 `requestId`：为每个审批上的每个选择生成一个（`DecisionRequests`），同一页面同一审批同时只发出一个决定：
+
+- **结果未知时重用。** 网络错误、超时（15 秒）、408 或 5xx 时，结果未知，`requestId` 保留，审批卡里出现「结果未知」与「重试」，说明可以重试同一选择、不会重复提交；「重试」或再按同一个按钮都重发同一请求。审批从快照里消失（已由某台设备结算）时，这条提示随之去掉。明确的 5xx 拒绝（`audit-unavailable`、`presence-unavailable`、`agent-busy`）与其他明确回答之后，`requestId` 丢弃。换一个选择总是使用新的 `requestId`。
+- **回执。** Host 接受后返回 `{ accepted: true, receipt: { approvalId, decision, optionId?, at } }`。同一设备用同一 `requestId` 重发时返回原回执并带 `replay: true`，不会再次决定或审计。
+- **已被处理。** 其他情况下，已经处理或已失效的审批返回 `409 approval-settled`，`decidedBy` 为 `{ kind: 'device', self, deviceName, decision, optionKind, at }`，或 `{ kind: 'system' }`（会话结束或取消使其失效）。`deviceName` 是作出决定的设备当前的名称，Host 已不认识该设备时为空。客户端据此判断：本设备此前作出了同一决定（Host 给出 `optionKind` 时还要求选项类别相同）就视为已生效；本设备此前作了不同的选择时，提示本次选择未生效；由其他设备处理时提示「已由「设备名」处理」，设备名为空或不符合设备名称规则时只提示「该审批已结束」；`system` 同样提示「该审批已结束」。
+- **随会话保存。** 决定记录（审批 ID、`requestId`、作出决定的设备 ID、决定与选项、时间）在回答之前写入数据目录的 `sessions-meta.json`，与该会话的标题、置顶等放在一起，所以 Host 重启后重试同一个 `requestId` 仍得到原回执（`replay: true`），其他设备仍得到 `decidedBy`。记录保留 7 天，每台设备最多 1 万条、合计最多 10 万条，最旧的先删除；删除会话时一并删除。写入失败时决定照常生效，记录留在内存中并进入下一次写入，日志记下失败。
+- **本机确认。** 需要本机确认的允许先得到 `403 stepup-required` 与确认票据。审批卡的按钮转圈，读屏读出「在系统窗口中确认」；理由和详情由系统窗口显示。批准后页面带 `x-latch-confirmation` 原样重发同一请求体（同一 `requestId`）。取消、出错或超时不重发；「在这台 Mac 上允许」可重新申请确认。其他设备收到 `stepup-required`（`where: 'host-desktop'`），页面说明去运行 Latch 的电脑确认。
+
+### 取消的请求 ID 与回执
+
+`POST /link/api/tasks/:id/cancel` 的请求体为 `{ requestId?, runId? }`，两项都可选，所以加入它们之前载入的页面仍能停止运行。页面总是带上 `requestId`，并带上它显示的那次运行的 `runId`（会话摘要有时）：同一会话同一次运行的停止在结果未知（网络错误、超时、408 或 5xx）时重用同一个 `requestId`，明确回答之后丢弃；运行变了就用新的（[cancelRequest.ts](../apps/web/src/core/cancelRequest.ts)）。
+
+- **只停止指名的运行。** `runId` 与会话当前的运行不同（那次运行已经结束，之后又开始了新的一轮）时，Host 不停止任何东西，回答 `ended` 且不带 `status`；相同但已经结束时回答 `ended` 与它结束时的状态。指名的运行仍在进行时（Driver 列不出该会话、Host 无从判断时也一样），Host 先审计 `task.cancelled`（detail 含 `runId`），再把 `runId` 交给 Driver：Driver 在开始取消的同一步核对它，所以审计期间结束、又开始的新一轮不会被停止。等运行真正结算后回答 `stopped` 与结算后的状态（通常是 `cancelled`；结算前刚好完成时是 `idle`）。不带 `runId` 的请求保持原来的含义：停止正在进行的运行，没有时回答 `ended`。
+- **回执。** 回答为 `{ accepted: true, receipt: { sessionId, requestId?, runId?, outcome: 'stopped' | 'ended', status?, at } }`。带 `requestId` 的回执与审批决定一样随会话保存（同样的保留期限与上限，按会话、设备与 `requestId` 区分），同一设备在同一会话用同一 `requestId` 重试，包括 Host 重启之后（该会话的 Driver 未能挂载时也一样），都得到原回执并带 `replay: true`，不会再次审计或取消；同一个 `requestId` 换了 `runId` 返回 409 `request-conflict`。同一请求的两个副本同时到达时，后到的等前一个结算，得到同一份回执。
+- **强制停止。** 回执还带着这次运行的 `runEnd`（见下文「运行的真实状态」）：停止没有在宽限期内结算、进程被结束时，`reason` 是 `forced-stop`，`unknownResultCount` 说明有几条命令结果未知。回执不带它们的名称：原生客户端在正文窗口之外也能取消，名称在会话详情的 `runEnd` 里。
+- **页面的显示。** 回答 `ended` 时页面立即结束「正在停止」：带状态时提示「这一轮已经结束，无需停止」，不带时提示「要停止的那一轮已经结束，新的一轮仍在运行」。旧 Host 只回答 `{ accepted: true }`，页面照旧等待会话状态变化。
+
+经 `api.ts` 发出的请求在 `429 rate-limited` 且 `retryAfter` 不超过 5 秒时自动等待并重试一次：被限速的请求没有执行，所以重试是安全的。
+
+撤销之后的第一条用户消息，文字最前面带一段给 Agent 的说明（[CHANGES.md](CHANGES.md#撤销与丢弃)），消息文字就是实际发出的内容。
+
+## 时间与用量
+
+源码：[timing.ts](../packages/core/src/node-kit/timing.ts)、[runtime.ts](../packages/core/src/runtime.ts)、[bridge.ts](../packages/harness-acp/src/bridge.ts)、[hostClock.ts](../apps/web/src/core/hostClock.ts)、[conversation.ts](../apps/web/src/conversation.ts)。
+
+界面上的每个时间与计数都来自 Host 的记录，客户端不估算；字段都是可选的，旧 Host、插件 Driver 与记录这些字段之前的历史没有它们，缺少时对应的部分不显示。时间是 Host 时钟的 ISO 字符串，由 `ServerOptions.clock`（默认 `Date.now`）给出，内置 Harness 与 ACP Driver 经 `HarnessHostOptions.clock` 用同一个时钟。
+
+- **持久的。** 会话摘要的 `createdAt`。每条消息的 `createdAt`（用户消息被接受、助手一步开始、工具调用被记录、说明写入的时刻）；工具的 `startedAt`（审批之后真正开始运行）与 `completedAt`（结算）；助手一步的 `completedAt`、`reasoningMs`（从第一段推理到第一段正文或这一步结束）与回答它的 `model`（内置 Harness 另有 `providerId`）。开启一轮的用户消息在这一轮结算时得到 `turn`：`endedAt`、`activeMs`（从提示到结束，减去等待审批的时间）与 `waitMs`（至少有一个审批在等人的时间，多个审批重叠时按并集计）。Host 重启中断的一轮没有 `turn`。这些字段都写进各自存储的 zod schema。
+- **运行中的投影。** 运行期间 detail 带 `runStartedAt`、`runWaitMs`（已结束的审批等待）与 `runWaitingSince`（有审批正在等待时），客户端据此算出不含等待的已运行时间，等待时停住；`lastOutputAt` 是可见输出最后一次变化（正文、推理、工具、计划、新消息），客户端用它说出「N 分钟没有新输出」；`liveReasoningStartedAt` 与正文开始后的 `liveReasoningMs` 给出正在流出的思考用时。
+- **Host 时钟。** 客户端从快照与每个 `task-state` 的 `hostTime` 得到 Host 时钟与本机时钟的差，变化小于一秒视为网络抖动、不更新；所有活的计时（已运行、工具用时、思考秒数）都按 Host 时钟计算，所以手机时钟不准时各设备读到的仍一样。旧 Host 不发 `hostTime` 时差为零，运行时间退回为页面看到运行开始以来的时间。走秒由页面共享的一个计时器驱动，只有显示数值的叶子组件订阅，页面隐藏时停止。
+- **用量。** 每一步的 `usage` 是 `inputTokens`（含缓存）与 `outputTokens`（含推理），模型服务报告时另有 `cacheReadTokens`、`cacheWriteTokens` 与 `reasoningTokens`；Host 与客户端合计多步时，某一部分只有每一步都报告了才保留，所以合计从不把「没报告」当成 0。ACP Agent 报告的 `usage_update`（当前上下文已用、窗口大小与费用）存为会话的 `usageReport`，只作为 Agent 的报告显示，不当作账单，也不从 tokens 推算。
+
+## 运行的真实状态
+
+源码：[run-silence.ts](../apps/host/src/run-silence.ts)、[hub.ts](../apps/host/src/hub.ts)、[runtime.ts](../packages/core/src/runtime.ts)、[bridge.ts](../packages/harness-acp/src/bridge.ts)、[sessions.ts](../packages/protocol/src/sessions.ts)。
+
+已运行时间不代表进展。Host 记录每次运行最后一次有动静的时间，只说事实，**从不因为沉默而停止运行**。`catalog.features.runLiveness` 声明这些都可用；旧 Host 没有这些字段，旧客户端忽略它们。
+
+**`TaskSummary.live`**（运行期间才有，只在内存，不持久化）：
+
+| 字段 | 含义 |
+| --- | --- |
+| `runId` | 这次运行 |
+| `activity` | `starting`（进程与会话在准备）、`model`（等模型）、`command`（命令在运行）、`tool`（其他工具在运行）、`approval`（等人）、`cancelling`（停止中，等执行端结算） |
+| `commandName` | `command` 与 `tool` 时运行的是什么，只有一行，已脱敏；**只在会话详情里** |
+| `since` | 这项活动开始的时间 |
+| `lastEventAt` | 最后的动静：引擎为这个会话发来的任何东西（输出、工具更新、用量报告、请求），或一项活动的开始（比如审批刚被答复）。Agent 的 stderr 不算：它不属于任何一次运行 |
+| `lastOutputAt` | 可见输出最后一次变化 |
+| `silenceThresholdMs`、`silent` | Host 的判断，见下 |
+| `unrecognized` | 引擎发来过 Latch 不认识的请求：`count` 与最新的 `at`；会话详情里另有 `method` 与记录它的系统消息 `messageId` |
+
+Driver 报告前五项，`silenceThresholdMs` 与 `silent` 只由 Host 计算，Driver 的说法会被丢弃。Standard 的 `lastEventAt` 随 Provider 的每个事件前进，工具的 `kind: 'execute'` 算命令，名称是工具的标题；ACP 的 `lastEventAt` 随该会话的每个 `session/update` 与请求前进，`kind: 'execute'` 算命令，名称优先取调用的 `rawInput.command`。ACP 同时运行几个调用时，一个结束后活动仍是还在运行的那个，不会说成在等模型。
+
+**阈值与沉默。** 模型（含 `starting`）2 分钟，命令与工具 10 分钟；等人和停止中没有阈值。`silent` 表示 `lastEventAt` 距今超过阈值，每次读取时计算，所以不会读到过期的答案。
+
+**没有周期开销。** Host 只有一个定时器，等最早到期的阈值，只在有运行可能越过阈值或正在沉默时存在，读的是 `Bridge.liveRuns()`（内存中的运行，不列全部会话）。越过时只发一次普通的会话变化（`task-state`，其他连接收到 `tasks-invalidated`）；沉默中的运行每 30 秒复查一次，因为 Driver 不必为每个动静都通知，复查发现它恢复时同样发一次变化；空闲的 Host 没有定时器。没有 `liveRuns` 的 Driver 仍在读取时算出沉默、可以继续等，但 Host 不主动宣布越过。客户端自己用 `lastEventAt` 与 Host 时钟算出「N 分钟」，不需要 Host 持续推送。`lastEventAt` 的变化本身不会让其他设备重读列表，只有活动、阈值、沉默或 `unrecognized` 的计数变化才会，所以列表中的 `lastEventAt` 可以落后于详情，判断沉默以 `silent` 为准；要比较 `unrecognized.at` 与 `lastEventAt` 看引擎是否继续了，也只在详情里比较。电脑从睡眠中醒来时，睡眠的时间也算沉默。
+
+**列表不带正文。** 快照的 `live` 不含 `commandName`、`unrecognized.method` 与 `messageId`，因为原生客户端在正文窗口之外也能读列表。
+
+**继续等。** `POST /link/api/tasks/:id/keep-waiting`，权限 `view`，请求体 `{ runId, thresholdMs }`，`thresholdMs` 是页面看到的阈值。回答 `{ accepted: true, outcome, thresholdMs? }`：
+
+| `outcome` | 含义 |
+| --- | --- |
+| `extended` | 阈值翻倍，只对这次运行的这类活动（模型与命令各算各的）；如果下一次询问会在半个原阈值之内到来（页面放了很久才点），再翻一倍 |
+| `unchanged` | 阈值已不是请求看到的那个：一次重试或另一台设备已经点过。所以它不需要 `requestId`，重试总是安全的 |
+| `not-silent` | 现在并不沉默，或正在等人、停止中 |
+| `ended` | 这次运行已不是活动的 |
+
+阈值只在内存：Host 重启会中断运行，运行结束时一并丢弃。这个操作不授予任何权限，不写审计。
+
+**`TaskSummary.runEnd`**（随会话持久化，新运行开始时清除）说明一次运行不是以普通回答结束的：
+
+| `reason` | 含义 | 会话状态 |
+| --- | --- | --- |
+| `process-exited` | 引擎进程自己退出，或超出协议限制被结束 | `failed`（停止途中退出时为 `interrupted`） |
+| `forced-stop` | 停止在 30 秒内没有结算，Latch 结束了进程 | `interrupted` |
+| `host-stopped` | Host 在运行期间停止或重启 | `interrupted` |
+| `turn-ended` | 引擎结束了这一轮，但有调用没有报告结果 | 按这一轮的结果 |
+
+`unknownResults` 列出当时在运行的调用（`messageId` 是工具行，`name` 是名称），最多 32 条，更多时带 `unknownResultsTruncated`。`name` 是命令文本，所以 `unknownResults` **只在会话详情里**；列表与取消回执只带条数 `unknownResultCount`。进程退出的运行 `status` 是 `failed`，但 `runOutcome` 仍是 `interrupted`：那条命令是否生效没人知道，自动化不能把它当作可以重试的失败。
+
+Standard 的工具与模型在进程内运行，没有可结束的进程：停止只发出中止信号并等待它们真实结算，没有强制停止，不理会中止的插件工具会让运行一直停在 `cancelling`。
+
+## 阅读位置
+
+源码：[useReadingPosition.ts](../apps/web/src/core/useReadingPosition.ts)。
+
+滚动容器使用 hook 返回的 containerRef 与 handlers，正文 wrapper 使用 contentRef。`ready` 必须表示 detail 已加载且属于当前 session；在此之前不写滚动位置。App 不应再增加第二个 scrollTop 写入 effect。
+
+| 模式 | 行为 |
+| --- | --- |
+| `follow` | 流式正文或容器尺寸变化后，保持在当前底部 |
+| `read` | 记录首个可见 `data-message-id` 与其相对视口 offset；布局变化后尽量保持这条消息的位置，不跟随新增正文 |
+
+上翻 wheel、键盘、触摸、滚动条拖动提供用户意图；嵌套可滚动区能消费的滚动不释放外层 follow。自己的程序滚动与视口变大引起的 clamp 不视为用户上翻。用户手势或惯性期间暂不做锚点补偿，避免与拖动竞争。
+
+“回到最新”和成功提交输入显式恢复 follow；用户向下滚到接近底部也可恢复。`reveal(messageId)` 把指定消息行滚入视野（审批“查看”、会话信息「变更」里的文件），它同样由 hook 执行，目标已在底部附近时等同于回到最新。目标在收起的折叠里时，页面先向它外层每个 `hidden="until-found"` 的容器派发 `beforematch`（与浏览器页内查找走同一条路径，各自的主人随之展开），下一帧再 `reveal`。展开块的高度动画对 hook 来说是内容尺寸变化，阅读模式按锚点保持位置。思考与运行中的工具输出这类嵌套滚动框用 `flex-direction: column-reverse` 从末尾排布，自然跟随最新内容，不写 `scrollTop`。切换会话保存独立模式与锚点，当前 hook 最多保留 100 个会话的内存记录。它不把阅读位置保存到磁盘或浏览器存储，刷新整页不保证恢复原锚点。锚点消息消失时使用限制在有效范围内的旧 offset。锚点只在读者滚动时更新，程序写入不替换它。
+
+当前使用完整消息列表，没有历史分页或虚拟列表；也没有“已发送”阅读状态或预留回复空间。手机视口变化通过 ResizeObserver 参与布局，但浏览器尺寸验收不能等同于 iPhone/Android 真机软键盘和全部惯性滚动行为已经验证。
+
+## Markdown、代码与安全边界
+
+源码：[MessageContent.tsx](../apps/web/src/MessageContent.tsx)、[markdown.css](../apps/web/src/styles/markdown.css)、[DiffView.tsx](../apps/web/src/components/DiffView.tsx)。
+
+消息里的 Markdown 不执行原始 HTML，URL 只允许安全协议，图片不加载；显示规则见 [DESIGN.md](./DESIGN.md#流式与阅读)。
+
+代码块超过 18 行可展开/收起，支持复制，失败时提示手动选择。HTTP 局域网或浏览器权限可能限制 Clipboard API，不显示虚假的复制成功。表格横向滚动，脚注 ID 按消息隔离；组件类型保持稳定，避免每次分片创建新的代码组件。代码块在共享 worker 内着色，超出 200 KB 或单行 1,000 字符时保留纯文本。长行在代码块内横向滚动，可聚焦后用键盘滚动，还有内容的一侧边缘变暗。
+
+调度（[highlightScheduler.ts](../apps/web/src/preview/highlightScheduler.ts)）：worker 串行，所以只有一项在途，其余在栈里等待，最新的先出；取消的直接出栈。已结算的块在接近视口（滚动容器上下 800 px，[viewportGate.ts](../apps/web/src/preview/viewportGate.ts)）时才请求，并且不等待：只有文本还在变时才防抖 300 ms；缓存命中在同一次渲染显示。看门狗只针对在途项（新 worker 的第一项还要等它加载，给 30 秒）：超时时销毁 worker，其余任务留在栈中，超时项放到栈底再试一次并给四倍时限，再超时才记入负缓存，之后不再请求。worker 连续崩溃三次时放弃等待中的任务，下一次请求重新开始。
+
+未闭合的围栏逐行着色：worker 按块保留 `grammarState`，只分词新完成的行，每块只有一个请求在途，下一个带上这期间完成的所有行；最后一行可能还会变，保持纯文本。文本不再是已分词内容的延长时从头开始，worker 已不持有该块时回答 `restart`。已完成的行有稳定的 DOM 节点，闭合后整块分词的结果相同时也不替换。超过 18 行的未闭合块只渲染最新 17 行，上方一行「前 N 行已收起」，光标在最后一个字符之后，所以可见部分就是在变化的部分；总高度与闭合后的 18 行相同，不写滚动位置。这期间被收起的行不在 DOM 中，也就不在会话内查找的范围内，展开或闭合后恢复；复制取原文。闭合后折叠的块只把前 19 行渲染成 token，其余仍是文本，可以查找和选择。会话内查找把代码块当成一段文本，匹配可以跨 token，着色替换文本节点后重新定位而不移动阅读位置。
+
+流式帧不重绘其他轮次：全量帧每次重新解析所有消息，`stableTurns` 把数据相同的轮次保留为同一个对象（逐字段比较，不会漏掉新字段），`TurnView` 只接收属于自己的内容，只有最新一轮看到 detail。已结算的轮次用 `content-visibility: auto`，打印时恢复显示；这个属性也裁剪超出轮次的绘制，轮次内的内容不能画到轮次之外。未绘制的轮次只占一个估计高度，它的行却按完整高度测量，所以 `useReadingPosition` 定位锚点时先让锚点所在轮次与视野内其下的轮次真正绘制（`data-drawn`），取视野顶部的行时也不算超出占位的部分；切回会话、页内查找和 `reveal` 因此落在同一行。未闭合围栏与失败内容保留源码，详见 [DOCUMENT-PREVIEWS.md](DOCUMENT-PREVIEWS.md)。
+
+## 继续开发时的验证入口
+
+| 改动 | 优先检查 |
+| --- | --- |
+| 合并、订阅、重连与版本 | [streaming.test.ts](../apps/host/test/streaming.test.ts)、[projection.test.ts](../apps/web/test/projection.test.ts) |
+| 事件流解析、退避、401 续期、单飞、丢失的续期应答、审批回执与停止请求 | [client-security.test.ts](../apps/web/test/client-security.test.ts)、[enrollment.e2e.ts](../e2e/enrollment.e2e.ts) |
+| 事件流随凭据失效而结束 | [server.test.ts](../apps/host/test/server.test.ts)、[auth.test.ts](../apps/host/test/auth.test.ts) |
+| 桌面端转发、流式响应与主进程续期 | [desktop-proxy.test.ts](../apps/desktop/test/desktop-proxy.test.ts)、[desktop.e2e.ts](../e2e/desktop.e2e.ts)（`LATCH_ELECTRON_E2E=1`） |
+| 模型、工具、审批与取消 | [runtime.test.ts](../tests/runtime.test.ts)、[providers.test.ts](../apps/host/test/providers.test.ts)、[acp.test.ts](../packages/harness-acp/test/acp.test.ts) |
+| 多 Harness 路由 | [hub.test.ts](../apps/host/test/hub.test.ts)、[harness-host.test.ts](../apps/host/test/harness-host.test.ts) |
+| 阅读意图与布局竞争 | [reading-position.test.ts](../apps/web/test/reading-position.test.ts) |
+| Markdown、差异与危险内容 | [message-content.test.ts](../apps/web/test/message-content.test.ts)、[client-diff.test.ts](../apps/web/test/client-diff.test.ts)、[components-conversation.test.ts](../apps/web/test/components-conversation.test.ts)、[client-export.test.ts](../apps/web/test/client-export.test.ts) |
+| 开发服务器代理 | [client-devproxy.test.ts](../apps/web/test/client-devproxy.test.ts) |
+| 真实 Host 的完整界面链路 | [streaming-ui.e2e.ts](../e2e/streaming-ui.e2e.ts)、[takeover.e2e.ts](../e2e/takeover.e2e.ts)、[extensions.e2e.ts](../e2e/extensions.e2e.ts)、[permissions-ui.e2e.ts](../e2e/permissions-ui.e2e.ts) |
+
+统一使用 Vitest；浏览器用例在 Vitest 内使用 Playwright。运行结果以最近一次实际执行为准，本文不固定测试数量。继续修改时重点保留：旧 HTTP 不能盖过新流、A/B 不串会话、live 结算不重复、审批位置不乱、同一审批决定不重复提交、取消不提前确认、阅读历史不被新文字抢走，以及危险链接/HTML 不执行。
+
+## 插件的会话面板
+
+面板发现来自 Host 的 `catalog.uiPanels`，缺少字段时使用原会话信息。数据面板的异步响应按包、面板、会话、运行与重试序号归属；切换会话或卸载时中止读取，迟到响应不能替换新内容。面板的读取租约保留到 Host 回调实际结算。客户端不会按流式 token 请求面板数据，在会话运行状态改变或明确刷新时重新读取。
+
+React 模块按内容摘要加载，组件在切换会话、离开页签与停用包时卸载；组件 effect 返回自己的资源清理函数。`readData` 的请求跟随组件寿命取消，卸载后的 `compose` 回调不修改新会话草稿。「写入对话」只追加草稿，不发起运行；发送仍经 `useSubmission`，由它持久化待发送内容、保留结果未知状态和复用原 requestId。
+
+Standard 的技能指令在每轮开始时与输入一起持久化，同轮的流式步骤固定该份正文。插件替换不改变已开始的一轮；下一轮从当前启用集合重新组装。
+
+原生 HTTP/2 客户端复用相同的 Host API 与 SSE 内容格式，网络连接不决定执行结果。原生正文窗口按已认证连接与 App 打开回执绑定，过期后流停止；列表可重新读取。取消与无附言拒绝保持可用，只返回回执，写入结果未知时继续保留原 requestId。Node `NativeWorkspace` 在安装新路径前恢复正文回执并读取 checkpoint，同一 Host 实例的 revision 只能前进；新路径失败时保留旧连接，迟到的快照不覆盖当前路径。后台重连循环在真实连接关闭或网络变化时重新获取候选，用同一 PathManager 安装新连接，且从不自动重发写入。
+
+### 搜索定位与阅读标记
+
+正文搜索响应不是会话状态更新。点击结果先切换到原会话，等待对应 detail 后再通过 `useReadingPosition` 定位消息；迟到的搜索响应不会改变当前会话正文。会话内查找只创建 DOM Range 与 CSS Highlight，折叠行通过 `beforematch` 展开，不改写消息节点或增加一条消息。手动「标为未读」是每台设备的本地阅读偏好，持久化到已有阅读标记中；重新打开或收到该会话更新时清除，删除会话后清理。
+
+文件标签是客户端阅读状态，不改变 Host 的会话状态。文件分块读取绑定打开时的 ETag，元数据变化先显示待更新提示；权限失效卸载解析器，标签切换取消 fetch、worker、PDF render 与 MessagePort。手机文件页复用页面返回栈；阅读位置仍由会话的控制器管理。相关契约见 [DOCUMENT-PREVIEWS.md](DOCUMENT-PREVIEWS.md)。
+
+### 输入身份与分叉上下文
+
+Standard 与 ACP 在接纳用户输入时把原始 `requestId` 写到用户消息，两种消息存储的 schema 都保留它，客户端据此关联重试和发送中的气泡。Host 为分叉首条消息补充可选 `forkContext`，`prefixLength` 是正文开头的上下文字符数，其余是新输入；正文仍完整发送给 Harness。折叠只是显示方式，复制消息保留完整正文。旧 Host 不带这些字段时沿用原有显示。
+
+### 排队状态与实际发送
+
+详情与 SSE 的 TaskDetail.queue 投影 `{id,text,queuedAt,state,reason?}`，state 为 waiting、parked 或 dropped；设备身份与请求回执不下发。入队回执不生成用户消息，实际派发才生成带 requestId 与 queuedAt 的正常消息。编辑换派发标识，原提交重试仍命中同一项。两种 Driver 的 zod 快照保留 queuedAt 与 TaskSummary.runOutcome；新运行清除旧 outcome，真实结算后才写明确完成、失败、取消或中断。队列不从网络状态、idle 或文字猜测完成。 个人助手额外使用 Host 私有的执行摘要，只有 `personalQueue` 能力为真才支持；摘要与原手机窗口不进入公开投影，配置变化时保留文字并暂停，详见 [PERSONAL.md](PERSONAL.md#个人会话队列)。
+
+## Agent 提问与回答
+
+`catalog.features.questions` 表示 Host 支持内置问答接口，不代表 ACP Agent 支持。题包只在所选会话 detail/事件里出现，工具行按 toolCallId 显示向导。草稿与当前题号仅在本设备存储；切换会话或重载页面后恢复。提交前保存完整 requestId/answers；未知结果保持相同内容重试，卡片卸载不取消已经接纳的写请求。工具结果落盘后替换为可展开的已回答记录，随后模型继续。
+
+问答沿用审批等待的传输状态，详情里的 questions 决定界面显示「等你回答」。工作计时与审批等待使用同一暂停区间。Host 重启结束未答题；回答接收与工具结果之间崩溃时，只有实际会话的 completed 输出完全匹配才恢复已回答回执，不据客户端声称的成功继续执行。
+
+## 附件输入
+
+附件字节独立上传，消息流只同步 `Message.attachments` 的 metadata。发送引用前保存原 requestId 和 attachmentIds；响应丢失后重试相同请求，绑定后的附件也能识别原创建请求。Host 中的 Standard 历史只存引用，在调用 Provider 前读取真实内容；ACP 内容块不进入公开会话响应。上传的中断或失败不等于消息已经发送，接口与权限见 [ATTACHMENTS.md](ATTACHMENTS.md)。
+
+输入的附件队列是客户端草稿状态；点击发送后先等待上传再建立持久待确认提交。取消等待只终止上传，不调用会话取消。文件选择的结构化引用与原请求一起保存，文字编辑移除标记也移除其选择；网络重试继续使用已保存的引用。
+
+### 本设备的发送投影
+
+`catalog.features.messageIdentity` 明确声明用户消息保留 requestId。客户端在本设备提交后立即显示临时文字，500ms 后才显示「发送中…」；按相同请求标识、文字及附件/文件引用匹配 Host 消息后隐藏临时投影，实际会话仍由 Host 维护。临时状态不写入 TaskDetail、快照或服务器存储。结果未知保留原提交，并以同一请求体重试；即使看见相同消息，也不凭它清除写请求回执。队列接收不生成临时气泡；完全访问新会话与本机确认等待期间也不生成。旧 Host 缺少标记时保留原显示。
+文件变化的范围、运行结算、可选插件契约与验证见 [运行期间的文件变化](FILE-OUTPUTS.md)。
+
+文件列按 session 与 workspace/Harness 分开保留相对引用；切换上下文取消旧解析、目录读取与搜索，迟到结果不更新新上下文。项目预览不创建会话。目录与句柄见 [DOCUMENT-PREVIEWS.md](DOCUMENT-PREVIEWS.md)。
+
+## 个人助手的消息身份与隐私
+
+个人会话在运行开始之前写入 `TaskSummary.personal` 和本轮 `pluginIds`。职责与显式记忆仅在运行内作为系统上下文传给 Provider，不进入持久模型历史、公开消息、分叉或导出。每轮仍有原有持久 requestId 回执；Host 在选择 Driver 前另保存设备绑定的启动预留，未知结果不会因助手设置变化改投另一个 Harness。所有正文路径与每次 SSE 发送复查个人数据范围；概览与专用记忆路由同样要求有效手机正文窗口。完整规则见 [PERSONAL.md](PERSONAL.md)。
+
+个人新建会话的 Driver 回执使用设备绑定的内部编号，Host 在经过授权的 detail 与 SSE 消息上投影回原始客户端 requestId；内部持久回执与未知结果恢复仍使用派生编号。客户端不复刻内部命名算法，重启和同请求恢复后也沿用原始消息身份。

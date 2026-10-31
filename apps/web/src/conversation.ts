@@ -59,6 +59,29 @@ export function turnsOf(messages: Message[]): Turn[] {
   return turns
 }
 
+/** Whether two values parsed from JSON hold the same data; it looks at every field, so a new one is never missed. */
+export function sameData(a: unknown, b: unknown): boolean {
+  if (a === b) return true
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false
+  if (Array.isArray(a) !== Array.isArray(b)) return false
+  const left = a as Record<string, unknown>,
+    right = b as Record<string, unknown>
+  const keys = Object.keys(left)
+  return keys.length === Object.keys(right).length && keys.every(key => Object.hasOwn(right, key) && sameData(left[key], right[key]))
+}
+
+/**
+ * The turns, with each turn whose data did not change kept as the same object. A full frame parses every message of the
+ * session again, and a memoized turn compares by identity.
+ */
+export function stableTurns(previous: readonly Turn[], next: readonly Turn[]): Turn[] {
+  const known = new Map(previous.map(turn => [turn.key, turn]))
+  return next.map(turn => {
+    const before = known.get(turn.key)
+    return before && sameData(before, turn) ? before : turn
+  })
+}
+
 /** How a settled turn ended. */
 export type TurnOutcome = 'completed' | 'failed' | 'stopped' | 'interrupted'
 

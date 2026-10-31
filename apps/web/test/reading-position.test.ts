@@ -302,3 +302,37 @@ it('keeps the anchor when reasoning folds above it', () => {
   expect(f.viewport.anchor()).toEqual({ messageId: 'message-5', offset: -30 })
   expect(f.controller.isFollowing).toBe(false)
 })
+
+it('keeps a revealed row as its anchor whatever row a later measure takes for the top', () => {
+  const f = fixture()
+  f.controller.sync('a', true, f.viewport)
+  f.controller.input(-1, f.viewport)
+  f.userScroll(100)
+  f.settle()
+  // A turn not drawn yet overflows its placeholder, so a row far from the view can measure as the first one in it.
+  const anchor = vi.spyOn(f.viewport, 'anchor').mockReturnValue({ messageId: 'message-1', offset: 0 })
+  f.controller.reveal('message-4', f.viewport)
+  expect(f.geometry.top).toBe(376)
+  for (const row of f.rows) row.top += 50
+  f.geometry.extent += 50
+  f.controller.layout(f.viewport)
+  expect(f.geometry.top).toBe(426)
+  expect(anchor).not.toHaveBeenCalled()
+})
+
+it('measures the extent after finding the anchor, which can draw the turns around it', () => {
+  const f = fixture()
+  f.controller.sync('a', true, f.viewport)
+  f.controller.input(-1, f.viewport)
+  f.userScroll(530)
+  f.settle()
+  f.geometry.extent = 600
+  f.geometry.top = 400
+  const positionFor = f.viewport.positionFor
+  f.viewport.positionFor = anchor => {
+    f.geometry.extent = 1000
+    return positionFor(anchor)
+  }
+  f.controller.layout(f.viewport)
+  expect(f.geometry.top).toBe(530)
+})

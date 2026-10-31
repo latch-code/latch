@@ -27,11 +27,7 @@ describe('isolated document renderers', () => {
           'papaparse',
           '@shikijs/core',
           '@shikijs/engine-javascript',
-          ...[
-            ...new Set(
-              (await readFile(resolve('apps/web/src/preview/highlight.worker.ts'), 'utf8')).match(/@shikijs\/langs-precompiled\/[a-z]+/gu),
-            ),
-          ],
+          ...[...new Set((await readFile(resolve('apps/web/src/preview/highlight.worker.ts'), 'utf8')).match(/@shikijs\/langs\/[a-z]+/gu))],
         ],
       },
       plugins: [
@@ -317,11 +313,14 @@ describe('isolated document renderers', () => {
     )
     expect(refused).toEqual([false, false, false])
   })
-  it('keeps an unfinished streaming fence plain until it closes', async () => {
+  it('keeps the unfinished line of a streaming fence plain until it is finished', async () => {
     await page.evaluate(() => window.startRichPreview('```ts\nconst streamingValue = 37', true))
     await page.getByText('streamingValue', { exact: false }).waitFor()
     await page.waitForTimeout(400)
     expect(await page.locator('.syn-keyword').count()).toBe(0)
+    await page.evaluate(() => window.startRichPreview('```ts\nconst streamingValue = 37\nconst more', true))
+    await page.locator('.syn-keyword', { hasText: 'const' }).first().waitFor()
+    expect(await page.locator('.syn-keyword', { hasText: 'const' }).count()).toBe(1)
     await page.evaluate(() => window.startRichPreview('```ts\nconst streamingValue = 37\n```', true))
     await page.locator('.syn-keyword').first().waitFor()
   })

@@ -40,7 +40,17 @@ import { projectOf } from '../sessions.ts'
 import { folderAccessText, projectFolders, projectName } from '../projects.tsx'
 import { parseDuration, parseTime, useTicker } from '../core/hostClock.ts'
 import { diffLines } from '../diff.ts'
-import { absoluteTime, basename, exactTokens, formatDuration, formatTokens, messageTime, tokenAmount, tokenLines } from '../format.ts'
+import {
+  absoluteTime,
+  basename,
+  currencyAmount,
+  exactTokens,
+  formatDuration,
+  formatTokens,
+  messageTime,
+  tokenAmount,
+  tokenLines,
+} from '../format.ts'
 import { HarnessTile, ProviderTile } from './BrandTile.tsx'
 import { CodeRootNotice, codeRootWorkspace } from './CodeRootNotice.tsx'
 import { InlineConfirm } from './InlineConfirm.tsx'
@@ -647,7 +657,7 @@ export function Inspector({
                 <span className="info-number">
                   {report.cost.amount > 0 && report.cost.amount < 0.01
                     ? '<$0.01'
-                    : new Intl.NumberFormat('zh-CN', { style: 'currency', currency: report.cost.currency }).format(report.cost.amount)}
+                    : currencyAmount(report.cost.amount, report.cost.currency)}
                 </span>
                 <span className="info-caption">由 Agent 报告，不是账单</span>
               </span>

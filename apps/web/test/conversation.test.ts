@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { Message, TaskDetail, TaskStatus } from '@latch/protocol'
 import type { Turn } from '../src/conversation.ts'
 import {
+  sameData,
+  stableTurns,
   foldedRows,
   foldSummary,
   liveFacts,
@@ -478,5 +480,39 @@ describe('a settled turn', () => {
     expect(streamingTranscript('running')).toContain('<span class="assistant-meta-model">· fixture-large</span>')
     // A settled turn names only the model its steps recorded.
     expect(streamingTranscript('idle')).not.toContain('assistant-meta-model')
+  })
+})
+
+describe('stable turns', () => {
+  const parse = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
+  const turns: Turn[] = [
+    {
+      key: 'a',
+      user: { id: 'a', role: 'user', text: '一' },
+      replies: [{ id: 'b', role: 'assistant', text: '二', usage: { inputTokens: 1, outputTokens: 2 } }],
+    },
+    { key: 'c', user: { id: 'c', role: 'user', text: '三' }, replies: [] },
+  ]
+
+  it('keeps a turn parsed again as the same object, and takes one that changed in any field', () => {
+    const again = stableTurns(turns, parse(turns))
+    expect(again[0]).toBe(turns[0])
+    expect(again[1]).toBe(turns[1])
+    const changed = parse(turns)
+    changed[0]!.replies[0]!.usage!.outputTokens = 3
+    expect(stableTurns(turns, changed)[0]).toBe(changed[0])
+    const added = parse(turns)
+    added[1]!.user!.turn = { endedAt: '2026-10-31T00:00:00.000Z' }
+    const next = stableTurns(turns, added)
+    expect(next[0]).toBe(turns[0])
+    expect(next[1]).toBe(added[1])
+  })
+
+  it('tells data apart by shape as well as by value', () => {
+    expect(sameData({ a: [1, { b: 2 }] }, { a: [1, { b: 2 }] })).toBe(true)
+    expect(sameData([], {})).toBe(false)
+    expect(sameData({ a: undefined }, { b: undefined })).toBe(false)
+    expect(sameData({ a: 1 }, { a: 1, b: 2 })).toBe(false)
+    expect(sameData(null, {})).toBe(false)
   })
 })

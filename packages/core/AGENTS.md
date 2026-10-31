@@ -11,7 +11,7 @@ Cordis 插件注册表（`src/registry.ts`）、Standard 执行循环（`src/run
 - 技能在激活时复制、在运行租约中固定，并随输入持久化；替换不改变已开始的一轮。技能与两种界面共享包生命周期，客户端模块只发布元数据与摘要，源码经认证单独读取（`tests/skills.test.ts`、`tests/ui-panels.test.ts`）。
 - 执行循环的风险由 Host 的分级器判定，分级器抛错按 R2 处理（`tests/runtime.test.ts#treats a classifier that %s as R2`）。
 - 会话的文件夹在创建时固定：`createTask` 核对 `cwd` 是 `workspaceId` 所指项目的主文件夹、其他文件夹都属于该项目，输入与审批决定之前再核对，否则 409 `workspace-changed`（`tests/runtime.test.ts#freezes the folders when the session starts, and stops input once one of them leaves the project`）。
-- 新增秘密格式时补充 `redactSecrets`：凭据本身的格式也决定文件是否可能含密钥（`containsSecret`），只携带凭据的 Cookie、请求头与参数写法只用于日志（`tests/redact.test.ts#leaves ordinary text alone`）；改 `canonicalJson` 前读根 `AGENTS.md`「共享安全编码」。
+- 新增秘密格式时补充 `redactSecrets`：凭据本身的格式也决定文件是否可能含密钥（`containsSecret`），只携带凭据的 Cookie、请求头、URL 参数与 userinfo 写法只用于日志（`tests/redact.test.ts#leaves ordinary text alone`）；改 `canonicalJson` 前读根 `AGENTS.md`「共享安全编码」。
 
 测试在根项目 `tests/`（`pnpm test --project latch`）；改动后运行 `pnpm lint`、`pnpm test` 与 `pnpm test:e2e`。插件生命周期见 [docs/PLUGIN-DEVELOPMENT.md](../../docs/PLUGIN-DEVELOPMENT.md)，消息与取消见 [docs/STREAMING.md](../../docs/STREAMING.md)。
 

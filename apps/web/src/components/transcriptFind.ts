@@ -20,11 +20,9 @@ export function lazyOutputMatches(messages: readonly Message[], query: string, l
   return found
 }
 
-/** VisibleText can split a match across text nodes; offsets still refer to the displayed UTF-16 string. */
-export function outputRange(output: Element, query: string, index: number): Range | undefined {
-  const match = textMatches(output.textContent ?? '', query)[index]
-  if (!match) return
-  const walker = document.createTreeWalker(output, NodeFilter.SHOW_TEXT)
+/** VisibleText and syntax tokens can split a match across text nodes; offsets still refer to the displayed UTF-16 string. */
+function matchRange(element: Element, match: { start: number; end: number }): Range | undefined {
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
   const range = document.createRange()
   let offset = 0,
     started = false
@@ -40,4 +38,17 @@ export function outputRange(output: Element, query: string, index: number): Rang
     }
     offset += length
   }
+}
+
+export function outputRange(output: Element, query: string, index: number): Range | undefined {
+  const match = textMatches(output.textContent ?? '', query)[index]
+  return match && matchRange(output, match)
+}
+
+/** Every match in the element's text, whether or not its text is split into tokens yet. */
+export function elementRanges(element: Element, query: string, limit: number): Range[] {
+  return textMatches(element.textContent ?? '', query, limit).flatMap(match => {
+    const range = matchRange(element, match)
+    return range ? [range] : []
+  })
 }

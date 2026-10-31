@@ -10,12 +10,17 @@ const LATCH_CREDENTIALS: readonly RegExp[] = [
   /lp[io]1-[A-Z2-7]{26}/gu,
 ]
 
-/** Where a credential travels: the cookies, the device header and URL parameters, whatever value they carry. */
+/** Where a credential travels: the cookies, the device header, URL parameters and userinfo, whatever value they carry. */
 const CARRIERS: readonly RegExp[] = [
   /(?:harness_link|latch_[a-z2-7]{8}|__Host-latch_[a-z2-7]{8})=[^;\s]+/gu,
   /Latch-Device\s+\S+/gu,
   /#(?:token|pair)=[\w-]+/gu,
   /[?&]token=[\w-]+/gu,
+  // URL userinfo: `user:secret@` under any scheme, and a lone name under HTTP and WebSocket, where it is a token
+  // (`ssh://git@host` and `ftp://anonymous@host` are not). A raw `@` stays inside: the last one before the path ends the
+  // userinfo, as URL parsers read it. A raw `/`, `?` or `#` ends the authority there too, so what follows is not userinfo.
+  /(?<=\b[a-z][a-z0-9+.-]*:\/\/)[^\s/?#"'<>`\\:]*:[^\s/?#"'<>`\\]*(?=@)/giu,
+  /(?<=\b(?:https?|wss?):\/\/)[^\s/?#"'<>`\\]*(?=@)/giu,
 ]
 
 /** Keys by their own shape. */
@@ -46,8 +51,8 @@ export function redactSecrets(text: string): string {
 
 /**
  * Whether the text holds a credential itself: a Latch credential or code, a private key's armour or a service key by
- * its prefix. The Host treats a text file that does as likely to hold a secret. The cookie, header and URL-parameter
- * forms are left to `redactSecrets`, so a file that documents `?token=…` or the `Latch-Device` header is not secret.
+ * its prefix. The Host treats a text file that does as likely to hold a secret. The cookie, header and URL forms are
+ * left to `redactSecrets`, so a file that documents `?token=…`, `user:password@` or the `Latch-Device` header is not secret.
  */
 export function containsSecret(text: string): boolean {
   return CREDENTIALS.some(pattern => new RegExp(pattern.source, pattern.flags.replace('g', '')).test(text))

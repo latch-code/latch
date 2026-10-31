@@ -7,7 +7,7 @@ import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { AGENT_ACTIONS } from './audit-actions/agents.ts'
 import { CHANGE_ACTIONS } from './audit-actions/changes.ts'
 import { DEVICE_ACTIONS } from './audit-actions/devices.ts'
-import { deviceId, hex64, opaqueId } from './audit-actions/fields.ts'
+import { attachmentId, deviceId, hex64, opaqueId } from './audit-actions/fields.ts'
 import { GIT_ACTIONS } from './audit-actions/git.ts'
 import { HOST_ACTIONS } from './audit-actions/host.ts'
 import { NATIVE_APPROVAL_ACTIONS } from './audit-actions/native-approvals.ts'
@@ -46,6 +46,7 @@ export type AuditAction = keyof typeof AUDIT_DETAIL
 export type AuditDetail<A extends AuditAction> = z.input<(typeof AUDIT_DETAIL)[A]>
 
 const actions = Object.keys(AUDIT_DETAIL) as [AuditAction, ...AuditAction[]]
+const targetSchema = z.union([opaqueId, attachmentId, z.literal('')])
 const actorSchema = z.strictObject({
   deviceId: deviceId.optional(),
   listener: z.enum([...LISTENER_CLASSES, 'host', 'cli']),
@@ -57,7 +58,7 @@ const recordSchema = z.strictObject({
   at: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u),
   actor: actorSchema,
   action: z.enum(actions),
-  target: z.union([opaqueId, z.literal('')]),
+  target: targetSchema,
   stepup: z.enum(['none', 'lpc-local', 'shell-local', 'offline']),
   detail: z.record(z.string(), z.unknown()),
   prev: hex64,
@@ -263,7 +264,7 @@ export class AuditLog {
     const detail = schema?.safeParse(event.detail)
     const actor = actorSchema.safeParse(event.actor)
     const target = event.target ?? ''
-    if (!schema || !detail?.success || !actor.success || !(target === '' || opaqueId.safeParse(target).success)) {
+    if (!schema || !detail?.success || !actor.success || !targetSchema.safeParse(target).success) {
       throw new AppError(500, 'audit-detail-invalid', '审计记录内容无效，操作未执行')
     }
     if (this.poisoned) throw unavailable()

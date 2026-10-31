@@ -74,7 +74,7 @@ savePrefix: ''
 catalog:
   '@shikijs/core': 4.5.0
   '@shikijs/engine-javascript': 4.5.0
-  '@shikijs/langs-precompiled': 4.5.0
+  '@shikijs/langs': 4.5.0
   katex: 0.19.0
   remark-math: 6.0.0
   mermaid: 12.2.0

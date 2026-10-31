@@ -56,7 +56,21 @@ export function formatTokens(value: number): string {
   return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
 }
 
-export const exactTokens = (value: number): string => value.toLocaleString('en-US')
+const groupedNumber = new Intl.NumberFormat('en-US')
+export const exactTokens = (value: number): string => groupedNumber.format(value)
+
+// A formatter is expensive to build and this runs on every render of the session's details.
+const currencies = new Map<string, Intl.NumberFormat>()
+/** An amount in its currency; building throws on a code that is not a currency, as `format` did inline. */
+export function currencyAmount(amount: number, currency: string): string {
+  let format = currencies.get(currency)
+  if (!format) {
+    format = new Intl.NumberFormat('zh-CN', { style: 'currency', currency })
+    if (currencies.size >= 16) currencies.clear()
+    currencies.set(currency, format)
+  }
+  return format.format(amount)
+}
 
 /** A token count with its unit, abbreviated: 「850 tokens」, 「12.4k tokens」. Every count on screen carries the unit. */
 export const tokenAmount = (value: number): string => `${formatTokens(value)} tokens`

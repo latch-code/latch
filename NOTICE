@@ -119,7 +119,7 @@ Bundling/minification does not change the source files; no renderer source fork 
 
 Rich text rendering
 -------------------
-Shiki 4.5.0 (core, JavaScript regex engine and precompiled grammars), KaTeX 0.19.0, remark-math 6.0.0 and Mermaid 12.2.0 are distributed with their dependency notices in apps/web/public/licenses/rich/. These dependencies run only in the documented worker, DOM or opaque-frame boundary. The selected TextMate grammars (JavaScript, TypeScript, JSX, TSX, JSON, JSONC, Python, Bash/shell, HTML, CSS, SCSS, Markdown, YAML, TOML, SQL, Rust, Go, Java, Kotlin, Swift, C, C++, C#, Ruby, PHP, Dockerfile, diff, XML and Vue) are supplied by @shikijs/langs-precompiled under its included MIT license. KaTeX fonts retain its included MIT license.
+Shiki 4.5.0 (core, JavaScript regex engine and grammars), KaTeX 0.19.0, remark-math 6.0.0 and Mermaid 12.2.0 are distributed with their dependency notices in apps/web/public/licenses/rich/. These dependencies run only in the documented worker, DOM or opaque-frame boundary. The selected TextMate grammars (JavaScript, TypeScript, JSX, TSX, JSON, JSONC, Python, Bash/shell, HTML, CSS, SCSS, Markdown, YAML, TOML, SQL, Rust, Go, Java, Kotlin, Swift, C, C++, C#, Ruby, PHP, Dockerfile, diff, XML and Vue) are supplied by @shikijs/langs under its included MIT license. KaTeX fonts retain its included MIT license.
 
 - @antfu/install-pkg@2.1.0: MIT.
 - @braintree/sanitize-url@7.1.2: MIT.
@@ -133,7 +133,7 @@ Shiki 4.5.0 (core, JavaScript regex engine and precompiled grammars), KaTeX 0.19
 - @mermaid-js/parser@2.0.1: MIT.
 - @shikijs/core@4.5.0: MIT.
 - @shikijs/engine-javascript@4.5.0: MIT.
-- @shikijs/langs-precompiled@4.5.0: MIT.
+- @shikijs/langs@4.5.0: MIT.
 - @shikijs/primitive@4.5.0: MIT.
 - @shikijs/types@4.5.0: MIT.
 - @shikijs/vscode-textmate@10.0.2: MIT.

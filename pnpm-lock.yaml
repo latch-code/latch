@@ -18,7 +18,7 @@ catalogs:
     '@shikijs/engine-javascript':
       specifier: 4.5.0
       version: 4.5.0
-    '@shikijs/langs-precompiled':
+    '@shikijs/langs':
       specifier: 4.5.0
       version: 4.5.0
     '@tanstack/react-virtual':
@@ -299,7 +299,7 @@ importers:
       '@shikijs/engine-javascript':
         specifier: 'catalog:'
         version: 4.5.0
-      '@shikijs/langs-precompiled':
+      '@shikijs/langs':
         specifier: 'catalog:'
         version: 4.5.0
       '@tanstack/react-virtual':
@@ -1423,8 +1423,8 @@ packages:
     resolution: {integrity: sha512-Ed6UdEj84LyYkwnxM5CvSMWAD+id9ExTYri0/+x41U9zrgNifPSS9lZm0JqBP0VfYI8yr8tY5nbNq9+p9R0kFA==}
     engines: {node: '>=20'}
 
-  '@shikijs/langs-precompiled@4.5.0':
-    resolution: {integrity: sha512-l6x3sNA4qvSQPtFogjhVj9IjjYhQ6Z4zy+E2vP5/PteFYCtT7GR7xZIjUT8QQKgA7k6glMDQXI0265qmIkJXLg==}
+  '@shikijs/langs@4.5.0':
+    resolution: {integrity: sha512-wwBTqwduXSz0X4v9Qa2EWeFaYJEw1clCncWjoRNQRbVDu3SPRTRWucnouYapKj3b8Q+sk/41Vbc4B5c8nuYzLA==}
     engines: {node: '>=20'}
 
   '@shikijs/primitive@4.5.0':
@@ -3625,10 +3625,9 @@ snapshots:
       '@shikijs/vscode-textmate': 10.0.2
       oniguruma-to-es: 4.3.6
 
-  '@shikijs/langs-precompiled@4.5.0':
+  '@shikijs/langs@4.5.0':
     dependencies:
       '@shikijs/types': 4.5.0
-      oniguruma-to-es: 4.3.6
 
   '@shikijs/primitive@4.5.0':
     dependencies:

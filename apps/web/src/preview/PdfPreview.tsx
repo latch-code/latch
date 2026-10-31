@@ -7,7 +7,7 @@ import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?worker&url'
 import { trustedScriptUrl } from './runtime.ts'
 import type { DocumentPreviewProps } from './types.ts'
 import { boundedQuoteText, selectedQuote } from './quote.ts'
-import { PDF_CSS_SCALE, pdfPercent, pdfScale, pdfZoomKey } from './pdfZoom.ts'
+import { PDF_CSS_SCALE, pdfPageAt, pdfPercent, pdfScale, pdfZoomKey } from './pdfZoom.ts'
 class SafeBinaryData {
   async fetch({ kind, filename }: { kind: string; filename: string }) {
     const directory =
@@ -480,7 +480,7 @@ export default function PdfPreview({ file, read, versionKey, onQuote }: Document
       </form>
     )
   if (!document) return <p role="status">正在读取 PDF…</p>
-  const index = virtual.getVirtualItems().find(item => item.end > (scroll.current?.scrollTop ?? 0))?.index ?? 0
+  const index = pdfPageAt(virtual.getVirtualItems(), scroll.current?.scrollTop ?? 0)?.index ?? 0
   const quote = async (source: 'page' | 'selection') => {
     if (!onQuote || loadedVersion !== versionKey) return
     if (source === 'selection') {
@@ -600,7 +600,7 @@ export default function PdfPreview({ file, read, versionKey, onQuote }: Document
         aria-label="PDF 页面"
         onScroll={() => {
           const top = scroll.current?.scrollTop ?? 0,
-            first = virtual.getVirtualItems().find(item => item.end > top)
+            first = pdfPageAt(virtual.getVirtualItems(), top)
           if (first) reading.current = { page: first.index, offset: Math.max(0, top - first.start) }
         }}>
         <div className="pdf-pages" style={{ height: virtual.getTotalSize() }}>

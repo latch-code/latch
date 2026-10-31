@@ -15,9 +15,9 @@ Latch 是跨电脑与手机的 AI Agent 工作台。Node Host（`apps/host`）�
 | `apps/host/` | Host 组合根、插件与命令 |
 | `apps/web/` | 浏览器与桌面共用页面，构建到 `dist/web` |
 | `apps/desktop/` | `@latch/desktop`：Electron 主进程与 preload（CommonJS） |
-| `packages/link-wire/` | 原生连接的纯编码、KDF 与恢复日志；见 `docs/REMOTE.md` |
-| `packages/link-client/` | 原生 TLS、Go 组件与中继；见 `docs/REMOTE.md` |
-| `apps/relay/` | 自建盲中继底座；机制与实现边界见 `docs/RELAY.md` |
+| `packages/link-wire/` | 原生连接的纯编码、KDF 与恢复日志 |
+| `packages/link-client/` | 原生 TLS、Go 组件与中继 |
+| `apps/relay/` | 自建盲中继底座 |
 | `packages/protocol/` | 共用 DTO、预设与安全文本 |
 | `packages/ui/` | `@latch/ui`：令牌、层叠层与原语 |
 | `packages/sdk/` | `@latch/sdk`：插件作者面与 `AppError` |
@@ -90,6 +90,7 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web        # 仅开发；按 Vite 打印�
 - 不停止、重启或向已运行的 Host 发信号，不读取、修改或删除 `.runtime*/`。
 - 每个命令都显式指定临时目录：`pnpm start` / `start:demo` 带 `--data-dir`、`--workspace` 与 `--port 0`；`pnpm latch`、`pnpm stop` 带同一个 `--data-dir`；`pnpm dev:web` 用 `LATCH_DATA_DIR`。省略时会落到用户的数据：当前目录的旧 `.runtime/`、平台默认数据目录（macOS 为 `~/Library/Application Support/Latch/Host`）、`~/Latch/workspace` 与端口 4317。
 - 只停止自己启动的节点：`pnpm stop -- --data-dir <目录>` 经 `host.sock` 核对后才发 SIGTERM，有运行中或等待审批的会话时拒绝（`--force` 仍然停止）。不删除其他节点的 `host.lock` 与 `.host-lock-*`（见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#hostjson-与数据目录锁)）。
+- 不运行 `git clean -x`、`git clean -X` 与 `git stash -a`：被忽略的目录里有用户的数据，后者还会把它们写进对象库。
 - 审阅外部 PR（所有者以外的人的改动）时，在独立的 worktree 中检出，每个 git 命令都带 `-c core.hooksPath=/dev/null`（如 `git -c core.hooksPath=/dev/null worktree add <临时目录> <提交>`），因为已安装的钩子执行检出内容中的 `lefthook.yml`。不在该目录运行 `pnpm install`、任何 `pnpm` 脚本、测试或构建，也不在该目录启动 Agent：PR 可以修改包脚本、依赖与安装策略、构建与测试配置和 Agent 指令，运行其中任何一项都会执行 PR 作者的代码。改动这类文件的 PR 由所有者审阅（`.github/CODEOWNERS`）。
 - 测试与调试只用临时目录、端口 0、本地假模型服务与假 ACP Agent。不调用付费模型，不对真实 Agent CLI 发送提示。不运行 `pnpm desktop`（它使用系统钥匙串与默认桌面端数据目录），桌面端用 Electron e2e 验证。
 - `pnpm build` 会更新 `dist/web`，正在运行的旧 Host 会直接提供新页面；客户端必须能在缺少 `snapshot.catalog` 与 `snapshot.host`（旧 Host）时降级运行。修改 `LatchPresence.swift` 后的构建会改变确认组件签名，使用这份代码的已运行 Host 的本机确认随之不可用，需要用户停止 Host 后运行 `pnpm latch presence repin`，完成时告知用户。
@@ -98,11 +99,11 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web        # 仅开发；按 Vite 打印�
 
 | 改动 | 文档 |
 | --- | --- |
-| 模块边界、Harness 路由、持久化、HTTP API；监听入口、设备与凭据、本机确认、安全策略、出站策略、路径与项目目录、审计 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| 模块边界、Harness 路由、持久化、HTTP API、路径与项目目录 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | 终端 | [docs/TERMINAL.md](docs/TERMINAL.md) |
-| ACP Agent 接入、进程与环境、项目配置与启动指纹、权限模式读回、取消与恢复 | [docs/HARNESSES.md](docs/HARNESSES.md) |
-| SSE、fetch 事件流、凭据续期、重连、消息身份、审批顺序、取消、阅读位置 | [docs/STREAMING.md](docs/STREAMING.md) |
-| Provider（出站与密钥）、Tool（风险分级）、插件生命周期、HarnessDriver | [docs/PLUGIN-DEVELOPMENT.md](docs/PLUGIN-DEVELOPMENT.md) |
+| ACP Agent 接入、项目配置、权限模式读回、取消与恢复 | [docs/HARNESSES.md](docs/HARNESSES.md) |
+| SSE、fetch 事件流、重连、消息身份、审批顺序、取消、阅读位置 | [docs/STREAMING.md](docs/STREAMING.md) |
+| Provider、Tool（风险分级）、插件生命周期、HarnessDriver | [docs/PLUGIN-DEVELOPMENT.md](docs/PLUGIN-DEVELOPMENT.md) |
 | 布局、配色、图标、组件与交互，设备与权限界面 | [docs/DESIGN.md](docs/DESIGN.md) |
 | 选择测试范围、编写测试、测试 Host 与共享向量、仓库检查 | [docs/TESTING.md](docs/TESTING.md) |
 | 用户可见的启动参数、手机接入、`pnpm latch` 命令 | [README.md](README.md) |
@@ -129,5 +130,5 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web        # 仅开发；按 Vite 打印�
 - 运行环境：每个项目在 `package.json` 中声明 `latch.env`，只用该环境有的全局变量与模块；`apps/desktop/src/*.cjs` 是 CommonJS，其余是 ES 模块。新增目录时加入对应的 `tsconfig.*.json` 与 `.oxlintrc.json` 覆盖规则；新增 workspace 项目时另写 `latch.env` 并登记到 `PROJECTS`，规则与上层不同时写 `AGENTS.md` 与内容为 `@AGENTS.md` 的 `CLAUDE.md`。
 - workspace 项目只经包名导入（不用相对路径进入 `apps/`、`packages/`、`e2e/`），依赖写成 `workspace:*`；只有 `packages/core/src/registry.ts` 导入 `cordis`。用例放在所测项目的 `test/`，由 `vitest.config.ts` 的 project 运行。
 - 工程技能只写在 `.agents/skills/<名称>/SKILL.md`，改动后运行 `pnpm agents:sync`；技能只调用脚本，规则以脚本为准。包示例放 `examples/<包>/SKILL.md`。
-- 仓库只保存产品代码与机制文档：不在文档中引用其他产品作为设计参考。工作状态写在提交信息、PR 或 issue 中。
+- Git 只跟踪产品代码与机制文档：分析报告、设计稿、工作记录与安全分析不进入 Git，不引用其他产品作设计参考。提交信息只写改动与原因。
 - 提交信息使用 Conventional Commits（`feat`、`fix`、`docs`、`design`、`refactor`、`test`、`chore`），scope 为项目名。

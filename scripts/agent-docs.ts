@@ -1,5 +1,6 @@
 import { posix } from 'node:path'
 import { isMap, isScalar, isSeq, parseDocument } from 'yaml'
+import { checkDocHygiene } from './doc-hygiene.ts'
 import type { Change, Repository } from './repository.ts'
 
 /**
@@ -389,7 +390,7 @@ export async function checkAgentDocs(repo: Repository, options: CheckOptions = {
     problems.push(`${item.where}：\`${item.token}\` 在仓库中不存在`)
   }
 
-  problems.push(...(await skillProblems(repo)), ...(await readDocSources(repo)).problems)
+  problems.push(...(await skillProblems(repo)), ...(await readDocSources(repo)).problems, ...(await checkDocHygiene(repo)))
   return problems
 }
 

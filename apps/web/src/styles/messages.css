@@ -13,6 +13,18 @@
 .turn + .turn {
   margin-top: var(--sp-48);
 }
+.turn[data-settled] {
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto 400px;
+}
+.turn[data-settled][data-drawn] {
+  content-visibility: visible;
+}
+@media print {
+  .turn[data-settled] {
+    content-visibility: visible;
+  }
+}
 .message {
   min-width: 0;
 }
@@ -174,7 +186,8 @@
 
 /* A blinking caret after the live text; ::after never enters the message's textContent. */
 .message-assistant.is-live .message-content > :is(p, h1, h2, h3, h4, h5, h6):last-child::after,
-.message-assistant.is-live .message-content > :is(ul, ol):last-child > li:last-child::after {
+.message-assistant.is-live .message-content > :is(ul, ol):last-child > li:last-child::after,
+.message-assistant.is-live .message-code.is-open code::after {
   content: '';
   display: inline-block;
   width: 2px;
@@ -186,7 +199,8 @@
 /* Reduced motion: the caret stands still and still says the reply is coming. */
 @media (prefers-reduced-motion: no-preference) {
   .message-assistant.is-live .message-content > :is(p, h1, h2, h3, h4, h5, h6):last-child::after,
-  .message-assistant.is-live .message-content > :is(ul, ol):last-child > li:last-child::after {
+  .message-assistant.is-live .message-content > :is(ul, ol):last-child > li:last-child::after,
+  .message-assistant.is-live .message-code.is-open code::after {
     animation: caret 1s steps(1) infinite;
   }
 }

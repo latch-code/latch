@@ -1,9 +1,9 @@
 import { z } from 'zod'
-import { count, hex64, opaqueId } from './fields.ts'
+import { attachmentId, count, hex64, opaqueId } from './fields.ts'
 
 const risk = z.enum(['R0', 'R1', 'R2'])
 const attachmentEvent = z.strictObject({
-  attachmentId: z.string().regex(/^[A-Za-z0-9_-]{22}$/u),
+  attachmentId,
   contentHash: hex64,
   bytes: count,
   type: z.enum(['image', 'text']),

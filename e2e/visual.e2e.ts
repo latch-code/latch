@@ -162,7 +162,20 @@ function hold(signal: AbortSignal): Promise<void> {
   })
 }
 
+/** A reply with code that arrives: a long open fence, with a line too long for any width, then its end. */
+const ARRIVING_CODE = `这是设置页保存路径的完整实现：
+
+\`\`\`ts
+${Array.from({ length: 30 }, (_, index) =>
+  index % 7 === 3
+    ? `// 第 ${index + 1} 行：省略表示保留，null 表示清除，这条说明长到任何宽度都放不下，需要横向滚动才能读到结尾。`
+    : `export const field${index + 1} = await readProvider("provider-${index + 1}", { retry: ${index % 3} })`,
+).join('\n')}
+export const last`
+let releaseArrivingCode: (() => void) | undefined
+
 const PROMPTS = {
+  code: '给我设置页保存路径的完整实现',
   done: '修复设置页保存后密钥被清空的问题',
   running: '运行设置页的回归测试',
   failed: '检查发布脚本的签名步骤',
@@ -268,6 +281,18 @@ const visualPlugin: HarnessPlugin = {
           await hold(signal)
           return
         }
+        if (messages[last]?.content === PROMPTS.code) {
+          advance(1200)
+          yield text(ARRIVING_CODE)
+          await new Promise<void>(done => {
+            releaseArrivingCode = done
+          })
+          signal.throwIfAborted()
+          advance(1200)
+          yield text(' = true\n```\n\n以上就是全部。')
+          yield stop
+          return
+        }
         const script = SCRIPTS[messages[last]?.content ?? '']
         const turn = script?.[messages.slice(last + 1).filter(message => message.role === 'tool').length]
         if (turn === undefined) throw new Error(`No scripted turn for ${messages[last]?.content}`)
@@ -368,6 +393,13 @@ async function closeDetails(target: Page, viewport: VisualViewport): Promise<voi
   const toggle = target.locator('.topbar').getByRole('button', { name: '会话信息', exact: true })
   if ((await toggle.getAttribute('aria-pressed')) === 'true') await toggle.click()
   await settleMotion(target)
+}
+
+/** A diff's two sides colour as separate jobs, and motion settling says nothing about either. */
+async function diffColoured(target: Page): Promise<void> {
+  for (const side of ['remove', 'add']) {
+    await target.locator(`.diff-view .diff-${side} [class^="syn-"]`).first().waitFor({ state: 'attached' })
+  }
 }
 
 async function settleMotion(target: Page): Promise<void> {
@@ -1386,6 +1418,7 @@ describe('visual capture of the real product', () => {
       const fold = target.locator('.fold-toggle')
       await fold.getByText(/^已处理 · 思考 6 秒 · 读取 1 个文件/).waitFor()
       await target.locator('.diff-view').getByText('省略表示保留').first().waitFor()
+      await diffColoured(target)
       await settleMotion(target)
       await recorder.capture(target, viewport, 'session-done', 'done with tools and a diff')
       if (sidebar) await recorder.capture(target, viewport, 'sidebar-done', 'done session selected', sidebar)
@@ -2012,6 +2045,7 @@ describe('visual capture of the real product', () => {
         async () => {
           await openSession(target, viewport, sessions.done)
           await shows(target, /建议再补一条/)
+          await diffColoured(target)
         },
       ],
       [
@@ -2044,6 +2078,36 @@ describe('visual capture of the real product', () => {
         })
       }
       await target.emulateMedia({ colorScheme: 'light' })
+    }
+  })
+
+  // ---- Code in a reply ------------------------------------------------------------------------------------------
+
+  it('captures code arriving and settled at each viewport', async () => {
+    const id = await start(PROMPTS.code, 'chat')
+    await expect.poll(async () => (await detail(id)).liveText.length, { timeout: 20_000 }).toBeGreaterThan(0)
+    for (const viewport of VISUAL_VIEWPORTS) {
+      const target = page(viewport)
+      await openSession(target, viewport, id)
+      const block = target.locator('.message-code.is-tail')
+      await block.getByText('前 14 行已收起', { exact: true }).waitFor()
+      await block.locator('.syn-comment').first().waitFor()
+      await block.locator('.syn-keyword').last().waitFor()
+      await noHorizontalOverflow(target)
+      await settleMotion(target)
+      await recorder.capture(target, viewport, 'session-code-arriving', 'a long code block arrives: its newest lines, coloured')
+    }
+    releaseArrivingCode?.()
+    await settled(id, 'idle')
+    for (const viewport of VISUAL_VIEWPORTS) {
+      const target = page(viewport)
+      await openSession(target, viewport, id)
+      const block = target.locator('.message-code.is-collapsed')
+      await block.getByRole('button', { name: '展开全部 31 行', exact: true }).waitFor()
+      await block.locator('.syn-keyword').first().waitFor()
+      await noHorizontalOverflow(target)
+      await settleMotion(target)
+      await recorder.capture(target, viewport, 'session-code-settled', 'the same block settled: its first lines, with more to expand')
     }
   })
 

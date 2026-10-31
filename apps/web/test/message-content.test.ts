@@ -91,14 +91,45 @@ describe('message markdown', () => {
     const streaming = render(partial, true)
     const finished = render(`${partial}\n\`\`\``)
     for (const html of [streaming, finished]) {
-      expect(html.match(/class="message-code"/g)).toHaveLength(1)
+      expect(html.match(/class="message-code(?: is-open)?"/g)).toHaveLength(1)
       expect(html).toContain('class="message-code-language">ts</span>')
-      expect(html).toContain('<code>const answer = 42\nconsole.log(answer)\n</code>')
+      expect(html).toContain('<code>const answer = 42\nconsole.log(answer)')
       expect(html).toContain('aria-label="复制代码"')
       expect(html).not.toContain('```')
     }
     expect(streaming).toContain('aria-busy="true"')
     expect(finished).not.toContain('aria-busy=')
+  })
+
+  it('shows the newest lines of a long block still arriving, and every byte once it closes', () => {
+    const lines = Array.from({ length: 40 }, (_, i) => `line ${i + 1}`).join('\n')
+    const open = render(`\`\`\`text\n${lines}`, true)
+    expect(open).toContain('message-code is-collapsed is-open is-tail')
+    expect(open).toContain('前 23 行已收起')
+    expect(open).toContain('<code>line 24\n')
+    expect(open).toContain('line 40</code>')
+    expect(open).not.toContain('line 23\n')
+    expect(open).toContain('展开全部 40 行')
+    const closed = render(`\`\`\`text\n${lines}\n\`\`\`\n`, true)
+    expect(closed).toContain('class="message-code is-collapsed"')
+    expect(closed).not.toContain('已收起')
+    expect(closed).toContain('<code>line 1\n')
+    expect(closed).toContain('line 40\n</code>')
+  })
+
+  it('does not take a fence with text after it for the closing one', () => {
+    expect(render('```ts\nconst a = 1\n```x\nconst b = 2', true)).toContain('is-open')
+    expect(render('```ts\nconst a = 1\n```  \n', true)).not.toContain('is-open')
+  })
+
+  it('sees the closing fence of a block inside a list item or a quote', () => {
+    expect(render('10. step\n\n    ```ts\n    const a = 1\n    ```\n', true)).not.toContain('is-open')
+    expect(render('> ```ts\n> const a = 1\n> ```\n', true)).not.toContain('is-open')
+    expect(render('- > ```ts\n  > const a = 1\n  > ```\n', true)).not.toContain('is-open')
+    expect(render('10. step\n\n    ```ts\n    const a = 1\n', true)).toContain('is-open')
+    expect(render('> ```ts\n> const a = 1\n', true)).toContain('is-open')
+    // Indented past a fence's reach, this line is the block's text.
+    expect(render('```ts\n    ```\nconst a = 1\n', true)).toContain('is-open')
   })
 
   it('retains all code in long blocks while offering an accessible expansion control', () => {

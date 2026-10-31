@@ -185,7 +185,12 @@
   padding: var(--sp-12) var(--sp-16);
   overflow: auto;
   overscroll-behavior-inline: contain;
-  background: transparent;
+  /* An edge darkens while there is more code past it: a scrollbar is often hidden until scrolling starts. */
+  background:
+    linear-gradient(to right, var(--sunken) 50%, transparent) left / 24px 100% no-repeat local,
+    linear-gradient(to left, var(--sunken) 50%, transparent) right / 24px 100% no-repeat local,
+    linear-gradient(to right, var(--line), transparent) left / 8px 100% no-repeat scroll,
+    linear-gradient(to left, var(--line), transparent) right / 8px 100% no-repeat scroll;
   color: var(--ink);
   font-family: var(--mono);
   font-size: var(--fs-code);
@@ -203,6 +208,21 @@
 /* Matches the 18-line threshold so an arriving line never shrinks the block. */
 .message-code.is-collapsed pre {
   max-height: calc(18 * 20px + 24px);
+}
+/*
+ * While a long block arrives it shows its newest lines, so what changes is what is visible. The note and 17 lines stand
+ * exactly as tall as 18 lines with their padding, so the block keeps its height when it closes and returns to its top.
+ */
+.message-content .message-code-tail-note {
+  margin: 0;
+  padding: var(--sp-8) var(--sp-16) var(--sp-4);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-code);
+}
+.message-content .message-code.is-tail pre {
+  max-height: none;
+  padding-top: 0;
 }
 .message-code-expand {
   width: 100%;

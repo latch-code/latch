@@ -35,6 +35,59 @@ describe('redactSecrets', () => {
     const text = 'Latch 0.1.0 · 打开 http://h-abc.localhost:4317/link/ ，请在本机确认。 dev_123 latch_short=1 lpi1-short'
     expect(redactSecrets(text)).toBe(text)
   })
+  it.each([
+    ['https://user:token123@git.example.com/org/repo.git', 'https://[redacted]@git.example.com/org/repo.git'],
+    ['HTTPS://user:token123@git.example.com', 'HTTPS://[redacted]@git.example.com'],
+    ['https://token123@github.com/org/repo', 'https://[redacted]@github.com/org/repo'],
+    ['http://user:p@ss@h.example:8080/x', 'http://[redacted]@h.example:8080/x'],
+    ['http://user:pw@[::1]:4317/link/', 'http://[redacted]@[::1]:4317/link/'],
+    ['postgres://admin:hunter2@db.internal:5432/app', 'postgres://[redacted]@db.internal:5432/app'],
+    ['mongodb+srv://a:b@cluster.example/db', 'mongodb+srv://[redacted]@cluster.example/db'],
+    ['redis://:hunter2@cache:6379', 'redis://[redacted]@cache:6379'],
+    ['git+https://user:token123@git.example.com/r', 'git+https://[redacted]@git.example.com/r'],
+    ['postgres://me@corp.example:hunter2@db/app', 'postgres://[redacted]@db/app'],
+    ['wss://token123@relay.example/socket', 'wss://[redacted]@relay.example/socket'],
+    ['ws://token123@127.0.0.1:4317', 'ws://[redacted]@127.0.0.1:4317'],
+    [
+      "remote 'https://u:t@a.example' and https://v:w@b.example/x",
+      "remote 'https://[redacted]@a.example' and https://[redacted]@b.example/x",
+    ],
+    ['[repo](https://u:t@a.example/x), https://v:w@b.example', '[repo](https://[redacted]@a.example/x), https://[redacted]@b.example'],
+  ])('redacts the userinfo of %s and keeps the rest of the URL', (input, expected) => {
+    expect(redactSecrets(input)).toBe(expected)
+  })
+
+  it.each([
+    'https://example.com/path?q=1#top',
+    'http://h-abc.localhost:4317/link/',
+    'http://[::1]:4317/link/',
+    'https://example.com:8443/@scope/pkg',
+    'https://www.npmjs.com/package/@latch/sdk',
+    'https://medium.com/@someone/post',
+    'https://example.com/a?mail=me@example.com',
+    'https://example.com#me@example.com',
+    'https://example.com and me@example.com',
+    '<https://example.com>, me@example.com',
+    'git@github.com:org/repo.git',
+    'ssh://git@github.com/org/repo.git',
+    'ssh://git@github.com:22/org/repo.git',
+    'ftp://anonymous@ftp.example/pub',
+    'postgres://me@db.example:5432/app',
+    'mailto:me@example.com',
+    'npm:@latch/sdk@1.2.3',
+    'time 12:30 me@example.com',
+  ])('leaves the ordinary %s alone', text => {
+    expect(redactSecrets(text)).toBe(text)
+  })
+
+  it('keeps long text without a userinfo fast', () => {
+    const started = performance.now()
+    expect(redactSecrets(`https://${'a:'.repeat(100_000)}`)).not.toContain('[redacted]')
+    expect(redactSecrets('://'.repeat(100_000))).not.toContain('[redacted]')
+    expect(redactSecrets(`wss://${'a@b:'.repeat(100_000)}`)).toContain('[redacted]')
+    expect(performance.now() - started).toBeLessThan(1000)
+  })
+
   it('classifies encoded native pairing payloads and app-open receipts as secrets', () => {
     expect(containsSecret(`LATCHPAIR2.${'a'.repeat(128)}`)).toBe(true)
     expect(containsSecret(`lnw1.${'W'.repeat(43)}`)).toBe(true)
@@ -60,6 +113,7 @@ describe('redactSecrets', () => {
       '桌面端在 Latch-Device 请求头里带上凭据。',
       'Cookie: latch_abcdefgh=<凭据>',
       'http://h.localhost:4317/link/#pair=XXXX',
+      'postgres://user:password@localhost:5432/app',
     ]) {
       expect(containsSecret(text), text).toBe(false)
       // Log lines still lose them.

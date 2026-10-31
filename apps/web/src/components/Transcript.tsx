@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ChevronRight } from 'lucide-react'
 import type { Approval, HarnessInfo, Message, TaskDetail } from '@latch/protocol'
 import {
@@ -9,7 +9,9 @@ import {
   renderedMessages,
   resendWarning,
   separators,
+  sameData,
   sideEffects,
+  stableTurns,
   toolRowId,
   turnModel,
   turnOutcome,
@@ -19,11 +21,12 @@ import {
 } from '../conversation.ts'
 import { FileSession } from './FileChip.tsx'
 import { FileReferences } from './FileReferences.tsx'
-import { MessageRow, SourceRow } from './MessageRow.tsx'
+import { MessageRow, SourceRow, type LiveReasoning } from './MessageRow.tsx'
 import { ToolCard, type ApprovalGateFor, type DecideHandler } from './ToolCard.tsx'
 import { QuestionCard, QuestionResultCard, type QuestionActions } from './QuestionCard.tsx'
 import { TurnFooter, type TurnRetry } from './TurnFooter.tsx'
 import { transcriptMarkdown } from '../exportMarkdown.ts'
+import { useStableCallback } from '../hooks/useStableCallback.ts'
 import { Collapse, ICON_STROKE, useLivePrevious } from '@latch/ui'
 
 /** What resending the latest turn takes, when this device may send now. */
@@ -33,26 +36,31 @@ export interface RetryAccess {
   onResend: (prompt: string) => void
 }
 
+type Question = NonNullable<TaskDetail['questions']>[number]
+
+/** What a row needs beyond its message; for a turn with no approval or question of its own it never changes. */
 interface RowContext {
-  detail: TaskDetail
-  approvals: ReadonlyMap<string, Approval>
+  sessionId: string
+  approvals: readonly Approval[]
+  questions: readonly Question[]
   busy: ReadonlyMap<string, string>
   onDecide: DecideHandler
   gateFor?: ApprovalGateFor
-  liveId: string
-  live: boolean
+  /** The reply streaming in this turn, under the ID it keeps once committed. */
+  streamingId?: string
+  liveReasoning?: LiveReasoning
   coarse: boolean
   questionActions?: QuestionActions
 }
 
 function Row({ message, context }: { message: Message; context: RowContext }) {
   if (message.role === 'tool') {
-    const question = context.detail.questions?.find(question => `tool:${question.toolCallId}` === message.id)
+    const question = context.questions.find(question => `tool:${question.toolCallId}` === message.id)
     if (question && context.questionActions)
-      return <QuestionCard question={question} sessionId={context.detail.summary.id} actions={context.questionActions} />
+      return <QuestionCard question={question} sessionId={context.sessionId} actions={context.questionActions} />
     if (message.toolName === 'ask_user' && message.state === 'completed' && message.text.startsWith('{"kind":"latch.question-result"'))
       return <QuestionResultCard text={message.text} />
-    const approval = context.approvals.get(message.id)
+    const approval = context.approvals.find(approval => toolRowId(approval) === message.id)
     return (
       <ToolCard
         message={message}
@@ -63,13 +71,13 @@ function Row({ message, context }: { message: Message; context: RowContext }) {
       />
     )
   }
-  const streaming = context.live && message.id === context.liveId
+  const streaming = message.id === context.streamingId
   return (
     <MessageRow
       message={message}
       streaming={streaming}
       coarse={context.coarse}
-      liveReasoning={streaming ? { startedAt: context.detail.liveReasoningStartedAt, ms: context.detail.liveReasoningMs } : undefined}
+      liveReasoning={streaming ? context.liveReasoning : undefined}
     />
   )
 }
@@ -140,30 +148,14 @@ function ProcessFold({ rows, settledLive, children }: { rows: Message[]; settled
   )
 }
 
-function TurnView({
-  turn,
-  harnessName,
-  harness,
-  providerName,
-  separator,
-  latest,
-  trailingLive,
-  outcome,
-  settledLive,
-  arrived,
-  runModel,
-  standalone,
-  liveFooter,
-  context: rowContext,
-  retry,
-  reportedContext,
-  actions,
-}: {
+interface TurnViewProps {
   turn: Turn
   context: RowContext
   harnessName: string
   harness?: Pick<HarnessInfo, 'id' | 'source'>
-  providerName?: (id: string) => string | undefined
+  /** The model that answered, or that the run uses before its first step records one, and its service's name. */
+  model?: string
+  provider?: string
   separator?: { at: number; sameDay: boolean }
   latest: boolean
   trailingLive: boolean
@@ -171,22 +163,73 @@ function TurnView({
   settledLive: boolean
   /** The page saw this turn arrive: its prompt rises in. */
   arrived: boolean
-  /** The model the run uses, for the source row of a running turn before its first step records one. */
-  runModel?: { model: string; providerId?: string }
-  standalone: Approval[]
+  standalone: readonly Approval[]
   liveFooter?: Parameters<typeof TurnFooter>[0]['live']
+  /** What the Host saw this run change, for the latest turn. */
+  fileChanges?: TaskDetail['fileChanges']
+  runId?: string
   retry?: TurnRetry
   reportedContext?: number
-  actions?: Parameters<typeof TurnFooter>[0]['actions']
-}) {
+  /** Fork from, and copy the record up to, the turn's last row; only a settled turn offers them. */
+  onForkFrom?: (messageId: string) => void
+  onCopyUpTo?: (messageId: string) => void
+}
+
+/**
+ * A settled turn draws only when its own data changes, so a streaming frame costs the turn that is streaming. Every prop
+ * counts unless named here, so a new one can only cost a render, never leave a turn stale.
+ */
+function sameTurnProps(a: TurnViewProps, b: TurnViewProps): boolean {
+  const keys = Object.keys(a) as Array<keyof TurnViewProps>
+  if (keys.length !== Object.keys(b).length) return false
+  return keys.every(key => {
+    if (Object.is(a[key], b[key])) return true
+    if (key === 'separator' || key === 'harness') return sameData(a[key], b[key])
+    if (key !== 'context') return false
+    const left = a.context,
+      right = b.context
+    const fields = Object.keys(left) as Array<keyof RowContext>
+    if (fields.length !== Object.keys(right).length) return false
+    return fields.every(
+      field =>
+        Object.is(left[field], right[field])
+        || ((field === 'approvals' || field === 'questions' || field === 'liveReasoning') && sameData(left[field], right[field])),
+    )
+  })
+}
+
+const NONE: readonly never[] = []
+const NO_BUSY: ReadonlyMap<string, string> = new Map()
+
+const TurnView = memo(function TurnView({
+  turn,
+  harnessName,
+  harness,
+  model,
+  provider,
+  separator,
+  latest,
+  trailingLive,
+  outcome,
+  settledLive,
+  arrived,
+  standalone,
+  liveFooter,
+  fileChanges,
+  runId,
+  context: rowContext,
+  retry,
+  reportedContext,
+  onForkFrom,
+  onCopyUpTo,
+}: TurnViewProps) {
   const [tapped, setTapped] = useState(false)
   const folded = trailingLive ? [] : foldedRows(turn, outcome)
   const foldedIds = new Set(folded.map(message => message.id))
   const rest = turn.replies.filter(message => !foldedIds.has(message.id))
   const render = (message: Message) => <Row key={message.id} message={message} context={rowContext} />
-  const stamped = turnModel(turn)
-  const model = stamped?.model ? { model: stamped.model, providerId: stamped.providerId } : trailingLive ? runModel : undefined
-  const observed = latest ? rowContext.detail.fileChanges : undefined
+  const observed = fileChanges
+  const end = turn.replies.at(-1) ?? turn.user
   const hasOutputs = !!(
     turn.user?.outputs?.length
     || turn.user?.outputsTruncated
@@ -200,7 +243,7 @@ function TurnView({
   const replyBefore = useLivePrevious(hasReply)
   const replyArrived = hasReply && (arrived || replyBefore === false)
   return (
-    <div className="turn" data-turn={turn.key}>
+    <div className="turn" data-turn={turn.key} data-settled={latest ? undefined : ''}>
       {turn.user && <MessageRow message={turn.user} separator={separator} coarse={rowContext.coarse} arrived={arrived} />}
       {hasReply && (
         <div
@@ -215,12 +258,7 @@ function TurnView({
                 }
               : undefined
           }>
-          <SourceRow
-            name={harnessName}
-            harness={harness}
-            model={model?.model}
-            provider={model?.providerId ? providerName?.(model.providerId) : undefined}
-          />
+          <SourceRow name={harnessName} harness={harness} model={model} provider={provider} />
           {folded.length > 0 && (
             <ProcessFold rows={folded} settledLive={settledLive}>
               {rowsWithGroups(folded, render)}
@@ -240,22 +278,35 @@ function TurnView({
           <TurnFooter
             key={turn.key}
             turn={turn}
-            fileChanges={
-              latest && rowContext.detail.fileChanges?.runId === rowContext.detail.summary.runId ? rowContext.detail.fileChanges : undefined
-            }
+            fileChanges={fileChanges?.runId === runId ? fileChanges : undefined}
             live={trailingLive ? liveFooter : undefined}
             outcome={outcome}
             pinned={tapped || (latest && rowContext.coarse)}
             settledLive={settledLive}
-            context={latest ? reportedContext : undefined}
+            context={reportedContext}
             retry={retry}
-            actions={actions}
+            actions={
+              end && onCopyUpTo
+                ? {
+                    ...(onForkFrom
+                      ? {
+                          onFork: () => {
+                            onForkFrom(end.id)
+                          },
+                        }
+                      : {}),
+                    onCopy: () => {
+                      onCopyUpTo(end.id)
+                    },
+                  }
+                : undefined
+            }
           />
         </div>
       )}
     </div>
   )
-}
+}, sameTurnProps)
 
 /**
  * The conversation as turns: each prompt (with its time separator when one is due), then what answered it under one
@@ -305,39 +356,32 @@ export function Transcript({
   questionActions?: QuestionActions
 }) {
   const messages = renderedMessages(detail)
-  const turns = turnsOf(messages)
+  // Kept from the previous render even if React discards it: a turn only ever stands in for one with the same data.
+  const lastTurns = useRef<Turn[]>([])
+  const turns = stableTurns(lastTurns.current, turnsOf(messages))
+  lastTurns.current = turns
   const marks = separators(messages)
-  const byTool = new Map(
-    approvals.flatMap(approval => {
-      const id = toolRowId(approval)
-      return id ? [[id, approval] as const] : []
-    }),
-  )
   const ids = new Set(messages.map(message => message.id))
   const standalone = approvals.filter(approval => {
     const id = toolRowId(approval)
     return id === undefined || !ids.has(id)
   })
-  const rowContext: RowContext = {
-    detail,
-    approvals: byTool,
-    busy,
-    onDecide,
-    gateFor,
-    liveId: liveMessageId(detail),
-    live: isLive(detail),
-    coarse,
-    questionActions,
-  }
+  const liveId = isLive(detail) ? liveMessageId(detail) : undefined
+  const decide = useStableCallback<Parameters<DecideHandler>, ReturnType<DecideHandler>>((...args) => onDecide(...args))
+  const forkFrom = useStableCallback((messageId: string) => onFork?.(messageId))
+  const copyUpTo = useStableCallback((messageId: string) => {
+    const index = detail.messages.findIndex(message => message.id === messageId)
+    void (async () => {
+      if (!navigator.clipboard?.writeText) throw new Error('此浏览器不能复制，请手动选择记录')
+      await navigator.clipboard.writeText(transcriptMarkdown({ ...detail, messages: detail.messages.slice(0, index + 1), liveText: '' }))
+    })().catch(error => onCopyError?.(error))
+  })
   const trailingKey = active ? (turns.at(-1)?.key ?? 'empty') : null
   // The turn the page watched run until the previous render: when it settles, its footer lingers and its process folds.
   const previouslyLive = useLivePrevious(trailingKey)
   // The latest turn before the last change the page saw happen ('' for none): a different latest turn arrived live.
   const lastKey = turns.at(-1)?.key ?? ''
   const previousLast = useLivePrevious(lastKey)
-  const runModel = detail.summary.model
-    ? { model: detail.summary.model, ...(detail.summary.providerId ? { providerId: detail.summary.providerId } : {}) }
-    : undefined
   const liveFooter = {
     detail,
     harness: harnessName,
@@ -345,7 +389,6 @@ export function Transcript({
     approvals: approvals.length,
     ...(fallbackElapsed !== undefined ? { fallbackElapsed } : {}),
   }
-  const reportedContext = detail.usageReport?.contextUsed
   const { id: sessionId, cwd, folders } = detail.summary
   const fileSession = useMemo(
     () => ({ id: sessionId, ...(cwd ? { folder: cwd } : {}), ...(folders ? { folders } : {}) }),
@@ -368,49 +411,49 @@ export function Transcript({
                   },
                 }
               : undefined
+          const rowIds = turn.replies.filter(message => message.role === 'tool').map(message => message.id)
+          const ownApprovals = approvals.length ? approvals.filter(approval => rowIds.includes(toolRowId(approval) ?? '')) : NONE
+          const ownQuestions = detail.questions?.length
+            ? detail.questions.filter(question => rowIds.includes(`tool:${question.toolCallId}`))
+            : NONE
+          const asks = ownApprovals.length > 0 || (latest && standalone.length > 0)
+          const streaming = liveId !== undefined && turn.replies.some(message => message.id === liveId)
+          const stamped = turnModel(turn)
+          const providerId = stamped?.model ? stamped.providerId : trailingLive ? detail.summary.providerId : undefined
           return (
             <TurnView
               key={turn.key}
               turn={turn}
-              context={rowContext}
+              context={{
+                sessionId,
+                approvals: ownApprovals,
+                questions: ownQuestions,
+                busy: asks ? busy : NO_BUSY,
+                onDecide: decide,
+                ...(asks && gateFor ? { gateFor } : {}),
+                ...(streaming ? { streamingId: liveId } : {}),
+                ...(streaming ? { liveReasoning: { startedAt: detail.liveReasoningStartedAt, ms: detail.liveReasoningMs } } : {}),
+                coarse,
+                ...(ownQuestions.length > 0 && questionActions ? { questionActions } : {}),
+              }}
               harnessName={harnessName}
               harness={harness}
-              providerName={providerName}
+              model={stamped?.model ?? (trailingLive ? detail.summary.model : undefined)}
+              provider={providerId ? providerName?.(providerId) : undefined}
               separator={turn.user ? marks.get(turn.user.id) : undefined}
               latest={latest}
               trailingLive={trailingLive}
               outcome={outcome}
               settledLive={settledLive}
               arrived={latest && previousLast !== undefined && previousLast !== lastKey}
-              runModel={runModel}
-              standalone={latest ? standalone : []}
-              liveFooter={liveFooter}
+              standalone={latest ? standalone : NONE}
+              liveFooter={trailingLive ? liveFooter : undefined}
+              fileChanges={latest ? detail.fileChanges : undefined}
+              runId={latest ? detail.summary.runId : undefined}
               retry={resend}
-              reportedContext={reportedContext}
-              actions={
-                !trailingLive
-                  ? {
-                      ...(onFork
-                        ? {
-                            onFork: () => {
-                              const end = turn.replies.at(-1) ?? turn.user
-                              if (end) onFork(end.id)
-                            },
-                          }
-                        : {}),
-                      onCopy: () => {
-                        const end = turn.replies.at(-1) ?? turn.user
-                        const index = detail.messages.findIndex(message => message.id === end?.id)
-                        void (async () => {
-                          if (!navigator.clipboard?.writeText) throw new Error('此浏览器不能复制，请手动选择记录')
-                          await navigator.clipboard.writeText(
-                            transcriptMarkdown({ ...detail, messages: detail.messages.slice(0, index + 1), liveText: '' }),
-                          )
-                        })().catch(error => onCopyError?.(error))
-                      },
-                    }
-                  : undefined
-              }
+              reportedContext={latest ? detail.usageReport?.contextUsed : undefined}
+              onForkFrom={!trailingLive && onFork ? forkFrom : undefined}
+              onCopyUpTo={!trailingLive ? copyUpTo : undefined}
             />
           )
         })}

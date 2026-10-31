@@ -11,7 +11,7 @@
     "@latch/ui": "workspace:*",
     "@shikijs/core": "catalog:",
     "@shikijs/engine-javascript": "catalog:",
-    "@shikijs/langs-precompiled": "catalog:",
+    "@shikijs/langs": "catalog:",
     "@tanstack/react-virtual": "catalog:",
     "docx-preview": "catalog:",
     "fflate": "catalog:",

@@ -426,9 +426,12 @@ describe('streamed messages in the real workspace', () => {
       const { row } = await liveRow(page, id)
       const block = row.locator('.message-code')
       await block.waitFor()
-      expect(await block.locator('pre code').textContent()).toBe(code)
+      // While it arrives the block shows its newest lines, and every line once expanded.
+      expect(await block.locator('pre code').textContent()).toBe(code.trimEnd().split('\n').slice(-17).join('\n'))
+      await block.getByText('前 9 行已收起', { exact: true }).waitFor()
       const originalPre = await block.locator('pre').elementHandle()
       await block.getByRole('button', { name: '展开全部 26 行', exact: true }).click()
+      expect(await block.locator('pre code').textContent()).toBe(code.trimEnd())
       expect(await block.getByRole('button', { name: '收起代码', exact: true }).getAttribute('aria-expanded')).toBe('true')
 
       reply.append(

@@ -252,7 +252,7 @@ contextBridge.exposeInMainWorld(
       open: fileCall('latch:files:open'),
     }),
     // The 浏览器 tab. Main lays each tab's page over the panel rectangle the page sends and keeps every way a guest page
-    // could reach the shell or the Host shut; see docs/PREVIEW-BROWSER.md for each call's answer.
+    // could reach the shell or the Host shut.
     browser: Object.freeze({
       protocolVersion: 1,
       /** A new tab in the project's own partition, empty or at an address as typed in the address field. */

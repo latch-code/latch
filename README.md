@@ -197,9 +197,15 @@ pnpm desktop -- --tailnet \
 | `--native-host <具体 IP>`、`--native-port <端口>` | — | 不指定时局域网入口自动选择并跟随手机接入；指定后固定在这个地址，端口默认 `4319` |
 | `--plugin <目录或模块>`、`--harness <id>`、`--provider <id>`、`--demo` | — | — |
 
-**连接 iPhone 上的 Latch：** 在桌面端打开「设置 → 设备 → 连接手机」，用 iPhone 上的 Latch 扫码，再用 Touch ID 确认一次。iPhone 需要和这台 Mac 连接同一个 Wi‑Fi；客户端隔离的网络上配对会失败，可以让 Mac 临时连 iPhone 的个人热点。之后不用再设置：有已配对的手机时局域网入口保持打开。官方中继尚未部署，不在同一网络时目前连不上。不需要时在「设备」里移除，手机也可以在设置里「断开这台 Mac」。
+**连接 iPhone 上的 Latch：** 在桌面端打开「设置 → 设备 → 连接手机」，用 iPhone 上的 Latch 扫码，再用 Touch ID 确认一次。iPhone 需要和这台 Mac 连接同一个 Wi‑Fi；客户端隔离的网络上配对会失败，可以让 Mac 临时连 iPhone 的个人热点。之后不用再设置：有已配对的手机时局域网入口保持打开。官方中继尚未部署，不在同一网络时目前连不上。新增自建中继与地址目录目前没有界面或接口（尚未实现）；已保存的配置继续生效，可以在「设备」里移除。不需要时在「设备」里移除，手机也可以在设置里「断开这台 Mac」。
 
-原生入口使用固定 Host 根身份的 TLS 1.3 / HTTP/2，与浏览器入口分别配置。Node 客户端已实现；手机 App、Secure Enclave / App Attest 和自动发现的实现与验收边界见 [docs/REMOTE.md](docs/REMOTE.md)。
+手机连接没有账号和云端用户库，也不使用 P2P 或 NAT 穿透：手机直接连到你的这台 Mac，设备、权限与会话都由 Mac 上的 Host 决定，网络失败不会改变它们。这个入口与浏览器的 HTTPS 入口分别配置。
+
+配对只有一种方式：在 Mac 所在的 Wi‑Fi 或有线网络上扫一次二维码，在 Mac 上确认一次。确认之后面板问「手机上显示已连接了吗？」：手机显示已连接就选「是的，完成」；没有显示，说明连上的可能不是你的手机，选「没有，移除」，它立即断开，之后要重新扫码才能连接。
+
+中继只连接 Host 与已获准设备，不能读取端到端正文、签发设备权限或替换 Host 身份。中继的运营方与云服务商仍能看到 IP、时间、填充后的大小与连接关系，同一运营方可以把不同节点、不同日期的连接关联起来。
+
+以下还没有在真机上验收，测试夹具不能代替：Secure Enclave、Face ID、App Attest、Mac 上配对的系统确认表单、Bonjour 本地网络权限、Wi‑Fi 与蜂窝切换，以及手机上的分享与预览。App Attest 与云推送尚未启用，所以手机不能开启完全访问会话或批准高风险操作，也没有通知。
 
 同时运行多个 Host 时，为每个 Host 使用不同的 `--data-dir` 与 `--port`。
 
@@ -225,7 +231,7 @@ pnpm desktop -- --tailnet \
 
 已保存的项目每次列出时重新检查（结果保留 5 秒），新建会话时立即检查：任何一个文件夹找不到、不再符合规则或无法打开，整个项目就不能新建会话，已有会话也不能继续，直到文件夹回到原处，或在项目中把它换成另一个文件夹。会话创建时记下它的项目与文件夹，之后加入的文件夹只用于新会话；它用到的文件夹被移出项目或替换后，会话不能继续。
 
-完整的路径规则与数据目录内容见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 的「路径与项目目录」与「持久化与恢复」。
+路径与数据目录内容见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 的「路径与项目目录」与「持久化与恢复」。
 
 ## 停止 Host
 
@@ -272,7 +278,7 @@ pnpm stop -- --reason restart           # 告诉手机与浏览器原因：resta
 - 每台设备持有自己的 P-256 密钥，Host 只保存公钥与凭据哈希；授予或执行权限的操作先写入哈希链审计记录。
 - 不要把端口直接暴露到公网；远程设备只通过你提供证书的 HTTPS 入口接入。即使回环端口被隧道转发出去，没有邀请也无法登记，转发进来的连接也不能发起本机确认。
 
-完整的安全模型、不防御的情况与尚未实现的部分见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+不防御的情况与尚未实现的部分见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ## 开发
 
@@ -296,10 +302,10 @@ Git 钩子与 `git blame` 的忽略列表需要在每个克隆中手动设置一
 | 文档 | 内容 |
 | --- | --- |
 | [AGENTS.md](AGENTS.md) | 给 AI 编码助手的工作约定与入口 |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 分层、安全模型、设备与凭据、Harness 路由、持久化、HTTP API |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 分层、Harness 路由、持久化、HTTP API |
 | [docs/HARNESSES.md](docs/HARNESSES.md) | ACP Agent 接入、权限模式、项目配置与限制 |
 | [docs/PLUGIN-DEVELOPMENT.md](docs/PLUGIN-DEVELOPMENT.md) | 组合技能、工具、React 界面与 Harness 需求包 |
-| [docs/STREAMING.md](docs/STREAMING.md) | 流式同步、消息身份、重连、凭据续期与阅读位置 |
+| [docs/STREAMING.md](docs/STREAMING.md) | 流式同步、消息身份、重连与阅读位置 |
 | [docs/DESIGN.md](docs/DESIGN.md) | 界面结构、设计令牌与交互规则 |
 | [docs/TESTING.md](docs/TESTING.md) | 测试命令与按改动选择回归 |
 

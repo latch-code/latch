@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PDF_CSS_SCALE, pdfPercent, pdfScale, pdfZoomKey } from '../src/preview/pdfZoom.ts'
+import { PDF_CSS_SCALE, pdfPageAt, pdfPercent, pdfScale, pdfZoomKey } from '../src/preview/pdfZoom.ts'
 
 describe('PDF zoom and canvas bounds', () => {
   it('uses the actual page width in fit mode and PDF-point/CSS-pixel scaling outside fit', () => {
@@ -27,5 +27,16 @@ describe('PDF zoom and canvas bounds', () => {
     expect(pdfZoomKey({ ...event, metaKey: false })).toBeUndefined()
     expect(pdfZoomKey({ ...event, altKey: true })).toBeUndefined()
     expect(pdfZoomKey({ ...event, isComposing: true })).toBeUndefined()
+  })
+  it('takes a page scrolled to at a fractional start as the current one', () => {
+    const height = 762.656,
+      items = [0, 1, 2, 3].map(index => ({ index, end: (index + 1) * height }))
+    // The browser keeps scrollTop on whole pixels: the page starting at 1525.312 is reached at 1525 or 1526.
+    expect(pdfPageAt(items, 1525)?.index).toBe(2)
+    expect(pdfPageAt(items, 1526)?.index).toBe(2)
+    expect(pdfPageAt(items, 0)?.index).toBe(0)
+    expect(pdfPageAt(items, 1524)?.index).toBe(1)
+    expect(pdfPageAt(items, 3000)?.index).toBe(3)
+    expect(pdfPageAt([], 0)).toBeUndefined()
   })
 })
