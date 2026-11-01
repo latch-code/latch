@@ -836,11 +836,19 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .titlebar {
 }
 
 /* The toast (the design system's floating pill) sits at the bottom centre of the window. */
+/* Above the composer's controls when one shows; ToastClearance writes these on the root while a toast is up. */
+:root {
+  --toast-center: 50%;
+  --toast-clearance: calc(24px + env(safe-area-inset-bottom));
+}
 .toast {
   position: fixed;
-  left: 50%;
-  bottom: calc(24px + env(safe-area-inset-bottom));
+  left: var(--toast-center);
+  bottom: var(--toast-clearance);
   z-index: 60;
+  /* Left at the centre leaves it half the window to fit into, so it would wrap long before the window's edge. */
+  width: max-content;
+  max-width: min(560px, calc(100vw - 32px));
   transform: translateX(-50%);
   animation: rise-in var(--m-enter) var(--e-enter);
 }

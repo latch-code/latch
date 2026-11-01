@@ -168,23 +168,47 @@ describe.skipIf(process.platform !== 'darwin')('descriptor-relative macOS file l
     expect((await invoke('{"root":', true)).result).toEqual({ error: 'invalid-input' })
   })
 
-  it('returns a bounded partial listing instead of losing results at the entry and output limits', async () => {
-    for (let start = 0; start < 2200; start += 50)
-      await Promise.all(Array.from({ length: 50 }, (_, index) => mkdir(join(root, `${'"'.repeat(248)}${start + index}`))))
-    const result = await invoke(request())
-    expect(result.code).toBe(0)
-    expect(result.result.truncated).toBe(true)
-    expect(result.result.entries!.length).toBeGreaterThan(0)
-    expect(result.result.entries!.length).toBeLessThan(2000)
-    expect(result.bytes).toBeLessThanOrEqual(1_048_576)
-    await rm(root, { recursive: true })
-    await mkdir(root)
-    for (let start = 0; start < 2050; start += 50)
-      await Promise.all(Array.from({ length: 50 }, (_, index) => mkdir(join(root, `file-${start + index}`))))
-    const entries = await invoke(request())
-    expect(entries.result.truncated).toBe(true)
-    expect(entries.result.entries).toHaveLength(2000)
-  }, 20_000)
+  // The helper answers these in milliseconds even on a busy disk; the thousands of journalled mkdirs are what take time.
+  // They are built once, outside any test's budget and outside the per-test root, which a timed-out test would keep
+  // writing into after the next test's beforeEach has replaced it.
+  describe('at the listing limits', () => {
+    let limits = ''
+    const populate = async (path: string, count: number, name: (index: number) => string) => {
+      await mkdir(path)
+      for (let start = 0; start < count; start += 50) {
+        const batch = Array.from({ length: Math.min(50, count - start) }, (_, index) => mkdir(join(path, name(start + index))))
+        await Promise.all(batch)
+      }
+    }
+    const listing = (path: string) => ({ root: path, dir: '', protectedPaths: [], showHidden: false })
+
+    beforeAll(async () => {
+      limits = await realpath(await mkdtemp(join(tmpdir(), 'latch-files-limits-')))
+      await Promise.all([
+        populate(join(limits, 'long-names'), 1950, index => `${'"'.repeat(248)}${index}`),
+        populate(join(limits, 'many-names'), 2001, index => `file-${index}`),
+      ])
+    }, 120_000)
+    afterAll(async () => {
+      if (limits) await rm(limits, { recursive: true, force: true })
+    }, 120_000)
+
+    it('stops at the output limit with a bounded partial listing', async () => {
+      const result = await invoke(listing(join(limits, 'long-names')))
+      expect(result.code).toBe(0)
+      expect(result.result.truncated).toBe(true)
+      expect(result.result.entries!.length).toBeGreaterThan(0)
+      expect(result.result.entries!.length).toBeLessThan(1950)
+      expect(result.bytes).toBeLessThanOrEqual(1_048_576)
+      expect(result.bytes).toBeGreaterThan(1_000_000)
+    })
+
+    it('stops at the entry limit with a bounded partial listing', async () => {
+      const result = await invoke(listing(join(limits, 'many-names')))
+      expect(result.result.truncated).toBe(true)
+      expect(result.result.entries).toHaveLength(2000)
+    })
+  })
 
   it('never lists an outside directory substituted for an accepted directory during concurrent renames', async () => {
     const target = join(root, 'target'),
@@ -209,11 +233,13 @@ describe.skipIf(process.platform !== 'darwin')('descriptor-relative macOS file l
         const result = await invoke(request('target'))
         expect(result.stderr).toBe('')
         if (result.code === 0) expect(result.result.entries?.map(entry => entry.name)).toEqual(['inside'])
-        else expect(['unreadable', 'changed']).toContain(result.result.error)
+        // `budget` is the helper's watchdog on a stalled machine: it also lists nothing.
+        else expect(['unreadable', 'changed', 'budget']).toContain(result.result.error)
       }
     } finally {
       stopped = true
       await mutate
     }
-  }, 15_000)
+    // Eight runs, each allowed the helper's 2 s watchdog; a timeout here would leave `mutate` writing into the next hook.
+  }, 30_000)
 })

@@ -53,6 +53,7 @@ import { dropProviderDraft, keepProviderDraft, peekProviderDraft, type ProviderD
 import { ModelVisibilitySettings } from './ModelVisibilitySettings.tsx'
 import { SettingsPages, type SettingsLevel } from './navigation.tsx'
 import { UsageSettings } from './UsageSettings.tsx'
+import { ConfirmedAddresses } from './ConfirmedAddresses.tsx'
 import { providerAbilities, type ProviderAbilities } from '../core/providerAbilities.ts'
 export { providerAbilities, type ProviderAbilities } from '../core/providerAbilities.ts'
 
@@ -1632,6 +1633,16 @@ export function ProvidersSettings({ snapshot, access, onChanged }: { snapshot: A
             />
           ))}
         </SettingsGroup>
+      )}
+      {access.local && access.admin && (
+        <ConfirmedAddresses
+          providers={data.providers}
+          revision={(data.confirmedAddresses ?? []).join('\n')}
+          onChanged={() => {
+            onChanged()
+            void load()
+          }}
+        />
       )}
       {snapshot.catalog?.features?.usage && <UsageSettings catalog={snapshot.catalog} />}
       {snapshot.catalog && <ModelVisibilitySettings catalog={snapshot.catalog} />}

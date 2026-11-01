@@ -421,6 +421,7 @@ const preferencesSchema = z.object({
     mode: z.enum(['chat', 'agent']).optional(),
     workspaceId: z.string().min(1).max(64).optional(),
     model: modelRefSchema.nullable().optional(),
+    pinned: z.boolean().optional(),
   }),
 })
 const levelSchema = z.enum(['L0', 'L1', 'L2'])
@@ -2531,17 +2532,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const egress = plan.egress && !current.hostEgressAllow.includes(plan.egress) ? plan.egress : undefined
       if (!address && !egress) return async () => {}
       if (address && addresses.length >= 256)
-        throw new AppError(
-          409,
-          'origins-full',
-          '已确认的模型服务地址已有 256 个。停止 Host 后，从 policy.json 的 confirmedAddresses 中移除不再使用的地址。',
-        )
+        throw new AppError(409, 'origins-full', '已确认的模型服务地址已有 256 个。请在 设置 › 模型 › 已确认的地址 里移除不再使用的。')
       if (egress && current.hostEgressAllow.length >= 64)
-        throw new AppError(
-          409,
-          'egress-full',
-          '允许访问的地址已有 64 个。停止 Host 后，从 policy.json 的 hostEgressAllow 中移除不再使用的地址。',
-        )
+        throw new AppError(409, 'egress-full', '允许访问的地址已有 64 个。请在 设置 › 模型 › 已确认的地址 里移除不再使用的。')
       const next = structuredClone(current)
       if (address) next.confirmedAddresses = [...addresses, address]
       if (egress) next.hostEgressAllow = [...current.hostEgressAllow, egress]
@@ -3487,6 +3480,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     function sessionDefaults(): SessionDefaults {
       const saved = config.settings().defaults
       const model = defaultModelRef()
+      // What was pinned must still be what starts: when its engine or model cannot, the fallback is not what anyone chose,
+      // and the device's own memory takes over. It holds again if they come back.
+      const engine = hub?.info(saved.harnessId ?? STANDARD)
+      const pinned =
+        saved.pinned === true
+        && engine?.status === 'ready'
+        && (engine.models !== 'host' || saved.model === undefined || savedDefaultModel() !== undefined)
       return {
         harnessId: defaultHarnessId(),
         mode: saved.mode ?? 'agent',
@@ -3495,10 +3495,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             ? saved.workspaceId
             : 'default',
         ...(model ? { model } : {}),
+        ...(pinned ? { pinned: true as const } : {}),
       }
     }
 
     async function savePreferences(caller: Caller, input: z.infer<typeof preferencesSchema>['defaults']): Promise<void> {
+      // A pinned engine is preselected on this computer, a full-access one included, so only this computer picks or moves it.
+      const movesPin = config.settings().defaults.pinned === true && (input.harnessId !== undefined || input.model !== undefined)
+      if (input.pinned !== undefined || movesPin) requireLocal(caller)
       if (input.harnessId !== undefined && !hub!.has(input.harnessId))
         throw new AppError(400, 'harness-unavailable', `Harness ${input.harnessId} 未启用`)
       if (input.workspaceId !== undefined && input.workspaceId !== 'default') {
@@ -3510,6 +3514,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (input.harnessId !== undefined) draft.defaults.harnessId = input.harnessId
         if (input.mode !== undefined) draft.defaults.mode = input.mode
         if (input.workspaceId !== undefined) draft.defaults.workspaceId = input.workspaceId
+        if (input.pinned === true) draft.defaults.pinned = true
+        else if (input.pinned === false) delete draft.defaults.pinned
         if (input.model === null) delete draft.defaults.model
         else if (input.model) draft.defaults.model = { providerId: input.model.providerId, model: input.model.model }
       })
@@ -3540,6 +3546,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           personalQueue: true,
           configReceipts: true,
           runLiveness: true,
+          pinnedDefaults: true,
           ...routes.features(caller),
         },
         harnesses: hub!.drivers().map(harness => ({ ...harness, remoteStart: remoteHarnessStartable(harness) })),

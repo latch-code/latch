@@ -59,7 +59,7 @@ export interface WorkspaceRecord {
 
 export interface HostSettings {
   version: 1
-  defaults: { harnessId?: string; mode?: TaskMode; workspaceId?: string; model?: ModelRef }
+  defaults: { harnessId?: string; mode?: TaskMode; workspaceId?: string; model?: ModelRef; pinned?: boolean }
   plugins: { disabled: string[] }
   /** Owner-added projects. The startup workspace is the implicit `default` and is not stored. */
   workspaces: WorkspaceRecord[]
@@ -328,6 +328,7 @@ const settingsSchema = z
           .regex(/^[a-z0-9][a-z0-9_-]{0,63}$/u, '项目标识无效')
           .optional(),
         model: z.object({ providerId: z.string().min(1).max(128), model: modelId }).optional(),
+        pinned: z.boolean().optional(),
       })
       .default({}),
     plugins: z.object({ disabled: z.array(z.string().min(1).max(128)).max(256) }).default({ disabled: [] }),

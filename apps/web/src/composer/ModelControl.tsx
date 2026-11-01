@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronLeft, ChevronRight, Cpu, Box, Plus, Sparkles } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Cpu, Box, Pin, PinOff, Plus, Sparkles } from 'lucide-react'
 import type { AgentPresetSettings, AgentSettings, HarnessInfo, HostCatalog, ModelRef, SessionConfigOption } from '@latch/protocol'
 import {
   Button,
@@ -13,10 +13,18 @@ import {
   useLayerClose,
   type PickerGroup,
 } from '@latch/ui'
-import { api } from '../core/api.ts'
+import { api, errorMessage } from '../core/api.ts'
 import { harnessLevel, type DeviceAccess } from '../core/permissions.ts'
 import { SETUP_COPY } from '../core/securityCopy.ts'
-import { engineEntries, harnessName, LATCH_ENGINE_LIMIT, presetsToAdd, sameModel, type ComposerChoice } from '../composerChoice.ts'
+import {
+  engineEntries,
+  harnessName,
+  isPinnedChoice,
+  LATCH_ENGINE_LIMIT,
+  presetsToAdd,
+  sameModel,
+  type ComposerChoice,
+} from '../composerChoice.ts'
 import { fuzzyModelMatch, modelKey, rememberModel, useModelPreferences } from '../modelPreferences.ts'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { ModelAddPanel, modelGroups } from '../components/Pickers.tsx'
@@ -111,6 +119,57 @@ function HiddenModelsLink({ shown, onToggle }: { shown: boolean; onToggle: () =>
     <MenuFooterLink chevron={false} onClick={onToggle}>
       {shown ? '收起隐藏的模型' : `显示隐藏的模型（${hidden.length}）`}
     </MenuFooterLink>
+  )
+}
+
+/** 设为新会话默认: on the Host computer only, because a pinned engine is preselected there. The menu stays open to show it took. */
+function PinChoiceRow({
+  catalog,
+  harness,
+  model,
+  onChanged,
+}: {
+  catalog: HostCatalog
+  harness: HarnessInfo
+  model: ModelRef | undefined
+  onChanged?: (() => void | Promise<void>) | undefined
+}) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const pinned = isPinnedChoice(catalog, harness, model)
+  const toggle = async () => {
+    if (busy) return
+    setBusy(true)
+    setError('')
+    try {
+      const defaults = pinned
+        ? { pinned: false }
+        : { harnessId: harness.id, ...(harness.models === 'host' && model ? { model } : {}), pinned: true }
+      await api('preferences', { method: 'PUT', body: { defaults } })
+      await onChanged?.()
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <>
+      {pinned && <p className="model-note">这台 Mac 上每个新会话都从这里开始，临时换一个只影响那一次。</p>}
+      {error && (
+        <p className="model-note" data-tone="error">
+          {error}
+        </p>
+      )}
+      <MenuFooterLink
+        icon={pinned ? PinOff : Pin}
+        chevron={false}
+        onClick={() => {
+          void toggle()
+        }}>
+        {busy ? '正在保存…' : pinned ? '取消新会话默认' : '设为新会话默认'}
+      </MenuFooterLink>
+    </>
   )
 }
 
@@ -211,6 +270,7 @@ export function DraftModelControl({
   onManageModels,
   onProvidersChanged,
   onEngineAdded,
+  onDefaultsChanged,
 }: {
   catalog: HostCatalog
   choice: ComposerChoice
@@ -221,6 +281,7 @@ export function DraftModelControl({
   onManageModels?: (() => void) | undefined
   onProvidersChanged?: (() => void) | undefined
   onEngineAdded?: ((agent: AgentSettings) => void) | undefined
+  onDefaultsChanged?: (() => void | Promise<void>) | undefined
 }) {
   const [panel, setPanel] = useState<'service' | 'engine' | null>(null)
   const [showHidden, setShowHidden] = useState(false)
@@ -228,7 +289,7 @@ export function DraftModelControl({
   const entries = engineEntries(catalog, access, choice.workspaceId)
   const harness = entries.find(entry => entry.harness.id === choice.harnessId)?.harness
   // One flat list per engine, the most recently used first.
-  const hostModels = modelGroups(catalog, preferences, choice.model, showHidden).flatMap(group => group.options)
+  const hostModels = modelGroups(catalog, preferences, choice.model, showHidden, access).flatMap(group => group.options)
   const groups: Array<PickerGroup<string>> = entries.map(entry => ({
     id: entry.harness.id,
     label: entry.label,
@@ -263,6 +324,7 @@ export function DraftModelControl({
     !access.local && !access.legacy && catalog.harnesses.some(item => item.status === 'ready' && harnessLevel(item) === 'L3')
   const noService = harness?.models === 'host' && !choice.model
   const permission = draftPermission(harness)
+  const canPin = !access.legacy && access.local && access.admin && catalog.features?.pinnedDefaults === true && !noService
   return (
     <ValuePicker
       label="模型"
@@ -307,6 +369,7 @@ export function DraftModelControl({
           )}
           {noService && !access.admin && <MenuFooterNote>{SETUP_COPY.addProviderElsewhere}</MenuFooterNote>}
           <PermissionRowLink view={permission} onOpen={() => {}} />
+          {canPin && harness && <PinChoiceRow catalog={catalog} harness={harness} model={choice.model} onChanged={onDefaultsChanged} />}
           <HiddenModelsLink
             shown={showHidden}
             onToggle={() => {

@@ -1,4 +1,5 @@
 import {
+  escapeSecurityText,
   isAcceptableDeviceName,
   RISK_REASON_TEXT,
   SCOPE_LABELS,
@@ -584,12 +585,43 @@ export const PROVIDER_COPY = {
   /** A confirmed address whose allowance was removed. */
   allowAgain: (target: string) => `用 Touch ID 允许访问 ${target}`,
   allowElsewhere: '需要在 Mac 上的 Latch 里允许这个地址。',
-  confirmedAddressesTitle: '已确认的模型服务地址',
-  confirmedAddressesCaption: '自定义和这台 Mac 上的模型服务，地址（含路径）确认一次后才能使用。移除后，使用它的服务随即停止。',
-  confirmedAddressesEmpty: '没有已确认的地址',
-  confirmedAddressesEmptyNote: '已知服务的地址不需要确认；在 设置 › 模型 添加自定义服务时确认。',
-  confirmedAddressRow: '模型服务可以使用这个地址',
+  confirmedAddressesTitle: '已确认的地址',
+  confirmedAddressesCaption: '自定义和这台 Mac 上的模型服务，地址确认一次后才能使用。移除后，用它的服务随即停止。',
+  addressUse: (services: readonly string[], allowance?: string) =>
+    [
+      services.length ? `${services.map(escapeSecurityText).join('、')} 在用` : '没有服务在用',
+      ...(allowance ? [`Latch 可以连接 ${allowance}`] : []),
+    ].join(' · '),
+  removeAddress: (services: readonly string[]) =>
+    `${services.length ? `${services.map(name => `「${escapeSecurityText(name)}」`).join('、')}随即停止发送请求，正在运行的会话下一次请求会失败。` : ''}要再用这个地址，保存服务时重新确认。`,
+  allowanceRow: 'Latch 可以连接这个地址',
+  removeAllowance: '依赖这个地址的连接随即断开。要再用它，需要在这台 Mac 上重新确认。',
 } as const
+
+/** 这台 Mac 的限制: what the policy holds differently from a new Host. The Host enforces these on every request. */
+export const LIMIT_COPY = {
+  title: '这台 Mac 的限制',
+  howToChange: '这些限制写在 policy.json 里。要改回去：在这台 Mac 上运行 pnpm stop，编辑这个文件，再启动 Latch。',
+  noProject: '不在项目里的会话',
+  unknownEntries: (count: number) => `${count} 个已不存在的项目或引擎`,
+  noFullAccess: {
+    title: '这台 Mac 不能开始完全访问会话',
+    description: '由引擎自己决定权限的会话开始不了，已有的这类会话也不能继续。',
+  },
+  localReadOnly: { title: '这台 Mac 上的会话只能查看', description: '这里不能开始会话或发送消息。' },
+  remoteReadOnly: { title: '手机和浏览器只能查看', description: '它们不能开始会话或发送消息。' },
+  anyEngine: {
+    title: '手机和浏览器可以用完全访问以外的所有引擎',
+    description: '比默认宽：默认只有内置引擎。完全访问的引擎只能在这台 Mac 上开始。',
+  },
+  noEngine: { title: '手机和浏览器不能用任何引擎', description: '它们不能开始或继续会话。' },
+  someEngines: (names: string) => ({ title: '手机和浏览器只能用这些引擎', description: names }),
+  noProjects: { title: '手机和浏览器不能在任何项目里工作', description: '它们不能开始或继续会话。' },
+  someProjects: (names: string) => ({ title: '手机和浏览器只能在这些项目里工作', description: names }),
+} as const
+
+/** Why this device cannot start in a project, with where to see and change that. */
+export const REMOTE_PROJECT_REFUSED = '这台 Mac 不允许这台设备在这个项目里开始。到 Mac 上的 Latch 里，设置 › 设备 写着限制和改法。'
 
 /** Why a session no longer accepts input: one line, with 「在新会话中继续」 beside it. */
 export const SESSION_STOP_TEXT = {
@@ -685,7 +717,8 @@ const FIXED: Record<string, string> = {
   'listener-mismatch': ENROLLMENT_REASON_TEXT['listener-mismatch']!,
   'legacy-reconfirm': '这台设备需要重新连接',
   'local-only': LOCAL_ONLY_TEXT,
-  'ceiling-exceeded': '这台设备不能这样做：这台 Mac 的 policy.json 限制了它。运行 pnpm stop 后才能修改这个文件。',
+  'ceiling-exceeded':
+    '这台设备不能这样做：这台 Mac 的 policy.json 限制了它，或这个会话的文件夹已经变了。运行 pnpm stop 后才能修改这个文件。',
   'policy-changed': '设置刚被修改过，这次更改没有应用。请查看最新的设置后重试。',
   'presence-unavailable': '这台 Mac 暂时不能确认',
   'origin-unconfirmed': '这个模型服务的地址还没有确认，Latch 不会向它发送请求。请在 Mac 上的 Latch 里确认：设置 › 模型。',

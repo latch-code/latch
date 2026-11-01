@@ -11,7 +11,7 @@ import {
   writePending,
   type PendingSubmission,
 } from '../core/api.ts'
-import { readChoice, resolveChoice, writeChoice, type ComposerChoice } from '../composerChoice.ts'
+import { draftStart, pinnedChoice, readChoice, resolveChoice, writeChoice, type ComposerChoice, type DraftPick } from '../composerChoice.ts'
 import { withConfirmation } from '../core/confirmations.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import type { SendingMessage } from '../core/sendingMessage.ts'
@@ -77,21 +77,31 @@ export function useSubmission({
   }, [])
   const [error, setError] = useState('')
   const [stored, setStored] = useState<Partial<ComposerChoice> | null>(() => readChoice(deviceId))
+  const [draftPick, setDraftPick] = useState<DraftPick | null>(null)
   const { legacy, local } = access
-  const remembered = useMemo(() => resolveChoice(catalog, stored, { legacy, local }), [catalog, stored, legacy, local])
+  const start = useMemo(() => draftStart(catalog, stored, draftPick, { legacy, local }), [catalog, stored, draftPick, legacy, local])
+  const remembered = useMemo(() => resolveChoice(catalog, start, { legacy, local }), [catalog, start, legacy, local])
   const borrowed = fork?.choice
   const choice = useMemo(
-    () => (borrowed ? resolveChoice(catalog, { ...stored, ...borrowed }, { legacy, local }) : remembered),
-    [catalog, stored, borrowed, remembered, legacy, local],
+    () => (borrowed ? resolveChoice(catalog, { ...start, ...borrowed }, { legacy, local }) : remembered),
+    [catalog, start, borrowed, remembered, legacy, local],
   )
   /** Model switches chosen for existing sessions; sent with that session's next prompt. */
   const [overrides, setOverrides] = useState<Record<string, ModelRef>>({})
 
   const updateChoice = (patch: Partial<ComposerChoice>) => {
+    setFork(previous => previous && (previous.choice ? { ...previous, choice: { ...previous.choice, ...patch } } : previous))
+    if (pinnedChoice(catalog, { legacy, local })) {
+      const { harnessId, model, ...rest } = patch
+      setDraftPick(previous => ({ ...previous, ...(harnessId ? { harnessId } : {}), ...(model ? { model } : {}) }))
+      const kept = { ...stored, ...rest }
+      setStored(kept)
+      writeChoice(deviceId, { ...kept, mode: kept.mode ?? remembered.mode })
+      return
+    }
     // Keep the remembered model when a harness without host models is picked, so switching back restores it.
     const next = { ...stored, ...remembered, ...patch }
     setStored(next)
-    setFork(previous => previous && (previous.choice ? { ...previous, choice: { ...previous.choice, ...patch } } : previous))
     writeChoice(deviceId, resolveChoice(catalog, next, { legacy, local }))
   }
 
@@ -111,7 +121,14 @@ export function useSubmission({
       setFork(restored.forkOf ? { ...restored.forkOf, choice: restoredChoice(restored) } : null)
     }
     if (restored.sessionId === undefined) {
-      if (!restored.forkOf) setStored(previous => ({ ...previous, ...restoredChoice(restored) }))
+      if (!restored.forkOf) {
+        setStored(previous => ({ ...previous, ...restoredChoice(restored) }))
+        // Under a pin too, what shows is what this unconfirmed request carries.
+        setDraftPick({
+          ...(restored.harnessId ? { harnessId: restored.harnessId } : {}),
+          ...(restored.model ? { model: restored.model } : {}),
+        })
+      }
     } else if (restored.model) {
       const { sessionId, model } = restored
       setOverrides(previous => ({ ...previous, [sessionId]: model }))
@@ -212,6 +229,8 @@ export function useSubmission({
       // A resent prompt never came from the composer, so whatever is being drafted stays.
       if (origin.consumedDraft && foreground) setDraft('')
       if (submission.sessionId === undefined && foreground) setFork(null)
+      // The pick went with this session, unless another was made while a slow start was waiting.
+      if (submission.sessionId === undefined) setDraftPick(current => (current === draftPick ? null : current))
       if (submission.sessionId !== undefined)
         setOverrides(previous => {
           const next = { ...previous }
@@ -255,6 +274,10 @@ export function useSubmission({
     setError,
     choice,
     updateChoice,
+    /** The pin just moved, so a pick made before that says nothing about the new one. */
+    forgetDraftPick: () => {
+      setDraftPick(null)
+    },
     submit,
     resend: (prompt: string) => submit(undefined, prompt),
     override: selectedId === null ? undefined : overrides[selectedId],

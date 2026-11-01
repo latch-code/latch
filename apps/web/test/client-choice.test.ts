@@ -12,10 +12,15 @@ import {
   presetsToAdd,
   projectFor,
   resolveChoice,
+  draftStart,
   startableWorkspaces,
   startBlock,
   usesDemoModel,
   fullAccessStartNote,
+  isPinnedChoice,
+  pinnedChoice,
+  type ComposerChoice,
+  type DraftPick,
 } from '../src/composerChoice.ts'
 import { GeneralSettings } from '../src/settings/GeneralSettings.tsx'
 
@@ -118,6 +123,38 @@ describe('composer choice', () => {
     expect(startBlock(snapshot({ catalog: onlyAgent }), resolveChoice(onlyAgent, null, local), local)).toMatchObject({
       kind: 'engine-required',
     })
+  })
+
+  it('starts from a pinned engine and model on the devices that can use it, a pick in the draft winning until it starts', () => {
+    const local = { legacy: false, local: true }
+    const remote = { legacy: false, local: false }
+    const pinned = catalog({
+      defaults: {
+        harnessId: 'codex',
+        mode: 'agent',
+        workspaceId: 'default',
+        model: { providerId: 'deepseek', model: 'deepseek-chat' },
+        pinned: true,
+      },
+    })
+    // Pinned on the Mac, so unlike a Host's plain default it counts as this person's choice of a full-access engine.
+    const started = (memory: Partial<ComposerChoice> | null, pick: DraftPick | null = null) =>
+      resolveChoice(pinned, draftStart(pinned, memory, pick, local), local)
+    expect(started(null).harnessId).toBe('codex')
+    // The pin stands in for what this device remembers, what it does not hold stays.
+    expect(draftStart(pinned, { harnessId: 'standard', mode: 'chat' }, null, local)).toMatchObject({ harnessId: 'codex', mode: 'chat' })
+    // A pick in this draft stands in for the pin, and is gone once the draft is.
+    expect(started({ harnessId: 'standard' }, { harnessId: 'standard' }).harnessId).toBe('standard')
+    expect(started({ harnessId: 'standard' }, null).harnessId).toBe('codex')
+    // The pin holds only where it can be seen and taken back: other devices keep their own memory, untouched.
+    const elsewhere = { harnessId: 'standard', model: { providerId: 'local', model: 'qwen3' } }
+    expect(pinnedChoice(pinned, remote)).toBeUndefined()
+    expect(draftStart(pinned, elsewhere, null, remote)).toBe(elsewhere)
+    expect(resolveChoice(pinned, draftStart(pinned, null, null, remote), remote).harnessId).toBe('standard')
+    expect(pinnedChoice(catalog(), local)).toBeUndefined()
+    const pi = { id: 'codex', models: 'agent' as const }
+    expect(isPinnedChoice(pinned, pi, undefined)).toBe(true)
+    expect(isPinnedChoice(pinned, { id: 'standard', models: 'host' as const }, undefined)).toBe(false)
   })
 
   it('asks for an engine only when none is chosen, not when a named one is gone', () => {

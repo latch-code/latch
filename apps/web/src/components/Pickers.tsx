@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Folder, FolderPlus, Plus, Sparkles } from 'lucide-react'
 import type { HarnessInfo, HostCatalog, ModelRef, SessionConfigOption, TaskMode } from '@latch/protocol'
-import { findProvider, startableWorkspaces } from '../composerChoice.ts'
+import { findProvider, pinnedChoice, startableWorkspaces } from '../composerChoice.ts'
 import {
   fuzzyModelMatch,
   getModelPreferences,
@@ -15,7 +15,7 @@ import { basename, middleEllipsis } from '../format.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { ProviderTile } from './BrandTile.tsx'
 import type { MenuSection } from './overlays.tsx'
-import { CODE_ROOT_COPY, SETUP_COPY } from '../core/securityCopy.ts'
+import { CODE_ROOT_COPY, REMOTE_PROJECT_REFUSED, SETUP_COPY } from '../core/securityCopy.ts'
 import { ProviderSetupPanel } from './SetupPanels.tsx'
 import {
   Badge,
@@ -41,9 +41,14 @@ export function modelGroups(
   preferences?: ModelPreferences,
   current?: ModelRef,
   showHidden = false,
+  access?: Pick<DeviceAccess, 'legacy' | 'local'>,
 ): Array<PickerGroup<string>> {
   const hidden = new Set(preferences?.hidden),
     selected = current && modelKey(current)
+  // Where new sessions are pinned to one model, the tag marks that one rather than each service's own first choice.
+  const pinned = pinnedChoice(catalog, access)?.model
+  const isDefault = (providerId: string, serviceDefault: string, model: string) =>
+    pinned ? pinned.providerId === providerId && pinned.model === model : model === serviceDefault
   const groups: Array<PickerGroup<string>> = catalog.providers.map(provider => ({
     id: provider.id,
     label: provider.name,
@@ -54,7 +59,12 @@ export function modelGroups(
         value: modelKey({ providerId: provider.id, model }),
         label: model,
         description: provider.name,
-        tag: provider.kind === 'demo' ? <DemoMark compact /> : model === provider.defaultModel ? <Badge>默认</Badge> : undefined,
+        tag:
+          provider.kind === 'demo' ? (
+            <DemoMark compact />
+          ) : isDefault(provider.id, provider.defaultModel, model) ? (
+            <Badge>默认</Badge>
+          ) : undefined,
       }))
       .filter(option => showHidden || !hidden.has(option.value) || selected === option.value),
   }))
@@ -95,7 +105,7 @@ export function ModelPicker({
   const [adding, setAdding] = useState(false)
   const [showHidden, setShowHidden] = useState(false)
   const modelPreferences = useModelPreferences()
-  const groups = modelGroups(catalog, modelPreferences, value, showHidden)
+  const groups = modelGroups(catalog, modelPreferences, value, showHidden, access)
   const count = groups.reduce((sum, group) => sum + group.options.length, 0)
   const provider = value ? findProvider(catalog, value.providerId) : undefined
   return (
@@ -243,7 +253,7 @@ export function ProjectPicker({
     media: <ProjectIcon project={workspace} size={16} />,
     disabledReason:
       workspace.unavailable
-      ?? (access && !access.local && !access.legacy && workspace.remoteStart === false ? '其他设备不能在这个项目中发起会话' : undefined)
+      ?? (access && !access.local && !access.legacy && workspace.remoteStart === false ? REMOTE_PROJECT_REFUSED : undefined)
       ?? (harness?.projectFolders?.access === 'all'
       && harness.projectFolders.max !== undefined
       && projectFolders(workspace).length > harness.projectFolders.max

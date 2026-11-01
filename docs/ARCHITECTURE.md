@@ -406,7 +406,7 @@ Host 约每 40ms 合并一次变化，把选中会话的完整 `task-state` 推�
 | `POST /workspaces`、`POST /workspaces/:id/folders` | 桌面端 `admin` + 签名 | `{ nonce, via, paths, name? \| replace?, signature }`：新建项目（201）、加入或重新选择文件夹（200），返回 `{ workspace, refused }`；`POST /workspaces` 也接受 `{ nonce, via: 'session', sessionId, signature }`，把会话自己的文件夹存为项目（201） |
 | `PATCH /workspaces/:id` | `admin` | `{ name?, glyph?, order? }`：重命名、图标、文件夹顺序（第一个是主文件夹） |
 | `DELETE /workspaces/:id/folders/:folderId`、`DELETE /workspaces/:id` | `admin` | 从项目中移除文件夹、移除项目（文件不删除） |
-| `GET /plugins`、`POST /plugins/:id`、`PUT /preferences` | `admin` | 插件列表与启停、新会话默认值 |
+| `GET /plugins`、`POST /plugins/:id`、`PUT /preferences` | `admin` | 插件列表与启停、新会话默认值；`pinned`（这台电脑上的新会话都从这个引擎与模型开始；它们用不了时快照里不带 `pinned`）与它固定之后的引擎、模型只能经 `host.sock` 修改，因为固定的引擎可以是完全访问的 |
 | `GET /policy`、`PATCH /policy` | `admin`；放宽需桌面端与本机确认 | 安全策略及其哈希 |
 
 `/link/` 下的静态页面在所有入口上无需认证（Host 与来源检查照常）。不是页面的地址（例如把回复里的文件名当链接打开的 `/link/report.md`，或 `/link/` 之外的路径）返回 404 的普通 HTML 页面「找不到这个页面」，带回到 `/link/` 的链接：它不回显请求的路径，不运行脚本（[not-found.ts](../apps/host/src/not-found.ts)）。`/link/api/` 下的路径仍返回 JSON 错误。没有凭据的 `host.sock` 连接只能调用健康检查、`host-info`、运行状态报告、登记、设备列表、撤销设备、生成邀请与读取流量计数，以匿名命令行身份审计。

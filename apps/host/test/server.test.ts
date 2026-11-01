@@ -3242,6 +3242,63 @@ describe('workspaces, policy and audit', () => {
     expect(await body(await start('proj'))).toMatchObject({ error: 'workspace-unavailable' })
   })
 
+  it('lets only this computer pin where new sessions start, or move a pin once it is set', async () => {
+    const t = await testHost()
+    const browser = await t.enroll({ scopes: [...ADMIN] })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const defaults = async () => (await desktop.json<AppSnapshot>('snapshot')).catalog!.defaults
+    const put = (device: typeof browser, value: Record<string, unknown>) =>
+      device.request('preferences', { method: 'PUT', body: { defaults: value } })
+    // A plain default stays what any admin device may set, and is not a pin.
+    expect((await put(browser, { harnessId: 'standard' })).status).toBe(200)
+    expect((await defaults()).pinned).toBeUndefined()
+    expect(await body(await put(browser, { harnessId: 'standard', pinned: true }))).toMatchObject({ error: 'local-only' })
+    expect((await defaults()).pinned).toBeUndefined()
+
+    expect((await put(desktop, { harnessId: 'standard', pinned: true })).status).toBe(200)
+    expect(await defaults()).toMatchObject({ harnessId: 'standard', pinned: true })
+    expect((await desktop.json<AppSnapshot>('snapshot')).catalog!.features?.pinnedDefaults).toBe(true)
+    expect(await body(await put(browser, { harnessId: 'standard' }))).toMatchObject({ error: 'local-only' })
+    expect(await body(await put(browser, { pinned: false }))).toMatchObject({ error: 'local-only' })
+    // What the pin does not hold stays open.
+    expect((await put(browser, { mode: 'chat' })).status).toBe(200)
+
+    expect((await put(desktop, { pinned: false })).status).toBe(200)
+    expect((await defaults()).pinned).toBeUndefined()
+    expect((await put(browser, { harnessId: 'standard' })).status).toBe(200)
+  })
+
+  it('stops calling a model a pin once that model cannot start, and again when it can', async () => {
+    const model = await localModel()
+    const t = await testHost({ demo: false })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const address = `${new URL(model.baseURL).origin}/v1`
+    await desktop.confirmed('providers', {
+      method: 'POST',
+      body: {
+        id: 'ollama',
+        name: 'Ollama',
+        kind: 'openai-compatible',
+        presetId: 'ollama',
+        baseURL: model.baseURL,
+        models: ['alpha'],
+        defaultModel: 'alpha',
+        confirmOrigin: true,
+      },
+    })
+    const defaults = async () => (await desktop.json<AppSnapshot>('snapshot')).catalog!.defaults
+    const pin = { harnessId: 'standard', model: { providerId: 'ollama', model: 'alpha' }, pinned: true }
+    expect((await desktop.request('preferences', { method: 'PUT', body: { defaults: pin } })).status).toBe(200)
+    expect(await defaults()).toMatchObject({ model: pin.model, pinned: true })
+
+    const removed = await desktop.request('policy', { method: 'PATCH', body: { confirmedAddresses: { remove: [address] } } })
+    expect(removed.status).toBe(200)
+    expect((await defaults()).pinned).toBeUndefined()
+
+    await desktop.confirmed('provider-origins', { method: 'POST', body: { baseURL: model.baseURL } })
+    expect(await defaults()).toMatchObject({ model: pin.model, pinned: true })
+  })
+
   it('disables saved workspaces that no longer pass the registration rules, keeps them listed and refuses their sessions', async () => {
     const root = await temporaryDirectory()
     const dataDir = join(root, 'data')

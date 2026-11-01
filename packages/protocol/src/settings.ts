@@ -70,6 +70,8 @@ export interface SessionDefaults {
   mode: TaskMode
   workspaceId: string
   model?: ModelRef
+  /** The engine and model were set on the Host computer as where every new session starts, not only a first-use fallback. */
+  pinned?: true
 }
 
 /**

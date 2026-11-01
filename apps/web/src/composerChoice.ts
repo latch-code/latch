@@ -12,6 +12,7 @@ import {
 } from '@latch/protocol'
 import { harnessGate, harnessLevel, type DeviceAccess } from './core/permissions.ts'
 import { heldBackService } from './core/providerSetup.ts'
+import { REMOTE_PROJECT_REFUSED } from './core/securityCopy.ts'
 import { storageGet, storageSet } from './preferences.ts'
 import { projectOf } from './sessions.ts'
 
@@ -139,6 +140,39 @@ export function defaultModel(catalog: HostCatalog): ModelRef | undefined {
   return provider ? { providerId: provider.id, model: provider.defaultModel || provider.models[0]! } : undefined
 }
 
+/** The engine and model a pick in a draft can change. */
+export type DraftPick = Partial<Pick<ComposerChoice, 'harnessId' | 'model'>>
+
+/**
+ * Where every new session starts on the Host computer, when it set one. Other devices cannot see or take back a pin,
+ * so each of them carries on from its own last choice.
+ */
+export function pinnedChoice(catalog: HostCatalog | undefined, access: StartAccess = openAccess): DraftPick | undefined {
+  if (!catalog?.defaults.pinned || access.legacy || !access.local) return undefined
+  return { harnessId: catalog.defaults.harnessId, ...(catalog.defaults.model ? { model: catalog.defaults.model } : {}) }
+}
+
+/**
+ * What a draft resolves from. A pin stands in for what the device remembers, and a pick in the draft stands in for the pin
+ * until the session starts; that pick is never remembered, so a reload or the next draft is back at the pin.
+ */
+export function draftStart(
+  catalog: HostCatalog | undefined,
+  memory: Partial<ComposerChoice> | null,
+  pick: DraftPick | null,
+  access: StartAccess = openAccess,
+): Partial<ComposerChoice> | null {
+  const pin = pinnedChoice(catalog, access)
+  return pin ? { ...memory, ...pin, ...pick } : memory
+}
+
+/** Whether the draft shows exactly the pinned start. An engine with its own models is the engine alone. */
+export function isPinnedChoice(catalog: HostCatalog, harness: Pick<HarnessInfo, 'id' | 'models'>, model: ModelRef | undefined): boolean {
+  const pinned = pinnedChoice(catalog, { legacy: false, local: true })
+  if (pinned?.harnessId !== harness.id) return false
+  return harness.models !== 'host' || (model !== undefined && pinned.model !== undefined && sameModel(model, pinned.model))
+}
+
 /**
  * A remembered or partial choice, repaired against what the Host offers now: a
  * missing harness, unsupported mode, removed workspace or model falls back to
@@ -214,7 +248,7 @@ export function startBlock(snapshot: AppSnapshot, choice: ComposerChoice, access
     const project = catalog.workspaces.find(item => item.id === choice.workspaceId)
     if (project?.unavailable) return { kind: 'harness-unavailable', message: project.unavailable }
     if (!access.local && !access.legacy && project?.remoteStart === false)
-      return { kind: 'harness-unavailable', message: '其他设备不能在这个项目中发起会话。' }
+      return { kind: 'harness-unavailable', message: REMOTE_PROJECT_REFUSED }
     const count = project?.folders?.length ?? 1
     const max = harness.projectFolders?.access === 'all' ? harness.projectFolders.max : undefined
     if (max !== undefined && count > max)

@@ -1,15 +1,18 @@
 import { _electron, type ElectronApplication } from '@playwright/test'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { mkdtemp, mkdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
-import type { AgentSettings, TaskDetail } from '@latch/protocol'
+import type { AgentSettings, AppSnapshot, TaskDetail } from '@latch/protocol'
 import { writeHostState } from '@latch/host/host-state'
 import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { latchEnv } from '@latch/host/env'
 import { startTestHost } from './helpers/host.ts'
+import { openSection, openSettings } from './helpers/layout.ts'
 
 describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 'darwin')(
   'actual Agent model and reasoning controls',
@@ -122,6 +125,92 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       } finally {
         await application?.close()
         await host.close()
+        await rm(root, { recursive: true, force: true })
+      }
+    })
+
+    it('pins where new sessions start and removes a confirmed address over the real socket, asking the system for neither', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'latch-electron-take-back-')),
+        host = await startTestHost()
+      const service = createServer((_, response) => {
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ data: [{ id: 'local-model' }] }))
+      })
+      let application: ElectronApplication | undefined
+      try {
+        await new Promise<void>(done => service.listen(0, '127.0.0.1', done))
+        const address = `http://127.0.0.1:${(service.address() as AddressInfo).port}/v1`
+        const owner = await host.enroll({ listener: 'unix' })
+        expect(
+          (
+            await owner.confirmed('providers', {
+              method: 'POST',
+              body: {
+                name: '本地服务',
+                kind: 'openai-compatible',
+                baseURL: address,
+                models: ['local-model'],
+                defaultModel: 'local-model',
+                confirmOrigin: true,
+              },
+            })
+          ).status,
+        ).toBeLessThan(300)
+        await owner.json('policy', { method: 'PATCH', body: { remote: { workspaces: ['default'] } } })
+        await writeHostState(host.dataDir, {
+          version: 2,
+          pid: process.pid,
+          hostId: host.host.hostId,
+          instanceId: host.host.instanceId,
+          socketPath: host.host.socketPath,
+          loopbackOrigin: host.host.loopbackOrigin,
+          tlsOrigin: null,
+          startedAt: new Date().toISOString(),
+          dataDir: host.dataDir,
+        })
+        application = await _electron.launch({
+          args: [
+            resolve('apps/desktop/src/main.cjs'),
+            '--latch-host-state=' + join(host.dataDir, 'host.json'),
+            '--latch-user-data=' + join(root, 'electron'),
+            '--use-mock-keychain',
+          ],
+          cwd: process.cwd(),
+          env: Object.fromEntries(
+            Object.entries(desktopShellEnvironment(process.env)).filter((entry): entry is [string, string] => entry[1] !== undefined),
+          ),
+          timeout: 30_000,
+        })
+        const page = await application.firstWindow()
+        page.setDefaultTimeout(15_000)
+        await page.getByRole('textbox', { name: '设备名称', exact: true }).fill('取回验收')
+        await page.getByRole('button', { name: '请求本机确认', exact: true }).click()
+        await page.locator('.app-shell[data-connection="connected"]').waitFor()
+        const asked = host.presence.requests.length
+
+        await page.locator('.composer-stack .model-picker').click()
+        await page.getByRole('menuitem', { name: '设为新会话默认' }).click()
+        await page.getByRole('menuitem', { name: '取消新会话默认' }).waitFor()
+        expect((await owner.json<AppSnapshot>('snapshot')).catalog!.defaults.pinned).toBe(true)
+        await page.keyboard.press('Escape')
+
+        const settings = await openSettings(page)
+        await openSection(settings, '模型')
+        const row = settings.locator('.address-row', { hasText: '127.0.0.1' })
+        await row.getByRole('button', { name: '移除', exact: true }).click()
+        await page.getByRole('dialog').getByRole('button', { name: '移除', exact: true }).click()
+        await row.waitFor({ state: 'detached' })
+        const { policy } = await owner.json<{ policy: { confirmedAddresses: string[]; hostEgressAllow: string[] } }>('policy')
+        expect(policy.confirmedAddresses).toEqual([])
+        expect(policy.hostEgressAllow).toEqual([])
+
+        await openSection(settings, '设备')
+        await settings.getByText('手机和浏览器只能在这些项目里工作', { exact: true }).waitFor()
+        expect(host.presence.requests.length).toBe(asked)
+      } finally {
+        await application?.close()
+        await host.close()
+        await new Promise(done => service.close(done))
         await rm(root, { recursive: true, force: true })
       }
     })

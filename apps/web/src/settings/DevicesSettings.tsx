@@ -29,6 +29,7 @@ import { Badge, Button, InlineNotice, type LucideIcon, Menu, StatusPill, TextFie
 import { VisibleText } from '../components/VisibleText.tsx'
 import { useViewport } from '../breakpoints.ts'
 import { IconTile, Loading, moreButton, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
+import { PolicyLimits } from './PolicyLimits.tsx'
 import { RemoteStartRow } from './RemoteStartRow.tsx'
 import { PairingSection } from './PhonePairing.tsx'
 
@@ -513,6 +514,7 @@ export function DevicesSettings({ snapshot, access, onChanged }: { snapshot: App
               : {})}
         />
       )}
+      {access.local && access.admin && <PolicyLimits catalog={snapshot.catalog} />}
       <PairingSection access={access} snapshot={snapshot} />
       <RevokeThisDevice device={snapshot.device} onChanged={onChanged} />
     </>

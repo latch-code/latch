@@ -36,6 +36,8 @@ export interface HostFeatures {
   nativeElevation?: true
   /** Summaries carry `live` and `runEnd`, and `POST /tasks/:id/keep-waiting` exists. */
   runLiveness?: true
+  /** `PUT /preferences` takes `pinned`, and `SessionDefaults.pinned` reports it. */
+  pinnedDefaults?: true
 }
 
 export interface SearchHit {

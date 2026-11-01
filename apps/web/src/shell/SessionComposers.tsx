@@ -406,6 +406,10 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
                   submission.updateChoice({ harnessId: agent.id, mode: 'agent' })
                   void refresh()
                 }}
+                onDefaultsChanged={async () => {
+                  await refresh()
+                  submission.forgetDraftPick()
+                }}
               />
             ) : (
               summary && (
