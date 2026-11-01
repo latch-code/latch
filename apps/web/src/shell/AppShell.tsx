@@ -11,10 +11,11 @@ import { ConversationHeader } from './ConversationHeader.tsx'
 import { Button, IconButton, LiveChanges, LayerHistory, ResizeHandle, Scrim } from '@latch/ui'
 import { ConnectionBanners } from './ConnectionBanners.tsx'
 import { PhoneTabBar } from './PhoneTabBar.tsx'
-import { Rail } from './Rail.tsx'
 import { TitleBar } from './TitleBar.tsx'
 import { RIGHT_PANEL_MIN, rightPanelMax } from './panelLayout.ts'
-import { SettingsPage } from '../settings/SettingsPage.tsx'
+import { SettingsPage, settingsSections } from '../settings/SettingsPage.tsx'
+import { waitingCount } from '../sessions.ts'
+import { sidebarPages } from './routes.ts'
 import { ConversationView } from './ConversationView.tsx'
 import { Overlays } from './Overlays.tsx'
 import { RightPanel } from './RightPanel.tsx'
@@ -98,6 +99,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     openProjectSettings,
     manageProviders,
     createProject,
+    projectAsk,
     createProjectAndStart,
     newChoicesLocked,
     sheetCanStart,
@@ -110,7 +112,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     archiveBatch,
     archiveUndo,
     openSearch,
-    startChat,
+    startWithoutProject,
     demo,
     startIn,
     browseFiles,
@@ -122,6 +124,9 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     selectedId,
     resync,
     connection,
+    entries,
+    goEntry,
+    hostProblem,
   } = shell
   return (
     <FileOpenContext.Provider value={catalog?.features?.filePreview ? openFile : undefined}>
@@ -144,7 +149,6 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
               '--inspector-open-width': `${inspectorWidth}px`,
             }}>
             {!phone && <TitleBar shell={shell} />}
-            {!phone && <Rail shell={shell} />}
             <Scrim
               open={drawerMode && drawer.open}
               label="关闭会话列表"
@@ -207,13 +211,18 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   isUnread={unread}
                   cancelling={stopping}
                   onSearch={openSearch}
-                  onNewChat={startChat}
+                  onNewWithoutProject={startWithoutProject}
                   filter={filter}
                   onFilter={setFilter}
                   onSelect={choose}
                   onNew={startNew}
                   onNewIn={startIn}
                   onCreateProject={createProjectAndStart}
+                  pages={sidebarPages(snapshot, settingsSections(snapshot, access))}
+                  entries={entries}
+                  onEntry={goEntry}
+                  onPage={openSettings}
+                  hostProblem={hostProblem}
                   onEditProject={owner ? openProjectSettings : undefined}
                   onProjectsChanged={() => {
                     void refresh()
@@ -317,7 +326,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                         <div className="info-page-title">
                           <h2>
                             {changesOpen && !fileTabs.active
-                              ? '变更'
+                              ? '改动'
                               : fileTabs.active?.target.view === 'changes'
                                 ? '代码审阅'
                                 : fileTabs.active
@@ -363,6 +372,10 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 snapshot={snapshot}
                 access={access}
                 entry={route.entry}
+                waiting={waitingCount(snapshot)}
+                onBack={() => {
+                  goEntry('sessions')
+                }}
                 section={route.section}
                 initialProjectId={route.projectId}
                 {...(route.agent ? { initialAgent: route.agent } : {})}
@@ -405,6 +418,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 }}
                 onManageWorkspaces={owner ? () => openSettings('workspaces') : undefined}
                 onCreateProject={createProject}
+                projectAsk={projectAsk}
                 composer={
                   <>
                     <SendingBubble shell={shell} />

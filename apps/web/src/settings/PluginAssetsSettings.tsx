@@ -399,7 +399,7 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
                     setManifestText(event.target.value)
                     setDirty(true)
                   }}
-                  hint="可组合技能、Host 模块、React 面板和静态数据面板；执行入口使用 .mjs。"
+                  hint="可组合技能、在 Mac 上运行的模块、React 面板和静态数据面板；执行入口使用 .mjs。"
                 />
               ) : (
                 <div className="plugin-file-editor">

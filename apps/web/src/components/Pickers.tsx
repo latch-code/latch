@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { Folder, FolderPlus, Plus, Sparkles } from 'lucide-react'
+import { Folder, FolderOpen, Plus, Sparkles } from 'lucide-react'
 import type { HarnessInfo, HostCatalog, ModelRef, SessionConfigOption, TaskMode } from '@latch/protocol'
-import { findProvider, pinnedChoice, startableWorkspaces } from '../composerChoice.ts'
+import { findProvider, noProjectLine, pinnedChoice, startableWorkspaces } from '../composerChoice.ts'
 import {
   fuzzyModelMatch,
   getModelPreferences,
@@ -21,6 +21,7 @@ import {
   Badge,
   ChoiceList,
   DemoMark,
+  Icon,
   MenuFooterLink,
   MenuFooterNote,
   SegmentedControl,
@@ -208,11 +209,13 @@ export function ModelAddPanel({
 }
 
 const NO_PROJECT = '不选项目'
+/** Not a value: the row that opens the system's folder panel. */
+const OPEN_FOLDER = '~open-folder'
 
 /**
- * The project of a new session: the saved projects with their paths (the default one marked), then the Host's start
- * directory. In the desktop app 新建项目… opens the system's folder panel and chooses the new project; elsewhere a note
- * says where projects are created. 管理项目… goes to settings.
+ * The project of a new session: the saved projects with their paths (the default one marked), 打开文件夹…, and going
+ * without. In the desktop app 打开文件夹… opens the system's folder panel and the folder becomes a project at once;
+ * elsewhere a note says where projects are created. 管理项目… goes to settings.
  */
 export function ProjectPicker({
   catalog,
@@ -225,6 +228,9 @@ export function ProjectPicker({
   onManage,
   onCreate,
   disabled,
+  openRequest,
+  notice,
+  onClosed,
 }: {
   catalog: HostCatalog
   harness?: HarnessInfo | undefined
@@ -238,6 +244,11 @@ export function ProjectPicker({
   /** The desktop app on the Host's computer: a new project from a folder chosen in the system's panel. */
   onCreate?: (() => void) | undefined
   disabled?: boolean
+  /** Each new value opens the list: sending found no project, or a folder was refused. */
+  openRequest?: number | undefined
+  /** Why the folder just chosen did not become a project, in the Host's words. */
+  notice?: string | undefined
+  onClosed?: (() => void) | undefined
 }) {
   const workspaces = catalog.workspaces
   const start = workspaces.find(workspace => workspace.id === 'default')
@@ -272,7 +283,24 @@ export function ProjectPicker({
         .filter(workspace => workspace.id !== 'default')
         .map(workspace => option(workspace, workspace.name || basename(workspace.path))),
     },
-    ...(start ? [{ id: 'start', options: [{ ...option(start, NO_PROJECT), description: undefined }] }] : []),
+    ...(onCreate
+      ? [{ id: 'open', options: [{ value: OPEN_FOLDER, label: '打开文件夹…', media: <Icon icon={FolderOpen} size={16} /> }] }]
+      : []),
+    ...(start
+      ? [
+          {
+            id: 'start',
+            options: [
+              {
+                ...option(start, NO_PROJECT),
+                tag: undefined,
+                // The Host's own start directory gives each session a new folder; one the owner set is used as it is.
+                description: catalog.sessionFolders ? noProjectLine(harness) : middleEllipsis(start.path, 44),
+              },
+            ],
+          },
+        ]
+      : []),
   ]
   return (
     <ValuePicker
@@ -280,6 +308,10 @@ export function ProjectPicker({
       label="项目"
       className={inline ? 'project-inline' : variant === 'row' ? 'new-sheet-row' : undefined}
       menuChevron={variant !== 'row'}
+      openRequest={openRequest}
+      onOpenChange={open => {
+        if (!open) onClosed?.()
+      }}
       leading={
         inline
           ? undefined
@@ -293,16 +325,14 @@ export function ProjectPicker({
       value={value}
       groups={groups}
       disabled={disabled}
-      onValueChange={onChange}
+      onValueChange={id => {
+        if (id === OPEN_FOLDER) onCreate?.()
+        else onChange(id)
+      }}
       footer={
         <>
-          {onCreate ? (
-            <MenuFooterLink icon={FolderPlus} chevron={false} closes onClick={onCreate}>
-              新建项目…
-            </MenuFooterLink>
-          ) : (
-            <MenuFooterNote>{SETUP_COPY.addProjectElsewhere}</MenuFooterNote>
-          )}
+          {notice && <MenuFooterNote>{notice}</MenuFooterNote>}
+          {!onCreate && <MenuFooterNote>{SETUP_COPY.addProjectElsewhere}</MenuFooterNote>}
           {onManage && (
             <MenuFooterLink closes onClick={onManage}>
               管理项目…

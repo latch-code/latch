@@ -38,7 +38,7 @@ export function slashOptions(draft: string, commands: readonly SessionCommand[],
       id: 'template:' + template.id,
       kind: 'template' as const,
       label: '/' + template.id + ' · ' + template.name,
-      description: '提示模板 · ' + { all: '通用', project: '当前项目', agent: '当前 Agent' }[template.scope.kind],
+      description: '提示模板 · ' + { all: '全部会话', project: '当前项目', agent: '当前 Harness' }[template.scope.kind],
       text: template.content,
       score: Math.min(rank(template.id, query), rank(template.name, query)),
     })),
@@ -46,7 +46,7 @@ export function slashOptions(draft: string, commands: readonly SessionCommand[],
       id: 'command:' + command.name,
       kind: 'command' as const,
       label: '/' + command.name,
-      description: command.description ?? command.inputHint ?? 'Agent 命令',
+      description: command.description ?? command.inputHint ?? 'Harness 命令',
       text: '/' + command.name + ' ',
       score: rank(command.name, query),
     })),
@@ -117,8 +117,8 @@ export function SlashCommands({ menu }: { menu: ReturnType<typeof useSlashComman
         {[...new Set(menu.options.map(option => option.kind))].map(kind => {
           const options = menu.options.filter(option => option.kind === kind)
           return options.length ? (
-            <div key={kind} role="group" aria-label={kind === 'template' ? '提示模板' : 'Agent 命令'}>
-              <p>{kind === 'template' ? '提示模板' : 'Agent 命令'}</p>
+            <div key={kind} role="group" aria-label={kind === 'template' ? '提示模板' : 'Harness 命令'}>
+              <p>{kind === 'template' ? '提示模板' : 'Harness 命令'}</p>
               {options.map(option => {
                 const index = menu.options.indexOf(option)
                 return (

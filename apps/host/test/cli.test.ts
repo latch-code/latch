@@ -228,12 +228,12 @@ describe('latch CLI', () => {
     expect(blocked.output.stderr).toContain('没有加入')
     const mismatched = cli({ cwd: root })
     expect(await mismatched.latch('project', 'add', start, '--yes', '--workspace', tls, '--data-dir', dataDir)).toBe(1)
-    expect(mismatched.output.stderr).toContain('--workspace 与上次 Host 的启动目录不同')
+    expect(mismatched.output.stderr).toContain('--workspace 与上次 Host 的默认文件夹不同')
     expect((await HostConfig.open(dataDir)).settings().workspaces).toEqual([])
     const fresh = await stoppedDataDir()
     const missing = cli({ cwd: root })
     expect(await missing.latch('project', 'add', tls, '--yes', '--data-dir', fresh)).toBe(1)
-    expect(missing.output.stderr).toContain('--workspace <启动目录>')
+    expect(missing.output.stderr).toContain('--workspace <默认文件夹>')
     expect(await cli({ cwd: root }).latch('project', 'add', tls, '--yes', '--workspace', start, '--data-dir', fresh)).toBe(0)
   })
 
@@ -322,9 +322,9 @@ describe('latch CLI', () => {
     const directory = await temporaryDirectory()
     const stopped = cli({ cwd: directory })
     expect(await stopped.latch('device', 'enroll', '--offline', '--code-file', 'code.txt', '--data-dir', dataDir)).toBe(0)
-    expect(stopped.output.stderr).toContain('离线登记依赖本机此刻没有恶意的同用户进程')
+    expect(stopped.output.stderr).toContain('离线连接依赖本机此刻没有恶意的同用户进程')
     expect(stopped.output.stdout).toContain(
-      '启动 Latch 桌面端（pnpm desktop）后，在它的登记页面填写离线登记码。浏览器与手机不接受离线登记码。',
+      '启动 Latch 桌面端（pnpm desktop）后，在它的连接页面填写离线连接码。浏览器与手机不接受离线连接码。',
     )
     const code = (await readFile(join(directory, 'code.txt'), 'utf8')).trim()
     expect(code).toMatch(/^lpo1-[A-Z2-7]{26}$/)

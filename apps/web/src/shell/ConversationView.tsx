@@ -1,7 +1,7 @@
 import { ShieldAlert } from 'lucide-react'
 import { errorMessage } from '../core/api.ts'
 import { projectFor } from '../composerChoice.ts'
-import { APPROVAL_COPY, RECOVERY_COPY } from '../core/securityCopy.ts'
+import { APPROVAL_COPY, MODE_COPY, RECOVERY_COPY } from '../core/securityCopy.ts'
 import { FindBar } from '../components/FindBar.tsx'
 import { NewSession } from '../newSession/NewSession.tsx'
 import { Banner } from '../components/Banner.tsx'
@@ -147,6 +147,13 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                   </>
                 ) : (
                   <ChangesLinkContext.Provider value={changesLink}>
+                    {current.summary.firstStart && harnessInfo && (
+                      <p className="session-start-note" role="note">
+                        {harnessInfo.permission?.approvals === 'none'
+                          ? `${MODE_COPY.agentDecidesLine(harnessInfo.name)}。`
+                          : MODE_COPY.firstStart(harnessInfo.name)}
+                      </p>
+                    )}
                     <Transcript
                       detail={current}
                       onSource={choose}

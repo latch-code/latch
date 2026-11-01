@@ -92,9 +92,24 @@ describe('plugin shelves', () => {
     expect(shelfOf(['tool:read'])).toBe('tool')
     expect(shelfOf(['ui:panel', 'skill:x'])).toBe('tool')
     expect(shelfOf(['skill:x'])).toBe('skill')
-    expect(shelfOf(['provider:openai'])).toBe('provider')
-    expect(shelfOf(['harness:acp'])).toBe('engine')
+    expect(shelfOf(['provider:openai'])).toBe('tool')
+    expect(shelfOf(['harness:acp'])).toBe('tool')
     expect(shelfOf(['transport:relay'])).toBe('connection')
+  })
+
+  it('leaves services and Harnesses to their own pages, but not a package of the person', () => {
+    const plugin = { id: 'x', name: 'x', version: '1', description: '', enabled: true, activeRuns: 0 }
+    const listed = pluginItems(
+      [
+        { ...plugin, id: 'service', capabilities: ['provider:openai'], managed: 'provider' as const },
+        { ...plugin, id: 'agent', capabilities: ['harness:codex'], managed: 'agent' as const },
+        { ...plugin, id: 'standard', capabilities: ['harness:standard'], managed: 'core' as const },
+        { ...plugin, id: 'ask', capabilities: ['tool:ask'], managed: 'core' as const },
+        { ...plugin, id: 'own', capabilities: ['provider:mine'] },
+      ],
+      [],
+    )
+    expect(listed.map(item => item.key)).toEqual(['plugin:ask', 'plugin:own'])
   })
 
   it('lists a package once, with its own state, and a loaded plugin it owns not again', () => {

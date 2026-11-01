@@ -318,10 +318,10 @@ Host 把第三方 Harness 插件的会话标为完全访问（L3）：Latch 无�
 | 方法 | Host 期待的行为 |
 | --- | --- |
 | `start / close` | 初始化；关闭时等待执行、取消与资源清理 |
-| `listTasks / detail` | 返回产品 DTO：稳定的消息 ID 与真实状态，不把引擎私有类型传给客户端 |
+| `listTasks / detail` | 返回产品 DTO：稳定的消息 ID 与真实状态，不把 Harness 私有类型传给客户端 |
 | `createTask / prompt` | 接收 `requestId` 并持久化去重；不支持的模式必须报错，不能把 chat 当 agent；`cwd` 必须属于 `workspaces()`；声明 `projectFolders: 'all'` 的 Driver 还会收到 `workspaceId` 与 `folders`；L3 Driver 的 `createTask` 还会收到确认过的 `expectedLaunchHash` |
 | `cancel` | 等待实际执行结算；后端只回复"已收到"不够。带 `options.runId` 时只在它仍是当前运行时取消，并在开始取消的同一步核对（之间不能有 `await`），这样迟到的取消不会停止之后开始的运行；没有可取消的运行或 `runId` 不符时返回 `false`，取消并结算后返回 `true`；不区分的旧 Driver 可以不返回值 |
-| `approvals / decide` | 返回当前有效审批；并发决定只有一个成功；`optionId` 必须属于该审批，旧审批或重复决定返回 false。`options.via` 说明人在哪里决定（`this-mac` 或 `other-device`），用于工具行的决定记录；`options.note` 只随拒绝出现，是「告诉 Agent 改做什么」的说明，权限回复不能带文字的 Driver 忽略它 |
+| `approvals / decide` | 返回当前有效审批；并发决定只有一个成功；`optionId` 必须属于该审批，旧审批或重复决定返回 false。`options.via` 说明人在哪里决定（`this-mac` 或 `other-device`），用于工具行的决定记录；`options.note` 只随拒绝出现，是「告诉 Harness 改做什么」的说明，权限回复不能带文字的 Driver 忽略它 |
 | `subscribe` | 状态变化时通知，带 sessionId 时 Host 会合并通知并推送该会话状态 |
 | `liveRuns?` | 可选。同步返回内存中活动的运行 `{ sessionId, live }`，开销只随活动运行数增长：Host 每次变化与阈值到期时都调用，据此发现沉默；不提供时没有沉默通知 |
 | `remove?` | 可选。删除已结束会话的数据；运行中返回 409 `task-running` |
@@ -380,7 +380,7 @@ pnpm test:e2e
 
 ### 个人助手上下文
 
-`CreateTaskInput.agentContext?` / `PromptOptions.agentContext?` 是 Host 构造的 `AgentExecutionContext`，不是可由 HTTP 客户端授予的权限。`agent` 持久化为会话归属。Driver 用 `agentContext` 声明接收方式：`private` 必须保证 `instructions` 只对当前运行可见、不进入公开消息或可分叉历史，并对每轮输入校验原归属，Standard 已实现；`first-turn` 把 `brief` 随第一轮发给引擎，并记录到那条用户消息的 `agentBrief`，ACP 已实现。未声明的 Driver 收不到 Agent 上下文。
+`CreateTaskInput.agentContext?` / `PromptOptions.agentContext?` 是 Host 构造的 `AgentExecutionContext`，不是可由 HTTP 客户端授予的权限。`agent` 持久化为会话归属。Driver 用 `agentContext` 声明接收方式：`private` 必须保证 `instructions` 只对当前运行可见、不进入公开消息或可分叉历史，并对每轮输入校验原归属，Standard 已实现；`first-turn` 把 `brief` 随第一轮发给 Harness，并记录到那条用户消息的 `agentBrief`，ACP 已实现。未声明的 Driver 收不到 Agent 上下文。
 
 `registry.acquire(providerId, {tools, pluginIds})` 的可选 `pluginIds` 固定本轮工具和技能的归属插件。缺省保持旧行为；显式空列表不租用工具或技能；选择的插件已停用或移除时报错。Provider 独立租用，不能通过 Provider 所属关系额外提供未选中的工具。私有记忆、请求预留与数据范围规则见 [PERSONAL.md](PERSONAL.md)。
 

@@ -1,5 +1,5 @@
 /*
- * The 变更 tab: one 36 row holds the scope, the stat and the undo action or the reason there is none; lines say what the
+ * The 改动 tab: one 36 row holds the scope, the stat and the undo action or the reason there is none; lines say what the
  * reader must know about the list; then the tree and the diff in one order. Amber only where the reader must take care,
  * red only inside the step that cannot be undone.
  */

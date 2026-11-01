@@ -77,6 +77,34 @@ describe('changes routes', () => {
     expect(messages.find(message => message.role === 'user')?.createdAt).toBe((await turns()).at(-1)!.startedAt)
   })
 
+  it('keeps a first turn in the project the session belongs to, not only in the default one', async () => {
+    const t = await startTestHost()
+    hosts.push(t)
+    const owner = await t.enroll({ listener: 'unix' })
+    const saved = await owner.request('agents', {
+      method: 'POST',
+      body: { id: 'fake', name: 'Fake', command: process.execPath, args: [FAKE_ACP_AGENT] },
+    })
+    expect(saved.status).toBe(201)
+    const folder = await mkdtemp(join(tmpdir(), 'latch-changes-project-'))
+    try {
+      const { id: workspaceId } = ((await (await owner.addFolders({ paths: [folder] })).json()) as { workspace: { id: string } }).workspace
+      const created = await owner.confirmed('tasks', {
+        method: 'POST',
+        body: { prompt: 'shell-edit', requestId: randomUUID(), mode: 'agent', harnessId: 'fake', workspaceId },
+      })
+      expect(created.status).toBe(201)
+      const { sessionId } = (await created.json()) as { sessionId: string }
+      const turns = async () => (await owner.json<{ turns: TurnChanges[] }>(`tasks/${sessionId}/changes/turns`)).turns
+      await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status, SLOW).toBe('idle')
+      await expect.poll(async () => (await turns()).at(-1)?.state, SLOW).toBe('settled')
+      const list = await owner.json<ChangeList>(`tasks/${sessionId}/changes?scope=turn`)
+      expect(list.files.map(file => file.path)).toEqual(['agent-edit.txt', 'command-edit.txt'])
+    } finally {
+      await rm(folder, { recursive: true, force: true })
+    }
+  })
+
   it('announces the feature and lists a turn with what a command changed', async () => {
     const { owner, path, turnId } = await fixture()
     const snapshot = await owner.json<{ catalog: { features: { changes?: true } } }>('snapshot')

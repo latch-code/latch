@@ -117,7 +117,7 @@ Host 从启动起计数自己发出的字节（[traffic.ts](../apps/host/src/tra
 | 连接失败、非 2xx、流结束，或 45 秒没有收到任何字节（含等待响应头的时间；Host 每 15 秒发心跳） | 视为断线，按 1、2、4、8 秒退避，之后每 15 秒重连；浏览器重新联网，或页面重新可见且在线时，跳过剩余等待立即重连 |
 | 浏览器 offline | 断开事件流、取消在途 HTTP，并停止重连，直到浏览器重新联网或页面重新可见且在线 |
 | `401 renewal-required` | 先续期凭据；续期成功后立即重连一次。续期失败、正在等待下一次续期（桌面端页面从不自己续期），或续期后流打开前 Host 仍要求续期，都按退避重连 |
-| 其他 `401` | 按退避重试；每次断线后的快照同步决定进入登记页还是只是暂时失败，页面离开工作区时关闭事件流 |
+| 其他 `401` | 按退避重试；每次断线后的快照同步决定进入连接页还是只是暂时失败，页面离开工作区时关闭事件流 |
 | `deferReconnect(ms)` | 放下当前连接，此后每次重连前至少等待 `ms`（与退避取较大者），直到下一条流打开为止 |
 
 事件流 open 不直接标记“已连接”：先完成 HTTP snapshot/detail 同步，确认选择仍有效、事件流仍打开且浏览器在线，`.app-shell` 的 `data-connection` 才变为 `connected`；其他取值为 `connecting`、`reconnecting`、`offline`。网络错误显示重连中；浏览器 offline 时保留已读内容，显示离线。online 或页面重新可见时再同步。`refresh` 与 `tasks-invalidated` 只有在 `instanceId` 与当前 Host 相同且 revision 新于当前 snapshot 时才触发同步；`instanceId` 不同则立即重新同步并重新绑定。
@@ -128,7 +128,7 @@ Host 从启动起计数自己发出的字节（[traffic.ts](../apps/host/src/tra
 
 ### Host 宣布的停止与睡眠
 
-收到实例与当前 Host 相同、形状正确的 `stopping` 或 `sleeping`（[hostState.ts](../apps/web/src/core/hostState.ts) 校验）时，页面记下这条通告，连接状态变为 `reconnecting`，并以 `retryAfter` 调用 `deferReconnect`：Host 已说明暂时不会应答，所以页面不按 1 秒起的退避猜测，也不在断线时立即请求快照；浏览器重新联网或页面重新可见时照常立即重连一次。横幅标题按通告给出原因与开始时间，替代「连接已中断，正在重连…」：`sleeping` 为「电脑已休眠（22:41 起）」，`restart` 为「电脑上的 Latch 正在重启」，`update` 为「电脑上的 Latch 正在更新」，`shutdown` 为「电脑上的 Latch 已停止（21:03 起）」。重连后的快照同步成功、页面标为 `connected` 时清除通告；收到 `awake` 时清除通告并立即同步。只有连接失败才按通告等待：重连得到 `401` 说明 Host 已经在应答，续期不能解决时页面清除通告，照常请求快照，由快照决定进入登记页（设备被撤销、凭据过期等）还是显示暂时故障，不会停在过时的「电脑已休眠」上。实例不同的通告被忽略。桌面端页面另外显示主进程对 Host 的判断（正在重启、反复崩溃后停止自动重启、已停止、没有响应），Host 停止或反复崩溃后横幅给出「启动 Host」。
+收到实例与当前 Host 相同、形状正确的 `stopping` 或 `sleeping`（[hostState.ts](../apps/web/src/core/hostState.ts) 校验）时，页面记下这条通告，连接状态变为 `reconnecting`，并以 `retryAfter` 调用 `deferReconnect`：Host 已说明暂时不会应答，所以页面不按 1 秒起的退避猜测，也不在断线时立即请求快照；浏览器重新联网或页面重新可见时照常立即重连一次。横幅标题按通告给出原因与开始时间，替代「连接已中断，正在重连…」：`sleeping` 为「电脑已休眠（22:41 起）」，`restart` 为「电脑上的 Latch 正在重启」，`update` 为「电脑上的 Latch 正在更新」，`shutdown` 为「电脑上的 Latch 已停止（21:03 起）」。重连后的快照同步成功、页面标为 `connected` 时清除通告；收到 `awake` 时清除通告并立即同步。只有连接失败才按通告等待：重连得到 `401` 说明 Host 已经在应答，续期不能解决时页面清除通告，照常请求快照，由快照决定进入连接页（设备被撤销、凭据过期等）还是显示暂时故障，不会停在过时的「电脑已休眠」上。实例不同的通告被忽略。桌面端页面另外显示主进程对 Host 的判断（正在重启、反复崩溃后停止自动重启、已停止、没有响应），Host 停止或反复崩溃后横幅给出「启动 Host」。
 
 ### 桌面端的转发与流
 
@@ -142,11 +142,11 @@ Host 从启动起计数自己发出的字节（[traffic.ts](../apps/host/src/tra
 2. **实例**：SSE/detail 的 sync.instanceId 必须等于当前 HTTP 确认的 Host。重启后的状态不能与旧实例混合。
 3. **版本与来源**：同一选择中，低于已接受 revision 的 detail 被丢弃。相同 revision 时 stream 优先于 HTTP：流可以更新此前的 HTTP 正文，迟到 HTTP 和重复 stream 都不能覆盖已接受的流正文。已经接受带版本状态后，不再接受无版本 detail 回退。
 
-切换会话会取消待处理 HTTP、清除当前 detail、重建带新 sessionId 的事件流。事件 JSON 至少验证事件类型、版本、session ID 与正文的基本形状；它不是对外提供的通用不可信 JSON 导入器。设备被撤销、登记满 30 天或凭据属于别的访问地址时，页面清除任务内容并进入登记页。
+切换会话会取消待处理 HTTP、清除当前 detail、重建带新 sessionId 的事件流。事件 JSON 至少验证事件类型、版本、session ID 与正文的基本形状；它不是对外提供的通用不可信 JSON 导入器。设备被撤销、登记满 30 天或凭据属于别的访问地址时，页面清除任务内容并进入连接页。
 
 snapshot 与 task-state 可能交错。摘要与审批只在 detail.revision 大于或等于 snapshot.revision 时由选中 detail 覆盖；更旧 detail 不得覆盖较新的 snapshot。这个列表合并规则与上述正文来源优先级分开处理，不会把一个任务的 detail 替换到另一个任务上。
 
-**当前没有 WAL、持久事件队列、Last-Event-ID 历史重放或逐事件缺口恢复。** 断线后通过当前快照收敛，不保证客户端看过所有短暂中间状态。SSE 关闭只移除订阅，不取消 run。创建/输入的幂等回执另由 Runtime 持久化，审批决定与取消的回执由 Host 随会话保存（见下文）；浏览器保存的待确认提交用于显式重试，不是自动离线任务队列。
+**当前没有 WAL、持久事件队列、Last-Event-ID 历史重放或逐事件缺口恢复。** 断线后通过当前快照收敛，不保证客户端看过所有短暂中间状态。SSE 关闭只移除订阅，不取消 run。创建/输入的幂等回执另由 Runtime 持久化，审批决定与取消的回执由 Host 随会话保存（见下文）；浏览器保存的待确认提交用于显式重试，不是自动离线任务队列。这条记录只有一条：输入框为它锁定；「未确认送达」和重试只显示在它所属的会话或新会话，其他会话写「另一个会话有消息未确认送达」并给「打开」。记录同时带着正在等待的确认票据（`awaitingConfirmation`）时，内容还没有发出：重新打开页面会取消这张票据（系统表单随之关闭），把文字放回输入框，不显示未确认送达。同一设备的另一个窗口结算后，经 `storage` 事件清除这一行。
 
 ## 消息、审批与取消
 
@@ -166,7 +166,7 @@ Provider 不能在 finish 后继续发送内容，缺少 finish 也视为失败�
 
 ### 审批决定的请求 ID 与回执
 
-`POST /link/api/approvals/:id` 的请求体为 `{ decision, optionId?, requestId?, note? }`（`note` 是拒绝时「告诉 Agent 改做什么」的说明，同一说明的重试用同一个 `requestId`，换一句说明算换一个选择）。浏览器总是带上 `requestId`：为每个审批上的每个选择生成一个（`DecisionRequests`），同一页面同一审批同时只发出一个决定：
+`POST /link/api/approvals/:id` 的请求体为 `{ decision, optionId?, requestId?, note? }`（`note` 是拒绝时「告诉 Harness 改做什么」的说明，同一说明的重试用同一个 `requestId`，换一句说明算换一个选择）。浏览器总是带上 `requestId`：为每个审批上的每个选择生成一个（`DecisionRequests`），同一页面同一审批同时只发出一个决定：
 
 - **结果未知时重用。** 网络错误、超时（15 秒）、408 或 5xx 时，结果未知，`requestId` 保留，审批卡里出现「结果未知」与「重试」，说明可以重试同一选择、不会重复提交；「重试」或再按同一个按钮都重发同一请求。审批从快照里消失（已由某台设备结算）时，这条提示随之去掉。明确的 5xx 拒绝（`audit-unavailable`、`presence-unavailable`、`agent-busy`）与其他明确回答之后，`requestId` 丢弃。换一个选择总是使用新的 `requestId`。
 - **回执。** Host 接受后返回 `{ accepted: true, receipt: { approvalId, decision, optionId?, at } }`。同一设备用同一 `requestId` 重发时返回原回执并带 `replay: true`，不会再次决定或审计。
@@ -213,16 +213,16 @@ Provider 不能在 finish 后继续发送内容，缺少 finish 也视为失败�
 | `commandName` | `command` 与 `tool` 时运行的是什么，只有一行，已脱敏；**只在会话详情里** |
 | `since` | 这项活动开始的时间 |
 | `runStartedAt`、`runWaitMs`、`runWaitingSince` | 整次运行开始的时间与等人的时间，和详情里的同名字段一致。`since` 随活动重新开始，整次运行的时钟读这三项；列表也带它们，它们不含正文 |
-| `lastEventAt` | 最后的动静：引擎为这个会话发来的任何东西（输出、工具更新、用量报告、请求），或一项活动的开始（比如审批刚被答复）。Agent 的 stderr 不算：它不属于任何一次运行 |
+| `lastEventAt` | 最后的动静：Harness 为这个会话发来的任何东西（输出、工具更新、用量报告、请求），或一项活动的开始（比如审批刚被答复）。Agent 的 stderr 不算：它不属于任何一次运行 |
 | `lastOutputAt` | 可见输出最后一次变化 |
 | `silenceThresholdMs`、`silent` | Host 的判断，见下 |
-| `unrecognized` | 引擎发来过 Latch 不认识的请求：`count` 与最新的 `at`，`at` 不早于 `lastEventAt` 表示之后再无动静；引擎继续时列表重读一次，不随每个词重读；会话详情里另有 `method` 与记录它的系统消息 `messageId` |
+| `unrecognized` | Harness 发来过 Latch 不认识的请求：`count` 与最新的 `at`，`at` 不早于 `lastEventAt` 表示之后再无动静；Harness 继续时列表重读一次，不随每个词重读；会话详情里另有 `method` 与记录它的系统消息 `messageId` |
 
 Driver 报告除 `silenceThresholdMs`、`silent` 以外的各项，`silenceThresholdMs` 与 `silent` 只由 Host 计算，Driver 的说法会被丢弃。Standard 的 `lastEventAt` 随 Provider 的每个事件前进，工具的 `kind: 'execute'` 算命令，名称是工具的标题；ACP 的 `lastEventAt` 随该会话的每个 `session/update` 与请求前进，`kind: 'execute'` 算命令，名称优先取调用的 `rawInput.command`。ACP 同时运行几个调用时，一个结束后活动仍是还在运行的那个，不会说成在等模型。
 
 **阈值与沉默。** 模型（含 `starting`）2 分钟，命令与工具 10 分钟；等人和停止中没有阈值。`silent` 表示 `lastEventAt` 距今超过阈值，每次读取时计算，所以不会读到过期的答案。
 
-**没有周期开销。** Host 只有一个定时器，等最早到期的阈值，只在有运行可能越过阈值或正在沉默时存在，读的是 `Bridge.liveRuns()`（内存中的运行，不列全部会话）。越过时只发一次普通的会话变化（`task-state`，其他连接收到 `tasks-invalidated`）；沉默中的运行每 30 秒复查一次，因为 Driver 不必为每个动静都通知，复查发现它恢复时同样发一次变化；空闲的 Host 没有定时器。没有 `liveRuns` 的 Driver 仍在读取时算出沉默、可以继续等，但 Host 不主动宣布越过。客户端自己用 `lastEventAt` 与 Host 时钟算出「N 分钟」，不需要 Host 持续推送。`lastEventAt` 的变化本身不会让其他设备重读列表，只有活动、阈值、沉默或 `unrecognized` 的计数变化才会，所以列表中的 `lastEventAt` 可以落后于详情，判断沉默以 `silent` 为准；要比较 `unrecognized.at` 与 `lastEventAt` 看引擎是否继续了，也只在详情里比较。电脑从睡眠中醒来时，睡眠的时间也算沉默。
+**没有周期开销。** Host 只有一个定时器，等最早到期的阈值，只在有运行可能越过阈值或正在沉默时存在，读的是 `Bridge.liveRuns()`（内存中的运行，不列全部会话）。越过时只发一次普通的会话变化（`task-state`，其他连接收到 `tasks-invalidated`）；沉默中的运行每 30 秒复查一次，因为 Driver 不必为每个动静都通知，复查发现它恢复时同样发一次变化；空闲的 Host 没有定时器。没有 `liveRuns` 的 Driver 仍在读取时算出沉默、可以继续等，但 Host 不主动宣布越过。客户端自己用 `lastEventAt` 与 Host 时钟算出「N 分钟」，不需要 Host 持续推送。`lastEventAt` 的变化本身不会让其他设备重读列表，只有活动、阈值、沉默或 `unrecognized` 的计数变化才会，所以列表中的 `lastEventAt` 可以落后于详情，判断沉默以 `silent` 为准；要比较 `unrecognized.at` 与 `lastEventAt` 看 Harness 是否继续了，也只在详情里比较。电脑从睡眠中醒来时，睡眠的时间也算沉默。
 
 **列表不带正文。** 快照的 `live` 不含 `commandName`、`unrecognized.method` 与 `messageId`，因为原生客户端在正文窗口之外也能读列表。
 
@@ -241,12 +241,12 @@ Driver 报告除 `silenceThresholdMs`、`silent` 以外的各项，`silenceThres
 
 | `reason` | 含义 | 会话状态 |
 | --- | --- | --- |
-| `process-exited` | 引擎进程自己退出，或超出协议限制被结束 | `failed`（停止途中退出时为 `interrupted`） |
+| `process-exited` | Harness 进程自己退出，或超出协议限制被结束 | `failed`（停止途中退出时为 `interrupted`） |
 | `forced-stop` | 停止在 30 秒内没有结算，Latch 结束了进程 | `interrupted` |
 | `host-stopped` | Host 在运行期间停止或重启 | `interrupted` |
-| `turn-ended` | 引擎结束了这一轮，但有调用没有报告结果 | 按这一轮的结果 |
+| `turn-ended` | Harness 结束了这一轮，但有调用没有报告结果 | 按这一轮的结果 |
 
-`unknownResults` 列出当时在运行的调用（`messageId` 是工具行，`name` 是名称），最多 32 条，更多时带 `unknownResultsTruncated`。`name` 是命令文本，所以 `unknownResults` **只在会话详情里**；列表与取消回执只带条数 `unknownResultCount`。进程退出的运行 `status` 是 `failed`，但 `runOutcome` 仍是 `interrupted`：那条命令是否生效没人知道，自动化不能把它当作可以重试的失败。
+`unknownResults` 列出当时在运行的调用（`messageId` 是工具行，`name` 是名称），最多 32 条，更多时带 `unknownResultsTruncated`。`name` 是命令文本，所以 `unknownResults` **只在会话详情里**；列表与取消回执只带条数 `unknownResultCount`。进程退出的运行 `status` 是 `failed`，但 `runOutcome` 仍是 `interrupted`：那条命令是否生效没人知道，定时任务不能把它当作可以重试的失败。
 
 Standard 的工具与模型在进程内运行，没有可结束的进程：停止只发出中止信号并等待它们真实结算，没有强制停止，不理会中止的插件工具会让运行一直停在 `cancelling`。
 

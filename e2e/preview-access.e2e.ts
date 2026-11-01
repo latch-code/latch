@@ -113,7 +113,7 @@ describe('preview authority reduction', () => {
           const toggle = page.getByRole('button', { name: '显示文件', exact: true })
           if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click()
           await artifactLink.click()
-          await page.getByRole('region', { name: '文件历史变更', exact: true }).getByRole('button', { name: '预览', exact: true }).click()
+          await page.getByRole('region', { name: '文件历史改动', exact: true }).getByRole('button', { name: '预览', exact: true }).click()
         }
         await openArtifact()
         await preview.getByText(artifact, { exact: true }).waitFor()

@@ -130,7 +130,7 @@ struct InboxRow: View {
             }
             HStack(spacing: 6) {
                 EngineTile(harnessId: task["harnessId"].string, size: 14)
-                Text(([task["personal"]["assistantId"].string == nil ? "通用" : "助手"] + [PhoneSessions.rowMeta(task, project: project)].compactMap { $0 }).joined(separator: " · "))
+                Text(([model.engineName(task["harnessId"].string)] + [PhoneSessions.rowMeta(task, project: project)].compactMap { $0 }).joined(separator: " · "))
                     .font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).lineLimit(1)
             }
         }.frame(minHeight: 48, alignment: .center).accessibilityElement(children: .combine)

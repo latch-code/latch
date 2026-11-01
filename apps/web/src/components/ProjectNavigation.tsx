@@ -8,21 +8,8 @@ import { projectFolders, projectName } from '../projects.tsx'
 import { VisibleText } from './VisibleText.tsx'
 
 export interface ProjectNavigationActions {
-  onCreateProject?: () => void
   onEditProject?: (id: string) => void
   onProjectsChanged?: () => void
-}
-
-/** With no project saved yet, the one place the panel offers to make one; afterwards it is in each project's ⋯. */
-export function NewProjectRow({ onCreateProject }: { onCreateProject: () => void }) {
-  return (
-    <button type="button" className="new-project-row" onClick={onCreateProject}>
-      <span className="sidebar-row-icon">
-        <FolderPlus size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-      </span>
-      <span>新建项目…</span>
-    </button>
-  )
 }
 
 /**
@@ -65,7 +52,6 @@ export function ProjectGroupHeading({
   onFold,
   count,
   onNew,
-  onCreateProject,
   onEditProject,
   onProjectsChanged,
 }: {
@@ -152,9 +138,6 @@ export function ProjectGroupHeading({
                 { id: 'edit', label: '管理文件夹…', icon: Settings, onSelect: () => onEditProject(project.id) },
               ],
             },
-            ...(onCreateProject
-              ? [{ id: 'create', items: [{ id: 'create', label: '新建项目…', icon: FolderPlus, onSelect: onCreateProject }] }]
-              : []),
           ]}
         />
       )}

@@ -418,7 +418,7 @@ export default function PdfPreview({ file, read, versionKey, onQuote }: Document
         if (!controller.signal.aborted) setOutline(links)
       })
       .catch(() => {
-        if (!controller.signal.aborted) setError('无法显示这个 PDF，请下载或在执行端电脑上打开。')
+        if (!controller.signal.aborted) setError('无法显示这个 PDF，请下载或在 Mac 上打开。')
         if (resource.current !== entry) releasePdf(entry)
       })
     return () => {

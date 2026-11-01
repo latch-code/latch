@@ -265,12 +265,7 @@ export function SessionHeader({
     return (
       <PhoneTopBar
         summary={summary}
-        source={[
-          identity ?? (harness ? [harnessName(harness), project].filter(Boolean).join(' · ') : undefined),
-          summary?.branch && escapeSecurityText(summary.branch),
-        ]
-          .filter(Boolean)
-          .join(' · ')}
+        source={identity ?? (harness ? [harnessName(harness), project].filter(Boolean).join(' · ') : undefined)}
         cancelling={cancelling}
         demo={demo}
         onBack={onBack}
@@ -447,7 +442,7 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
         canViewChanges
           ? {
               changes: {
-                label: '变更',
+                label: '改动',
                 icon: GitCompare,
                 shortcut: desktop ? '⌘D' : 'Alt D',
                 pressed: showing,

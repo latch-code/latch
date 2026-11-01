@@ -1106,7 +1106,7 @@ describe('macOS helper backend', () => {
     // Every confirm re-checks, never from the cache.
     await expect(context.backend.confirm({ ...input, signal: new AbortController().signal })).resolves.toEqual({
       result: 'error',
-      message: '本机确认组件与登记的签名不一致。如果你重新构建了它，请停止 Host 后运行 pnpm latch presence repin。',
+      message: '本机确认组件与记录的签名不一致。如果你重新构建了它，请停止 Host 后运行 pnpm latch presence repin。',
     })
     expect(context.children).toHaveLength(0)
     context.codesign.verify = 1
@@ -1133,7 +1133,7 @@ describe('macOS helper backend', () => {
     await expect(backend.availability()).resolves.toEqual({
       status: 'unavailable',
       reason: 'cdhash-mismatch',
-      message: '本机确认组件的登记签名已丢失（policy.json 被修改或删除）。请停止 Host 后运行 pnpm latch presence repin。',
+      message: '本机确认组件的签名记录已丢失（policy.json 被修改或删除）。请停止 Host 后运行 pnpm latch presence repin。',
     })
     expect(reopened.get().presence.helperCdhash).toBeNull()
   })

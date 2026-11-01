@@ -60,7 +60,7 @@ describe('pairing codes in a Latch terminal', () => {
       expect(invite.output.stderr).toContain('Latch 终端的输出可能被加入对话，配对链接不在这里显示；请使用 --code-file <路径>')
       const offline = terminal(env, directory)
       expect(await offline.latch('device', 'enroll', '--offline', '--data-dir', dataDir)).toBe(1)
-      expect(offline.output.stderr).toContain('离线登记码不在这里显示；请使用 --code-file <路径>')
+      expect(offline.output.stderr).toContain('离线连接码不在这里显示；请使用 --code-file <路径>')
       expect(CODE.test(`${invite.output.stdout}${offline.output.stdout}`)).toBe(false)
     }
     for (const env of [
@@ -81,6 +81,6 @@ describe('pairing codes in a Latch terminal', () => {
     // Any other terminal on this computer shows the code as before.
     const other = terminal({ TERM_PROGRAM: 'Apple_Terminal' }, directory)
     expect(await other.latch('device', 'enroll', '--offline', '--data-dir', dataDir)).toBe(0)
-    expect(/离线登记码：lpo1-[A-Z2-7]{26}/u.test(other.output.stdout)).toBe(true)
+    expect(/离线连接码：lpo1-[A-Z2-7]{26}/u.test(other.output.stdout)).toBe(true)
   })
 })

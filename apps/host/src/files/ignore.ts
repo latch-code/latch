@@ -3,7 +3,16 @@
 import { redactSecrets } from '@latch/core/node-kit'
 import { isSecretPath } from './secrets.ts'
 
-const IGNORED_NAMES = new Set(['.git', 'node_modules', 'dist', 'build', '.next', '.venv', '__pycache__', '.ds_store'])
+export const IGNORED_NAMES: ReadonlySet<string> = new Set([
+  '.git',
+  'node_modules',
+  'dist',
+  'build',
+  '.next',
+  '.venv',
+  '__pycache__',
+  '.ds_store',
+])
 const EMPTY = new Uint8Array()
 
 /** A relative, `/`-separated path under an ignored name, or a `*.tmp` file. */

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Keyboar
 import { createPortal } from 'react-dom'
 import {
   AlarmClock,
+  ArrowLeft,
+  Bot,
   Box,
   ChevronLeft,
   ChevronRight,
@@ -13,7 +15,6 @@ import {
   MonitorSmartphone,
   Puzzle,
   SlidersHorizontal,
-  UsersRound,
 } from 'lucide-react'
 import type { AppSnapshot } from '@latch/protocol'
 import { useViewport } from '../breakpoints.ts'
@@ -23,13 +24,13 @@ import { currentShell } from '../core/shell.ts'
 import { useBackLayer } from '../hooks/backStack.ts'
 import { SettingsNavigationProvider, type SettingsNavigation } from './navigation.tsx'
 import { deferredComponent } from '../components/DeferredContent.tsx'
-import { Icon, IconButton, SearchField, type LucideIcon } from '@latch/ui'
+import { Count, ICON_STROKE, Icon, IconButton, SearchField, type LucideIcon } from '@latch/ui'
 import { entrySections, type AgentPageTarget, type PageEntry, type SettingsSection, type ShellRoute } from '../shell/routes.ts'
 
 export type { SettingsSection }
 
 const AboutSettings = deferredComponent(async () => ({ default: (await import('./AboutSettings.tsx')).AboutSettings }), '关于')
-const AgentsSettings = deferredComponent(async () => ({ default: (await import('./AgentsSettings.tsx')).AgentsSettings }), '引擎设置')
+const AgentsSettings = deferredComponent(async () => ({ default: (await import('./AgentsSettings.tsx')).AgentsSettings }), '设置')
 const PhoneDevicesPage = deferredComponent(
   async () => ({ default: (await import('./devices/PhoneDevicesPage.tsx')).PhoneDevicesPage }),
   '手机与设备',
@@ -54,9 +55,11 @@ const SEARCH_TERMS: Partial<Record<SettingsSection, string>> = {
   general: '外观 主题 深色 浅色 发送消息 回车 新文档 自动打开 通知 登录时打开 唤醒 名称',
   providers: '服务 密钥 key 添加服务 用量 tokens 显示的模型 已确认的地址 地址 出站',
   engines: '已安装 可以安装 启动方式 环境变量 命令 agent',
-  workspaces: '文件夹 新建项目 快照',
+  workspaces: '文件夹 添加项目 新建项目 快照',
+  routines: 'cron 每天 自动',
+  plugins: '工具 技能 扩展',
   shortcuts: '键盘',
-  devices: '手机 连接手机 二维码 配对 邀请 重命名 移除 撤销 浏览器 限制 policy 开始新会话',
+  devices: '手机 连接手机 二维码 配对 重命名 移除 撤销 浏览器 限制 policy 开始新会话',
   about: '版本 开源许可',
 }
 
@@ -67,7 +70,10 @@ export function searchSections<T extends { id: SettingsSection; label: string }>
   return list.filter(section => `${section.label} ${SEARCH_TERMS[section.id] ?? ''}`.toLocaleLowerCase().includes(needle))
 }
 
-const ENTRY_LABELS: Record<PageEntry, string> = { agents: 'Agent', automations: '自动化', plugins: '插件', phone: '手机', settings: '设置' }
+const ENTRY_LABELS: Record<PageEntry, string> = {
+  phone: '手机',
+  settings: '设置',
+}
 
 /**
  * `admin`: needs the device's 管理此 Host scope. `catalog`: needs the Host APIs that come with a snapshot catalog.
@@ -85,12 +91,12 @@ const sections: Array<{
 }> = [
   { id: 'general', label: '通用', icon: SlidersHorizontal, admin: false },
   { id: 'providers', label: '模型', icon: Box, admin: true, catalog: true },
-  { id: 'engines', label: '引擎', icon: Cpu, admin: true, catalog: true },
-  { id: 'assistants', label: '个人助手', icon: UsersRound, admin: false, feature: 'personal' },
-  { id: 'routines', label: '例行任务', icon: AlarmClock, admin: false, feature: 'personalRoutines' },
+  { id: 'engines', label: 'Harness', icon: Cpu, admin: true, catalog: true },
   { id: 'workspaces', label: '项目', icon: Folder, admin: true, catalog: true },
-  { id: 'shortcuts', label: '快捷键', icon: Keyboard, admin: false },
+  { id: 'routines', label: '定时任务', icon: AlarmClock, admin: false, feature: 'personalRoutines' },
+  { id: 'assistants', label: 'Agent', icon: Bot, admin: false, feature: 'personal' },
   { id: 'plugins', label: '插件', icon: Puzzle, admin: true },
+  { id: 'shortcuts', label: '快捷键', icon: Keyboard, admin: false },
   { id: 'devices', label: '手机与设备', icon: MonitorSmartphone, admin: false, secured: true },
   { id: 'about', label: '关于', icon: Info, admin: false },
 ]
@@ -131,7 +137,7 @@ export function settingsPanel(
   return { active, panel }
 }
 
-/** The section a page entry shows now, for what stands over the page (个人助手 and 例行任务 draw there). */
+/** The section a page shows now, for what stands over the page (Agent and 定时任务 draw there). */
 export function entrySection(route: ShellRoute, allowed: readonly SettingsSection[], phone: boolean): SettingsSection | null {
   if (route.entry === 'sessions') return null
   const ids = entrySections(route.entry, phone).filter(id => allowed.includes(id))
@@ -139,8 +145,8 @@ export function entrySection(route: ShellRoute, allowed: readonly SettingsSectio
 }
 
 /**
- * A page entry of the shell: the entry's sections in the panel next to the rail and the chosen one in the main area, with
- * its name in the title row. It covers the session's columns without unmounting them, so the conversation keeps its
+ * A page of the shell: its sections where the sidebar stands, under the way back, and the chosen one in the main area,
+ * with its name in the title row. It covers the session's columns without unmounting them, so the conversation keeps its
  * state. On phones the section list is the root and a section, and each page inside it, is pushed over the level before.
  */
 export function SettingsPage({
@@ -151,6 +157,8 @@ export function SettingsPage({
   initialProjectId,
   initialAgent,
   titleSlot,
+  waiting = 0,
+  onBack,
   onSection,
   onChanged,
   onOpenSession,
@@ -164,6 +172,10 @@ export function SettingsPage({
   initialAgent?: AgentPageTarget
   /** Where the page puts its title on wide windows. */
   titleSlot?: HTMLElement | null
+  /** How many sessions wait on the person, for the way back to them. */
+  waiting?: number
+  /** Back to the sessions, on wide windows. */
+  onBack?: () => void
   /** Opens a section, of this entry or another. Without an argument, goes back to this entry's list. */
   onSection: (section?: SettingsSection) => void
   onChanged: () => void
@@ -206,8 +218,8 @@ export function SettingsPage({
     levelBack.current = back
     setDepthState(next)
   }, [])
-  // 插件 and 手机 list their objects beside the rail and title the page with the one shown; other entries list sections.
-  const objectEntry = (entry === 'plugins' || entry === 'phone') && !phone
+  // 手机 lists its devices where 设置 lists sections, and titles the page with the one shown.
+  const objectEntry = entry === 'phone' && !phone
   const [navSlot, setNavSlot] = useState<HTMLElement | null>(null)
   const navigation: SettingsNavigation = {
     phone,
@@ -284,6 +296,15 @@ export function SettingsPage({
                 <span />
                 <h2>{ENTRY_LABELS[entry]}</h2>
               </header>
+            )}
+            {!phone && onBack && (
+              <div className="settings-back-line">
+                <button type="button" className="sidebar-nav-row" onClick={onBack}>
+                  <ArrowLeft size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+                  <span>返回会话</span>
+                  {waiting > 0 && <Count tone="warn" value={waiting} />}
+                </button>
+              </div>
             )}
             {searchable && (
               <div ref={search} className="settings-search">
@@ -372,9 +393,7 @@ export function SettingsPage({
                         {...(access.scopes.has('view') && onOpenSession ? { onOpenSession } : {})}
                       />
                     )}
-                    {panel === 'plugins' && (
-                      <PluginsSettings onManage={onSection} snapshot={snapshot} access={access} onChanged={onChanged} />
-                    )}
+                    {panel === 'plugins' && <PluginsSettings snapshot={snapshot} access={access} onChanged={onChanged} />}
                     {panel === 'devices' && <PhoneDevicesPage snapshot={snapshot} access={access} onChanged={onChanged} />}
                     {panel === 'about' && <AboutSettings snapshot={snapshot} access={access} />}
                   </div>

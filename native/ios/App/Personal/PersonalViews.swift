@@ -53,9 +53,9 @@ struct PersonalHomeView: View {
                             }
                         }
                         if model.supportsRoutines {
-                            Section("例行任务") {
+                            Section("定时任务") {
                                 ForEach(model.personalOverview["routines"].array, id: \.id) { item in PersonalRoutineRow(routine: item) { routine = item } }
-                                Button("创建例行任务", systemImage: "plus") { routine = .null }.disabled(!model.canRun || !model.pending.isEmpty || !model.personalOverview["assistants"].array.contains { $0["canSchedule"].bool })
+                                Button("创建定时任务", systemImage: "plus") { routine = .null }.disabled(!model.canRun || !model.pending.isEmpty || !model.personalOverview["assistants"].array.contains { $0["canSchedule"].bool })
                             }
                         }
                     }.refreshable { await model.refreshPersonal() }

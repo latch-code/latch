@@ -8,7 +8,6 @@ import type { PendingSubmission } from '../core/api.ts'
 import type { SendKey } from '../preferences.ts'
 import { escapeIsLeftover } from '../escapeGrace.ts'
 import { SlashCommands, useSlashCommands } from './SlashCommands.tsx'
-import { FooterFoldContext, useFooterFold } from './useFooterFold.ts'
 import { Button, Collapse, EASING, ICON_STROKE, InlineNotice, MOTION, Spinner, Swap, Tooltip, useLiveChange } from '@latch/ui'
 
 /**
@@ -44,6 +43,7 @@ export function Composer({
   draft,
   onDraft,
   pending,
+  onOpenPending,
   sending,
   error,
   onRetry,
@@ -82,6 +82,8 @@ export function Composer({
   draft: string
   onDraft: (value: string) => void
   pending: PendingSubmission | null
+  /** The pending submission belongs to another session or to 新会话: this input is held for it, and this opens it. */
+  onOpenPending?: () => void
   sending: boolean
   error: string
   onRetry: () => void
@@ -100,7 +102,7 @@ export function Composer({
    * stays the stop circle, since nothing else stops a run that waits on a question.
    */
   answer?: { kind: 'reject' | 'question'; onSubmit: () => void }
-  /** The footer's right side, before send: the branch, usage and 「⋯」. */
+  /** The footer's right side, before send: usage and 「⋯」. */
   meta?: ReactNode
   /** Attached above the card: the approval, question, queue and notice drawers. */
   drawers?: ReactNode
@@ -114,8 +116,6 @@ export function Composer({
   confirmation?: ReactNode
 }) {
   const box = useRef<HTMLDivElement>(null)
-  const footer = useRef<HTMLDivElement>(null)
-  const fold = useFooterFold(footer)
   const mentions = useFileMentions(draft, onDraft, textareaRef, fileMentions)
   // The input grows with its content a line at a time, up to eight lines, its height moving over 120ms (composer.css).
   // Measuring needs the height let go for a moment; it is put back without a transition, so the move then starts from
@@ -291,10 +291,10 @@ export function Composer({
       {pending !== null && !sending && (
         <div className="pending-submission" data-tint="warn" role="status">
           <div>
-            <strong>未确认送达</strong>
+            <strong>{onOpenPending ? '另一个会话有消息未确认送达' : '未确认送达'}</strong>
             <p>{pending.prompt || `${pending.attachmentIds?.length ?? 0} 个附件`}</p>
           </div>
-          <Button onClick={onRetry}>重试这次提交</Button>
+          {onOpenPending ? <Button onClick={onOpenPending}>打开</Button> : <Button onClick={onRetry}>重试这次提交</Button>}
         </div>
       )}
       {drawers && <div className="composer-drawers">{drawers}</div>}
@@ -355,16 +355,14 @@ export function Composer({
         )}
         {variant === 'sheet' && attachments && <AttachmentButton controller={attachments} disabled={locked} />}
         {!inline && variant !== 'sheet' && (
-          <FooterFoldContext.Provider value={fold}>
-            <div className="composer-toolbar" ref={footer} data-fold={fold}>
-              <div className="composer-controls">
-                {attachments && <AttachmentButton controller={attachments} disabled={locked} />}
-                {controls}
-              </div>
-              {meta && <div className="composer-meta">{meta}</div>}
-              {action}
+          <div className="composer-toolbar">
+            <div className="composer-controls">
+              {attachments && <AttachmentButton controller={attachments} disabled={locked} />}
+              {controls}
             </div>
-          </FooterFoldContext.Provider>
+            {meta && <div className="composer-meta">{meta}</div>}
+            {action}
+          </div>
         )}
       </form>
       {inline && controls && <div className="composer-chips">{controls}</div>}

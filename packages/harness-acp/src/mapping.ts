@@ -8,7 +8,7 @@ export const TOOL_TEXT_LIMIT = 64 * 1024
 const DIFF_SIDE_LIMIT = 128 * 1024
 const TRUNCATED = '\n…（内容过长，已截断）'
 
-export const OUTCOME_UNKNOWN = 'TOOL_OUTCOME_UNKNOWN: 执行未取得已确认结果。请先核对实际副作用；系统不会自动重放此操作。'
+export const OUTCOME_UNKNOWN = 'TOOL_OUTCOME_UNKNOWN: 结果未知，请先核对它做了什么。Latch 不会自动重做。'
 export const NOT_STARTED = 'TOOL_NOT_STARTED: 本轮已结束，工具没有开始执行。'
 
 export function clip(text: string, limit: number): string {

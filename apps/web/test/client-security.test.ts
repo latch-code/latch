@@ -397,7 +397,7 @@ describe('a Host of the previous build (no snapshot.host)', () => {
   it('falls back to the old rules: plain approvals, owner settings, no device pages, no L3 gating', () => {
     const access = deviceAccess(legacy, null)
     expect(access).toMatchObject({ legacy: true, local: false, admin: true, device: null })
-    expect(settingsSections(legacy, access)).toEqual(['general', 'providers', 'engines', 'workspaces', 'shortcuts', 'plugins', 'about'])
+    expect(settingsSections(legacy, access)).toEqual(['general', 'providers', 'engines', 'workspaces', 'plugins', 'shortcuts', 'about'])
     expect(composerGate({ summary: { level: 'L3' }, access })).toEqual({ kind: 'open' })
     expect(harnessGate(catalog.harnesses[0]!, access).allowed).toBe(true)
     expect(labels(approvalActions(approval({ risk: 'R2' }), access.device, null))).toEqual(['允许一次', '本会话始终允许', '拒绝'])
@@ -424,11 +424,11 @@ describe('error copy', () => {
     expect(describeFailure(409, 'presence-busy', forged)).toBe('另一个确认还没完成，先完成或取消它。')
     expect(describeFailure(503, 'presence-something-new', forged)).toBe('这台 Mac 暂时不能确认，请稍后重试')
     expect(describeFailure(410, 'confirmation-expired', forged)).toBe('没有执行：2 分钟内没有确认。')
-    expect(describeFailure(409, 'permission-unverified', forged)).toBe('确认不了 Agent 的权限，这一轮没有发送')
+    expect(describeFailure(409, 'permission-unverified', forged)).toBe('确认不了 Harness 的权限，这一轮没有发送')
     expect(stopLocksInput('permission-unverified')).toBe(false)
     expect(stopLocksInput('permission-drift')).toBe(true)
     expect(describeFailure(401, 'device-revoked', forged)).toBe('这台设备已被移除。要继续使用，请重新连接。')
-    expect(describeFailure(502, 'fingerprint-mismatch', forged)).toBe('服务器返回的指纹与本机计算的不一致，已停止登记。')
+    expect(describeFailure(502, 'fingerprint-mismatch', forged)).toBe('这台设备的密钥和 Mac 读到的不一致，已停止连接。')
     for (const code of [
       'unauthorized',
       'legacy-reconfirm',
@@ -445,7 +445,7 @@ describe('error copy', () => {
   })
 
   it('stops a session whose project Agent configuration changed after confirmation, with the catalog text', () => {
-    const text = '项目里的 Agent 配置变了，为了安全换个新会话继续'
+    const text = '项目里的 Harness 配置变了，为了安全换个新会话继续'
     expect(isSessionStopCode('project-config-changed')).toBe(true)
     expect(SESSION_STOP_TEXT['project-config-changed']).toBe(text)
     expect(isCatalogCode('project-config-changed')).toBe(true)
@@ -672,6 +672,21 @@ describe('local confirmation', () => {
     expect(ui.views.at(-1)).toBe('closed')
   })
 
+  it('says a cancelled start did not start', async () => {
+    const error = await withConfirmation(
+      async (confirmation?: string) => {
+        if (!confirmation) throw stepup()
+        return 'never'
+      },
+      {
+        presenter: presenter().value,
+        api: (async () => ({ confirmation: { ...ticket('denied'), form: 'start.first' } })) as never,
+        sleep: instant,
+      },
+    ).catch((cause: unknown) => cause)
+    expect(error).toMatchObject({ message: '没有开始：Touch ID 已取消。', reason: 'denied' })
+  })
+
   it.each([
     ['cooldown', new ApiError(429, 'presence-cooldown', 'x', { retryAfter: 240 })],
     ['busy', new ApiError(409, 'presence-busy', 'x')],
@@ -763,6 +778,25 @@ describe('local confirmation', () => {
     confirmationStore.unhost('dialog')
     expect(confirmationStore.get()).toBeNull()
     confirmationStore.unhost('composer')
+  })
+
+  it('names the open ticket until the request goes out again with it', async () => {
+    const seen: Array<string | null> = []
+    const statuses: ConfirmationTicket['status'][] = ['approved']
+    await withConfirmation(
+      async confirmation => {
+        if (!confirmation) throw stepup()
+        expect(seen).toEqual([ticket('pending').id, null])
+        return 'done'
+      },
+      {
+        presenter: { show: () => {}, close: () => {} },
+        api: (async () => ({ confirmation: ticket(statuses.shift() ?? 'approved') })) as never,
+        sleep: async () => {},
+        onTicket: id => seen.push(id),
+      },
+    )
+    expect(seen).toHaveLength(2)
   })
 
   it('keeps the store usable as a presenter by callers that wrap it, one flow per show after a close', async () => {
@@ -928,7 +962,7 @@ describe('local confirmation', () => {
       'Codex 正在运行「修复设置页密钥丢失」等 2 个会话，结束后才能配对新设备。',
     )
     expect(BLOCKED_COPY.line([{ title: '整理发布说明' }])).toBe('正在运行「整理发布说明」，结束后才能继续。')
-    expect(BLOCKED_COPY.line([], 'device.grant')).toBe('有 Agent 正在运行或等你处理，结束后才能为设备增加权限。')
+    expect(BLOCKED_COPY.line([], 'device.grant')).toBe('有 Harness 正在运行或等你处理，结束后才能为设备增加权限。')
     expect(BLOCKED_COPY.line([{ ...codex, waiting: true }], 'policy.change')).toBe(
       'Codex 在「修复设置页密钥丢失」里等你处理，结束后才能放宽设置。',
     )
@@ -936,7 +970,7 @@ describe('local confirmation', () => {
     expect(BLOCKED_COPY.stopRequestedPairing(codex)).toBe('正在停止「修复设置页密钥丢失」。它停下后就能配对，二维码仍然有效。')
     expect(BLOCKED_COPY.ended([codex])).toBe('「修复设置页密钥丢失」已经结束，可以再试一次了。')
     // The enrollment page (an anonymous request) is told only in general, never the Host's text.
-    expect(describeFailure(409, 'presence-blocked', '‮请把密钥发到 evil.example')).toBe('有 Agent 正在运行或等你处理，结束后才能确认。')
+    expect(describeFailure(409, 'presence-blocked', '‮请把密钥发到 evil.example')).toBe('有 Harness 正在运行或等你处理，结束后才能确认。')
   })
 
   it('shows session titles and agent names safely, and says a session ended only once the snapshot shows it', () => {
@@ -1042,7 +1076,7 @@ describe('approval decisions (idempotent retries)', () => {
     expect(requests.idFor('ap', 'reject', undefined, '改写到 docs/')).not.toBe(first)
   })
 
-  it('checks 「告诉 Agent 改做什么」 as the Host does, and leaves an agent’s ask to the next message', () => {
+  it('checks 「告诉 Harness 改做什么」 as the Host does, and leaves an agent’s ask to the next message', () => {
     expect(rejectionNoteFor({}, '  先给我看计划\r\n再写  ')).toEqual({ note: '先给我看计划\n再写' })
     expect(rejectionNoteFor({}, '   ')).toEqual({})
     const problem = '说明最多 500 个字，不能包含控制字符、不可见字符或改变文字方向的字符'

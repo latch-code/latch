@@ -12,7 +12,7 @@ struct PersonalRoutineRow: View {
                 HStack(alignment: .top, spacing: 12) {
                     Image(systemName: "clock").font(.system(size: 18)).foregroundStyle(.secondary).frame(width: 24)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(routine["name"].string ?? "例行任务").foregroundStyle(.primary)
+                        Text(routine["name"].string ?? "定时任务").foregroundStyle(.primary)
                         Text("每天 " + (routine["schedule"]["time"].string ?? "") + " · " + (routine["schedule"]["timeZone"].string ?? "")).font(.caption).foregroundStyle(.secondary)
                         Text(stateText).font(.caption).foregroundStyle(routine["state"].string == "paused" ? Color.orange : .secondary)
                     }
@@ -72,14 +72,14 @@ struct PersonalRoutineEditor: View {
                     LabeledContent("时区") { LocalTextEditor(text: $timeZone, placeholder: "Asia/Shanghai", maximumLines: 1).frame(minHeight: 30) }.disabled(running)
                 } header: { Text("时间") } footer: { Text("保存后请在电脑上明确开启。电脑离线错过的时间不会自动补跑。修改执行内容后需要重新开启。") }
                 if let session = routine["lastRun"]["sessionId"].string { Section { Button("查看最近执行") { dismiss(); Task { await model.openSession(session) } } } }
-                if editing { Section { Button("删除例行任务", role: .destructive) { deleting = true }.disabled(running || !model.canRun || !model.pending.isEmpty) } }
+                if editing { Section { Button("删除定时任务", role: .destructive) { deleting = true }.disabled(running || !model.canRun || !model.pending.isEmpty) } }
             }
-            .navigationTitle(editing ? "例行任务" : "创建例行任务").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle(editing ? "定时任务" : "创建定时任务").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { clear(); dismiss() } }
                 ToolbarItem(placement: .confirmationAction) { Button("保存") { Task { await save() } }.disabled(!valid || model.busy || !model.pending.isEmpty) }
             }
-            .confirmationDialog("删除这个例行任务？", isPresented: $deleting, titleVisibility: .visible) { Button("删除例行任务", role: .destructive) { Task { if await model.mutate(.delete, path: "/link/api/personal/routines/" + routine.id, fields: [:]), model.pending.isEmpty { clear(); dismiss() } } } }
+            .confirmationDialog("删除这个定时任务？", isPresented: $deleting, titleVisibility: .visible) { Button("删除定时任务", role: .destructive) { Task { if await model.mutate(.delete, path: "/link/api/personal/routines/" + routine.id, fields: [:]), model.pending.isEmpty { clear(); dismiss() } } } }
             .onAppear {
                 name = routine["name"].string ?? ""; prompt = routine["prompt"].string ?? ""
                 assistantId = routine["assistantId"].string ?? choices.first?.id ?? ""

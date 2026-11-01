@@ -273,7 +273,7 @@ function workspaceChanged(): AppError {
 }
 
 function scopeUnavailable(): AppError {
-  return new AppError(400, 'workspace-unavailable', '所选项目的文件夹与此节点登记的不一致')
+  return new AppError(400, 'workspace-unavailable', '所选项目的文件夹与这台电脑记录的不一致')
 }
 
 /** How the folders a launch passes are compared: in order, with how they are passed. */
@@ -1110,11 +1110,11 @@ export class AcpBridge implements Bridge {
   private async workspace(input: string | undefined): Promise<string> {
     const target = input ?? this.workspaceRoot
     if (typeof target !== 'string' || !isAbsolute(target))
-      throw new AppError(400, 'workspace-unavailable', '工作目录必须是 Host 已登记的项目目录')
+      throw new AppError(400, 'workspace-unavailable', '工作目录必须是 已添加的项目目录')
     const real = await realpath(target).catch(() => undefined)
     const roots = (this.options.workspaces?.() ?? [this.workspaceRoot]).map(root => resolve(root))
     if (real) for (const root of roots) if ((await realpath(root).catch(() => undefined)) === real) return root
-    throw new AppError(400, 'workspace-unavailable', '工作目录不是 Host 已登记的项目目录，或目录已不存在')
+    throw new AppError(400, 'workspace-unavailable', '工作目录不是 已添加的项目目录，或目录已不存在')
   }
 
   private async assertWorkspace(task: AcpTask): Promise<void> {
@@ -1713,7 +1713,8 @@ export class AcpBridge implements Bridge {
     if (error instanceof RpcError) {
       if (error.code === RPC.cancelled) return 'cancelled'
       if (error.code === RPC.authRequired) {
-        notes.push(this.authMessage(run.live))
+        this.forgetProcessAfterAuth(run.live)
+        notes.push(this.authMessage())
         return 'failed'
       }
       if (error.code === RPC.notFound) {
@@ -1749,7 +1750,7 @@ export class AcpBridge implements Bridge {
     }
     if (info.reason === 'stop') return `${name} 进程已随 Latch 关闭而结束；${turn}。请核对工具副作用。`
     if (info.reason === 'overflow') return `${name} 输出了超过限制的单行消息，进程已被结束；${turn}。请核对工具副作用。`
-    return `${name} 进程意外退出（${describeExit(info)}）；${turn}。正在执行的工具结果未知，请核对实际副作用。${info.stderr ? '错误输出已记入 Host 日志。' : ''}`
+    return `${name} 进程意外退出（${describeExit(info)}）；${turn}。正在执行的工具结果未知，请核对实际副作用。${info.stderr ? '错误输出已记入日志。' : ''}`
   }
 
   private finishTurn(run: Run, status: TaskStatus, notes: string[]): void {
@@ -2035,7 +2036,7 @@ export class AcpBridge implements Bridge {
         1000,
       )
       this.health.lastError = clip(detail, 300)
-      throw new AppError(503, 'agent-start-failed', `${name} 启动失败：${detail}${info.stderr ? '。错误输出已记入 Host 日志。' : ''}`)
+      throw new AppError(503, 'agent-start-failed', `${name} 启动失败：${detail}${info.stderr ? '。错误输出已记入日志。' : ''}`)
     }
   }
 
@@ -2183,17 +2184,23 @@ export class AcpBridge implements Bridge {
     if (error instanceof ConnectionStopping) return new AppError(503, 'agent-exited', `${name} 进程正在停止，请稍后重试。`)
     if (error instanceof RequestTimeout) return new AppError(504, 'agent-timeout', `${name} 长时间没有响应，请稍后重试`)
     if (error instanceof RpcError) {
-      if (error.code === RPC.authRequired) return new AppError(409, 'agent-auth-required', this.authMessage(live))
+      if (error.code === RPC.authRequired) {
+        this.forgetProcessAfterAuth(live)
+        return new AppError(409, 'agent-auth-required', this.authMessage())
+      }
       if (error.code === RPC.notFound) return new AppError(409, 'harness-session-lost', '该 Harness 已找不到这个会话，请新建会话')
       return new AppError(502, 'agent-error', `${name} 返回错误：${clip(this.redact(error.message), 1000)}`)
     }
     return new AppError(500, 'agent-error', `${name} 运行失败：${clip(this.redact(message(error)), 1000)}`)
   }
 
-  private authMessage(live: Live | undefined): string {
-    const methods = live?.authMethods ?? []
-    const lines = methods.map(method => `- ${method.name}${method.description ? `：${method.description}` : ''}`)
-    return `${this.agent.name} 需要登录。请在运行 Latch 的电脑上完成该 Harness 的登录后重试。${lines.length ? `\n\n可用的登录方式：\n${lines.join('\n')}` : ''}`
+  /** An agent may read its login once at startup, so a retry after logging in has to reach a new process. */
+  private forgetProcessAfterAuth(live: Live | undefined): void {
+    if (live) void live.connection.stop('stop', this.limits.stopGraceMs).catch(() => {})
+  }
+
+  private authMessage(): string {
+    return `${this.agent.name} 还没登录。按它自己的方式登录后重试。`
   }
 
   private holdIdle(live: Live): void {

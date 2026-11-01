@@ -1,23 +1,10 @@
 import { Ellipsis, GitBranch } from 'lucide-react'
 import type { SessionConfigOption } from '@latch/protocol'
-import { ICON_STROKE, IconButton, Popover, SwitchRow, Tooltip, ValuePicker } from '@latch/ui'
+import { ICON_STROKE, IconButton, Popover, Tooltip, ValuePicker } from '@latch/ui'
 import { escapeHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
 import { agentConfigValues } from './modelReasoning.ts'
-import { MODE_ICONS, PermissionList } from './PermissionList.tsx'
-import type { PermissionView } from './permission.ts'
 
-/** 通用 is the built-in Agent and today the only one, so the chip names it and has nothing to open. */
-export function AgentChip() {
-  return (
-    <Tooltip content="通用是默认的 Agent，没有额外的指令和技能">
-      <span className="chip chip-static chip-agent" tabIndex={0} aria-label="Agent：通用">
-        <span className="chip-text">通用</span>
-      </span>
-    </Tooltip>
-  )
-}
-
-/** The branch as the Host read it; with nothing verified the footer shows nothing. */
+/** The branch as the Host read it, under the input; with nothing verified there is nothing to show. */
 export function BranchLabel({ branch }: { branch: string }) {
   const name = escapeHiddenCharacters(branch)
   return (
@@ -86,17 +73,15 @@ function OptionRows({
 
 /** 「⋯」: only when there is something in it. */
 export function MoreMenu({
-  chatOnly,
   options = [],
   disabled = false,
   onOption,
 }: {
-  chatOnly?: { value: boolean; onChange: (value: boolean) => void } | undefined
   options?: readonly SessionConfigOption[]
   disabled?: boolean
   onOption: (option: SessionConfigOption, value: string) => void
 }) {
-  if (!chatOnly && options.length === 0) return null
+  if (options.length === 0) return null
   return (
     <span className="composer-more">
       <Popover
@@ -106,72 +91,7 @@ export function MoreMenu({
         align="end"
         trigger={props => <IconButton {...props} size="sm" icon={Ellipsis} label="更多选项" />}>
         <div className="composer-more-body">
-          {chatOnly && (
-            <SwitchRow title="只聊天，不读写文件" checked={chatOnly.value} disabled={disabled} onCheckedChange={chatOnly.onChange} />
-          )}
           <OptionRows options={options} disabled={disabled} onChoose={onOption} />
-        </div>
-      </Popover>
-    </span>
-  )
-}
-
-/** Under 420: 权限, other options, the branch and usage in one 「⋯」. An amber 权限 stays out of it. */
-export function FoldMenu({
-  permission,
-  branch,
-  use,
-  options = [],
-  disabled = false,
-  chatOnly,
-  onOption,
-}: {
-  permission: PermissionView | undefined
-  branch?: string | undefined
-  use?: { percent: number; words: string } | undefined
-  options?: readonly SessionConfigOption[]
-  disabled?: boolean
-  chatOnly?: { value: boolean; onChange: (value: boolean) => void } | undefined
-  onOption: (option: SessionConfigOption, value: string) => void
-}) {
-  const plain = permission && !permission.amber ? permission : undefined
-  if (!plain && !branch && !use && options.length === 0 && !chatOnly) return null
-  const Glyph = plain ? MODE_ICONS[plain.icon] : undefined
-  return (
-    <span className="composer-fold-more">
-      <Popover
-        label="权限、更多选项、分支和用量"
-        width={272}
-        side="top"
-        align="end"
-        trigger={props => <IconButton {...props} size="sm" icon={Ellipsis} label="权限、更多选项、分支和用量" />}>
-        <div className="composer-more-body">
-          {plain?.rows && plain.option ? (
-            <PermissionList
-              rows={plain.rows}
-              onChoose={value => {
-                onOption(plain.option!, value)
-              }}
-            />
-          ) : (
-            plain
-            && Glyph && (
-              <p className="composer-more-line">
-                <Glyph size={14} aria-hidden="true" />
-                权限 · {plain.label}
-              </p>
-            )
-          )}
-          {chatOnly && (
-            <SwitchRow title="只聊天，不读写文件" checked={chatOnly.value} disabled={disabled} onCheckedChange={chatOnly.onChange} />
-          )}
-          <OptionRows options={options} disabled={disabled} onChoose={onOption} />
-          {branch && (
-            <p className="composer-more-line">
-              分支 · <VisibleText text={branch} />
-            </p>
-          )}
-          {use && <p className="composer-more-line">{use.words}</p>}
         </div>
       </Popover>
     </span>

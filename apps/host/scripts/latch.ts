@@ -73,7 +73,7 @@ class CliError extends Error {}
  * Why a pairing link or an offline code may not be shown here. A Latch terminal keeps its output in memory, and
  * 「加入对话」 can pass it to a model; a code rendered as a QR would pass the redaction.
  */
-function codeRefusal(io: CliIO, what: '配对链接' | '离线登记码'): string | undefined {
+function codeRefusal(io: CliIO, what: '配对链接' | '离线连接码'): string | undefined {
   if (isLatchTerminal(io.env)) return `Latch 终端的输出可能被加入对话，${what}不在这里显示；请使用 --code-file <路径>`
   // A pane keeps the environment of the terminal that started the multiplexer, so it may be attached from a Latch terminal unmarked.
   if (io.env.TMUX !== undefined || io.env.STY !== undefined || io.env.ZELLIJ !== undefined)
@@ -94,8 +94,8 @@ const SCOPES = new Set<string>(Object.keys(SCOPE_LABELS))
 const RUNNING = 'Host 正在运行，请先停止（pnpm stop）'
 const PROJECT_RUNNING = 'Host 正在运行。请在 Latch 桌面端添加，或先停止 Host。'
 const PROJECT_REMOVE_RUNNING = 'Host 正在运行。请在 Latch 的「设置 → 项目」中移除，或先停止 Host。'
-const OFFLINE_WARNING = '离线登记依赖本机此刻没有恶意的同用户进程。只在无法使用本机确认时使用。'
-const UNPINNED = '本机确认组件尚未登记。请先在这台电脑上打开一次 Latch，或停止 Host 后重试。'
+const OFFLINE_WARNING = '离线连接依赖本机此刻没有恶意的同用户进程。只在无法使用本机确认时使用。'
+const UNPINNED = '本机确认组件尚未记录。请先在这台电脑上打开一次 Latch，或停止 Host 后重试。'
 /**
  * What a loopback link offers unless --scopes says otherwise: with no desktop app to raise it later, 「管理此 Host」 too, which
  * the desktop app's own link leaves out (apps/desktop/src/proxy.cjs). The confirmation warns when it is asked for.
@@ -104,14 +104,14 @@ const BROWSER_SCOPES: readonly DeviceScope[] = ['view', 'run', 'approve:standard
 
 const USAGE = `用法：pnpm latch <命令> [--data-dir <目录>]
 
-  device list [--json]                     列出已登记的设备（Host 运行中）
+  device list [--json]                     列出已连接的设备（Host 运行中）
   device revoke <设备 ID>                   撤销设备（Host 运行中）
   device invite [--loopback] [--scopes view,run,...] [--code-file <路径>]
                                            生成手机配对二维码（Host 运行中，需要 HTTPS 入口）；
-                                           --loopback 生成这台电脑上浏览器用的一次性登记链接，
+                                           --loopback 生成这台电脑上浏览器用的一次性链接，
                                            未给 --scopes 时可申请到「管理此 Host」
   device enroll --offline [--code-file <路径>]
-                                           生成桌面端用的一次性离线登记码（Host 已停止）
+                                           生成桌面端用的一次性离线连接码（Host 已停止）
   provider set-key <服务 ID> [--expect-url <服务地址>]
                                            从标准输入读取并保存模型服务密钥；地址未确认时先列出它，一并确认（Host 已停止）
   provider confirm <服务 ID> [--expect-url <服务地址>]
@@ -125,9 +125,9 @@ const USAGE = `用法：pnpm latch <命令> [--data-dir <目录>]
   project remove <项目 ID> [--yes]          移除项目，文件夹中的文件不删除（Host 已停止）
   project remove-folder <项目 ID> <文件夹 ID> [--yes]
                                            从项目中移除一个文件夹（Host 已停止）
-  项目命令沿用上次 Host 的启动目录；首次启动前需加 --workspace <启动目录>。
+  项目命令沿用上次 Host 的默认文件夹；首次启动前需加 --workspace <默认文件夹>。
   presence status                          查看本机确认是否可用
-  presence repin                           重新登记本机确认组件的签名（Host 已停止）
+  presence repin                           重新记录本机确认组件的签名（Host 已停止）
   presence test                            显示一次示例本机确认（人工检查）
   audit verify                             校验审计记录
   traffic [--json]                         Host 本次启动以来发出的字节数与帧大小分布（Host 运行中）
@@ -713,7 +713,7 @@ export async function runLatch(argv: string[], io: CliIO): Promise<number> {
       const expires = new Date(invitation.expiresAt).toLocaleTimeString('zh-CN', { hour12: false })
       if (file) {
         await file.write(invitation.url)
-        out(`${loopback ? '登记链接' : '配对链接'}已写入 ${codePath}（0600），${expires} 前有效，只能使用一次。`)
+        out(`${loopback ? '浏览器链接' : '配对链接'}已写入 ${codePath}（0600），${expires} 前有效，只能使用一次。`)
         return 0
       }
       if (loopback) {
@@ -729,7 +729,7 @@ export async function runLatch(argv: string[], io: CliIO): Promise<number> {
     if (key === 'device enroll') {
       if (!flags.has('--offline')) throw new CliError('device enroll 目前只支持 --offline')
       const codeFile = flags.get('--code-file')
-      const refusal = typeof codeFile === 'string' ? undefined : codeRefusal(io, '离线登记码')
+      const refusal = typeof codeFile === 'string' ? undefined : codeRefusal(io, '离线连接码')
       if (refusal) throw new CliError(refusal)
       const codePath = typeof codeFile === 'string' ? resolve(io.cwd, codeFile) : undefined
       const lock = await lockStopped(dataDir)
@@ -750,13 +750,13 @@ export async function runLatch(argv: string[], io: CliIO): Promise<number> {
           const expires = new Date(ticket.expiresAt).toLocaleTimeString('zh-CN', { hour12: false })
           if (file) {
             await file.write(ticket.code)
-            out(`离线登记码已写入 ${codePath}（0600），${expires} 前有效，只能使用一次。`)
+            out(`离线连接码已写入 ${codePath}（0600），${expires} 前有效，只能使用一次。`)
           } else {
-            out(`离线登记码：${ticket.code}`)
+            out(`离线连接码：${ticket.code}`)
             out(`${expires} 前有效，只能使用一次。`)
           }
           // Only host.sock takes offline codes: a browser's loopback port may be forwarded from elsewhere.
-          out('启动 Latch 桌面端（pnpm desktop）后，在它的登记页面填写离线登记码。浏览器与手机不接受离线登记码。')
+          out('启动 Latch 桌面端（pnpm desktop）后，在它的连接页面填写离线连接码。浏览器与手机不接受离线连接码。')
         } finally {
           await audit.close()
         }
@@ -944,7 +944,7 @@ export async function runLatch(argv: string[], io: CliIO): Promise<number> {
         } finally {
           await audit.close()
         }
-        out(`已登记 latch-presence cdhash ${cdhash}`)
+        out(`已记录 latch-presence cdhash ${cdhash}`)
       } finally {
         await lock.release()
       }
@@ -1022,14 +1022,14 @@ async function offlineProjectContext(dataDir: string, flags: Map<string, string 
   const recorded = await readProjectContext(dataDir)
   const explicit = flags.get('--workspace') ?? latchEnv(io.env, 'WORKSPACE')
   if (!recorded && typeof explicit !== 'string') {
-    throw new CliError('没有已记录的 Host 启动目录。请先用原参数启动并停止 Host，或提供 --workspace <启动目录>。')
+    throw new CliError('没有已记录的 Host 默认文件夹。请先用原参数启动并停止 Host，或提供 --workspace <默认文件夹>。')
   }
   if (
     recorded
     && typeof explicit === 'string'
     && (await canonicalPath(resolve(io.cwd, explicit))) !== (await canonicalPath(recorded.workspaceRoot))
   ) {
-    throw new CliError('--workspace 与上次 Host 的启动目录不同，请先用新的启动参数成功启动并停止 Host。')
+    throw new CliError('--workspace 与上次 Host 的默认文件夹不同，请先用新的启动参数成功启动并停止 Host。')
   }
   const located = resolveLatchPaths({
     dataDir,
@@ -1061,7 +1061,7 @@ async function addProjectFolders(
   const projectId = adding ? rest[0] : undefined
   const inputs = adding ? rest.slice(1) : rest
   if (adding && !projectId) throw new CliError('请提供项目 ID')
-  if (projectId === 'default') throw new CliError('启动目录只能包含一个文件夹。要组合多个文件夹，请新建项目。')
+  if (projectId === 'default') throw new CliError('默认文件夹只能包含一个文件夹。要组合多个文件夹，请新建项目。')
   if (inputs.length === 0) throw new CliError('请提供至少一个文件夹路径')
   if (inputs.length > PROJECT_FOLDER_LIMIT) throw new CliError(`一次最多添加 ${PROJECT_FOLDER_LIMIT} 个文件夹`)
   const nameFlag = flags.get('--name')
@@ -1089,7 +1089,7 @@ async function addProjectFolders(
       ...(context.tlsKeyPath ? { tlsKeyPath: context.tlsKeyPath } : {}),
     }
     const primaries = [
-      { id: 'default', name: '启动目录', path: context.workspaceRoot },
+      { id: 'default', name: '默认文件夹', path: context.workspaceRoot },
       ...settings.workspaces
         .filter(item => item.id !== projectId)
         .map(item => ({ id: item.id, name: item.name, path: item.folders[0].path })),
@@ -1213,7 +1213,7 @@ async function removeProjectFolder(
   const [projectId, folderId] = rest
   if (!projectId) throw new CliError('请提供项目 ID')
   if (folder && !folderId) throw new CliError('请提供文件夹 ID（pnpm latch project list --json 中的 folders[].id）')
-  if (projectId === 'default') throw new CliError('启动目录由 Host 的启动参数决定，不能移除')
+  if (projectId === 'default') throw new CliError('默认文件夹由 Host 的启动参数决定，不能移除')
   const ask = io.stdout.isTTY ? io.confirm : undefined
   if (!ask && !flags.has('--yes')) throw new CliError('移除需要确认：在终端中运行，或加上 --yes')
   const lock = await lockStopped(dataDir, PROJECT_REMOVE_RUNNING)
@@ -1229,7 +1229,7 @@ async function removeProjectFolder(
     if (index === 0) {
       // The next folder becomes primary; it may not be another project's primary folder or the start directory.
       const others = [
-        { id: 'default', name: '启动目录', path: (await offlineProjectContext(dataDir, flags, io)).workspaceRoot },
+        { id: 'default', name: '默认文件夹', path: (await offlineProjectContext(dataDir, flags, io)).workspaceRoot },
         ...settings.workspaces
           .filter(item => item.id !== record.id)
           .map(item => ({ id: item.id, name: item.name, path: item.folders[0].path })),

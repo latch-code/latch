@@ -60,6 +60,8 @@ export interface ConfirmationOptions {
   nativeConfirm?: (id: string) => Promise<ShellConfirmationResult>
   pollMs?: number
   sleep?: (ms: number, wake: AbortSignal) => Promise<void>
+  /** Told the ticket the Host opened, and `null` just before the request goes out again with it. */
+  onTicket?: (id: string | null) => void
 }
 
 function defaultSleep(ms: number, wake: AbortSignal): Promise<void> {
@@ -148,6 +150,7 @@ export async function withConfirmation<T>(send: (confirmation?: string) => Promi
     presenter.close()
     throw new ConfirmationError(CONFIRMATION_RESULT_TEXT.cancelled, 'cancelled', true)
   }
+  options.onTicket?.(ticket.id)
   presenter.show({ phase: 'waiting', ticket }, actions)
   if (ticket.confirmationMethod === 'shell-local') {
     const confirm = options.nativeConfirm ?? shellConfirmations()?.confirm
@@ -181,12 +184,14 @@ export async function withConfirmation<T>(send: (confirmation?: string) => Promi
     if (ticket.status === 'pending') presenter.show({ phase: 'waiting', ticket }, actions)
   }
   if (cancelled.signal.aborted) stop()
-  if (ticket.status === 'denied') fail('denied', CONFIRMATION_RESULT_TEXT.denied)
+  if (ticket.status === 'denied')
+    fail('denied', ticket.form?.startsWith('start.') ? CONFIRMATION_RESULT_TEXT.startDenied : CONFIRMATION_RESULT_TEXT.denied)
   if (ticket.status === 'expired') fail('expired', CONFIRMATION_RESULT_TEXT.expired)
   if (ticket.status === 'cancelled') fail('cancelled', CONFIRMATION_RESULT_TEXT.cancelled)
   if (ticket.status !== 'approved')
     fail('error', ticket.failure === 'biometry-lockout' ? CONFIRMATION_RESULT_TEXT.lockout : CONFIRMATION_RESULT_TEXT.error)
 
+  options.onTicket?.(null)
   presenter.show({ phase: 'sending', ticket }, actions)
   try {
     const result = await send(ticket.id)

@@ -32,7 +32,7 @@ const SCAN_RULES: readonly ScanRule[] = [
     id: 'secret-shape',
     applies: text,
     matches: line => redactSecrets(line) !== line || FOREIGN_KEY.test(line),
-    message: '新增内容中有凭据、邀请码、离线登记码或密钥的形状；秘密不进入 Git、日志与输出',
+    message: '新增内容中有凭据、邀请码、离线连接码或密钥的形状；秘密不进入 Git、日志与输出',
   },
   {
     id: 'event-source',

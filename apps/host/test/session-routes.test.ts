@@ -39,7 +39,7 @@ describe('session workflow routes', () => {
     hosts.push(host)
     const owner = await host.enroll({ listener: 'unix' }),
       viewer = await host.enroll({ scopes: ['view', 'run'] })
-    const template = { id: 'review', name: '检查变更', content: '阅读并解释', scope: { kind: 'all' } }
+    const template = { id: 'review', name: '检查改动', content: '阅读并解释', scope: { kind: 'all' } }
     expect((await viewer.request('prompts/review', { method: 'PUT', body: template })).status).toBe(403)
     await owner.json('prompts/review', { method: 'PUT', body: template })
     await owner.json('prompts/review', { method: 'PUT', body: template })

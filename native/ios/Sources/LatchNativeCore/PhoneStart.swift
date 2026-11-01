@@ -28,7 +28,7 @@ public struct PhoneStartChoice: Equatable, Sendable {
 public enum PhoneStart {
     public static let onMac = "在 Mac 上开始"
     public static func engineName(_ harness: NativeJSON) -> String {
-        harness["source"].string == "builtin" ? "Latch" : harness["name"].string ?? harness["id"].string ?? "引擎"
+        harness["source"].string == "builtin" ? "Latch 内置" : harness["name"].string ?? harness["id"].string ?? "Harness"
     }
     public static func level(_ harness: NativeJSON) -> String {
         harness["level"].string ?? (harness["source"].string == "builtin" ? "L1" : "L3")
@@ -43,7 +43,7 @@ public enum PhoneStart {
         return ordered.compactMap { harness in
             guard let id = harness["id"].string else { return nil }
             let startable = canStart(harness)
-            return PhoneStartEntry(id: id, name: engineName(harness), line: startable ? (harness["source"].string == "builtin" ? "内置引擎" : nil) : onMac, startable: startable)
+            return PhoneStartEntry(id: id, name: engineName(harness), line: startable ? nil : onMac, startable: startable)
         }
     }
     public static func projects(_ catalog: NativeJSON) -> [PhoneStartEntry] {
@@ -80,7 +80,7 @@ public enum PhoneStart {
     /** Why this choice cannot start, in the words the sheet shows; nil when it can. */
     public static func blocker(_ catalog: NativeJSON, choice: PhoneStartChoice) -> String? {
         guard let harnessId = choice.harnessId, let harness = catalog["harnesses"].array.first(where: { $0["id"].string == harnessId }) else {
-            return "这台手机现在没有能开始的引擎。" + onMac + "。"
+            return "这台手机现在没有能开始的 Harness。" + onMac + "。"
         }
         guard canStart(harness) else { return engineName(harness) + " 只能在 Mac 上开始。" }
         if let id = choice.workspaceId {

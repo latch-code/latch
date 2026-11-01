@@ -66,6 +66,27 @@ section.inline-confirm[data-secure] {
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
+.confirm-touch-id {
+  display: block !important;
+  color: var(--ink-2) !important;
+  font-size: var(--fs-ui) !important;
+}
+.confirm-fold {
+  display: block !important;
+  color: var(--ink-2) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption-para) !important;
+}
+.confirm-fold summary {
+  display: list-item !important;
+  width: fit-content;
+  color: var(--ink-2) !important;
+  cursor: pointer;
+}
+.confirm-fold[open] > .confirm-warnings,
+.confirm-fold[open] > .confirm-details-list {
+  margin-top: var(--sp-8);
+}
 .confirm-blocked-actions {
   display: inline-flex !important;
   gap: var(--sp-6);

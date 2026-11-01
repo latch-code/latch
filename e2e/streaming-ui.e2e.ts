@@ -6,7 +6,6 @@ import type { HarnessPlugin, ModelDelta } from '@latch/sdk'
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { setChatOnly } from './helpers/layout.ts'
 
 /** The test releases each delta; no paid model, token timers, or simulated Host. */
 class ControlledReply {
@@ -148,11 +147,9 @@ describe('streamed messages in the real workspace', () => {
   async function start(page: Page, prompt: string): Promise<{ id: string; reply: ControlledReply }> {
     const reply = new ControlledReply()
     replies.set(prompt, reply)
-    // Phones show 新建会话 in their list's header and start from a sheet with 开始; wider layouts in the sidebar or rail.
+    // Phones show 新建会话 in their list's header and start from a sheet with 开始; wider layouts in the sidebar or title row.
     await page.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
     await page.locator('.drawer-backdrop').waitFor({ state: 'detached' })
-    // 只聊天: no tools, no files.
-    await setChatOnly(page, true)
     await page.getByRole('textbox', { name: '新会话消息' }).fill(prompt)
     const created = page.waitForResponse(
       response => response.request().method() === 'POST' && new URL(response.url()).pathname === '/link/api/tasks',

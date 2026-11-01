@@ -30,6 +30,16 @@ export interface HarnessInfo {
   projectFolders?: { access: ProjectFolderAccess; max?: number }
   /** Other devices may start sessions on this harness under the current policy; absent from older Hosts. */
   remoteStart?: boolean
+  /**
+   * Display only, known before a session starts: whether the harness asks before it acts, and whether Latch can read its
+   * mode back. Absent: Latch has no profile for it and learns this only after it starts.
+   */
+  permission?: { approvals: 'prompts' | 'none'; readback: 'mode' | 'none' }
+  /**
+   * A preset whose commands are on this computer and that has no saved definition yet: it can be chosen like any other,
+   * and the first session saves the definition. Only a device that may save one receives these.
+   */
+  offer?: { presetId: string }
 }
 
 export type ProjectFolderAccess = 'all' | 'primary' | 'primary-asks' | 'primary-unbounded'
@@ -63,6 +73,8 @@ export interface CommandDetection {
   found: boolean
   path?: string
   companion?: { command: string; found: boolean }
+  /** Display only, see `AgentPreset.agentCommand`. */
+  agent?: { command: string; found: boolean }
 }
 
 /** A preset as the agent settings list it: with what the Host found of its commands. Older Hosts send no `detected`. */

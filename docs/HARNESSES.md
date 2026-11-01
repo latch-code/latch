@@ -27,8 +27,10 @@ ACP Agent 是本机运行的可信代码，Latch 不给它加操作系统沙箱�
 ## 使用
 
 1. 在运行 Host 的电脑上安装 Agent，并按它自己的方式完成登录与模型配置。
-2. 在 Latch 桌面端打开「设置 → 引擎」，选择预设或填写自定义命令（可执行文件名或绝对路径、参数、环境变量）。定义只能在桌面端保存，保存时不需要本机确认：保存本身不运行任何东西，下一步新建会话时的系统表单写出要运行的命令、参数与环境变量名。新建定义或修改命令、参数、环境变量与预设后，定义标为「还没有开启过会话」，直到第一个以它开启的完全访问会话（`AgentRecord.startedHash`）；之后每个新会话仍要确认。改名和启用/停用任何管理设备都可以，不改变这一标记。
-3. 新建会话时选择该 Agent 与项目目录。确认内容列出：Harness、命令（解析出的绝对路径）、参数、Agent 启动时的全部环境变量名（不显示值）、工作目录（真实路径）、Agent 还会收到的其他文件夹（见「项目的多个文件夹」）、定义状态（「已验证的预设」或「未验证的定义」）、能否读回权限模式、是否请求审批、若干「说明」（预设的权限说明、定义的说明与项目中找到的 Agent 配置，见「项目配置」）、启动指纹与首条输入的哈希。这些是确认详情，桌面原生表单全部显示；首次系统 Touch ID 表单只写一句理由：「允许 Codex 读写这台 Mac 上的文件并运行命令（项目「Acme」）：/opt/homebrew/bin/codex-acp --flag」，定义设置了环境变量时另写「，另设 <变量名>」；命令、参数、定义的环境变量或项目配置与以前启动时不同时写「再次允许 Codex 读写这台 Mac 上的文件并运行命令（启动方式已变化，项目「Acme」）：…」。是否为预设自己的命令在上面列出的确认内容里。规则见 [ARCHITECTURE.md](./ARCHITECTURE.md#会话级别与审批风险)。
+2. 桌面端在新会话里直接列出命令已经装好的预设（`catalog.harnesses` 中带 `offer` 的项，只发给 `host.sock` 上有 `admin` 的设备），不用先添加；第一次发送时页面先保存它的定义，再开始会话，保存不运行任何东西。`startServer` 只有收到 `detectPreset`（启动脚本传入）才找命令，测试不传，所以运行测试的电脑上装的 Agent 不会被选中。也可以在「设置 → Harness」选择预设或填写自定义命令（可执行文件名或绝对路径、参数、环境变量）。定义只能在桌面端保存，保存时不需要本机确认：保存本身不运行任何东西，下一步新建会话时的系统表单写出要运行的命令、参数与环境变量名。新建定义或修改命令、参数、环境变量与预设后，定义标为「还没有开启过会话」，直到第一个以它开启的完全访问会话（`AgentRecord.startedHash`）；之后每个新会话仍要确认。改名和启用/停用任何管理设备都可以，不改变这一标记。
+3. 新建会话时默认用这台设备上次的 Harness，否则按预设顺序用第一个能开始的，Latch 内置最后，不提问。项目在标题里选；Harness 没有项目、启动目录又是 Host 自己选的（`catalog.sessionFolders`）时，按发送打开项目列表、保留草稿、不开始；选「不选项目」就在新的空文件夹里开始。确认内容列出：Harness、命令（解析出的绝对路径）、参数、Agent 启动时的全部环境变量名（不显示值）、工作目录（真实路径）、Agent 还会收到的其他文件夹（见「项目的多个文件夹」）、定义状态（「已验证的预设」或「未验证的定义」）、能否读回权限模式、是否请求审批、若干「说明」（预设的权限说明、定义的说明与项目中找到的 Agent 配置，见「项目配置」）、启动指纹与首条输入的哈希。这些是确认详情，桌面原生表单全部显示；首次系统 Touch ID 表单只写一句理由：「允许 Codex 读写这台 Mac 上的文件并运行命令（项目「Acme」）：/opt/homebrew/bin/codex-acp --flag」，定义设置了环境变量时另写「，另设 <变量名>」；命令、参数、定义的环境变量或项目配置与以前启动时不同时写「再次允许 Codex 读写这台 Mac 上的文件并运行命令（启动方式已变化，项目「Acme」）：…」。是否为预设自己的命令在上面列出的确认内容里。规则见 [ARCHITECTURE.md](./ARCHITECTURE.md#会话级别与审批风险)。
+
+   这次启动是这台设备上这个启动指纹与项目的第一次时，`sessions-meta.json` 记 `firstStart`，摘要带 `firstStart: true`，会话记录最上面显示一行：「Codex 能读写这台 Mac 上的文件并运行命令。权限是 Codex 自己的设置，Latch 不隔离它。」；从不询问的 Harness 写「pi 执行前不询问，Latch 不限制它。」。Driver 不会收到这一项。
 4. 会话头部显示 Agent 提供的模型、模式等选项，修改后从下一轮生效；放宽权限模式需要本机确认。
 
 预设只收录开源 Agent，并且只使用本机已安装的命令，不使用 `npx` 等运行时下载：
@@ -45,7 +47,7 @@ ACP Agent 是本机运行的可信代码，Latch 不给它加操作系统沙箱�
 
 Host 在 PATH 以及 `/opt/homebrew/bin`、`/usr/local/bin`、`~/.npm-global/bin`、`~/.local/bin`、`~/.bun/bin` 中查找命令，不经过 shell；含 `/` 的相对路径按找不到处理。从图形界面启动的 Host 通常没有登录 shell 的 PATH，所以还查找用户目录里 Node 版本管理器与包管理器的全局目录：fnm 的 `$FNM_DIR`（或 `~/.local/share/fnm`）下的 `aliases/default/bin`、nvm 的 `~/.nvm/alias/default`（经 `lts/*` 这类别名解析）指向的 `~/.nvm/versions/node/<版本>/bin`、Volta 的 `~/.volta/bin`、asdf 的 `~/.asdf/shims`、mise 的 `~/.local/share/mise/shims`、pnpm 的 `$PNPM_HOME` 与 `~/Library/pnpm`、Yarn 的 `~/.yarn/bin`。来自环境变量的目录只在是绝对路径时使用，只接受可执行的普通文件，查到的绝对路径计入启动指纹；这些目录也追加到 Agent 进程的 PATH 上。找不到时 Agent 在选择器中显示为不可用，并给出安装提示；仍找不到时请填写绝对路径。
 
-预设可以声明 `companion`：适配器命令要连接的另一个程序（pi-acp 连接 pi）。Host 用同样的规则查找它，「设置 → 引擎」与选择器据此写出缺的是哪一个（「已安装 pi，还差让 Latch 连接它的适配器 pi-acp」「已找到适配器 pi-acp，还没找到 pi」或两者都没找到）；缺任何一个时这个 Agent 都不可用。Harness 状态里的命令查找结果缓存 5 秒；读取 `GET /link/api/agents`（设置页的「重新检测」，以及窗口重新获得焦点时）会清掉这个缓存，所以刚在终端里装好的命令下一次就能看到。这个列表里的每个预设也带同样的查找结果（`detected`，还没有据它添加 Agent 时也有），新会话页的「添加 Agent」据此在添加之前说出这台电脑上缺的是哪个程序；旧版 Host 不发它，那里只显示安装命令。Latch 不提供一键安装，只显示可复制的安装命令与项目主页。
+预设可以声明 `companion`：适配器命令要连接的另一个程序（pi-acp 连接 pi）。Host 用同样的规则查找它，「设置 → Harness」与选择器据此写出缺的是哪一个（「已安装 pi，还差让 Latch 连接它的适配器 pi-acp」「已找到适配器 pi-acp，还没找到 pi」或两者都没找到）；缺任何一个时这个 Agent 都不可用。Harness 状态里的命令查找结果缓存 5 秒；读取 `GET /link/api/agents`（设置页的「重新检测」，以及窗口重新获得焦点时）会清掉这个缓存，所以刚在终端里装好的命令下一次就能看到。这个列表里的每个预设也带同样的查找结果（`detected`，还没有据它添加 Agent 时也有），新会话页的「添加 Agent」据此在添加之前说出这台电脑上缺的是哪个程序；旧版 Host 不发它，那里只显示安装命令。Latch 不提供一键安装，只显示可复制的安装命令与项目主页。
 
 ## 预设的权限配置
 
@@ -137,7 +139,7 @@ Host 在 PATH 以及 `/opt/homebrew/bin`、`/usr/local/bin`、`~/.npm-global/bin
 - 每个 Latch 会话有自己的 Agent 子进程（一个 ACP 会话），首次需要时启动，工作目录为该会话的主文件夹；Gemini CLI 与 Qwen Code 的参数之后追加其他文件夹（见「项目的多个文件夹」）。同一个 Agent 定义最多同时运行 8 个进程（`AcpAgentOptions.maxProcesses`）；达到上限时，Latch 停止最久未使用的、可以恢复的空闲进程，没有可停的进程时返回 503 `agent-busy`（`同时运行的 <名称> 会话过多，请先结束一些会话`）。
 - 子进程在独立进程组中运行。stderr 持续读取到 64 KiB 环形缓冲，只在启动失败或崩溃时以脱敏的短摘要写入 Host 日志，不进入会话记录。
 - 模型服务的密钥、地址等需要在 Agent 自己的配置里设置，或写进 Agent 定义的环境变量。
-- `initialize` 返回的协议版本必须是 1，否则启动失败。Latch 声明 `fs.readTextFile`、`fs.writeTextFile` 与 `terminal` 能力均为 false，Agent 使用自己的文件与命令执行能力；`session/new`、`session/resume`、`session/load` 不传 MCP 服务器；Agent 发来的请求只处理 `session/request_permission`，其他方法返回 method not found。Latch 不调用 `authenticate`：Agent 要求登录时返回 409 `agent-auth-required` 并列出它报告的登录方式。
+- `initialize` 返回的协议版本必须是 1，否则启动失败。Latch 声明 `fs.readTextFile`、`fs.writeTextFile` 与 `terminal` 能力均为 false，Agent 使用自己的文件与命令执行能力；`session/new`、`session/resume`、`session/load` 不传 MCP 服务器；Agent 发来的请求只处理 `session/request_permission`，其他方法返回 method not found。Latch 不调用 `authenticate`：Agent 要求登录时返回 409 `agent-auth-required`，文字是「Codex 还没登录。按它自己的方式登录后重试。」，并停掉这个进程，因为 Agent 可能只在启动时读取登录状态：下一次重试启动新进程。预设目前都没有记录登录命令，所以不显示命令。
 - 空闲 10 分钟且 Agent 支持恢复会话时，进程会被优雅停止，下次需要时再启动。
 - 进程崩溃时，该会话转为 `failed`，`runEnd` 为 `process-exited` 并列出结果未知的调用，`runOutcome` 仍是 `interrupted`（见 [STREAMING.md](./STREAMING.md#运行的真实状态)）；之后的重启从 250 ms 开始按最近的崩溃次数加倍延迟（最多 5 秒），同一定义一分钟内崩溃 3 次会暂停自动重启一分钟（503 `agent-paused`）。
 
@@ -175,7 +177,7 @@ Host 在 PATH 以及 `/opt/homebrew/bin`、`/usr/local/bin`、`~/.npm-global/bin
 - 选择被去掉的选项返回 400 `approval-option-hidden`；选择的选项必须属于该审批，且与允许/拒绝方向一致。只说"允许"时使用「仅此一次允许」；只说"拒绝"时使用「仅此一次拒绝」，没有该选项时答复为取消。
 - 一个会话可以同时存在多个审批；多设备竞争时只有一个决定生效。不在进行中的一轮里的询问答复为取消。
 - 允许 ACP 询问只能在执行端电脑上的 Latch 桌面端进行（不需要本机确认，不提供「始终允许」）；拒绝可以在任何已登记且有查看权限的设备上进行。
-- 询问结束后，那次工具调用带上决定记录 `ToolDetail.decision`（见 [ARCHITECTURE.md](./ARCHITECTURE.md)「决定记录与拒绝说明」）：人的允许或拒绝记 `allowed`、`rejected` 与在哪里决定；取消、一轮结束、进程退出、Host 重启时还开着的询问，以及权限漂移时 Latch 自己拒绝的询问，记 `cancelled`，不算作某人的拒绝；Agent 撤回的询问不留记录；同一调用询问多次时，已经给出的允许不被之后的拒绝或取消覆盖。拒绝不保证 Agent 不执行：Agent 之后报告的开始、完成与差异照常显示。ACP 的权限回复不能带文字，所以拒绝附带的说明（「告诉 Agent 改做什么」）不会转给 Agent。
+- 询问结束后，那次工具调用带上决定记录 `ToolDetail.decision`（见 [ARCHITECTURE.md](./ARCHITECTURE.md)「决定记录与拒绝说明」）：人的允许或拒绝记 `allowed`、`rejected` 与在哪里决定；取消、一轮结束、进程退出、Host 重启时还开着的询问，以及权限漂移时 Latch 自己拒绝的询问，记 `cancelled`，不算作某人的拒绝；Agent 撤回的询问不留记录；同一调用询问多次时，已经给出的允许不被之后的拒绝或取消覆盖。拒绝不保证 Agent 不执行：Agent 之后报告的开始、完成与差异照常显示。ACP 的权限回复不能带文字，所以拒绝附带的说明（「告诉 Harness 改做什么」）不会转给 Agent。
 - 有些 Agent（例如 pi，或处于自动批准模式的 Agent）不请求审批，Latch 不会显示审批卡片。Latch 的审批不是操作系统沙箱。
 
 ## 取消
@@ -219,7 +221,7 @@ Latch 只处理 Agent 发来的 `session/request_permission`。其他请求（�
 | `workspace-changed`（409） | 会话使用的文件夹已不在项目中、被替换或找不到，或项目已不在 Host 的项目列表中；新建时交给 Agent 的文件夹与确认时不同 |
 | `agent-folders-unsupported`（409） | Agent 的当前版本没有声明 `additionalDirectories`，会话没有开始或本轮没有发送 |
 | `harness-folder-limit`（409） | 项目的文件夹超过 Agent 能使用的数量（Gemini CLI、Qwen Code 最多 5 个） |
-| `agent-auth-required`（409） | Agent 要求登录；请在运行 Host 的电脑上按提示完成登录 |
+| `agent-auth-required`（409） | Agent 要求登录；按它自己的方式登录后点重试 |
 | `harness-session-lost`（409） | Agent 无法恢复该会话 |
 | `agent-not-found`、`agent-start-failed`、`agent-paused`、`agent-busy`、`agent-exited`（503） | 命令缺失、启动失败、连续崩溃后暂停、同时运行的进程过多、进程已退出或正在停止 |
 | `agent-timeout`（504） | Agent 长时间没有响应会话建立或设置请求（初始化超时属于 `agent-start-failed`） |

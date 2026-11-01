@@ -42,15 +42,15 @@ describe('optional settings loading', () => {
     expect(await pairingQr('Latch fixture one', options)).toBe(first)
   })
 
-  it('names the section a page entry shows, for what stands over the page', () => {
+  it('names the section a page shows, for what stands over the page', () => {
     const all: SettingsSection[] = ['general', 'engines', 'assistants', 'routines']
-    expect(entrySection({ entry: 'automations' }, all, false)).toBe('routines')
-    expect(entrySection({ entry: 'agents' }, all, false)).toBe('assistants')
+    expect(entrySection({ entry: 'settings', section: 'routines' }, all, false)).toBe('routines')
+    expect(entrySection({ entry: 'settings', section: 'assistants' }, all, false)).toBe('assistants')
     expect(entrySection({ entry: 'settings', section: 'engines' }, all, false)).toBe('engines')
-    // A device without 管理此 Host has no 引擎, so the entry falls back to its first section.
+    // A device without 管理此 Host has no Harness, so the page falls back to its first section.
     expect(entrySection({ entry: 'settings', section: 'engines' }, ['general', 'assistants'], false)).toBe('general')
-    expect(entrySection({ entry: 'agents', section: 'routines' }, all, true)).toBe('routines')
-    expect(entrySection({ entry: 'agents' }, all, true)).toBeNull()
+    expect(entrySection({ entry: 'settings', section: 'routines' }, all, true)).toBe('routines')
+    expect(entrySection({ entry: 'settings' }, all, true)).toBeNull()
     expect(entrySection({ entry: 'sessions' }, all, false)).toBeNull()
   })
 

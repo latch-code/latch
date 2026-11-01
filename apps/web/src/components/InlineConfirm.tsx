@@ -63,7 +63,22 @@ function ConfirmationWarnings({ ticket }: { ticket: ConfirmationTicket }) {
 function detailsLeftOut(ticket: ConfirmationTicket) {
   if (ticket.confirmationMethod === 'shell-local') return []
   if (!ticket.form?.startsWith('start.') && !ticket.reason?.includes('…')) return []
-  return (ticket.lines ?? []).filter(line => !/指纹|哈希/u.test(line.label))
+  return (ticket.lines ?? []).filter(line => !/指纹|哈希|首条输入/u.test(line.label))
+}
+
+function DetailsList({ lines }: { lines: ReturnType<typeof detailsLeftOut> }) {
+  return (
+    <dl className="confirm-details-list">
+      {lines.map((line, index) => (
+        <div key={`${index}-${line.label}`} className="confirm-details-row">
+          <dt>{line.label}</dt>
+          <dd>
+            <VisibleText text={line.value} />
+          </dd>
+        </div>
+      ))}
+    </dl>
+  )
 }
 
 function DetailsLeftOut({ ticket }: { ticket: ConfirmationTicket }) {
@@ -72,17 +87,22 @@ function DetailsLeftOut({ ticket }: { ticket: ConfirmationTicket }) {
   return (
     <div className="confirm-details">
       <span className="confirm-details-title">{COPY.details}</span>
-      <dl className="confirm-details-list">
-        {lines.map((line, index) => (
-          <div key={`${index}-${line.label}`} className="confirm-details-row">
-            <dt>{line.label}</dt>
-            <dd>
-              <VisibleText text={line.value} />
-            </dd>
-          </div>
-        ))}
-      </dl>
+      <DetailsList lines={lines} />
     </div>
+  )
+}
+
+/** A start says one line; what the sheet leaves out is a click away, since a full list pushes the input off the page. */
+function StartWaiting({ ticket }: { ticket: ConfirmationTicket }) {
+  return (
+    <>
+      <p className="confirm-touch-id">{COPY.waitingTouchId}</p>
+      <details className="confirm-fold">
+        <summary>{COPY.details}</summary>
+        <ConfirmationWarnings ticket={ticket} />
+        <DetailsList lines={detailsLeftOut(ticket)} />
+      </details>
+    </>
   )
 }
 
@@ -196,6 +216,7 @@ export function ConfirmationContent({ view, actions }: { view: ConfirmationView;
     )
   }
   if (view.phase !== 'waiting') return null
+  if (view.ticket.form?.startsWith('start.') && detailsLeftOut(view.ticket).length > 0) return <StartWaiting ticket={view.ticket} />
   return (
     <>
       <ConfirmationWarnings ticket={view.ticket} />

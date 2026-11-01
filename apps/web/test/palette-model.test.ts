@@ -55,8 +55,8 @@ describe('palette groups', () => {
       commands: [entry('c', '轮换密钥'), entry('n', '新会话', { root: true })],
       messages: search({ rows: [entry('m', '…写入密钥')] }),
     })
-    expect(groups.map(group => group.label)).toEqual(['会话', '文件', 'Agent', '设置', '命令', '在消息中'])
-    expect(groups.find(group => group.label === 'Agent')!.rows.map(row => row.id)).toEqual(['a'])
+    expect(groups.map(group => group.label)).toEqual(['会话', '文件', 'Harness', '设置', '命令', '在消息中'])
+    expect(groups.find(group => group.label === 'Harness')!.rows.map(row => row.id)).toEqual(['a'])
     expect(groups.find(group => group.label === '命令')!.rows.map(row => row.id)).toEqual(['c'])
   })
 

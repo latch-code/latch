@@ -17,8 +17,6 @@ struct NewSessionSheet: View {
         NavigationStack {
             VStack(spacing: 12) {
                 VStack(spacing: 0) {
-                    row("Agent") { Text("通用").foregroundStyle(PhoneTheme.ink2) }
-                    Divider().overlay(PhoneTheme.line)
                     projectRow
                     Divider().overlay(PhoneTheme.line)
                     engineRow
@@ -27,14 +25,14 @@ struct NewSessionSheet: View {
                     Divider().overlay(PhoneTheme.line)
                     row("思考") { Text("模型默认").foregroundStyle(PhoneTheme.muted) }
                     Divider().overlay(PhoneTheme.line)
-                    row("权限") { HStack(spacing: 6) { Image(systemName: "shield").font(.system(size: 13)); Text("需要时询问") }.foregroundStyle(PhoneTheme.ink2) }
+                    row("权限") { HStack(spacing: 6) { Image(systemName: "shield").font(.system(size: 13)); Text("先问你") }.foregroundStyle(PhoneTheme.ink2) }
                 }
                 .background(PhoneTheme.raised, in: RoundedRectangle(cornerRadius: 16))
                 .overlay(RoundedRectangle(cornerRadius: 16).stroke(PhoneTheme.line))
-                Text(blocker ?? "改文件前会问你。放宽权限和其他引擎都在 Mac 上开始。").font(PhoneTheme.caption).foregroundStyle(blocker == nil ? PhoneTheme.muted : PhoneTheme.amber)
+                Text(blocker ?? "改文件前会问你。放宽权限和其他 Harness 都在 Mac 上开始。").font(PhoneTheme.caption).foregroundStyle(blocker == nil ? PhoneTheme.muted : PhoneTheme.amber)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 4)
-                LocalTextEditor(text: $prompt, placeholder: "让 Agent 做点什么…", maximumLines: 6)
-                    .overlay(alignment: .topLeading) { if prompt.isEmpty { Text("让 Agent 做点什么…").font(PhoneTheme.body).foregroundStyle(PhoneTheme.faint).allowsHitTesting(false).accessibilityHidden(true) } }
+                LocalTextEditor(text: $prompt, placeholder: "要做什么？", maximumLines: 6)
+                    .overlay(alignment: .topLeading) { if prompt.isEmpty { Text("要做什么？").font(PhoneTheme.body).foregroundStyle(PhoneTheme.faint).allowsHitTesting(false).accessibilityHidden(true) } }
                     .padding(14).frame(minHeight: 110, alignment: .topLeading)
                     .background(PhoneTheme.bubble, in: RoundedRectangle(cornerRadius: 16))
                 ForEach(model.pending, id: \.requestId) { pending in
@@ -97,17 +95,17 @@ struct NewSessionSheet: View {
                 Button { choice.harnessId = engine.id } label: { menuLabel(engine.name, line: engine.line, on: engine.id == choice.harnessId) }.disabled(!engine.startable)
             }
         } label: {
-            row("引擎") {
+            row("Harness") {
                 HStack(spacing: 6) {
                     if choice.harnessId != nil { EngineTile(harnessId: choice.harnessId, size: 18); Text(PhoneStart.engineName(harness)).foregroundStyle(PhoneTheme.ink2) }
-                    else { Text("没有可用的引擎").foregroundStyle(PhoneTheme.muted) }
+                    else { Text("没有可用的 Harness").foregroundStyle(PhoneTheme.muted) }
                     updown
                 }
             }
         }
     }
     @ViewBuilder private var modelRow: some View {
-        if harness["models"].string == "agent" { row("模型") { Text("由引擎决定").foregroundStyle(PhoneTheme.muted) } }
+        if harness["models"].string == "agent" { row("模型") { Text("由 Harness 决定").foregroundStyle(PhoneTheme.muted) } }
         else {
             NavigationLink {
                 ModelList(models: PhoneStart.models(catalog), chosen: $choice.model)

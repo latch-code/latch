@@ -18,7 +18,7 @@
 
 - `src/file-refs.ts` 定义显式相对引用；`src/attachments.ts` 仅定义有限的元数据、上传上下文与能力；`AttachmentRef` 不含内容或私有路径，新增字段须同步两个 Harness 的持久化 schema。
 - 文件上下文区分 session 和带 Harness 的 workspace；目录 DTO 不含绝对路径，旧会话 `FileOpenTarget` 继续兼容。
-- `src/personal.ts` 定义个人助手、用户记忆、例行任务与有界群聊；私有执行 context 不是客户端可授予的权限，概览不代替正文授权。
+- `src/personal.ts` 定义个人助手、用户记忆、定时任务与有界群聊；私有执行 context 不是客户端可授予的权限，概览不代替正文授权。
 - `plugin-packages.ts` 定义可编辑插件资产与有限模板；摘要区分草稿、已应用版本及真实不可用原因，不含 Host 私有路径。
 - `src/terminal.ts` 定义终端路由的线上类型；路由只接受 `host.sock`，见 [docs/TERMINAL.md](../../docs/TERMINAL.md)。
 

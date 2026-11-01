@@ -163,7 +163,7 @@ export function groupSessions(
     tasks: (options.waitingFrom ?? []).filter(waitsOnYou).toSorted(byRecency),
   }
   const shelved = new Set(waiting.tasks.map(task => task.id))
-  const other: SessionGroup = { id: 'other', label: workspaces === undefined ? '会话' : '对话', tasks: [] }
+  const other: SessionGroup = { id: 'other', label: workspaces === undefined ? '会话' : '无项目', tasks: [] }
   const projects = new Map<string, SessionGroup>()
   const makeProject = (project: WorkspaceInfo): SessionGroup => ({
     id: `project:${project.id}`,

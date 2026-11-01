@@ -1,10 +1,12 @@
-import { useState, type ReactNode, type RefObject } from 'react'
-import { PlugZap, TriangleAlert } from 'lucide-react'
-import type { HostCatalog, ModelRef } from '@latch/protocol'
-import { Button, Collapse, ICON_STROKE } from '@latch/ui'
+import { useEffect, useState, type ReactNode, type RefObject } from 'react'
+import { PlugZap, RefreshCw, TriangleAlert } from 'lucide-react'
+import { AGENT_PRESETS, type AgentPresetSettings, type ModelRef } from '@latch/protocol'
+import { Button, Collapse, CopyButton, ICON_STROKE } from '@latch/ui'
+import { api } from '../core/api.ts'
+import { foundWithoutAdapter } from '../core/agentDetection.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { ProviderSetupPanel } from '../components/SetupPanels.tsx'
-import { engineEntries, LATCH_ENGINE_LIMIT, type ComposerChoice, type StartBlock } from '../composerChoice.ts'
+import { LATCH_ENGINE_LIMIT, type StartBlock } from '../composerChoice.ts'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { SETUP_COPY } from '../core/securityCopy.ts'
 
@@ -19,7 +21,7 @@ export function SetupCard({
   providers,
   triggerRef,
 }: {
-  block: Exclude<StartBlock, { kind: 'engine-required' }>
+  block: StartBlock
   owner: boolean
   onSetup: () => void
   /** Adding a model service in place, for a missing one: this device's access and what to do once one is saved. */
@@ -45,7 +47,7 @@ export function SetupCard({
                 ? (held?.hint ?? `Latch 内置要先连一个模型服务才能开始。${LATCH_ENGINE_LIMIT}`)
                 : SETUP_COPY.modelNeedsAdmin
               : owner
-                ? '可在设置中检查引擎与插件。'
+                ? '可在设置中检查 Harness 与插件。'
                 : SETUP_COPY.harnessNeedsAdmin}
           </p>
         </div>
@@ -82,43 +84,116 @@ export function SetupCard({
   )
 }
 
-/**
- * A device's first session, with more than one engine to run on: it asks, once. None is marked or preselected, since most
- * engines are not limited by Latch; the answer is remembered on this device and changes in the model control.
- */
-export function EngineQuestion({
-  catalog,
-  access,
-  choice,
-  onChoice,
-}: {
-  catalog: HostCatalog
-  access: Pick<DeviceAccess, 'legacy' | 'local'>
-  choice: ComposerChoice
-  onChoice: (patch: Partial<ComposerChoice>) => void
-}) {
-  const entries = engineEntries(catalog, access, choice.workspaceId)
+function InstallRow({ preset, note }: { preset: AgentPresetSettings; note?: string }) {
   return (
-    <section className="setup-card engine-question" aria-label="选择引擎">
+    <li className="harness-install-row">
+      <span className="harness-install-name">
+        <HarnessTile harness={{ id: preset.id, source: 'acp', presetId: preset.id }} size={16} />
+        {preset.name}
+      </span>
+      {note && <span className="harness-install-note">{note}</span>}
+      <span className="harness-install-command">
+        <code>{preset.install}</code>
+        {preset.install && <CopyButton text={preset.install} label={`复制 ${preset.name} 的安装命令`} size="xs" />}
+        {preset.installNote && <span className="harness-install-note">{preset.installNote}</span>}
+      </span>
+    </li>
+  )
+}
+
+/**
+ * Nothing that can run a session was found on this computer: what to install, and a way to look again. The Host looks
+ * by itself as well, so one installed meanwhile takes over without this button. Latch 内置 stays one quiet line, since
+ * it needs a model service and cannot run commands.
+ */
+export function HarnessInstallCard({
+  access,
+  onRecheck,
+  onSettings,
+  onSaved,
+}: {
+  access: Pick<DeviceAccess, 'legacy' | 'local' | 'admin'>
+  onRecheck: () => Promise<void>
+  onSettings: () => void
+  onSaved: (model: ModelRef) => void
+}) {
+  const [presets, setPresets] = useState<AgentPresetSettings[]>(AGENT_PRESETS)
+  const [checking, setChecking] = useState(false)
+  const [adding, setAdding] = useState(false)
+  // Reading them makes the Host look again, which is what a person pressing the button or arriving here wants.
+  const look = async () => {
+    const reply = await api<{ presets: AgentPresetSettings[] }>('agents').catch(() => undefined)
+    if (reply) setPresets(reply.presets)
+  }
+  useEffect(() => {
+    void look()
+  }, [])
+  const halfway = presets.filter(preset => foundWithoutAdapter(preset.detected) !== undefined)
+  const others = presets.filter(preset => !halfway.includes(preset))
+  return (
+    <section className="setup-card harness-install" aria-label="安装 Harness">
       <div className="setup-card-text">
-        <strong>这台设备先用哪个引擎？</strong>
-        <p>{LATCH_ENGINE_LIMIT}其他引擎由它们自己决定权限，Latch 不限制它们，开始时要在 Mac 上确认。</p>
+        <strong>{halfway.length ? '还差一步' : '没有找到可用的 Harness'}</strong>
       </div>
-      <div className="engine-question-options">
-        {entries.map(entry => (
+      {halfway.length > 0 && (
+        <ul className="harness-install-list">
+          {halfway.map(preset => (
+            <InstallRow
+              key={preset.id}
+              preset={preset}
+              note={`找到了 ${foundWithoutAdapter(preset.detected)!}，还差让 Latch 连接它的适配器`}
+            />
+          ))}
+        </ul>
+      )}
+      <div className="harness-install-group">
+        <p>{halfway.length ? '或者装别的：' : '先装一个：'}</p>
+        <ul className="harness-install-list">
+          {others.map(preset => (
+            <InstallRow key={preset.id} preset={preset} />
+          ))}
+        </ul>
+      </div>
+      <div className="harness-install-foot">
+        <Button
+          size="sm"
+          icon={RefreshCw}
+          loading={checking}
+          onClick={() => {
+            setChecking(true)
+            void Promise.all([look(), onRecheck()]).finally(() => {
+              setChecking(false)
+            })
+          }}>
+          重新检测
+        </Button>
+        {!adding && (
           <Button
-            key={entry.harness.id}
+            variant="link"
             size="sm"
-            disabled={entry.disabledReason !== undefined}
-            tooltip={entry.disabledReason}
+            className="harness-install-builtin"
             onClick={() => {
-              onChoice({ harnessId: entry.harness.id })
+              setAdding(true)
             }}>
-            <HarnessTile harness={entry.harness} size={16} />
-            {entry.label}
+            也可以用 Latch 内置：只能读写文件，不能运行命令，要先添加模型。
           </Button>
-        ))}
+        )}
       </div>
+      <Collapse open={adding} lazy>
+        <div className="setup-card-panel">
+          <ProviderSetupPanel
+            access={access}
+            onCancel={() => {
+              setAdding(false)
+            }}
+            onSettings={onSettings}
+            onSaved={saved => {
+              setAdding(false)
+              onSaved(saved)
+            }}
+          />
+        </div>
+      </Collapse>
     </section>
   )
 }

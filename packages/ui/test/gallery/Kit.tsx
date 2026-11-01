@@ -118,7 +118,7 @@ function Actions() {
 }
 
 const TABS: Array<PanelTab<string>> = [
-  { value: 'changes', label: '变更', icon: GitCommitHorizontal, stat: { added: 60, removed: 6 } },
+  { value: 'changes', label: '改动', icon: GitCommitHorizontal, stat: { added: 60, removed: 6 } },
   { value: 'files', label: '文件', icon: FileText },
   { value: 'deck', label: 'presentation-template.html', icon: FileText, closeLabel: '关闭 presentation-template.html', fresh: true },
   { value: 'notes', label: 'notes.md', icon: FileText, closeLabel: '关闭 notes.md' },

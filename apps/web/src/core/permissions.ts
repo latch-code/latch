@@ -61,7 +61,7 @@ export const harnessLevel = (harness: Pick<HarnessInfo, 'level' | 'source'>): 'L
   harness.level ?? (harness.source === 'builtin' ? 'L1' : 'L3')
 
 /** The session's level as words, in neutral ink: 完全访问 is a fact about the agent, not a warning. */
-export const LEVEL_LABELS = { L1: MODE_COPY.askWhenNeeded, L3: MODE_COPY.fullAccess } as const
+export const LEVEL_LABELS = { L1: MODE_COPY.askFirst, L3: MODE_COPY.fullAccess } as const
 const LOCAL_ONLY_HARNESS = HOVER_REASONS.startOnMac
 export const L3_READ_ONLY = '这个会话只能在 Mac 上继续。这台设备可以查看、拒绝和停止。'
 export const DEV_MODE_TEXT = '开发模式：这台 Mac 上的程序可以修改 Latch 的代码'

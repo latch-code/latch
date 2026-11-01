@@ -40,7 +40,9 @@ function SettledFacts({ turn, outcome, context }: { turn: Turn; outcome: TurnOut
       {spent && <span className="turn-fact">{spent}</span>}
       {usage && <Fact tip={inputLine}>{input}</Fact>}
       {usage && <Fact tip={outputLine}>{output}</Fact>}
-      {!usage && context !== undefined && <Fact tip={`由 Agent 报告：${exactTokens(context)} tokens`}>上下文 {tokenAmount(context)}</Fact>}
+      {!usage && context !== undefined && (
+        <Fact tip={`由 Harness 报告：${exactTokens(context)} tokens`}>上下文 {tokenAmount(context)}</Fact>
+      )}
     </>
   )
 }

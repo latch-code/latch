@@ -258,7 +258,7 @@ export class Automations {
     const data = createSchema.parse(input)
     const { requestId: _, ...definition } = data
     const result = await this.mutate('create', '', data, actor, state => {
-      if (state.rows.length >= MAX_AUTOMATIONS) throw new AppError(409, 'automation-limit', `最多保存 ${MAX_AUTOMATIONS} 个自动化。`)
+      if (state.rows.length >= MAX_AUTOMATIONS) throw new AppError(409, 'automation-limit', `最多保存 ${MAX_AUTOMATIONS} 个定时任务。`)
       const stamp = this.stamp(),
         value: Automation = {
           ...definition,
@@ -364,7 +364,8 @@ export class Automations {
       state => {
         const item = this.find(state, key)
         if (item.attempt) throw this.busy()
-        if (this.atLimit(state)) throw new AppError(409, 'automation-limit-running', `已有 ${MAX_ATTEMPTS} 个自动化在运行，请等它们结束。`)
+        if (this.atLimit(state))
+          throw new AppError(409, 'automation-limit-running', `已有 ${MAX_ATTEMPTS} 个定时任务在运行，请等它们结束。`)
         const definition = configOf(item.automation)
         this.options.authorize(actor.actor.deviceId, definition)
         plan = this.options.plan(definition)
@@ -540,9 +541,9 @@ export class Automations {
         const current = this.find(this.journal.read(), key)
         this.options.authorize(deviceId, configOf(current.automation))
         if (!current.automation.enabled || current.grant?.basis !== expected || current.grant.deviceId !== deviceId)
-          throw new AppError(409, 'automation-changed', '自动化已关闭或已修改。')
+          throw new AppError(409, 'automation-changed', '定时任务已关闭或已修改。')
         if (this.basis(configOf(current.automation), this.options.plan(configOf(current.automation))) !== expected)
-          throw new AppError(409, 'automation-changed', '自动化的执行配置已改变。')
+          throw new AppError(409, 'automation-changed', '定时任务的执行配置已改变。')
       }
     let auditing = false
     try {
@@ -553,7 +554,7 @@ export class Automations {
           authorize()
           const target = this.find(state, key)
           if (target.attempt || !target.automation.enabled || target.automation.nextRunAt !== slot || target.grant?.basis !== expected)
-            throw new AppError(409, 'automation-changed', '自动化已修改。')
+            throw new AppError(409, 'automation-changed', '定时任务已修改。')
           auditing = true
           await this.options.audit.append({
             action: 'automation.ran',
@@ -803,7 +804,7 @@ export class Automations {
   }
   private find(state: State, key: string): Row {
     const found = state.rows.find(item => item.automation.id === key)
-    if (!found) throw new AppError(404, 'automation-not-found', '找不到这个自动化。')
+    if (!found) throw new AppError(404, 'automation-not-found', '找不到这个定时任务。')
     return found
   }
   private revision(value: Automation, expected: number): void {

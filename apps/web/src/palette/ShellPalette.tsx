@@ -34,12 +34,12 @@ const SETTINGS_ROWS: ReadonlyArray<{ section: SettingsSection; keywords?: string
   { section: 'general', keywords: '外观 主题 通知 发送键 用量' },
   { section: 'providers', keywords: '模型 密钥' },
   { section: 'engines', keywords: 'agent' },
-  { section: 'assistants' },
-  { section: 'routines', keywords: '自动化' },
   { section: 'workspaces', keywords: '文件夹' },
+  { section: 'routines', keywords: 'cron automation' },
+  { section: 'assistants' },
   { section: 'plugins' },
-  { section: 'devices', keywords: '手机 配对' },
   { section: 'shortcuts', keywords: '键盘' },
+  { section: 'devices', keywords: '手机 配对' },
   { section: 'about', keywords: '版本 许可' },
 ]
 
@@ -167,7 +167,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
       : []),
     { id: 'new', label: '新会话', icon: glyph(SquarePen), root: true, ...keys('new'), run: startNew },
     ...(canViewChanges
-      ? [{ id: 'changes', label: '打开变更', icon: glyph(FileDiff), root: true, ...keys('changes'), run: inSession(openChangesTab) }]
+      ? [{ id: 'changes', label: '打开改动', icon: glyph(FileDiff), root: true, ...keys('changes'), run: inSession(openChangesTab) }]
       : []),
     ...(drawerMode && route.entry !== 'sessions'
       ? []
@@ -176,8 +176,8 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
       ? [
           {
             id: 'new-agent',
-            label: '新建 Agent',
-            keywords: '添加 Agent',
+            label: '添加 Harness',
+            keywords: '新建 Harness',
             icon: glyph(Bot),
             root: true,
             run: () => {

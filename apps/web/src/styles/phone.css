@@ -105,3 +105,16 @@
   background: var(--selected);
   color: var(--ink);
 }
+/* 会话 while something waits and it is not the tab on show. */
+.phone-tab {
+  position: relative;
+}
+.phone-tab-dot {
+  position: absolute;
+  top: 6px;
+  left: calc(50% + 8px);
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-full);
+  background: var(--amber);
+}

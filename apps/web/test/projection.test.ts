@@ -164,7 +164,7 @@ describe('authoritative stream projection', () => {
     await vi.advanceTimersByTimeAsync(200)
     await rejected
     expect(signal?.aborted).toBe(true)
-    expect(new ApiTimeoutError().message).toContain('执行端可能仍在处理')
+    expect(new ApiTimeoutError().message).toContain('Mac 可能仍在处理')
     expect(vi.getTimerCount()).toBe(0)
   })
 })

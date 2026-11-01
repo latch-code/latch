@@ -83,3 +83,61 @@ test('shows immediate text, delays delivery wording and retries an uncertain inp
     await host.close()
   }
 }, 60_000)
+
+test('an unconfirmed message says so in another session, opens from there and is retried at home', async () => {
+  const host = await startTestHost({ uiDir: resolve('dist/web') }),
+    browser = await chromium.launch(browserLaunchOptions())
+  try {
+    const owner = await host.enroll({ listener: 'unix' })
+    const start = async (title: string) => {
+      const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+        method: 'POST',
+        body: { prompt: title, requestId: randomUUID() },
+      })
+      await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('idle')
+      return sessionId
+    }
+    const home = await start('发出去的会话')
+    const elsewhere = await start('另一个会话')
+    const context = await browser.newContext({ viewport: { width: 1280, height: 860 }, reducedMotion: 'reduce' }),
+      page = await context.newPage()
+    await enrollBrowser(page, host, { name: '未确认' })
+    let aborted = false
+    await page.route(`**/link/api/tasks/${home}/prompt`, async route => {
+      if (aborted) return route.continue()
+      aborted = true
+      return route.abort('failed')
+    })
+    await page.locator(`[data-task-id="${home}"]`).first().click()
+    const input = page.getByRole('textbox', { name: '继续对话', exact: true })
+    await input.fill('断线的消息')
+    await input.press('Enter')
+    const row = page.locator('.pending-submission')
+    await row.getByRole('button', { name: '重试这次提交', exact: true }).waitFor()
+
+    // Another window of this device reads the same record, and lets go of it when this one settles it.
+    const other = await context.newPage()
+    await other.goto(page.url())
+    const otherRow = other.locator('.pending-submission')
+    await otherRow.waitFor()
+
+    await page.locator(`[data-task-id="${elsewhere}"]`).first().click()
+    await row.getByText('另一个会话有消息未确认送达', { exact: true }).waitFor()
+    expect(await row.getByRole('button', { name: '重试这次提交', exact: true }).count()).toBe(0)
+
+    await row.getByRole('button', { name: '打开', exact: true }).click()
+    await page.locator('.user-bubble').getByText('发出去的会话', { exact: true }).waitFor()
+    await row.getByRole('button', { name: '重试这次提交', exact: true }).click()
+    await expect
+      .poll(async () => (await owner.json<TaskDetail>(`tasks/${home}`)).messages.filter(message => message.text === '断线的消息').length)
+      .toBe(1)
+    await expect.poll(() => row.count()).toBe(0)
+    await page.locator(`[data-task-id="${elsewhere}"]`).first().click()
+    expect(await row.count()).toBe(0)
+    await expect.poll(() => otherRow.count()).toBe(0)
+    await context.close()
+  } finally {
+    await browser.close()
+    await host.close()
+  }
+}, 60_000)

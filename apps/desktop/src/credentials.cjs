@@ -167,7 +167,7 @@ async function openCredentialStore({
         throw new Error('format')
       return { key, deviceId: value.deviceId, credential }
     } catch {
-      log('设备凭据文件无法读取，需要重新登记')
+      log('设备凭据文件无法读取，需要重新连接')
       return undefined
     }
   }

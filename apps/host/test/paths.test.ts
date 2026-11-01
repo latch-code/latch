@@ -110,7 +110,7 @@ describe('resolveLatchPaths', () => {
       workspaceSource: 'default',
     })
     expect(legacy.warnings[1]).toBe(
-      '数据目录内的旧工作区 /src/harness-link/.runtime/workspace 位于 Latch 程序目录中，不再作为启动目录；启动目录改为 /home/me/Latch/workspace。原目录中的文件没有移动。',
+      '数据目录内的旧工作区 /src/harness-link/.runtime/workspace 位于 Latch 程序目录中，不再作为默认文件夹；默认文件夹改为 /home/me/Latch/workspace。原目录中的文件没有移动。',
     )
     expect(
       resolveLatchPaths({ ...base, cwd: '/w', env: { LATCH_DATA_DIR: '/src/harness-link/.runtime' }, exists: inRepo }).workspaceRoot,
@@ -806,11 +806,11 @@ describe('project folders', () => {
 
     // The primary folder is nobody else's primary folder; an additional folder may be shared.
     const others = [
-      { id: 'default', name: '启动目录', path: join(projects, 'c,d') },
+      { id: 'default', name: '默认文件夹', path: join(projects, 'c,d') },
       { id: 'shop', name: 'Shop', path: b },
     ]
     expect(await check([b, a], others)).toBe('0 workspace-exists 该文件夹已是项目「Shop」的主文件夹')
-    expect(await check([join(projects, 'c,d')], others)).toBe('0 workspace-exists 该文件夹是 Host 的启动目录，不能作为项目的主文件夹')
+    expect(await check([join(projects, 'c,d')], others)).toBe('0 workspace-exists 该文件夹是 Host 的默认文件夹，不能作为项目的主文件夹')
     expect(await check([a, b], others)).toBe('ok')
 
     const many = Array.from({ length: 9 }, (_, index) => join(root, `p${index}`))

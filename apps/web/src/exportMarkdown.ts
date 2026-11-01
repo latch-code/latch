@@ -128,7 +128,7 @@ function toolBlock(message: Message): string[] {
   }
   if (message.tool?.input) out.push('参数：', '', fence(message.tool.input, 'json'), '')
   // The diff of a call its approval kept from running changed nothing; one that started keeps its changes.
-  for (const diff of appliedDiffs(message)) out.push(`变更：${code(diff.path)}`, '', fence(unifiedDiff(diff), 'diff'), '')
+  for (const diff of appliedDiffs(message)) out.push(`改动：${code(diff.path)}`, '', fence(unifiedDiff(diff), 'diff'), '')
   const output = shownToolOutput(message)
   if (output) out.push('输出：', '', fence(output), '')
   out.push('</details>', '')
@@ -139,7 +139,7 @@ function toolBlock(message: Message): string[] {
 export function transcriptMarkdown(detail: TaskDetail, meta: { harness?: string; exportedAt?: Date } = {}): string {
   const { summary } = detail
   const facts = [
-    meta.harness && `引擎：${meta.harness}`,
+    meta.harness && `Harness：${meta.harness}`,
     summary.model && `模型：${summary.model}`,
     `模式：${summary.mode === 'chat' ? '对话' : 'Agent'}`,
     summary.cwd && `项目：${code(summary.cwd)}`,

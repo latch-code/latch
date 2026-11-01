@@ -37,7 +37,7 @@ export function sessionFolderName(at: Date, suffix: string): string {
 }
 
 function unavailable(): AppError {
-  return new AppError(409, 'session-folder-unavailable', '没能在启动目录中为这个会话新建文件夹，会话没有开始。请重试。')
+  return new AppError(409, 'session-folder-unavailable', '没能在默认文件夹中为这个会话新建文件夹，会话没有开始。请重试。')
 }
 
 interface RequestFolder {
@@ -226,11 +226,11 @@ export class SessionFolders {
       // The default start directory is created on demand, as at startup.
       await mkdir(root, { recursive: true, mode: 0o700 })
     } catch (error) {
-      this.options.log(`启动目录无法创建（${codeOf(error) ?? 'error'}），没有为会话新建文件夹。`)
+      this.options.log(`默认文件夹无法创建（${codeOf(error) ?? 'error'}），没有为会话新建文件夹。`)
       throw unavailable()
     }
     if ((await canonicalPath(root).catch(() => undefined)) !== canonicalRoot)
-      throw new AppError(409, 'session-folder-unavailable', '启动目录已不在 Host 启动时的位置，没有为会话新建文件夹。请重启 Host。')
+      throw new AppError(409, 'session-folder-unavailable', '默认文件夹已不在 Host 启动时的位置，没有为会话新建文件夹。请重启 Host。')
     for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
       const suffix = this.options.suffix?.() ?? randomBytes(2).toString('hex')
       const name = sessionFolderName(new Date(this.options.clock()), suffix)
@@ -253,7 +253,7 @@ export class SessionFolders {
       }
       return { name, path }
     }
-    this.options.log('启动目录中的会话文件夹名称连续重复，没有为会话新建文件夹。')
+    this.options.log('默认文件夹中的会话文件夹名称连续重复，没有为会话新建文件夹。')
     throw unavailable()
   }
 

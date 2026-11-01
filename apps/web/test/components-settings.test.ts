@@ -88,7 +88,14 @@ describe('phone pairing', () => {
   it('tells nothing of codes, countdowns, addresses, scopes or fingerprints on the page or in the sheet', () => {
     // 关于连接 is the one place that may name the relay.
     const { aboutBody: _about, savedRelay: _relay, ...page } = DEVICES_COPY
-    const words = JSON.stringify([page, NATIVE_LINK_COPY, ENROLLMENT_COPY.waiting, ENROLLMENT_COPY.compare, ENROLLMENT_COPY.submit])
+    const words = JSON.stringify([
+      page,
+      NATIVE_LINK_COPY,
+      ENROLLMENT_COPY.waiting,
+      ENROLLMENT_COPY.compare,
+      ENROLLMENT_COPY.desktopFirst,
+      ENROLLMENT_COPY.desktopSubmit,
+    ])
     for (const word of ['六位', '核对码', '指纹', '剩余', '直连', '中继', '局域网', '证书', '权限', 'HTTPS'])
       expect(words).not.toContain(word)
   })

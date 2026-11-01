@@ -626,14 +626,14 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       sealedCatalog: {
         harnesses: [{ id: 'standard', source: 'builtin', status: 'ready', level: 'L1', modes: ['chat', 'agent'], models: 'host' }],
         workspaces: [
-          { id: 'default', name: '启动目录', remoteStart: false },
+          { id: 'default', name: '默认文件夹', remoteStart: false },
           { id: 'latch', name: 'latch', remoteStart: true },
         ],
         providers: [{ id: 'p', name: 'P', models: ['m1'] }],
         defaults: { harnessId: 'standard', mode: 'chat' },
       },
       workspaces: [
-        { id: 'default', name: '启动目录', path: '/work' },
+        { id: 'default', name: '默认文件夹', path: '/work' },
         { id: 'latch', name: 'latch', path: '/work/latch' },
       ],
       tasks: [
@@ -834,7 +834,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       { heading: 'write_file', canAllow: false, option: '', mac, clause: '高风险' },
     ])
     expect(result.engines).toEqual([
-      { id: 'standard', name: 'Latch', startable: true, line: '内置引擎' },
+      { id: 'standard', name: 'Latch 内置', startable: true, line: '' },
       { id: 'codex', name: 'Codex', startable: false, line: '在 Mac 上开始' },
     ])
     expect(result.projects).toEqual([

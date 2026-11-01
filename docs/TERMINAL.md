@@ -109,4 +109,4 @@ shell 自行退出时，组件再读取最多 0.5 秒输出，然后报告退出
 - `apps/host/test/terminal-service.test.ts`：用假组件检查每个入口类别的输入规则、文件夹来自会话记录、环境、审计先于启动、并发下的上限、尺寸归属、重放与背压、`reset`、输出速率、本地服务、关闭前确认、「加入对话」的脱敏、启动失败，以及归档与 Host 停止。
 - `terminal-environment.test.ts`、`terminal-output.test.ts`、`terminal-frames.test.ts`：环境、登录 shell、回滚缓冲、本地服务识别、文本提取、脱敏、`mayContainSecret`、光标移动留下的空隙与帧编解码。
 - `terminal-routes.test.ts`：真实 Host 配假组件，检查每条路由、审计先于启动、审计失败不启动、每个入口类别都被拒绝、能力标记、流的重连、撤销与 Host 停止时结束、归档与删除的检查（包括被拒绝的删除不结束 shell）；并用真实组件运行一次完整流程。`route-guards.test.ts`：已验证的手机经原生入口也被拒绝。
-- `terminal-cli.test.ts`：Latch 终端里不显示配对链接和离线登记码。
+- `terminal-cli.test.ts`：Latch 终端里不显示配对链接和离线连接码。

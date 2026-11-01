@@ -12,7 +12,15 @@ import { cancelAnswer, CancelRequests } from '../core/cancelRequest.ts'
 import { ConfigRequests } from '../core/configRequest.ts'
 import { SessionDrafts } from '../core/sessionDrafts.ts'
 import type { SessionConfigFeedback } from '../composer/modelReasoning.ts'
-import { findHarness, findProvider, harnessName as harnessLabel, sessionHarness, sessionModel, startBlock } from '../composerChoice.ts'
+import {
+  findHarness,
+  findProvider,
+  harnessName as harnessLabel,
+  needsProject,
+  sessionHarness,
+  sessionModel,
+  startBlock,
+} from '../composerChoice.ts'
 import { openSession } from '../core/blocking.ts'
 import { ConfirmationError, withConfirmation, type ConfirmationPresenter } from '../core/confirmations.ts'
 import { provideSessionLinks } from '../core/sessionLinks.ts'
@@ -51,6 +59,9 @@ import { type ApprovalStatus } from '../composer/ApprovalDrawer.tsx'
 import { codeRootWorkspace } from '../components/CodeRootNotice.tsx'
 import { sendingMessageFor } from '../core/sendingMessage.ts'
 import { toolRowId } from '../conversation.ts'
+
+/** Session IDs are never empty. */
+const NEW_SESSION_DRAFT = ''
 
 type Harness = ReturnType<typeof useHarness>
 type ToastMessage = { text: string; tone: 'ok' | 'error' }
@@ -190,7 +201,7 @@ export function useSessionController({
     select,
     refresh,
     onSent: (sessionId, sent, { foreground, consumedDraft }) => {
-      if (consumedDraft && sent.sessionId !== undefined) sessionDrafts.current.remove(sent.sessionId)
+      if (consumedDraft) sessionDrafts.current.remove(sent.sessionId ?? NEW_SESSION_DRAFT)
       if (!foreground || sent.queue) return
       draftSessionId.current = sessionId
       setPersonalDraft(null)
@@ -266,7 +277,18 @@ export function useSessionController({
     refs: fileMentions.filter(ref => hasFileMention(submission.draft, ref)),
     onRefs: setFileMentions,
   }
+  /** Sending found no folder to work in: the list opens, the draft stays. `notice`: a folder the Host just refused. */
+  const [projectRequest, setProjectRequest] = useState(0)
+  const [projectNotice, setProjectNotice] = useState<string>()
+  const askProject = (notice?: string) => {
+    setProjectNotice(notice)
+    setProjectRequest(request => request + 1)
+  }
   const sendDraft = async () => {
+    if (selectedId === null && !personalDraft && !submission.fork && needsProject(catalog, choice)) {
+      askProject()
+      return
+    }
     if (active && (attachmentDraft.items.length > 0 || mentionChoice.refs.length > 0)) {
       submission.setError('排队暂不支持附件或文件引用，请等本轮结束再发送。')
       return
@@ -358,8 +380,10 @@ export function useSessionController({
           setToast({ text: '草稿超出临时缓存上限，请先复制或缩短内容后再切换。', tone: 'error' })
           return
         }
-      }
-      submission.setDraft(id === null ? '' : sessionDrafts.current.read(id, privateVisible))
+      } else if (id !== null && !personalDraft) sessionDrafts.current.save(NEW_SESSION_DRAFT, submission.draft, false)
+      // 新会话 pressed on 新会话 starts over; coming back from a session finds what was being written.
+      if (selectedId === null && id === null) sessionDrafts.current.remove(NEW_SESSION_DRAFT)
+      submission.setDraft(sessionDrafts.current.read(id ?? NEW_SESSION_DRAFT, privateVisible))
       draftSessionId.current = id
     }
     setPersonalDraft(null)
@@ -877,7 +901,6 @@ export function useSessionController({
     && submission.pending === null
     && !submission.sending
       ? {
-          fullAccess: (current?.permission?.level ?? summary?.level) === 'L3',
           onResend: (prompt: string) => {
             if (selectedId !== null) clearUnverified(selectedId)
             void submission.resend(prompt)
@@ -885,7 +908,7 @@ export function useSessionController({
         }
       : undefined
   const askedQuestion = current?.questions?.[0]?.state === 'answering' ? undefined : current?.questions?.[0]
-  const startWords = mode === 'chat' ? '写下问题或想法…' : '让 Agent 做点什么…  @ 文件，/ 命令'
+  const startWords = mode === 'chat' ? '写下问题或想法…' : '要做什么？@ 文件，/ 命令'
   const placeholder =
     submission.pending !== null
       ? '等待确认上一条提交…'
@@ -981,6 +1004,14 @@ export function useSessionController({
     mentionChoice,
     sendDraft,
     retryDraft,
+    askProject,
+    projectAsk: {
+      request: projectRequest,
+      notice: projectNotice,
+      clearNotice: () => {
+        setProjectNotice(undefined)
+      },
+    },
     pageRunElapsed,
     sendingView,
     seenKey,

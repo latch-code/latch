@@ -171,6 +171,6 @@ describe('personal group and routine presentation', () => {
     const denied = renderToStaticMarkup(createElement(PersonalPage, props))
     expect(denied).toContain('在电脑上允许个人助手访问')
     expect(denied).not.toContain('创建群聊')
-    expect(denied).not.toContain('创建例行任务')
+    expect(denied).not.toContain('创建定时任务')
   })
 })

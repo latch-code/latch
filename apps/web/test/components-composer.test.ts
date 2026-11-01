@@ -184,7 +184,7 @@ describe('decided approvals', () => {
     expect(html).not.toContain('state-rejected')
     expect(stateSlot(html)).toBe('')
     expect(html).toMatch(
-      /<p class="tool-decision" title="[^"]*在其他设备上决定\nAgent 的询问只是提示[^"]*" data-outcome="rejected">.*已拒绝 · \d{2}:\d{2} · Agent 报告仍执行了这次调用<\/p>/u,
+      /<p class="tool-decision" title="[^"]*在其他设备上决定\nHarness 的询问只是提示[^"]*" data-outcome="rejected">.*已拒绝 · \d{2}:\d{2} · Harness 报告仍执行了这次调用<\/p>/u,
     )
   })
 
@@ -243,7 +243,7 @@ describe('approval cards', () => {
     // The diff names the file and shows its content, so neither is repeated as an argument.
     expect(html).not.toContain('<dt>path</dt>')
     expect(html).not.toContain('<dt>content</dt>')
-    expect(html).not.toContain('内容见变更')
+    expect(html).not.toContain('内容见改动')
     expect(html.match(/SECRET_BODY/g)).toHaveLength(1)
   })
 
@@ -430,7 +430,10 @@ describe('approval cards', () => {
     // Every start: the system form names the program, not the folder or what the project can change.
     for (const form of ['start.first', 'start.first-mode', 'start.changed', 'start.changed-mode'] as const) {
       const waiting = render({ phase: 'waiting', ticket: { ...ticket, form } })
-      expect(waiting).toContain('确认详情')
+      // Under one word, shut: it must not push the input off the page.
+      expect(waiting).toContain(CONFIRMATION_COPY.waitingTouchId)
+      expect(waiting).toMatch(/<details class="confirm-fold"><summary>确认详情<\/summary>/u)
+      expect(waiting).not.toContain('<details class="confirm-fold" open')
       for (const line of ticket.lines.slice(0, 3)) expect(waiting).toContain(line.value)
       expect(waiting).not.toContain('f00d-f00d-f00d-f00d')
       expect(waiting).not.toContain(ticket.reason)
@@ -609,7 +612,7 @@ describe('a folder inside Latch’s program directory', () => {
       }),
     )
 
-  it('warns in the breadcrumb’s popover by the Host’s flag, with 新建项目… where this device can make one', () => {
+  it('warns in the breadcrumb’s popover by the Host’s flag, with 添加项目… where this device can make one', () => {
     const html = folders(noop)
     expect(html).toContain('data-tone="warn"')
     expect(html).toContain(CODE_ROOT_COPY.notice)
@@ -657,7 +660,7 @@ describe('a folder inside Latch’s program directory', () => {
       )
     const flagged = settings(start)
     expect(flagged).toContain(CODE_ROOT_COPY.startDir)
-    expect(flagged).not.toContain('要在其他文件夹中工作，请新建项目。')
+    expect(flagged).not.toContain('要在其他文件夹中工作，请添加项目。')
     const { codeRoot: _codeRoot, ...ordinary } = start
     const plain = settings(ordinary)
     expect(plain).not.toContain(CODE_ROOT_COPY.startDir)

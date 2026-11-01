@@ -130,7 +130,7 @@ function SourceOutput({ text, language, enabled }: { text: string; language: str
  * One tool call as a work row: the kind's icon (a spinner while it runs, a red ✕ when it failed), what it does with its
  * object and the lines it changed, and its duration under the pointer. A failed row says why on one line, with 重试 when
  * this device may resend the turn. Opening a row shows what it did indented under its words: a file edit's short preview
- * (never while the right panel is open: there the row stays one line and selects its file in 变更), otherwise its
+ * (never while the right panel is open: there the row stays one line and selects its file in 改动), otherwise its
  * arguments and output. A pending approval is decided in the drawer above the composer; here the row only says what it is.
  */
 export const ToolCard = memo(
@@ -295,7 +295,7 @@ export const ToolCard = memo(
                           onClick={() => {
                             openInChanges(diff)
                           }}>
-                          {previousState(diff) === 'none' ? '打开文件' : '在变更中打开'}
+                          {previousState(diff) === 'none' ? '打开文件' : '在改动中打开'}
                         </Button>
                       )}
                     />

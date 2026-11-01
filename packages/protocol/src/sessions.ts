@@ -100,6 +100,8 @@ export interface TaskSummary {
    * Agent session outside a saved project. The desktop can save it as a project's primary folder.
    */
   sessionFolder?: true
+  /** The first start of this launch in this project, the one the system sheet asks about: the timeline says what it can do. */
+  firstStart?: true
   /**
    * The session's current or latest run: a new value each time `createTask` or a prompt starts one. A cancel names it,
    * so a cancel that arrives late cannot stop a run that began afterwards. Drivers that do not track runs omit it.

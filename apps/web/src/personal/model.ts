@@ -68,7 +68,7 @@ export function routineConfig(routine?: PersonalRoutine): PersonalRoutineConfig 
 
 export function routineConfigProblem(config: PersonalRoutineConfig): string | undefined {
   if (!config.name.trim() || config.name.length > 80 || /[\p{Cc}\p{Cf}]/u.test(config.name)) return '给任务一个清晰的名字（最多 80 字）。'
-  if (!config.assistantId) return '请选择可执行例行任务的助手。'
+  if (!config.assistantId) return '请选择可执行定时任务的助手。'
   if (!config.prompt.trim() || config.prompt.length > 16_000) return '请填写任务内容（最多 16000 字）。'
   if (!/^([01]\d|2[0-3]):[0-5]\d$/u.test(config.schedule.time)) return '请选择有效的每日时间。'
   if (!config.schedule.timeZone || config.schedule.timeZone.length > 80) return '请填写有效的 IANA 时区。'

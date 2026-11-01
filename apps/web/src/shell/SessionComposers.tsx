@@ -2,23 +2,23 @@ import { Info, ShieldAlert } from 'lucide-react'
 import type { ModelRef, SessionConfigOption } from '@latch/protocol'
 import { Button, Collapse, Icon, InlineNotice } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
-import { engineLimitNote, fullAccessStartNote, harnessName, sameModel } from '../composerChoice.ts'
+import { harnessName, nothingInstalled, sameModel } from '../composerChoice.ts'
 import { APPROVAL_COPY, CODE_ROOT_COPY } from '../core/securityCopy.ts'
 import { projectOf } from '../sessions.ts'
 import { scopedTemplates } from '../hooks/usePromptTemplates.ts'
 import { ApprovalDrawer } from '../composer/ApprovalDrawer.tsx'
 import { Composer } from '../composer/Composer.tsx'
-import { AgentChip, BranchLabel, FoldMenu, MoreMenu, UsageRing } from '../composer/Footer.tsx'
-import { DraftModelControl, SessionModelControl } from '../composer/ModelControl.tsx'
+import { BranchLabel, MoreMenu, UsageRing } from '../composer/Footer.tsx'
+import { DraftHarnessControl, DraftModelControl, SessionHarnessControl, SessionModelControl } from '../composer/ModelControl.tsx'
 import { PermissionChip } from '../composer/PermissionChip.tsx'
 import { composerOptions } from '../composer/modelReasoning.ts'
-import { contextUse, permissionView } from '../composer/permission.ts'
+import { contextUse, draftPermission, permissionView } from '../composer/permission.ts'
 import { QuestionDrawer, useQuestionDrawer } from '../composer/QuestionDrawer.tsx'
 import { QueueDrawer } from '../composer/QueueDrawer.tsx'
 import { WorkspaceRecovery } from '../composer/WorkspaceRecovery.tsx'
 import { InlineConfirm } from '../components/InlineConfirm.tsx'
 import { ModeSwitch, ProjectPicker } from '../components/Pickers.tsx'
-import { EngineQuestion, SetupCard } from '../newSession/NewSession.tsx'
+import { HarnessInstallCard, SetupCard } from '../newSession/NewSession.tsx'
 import { SendingMessage } from '../components/SendingMessage.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 
@@ -32,36 +32,44 @@ export function SendingBubble({ shell }: { shell: ShellState }) {
 /** On a phone the input has no room for the part after the two spaces, which teaches @ and /. */
 const phoneWords = (words: string) => words.split('  ')[0]!
 
-/** The new-session page's question: the project is an inline picker, and with none the footer offers one. */
+/** The new-session page's question: the project is a picker in it, named when there is one and offered when there is not. */
 export function NewSessionTitle({ shell }: { shell: ShellState }) {
-  const { personalDraft, catalog, choice, submission, newChoicesLocked, access, owner, openSettings, createProject } = shell
+  const { personalDraft, catalog, choice, newChoicesLocked, access, owner, openSettings, createProject, projectAsk, chooseProject } = shell
   if (personalDraft) return <>和{personalDraft.name}聊聊</>
-  const project =
-    choice.mode !== 'chat' ? catalog?.workspaces.find(item => item.id === choice.workspaceId && item.id !== 'default') : undefined
-  if (!catalog || !project)
+  const question = (
+    <>
+      要做什么<span className="new-session-mark">？</span>
+    </>
+  )
+  if (!catalog) return question
+  const project = catalog.workspaces.find(item => item.id === choice.workspaceId && item.id !== 'default')
+  const picker = (
+    <ProjectPicker
+      access={access}
+      catalog={catalog}
+      value={project?.id ?? (choice.projectSkipped ? 'default' : undefined)}
+      disabled={newChoicesLocked}
+      harness={catalog.harnesses.find(item => item.id === choice.harnessId)}
+      inline={project !== undefined}
+      onManage={owner ? () => openSettings('workspaces') : undefined}
+      onCreate={createProject}
+      onChange={chooseProject}
+      openRequest={projectAsk.request}
+      notice={projectAsk.notice}
+      onClosed={projectAsk.clearNotice}
+    />
+  )
+  if (project)
     return (
       <>
-        要做什么<span className="new-session-mark">？</span>
+        在 {picker} 里做什么<span className="new-session-mark">？</span>
       </>
     )
   return (
-    <>
-      在{' '}
-      <ProjectPicker
-        access={access}
-        catalog={catalog}
-        value={choice.workspaceId}
-        disabled={newChoicesLocked}
-        harness={catalog.harnesses.find(item => item.id === choice.harnessId)}
-        inline
-        onManage={owner ? () => openSettings('workspaces') : undefined}
-        onCreate={createProject}
-        onChange={workspaceId => {
-          submission.updateChoice({ workspaceId })
-        }}
-      />{' '}
-      里做什么<span className="new-session-mark">？</span>
-    </>
+    <span className="new-session-question">
+      <span>{question}</span>
+      {picker}
+    </span>
   )
 }
 
@@ -70,7 +78,6 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
   const {
     openPersonal,
     personalDraft,
-    startsL3,
     chosenHarness,
     current,
     summary,
@@ -110,8 +117,8 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
     phone,
     promptTemplates,
     openSettings,
+    startNew,
     manageProviders,
-    createProject,
     selectedId,
     refresh,
     approvals,
@@ -140,45 +147,33 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
   const asked = useQuestionDrawer(current?.questions?.[0], selectedId ?? '', questionActions)
   const answersQuestion = asked !== undefined && !asked.locked && gate.kind === 'open' && !earlierDraft.held
   const permission =
-    selectedId === null || !summary
-      ? undefined
-      : permissionView({
-          harness: harnessInfo,
-          ...(current?.permission ? { permission: current.permission } : {}),
-          config: current?.config ?? [],
-          access,
-          ...(gate.kind === 'open' ? {} : { locked: gate.kind === 'read-only' ? gate.text : '该会话不再接受输入。' }),
-        })
+    selectedId === null
+      ? personalDraft
+        ? undefined
+        : draftPermission(chosenHarness, choice.mode)
+      : !summary
+        ? undefined
+        : permissionView({
+            harness: harnessInfo,
+            mode: summary.mode,
+            ...(current?.permission ? { permission: current.permission } : {}),
+            config: current?.config ?? [],
+            access,
+            ...(gate.kind === 'open' ? {} : { locked: gate.kind === 'read-only' ? gate.text : '该会话不再接受输入。' }),
+          })
   const chooseOption = (option: SessionConfigOption, value: string) => {
     if (configBusy.has(selectedId ?? '')) return
     void Promise.resolve(setConfig(option.id, value))
   }
   const otherOptions = composerOptions(current?.config ?? [], harnessInfo?.models === 'host')
   const use = selectedId === null ? undefined : contextUse(current?.usageReport)
-  const branch = selectedId === null ? undefined : summary?.branch
-  const chatOnly =
-    selectedId === null && !personalDraft
-      ? (() => {
-          const harness = catalog?.harnesses.find(item => item.id === choice.harnessId)
-          return harness?.modes.includes('chat') && harness.modes.includes('agent')
-            ? {
-                value: choice.mode === 'chat',
-                onChange: (value: boolean) => {
-                  submission.updateChoice({ mode: value ? 'chat' : 'agent' })
-                },
-              }
-            : undefined
-        })()
-      : undefined
-  const engineNote = catalog && block === null && choice.mode !== 'chat' ? engineLimitNote(catalog, access) : undefined
-  const fullAccessNote = selectedId === null && !personalDraft && startsL3 && chosenHarness ? fullAccessStartNote(chosenHarness) : undefined
-  const noProject =
+  const branch =
     selectedId === null
-    && catalog
-    && !personalDraft
-    && choice.mode !== 'chat'
-    && (choice.workspaceId === undefined || choice.workspaceId === 'default')
-  const showControls = selectedId === null ? !personalDraft : !!summary && !summary.personal && gate.kind === 'open'
+      ? personalDraft
+        ? undefined
+        : catalog?.workspaces.find(item => item.id === choice.workspaceId && item.id !== 'default')?.branch
+      : summary?.branch
+  const showControls = selectedId === null ? !personalDraft : !!summary && !summary.personal && gate.kind !== 'stopped'
   const drawers = (
     <>
       {current && workspaceChanged.has(current.summary.id) && (
@@ -193,7 +188,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
           runGate={
             access.scopes.has('run') && harnessInfo?.status === 'ready'
               ? { allowed: true }
-              : { allowed: false, reason: '请先恢复发起会话权限和可用的引擎。' }
+              : { allowed: false, reason: '请先恢复发起会话权限和可用的 Harness。' }
           }
           phase={submission.pending ? 'unknown' : submission.sending || cancelling.has(current.summary.id) ? 'busy' : 'idle'}
           onFork={(taskId, upToMessageId, workspaceId) => {
@@ -214,7 +209,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
       {asked && (
         <QuestionDrawer
           state={asked}
-          asker={harnessInfo ? harnessName(harnessInfo) : 'Agent'}
+          asker={harnessInfo ? harnessName(harnessInfo) : 'Harness'}
           canAnswer={questionActions.canAnswer}
           onOther={() => {
             earlierDraft.release()
@@ -249,6 +244,16 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
     </>
   )
   const words = submission.pending === null ? (noteComposer?.placeholder ?? placeholder) : placeholder
+  // A session no longer listed cannot be opened, so its retry stays here and gets the Host's definitive answer.
+  const held = submission.pending
+  const pendingHome =
+    held === null || held.assistantId !== undefined
+      ? undefined
+      : held.sessionId === undefined
+        ? null
+        : shell.snapshot.tasks.some(task => task.id === held.sessionId)
+          ? held.sessionId
+          : undefined
   const answer = asked
     ? answersQuestion
       ? {
@@ -284,6 +289,14 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
       draft={submission.draft}
       onDraft={setSubmissionDraft}
       pending={submission.pending}
+      {...(pendingHome === undefined || pendingHome === selectedId
+        ? {}
+        : {
+            onOpenPending: () => {
+              choose(pendingHome)
+              if (phone && pendingHome === null) setNewSheet(true)
+            },
+          })}
       sending={submission.sending}
       error={noteComposer?.error || submission.error || (actionError?.sessionId === selectedId ? actionError.text : '')}
       onRetry={() => {
@@ -296,34 +309,30 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
       drawers={drawers}
       stepBack={approvals.length > 0 || answersQuestion}
       below={
-        selectedId === null && catalog && !personalDraft ? (
-          <>
-            {/* Captions open under the input like disclosures, so the input and everything above it stay put. */}
-            <Collapse open={fullAccessNote !== undefined}>
-              <p className="composer-notice" data-tint="warn" role="note">
-                <Icon icon={ShieldAlert} size={14} />
-                {fullAccessNote}
-              </p>
-            </Collapse>
-            <Collapse open={codeRootChoice !== undefined}>
-              <p className="composer-notice" data-tint="warn" role="note">
-                <Icon icon={ShieldAlert} size={14} />
-                {codeRootChoice && CODE_ROOT_COPY.notice}
-              </p>
-            </Collapse>
-            <Collapse open={chosenScopeCaption !== undefined}>
-              <p className="composer-notice" role="note">
-                <Icon icon={Info} size={14} />
-                <VisibleText text={chosenScopeCaption ?? ''} />
-              </p>
-            </Collapse>
-            <Collapse open={engineNote !== undefined}>
-              <p className="composer-engine-note" role="note">
-                {engineNote}
-              </p>
-            </Collapse>
-          </>
-        ) : undefined
+        <>
+          {branch && (
+            <div className="composer-context">
+              <BranchLabel branch={branch} />
+            </div>
+          )}
+          {selectedId === null && catalog && !personalDraft && (
+            <>
+              {/* Captions open under the input like disclosures, so the input and everything above it stay put. */}
+              <Collapse open={codeRootChoice !== undefined}>
+                <p className="composer-notice" data-tint="warn" role="note">
+                  <Icon icon={ShieldAlert} size={14} />
+                  {codeRootChoice && CODE_ROOT_COPY.notice}
+                </p>
+              </Collapse>
+              <Collapse open={chosenScopeCaption !== undefined}>
+                <p className="composer-notice" role="note">
+                  <Icon icon={Info} size={14} />
+                  <VisibleText text={chosenScopeCaption ?? ''} />
+                </p>
+              </Collapse>
+            </>
+          )}
+        </>
       }
       confirmation={
         <InlineConfirm active={submission.sending || (selectedId !== null && configBusy.has(selectedId))} className="composer-confirm" />
@@ -339,32 +348,8 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
       meta={
         showControls && !phone ? (
           <>
-            {noProject && catalog && (
-              <ProjectPicker
-                access={access}
-                catalog={catalog}
-                harness={catalog.harnesses.find(item => item.id === choice.harnessId)}
-                value={undefined}
-                disabled={newChoicesLocked}
-                onManage={owner ? () => openSettings('workspaces') : undefined}
-                onCreate={createProject}
-                onChange={workspaceId => {
-                  submission.updateChoice({ workspaceId })
-                }}
-              />
-            )}
-            {branch && <BranchLabel branch={branch} />}
             {use && <UsageRing use={use} />}
-            <MoreMenu chatOnly={chatOnly} options={otherOptions} disabled={newChoicesLocked} onOption={chooseOption} />
-            <FoldMenu
-              permission={permission}
-              branch={branch}
-              use={use}
-              options={otherOptions}
-              chatOnly={chatOnly}
-              disabled={newChoicesLocked}
-              onOption={chooseOption}
-            />
+            <MoreMenu options={otherOptions} disabled={newChoicesLocked} onOption={chooseOption} />
           </>
         ) : undefined
       }
@@ -385,51 +370,68 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
           ) : null
         ) : (
           <>
-            <AgentChip />
             {selectedId === null ? (
-              <DraftModelControl
-                catalog={catalog}
-                choice={choice}
-                onChoice={submission.updateChoice}
-                access={access}
-                disabled={newChoicesLocked}
-                onManageEngines={manageEngines}
-                onManageModels={manageProviders}
-                onProvidersChanged={() => {
-                  void refresh()
-                }}
-                onEngineAdded={agent => {
-                  submission.updateChoice({ harnessId: agent.id, mode: 'agent' })
-                  void refresh()
-                }}
-                onDefaultsChanged={async () => {
-                  await refresh()
-                  submission.forgetDraftPick()
-                }}
-              />
+              <>
+                <DraftHarnessControl
+                  catalog={catalog}
+                  choice={choice}
+                  onChoice={submission.updateChoice}
+                  access={access}
+                  disabled={newChoicesLocked}
+                  onManage={manageEngines}
+                  onAdded={agent => {
+                    submission.updateChoice({ harnessId: agent.id })
+                    void refresh()
+                  }}
+                  onDefaultsChanged={async () => {
+                    await refresh()
+                    submission.forgetDraftPick()
+                  }}
+                />
+                <DraftModelControl
+                  catalog={catalog}
+                  choice={choice}
+                  onChoice={submission.updateChoice}
+                  access={access}
+                  disabled={newChoicesLocked}
+                  onManageModels={manageProviders}
+                  onProvidersChanged={() => {
+                    void refresh()
+                  }}
+                />
+              </>
             ) : (
               summary && (
-                <SessionModelControl
-                  catalog={catalog}
-                  harness={harnessInfo}
-                  model={effectiveModel}
-                  current={currentModel}
-                  onModel={model => {
-                    submission.setOverride(summary.id, model && sameModel(model, currentModel) ? undefined : model)
-                    if (model) setToast({ text: `下一轮起用 ${model.model}`, tone: 'ok' })
-                  }}
-                  config={current?.config ?? []}
-                  busy={configBusy.get(summary.id) ?? null}
-                  {...(configFeedback.get(summary.id) ? { feedback: configFeedback.get(summary.id)! } : {})}
-                  onRefresh={refreshConfig}
-                  onConfig={setConfig}
-                  permission={permission}
-                  onManageEngines={manageEngines}
-                  onManageModels={manageProviders}
-                />
+                <>
+                  {harnessInfo && <SessionHarnessControl harness={harnessInfo} onNewSession={startNew} />}
+                  <SessionModelControl
+                    catalog={catalog}
+                    harness={harnessInfo}
+                    model={effectiveModel}
+                    current={currentModel}
+                    reported={summary.model}
+                    onModel={model => {
+                      submission.setOverride(summary.id, model && sameModel(model, currentModel) ? undefined : model)
+                      if (model) setToast({ text: `下一轮起用 ${model.model}`, tone: 'ok' })
+                    }}
+                    config={current?.config ?? []}
+                    busy={configBusy.get(summary.id) ?? null}
+                    {...(configFeedback.get(summary.id) ? { feedback: configFeedback.get(summary.id)! } : {})}
+                    onRefresh={refreshConfig}
+                    onConfig={setConfig}
+                    onManageModels={manageProviders}
+                    locked={gate.kind === 'read-only' ? gate.text : undefined}
+                  />
+                </>
               )
             )}
-            {permission?.chip && <PermissionChip view={permission} onChoose={chooseOption} />}
+            {permission ? (
+              <PermissionChip view={permission} onChoose={chooseOption} />
+            ) : (
+              <button type="button" className="chip chip-permission" disabled>
+                <span className="chip-text">权限</span>
+              </button>
+            )}
             {phone && selectedId !== null && <MoreMenu options={otherOptions} disabled={newChoicesLocked} onOption={chooseOption} />}
           </>
         )
@@ -442,7 +444,6 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
 export function SheetComposer({ shell }: { shell: ShellState }) {
   const {
     catalog,
-    access,
     submission,
     choice,
     attachmentDraft,
@@ -456,15 +457,11 @@ export function SheetComposer({ shell }: { shell: ShellState }) {
     placeholder,
     presenceDown,
     startReason,
-    startsL3,
-    chosenHarness,
     coarse,
     preferences,
     sheetComposerRef,
     promptTemplates,
   } = shell
-  const engineNote = catalog && block === null && choice.mode !== 'chat' ? engineLimitNote(catalog, access) : undefined
-  const fullAccessNote = startsL3 && chosenHarness ? fullAccessStartNote(chosenHarness) : undefined
   return (
     <Composer
       textareaRef={sheetComposerRef}
@@ -486,24 +483,10 @@ export function SheetComposer({ shell }: { shell: ShellState }) {
       blockReason={block?.message ?? startReason}
       readOnly={gate.kind === 'read-only' ? gate.text : undefined}
       below={
-        codeRootChoice || engineNote || fullAccessNote ? (
-          <>
-            {fullAccessNote && (
-              <p className="composer-notice" data-tint="warn" role="note">
-                {fullAccessNote}
-              </p>
-            )}
-            {codeRootChoice && (
-              <p className="composer-notice" role="note">
-                {CODE_ROOT_COPY.notice}
-              </p>
-            )}
-            {engineNote && (
-              <p className="composer-engine-note" role="note">
-                {engineNote}
-              </p>
-            )}
-          </>
+        codeRootChoice ? (
+          <p className="composer-notice" role="note">
+            {CODE_ROOT_COPY.notice}
+          </p>
         ) : undefined
       }
       onSubmit={() => {
@@ -518,7 +501,7 @@ export function SheetComposer({ shell }: { shell: ShellState }) {
 }
 
 export function SetupNotices({ shell }: { shell: ShellState }) {
-  const { catalog, access, owner, submission, block, choice, setupTrigger, openSettings, refresh } = shell
+  const { catalog, access, owner, submission, block, setupTrigger, openSettings, refresh } = shell
   return (
     <>
       {submission.fork && (
@@ -529,30 +512,41 @@ export function SetupNotices({ shell }: { shell: ShellState }) {
           </Button>
         </InlineNotice>
       )}
-      {block?.kind === 'engine-required' && catalog && (
-        <EngineQuestion catalog={catalog} access={access} choice={choice} onChoice={submission.updateChoice} />
-      )}
-      {block && block.kind !== 'engine-required' && (
-        <SetupCard
-          triggerRef={setupTrigger}
-          block={block}
-          owner={owner}
-          providers={
-            owner && catalog
-              ? {
-                  access,
-                  onSettings: () => openSettings('providers'),
-                  onSaved: (model: ModelRef) => {
-                    submission.updateChoice({ model })
-                    void refresh()
-                  },
-                }
-              : undefined
-          }
-          onSetup={() => {
-            openSettings(block.kind === 'model-required' ? 'providers' : catalog ? 'engines' : 'plugins')
+      {nothingInstalled(block, catalog, access) ? (
+        <HarnessInstallCard
+          access={access}
+          onRecheck={refresh}
+          onSettings={() => {
+            openSettings('providers')
+          }}
+          onSaved={(model: ModelRef) => {
+            submission.updateChoice({ model })
+            void refresh()
           }}
         />
+      ) : (
+        block && (
+          <SetupCard
+            triggerRef={setupTrigger}
+            block={block}
+            owner={owner}
+            providers={
+              owner && catalog
+                ? {
+                    access,
+                    onSettings: () => openSettings('providers'),
+                    onSaved: (model: ModelRef) => {
+                      submission.updateChoice({ model })
+                      void refresh()
+                    },
+                  }
+                : undefined
+            }
+            onSetup={() => {
+              openSettings(block.kind === 'model-required' ? 'providers' : catalog ? 'engines' : 'plugins')
+            }}
+          />
+        )
       )}
     </>
   )

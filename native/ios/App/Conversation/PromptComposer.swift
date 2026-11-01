@@ -118,7 +118,6 @@ struct PromptComposer: View {
         let current = nextModel?.model ?? summary["model"].string
         return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                chip { Text(summary["personal"]["assistantId"].string == nil ? "通用" : "助手") }
                 if !models.isEmpty, model.engineInfo(summary["harnessId"].string)["models"].string == "host" {
                     Menu {
                         ForEach(models) { item in

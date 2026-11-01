@@ -43,7 +43,7 @@ const PAIRINGS_PATH = '/link/api/pairings'
 const BROWSER_INVITATION = Object.freeze({ target: 'loopback', scopes: Object.freeze(['view', 'run', 'approve:standard']) })
 const INVITATION_FRAGMENT = /^#pair=lpi1-[A-Z2-7]{26}$/
 const HOST_UNAVAILABLE = '无法连接到 Latch Host，请确认 Host 仍在运行。'
-const BROWSER_LINK_MANAGED = '这台电脑上浏览器的登记链接由 Latch 桌面端直接交给浏览器'
+const BROWSER_LINK_MANAGED = '这台电脑上浏览器的链接由 Latch 桌面端直接交给浏览器'
 const DROPPED_REQUEST_HEADERS = new Set([
   'cookie',
   'authorization',
@@ -604,7 +604,7 @@ function streamedResponse({ request: upstreamRequest, response }, method) {
       response.once('close', () => {
         if (!finished) {
           finished = true
-          controller.error(new Error('Latch Host 连接中断'))
+          controller.error(new Error('Latch 服务连接中断'))
         }
       })
     },
@@ -766,7 +766,7 @@ function createShellProxy(options) {
         )
       }
     } catch (error) {
-      log(`生成浏览器登记链接失败：${error instanceof Error ? error.message : '未知错误'}`)
+      log(`生成浏览器链接失败：${error instanceof Error ? error.message : '未知错误'}`)
       return refusal(502, 'host-unavailable', HOST_UNAVAILABLE)
     }
   }
@@ -788,7 +788,7 @@ function createShellProxy(options) {
         await upstream('DELETE', `/link/api/enrollments/${enrollment.id}`, { accept: 'application/json' }, undefined, CONTROL_TIMEOUT_MS)
           .then(bufferUpstream)
           .catch(() => {})
-        return errorResponse(502, 'fingerprint-mismatch', '服务器返回的指纹与本机计算的不一致，已停止登记。')
+        return errorResponse(502, 'fingerprint-mismatch', '这台设备的密钥和 Mac 读到的不一致，已停止连接。')
       }
       const expires = Date.parse(enrollment.expiresAt ?? '')
       pending.set(enrollment.id, {
@@ -806,7 +806,7 @@ function createShellProxy(options) {
     if (request.method !== 'POST') return errorResponse(405, 'method-not-allowed', '不支持此操作')
     prunePending()
     const entry = pending.get(enrollmentId)
-    if (!entry) return errorResponse(404, 'enrollment-not-found', '找不到该登记请求')
+    if (!entry) return errorResponse(404, 'enrollment-not-found', '找不到这个连接请求')
     const signature = entry.key.sign(enrollSigningText(hostId, enrollmentId, entry.nonce))
     const result = await bufferUpstream(
       await upstream(
@@ -823,7 +823,7 @@ function createShellProxy(options) {
         await store.commit({ key: entry.key, deviceId: device.id, credential: result.json.credential })
       } catch (error) {
         log(`保存设备凭据失败：${error instanceof Error ? error.message : '未知错误'}`)
-        return errorResponse(500, 'credential-store-failed', '无法保存设备凭据，请重新登记。')
+        return errorResponse(500, 'credential-store-failed', '无法保存设备凭据，请重新连接。')
       }
       renewAfter = now() + RENEW_INTERVAL_MS
       retryAt = 0

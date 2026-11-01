@@ -1,6 +1,6 @@
 import { _electron, type ElectronApplication, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises'
+import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -69,10 +69,9 @@ async function resize(application: ElectronApplication, page: Page, width: numbe
   await page.waitForFunction(width => innerWidth === width, width)
   await page.emulateMedia({ colorScheme: width === 900 ? 'dark' : 'light', reducedMotion: 'reduce' })
 }
-async function enroll(page: Page, name: string) {
+async function enroll(page: Page) {
   page.setDefaultTimeout(15_000)
-  await page.getByRole('textbox', { name: '设备名称', exact: true }).fill(name)
-  await page.getByRole('button', { name: '请求连接', exact: true }).click()
+  await page.getByRole('button', { name: '继续', exact: true }).click()
   await page.locator('.app-shell[data-connection="connected"]').waitFor()
 }
 async function startNew(page: Page, width: number) {
@@ -96,7 +95,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       const directory = await mkdtemp(join(tmpdir(), 'latch-electron-first-use-')),
         calls = { count: 0 },
         provider = localProvider(calls),
-        host = await startTestHost({ demo: false, providerId: provider.id, plugins: [provider] })
+        host = await startTestHost({ demo: false, providerId: provider.id, plugins: [provider], detectPreset: () => ({ found: false }) })
       let application: ElectronApplication | undefined
       try {
         const owner = await host.enroll({ listener: 'unix' })
@@ -104,12 +103,9 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         application = await launch(host, join(directory, 'electron'))
         const page = await application.firstWindow()
         await resize(application, page, width)
-        await enroll(page, '首次使用 ' + width)
+        await enroll(page)
         if (width === 390) await startNew(page, width)
         const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
-        // With the built-in engine alone there is nothing to ask, and the page says what that engine cannot do.
-        await page.locator('.composer-engine-note').filter({ hasText: 'Latch 内置只能读写项目里的文件，不能运行命令' }).waitFor()
-        expect(await page.locator('.engine-question').count()).toBe(0)
         const prompt = '这是通过本地假 Provider 执行的第一个实际任务。'
         await input.fill(prompt)
         await input.press('Meta+Enter')
@@ -127,9 +123,10 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         const missingDraft = '缺少模型时也不能丢掉这份草稿。'
         await input.fill(missingDraft)
         expect((await owner.request('plugins/' + provider.id, { method: 'POST', body: { enabled: false } })).status).toBe(200)
-        const setup = page.locator('.setup-card')
-        await setup.getByText('还没有模型服务。', { exact: true }).waitFor()
-        await setup.getByRole('button', { name: '添加模型服务', exact: true }).click()
+        // Nothing else can run here, so the page says what to install; the built-in Harness is one quiet line.
+        const setup = page.getByRole('region', { name: '安装 Harness', exact: true })
+        await setup.getByText('没有找到可用的 Harness', { exact: true }).waitFor()
+        await setup.getByRole('button', { name: /^也可以用 Latch 内置/ }).click()
         await setup.getByRole('region', { name: '添加模型服务', exact: true }).waitFor()
         await setup.getByRole('group', { name: '选择服务', exact: true }).waitFor()
         expect(await page.locator('.settings-page').count()).toBe(0)
@@ -146,6 +143,156 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       }
     })
 
+    it('runs a Harness found on this computer with nothing to add, asking only for the folder', async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'latch-electron-found-'))
+      const bin = join(directory, 'bin')
+      await mkdir(bin)
+      const adapter = join(bin, 'codex-acp')
+      await writeFile(
+        adapter,
+        [
+          '#!/bin/sh',
+          'export FAKE_ACP_MODES=read-only,workspace-write,agent-full-access FAKE_ACP_INITIAL_MODE=read-only FAKE_ACP_CONFIG=options',
+          `exec "${process.execPath}" "${FAKE_ACP_AGENT}" "$@"`,
+        ].join('\n'),
+      )
+      await chmod(adapter, 0o755)
+      const project = join(directory, 'rust-learn')
+      await mkdir(project)
+      const path = process.env.PATH
+      process.env.PATH = `${bin}:${path}`
+      const host = await startTestHost({
+        demo: false,
+        sessionFolders: true,
+        presenceMode: 'manual',
+        // Only this adapter is found, whatever is installed on the machine running the test.
+        detectPreset: preset => (preset.id === 'codex' ? { found: true, path: adapter } : { found: false }),
+      })
+      let application: ElectronApplication | undefined
+      try {
+        application = await launch(host, join(directory, 'electron'))
+        const page = await application.firstWindow()
+        await resize(application, page, 1440)
+        page.setDefaultTimeout(15_000)
+        await page.getByRole('button', { name: '继续', exact: true }).click()
+        await host.presence.waitForRequest(15_000)
+        host.presence.approveNext()
+        await page.locator('.app-shell[data-connection="connected"]').waitFor()
+        await page.getByRole('button', { name: /^Harness：Codex/ }).waitFor()
+        expect(await page.locator('.setup-card').count()).toBe(0)
+        const owner = await host.enroll({ listener: 'unix' })
+        expect((await owner.json<{ agents: AgentSettings[] }>('agents')).agents).toEqual([])
+
+        // Enter with no folder asks for one and keeps the draft; nothing has been saved or started.
+        const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
+        await input.fill('修一下测试')
+        await input.press('Meta+Enter')
+        const open = page.getByRole('menuitemradio', { name: '打开文件夹…' }).or(page.getByRole('option', { name: '打开文件夹…' }))
+        await open.waitFor()
+        expect(await input.inputValue()).toBe('修一下测试')
+        expect((await owner.json<AppSnapshot>('snapshot')).tasks).toHaveLength(0)
+        expect((await owner.json<{ agents: AgentSettings[] }>('agents')).agents).toEqual([])
+
+        // A folder the Host refuses says so in the list, at once.
+        await application.evaluate(({ BrowserWindow, dialog }, chosen) => {
+          dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [chosen] })) as typeof dialog.showOpenDialog
+          BrowserWindow.prototype.isFocused = () => true
+        }, process.cwd())
+        await open.click()
+        await page.getByText(/^没有打开 .*不能作为项目$/u).waitFor()
+
+        // The chosen folder is a project at once, named in the question; a list asked for earlier stays shut.
+        await application.evaluate(({ dialog }, chosen) => {
+          dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [chosen] })) as typeof dialog.showOpenDialog
+        }, project)
+        await open.click()
+        await page.locator('.new-session-title').getByText('rust-learn', { exact: true }).first().waitFor()
+        expect(await open.isVisible()).toBe(false)
+        await expect.poll(() => input.evaluate(element => element === document.activeElement)).toBe(true)
+
+        // Sending saves the definition, then the existing start confirmation runs what was saved.
+        await input.press('Meta+Enter')
+        const sheet = await host.presence.waitForRequest(15_000)
+        expect(sheet.preview.action).toBe('task.start-l3')
+        expect((await owner.json<{ agents: AgentSettings[] }>('agents')).agents).toMatchObject([{ id: 'codex', presetId: 'codex' }])
+        host.presence.approveNext()
+        await page.locator('.transcript').getByText('echo: 修一下测试', { exact: true }).waitFor()
+        // The first start of this launch in this project says what the Harness can do, and it stays.
+        const startNote = page.locator('.session-start-note')
+        await startNote
+          .getByText('Codex 能读写这台 Mac 上的文件并运行命令。权限是 Codex 自己的设置，Latch 不隔离它。', { exact: true })
+          .waitFor()
+
+        // The next start of the same launch here does not repeat it.
+        await application.evaluate(({ dialog }) => {
+          dialog.showMessageBox = (async () => ({ response: 1, checkboxChecked: false })) as typeof dialog.showMessageBox
+        })
+        await startNew(page, 1440)
+        await input.fill('再来一个')
+        await input.press('Meta+Enter')
+        await page.locator('.transcript').getByText('echo: 再来一个', { exact: true }).waitFor()
+        expect(await startNote.count()).toBe(0)
+
+        // 不选项目 works too: a new empty folder, nothing refused.
+        await startNew(page, 1440)
+        await page.locator('.new-session-title button').first().click()
+        await page.getByText('在一个新的空文件夹里开始', { exact: true }).click()
+        await input.fill('随便试试')
+        await input.press('Meta+Enter')
+        await host.presence.waitForRequest(15_000)
+        await page.getByText('确认详情', { exact: true }).waitFor()
+
+        // A reload with the sheet up: nothing was sent, so the text is back, no row asks about delivery and the sheet is closed.
+        await page.reload()
+        await page.locator('.app-shell[data-connection="connected"]').waitFor()
+        await expect.poll(() => input.inputValue()).toBe('随便试试')
+        expect(await page.locator('.pending-submission').count()).toBe(0)
+        await expect.poll(async () => (await owner.json<AppSnapshot>('snapshot')).tasks.length).toBe(2)
+        // The text stays while another session is open, and sending starts a new confirmation instead of waiting on the old one.
+        await page.locator('#session-navigation').getByText('修一下测试', { exact: true }).click()
+        await page.locator('.transcript').getByText('echo: 修一下测试', { exact: true }).waitFor()
+        expect(await page.locator('.pending-submission').count()).toBe(0)
+        await page.getByRole('button', { name: '新建会话', exact: true }).first().click()
+        await expect.poll(() => input.inputValue()).toBe('随便试试')
+        await page.locator('.new-session-title button').first().click()
+        await page.getByText('在一个新的空文件夹里开始', { exact: true }).click()
+        await input.press('Meta+Enter')
+        await host.presence.waitForRequest(15_000)
+        host.presence.approveNext()
+        await page.locator('.transcript').getByText('echo: 随便试试', { exact: true }).waitFor()
+        await noHorizontalOverflow(page)
+
+        // 添加项目 at the sidebar's foot: from a session, a cancel stays put, a refusal says so, a folder starts there.
+        const pick = (chosen: string | null) =>
+          application!.evaluate(({ dialog }, path) => {
+            dialog.showOpenDialog = (async () =>
+              path ? { canceled: false, filePaths: [path] } : { canceled: true, filePaths: [] }) as typeof dialog.showOpenDialog
+          }, chosen)
+        const add = page.getByRole('button', { name: '添加项目', exact: true })
+        await pick(null)
+        await add.click()
+        await page.locator('.transcript').getByText('echo: 随便试试', { exact: true }).waitFor()
+        await pick(process.cwd())
+        await add.click()
+        await page
+          .locator('.toast')
+          .getByText(/^没有打开 .*不能作为项目$/u)
+          .waitFor()
+        await page.locator('.transcript').getByText('echo: 随便试试', { exact: true }).waitFor()
+        const second = join(directory, 'second')
+        await mkdir(second)
+        await pick(second)
+        await add.click()
+        await page.locator('.new-session-title').getByText('second', { exact: true }).first().waitFor()
+        await page.locator('#session-navigation').getByText('second', { exact: true }).waitFor()
+      } finally {
+        process.env.PATH = path
+        await application?.close()
+        await host.close()
+        await rm(directory, { recursive: true, force: true })
+      }
+    })
+
     it('uses actual ACP command updates, template IDs and ranked keyboard insertion without sending at three widths', async () => {
       const directory = await mkdtemp(join(tmpdir(), 'latch-electron-slash-')),
         provider = localProvider(),
@@ -156,7 +303,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         const owner = await host.enroll({ listener: 'unix' }),
           added = await owner.confirmed('agents', {
             method: 'POST',
-            body: { name: '命令验收 Agent', command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_LOG: agentLog } },
+            body: { name: '命令验收 Harness', command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_LOG: agentLog } },
           })
         expect(added.status).toBe(201)
         const agent = ((await added.json()) as { agent: AgentSettings }).agent,
@@ -169,7 +316,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await expect.poll(async () => (await owner.json<TaskDetail>('tasks/' + sessionId)).summary.status).toBe('idle')
         expect((await owner.json<TaskDetail>('tasks/' + sessionId)).commands).toEqual([{ name: 'init', description: 'init' }])
         const templates = [
-          ['review', '检查变更', '阅读变更，并解释结果。'],
+          ['review', '检查改动', '阅读改动，并解释结果。'],
           ['review-notes', '整理评审笔记', '整理这些笔记。'],
           ['code-review', '代码核对', '核对代码。'],
           ['prereview', '准备审阅', '准备审阅材料。'],
@@ -186,7 +333,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         application = await launch(host, join(directory, 'electron'))
         const page = await application.firstWindow()
         await resize(application, page, 1440)
-        await enroll(page, '命令验收电脑')
+        await enroll(page)
         await page.locator(`[data-task-id="${sessionId}"]`).click()
         for (const width of [1440, 900, 390]) {
           await resize(application, page, width)
@@ -216,17 +363,17 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           await input.press('Enter')
           expect(await input.inputValue()).toBe(templates[0][2])
           await input.fill('/检查')
-          await list.getByRole('option').filter({ hasText: '/review · 检查变更' }).waitFor()
+          await list.getByRole('option').filter({ hasText: '/review · 检查改动' }).waitFor()
           await input.press('Tab')
           expect(await input.inputValue()).toBe(templates[0][2])
           await input.fill('/')
           await list.getByRole('group', { name: '提示模板', exact: true }).waitFor()
-          await list.getByRole('group', { name: 'Agent 命令', exact: true }).waitFor()
+          await list.getByRole('group', { name: 'Harness 命令', exact: true }).waitFor()
           expect(await list.getByRole('group', { name: '提示模板', exact: true }).getByRole('option').count()).toBe(4)
-          expect(await list.getByRole('group', { name: 'Agent 命令', exact: true }).getByRole('option').count()).toBe(1)
+          expect(await list.getByRole('group', { name: 'Harness 命令', exact: true }).getByRole('option').count()).toBe(1)
           expect(await list.getByRole('group').evaluateAll(groups => groups.map(group => group.getAttribute('aria-label')))).toEqual([
             '提示模板',
-            'Agent 命令',
+            'Harness 命令',
           ])
           for (const option of await list.getByRole('option').all()) await reachable(option)
           await noHorizontalOverflow(page, menu)

@@ -133,7 +133,7 @@ export function AttachmentDrafts({
         <div className="attachment-drafts" aria-label="消息附件">
           {intro && (
             <div className="attachment-intro" role="note">
-              <span>附件内容会发送给当前模型服务或 Agent。</span>
+              <span>附件内容会发送给当前模型服务或 Harness。</span>
               <IconButton
                 label="知道了"
                 icon={X}
@@ -203,7 +203,7 @@ export function AttachmentDrafts({
       {confirm && (
         <ConfirmDialog
           title="这个附件可能包含密钥"
-          message="确认后，附件内容会随消息发送给当前模型服务或 Agent。请先检查内容。"
+          message="确认后，附件内容会随消息发送给当前模型服务或 Harness。请先检查内容。"
           confirmLabel="确认添加"
           onClose={() => setConfirm(undefined)}
           onConfirm={async () => {

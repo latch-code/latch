@@ -4,7 +4,7 @@ import { networkInterfaces } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { HarnessPlugin } from '@latch/sdk'
 import { redactSecrets } from '@latch/core/node-kit'
-import { LATCH_VERSION, startServer, type TlsListenerOptions } from '../src/server.ts'
+import { detectPresetCommands, LATCH_VERSION, startServer, type TlsListenerOptions } from '../src/server.ts'
 import {
   acquireDataDirLock,
   processAlive,
@@ -213,6 +213,7 @@ async function main(): Promise<void> {
     dataDir: paths.dataDir,
     workspaceRoot: paths.workspaceRoot,
     sessionFolders,
+    detectPreset: detectPresetCommands,
     agentsDir: paths.agentsDir,
     uiDir: resolve(codeRoot, 'dist/web'),
     port,
@@ -264,13 +265,13 @@ async function main(): Promise<void> {
     startedAt: server.startedAt,
     dataDir: paths.dataDir,
   })
-  console.log(`Latch ${LATCH_VERSION} · ${demo ? '演示模型 / 真实工具' : '通用模型接口'}`)
+  console.log(`Latch ${LATCH_VERSION} · ${demo ? '演示模型 / 真实工具' : '模型服务'}`)
   // Loopback enrollment takes an invitation: the desktop app opens one, or the CLI prints one to a terminal.
   console.log(
     `浏览器：${server.loopbackOrigin}/link/（新浏览器从 Latch 桌面端「在这台电脑的浏览器中打开」，或运行 pnpm latch device invite --loopback）`,
   )
-  console.log(`启动目录：${paths.workspaceRoot}`)
-  if (sessionFolders) console.log('不在项目中的 Agent 会话各自使用启动目录中新建的一个文件夹。')
+  console.log(`默认文件夹：${paths.workspaceRoot}`)
+  if (sessionFolders) console.log('不在项目中的 Agent 会话各自使用默认文件夹中新建的一个文件夹。')
   console.log(
     server.tlsOrigin
       ? `手机接入：${server.tlsOrigin}/link/（在电脑上的 Latch 桌面端生成配对二维码）`

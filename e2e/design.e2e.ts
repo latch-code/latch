@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openSection, openSettings, reachable, closeSettings, setChatOnly } from './helpers/layout.ts'
+import { noHorizontalOverflow, openSection, openSettings, reachable, closeSettings } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/design'
 const VIEWPORTS = [
@@ -101,21 +101,18 @@ describe('responsive workspace controls', () => {
       expect(await page.locator('textarea[aria-label="新会话消息"]').count()).toBe(1)
       await reachable(composer)
       await composer.fill('这是一条未提交的布局验收草稿。')
-      // 只聊天 and back keep the draft, and the page never overflows.
-      for (const chat of [true, false]) {
-        await setChatOnly(page, chat)
-        expect(await composer.inputValue()).toBe('这是一条未提交的布局验收草稿。')
-        await noHorizontalOverflow(page)
-      }
+      await noHorizontalOverflow(page)
       // Model and project: rows of the sheet on phones, the one control in the input elsewhere.
       if (phone) {
-        for (const row of ['Agent', '引擎', '权限']) await page.locator('.new-sheet-card').getByText(row, { exact: true }).first().waitFor()
+        for (const row of ['Harness', '思考', '权限'])
+          await page.locator('.new-sheet-card').getByText(row, { exact: true }).first().waitFor()
         await page
           .locator('.new-sheet-card')
           .getByRole('button', { name: /^模型：/ })
           .waitFor()
         await noHorizontalOverflow(page, page.locator('.new-session-sheet > .ui-sheet-surface > .ui-sheet-body'))
-      } else await reachable(page.getByRole('button', { name: /^模型：/ }).first())
+      } else
+        for (const control of [/^Harness：/, /^模型：/, /^权限：/]) await reachable(page.getByRole('button', { name: control }).first())
       await reachable(page.getByRole('button', { name: phone ? '开始' : '发送', exact: true }), { allowDisabled: phone })
       await composer.fill('')
       await capture(page, `${label}-new-session`)

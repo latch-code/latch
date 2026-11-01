@@ -9,17 +9,22 @@ import { parseAst } from 'vite'
  * string such as `host-desktop` is not a hit.
  */
 export const BANNED_WORDS = [
+  '引擎',
+  '自动化',
+  '例行',
+  '变更',
   '助手',
   '群聊',
   '回复者',
-  '例行任务',
-  'Harness',
+  '工作区',
+  '启动目录',
+  '只聊天',
   'Provider',
   'ACP',
   '预设',
   '执行端',
   'Host',
-  '本机确认',
+  '本机',
   '指纹',
   '核对码',
   '回环',
@@ -31,6 +36,7 @@ export const BANNED_WORDS = [
   '权限上限',
   '数据范围',
   '登记',
+  '邀请',
   '启动指纹',
   '哈希',
   '只对话',
@@ -94,7 +100,7 @@ export function readableText(path: string, source: string): Array<{ key: string;
       visit(value.expression, names)
       return
     }
-    if (value.type.startsWith('TS') || value.type === 'ImportDeclaration' || isLogCall(value)) return
+    if (value.type.startsWith('TS') || value.type === 'ImportDeclaration' || value.type === 'ImportExpression' || isLogCall(value)) return
     if ((value.type === 'ExportNamedDeclaration' || value.type === 'ExportAllDeclaration') && value.source) return
     if (value.type === 'Literal' && typeof value.value === 'string') add(value, names, value.value)
     else if (value.type === 'JSXText' && (value.value as string).trim() !== '') add(value, names, (value.value as string).trim())
@@ -132,61 +138,58 @@ export function scanGlossary(path: string, source: string, allowances: readonly 
 }
 
 const COPY_FILE = 'apps/web/src/core/securityCopy.ts'
-const PAIRING_COPY = 'Pairing and enrollment copy keeps its current words.'
-const PERSONAL_COPY = 'The shell still names the personal pages; these go when those pages are renamed.'
-const PERSONAL_WORDS = ['助手', '群聊', '例行任务'] as const
+const PERSONAL_COPY = 'The shell still names the personal pages; these go when those pages are removed.'
+const PERSONAL_WORDS = ['助手', '群聊'] as const
+const CHAT_MODE = 'The chat-only mode keeps its name until it is removed.'
 
-/** The files and directories the scan covers. */
+/** The directories the scan covers: every page, except the personal pages. */
 export const GLOSSARY_SCOPE = {
-  files: [
-    COPY_FILE,
-    'apps/web/src/core/permissions.ts',
-    'apps/web/src/core/hostState.ts',
-    'apps/web/src/core/blocking.ts',
-    'apps/web/src/core/confirmations.ts',
-    'apps/web/src/core/approvalDecision.ts',
-    'apps/web/src/core/auditCheckpoint.ts',
-    'apps/web/src/components/InlineConfirm.tsx',
-  ],
-  directories: [
-    'apps/web/src/agents',
-    'apps/web/src/automations',
-    'apps/web/src/browser',
-    'apps/web/src/composer',
-    'apps/web/src/conversation',
-    'apps/web/src/palette',
-    'apps/web/src/panel',
-    'apps/web/src/shell',
-  ],
+  directories: ['apps/web/src'],
+  skip: ['apps/web/src/personal/'],
 } as const
 
 export const GLOSSARY_ALLOWANCES: readonly GlossaryAllowance[] = [
-  ...['ENROLLMENT_REASON_TEXT.', 'ENROLLMENT_COPY.', 'NATIVE_LINK_COPY.'].map(key => ({
-    file: COPY_FILE,
-    key,
-    why: PAIRING_COPY,
-  })),
   {
     file: COPY_FILE,
     key: 'DEVICES_COPY.savedRelay',
     words: ['中继'],
     why: 'A relay saved by an earlier build is named only behind 「关于连接」, beside the way to remove it.',
   },
-  ...[
-    'CONFIRMATION_VERBS.device.enroll',
-    'CONFIRMATION_VERBS.device.enroll-native',
-    'BLOCKED_ACTION_TEXT.device.enroll-native',
-    'FIXED.enrollment-',
-    'FIXED.invitation-',
-    'FIXED.offline-code-invalid',
-    'FIXED.fingerprint-mismatch',
-    'FIXED.credential-store-failed',
-    'FIXED.browser-open-unsupported',
-    'FIXED.native-',
-    'FAMILY_FALLBACK',
-  ].map(key => ({ file: COPY_FILE, key, why: PAIRING_COPY })),
+  ...['FIXED.native-relay-duplicate'].map(key => ({
+    file: COPY_FILE,
+    key,
+    words: ['中继'],
+    why: 'Only a person adding relay nodes reads it.',
+  })),
+  {
+    file: COPY_FILE,
+    key: 'BLOCKED_ACTION_TEXT.automation.grant',
+    words: ['自动化'],
+    why: 'Mirrors the confirmation title on the macOS helper, which no route raises yet; renaming it means rebuilding the helper.',
+  },
+  {
+    file: 'apps/web/src/palette/ShellPalette.tsx',
+    key: 'SETTINGS_ROWS.keywords',
+    words: ['自动化'],
+    why: 'Never drawn: someone searching the other common name still finds 定时任务.',
+  },
+  {
+    file: 'apps/web/src/core/contentHash.ts',
+    key: 'CONTENT_HASH_LABEL',
+    words: ['哈希'],
+    why: 'A line of the signed confirmation preview, shared with the macOS helper.',
+  },
   ...(
     [
+      ['apps/web/src/composer/Footer.tsx', 'MoreMenu', '只聊天'],
+      ['apps/web/src/composer/Footer.tsx', 'FoldMenu', '只聊天'],
+      ['apps/web/src/newSession/NewSessionSheet.tsx', 'NewSessionSheet', '只聊天'],
+      ['apps/web/src/components/Pickers.tsx', 'ModeSwitch.title', '只对话'],
+    ] as const
+  ).map(([file, key, word]) => ({ file, key, words: [word], why: CHAT_MODE })),
+  ...(
+    [
+      ['apps/web/src/settings/SettingsPage.tsx', 'sections.label'],
       ['apps/web/src/shell/ConversationView.tsx', 'ConversationView'],
       ['apps/web/src/shell/Overlays.tsx', 'Overlays.label'],
       ['apps/web/src/shell/Overlays.tsx', 'Overlays.label.'],
@@ -212,7 +215,7 @@ async function sourcesUnder(root: string, directory: string): Promise<string[]> 
 /** Every banned word in the scope, as the test reports them. */
 export async function scanRepository(root: string): Promise<GlossaryFinding[]> {
   const directories = await Promise.all(GLOSSARY_SCOPE.directories.map(directory => sourcesUnder(root, directory)))
-  const paths = [...GLOSSARY_SCOPE.files, ...directories.flat()]
+  const paths = directories.flat().filter(path => !GLOSSARY_SCOPE.skip.some(prefix => path.startsWith(prefix)))
   const scanned = await Promise.all(
     paths.map(async path => scanGlossary(path, await readFile(join(root, path), 'utf8'), GLOSSARY_ALLOWANCES)),
   )

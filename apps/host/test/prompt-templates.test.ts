@@ -13,7 +13,7 @@ async function store() {
   directories.push(dir)
   return { dir, value: await PromptTemplateStore.open(dir) }
 }
-const template: PromptTemplate = { id: 'review', name: '检查变更', content: '检查这次变更\n并解释结果', scope: { kind: 'all' } }
+const template: PromptTemplate = { id: 'review', name: '检查改动', content: '检查这次改动\n并解释结果', scope: { kind: 'all' } }
 describe('prompt template persistence', () => {
   it('replaces by stable ID, survives restart, and serializes concurrent writes without dropping another template', async () => {
     const { dir, value } = await store()

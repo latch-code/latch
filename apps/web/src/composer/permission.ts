@@ -1,4 +1,4 @@
-import type { HarnessInfo, SessionConfigOption, SessionPermission } from '@latch/protocol'
+import type { HarnessInfo, SessionConfigOption, SessionPermission, TaskMode } from '@latch/protocol'
 import { harnessLevel, modeRows, type DeviceAccess, type ModeRow } from '../core/permissions.ts'
 import { MODE_COPY } from '../core/securityCopy.ts'
 
@@ -14,28 +14,61 @@ export interface PermissionRow extends ModeRow {
 /** What the composer says about who decides, and the rows when the engine has modes to choose from. */
 export interface PermissionView {
   label: string
-  tooltip: string
+  /** One sentence on what this means: the row's line, and the chip's tooltip. */
+  line: string
   icon: ModeIcon
-  /** A mode in which the agent never asks: amber, and it stays at every width. */
+  /** A mode in which the agent never asks, or one Latch cannot confirm. */
   amber: boolean
-  /** Whether the footer draws a chip: anything but the engine's default. */
-  chip: boolean
+  /** Nothing can ask, so the menu has no question to put at its head. */
+  asksNothing?: boolean
+  /** The one honest limit, under the rows. */
+  note?: string
   option?: SessionConfigOption
   rows?: PermissionRow[]
 }
 
 const modeOption = (config: readonly SessionConfigOption[]) => config.find(option => option.category === 'mode')
 
-const askTooltip = (harness: Pick<HarnessInfo, 'source'>) =>
-  harness.source === 'builtin' ? MODE_COPY.askBeforeWritesTooltip : MODE_COPY.askWhenNeededTooltip
+type PermissionHarness = Pick<HarnessInfo, 'name' | 'source' | 'level' | 'permission'>
 
-/**
- * What the footer says about a session's permissions. The engine's default mode draws nothing, and the choice stays in
- * the model control. A mode away from it always shows, and so does an engine Latch cannot read back or limit, since
- * there is no default to fall back on.
- */
+/** The harness's own facts, which need no session: for a draft, and for a session whose detail has not arrived. */
+function declaredPermission(harness: PermissionHarness): PermissionView {
+  if (harnessLevel(harness) !== 'L3')
+    return { label: MODE_COPY.askFirst, line: MODE_COPY.askBeforeWritesLine, icon: 'shield', amber: false }
+  const declared = harness.permission
+  if (declared?.approvals === 'none')
+    return {
+      label: MODE_COPY.agentDecides(harness.name),
+      line: MODE_COPY.agentDecidesLine(harness.name),
+      icon: 'shield-alert',
+      amber: true,
+    }
+  if (declared?.readback === 'none')
+    return { label: MODE_COPY.unverifiable, line: MODE_COPY.unverifiableLine(harness.name), icon: 'shield-alert', amber: true }
+  if (declared)
+    return {
+      label: MODE_COPY.askFirst,
+      line: MODE_COPY.askFirstLine(harness.name),
+      icon: 'shield',
+      amber: false,
+      note: MODE_COPY.changeAfterStart(harness.name),
+    }
+  return { label: MODE_COPY.afterStart, line: MODE_COPY.afterStartLine(harness.name), icon: 'shield', amber: false }
+}
+
+/** No tools run, so nothing can be asked and no mode applies. */
+const chatPermission: PermissionView = {
+  label: MODE_COPY.noFiles,
+  line: MODE_COPY.noFilesLine,
+  icon: 'shield',
+  amber: false,
+  asksNothing: true,
+}
+
+/** What the footer says about a session's permissions. It always says something: the mode with its rows when the agent reports modes. */
 export function permissionView(input: {
-  harness: Pick<HarnessInfo, 'name' | 'source' | 'level'> | undefined
+  harness: PermissionHarness | undefined
+  mode?: TaskMode | undefined
   permission?: SessionPermission
   config: readonly SessionConfigOption[]
   access: Pick<DeviceAccess, 'legacy' | 'local'>
@@ -43,29 +76,17 @@ export function permissionView(input: {
 }): PermissionView | undefined {
   const { harness, permission, config, access, locked } = input
   if (!harness) return undefined
-  if (harnessLevel(harness) !== 'L3')
-    return { label: MODE_COPY.askWhenNeeded, tooltip: askTooltip(harness), icon: 'shield', amber: false, chip: false }
+  if (input.mode === 'chat') return chatPermission
+  if (harnessLevel(harness) !== 'L3') return declaredPermission(harness)
   const option = modeOption(config)
   if (!option) {
-    // A session whose detail has not arrived yet says nothing rather than something wrong.
-    if (!permission) return undefined
-    if (permission.approvals === 'none')
-      return {
-        label: MODE_COPY.agentDecides(harness.name),
-        tooltip: MODE_COPY.agentDecidesTooltip(harness.name),
-        icon: 'shield',
-        amber: false,
-        chip: true,
-      }
-    if (permission.readback !== 'mode')
-      return {
-        label: MODE_COPY.unverifiable,
-        tooltip: MODE_COPY.unverifiableTooltip(harness.name),
-        icon: 'shield',
-        amber: false,
-        chip: true,
-      }
-    return undefined
+    // The session's own report outranks the declaration, and once it started the agent has said what modes it has.
+    if (!permission) return declaredPermission(harness)
+    const { note: _beforeStart, ...started } = declaredPermission({
+      ...harness,
+      permission: { approvals: permission.approvals ?? 'prompts', readback: permission.readback ?? 'none' },
+    })
+    return started
   }
   const never = new Set(permission?.neverAskModes)
   const rows = modeRows(option, access, locked).map((row, index): PermissionRow => {
@@ -78,25 +99,20 @@ export function permissionView(input: {
     }
   })
   const current = rows.find(row => row.current)
-  const standing = permission?.defaultMode ?? permission?.expectedMode
-  const amber = current?.neverAsks === true
   return {
     label: current?.name ?? option.currentValue,
-    tooltip: current?.line ?? '',
+    line: current?.line ?? '',
     icon: current?.icon ?? 'shield',
-    amber,
-    chip: amber || option.currentValue !== standing,
+    amber: current?.neverAsks === true,
+    note: MODE_COPY.agentOwnSetting(harness.name),
     option,
     rows,
   }
 }
 
-/** Before the first send nothing has told Latch an external engine's modes, so the popover says when they appear. */
-export function draftPermission(harness: Pick<HarnessInfo, 'name' | 'source' | 'level'> | undefined): PermissionView | undefined {
-  if (!harness) return undefined
-  if (harnessLevel(harness) !== 'L3')
-    return { label: MODE_COPY.askWhenNeeded, tooltip: askTooltip(harness), icon: 'shield', amber: false, chip: false }
-  return { label: MODE_COPY.afterStart, tooltip: MODE_COPY.afterStartTooltip(harness.name), icon: 'shield', amber: false, chip: false }
+/** Before the first send only what the harness declares is known, and the agent's own modes are not. */
+export function draftPermission(harness: PermissionHarness | undefined, mode: TaskMode): PermissionView | undefined {
+  return harness && (mode === 'chat' ? chatPermission : declaredPermission(harness))
 }
 
 const thousands = (value: number) => (value >= 1000 ? `${Math.round(value / 1000)}K` : String(value))

@@ -1,8 +1,8 @@
 import { createElement } from 'react'
-import { entryOfSection, routeAtWidth, visibleEntries } from '../src/shell/routes.ts'
+import { entryOfSection, routeAtWidth, sidebarPages, visibleEntries, type SettingsSection } from '../src/shell/routes.ts'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { TaskSummary } from '@latch/protocol'
+import type { AppSnapshot, TaskSummary } from '@latch/protocol'
 import { scrollMovesAnchor } from '../src/components/overlays.tsx'
 import { SessionHeader } from '../src/shell/ConversationHeader.tsx'
 
@@ -124,22 +124,16 @@ describe('popover anchoring', () => {
   })
 })
 
-describe('rail routes', () => {
+describe('shell routes', () => {
   it('draws only the entries this device can use', () => {
     expect(visibleEntries(['general', 'about'], false)).toEqual(['sessions', 'settings'])
-    expect(visibleEntries(['general', 'plugins', 'devices', 'routines'], false)).toEqual([
-      'sessions',
-      'automations',
-      'plugins',
-      'phone',
-      'settings',
-    ])
+    expect(visibleEntries(['general', 'plugins', 'devices', 'routines'], false)).toEqual(['sessions', 'phone', 'settings'])
   })
 
-  it('gives a phone three tabs, with 自动化 inside Agent and 插件 and 手机 inside 设置', () => {
-    expect(visibleEntries(['general', 'plugins', 'devices', 'routines'], true)).toEqual(['sessions', 'agents', 'settings'])
-    expect(entryOfSection('routines', true)).toBe('agents')
-    expect(entryOfSection('routines', false)).toBe('automations')
+  it('gives a phone 会话 and 设置, with every section inside 设置', () => {
+    expect(visibleEntries(['general', 'plugins', 'devices', 'routines'], true)).toEqual(['sessions', 'settings'])
+    expect(entryOfSection('routines', true)).toBe('settings')
+    expect(entryOfSection('routines', false)).toBe('settings')
     expect(entryOfSection('devices', true)).toBe('settings')
     expect(entryOfSection('devices', false)).toBe('phone')
   })
@@ -147,8 +141,19 @@ describe('rail routes', () => {
   it('keeps the open section when the window crosses the phone breakpoint', () => {
     expect(routeAtWidth({ entry: 'phone' }, true)).toEqual({ entry: 'settings', section: 'devices' })
     expect(routeAtWidth({ entry: 'settings', section: 'devices' }, false)).toEqual({ entry: 'phone', section: 'devices' })
-    expect(routeAtWidth({ entry: 'automations' }, true)).toEqual({ entry: 'agents', section: 'routines' })
+    expect(routeAtWidth({ entry: 'settings', section: 'plugins' }, true)).toEqual({ entry: 'settings', section: 'plugins' })
     expect(routeAtWidth({ entry: 'settings' }, true)).toEqual({ entry: 'settings' })
     expect(routeAtWidth({ entry: 'sessions' }, true)).toEqual({ entry: 'sessions' })
+  })
+
+  it('names a page in the sidebar only once it holds something this device may see', () => {
+    const allowed: SettingsSection[] = ['general', 'routines', 'assistants']
+    const empty = { tasks: [] } as unknown as AppSnapshot
+    expect(sidebarPages(empty, allowed)).toEqual([])
+    const fromAgent = { tasks: [{ personal: { assistantId: 'asst' } }] } as unknown as AppSnapshot
+    expect(sidebarPages(fromAgent, allowed)).toEqual(['assistants'])
+    expect(sidebarPages(fromAgent, ['general'])).toEqual([])
+    const scheduled = { tasks: [], automations: [{}], customAgents: [{}] } as unknown as AppSnapshot
+    expect(sidebarPages(scheduled, allowed)).toEqual(['routines', 'assistants'])
   })
 })

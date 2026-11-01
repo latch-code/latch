@@ -41,7 +41,7 @@ function surfaceOf(value: string): PanelSurface {
   return { kind: 'plugin', id: value.slice(7) }
 }
 
-/** The right panel: a strip of tabs over 变更, 文件, the opened files and the panels enabled plugins contribute. */
+/** The right panel: a strip of tabs over 改动, 文件, the opened files and the panels enabled plugins contribute. */
 export function SessionPanels({
   panels = [],
   summary,
@@ -81,7 +81,7 @@ export function SessionPanels({
   launcherTakesFocus?(): boolean
   /** Under the launcher's rows: a phone's only home for what the title row's popover holds elsewhere. */
   launcherNote?: ReactNode
-  /** The 变更 tab's content, when the session has one. */
+  /** The 改动 tab's content, when the session has one. */
   changes?: ReactNode
   changesOpen?: boolean
   /** The number on the tab, only while another tab is showing. */
@@ -153,7 +153,7 @@ export function SessionPanels({
       ? [
           {
             value: 'changes',
-            label: '变更',
+            label: '改动',
             icon: FileDiff,
             controls: id,
             ...(!showingChanges && changesTotals?.files ? { stat: { added: changesTotals.add, removed: changesTotals.del } } : {}),

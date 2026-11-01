@@ -54,7 +54,7 @@ describe('session list', () => {
       ['project:website', 'website', ['pinned-old', 'site'], 'website'],
       // The deepest saved project holds the session.
       ['project:docs', '文档', ['docs'], 'docs'],
-      ['other', '对话', ['app-new', 'elsewhere', 'history', 'app-old'], undefined],
+      ['other', '无项目', ['app-new', 'elsewhere', 'history', 'app-old'], undefined],
     ])
   })
 

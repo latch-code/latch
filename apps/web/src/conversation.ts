@@ -481,7 +481,9 @@ export function foldWords(turn: Turn): string {
 
 /** One line for a failed row: the first line of what it reported, without the runtime's code, and cut. */
 export function failureReason(message: Pick<Message, 'state' | 'tool' | 'text'>): string {
-  const line = shownToolOutput(message)
+  // A call that reported nothing has its arguments or title as its text, which are no reason.
+  const silent = message.tool?.output === undefined && (message.text === message.tool?.input || message.text === message.tool?.title)
+  const line = (silent ? '' : shownToolOutput(message))
     .split('\n')
     .map(part => part.trim())
     .find(Boolean)
@@ -494,7 +496,7 @@ export function failureReason(message: Pick<Message, 'state' | 'tool' | 'text'>)
 export function deliveryWords(detail: TaskDetail, turn: Turn): string | undefined {
   const activity = detail.summary.live?.activity
   if (activity === undefined || detail.liveText || turnText(turn)) return undefined
-  return activity === 'starting' ? 'Mac 已收到' : 'Agent 已开始'
+  return activity === 'starting' ? 'Mac 已收到' : 'Harness 已开始'
 }
 
 // ---- Retry ------------------------------------------------------------------------------------------------------
@@ -534,7 +536,7 @@ export function sideEffects(turn: Turn): SideEffects {
 }
 
 /** The confirmation before resending a turn that may have changed something; undefined when it changed nothing. */
-export function resendWarning(effects: SideEffects, fullAccess: boolean): string | undefined {
+export function resendWarning(effects: SideEffects): string | undefined {
   const done = effects.edits + effects.commands + effects.others
   if (done === 0 && effects.unknown === 0) return undefined
   const parts: string[] = []
@@ -547,8 +549,7 @@ export function resendWarning(effects: SideEffects, fullAccess: boolean): string
     parts.push(`上一次已经执行了 ${done} 个操作：${what.join('、')}。`)
   }
   if (effects.unknown > 0) parts.push(`上一次有 ${effects.unknown} 个操作结果未知，可能已经执行。`)
-  parts.push('重新发送后，Agent 可能再次执行它们。')
-  if (fullAccess) parts.push('完全访问会话不会逐项询问。')
+  parts.push('重新发送后，Harness 可能再次执行它们。')
   return parts.join('')
 }
 

@@ -18,7 +18,7 @@ describe('the panel next to the rail', () => {
   it('stays between 220 and 400, and leaves the conversation 480', () => {
     expect(clampSidebar(100, 1440)).toBe(SIDEBAR_MIN)
     expect(clampSidebar(900, 1440)).toBe(SIDEBAR_MAX)
-    expect(sidebarMax(800)).toBe(800 - 52 - 480)
+    expect(sidebarMax(800)).toBe(800 - 480)
     expect(sidebarMax(1024, 400)).toBe(SIDEBAR_MIN)
   })
 
@@ -53,8 +53,8 @@ describe('the right panel', () => {
     expect(placeRightPanel({ windowWidth: 1440, left: 300 })).toEqual({ kind: 'column', width: RIGHT_PANEL_DEFAULT })
     expect(placeRightPanel({ windowWidth: 1300, left: 300 })).toEqual({ kind: 'column', width: RIGHT_PANEL_DEFAULT })
     expect(placeRightPanel({ windowWidth: 1299, left: 300 })).toEqual({ kind: 'sheet', width: RIGHT_PANEL_DEFAULT })
-    expect(placeRightPanel({ windowWidth: 1100, left: 52 })).toEqual({ kind: 'column', width: RIGHT_PANEL_DEFAULT })
-    expect(placeRightPanel({ windowWidth: 768, left: 52 })).toEqual({ kind: 'sheet', width: RIGHT_PANEL_DEFAULT })
+    expect(placeRightPanel({ windowWidth: 1100, left: 0 })).toEqual({ kind: 'column', width: RIGHT_PANEL_DEFAULT })
+    expect(placeRightPanel({ windowWidth: 768, left: 0 })).toEqual({ kind: 'sheet', width: RIGHT_PANEL_DEFAULT })
   })
 
   it('is a pushed page on phones', () => {
@@ -62,13 +62,13 @@ describe('the right panel', () => {
   })
 })
 
-describe('how wide 变更 opens', () => {
+describe('how wide 改动 opens', () => {
   it('asks for 660 where the conversation keeps 480, what is left below that, and a 420 sheet when that is too little', () => {
     expect(changesPanelWidth(1440, 300)).toBe(660)
     expect(changesPanelWidth(1280, 300)).toBe(500)
     expect(changesPanelWidth(1024, 300)).toBe(420)
-    expect(changesPanelWidth(1024, 52)).toBe(492)
-    expect(changesPanelWidth(1440, 52, true)).toBe(860)
+    expect(changesPanelWidth(1024, 0)).toBe(544)
+    expect(changesPanelWidth(1440, 0, true)).toBe(860)
     expect(changesPanelWidth(1440, 300, true)).toBe(660)
   })
 })

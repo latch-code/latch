@@ -6,7 +6,7 @@ import type { TestDevice } from '@latch/testkit'
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, reachable, setChatOnly } from './helpers/layout.ts'
+import { noHorizontalOverflow, reachable } from './helpers/layout.ts'
 import { motions, tokens } from './helpers/motion.ts'
 
 /**
@@ -191,13 +191,10 @@ describe('the phone stack', () => {
       expect(Math.round((await surface.boundingBox())!.height)).toBe(standing)
       // Another device runs on the built-in engine alone: the engine row holds nothing else.
       expect(await sheet.getByText('Codex').count()).toBe(0)
-      // A chat reads and writes no files, so it has no project.
-      const projectRow = sheet.locator('.new-sheet-card').getByRole('button', { name: /^项目：/ })
-      await projectRow.waitFor()
-      await setChatOnly(page, true)
-      await projectRow.waitFor({ state: 'detached' })
-      await setChatOnly(page, false)
-      await projectRow.waitFor()
+      await sheet
+        .locator('.new-sheet-card')
+        .getByRole('button', { name: /^项目：/ })
+        .waitFor()
       const start = sheet.getByRole('button', { name: '开始', exact: true })
       expect(await start.getAttribute('aria-disabled')).toBe('true')
       await sheet.getByRole('textbox', { name: '新会话消息', exact: true }).fill('展示流式输出')

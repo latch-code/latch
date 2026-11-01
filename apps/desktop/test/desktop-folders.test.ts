@@ -257,7 +257,7 @@ describe('desktop shell folders: what main accepts', () => {
   it('opens the panel for folders only, never into packages, hidden files or unresolved aliases, always at a set place', () => {
     const fresh = folders.pickDialog({ defaultPath: '/Users/me' })
     expect(fresh).toEqual({
-      title: '新建项目',
+      title: '添加项目',
       buttonLabel: '创建项目',
       message: '可以选择多个文件夹。之后可以在设置中更改主文件夹。',
       defaultPath: '/Users/me',
@@ -289,9 +289,9 @@ describe('desktop shell folders: what main accepts', () => {
     expect(folders.dropDialog({ paths: ['/Users/me/site', '/Users/me/docs'] })).toEqual({
       type: 'question',
       title: 'Latch',
-      message: '用这些文件夹新建项目？',
+      message: '用这些文件夹添加项目？',
       detail: '/Users/me/site\n/Users/me/docs\n\nLatch 内置可以读取其中的所有文件。',
-      buttons: ['新建项目', '取消'],
+      buttons: ['添加项目', '取消'],
       defaultId: 1,
       cancelId: 1,
       noLink: true,
@@ -362,7 +362,7 @@ describe('desktop shell folders: adding', () => {
       { method: 'POST', path: '/link/api/workspaces', body: { ...body, signature: 'signature-of-nonce-1' } },
     ])
     expect(signed).toEqual([body])
-    expect(asked[0]).toMatchObject({ title: '新建项目', defaultPath: '/Users/me' })
+    expect(asked[0]).toMatchObject({ title: '添加项目', defaultPath: '/Users/me' })
     await created.pickFolders(NEW)
     expect(asked[1]).toMatchObject({ defaultPath: '/Users/me/projects' })
   })
@@ -517,7 +517,7 @@ describe('desktop shell folders: adding', () => {
     )
     expect(await created.dropFolders({ projectId: null, paths: ['/Users/me/site', '/Users/me/latch'] })).toEqual({ status: 'canceled' })
     expect(host.requests).toEqual([])
-    expect(asked[0]).toMatchObject({ message: '用这些文件夹新建项目？', buttons: ['新建项目', '取消'], defaultId: 1, cancelId: 1 })
+    expect(asked[0]).toMatchObject({ message: '用这些文件夹添加项目？', buttons: ['添加项目', '取消'], defaultId: 1, cancelId: 1 })
     expect(asked[0]?.detail).toContain('/Users/me/site\n/Users/me/latch\n\n')
     answer = 0
     expect(await created.dropFolders({ projectId: null, paths: ['/Users/me/site', '/Users/me/latch'] })).toEqual({
@@ -657,7 +657,7 @@ describe('desktop shell folders: showing in Finder', () => {
       project,
       {
         id: 'default',
-        name: '启动目录',
+        name: '默认文件夹',
         path: '/Users/me/Latch/workspace',
         folders: [{ id: 'default', path: '/Users/me/Latch/workspace' }],
       },

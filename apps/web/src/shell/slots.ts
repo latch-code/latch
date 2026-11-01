@@ -18,6 +18,6 @@ export interface ConversationHeaderSlots {
   gitAction?: ReactNode
   /** 终端 (⌘J). */
   terminal?: HeaderToggle
-  /** 变更 (⌘D). */
+  /** 改动 (⌘D). */
   changes?: HeaderToggle
 }

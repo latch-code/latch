@@ -241,7 +241,7 @@ const folderPath = z
 const folderSchema = z.object({ id: z.string().regex(FOLDER_ID, '文件夹标识无效'), path: folderPath })
 const workspaceSchema = z
   .object({
-    id: id('项目标识').refine(value => value !== 'default', '项目标识 default 保留给启动目录'),
+    id: id('项目标识').refine(value => value !== 'default', '项目标识 default 保留给默认文件夹'),
     name,
     path: folderPath,
     folders: z.array(folderSchema).min(1, '项目至少要有一个文件夹').max(8, '一个项目最多 8 个文件夹').optional(),

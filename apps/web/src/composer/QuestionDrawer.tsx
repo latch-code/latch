@@ -222,7 +222,7 @@ export function QuestionDrawer({
   }, [locked, armed, options, state])
   const last = draft.step === question.questions.length - 1
   return (
-    <section className="composer-drawer question-card" data-arming={armed ? undefined : ''} aria-label="Agent 提问">
+    <section className="composer-drawer question-card" data-arming={armed ? undefined : ''} aria-label="Harness 提问">
       <div className="question-heading">
         <span>{asker} 想问你</span>
         {question.questions.length > 1 && (

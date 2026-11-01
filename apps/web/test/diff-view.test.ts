@@ -71,12 +71,12 @@ describe('DiffView modes', () => {
 
   it('previews 12 changed lines at most, with no head and what is left in its foot', () => {
     const big: DiffViewFile = { path: 'a.ts', oldText: numbered(40), newText: numbered(40, index => `changed ${index}`), previous: 'text' }
-    const out = html({ diffs: [big], mode: 'compact', fileActions: () => createElement('button', null, '在变更中打开') })
+    const out = html({ diffs: [big], mode: 'compact', fileActions: () => createElement('button', null, '在改动中打开') })
     expect(out).not.toContain('@@')
     expect(out).not.toContain('diff-file-header')
     expect(out.match(/diff-line diff-(add|remove)/gu)?.length).toBe(12)
     expect(out).toContain('还有 68 行改动')
-    expect(out).toContain('在变更中打开')
+    expect(out).toContain('在改动中打开')
   })
 
   it('previews the first 8 lines of a new file', () => {
@@ -120,7 +120,7 @@ describe('DiffView says what it knows', () => {
   })
 
   it('keeps the warning about previous content it cannot see in the compact preview', () => {
-    expect(html({ diffs: [{ path: 'a.ts', newText: 'a\n' }], mode: 'compact' })).toContain('执行端没有说明原内容')
+    expect(html({ diffs: [{ path: 'a.ts', newText: 'a\n' }], mode: 'compact' })).toContain('Harness 没有说明原内容')
     expect(html({ diffs: [{ path: 'a.ts', newText: 'a\n', previous: 'unavailable' }], mode: 'compact' })).toContain('该文件已存在')
     expect(html({ diffs: [{ path: 'a.ts', newText: 'a\n', previous: 'none' }], mode: 'compact' })).not.toContain('diff-note')
   })

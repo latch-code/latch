@@ -104,7 +104,7 @@ export function UsageSettings({ catalog }: { catalog: HostCatalog }) {
                         ?? (row.source === 'agent'
                           ? (catalog.harnesses.find(item => item.id === row.harnessId)?.name ?? row.harnessId)
                           : '未记录模型服务')}
-                      {row.source === 'agent' ? ' · Agent 报告' : ''}
+                      {row.source === 'agent' ? ' · Harness 报告' : ''}
                     </small>
                   </th>
                   <td>{shownTokens(row.usage.inputTokens)}</td>

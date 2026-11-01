@@ -44,7 +44,6 @@ import { Button, Collapse, ICON_STROKE, useLivePrevious } from '@latch/ui'
 /** What resending the latest turn takes, when this device may send now. */
 export interface RetryAccess {
   /** The session is a full-access one: the confirmation says it will not ask before each step. */
-  fullAccess: boolean
   onResend: (prompt: string) => void
 }
 
@@ -129,9 +128,7 @@ function WorkRow({ item, context, onRetry }: { item: WorkItem; context: RowConte
 interface TurnViewProps {
   turn: Turn
   context: RowContext
-  /** The word of the author line: the Agent. */
-  author: string
-  /** The engine behind it, in the author line's secondary text and in what the status says. */
+  /** Stands in for the Harness in what the status says, and beside it on the author line: only the demo model does. */
   engine?: string
   harnessName: string
   harness?: Pick<HarnessInfo, 'id' | 'source'>
@@ -213,7 +210,6 @@ function OutcomeRecord({ turn, outcome, onRetry }: { turn: Turn; outcome: TurnOu
 
 const TurnView = memo(function TurnView({
   turn,
-  author,
   engine,
   harnessName,
   harness,
@@ -295,7 +291,7 @@ const TurnView = memo(function TurnView({
                 }
               : undefined
           }>
-          <AuthorLine name={author} engine={engine} harness={harness} model={model} provider={provider} />
+          <AuthorLine name={harnessName} engine={engine} harness={harness} model={model} provider={provider} />
           {!trailingLive && hasWork && (
             <button
               type="button"
@@ -324,6 +320,8 @@ const TurnView = memo(function TurnView({
             }
             if (block.kind === 'note') {
               if (block.message.role === 'tool') return <QuestionRow key={block.message.id} message={block.message} context={rowContext} />
+              // The run's end line says the same and offers the same 重试; the note is the record once a later turn replaces it.
+              if (runEnd && block.message.state === 'failed') return null
               return (
                 <MessageRow key={block.message.id} message={block.message} coarse={rowContext.coarse} {...(onRetry ? { onRetry } : {})} />
               )
@@ -342,7 +340,7 @@ const TurnView = memo(function TurnView({
                       key={item.kind === 'reads' ? `reads:${item.messages[0]!.id}` : `${item.kind}:${item.message.id}`}
                       item={item}
                       context={rowContext}
-                      onRetry={item.kind === 'tool' && item.message.id === lastFailed ? onRetry : undefined}
+                      onRetry={!runEnd && item.kind === 'tool' && item.message.id === lastFailed ? onRetry : undefined}
                     />
                   ))}
                 </div>
@@ -548,8 +546,7 @@ export function Transcript({
     [changes?.undo, refreshChanges, sessionId],
   )
   const frozen = frozenAt !== undefined
-  const author = personal ? harnessName : '通用'
-  const engine = demo ? '演示' : personal ? undefined : harness?.source === 'builtin' ? 'Latch' : harnessName
+  const engine = demo ? '演示' : undefined
   const statusProps: StatusLineProps = {
     detail,
     harness: engine ?? harnessName,
@@ -585,7 +582,7 @@ export function Transcript({
             const resend =
               latest && !trailingLive && retry && turn.user
                 ? {
-                    warning: resendWarning(sideEffects(turn), retry.fullAccess),
+                    warning: resendWarning(sideEffects(turn)),
                     onResend: () => {
                       retry.onResend(splitChangeNote(turn.user!.text).text)
                     },
@@ -614,7 +611,6 @@ export function Transcript({
                   coarse,
                   frozen: frozen && trailingLive,
                 }}
-                author={author}
                 {...(engine ? { engine } : {})}
                 harnessName={harnessName}
                 harness={harness}

@@ -6,8 +6,9 @@ import { MODE_ICONS, PermissionList } from './PermissionList.tsx'
 import type { PermissionView } from './permission.ts'
 
 /**
- * 权限, drawn only away from the engine's default: the mode with its own list, or, for an engine Latch cannot limit, a
- * static chip whose tooltip says why. Amber only on a mode in which the agent never asks.
+ * 权限, always drawn and always opening, so touch reads what a hover would: the agent's own modes when it reports them,
+ * otherwise the one row that is true now and why it cannot change yet. Amber only where the agent never asks or Latch
+ * cannot confirm.
  */
 export function PermissionChip({
   view,
@@ -18,23 +19,13 @@ export function PermissionChip({
 }) {
   const Glyph = MODE_ICONS[view.icon]
   const label = escapeHiddenCharacters(view.label)
-  if (!view.rows || !view.option)
-    return (
-      <Tooltip content={view.tooltip}>
-        <span className="chip chip-static chip-permission" tabIndex={0}>
-          <Glyph size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-          <span className="chip-text">{label}</span>
-        </span>
-      </Tooltip>
-    )
-  const { rows, option } = view
   return (
     <Popover
       label="权限"
       width={400}
       side="top"
       trigger={props => (
-        <Tooltip content={escapeHiddenCharacters(view.tooltip)} describe={false}>
+        <Tooltip content={escapeHiddenCharacters(view.line)} describe={false}>
           <button {...props} type="button" className={`chip chip-permission${view.amber ? ' is-amber' : ''}`} aria-label={`权限：${label}`}>
             <Glyph size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
             <span className="chip-text">{label}</span>
@@ -43,9 +34,9 @@ export function PermissionChip({
         </Tooltip>
       )}>
       <PermissionList
-        rows={rows}
+        view={view}
         onChoose={value => {
-          onChoose(option, value)
+          if (view.option) onChoose(view.option, value)
         }}
       />
     </Popover>

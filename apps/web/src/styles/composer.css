@@ -171,19 +171,37 @@
 
 .composer-toolbar {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: var(--sp-8);
   min-height: 44px;
   padding: 0 var(--sp-8) var(--sp-8) var(--sp-8);
 }
+/* All four facts stay readable at every width, so a narrow toolbar takes another row instead of hiding one. */
 .composer-controls {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--sp-4);
-  flex: 1 0 auto;
+  flex: 1 1 0;
   min-width: 0;
 }
-.composer-controls > *,
+.composer-controls > * {
+  max-width: 100%;
+  min-width: 0;
+}
+.composer-controls :is(.ui-value-picker, .chip) {
+  max-width: 100%;
+}
+.composer-controls .ui-value-picker-value {
+  min-width: 0;
+  overflow: hidden;
+}
+.composer-controls .ui-value-picker-text,
+.composer-controls .chip-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .composer-meta > * {
   flex-shrink: 0;
 }
@@ -221,30 +239,6 @@
   transform: rotate(-90deg);
   transform-origin: center;
 }
-.composer-fold-more {
-  display: none;
-}
-/* The footer gives way in one order, measured by useFooterFold: the branch, the level, Agent, a plain 权限's words. */
-.composer-toolbar:not([data-fold='0']) .composer-branch,
-.composer-toolbar[data-fold='3'] .chip-agent,
-.composer-toolbar[data-fold='4'] .chip-agent,
-.composer-toolbar[data-fold='5'] .chip-agent {
-  display: none;
-}
-.composer-toolbar[data-fold='4'] .chip-permission:not(.is-amber) .chip-text,
-.composer-toolbar[data-fold='4'] .chip-permission:not(.is-amber) .chip-chevron {
-  display: none;
-}
-/* Under 420 one 「⋯」 holds the rest; an amber 权限 keeps its words, and the model's name gives way to it first. */
-.composer-toolbar[data-fold='5'] :is(.composer-usage, .composer-more, .chip-permission:not(.is-amber)) {
-  display: none;
-}
-.composer-toolbar[data-fold='5'] .composer-fold-more {
-  display: inline-flex;
-}
-.composer-toolbar[data-fold='5']:has(.chip-permission.is-amber) .model-picker .ui-value-picker-value {
-  display: none;
-}
 .composer-more-body {
   display: grid;
   gap: var(--sp-4);
@@ -259,7 +253,8 @@
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
 }
-.chip-permission.is-amber {
+.chip-permission.is-amber,
+.new-sheet-permission.is-amber .ui-value-picker-value {
   color: var(--amber);
 }
 .chip-permission.is-amber > svg {
@@ -269,7 +264,7 @@
   background: var(--amber-soft);
   color: var(--amber);
 }
-/* The model control's popover: 思考 and 权限 under the models, then the ways to add and manage. */
+/* The model control's popover: 思考 under the models, then the ways to add and manage. */
 .model-footer {
   display: grid;
   gap: var(--sp-2);
@@ -299,12 +294,6 @@
   line-height: var(--lh-ui);
   text-align: left;
 }
-.model-setting-link {
-  transition: background-color var(--m-micro) var(--e-micro);
-}
-.model-setting-link:hover {
-  background: var(--hover);
-}
 .model-setting-name {
   color: var(--muted);
   margin-right: auto;
@@ -315,20 +304,17 @@
   gap: var(--sp-6);
   color: var(--ink-2);
 }
-.model-setting-value[data-amber] {
-  color: var(--amber);
-}
-.model-manage {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  border-top: 1px solid var(--line);
-  margin-top: var(--sp-4);
-  padding-top: var(--sp-4);
-}
 .permission-list {
   display: grid;
   gap: var(--sp-4);
   padding: var(--sp-4);
+}
+.permission-list-title,
+.permission-list-note {
+  padding: var(--sp-4) var(--sp-8);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
 }
 .permission-list-head {
   display: flex;
@@ -825,21 +811,24 @@
 .composer-stop > svg {
   flex-shrink: 0;
 }
-/* A phone's chips run in one scrolling row under the card. */
+/* A phone's chips under the card, wrapping for the same reason as the toolbar's. */
 .composer-chips {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--sp-4);
-  overflow-x: auto;
-  scrollbar-width: none;
   min-width: 0;
 }
 .composer-chips > * {
-  flex-shrink: 0;
+  max-width: 100%;
+  min-width: 0;
 }
-/* What the built-in engine cannot do, under the input while it is the only engine. */
-.composer-engine-note {
+/* The branch, under the card where the toolbar's first glyph starts. */
+.composer-context {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
   padding: 0 var(--sp-16);
   color: var(--muted);
   font-size: var(--fs-caption);
-  line-height: var(--lh-caption-para);
+  line-height: var(--lh-caption);
 }

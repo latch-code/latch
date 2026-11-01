@@ -64,7 +64,7 @@ struct AgentTabView: View {
                 List {
                     Section("已安装") {
                         if PhoneStart.engines(catalog).isEmpty {
-                            Text(model.connected ? "还没有可用的引擎" : "连上 Mac 后显示").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
+                            Text(model.connected ? "还没有可用的 Harness" : "连上 Mac 后显示").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
                         }
                         ForEach(PhoneStart.engines(catalog)) { engine in
                             HStack(spacing: 12) {

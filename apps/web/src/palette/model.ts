@@ -136,7 +136,7 @@ export function paletteGroups({
       notes: matchedSessions.length > SESSION_ROWS ? [{ text: '只显示了部分会话，请缩小搜索范围。' }] : [],
     },
     { label: '文件', rows: files?.rows ?? [], notes: files ? searchNotes({ ...files, loading: false }, FILE_WORDS) : [] },
-    { label: 'Agent', rows: matchEntries(agents, typed) },
+    { label: 'Harness', rows: matchEntries(agents, typed) },
     { label: '设置', rows: matchEntries(settings, typed) },
     { label: '命令', rows: matchEntries(commands, typed) },
     {

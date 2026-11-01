@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { AppSnapshot, ModelRef, FileMention } from '@latch/protocol'
+import { AGENT_PRESETS, type AppSnapshot, type ModelRef, type FileMention } from '@latch/protocol'
 import {
   api,
   ApiError,
@@ -11,7 +11,16 @@ import {
   writePending,
   type PendingSubmission,
 } from '../core/api.ts'
-import { draftStart, pinnedChoice, readChoice, resolveChoice, writeChoice, type ComposerChoice, type DraftPick } from '../composerChoice.ts'
+import {
+  draftStart,
+  forkedChoice,
+  pinnedChoice,
+  readChoice,
+  resolveChoice,
+  writeChoice,
+  type ComposerChoice,
+  type DraftPick,
+} from '../composerChoice.ts'
 import { withConfirmation } from '../core/confirmations.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import type { SendingMessage } from '../core/sendingMessage.ts'
@@ -28,6 +37,9 @@ const restoredChoice = (pending: PendingSubmission): Partial<ComposerChoice> => 
   ...(pending.workspaceId ? { workspaceId: pending.workspaceId } : {}),
   ...(pending.model ? { model: pending.model } : {}),
 })
+
+const storedOwnsInput = (pending: PendingSubmission, selectedId: string | null, assistantId: string | undefined): boolean =>
+  pending.sessionId === undefined ? selectedId === null && assistantId === pending.assistantId : selectedId === pending.sessionId
 
 /**
  * Draft, composer choice and the at-most-one unconfirmed submission of this
@@ -83,14 +95,19 @@ export function useSubmission({
   const remembered = useMemo(() => resolveChoice(catalog, start, { legacy, local }), [catalog, start, legacy, local])
   const borrowed = fork?.choice
   const choice = useMemo(
-    () => (borrowed ? resolveChoice(catalog, { ...start, ...borrowed }, { legacy, local }) : remembered),
+    () => (borrowed ? forkedChoice(catalog, start, borrowed, { legacy, local }) : remembered),
     [catalog, start, borrowed, remembered, legacy, local],
   )
   /** Model switches chosen for existing sessions; sent with that session's next prompt. */
   const [overrides, setOverrides] = useState<Record<string, ModelRef>>({})
 
   const updateChoice = (patch: Partial<ComposerChoice>) => {
-    setFork(previous => previous && (previous.choice ? { ...previous, choice: { ...previous.choice, ...patch } } : previous))
+    setFork(previous => {
+      if (!previous?.choice) return previous
+      // A person picking another place or Harness leaves the source's mode behind.
+      const { mode: _source, ...rest } = previous.choice
+      return { ...previous, choice: { ...(patch.workspaceId || patch.harnessId ? rest : previous.choice), ...patch } }
+    })
     if (pinnedChoice(catalog, { legacy, local })) {
       const { harnessId, model, ...rest } = patch
       setDraftPick(previous => ({ ...previous, ...(harnessId ? { harnessId } : {}), ...(model ? { model } : {}) }))
@@ -106,34 +123,94 @@ export function useSubmission({
   }
 
   useEffect(() => {
-    const restored = readPending(pendingKey)
+    const stored = readPending(pendingKey)
+    const owner = stored && storedOwnsInput(stored, selectedId, assistantId)
+    if (stored?.awaitingConfirmation)
+      void api(`confirmations/${encodeURIComponent(stored.awaitingConfirmation)}`, { method: 'DELETE' }).catch(() => {
+        /* The ticket also expires on the Host. */
+      })
+    // Only a confirmation was open, so nothing was sent: the text goes back to its input, with no row asking about delivery.
+    let restored = stored
+    if (stored?.awaitingConfirmation) {
+      const { awaitingConfirmation: _closed, ...rest } = stored
+      restored = owner ? null : rest
+      try {
+        writePending(pendingKey, restored)
+      } catch {
+        /* Unreadable storage already reads as nothing pending on the next load. */
+      }
+    }
     setPending(restored)
     setSendingMessage(
       restored && !restored.queue
         ? { submission: restored, sessionId: restored.sessionId ?? null, state: 'unknown', startedAt: Date.now() }
         : null,
     )
-    if (restored === null) return
-    const ownsInput =
-      restored.sessionId === undefined ? selectedId === null && assistantId === restored.assistantId : selectedId === restored.sessionId
-    if (ownsInput) {
-      setDraft(restored.prompt)
-      setFork(restored.forkOf ? { ...restored.forkOf, choice: restoredChoice(restored) } : null)
+    if (stored === null) return
+    if (owner) {
+      setDraft(stored.prompt)
+      setFork(stored.forkOf ? { ...stored.forkOf, choice: restoredChoice(stored) } : null)
     }
-    if (restored.sessionId === undefined) {
-      if (!restored.forkOf) {
-        setStored(previous => ({ ...previous, ...restoredChoice(restored) }))
+    if (stored.sessionId === undefined) {
+      if (!stored.forkOf) {
+        setStored(previous => ({ ...previous, ...restoredChoice(stored) }))
         // Under a pin too, what shows is what this unconfirmed request carries.
         setDraftPick({
-          ...(restored.harnessId ? { harnessId: restored.harnessId } : {}),
-          ...(restored.model ? { model: restored.model } : {}),
+          ...(stored.harnessId ? { harnessId: stored.harnessId } : {}),
+          ...(stored.model ? { model: stored.model } : {}),
         })
       }
-    } else if (restored.model) {
-      const { sessionId, model } = restored
+    } else if (stored.model) {
+      const { sessionId, model } = stored
       setOverrides(previous => ({ ...previous, [sessionId]: model }))
     }
   }, [pendingKey])
+
+  // Another window of this device settled what it sent: this one was showing that row from storage.
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== pendingKey || sendingRef.current || readPending(pendingKey) !== null) return
+      setPending(null)
+      setSendingMessage(null)
+    }
+    window.addEventListener('storage', onStorage)
+    return () => {
+      window.removeEventListener('storage', onStorage)
+    }
+  }, [pendingKey])
+
+  /**
+   * A preset chosen before it has a definition gets one now. It runs nothing, and comes before the submission is stored,
+   * so a retry repeats a request the Host can accept. Saved by another window meanwhile is saved.
+   */
+  const saveOfferedHarness = async (): Promise<boolean> => {
+    const presetId = catalog?.harnesses.find(item => item.id === choice.harnessId)?.offer?.presetId
+    const preset = AGENT_PRESETS.find(item => item.id === presetId)
+    if (!preset) return true
+    sendingRef.current = true
+    setSending(true)
+    setError('')
+    try {
+      const body = {
+        id: preset.id,
+        name: preset.name,
+        presetId: preset.id,
+        command: preset.command,
+        args: preset.args,
+        env: {},
+        enabled: true,
+      }
+      await withConfirmation(confirmation => api('agents', { method: 'POST', body, ...(confirmation ? { confirmation } : {}) }))
+      return true
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.code === 'agent-exists') return true
+      setError(inlineError(cause))
+      return false
+    } finally {
+      sendingRef.current = false
+      setSending(false)
+    }
+  }
 
   /**
    * Sends the draft, retries a pending submission with its own requestId, or (`resend`) sends a prompt of the open
@@ -148,6 +225,7 @@ export function useSubmission({
   ): Promise<boolean> => {
     if (sendingRef.current || (!retry && resend === undefined && !draft.trim() && !attachmentIds?.length)) return false
     if (resend !== undefined && (selectedId === null || !resend.trim())) return false
+    if (!retry && selectedId === null && !assistantId && !(await saveOfferedHarness())) return false
     const override =
       selectedId === null || snapshot.tasks.find(task => task.id === selectedId)?.personal ? undefined : overrides[selectedId]
     const submission: PendingSubmission =
@@ -177,10 +255,14 @@ export function useSubmission({
     if (fileRefs?.length && !retry && resend === undefined) submission.fileRefs = fileRefs
     if (attachmentIds?.length && !retry && resend === undefined) submission.attachmentIds = attachmentIds
     // An uncertain delivery never rebinds a retry to the input currently on screen.
-    const origin = requestOrigins.current.get(submission.requestId) ?? {
+    const earlier = requestOrigins.current.get(submission.requestId)
+    // Unless the retry was pressed from where it was sent, which is the only place that offers it.
+    const origin = {
       epoch: destination.current.epoch,
-      consumedDraft: resend === undefined,
+      consumedDraft: earlier?.consumedDraft ?? resend === undefined,
     }
+    if (earlier && !storedOwnsInput(submission, destination.current.selectedId, destination.current.assistantId))
+      origin.epoch = earlier.epoch
     if (!retry) requestOrigins.current.clear()
     requestOrigins.current.set(submission.requestId, origin)
     try {
@@ -200,18 +282,29 @@ export function useSubmission({
     try {
       const { path, body } = submissionRequest(submission)
       // Full-access sessions start only after a local confirmation; the resend carries the same requestId.
-      const result = await withConfirmation(async confirmation => {
-        try {
-          return await api<{ sessionId?: string; queued?: { id: string } }>(path, {
-            method: 'POST',
-            body,
-            ...(confirmation ? { confirmation } : {}),
-          })
-        } catch (error) {
-          if (error instanceof ApiError && error.code === 'stepup-required') setSendingMessage(null)
-          throw error
-        }
-      })
+      const result = await withConfirmation(
+        async confirmation => {
+          try {
+            return await api<{ sessionId?: string; queued?: { id: string } }>(path, {
+              method: 'POST',
+              body,
+              ...(confirmation ? { confirmation } : {}),
+            })
+          } catch (error) {
+            if (error instanceof ApiError && error.code === 'stepup-required') setSendingMessage(null)
+            throw error
+          }
+        },
+        {
+          onTicket: id => {
+            try {
+              writePending(pendingKey, id === null ? submission : { ...submission, awaitingConfirmation: id })
+            } catch {
+              /* What was stored before sending stands: a reload shows it as unconfirmed, which is the cautious reading. */
+            }
+          },
+        },
+      )
       const sessionId = submission.sessionId ?? result.sessionId
       if (sessionId === undefined) throw new Error('missing session id')
       setSendingMessage(submission.queue ? null : { submission, sessionId, state: 'accepted', startedAt: Date.now() })

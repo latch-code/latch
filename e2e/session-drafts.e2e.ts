@@ -192,14 +192,17 @@ it.each([
       if (reload) {
         await page.reload()
         await connected(page)
-        await page.getByRole('button', { name: '重试这次提交', exact: true }).waitFor()
+        await page.getByRole('button', { name: '打开', exact: true }).waitFor()
         expect(await input.inputValue()).toBe('')
       }
       const expectedB = reload ? '' : 'Draft B stays with B'
       if (unknown) {
+        // The row in B points home; the retry happens there, and B's draft stays with B.
         accepted = false
+        await page.getByRole('button', { name: '打开', exact: true }).click()
         await page.getByRole('button', { name: '重试这次提交', exact: true }).click()
         await expect.poll(() => accepted).toBe(true)
+        await choose(b.summary.title)
       }
       release()
       await expect.poll(() => input.isEnabled()).toBe(true)

@@ -215,7 +215,7 @@ export function createWorkspacePlugin(options: WorkspacePluginOptions = {}): Har
   const hooks = options.hooks
   return {
     id: 'workspace-files',
-    name: '工作区文件',
+    name: '项目文件',
     version: '1.2.0',
     description: '列出、读取和编辑项目各文件夹中的文件；每次写入需要审批，节点私有数据不可访问。',
     activate(ctx) {

@@ -51,9 +51,9 @@ describe('the 手机 page rows', () => {
     const browser = device({ id: 'browser', listener: 'loopback-tcp' })
     const invited = device({ id: 'invited', pairedBy: { method: 'invitation', deviceId: 'browser' } })
     expect(removeBody(phone, false, [phone])).toBe('它会立即断开，之后要重新扫码才能连接。')
-    expect(removeBody(browser, false, [browser])).toBe('它会立即断开，之后要重新邀请才能连接。')
-    expect(removeBody(browser, true, [browser])).toBe('这台设备会立即断开，之后要重新邀请才能连接。')
-    expect(removeBody(browser, false, [browser, invited])).toContain('由它邀请的设备会降为只能查看')
+    expect(removeBody(browser, false, [browser])).toBe('它会立即断开，之后要重新发链接才能连接。')
+    expect(removeBody(browser, true, [browser])).toBe('这台设备会立即断开，之后要重新发链接才能连接。')
+    expect(removeBody(browser, false, [browser, invited])).toContain('由它连接的设备会降为只能查看')
     // A device already removed is no longer a consequence.
     expect(removeBody(browser, false, [browser, { ...invited, status: 'revoked' }])).not.toContain('由它邀请')
   })

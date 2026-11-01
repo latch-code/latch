@@ -284,7 +284,7 @@ describe('adding a model service', () => {
       await settings.getByRole('button', { name: '编辑 DeepSeek', exact: true }).click()
       await settings.getByText('还没有填写密钥，Latch 不会使用它。', { exact: true }).waitFor()
       await settings.getByText('在 Mac 上的 Latch 里填写密钥：设置 › 模型 › DeepSeek。').waitFor()
-      await settings.getByText('填写密钥后内置 Agent 才能使用它的模型', { exact: true }).waitFor()
+      await settings.getByText('填写密钥后 Latch 内置才能使用它的模型', { exact: true }).waitFor()
       expect(await settings.getByRole('button', { name: '检测连接', exact: true }).getAttribute('aria-disabled')).toBe('true')
       expect(await settings.getByRole('button', { name: '获取模型', exact: true }).getAttribute('aria-disabled')).toBe('true')
       expect(await settings.getByText('密钥不对或已过期', { exact: false }).count()).toBe(0)
@@ -295,7 +295,7 @@ describe('adding a model service', () => {
       await addService.click()
       await sheet.getByRole('button', { name: 'Ollama', exact: true }).click()
       await sheet
-        .getByText('这个地址要在运行 Latch 的电脑上确认后才能使用。保存后它会显示在列表里，等你在 Mac 上确认地址。', {
+        .getByText('这个地址要在 Mac 上确认后才能使用。保存后它会显示在列表里，等你在 Mac 上确认地址。', {
           exact: true,
         })
         .waitFor()
@@ -317,7 +317,7 @@ describe('adding a model service', () => {
       expect(await settings.getByRole('button', { name: '获取模型', exact: true }).getAttribute('aria-disabled')).toBe('true')
       // The switch says what the address still needs, the check says why it cannot run, and no command for the
       // computer running Latch is offered on this device.
-      await settings.getByText('确认地址后内置 Agent 才能使用它的模型', { exact: true }).waitFor()
+      await settings.getByText('确认地址后 Latch 内置才能使用它的模型', { exact: true }).waitFor()
       expect(await settings.getByRole('button', { name: '检测连接', exact: true }).getAttribute('aria-disabled')).toBe('true')
       expect(await settings.innerText()).not.toContain('pnpm latch')
       expect(testHost.host.security.policy.get().confirmedAddresses).toEqual([])
@@ -348,7 +348,7 @@ describe('an agent that has not started yet', () => {
       const before = testHost.presence.requests.length
       const saved = await desktop.request('agents', {
         method: 'POST',
-        body: { name: '本地 ACP Agent', command: process.execPath, args: [FAKE_ACP_AGENT], env: {} },
+        body: { name: '本地 ACP Harness', command: process.execPath, args: [FAKE_ACP_AGENT], env: {} },
       })
       expect(saved.status).toBe(201)
       expect(testHost.presence.requests).toHaveLength(before)
@@ -358,25 +358,25 @@ describe('an agent that has not started yet', () => {
       const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'zh-CN', deviceScaleFactor: 1 })
       context.setDefaultTimeout(15_000)
       const page = await context.newPage()
-      await enrollBrowser(page, testHost, { name: 'Agent 电脑', scopes: ['view', 'run', 'approve:standard', 'admin'] })
+      await enrollBrowser(page, testHost, { name: 'Harness 电脑', scopes: ['view', 'run', 'approve:standard', 'admin'] })
       // The palette opens an Agent's own page, not just the list.
       await page.keyboard.press('Meta+k')
       const palette = page.getByRole('dialog', { name: '命令面板', exact: true })
       await palette.getByRole('searchbox').fill('本地 ACP')
-      await palette.getByRole('option', { name: '本地 ACP Agent', exact: true }).click()
+      await palette.getByRole('option', { name: '本地 ACP Harness', exact: true }).click()
       await page.getByText('开始会话时，会在这台电脑上确认它要运行的命令、参数和环境变量名。', { exact: true }).waitFor()
       await page.reload()
       await connected(page)
       const settings = await openSettings(page, '设置')
-      await openSection(settings, '引擎')
-      const row = settings.locator('.agent-row', { hasText: '本地 ACP Agent' })
+      await openSection(settings, 'Harness')
+      const row = settings.locator('.agent-row', { hasText: '本地 ACP Harness' })
       await row.waitFor()
       for (const scheme of ['light', 'dark'] as const) {
         await page.emulateMedia({ colorScheme: scheme })
         await page.screenshot({ path: `test-results/settings-agent-not-started-${scheme}.png`, animations: 'disabled' })
       }
       await page.emulateMedia({ colorScheme: 'light' })
-      await settings.getByRole('button', { name: '编辑 本地 ACP Agent', exact: true }).click()
+      await settings.getByRole('button', { name: '编辑 本地 ACP Harness', exact: true }).click()
       await settings.getByText('开始会话时，会在这台电脑上确认它要运行的命令、参数和环境变量名。', { exact: true }).waitFor()
       await page.screenshot({ path: 'test-results/settings-agent-page-not-started.png', animations: 'disabled' })
       await backToSection(settings)
@@ -390,7 +390,7 @@ describe('an agent that has not started yet', () => {
       expect(started.status).toBe(201)
       expect(testHost.presence.requests.slice(beforeStart).map(request => request.preview.action)).toEqual(['task.start-l3'])
       // 重新检测 on its page reads the agents again.
-      await settings.getByRole('button', { name: '编辑 本地 ACP Agent', exact: true }).click()
+      await settings.getByRole('button', { name: '编辑 本地 ACP Harness', exact: true }).click()
       await settings.getByRole('button', { name: '重新检测', exact: true }).click()
       await expect
         .poll(() => settings.getByText('开始会话时，会在这台电脑上确认它要运行的命令、参数和环境变量名。', { exact: true }).count())

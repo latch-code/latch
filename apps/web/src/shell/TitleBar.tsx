@@ -1,4 +1,4 @@
-import { Inbox, PanelLeft, SquarePen } from 'lucide-react'
+import { ArrowLeft, Inbox, PanelLeft, SquarePen } from 'lucide-react'
 import { Count, IconButton, useLivePrevious } from '@latch/ui'
 import { currentShell } from '../core/shell.ts'
 import { waitingCount } from '../sessions.ts'
@@ -7,7 +7,7 @@ import type { ShellState } from './useShellLayout.tsx'
 
 /**
  * The 52px row spanning the window. Its left zone holds the traffic lights' inset and ◧, with 新建会话 once the panel is
- * shut; the rest of the row is the conversation's header, or the title of another entry. On the desktop app the row
+ * shut; the rest of the row is the conversation's header, or the title of a page. On the desktop app the row
  * moves the window, except over its controls.
  */
 export function TitleBar({ shell }: { shell: ShellState }) {
@@ -21,6 +21,7 @@ export function TitleBar({ shell }: { shell: ShellState }) {
     setSidebarShut,
     sidebarToggle,
     startNew,
+    goEntry,
     selectedId,
     snapshot,
     openApprovals,
@@ -32,7 +33,7 @@ export function TitleBar({ shell }: { shell: ShellState }) {
   const approvalsBefore = useLivePrevious(approvals)
   const sessions = route.entry === 'sessions'
   // What the shut panel would otherwise offer stays one click away here.
-  const shut = sessions ? (sidebarColumn ? sidebarCollapsed : drawerMode && !drawer.open) : sidebarColumn && sidebarCollapsed
+  const shut = sidebarColumn ? sidebarCollapsed : drawerMode && sessions
   return (
     <div
       ref={titlebar}
@@ -66,10 +67,20 @@ export function TitleBar({ shell }: { shell: ShellState }) {
             />
           )
         )}
-        {sidebarColumn && !sidebarCollapsed && <span className="titlebar-wordmark">Latch</span>}
+        {!shut && (sidebarColumn || !sessions) && <span className="titlebar-wordmark">Latch</span>}
         {shut && (
           <>
-            <IconButton label="新建会话" icon={SquarePen} pressed={sessions && selectedId === null} onClick={startNew} />
+            {sessions ? (
+              <IconButton label="新建会话" icon={SquarePen} pressed={selectedId === null} onClick={startNew} />
+            ) : (
+              <IconButton
+                label="返回会话"
+                icon={ArrowLeft}
+                onClick={() => {
+                  goEntry('sessions')
+                }}
+              />
+            )}
             {approvals > 0 && (
               <IconButton
                 label={`${approvals} 项等你处理`}

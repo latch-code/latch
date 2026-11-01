@@ -34,7 +34,7 @@
 	<key>NSCameraUsageDescription</key>
 	<string>扫描 Mac 上的配对二维码。</string>
 	<key>NSFaceIDUsageDescription</key>
-	<string>验证后查看并继续已登记电脑上的会话。</string>
+	<string>验证后查看并继续已连接的电脑上的会话。</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>在同一个 Wi‑Fi 下直接连接你的 Mac。</string>
 	<key>UIApplicationSceneManifest</key>

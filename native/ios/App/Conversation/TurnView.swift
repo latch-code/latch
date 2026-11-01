@@ -12,7 +12,6 @@ struct TurnView: View, Equatable {
     let delivery: String?
     let harnessId: String?
     let engine: String
-    let assistant: String
     /** The run's own line says how it ended, so the footer does not say it twice. */
     let endSaid: Bool
     let open: (String, String?) -> Void
@@ -27,7 +26,7 @@ struct TurnView: View, Equatable {
         let folds = !running && PhoneConversation.workFolds(turn, outcome: outcome)
         VStack(alignment: .leading, spacing: 12) {
             if let user = turn.user { UserBubble(message: user, delivery: delivery) }
-            if !turn.replies.isEmpty || running { AuthorLine(harnessId: harnessId, assistant: assistant, engine: engine, model: PhoneConversation.turnModel(turn)) }
+            if !turn.replies.isEmpty || running { AuthorLine(harnessId: harnessId, engine: engine, model: PhoneConversation.turnModel(turn)) }
             if folds {
                 Button { withAnimation(.easeOut(duration: 0.2)) { unfolded.toggle() } } label: {
                     HStack(spacing: 4) {
@@ -83,17 +82,16 @@ private struct UserBubble: View {
     }
 }
 
-/** The word is always the Agent; the engine and the model are secondary. */
+/** The Harness, with the model secondary. */
 private struct AuthorLine: View {
     let harnessId: String?
-    let assistant: String
     let engine: String
     let model: String?
     var body: some View {
         HStack(spacing: 8) {
             EngineTile(harnessId: harnessId, size: 16)
-            Text(assistant).font(.system(size: 14, weight: .medium)).foregroundStyle(PhoneTheme.ink)
-            Text(([engine] + [model].compactMap { $0 }).joined(separator: " · ")).font(.system(size: 12)).foregroundStyle(PhoneTheme.muted).lineLimit(1)
+            Text(engine).font(.system(size: 14, weight: .medium)).foregroundStyle(PhoneTheme.ink)
+            if let model { Text(model).font(.system(size: 12)).foregroundStyle(PhoneTheme.muted).lineLimit(1) }
         }
     }
 }

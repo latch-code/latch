@@ -1,26 +1,22 @@
 import { useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
-import { ArrowLeftRight, BookOpen, Box, Cpu, Plus, Wrench } from 'lucide-react'
+import { ArrowLeftRight, BookOpen, Plus, Wrench } from 'lucide-react'
 import type { AppSnapshot, PluginInfo, PluginPackageManifest, PluginPackageSummary } from '@latch/protocol'
-import { BUILTIN_HARNESS_NAME } from '../composerChoice.ts'
 import { api, errorMessage } from '../core/api.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { Button, EmptyState, IconButton, InlineNotice, Switch, type LucideIcon } from '@latch/ui'
-import { IconTile, Loading, SettingsGroup, SettingsRow } from './common.tsx'
+import { IconTile, Loading, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
 import { NavigationContext, SettingsPages } from './navigation.tsx'
 import { packageState, PluginReachGroup, usePluginAssets } from './PluginAssetsSettings.tsx'
 import { packageReach, pluginReach, type PluginReach } from './pluginAssets.ts'
 
-type Shelf = 'tool' | 'skill' | 'provider' | 'engine' | 'connection'
+type Shelf = 'tool' | 'skill' | 'connection'
 const SHELVES: Array<{ id: Shelf; label: string; icon: LucideIcon }> = [
   { id: 'tool', label: '工具', icon: Wrench },
   { id: 'skill', label: '技能', icon: BookOpen },
-  { id: 'provider', label: '模型服务', icon: Box },
-  { id: 'engine', label: '引擎', icon: Cpu },
   { id: 'connection', label: '连接', icon: ArrowLeftRight },
 ]
 const CAPABILITY_LABELS: Record<string, string> = {
-  harness: '引擎',
+  harness: 'Harness',
   provider: '模型服务',
   tool: '工具',
   ui: '界面',
@@ -28,25 +24,12 @@ const CAPABILITY_LABELS: Record<string, string> = {
   data: '数据',
   transport: '连接',
 }
-/** Where a plugin that settings manages for the person is turned on and off. */
-export type PluginManager = 'providers' | 'engines'
-const MANAGERS: Record<'provider' | 'agent', { section: PluginManager; label: string }> = {
-  provider: { section: 'providers', label: '在 设置 › 模型 中管理' },
-  agent: { section: 'engines', label: '在 设置 › 引擎 中管理' },
-}
-
-/** The built-in engine's plugin, named as the engine is even when an older Host still says 「Standard Harness」. */
-export const pluginName = (plugin: Pick<PluginInfo, 'name' | 'capabilities'>) =>
-  plugin.capabilities.includes('harness:standard') ? BUILTIN_HARNESS_NAME : plugin.name
-
 const kindsOf = (capabilities: readonly string[]) => capabilities.map(capability => capability.split(':')[0])
 
-/** The shelf a plugin stands on, named for what it does for the person; a package with code is a tool. */
+/** The shelf a plugin stands on, named for what it does for the person; anything else with code is a tool. */
 export function shelfOf(capabilities: readonly string[]): Shelf {
   const kinds = kindsOf(capabilities)
   if (kinds.includes('transport')) return 'connection'
-  if (kinds.includes('harness')) return 'engine'
-  if (kinds.includes('provider')) return 'provider'
   if (kinds.includes('skill') && !kinds.includes('tool') && !kinds.includes('ui')) return 'skill'
   return 'tool'
 }
@@ -62,6 +45,12 @@ type Item = { key: string; name: string; state: string; attention: boolean; shel
   | { kind: 'plugin'; plugin: PluginInfo }
   | { kind: 'package'; record: PluginPackageSummary; plugin?: PluginInfo }
 )
+
+/** What 设置 › 模型 and 设置 › Harness already list. A person's own package offering either is still a plugin. */
+function managedElsewhere(plugin: PluginInfo): boolean {
+  if (plugin.managed === 'provider' || plugin.managed === 'agent') return true
+  return plugin.managed === 'core' && kindsOf(plugin.capabilities).some(kind => kind === 'harness' || kind === 'provider')
+}
 
 function pluginState(plugin: PluginInfo): string {
   if (plugin.managed === 'core') return '始终开启'
@@ -85,12 +74,12 @@ export function pluginItems(plugins: readonly PluginInfo[], records: readonly Pl
       }
     }),
     ...plugins
-      .filter(plugin => !owned.has(plugin.id))
+      .filter(plugin => !owned.has(plugin.id) && !managedElsewhere(plugin))
       .map((plugin): Item => ({
         key: `plugin:${plugin.id}`,
         kind: 'plugin',
         plugin,
-        name: pluginName(plugin),
+        name: plugin.name,
         state: pluginState(plugin),
         attention: false,
         shelf: shelfOf(plugin.capabilities),
@@ -98,7 +87,7 @@ export function pluginItems(plugins: readonly PluginInfo[], records: readonly Pl
   ]
 }
 
-/** The shelves with their rows, in the entry's panel on wide windows and as the section's list on a phone. */
+/** The shelves with their rows: the section's list, and a row opens one plugin over it. */
 function Shelves({
   items,
   selected,
@@ -151,8 +140,7 @@ function Shelves({
 const inUseText = (sessions: number) => `有 ${sessions} 个会话正在使用，结束后才能停用`
 
 /**
- * One plugin: what it is, what it provides, where its code runs and which devices receive it. The switch stands in the
- * title row on wide windows; a plugin that another page manages points there instead of offering a second switch.
+ * One plugin: what it is, what it provides, where its code runs and which devices receive it.
  */
 function PluginDetail({
   item,
@@ -165,7 +153,6 @@ function PluginDetail({
   onToggle,
   onSetPackage,
   onEdit,
-  onManage,
 }: {
   item: Item
   busy: boolean
@@ -178,20 +165,18 @@ function PluginDetail({
   onToggle: (plugin: PluginInfo) => void
   onSetPackage: (record: PluginPackageSummary, enabled: boolean) => void
   onEdit: (record: PluginPackageSummary) => void
-  onManage: (section: PluginManager) => void
 }) {
-  const { phone, titleSlot } = useContext(NavigationContext)
+  // A phone's page has the name in its bar.
+  const { phone } = useContext(NavigationContext)
   const plugin = item.plugin
   const record = item.kind === 'package' ? item.record : undefined
   const version = record?.version ?? plugin?.version
   const description = record?.description ?? plugin?.description
   const capabilities = record?.capabilities ?? plugin?.capabilities ?? []
-  const manager = plugin?.managed === 'provider' || plugin?.managed === 'agent' ? MANAGERS[plugin.managed] : undefined
   const reason = plugin?.enabled && plugin.activeRuns > 0 && plugin.managed === undefined ? inUseText(plugin.activeRuns) : undefined
   // A package has its own switch once a revision is applied: taking it back should not need its editor.
   const appliedPackage = record?.appliedRevision && canEdit ? record : undefined
-  const canSwitch =
-    appliedPackage !== undefined || (plugin !== undefined && manager === undefined && plugin.managed !== 'core' && !plugin.editable)
+  const canSwitch = appliedPackage !== undefined || (plugin !== undefined && plugin.managed !== 'core' && !plugin.editable)
   const control: ReactNode = canSwitch && (
     <Switch
       label={`启用 ${item.name}`}
@@ -206,42 +191,16 @@ function PluginDetail({
   )
   return (
     <>
-      {!phone
-        && titleSlot
-        && createPortal(
-          <div className="plugin-title">
-            <h1 className="titlebar-page-title">{item.name}</h1>
-            <span className="plugin-title-end">
-              <span>{item.state}</span>
-              {control}
-            </span>
-          </div>,
-          titleSlot,
-        )}
+      {!phone && <SectionHeading title={item.name} />}
       {description && <p className="plugin-description">{description}</p>}
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
       {record?.unavailableReason && <InlineNotice tone="error">{record.unavailableReason}</InlineNotice>}
       {status}
       <SettingsGroup title="设置">
-        {phone && canSwitch && <SettingsRow title={item.state} description={reason} trailing={control} />}
+        {canSwitch ? <SettingsRow title={item.state} description={reason} trailing={control} /> : <SettingsRow title={item.state} />}
         {version && <SettingsRow title="版本" trailing={<span className="settings-row-value">{version}</span>} />}
         {capabilities.length > 0 && (
           <SettingsRow title="提供" trailing={<span className="settings-row-value">{provides(capabilities)}</span>} />
-        )}
-        {reason && !phone && <SettingsRow title="使用中" description={reason} />}
-        {manager && (
-          <SettingsRow
-            title="开关"
-            trailing={
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  onManage(manager.section)
-                }}>
-                {manager.label}
-              </Button>
-            }
-          />
         )}
         {plugin?.editable && !record && <SettingsRow title="内容" description="在 Mac 上的 Latch 里编辑" />}
         {record && canEdit && (
@@ -263,18 +222,7 @@ function PluginDetail({
   )
 }
 
-export function PluginsSettings({
-  onManage,
-  snapshot,
-  access,
-  onChanged,
-}: {
-  onManage: (section: PluginManager) => void
-  snapshot: AppSnapshot
-  access: DeviceAccess
-  onChanged: () => void
-}) {
-  const { phone, navSlot } = useContext(NavigationContext)
+export function PluginsSettings({ snapshot, access, onChanged }: { snapshot: AppSnapshot; access: DeviceAccess; onChanged: () => void }) {
   const [plugins, setPlugins] = useState<PluginInfo[] | null>(null)
   const [chosen, setChosen] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -323,12 +271,10 @@ export function PluginsSettings({
     }
   }
 
-  // In the order the shelves draw them, so what a wide window opens on is the row at the top.
   const items = pluginItems(plugins ?? [], assets.records ?? []).toSorted(
     (a, b) => SHELVES.findIndex(shelf => shelf.id === a.shelf) - SHELVES.findIndex(shelf => shelf.id === b.shelf),
   )
-  // Wide windows always show one plugin; on a phone the list is the page until a row is chosen.
-  const selected = items.find(item => item.key === chosen) ?? (phone ? undefined : items[0])
+  const selected = items.find(item => item.key === chosen)
   const selectedRecord = selected?.kind === 'package' ? selected.record : undefined
   useEffect(() => {
     if (!selectedRecord) return undefined
@@ -377,7 +323,6 @@ export function PluginsSettings({
       }}
       onSetPackage={assets.setEnabled}
       onEdit={assets.open}
-      onManage={onManage}
     />
   )
   const assetsError = !assets.locked && assets.error && (
@@ -391,40 +336,31 @@ export function PluginsSettings({
       {assets.error}
     </InlineNotice>
   )
-  if (phone)
-    return (
-      <>
-        <SettingsPages
-          main={
-            <>
-              {error && !selected && <InlineNotice tone="error">{error}</InlineNotice>}
-              {assetsError}
-              {items.length === 0 ? <EmptyState title="这台 Mac 还没有可管理的插件" /> : shelves}
-            </>
-          }
-          levels={
-            selected
-              ? [
-                  {
-                    key: selected.key,
-                    title: selected.name,
-                    onBack: () => {
-                      setChosen(null)
-                    },
-                    content: detail,
-                  },
-                ]
-              : []
-          }
-        />
-        {assets.dialogs}
-      </>
-    )
   return (
     <>
-      {navSlot && createPortal(shelves, navSlot)}
-      {assetsError}
-      {detail ?? <EmptyState title="这台 Mac 还没有可管理的插件" />}
+      <SettingsPages
+        main={
+          <>
+            {error && !selected && <InlineNotice tone="error">{error}</InlineNotice>}
+            {assetsError}
+            {items.length === 0 ? <EmptyState title="这台 Mac 还没有可管理的插件" /> : shelves}
+          </>
+        }
+        levels={
+          selected
+            ? [
+                {
+                  key: selected.key,
+                  title: selected.name,
+                  onBack: () => {
+                    setChosen(null)
+                  },
+                  content: detail,
+                },
+              ]
+            : []
+        }
+      />
       {assets.dialogs}
     </>
   )

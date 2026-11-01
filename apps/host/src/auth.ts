@@ -286,7 +286,7 @@ async function preparePrivateDirectory(directory: string): Promise<void> {
 }
 
 function corrupt(file: string, detail: string): AppError {
-  return new AppError(500, 'devices-corrupt', `设备登记文件 auth/${file} 无法读取，原文件已保留：${detail}`)
+  return new AppError(500, 'devices-corrupt', `设备文件 auth/${file} 无法读取，原文件已保留：${detail}`)
 }
 
 function iso(ms: number): string {
@@ -409,7 +409,7 @@ export class DeviceStore {
       } else {
         const parsed = devicesFile.safeParse(raw)
         if (!parsed.success) throw corrupt(DEVICES_FILE, version === 2 ? '格式无效' : `不支持的版本 ${String(version)}`)
-        if (parsed.data.hostId !== this.hostId) throw new AppError(500, 'devices-host-mismatch', '设备登记属于另一台 Host')
+        if (parsed.data.hostId !== this.hostId) throw new AppError(500, 'devices-host-mismatch', '设备文件属于另一台 Host')
         for (const device of parsed.data.devices) {
           if (isNativeListener(device.listener) !== Boolean(device.native)) throw corrupt(DEVICES_FILE, '原生身份缺失或入口不匹配')
           if (device.native) {
@@ -1057,7 +1057,7 @@ export class DeviceStore {
       requireGrantable(scopes, input.connection.listener)
       if (input.dataScope !== 'work' && input.dataScope !== 'all') throw new AppError(400, 'invalid-data-scope', '数据范围无效')
       const method = input.pairedBy.method
-      if (method === 'migration') throw new AppError(400, 'invalid-pairing', '登记方式无效')
+      if (method === 'migration') throw new AppError(400, 'invalid-pairing', '连接方式无效')
       // Checked on the store's queue, after any revocation queued before it: an enrollment whose inviter was revoked
       // in the meantime would otherwise create an active device that the inviter's cascade never reached.
       if (input.pairedBy.deviceId !== undefined) {
@@ -1066,9 +1066,9 @@ export class DeviceStore {
           throw new AppError(403, 'invitation-invalid', '配对码无效或已过期')
       }
       const native = isNativeListener(input.connection.listener) && input.native ? validateNativeIdentity(input.native, der) : undefined
-      if (native && this.nativeCandidates().length >= 96) throw new AppError(429, 'native-device-limit', '原生设备登记已达到上限')
+      if (native && this.nativeCandidates().length >= 96) throw new AppError(429, 'native-device-limit', '手机连接数已达到上限')
       if (isNativeListener(input.connection.listener) !== Boolean(native))
-        throw new AppError(400, 'native-identity-required', '原生登记必须绑定连接证书与验证密钥')
+        throw new AppError(400, 'native-identity-required', '手机连接必须绑定连接证书与验证密钥')
       if (native && !/^[a-f0-9]{64}$/u.test(input.native!.knockHash))
         throw new AppError(400, 'native-identity-invalid', '原生设备的敲门派生无效')
       const now = this.now()
@@ -1205,7 +1205,7 @@ export class DeviceStore {
       if (!device || device.status === 'revoked') throw new AppError(401, 'device-revoked', '此设备已被撤销，请重新在本机确认')
       if (!this.usable(device) || !device.credential) {
         throw now > device.credentialExpiresAt
-          ? new AppError(401, 'credential-expired', '此设备的登记已满 30 天，请重新在本机确认')
+          ? new AppError(401, 'credential-expired', '这台设备的连接已满 30 天，请重新在本机确认')
           : unauthorized()
       }
       if (input.connection.listener !== device.listener || input.connection.origin !== device.origin) {
@@ -1670,7 +1670,7 @@ export class EnrollmentService {
     this.prune()
     // A phone gets past this only after its claim is checked: another QR holder must not be able to fill it.
     if (!isNativeListener(connection.listener)) this.assertPendingRoom()
-    if (!request || typeof request !== 'object') throw new AppError(400, 'invalid-request', '登记请求无效')
+    if (!request || typeof request !== 'object') throw new AppError(400, 'invalid-request', '连接请求无效')
     const { der } = parseP256Spki(request.publicKey)
     let native: NativeRegistrationIdentity | undefined
     if (!isNativeListener(connection.listener) && request.native)
@@ -1679,7 +1679,7 @@ export class EnrollmentService {
       // The result is fixed, so a phone asking for anything is not asking this Host.
       if (request.scopes !== undefined || request.dataScope !== undefined)
         throw new AppError(400, 'scope-not-grantable', '该权限在此连接方式下不可授予')
-    } else if (request.gatewayHash !== undefined) throw new AppError(400, 'invalid-request', '登记请求无效')
+    } else if (request.gatewayHash !== undefined) throw new AppError(400, 'invalid-request', '连接请求无效')
     const action = isNativeListener(connection.listener) ? 'device.enroll-native' : 'device.enroll'
     const legacyDevice =
       connection.listener === 'loopback-tcp' && legacy?.kind === 'legacy-cookie' ? this.devices.legacyMatch(legacy.value) : undefined
@@ -1717,9 +1717,9 @@ export class EnrollmentService {
 
     if (request.offlineCode !== undefined) {
       // Offline codes skip the local confirmation, so only the desktop app's socket takes them.
-      if (!local) throw new AppError(403, 'offline-code-invalid', '离线登记码无效或已过期')
+      if (!local) throw new AppError(403, 'offline-code-invalid', '离线连接码无效或已过期')
       ticket = await this.findOfflineTicket(request.offlineCode)
-      if (!ticket) throw new AppError(403, 'offline-code-invalid', '离线登记码无效或已过期')
+      if (!ticket) throw new AppError(403, 'offline-code-invalid', '离线连接码无效或已过期')
       method = 'offline'
       scopes = [...ALL_SCOPES]
       dataScope = 'all'
@@ -1849,7 +1849,7 @@ export class EnrollmentService {
         ]
     const warnings = nativeRequest
       ? ['只有在你正在连接这台手机时才确认。']
-      : ['只有在你正在登记这台设备、并且两边显示的指纹完全一致时才确认。']
+      : ['只有在你正在连接这台设备、并且两边显示的指纹完全一致时才确认。']
     if (scopes.includes('admin')) warnings.push('该设备将可以管理此 Host（模型服务、插件、项目和其他设备）。')
     const binding = paramsHash(action, {
       enrollmentId: id,
@@ -2212,7 +2212,7 @@ export class EnrollmentService {
   private consumeOfflineTicket(ticket: OfflineTicket, actor: AuditActor): Promise<void> {
     const run = this.offlineQueue.then(async () => {
       const tickets = await readOfflineTickets(this.directory)
-      if (!tickets.some(item => item.id === ticket.id)) throw new AppError(403, 'offline-code-invalid', '离线登记码无效或已过期')
+      if (!tickets.some(item => item.id === ticket.id)) throw new AppError(403, 'offline-code-invalid', '离线连接码无效或已过期')
       await this.audit.append({
         action: 'offline.ticket.consumed',
         actor,
@@ -2232,7 +2232,7 @@ export class EnrollmentService {
 
   private lookup(id: unknown, connection: ConnectionContext): Enrollment {
     const enrollment = typeof id === 'string' ? this.enrollments.get(id) : undefined
-    if (!enrollment) throw new AppError(404, 'enrollment-not-found', '找不到该登记请求')
+    if (!enrollment) throw new AppError(404, 'enrollment-not-found', '找不到这个连接请求')
     if (
       !(
         enrollment.connection.listener === connection.listener
@@ -2240,7 +2240,7 @@ export class EnrollmentService {
       )
       || enrollment.connection.origin !== connection.origin
     ) {
-      throw new AppError(409, 'listener-mismatch', '请在发起登记的同一页面完成登记')
+      throw new AppError(409, 'listener-mismatch', '请在发起连接的同一页面完成连接')
     }
     if ((enrollment.status === 'pending' || enrollment.status === 'approved') && this.now() > enrollment.expiresAt) {
       enrollment.status = 'expired'
@@ -2337,9 +2337,9 @@ export class EnrollmentService {
       case 'denied':
         throw new AppError(403, 'enrollment-denied', '本机拒绝了此设备')
       case 'expired':
-        throw new AppError(410, 'enrollment-expired', '登记请求已超时，请重新提交')
+        throw new AppError(410, 'enrollment-expired', '连接请求已超时，请重新提交')
       case 'cancelled':
-        throw new AppError(410, 'enrollment-cancelled', '登记请求已取消，请重新提交')
+        throw new AppError(410, 'enrollment-cancelled', '连接请求已取消，请重新提交')
       case 'completed':
         if (enrollment.native && isNativeListener(connection.listener)) {
           const deviceId = this.prepareNative(id, signature, connection),
@@ -2347,7 +2347,7 @@ export class EnrollmentService {
           if (!device) throw unauthorized()
           return { device, credential: '' }
         }
-        throw new AppError(409, 'enrollment-completed', '该登记已完成')
+        throw new AppError(409, 'enrollment-completed', '这次连接已完成')
       case 'approved':
         break
     }
@@ -2376,7 +2376,7 @@ export class EnrollmentService {
       if (ended) {
         await this.removeUnwanted(result.device.id, actor).catch(() => {})
         enrollment.status = 'cancelled'
-        throw enrollment.contended ? contended() : new AppError(410, 'enrollment-cancelled', '登记请求已取消，请重新提交')
+        throw enrollment.contended ? contended() : new AppError(410, 'enrollment-cancelled', '连接请求已取消，请重新提交')
       }
       enrollment.status = 'completed'
       enrollment.completedAt = this.now()

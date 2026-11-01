@@ -303,7 +303,7 @@ public actor NativePairing {
         return item
     }
     private func view(_ value: [String: Any]) throws -> NativeEnrollment {
-        guard Set(value.keys).isSubset(of: ["id", "status", "fingerprint", "nonce", "expiresAt", "hashDisplay", "reason", "contended"]),
+        guard Set(value.keys).isSubset(of: ["id", "status", "fingerprint", "nonce", "expiresAt", "hashDisplay", "reason", "contended", "scopes", "dataScope"]),
               let id = value["id"] as? String, LinkBytes.matches(id, "[A-Za-z0-9_-]{1,64}"),
               let status = value["status"] as? String, ["pending", "approved", "completed", "denied", "expired", "cancelled"].contains(status),
               let nonce = value["nonce"] as? String, LinkBytes.matches(nonce, "[A-Za-z0-9_-]{16,128}"),

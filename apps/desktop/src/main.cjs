@@ -530,7 +530,7 @@ async function start() {
       verifying ??= (async () => {
         const next = await readHostStateFile(hostStatePath)
         previewBrowser.blockHost(next)
-        if (!next || next.hostId !== state.hostId) throw new Error('Latch Host 未运行')
+        if (!next || next.hostId !== state.hostId) throw new Error('Latch 服务未运行')
         const result = await inspectHostState(next)
         if (!result.ok) throw new Error(result.reason)
         socketPath = next.socketPath

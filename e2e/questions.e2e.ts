@@ -66,7 +66,7 @@ test('keeps text written before a question arrived as the next message, until �
     const input = page.getByRole('textbox', { name: '继续对话', exact: true })
     await input.fill('顺便看看手机端')
     release()
-    const card = page.getByRole('region', { name: 'Agent 提问', exact: true })
+    const card = page.getByRole('region', { name: 'Harness 提问', exact: true })
     await card.waitFor()
     // The text stays in the input and the slot still queues; Enter would not have answered.
     await page.getByRole('button', { name: '排队发送', exact: true }).waitFor()
@@ -165,7 +165,7 @@ test('answers a multi-question wizard, keeps per-device drafts across sessions, 
         await palette.getByRole('option', { name: prompt, exact: true }).click()
       }
       await open()
-      const card = page.getByRole('region', { name: 'Agent 提问', exact: true })
+      const card = page.getByRole('region', { name: 'Harness 提问', exact: true })
       await expect.poll(() => card.isVisible()).toBe(true)
       // A single-choice question answers on the press and goes on to the next.
       await card.getByRole('button', { name: /TypeScript/ }).click()

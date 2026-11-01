@@ -285,7 +285,7 @@ function CompactDiff({ diff, fileActions }: { diff: DiffViewFile; fileActions?: 
 export const PREVIOUS_UNAVAILABLE_LABEL = '原内容未显示'
 export const PREVIOUS_UNAVAILABLE_TEXT = '该文件已存在，但原内容过大、是二进制或无法读取，没有显示：写入会覆盖它。'
 export const PREVIOUS_UNKNOWN_LABEL = '原内容未知'
-export const PREVIOUS_UNKNOWN_TEXT = '执行端没有说明原内容：这可能是新文件，也可能会覆盖过大、二进制或无法读取的现有文件。'
+export const PREVIOUS_UNKNOWN_TEXT = 'Harness 没有说明原内容：这可能是新文件，也可能会覆盖过大、二进制或无法读取的现有文件。'
 
 /** Warning lines for previous content the reviewer cannot see; a new file or included text needs none. */
 export const PREVIOUS_NOTES: Partial<Record<PreviousState, string>> = {
@@ -424,7 +424,7 @@ function DiffFile({
           setOpen(true)
         }}>
         <div className="diff-paper">
-          <div className="diff-body" role="region" tabIndex={0} aria-label={`${path} 的变更`}>
+          <div className="diff-body" role="region" tabIndex={0} aria-label={`${path} 的改动`}>
             {note && !whole && <p className="diff-note">{note}</p>}
             {diff.binary ? (
               <p className="diff-empty">{BINARY_TEXT}</p>

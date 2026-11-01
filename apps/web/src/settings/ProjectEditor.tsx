@@ -423,11 +423,11 @@ export function ProjectEditor({
         <p className="settings-caption">
           {currentShell() && owner
             ? '重新启动 Latch 桌面端后，可以在这里添加和重新选择文件夹。'
-            : '新建项目和添加文件夹要在运行 Latch 的电脑上用桌面端完成。'}
+            : '添加项目和添加文件夹要在 Mac 上用桌面端完成。'}
         </p>
       )}
       {folders.length > 1 && (
-        <SettingsGroup title="各 Agent 使用的文件夹" caption="Agent 以完全访问运行时，文件夹范围由 Agent 自己执行，不是隔离。">
+        <SettingsGroup title="各 Harness 使用的文件夹" caption="Harness 以完全访问运行时，文件夹范围由 Harness 自己执行，不是隔离。">
           {snapshot.catalog?.harnesses
             .filter(harness => harness.status === 'ready')
             .map(harness => (

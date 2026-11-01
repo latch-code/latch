@@ -1,12 +1,12 @@
 import { useEffect, type ReactNode, type RefObject } from 'react'
 import { FlaskConical } from 'lucide-react'
 import type { AppSnapshot, PersonalAssistantSummary } from '@latch/protocol'
-import { Badge, Button, ICON_STROKE, MOTION, Sheet, SwitchRow, usePresence, ValuePicker } from '@latch/ui'
-import { engineEntries, harnessName, type ComposerChoice } from '../composerChoice.ts'
+import { Badge, Button, ICON_STROKE, MenuFooterNote, MOTION, Sheet, usePresence, ValuePicker } from '@latch/ui'
+import { engineEntries, type ComposerChoice } from '../composerChoice.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
-import { MODE_COPY } from '../core/securityCopy.ts'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { ModelPicker, ModeSwitch, ProjectPicker } from '../components/Pickers.tsx'
+import { DEFAULT_MODEL } from '../composer/modelReasoning.ts'
 import { draftPermission } from '../composer/permission.ts'
 
 function StaticRow({ label, value }: { label: string; value: string }) {
@@ -18,7 +18,7 @@ function StaticRow({ label, value }: { label: string; value: string }) {
   )
 }
 
-/** The phone's new session: one row per choice (Agent, 项目, 引擎, 模型, 权限), then the input; 开始 is in the header. */
+/** The phone's new session: one row per choice (项目, Harness, 模型, 思考, 权限), then the input; 开始 is in the header. */
 export function NewSessionSheet({
   personal,
   open,
@@ -38,6 +38,7 @@ export function NewSessionSheet({
   onProvidersChanged,
   onManageWorkspaces,
   onCreateProject,
+  projectAsk,
   onBrowseFiles,
   focusComposer,
 }: {
@@ -59,6 +60,7 @@ export function NewSessionSheet({
   onProvidersChanged?: (() => void) | undefined
   onManageWorkspaces?: (() => void) | undefined
   onCreateProject?: (() => void) | undefined
+  projectAsk?: { request: number; notice?: string | undefined; clearNotice: () => void }
   onBrowseFiles?(): void
   focusComposer?: RefObject<HTMLTextAreaElement | null>
 }) {
@@ -73,8 +75,7 @@ export function NewSessionSheet({
   const catalog = snapshot.catalog
   const entries = catalog ? engineEntries(catalog, access, choice.workspaceId) : []
   const harness = entries.find(entry => entry.harness.id === choice.harnessId)?.harness
-  const permission = draftPermission(harness)
-  const canChatOnly = harness?.modes.includes('chat') === true && harness.modes.includes('agent')
+  const permission = draftPermission(harness, choice.mode)
   return (
     <Sheet
       open={open}
@@ -89,24 +90,24 @@ export function NewSessionSheet({
       }>
       {present && !personal && catalog && (
         <div className="new-sheet-card">
-          <StaticRow label="Agent" value="通用" />
-          {choice.mode !== 'chat' && (
-            <ProjectPicker
-              access={access}
-              harness={harness}
-              variant="row"
-              catalog={catalog}
-              value={choice.workspaceId}
-              disabled={disabled}
-              onChange={workspaceId => onChoice({ workspaceId })}
-              onManage={onManageWorkspaces}
-              onCreate={onCreateProject}
-            />
-          )}
+          <ProjectPicker
+            access={access}
+            harness={harness}
+            variant="row"
+            catalog={catalog}
+            value={choice.workspaceId === 'default' && !choice.projectSkipped && catalog.sessionFolders ? undefined : choice.workspaceId}
+            disabled={disabled}
+            onChange={workspaceId => onChoice({ workspaceId, projectSkipped: workspaceId === 'default' })}
+            onManage={onManageWorkspaces}
+            onCreate={onCreateProject}
+            openRequest={projectAsk?.request}
+            notice={projectAsk?.notice}
+            onClosed={projectAsk?.clearNotice}
+          />
           <ValuePicker
             variant="row"
-            label="引擎"
-            placeholder="选择引擎"
+            label="Harness"
+            placeholder="选择 Harness"
             className="new-sheet-row"
             value={harness?.id}
             leading={harness ? <HarnessTile harness={harness} size={16} /> : undefined}
@@ -114,38 +115,43 @@ export function NewSessionSheet({
             options={entries.map(entry => ({
               value: entry.harness.id,
               label: entry.label,
+              description: entry.line,
               media: <HarnessTile harness={entry.harness} size={20} />,
               ...(entry.disabledReason ? { disabledReason: entry.disabledReason } : {}),
             }))}
-            onValueChange={harnessId => {
-              const chosen = entries.find(entry => entry.harness.id === harnessId)?.harness
-              onChoice({ harnessId, ...(choice.mode === 'chat' && !chosen?.modes.includes('chat') ? { mode: 'agent' as const } : {}) })
-            }}
+            onValueChange={harnessId => onChoice({ harnessId })}
           />
           {harness?.models === 'host' ? (
-            <ModelPicker
-              variant="row"
-              catalog={catalog}
-              value={choice.model}
-              disabled={disabled}
-              access={access}
-              onChange={model => onChoice({ model })}
-              onManage={onManageProviders}
-              onAdded={onProvidersChanged}
-            />
+            <>
+              <ModelPicker
+                variant="row"
+                catalog={catalog}
+                value={choice.model}
+                disabled={disabled}
+                access={access}
+                onChange={model => onChoice({ model })}
+                onManage={onManageProviders}
+                onAdded={onProvidersChanged}
+              />
+              <StaticRow label="思考" value="模型默认" />
+            </>
           ) : (
-            harness && <StaticRow label="模型" value={`${harnessName(harness)} 自带`} />
+            harness && (
+              <>
+                <StaticRow label="模型" value={`${DEFAULT_MODEL} · 开始后可以换`} />
+                <StaticRow label="思考" value="默认 · 开始后可以换" />
+              </>
+            )
           )}
           {permission && (
-            <StaticRow label="权限" value={permission.label === MODE_COPY.afterStart ? permission.label : MODE_COPY.askWhenNeeded} />
-          )}
-          {canChatOnly && (
-            <SwitchRow
-              className="new-sheet-row"
-              title="只聊天，不读写文件"
-              checked={choice.mode === 'chat'}
-              disabled={disabled}
-              onCheckedChange={chat => onChoice({ mode: chat ? 'chat' : 'agent' })}
+            <ValuePicker
+              variant="row"
+              label="权限"
+              className={`new-sheet-row new-sheet-permission${permission.amber ? ' is-amber' : ''}`}
+              value="current"
+              options={[{ value: 'current', label: permission.label }]}
+              footer={<MenuFooterNote>{permission.note ?? permission.line}</MenuFooterNote>}
+              onValueChange={() => {}}
             />
           )}
           {onBrowseFiles && (

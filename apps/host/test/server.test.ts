@@ -1560,6 +1560,56 @@ describe('approvals and risk', () => {
 })
 
 describe('agent settings', () => {
+  it('offers a preset found on this computer to the desktop only, until its definition is saved', async () => {
+    const t = await testHost({
+      detectPreset: preset =>
+        preset.id === 'codex'
+          ? { found: true, path: '/fake/codex-acp' }
+          : preset.id === 'pi'
+            ? { found: true, path: '/fake/pi-acp', companion: { command: 'pi', found: false } }
+            : { found: false },
+    })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const browser = await t.enroll({ listener: 'loopback-tcp' })
+    const harnesses = async (client: typeof desktop) => (await client.json<AppSnapshot>('snapshot')).catalog!.harnesses
+    const offered = (await harnesses(desktop)).filter(harness => harness.offer)
+    // pi's adapter alone runs nothing, so it is not offered.
+    expect(offered).toMatchObject([
+      { id: 'codex', source: 'acp', status: 'ready', level: 'L3', modes: ['agent'], offer: { presetId: 'codex' } },
+    ])
+    expect(offered[0]!.permission).toEqual({ approvals: 'prompts', readback: 'mode' })
+    expect((await harnesses(browser)).some(harness => harness.offer)).toBe(false)
+    // Offering saved nothing, and only saving makes it a Harness like any other.
+    expect((await desktop.json<{ agents: unknown[] }>('agents')).agents).toEqual([])
+    const saved = await desktop.request('agents', {
+      method: 'POST',
+      body: { id: 'codex', name: 'Codex', presetId: 'codex', command: 'codex-acp', args: [], env: {}, enabled: true },
+    })
+    expect(saved.status).toBe(201)
+    const after = await harnesses(desktop)
+    expect(after.filter(harness => harness.id === 'codex')).toHaveLength(1)
+    expect(after.find(harness => harness.id === 'codex')?.offer).toBeUndefined()
+    // The second save of the same offer, from another window, says it exists instead of making codex-2.
+    const again = await desktop.request('agents', {
+      method: 'POST',
+      body: { id: 'codex', name: 'Codex', presetId: 'codex', command: 'codex-acp', args: [], env: {}, enabled: true },
+    })
+    expect(again.status).toBe(409)
+    expect((await body<{ error: string }>(again)).error).toBe('agent-exists')
+  })
+
+  it('offers nothing unless the start script asks it to look', async () => {
+    const t = await testHost()
+    const desktop = await t.enroll({ listener: 'unix' })
+    expect((await desktop.json<AppSnapshot>('snapshot')).catalog!.harnesses.some(harness => harness.offer)).toBe(false)
+  })
+
+  it('tells only the desktop app the name of this computer', async () => {
+    const t = await testHost({ hostName: 'my-mac.local' })
+    expect((await body<EnrollmentInfo>(await t.raw('unix', 'api/enrollment-info'))).hostName).toBe('my-mac')
+    expect((await body<EnrollmentInfo>(await t.raw('loopback-tcp', 'api/enrollment-info'))).hostName).toBeUndefined()
+  })
+
   it('reports the adapter and the agent it connects to separately, and looks again on every read', async () => {
     const home = await temporaryDirectory('latch-agent-home-')
     const bin = join(home, '.volta', 'bin')
@@ -2155,7 +2205,7 @@ describe('full-access (L3) sessions', () => {
     expect(preview).toMatchObject({ action: 'task.start-l3', title: '开启完全访问会话' })
     expect(preview.reason).toMatch(/^允许 Fake agent 读写这台 Mac 上的文件并运行命令：\S*node /u)
     expect(preview.lines.find(line => line.label === '命令')!.value).toBe(await realpath(process.execPath))
-    expect(preview.warnings).toContain('Harness 自己发起的询问只是提示，不是安全边界。')
+    expect(preview.warnings).toContain('它发起的询问只是提示，Latch 不隔离它。')
     const started = (await auditRecords(t)).find(record => record.action === 'task.l3.started')
     expect(started).toMatchObject({
       stepup: 'lpc-local',
@@ -4235,7 +4285,7 @@ describe('projects of several folders', () => {
     expect(snapshot.catalog!.projectFolders).toEqual({ max: 8 })
     expect(snapshot.catalog!.workspaces[0]).toEqual({
       id: 'default',
-      name: '启动目录',
+      name: '默认文件夹',
       path: t.workspaceRoot,
       folders: [{ id: 'default', path: t.workspaceRoot }],
       remoteStart: true,
@@ -4630,7 +4680,7 @@ describe('projects of several folders', () => {
     const desktop = await t.enroll({ listener: 'unix' })
     expect(await projectOf(desktop, 'default')).toEqual({
       id: 'default',
-      name: '启动目录',
+      name: '默认文件夹',
       path: join(root, 'repo'),
       folders: [{ id: 'default', path: join(root, 'repo') }],
       remoteStart: true,

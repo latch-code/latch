@@ -51,7 +51,7 @@ export function RoutinePage(props: RoutinePageProps) {
   return (
     <>
       <SectionHeading
-        title={routine?.name ?? '例行任务'}
+        title={routine?.name ?? '定时任务'}
         description="把明确的日常事项交给一位助手，按保存的每日时间处理。"
         action={
           writable && (
@@ -59,7 +59,7 @@ export function RoutinePage(props: RoutinePageProps) {
               icon={routineId ? Pencil : Plus}
               disabled={locked || (routineId !== null && (!routine || routine.state === 'running'))}
               onClick={() => edit(routine)}>
-              {routineId ? '编辑任务' : '创建例行任务'}
+              {routineId ? '编辑任务' : '创建定时任务'}
             </Button>
           )
         }
@@ -80,7 +80,7 @@ export function RoutinePage(props: RoutinePageProps) {
             ))}
           </SettingsGroup>
         ) : (
-          <EmptyState title="还没有例行任务" description="保存后默认关闭。检查任务、助手和时区后，再在电脑上明确开启。" />
+          <EmptyState title="还没有定时任务" description="保存后默认关闭。检查任务、助手和时区后，再在电脑上明确开启。" />
         )
       ) : !routine ? (
         <EmptyState title="找不到这项任务" description="它可能已在其他设备删除，请返回列表重新选择。" />
@@ -95,7 +95,7 @@ export function RoutinePage(props: RoutinePageProps) {
             />
             {routine.nextRunAt && <SettingsRow title="下次执行" trailing={dateTime(routine.nextRunAt)} />}
           </SettingsGroup>
-          <section aria-label="保存的例行任务内容">
+          <section aria-label="保存的定时任务内容">
             <div className="personal-shared-text">
               <VisibleText text={routine.prompt} />
             </div>
@@ -142,7 +142,7 @@ export function RoutinePage(props: RoutinePageProps) {
             </div>
           )}
           {!props.local && (!routine.enabled || routine.state === 'paused') && (
-            <p className="setup-panel-caption">开启例行任务：{LOCAL_ONLY_TEXT}。</p>
+            <p className="setup-panel-caption">开启定时任务：{LOCAL_ONLY_TEXT}。</p>
           )}
           {routine.state === 'running' && (
             <p className="setup-panel-caption">暂停只影响以后启动。当前执行继续显示真实结果，可在实际会话中停止。</p>
@@ -179,7 +179,7 @@ export function RoutinePage(props: RoutinePageProps) {
       )}
       {deleting && routine && (
         <ConfirmDialog
-          title="删除例行任务"
+          title="删除定时任务"
           message="删除后不再按这个计划启动，已有会话仍独立保存。"
           confirmLabel="删除任务"
           danger
@@ -219,12 +219,12 @@ function RoutineEditor({
 }) {
   const problem =
     routineConfigProblem(value)
-    ?? (!assistants.some(item => item.id === value.assistantId && item.canSchedule) ? '请选择当前可执行例行任务的助手。' : undefined)
+    ?? (!assistants.some(item => item.id === value.assistantId && item.canSchedule) ? '请选择当前可执行定时任务的助手。' : undefined)
   return (
     <Dialog
       open
       size="wide"
-      title="例行任务设置"
+      title="定时任务设置"
       onClose={onClose}
       footer={
         <Button variant="primary" disabled={locked || problem !== undefined} tooltip={problem} onClick={onSave}>
@@ -247,7 +247,7 @@ function RoutineEditor({
           options={assistants.map(assistant => ({
             value: assistant.id,
             label: assistant.name,
-            disabledReason: !assistant.canSchedule ? (assistant.unavailableReason ?? '当前执行方式暂不支持例行任务') : undefined,
+            disabledReason: !assistant.canSchedule ? (assistant.unavailableReason ?? '当前执行方式暂不支持定时任务') : undefined,
           }))}
           onValueChange={assistantId => onChange({ ...value, assistantId })}
         />

@@ -126,7 +126,7 @@ export class PluginRegistry implements RuntimeRegistry {
   }
 
   register(plugin: HarnessPlugin, options: RegisterOptions = {}): void {
-    if (this.mutating.has(plugin.id)) throw new AppError(409, 'plugin-busy', '插件正在变更，请稍后重试')
+    if (this.mutating.has(plugin.id)) throw new AppError(409, 'plugin-busy', '插件正在更新，请稍后重试')
     if (this.entries.has(plugin.id)) throw new AppError(409, 'plugin-exists', `插件 ${plugin.id} 已安装`)
     this.entries.set(plugin.id, this.newEntry(plugin, options.managed, options.revision))
   }
@@ -134,7 +134,7 @@ export class PluginRegistry implements RuntimeRegistry {
   async enable(id: string): Promise<void> {
     const entry = this.entry(id)
     if (entry.enabled) return
-    if (this.mutating.has(id)) throw new AppError(409, 'plugin-busy', '插件正在变更，请稍后重试')
+    if (this.mutating.has(id)) throw new AppError(409, 'plugin-busy', '插件正在更新，请稍后重试')
     this.mutating.add(id)
     try {
       await this.activate(entry)
@@ -263,7 +263,7 @@ export class PluginRegistry implements RuntimeRegistry {
     const entry = this.entry(id)
     const transports = this.transportLeases(id)
     if (this.leases(id) > transports.length) throw new AppError(409, 'plugin-in-use', `${IN_USE}停用`)
-    if (this.mutating.has(id)) throw new AppError(409, 'plugin-busy', '插件正在变更，请稍后重试')
+    if (this.mutating.has(id)) throw new AppError(409, 'plugin-busy', '插件正在更新，请稍后重试')
     this.mutating.add(id)
     try {
       entry.enabled = false
@@ -278,7 +278,7 @@ export class PluginRegistry implements RuntimeRegistry {
   /** Stop new acquisitions immediately; existing leases own the old generation until their real settlement. */
   retire(id: string, forget = false): void {
     const entry = this.entry(id)
-    if (this.mutating.has(id)) throw new AppError(409, 'plugin-busy', '插件正在变更，请稍后重试')
+    if (this.mutating.has(id)) throw new AppError(409, 'plugin-busy', '插件正在更新，请稍后重试')
     entry.enabled = false
     for (const lease of entry.transportLeases) lease.invalidate()
     if (forget) this.entries.delete(id)
@@ -292,7 +292,7 @@ export class PluginRegistry implements RuntimeRegistry {
     const entry = this.entry(id)
     const transports = this.transportLeases(id)
     if (this.leases(id) > transports.length) throw new AppError(409, 'plugin-in-use', `${IN_USE}删除`)
-    if (this.mutating.has(id)) throw new AppError(409, 'plugin-busy', '插件正在变更，请稍后重试')
+    if (this.mutating.has(id)) throw new AppError(409, 'plugin-busy', '插件正在更新，请稍后重试')
     this.mutating.add(id)
     try {
       entry.enabled = false
@@ -380,7 +380,7 @@ export class PluginRegistry implements RuntimeRegistry {
     for (const id of [...new Set(ids)].sort()) {
       const entry = this.entries.get(id)
       if (!entry?.enabled) throw new AppError(409, 'plugin-unavailable', '需要的插件已停用或移除。')
-      if (this.mutating.has(id)) throw new AppError(409, 'plugin-busy', '需要的插件正在变更，请稍后重试。')
+      if (this.mutating.has(id)) throw new AppError(409, 'plugin-busy', '需要的插件正在更新，请稍后重试。')
       revisions.set(id, entry.revision ?? sha256Hex('latch-plugin-activation-v1\0' + entry.activation))
       if (entry.revision === undefined) persistent = false
     }
@@ -418,7 +418,7 @@ export class PluginRegistry implements RuntimeRegistry {
     if (options.expectedRevisions !== undefined && contributors.some(entry => !Object.hasOwn(options.expectedRevisions!, entry.plugin.id)))
       throw new AppError(409, 'plugin-revision-missing', '执行授权缺少实际插件修订，请重新确认设置。')
     if (contributors.some(entry => this.mutating.has(entry.plugin.id))) {
-      throw new AppError(409, 'plugin-busy', '本次任务需要的插件正在变更，请稍后重试')
+      throw new AppError(409, 'plugin-busy', '本次任务需要的插件正在更新，请稍后重试')
     }
     const tools = withTools ? capabilities.flatMap(e => e.tools) : []
     const skills = skillOwners
@@ -495,7 +495,7 @@ export class PluginRegistry implements RuntimeRegistry {
     )
     const panel = entry?.clientPanels.find(item => `${entry.plugin.id}:${item.id}` === id && item.hash === hash)
     if (!entry || !panel) throw new AppError(404, 'ui-panel-unavailable', '这个界面模块已更新或停用，请刷新。')
-    if (this.mutating.has(entry.plugin.id)) throw new AppError(409, 'plugin-busy', '面板插件正在变更，请稍后重试。')
+    if (this.mutating.has(entry.plugin.id)) throw new AppError(409, 'plugin-busy', '面板插件正在更新，请稍后重试。')
     return { info: this.panelInfo(entry, panel), source: panel.source, release: this.lease([entry], false) }
   }
 
@@ -503,7 +503,7 @@ export class PluginRegistry implements RuntimeRegistry {
     const entry = [...this.entries.values()].find(item => item.enabled && item.panels.some(panel => `${item.plugin.id}:${panel.id}` === id))
     const panel = entry?.panels.find(item => `${entry.plugin.id}:${item.id}` === id)
     if (!entry || !panel) throw new AppError(404, 'ui-panel-unavailable', '这个扩展面板已停用或移除。')
-    if (this.mutating.has(entry.plugin.id)) throw new AppError(409, 'plugin-busy', '面板插件正在变更，请稍后重试。')
+    if (this.mutating.has(entry.plugin.id)) throw new AppError(409, 'plugin-busy', '面板插件正在更新，请稍后重试。')
     return {
       info: this.panelInfo(entry, panel),
       render: context => renderUiPanel(panel, context, this.log),
@@ -553,7 +553,7 @@ export class PluginRegistry implements RuntimeRegistry {
     const entry = [...this.entries.values()].find(entry => entry.enabled && entry.transports.some(driver => driver.id === id))
     const driver = entry?.transports.find(driver => driver.id === id)
     if (!entry || !driver) throw new AppError(409, 'transport-unavailable', '请先安装并启用这个连接插件。')
-    if (this.mutating.has(entry.plugin.id)) throw new AppError(409, 'plugin-busy', '连接插件正在变更，请稍后重试。')
+    if (this.mutating.has(entry.plugin.id)) throw new AppError(409, 'plugin-busy', '连接插件正在更新，请稍后重试。')
     let invalidate!: () => void,
       finish!: () => void,
       released = false
@@ -584,7 +584,7 @@ export class PluginRegistry implements RuntimeRegistry {
     const entry = [...this.entries.values()].find(entry => entry.enabled && entry.harnesses.some(driver => driver.id === id))
     const driver = entry?.harnesses.find(driver => driver.id === id)
     if (!entry || !driver) throw new AppError(409, 'harness-unavailable', `请先配置并启用 Harness ${id}`)
-    if (this.mutating.has(entry.plugin.id)) throw new AppError(409, 'plugin-busy', 'Harness 插件正在变更，请稍后重试')
+    if (this.mutating.has(entry.plugin.id)) throw new AppError(409, 'plugin-busy', 'Harness 插件正在更新，请稍后重试')
     return { driver, release: this.lease([entry], false) }
   }
 
@@ -595,7 +595,7 @@ export class PluginRegistry implements RuntimeRegistry {
    */
   async replace(plugin: HarnessPlugin, beforeCommit?: () => Promise<void>, options: ReplaceOptions = {}): Promise<void> {
     const previous = this.entries.get(plugin.id)
-    if (this.mutating.has(plugin.id)) throw new AppError(409, 'plugin-busy', '插件正在变更，请稍后重试')
+    if (this.mutating.has(plugin.id)) throw new AppError(409, 'plugin-busy', '插件正在更新，请稍后重试')
     const staged = this.newEntry(plugin, options.managed ?? previous?.managed, options.revision)
     const keepDisabled = options.preserveEnabled === true && previous !== undefined && !previous.enabled
     this.mutating.add(plugin.id)
@@ -632,7 +632,7 @@ export class PluginRegistry implements RuntimeRegistry {
     if (this.retired.size || [...this.entries.values()].some(entry => entry.leases)) {
       throw new AppError(409, 'plugin-in-use', '关闭插件前必须释放任务与 Harness')
     }
-    if (this.mutating.size) throw new AppError(409, 'plugin-busy', '插件正在变更，请稍后关闭')
+    if (this.mutating.size) throw new AppError(409, 'plugin-busy', '插件正在更新，请稍后关闭')
     const failures: unknown[] = []
     for (const id of [...this.entries.keys()].reverse()) {
       try {

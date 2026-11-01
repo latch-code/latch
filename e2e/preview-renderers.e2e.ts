@@ -372,7 +372,7 @@ describe('isolated document renderers', () => {
       })
     })
     await open('pdf', Array.from(strToU8('This is not a PDF document.')))
-    await page.locator('.ui-notice').filter({ hasText: '无法显示这个 PDF，请下载或在执行端电脑上打开。' }).waitFor()
+    await page.locator('.ui-notice').filter({ hasText: '无法显示这个 PDF，请下载或在 Mac 上打开。' }).waitFor()
     await page.locator('.pdf-text-layer').getByText('Hello PDF', { exact: true }).waitFor()
     expect(created).toBe(true)
     await expect.poll(() => closed).toBe(true)

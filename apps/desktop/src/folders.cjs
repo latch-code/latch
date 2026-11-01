@@ -152,7 +152,7 @@ function pickDialog({ defaultPath, project, replacing }) {
     }
   }
   return {
-    title: '新建项目',
+    title: '添加项目',
     buttonLabel: '创建项目',
     message: '可以选择多个文件夹。之后可以在设置中更改主文件夹。',
     defaultPath,
@@ -171,9 +171,9 @@ function dropDialog({ paths, project }) {
   return {
     type: 'question',
     title: 'Latch',
-    message: project ? (name ? `把这些文件夹加入「${name}」？` : '把这些文件夹加入这个项目？') : '用这些文件夹新建项目？',
+    message: project ? (name ? `把这些文件夹加入「${name}」？` : '把这些文件夹加入这个项目？') : '用这些文件夹添加项目？',
     detail: `${paths.join('\n')}\n\n${READS}${project?.remoteStart === true ? REMOTE : ''}`,
-    buttons: [project ? '添加' : '新建项目', '取消'],
+    buttons: [project ? '添加' : '添加项目', '取消'],
     defaultId: 1,
     cancelId: 1,
     noLink: true,

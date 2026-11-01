@@ -285,6 +285,8 @@ describe("a turn's blocks and its fold", () => {
   it("gives a failed row the first line of what it reported, without the runtime's code, cut", () => {
     expect(failureReason({ state: 'failed', text: 'TOOL_ERROR: 2 个测试没有通过\nFAIL a.ts' })).toBe('2 个测试没有通过')
     expect(failureReason({ state: 'failed', text: '' })).toBe('没有成功')
+    // A call that reported nothing carries its arguments as its text; a line of JSON says nothing about why.
+    expect(failureReason({ state: 'failed', text: '{\n  "command": "ls"\n}', tool: { input: '{\n  "command": "ls"\n}' } })).toBe('没有成功')
     expect(failureReason({ state: 'failed', text: 'x'.repeat(200) })).toHaveLength(121)
   })
 })
@@ -342,7 +344,7 @@ describe('decided approvals', () => {
     const legacy = call({ state: 'failed', tool: { kind: 'edit', output: 'APPROVAL_REJECTED: 用户拒绝了本次工具调用，未执行该操作。' } })
     expect(shownToolState(legacy)).toBe('rejected')
     expect(shownToolOutput(legacy)).toBe('用户拒绝了本次工具调用，未执行该操作。')
-    expect(resendWarning(sideEffects(firstTurn([user('u'), tool('t', legacy)])), false)).toBeUndefined()
+    expect(resendWarning(sideEffects(firstTurn([user('u'), tool('t', legacy)])))).toBeUndefined()
     // Only a failure that starts with the code, and only without a record.
     expect(shownToolState(call({ state: 'failed', text: 'TOOL_ERROR: APPROVAL_REJECTED: x' }))).toBe('failed')
     expect(shownToolState({ ...legacy, tool: { ...legacy.tool, decision: decision('allowed') } })).toBe('failed')
@@ -351,24 +353,24 @@ describe('decided approvals', () => {
 
 describe('resending a turn', () => {
   it('asks first only when a tool that may change something ran, failed, stopped or has an unknown outcome', () => {
-    expect(resendWarning(effects('read', 'completed'), false)).toBeUndefined()
-    expect(resendWarning(effects('edit', 'queued'), false)).toBeUndefined()
-    expect(resendWarning(effects('execute', 'cancelled', 'TOOL_NOT_STARTED: …'), false)).toBeUndefined()
+    expect(resendWarning(effects('read', 'completed'))).toBeUndefined()
+    expect(resendWarning(effects('edit', 'queued'))).toBeUndefined()
+    expect(resendWarning(effects('execute', 'cancelled', 'TOOL_NOT_STARTED: …'))).toBeUndefined()
     // A call its approval kept from running (it settled without starting) changed nothing.
     const declined = (outcome: 'rejected' | 'expired' | 'cancelled') =>
       sideEffects(firstTurn([user('u'), tool('t', { state: 'failed', tool: { kind: 'edit', decision: { outcome, at: day(9) } } })]))
-    for (const outcome of ['rejected', 'expired', 'cancelled'] as const) expect(resendWarning(declined(outcome), false)).toBeUndefined()
-    expect(resendWarning(effects('edit', 'completed'), false)).toBe(
-      '上一次已经执行了 1 个操作：修改 1 个文件。重新发送后，Agent 可能再次执行它们。',
+    for (const outcome of ['rejected', 'expired', 'cancelled'] as const) expect(resendWarning(declined(outcome))).toBeUndefined()
+    expect(resendWarning(effects('edit', 'completed'))).toBe(
+      '上一次已经执行了 1 个操作：修改 1 个文件。重新发送后，Harness 可能再次执行它们。',
     )
-    expect(resendWarning(effects('execute', 'failed'), true)).toBe(
-      '上一次已经执行了 1 个操作：运行 1 条命令。重新发送后，Agent 可能再次执行它们。完全访问会话不会逐项询问。',
+    expect(resendWarning(effects('execute', 'failed'))).toBe(
+      '上一次已经执行了 1 个操作：运行 1 条命令。重新发送后，Harness 可能再次执行它们。',
     )
-    expect(resendWarning(effects(undefined, 'completed'), false)).toContain('调用 1 次其他工具')
-    expect(resendWarning(effects('execute', 'running'), false)).toBe(
-      '上一次有 1 个操作结果未知，可能已经执行。重新发送后，Agent 可能再次执行它们。',
+    expect(resendWarning(effects(undefined, 'completed'))).toContain('调用 1 次其他工具')
+    expect(resendWarning(effects('execute', 'running'))).toBe(
+      '上一次有 1 个操作结果未知，可能已经执行。重新发送后，Harness 可能再次执行它们。',
     )
-    expect(resendWarning(effects('other', 'failed', 'TOOL_OUTCOME_UNKNOWN: …'), false)).toContain('结果未知')
+    expect(resendWarning(effects('other', 'failed', 'TOOL_OUTCOME_UNKNOWN: …'))).toContain('结果未知')
   })
 
   it('offers 重试 on the latest turn only, and sends its prompt again', () => {
@@ -379,7 +381,7 @@ describe('resending a turn', () => {
           detail: detail([user('u1'), reply('a1', '好'), user('u2'), reply('a2', '部分', { state: 'failed' })], {}, status),
           approvals: [],
           harnessName: 'Latch',
-          retry: { fullAccess: false, onResend: prompt => sent.push(prompt) },
+          retry: { onResend: prompt => sent.push(prompt) },
         }),
       )
     expect(render('failed').match(/aria-label="重试"/g)).toHaveLength(1)
@@ -538,7 +540,7 @@ describe('the live run', () => {
       }
     }
     expect(deliveryWords(running('starting'), turn)).toBe('Mac 已收到')
-    expect(deliveryWords(running('model'), turn)).toBe('Agent 已开始')
+    expect(deliveryWords(running('model'), turn)).toBe('Harness 已开始')
     expect(deliveryWords(running('model', { liveText: '好' }), turn)).toBeUndefined()
     expect(deliveryWords(running(undefined), turn)).toBeUndefined()
     expect(deliveryWords(running('model'), firstTurn([user('u'), reply('a', '好')]))).toBeUndefined()
@@ -633,7 +635,7 @@ describe('a settled turn', () => {
   })
 
   it('names the model of a running turn from the run before its first step records one', () => {
-    expect(streamingTranscript('running')).toContain('<span class="assistant-meta-model">Latch · fixture-large</span>')
+    expect(streamingTranscript('running')).toContain('<span class="assistant-meta-model">fixture-large</span>')
     // A settled turn names only the model its steps recorded: here, just the engine.
     expect(streamingTranscript('idle')).not.toContain('fixture-large')
   })

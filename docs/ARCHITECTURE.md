@@ -42,7 +42,7 @@ Cordis Context → 每个插件一个 fiber → 清理 effect
 | 层 | 职责 | 源码 |
 | --- | --- | --- |
 | 客户端 | 会话、选择器、消息、审批、设置、设备登记与本机确认对话框；断线后重新同步 | `apps/web/src`（入口 `App.tsx` → `shell/AppShell.tsx`；与 Host 通信、同步与阅读位置等无布局的核心在 `core/`） |
-| 桌面端 | Electron 主进程：`latch://app/` 协议、经 `host.sock` 转发并附加凭据、设备密钥与凭据、渲染进程限制、经系统文件管理器新建项目与在访达中显示、文件快速查看与默认应用打开、「在浏览器中打开」、「浏览器」标签的预览页（[PREVIEW-BROWSER.md](./PREVIEW-BROWSER.md)）、Host 的生命周期（崩溃后重启、忙时防睡、登录项、睡眠与停止报告） | `apps/desktop/src`（`main.cjs`、`proxy.cjs`、`credentials.cjs`、`host.cjs`、`folders.cjs`、`lifecycle.cjs`、`files.cjs`、`browser.cjs`、`preload.cjs`） |
+| 桌面端 | Electron 主进程：`latch://app/` 协议、经 `host.sock` 转发并附加凭据、设备密钥与凭据、渲染进程限制、经系统文件管理器添加项目与在访达中显示、文件快速查看与默认应用打开、「在浏览器中打开」、「浏览器」标签的预览页（[PREVIEW-BROWSER.md](./PREVIEW-BROWSER.md)）、Host 的生命周期（崩溃后重启、忙时防睡、登录项、睡眠与停止报告） | `apps/desktop/src`（`main.cjs`、`proxy.cjs`、`credentials.cjs`、`host.cjs`、`folders.cjs`、`lifecycle.cjs`、`files.cjs`、`browser.cjs`、`preload.cjs`） |
 | Host | 监听入口（含 HTTPS 证书热加载）、HTTP/SSE、运行状态通告、流量计数、访问规则、配置读写、插件挂载、密钥文件排除在时间机器之外 | `apps/host/src/server.ts`、`listeners.ts`、`lifecycle.ts`、`traffic.ts`、`access.ts`、`config.ts`、`providers.ts`、`backup.ts` |
 | HTTP 路由模块 | 按领域分组的路由，各自带守卫与 `catalog.features` 标记；设备、登记与配对邀请在 `devices.ts`，改动记录与撤销在 `changes.ts`（[CHANGES.md](CHANGES.md)），原生连接（验证窗口、撤销通知、地址簿、配对二维码与手机接入的生命周期）与中继的启动在 `native.ts`（见「HTTP API」） | `apps/host/src/routes/`（`registry.ts`、`index.ts`） |
 | 安全核心 | 设备与登记、本机确认、审计、安全策略、出站策略、路径与项目文件夹规则、风险分级、会话文件裁决 | `apps/host/src/auth.ts`、`presence.ts`、`presence-reason.ts`、`audit.ts`、`policy.ts`、`egress.ts`、`paths.ts`、`projects.ts`、`session-folders.ts`、`risk.ts`、`identity.ts`、`crypto.ts`、`files/` |
@@ -55,10 +55,10 @@ Cordis Context → 每个插件一个 fiber → 清理 effect
 | 扩展接口 | Provider、Tool、插件、HarnessDriver、Transport、`AppError` | `packages/sdk/src/plugins.ts`、`harness.ts`、`transports.ts`、`errors.ts` |
 | Standard | 模型循环、审批、取消、消息与幂等记录 | `packages/core/src/runtime.ts`、`store.ts` |
 | Node 工具 | Host 与 Harness 共用：`canonicalJson` 与 `sha256Hex`、原子写入 `writeFileAtomic`、日志脱敏 `redactSecrets` | `packages/core/src/node-kit/` |
-| 内置插件 | 每个插件一个目录 `<种类>/<id>/`：OpenAI 兼容与 Anthropic 模型协议（共用 `providers/http.ts`）、演示模型、工作区文件、演示工具、Standard Driver | `apps/host/src/plugins/`：`providers/{openai-compatible,anthropic,demo}`、`tools/{workspace-files,safe-tools}`、`standard` |
+| 内置插件 | 每个插件一个目录 `<种类>/<id>/`：OpenAI 兼容与 Anthropic 模型协议（共用 `providers/http.ts`）、演示模型、项目文件、演示工具、Standard Driver | `apps/host/src/plugins/`：`providers/{openai-compatible,anthropic,demo}`、`tools/{workspace-files,safe-tools}`、`standard` |
 | ACP Driver | 外部 Agent 的进程、协议、映射、权限配置、启动指纹与存储 | `packages/harness-acp/src`（权限配置在 `profiles/`） |
 | 预设 | 浏览器可用的模型服务与 Agent 预设 | `packages/protocol/src/presets.ts`、`agent-presets.ts` |
-| 命令行 | 启动、停止、设备管理、离线登记、密钥、本机确认组件、审计校验、流量计数 | `apps/host/scripts/start.ts`、`stop.ts`、`latch.ts` |
+| 命令行 | 启动、停止、设备管理、离线连接、密钥、本机确认组件、审计校验、流量计数 | `apps/host/scripts/start.ts`、`stop.ts`、`latch.ts` |
 | 测试辅助 | 只供测试：Host 夹具、测试确认后端、共享安全向量、假 ACP Agent、测试证书 | `packages/testkit`；Host 的绑定在 `apps/host/test/helpers/host.ts`、`e2e/helpers/host.ts` 与 `apps/desktop/test/helpers/host.ts` |
 | 测试 | 单元与集成用例跟随所测项目放在 `test/`；根项目的 `tests/`；端到端用例 | 各项目的 `test/`、`tests/`、`e2e/`（见 [TESTING.md](TESTING.md)「测试位置」） |
 | 兼容入口 | `latch/plugin-sdk` 与 `latch/harness-sdk`，再导出 `@latch/sdk` 的类型子路径 | `src/plugin-sdk.ts`、`src/harness-sdk.ts` |
@@ -139,7 +139,7 @@ Host 模块与 UI 模块都是用户显式加载的可信代码：分别拥有 H
 Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码的隔离：
 
 - **Host 是唯一权威。** 每个请求的身份只来自接受连接的监听入口与设备凭据。
-- **设备各自持有密钥。** 每台设备在登记时生成自己的密钥，Host 只保存公钥与凭据哈希。登记需要在执行端电脑上确认（离线登记码除外）。
+- **设备各自持有密钥。** 每台设备在登记时生成自己的密钥，Host 只保存公钥与凭据哈希。登记需要在执行端电脑上确认（离线连接码除外）。
 - **只有 `host.sock` 算这台电脑。** 回环端口也可能被转发到别处，所以回环与其他入口一样按远程处理。
 - **能力按设备分级。** 设备权限（scope）决定能调用哪些接口；监听入口决定能否提升权限；安全策略的上限与会话级别（L1 / L3）决定能运行什么、Latch 是否逐项把关。
 - **本机确认只在执行端电脑上发起。** 只有经 `host.sock` 认证的已登记设备（桌面端）能发起需要本机确认的操作；设备登记是唯一例外，而 `host.sock` 以外的登记还要先有一次性邀请。
@@ -176,7 +176,7 @@ Host 自己负责宣布运行状态与重新加载证书；在 macOS 上让它�
 - **忙时保持唤醒。** 主进程每 5 秒从 `host-info` 读取运行中与等待审批的会话数。接电源时，有会话运行或有审批等待就持有 Electron 的 `powerSaveBlocker('prevent-app-suspension')`（阻止系统空闲睡眠，显示器照常熄灭，不修改系统电源设置）；用电池时只在有会话运行时持有，每次最长 1 小时，到时释放，直到没有会话运行或重新接上电源才重新计时。Host 未运行或没有响应时释放。所有者可以在「设置 › 通用」关闭它（保存在桌面端数据目录的 0600 `lifecycle.json`），当前状态显示在设置页与侧栏的连接状态旁。
 - **没有窗口时。** 在 macOS 上关闭最后一个窗口不退出桌面端（Mac 应用的惯例），崩溃后重启与忙时保持唤醒照常进行；点 Dock 图标重新打开窗口，退出（⌘Q 或 Dock 菜单）才结束桌面端，这两项随之停止，Host 继续运行。错误页（桌面端未就绪时）与其他系统上，关闭最后一个窗口即退出。
 - **登录项。** 「登录时打开 Latch」经 `app.setLoginItemSettings` 登记 macOS 登录项（`SMAppService` 登记正在运行的 app 包）。开发运行时运行的是 Electron 自己的 app 包，登记它会在登录时打开 Electron 而不是 Latch，所以只有打包后的 Latch.app 提供这个开关；开发运行时开关不可用并说明原因（打包构建尚未实现，见「尚未实现」）。macOS 要求用户批准时，设置页提示去「系统设置 › 通用 › 登录项」。由登录项打开时主进程不弹出窗口，点 Dock 图标再打开。
-- **时间机器。** Host 每次启动时把 `auth/`（设备登记、撤销日志、离线登记码哈希）、`identity/`（Host 身份私钥）、`providers.json`（模型密钥）、`settings.json` 与旧版 `provider.json` 排除在时间机器备份之外；`providers.json` 与 `settings.json` 每次写入的新文件在替换旧文件之前就已排除。`settings.json` 整个不备份，因为 Agent 定义的环境变量值常是 API Key：把这些值拆到另一个文件，会让一次 Agent 定义的保存有两个提交点，而启动指纹覆盖这些值；代价是默认值、插件停用列表、项目列表与 Agent 定义也不随备份恢复。桌面端主进程启动时排除自己数据目录中的 `latch-devices/`（凭据用这台 Mac 钥匙串中的密钥加密，备份副本没有用处）。做法是 `tmutil addexclusion`（不带 `-p`，不需要管理员权限）写入的同一个扩展属性 `com.apple.metadata:com_apple_backup_excludeItem`（值为包含字符串 `com.apple.backupd` 的二进制属性列表，与 tmutil 写入的逐字节相同），由 `/usr/bin/xattr` 以固定参数写入，因为 `tmutil addexclusion` 要等备份守护进程应答，可能阻塞十秒以上。已带该属性的条目只读取不改写；不存在的路径跳过；从不读取文件内容；失败只记入日志，不影响启动。照常进入备份的是会话（`sessions/`、`sessions-meta.json`、`harnesses/`）、审计 `audit/`、`policy.json`、`host.log` 等其余条目；「设置 › 通用」在桌面端提示这一点，建议加密备份盘。
+- **时间机器。** Host 每次启动时把 `auth/`（设备登记、撤销日志、离线连接码哈希）、`identity/`（Host 身份私钥）、`providers.json`（模型密钥）、`settings.json` 与旧版 `provider.json` 排除在时间机器备份之外；`providers.json` 与 `settings.json` 每次写入的新文件在替换旧文件之前就已排除。`settings.json` 整个不备份，因为 Agent 定义的环境变量值常是 API Key：把这些值拆到另一个文件，会让一次 Agent 定义的保存有两个提交点，而启动指纹覆盖这些值；代价是默认值、插件停用列表、项目列表与 Agent 定义也不随备份恢复。桌面端主进程启动时排除自己数据目录中的 `latch-devices/`（凭据用这台 Mac 钥匙串中的密钥加密，备份副本没有用处）。做法是 `tmutil addexclusion`（不带 `-p`，不需要管理员权限）写入的同一个扩展属性 `com.apple.metadata:com_apple_backup_excludeItem`（值为包含字符串 `com.apple.backupd` 的二进制属性列表，与 tmutil 写入的逐字节相同），由 `/usr/bin/xattr` 以固定参数写入，因为 `tmutil addexclusion` 要等备份守护进程应答，可能阻塞十秒以上。已带该属性的条目只读取不改写；不存在的路径跳过；从不读取文件内容；失败只记入日志，不影响启动。照常进入备份的是会话（`sessions/`、`sessions-meta.json`、`harnesses/`）、审计 `audit/`、`policy.json`、`host.log` 等其余条目；「设置 › 通用」在桌面端提示这一点，建议加密备份盘。
 
 ## 会话级别与审批风险
 
@@ -234,7 +234,7 @@ Host 只把项目标识与全部文件夹交给声明 `projectFolders: 'all'` �
 
 ### 会话自己的文件夹
 
-启动目录由 Host 选定时（没有 `--workspace` 与 `LATCH_WORKSPACE`，`pnpm start` 传入 `sessionFolders`），每个不在已保存项目中的新 Agent 会话（Latch 内置的 Agent 模式、ACP Agent 与第三方 Harness 插件）在启动目录中得到一个新文件夹 `<yyyymmdd>-<4 位十六进制>`（Host 的本地日期），作为它的工作目录：会话之间不再共用一个文件夹，各自写的文件互不覆盖。「只对话」会话不读写文件，没有文件夹；所有者指定的启动目录照旧使用，不建子文件夹。快照的 `catalog.sessionFolders` 表示这台 Host 这样做。
+启动目录由 Host 选定时（没有 `--workspace` 与 `LATCH_WORKSPACE`，`pnpm start` 传入 `sessionFolders`），每个不在已保存项目中的新 Agent 会话（ACP Agent 与只有 Agent 模式的第三方 Harness 插件）在启动目录中得到一个新文件夹 `<yyyymmdd>-<4 位十六进制>`（Host 的本地日期），作为它的工作目录：会话之间不再共用一个文件夹，各自写的文件互不覆盖。只对话（`mode: 'chat'`）的会话不读写文件，没有文件夹。页面不提供模式开关：不选项目时，能只对话的 Harness（Latch 内置）只对话，其余的进入新文件夹；选了项目或所有者指定了启动目录时都是 Agent 模式。分叉沿用来源的模式，旧的只对话会话照常打开。所有者指定的启动目录照旧使用，不建子文件夹。快照的 `catalog.sessionFolders` 表示这台 Host 这样做；这时桌面端在 Harness 没有项目时先问，选「不选项目」才走这里。
 
 - **新建。** 会话开始时以 0700 创建（不受 umask 影响），从不沿用已存在的同名条目（文件、目录或链接都换一个后缀，连续 16 次重名返回 409 `session-folder-unavailable`）；启动目录不存在时先创建，它的真实路径已不是 Host 启动时的那个时拒绝。文件夹属于这次请求：同一台设备以同一 `requestId` 重试，以及 L3 确认之后的第二次请求，得到同一个文件夹（其他设备用同一个 `requestId` 得不到它），所以本机确认里的「工作目录」就是 Agent 收到的目录。调用 Driver 之前先把请求键的哈希、文件夹名与启动目录哈希写入 0600 `session-folders.json`，跨重启与内存缓存过期仍沿用原目录；原目录丢失或启动目录改变时拒绝，不能换一个目录继续重试。Driver 明确以 4xx（408 除外）拒绝且未建成会话时删除记录与仍为空的目录；结果未知时保留。尚未调用 Driver、等待确认而没有继续的请求 10 分钟后清理。Latch 从不删除建成过会话的文件夹，删除会话也保留它和其中的文件。
 - **记录。** 会话的 `workspaceId` 为 `default`，文件夹名记在 `sessions-meta.json` 的 `sessionFolder`，摘要带 `sessionFolder: true`；Driver 不会收到这一项，Driver 自己报告的值被丢弃。Host 把这些文件夹列入给 Driver 的目录列表（`workspaces()`，排在项目之后）：它们都直接位于启动目录中，列出它们不授予启动目录之外的任何东西。
@@ -278,7 +278,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载；每�
   - 运行的查询与 `runStarted` 的监听器合计最多等待 15 秒，`hostStopping` 的监听器最多 3 秒，其余事件不等待。取消会让仍在等待的运行立即继续（提示不会发出）；Host 开始停止时，仍在等待的运行先被取消再放行，之后才到达 `trackFiles` 的运行直接取消，都不会发给模型或 Agent。监听器抛错、拒绝或超时只经脱敏的日志记录，不影响运行与停止。
 - **挂载与卸载。** 启停 Harness 插件或修改 Agent 定义时先卸载旧 Driver；仍有运行中或待审批的会话时返回 409 `harness-busy`。
 
-客户端从快照的 `catalog` 读取可选项：`harnesses`（来源、状态、级别、支持的模式、模型由 Host 还是 Agent 管理）、`providers`（不含密钥）、`workspaces`（含本次运行停用、带 `unavailable` 的项目）与 `defaults`。`snapshot.harness` 与 `snapshot.execution` 保留旧含义，描述默认 Harness。快照还带当前设备（`device`，含续期时间）与 Host 信息（`host`：hostId、开发版标记、本机确认状态、HTTPS 入口、策略上限与 `allowL3`）。
+客户端从快照的 `catalog` 读取可选项：`harnesses`（来源、状态、级别、支持的模式、模型由 Host 还是 Agent 管理；`offer` 表示这台电脑上找到了预设的命令、定义还没保存，只发给能保存它的设备，见 [HARNESSES.md](./HARNESSES.md#使用)）、`providers`（不含密钥）、`workspaces`（含本次运行停用、带 `unavailable` 的项目）与 `defaults`。`snapshot.harness` 与 `snapshot.execution` 保留旧含义，描述默认 Harness。快照还带当前设备（`device`，含续期时间）与 Host 信息（`host`：hostId、开发版标记、本机确认状态、HTTPS 入口、策略上限与 `allowL3`）。
 
 ## Standard 的会话与运行
 
@@ -307,7 +307,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载；每�
 
 审批属于执行端的运行，多设备竞争时只有一个决定生效：同一审批的决定串行处理。Standard 的 R1 审批提供允许一次、本会话始终允许（该工具名写入会话的 `allowedTools`）与拒绝；R2 审批与 L3 询问不提供「始终允许」，即使同一工具此前被 R1 始终允许过也每次询问（选择「始终允许」返回 403 `approval-always-unavailable`）。决定与选项方向不一致、或选项不存在时返回 400（L3 询问中会持久保存授权的选项被隐藏，返回 400 `approval-option-hidden`）。决定前按设备的当前记录检查所需权限；允许时还检查上限。每次决定先审计 `approval.decided`（含所选选项的类别 `optionKind`，R2 另含 previewHash），再交给执行端。
 
-**决定记录与拒绝说明。** Host 把决定连同 `via`（`host.sock` 上的桌面端为 `this-mac`，其余入口为 `other-device`）交给 Driver；内置 Harness 与 ACP Driver 把结果写在那次工具调用上，`ToolDetail.decision = { outcome, at, via? }`，并写进各自存储的 zod schema。`outcome` 为 `allowed`、`rejected`（人的选择，带 `via`），或 `expired`、`cancelled`（没有人回答：会话停止、取消、进程结束、Host 重启时还开着的审批，以及权限漂移时 Latch 自己拒绝的询问），后两者不带 `via`，从不记作某人的拒绝。Agent 自己撤回的询问不留记录。设备名与设备 ID 不进这条记录，只在审计里。记录写的是人的决定，不是调用有没有执行：内置 Harness 在允许之前不执行调用，被拒绝时给模型的工具结果是「用户拒绝了本次工具调用，未执行该操作。」，没有内部代码；ACP Agent 是可信本机代码，它的询问只是提示，Agent 之后报告的状态与差异照常记下，界面只把没有开始就结束的调用读作被拒绝（见 [DESIGN.md](./DESIGN.md)「审批」）。Agent 为同一调用询问多次时，记录保留已经给出的允许，之后的拒绝或取消不覆盖它。拒绝可以附一句说明 `note`（「告诉 Agent 改做什么」）：去掉首尾空白、换行统一为 `\n` 后最多 500 个字符，每一行都不能含 `escapeSecurityText` 会标出的字符（`rejectionNote`，[decision.ts](../packages/protocol/src/decision.ts)），否则在审计之前返回 400 `invalid-note`；允许时带说明同样返回 400。说明是给模型的输入，所以像在会话里输入一样另需 `run` 权限，并受会话上限与远程列表约束（403 `scope-required`、`ceiling-exceeded`）；只有查看权限的设备仍可以拒绝，但不能附说明。内置 Harness 把它接在拒绝后面交给模型（「…未执行该操作。用户的说明：…」）；ACP 的权限回复不能带文字，Host 不把说明转给 Agent。快照的 `host.rejectionNote: true` 表示 Host 接收说明，页面只在有它时才让拒绝等说明（旧 Host 会丢掉它）。说明是交给模型的输入，不写进审计。
+**决定记录与拒绝说明。** Host 把决定连同 `via`（`host.sock` 上的桌面端为 `this-mac`，其余入口为 `other-device`）交给 Driver；内置 Harness 与 ACP Driver 把结果写在那次工具调用上，`ToolDetail.decision = { outcome, at, via? }`，并写进各自存储的 zod schema。`outcome` 为 `allowed`、`rejected`（人的选择，带 `via`），或 `expired`、`cancelled`（没有人回答：会话停止、取消、进程结束、Host 重启时还开着的审批，以及权限漂移时 Latch 自己拒绝的询问），后两者不带 `via`，从不记作某人的拒绝。Agent 自己撤回的询问不留记录。设备名与设备 ID 不进这条记录，只在审计里。记录写的是人的决定，不是调用有没有执行：内置 Harness 在允许之前不执行调用，被拒绝时给模型的工具结果是「用户拒绝了本次工具调用，未执行该操作。」，没有内部代码；ACP Agent 是可信本机代码，它的询问只是提示，Agent 之后报告的状态与差异照常记下，界面只把没有开始就结束的调用读作被拒绝（见 [DESIGN.md](./DESIGN.md)「审批」）。Agent 为同一调用询问多次时，记录保留已经给出的允许，之后的拒绝或取消不覆盖它。拒绝可以附一句说明 `note`（「告诉 Harness 改做什么」）：去掉首尾空白、换行统一为 `\n` 后最多 500 个字符，每一行都不能含 `escapeSecurityText` 会标出的字符（`rejectionNote`，[decision.ts](../packages/protocol/src/decision.ts)），否则在审计之前返回 400 `invalid-note`；允许时带说明同样返回 400。说明是给模型的输入，所以像在会话里输入一样另需 `run` 权限，并受会话上限与远程列表约束（403 `scope-required`、`ceiling-exceeded`）；只有查看权限的设备仍可以拒绝，但不能附说明。内置 Harness 把它接在拒绝后面交给模型（「…未执行该操作。用户的说明：…」）；ACP 的权限回复不能带文字，Host 不把说明转给 Agent。快照的 `host.rejectionNote: true` 表示 Host 接收说明，页面只在有它时才让拒绝等说明（旧 Host 会丢掉它）。说明是交给模型的输入，不写进审计。
 
 审批已被处理或已失效时返回 409 `approval-settled`，`decidedBy` 说明由谁处理：`{ kind: 'device', self, deviceName, decision, optionKind, at }`（`optionKind` 如 `allow_once`、`allow_always`、`reject_once`；`deviceName` 为该设备当前的名称，Host 已不认识该设备时为空），或 `{ kind: 'system' }`（会话结束或取消使其失效）；执行端已不再等待时记录 `approval.stale`。同一设备用同一 `requestId` 重发时返回原回执（`replay: true`），不会再次决定或审计。
 
@@ -321,7 +321,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载；每�
 | --- | --- |
 | `identity/host-key.pem` | Host 身份私钥（0600，目录 0700） |
 | `auth/devices.json`、`auth/revocations.jsonl` | 设备登记（版本 2，只含凭据哈希）与撤销日志（0600，目录 0700） |
-| `auth/offline-enrollments.json` | 未使用的离线登记码哈希 |
+| `auth/offline-enrollments.json` | 未使用的离线连接码哈希 |
 | `audit/audit.jsonl` | 哈希链审计记录 |
 | `policy.json` | 本机安全策略 |
 | `providers.json` | 模型服务、密钥及其绑定的源与路径（0600，不进入时间机器备份） |
@@ -403,10 +403,10 @@ Host 约每 40ms 合并一次变化，把选中会话的完整 `task-state` 推�
 | `GET/POST /agents`、`PUT/DELETE /agents/:id` | `admin`；新建，或修改命令、参数、环境变量与预设，只能在桌面端（不需要本机确认） | ACP Agent 定义；环境变量只返回名称，预设带命令检测结果，`started` 说明是否已以当前定义开启过 L3 会话 |
 | `GET /enrollments` | 桌面端 `admin` | 仍在等待的登记及其指纹与系统表单的理由；以及会挡住新配对的完全访问会话。页面已不读取它，配对表单跟随 `GET /native/pairings/:id` |
 | `POST /folder-grants` | 桌面端 `admin` | `{ nonce, expiresAt }`：一次添加文件夹的 nonce |
-| `POST /workspaces`、`POST /workspaces/:id/folders` | 桌面端 `admin` + 签名 | `{ nonce, via, paths, name? \| replace?, signature }`：新建项目（201）、加入或重新选择文件夹（200），返回 `{ workspace, refused }`；`POST /workspaces` 也接受 `{ nonce, via: 'session', sessionId, signature }`，把会话自己的文件夹存为项目（201） |
+| `POST /workspaces`、`POST /workspaces/:id/folders` | 桌面端 `admin` + 签名 | `{ nonce, via, paths, name? \| replace?, signature }`：添加项目（201）、加入或重新选择文件夹（200），返回 `{ workspace, refused }`；`POST /workspaces` 也接受 `{ nonce, via: 'session', sessionId, signature }`，把会话自己的文件夹存为项目（201） |
 | `PATCH /workspaces/:id` | `admin` | `{ name?, glyph?, order? }`：重命名、图标、文件夹顺序（第一个是主文件夹） |
 | `DELETE /workspaces/:id/folders/:folderId`、`DELETE /workspaces/:id` | `admin` | 从项目中移除文件夹、移除项目（文件不删除） |
-| `GET /plugins`、`POST /plugins/:id`、`PUT /preferences` | `admin` | 插件列表与启停、新会话默认值；`pinned`（这台电脑上的新会话都从这个引擎与模型开始；它们用不了时快照里不带 `pinned`）与它固定之后的引擎、模型只能经 `host.sock` 修改，因为固定的引擎可以是完全访问的 |
+| `GET /plugins`、`POST /plugins/:id`、`PUT /preferences` | `admin` | 插件列表与启停、新会话默认值；`pinned`（这台电脑上的新会话都从这个 Harness 与模型开始；它们用不了时快照里不带 `pinned`）与它固定之后的 Harness、模型只能经 `host.sock` 修改，因为固定的 Harness 可以是完全访问的 |
 | `GET /policy`、`PATCH /policy` | `admin`；放宽需桌面端与本机确认 | 安全策略及其哈希 |
 
 `/link/` 下的静态页面在所有入口上无需认证（Host 与来源检查照常）。不是页面的地址（例如把回复里的文件名当链接打开的 `/link/report.md`，或 `/link/` 之外的路径）返回 404 的普通 HTML 页面「找不到这个页面」，带回到 `/link/` 的链接：它不回显请求的路径，不运行脚本（[not-found.ts](../apps/host/src/not-found.ts)）。`/link/api/` 下的路径仍返回 JSON 错误。没有凭据的 `host.sock` 连接只能调用健康检查、`host-info`、运行状态报告、登记、设备列表、撤销设备、生成邀请与读取流量计数，以匿名命令行身份审计。
@@ -429,7 +429,7 @@ Host 约每 40ms 合并一次变化，把选中会话的完整 `task-state` 推�
 | --- | --- |
 | `host.sock` 对端进程身份检查、按会话标记识别进程 | 需要签名的原生扩展 |
 | 回环请求的额外绑定值或设备签名 | 未实现（见「不防御的情况」） |
-| Linux（polkit）与 Windows（Windows Hello）本机确认 | 未实现；这些系统上本机确认不可用，可用离线登记码登记桌面端，回环与 HTTPS 上的登记无法完成 |
+| Linux（polkit）与 Windows（Windows Hello）本机确认 | 未实现；这些系统上本机确认不可用，可用离线连接码登记桌面端，回环与 HTTPS 上的登记无法完成 |
 | 在 macOS 以外从桌面端打开浏览器 | 未实现；改用 `pnpm latch device invite --loopback` |
 | 无界面服务器的确认通道（独立系统用户、命令行确认） | 未实现，`policy.json` 的 `operators` 被忽略；Linux 服务器建议用独立系统用户运行 Host |
 | 远程设备的高风险确认（WebAuthn） | 未实现；在此之前 R2 与其他需要本机确认的操作只能在桌面端处理 |
@@ -509,7 +509,7 @@ Host 通过 `catalog.features.search` 与 `sessionBatch` 声明支持。`POST /l
 
 ## Agent 领域
 
-我的 Agent 与「通用」见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md)，自动化见 [AUTOMATIONS.md](AUTOMATIONS.md)。它们与下面的个人助手并存，直到客户端全部切换。内置引擎每轮以一段简短的基础提示开始，默认最多 50 步。
+我的 Agent 与「通用」见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md)，定时任务见 [AUTOMATIONS.md](AUTOMATIONS.md)。它们与下面的个人助手并存，直到客户端全部切换。内置 Harness 每轮以一段简短的基础提示开始，默认最多 50 步。
 
 ## 个人助手领域
 

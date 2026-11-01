@@ -148,7 +148,7 @@ describe('Host process', () => {
     expect(lines[1]).toMatch(
       /^浏览器：http:\/\/h-[a-z2-7]{52}\.localhost:\d+\/link\/（新浏览器从 Latch 桌面端「在这台电脑的浏览器中打开」，或运行 pnpm latch device invite --loopback）$/u,
     )
-    expect(lines[2]).toBe(`启动目录：${workspace}`)
+    expect(lines[2]).toBe(`默认文件夹：${workspace}`)
     expect(lines[3]).toBe(`手机接入：https://${tls.hostname}:${tlsPort}/link/（在电脑上的 Latch 桌面端生成配对二维码）`)
 
     const state = (await readHostState(dataDir))!

@@ -2633,7 +2633,7 @@ describe('ACP process failures', () => {
     // The note states the same outcome as the status.
     expect(note).toContain('本轮失败')
     expect(note).not.toContain('已中断')
-    expect(note).toContain('Host 日志')
+    expect(note).toContain('已记入日志')
     // stderr can print any inherited value, so it stays out of the transcript every paired device reads.
     expect(note).not.toContain('fatal')
     expect(fixture.diagnostics.join('\n')).toContain('fatal: token=[redacted]')
@@ -2713,14 +2713,15 @@ describe('ACP process failures', () => {
     const { sessionId } = await bridge.createTask({ prompt: 'echo', requestId: rid() })
     const detail = await settled(bridge, sessionId)
     expect(detail.summary.status).toBe('failed')
-    expect(systemText(detail)).toContain('请在运行 Latch 的电脑上完成该 Harness 的登录')
-    expect(systemText(detail)).toContain('Fake login：Run `fake login` in a terminal')
+    expect(systemText(detail)).toContain('还没登录。按它自己的方式登录后重试。')
     await expect(bridge.prompt(sessionId, 'echo again', rid())).rejects.toMatchObject({ status: 409, code: 'agent-auth-required' })
     expect(received(await fixture.log(), 'authenticate')).toEqual([])
+    // Each try after a refusal starts a new process, which is what reads a login made in between.
+    await vi.waitFor(async () => expect(received(await fixture.log(), 'initialize').length).toBe(2), { timeout: 8_000 })
 
     const promptAuth = await (await setup({ FAKE_ACP_AUTH: 'prompt' })).open()
     const gated = await promptAuth.createTask({ prompt: 'echo', requestId: rid() })
-    expect(systemText(await settled(promptAuth, gated.sessionId))).toContain('Fake login')
+    expect(systemText(await settled(promptAuth, gated.sessionId))).toContain('还没登录')
 
     const mismatch = await setup({ FAKE_ACP_PROTOCOL: '2' })
     const newer = await mismatch.open()

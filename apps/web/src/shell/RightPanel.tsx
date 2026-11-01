@@ -71,7 +71,7 @@ export function RightPanel({ shell }: { shell: ShellState }) {
               <ChangesPanel
                 summary={summary}
                 messages={current?.messages ?? []}
-                engine={topHarness ? harnessName(topHarness) : 'Agent'}
+                engine={topHarness ? harnessName(topHarness) : 'Harness'}
                 local={access.local}
                 canRun={access.scopes.has('run')}
                 localOnlySession={level === 'L3'}

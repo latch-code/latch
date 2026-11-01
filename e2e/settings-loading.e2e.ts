@@ -62,11 +62,7 @@ describe('optional settings chunk lifecycle', () => {
       })
       await page.setViewportSize({ width, height: 1000 })
       const settings = page.locator('.settings-page')
-      // 插件 is an entry of its own on wide windows, and a section of 设置 on a phone.
-      if (width < 768) {
-        await openEntry(page, '设置')
-        await settings.getByRole('tab', { name: '插件', exact: true }).click()
-      } else await openEntry(page, '插件')
+      await openEntry(page, '插件')
       await expect.poll(() => requested).toBe(true)
       expect(privateReads).toBe(0)
       await owner.json(`devices/${device.id}`, { method: 'PATCH', body: { scopes: ['view', 'run'] } })
@@ -99,9 +95,7 @@ describe('optional settings chunk lifecycle', () => {
           2,
         ),
       )
-      // Without 管理此 Host a wide window's entry is gone, and the page with it.
-      if (width < 768) await closeSettings(settings)
-      else await settings.waitFor({ state: 'detached' })
+      await closeSettings(settings)
       await page.setViewportSize({ width: 1440, height: 1000 })
       expect(await draft.inputValue()).toBe('Retain this unsent draft while settings loads')
     } finally {

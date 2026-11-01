@@ -191,7 +191,7 @@ export function useAttachments({
         return
       }
       if (state.current.some(item => (item.ref?.kind === 'image' ? !caps?.images : !caps?.text || item.file.size > caps.textBytes))) {
-        setError(caps?.reason ?? '当前 Agent 不接受这些附件。请移除附件或更换模型。')
+        setError(caps?.reason ?? '当前 Harness 不接受这些附件。请移除附件或更换模型。')
         return
       }
       return state.current.map(item => item.ref!.id)

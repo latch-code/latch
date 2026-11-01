@@ -157,11 +157,7 @@ export class BranchReader {
     this.seen.delete(summary.id)
     this.seen.set(summary.id, { cwd: summary.cwd, active, runId: summary.runId, updatedAt: summary.updatedAt })
     while (this.seen.size > 1024) this.seen.delete(this.seen.keys().next().value!)
-    let entry = this.cache.get(summary.cwd)
-    if (!entry) entry = { cwd: summary.cwd, checkedAt: -Infinity, generation: 0, again: false }
-    this.cache.delete(summary.cwd)
-    this.cache.set(summary.cwd, entry)
-    while (this.cache.size > 256) this.cache.delete(this.cache.keys().next().value!)
+    const entry = this.entryFor(summary.cwd)
     if (force || (old && old.cwd !== summary.cwd)) {
       entry.generation++
       entry.checkedAt = -Infinity
@@ -169,6 +165,20 @@ export class BranchReader {
     }
     if (now - entry.checkedAt >= 30_000) this.refresh(entry)
     return { ...result, ...(entry.branch ? { branch: entry.branch } : {}) }
+  }
+  /** A folder no session has run in yet, such as a project a new session is about to start in. */
+  branchOf(cwd: string): string | undefined {
+    if (this.closed || !isAbsolute(cwd)) return undefined
+    const entry = this.entryFor(cwd)
+    if ((this.options.now ?? Date.now)() - entry.checkedAt >= 30_000) this.refresh(entry)
+    return entry.branch
+  }
+  private entryFor(cwd: string): Cached {
+    const entry = this.cache.get(cwd) ?? { cwd, checkedAt: -Infinity, generation: 0, again: false }
+    this.cache.delete(cwd)
+    this.cache.set(cwd, entry)
+    while (this.cache.size > 256) this.cache.delete(this.cache.keys().next().value!)
+    return entry
   }
   private refresh(entry: Cached): void {
     if (this.closed || entry.pending || this.active.size >= 4) return

@@ -1,6 +1,20 @@
-import { NewProjectRow, ProjectGroupHeading, ShelfHead, type ProjectNavigationActions } from './ProjectNavigation.tsx'
+import { ProjectGroupHeading, ShelfHead, type ProjectNavigationActions } from './ProjectNavigation.tsx'
 import { memo, useCallback, useMemo, useRef, useState } from 'react'
-import { Archive, ChevronLeft, Ellipsis, Pin, Plus, Search, SquarePen, X } from 'lucide-react'
+import {
+  AlarmClock,
+  Archive,
+  Bot,
+  ChevronLeft,
+  Ellipsis,
+  FolderPlus,
+  Pin,
+  Plus,
+  Search,
+  Settings,
+  Smartphone,
+  SquarePen,
+  X,
+} from 'lucide-react'
 import type { AppSnapshot, HarnessInfo, TaskSummary } from '@latch/protocol'
 import { BUILTIN_HARNESS_NAME, sessionHarness } from '../composerChoice.ts'
 import { currentShell } from '../core/shell.ts'
@@ -25,7 +39,8 @@ import type { ConnectionStatus } from '../core/useHarness.ts'
 import { HarnessTile } from './BrandTile.tsx'
 import { Menu, type MenuSection } from './overlays.tsx'
 import { SessionStatus, statusLabel, useLastConfirmed } from './SessionStatus.tsx'
-import { Collapse, ICON_STROKE, IconButton } from '@latch/ui'
+import { Collapse, ICON_STROKE, IconButton, type LucideIcon } from '@latch/ui'
+import type { SettingsSection, ShellEntry } from '../shell/routes.ts'
 
 export const connectionLabels: Record<ConnectionStatus, string> = {
   connected: '已连接',
@@ -57,13 +72,24 @@ export function taskHarness(snapshot: AppSnapshot, task: TaskSummary): TaskHarne
 /** The harness's name on a row: the built-in one by its product name, one no longer listed by its ID. */
 export const harnessLabel = (harness: TaskHarness) => (harness.source === 'builtin' ? BUILTIN_HARNESS_NAME : (harness.name ?? harness.id))
 
-/**
- * The word for what ran a session. Sessions do not record an Agent yet, so every one is 通用; the mark and its tooltip
- * name the engine.
- */
-export const SESSION_AGENT = '通用'
-
 const shortcutFor = (key: string) => (currentShell() ? `⌘${key}` : `Alt ${key}`)
+
+/** Something wrong with reaching the Mac: the sentence for the dot beside 手机, and how bad it is. A healthy state has none. */
+function connectionTrouble(
+  connection: ConnectionStatus,
+  hostProblem: { text: string } | null,
+): { tone: 'warn' | 'error'; text: string } | null {
+  if (connection === 'offline') return { tone: 'warn', text: '这台设备已离线' }
+  if (hostProblem) return { tone: 'error', text: hostProblem.text }
+  if (connection === 'reconnecting') return { tone: 'warn', text: '正在重新连接' }
+  return null
+}
+
+/** What a page the sidebar names is called and drawn with. */
+const SIDEBAR_PAGES: Partial<Record<SettingsSection, { label: string; icon: LucideIcon }>> = {
+  routines: { label: '定时任务', icon: AlarmClock },
+  assistants: { label: 'Agent', icon: Bot },
+}
 
 const SessionItem = memo(function SessionItem({
   task,
@@ -100,7 +126,7 @@ const SessionItem = memo(function SessionItem({
   const status = rowStatus(task, { unread, stopping, frozen: frozen !== null })
   const oneLine = isOneLine(status)
   const engine = harnessLabel(harness)
-  const meta = rowMeta(task, status, inWaitingShelf ? (project ?? '对话') : undefined)
+  const meta = rowMeta(task, status, inWaitingShelf ? (project ?? '无项目') : undefined)
   // While the connection is down the row says less, not that what it last knew stopped mattering.
   const strong =
     status.kind === 'waiting'
@@ -121,7 +147,7 @@ const SessionItem = memo(function SessionItem({
           className="session-item-main"
           data-task-id={leaving ? undefined : task.id}
           aria-current={selected ? 'page' : undefined}
-          title={oneLine ? [SESSION_AGENT, engine, task.branch, time].filter(Boolean).join(' · ') : undefined}
+          title={oneLine ? [engine, task.branch, time].filter(Boolean).join(' · ') : undefined}
           onClick={() => {
             onSelect(task.id)
           }}>
@@ -142,7 +168,7 @@ const SessionItem = memo(function SessionItem({
               <span className="session-mark" title={engine}>
                 <HarnessTile harness={{ id: harness.id, source: harness.source }} size={14} />
               </span>
-              <span>{SESSION_AGENT}</span>
+              <span>{engine}</span>
               {meta && <span className="session-meta-rest">{`· ${meta}`}</span>}
               {status.kind === 'frozen' && <span className="session-frozen">{frozen}</span>}
             </span>
@@ -195,8 +221,7 @@ function SessionGroupView({
   now,
   onSelect,
   onNewIn,
-  onNewChat,
-  onCreateProject,
+  onNewWithoutProject,
   onEditProject,
   onProjectsChanged,
   menu,
@@ -216,7 +241,7 @@ function SessionGroupView({
   now: number
   onSelect: (id: string) => void
   onNewIn?: (workspaceId: string) => void
-  onNewChat?: () => void
+  onNewWithoutProject?: () => void
   menu: (task: TaskSummary) => MenuSection[]
 }) {
   const rows = usePresence(group.tasks, task => task.id, context, settled)
@@ -233,7 +258,6 @@ function SessionGroupView({
           onFold={onFold}
           count={count}
           onNew={workspaceId && onNewIn ? () => onNewIn(workspaceId) : undefined}
-          onCreateProject={onCreateProject}
           onEditProject={onEditProject}
           onProjectsChanged={onProjectsChanged}
         />
@@ -244,8 +268,8 @@ function SessionGroupView({
           onFold={onFold}
           count={waiting || folded ? count : undefined}
           actions={
-            group.id === 'other' && onNewChat ? (
-              <IconButton size="xs" label="新对话" tooltip="新对话" icon={Plus} onClick={onNewChat} />
+            group.id === 'other' && onNewWithoutProject ? (
+              <IconButton size="xs" label="新会话" tooltip="新会话" icon={Plus} onClick={onNewWithoutProject} />
             ) : undefined
           }
         />
@@ -296,8 +320,9 @@ function useFoldedShelves(key: string) {
 }
 
 /**
- * The session panel: 新会话 and 搜索 (the palette searches), then the shelves 等你处理, each project, 对话 and a quiet
- * 已归档 row. A shelf folds with its chevron; what ended up there stays one click away.
+ * The whole navigation of a wide window: 新会话, 搜索 (the palette searches) and the pages that hold something; the shelves
+ * 等你处理, each project, 无项目 and a quiet 已归档 row; at the foot 添加项目, 手机 and 设置. A shelf folds with its chevron;
+ * what ended up there stays one click away.
  */
 export function Sidebar({
   snapshot,
@@ -311,11 +336,16 @@ export function Sidebar({
   onSelect,
   onNew,
   onNewIn,
-  onNewChat,
+  onNewWithoutProject,
   onSearch,
   onCreateProject,
   onEditProject,
   onProjectsChanged,
+  pages,
+  entries,
+  onEntry,
+  onPage,
+  hostProblem,
   newActive = false,
   drawer,
   onClose,
@@ -340,7 +370,7 @@ export function Sidebar({
   onNew: () => void
   /** Starts a new session in a saved project; absent where this device cannot start one. */
   onNewIn?: (workspaceId: string) => void
-  onNewChat?: () => void
+  onNewWithoutProject?: () => void
   onSearch: () => void
   /** The new-session page is open: 新会话 shows as a toggle that is on. */
   newActive?: boolean
@@ -350,6 +380,13 @@ export function Sidebar({
   onRefresh: () => void
   sessionMenu: (task: TaskSummary) => MenuSection[]
   now: number
+  onCreateProject?: () => void
+  /** The pages named under 搜索. */
+  pages: readonly SettingsSection[]
+  entries: readonly ShellEntry[]
+  onEntry: (entry: ShellEntry) => void
+  onPage: (section: SettingsSection) => void
+  hostProblem: { text: string } | null
 }) {
   const list = useRef<HTMLElement>(null)
   const [folded, toggleShelf] = useFoldedShelves(shelvesKey(snapshot.device.id))
@@ -362,7 +399,8 @@ export function Sidebar({
     ...(archived ? {} : { waitingFrom: snapshot.tasks }),
   })
   const archivedCount = snapshot.tasks.filter(task => task.archived).length
-  const noProjects = !snapshot.catalog?.workspaces.some(item => item.id !== 'default')
+  const trouble = connectionTrouble(connection, hostProblem)
+  const desktop = currentShell() !== null
   const context = filter
   const signature = groups.map(group => `${group.id}:${folded.has(group.id) ? '' : group.tasks.map(task => task.id).join(',')}`).join('|')
   const remeasure = useListMotion(list, context, signature)
@@ -387,6 +425,22 @@ export function Sidebar({
           <span>搜索</span>
           {!drawer && <span className="sidebar-shortcut">{/Mac/.test(navigator.platform) ? '⌘K' : 'Ctrl K'}</span>}
         </button>
+        {pages.map(section => {
+          const page = SIDEBAR_PAGES[section]
+          if (!page) return null
+          return (
+            <button
+              key={section}
+              type="button"
+              className="sidebar-nav-row"
+              onClick={() => {
+                onPage(section)
+              }}>
+              <page.icon size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+              <span>{page.label}</span>
+            </button>
+          )
+        })}
       </div>
       {archiveBatch}
       <nav ref={list} className="session-list" aria-label="会话列表" data-session-filter={filter}>
@@ -426,15 +480,13 @@ export function Sidebar({
               now={now}
               onSelect={onSelect}
               onNewIn={onNewIn}
-              onNewChat={onNewChat}
+              onNewWithoutProject={onNewWithoutProject}
               menu={sessionMenu}
-              onCreateProject={onCreateProject}
               onEditProject={onEditProject}
               onProjectsChanged={onProjectsChanged}
             />
           ))
         )}
-        {projectSections && noProjects && onCreateProject && <NewProjectRow onCreateProject={onCreateProject} />}
         {archivedCount > 0 && !archived && (
           <button
             type="button"
@@ -452,14 +504,47 @@ export function Sidebar({
         )}
       </nav>
       {archiveUndo}
-      {/* Connection trouble is the rail's dot and the header's words. While the desktop app keeps this Mac awake, a few quiet words say so. */}
+      {/* While the desktop app keeps this Mac awake, a few quiet words say so. */}
       {keepAwake && connection === 'connected' && (
-        <footer className="sidebar-footer">
+        <div className="sidebar-footer">
           <button type="button" className="connection-badge connection-connected" title={`${keepAwake} · 同步最新状态`} onClick={onRefresh}>
             {KEEP_AWAKE_LABEL}
           </button>
-        </footer>
+        </div>
       )}
+      <nav className="sidebar-foot" aria-label="主导航">
+        {onCreateProject && (
+          <button type="button" className="sidebar-add-project" onClick={onCreateProject}>
+            <FolderPlus size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+            <span>添加项目</span>
+          </button>
+        )}
+        <span className="sidebar-foot-spacer" />
+        {trouble && (
+          <span className="sidebar-trouble" data-tone={trouble.tone} role="status" title={trouble.text}>
+            <span className="sr-only">{trouble.text}</span>
+          </span>
+        )}
+        {entries.includes('phone') && (
+          <IconButton
+            label="手机"
+            icon={Smartphone}
+            onClick={() => {
+              onEntry('phone')
+            }}
+          />
+        )}
+        {entries.includes('settings') && (
+          <IconButton
+            label="设置"
+            icon={Settings}
+            shortcut={desktop ? '⌘,' : 'Alt ,'}
+            onClick={() => {
+              onEntry('settings')
+            }}
+          />
+        )}
+      </nav>
     </div>
   )
 }

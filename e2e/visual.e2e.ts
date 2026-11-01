@@ -19,7 +19,6 @@ import {
   backToPhoneSessions,
   reachable,
   closeSettings,
-  setChatOnly,
 } from './helpers/layout.ts'
 import { expectUnmovedByInjectedStyles } from './helpers/security.ts'
 import {
@@ -368,7 +367,7 @@ interface Sessions {
 
 // ---- Page drivers that need nothing from the scenario ---------------------------------------------------------
 
-/** The tablet's session list, which slides over from the rail. */
+/** The tablet's session list, which slides over from the left. */
 async function openDrawer(target: Page): Promise<Locator> {
   await target.getByRole('button', { name: '打开会话列表', exact: true }).filter({ visible: true }).first().click()
   const drawer = target.getByRole('dialog', { name: '会话导航', exact: true })
@@ -877,7 +876,7 @@ describe('visual capture of the real product', () => {
     expect((await local.addFolders({ paths: [join(projects, 'website')], name: 'website' })).status).toBe(201)
     const saved = await local.confirmed('agents', {
       method: 'POST',
-      body: { name: '本地 ACP Agent', command: process.execPath, args: [FAKE_ACP_AGENT], env: {} },
+      body: { name: '本地 ACP Harness', command: process.execPath, args: [FAKE_ACP_AGENT], env: {} },
     })
     expect(saved.status).toBe(201)
     const { agent }: { agent: AgentSettings } = await saved.json()
@@ -969,7 +968,7 @@ describe('visual capture of the real product', () => {
 
     const hidden = await start(PROMPTS.hidden)
     await pendingApproval(hidden)
-    // The first approval to arrive while the pages watch: 等你处理 appears (the rail's button on tablets, with its count,
+    // The first approval to arrive while the pages watch: 等你处理 appears (the title row's button on tablets, with its count,
     // which fades in because the page saw it arrive).
     await pages
       .get('desktop')!
@@ -1029,8 +1028,6 @@ describe('visual capture of the real product', () => {
       await reachable(target.getByRole('button', { name: viewport.name === 'phone' ? '开始' : '发送', exact: true }), {
         allowDisabled: true,
       })
-      // This browser runs on the built-in engine alone: nothing to ask, and the full-access agent is not offered.
-      expect(await target.locator('.engine-question').count()).toBe(0)
       await recorder.capture(target, viewport, 'new-session', 'empty')
       await target.getByRole('textbox', { name: '新会话消息', exact: true }).blur()
       await settleMotion(target)
@@ -1084,11 +1081,6 @@ describe('visual capture of the real product', () => {
         await target.keyboard.press('Escape')
         await target.getByRole('region', { name: 'DeepSeek', exact: true }).waitFor({ state: 'hidden' })
       }
-      await setChatOnly(target, true)
-      await settleMotion(target)
-      await recorder.capture(target, viewport, 'new-session-chat', 'only chatting: no project, no files')
-      await setChatOnly(target, false)
-
       // Nothing to start with yet: no model service. The card above the input offers one, and the same panel as the
       // model picker's opens inside it. The Host's catalog is read without its services for this.
       await target.route('**/link/api/snapshot', async route => {
@@ -1161,13 +1153,8 @@ describe('visual capture of the real product', () => {
         await connected(desktopApp)
         await desktopApp.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
         await desktopApp.locator('.workspace.is-new').waitFor()
-        const question = desktopApp.getByRole('region', { name: '选择引擎', exact: true })
-        await reachable(question.getByRole('button', { name: /本地 ACP Agent/ }))
-        expect(await desktopApp.getByRole('button', { name: '发送', exact: true }).getAttribute('aria-disabled')).toBe('true')
-        await desktopApp.evaluate(() => new Promise(done => setTimeout(done, 400)))
-        await recorder.capture(desktopApp, viewport, 'new-session-engine-question', 'first use on a device: which engine, none preselected')
-        await question.getByRole('button', { name: /本地 ACP Agent/ }).click()
-        await question.waitFor({ state: 'detached' })
+        // Nothing to answer first: the Harness it found is already chosen.
+        expect(await desktopApp.getByRole('button', { name: /^Harness：本地 ACP Harness/ }).count()).toBe(1)
         // Nothing typed yet: the start button rests on the same neutral fill as an empty send, its lock kept.
         const startButton = desktopApp.getByRole('button', { name: '发送', exact: true })
         await reachable(startButton, { allowDisabled: true })
@@ -1181,9 +1168,9 @@ describe('visual capture of the real product', () => {
         await desktopApp.evaluate(() => new Promise(done => setTimeout(done, 400)))
         await recorder.capture(desktopApp, viewport, 'new-session-full-access', 'starting a full-access session in the desktop app')
         // An engine is added where it is chosen: the presets not added yet, then one of them with its install command.
-        await desktopApp.getByRole('button', { name: /^模型：/ }).click()
-        await desktopApp.getByRole('menuitem', { name: '添加引擎…', exact: true }).click()
-        const presets = desktopApp.getByRole('group', { name: '添加 Agent', exact: true })
+        await desktopApp.getByRole('button', { name: /^Harness：/ }).click()
+        await desktopApp.getByRole('menuitem', { name: '添加 Harness…', exact: true }).click()
+        const presets = desktopApp.getByRole('group', { name: '添加 Harness', exact: true })
         await reachable(presets.getByRole('button', { name: /^Codex/ }))
         await desktopApp.evaluate(() => new Promise(done => setTimeout(done, 400)))
         await recorder.capture(desktopApp, viewport, 'new-session-harness', 'the engines that can be added')
@@ -1218,8 +1205,8 @@ describe('visual capture of the real product', () => {
         await connected(blockedApp)
         await blockedApp.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
         await blockedApp.locator('.workspace.is-new').waitFor()
-        await blockedApp.getByRole('button', { name: /^模型：/ }).click()
-        await blockedApp.getByRole('menuitemradio', { name: /本地 ACP Agent/ }).click()
+        await blockedApp.getByRole('button', { name: /^Harness：/ }).click()
+        await blockedApp.getByRole('menuitemradio', { name: /本地 ACP Harness/ }).click()
         await blockedApp.getByRole('textbox', { name: '新会话消息', exact: true }).fill('列出项目根目录')
         const blockedStart = blockedApp.getByRole('button', { name: '发送', exact: true })
         await reachable(blockedStart, { allowDisabled: true })
@@ -1377,7 +1364,7 @@ describe('visual capture of the real product', () => {
         await settleMotion(target)
         await recorder.capture(target, viewport, 'session-model-switch', 'a model switch for the next message, with its undo')
         await undo.click()
-        await input.getByRole('button', { name: '模型：fixture-large', exact: true }).waitFor()
+        await input.getByRole('button', { name: '模型：fixture-large · 默认思考', exact: true }).waitFor()
       }
 
       // Opening the fold shows the rows as they were.
@@ -1487,7 +1474,7 @@ describe('visual capture of the real product', () => {
       // A decision whose answer never arrived: the card offers to send the same choice again.
       await target.route('**/link/api/approvals/**', route => route.abort('connectionreset'))
       // Typing says what to do instead: 拒绝 becomes 拒绝并发送, and the text goes with it.
-      const answerBox = target.getByRole('textbox', { name: '输入内容会拒绝并告诉 Agent 改做什么', exact: true })
+      const answerBox = target.getByRole('textbox', { name: '输入内容会拒绝并告诉 Harness 改做什么', exact: true })
       await answerBox.fill('先写到草稿目录')
       await r1.getByRole('button', { name: '拒绝并发送', exact: true }).waitFor()
       await settleMotion(target)
@@ -1793,11 +1780,11 @@ describe('visual capture of the real product', () => {
       await recorder.capture(target, viewport, 'settings-general', 'general')
       for (const [surface, section, ready] of [
         ['settings-providers', '模型', settings.getByText('本地模型服务').first()],
-        ['settings-agents', '引擎', settings.getByText('本地 ACP Agent').first()],
+        ['settings-agents', 'Harness', settings.getByText('本地 ACP Harness').first()],
         ['settings-workspaces', '项目', settings.getByText('website').first()],
         ['settings-plugins', '插件', target.locator('.plugin-nav-row').first()],
         ['settings-devices', '手机与设备', target.getByRole('switch', { name: '手机可以开始新会话', exact: true })],
-        ['settings-about', '关于', settings.getByText('Agent 和插件以你的权限在这台电脑上运行。').first()],
+        ['settings-about', '关于', settings.getByText('Harness 和插件以你的权限在这台电脑上运行。').first()],
       ] as const) {
         await openSection(settings, section)
         await ready.waitFor()
@@ -1838,7 +1825,7 @@ describe('visual capture of the real product', () => {
         }
         if (surface === 'settings-agents') {
           // An agent's page: 启用, its definition read-only in a browser, detection with the path and the red group.
-          await settings.getByRole('button', { name: '编辑 本地 ACP Agent', exact: true }).click()
+          await settings.getByRole('button', { name: '编辑 本地 ACP Harness', exact: true }).click()
           await reachable(top().getByRole('switch', { name: '启用', exact: true }))
           await reachable(top().getByRole('button', { name: '重新检测', exact: true }))
           await reachable(top().getByRole('button', { name: '复制命令路径', exact: true }))

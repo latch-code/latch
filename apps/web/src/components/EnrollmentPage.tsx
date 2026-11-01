@@ -5,6 +5,7 @@ import {
   acceptableName,
   enrollmentName,
   pendingInvitation,
+  DESKTOP_SCOPES,
   requestedScopes,
   useEnrollment,
   type EnrolledResult,
@@ -132,14 +133,25 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
   const [manageDeclined, setManageDeclined] = useState(false)
   const size = useButtonSize()
   const reason = ENROLLMENT_REASON_TEXT[auth.reason]
-  const title = legacy ? COPY.legacyTitle : COPY.title
+  const desktop = electron && !legacy
+  const title = legacy ? COPY.legacyTitle : desktop ? COPY.desktopTitle : COPY.title
   const presenceDown = info?.presence.status === 'unavailable'
   const offlineTicket = info?.offlineCodeAccepted === true
   // Only host.sock takes offline codes; a Host of the previous build may still take them over loopback and says so in
   // offlineCodeAccepted.
   const offlineAccepted = (info !== null && isLocalListener(info.listener)) || offlineTicket
   // Without local confirmation the offline code is the way in, so the intro does not promise Touch ID.
-  const description = legacy ? COPY.legacyBody : invited ? COPY.invited : presenceDown && offlineAccepted ? COPY.offline : COPY.local
+  const description = legacy
+    ? COPY.legacyBody
+    : presenceDown && offlineAccepted
+      ? COPY.offline
+      : desktop
+        ? info?.firstDevice
+          ? COPY.desktopFirst
+          : COPY.desktopAgain
+        : invited
+          ? COPY.invited
+          : COPY.local
 
   if (step.kind === 'loading')
     return (
@@ -239,7 +251,7 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
   const linkCanManage = linkAllowsAdmin && info?.listener === 'loopback-tcp'
   const wantsAdmin = linkCanManage && !manageDeclined
   const busy = step.kind === 'submitting'
-  const chosenName = enrollmentName(name, legacyName)
+  const chosenName = enrollmentName(name, legacyName ?? (electron ? info?.hostName : undefined))
   const send = (event: FormEvent, useOffline: boolean) => {
     event.preventDefault()
     if (busy || chosenName === null || (useOffline ? !offlineCode.trim() : blocked)) return
@@ -272,14 +284,14 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
         onSubmit={event => {
           send(event, offlineOnly)
         }}>
-        {electron && (
+        {electron && offlineOffered && (offlineOnly || showOffline) && (
           <TextField
             label={COPY.name}
             value={name}
             onChange={event => {
               setName(event.target.value)
             }}
-            placeholder={acceptableName(legacyName) ?? COPY.namePlaceholder}
+            placeholder={acceptableName(legacyName ?? info?.hostName) ?? COPY.namePlaceholder}
             autoComplete="off"
             maxLength={80}
             disabled={busy}
@@ -320,7 +332,7 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
               icon={outcome ? RefreshCw : undefined}
               loading={busy}
               disabled={chosenName === null || blocked}>
-              {legacy ? COPY.legacySubmit : electron ? COPY.submit : COPY.connectBrowser}
+              {legacy ? COPY.legacySubmit : electron ? COPY.desktopSubmit : COPY.connectBrowser}
             </Button>
             {offlineOffered
               && (showOffline ? (
@@ -348,7 +360,13 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
         )}
       </form>
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
-      {!electron && chosenName !== null && <ConnectionDetails name={chosenName} scopes={requestedScopes(wantsAdmin)} dataScope="work" />}
+      {!offlineOnly && chosenName !== null && (
+        <ConnectionDetails
+          name={chosenName}
+          scopes={electron ? DESKTOP_SCOPES : requestedScopes(wantsAdmin)}
+          dataScope={electron ? 'all' : 'work'}
+        />
+      )}
     </Shell>
   )
 }

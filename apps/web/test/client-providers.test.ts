@@ -108,12 +108,12 @@ describe('model-service addresses', () => {
     expect(failure('http-error', { upstreamStatus: 404 }).text).toContain('没有模型列表')
     expect(failure('http-error', { upstreamStatus: 500 }).text).toBe('模型服务返回了错误（HTTP 500）。')
     expect(failure('network-error', { networkCode: 'ECONNREFUSED' }).text).toBe(
-      'Host 连不上这个地址：那里没有服务在监听。确认服务已经启动、端口正确。',
+      'Latch 连不上这个地址：那里没有服务在监听。确认服务已经启动、端口正确。',
     )
-    expect(failure('network-error', { networkCode: 'ENOTFOUND' }).text).toBe('Host 找不到这个域名。检查地址的拼写和网络。')
-    expect(failure('network-error', { networkCode: 'CERT_HAS_EXPIRED' }).text).toBe('Host 不信任这个地址的 HTTPS 证书。')
-    expect(failure('network-error').text).toBe('Host 连不上这个地址。检查地址和网络。')
-    expect(failure('timeout').text).toBe('Host 连不上这个地址：10 秒内没有响应。')
+    expect(failure('network-error', { networkCode: 'ENOTFOUND' }).text).toBe('Latch 找不到这个地址。检查地址的拼写和网络。')
+    expect(failure('network-error', { networkCode: 'CERT_HAS_EXPIRED' }).text).toBe('Latch 不信任这个地址的 HTTPS 证书。')
+    expect(failure('network-error').text).toBe('Latch 连不上这个地址。检查地址和网络。')
+    expect(failure('timeout').text).toBe('Latch 连不上这个地址：10 秒内没有响应。')
     // A service that answers without a usable model list is not a failed connection: many gateways have none.
     expect(failure('invalid-response').kind).toBe('listing')
     expect(failure('http-error', { upstreamStatus: 404 }).kind).toBe('listing')

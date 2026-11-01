@@ -75,7 +75,7 @@ function socketRequest(socketPath, { method = 'GET', path, headers = {}, body, b
     const req = request({ socketPath, method, path, headers: outgoing })
     let timer
     if (timeoutMs !== undefined) {
-      timer = setTimeout(() => req.destroy(Object.assign(new Error('Latch Host 响应超时'), { code: 'ETIMEDOUT' })), timeoutMs)
+      timer = setTimeout(() => req.destroy(Object.assign(new Error('Latch 服务响应超时'), { code: 'ETIMEDOUT' })), timeoutMs)
     }
     const reader = bodyStream?.getReader()
     let responded = false
@@ -151,7 +151,7 @@ function readBody(stream, limit) {
       if (settled) return
       size += chunk.length
       if (size > limit) {
-        fail(new Error('Latch Host 响应过大'))
+        fail(new Error('Latch 服务响应过大'))
         stream.destroy()
         return
       }
@@ -164,7 +164,7 @@ function readBody(stream, limit) {
       }
     })
     stream.once('error', fail)
-    stream.once('close', () => fail(new Error('Latch Host 连接中断')))
+    stream.once('close', () => fail(new Error('Latch 服务连接中断')))
   })
 }
 

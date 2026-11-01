@@ -20,7 +20,7 @@ export type AgentGlyph = (typeof AGENT_GLYPHS)[number]
 
 export const GENERAL_AGENT_ID = 'general'
 
-/** 名称、图标、说明、指令、技能、引擎与模型 of one of 我的 Agent. */
+/** 名称、图标、说明、指令、技能、Harness 与模型 of one of 我的 Agent. */
 export interface CustomAgentConfig {
   name: string
   description: string

@@ -43,7 +43,7 @@ export const RENEW_INTERVAL_MS = 24 * 60 * 60 * 1000
 const MAX_ISSUED_INVITATIONS = 256
 const MAX_GATE_REFUSALS = 8
 export const UNIX_ADDRESS = '本机 host.sock'
-const PAIRING_LABELS = { lpc: '本机确认', offline: '离线登记码', invitation: '配对邀请', migration: '旧版本迁移' } as const
+const PAIRING_LABELS = { lpc: '本机确认', offline: '离线连接码', invitation: '配对邀请', migration: '旧版本迁移' } as const
 
 const deviceNameSchema = z.object({ name: z.string().trim().min(1).max(80) })
 const scopeSchema = z.enum(['view', 'run', 'approve:standard', 'approve:elevated', 'admin', 'secrets'])
@@ -145,7 +145,8 @@ export function createDeviceRoutes(context: RouteContext, deps: DeviceRouteDeps)
         const outcome = await devices.authenticate(presented, connection)
         if (!outcome.ok && outcome.code === 'legacy-reconfirm') legacyName = outcome.legacyName
       }
-      json(res, await enrollments.info(connection, legacyName))
+      const info = await enrollments.info(connection, legacyName)
+      json(res, isLocalListener(connection.listener) ? { ...info, hostName: deps.hostName().replace(/\.local$/u, '') } : info)
       return true
     }
     if (path === '/link/api/enrollment-invitation' && method === 'POST') {
@@ -219,7 +220,7 @@ export function createDeviceRoutes(context: RouteContext, deps: DeviceRouteDeps)
     if (!enrollment) return false
     const id = safeDecode(enrollment[1]!)
     if (isNativeListener(listener.listener) && opening?.enrollmentId !== id) throw authFailure('unauthorized')
-    if (id.length > 64) throw new AppError(404, 'enrollment-not-found', '找不到该登记请求')
+    if (id.length > 64) throw new AppError(404, 'enrollment-not-found', '找不到这个连接请求')
     if (method === 'GET' && !enrollment[2]) {
       limits.enrollmentPoll.take(id)
       json(res, { enrollment: enrollments.status(id, connection) })

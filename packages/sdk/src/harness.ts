@@ -102,6 +102,8 @@ export interface HarnessDriver {
    * for a driver that declares `projectFolders: 'all'`.
    */
   folderAccess?: NonNullable<HarnessInfo['projectFolders']>
+  /** What clients may say about this driver's permissions before a session starts. */
+  permission?: NonNullable<HarnessInfo['permission']>
   /** Optional readiness probe, e.g. whether an agent binary is installed. */
   status?(): { status: HarnessInfo['status']; statusMessage?: string }
   /** Creates an unstarted instance; asynchronous initialization belongs to Bridge.start(). */

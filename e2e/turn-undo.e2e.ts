@@ -170,7 +170,7 @@ it('sends the next message once, and stops promising to tell the engine once it 
     const input = page.getByRole('textbox', { name: '继续对话', exact: true })
     await input.fill('再改一次')
     await input.press('Enter')
-    await page.getByText('已告诉 Agent 改动被撤销了').waitFor()
+    await page.getByText('已告诉 Harness 改动被撤销了').waitFor()
     await vi.waitFor(async () => expect((await host.host.bridge.detail(id)).summary.status).toBe('idle'), { timeout: 15_000 })
     await cardOf(page).getByText('改动了 1 个文件', { exact: true }).waitFor()
     expect(await page.locator('.message-user', { hasText: '再改一次' }).count()).toBe(1)

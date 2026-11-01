@@ -43,6 +43,8 @@ let invitation = captureFragment()
 export const pendingInvitation = () => invitation
 
 export const BASE_SCOPES: DeviceScope[] = ['view', 'run', 'approve:standard']
+/** What host.sock grants the desktop app; it asks for nothing itself, so this is only for saying so. */
+export const DESKTOP_SCOPES: DeviceScope[] = ['view', 'run', 'approve:standard', 'approve:elevated', 'admin', 'secrets']
 /** What a browser asks for: management only when the person was shown it and did not turn it down. */
 export const requestedScopes = (admin: boolean): DeviceScope[] => [...BASE_SCOPES, ...(admin ? ['admin' as const] : [])]
 
@@ -80,17 +82,20 @@ export function browserDeviceName(userAgent: string, touchPoints = 0): string {
   return system ? `${system} 上的 ${browser}` : browser
 }
 
-export function defaultDeviceName(legacyName?: string): string {
-  const legacy = acceptableName(legacyName)
-  if (legacy) return legacy
+export function defaultDeviceName(knownName?: string): string {
+  const known = acceptableName(knownName)
+  if (known) return known
   if (currentShell()) return 'Latch 桌面端'
   return typeof navigator === 'undefined' ? '浏览器' : browserDeviceName(navigator.userAgent, navigator.maxTouchPoints)
 }
 
-/** The name an enrollment submits: the default when left empty, null when the security-text rule would escape it. */
-export function enrollmentName(typed: string, legacyName?: string): string | null {
+/**
+ * The name an enrollment submits: when left empty, a name already known (the device's old one, the Mac's for the desktop
+ * app) or the default; null when the security-text rule would escape it.
+ */
+export function enrollmentName(typed: string, knownName?: string): string | null {
   const name = typed.trim()
-  if (name === '') return defaultDeviceName(legacyName)
+  if (name === '') return defaultDeviceName(knownName)
   return isAcceptableDeviceName(name) ? name : null
 }
 

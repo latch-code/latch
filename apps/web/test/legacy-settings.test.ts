@@ -6,7 +6,6 @@ import { SetupCard } from '../src/newSession/NewSession.tsx'
 import { sessionMenuSections } from '../src/sessionMenu.ts'
 import { SettingsPage, settingsSections } from '../src/settings/SettingsPage.tsx'
 import { harnessName, startBlock } from '../src/composerChoice.ts'
-import { pluginName } from '../src/settings/PluginsSettings.tsx'
 
 const noop = () => {}
 const catalog: HostCatalog = {
@@ -32,14 +31,14 @@ const legacy = {
 describe('older Host without a catalog', () => {
   it('offers only settings the Host can serve', () => {
     // The device page needs the newer device API, and model services the catalog, so both are hidden on such a Host.
-    expect(settingsSections(legacy)).toEqual(['general', 'shortcuts', 'plugins', 'about'])
+    expect(settingsSections(legacy)).toEqual(['general', 'plugins', 'shortcuts', 'about'])
     expect(settingsSections({ ...legacy, catalog })).toEqual([
       'general',
       'providers',
       'engines',
       'workspaces',
-      'shortcuts',
       'plugins',
+      'shortcuts',
       'about',
     ])
     const html = renderToStaticMarkup(
@@ -78,7 +77,5 @@ describe('the built-in harness on a Host from before its rename', () => {
     expect(harnessName({ id: 'codex', name: 'Codex', source: 'acp' })).toBe('Codex')
     // Only the built-in one: a plugin harness that calls itself standard keeps its own name.
     expect(harnessName({ id: 'standard', name: 'Standard Harness', source: 'plugin' })).toBe('Standard Harness')
-    expect(pluginName({ name: 'Standard Harness', capabilities: ['harness:standard'] })).toBe('Latch 内置')
-    expect(pluginName({ name: '工作区文件', capabilities: ['tool:read_file'] })).toBe('工作区文件')
   })
 })

@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { chromium } from '@playwright/test'
 import { describe, expect, it } from 'vitest'
 import type { HarnessPlugin } from '@latch/sdk'
-import { closeSettings, openSection, openSettings } from './helpers/layout.ts'
+import { closeSettings, openSection, openSessions, openSettings } from './helpers/layout.ts'
 import type { TaskDetail } from '@latch/protocol'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
@@ -37,12 +37,8 @@ describe('session search and workbench navigation', () => {
         await result.waitFor()
         await result.click()
         await page.locator('.transcript [data-search-target]').first().waitFor()
-        // The branch: the input's footer, or the phone's header, which has no footer.
-        await page
-          .locator(width === 390 ? '.topbar-source-text' : '.composer-branch')
-          .filter({ hasText: 'feature/quiet-ui' })
-          .first()
-          .waitFor()
+        // The branch, under the input at every width.
+        await page.locator('.composer-branch').filter({ hasText: 'feature/quiet-ui' }).first().waitFor()
         await page.keyboard.press('Meta+f')
         const find = page.getByRole('search', { name: '会话内查找' })
         await find.getByRole('searchbox', { name: '查找消息内容' }).fill('hello')
@@ -72,8 +68,7 @@ describe('session search and workbench navigation', () => {
           await expect.poll(async () => (await owner.json<TaskDetail>('tasks/' + created.sessionId)).summary.status).toBe('cancelled')
           await page.keyboard.press('Alt+/')
           await page.getByRole('searchbox', { name: '搜索快捷键', exact: true }).waitFor()
-          await page.keyboard.press('Alt+1')
-          await page.locator('.settings-page').waitFor({ state: 'detached' })
+          await openSessions(page)
           await page.keyboard.press('Alt+b')
           await page.getByRole('button', { name: '展开侧栏', exact: true }).waitFor()
           await page.keyboard.press('Alt+b')
@@ -82,8 +77,7 @@ describe('session search and workbench navigation', () => {
           await page.locator('.new-session-title').waitFor()
           await page.keyboard.press('Alt+,')
           await page.locator('.settings-page').waitFor()
-          await page.keyboard.press('Alt+1')
-          await page.locator('.settings-page').waitFor({ state: 'detached' })
+          await openSessions(page)
           await page.locator('#session-navigation [data-task-id]').first().click()
         }
 
@@ -104,7 +98,7 @@ describe('session search and workbench navigation', () => {
       const owner = await host.enroll({ listener: 'unix' })
       await owner.json('prompts/review', {
         method: 'PUT',
-        body: { id: 'review', name: '检查变更', content: '阅读变更，并解释结果。', scope: { kind: 'all' } },
+        body: { id: 'review', name: '检查改动', content: '阅读改动，并解释结果。', scope: { kind: 'all' } },
       })
       for (const width of [1440, 390]) {
         const context = await browser.newContext({ viewport: { width, height: 900 }, reducedMotion: 'reduce' }),
@@ -113,8 +107,8 @@ describe('session search and workbench navigation', () => {
         if (width === 390) await page.locator('.phone-list-head').getByRole('button', { name: '新建会话', exact: true }).click()
         const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
         await input.fill('/review')
-        await page.getByRole('option', { name: '/review · 检查变更 提示模板 · 通用', exact: true }).click()
-        expect(await input.inputValue()).toBe('阅读变更，并解释结果。')
+        await page.getByRole('option', { name: '/review · 检查改动 提示模板 · 全部会话', exact: true }).click()
+        expect(await input.inputValue()).toBe('阅读改动，并解释结果。')
         expect((await owner.json<{ tasks: unknown[] }>('snapshot')).tasks).toEqual([])
         await context.close()
       }

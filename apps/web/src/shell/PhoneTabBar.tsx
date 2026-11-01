@@ -1,25 +1,38 @@
-import { Icon } from '@latch/ui'
-import { RAIL_ICONS, RAIL_LABELS } from './Rail.tsx'
+import { MessagesSquare, Settings } from 'lucide-react'
+import { Icon, type LucideIcon } from '@latch/ui'
+import { waitingCount } from '../sessions.ts'
+import type { ShellEntry } from './routes.ts'
 import type { ShellState } from './useShellLayout.tsx'
 
-/** Phones have no rail: the root pages share a bottom bar of 会话, Agent and 设置. A pushed page covers it. */
+const TABS: Partial<Record<ShellEntry, { label: string; icon: LucideIcon }>> = {
+  sessions: { label: '会话', icon: MessagesSquare },
+  settings: { label: '设置', icon: Settings },
+}
+
+/** The root pages of a phone share a bottom bar of 会话 and 设置. A pushed page covers it. */
 export function PhoneTabBar({ shell }: { shell: ShellState }) {
-  const { entries, route, goEntry } = shell
+  const { entries, route, goEntry, snapshot } = shell
   return (
     <nav className="phone-tabs" aria-label="主导航">
-      {entries.map(entry => (
-        <button
-          key={entry}
-          type="button"
-          className="phone-tab"
-          aria-current={route.entry === entry ? 'page' : undefined}
-          onClick={() => {
-            goEntry(entry)
-          }}>
-          <Icon icon={RAIL_ICONS[entry]} size={20} />
-          <span>{RAIL_LABELS[entry]}</span>
-        </button>
-      ))}
+      {entries.flatMap(entry => {
+        const tab = TABS[entry]
+        if (!tab) return []
+        const waits = entry === 'sessions' && route.entry !== 'sessions' && waitingCount(snapshot) > 0
+        return [
+          <button
+            key={entry}
+            type="button"
+            className="phone-tab"
+            aria-current={route.entry === entry ? 'page' : undefined}
+            onClick={() => {
+              goEntry(entry)
+            }}>
+            <Icon icon={tab.icon} size={20} />
+            <span>{tab.label}</span>
+            {waits && <span className="phone-tab-dot" aria-hidden="true" />}
+          </button>,
+        ]
+      })}
     </nav>
   )
 }

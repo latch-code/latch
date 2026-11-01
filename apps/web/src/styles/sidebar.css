@@ -1,5 +1,5 @@
 /*
- * The session panel: 新会话 and 搜索 (32, ghost), the shelves, and a footer only when there is something to say. From
+ * The sidebar: 新会话, 搜索 and the pages (32, ghost) over a line, the shelves, and the foot under a line. From
  * 1024px the column keeps its own width while its grid track narrows, so collapsing clips it instead of reflowing it.
  */
 .sidebar-body {
@@ -20,6 +20,9 @@
   display: grid;
   gap: var(--sp-4);
   flex-shrink: 0;
+  margin-inline: calc(-1 * var(--sp-8));
+  padding: 0 var(--sp-8) var(--sp-4);
+  border-bottom: 1px solid var(--line);
 }
 .sidebar-nav-line {
   display: flex;
@@ -72,10 +75,9 @@
   white-space: nowrap;
 }
 
-/* Rows under the list (已归档, the first project): ghost, so the open session's selection stays the only resting fill. */
+/* Rows under the list (已归档): ghost, so the open session's selection stays the only resting fill. */
 .archived-row,
-.archived-back,
-.new-project-row {
+.archived-back {
   display: flex;
   align-items: center;
   gap: var(--sp-8);
@@ -95,18 +97,15 @@
     color var(--m-micro) var(--e-micro);
 }
 .archived-row:hover,
-.archived-back:hover,
-.new-project-row:hover {
+.archived-back:hover {
   background: var(--hover);
   color: var(--ink-2);
 }
 .archived-row:active,
-.archived-back:active,
-.new-project-row:active {
+.archived-back:active {
   background: var(--press);
 }
-.archived-row,
-.new-project-row {
+.archived-row {
   margin-top: var(--sp-12);
 }
 .archived-back {
@@ -409,7 +408,7 @@
 @media (hover: none), (pointer: coarse) {
   .archived-row,
   .archived-back,
-  .new-project-row,
+  .sidebar-add-project,
   .sidebar-nav-row {
     height: 44px;
   }
@@ -485,14 +484,66 @@
   color: var(--ink);
 }
 
-/* A footer only while the desktop app keeps this Mac awake; connection trouble is the rail's dot and the header's words. */
+/* Only while the desktop app keeps this Mac awake. */
 .sidebar-footer {
   display: flex;
   align-items: center;
   gap: var(--sp-8);
   flex-shrink: 0;
-  min-height: 40px;
-  padding: 0 var(--sp-4) env(safe-area-inset-bottom) 10px;
+  min-height: 28px;
+  padding: 0 var(--sp-4) 0 10px;
+}
+/* 添加项目 on the left, 手机 and 设置 on the right; always in reach, however long the list is. */
+.sidebar-foot {
+  /* Counts on its buttons are cut out of the ground. */
+  --surface: var(--sidebar);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  flex-shrink: 0;
+  margin-inline: calc(-1 * var(--sp-8));
+  padding: var(--sp-6) var(--sp-8) calc(var(--sp-6) + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+}
+.sidebar-foot-spacer {
+  flex: 1;
+}
+.sidebar-add-project {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 var(--sp-8) 0 10px;
+  border: 0;
+  border-radius: var(--r-6);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  white-space: nowrap;
+  transition:
+    background-color var(--m-micro) var(--e-micro),
+    color var(--m-micro) var(--e-micro);
+}
+.sidebar-add-project:hover {
+  background: var(--hover);
+  color: var(--ink-2);
+}
+.sidebar-add-project:active {
+  background: var(--press);
+}
+/* Beside 手机, only while the Mac cannot be reached as it should; the sentence is in its title. */
+.sidebar-trouble {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  margin-inline: var(--sp-4);
+  border-radius: var(--r-full);
+  background: var(--amber);
+}
+.sidebar-trouble[data-tone='error'] {
+  background: var(--red);
 }
 /* A 16px badge that is also a button: its target reaches 4px past it on every side (24 high). */
 .connection-badge {

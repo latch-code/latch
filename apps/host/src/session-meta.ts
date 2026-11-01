@@ -79,6 +79,7 @@ const metaSchema = z.object({
           .regex(/^[a-z0-9][a-z0-9_-]{0,63}$/u)
           .optional(),
         sessionFolder: z.string().regex(SESSION_FOLDER_NAME).optional(),
+        firstStart: z.literal(true).optional(),
         forkOf: z
           .object({
             taskId: z.string().min(1).max(256),
@@ -110,6 +111,7 @@ export interface StoredMeta {
   archived?: true
   workspaceId?: string
   sessionFolder?: string
+  firstStart?: true
   forkOf?: TaskSummary['forkOf']
 }
 

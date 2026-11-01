@@ -29,7 +29,7 @@ describe('what the policy holds, in words', () => {
     expect(rows.map(row => row.title)).toEqual([
       '这台 Mac 不能开始完全访问会话',
       '手机和浏览器只能查看',
-      '手机和浏览器不能用任何引擎',
+      '手机和浏览器不能用任何 Harness',
       '手机和浏览器不能在任何项目里工作',
     ])
   })
@@ -48,8 +48,12 @@ describe('what the policy holds, in words', () => {
       catalog,
     )
     expect(rows).toEqual([
-      { id: 'remote-engines', title: '手机和浏览器只能用这些引擎', description: 'Latch、Pi' },
-      { id: 'remote-projects', title: '手机和浏览器只能在这些项目里工作', description: '官网、不在项目里的会话、1 个已不存在的项目或引擎' },
+      { id: 'remote-engines', title: '手机和浏览器只能用这些 Harness', description: 'Latch、Pi' },
+      {
+        id: 'remote-projects',
+        title: '手机和浏览器只能在这些项目里工作',
+        description: '官网、不在项目里的会话、1 个已不存在的项目或 Harness',
+      },
     ])
   })
 

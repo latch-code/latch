@@ -195,8 +195,8 @@ export function CommandPalette({
       <SearchField
         autoFocus
         variant="ghost"
-        label={files ? '搜索文件名' : '搜索会话、文件、Agent 和命令'}
-        placeholder={files ? '输入文件名…' : '搜索会话、文件、Agent 和命令…'}
+        label={files ? '搜索文件名' : '搜索会话、文件、Harness 和命令'}
+        placeholder={files ? '输入文件名…' : '搜索会话、文件、Harness 和命令…'}
         aria-controls="palette-results"
         aria-activedescendant={selected ? `palette-${selected.id}` : undefined}
         value={query}

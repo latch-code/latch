@@ -1,11 +1,11 @@
 import { EventEmitter } from 'node:events'
 import { watch, type FSWatcher, type Dirent } from 'node:fs'
-import { mkdir, mkdtemp, opendir, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, opendir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppError } from '@latch/sdk'
-import { FileSearchIndex } from '../src/files/search.ts'
+import { FileSearchIndex, searchFiles } from '../src/files/search.ts'
 import { ProtectedPaths } from '../src/files/resolve.ts'
 
 vi.mock('node:fs', async original => {
@@ -278,5 +278,138 @@ describe('bounded filename index', () => {
     await closing
     expect(closed).toBe(true)
     await expect(f.search()).rejects.toMatchObject({ status: 503 })
+  })
+})
+
+async function project(files: Record<string, string>) {
+  const f = await fixture()
+  await rm(join(f.root, 'report.txt'))
+  for (const [path, content] of Object.entries(files)) {
+    await mkdir(join(f.root, path, '..'), { recursive: true })
+    await writeFile(join(f.root, path), content)
+  }
+  const roots = [{ id: 'primary', path: f.root }]
+  return {
+    ...f,
+    listed: async (query = '') => (await f.search(query)).files.map(file => file.path),
+    uncached: async (query = '') => (await searchFiles(roots, f.guard, query, 100, () => false)).files.map(file => file.path),
+  }
+}
+const RUST = {
+  '.git/HEAD': 'ref',
+  '.gitignore': 'target/\n',
+  '.vscode/launch.json': '{}',
+  'Cargo.toml': '[package]',
+  'src/main.rs': 'fn main() {}',
+  'src/deep/er/lib.rs': '',
+  'target/.rustc_info.json': '{}',
+  'target/CACHEDIR.TAG': 'tag',
+  'target/debug/main.d': '',
+}
+
+describe('the order a person sees', () => {
+  it('lists source first and leaves ignored build output out until it is typed for', async () => {
+    controlledWatches()
+    const f = await project(RUST)
+    const browsing = ['src/main.rs', 'src/deep/er/lib.rs', 'Cargo.toml', '.gitignore', '.vscode/launch.json']
+    expect(await f.listed()).toEqual(browsing)
+    expect(await f.uncached()).toEqual(browsing)
+    for (const search of [f.search, (query: string) => searchFiles([{ id: 'primary', path: f.root }], f.guard, query, 100, () => false)]) {
+      expect((await search('cachedir')).files).toEqual([
+        { name: 'CACHEDIR.TAG', path: 'target/CACHEDIR.TAG', root: 'primary', ignored: true },
+      ])
+      expect((await search('main')).files.map(file => [file.path, file.ignored])).toEqual([
+        ['src/main.rs', undefined],
+        ['target/debug/main.d', true],
+      ])
+    }
+  })
+
+  it('ranks name prefix, name, path, then subsequence, ahead of the limit', async () => {
+    controlledWatches()
+    const f = await project({
+      'zz/mention.md': '',
+      'file-mention.ts': '',
+      'mention/other.ts': '',
+      'm-e-n-t-i-o-n.ts': '',
+      ...Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`a/noise-${i}.ts`, ''])),
+    })
+    const order = ['zz/mention.md', 'file-mention.ts', 'mention/other.ts', 'm-e-n-t-i-o-n.ts']
+    expect(await f.listed('mention')).toEqual(order)
+    expect(await f.uncached('mention')).toEqual(order)
+    const limited = await f.index.search([{ id: 'primary', path: f.root }], f.guard, 'context-v1', 'noise', 5, () => false)
+    expect(limited.files).toHaveLength(5)
+    expect(limited.truncated).toBe(true)
+    expect((await f.index.search([{ id: 'primary', path: f.root }], f.guard, 'context-v1', 'mention', 4, () => false)).truncated).toBe(
+      false,
+    )
+  })
+
+  it('keeps target as source in a repository that does not ignore it, and as low-ranked output without git', async () => {
+    controlledWatches()
+    const repository = await project({ '.git/HEAD': 'ref', 'target/real.rs': '', 'a/b/c/deeper.rs': '' })
+    expect(await repository.listed()).toEqual(['target/real.rs', 'a/b/c/deeper.rs'])
+    const plain = await project({ 'target/out.rs': '', 'src/a.rs': '' })
+    expect(await plain.listed()).toEqual(['src/a.rs'])
+    expect((await plain.search('out')).files).toEqual([{ name: 'out.rs', path: 'target/out.rs', root: 'primary', ignored: true }])
+    const onlyOutput = await project({ 'target/out.rs': '' })
+    expect(await onlyOutput.listed()).toEqual(['target/out.rs'])
+  })
+
+  it('follows nested .gitignore files, negation and ignored files beside kept ones', async () => {
+    controlledWatches()
+    const f = await project({
+      '.git/HEAD': 'ref',
+      '.gitignore': '*.log\n!keep.log\ngen/\n',
+      'app/.gitignore': '/local.ts\n!gen/\n',
+      'app/local.ts': '',
+      'app/deep/local.ts': '',
+      'app/gen/made.ts': '',
+      'gen/made2.ts': '',
+      'keep.log': '',
+      'drop.log': '',
+    })
+    expect(await f.listed()).toEqual(['app/deep/local.ts', 'app/gen/made.ts', 'keep.log', '.gitignore', 'app/.gitignore'])
+    expect((await f.search('drop')).files).toEqual([{ name: 'drop.log', path: 'drop.log', root: 'primary', ignored: true }])
+    expect((await f.search('made2')).files[0]).toMatchObject({ path: 'gen/made2.ts', ignored: true })
+  })
+
+  it('never lists .git, and typed search does not get past symlinks, protected paths or secret files', async () => {
+    controlledWatches()
+    const f = await project({ '.git/config': '', 'node_modules/pkg/index.js': '', 'node_modules/pkg/.env': 'A=1', 'src/a.ts': '' })
+    const parent = join(f.root, '..')
+    await mkdir(join(parent, 'private'))
+    await writeFile(join(parent, 'private', 'hidden-escape.txt'), 'private')
+    await symlink(join(parent, 'private'), join(f.root, 'node_modules', 'escape'))
+    await symlink(join(parent, 'private'), join(f.root, 'dist'))
+    await writeFile(join(f.root, 'node_modules', 'pkg', 'key.txt'), ['-----BEGIN', 'PRIVATE KEY-----'].join(' '))
+    await mkdir(join(f.root, 'build'))
+    await writeFile(join(f.root, 'build', 'guarded-file.txt'), 'x')
+    const guard = new ProtectedPaths([join(f.root, 'build')])
+    const roots = [{ id: 'primary', path: f.root }]
+    const search = async (q: string) => (await f.index.search(roots, guard, 'guarded', q, 100, () => false)).files
+    const uncached = async (q: string) => (await searchFiles(roots, guard, q, 100, () => false)).files
+    for (const find of [search, uncached]) {
+      expect(await find('config')).toEqual([])
+      expect(await find('hidden-escape')).toEqual([])
+      expect(await find('guarded-file')).toEqual([])
+      expect(await find('key.txt')).toEqual([])
+      expect(await find('pkg/.env')).toEqual([])
+      expect(await find('index')).toEqual([{ name: 'index.js', path: 'node_modules/pkg/index.js', root: 'primary', ignored: true }])
+    }
+  })
+
+  it('makes no second walk while browsing or when the first has plenty', async () => {
+    controlledWatches()
+    const f = await project({ 'src/a.ts': '', 'src/ab.ts': '', 'node_modules/ab.js': '' })
+    await f.search('')
+    const directories = vi.mocked(opendir).mock.calls.length
+    await f.search('')
+    await f.index.search([{ id: 'primary', path: f.root }], f.guard, 'context-v1', 'ab', 1, () => false)
+    expect(vi.mocked(opendir).mock.calls.length).toBe(directories)
+    expect(await f.listed('a')).toEqual(['src/a.ts', 'src/ab.ts'])
+    expect(vi.mocked(opendir).mock.calls.length).toBe(directories)
+    expect(await f.listed('ab')).toEqual(['src/ab.ts', 'node_modules/ab.js'])
+    expect(vi.mocked(opendir).mock.calls.length).toBeGreaterThan(directories)
   })
 })

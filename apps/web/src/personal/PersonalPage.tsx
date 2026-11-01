@@ -36,7 +36,7 @@ import { deferredComponent } from '../components/DeferredContent.tsx'
 import { emptyGroupDraft, groupPath, type GroupDraft, type RoutineDraft, type PersonalMutation as Mutation } from './model.ts'
 
 const GroupPage = deferredComponent(async () => ({ default: (await import('./GroupPage.tsx')).GroupPage }), '助手群聊')
-const RoutinePage = deferredComponent(async () => ({ default: (await import('./RoutinePage.tsx')).RoutinePage }), '例行任务')
+const RoutinePage = deferredComponent(async () => ({ default: (await import('./RoutinePage.tsx')).RoutinePage }), '定时任务')
 type Area = 'assistants' | 'groups' | 'routines'
 
 type Overview = PersonalOverview & { plugins?: Array<Pick<PluginInfo, 'id' | 'name' | 'description' | 'capabilities'>> }
@@ -62,7 +62,7 @@ export function PersonalPage({
   refreshHint: number
   canStart: boolean
   open?: boolean
-  /** Which entry shows the page: 个人助手 with its groups, or 例行任务 alone. */
+  /** Which entry shows the page: 个人助手 with its groups, or 定时任务 alone. */
   area?: 'assistants' | 'routines'
   initialGroupId?: string
   onGroupSession?: (sessionId: string, groupId: string) => void
@@ -369,10 +369,10 @@ export function PersonalPage({
             {area === 'groups' && groupId
               ? '所有群聊'
               : area === 'routines' && routineId
-                ? '所有例行任务'
+                ? '所有定时任务'
                 : area === 'assistants' && selected
                   ? '所有助手'
-                  : 'Agent'}
+                  : '设置'}
           </Button>
         </header>
       )}

@@ -5,6 +5,7 @@ import type { HarnessPlugin } from '@latch/sdk'
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
+import { openEntry, openSessions } from './helpers/layout.ts'
 
 describe('custom model extension in the app', () => {
   it('runs without built-in provider configuration and responds to hot plugin toggles', async () => {
@@ -52,12 +53,12 @@ describe('custom model extension in the app', () => {
       await page.getByText('自定义模型插件已经响应。', { exact: true }).waitFor()
       await expect.poll(async () => (await host.bridge.listTasks())[0]?.status).toBe('idle')
 
-      await page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '插件', exact: true }).click()
+      await openEntry(page, '插件')
       await page.locator('.plugin-nav-row', { hasText: '验收模型插件' }).click()
       const toggle = page.getByRole('switch', { name: '启用 验收模型插件', exact: true })
       await toggle.click()
       await expect.poll(() => toggle.getAttribute('aria-checked')).toBe('false')
-      await page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '会话', exact: true }).click()
+      await openSessions(page)
       await page.locator('.settings-page').waitFor({ state: 'detached' })
       await page.getByRole('button', { name: '新建会话', exact: true }).click()
       // Drafting stays possible; starting is blocked and the setup card explains why.
@@ -65,11 +66,11 @@ describe('custom model extension in the app', () => {
       await expect.poll(() => send.isDisabled()).toBe(true)
       await page.locator('.setup-card').getByText('还没有模型服务。', { exact: true }).waitFor()
 
-      await page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '插件', exact: true }).click()
+      await openEntry(page, '插件')
       await page.locator('.plugin-nav-row', { hasText: '验收模型插件' }).click()
       await toggle.click()
       await expect.poll(() => toggle.getAttribute('aria-checked')).toBe('true')
-      await page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '会话', exact: true }).click()
+      await openSessions(page)
       await page.locator('.settings-page').waitFor({ state: 'detached' })
       await composer.fill('重新启用模型后继续')
       await send.click()

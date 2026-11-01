@@ -5,7 +5,7 @@ type Tone = 'neutral' | 'warn' | 'error'
 
 /** Why the login item cannot be used here, or what it needs; empty when it works. */
 export function loginItemNote(view: ShellLifecycle['loginItem']): string {
-  if (view.reason === 'development') return '只有打包后的 Latch 应用能登记为登录项。当前是开发运行（pnpm desktop），打包版本尚未提供。'
+  if (view.reason === 'development') return '只有打包后的 Latch 应用能设为登录项。当前是开发运行（pnpm desktop），打包版本尚未提供。'
   if (view.reason === 'platform') return '只在 macOS 上可用。'
   if (view.needsApproval) return '需要在「系统设置 › 通用 › 登录项」中允许 Latch。'
   return ''
@@ -27,32 +27,32 @@ export function keepAwakeLine(view: ShellLifecycle['keepAwake']): string {
 export function hostLine(view: ShellLifecycle['host']): { text: string; tone: Tone } {
   switch (view.status) {
     case 'starting':
-      return { text: 'Latch Host 正在启动…', tone: 'warn' }
+      return { text: 'Latch 服务正在启动…', tone: 'warn' }
     case 'restarting': {
       const seconds = Math.max(1, Math.round((view.restartInMs ?? 0) / 1000))
-      return { text: `Latch Host 意外退出，${seconds} 秒后重新启动（10 分钟内第 ${view.crashes} 次）。`, tone: 'warn' }
+      return { text: `Latch 服务意外退出，${seconds} 秒后重新启动（10 分钟内第 ${view.crashes} 次）。`, tone: 'warn' }
     }
     case 'crash-loop':
       return {
-        text: `Latch Host 在 10 分钟内意外退出 ${view.crashes} 次，已停止自动重启。请查看数据目录中的 host.log，再重新启动。`,
+        text: `Latch 服务在 10 分钟内意外退出 ${view.crashes} 次，已停止自动重启。请查看数据目录中的 host.log，再重新启动。`,
         tone: 'error',
       }
     case 'crashed':
       return view.reason === 'environment'
-        ? { text: 'Latch Host 意外退出。它的设置来自环境变量，桌面端不能按原样启动，请重新运行 pnpm desktop。', tone: 'error' }
-        : { text: 'Latch Host 意外退出。它不是由 Latch 桌面端启动的，不会自动重新启动。', tone: 'error' }
+        ? { text: 'Latch 服务意外退出。它的设置来自环境变量，桌面端不能按原样启动，请重新运行 pnpm desktop。', tone: 'error' }
+        : { text: 'Latch 服务意外退出。它不是由 Latch 桌面端启动的，不会自动重新启动。', tone: 'error' }
     case 'stopped':
-      return { text: 'Latch Host 已停止。', tone: 'warn' }
+      return { text: 'Latch 服务已停止。', tone: 'warn' }
     case 'unresponsive':
       return {
-        text: 'Latch Host 没有响应：进程仍在，但无法通过 host.sock 核对。在它恢复应答之前，电脑不会为它保持唤醒。',
+        text: 'Latch 服务没有响应：进程仍在，但无法通过 host.sock 核对。在它恢复应答之前，电脑不会为它保持唤醒。',
         tone: 'error',
       }
     case 'running':
-      if (view.supervised) return { text: 'Latch Host 运行中。意外退出后会自动重新启动。', tone: 'neutral' }
+      if (view.supervised) return { text: 'Latch 服务运行中。意外退出后会自动重新启动。', tone: 'neutral' }
       return view.reason === 'environment'
-        ? { text: 'Latch Host 运行中。它的设置来自环境变量，意外退出后不会自动重新启动。', tone: 'neutral' }
-        : { text: 'Latch Host 运行中。它不是由 Latch 桌面端启动的，意外退出后不会自动重新启动。', tone: 'neutral' }
+        ? { text: 'Latch 服务运行中。它的设置来自环境变量，意外退出后不会自动重新启动。', tone: 'neutral' }
+        : { text: 'Latch 服务运行中。它不是由 Latch 桌面端启动的，意外退出后不会自动重新启动。', tone: 'neutral' }
   }
 }
 

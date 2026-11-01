@@ -123,7 +123,7 @@ describe('personal group and routine layout with real child-session navigation',
       })
       const prompt = '请一起梳理目标、执行顺序和需要复核的地方。'
       const draft = '这是一条尚未发送的群聊草稿。\n保留原群聊与成员顺序，不要自动开始新的执行。 ' + suffix
-      const privateDraft = '尚未保存的私人例行任务草稿 ' + suffix
+      const privateDraft = '尚未保存的私人定时任务草稿 ' + suffix
       const readGroup = () => owner.json<PersonalGroupDetail>(`personal/groups/${group.id}`)
       try {
         const deviceName = '群聊布局 ' + suffix
@@ -205,12 +205,12 @@ describe('personal group and routine layout with real child-session navigation',
         await noHorizontalOverflow(page, personal.locator('.personal-content'))
         await capture(page, 'group-returned-draft-' + suffix)
 
-        await openSection(page.locator('.settings-page'), '例行任务')
-        const create = personal.getByRole('button', { name: '创建例行任务', exact: true })
+        await openSection(page.locator('.settings-page'), '定时任务')
+        const create = personal.getByRole('button', { name: '创建定时任务', exact: true })
         await reachable(create)
         const confirmations = host.presence.requests.length
         await create.click()
-        const editor = page.getByRole('dialog', { name: '例行任务设置', exact: true })
+        const editor = page.getByRole('dialog', { name: '定时任务设置', exact: true })
         const routineName = '每日整理与下一步检查 ' + suffix
         await editor.getByRole('textbox', { name: '任务名称', exact: true }).fill(routineName)
         const assistant = editor.getByRole('button', { name: /^执行助手/u })
@@ -233,7 +233,7 @@ describe('personal group and routine layout with real child-session navigation',
         expect(routine.enabled).toBe(false)
         expect(routine.state).toBe('disabled')
         expect(await personal.getByRole('button', { name: /^(开启每日执行|重新开启)$/u }).count()).toBe(0)
-        await personal.getByText('开启例行任务：只能在 Mac 上的 Latch 里操作。', { exact: true }).waitFor()
+        await personal.getByText('开启定时任务：只能在 Mac 上的 Latch 里操作。', { exact: true }).waitFor()
         await noHorizontalOverflow(page, personal.locator('.personal-content'))
         await capture(page, 'routine-disabled-' + suffix)
         const refused = await page.evaluate(

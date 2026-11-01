@@ -46,16 +46,16 @@ export const LOCAL_ONLY_TEXT = '只能在 Mac 上的 Latch 里操作'
 /** Restrictions and consequences shown while choosing or adding an agent, project or model service. */
 export const SETUP_COPY = {
   modelNeedsAdmin: '这台设备不能添加模型。在 Mac 上的 Latch 里添加：设置 › 模型。',
-  harnessNeedsAdmin: '这台设备不能管理 Agent。在 Mac 上的 Latch 里查看：设置 › Agent。',
-  addAgentElsewhere: '在 Mac 上的 Latch 里添加：设置 › Agent',
+  harnessNeedsAdmin: '这台设备不能管理 Harness。在 Mac 上的 Latch 里查看：设置 › Harness。',
+  addAgentElsewhere: '在 Mac 上的 Latch 里添加：设置 › Harness',
   addProviderElsewhere: '在 Mac 上的 Latch 里添加：设置 › 模型',
   keyElsewhere: '密钥只能在 Mac 上的 Latch 里填写：设置 › 模型。',
   keyStorage: '密钥只保存在这台 Mac 上，不会发给浏览器。',
-  addProjectElsewhere: '在 Mac 上的 Latch 里新建项目',
+  addProjectElsewhere: '在 Mac 上的 Latch 里添加项目',
   confirmAddressElsewhere: '这个地址要先在 Mac 上确认一次，才能在这里使用：设置 › 模型。',
   saveAgent: '保存不需要确认；开始会话时，在这台 Mac 上确认要运行的命令。',
   agentFullAccess: '它可以读写这台 Mac 上的文件并运行命令，Latch 不隔离它。',
-  fullAccessDetail: '完全访问：Agent 不再询问，直接读写这台 Mac 上的文件并运行命令',
+  fullAccessDetail: '完全访问：Harness 不再询问，直接读写这台 Mac 上的文件并运行命令',
 } as const
 
 /**
@@ -67,7 +67,7 @@ export const APPROVAL_COPY = {
   highRisk: '高风险',
   advisory: '仅提示',
   check: '需要核对',
-  advisoryNote: 'Agent 的询问只是提示：拒绝会转达给它，但不能阻止它执行其他操作。',
+  advisoryNote: 'Harness 的询问只是提示：拒绝会转达给它，但不能阻止它执行其他操作。',
   hiddenCharacters: '含有不可见字符，已标出',
   confirmedLocal: '已确认，正在执行…',
   /** Standard R2 opens the desktop's own 取消/允许 sheet (`shell-local`), which takes no Touch ID. */
@@ -97,9 +97,9 @@ export const APPROVAL_COPY = {
   stopTurn: '停止这一轮',
   hidePreview: '收起',
   viewDetail: '查看详情',
-  rejectPlaceholder: '输入内容会拒绝并告诉 Agent 改做什么',
+  rejectPlaceholder: '输入内容会拒绝并告诉 Harness 改做什么',
   viewChange: '查看改动',
-  /** The proposal's label in 变更 while it waits. */
+  /** The proposal's label in 改动 while it waits. */
   proposal: '待允许',
   allowedAt: (time: string) => `已允许 · ${time}`,
   rejectedAt: (time: string) => `已拒绝 · ${time}`,
@@ -120,8 +120,8 @@ export const DECISION_COPY = {
   viaOtherDevice: '在其他设备上决定',
   expiredNote: '没有人在时限内回答',
   cancelledNote: '会话停止时还没有人回答',
-  ranDespite: 'Agent 报告仍执行了这次调用',
-  ranDespiteNote: 'Agent 的询问只是提示：拒绝会转达给它，但不能阻止它执行。这一行显示的是 Agent 自己的报告。',
+  ranDespite: 'Harness 报告仍执行了这次调用',
+  ranDespiteNote: 'Harness 的询问只是提示：拒绝会转达给它，但不能阻止它执行。这一行显示的是 Harness 自己的报告。',
   /** Why what was typed cannot go with a rejection. */
   noteInvalid: '说明最多 500 个字，不能包含控制字符、不可见字符或改变文字方向的字符',
 } as const
@@ -164,6 +164,7 @@ export const CONFIRMATION_COPY = {
   /** Either window: the helper's Touch ID sheet, or the desktop's own 取消/允许 sheet. */
   waiting: '在系统窗口中确认',
   waitingShort: '等待确认',
+  waitingTouchId: '等待 Touch ID',
   /** Above what a system form's sentence leaves out. */
   details: '确认详情',
   confirmed: '已确认，正在',
@@ -172,7 +173,7 @@ export const CONFIRMATION_COPY = {
   cooldownWait: (wait: string) => `${wait} 后可以再试。`,
   cooldownOver: '现在可以再试。',
   busy: '另一个确认还没完成，先完成或取消它。',
-  blocked: '有 Agent 正在运行或等你处理，结束后才能确认。',
+  blocked: '有 Harness 正在运行或等你处理，结束后才能确认。',
   untitled: '未命名会话',
   openSession: '查看',
   stopSession: '停止',
@@ -195,9 +196,9 @@ export const BLOCKED_VERBS: Record<
 export const CONFIRMATION_VERBS: Record<PresenceAction, string> = {
   'plugin.package.apply': '应用插件',
   'device.enroll-native': '配对手机',
-  'device.enroll': '登记设备',
+  'device.enroll': '连接设备',
   'agent.probe': '测试启动',
-  'automation.grant': '开启自动化',
+  'automation.grant': '开启定时任务',
   'device.grant': '更新权限',
   'task.start-l3': '开启会话',
   'task.mode-widen': '切换权限',
@@ -211,7 +212,7 @@ export const CONFIRMATION_VERBS: Record<PresenceAction, string> = {
 export const BLOCKED_ACTION_TEXT: Record<PresenceAction, string> = {
   'plugin.package.apply': '应用自定义插件',
   'device.enroll-native': '配对手机',
-  'agent.probe': '测试启动 Agent',
+  'agent.probe': '测试启动 Harness',
   'automation.grant': '允许自动化按时运行',
   'device.enroll': '配对新设备',
   'device.grant': '为设备增加权限',
@@ -240,7 +241,7 @@ export const BLOCKED_COPY = {
   line: (sessions: readonly NamedSession[], action?: PresenceAction): string => {
     const [first] = sessions
     const then = `结束后才能${action ? BLOCKED_ACTION_TEXT[action] : '继续'}。`
-    if (!first) return `有 Agent 正在运行或等你处理，${then}`
+    if (!first) return `有 Harness 正在运行或等你处理，${then}`
     const more = sessions.length > 1 ? `等 ${sessions.length} 个会话` : ''
     const agent = first.agent ? `${first.agent} ` : ''
     if (first.waiting) return `${agent}在「${first.title}」${more}里等你处理，${then}`
@@ -266,6 +267,8 @@ export const BLOCKED_COPY = {
  */
 export const CONFIRMATION_RESULT_TEXT = {
   denied: '没有执行：确认没有通过。',
+  /** A start says what did not happen, and what was typed is still in the input. */
+  startDenied: '没有开始：Touch ID 已取消。',
   expired: '没有执行：2 分钟内没有确认。',
   cancelled: '没有执行：确认已取消。',
   error: '没有执行：确认没有完成，请重试。',
@@ -283,11 +286,16 @@ export function waitText(seconds: number): string {
 export const ENROLLMENT_COPY = {
   title: '连接到 Latch',
   local: '第一次连接时，在 Mac 上允许一次。之后打开即可继续工作。',
+  /** The desktop app on its first launch, one sentence and one button: the system sheet follows the press, never by itself. */
+  desktopTitle: 'Latch',
+  desktopFirst: '第一次在这台 Mac 上打开 Latch，用 Touch ID 确认。',
+  desktopAgain: '在这台 Mac 上用 Touch ID 确认后继续。',
+  desktopSubmit: '继续',
   /** The intro while local confirmation is unavailable: the offline code is the way in. */
-  offline: '这台设备会生成自己的密钥，再用离线登记码完成登记。',
+  offline: '这台设备会生成自己的密钥，再用离线连接码完成连接。',
   /** Why only the offline code is accepted, with the Host's reason (trailing full stops removed). */
   unavailable: (reason: string) =>
-    `本机确认不可用：${reason || '未知原因'}。停止 Host 后，在运行 Latch 的电脑上运行 pnpm latch device enroll --offline，把生成的离线登记码填在下面。`,
+    `Mac 现在不能确认：${reason || '未知原因'}。停止 Latch 服务后，在 Mac 上运行 pnpm latch device enroll --offline，把生成的离线连接码填在下面。`,
   /** The same, where the Host takes no offline code (every listener but host.sock): nothing here can be submitted yet. */
   unavailableRemote: (reason: string) => `Mac 现在不能确认：${reason || '未知原因'}。要等它能确认后才能连接。`,
   invited: '点下面的按钮，再到 Mac 上允许。',
@@ -298,7 +306,6 @@ export const ENROLLMENT_COPY = {
   browserLinkCommand: 'pnpm latch device invite --loopback',
   name: '设备名称',
   namePlaceholder: '例如：我的手机',
-  submit: '请求连接',
   connectBrowser: '连接这个浏览器',
   /** The link lets this browser ask for management, and pressing the button would. Never left to the system sheet. */
   linkCanManage: '这个链接还可以管理这台 Mac',
@@ -314,8 +321,8 @@ export const ENROLLMENT_COPY = {
   confirmFailed: '已经连上，但还没能读取 Mac 上的状态。',
   denied: 'Mac 上取消了连接。',
   expired: 'Mac 上没有确认，请重新开始。',
-  offlineField: '离线登记码',
-  offlineSubmit: '使用离线登记码',
+  offlineField: '离线连接码',
+  offlineSubmit: '使用离线连接码',
   unsupported: '此浏览器无法在当前地址安全地保存设备密钥。请使用最新版 Chrome、Edge、Firefox 或 Safari，或使用 Latch 桌面端。',
   mismatch: '这台设备的密钥和 Mac 读到的不一致，已停止连接。',
   legacyTitle: '这台设备要在 Mac 上重新确认',
@@ -383,7 +390,7 @@ export const DEVICES_COPY = {
   /** `native.input` and `status` a person can act on; a healthy device says nothing about them. */
   verificationRequired: '30 天未验证，现在只能查看；在手机上验证后恢复',
   review: '只能查看，等你恢复',
-  reviewNote: '邀请它的设备已被移除。恢复后可以继续运行和允许操作。',
+  reviewNote: '连接它的设备已被移除。恢复后可以继续运行和允许操作。',
   restore: '恢复使用',
   legacy: '要在这台设备上重新确认',
   manage: '可以管理这台 Mac',
@@ -393,11 +400,11 @@ export const DEVICES_COPY = {
   rename: '重命名',
   removeTitle: (name: string) => `移除「${name}」？`,
   removePhone: '它会立即断开，之后要重新扫码才能连接。',
-  removeBrowser: '它会立即断开，之后要重新邀请才能连接。',
+  removeBrowser: '它会立即断开，之后要重新发链接才能连接。',
   removeDesktop: '它会立即断开，之后要在那个桌面端重新确认才能连接。',
-  removeSelf: '这台设备会立即断开，之后要重新邀请才能连接。',
+  removeSelf: '这台设备会立即断开，之后要重新发链接才能连接。',
   /** Added when other devices were invited by this one. */
-  removeCascade: '由它邀请的设备会降为只能查看，等你恢复。',
+  removeCascade: '由它连接的设备会降为只能查看，等你恢复。',
   removed: (name: string) => `已移除「${name}」`,
   about: '关于连接',
   aboutBody: '同一个 Wi‑Fi 下，手机直接连接这台 Mac，全程端到端加密。Latch 目前还不提供其他网络下的连接。',
@@ -447,7 +454,7 @@ export const CODE_ROOT_COPY = {
   badge: '程序目录内',
   notice: '这个文件夹在 Latch 的程序目录里，每次写入都要你允许',
   startDir: '这是 Latch 启动时的文件夹。要在别的文件夹里工作，可以新建一个项目。',
-  newProject: '新建项目…',
+  newProject: '添加项目…',
 } as const
 
 /** File chips in replies: copying a path, and the desktop app's menu of what is allowed for that file. */
@@ -561,7 +568,7 @@ export const PLUGIN_REACH_COPY = {
   },
   text: {
     title: '技能和静态面板',
-    body: '只是文字，不运行代码。技能交给这台 Mac 上的 Latch 引擎；静态面板每台能查看会话的设备都能看到。',
+    body: '只是文字，不运行代码。技能交给这台 Mac 上的 Latch 内置；静态面板每台能查看会话的设备都能看到。',
   },
   unread: {
     title: '没能读取这个插件的声明',
@@ -595,10 +602,10 @@ export const PROVIDER_COPY = {
   connectedReason: '服务刚刚回答了模型列表请求。有些服务列出模型不需要密钥，所以这不证明密钥能用于对话。',
   checkNeedsAddress: '确认地址后才能检测',
   checkNeedsKey: '填写密钥后才能检测',
-  enabled: '内置 Agent 可以使用它的模型',
-  enabledUnconfirmed: '确认地址后内置 Agent 才能使用它的模型',
-  enabledMissingKey: '填写密钥后内置 Agent 才能使用它的模型',
-  disabled: '停用后内置 Agent 不能使用它的模型',
+  enabled: 'Latch 内置可以使用它的模型',
+  enabledUnconfirmed: '确认地址后 Latch 内置才能使用它的模型',
+  enabledMissingKey: '填写密钥后 Latch 内置才能使用它的模型',
+  disabled: '停用后 Latch 内置不能使用它的模型',
   presetKey: '已知服务的地址：密钥直接保存，不需要确认。',
   /** An address not confirmed yet, on the desktop that can confirm it. */
   firstUse: '第一次使用这个地址：保存时用 Touch ID 确认一次，之后不再询问。',
@@ -643,19 +650,19 @@ export const LIMIT_COPY = {
   title: '这台 Mac 的限制',
   howToChange: '这些限制写在 policy.json 里。要改回去：在这台 Mac 上运行 pnpm stop，编辑这个文件，再启动 Latch。',
   noProject: '不在项目里的会话',
-  unknownEntries: (count: number) => `${count} 个已不存在的项目或引擎`,
+  unknownEntries: (count: number) => `${count} 个已不存在的项目或 Harness`,
   noFullAccess: {
     title: '这台 Mac 不能开始完全访问会话',
-    description: '由引擎自己决定权限的会话开始不了，已有的这类会话也不能继续。',
+    description: '由 Harness 自己决定权限的会话开始不了，已有的这类会话也不能继续。',
   },
   localReadOnly: { title: '这台 Mac 上的会话只能查看', description: '这里不能开始会话或发送消息。' },
   remoteReadOnly: { title: '手机和浏览器只能查看', description: '它们不能开始会话或发送消息。' },
   anyEngine: {
-    title: '手机和浏览器可以用完全访问以外的所有引擎',
-    description: '比默认宽：默认只有内置引擎。完全访问的引擎只能在这台 Mac 上开始。',
+    title: '手机和浏览器可以用完全访问以外的所有 Harness',
+    description: '比默认宽：默认只有内置 Harness。完全访问的 Harness 只能在这台 Mac 上开始。',
   },
-  noEngine: { title: '手机和浏览器不能用任何引擎', description: '它们不能开始或继续会话。' },
-  someEngines: (names: string) => ({ title: '手机和浏览器只能用这些引擎', description: names }),
+  noEngine: { title: '手机和浏览器不能用任何 Harness', description: '它们不能开始或继续会话。' },
+  someEngines: (names: string) => ({ title: '手机和浏览器只能用这些 Harness', description: names }),
   noProjects: { title: '手机和浏览器不能在任何项目里工作', description: '它们不能开始或继续会话。' },
   someProjects: (names: string) => ({ title: '手机和浏览器只能在这些项目里工作', description: names }),
 } as const
@@ -665,11 +672,11 @@ export const REMOTE_PROJECT_REFUSED = '这台 Mac 不允许这台设备在这个
 
 /** Why a session no longer accepts input: one line, with 「在新会话中继续」 beside it. */
 export const SESSION_STOP_TEXT = {
-  'permission-drift': '这个 Agent 的设置变了，为了安全换个新会话继续',
-  'agent-definition-changed': '这个 Agent 的设置变了，为了安全换个新会话继续',
-  'project-config-changed': '项目里的 Agent 配置变了，为了安全换个新会话继续',
+  'permission-drift': '这个 Harness 的设置变了，为了安全换个新会话继续',
+  'agent-definition-changed': '这个 Harness 的设置变了，为了安全换个新会话继续',
+  'project-config-changed': '项目里的 Harness 配置变了，为了安全换个新会话继续',
   'l3-confirmation-missing': '这个会话没有经过确认，不能继续。换个新会话继续',
-  'permission-unverified': '确认不了 Agent 的权限，这一轮没有发送',
+  'permission-unverified': '确认不了 Harness 的权限，这一轮没有发送',
 } as const
 export const DOCUMENT_PREVIEW_ERRORS = {
   'document-too-complex': '这份演示文稿的内容过于复杂，暂时无法预览。可以下载或在电脑上打开。',
@@ -678,7 +685,7 @@ export const DOCUMENT_PREVIEW_ERRORS = {
 } as const
 export type SessionStopCode = keyof typeof SESSION_STOP_TEXT
 /** The same stop after a mode change, where no message was on its way. */
-export const CONFIG_UNVERIFIED_TEXT = '确认不了 Agent 是否切换到了所选的权限模式'
+export const CONFIG_UNVERIFIED_TEXT = '确认不了 Harness 是否切换到了所选的权限模式'
 export const isSessionStopCode = (code: string): code is SessionStopCode => code in SESSION_STOP_TEXT
 /** A mode that could not be read back this once: nothing went out, the session may read true on the next try. */
 export const stopLocksInput = (code: SessionStopCode) => code !== 'permission-unverified'
@@ -697,19 +704,28 @@ export const HOVER_REASONS = {
 
 /** The composer's 权限 chip and its rows with the agent as subject. */
 export const MODE_COPY = {
-  askWhenNeeded: '需要时询问',
-  askWhenNeededTooltip: '改文件或运行命令前会问你',
+  menuTitle: '什么时候问你？',
+  noFiles: '不读写文件',
+  noFilesLine: '只回复文字，不读写文件，也不运行命令。要读写文件，选一个项目开始新会话。',
+  askFirst: '先问你',
+  askFirstLine: (agent: string) => `${agent} 改文件或运行命令前问你`,
   /** The built-in engine has no way to run a command, so its mode cannot speak of one. */
-  askBeforeWritesTooltip: '改文件前会问你',
+  askBeforeWritesLine: '读项目不问；写文件每次问你',
   fullAccess: '完全访问',
   /** One meaning only. */
-  fullAccessTooltip: 'Agent 可以读写这台 Mac 上的文件并运行命令，不再询问',
-  agentDecides: (agent: string) => `由 ${agent} 决定`,
-  agentDecidesTooltip: (agent: string) => `${agent} 自己决定什么时候问你，Latch 不能限制它`,
+  fullAccessTooltip: 'Harness 可以读写这台 Mac 上的文件并运行命令，不再询问',
+  agentDecides: (agent: string) => `不询问 · 由 ${agent} 决定`,
+  agentDecidesLine: (agent: string) => `${agent} 执行前不询问，Latch 不限制它`,
+  /** The timeline's first row, once per launch in a project: the 权限 chip and the heading must not read as a limit. */
+  firstStart: (agent: string) => `${agent} 能读写这台 Mac 上的文件并运行命令。权限是 ${agent} 自己的设置，Latch 不隔离它。`,
   unverifiable: '权限无法确认',
-  unverifiableTooltip: (agent: string) => `Latch 启动时把 ${agent} 设为只读，但读不回来，无法确认它是否生效`,
+  unverifiableLine: (agent: string) => `Latch 启动时把 ${agent} 设为只读，但读不回来，无法确认它是否生效`,
   afterStart: '开始后可以选',
-  afterStartTooltip: (agent: string) => `${agent} 开始后才告诉 Latch 它有哪些权限模式`,
+  afterStartLine: (agent: string) => `${agent} 开始后才告诉 Latch 它有哪些权限模式`,
+  /** Under the current row before start: the modes come from the agent itself. */
+  changeAfterStart: (agent: string) => `发第一条消息后可以换：${agent} 那时才告诉 Latch 它有哪些模式。`,
+  /** Under the modes of a running agent. */
+  agentOwnSetting: (agent: string) => `这是 ${agent} 自己的设置。Latch 只核对档位名，不核对它实际怎么做，也不隔离它。`,
   readOnlyLine: (agent: string) => `${agent} 只看不改`,
   autoLine: (agent: string) => `${agent} 在项目里改文件和运行命令，越界前问你`,
   neverAsksLine: (agent: string) => `${agent} 不再询问，直接读写这台 Mac 上的文件并运行命令`,
@@ -759,15 +775,15 @@ const FIXED: Record<string, string> = {
   'confirmation-signature-invalid': '没有执行：确认无效。',
   'confirmation-shell-unavailable': '请更新 Mac 上的 Latch 后再确认。',
   'confirmation-failed': CONFIRMATION_RESULT_TEXT.error,
-  'enrollment-denied': '本机拒绝了此设备。',
-  'enrollment-not-found': '找不到该登记请求',
-  'enrollment-pending': '本机尚未确认',
-  'enrollment-completed': '该登记已完成',
-  'enrollment-expired': '登记请求已超时，请重新提交',
-  'enrollment-cancelled': '登记已取消。',
+  'enrollment-denied': 'Mac 上取消了连接。',
+  'enrollment-not-found': '找不到这个连接请求',
+  'enrollment-pending': 'Mac 上尚未确认',
+  'enrollment-completed': '这次连接已完成',
+  'enrollment-expired': '连接请求已超时，请重新提交',
+  'enrollment-cancelled': '连接已取消。',
   'invitation-required': '这台设备还没连接到 Latch。请在 Mac 上的 Latch 里连接它。',
   'invitation-invalid': '这个链接已失效或已用过，请重新获取。',
-  'offline-code-invalid': '离线登记码无效或已过期',
+  'offline-code-invalid': '离线连接码无效或已过期',
   'permission-drift': SESSION_STOP_TEXT['permission-drift'],
   'permission-unverified': SESSION_STOP_TEXT['permission-unverified'],
   'agent-definition-changed': SESSION_STOP_TEXT['agent-definition-changed'],
@@ -775,15 +791,15 @@ const FIXED: Record<string, string> = {
   'l3-confirmation-missing': SESSION_STOP_TEXT['l3-confirmation-missing'],
   'approval-settled': '该审批已结束',
   // Answered by the desktop shell's main process, not the Host.
-  'fingerprint-mismatch': '服务器返回的指纹与本机计算的不一致，已停止登记。',
+  'fingerprint-mismatch': '这台设备的密钥和 Mac 读到的不一致，已停止连接。',
   'host-unavailable': '连不上这台 Mac 上的 Latch，请确认它还在运行。',
-  'credential-store-failed': '无法安全保存设备凭据，登记未完成。',
+  'credential-store-failed': '无法安全保存设备凭据，连接未完成。',
   'browser-open-unsupported': '此系统上不能从桌面端直接打开浏览器，请运行 pnpm latch device invite --loopback。',
   'browser-open-failed': '无法在浏览器中打开 Latch，请重试。',
   'native-not-configured': '请先在 手机 › 连接手机 中设置连接方式。',
   'native-config-changed': '手机连接配置已变化。请重新打开设置连接，再核对后保存。',
   'native-relay-duplicate': '每个中继节点只能添加一次。',
-  'native-managed': '直连入口由启动参数管理，需要停止 Host 后修改参数。',
+  'native-managed': '这个地址由启动参数管理，需要停止 Latch 服务后修改参数。',
   'native-address-unavailable': '原来的局域网地址已不可用，请重新选择当前地址。',
   'native-listener-unavailable': '无法启用所选地址或端口，请核对网络后重试。',
   'native-not-ready': '手机连接服务正在准备，请稍后重试。',
@@ -794,7 +810,7 @@ const FIXED: Record<string, string> = {
 const FAMILY_FALLBACK: Array<[prefix: string, text: string]> = [
   ['presence-', '这台 Mac 暂时不能确认，请稍后重试'],
   ['confirmation-', CONFIRMATION_RESULT_TEXT.error],
-  ['enrollment-', '登记未完成，请重新提交'],
+  ['enrollment-', '连接未完成，请重新提交'],
   ['invitation-', '配对码无效或已过期'],
 ]
 

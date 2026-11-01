@@ -184,8 +184,8 @@ const defaultSpawn: SpawnLike = (file, args, options) => nodeSpawn(file, [...arg
 const PLATFORM_MESSAGE = '此系统暂不支持本机确认（Touch ID 或登录密码）'
 const MISSING_MESSAGE = '未找到本机确认组件。请运行 pnpm build:presence 后重启 Host。'
 const SIGNATURE_MESSAGE = '本机确认组件的签名或文件权限无效。请运行 pnpm build:presence 后重启 Host。'
-const MISMATCH_MESSAGE = '本机确认组件与登记的签名不一致。如果你重新构建了它，请停止 Host 后运行 pnpm latch presence repin。'
-const PIN_LOST_MESSAGE = '本机确认组件的登记签名已丢失（policy.json 被修改或删除）。请停止 Host 后运行 pnpm latch presence repin。'
+const MISMATCH_MESSAGE = '本机确认组件与记录的签名不一致。如果你重新构建了它，请停止 Host 后运行 pnpm latch presence repin。'
+const PIN_LOST_MESSAGE = '本机确认组件的签名记录已丢失（policy.json 被修改或删除）。请停止 Host 后运行 pnpm latch presence repin。'
 
 function noneBackend(availability: Extract<PresenceAvailability, { status: 'unavailable' }>): PresenceBackend {
   return {

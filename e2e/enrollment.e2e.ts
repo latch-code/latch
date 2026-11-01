@@ -367,8 +367,8 @@ describe('device enrollment in the browser', () => {
     await page.goto((await testHost.invite(undefined, 'loopback-tcp')).url)
     await page.getByText(/^Mac 现在不能确认：.*要等它能确认后才能连接/).waitFor()
     // Offline codes work only in the desktop app; submitting here would only use the invitation up.
-    expect(await page.getByLabel('离线登记码', { exact: true }).count()).toBe(0)
-    expect(await page.getByRole('button', { name: '使用离线登记码', exact: true }).count()).toBe(0)
+    expect(await page.getByLabel('离线连接码', { exact: true }).count()).toBe(0)
+    expect(await page.getByRole('button', { name: '使用离线连接码', exact: true }).count()).toBe(0)
     expect(await page.getByRole('button', { name: '连接这个浏览器', exact: true }).isDisabled()).toBe(true)
     // The intro is the invitation's; nothing on the page promises Touch ID.
     expect(await page.getByText(/Touch ID/).count()).toBe(0)

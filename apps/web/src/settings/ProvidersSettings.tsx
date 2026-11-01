@@ -196,7 +196,7 @@ function CheckRow({
         ) : local ? (
           <span className="check-result" role="status">
             <Icon icon={Info} size={12} />
-            Host 还不能访问这个地址
+            Latch 还不能访问这个地址
           </span>
         ) : unknown ? (
           <span className="check-result" role="status">
@@ -529,7 +529,7 @@ function addressNote(destination: Destination, abilities: ProviderAbilities, loc
   if (destination !== 'unconfirmed') return null
   if (abilities.confirm) return localTarget ? PROVIDER_COPY.localAddressAtSave(localTarget) : PROVIDER_COPY.firstUse
   if (abilities.offline) return offlineText(abilities)
-  return `这个地址要在运行 Latch 的电脑上确认后才能使用。${PROVIDER_COPY.savedUnconfirmed}`
+  return `这个地址要在 Mac 上确认后才能使用。${PROVIDER_COPY.savedUnconfirmed}`
 }
 
 /**
@@ -877,7 +877,7 @@ export function ProviderAddForm({
           busy={busy}
           waiting={confirming && waiting}
           actionLabel={PROVIDER_COPY.allowAndFetch}
-          elsewhere={abilities.offline ? offlineText(abilities) : '可以先手动输入模型 ID 保存，再在运行 Latch 的电脑上确认这个地址。'}
+          elsewhere={abilities.offline ? offlineText(abilities) : '可以先手动输入模型 ID 保存，再在 Mac 上确认这个地址。'}
           atSave={locked}
           onAllow={() => {
             void allowAndFetch()
@@ -1050,7 +1050,7 @@ function ProviderPage({
             ) : undefined
           }>
           {abilities.confirm
-            ? '确认后 Latch 才会向它发送请求；本机或局域网地址同时允许 Host 访问。'
+            ? '确认后 Latch 才会向它发送请求；localhost 或局域网地址同时允许 Latch 访问。'
             : abilities.offline
               ? offlineText(abilities, provider.id)
               : PROVIDER_COPY.confirmElsewhere(provider.name)}
@@ -1527,7 +1527,7 @@ export function ProvidersSettings({ snapshot, access, onChanged }: { snapshot: A
           </Button>
         }>
         {data.providers.length === 0 ? (
-          <SettingsRow title="还没有模型服务" description="添加一个后，Latch 引擎就能用它" />
+          <SettingsRow title="还没有模型服务" description="添加一个后，Latch 内置就能用它" />
         ) : (
           data.providers.map(provider => (
             <ObjectRow

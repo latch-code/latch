@@ -87,13 +87,45 @@
   margin: var(--sp-8);
 }
 .file-mentions > p {
+  padding-inline: var(--sp-10);
   color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
+.file-mentions > .ui-loading {
+  padding-inline: var(--sp-10);
+}
 .file-mentions > .ui-button {
+  flex-shrink: 0;
   justify-content: space-between;
   min-width: 0;
+}
+.file-mentions[aria-busy='true'] > .ui-button {
+  color: var(--muted);
+  transition: color var(--m-micro) var(--e-micro) 300ms;
+}
+.file-mention-path {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: var(--sp-8);
+  min-width: 0;
+  overflow: hidden;
+  text-align: start;
+}
+.file-mention-name {
+  flex-shrink: 0;
+  max-width: 70%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.file-mention-folder {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .attachment-drop-mask {

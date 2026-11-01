@@ -33,7 +33,7 @@ export function FileHistoryPreview({
   const entries = history?.entries.filter(entry => inScope(entry, history)).toReversed() ?? []
   const files = histories.filter(file => file.entries.some(entry => inScope(entry, file)))
   return (
-    <section className="file-preview file-history code-review" aria-label="文件历史变更">
+    <section className="file-preview file-history code-review" aria-label="文件历史改动">
       <header className="file-preview-head">
         <strong>
           <VisibleText text={name} />
@@ -88,7 +88,7 @@ export function FileHistoryPreview({
           </p>
           <div className="code-review-content" data-multiple={files.length > 1 ? '' : undefined}>
             {files.length > 1 && (
-              <nav className="code-review-files" aria-label="变更文件">
+              <nav className="code-review-files" aria-label="改动的文件">
                 {files.map(file => (
                   <Button
                     key={`${file.root}:${file.path}`}
@@ -114,7 +114,7 @@ export function FileHistoryPreview({
               </nav>
             )}
             <div className="file-preview-body code-review-entries">
-              {entries.length === 0 && <InlineNotice>这个文件在本轮没有修改。可以切换历史查看之前的变更。</InlineNotice>}
+              {entries.length === 0 && <InlineNotice>这个文件在本轮没有修改。可以切换历史查看之前的改动。</InlineNotice>}
               {entries.slice(0, limit).map((entry, index) => {
                 const number = history.entries.indexOf(entry) + 1
                 return (

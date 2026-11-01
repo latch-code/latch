@@ -424,7 +424,7 @@ test('the reason for a pause is the real one, and turning it off while a start i
     void off.service.setEnabled(c.id, { requestId: randomUUID(), baseRevision: 1, enabled: false }, actor)
     return undefined as never
   })
-  off.start.mockRejectedValueOnce(new AppError(409, 'automation-changed', '自动化已关闭或已修改。'))
+  off.start.mockRejectedValueOnce(new AppError(409, 'automation-changed', '定时任务已关闭或已修改。'))
   await off.service.tick()
   await vi.waitFor(() => expect(off.service.get(c.id).enabled).toBe(false))
   await off.service.tick()

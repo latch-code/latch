@@ -94,39 +94,67 @@ export async function backToPhoneSessions(page: Page): Promise<void> {
   await page.locator('.phone-list').evaluate(element => Promise.all(element.getAnimations().map(animation => animation.finished)))
 }
 
-/** The rail, or a phone's tab bar. */
+/** The sidebar's foot, or a phone's tab bar. */
 const mainNavigation = (page: Page) => page.getByRole('navigation', { name: '主导航', exact: true })
 
+const isPhone = async (page: Page) => (await page.locator('.phone-tabs').count()) > 0
+
+/** The foot stands in the sidebar: away from a page, and on a tablet inside its drawer. */
+async function footInReach(page: Page): Promise<void> {
+  if ((await page.locator('.settings-page').count()) > 0) await openSessions(page)
+  const drawer = page.getByRole('button', { name: '打开会话列表', exact: true })
+  if (await drawer.isVisible()) await drawer.click()
+  const shut = page.getByRole('button', { name: '展开侧栏', exact: true })
+  if (await shut.isVisible()) await shut.click()
+  await settleShell(page)
+}
+
+/** Sections that are opened inside 设置, on every width. */
+const IN_SETTINGS = new Set(['插件', 'Agent', '定时任务'])
+
 /**
- * Opens an entry of the rail, or the tab of a phone (from its session list when a session's page is pushed over it).
- * Tests do not select a breakpoint.
+ * Opens 设置 or 手机 from the sidebar's foot, or a section of 设置 by its name; on a phone, the tab (from its session list
+ * when a session's page is pushed over it). Tests do not select a breakpoint.
  */
 export async function openEntry(page: Page, name: string): Promise<void> {
   await settleShell(page)
   await backToPhoneSessions(page)
+  const phone = await isPhone(page)
+  if (IN_SETTINGS.has(name) || (phone && name === '手机')) {
+    await openEntry(page, '设置')
+    await openSection(page.locator('.settings-page'), name === '手机' ? '手机与设备' : name)
+    return
+  }
+  if (!phone && (await page.locator(`.settings-page[data-entry="${name === '手机' ? 'phone' : 'settings'}"]`).count()) > 0) return
+  if (!phone) await footInReach(page)
   const button = mainNavigation(page).getByRole('button', { name, exact: true })
   await reachable(button)
   await button.click()
 }
 
-/** Back to the session list or conversation through the rail or the tab bar. */
+/** Back to the session list or conversation: the way back at the top of a page, the title row's while shut, or the tab. */
 export async function openSessions(page: Page): Promise<void> {
-  await mainNavigation(page).getByRole('button', { name: '会话', exact: true }).click()
+  if (await isPhone(page)) await mainNavigation(page).getByRole('button', { name: '会话', exact: true }).click()
+  else
+    await page
+      .getByRole('button', { name: /^返回会话/u })
+      .locator('visible=true')
+      .first()
+      .click()
   await page.locator('.settings-page').waitFor({ state: 'detached' })
 }
 
-/** Opens 个人助手, a section of the Agent entry. */
+/** Opens 个人助手, the Agent section of 设置. */
 export async function openPersonal(page: Page): Promise<Locator> {
-  await openEntry(page, 'Agent')
-  await page.locator('.settings-page').getByRole('tab', { name: '个人助手', exact: true }).click()
+  await openEntry(page, '设置')
+  await openSection(page.locator('.settings-page'), 'Agent')
   const personal = page.getByRole('region', { name: '个人助手', exact: true })
   await personal.waitFor()
   return personal
 }
 
 /**
- * Returns the opened page of the 设置 entry, on the devices section when `section` is 手机与设备 (the 手机 entry; on a
- * phone, inside 设置).
+ * Returns the opened 设置 page, or the devices page when `section` is 手机与设备 (on a phone, inside 设置).
  */
 export async function openSettings(page: Page, section: '设置' | '手机与设备' = '设置'): Promise<Locator> {
   await openEntry(page, '设置')
@@ -166,15 +194,7 @@ export async function backToSection(settings: Locator): Promise<void> {
   }
 }
 
-/** Where a section lives when it is not on the page shown: the rail's entry on wide windows, the tab on a phone. */
-const SECTION_ENTRIES: Record<string, { wide: string; phone: string }> = {
-  插件: { wide: '插件', phone: '设置' },
-  手机与设备: { wide: '手机', phone: '设置' },
-  个人助手: { wide: 'Agent', phone: 'Agent' },
-  例行任务: { wide: '自动化', phone: 'Agent' },
-}
-
-/** Opens a section, through its entry when another entry's page is showing; on a phone, from the section list. */
+/** Opens a section, through its page when the other page is showing; on a phone, from the section list. */
 export async function openSection(settings: Locator, name: string): Promise<void> {
   const page = settings.page()
   const tab = settings.getByRole('tab', { name, exact: true })
@@ -187,36 +207,21 @@ export async function openSection(settings: Locator, name: string): Promise<void
     }
   await backToSections(settings)
   if ((await tab.count()) === 0) {
-    const entry = SECTION_ENTRIES[name] ?? { wide: '设置', phone: '设置' }
-    const phone = (await page.locator('.phone-tabs').count()) > 0
-    await mainNavigation(page)
-      .getByRole('button', { name: phone ? entry.phone : entry.wide, exact: true })
-      .click()
-    // 插件 and 手机 list their objects beside the rail on wide windows, in place of a section list.
-    if ((name === '插件' || name === '手机与设备') && !phone) return
+    if (name === '手机与设备' && !(await isPhone(page))) {
+      await openEntry(page, '手机')
+      return
+    }
+    await openEntry(page, '设置')
     await tab.waitFor()
   }
   await reachable(tab)
   await tab.click()
 }
 
-/** Leaves a page entry for the conversation through 会话 in the rail or the tab bar. */
+/** Leaves a page for the conversation. */
 export async function closeSettings(settings: Locator): Promise<void> {
   await backToSections(settings)
   await openSessions(settings.page())
-}
-
-/** 只聊天 on a new session: a row of the sheet on phones, in the input's 「⋯」 elsewhere. */
-export async function setChatOnly(page: Page, value: boolean): Promise<void> {
-  const name = '只聊天，不读写文件'
-  const sheet = page.locator('.new-session-sheet')
-  if (await sheet.isVisible()) {
-    await sheet.getByRole('switch', { name, exact: true }).setChecked(value)
-    return
-  }
-  await page.locator('.composer-more').getByRole('button', { name: '更多选项', exact: true }).click()
-  await page.getByRole('switch', { name, exact: true }).setChecked(value)
-  await page.keyboard.press('Escape')
 }
 
 /** The selected file tab goes the way a keyboard closes it: its × only shows under the pointer. */

@@ -132,7 +132,7 @@ describe('desktop lifecycle copy', () => {
 
   it('reports restarts and a crash loop, and offers a start only where it can work', () => {
     expect(hostLine(view({ status: 'restarting', restartInMs: 1_800, crashes: 2 }))).toEqual({
-      text: 'Latch Host 意外退出，2 秒后重新启动（10 分钟内第 2 次）。',
+      text: 'Latch 服务意外退出，2 秒后重新启动（10 分钟内第 2 次）。',
       tone: 'warn',
     })
     expect(hostLine(view({ status: 'crash-loop', crashes: 5 }))).toMatchObject({

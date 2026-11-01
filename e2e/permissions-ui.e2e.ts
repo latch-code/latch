@@ -145,8 +145,8 @@ describe('permission states in a browser', () => {
     await open(sessionId)
     const card = page.locator('[data-approval-id]')
     await card.getByRole('button', { name: '拒绝', exact: true }).waitFor()
-    const note = page.getByRole('textbox', { name: '输入内容会拒绝并告诉 Agent 改做什么', exact: true })
-    expect(await note.getAttribute('placeholder')).toBe('输入内容会拒绝并告诉 Agent 改做什么')
+    const note = page.getByRole('textbox', { name: '输入内容会拒绝并告诉 Harness 改做什么', exact: true })
+    expect(await note.getAttribute('placeholder')).toBe('输入内容会拒绝并告诉 Harness 改做什么')
     // Enter with nothing written decides nothing.
     await note.press('Enter')
     expect((await detail(sessionId)).approvals).toHaveLength(1)
@@ -276,10 +276,13 @@ describe('permission states in a browser', () => {
     await expect.poll(async () => (await detail(sessionId)).approvals.length).toBe(1)
     await open(sessionId)
 
-    await page.getByText('这个会话只能在 Mac 上继续。这台设备可以查看、拒绝和停止。', { exact: true }).waitFor()
+    await page
+      .locator('.composer-readonly')
+      .getByText('这个会话只能在 Mac 上继续。这台设备可以查看、拒绝和停止。', { exact: true })
+      .waitFor()
     expect(await page.getByRole('textbox', { name: '继续对话' }).count()).toBe(0)
     const card = page.locator('[data-approval-id]')
-    await card.getByText('Agent 的询问只是提示：拒绝会转达给它，但不能阻止它执行其他操作。', { exact: true }).waitFor()
+    await card.getByText('Harness 的询问只是提示：拒绝会转达给它，但不能阻止它执行其他操作。', { exact: true }).waitFor()
     await card.getByText('在 Mac 上的 Latch 里允许', { exact: true }).waitFor()
     expect(await card.getByRole('button', { name: /允许/ }).count()).toBe(0)
     await page.screenshot({ path: `${OUTPUT}/l3-read-only-desktop.png`, fullPage: true, animations: 'disabled' })
@@ -296,7 +299,7 @@ describe('permission states in a browser', () => {
       body: { prompt: 'drift plan', requestId: randomUUID() },
     })
     await expect.poll(async () => (await detail(sessionId)).summary.permissionDrift, { timeout: 15_000 }).toBe(true)
-    await page.getByText('这个 Agent 的设置变了，为了安全换个新会话继续', { exact: true }).waitFor()
+    await page.getByText('这个 Harness 的设置变了，为了安全换个新会话继续', { exact: true }).waitFor()
     expect(await page.getByRole('textbox', { name: '继续对话' }).count()).toBe(0)
     await page.screenshot({ path: `${OUTPUT}/l3-drift-desktop.png`, fullPage: true, animations: 'disabled' })
     // The banner that stops the session is a security surface too.
@@ -312,8 +315,8 @@ describe('permission states in a browser', () => {
 
   it('offers another device only the built-in engine, and says where the others start', async () => {
     await page.getByRole('button', { name: '新建会话', exact: true }).first().click()
-    await page.locator('.composer .model-picker').click()
-    await page.getByText('其他引擎只能在 Mac 上开始。', { exact: true }).waitFor()
+    await page.locator('.composer .harness-picker').click()
+    await page.getByText('其他 Harness 只能在 Mac 上开始。', { exact: true }).waitFor()
     expect(await page.getByRole('menuitemradio', { name: /Fake Agent/ }).count()).toBe(0)
     await page.screenshot({ path: `${OUTPUT}/engine-picker-remote.png`, animations: 'disabled' })
     await page.keyboard.press('Escape')

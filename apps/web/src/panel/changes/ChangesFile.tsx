@@ -233,10 +233,10 @@ function CommentBox({ onCancel, onSend }: { onCancel: () => void; onSend: (text:
         }
       }}>
       <textarea
-        aria-label="告诉 Agent"
+        aria-label="告诉 Harness"
         autoFocus
         rows={2}
-        placeholder="告诉 Agent…"
+        placeholder="告诉 Harness…"
         value={text}
         onChange={event => {
           setText(event.target.value)

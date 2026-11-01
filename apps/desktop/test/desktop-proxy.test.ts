@@ -288,7 +288,7 @@ async function fakeHost(now: () => number = Date.now) {
       if (req.method === 'POST' && completeMatch) {
         const enrollment = state.enrollments.get(completeMatch[1]!)
         if (!enrollment) {
-          sendJson(res, 404, { error: 'enrollment-not-found', message: '找不到该登记请求' })
+          sendJson(res, 404, { error: 'enrollment-not-found', message: '找不到这个连接请求' })
           return
         }
         const { signature } = JSON.parse(body) as { signature: string }
@@ -1731,7 +1731,7 @@ describe('desktop shell proxy', () => {
     ] as const) {
       const response = await post(path, body)
       expect(response.status, `${path} ${body}`).toBe(403)
-      expect(await response.json()).toEqual({ error: 'shell-managed', message: '这台电脑上浏览器的登记链接由 Latch 桌面端直接交给浏览器' })
+      expect(await response.json()).toEqual({ error: 'shell-managed', message: '这台电脑上浏览器的链接由 Latch 桌面端直接交给浏览器' })
     }
     expect(context.host.seen).toHaveLength(before)
     for (const body of [undefined, '{}', '{"target":"tls","scopes":["view","run"]}'])

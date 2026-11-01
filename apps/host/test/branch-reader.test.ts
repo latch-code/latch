@@ -45,6 +45,18 @@ const summary = (cwd: string, extra: Partial<TaskSummary> = {}): TaskSummary => 
   ...extra,
 })
 describe('read-only Git branch metadata', () => {
+  it('reads a project folder no session has run in, and refuses a relative path', async () => {
+    const read = vi.fn(async () => 'main'),
+      changed = vi.fn(),
+      reader = new BranchReader({ read, changed })
+    cleanup.push(() => reader.close())
+    expect(reader.branchOf('relative/path')).toBeUndefined()
+    expect(reader.branchOf('/tmp/project')).toBeUndefined()
+    await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(1))
+    expect(reader.branchOf('/tmp/project')).toBe('main')
+    expect(read).toHaveBeenCalledTimes(1)
+  })
+
   it('reads normal and detached HEADs without starting Git, redacts secret-shaped names and escapes hidden text', async () => {
     const { root, git } = await repository(),
       spawn = vi.mocked(childProcess.spawn),

@@ -448,7 +448,7 @@ export function FilePreview({
                           },
                         ]
                       : []),
-                    ...(onHistory ? [{ id: 'history', label: '查看变更', icon: GitCompare, onSelect: onHistory }] : []),
+                    ...(onHistory ? [{ id: 'history', label: '查看改动', icon: GitCompare, onSelect: onHistory }] : []),
                     ...(file.source !== 'attachment'
                       ? [
                           {
@@ -528,7 +528,7 @@ export function FilePreview({
                   </Button>
                 ) : undefined
               }>
-              这个文件可能包含密钥。{local || file.source === 'attachment' ? '显示后，内容只以纯文本呈现。' : '请在执行端电脑上查看。'}
+              这个文件可能包含密钥。{local || file.source === 'attachment' ? '显示后，内容只以纯文本呈现。' : '请在 Mac 上查看。'}
             </InlineNotice>
           ) : !file.actions.preview ? (
             <InlineNotice>

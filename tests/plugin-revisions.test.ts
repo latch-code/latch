@@ -120,7 +120,7 @@ test('requires the actual provider and every selected owner in a saved grant and
     { revision: '6'.repeat(64) },
   )
   await waiting
-  expect(() => registry.acquire('fixture', full)).toThrow('正在变更')
+  expect(() => registry.acquire('fixture', full)).toThrow('正在更新')
   release()
   await replacement
   expect(() => registry.acquire('fixture', full)).toThrow('插件已更新')

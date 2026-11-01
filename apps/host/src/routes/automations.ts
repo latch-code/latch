@@ -14,7 +14,7 @@ export interface AutomationRouteDeps {
 const deletion = z.strictObject({ requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u) })
 const AUTOMATION = /^\/link\/api\/automations\/(auto_[a-f0-9-]{36})(?:\/(enabled|run))?$/u
 
-/** 自动化. Any device that may read agents may read these, and may change them as far as its own start limits reach. */
+/** 定时任务. Any device that may read agents may read these, and may change them as far as its own start limits reach. */
 export function createAutomationRoutes(_context: RouteContext, deps: AutomationRouteDeps): RouteModule {
   return {
     features: () => ({ automations: true }) satisfies HostFeatures,

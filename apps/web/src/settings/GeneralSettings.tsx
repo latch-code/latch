@@ -74,8 +74,8 @@ function ThisMac({ hostName }: { hostName: string }) {
   const view = lifecycle.view
   const note = view ? loginItemNote(view.loginItem) : ''
   return (
-    <SettingsGroup title={currentShell() ? '这台 Mac' : '运行 Latch 的电脑'}>
-      <SettingsRow title="名称" trailing={<span className="settings-row-value">{hostName || '本机'}</span>} />
+    <SettingsGroup title={currentShell() ? '这台 Mac' : 'Mac'}>
+      <SettingsRow title="名称" trailing={<span className="settings-row-value">{hostName || '这台 Mac'}</span>} />
       {view && (
         <>
           <SwitchRow

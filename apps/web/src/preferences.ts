@@ -15,11 +15,11 @@ export interface Preferences {
   autoOpenDocuments: boolean
   diffLayout: 'unified' | 'split'
   diffScope: 'run' | 'history'
-  /** 自动, 上下 or 左右 in the 变更 tab; this device only. */
+  /** 自动, 上下 or 左右 in the 改动 tab; this device only. */
   diffMode: 'auto' | 'stacked' | 'split'
-  /** 自动换行 in the 变更 tab; off by default. */
+  /** 自动换行 in the 改动 tab; off by default. */
   diffWrap: boolean
-  /** 文件树 in the 变更 tab; absent until the person chooses, so it opens by itself where it fits. */
+  /** 文件树 in the 改动 tab; absent until the person chooses, so it opens by itself where it fits. */
   diffTree?: boolean
   theme: ThemePreference
   /** Desktop only; touch keyboards always insert a newline on Enter. */

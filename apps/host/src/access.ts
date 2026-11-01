@@ -78,7 +78,7 @@ export const CLEARED_LEGACY_COOKIE = `${LEGACY_COOKIE}=; Path=/link; Max-Age=0; 
 const AUTH_FAILURES = {
   unauthorized: [401, '请先在本机确认这台设备'],
   'renewal-required': [401, '设备凭据需要续期'],
-  'credential-expired': [401, '此设备的登记已满 30 天，请重新在本机确认'],
+  'credential-expired': [401, '这台设备的连接已满 30 天，请重新在本机确认'],
   'device-revoked': [401, '此设备已被撤销，请重新在本机确认'],
   'listener-mismatch': [401, '此设备凭据不能在当前地址使用，请重新在本机确认'],
   'legacy-reconfirm': [401, '此设备需要在本机重新确认'],

@@ -338,15 +338,15 @@ describe("the person's message", () => {
         message: { id: 'u', role: 'user', text: '[Latch] 在这条消息之前，用户撤销了上一轮\n\n接着改', createdAt: new Date().toISOString() },
       }),
     )
-    expect(html).toContain('已告诉 Agent 改动被撤销了')
+    expect(html).toContain('已告诉 Harness 改动被撤销了')
     expect(html).toContain('接着改')
     expect(html.slice(html.indexOf('user-bubble'))).not.toContain('[Latch]')
   })
 
   it('follows delivery under the bubble, in place of its time, and offers editing only with a place to fork to', () => {
     const message = { id: 'u', role: 'user' as const, text: '问', createdAt: new Date().toISOString() }
-    const going = renderToStaticMarkup(createElement(MessageRow, { message, delivery: 'Agent 已开始' }))
-    expect(going).toContain('Agent 已开始')
+    const going = renderToStaticMarkup(createElement(MessageRow, { message, delivery: 'Harness 已开始' }))
+    expect(going).toContain('Harness 已开始')
     expect(going).not.toContain('message-meta')
     expect(renderToStaticMarkup(createElement(MessageRow, { message }))).not.toContain('从这里编辑')
     expect(renderToStaticMarkup(createElement(MessageRow, { message, onEdit: noop }))).toContain('从这里编辑')

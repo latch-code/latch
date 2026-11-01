@@ -54,7 +54,7 @@ describe('planFolders', () => {
     const { root, code, guard } = setup()
     const docs = join(root, 'home', 'docs', 'web')
     const primaries = [
-      { id: 'default', name: '启动目录', path: docs },
+      { id: 'default', name: '默认文件夹', path: docs },
       { id: 'api', name: 'API', path: join(code, 'api') },
     ]
     const plan = await planFolders({

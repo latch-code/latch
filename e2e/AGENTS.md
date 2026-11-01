@@ -14,11 +14,11 @@
 
 `ios-app.e2e.ts` 用临时 DerivedData、固定依赖和禁签名的 iOS Simulator SDK 构建真实 App，检查 Mach-O 产物不含夹具身份；不启动模拟器或访问钥匙串。SDK 编译不能代替运行时布局、平台许可或真机验收。
 
-`changes-panel.e2e.ts` 在真实临时仓库走完变更页签的范围、撤销与恢复、回执和合并中的拒绝，并按 Host 的答复画出每个状态，截图写入 `test-results/changes-panel/`。
+`changes-panel.e2e.ts` 在真实临时仓库走完改动页签的范围、撤销与恢复、回执和合并中的拒绝，并按 Host 的答复画出每个状态，截图写入 `test-results/changes-panel/`。
 
 `webkit.e2e.ts` 用 Playwright WebKit 检查三宽、授权文件与引用发送；不称为真机 Safari 验收。`desktop-models.e2e.ts` 在隔离 Electron 和假 ACP 中检查真实配置读回、失回执不重发及三宽菜单；不调用真实 Agent 或模型。
 
-`personal-*.e2e.ts` 经真实 Host 验证群聊、例行任务、只读成员记录、草稿返回和撤权；不写私有草稿到浏览器存储。
+`personal-*.e2e.ts` 经真实 Host 验证群聊、定时任务、只读成员记录、草稿返回和撤权；不写私有草稿到浏览器存储。
 `native-swift-relay.e2e.ts` 用真实双Go与Swift检查单流、旧能力兼容、首块前后取消与App换代；每块复核原权限，测速含子连接握手。
 
 运行环境 node；依赖都写在 devDependencies：host、protocol、sdk、testkit 与原生全链的 relay、link-client、link-wire；Playwright、vite 用于界面与原语总览。用例与运行器用根项目的同一份 Vitest，所以本项目不声明 `vitest`。

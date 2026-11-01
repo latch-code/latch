@@ -573,7 +573,7 @@ describe('device credentials', () => {
     await expect(context.reopen()).rejects.toMatchObject({ status: 500, code: 'devices-corrupt' })
     expect(readFileSync(path, 'utf8')).toBe('{broken')
     writeFileSync(path, original.replace(hostId, 'b'.repeat(52)))
-    await expect(context.reopen()).rejects.toMatchObject({ code: 'devices-host-mismatch', message: '设备登记属于另一台 Host' })
+    await expect(context.reopen()).rejects.toMatchObject({ code: 'devices-host-mismatch', message: '设备文件属于另一台 Host' })
     writeFileSync(path, original.replace('"version": 2', '"version": 3'))
     await expect(context.reopen()).rejects.toMatchObject({ code: 'devices-corrupt' })
   })
@@ -959,7 +959,7 @@ describe('enrollment', () => {
     ])
     expect(JSON.stringify(preview)).not.toContain('本机')
     expect(preview.warnings).toEqual([
-      '只有在你正在登记这台设备、并且两边显示的指纹完全一致时才确认。',
+      '只有在你正在连接这台设备、并且两边显示的指纹完全一致时才确认。',
       '该设备将可以管理此 Host（模型服务、插件、项目和其他设备）。',
     ])
     expect(context.presence.requests[0]!.requireBiometric).toBe(true)
@@ -975,7 +975,7 @@ describe('enrollment', () => {
     })
     await expect(context.enrollments.complete(view.id, 'x', loopback)).rejects.toMatchObject({ status: 409, code: 'enrollment-pending' })
     expect(() => context.enrollments.status(view.id, otherLoopback)).toThrow(
-      expect.objectContaining({ status: 409, code: 'listener-mismatch', message: '请在发起登记的同一页面完成登记' }),
+      expect.objectContaining({ status: 409, code: 'listener-mismatch', message: '请在发起连接的同一页面完成连接' }),
     )
     expect(() => context.enrollments.status('enr_missing', loopback)).toThrow(
       expect.objectContaining({ status: 404, code: 'enrollment-not-found' }),
@@ -1320,7 +1320,7 @@ describe('enrollment', () => {
     }
     await expect(
       context.enrollments.create({ publicKey: testDeviceKey().spki, name: 'x', offlineCode: 'lpo1-AAAAAAAAAAAAAAAAAAAAAAAAAA' }, unix),
-    ).rejects.toMatchObject({ code: 'offline-code-invalid', message: '离线登记码无效或已过期' })
+    ).rejects.toMatchObject({ code: 'offline-code-invalid', message: '离线连接码无效或已过期' })
 
     const key = testDeviceKey()
     const view = await context.enrollments.create({ publicKey: key.spki, name: '桌面', offlineCode: ticket.code, scopes: ['view'] }, unix)

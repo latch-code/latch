@@ -493,7 +493,7 @@ function LineFor({
   }
 }
 
-/** The right panel's 变更 tab: what this session changed, who changed it, and taking it back. */
+/** The right panel's 改动 tab: what this session changed, who changed it, and taking it back. */
 export function ChangesPanel(props: ChangesPanelProps) {
   if (!props.canRead)
     return (

@@ -179,7 +179,7 @@ function UserMessage({
       {note && (
         <Tooltip content={note}>
           <p className="message-change-note" tabIndex={0}>
-            已告诉 Agent 改动被撤销了
+            已告诉 Harness 改动被撤销了
           </p>
         </Tooltip>
       )}

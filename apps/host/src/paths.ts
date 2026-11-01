@@ -114,7 +114,7 @@ export function resolveLatchPaths(input: {
     workspaceSource = 'default'
     if (legacyExists)
       warnings.push(
-        `数据目录内的旧工作区 ${legacyWorkspace} 位于 Latch 程序目录中，不再作为启动目录；启动目录改为 ${workspaceRoot}。原目录中的文件没有移动。`,
+        `数据目录内的旧工作区 ${legacyWorkspace} 位于 Latch 程序目录中，不再作为默认文件夹；默认文件夹改为 ${workspaceRoot}。原目录中的文件没有移动。`,
       )
   }
 
@@ -651,7 +651,7 @@ export async function checkProjectFolders(
   for (const item of context.existing) {
     if (!samePath(await locate(item.path), located[0])) continue
     const message =
-      item.id === 'default' ? '该文件夹是 Host 的启动目录，不能作为项目的主文件夹' : `该文件夹已是项目「${item.name}」的主文件夹`
+      item.id === 'default' ? '该文件夹是 Host 的默认文件夹，不能作为项目的主文件夹' : `该文件夹已是项目「${item.name}」的主文件夹`
     return { ok: false, index: 0, error: new AppError(409, 'workspace-exists', message) }
   }
   return { ok: true }

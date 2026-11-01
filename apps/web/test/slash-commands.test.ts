@@ -19,7 +19,7 @@ describe('advertised slash commands', () => {
     expect(slashMatches('/init', offered).map(item => item.name)).toEqual(['init', 'init-more', 'initial', 'project-init', 'preinit'])
   })
   it('finds a translated template by slash ID or display name and keeps it editable', () => {
-    const templates = [{ id: 'review', name: '检查变更', content: '先检查变更，再给出建议。', scope: { kind: 'all' as const } }]
+    const templates = [{ id: 'review', name: '检查改动', content: '先检查改动，再给出建议。', scope: { kind: 'all' as const } }]
     const result = slashOptions('/review', commands, templates)
     expect(result.map(option => option.kind)).toEqual(['template', 'command'])
     expect(result[0]?.text).toBe(templates[0]?.content)

@@ -26,8 +26,7 @@ describe('workbench key routing', () => {
       expect(workbenchShortcut(key(code!, { altKey: true, shiftKey: true }), false)).toBeNull()
       expect(workbenchShortcut(key(code!, { metaKey: true }), false)).toBeNull()
     }
-    expect(workbenchShortcut(key('Digit2', { altKey: true }), false)).toEqual({ entry: 'agents' })
-    expect(workbenchShortcut(key('Digit5', { altKey: true }), false)).toBeNull()
+    expect(workbenchShortcut(key('Digit2', { altKey: true }), false)).toBeNull()
     expect(workbenchShortcut(key('Comma', { altKey: true }), false)).toBe('settings')
     expect(workbenchShortcut(key('KeyB', { altKey: true, shiftKey: true }), false)).toBe('side-panel')
     expect(workbenchShortcut(key('KeyB', { metaKey: true, altKey: true }), true)).toBe('side-panel')
@@ -36,9 +35,8 @@ describe('workbench key routing', () => {
     expect(workbenchShortcut(key('KeyE', { metaKey: true, shiftKey: true }), true)).toBe('files')
     expect(workbenchShortcut(key('KeyE', { altKey: true, shiftKey: true }), false)).toBe('files')
   })
-  it('keeps only what still shows over a page entry, whose session columns are hidden', () => {
-    for (const action of ['new', 'sidebar', 'shortcuts', 'settings', { entry: 'agents' }] as const)
-      expect(shortcutWorksOnPage(action)).toBe(true)
+  it('keeps only what still shows over a page, whose session columns are hidden', () => {
+    for (const action of ['new', 'sidebar', 'shortcuts', 'settings'] as const) expect(shortcutWorksOnPage(action)).toBe(true)
     for (const action of ['previous', 'next', 'files', 'file-search', 'close-file', 'compose', 'side-panel'] as const)
       expect(shortcutWorksOnPage(action)).toBe(false)
   })
@@ -64,9 +62,9 @@ describe('workbench key routing', () => {
   })
   it('lists a row for every action a key can trigger', () => {
     const ids = new Set<string>(shortcutRows(true, true).map(row => row.id))
-    for (const code of ['KeyN', 'KeyB', 'KeyD', 'Slash', 'KeyP', 'KeyW', 'KeyL', 'Comma', 'Digit1', 'Digit4']) {
+    for (const code of ['KeyN', 'KeyB', 'KeyD', 'Slash', 'KeyP', 'KeyW', 'KeyL', 'Comma']) {
       const action = workbenchShortcut(key(code, { metaKey: true }), true)!
-      expect(ids.has(typeof action === 'object' ? action.entry : action), code).toBe(true)
+      expect(ids.has(action), code).toBe(true)
     }
     expect(ids.has('files') && ids.has('side-panel') && ids.has('previous') && ids.has('next')).toBe(true)
   })

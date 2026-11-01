@@ -6,7 +6,7 @@ import type { Device, NativeLinkInfo, NativePairingStatus, WaitingEnrollmentView
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { openSettings } from './helpers/layout.ts'
+import { openEntry, openSettings } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/phone-page'
 const SIZES = [
@@ -144,9 +144,7 @@ describe('the 手机 page', () => {
         await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' })
       }
       const phone = size.label === 'phone'
-      const nav = page.getByRole('navigation', { name: '主导航', exact: true })
-      await nav.getByRole('button', { name: phone ? '设置' : '手机', exact: true }).click()
-      if (phone) await page.getByRole('tab', { name: '手机与设备', exact: true }).click()
+      await openEntry(page, '手机')
 
       // No device yet.
       await page.getByText('还没有连接手机', { exact: true }).waitFor()
@@ -165,10 +163,7 @@ describe('the 手机 page', () => {
       ]
       await page.reload()
       await connected(page)
-      if (phone) {
-        await nav.getByRole('button', { name: '设置', exact: true }).click()
-        await page.getByRole('tab', { name: '手机与设备', exact: true }).click()
-      } else await nav.getByRole('button', { name: '手机', exact: true }).click()
+      await openEntry(page, '手机')
       const row = page.locator('[data-device-id="dev_phone"]')
       await row.waitFor()
       expect(await page.locator(`[data-device-id="${self}"]`).count()).toBe(0)
@@ -341,7 +336,7 @@ describe('the 手机 page', () => {
       await asDesktop(page, state)
       await page.reload()
       await connected(page)
-      await page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '手机', exact: true }).click()
+      await openEntry(page, '手机')
       const sheet = page.getByRole('dialog', { name: '连接手机', exact: true })
       return { context, page, sheet, qr: sheet.getByAltText('原生客户端配对二维码') }
     }
@@ -438,7 +433,7 @@ describe('the 手机 page', () => {
       const state = base({ create: 'blocked' })
       const { context, page, sheet, qr } = await open(state)
       await page.locator('.device-connect').click()
-      await sheet.getByText('有 Agent 正在运行或等你处理', { exact: false }).waitFor()
+      await sheet.getByText('有 Harness 正在运行或等你处理', { exact: false }).waitFor()
       expect(await sheet.getByText('用 iPhone 上的 Latch 扫码', { exact: true }).count()).toBe(0)
       expect(await sheet.locator('.pair-qr').count()).toBe(0)
       await page.screenshot({ path: `${OUTPUT}/sheet-held-back-desktop-light.png`, animations: 'disabled' })

@@ -163,7 +163,7 @@ describe('resizable sidebar', () => {
     await page.keyboard.press('Control+k')
     const palette = page.getByRole('dialog', { name: '命令面板', exact: true })
     await palette.waitFor()
-    await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('搜索会话、文件、Agent 和命令')
+    await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('搜索会话、文件、Harness 和命令')
     await page.keyboard.press('Escape')
     await palette.waitFor({ state: 'detached' })
     await page.locator('.app-shell[data-sidebar="collapsed"]').waitFor()
@@ -336,7 +336,7 @@ describe('session panel', () => {
     ).toBe(muted)
     expect(await row('read').locator('.session-item-main').getAttribute('title')).toContain('main')
     for (const id of ['running', 'failed', 'waiting', 'silent', 'stopping', 'forced']) expect(await height(id)).toBe(52)
-    expect(await row('running').locator('.session-meta').textContent()).toContain('通用')
+    expect(await row('running').locator('.session-meta').textContent()).toContain('Latch 内置')
     expect(await row('running').locator('.session-meta').textContent()).toContain('main')
   })
 

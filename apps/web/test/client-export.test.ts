@@ -51,7 +51,7 @@ describe('Markdown export', () => {
     const markdown = transcriptMarkdown(detail(), { harness: 'Standard', exportedAt: new Date('2026-10-23T08:00:00.000Z') })
     expect(
       markdown.startsWith(
-        '# 修复登录问题\n\n- 引擎：Standard\n- 模型：deepseek-chat\n- 模式：Agent\n- 项目：`/work/app`\n- 用量：输入 1.2k tokens · 输出 350 tokens\n- 导出于：',
+        '# 修复登录问题\n\n- Harness：Standard\n- 模型：deepseek-chat\n- 模式：Agent\n- 项目：`/work/app`\n- 用量：输入 1.2k tokens · 输出 350 tokens\n- 导出于：',
       ),
     ).toBe(true)
     expect(markdown).toContain('## 你\n\n登录按钮没反应')
@@ -89,8 +89,8 @@ describe('Markdown export', () => {
     const markdown = transcriptMarkdown(rejected, { harness: 'Latch 内置' })
     expect(markdown).toContain('<summary>工具：写入文件 notes/plan.md（已拒绝）</summary>')
     expect(markdown).toContain('审批：已拒绝 · 2026年10月23日 周五 14:32:00 · 在这台 Mac 上决定')
-    expect(markdown).not.toContain('变更：')
-    expect(markdown).toContain('- 引擎：Latch 内置')
+    expect(markdown).not.toContain('改动：')
+    expect(markdown).toContain('- Harness：Latch 内置')
   })
 
   it('keeps the diff an agent reports for a call it ran after a rejection, and says so next to the record', () => {
@@ -123,8 +123,8 @@ describe('Markdown export', () => {
     }
     const markdown = transcriptMarkdown(ran)
     expect(markdown).toContain('<summary>工具：Edit src/app.ts（已完成）</summary>')
-    expect(markdown).toContain('审批：已拒绝 · 2026年10月23日 周五 14:32:00 · 在其他设备上决定 · Agent 报告仍执行了这次调用')
-    expect(markdown).toContain('变更：`src/app.ts`')
+    expect(markdown).toContain('审批：已拒绝 · 2026年10月23日 周五 14:32:00 · 在其他设备上决定 · Harness 报告仍执行了这次调用')
+    expect(markdown).toContain('改动：`src/app.ts`')
     // History from before decision records: 已拒绝, without the internal code.
     expect(markdown).toContain('<summary>工具：write_file（已拒绝）</summary>')
     expect(markdown).not.toContain('APPROVAL_REJECTED')
@@ -200,7 +200,7 @@ describe('Markdown export', () => {
     }
     const markdown = transcriptMarkdown({ ...base, summary: { ...base.summary, cwd: '/w`d' }, messages: [tool] })
     expect(markdown).toContain('工具名：``w`x``')
-    expect(markdown).toContain('变更：``a`![](https:attacker.example?q=1)``')
+    expect(markdown).toContain('改动：``a`![](https:attacker.example?q=1)``')
     expect(markdown).toContain('- 项目：``/w`d``')
   })
 

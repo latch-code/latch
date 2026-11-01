@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { setTimeout as delay } from 'node:timers/promises'
 import type {
   Approval,
@@ -37,6 +38,8 @@ export interface HubCreateInput extends CreateTaskInput {
   workspaceId?: string
   /** The name of the folder the Host made for this session alone in its start directory (`cwd`); never sent to the driver. */
   sessionFolder?: string
+  /** Kept in the Host's session metadata; never sent to the driver. */
+  firstStart?: true
   forkOf?: TaskSummary['forkOf']
   initialTitle?: string
   /** The automation this session is a run of. */
@@ -192,6 +195,11 @@ function message(error: unknown): string {
 export class HarnessHub implements Bridge {
   private readonly entries = new Map<string, Entry>()
   private readonly routes = new Map<string, string>()
+  /**
+   * The project of the session being created. A driver starts the first run before `createTask` returns and the session's
+   * project is recorded, so that run's lookup would otherwise file its changes under the default project.
+   */
+  private readonly creatingProject = new AsyncLocalStorage<string | undefined>()
   private readonly personalOwners = new Map<string, NonNullable<TaskSummary['personal']>>()
   private readonly agentOwners = new Map<string, NonNullable<TaskSummary['agent']>>()
   private readonly briefSessions = new Set<string>()
@@ -407,6 +415,11 @@ export class HarnessHub implements Bridge {
     return [...this.entries.values()].map(entry => this.describe(entry))
   }
 
+  /** The Git branch a new session in `cwd` would start on, as last read. */
+  branchOf(cwd: string): string | undefined {
+    return this.branches.branchOf(cwd)
+  }
+
   /** The harness that owns a session. */
   async harnessOf(sessionId: string): Promise<string> {
     return (await this.route(sessionId)).driver.id
@@ -455,7 +468,10 @@ export class HarnessHub implements Bridge {
   /** A session's summary as its own driver lists it: no other driver is waited for, and the session is routed from here on. */
   async runSummary(harnessId: string, sessionId: string): Promise<TaskSummary | undefined> {
     const found = (await this.member(harnessId)?.bridge.listTasks())?.find(task => task.id === sessionId)
-    return found && this.claim(harnessId, sessionId) ? this.present(harnessId, found) : undefined
+    if (!found || !this.claim(harnessId, sessionId)) return undefined
+    const summary = this.present(harnessId, found)
+    const creating = this.creatingProject.getStore()
+    return creating !== undefined && summary.workspaceId === undefined ? { ...summary, workspaceId: creating } : summary
   }
 
   /** One session's summary, without reading its messages. */
@@ -484,13 +500,13 @@ export class HarnessHub implements Bridge {
   }
 
   async createTask(input: HubCreateInput): Promise<{ sessionId: string }> {
-    const { harnessId, workspaceId, folders, sessionFolder, forkOf, initialTitle, automationId, ...rest } = input
+    const { harnessId, workspaceId, folders, sessionFolder, firstStart, forkOf, initialTitle, automationId, ...rest } = input
     const id = harnessId ?? this.options.defaultId()
     const entry = this.entries.get(id)
     if (!entry?.bridge) throw new AppError(409, 'harness-unavailable', `Harness ${id} 当前不可用`)
     const task: CreateTaskInput =
       entry.driver.projectFolders === 'all' && workspaceId !== undefined && folders !== undefined ? { ...rest, workspaceId, folders } : rest
-    const result = await this.accept(entry as Member, bridge => bridge.createTask(task))
+    const result = await this.accept(entry as Member, bridge => this.creatingProject.run(workspaceId, () => bridge.createTask(task)))
     if (!this.claim(id, result.sessionId)) {
       throw new AppError(502, 'session-id-collision', `Harness ${id} 返回的会话标识已属于另一个 Harness`)
     }
@@ -501,11 +517,16 @@ export class HarnessHub implements Bridge {
     if (automationId)
       await this.meta
         .update(result.sessionId, current => ({ ...current, automationId, ...(initialTitle ? { title: initialTitle.slice(0, 120) } : {}) }))
-        .catch(error => this.log(`会话 ${result.sessionId} 的自动化记录写入失败：${message(error)}`))
+        .catch(error => this.log(`会话 ${result.sessionId} 的定时任务记录写入失败：${message(error)}`))
     // Without it the session is grouped and matched by its directory, as sessions from before projects had several folders.
     if (workspaceId)
       await this.meta
-        .update(result.sessionId, current => ({ ...current, workspaceId, ...(sessionFolder ? { sessionFolder } : {}) }))
+        .update(result.sessionId, current => ({
+          ...current,
+          workspaceId,
+          ...(sessionFolder ? { sessionFolder } : {}),
+          ...(firstStart ? { firstStart } : {}),
+        }))
         .catch(error => this.log(`会话 ${result.sessionId} 的项目记录写入失败：${message(error)}`))
     if (forkOf)
       await this.meta.update(result.sessionId, current => {
@@ -861,6 +882,7 @@ export class HarnessHub implements Bridge {
       archived: _archived,
       level: _level,
       sessionFolder: _sessionFolder,
+      firstStart: _firstStart,
       forkOf: _forkOf,
       automationId: _automationId,
       runId,
@@ -888,6 +910,7 @@ export class HarnessHub implements Bridge {
       ...(this.agentPrivate(summary.id) && !agent ? { agentPrivate: true as const } : {}),
       ...(meta?.automationId ? { automationId: meta.automationId } : {}),
       ...(meta?.sessionFolder ? { sessionFolder: true as const } : {}),
+      ...(meta?.firstStart ? { firstStart: true as const } : {}),
     })
   }
 
@@ -928,6 +951,7 @@ export class HarnessHub implements Bridge {
       ...(capabilities.attachments ? { attachments: structuredClone(capabilities.attachments) } : {}),
       level: levelFor(entry.source),
       ...folderInfo(driver),
+      ...(driver.permission ? { permission: { ...driver.permission } } : {}),
     }
   }
 

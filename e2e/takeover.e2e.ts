@@ -6,7 +6,7 @@ import type { AppSnapshot } from '@latch/protocol'
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { backToPhoneSessions, setChatOnly } from './helpers/layout.ts'
+import { backToPhoneSessions, openEntry, openSessions } from './helpers/layout.ts'
 
 describe('desktop to phone takeover', () => {
   let testHost: TestHost
@@ -60,8 +60,6 @@ describe('desktop to phone takeover', () => {
   async function start(prompt: string): Promise<string> {
     const before = (await snapshot()).tasks.map(t => t.id)
     await desktop.getByRole('button', { name: '新建会话', exact: true }).click()
-    // The device remembers its last choice; demo tasks that use tools need the built-in engine working as an agent.
-    await setChatOnly(desktop, false)
     await desktop.getByRole('textbox', { name: '新会话消息' }).fill(prompt)
     await desktop.getByRole('button', { name: '发送', exact: true }).click()
     await expect.poll(async () => (await snapshot()).tasks.filter(t => !before.includes(t.id)).length).toBe(1)
@@ -217,33 +215,6 @@ describe('desktop to phone takeover', () => {
     await mobile.locator('.topbar .ui-status-word', { hasText: '已停止' }).waitFor()
     expect((await host.bridge.detail(id)).messages).toEqual(detail.messages)
     await mobile.screenshot({ path: 'test-results/mobile-cancelled.png', fullPage: true, animations: 'disabled' })
-  })
-
-  it('creates a tool-free conversation from the real mode selector', async () => {
-    const before = (await snapshot()).tasks.map(task => task.id)
-    await desktop.getByRole('button', { name: '新建会话', exact: true }).click()
-    await setChatOnly(desktop, true)
-    await desktop.getByRole('textbox', { name: '新会话消息' }).fill('批准生成验收报告')
-    await desktop.getByRole('button', { name: '发送', exact: true }).click()
-    await expect.poll(async () => (await snapshot()).tasks.filter(task => !before.includes(task.id)).length).toBe(1)
-    const task = (await snapshot()).tasks.find(task => !before.includes(task.id))!
-    await desktop.locator(`[data-task-id="${task.id}"]`).waitFor()
-    expect(await desktop.locator('[data-session-filter]').getAttribute('data-session-filter')).toBe('all')
-    expect(task.mode).toBe('chat')
-    await expect.poll(async () => (await host.bridge.detail(task.id)).summary.status).toBe('idle')
-    const detail = await host.bridge.detail(task.id)
-    expect(detail.messages.some(message => message.role === 'assistant')).toBe(true)
-    expect(detail.messages.some(message => message.role === 'tool')).toBe(false)
-    expect(detail.approvals).toEqual([])
-    expect((await readdir(join(directory, 'artifacts'))).some(file => file.includes(task.id))).toBe(false)
-    await choosePhone(task.id)
-    await mobile.getByPlaceholder(/不读写文件、不运行命令/).waitFor()
-    await mobile.screenshot({ path: 'test-results/mobile-chat.png', fullPage: true, animations: 'disabled' })
-    await desktop.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '插件', exact: true }).click()
-    await desktop.locator('.settings-page').waitFor()
-    await desktop.screenshot({ path: 'test-results/desktop-plugins.png', fullPage: true, animations: 'disabled' })
-    await desktop.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '会话', exact: true }).click()
-    await desktop.locator('.settings-page').waitFor({ state: 'detached' })
   })
 
   it('renders the built-in streaming demonstration as readable Markdown on both devices', async () => {

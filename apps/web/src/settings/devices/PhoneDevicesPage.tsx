@@ -548,17 +548,6 @@ export function PhoneDevicesPage({ snapshot, access, onChanged }: { snapshot: Ap
       <EmptyState
         title={COPY.empty}
         description={canPair ? COPY.emptyBody : COPY.pairElsewhere}
-        action={
-          canPair ? (
-            <Button
-              icon={QrCode}
-              onClick={() => {
-                setPairing(true)
-              }}>
-              {NATIVE_LINK_COPY.enable}
-            </Button>
-          ) : undefined
-        }
       />
     </div>
   )

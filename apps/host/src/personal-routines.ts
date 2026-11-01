@@ -146,7 +146,7 @@ export class PersonalRoutines {
     return this.mutate('create', '', data, actor, state => {
       nextDaily(data.schedule, this.now())
       this.options.plan(data.assistantId)
-      if (state.rows.length >= 128) throw new AppError(409, 'personal-routine-limit', '最多保存 128 个例行任务。')
+      if (state.rows.length >= 128) throw new AppError(409, 'personal-routine-limit', '最多保存 128 个定时任务。')
       const { requestId: _, ...definition } = data
       const stamp = this.stamp(),
         value: PersonalRoutine = {
@@ -168,7 +168,7 @@ export class PersonalRoutines {
       const row = this.find(state, id),
         old = row.routine
       this.revision(old, data.baseRevision)
-      if (row.attempt) throw new AppError(409, 'personal-routine-running', '请先等待当前例行任务结束。')
+      if (row.attempt) throw new AppError(409, 'personal-routine-running', '请先等待当前定时任务结束。')
       const { requestId: _, baseRevision: __, ...changes } = data,
         next = { ...old, ...changes, revision: old.revision + 1, updatedAt: this.stamp() }
       nextDaily(next.schedule, this.now())
@@ -180,7 +180,7 @@ export class PersonalRoutines {
   }
   async setEnabled(id: string, input: PersonalRoutineEnable, actor: PersonalActor): Promise<PersonalRoutine> {
     const data = enable.parse(input)
-    if (data.enabled && actor.actor.listener !== 'unix') throw new AppError(403, 'local-only', '请在执行端电脑上开启例行任务。')
+    if (data.enabled && actor.actor.listener !== 'unix') throw new AppError(403, 'local-only', '请在执行端电脑上开启定时任务。')
     return this.mutate(
       'update',
       id,
@@ -190,7 +190,7 @@ export class PersonalRoutines {
         const row = this.find(state, id)
         this.revision(row.routine, data.baseRevision)
         if (data.enabled) {
-          if (row.attempt) throw new AppError(409, 'personal-routine-running', '请先等待当前例行任务结束。')
+          if (row.attempt) throw new AppError(409, 'personal-routine-running', '请先等待当前定时任务结束。')
           this.options.authorize(actor.actor.deviceId)
           const plan = this.options.plan(row.routine.assistantId)
           row.grant = { deviceId: actor.actor.deviceId, basis: this.basis(row.routine, plan), persistent: plan.persistent }
@@ -223,7 +223,7 @@ export class PersonalRoutines {
       actor,
       state => {
         const row = this.find(state, id)
-        if (row.attempt) throw new AppError(409, 'personal-routine-running', '请先等待当前例行任务结束。')
+        if (row.attempt) throw new AppError(409, 'personal-routine-running', '请先等待当前定时任务结束。')
         state.rows = state.rows.filter(row => row.routine.id !== id)
         return id
       },
@@ -328,9 +328,9 @@ export class PersonalRoutines {
         this.options.authorize(deviceId)
         const current = this.find(this.journal.read(), row.routine.id)
         if (!current.routine.enabled || current.grant?.basis !== expected || current.grant.deviceId !== deviceId)
-          throw new AppError(409, 'personal-routine-changed', '例行任务已停用或改变。')
+          throw new AppError(409, 'personal-routine-changed', '定时任务已停用或改变。')
         if (this.basis(row.routine, this.options.plan(row.routine.assistantId)) !== expected)
-          throw new AppError(409, 'personal-definition-changed', '例行任务的执行配置已改变。')
+          throw new AppError(409, 'personal-definition-changed', '定时任务的执行配置已改变。')
       }
     try {
       await this.journal.change(
@@ -340,7 +340,7 @@ export class PersonalRoutines {
           authorize()
           const target = this.find(state, row.routine.id)
           if (target.attempt || !target.routine.enabled || target.routine.nextRunAt !== slot || target.grant?.basis !== expected)
-            throw new AppError(409, 'personal-routine-changed', '例行任务已改变。')
+            throw new AppError(409, 'personal-routine-changed', '定时任务已改变。')
           await this.options.audit.append({
             action: 'personal.changed',
             actor: { listener: 'host' },
@@ -431,7 +431,7 @@ export class PersonalRoutines {
   }
   private find(state: State, key: string): Row {
     const row = state.rows.find(row => row.routine.id === key)
-    if (!row) throw new AppError(404, 'personal-routine-not-found', '找不到这个例行任务。')
+    if (!row) throw new AppError(404, 'personal-routine-not-found', '找不到这个定时任务。')
     return row
   }
   private revision(routine: PersonalRoutine, expected: number): void {

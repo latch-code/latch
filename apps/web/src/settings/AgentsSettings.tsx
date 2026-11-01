@@ -38,8 +38,8 @@ interface AgentsResponse {
 type Editing = { kind: 'agent'; id: string } | { kind: 'new'; preset?: AgentPreset } | null
 
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/
-const ENGINES_CAPTION = '引擎是这台 Mac 上的开源程序，以你的权限运行。Latch 不会替你安装它们。'
-const FULL_ACCESS_NOTE = '用它开启的会话为完全访问：Agent 自己决定执行范围，Latch 不隔离它。'
+const ENGINES_CAPTION = 'Harness 是这台 Mac 上的开源程序，以你的权限运行。Latch 不会替你安装它们。'
+const FULL_ACCESS_NOTE = '用它开启的会话为完全访问：Harness 自己决定执行范围，Latch 不隔离它。'
 const DEFINE_ON_DESKTOP = `启动方式：${LOCAL_ONLY_TEXT}。`
 /** Saving a definition asks for nothing; every full-access start is confirmed on this computer with what it runs. */
 const SAVE_NOTE = '保存不需要确认；每次用它开始会话，都会在这台电脑上确认要运行的命令。'
@@ -210,8 +210,8 @@ function AgentAdd({ preset, onSaved, onCancel }: { preset?: AgentPreset; onSaved
         void save(event)
       }}>
       <SectionHeading
-        title={preset ? `添加 ${preset.name}` : '自定义引擎'}
-        description={preset?.description ?? '通过 ACP 在本机启动的程序'}
+        title={preset ? `添加 ${preset.name}` : '自定义 Harness'}
+        description={preset?.description ?? '在这台 Mac 上运行的程序'}
       />
       {preset && (
         <SettingsGroup title="安装">
@@ -253,7 +253,7 @@ function AgentAdd({ preset, onSaved, onCancel }: { preset?: AgentPreset; onSaved
         <SwitchRow
           className="settings-row"
           title="添加后启用"
-          description="停用的 Agent 不能用来发起会话"
+          description="停用的 Harness 不能用来发起会话"
           checked={enabled}
           onCheckedChange={setEnabled}
         />
@@ -271,7 +271,7 @@ function AgentAdd({ preset, onSaved, onCancel }: { preset?: AgentPreset; onSaved
           </Button>
         }
         caption="值只保存在这台 Mac 上，不会再显示。">
-        {env.length === 0 && <SettingsRow title="没有环境变量" description="引擎继承这台 Mac 的安全环境；需要额外的变量时在这里添加" />}
+        {env.length === 0 && <SettingsRow title="没有环境变量" description="Harness 继承这台 Mac 的安全环境；需要额外的变量时在这里添加" />}
         <EnvFields entries={env} onChange={setEnv} />
       </SettingsGroup>
       <InlineConfirm active={busy} rank={1} />
@@ -281,7 +281,7 @@ function AgentAdd({ preset, onSaved, onCancel }: { preset?: AgentPreset; onSaved
           取消
         </Button>
         <Button size="md" type="submit" variant="primary" loading={busy}>
-          添加 Agent
+          添加 Harness
         </Button>
       </div>
     </form>
@@ -517,7 +517,7 @@ function AgentPage({
     <>
       <SectionHeading
         title={agent.name}
-        description={`通过 ACP 在本机启动 · ${LEVEL_LABELS.L3}`}
+        description={`在这台 Mac 上启动 · ${LEVEL_LABELS.L3}`}
         action={
           <Button
             disabled={busy}
@@ -533,7 +533,7 @@ function AgentPage({
         <SwitchRow
           className="settings-row"
           title="启用"
-          description={enabled ? '新会话可以选择这个 Agent' : '停用后不能用它发起新会话'}
+          description={enabled ? '新会话可以选择这个 Harness' : '停用后不能用它发起新会话'}
           checked={enabled}
           disabled={busy}
           onCheckedChange={next => {
@@ -589,7 +589,7 @@ function AgentPage({
           ) : undefined
         }
         caption="值只保存在这台 Mac 上，不会再显示。">
-        {agent.envKeys.length === 0 && <SettingsRow title="没有环境变量" description="引擎继承这台 Mac 的安全环境" />}
+        {agent.envKeys.length === 0 && <SettingsRow title="没有环境变量" description="Harness 继承这台 Mac 的安全环境" />}
         {agent.envKeys.map(key => (
           <SettingsRow
             key={key}
@@ -641,15 +641,15 @@ function AgentPage({
         )}
         <SettingsRow
           leading={<IconTile icon={agent.verified ? ShieldCheck : ShieldQuestion} />}
-          title={agent.verified ? '已验证的预设' : '未验证的定义'}
-          description={agent.verified ? '命令和参数与预设一致' : '命令或参数与预设不同'}
+          title={agent.verified ? 'Latch 已收录' : '未验证的定义'}
+          description={agent.verified ? '命令和参数与 Latch 收录的一致' : '命令或参数与 Latch 收录的不同'}
         />
         {preset && <InstallRows preset={preset} />}
       </SettingsGroup>
       {probe && <AgentProbe agent={agent} disabled={busy} disabledReason={probeDisabledReason} onSaved={onSaved} />}
       <SettingsGroup>
         <SettingsRow
-          title="删除引擎"
+          title="删除 Harness"
           description="删除启动配置和环境变量；它的会话正在运行时无法删除"
           trailing={
             <Button
@@ -665,7 +665,7 @@ function AgentPage({
       </SettingsGroup>
       <FieldDialog
         open={dialog === 'name'}
-        title="重命名引擎"
+        title="重命名 Harness"
         label="名称"
         initial={agent.name}
         maxLength={80}
@@ -695,7 +695,7 @@ function AgentPage({
       )}
       {removing && (
         <ConfirmDialog
-          title="删除引擎"
+          title="删除 Harness"
           danger
           confirmLabel="删除"
           message={`删除「${agent.name}」的启动配置和环境变量？它的会话正在运行时无法删除。`}
@@ -890,11 +890,11 @@ export function AgentsSettings({
               onClick={() => {
                 setEditing({ kind: 'new' })
               }}>
-              自定义引擎
+              自定义 Harness
             </Button>
           ) : undefined
         }
-        caption={definable ? ENGINES_CAPTION : `添加引擎或修改启动方式：${LOCAL_ONLY_TEXT}。`}
+        caption={definable ? ENGINES_CAPTION : `添加 Harness 或修改启动方式：${LOCAL_ONLY_TEXT}。`}
         captionIcon={definable ? null : 'lock'}>
         {builtin && (
           <SettingsRow
@@ -902,7 +902,7 @@ export function AgentsSettings({
             leading={<HarnessTile harness={builtin} size={24} />}
             record
             title={BUILTIN_HARNESS_NAME}
-            description="内置引擎，用你在 设置 › 模型 里接入的服务"
+            description="内置 Harness，用你在 设置 › 模型 里接入的服务"
             trailing={<span className="service-status">{builtin.status === 'ready' ? '可用' : '需要模型服务'}</span>}
           />
         )}
@@ -942,7 +942,7 @@ export function AgentsSettings({
   if (editing?.kind === 'new')
     levels.push({
       key: `new:${editing.preset?.id ?? 'custom'}`,
-      title: editing.preset ? `添加 ${editing.preset.name}` : '自定义引擎',
+      title: editing.preset ? `添加 ${editing.preset.name}` : '自定义 Harness',
       onBack: () => {
         setEditing(null)
       },
@@ -976,9 +976,9 @@ export function AgentsSettings({
           probe={snapshot.catalog?.features?.agentProbe === true}
           probeDisabledReason={
             !access.local
-              ? '测试启动只能在运行 Latch 的电脑上，通过桌面端进行。'
+              ? '测试启动只能在 Mac 上，通过桌面端进行。'
               : !snapshot.device.scopes?.includes('admin')
-                ? '此设备没有管理此 Host 的权限。'
+                ? '这台设备没有管理这台 Mac 的权限。'
                 : !snapshot.device.scopes?.includes('run')
                   ? '此设备没有发起和继续会话的权限。'
                   : !snapshot.host?.policy.allowL3
@@ -986,7 +986,7 @@ export function AgentsSettings({
                     : snapshot.host.presence.status !== 'available'
                       ? '这台 Mac 现在不能用 Touch ID 或登录密码确认。'
                       : !agent.detected.found
-                        ? '先安装或配置 Agent 命令，再测试启动。'
+                        ? '先安装或配置 Harness 命令，再测试启动。'
                         : undefined
           }
           onRecheck={() => {

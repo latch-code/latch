@@ -1,6 +1,6 @@
-/* Over a page entry's main area; on phones a page pushed over the Agent list. */
+/* Over a page's main area; on phones a page pushed over the section list. */
 .personal-page {
-  grid-area: 2 / 3 / 3 / -1;
+  grid-area: 2 / 2 / 3 / -1;
   z-index: 6;
   display: flex;
   flex-direction: column;
@@ -237,7 +237,7 @@
   .personal-bar-title {
     display: none;
   }
-  .personal-bar > :last-child {
+  .personal-bar > :last-child:not(:first-child) {
     margin-left: auto;
   }
 }

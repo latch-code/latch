@@ -593,7 +593,7 @@ export class PersonalStore {
       'routine',
       parsed,
       draft => {
-        if (draft.routines.length >= 128) throw new AppError(409, 'personal-routine-limit', '最多保存 128 个例行任务。')
+        if (draft.routines.length >= 128) throw new AppError(409, 'personal-routine-limit', '最多保存 128 个定时任务。')
         this.checkRoutine(parsed, draft)
         const { requestId: _, ...config } = parsed,
           id = `routine_${randomUUID()}`,
@@ -603,7 +603,7 @@ export class PersonalStore {
       },
       (state, ref) => {
         const value = this.value(state, ref)
-        if (!value) throw new AppError(410, 'personal-deleted', '这个例行任务已删除。')
+        if (!value) throw new AppError(410, 'personal-deleted', '这个定时任务已删除。')
         return value as PersonalRoutine
       },
     )

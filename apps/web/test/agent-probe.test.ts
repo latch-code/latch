@@ -34,7 +34,7 @@ describe('Agent diagnostic presentation', () => {
     expect(html).not.toContain('需要先登录')
   })
   it('explains where a remote device must go without suggesting it can run the test', () => {
-    const html = render(undefined, '测试启动只能在运行 Latch 的电脑上，通过桌面端进行。')
+    const html = render(undefined, '测试启动只能在 Mac 上，通过桌面端进行。')
     expect(html).toContain('通过桌面端进行')
     expect(html).toContain('aria-disabled="true"')
     expect(html).toContain('尚未测试启动')

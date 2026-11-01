@@ -1,5 +1,5 @@
 ---
-description: 自动化：内置引擎上的定时运行、开启与暂停、错过的时间、运行记录。
+description: 定时任务：内置 Harness 上的定时运行、开启与暂停、错过的时间、运行记录。
 sources:
   - apps/host/src/automations.ts
   - apps/host/src/schedule.ts
@@ -8,9 +8,9 @@ sources:
   - apps/host/src/server.ts
   - packages/protocol/src/automations.ts
 ---
-# 自动化
+# 定时任务
 
-自动化按时用一个 Agent 新开会话，做一件保存好的事。目前只能用内置引擎：选了外部引擎的 Agent 会被拒绝（`automation-engine`）。`catalog.features.automations` 声明下面的接口。定义在 `automations.json`。
+定时任务按时用一个 Agent 新开会话，做一件保存好的事。目前只能用内置 Harness：选了外部 Harness 的 Agent 会被拒绝（`automation-engine`）。`catalog.features.automations` 声明下面的接口。定义在 `automations.json`。
 
 | 接口 | 作用 |
 | --- | --- |
@@ -29,20 +29,20 @@ sources:
 
 ## 谁可以开启
 
-任何可读取 Agent、有 `run` 权限的设备都可以保存和开启，范围与它自己能开始的会话相同：不在这台电脑上的设备要符合远程开始的策略（是否允许、引擎与项目列表）。开启它的设备是这个自动化的授权来源。
+任何可读取 Agent、有 `run` 权限的设备都可以保存和开启，范围与它自己能开始的会话相同：不在这台电脑上的设备要符合远程开始的策略（是否允许、Harness 与项目列表）。开启它的设备是这个定时任务的授权来源。
 
 ## 运行与状态
 
 `state` 是 `off`、`ready`、`running`、`paused`。每次运行前都复查设备、策略和执行配置，配置变了就暂停而不是运行。
 
-**暂停**时 `enabled` 变为 `false`，`pause` 给出原因和一句话：配置（模型、插件、策略）变了、开启它的设备已不能运行、Agent 或项目不可用、上次结果未知、审计写入失败。只有重新开启才恢复，修改字段不会。通过接口修改 Agent 或它的记忆时，自动化会跟着新定义继续运行，保存与重新绑定之间的检查不会暂停它；删除 Agent 则暂停。插件正在更新这类一时的情况不算：检查时等下一次检查，已经开始的这次记为 `failed`，自动化保持开启。
+**暂停**时 `enabled` 变为 `false`，`pause` 给出原因和一句话：配置（模型、插件、策略）变了、开启它的设备已不能运行、Agent 或项目不可用、上次结果未知、审计写入失败。只有重新开启才恢复，修改字段不会。通过接口修改 Agent 或它的记忆时，定时任务会跟着新定义继续运行，保存与重新绑定之间的检查不会暂停它；删除 Agent 则暂停。插件正在更新这类一时的情况不算：检查时等下一次检查，已经开始的这次记为 `failed`，定时任务保持开启。
 
-**运行记录**的 `state` 是 `running`、`waiting`（在等审批）、`completed`、`failed`、`cancelled`、`interrupted`、`unknown`、`missed`、`skipped`。运行是一个会话，`TaskSummary.automationId` 指向自动化，标题是它的名字；它显示保存的提示，所以读取要完整数据范围，与自动化本身相同。
+**运行记录**的 `state` 是 `running`、`waiting`（在等审批）、`completed`、`failed`、`cancelled`、`interrupted`、`unknown`、`missed`、`skipped`。运行是一个会话，`TaskSummary.automationId` 指向定时任务，标题是它的名字；它显示保存的提示，所以读取要完整数据范围，与定时任务本身相同。
 
-**错过的时间**：Mac 关机、睡眠或 Host 没有运行时错过，记一条 `missed`，自动化保持开启，下一次照常。不会补跑，也不会在醒来时一起运行；需要时用立即运行。
+**错过的时间**：Mac 关机、睡眠或 Host 没有运行时错过，记一条 `missed`，定时任务保持开启，下一次照常。不会补跑，也不会在醒来时一起运行；需要时用立即运行。
 
 **运行期间经过的时间**：上一次运行还没结束时到了下一个时间，结束时补记一条 `skipped`，同样不补跑。`lastRun` 仍是那次真实运行的结果。
 
-**没有人看着时**：运行照常在每个审批处停下，超过内置引擎的审批时限（`unattended.approvalTtlHours.standard`）后取消，不会自动批准。结果未知的启动不会重发。
+**没有人看着时**：运行照常在每个审批处停下，超过内置 Harness 的审批时限（`unattended.approvalTtlHours.standard`）后取消，不会自动批准。结果未知的启动不会重发。
 
 **同时最多两个运行**：到点时已有两个在运行，这一次排队，有位置时按到点先后开始，不算错过；排队期间 Host 重启则记为 `missed`。

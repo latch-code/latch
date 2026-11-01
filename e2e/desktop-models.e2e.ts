@@ -25,7 +25,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         const owner = await host.enroll({ listener: 'unix' })
         const saved = await owner.confirmed('agents', {
           method: 'POST',
-          body: { name: '配置测试 Agent', command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_CONFIG: 'options' } },
+          body: { name: '配置测试 Harness', command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_CONFIG: 'options' } },
         })
         expect(saved.status).toBe(201)
         const agent = ((await saved.json()) as { agent: AgentSettings }).agent
@@ -62,8 +62,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         })
         const page = await application.firstWindow()
         page.setDefaultTimeout(15_000)
-        await page.getByRole('textbox', { name: '设备名称', exact: true }).fill('模型控件验收')
-        await page.getByRole('button', { name: '请求连接', exact: true }).click()
+        await page.getByRole('button', { name: '继续', exact: true }).click()
         await page.locator('.app-shell[data-connection="connected"]').waitFor()
         await page
           .locator('[data-task-id="' + sessionId + '"]')
@@ -91,11 +90,11 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         })
         await modelPicker.click()
         await page.getByRole('menuitemradio', { name: 'Large', exact: true }).click()
-        await page.getByRole('button', { name: /Model：.*结果未知/u }).waitFor()
+        await page.getByRole('button', { name: /模型：.*结果未知/u }).waitFor()
         expect((await owner.json<TaskDetail>('tasks/' + sessionId)).config?.find(item => item.id === 'model')?.currentValue).toBe('large')
         await modelPicker.click()
         await page.getByRole('button', { name: '刷新当前设置', exact: true }).click()
-        await page.getByRole('button', { name: /Model：Large · Low$/u }).waitFor()
+        await page.getByRole('button', { name: /模型：Large · Low$/u }).waitFor()
         expect(await page.evaluate(() => Reflect.get(window, 'configurationChanges').length)).toBe(1)
         await page.keyboard.press('Escape')
         for (const width of [1440, 900, 390]) {
@@ -114,7 +113,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
             .toBe(effort.toLowerCase())
           await expect.poll(() => modelPicker.getAttribute('aria-busy')).not.toBe('true')
           if (width === 390)
-            await page.getByRole('dialog', { name: 'Model', exact: true }).getByRole('button', { name: '取消', exact: true }).click()
+            await page.getByRole('dialog', { name: '模型', exact: true }).getByRole('button', { name: '取消', exact: true }).click()
           else if ((await modelPicker.getAttribute('aria-expanded')) === 'true') await modelPicker.click()
           expect(await input.inputValue()).toBe('切换设置时保留这份草稿。')
           expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
@@ -183,12 +182,11 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         })
         const page = await application.firstWindow()
         page.setDefaultTimeout(15_000)
-        await page.getByRole('textbox', { name: '设备名称', exact: true }).fill('取回验收')
-        await page.getByRole('button', { name: '请求连接', exact: true }).click()
+        await page.getByRole('button', { name: '继续', exact: true }).click()
         await page.locator('.app-shell[data-connection="connected"]').waitFor()
         const asked = host.presence.requests.length
 
-        await page.locator('.composer-stack .model-picker').click()
+        await page.locator('.composer-stack .harness-picker').click()
         await page.getByRole('menuitem', { name: '设为新会话默认' }).click()
         await page.getByRole('menuitem', { name: '取消新会话默认' }).waitFor()
         expect((await owner.json<AppSnapshot>('snapshot')).catalog!.defaults.pinned).toBe(true)

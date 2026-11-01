@@ -58,7 +58,7 @@ const render = (element: Parameters<typeof renderToStaticMarkup>[0]) => renderTo
 describe('the launcher', () => {
   it('offers only what this session can open, with the letter that opens it', () => {
     expect(launcherRows({ changes: true, files: true }).map(row => [row.label, row.letter])).toEqual([
-      ['变更', 'D'],
+      ['改动', 'D'],
       ['文件', 'F'],
     ])
     expect(launcherRows({ files: true, plugins: [{ id: 'p', title: '发布' }] }).map(row => [row.label, row.letter])).toEqual([

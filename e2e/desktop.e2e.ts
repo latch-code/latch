@@ -264,12 +264,12 @@ async function captureTablet(application: ElectronApplication, page: Page, name:
   await waitFor(async () => (await page.evaluate(() => window.innerWidth)) > 820)
 }
 
-async function enrollShell(page: Page, testHost: TestHost, name: string) {
-  await page.getByRole('heading', { name: '连接到 Latch' }).waitFor()
-  const field = page.getByRole('textbox', { name: '设备名称' })
-  await field.fill(name)
-  await waitFor(async () => (await field.inputValue()) === name)
-  await page.getByRole('button', { name: '请求连接' }).click()
+async function enrollShell(page: Page, testHost: TestHost) {
+  // One sentence and one button: no name to type, and the system sheet follows the press.
+  await page.getByText('第一次在这台 Mac 上打开 Latch，用 Touch ID 确认。', { exact: true }).waitFor()
+  expect(await page.getByRole('textbox').count()).toBe(0)
+  expect(testHost.presence.requests).toHaveLength(0)
+  await page.getByRole('button', { name: '继续', exact: true }).click()
   const request = await testHost.presence.waitForRequest(15_000)
   expect(request.preview.action).toBe('device.enroll')
   expect(request.preview.requester.listener).toBe('unix')
@@ -294,6 +294,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
     let hostClockOffset = 0
     const testHost = await startTestHost({
       demo: true,
+      hostName: '桌面端测试.local',
       uiDir: resolve('dist/web'),
       presenceMode: 'manual',
       plugins: [markPlugin(marks)],
@@ -388,7 +389,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         ],
       })
 
-      const fingerprint = await enrollShell(page, testHost, '桌面端测试')
+      const fingerprint = await enrollShell(page, testHost)
       const titleRow = await page.locator('.titlebar').evaluate(bar => {
         const region = (element: Element) => getComputedStyle(element).getPropertyValue('-webkit-app-region')
         const controls = [...bar.querySelectorAll('button')].filter(control => control.getBoundingClientRect().width > 0)
@@ -579,7 +580,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect(await loginItem.getAttribute('aria-checked')).toBe('false')
       expect(await loginItem.getAttribute('aria-disabled')).toBe('true')
       await background
-        .getByText('只有打包后的 Latch 应用能登记为登录项。当前是开发运行（pnpm desktop），打包版本尚未提供。', { exact: true })
+        .getByText('只有打包后的 Latch 应用能设为登录项。当前是开发运行（pnpm desktop），打包版本尚未提供。', { exact: true })
         .waitFor()
       const keepAwake = background.getByRole('switch', { name: '有任务时保持 Mac 唤醒', exact: true })
       expect(await keepAwake.getAttribute('aria-checked')).toBe('true')
@@ -839,7 +840,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect(second.status).toBe(201)
       const { agent: secondAgent }: { agent: AgentSettings } = await second.json()
       await page.getByRole('button', { name: '新建会话', exact: true }).first().click()
-      await page.getByRole('button', { name: /^模型：|^选择引擎/ }).click()
+      await page.getByRole('button', { name: /^Harness：/ }).click()
       await page.getByRole('menuitemradio', { name: /Second Agent/ }).click()
       await page.getByRole('textbox', { name: '新会话消息' }).fill('echo 开始')
       await page.getByRole('button', { name: '发送', exact: true }).click()
@@ -849,6 +850,10 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect(start.preview.reason).toMatch(/^允许 Second Agent 读写这台 Mac 上的文件并运行命令：\S*node /u)
       const startCard = page.locator('.composer-confirm .inline-confirm[data-confirmation-phase="waiting"]')
       await startCard.waitFor()
+      await startCard.getByText('等待 Touch ID', { exact: true }).waitFor()
+      // Shut at first, so the list does not push the input off the page; everything the sheet leaves out is one click away.
+      expect(await startCard.locator('.confirm-fold').evaluate(fold => (fold as HTMLDetailsElement).open)).toBe(false)
+      await startCard.locator('.confirm-fold summary').click()
       expect(start.preview.warnings).toHaveLength(2)
       for (const warning of start.preview.warnings) await startCard.getByText(warning, { exact: true }).waitFor()
       // The system form names the program only: the full command, the folder and the notes stay readable here, hashes do not.
@@ -987,6 +992,8 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         // picker, confirms the new address once, and selects the saved model without opening settings.
         await closeSettings(computer)
         await page.getByRole('button', { name: '新建会话', exact: true }).first().click()
+        await page.getByRole('button', { name: /^Harness：/ }).click()
+        await page.getByRole('menuitemradio', { name: /Latch 内置/ }).click()
         await page.getByRole('button', { name: /^模型：/ }).click()
         await page.getByRole('menuitem', { name: '添加模型服务…', exact: true }).click()
         await page
@@ -1011,7 +1018,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         testHost.presence.approveNext()
         await custom.waitFor({ state: 'detached' })
         expect(await page.locator('.settings-page').count()).toBe(0)
-        await page.getByRole('button', { name: '模型：local-custom', exact: true }).waitFor()
+        await page.getByRole('button', { name: '模型：local-custom · 默认思考', exact: true }).waitFor()
         expect(host.config.providers().find(provider => provider.name === '本机自定义模型')).toMatchObject({
           baseURL: customURL,
           models: ['local-custom'],
@@ -1023,7 +1030,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await models.close()
       }
 
-      // 设置 › 项目: 新建项目 opens the system's open panel for several folders. Main takes a nonce, signs the body with
+      // 设置 › 项目: 添加项目 opens the system's open panel for several folders. Main takes a nonce, signs the body with
       // the device key and adds the project over host.sock itself; the page never sends a path. 在访达中显示 shows only
       // folders the Host has registered and never opens anything. The panel, Finder and openPath are recorded in main
       // instead, and the window counts as focused (folder dialogs open only for the focused window; the test runner
@@ -1057,7 +1064,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           return record
         })
       await openSection(computer, '项目')
-      await computer.getByRole('button', { name: '新建项目', exact: true }).click()
+      await computer.getByRole('button', { name: '添加项目', exact: true }).click()
       await computer.locator('.project-editor').waitFor()
       await computer.getByRole('button', { name: '项目', exact: true }).click()
       const projectRow = computer.locator('.project-row', { hasText: 'picked-project' })
@@ -1069,7 +1076,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       })
       expect((await folderRecord()).panels).toEqual([
         expect.objectContaining({
-          title: '新建项目',
+          title: '添加项目',
           buttonLabel: '创建项目',
           properties: ['openDirectory', 'createDirectory', 'multiSelections'],
           defaultPath: expect.any(String),
@@ -1240,7 +1247,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       // Revoking the device from elsewhere sends the shell back to enrollment and deletes its credential.
       const revoked = await testHost.raw('unix', `api/devices/${device.id}`, { method: 'DELETE' })
       expect(revoked.status).toBe(200)
-      await page.getByRole('heading', { name: '连接到 Latch' }).waitFor({ timeout: 30_000 })
+      await page.getByRole('heading', { name: 'Latch', exact: true }).waitFor({ timeout: 30_000 })
       await expect(stat(stored)).rejects.toMatchObject({ code: 'ENOENT' })
 
       // Renderer-initiated navigation away from latch://app is refused in main. Playwright keeps treating a refused
@@ -1293,7 +1300,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         app.emit('activate')
       })
       const reopenedWindow = await reopened
-      await reopenedWindow.getByRole('heading', { name: '连接到 Latch' }).waitFor()
+      await reopenedWindow.getByRole('heading', { name: 'Latch', exact: true }).waitFor()
       expect(reopenedWindow.url()).toBe('latch://app/link/')
 
       await application.close()
@@ -1341,7 +1348,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       })
       const page = await application.firstWindow()
       page.setDefaultTimeout(20_000)
-      await enrollShell(page, testHost, 'Agent 诊断桌面端')
+      await enrollShell(page, testHost)
       const created = await page.evaluate(
         async definition =>
           (
@@ -1361,7 +1368,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       )
       expect(created).toBe(201)
       const settings = await openSettings(page)
-      await openSection(settings, '引擎')
+      await openSection(settings, 'Harness')
       await settings.getByRole('button', { name: '编辑 Probe fixture', exact: true }).click()
       const probe = settings.locator('.settings-group', { has: page.getByRole('heading', { name: '测试启动', exact: true }) })
       for (const [width, height] of [
@@ -1468,21 +1475,21 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       page.setDefaultTimeout(20_000)
       // host.sock is the one listener that takes offline codes, so with no local confirmation the page offers only that
       // way in: its intro points to the code, and nothing on it promises Touch ID.
-      await page.getByRole('heading', { name: '连接到 Latch', exact: true }).waitFor()
-      await page.getByText('这台设备会生成自己的密钥，再用离线登记码完成登记。', { exact: true }).waitFor()
-      await page.getByText(/^本机确认不可用：.*pnpm latch device enroll --offline/u).waitFor()
+      await page.getByRole('heading', { name: 'Latch', exact: true }).waitFor()
+      await page.getByText('这台设备会生成自己的密钥，再用离线连接码完成连接。', { exact: true }).waitFor()
+      await page.getByText(/^Mac 现在不能确认：.*pnpm latch device enroll --offline/u).waitFor()
       expect(await page.getByText(/Touch ID/u).count()).toBe(0)
-      expect(await page.getByRole('button', { name: '请求连接', exact: true }).count()).toBe(0)
-      const submit = page.getByRole('button', { name: '使用离线登记码', exact: true })
+      expect(await page.getByRole('button', { name: '继续', exact: true }).count()).toBe(0)
+      const submit = page.getByRole('button', { name: '使用离线连接码', exact: true })
       expect(await submit.isDisabled()).toBe(true)
-      await page.getByRole('textbox', { name: '设备名称', exact: true }).fill('离线登记的桌面端')
+      await page.getByRole('textbox', { name: '设备名称', exact: true }).fill('离线连接的桌面端')
       await captureThemes(page, 'native-desktop-enrollment-offline')
       const { code } = await createOfflineTicket(join(testHost.dataDir, 'auth'))
-      await page.getByLabel('离线登记码', { exact: true }).fill(code)
+      await page.getByLabel('离线连接码', { exact: true }).fill(code)
       await submit.click()
       await page.locator('.app-shell[data-connection="connected"]').waitFor()
       expect(testHost.presence.requests).toHaveLength(0)
-      expect(host.security.devices.list()).toMatchObject([{ name: '离线登记的桌面端', status: 'active', listener: 'unix' }])
+      expect(host.security.devices.list()).toMatchObject([{ name: '离线连接的桌面端', status: 'active', listener: 'unix' }])
     } finally {
       await application?.close()
       await testHost.close()

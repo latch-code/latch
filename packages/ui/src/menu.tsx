@@ -566,6 +566,8 @@ export interface ValuePickerProps<T extends string> extends LayerPlacement {
   panel?: ReactNode
   /** The layer opened or closed, whatever closed it. */
   onOpenChange?: (open: boolean) => void
+  /** Each new value opens the layer, for a page that needs this choice made before it can go on. */
+  openRequest?: number
   /**
    * The words the trigger shows instead of the chosen option's label, for a value that differs from the list's (a
    * model switch that applies from the next message, 「下一条：…」). Read after the label as well.
@@ -621,6 +623,7 @@ export function ValuePicker<T extends string>({
   footer,
   panel: form,
   onOpenChange,
+  openRequest = 0,
   valueText: shownText,
   width,
   searchable = false,
@@ -655,6 +658,14 @@ export function ValuePicker<T extends string>({
     closeLayer(restoreFocus)
     setQuery('')
   }
+
+  // Only a change asks: a picker mounted after an earlier request has nothing to open for.
+  const seenRequest = useRef(openRequest)
+  useEffect(() => {
+    if (seenRequest.current === openRequest) return
+    seenRequest.current = openRequest
+    setOpen(true)
+  }, [openRequest, setOpen])
 
   // The value fades in when it changes (120ms), not when the picker first appears.
   const currentLabel = shownText ?? current?.label

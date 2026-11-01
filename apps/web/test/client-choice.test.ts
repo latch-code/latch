@@ -7,8 +7,11 @@ import { workspaceSections } from '../src/components/Pickers.tsx'
 import { workspaceOptions } from '../src/components/pickerOptions.tsx'
 import {
   engineEntries,
-  engineLimitNote,
-  LATCH_ENGINE_LIMIT,
+  forkedChoice,
+  noProjectLine,
+  needsProject,
+  nothingInstalled,
+  otherHarnessesNote,
   presetsToAdd,
   projectFor,
   resolveChoice,
@@ -16,7 +19,6 @@ import {
   startableWorkspaces,
   startBlock,
   usesDemoModel,
-  fullAccessStartNote,
   isPinnedChoice,
   pinnedChoice,
   type ComposerChoice,
@@ -93,36 +95,91 @@ describe('composer choice', () => {
     expect(resolveChoice(undefined, { mode: 'chat', harnessId: 'x' })).toEqual({ mode: 'chat' })
   })
 
-  it('takes the workspace and mode from the Host, but leaves the engine to be asked on a device with several', () => {
-    expect(resolveChoice(catalog(), null)).toEqual({ mode: 'agent', workspaceId: 'default' })
+  it('takes the workspace from the Host', () => {
+    expect(resolveChoice(catalog(), null)).toEqual({ mode: 'agent', harnessId: 'codex', workspaceId: 'default' })
   })
 
-  it('asks on first use, remembers per device, and never chooses a full-access engine for the person', () => {
+  it('derives the mode: with no project and no folder the owner set, a harness that can chat does', () => {
+    const start = catalog().workspaces.find(item => item.id === 'default')!
+    const saved = { id: 'app', name: 'app', path: '/repo/app' }
+    const hostChosen = catalog({ sessionFolders: true, workspaces: [start, saved] })
+    const noProject = { workspaceId: 'default', projectSkipped: true }
+    expect(resolveChoice(hostChosen, { harnessId: 'standard', ...noProject })).toMatchObject({ mode: 'chat', workspaceId: 'default' })
+    expect(resolveChoice(hostChosen, { harnessId: 'codex', ...noProject })).toMatchObject({ mode: 'agent', workspaceId: 'default' })
+    expect(resolveChoice(hostChosen, { harnessId: 'standard', workspaceId: 'app' })).toMatchObject({ mode: 'agent', workspaceId: 'app' })
+    // A start directory the owner set is a folder: 不选项目 works in it.
+    expect(resolveChoice(catalog({ workspaces: [start, saved] }), { harnessId: 'standard', ...noProject })).toMatchObject({ mode: 'agent' })
+    // What this device remembers does not decide it.
+    expect(resolveChoice(hostChosen, { mode: 'chat', harnessId: 'standard', workspaceId: 'app' })).toMatchObject({ mode: 'agent' })
+    expect(resolveChoice(hostChosen, { mode: 'agent', harnessId: 'standard', ...noProject })).toMatchObject({ mode: 'chat' })
+  })
+
+  it('lets a fork keep its source mode while the Harness has it', () => {
+    const hostChosen = catalog({ sessionFolders: true })
+    const borrowed = { harnessId: 'standard', workspaceId: 'default', projectSkipped: true }
+    expect(forkedChoice(hostChosen, null, { ...borrowed, mode: 'agent' })).toMatchObject({ mode: 'agent' })
+    expect(forkedChoice(catalog(), null, { ...borrowed, mode: 'chat' })).toMatchObject({ mode: 'chat' })
+    expect(forkedChoice(hostChosen, null, { ...borrowed, harnessId: 'codex', mode: 'chat' })).toMatchObject({ mode: 'agent' })
+  })
+
+  it('says what 不选项目 does for this Harness', () => {
+    expect(noProjectLine({ modes: ['chat', 'agent'] })).toBe('不读写文件，不运行命令')
+    expect(noProjectLine({ modes: ['agent'] })).toBe('在一个新的空文件夹里开始')
+  })
+
+  it('never asks: the last engine of this device, otherwise the first it can start with the built-in one last', () => {
     const local = { legacy: false, local: true }
     const remote = { legacy: false, local: false }
-    // Several engines here: nothing is chosen, even when the Host's default is the full-access one.
-    const leaning = catalog({ defaults: { harnessId: 'codex', mode: 'agent', workspaceId: 'default' } })
-    expect(resolveChoice(leaning, null, local).harnessId).toBeUndefined()
-    expect(startBlock(snapshot({ catalog: leaning }), resolveChoice(leaning, null, local), local)).toEqual({
-      kind: 'engine-required',
-      message: '先选一个引擎。',
-    })
-    // The engine this device last used is kept, a full-access one included once it was chosen here.
-    expect(resolveChoice(leaning, { harnessId: 'codex' }, local).harnessId).toBe('codex')
-    // Another device gets the built-in engine alone: no question, and a remembered full-access engine does not follow it.
-    expect(resolveChoice(leaning, null, remote).harnessId).toBe('standard')
-    expect(resolveChoice(leaning, { harnessId: 'codex' }, remote).harnessId).toBe('standard')
-    // One engine that asks before each step needs no question; a lone full-access engine still does.
+    expect(resolveChoice(catalog(), null, local).harnessId).toBe('codex')
+    expect(resolveChoice(catalog(), { harnessId: 'standard' }, local).harnessId).toBe('standard')
+    expect(startBlock(snapshot({ catalog: catalog() }), resolveChoice(catalog(), null, local), local)).toBeNull()
+    // Another device gets the built-in engine alone, and a remembered full-access engine does not follow it.
+    expect(resolveChoice(catalog(), null, remote).harnessId).toBe('standard')
+    expect(resolveChoice(catalog(), { harnessId: 'codex' }, remote).harnessId).toBe('standard')
     const onlyBuiltin = catalog({ harnesses: [catalog().harnesses[0]!] })
     expect(resolveChoice(onlyBuiltin, null, local).harnessId).toBe('standard')
-    const onlyAgent = catalog({
-      harnesses: [catalog().harnesses[1]!],
-      defaults: { harnessId: 'codex', mode: 'agent', workspaceId: 'default' },
-    })
-    expect(resolveChoice(onlyAgent, null, local).harnessId).toBeUndefined()
-    expect(startBlock(snapshot({ catalog: onlyAgent }), resolveChoice(onlyAgent, null, local), local)).toMatchObject({
-      kind: 'engine-required',
-    })
+  })
+
+  it('orders engines as the presets are, whatever order the Host lists them in', () => {
+    const local = { legacy: false, local: true }
+    const [builtin, codex] = catalog().harnesses
+    const offered = { ...codex!, id: 'opencode', name: 'OpenCode', offer: { presetId: 'opencode' } }
+    const listed = catalog({ harnesses: [builtin!, offered, { ...codex!, id: 'custom', name: '自定义' }, codex!] })
+    expect(engineEntries(listed, local).map(entry => entry.harness.id)).toEqual(['codex', 'opencode', 'custom', 'standard'])
+  })
+
+  it('asks for a folder only when a Harness has none and the Host would make one up', () => {
+    const local = { legacy: false, local: true }
+    const hostChosen = catalog({ sessionFolders: true, workspaces: catalog().workspaces.filter(item => item.id === 'default') })
+    const choice = resolveChoice(hostChosen, { harnessId: 'codex' }, local)
+    expect(needsProject(hostChosen, choice)).toBe(true)
+    expect(needsProject(hostChosen, { ...choice, projectSkipped: true })).toBe(false)
+    expect(needsProject(hostChosen, resolveChoice(hostChosen, { harnessId: 'standard' }, local))).toBe(false)
+    // A start directory the owner set is a folder in mind.
+    expect(needsProject({ ...hostChosen, sessionFolders: undefined }, choice)).toBe(false)
+    // 不选项目 is remembered; anything else leaves the question open.
+    expect(resolveChoice(hostChosen, { workspaceId: 'default', projectSkipped: true }, local).projectSkipped).toBe(true)
+    expect(resolveChoice(hostChosen, { workspaceId: 'default' }, local).projectSkipped).toBeUndefined()
+  })
+
+  it('takes a saved project when nothing was chosen and the Host would otherwise make a folder', () => {
+    const start = catalog().workspaces[0]!
+    const saved = { ...start, id: 'rust', name: 'rust-learn', path: '/tmp/rust-learn' }
+    const both = catalog({ sessionFolders: true, workspaces: [start, saved] })
+    expect(resolveChoice(both, null).workspaceId).toBe('rust')
+    expect(resolveChoice(both, { workspaceId: 'default', projectSkipped: true }).workspaceId).toBe('default')
+    expect(resolveChoice(catalog({ workspaces: [start, saved] }), null).workspaceId).toBe('default')
+  })
+
+  it('says what to install only where nothing else can run and this device could change that', () => {
+    const owner = { legacy: false, local: true, admin: true }
+    const onlyBuiltin = catalog({ harnesses: [catalog().harnesses[0]!], providers: [] })
+    const missing = startBlock(snapshot({ catalog: onlyBuiltin }), resolveChoice(onlyBuiltin, null, owner), owner)
+    expect(nothingInstalled(missing, onlyBuiltin, owner)).toBe(true)
+    expect(nothingInstalled(missing, onlyBuiltin, { ...owner, local: false })).toBe(false)
+    expect(nothingInstalled(missing, onlyBuiltin, { ...owner, admin: false })).toBe(false)
+    expect(nothingInstalled(null, onlyBuiltin, owner)).toBe(false)
+    expect(nothingInstalled(missing, catalog(), owner)).toBe(false)
   })
 
   it('starts from a pinned engine and model on the devices that can use it, a pick in the draft winning until it starts', () => {
@@ -157,30 +214,24 @@ describe('composer choice', () => {
     expect(isPinnedChoice(pinned, { id: 'standard', models: 'host' as const }, undefined)).toBe(false)
   })
 
-  it('asks for an engine only when none is chosen, not when a named one is gone', () => {
+  it('says a named engine is gone', () => {
     const local = { legacy: false, local: true }
     expect(startBlock(snapshot({ catalog: catalog() }), { mode: 'agent', harnessId: 'deleted-agent' }, local)).toMatchObject({
       kind: 'harness-unavailable',
     })
-    expect(startBlock(snapshot({ catalog: catalog() }), { mode: 'agent' }, local)).toMatchObject({ kind: 'engine-required' })
-  })
-
-  it('says before a full-access engine starts that Latch does not limit it and the Mac confirms', () => {
-    expect(fullAccessStartNote({ name: 'Codex' })).toBe('Codex 由它自己决定权限，Latch 不限制它。开始时要在这台 Mac 上确认。')
   })
 
   it('says plainly when there is no engine or no model service', () => {
     const none = catalog({ harnesses: [catalog().harnesses[2]!] })
     expect(startBlock(snapshot({ catalog: none }), resolveChoice(none, null))).toEqual({
       kind: 'harness-unavailable',
-      message: '没有可用的引擎。',
+      message: '没有可用的 Harness。',
     })
     const noService = catalog({ providers: [], harnesses: [catalog().harnesses[0]!] })
     expect(startBlock(snapshot({ catalog: noService }), resolveChoice(noService, null))).toEqual({
       kind: 'model-required',
       message: '还没有模型服务。',
     })
-    expect(LATCH_ENGINE_LIMIT).toContain('不能运行命令')
   })
 
   it('never picks or offers a workspace the Host disabled for this run', () => {
@@ -201,24 +252,24 @@ describe('composer choice', () => {
     expect(resolveChoice(onlyDisabled, { workspaceId: 'docs' })).not.toHaveProperty('workspaceId')
   })
 
-  it('lists only the engines that can start from this device, the built-in one first, and offers unadded presets separately', () => {
+  it('lists only the engines that can start from this device, the built-in one last, and offers unadded presets separately', () => {
     expect(engineEntries(catalog(), { legacy: false, local: false }).map(entry => entry.harness.id)).toEqual(['standard'])
     const desktop = engineEntries(catalog(), { legacy: false, local: true })
     expect(desktop.map(entry => [entry.harness.id, entry.label, entry.fullAccess])).toEqual([
-      ['standard', 'Latch 内置', false],
       ['codex', 'Codex', true],
+      ['standard', 'Latch 内置', false],
     ])
     expect(presetsToAdd(catalog()).map(preset => preset.id)).toEqual(['opencode', 'dsh', 'gemini', 'qwen', 'goose'])
   })
 
   it('keeps a valid remembered choice', () => {
-    const stored = { mode: 'chat' as const, harnessId: 'standard', workspaceId: 'docs', model: { providerId: 'local', model: 'qwen3' } }
+    const stored = { mode: 'agent' as const, harnessId: 'standard', workspaceId: 'docs', model: { providerId: 'local', model: 'qwen3' } }
     expect(resolveChoice(catalog(), stored)).toEqual(stored)
   })
 
   it('repairs a choice the Host no longer supports instead of failing at submit time', () => {
-    expect(resolveChoice(catalog(), { harnessId: 'pi', mode: 'agent' }).harnessId).toBeUndefined()
-    expect(resolveChoice(catalog(), { harnessId: 'gone' }).harnessId).toBeUndefined()
+    expect(resolveChoice(catalog(), { harnessId: 'pi', mode: 'agent' }).harnessId).toBe('codex')
+    expect(resolveChoice(catalog(), { harnessId: 'gone' }).harnessId).toBe('codex')
     expect(resolveChoice(catalog(), { workspaceId: 'removed' }).workspaceId).toBe('default')
     expect(resolveChoice(catalog(), { harnessId: 'standard', model: { providerId: 'deepseek', model: 'retired' } }).model).toEqual({
       providerId: 'deepseek',
@@ -256,13 +307,13 @@ describe('composer choice', () => {
     expect(startBlock(snapshot({ catalog: held }), resolveChoice(held, standard))).toEqual({
       kind: 'model-required',
       message: '还没有可用的模型服务。「Ollama\\u{202E}」的地址还没有确认。',
-      hint: '在运行 Latch 的电脑上，打开 设置 › 模型 确认地址后即可开始。',
+      hint: '在 Mac 上，打开 设置 › 模型 确认地址后即可开始。',
       action: '打开模型服务',
     })
     const keyless = catalog({ providers: [], unusableProviders: [{ id: 'deepseek', name: 'DeepSeek', reason: 'key-missing' }] })
     expect(startBlock(snapshot({ catalog: keyless }), resolveChoice(keyless, standard))).toMatchObject({
       message: '还没有可用的模型服务。「DeepSeek」还没有填写密钥。',
-      hint: '在运行 Latch 的电脑上，打开 设置 › 模型 填写密钥后即可开始。',
+      hint: '在 Mac 上，打开 设置 › 模型 填写密钥后即可开始。',
     })
     // Agent harnesses bring their own models.
     expect(
@@ -274,7 +325,7 @@ describe('composer choice', () => {
     })
     expect(startBlock(snapshot({ catalog: onlyUnavailable }), resolveChoice(onlyUnavailable, null))).toEqual({
       kind: 'harness-unavailable',
-      message: '没有可用的引擎。',
+      message: '没有可用的 Harness。',
     })
     expect(startBlock(snapshot({ execution: { ready: false, modelConfigurationRequired: true } }), { mode: 'agent' })).toMatchObject({
       kind: 'model-required',
@@ -335,6 +386,11 @@ describe('pending submissions', () => {
       setItem: (key: string, value: string) => store.set(key, value),
     })
     const submission = { requestId: 'r1', prompt: '你好', assistantId }
+    writePending('ticket', { requestId: 'r', prompt: 'p', awaitingConfirmation: 'cfm_abcdefghijklmnopqrstuv' })
+    expect(readPending('ticket')?.awaitingConfirmation).toBe('cfm_abcdefghijklmnopqrstuv')
+    expect(submissionRequest(readPending('ticket')!).body).not.toHaveProperty('awaitingConfirmation')
+    writePending('ticket', { requestId: 'r', prompt: 'p', awaitingConfirmation: '../other' })
+    expect(readPending('ticket')?.awaitingConfirmation).toBeUndefined()
     writePending('personal', submission)
     expect(readPending('personal')).toEqual(submission)
     writePending('personal', { ...submission, workspaceId: 'other' })
@@ -448,16 +504,16 @@ describe('harness entries', () => {
     ).toContain('最多使用 1 个')
   })
 
-  it('says what the built-in engine cannot do where nothing else can start', () => {
+  it('says in the Harness menu why only the built-in one is listed', () => {
     const builtinOnly = catalog({ harnesses: catalog().harnesses.filter(harness => harness.id === 'standard') })
     const mac = { local: true, legacy: false, admin: true }
     const remote = { local: false, legacy: false, admin: false }
-    // Another engine can start here: the model control says the difference, the page says nothing.
-    expect(engineLimitNote(catalog(), mac)).toBeUndefined()
-    expect(engineLimitNote(builtinOnly, mac)).toBe(`${LATCH_ENGINE_LIMIT}要运行命令，在输入框的模型菜单里添加一个引擎。`)
-    expect(engineLimitNote(builtinOnly, remote)).toBe(`${LATCH_ENGINE_LIMIT}要运行命令，在 Mac 上的 Latch 里添加一个引擎。`)
+    expect(otherHarnessesNote(catalog(), mac)).toBeUndefined()
+    // Adding one is right there in the same menu on the Mac.
+    expect(otherHarnessesNote(builtinOnly, mac)).toBeUndefined()
+    expect(otherHarnessesNote(builtinOnly, remote)).toBe('要运行命令，在 Mac 上的 Latch 里添加一个 Harness。')
     // Installed, but only the Mac may start it: never told to add what is there.
-    expect(engineLimitNote(catalog(), remote)).toBe(`${LATCH_ENGINE_LIMIT}其他引擎只能在 Mac 上开始。`)
+    expect(otherHarnessesNote(catalog(), remote)).toBe('其他 Harness 只能在 Mac 上开始。')
   })
 
   it('offers only the presets no agent was added from yet', () => {

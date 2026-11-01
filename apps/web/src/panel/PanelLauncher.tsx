@@ -9,7 +9,7 @@ type Row = { id: string; label: string; icon: LucideIcon; letter?: string; surfa
 /** Only what this session can open; the keys work while the launcher holds focus. */
 export function launcherRows(input: { changes?: boolean; files?: boolean; plugins?: ReadonlyArray<{ id: string; title: string }> }): Row[] {
   return [
-    ...(input.changes ? [{ id: 'changes', label: '变更', icon: FileDiff, letter: 'D', surface: { kind: 'changes' as const } }] : []),
+    ...(input.changes ? [{ id: 'changes', label: '改动', icon: FileDiff, letter: 'D', surface: { kind: 'changes' as const } }] : []),
     ...(input.files ? [{ id: 'files', label: '文件', icon: Folder, letter: 'F', surface: { kind: 'files' as const } }] : []),
     ...(input.plugins ?? []).map(plugin => ({
       id: `plugin:${plugin.id}`,

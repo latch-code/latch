@@ -7,6 +7,7 @@ import {
   notRestoredLine,
   producedFiles,
   turnSummary,
+  redoBlockWords,
   undoBlockWords,
   undoExceptions,
 } from '../src/conversation/turnChanges.ts'
@@ -144,5 +145,6 @@ describe('undo', () => {
     expect(undoBlockWords('running')).toBe('运行中不能撤销')
     expect(undoBlockWords('changed-since')).toBe('之后又改过这些文件，不能撤销')
     expect(undoBlockWords('no-changes')).toBeUndefined()
+    expect(redoBlockWords('changed-since')).toBe('之后又改过这些文件，不能恢复')
   })
 })

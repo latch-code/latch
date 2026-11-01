@@ -19,7 +19,7 @@ import {
 import { HarnessTile } from './BrandTile.tsx'
 import { ActionSheet, type MenuSection } from './overlays.tsx'
 import { SessionStatus, statusLabel, useLastConfirmed } from './SessionStatus.tsx'
-import { harnessLabel, SESSION_AGENT, taskHarness, type TaskHarness } from './Sidebar.tsx'
+import { harnessLabel, taskHarness, type TaskHarness } from './Sidebar.tsx'
 import { Button, ICON_STROKE, IconButton, SearchField } from '@latch/ui'
 
 /** How long a finger rests on a row before its menu opens, and how far it may wander meanwhile. */
@@ -102,7 +102,7 @@ const PhoneRow = memo(function PhoneRow({
   const time = relativeTime(task.updatedAt, new Date(now))
   const status = rowStatus(task, { unread, stopping, frozen: frozen !== null })
   const engine = harnessLabel(harness)
-  const meta = rowMeta(task, status, inWaitingShelf ? (project ?? '对话') : undefined)
+  const meta = rowMeta(task, status, inWaitingShelf ? (project ?? '无项目') : undefined)
   // While the connection is down the row says less, not that what it last knew stopped mattering.
   const strong =
     status.kind === 'waiting'
@@ -145,7 +145,7 @@ const PhoneRow = memo(function PhoneRow({
           <span className="session-mark">
             <HarnessTile harness={{ id: harness.id, source: harness.source }} size={16} />
           </span>
-          <span className="phone-row-meta-text">{meta ? `${SESSION_AGENT} · ${meta}` : SESSION_AGENT}</span>
+          <span className="phone-row-meta-text">{meta ? `${engine} · ${meta}` : engine}</span>
           {status.kind === 'frozen' && <span className="session-frozen">{frozen}</span>}
         </span>
         <span className="sr-only">{`，${engine}${said ? `，${said}` : ''}${time ? `，${time}` : ''}`}</span>
@@ -418,7 +418,7 @@ export function PhoneSessionList({
         <footer className="phone-list-foot">
           <Laptop className="phone-list-foot-icon" size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
           <span className="phone-list-host" title={snapshot.hostName}>
-            {snapshot.hostName || '执行端'}
+            {snapshot.hostName || 'Mac'}
           </span>
           <Button
             size="xs"

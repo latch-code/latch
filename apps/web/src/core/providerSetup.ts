@@ -93,8 +93,8 @@ export function heldBackService(catalog: Pick<HostCatalog, 'unusableProviders'>)
   if (!first) return undefined
   const name = `「${escapeSecurityText(first.name)}」`
   return first.reason === 'key-missing'
-    ? { message: `${name}还没有填写密钥。`, hint: '在运行 Latch 的电脑上，打开 设置 › 模型 填写密钥后即可开始。' }
-    : { message: `${name}的地址还没有确认。`, hint: '在运行 Latch 的电脑上，打开 设置 › 模型 确认地址后即可开始。' }
+    ? { message: `${name}还没有填写密钥。`, hint: '在 Mac 上，打开 设置 › 模型 填写密钥后即可开始。' }
+    : { message: `${name}的地址还没有确认。`, hint: '在 Mac 上，打开 设置 › 模型 确认地址后即可开始。' }
 }
 
 /** A saved service's destination; older Hosts do not report it and enforce their own rules. */
@@ -165,19 +165,19 @@ export function latestQuestions() {
 }
 
 const NETWORK_TEXT: Record<string, string> = {
-  ECONNREFUSED: 'Host 连不上这个地址：那里没有服务在监听。确认服务已经启动、端口正确。',
-  ECONNRESET: 'Host 连上了这个地址，但连接被对方断开。检查地址和协议（http 或 https）是否正确。',
-  ENOTFOUND: 'Host 找不到这个域名。检查地址的拼写和网络。',
-  EAI_AGAIN: 'Host 暂时解析不了这个域名。检查网络后重试。',
-  ETIMEDOUT: 'Host 连不上这个地址：等待超时。',
-  EHOSTUNREACH: 'Host 连不上这个地址：网络不可达。',
-  ENETUNREACH: 'Host 连不上这个地址：网络不可达。',
+  ECONNREFUSED: 'Latch 连不上这个地址：那里没有服务在监听。确认服务已经启动、端口正确。',
+  ECONNRESET: 'Latch 连上了这个地址，但连接被对方断开。检查地址和协议（http 或 https）是否正确。',
+  ENOTFOUND: 'Latch 找不到这个地址。检查地址的拼写和网络。',
+  EAI_AGAIN: 'Latch 暂时解析不了这个地址。检查网络后重试。',
+  ETIMEDOUT: 'Latch 连不上这个地址：等待超时。',
+  EHOSTUNREACH: 'Latch 连不上这个地址：网络不可达。',
+  ENETUNREACH: 'Latch 连不上这个地址：网络不可达。',
 }
 const CERTIFICATE = /^(CERT_|UNABLE_TO_|DEPTH_ZERO_|SELF_SIGNED_|ERR_TLS_)/u
 
 /** One sentence for a failed check or listing, chosen by the Host's code; the Host's own text only as a last resort. */
 export function describeProbeFailure(error: unknown): ProbeFailure {
-  if (error instanceof ApiTimeoutError) return { kind: 'network', text: 'Host 没有及时回答。它可能仍在等待这个地址，请稍后重新检测。' }
+  if (error instanceof ApiTimeoutError) return { kind: 'network', text: 'Latch 没有及时回答。它可能仍在等待这个地址，请稍后重新检测。' }
   if (!(error instanceof ApiError)) return { kind: 'other', text: errorMessage(error) }
   const { code, details } = error
   switch (code) {
@@ -200,11 +200,11 @@ export function describeProbeFailure(error: unknown): ProbeFailure {
     }
     case 'network-error': {
       const network = typeof details.networkCode === 'string' ? details.networkCode : ''
-      if (CERTIFICATE.test(network)) return { kind: 'network', text: 'Host 不信任这个地址的 HTTPS 证书。' }
-      return { kind: 'network', text: NETWORK_TEXT[network] ?? 'Host 连不上这个地址。检查地址和网络。' }
+      if (CERTIFICATE.test(network)) return { kind: 'network', text: 'Latch 不信任这个地址的 HTTPS 证书。' }
+      return { kind: 'network', text: NETWORK_TEXT[network] ?? 'Latch 连不上这个地址。检查地址和网络。' }
     }
     case 'timeout':
-      return { kind: 'network', text: 'Host 连不上这个地址：10 秒内没有响应。' }
+      return { kind: 'network', text: 'Latch 连不上这个地址：10 秒内没有响应。' }
     case 'redirect':
       return { kind: 'address', text: '服务返回了重定向。请填写最终的 API 地址。' }
     case 'invalid-response':

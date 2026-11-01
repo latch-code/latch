@@ -1,5 +1,5 @@
 import { mentionMarker } from '../fileMentions.ts'
-import { useEffect, useState, type KeyboardEvent, type RefObject } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react'
 import type { FileMention } from '@latch/protocol'
 import { Button, InlineNotice, Loading } from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
@@ -12,6 +12,8 @@ export interface FileMentionChoice {
   refs: FileMention[]
   onRefs(refs: FileMention[]): void
 }
+
+type MentionFile = FileMention & { name: string; ignored?: boolean }
 
 export function activeFileMention(draft: string, caret: number): { start: number; end: number; query: string } | undefined {
   const before = draft.slice(0, caret),
@@ -26,7 +28,8 @@ export function useFileMentions(
   choice?: FileMentionChoice,
 ) {
   const [caret, setCaret] = useState(draft.length),
-    [files, setFiles] = useState<Array<FileMention & { name: string }>>([]),
+    [files, setFiles] = useState<MentionFile[]>([]),
+    [truncated, setTruncated] = useState(false),
     [loading, setLoading] = useState(false),
     [error, setError] = useState(''),
     [selected, setSelected] = useState(0),
@@ -35,11 +38,16 @@ export function useFileMentions(
     scope = choice?.sessionId ?? choice?.workspaceId
   const open = Boolean(choice?.enabled && token && dismissed !== draft)
   const query = token?.query ?? ''
+  const list = useRef<HTMLElement>(null)
+  useLayoutEffect(() => {
+    list.current?.querySelector('[aria-current="true"]')?.scrollIntoView({ block: 'nearest' })
+  }, [selected, files])
   useEffect(() => {
-    setFiles([])
     setError('')
     setSelected(0)
     if (!open || !scope || !choice) {
+      setFiles([])
+      setTruncated(false)
       setLoading(false)
       return
     }
@@ -49,28 +57,32 @@ export function useFileMentions(
       const path = choice.sessionId
         ? `tasks/${encodeURIComponent(choice.sessionId)}/files/search`
         : `workspaces/${encodeURIComponent(scope)}/files/search`
-      void api<{ files: Array<{ name: string; path: string; root: string }> }>(path, {
+      void api<{ files: MentionFile[]; truncated?: boolean }>(path, {
         method: 'POST',
         body: { q: query, limit: 30, ...(choice.sessionId ? {} : { harnessId: choice.harnessId }) },
         signal: controller.signal,
       })
         .then(result => {
-          if (!controller.signal.aborted)
-            setFiles(
-              result.files
-                .slice(0, 30)
-                .filter(
-                  file =>
-                    typeof file.name === 'string'
-                    && file.name.length <= 200
-                    && typeof file.root === 'string'
-                    && typeof file.path === 'string'
-                    && file.path.length <= 4096,
-                ),
-            )
+          if (controller.signal.aborted) return
+          setTruncated(result.truncated === true)
+          setFiles(
+            result.files
+              .slice(0, 30)
+              .filter(
+                file =>
+                  typeof file.name === 'string'
+                  && file.name.length <= 200
+                  && typeof file.root === 'string'
+                  && typeof file.path === 'string'
+                  && file.path.length <= 4096,
+              ),
+          )
         })
         .catch(cause => {
-          if (!controller.signal.aborted) setError(errorMessage(cause))
+          if (controller.signal.aborted) return
+          setFiles([])
+          setTruncated(false)
+          setError(errorMessage(cause))
         })
         .finally(() => {
           if (!controller.signal.aborted) setLoading(false)
@@ -111,34 +123,51 @@ export function useFileMentions(
     }
     if (event.key === 'Enter') {
       event.preventDefault()
-      if (files[selected]) choose(files[selected])
+      if (!loading && files[selected]) choose(files[selected])
       return true
     }
     return false
   }
+  const severalRoots = new Set(files.map(file => file.root)).size > 1
   const menu = open ? (
-    <section className="file-mentions" aria-label="引用项目文件">
-      <p>选择文件后，可编辑文字再发送</p>
+    <section ref={list} className="file-mentions" aria-label="引用项目文件" aria-busy={loading}>
       {!scope ? (
         <InlineNotice>先选择一个项目，再引用其中的文件。</InlineNotice>
-      ) : loading ? (
-        <Loading label="正在查找文件…" />
       ) : error ? (
         <InlineNotice tone="error">{error}</InlineNotice>
       ) : files.length ? (
-        files.map((file, index) => (
-          <Button
-            key={`${file.root}:${file.path}`}
-            variant={selected === index ? 'secondary' : 'ghost'}
-            size="sm"
-            onClick={() => choose(file)}
-            aria-current={selected === index ? 'true' : undefined}>
-            <VisibleText text={file.path} />
-            <span className="attachment-state">{file.root}</span>
-          </Button>
-        ))
+        <>
+          {files.map((file, index) => {
+            const folder = file.path.slice(0, Math.max(0, file.path.length - file.name.length - 1))
+            return (
+              <Button
+                key={`${file.root}:${file.path}`}
+                variant={selected === index ? 'secondary' : 'ghost'}
+                size="sm"
+                title={file.path}
+                onClick={() => choose(file)}
+                aria-current={selected === index ? 'true' : undefined}>
+                <span className="file-mention-path">
+                  <span className="file-mention-name">
+                    <VisibleText text={file.name} />
+                  </span>
+                  {folder ? (
+                    <span className="file-mention-folder">
+                      <VisibleText text={folder} />
+                    </span>
+                  ) : null}
+                </span>
+                {file.ignored ? <span className="attachment-state">已忽略</span> : null}
+                {severalRoots ? <span className="attachment-state">{file.root}</span> : null}
+              </Button>
+            )
+          })}
+          {truncated ? <p>还有更多文件，继续输入缩小范围</p> : null}
+        </>
+      ) : loading ? (
+        <Loading label="正在查找文件…" />
       ) : (
-        <p>没有匹配的文件。</p>
+        <p>没有匹配的文件</p>
       )}
     </section>
   ) : null

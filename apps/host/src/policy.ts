@@ -323,13 +323,13 @@ export class PolicyStore {
         throw new AppError(
           409,
           'presence-already-pinned',
-          '本机确认组件已登记其他签名；如需更换，请停止 Host 后运行 pnpm latch presence repin。',
+          '本机确认组件记录了其他签名；如需更换，请停止 Host 后运行 pnpm latch presence repin。',
         )
       if (this.audit.latest(['presence.helper.pinned'])) {
         throw new AppError(
           409,
           'presence-repin-required',
-          '本机确认组件的登记签名已丢失（policy.json 被修改或删除）。请停止 Host 后运行 pnpm latch presence repin。',
+          '本机确认组件的签名记录已丢失（policy.json 被修改或删除）。请停止 Host 后运行 pnpm latch presence repin。',
         )
       }
       await this.audit.append({ action: 'presence.helper.pinned', actor: { listener: 'host', via: 'startup' }, detail: { cdhash } })

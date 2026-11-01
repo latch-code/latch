@@ -130,6 +130,9 @@ const BLOCK_WORDS: Partial<Record<UndoBlock, string>> = {
 
 export const undoBlockWords = (reason: UndoBlock): string | undefined => BLOCK_WORDS[reason]
 
+/** Why an undone turn cannot come back: its undo already ran, so 「不能撤销」 would say the opposite of what happened. */
+export const redoBlockWords = (reason: UndoBlock): string | undefined => BLOCK_WORDS[reason]?.replace('撤销', '恢复')
+
 /** Files 撤销本轮 would leave alone, said before it runs: without them the undo runs at once. */
 export function undoExceptions(list: ChangeList): string[] {
   return [
@@ -146,5 +149,5 @@ export function notRestoredLine(receipt: Pick<ChangeReceipt, 'skipped' | 'notRes
   return `这 ${receipt.skipped} 个文件没有恢复${named > 0 && named < receipt.skipped ? `（列出前 ${named} 个）` : ''}`
 }
 
-/** The file 打开变更 goes to: a deleted one has nothing to open. */
+/** The file 打开改动 goes to: a deleted one has nothing to open. */
 export const firstOpenable = (files: readonly SummaryFile[]): SummaryFile | undefined => files.find(file => !file.deleted)

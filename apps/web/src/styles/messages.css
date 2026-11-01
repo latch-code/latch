@@ -602,6 +602,13 @@
 .run-end-line > svg {
   flex-shrink: 0;
 }
+/* The words take the row beside the icon, and the buttons drop below them, not the words below the icon. */
+@media (max-width: 767.98px) {
+  .run-end-line > span {
+    flex: 1 1 calc(100% - 22px);
+    min-width: 0;
+  }
+}
 .run-end-list {
   display: grid;
   gap: var(--sp-2);
@@ -932,6 +939,90 @@ button.summary-file:hover {
   .setup-card .ui-button {
     width: 100%;
     min-height: 44px;
+  }
+}
+
+.harness-install {
+  gap: var(--sp-12);
+}
+.harness-install-group {
+  display: grid;
+  gap: var(--sp-8);
+}
+.harness-install-group > p {
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.harness-install-list {
+  display: grid;
+  gap: var(--sp-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.harness-install-row {
+  display: grid;
+  grid-template-columns: 144px minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--sp-12);
+  min-height: 28px;
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.harness-install-name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-8);
+  min-width: 0;
+}
+.harness-install-command {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4) var(--sp-8);
+  min-width: 0;
+}
+.harness-install-command code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.harness-install-note {
+  color: var(--muted);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+}
+/* A row with a sentence takes the sentence as a line of its own, under the name. */
+.harness-install-row > .harness-install-note {
+  grid-column: 2;
+  grid-row: 1;
+  color: var(--ink);
+  font-size: var(--fs-ui);
+}
+.harness-install-row:has(> .harness-install-note) > .harness-install-command {
+  grid-column: 2;
+  grid-row: 2;
+}
+.harness-install-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8) var(--sp-12);
+}
+.harness-install-foot .harness-install-builtin {
+  height: auto;
+  white-space: normal;
+  text-align: left;
+}
+@media (max-width: 767.98px) {
+  .harness-install-row {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: var(--sp-4);
+  }
+  .harness-install-row > .harness-install-note,
+  .harness-install-row:has(> .harness-install-note) > .harness-install-command {
+    grid-column: 1;
+    grid-row: auto;
   }
 }
 

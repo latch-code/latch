@@ -14,6 +14,7 @@ import {
   changedOutputs,
   producedFiles,
   turnSummary,
+  redoBlockWords,
   undoBlockWords,
   undoExceptions,
   type SummaryFile,
@@ -141,7 +142,7 @@ function NotRestored({ receipt }: { receipt: ChangeReceipt }) {
 }
 
 /**
- * What a settled turn leaves behind. 「改动了 3 个文件 +64 −8」 lists the files under 显示文件, each row and 打开变更 go to
+ * What a settled turn leaves behind. 「改动了 3 个文件 +64 −8」 lists the files under 显示文件, each row and 打开改动 go to
  * this turn's files, and 撤销本轮 acts on the turn the Host recorded; the action or the reason it cannot run sits in the
  * header. 「生成了 2 个文件」 offers new documents to open, and alone stands for a turn that changed nothing else. After
  * an undo the cards give way to the record line.
@@ -237,7 +238,7 @@ export function TurnCards({
   if (undone) {
     const undoReceipt = receipt?.action === 'undo' ? receipt : undefined
     const notCovered = undoReceipt?.notCovered ?? list?.notCovered ?? []
-    const redoBlock = list?.redo && !list.redo.available ? undoBlockWords(list.redo.reason) : undefined
+    const redoBlock = list?.redo && !list.redo.available ? redoBlockWords(list.redo.reason) : undefined
     const canRedo = !active && !redoBlock && undoGate === 'open'
     // The engine hears as soon as a turn begins, so nothing is still to be told once one runs.
     const noted = !active && (done && done.record === record ? done.receipt.noteNextTurn : record?.notePending === true)
@@ -410,7 +411,7 @@ export function TurnCards({
               onClick={() => {
                 link.open(target())
               }}>
-              打开变更
+              打开改动
             </Button>
           )}
         </div>

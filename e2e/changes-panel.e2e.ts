@@ -109,7 +109,7 @@ it('reviews a turn, undoes and restores it with a receipt, and names what Git is
     await openBrowser(page, host, sessionId)
 
     // The header's toggle opens the tab: scope, stat, undo, and the first file already open.
-    await page.getByRole('button', { name: '变更', exact: true }).click()
+    await page.getByRole('button', { name: '改动', exact: true }).click()
     const panel = page.locator('.changes-panel')
     await panel.getByText('report.txt', { exact: true }).waitFor()
     await expect.poll(() => panel.locator('.changes-scope-button').innerText()).toBe('本轮')
@@ -119,7 +119,7 @@ it('reviews a turn, undoes and restores it with a receipt, and names what Git is
     // A line comment lands in the composer, naming the file and the line.
     await panel.locator('.diff-add', { hasText: 'changed' }).hover()
     await panel.locator('.diff-add').getByRole('button', { name: '评论第 3 行', exact: true }).click()
-    await panel.getByPlaceholder('告诉 Agent…').fill('这里写得不对')
+    await panel.getByPlaceholder('告诉 Harness…').fill('这里写得不对')
     await panel.getByRole('button', { name: '发送到对话', exact: true }).click()
     await expect.poll(() => page.locator('.composer textarea').inputValue()).toContain('第 3 行：这里写得不对')
     await page.locator('.composer textarea').fill('')
@@ -149,7 +149,7 @@ it('reviews a turn, undoes and restores it with a receipt, and names what Git is
     // A file changed since: the same place says why.
     await writeFile(join(host.workspaceRoot, 'report.txt'), 'later\n')
     await reopen(page, sessionId)
-    await page.getByRole('button', { name: '变更', exact: true }).click()
+    await page.getByRole('button', { name: '改动', exact: true }).click()
     await panel.getByText('之后又改过这些文件，不能撤销').waitFor()
     await writeFile(join(host.workspaceRoot, 'report.txt'), 'first\nsecond\nchanged\n')
 
@@ -193,7 +193,7 @@ it('reviews a turn, undoes and restores it with a receipt, and names what Git is
     git('checkout', '-q', 'main')
     expect(() => git('merge', 'side')).toThrow()
     await reopen(page, sessionId)
-    await page.getByRole('button', { name: '变更', exact: true }).click()
+    await page.getByRole('button', { name: '改动', exact: true }).click()
     await panel.locator('.changes-scope-button').click()
     await page.getByRole('menuitemradio', { name: /未提交/u }).click()
     await panel.getByText('仓库正在合并 · 1 个文件有冲突').waitFor()
@@ -215,7 +215,7 @@ it('tells a device outside the data scope why it sees nothing, and the Host agre
     const page = await context.newPage()
     page.setDefaultTimeout(15_000)
     await openBrowser(page, host, sessionId, 'work')
-    await page.getByRole('button', { name: '变更', exact: true }).click()
+    await page.getByRole('button', { name: '改动', exact: true }).click()
     await page.locator('.changes-panel').getByText('这台设备看不到会话文件夹里的文件').waitFor()
     await context.close()
   } finally {
@@ -408,7 +408,7 @@ it('tells the truth at both ends of a turn, whatever the turn record has reached
       return route.fulfill({ response })
     })
     await openBrowser(page, host, sessionId)
-    await page.getByRole('button', { name: '变更', exact: true }).click()
+    await page.getByRole('button', { name: '改动', exact: true }).click()
     const panel = page.locator('.changes-panel')
     const undoTurn = panel.getByRole('button', { name: '撤销本轮', exact: true })
     await undoTurn.waitFor()
@@ -458,7 +458,7 @@ it('goes from the conversation to the turn and file, and a turn taken back in on
     page.setDefaultTimeout(15_000)
     await openBrowser(page, host, sessionId)
     const card = page.getByRole('region', { name: '这一轮改动的文件', exact: true })
-    await card.getByRole('button', { name: '打开变更', exact: true }).click()
+    await card.getByRole('button', { name: '打开改动', exact: true }).click()
     const panel = page.locator('.changes-panel')
     await panel.locator('.changes-file[data-selected]', { hasText: 'report.txt' }).waitFor()
     await expect.poll(() => panel.locator('.changes-scope-button').innerText()).toMatch(/第 1 轮|本轮/u)
@@ -490,7 +490,7 @@ it('shows nothing of the last scope under the next label, keeps a list a failed 
     const page = await context.newPage()
     page.setDefaultTimeout(15_000)
     await openBrowser(page, host, sessionId)
-    await page.getByRole('button', { name: '变更', exact: true }).click()
+    await page.getByRole('button', { name: '改动', exact: true }).click()
     const panel = page.locator('.changes-panel')
     const undoTurn = panel.getByRole('button', { name: '撤销本轮', exact: true })
     await undoTurn.waitFor()
@@ -574,7 +574,7 @@ it('keeps a very long list quick: a window of tree rows, a page of file rows, ea
       detailReads = 0
       await reopen(page, sessionId)
       const started = Date.now()
-      await page.getByRole('button', { name: '变更', exact: true }).click()
+      await page.getByRole('button', { name: '改动', exact: true }).click()
       await page.locator('.changes-file').first().waitFor()
       const ready = Date.now() - started
       const panel = page.locator('.changes-panel')
@@ -635,7 +635,7 @@ it('draws every state at three widths in both themes', async () => {
       for (const next of FRAMES) {
         frame = next
         await reopen(page, sessionId)
-        await page.getByRole('button', { name: '变更', exact: true }).click()
+        await page.getByRole('button', { name: '改动', exact: true }).click()
         const panel = page.locator('.changes-panel')
         await panel.locator('.changes-scope-row').waitFor()
         if (next.list.scope === 'uncommitted') {

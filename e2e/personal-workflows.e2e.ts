@@ -199,9 +199,9 @@ describe('real personal group and daily-task workflows', () => {
     page.setDefaultTimeout(15000)
     try {
       const { personal, id } = await open(page, '例行浏览器')
-      await openSection(page.locator('.settings-page'), '例行任务')
-      await personal.getByRole('button', { name: '创建例行任务', exact: true }).click()
-      const editor = page.getByRole('dialog', { name: '例行任务设置', exact: true })
+      await openSection(page.locator('.settings-page'), '定时任务')
+      await personal.getByRole('button', { name: '创建定时任务', exact: true }).click()
+      const editor = page.getByRole('dialog', { name: '定时任务设置', exact: true })
       await editor.getByLabel('任务名称', { exact: true }).fill('每日整理')
       await editor.getByRole('button', { name: /^执行助手/u }).click()
       await page.getByText('成员 A', { exact: true }).last().click()

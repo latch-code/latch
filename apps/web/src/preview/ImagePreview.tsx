@@ -87,7 +87,7 @@ export function ImagePreview({ file, source, local }: { file: FileMetadata; sour
         <IconButton label="切换图片棋盘底色" icon={Grid2X2} aria-pressed={dark} onClick={() => setDark(!dark)} />
       </div>
       {failed ? (
-        <InlineNotice tone="error">无法解码这张图片，可以下载或在执行端电脑上查看。</InlineNotice>
+        <InlineNotice tone="error">无法解码这张图片，可以下载或在 Mac 上查看。</InlineNotice>
       ) : (
         <div
           ref={viewport}

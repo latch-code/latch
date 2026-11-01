@@ -1,8 +1,8 @@
 import { MOTION } from '@latch/ui'
 
-/** The icon rail at the window's left edge. */
-export const RAIL_WIDTH = 52
-/** The panel next to the rail: 248 by default, 220 to 400, snapping shut when dragged narrower than 160. */
+/** A sheet leaves this much of the window beside it, so what is under it still shows. */
+const SHEET_GAP = 52
+/** The sidebar: 248 by default, 220 to 400, snapping shut when dragged narrower than 160. */
 export const SIDEBAR_DEFAULT = 248
 export const SIDEBAR_MIN = 220
 export const SIDEBAR_MAX = 400
@@ -12,7 +12,7 @@ export const SIDEBAR_SNAP_MS = MOTION.panel + 20
 /** The right panel: 520 by default, from 360 up to 70% of the window. */
 export const RIGHT_PANEL_DEFAULT = 520
 export const RIGHT_PANEL_MIN = 360
-/** 变更 asks for more, unless the person chose a width: 660, or 860 when its file tree is wanted, down to what the conversation leaves. */
+/** 改动 asks for more, unless the person chose a width: 660, or 860 when its file tree is wanted, down to what the conversation leaves. */
 const CHANGES_PANEL = 660
 const CHANGES_PANEL_TREE = 860
 const CHANGES_SHEET = 420
@@ -48,9 +48,9 @@ export function parseRightPanelPreference(value: unknown): RightPanelPreference 
   return { open: field(value, 'open') === true, ...(width !== undefined ? { width } : {}) }
 }
 
-/** The widest the panel may be: the conversation keeps its minimum beside the rail and whatever stands on its far side. */
+/** The widest the sidebar may be: the conversation keeps its minimum and whatever stands on its far side. */
 export function sidebarMax(windowWidth: number, beside = 0): number {
-  return Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, windowWidth - RAIL_WIDTH - CONVERSATION_MIN - beside))
+  return Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, windowWidth - CONVERSATION_MIN - beside))
 }
 
 export function clampSidebar(width: number, windowWidth: number, beside = 0): number {
@@ -78,16 +78,16 @@ export type RightPanelPlacement =
   /** In the conversation's place: a phone's pushed page, or the panel maximised. */
   | { kind: 'page' }
 
-/** How wide 变更 opens beside a conversation, or over one that cannot keep its minimum. */
+/** How wide 改动 opens beside a conversation, or over one that cannot keep its minimum. */
 export function changesPanelWidth(windowWidth: number, left: number, tree = false): number {
   const room = windowWidth - left - CONVERSATION_MIN
   return room >= RIGHT_PANEL_MIN ? Math.min(tree ? CHANGES_PANEL_TREE : CHANGES_PANEL, room) : CHANGES_SHEET
 }
 
-/** Where the open right panel goes; `left` is what stands beside the conversation on its other side (rail and panel). */
+/** Where the open right panel goes; `left` is what stands beside the conversation on its other side (the sidebar). */
 export function placeRightPanel({ windowWidth, width, left }: { windowWidth: number; width?: number; left: number }): RightPanelPlacement {
   if (windowWidth < TABLET_FROM) return { kind: 'page' }
   const wanted = clampRightPanel(width ?? RIGHT_PANEL_DEFAULT, windowWidth)
   if (windowWidth - left - wanted >= CONVERSATION_MIN) return { kind: 'column', width: wanted }
-  return { kind: 'sheet', width: Math.min(wanted, windowWidth - RAIL_WIDTH) }
+  return { kind: 'sheet', width: Math.min(wanted, windowWidth - SHEET_GAP) }
 }

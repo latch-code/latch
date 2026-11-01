@@ -14,8 +14,8 @@ import { FoldRows, IconTile, Loading, MiddleEllipsis, moreButton, ObjectRow, Set
 import { ProjectEditor } from './ProjectEditor.tsx'
 import { SettingsPages } from './navigation.tsx'
 
-const LOCKED_CAPTION = '新建项目要在运行 Latch 的电脑上用桌面端完成。'
-const RESTART_CAPTION = '重新启动 Latch 桌面端后，可以在这里新建项目。'
+const LOCKED_CAPTION = '添加项目要在 Mac 上用桌面端完成。'
+const RESTART_CAPTION = '重新启动 Latch 桌面端后，可以在这里添加项目。'
 
 /** Where a project's history stops, as the Host keeps it: the limits are the Host's own, not a setting. */
 const HISTORY_CAP = '每个会话保留最近 20 轮的文件快照，每个项目最多占用 2 GB，满了先删最早的。'
@@ -171,7 +171,7 @@ function draggedFolders(event: DragEvent): 'folders' | 'files' | 'none' {
 
 /**
  * Settings › 项目. Projects are added only in the Latch desktop app on the computer that runs Latch: the native open
- * panel (新建项目…) or folders dropped from Finder, which main confirms natively and adds itself, so the page never
+ * panel (添加项目…) or folders dropped from Finder, which main confirms natively and adds itself, so the page never
  * sends a path. Elsewhere the page says where to do it. Any admin device can remove a project.
  */
 export function WorkspacesSettings({
@@ -276,7 +276,7 @@ export function WorkspacesSettings({
   const caption = folders ? undefined : desktop && owner ? RESTART_CAPTION : LOCKED_CAPTION
   const addAction = folders ? (
     <Button variant="outline" icon={FolderPlus} loading={picking} onClick={() => void pick()}>
-      {picking ? '选择中…' : '新建项目'}
+      {picking ? '选择中…' : '添加项目'}
     </Button>
   ) : undefined
   const multi = snapshot.catalog?.projectFolders !== undefined
@@ -301,7 +301,7 @@ export function WorkspacesSettings({
           <SettingsGroup title="项目" meta={addAction} caption={caption ? `${caption} ${HISTORY_CAP}` : HISTORY_CAP} captionIcon={null}>
             {folders && drag !== 'none' && (
               <div className="project-drop" role="status">
-                {drag === 'files' ? '只能拖入文件夹' : '松开以用这些文件夹新建项目'}
+                {drag === 'files' ? '只能拖入文件夹' : '松开以用这些文件夹添加项目'}
               </div>
             )}
             {projects.length === 0 && (
@@ -335,12 +335,11 @@ export function WorkspacesSettings({
               <>
                 <ObjectRow
                   className="project-row"
-                  label="启动目录"
+                  label="默认文件夹"
                   leading={<IconTile icon={Folder} />}
                   title={
                     <span className="settings-row-name">
-                      启动目录
-                      {start.id === defaultId && <span className="settings-row-note">默认</span>}
+                      默认文件夹
                     </span>
                   }
                   description={<MiddleEllipsis text={escapeSecurityText(start.path)} />}

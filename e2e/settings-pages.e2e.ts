@@ -173,7 +173,7 @@ describe('settings pages', () => {
         await sheet.getByRole('button', { name: '取消', exact: true }).click()
         await sheet.waitFor({ state: 'hidden' })
 
-        await openSection(settings, '引擎')
+        await openSection(settings, 'Harness')
         await settings.getByRole('heading', { name: '已安装', exact: true }).waitFor()
         await settings.getByRole('heading', { name: '可以安装', exact: true }).waitFor()
         await noHorizontalOverflow(page, settings)
@@ -192,17 +192,15 @@ describe('settings pages', () => {
         }
 
         await openSection(settings, '关于')
-        await settings.getByText('Agent 和插件以你的权限在这台电脑上运行。', { exact: true }).waitFor()
+        await settings.getByText('Harness 和插件以你的权限在这台电脑上运行。', { exact: true }).waitFor()
         await noHorizontalOverflow(page, settings)
         await shot('about')
 
         await openSection(settings, '插件')
-        await page.locator('.plugin-nav-row', { hasText: '工作区文件' }).click()
+        await page.locator('.plugin-nav-row', { hasText: '项目文件' }).click()
         // A plugin's page says where its code runs, in the same words the plugin form uses.
         await page.getByRole('heading', { name: '代码在哪里运行', exact: true }).waitFor()
         await page.getByText('在这台 Mac 上运行，权限和 Latch 相同', { exact: false }).waitFor()
-        if (viewport.name !== 'phone')
-          await expect.poll(() => page.locator('.plugin-nav-row[aria-current="true"]').innerText()).toContain('工作区文件')
         await settle(page)
         await shot('plugins')
 

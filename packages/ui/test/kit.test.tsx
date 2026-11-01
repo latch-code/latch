@@ -153,7 +153,7 @@ describe('PanelTabs', () => {
         onValueChange={setValue}
         onClose={onClose}
         tabs={[
-          { value: 'a', label: '变更', icon: FileText, stat: { added: 60, removed: 6 } },
+          { value: 'a', label: '改动', icon: FileText, stat: { added: 60, removed: 6 } },
           { value: 'b', label: 'notes.md', icon: FileText, closeLabel: '关闭 notes.md', fresh: true },
         ]}
       />
@@ -177,7 +177,7 @@ describe('PanelTabs', () => {
 
   it('shows the stat and the new-content dot, and is one tab stop moved by arrows', async () => {
     const screen = await render(<Sample onClose={() => {}} />)
-    const first = screen.getByRole('tab', { name: /变更/u })
+    const first = screen.getByRole('tab', { name: /改动/u })
     expect(first.element().textContent).toContain('+60 −6')
     await expect.element(screen.getByRole('img', { name: '有新内容' })).toBeVisible()
     expect(screen.getByRole('tab', { name: /notes/u }).element().tabIndex).toBe(-1)
@@ -203,7 +203,7 @@ describe('PanelTabs', () => {
     await userEvent.keyboard('{Delete}')
     expect(closed).toHaveBeenCalledTimes(2)
     screen
-      .getByRole('tab', { name: /变更/u })
+      .getByRole('tab', { name: /改动/u })
       .element()
       .focus()
     await userEvent.keyboard('{Delete}')

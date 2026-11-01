@@ -154,7 +154,7 @@ describe('plugin lifecycle', () => {
     await entered
     expect(context.registry.size).toBe(2)
     expect(registry.list()[0]).toMatchObject({ version: '1', enabled: true })
-    expect(() => registry.acquire('test')).toThrow('正在变更')
+    expect(() => registry.acquire('test')).toThrow('正在更新')
     expect(previousDispose).not.toHaveBeenCalled()
     releaseCommit()
     await replacement

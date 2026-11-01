@@ -233,10 +233,10 @@ it.each([
       await palette.waitFor({ state: 'detached' })
       expect(await draft.inputValue()).toBe('保留的草稿')
 
-      // 打开变更 opens: run again, with the panel showing, it leaves the panel there.
+      // 打开改动 opens: run again, with the panel showing, it leaves the panel there.
       const openChanges = async () => {
         await open()
-        await input.fill('打开变更')
+        await input.fill('打开改动')
         await input.press('Enter')
         await palette.waitFor({ state: 'detached' })
       }

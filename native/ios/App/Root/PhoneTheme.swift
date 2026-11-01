@@ -75,6 +75,6 @@ extension PhoneModel {
         let info = engineInfo(harnessId)
         if info != .null { return PhoneStart.engineName(info) }
         // A session keeps the identifier of an engine since removed, and should not read as if another ran it.
-        return harnessId ?? snapshot["harness"]["name"].string ?? "Latch"
+        return harnessId ?? snapshot["harness"]["name"].string ?? "Latch 内置"
     }
 }

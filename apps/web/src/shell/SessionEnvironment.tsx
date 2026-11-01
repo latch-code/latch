@@ -126,7 +126,7 @@ function SessionUsage({ summary, detail, agentReported }: { summary: TaskSummary
     <>
       {usage && (
         <CrumbRow label="用量">
-          <Tooltip content={`${inputLine}；${outputLine}${agentReported ? '，由 Agent 报告' : ''}`}>
+          <Tooltip content={`${inputLine}；${outputLine}${agentReported ? '，由 Harness 报告' : ''}`}>
             <span tabIndex={0}>
               输入 {tokenAmount(usage.inputTokens)} · 输出 {tokenAmount(usage.outputTokens)}
             </span>
@@ -136,7 +136,7 @@ function SessionUsage({ summary, detail, agentReported }: { summary: TaskSummary
       {report?.cost && (
         <CrumbRow label="费用">
           {report.cost.amount > 0 && report.cost.amount < 0.01 ? '<$0.01' : currencyAmount(report.cost.amount, report.cost.currency)}
-          {' · 由 Agent 报告，不是账单'}
+          {' · 由 Harness 报告，不是账单'}
         </CrumbRow>
       )}
       {timed.length > 0 && (

@@ -7,13 +7,20 @@ export interface AgentPreset {
   license: string
   homepage: string
   description: string
-  /** Shown when the command is missing. Latch never installs or downloads agents itself. */
+  /** The command to copy when `command` is missing. Latch never installs or downloads agents itself. */
   install?: string
+  /** What the install command does not say, such as a version it needs. */
+  installNote?: string
   /**
    * The agent an adapter command connects to, which must be installed as well (pi for pi-acp). The Host looks for it
    * the same way, so the page can say which of the two is missing.
    */
   companion?: string
+  /**
+   * Display only: the program a person already knows, when `command` is an adapter that runs without it. It lets the page
+   * say the program was found and only the adapter is missing; nothing waits on it, unlike `companion`.
+   */
+  agentCommand?: string
   /** False when the agent takes no MCP servers over ACP, so it cannot fetch an agent's skills. */
   skillServer?: false
 }
@@ -26,8 +33,9 @@ export const AGENT_PRESETS: AgentPreset[] = [
     args: [],
     license: 'Apache-2.0',
     homepage: 'https://github.com/agentclientprotocol/codex-acp',
-    description: '通过 ACP 适配器运行 Codex；模型、登录与沙箱由 Codex 自身配置。',
+    description: '通过适配器运行 Codex；模型、登录与沙箱由 Codex 自身配置。',
     install: 'npm i -g @agentclientprotocol/codex-acp',
+    agentCommand: 'codex',
   },
   {
     id: 'pi',
@@ -37,7 +45,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
     args: [],
     license: 'MIT',
     homepage: 'https://github.com/svkozak/pi-acp',
-    description: '通过 ACP 适配器运行 pi。pi 执行工具前不请求审批，Latch 不会显示审批。',
+    description: '通过适配器运行 pi。pi 执行工具前不请求审批，Latch 不会显示审批。',
     install: 'npm i -g pi-acp',
     companion: 'pi',
   },
@@ -48,7 +56,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
     args: ['acp'],
     license: 'MIT',
     homepage: 'https://github.com/anomalyco/opencode',
-    description: 'OpenCode 内置的 ACP 模式；模型与登录由 OpenCode 管理。',
+    description: '模型与登录由 OpenCode 管理。',
     install: 'npm i -g opencode-ai',
   },
   {
@@ -59,8 +67,9 @@ export const AGENT_PRESETS: AgentPreset[] = [
     args: ['--profile', 'acp'],
     license: 'MIT',
     homepage: 'https://github.com/deepseek-ai/deepseek-harness',
-    description: 'DeepSeek Harness 的 ACP 配置；按完整消息回复，不逐字流式输出。',
-    install: 'npm i -g @deepseek-ai/dsh（0.2.1-rc.2 或更高版本）',
+    description: '按完整消息回复，不逐字流式输出。',
+    install: 'npm i -g @deepseek-ai/dsh',
+    installNote: '0.2.1-rc.2 或更高版本',
   },
   {
     id: 'gemini',
@@ -69,7 +78,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
     args: ['--acp', '--approval-mode', 'default'],
     license: 'Apache-2.0',
     homepage: 'https://github.com/google-gemini/gemini-cli',
-    description: 'Gemini CLI 的 ACP 模式；登录与模型由 Gemini CLI 管理。',
+    description: '登录与模型由 Gemini CLI 管理。',
     install: 'npm i -g @google/gemini-cli',
   },
   {
@@ -79,7 +88,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
     args: ['--acp'],
     license: 'Apache-2.0',
     homepage: 'https://github.com/QwenLM/qwen-code',
-    description: 'Qwen Code 的 ACP 模式；登录与模型由 Qwen Code 管理。',
+    description: '登录与模型由 Qwen Code 管理。',
     install: 'npm i -g @qwen-code/qwen-code',
   },
   {
@@ -89,8 +98,8 @@ export const AGENT_PRESETS: AgentPreset[] = [
     args: ['acp'],
     license: 'Apache-2.0',
     homepage: 'https://github.com/block/goose',
-    description: 'goose 的 ACP 模式；模型提供方在 goose 中配置。',
-    install: '参见项目文档',
+    description: '模型在 goose 中配置。',
+    install: 'brew install block-goose-cli',
   },
 ]
 

@@ -1,6 +1,6 @@
 /**
  * How Latch drives one harness's own permission settings. Host-only: none of this reaches the browser except the
- * display fields copied into `SessionPermission`. A profile narrows what the harness does by default; it is not an OS
+ * display fields copied into `SessionPermission` and `HarnessInfo.permission`. A profile narrows what the harness does by default; it is not an OS
  * sandbox, so every ACP session stays full access (L3).
  */
 export interface AcpPermissionProfile {

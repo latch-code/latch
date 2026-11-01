@@ -79,7 +79,7 @@ export function AgentProbe({
   return (
     <SettingsGroup
       title="测试启动"
-      caption={disabledReason ?? '会运行 Agent 程序并要求本机认证；只检查启动握手，不发送提示词。'}
+      caption={disabledReason ?? '会运行 Harness 程序并要求 Touch ID；只检查启动握手，不发送提示词。'}
       captionIcon={disabledReason ? 'lock' : 'info'}>
       <SettingsRow
         title={busy ? '正在测试启动' : probeResultTitle(result)}
@@ -89,7 +89,7 @@ export function AgentProbe({
             : result?.status === 'ready'
               ? '登录状态与模型访问尚未验证。'
               : result?.status === 'authentication-required'
-                ? '先在终端登录这个 Agent，再重新测试。'
+                ? '先在终端登录这个 Harness，再重新测试。'
                 : result
                   ? '查看诊断，检查安装、启动配置或登录状态后重试。'
                   : '检查程序能否启动，以及它声明的能力。'

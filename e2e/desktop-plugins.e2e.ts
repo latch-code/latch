@@ -7,7 +7,7 @@ import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { writeHostState } from '@latch/host/host-state'
 import { latchEnv } from '@latch/host/env'
 import { startTestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openSection, openSettings, reachable } from './helpers/layout.ts'
+import { backToSection, noHorizontalOverflow, openSection, openSettings, reachable } from './helpers/layout.ts'
 
 describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 'darwin')(
   'custom plugin editor in the native desktop',
@@ -50,9 +50,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         })
         const page = await application.firstWindow()
         page.setDefaultTimeout(20000)
-        await page.getByRole('heading', { name: '连接到 Latch' }).waitFor()
-        await page.getByRole('textbox', { name: '设备名称' }).fill('插件编辑验收')
-        await page.getByRole('button', { name: '请求连接' }).click()
+        await page.getByRole('button', { name: '继续', exact: true }).click()
         await host.presence.waitForRequest(15000)
         host.presence.approveNext()
         await page.locator('.app-shell[data-connection="connected"]').waitFor()
@@ -123,6 +121,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         expect(await editor.isVisible()).toBe(false)
         await pageSwitch.click()
         await expect.poll(() => pageSwitch.isChecked()).toBe(true)
+        await backToSection(settings)
         await page.getByRole('button', { name: '添加插件…', exact: true }).click()
         await page.getByRole('radio', { name: '界面', exact: true }).click()
         await page.getByRole('button', { name: '继续', exact: true }).click()

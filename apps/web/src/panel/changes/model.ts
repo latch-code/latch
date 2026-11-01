@@ -1,4 +1,4 @@
-// What the 变更 tab draws from the Host's answers: which scope is shown, the file tree, what stands in the scope row, the
+// What the 改动 tab draws from the Host's answers: which scope is shown, the file tree, what stands in the scope row, the
 // lines above the list and the empty states. Pure, so every state of the table has a test. See docs/CHANGES.md.
 import type {
   Availability,

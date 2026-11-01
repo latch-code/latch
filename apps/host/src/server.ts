@@ -35,6 +35,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } 
 import { z } from 'zod'
 import {
   AGENT_PRESETS,
+  type AgentPreset,
   PROJECT_GLYPHS,
   escapeSecurityText,
   PROVIDER_PRESETS,
@@ -91,7 +92,7 @@ import {
 } from '@latch/sdk'
 import { PluginRegistry } from '@latch/core'
 import { canonicalJson, sha256Hex, redactSecrets } from '@latch/core/node-kit'
-import { createAcpAgentPlugin, forgetCommandLookups, resolveCommand, validateAgentDefinition } from '@latch/harness-acp'
+import { createAcpAgentPlugin, forgetCommandLookups, presetOffer, resolveCommand, validateAgentDefinition } from '@latch/harness-acp'
 import { AuditLog, type AuditActor, type StepupMethod } from './audit.ts'
 import { excludeFromBackup } from './backup.ts'
 import { PRIVATE_ENTRIES, isPrivateEntry } from './data-entries.ts'
@@ -236,8 +237,8 @@ const LEGACY_PROVIDER_ID = 'openai-compatible'
 const STANDARD = 'standard'
 const ACTIVE_STATUSES: ReadonlySet<TaskStatus> = new Set(['running', 'waiting-approval'])
 const L3_WARNINGS = [
-  '该会话可以读写 Latch 数据和 Host 身份私钥，并可以冒用本机 Electron 在其他电脑上的身份。',
-  'Harness 自己发起的询问只是提示，不是安全边界。',
+  '它可以读写 Latch 的数据和这台 Mac 的身份密钥，也可以在其他电脑上冒充这台 Mac 上的 Latch。',
+  '它发起的询问只是提示，Latch 不隔离它。',
 ]
 /** Unix connections without a credential may reach only these. */
 const ANONYMOUS_UNIX = new Set([
@@ -536,6 +537,11 @@ export interface ServerOptions {
   sessionFolders?: boolean
   /** Tests: the four hex characters of a session folder's name; default random. */
   sessionFolderSuffix?: () => string
+  /**
+   * Offers what it finds as Harnesses on the desktop app, with no step to add them. The start script passes
+   * `detectPresetCommands`; left out, as in tests, no real command on this computer can end up chosen for a session.
+   */
+  detectPreset?: (preset: AgentPreset) => CommandDetection
 }
 
 export interface StartedHost {
@@ -669,7 +675,7 @@ function disabledReason(problem: FolderProblem): DisabledReason {
 
 /** How long a project's folder states are reused for listings; session starts always check afresh. */
 const PROJECT_STATE_TTL = 5_000
-const START_DIRECTORY = '启动目录'
+const START_DIRECTORY = '默认文件夹'
 
 interface FolderState {
   id: string
@@ -833,13 +839,21 @@ function guardDataDir(plugin: HarnessPlugin, dataDir: string, workspace: string)
 }
 
 /** What this computer has of a command and, for an adapter, of the agent it connects to. */
-function detectCommand(command: string, companion: string | undefined): CommandDetection {
+function detectCommand(command: string, companion: string | undefined, agent?: string): CommandDetection {
   const path = resolveCommand(command)
   return {
     ...(path ? { found: true, path } : { found: false }),
     ...(companion ? { companion: { command: companion, found: resolveCommand(companion) !== undefined } } : {}),
+    ...(agent ? { agent: { command: agent, found: resolveCommand(agent) !== undefined } } : {}),
   }
 }
+
+/** What this computer has of a preset's commands. */
+export const detectPresetCommands = (preset: AgentPreset): CommandDetection =>
+  detectCommand(preset.command, preset.companion, preset.agentCommand)
+
+/** PATH lookups touch the file system and the catalog is read often; as long as a driver's own status keeps one. */
+const PRESET_LOOKUP_TTL_MS = 5_000
 
 function agentSettings(agent: AgentRecord): AgentSettings {
   const companion = AGENT_PRESETS.find(preset => preset.id === agent.presetId)?.companion
@@ -1391,13 +1405,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               ? projects.map(project => [project.id, project.folders])
               : [
                   context.workspaceId === 'default' ? workspaceRoot : projects.find(project => project.id === context.workspaceId),
-                  hub!.info(context.harnessId),
+                  draftHarness(context.harnessId),
                 ],
           ),
         )
       },
       async workspaceRoots(workspaceId, harnessId) {
-        const harness = hub!.info(harnessId)
+        const harness = draftHarness(harnessId)
         if (!harness || harness.status !== 'ready') throw new AppError(409, 'file-harness-unavailable', '当前 Agent 不可用，请重新选择')
         if (workspaceId === 'default') {
           if ((await canonicalPath(workspaceRoot).catch(() => undefined)) !== canonicalWorkspace) return 'removed'
@@ -1452,7 +1466,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               : {}),
         }
       }
-      const harness = hub!.info(selected.harnessId)
+      const harness = draftHarness(selected.harnessId)
       if (!harness || harness.status !== 'ready') throw new AppError(409, 'harness-unavailable', '当前 Agent 不可用。')
       if (harness.level === 'L3') assertSessionCeiling(caller, 'L3')
       else assertStandardCeiling(caller, { harnessId: selected.harnessId, workspaceId: selected.workspaceId ?? 'default' })
@@ -1470,8 +1484,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         }
       }
       const agent = config.settings().agents.find(item => item.id === selected.harnessId)
-      if (agent) {
-        const probe = agent.lastProbe
+      if (agent || harness.offer) {
+        const probe = agent?.lastProbe
         return {
           images: probe?.status === 'ready' && probe.capabilities.images === true,
           text: probe?.status === 'ready' && probe.capabilities.embeddedContext === true,
@@ -1902,7 +1916,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     function routinePlan(id: string, selection?: ModelRef): RoutinePlan {
       const assistant = personalStore.assistant(id),
         personal = personalContext(id)
-      if (assistant.harnessId !== 'standard') throw new AppError(409, 'personal-routine-harness', '例行任务目前需要内置执行方式。')
+      if (assistant.harnessId !== 'standard') throw new AppError(409, 'personal-routine-harness', '定时任务目前需要内置执行方式。')
       const model = selection ?? assistant.model ?? defaultModelRef()
       if (!model) throw new AppError(409, 'provider-unavailable', '请先配置模型服务。')
       const provider = registry.providerOwner(model.providerId)
@@ -1948,7 +1962,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         || !levelAtMost('L1', policy.get().unattended.maxLevel)
         || now() - Date.parse(device.lastSeenAt) > policy.get().unattended.pauseAfterIdleDays * 86400000
       )
-        throw new AppError(403, 'personal-routine-owner', '例行任务的电脑授权已变化，请在电脑上重新开启。')
+        throw new AppError(403, 'personal-routine-owner', '定时任务的电脑授权已变化，请在电脑上重新开启。')
     }
     const personalRoutines = await PersonalRoutines.open({
       dataDir,
@@ -2101,7 +2115,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             || (remote.harnesses !== null && !remote.harnesses.includes(STANDARD))
             || (remote.workspaces !== null && !remote.workspaces.includes(definition.projectId ?? 'default'))))
       )
-        throw new AppError(403, 'automation-owner', '这台设备不能开启这个自动化。')
+        throw new AppError(403, 'automation-owner', '这台设备不能开启这个定时任务。')
     }
     const automations = await Automations.open({
       dataDir,
@@ -3200,6 +3214,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
     }
 
+    function branchOfProject(path: string): Pick<WorkspaceInfo, 'branch'> {
+      const branch = hub?.branchOf(path)
+      return branch ? { branch } : {}
+    }
+
     function projectInfo(record: WorkspaceRecord, state: ProjectState): WorkspaceInfo {
       return {
         id: record.id,
@@ -3214,6 +3233,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         ...(record.glyph ? { glyph: record.glyph } : {}),
         remoteStart: remoteStartable(record.id),
         ...(state.folders.some(folder => folder.problem === 'code-root') ? { codeRoot: true as const } : {}),
+        ...branchOfProject(record.path),
       }
     }
 
@@ -3402,13 +3422,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const task = await sessionTask(input.sessionId)
       if (!task) throw new AppError(404, 'task-not-found', '找不到该会话')
       if (!task.sessionFolder || task.workspaceId !== 'default' || !task.cwd || !(await ownFolders.verify(task.cwd)))
-        throw new AppError(409, 'session-folder-none', '这个会话没有自己的文件夹，或文件夹已不在启动目录中，不能存为项目')
+        throw new AppError(409, 'session-folder-none', '这个会话没有自己的文件夹，或文件夹已不在默认文件夹中，不能存为项目')
       const plan = await planFolders({ current: [], paths: [task.cwd], primaries: primaries(), guard: workspaceGuard })
       if (plan.added.length === 0) throw foldersRefused(plan.refused)
       // What is saved is the real path the rules were checked on: it must still be the folder directly inside the start
       // directory that the owner confirmed, not wherever a link put in its place meanwhile points.
       if ((await canonicalPath(dirname(plan.folders[0].path)).catch(() => undefined)) !== canonicalWorkspace)
-        throw new AppError(409, 'session-folder-none', '这个会话没有自己的文件夹，或文件夹已不在启动目录中，不能存为项目')
+        throw new AppError(409, 'session-folder-none', '这个会话没有自己的文件夹，或文件夹已不在默认文件夹中，不能存为项目')
       const title = Array.from(task.title.trim()).slice(0, 80).join('').trim()
       const record = newProject({
         ...(title && isPrintableText(title) ? { name: title } : {}),
@@ -3425,7 +3445,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       id: string,
       input: z.infer<typeof folderAddSchema>,
     ): Promise<{ workspace: WorkspaceInfo; refused: FolderRefusal[] }> {
-      if (id === 'default') throw new AppError(409, 'workspace-default', '启动目录只能包含一个文件夹。要组合多个文件夹，请新建项目。')
+      if (id === 'default') throw new AppError(409, 'workspace-default', '默认文件夹只能包含一个文件夹。要组合多个文件夹，请添加项目。')
       const record = requireProject(id)
       if (input.replace !== undefined) {
         const replaced = record.folders.find(folder => folder.id === input.replace)
@@ -3477,7 +3497,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     /** Rename, glyph and folder order (which sets the primary folder): the folder set stays the same. Audited first. */
     async function patchProject(caller: DeviceCaller, id: string, input: z.infer<typeof projectPatchSchema>): Promise<WorkspaceInfo> {
-      if (id === 'default') throw new AppError(409, 'workspace-default', '启动目录由 Host 的启动参数决定，不能修改')
+      if (id === 'default') throw new AppError(409, 'workspace-default', '默认文件夹由 Host 的启动参数决定，不能修改')
       if (input.name !== undefined && !isPrintableText(input.name)) throw unprintableName()
       const record = requireProject(id)
       const folders = input.order ? reorderFolders(record.folders, input.order) : record.folders
@@ -3531,7 +3551,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     /** Lowering: never blocked by the audit log. The last folder cannot go; the next one becomes primary when the first goes. */
     async function removeFolder(caller: DeviceCaller, id: string, folderId: string, res: ServerResponse): Promise<WorkspaceInfo> {
-      if (id === 'default') throw new AppError(409, 'workspace-default', '启动目录只能包含一个文件夹，不能移除')
+      if (id === 'default') throw new AppError(409, 'workspace-default', '默认文件夹只能包含一个文件夹，不能移除')
       const record = requireProject(id)
       const index = record.folders.findIndex(folder => folder.id === folderId)
       if (index < 0) throw new AppError(404, 'workspace-folder-not-found', '找不到该文件夹')
@@ -3563,7 +3583,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
 
     async function removeWorkspace(caller: Caller, id: string, res: ServerResponse): Promise<void> {
-      if (id === 'default') throw new AppError(409, 'workspace-default', '启动目录不能移除')
+      if (id === 'default') throw new AppError(409, 'workspace-default', '默认文件夹不能移除')
       const record = requireProject(id)
       if (
         await sessionsUsing(
@@ -3682,7 +3702,29 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       })
     }
 
+    let presetLookup: { at: number; found: AgentPreset[] } | undefined
+    /** Presets found on this computer that have no definition and whose id is free. */
+    function presetsToOffer(): HarnessInfo[] {
+      const detect = options.detectPreset
+      if (!detect) return []
+      if (!presetLookup || Date.now() - presetLookup.at > PRESET_LOOKUP_TTL_MS)
+        presetLookup = {
+          at: Date.now(),
+          found: AGENT_PRESETS.filter(preset => {
+            const detected = detect(preset)
+            return detected.found && (detected.companion?.found ?? true)
+          }),
+        }
+      const saved = new Set(config.settings().agents.map(agent => agent.presetId))
+      return presetLookup.found.filter(preset => !saved.has(preset.id) && !hub!.info(preset.id)).map(presetOffer)
+    }
+
+    /** A draft's Harness, which may not be saved yet: it decides which folders a file search covers. */
+    const draftHarness = (id: string): HarnessInfo | undefined => hub!.info(id) ?? presetsToOffer().find(item => item.id === id)
+
     async function catalog(caller: Caller): Promise<HostCatalog> {
+      // Only a device that may save a definition is offered one; everyone else keeps what is defined.
+      const mayDefine = isLocalListener(caller.connection.listener) && caller.device?.scopes.includes('admin') === true
       return {
         promptTemplatesVersion: templateStore.revision(),
         features: {
@@ -3710,7 +3752,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           pinnedDefaults: true,
           ...routes.features(caller),
         },
-        harnesses: hub!.drivers().map(harness => ({ ...harness, remoteStart: remoteHarnessStartable(harness) })),
+        harnesses: [...hub!.drivers(), ...(mayDefine ? presetsToOffer() : [])].map(harness => ({
+          ...harness,
+          remoteStart: remoteHarnessStartable(harness),
+        })),
         providers: usableProviders().map(provider => summarizeProvider(provider, providerKindOf(provider.id))),
         unusableProviders: unusableProviders(),
         uiPanels: registry.uiPanels(),
@@ -4957,6 +5002,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             : await Promise.all((chosen?.folders.map(folder => folder.path) ?? [cwd]).map(path => canonicalPath(path)))
           launchKey = launchTrustKey({ deviceId: caller.device.id, harnessId, launchHash, projectId: workspaceId, roots })
         }
+        // Read before `confirm`, which remembers this launch once the sheet approved it.
+        const firstStart = !fork && (!launchKey || !launchTrust.has(launchKey))
         const stepup = await confirm(
           req,
           caller,
@@ -4998,11 +5045,22 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           created = await acceptCreate(() =>
             own
               ? createInOwnFolder(
-                  { ...task, cwd: own.path, sessionFolder: own.name, expectedLaunchHash: launchHash },
+                  {
+                    ...task,
+                    cwd: own.path,
+                    sessionFolder: own.name,
+                    expectedLaunchHash: launchHash,
+                    ...(firstStart ? { firstStart } : {}),
+                  },
                   folderRequest,
                   checkStart,
                 )
-              : hub!.createTask({ ...task, ...(folders ? { folders } : {}), expectedLaunchHash: launchHash }),
+              : hub!.createTask({
+                  ...task,
+                  ...(folders ? { folders } : {}),
+                  expectedLaunchHash: launchHash,
+                  ...(firstStart ? { firstStart } : {}),
+                }),
           )
         } catch (error) {
           auditFailed(intent, caller)
@@ -5777,9 +5835,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         // Reading the agent settings is a re-check: the next catalog looks for every command again.
         forgetCommandLookups()
         // Each preset says whether its commands are here, so an agent can be added knowing what is still missing.
+        presetLookup = undefined
         const presets: AgentPresetSettings[] = AGENT_PRESETS.map(preset => ({
           ...preset,
-          detected: detectCommand(preset.command, preset.companion),
+          detected: (options.detectPreset ?? detectPresetCommands)(preset),
         }))
         json(res, { agents: config.settings().agents.map(agentSettings), presets })
         return true

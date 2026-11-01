@@ -22,13 +22,14 @@ const openAccess: StartAccess = { legacy: true, local: false }
 
 /**
  * What a new session will run on. Fields beyond `mode` exist only when the Host sends a catalog; `harnessId` is absent
- * while this device has yet to choose an engine.
+ * only when nothing can start from this device. `projectSkipped`: 不选项目 was picked, as opposed to no project chosen yet.
  */
 export interface ComposerChoice {
   mode: TaskMode
   harnessId?: string
   workspaceId?: string
   model?: ModelRef
+  projectSkipped?: boolean
 }
 
 /** What the Host now calls its built-in harness; a Host from before the rename still says 「Standard Harness」. */
@@ -47,6 +48,8 @@ export function findHarness(catalog: HostCatalog | undefined, id: string | undef
 export interface EngineEntry {
   harness: HarnessInfo
   label: string
+  /** What it can do, in the Harness menu. */
+  line: string
   /** Why this project cannot use it, though it can start here. */
   disabledReason?: string
   /** Latch does not ask per step: starting it takes the confirmation on the Mac. */
@@ -56,28 +59,24 @@ export interface EngineEntry {
 /** The one sentence about what the built-in engine cannot do. */
 export const LATCH_ENGINE_LIMIT = `${BUILTIN_HARNESS_NAME}只能读写项目里的文件，不能运行命令。`
 
-/**
- * What the new-session page says when this device can only start the built-in engine: what it cannot do and where the
- * way around that is. Nothing when another engine can start here, since the model control then names the difference.
- */
-export function engineLimitNote(catalog: HostCatalog, access: Pick<DeviceAccess, 'legacy' | 'local' | 'admin'>): string | undefined {
+/** The Harness menu's sentence when this device can only start the built-in engine. */
+export function otherHarnessesNote(catalog: HostCatalog, access: Pick<DeviceAccess, 'legacy' | 'local' | 'admin'>): string | undefined {
   const usable = engineEntries(catalog, access)
   if (usable.some(entry => entry.harness.source !== 'builtin') || usable.length === 0) return undefined
   if (catalog.harnesses.some(harness => harness.source !== 'builtin' && harness.status === 'ready'))
-    return `${LATCH_ENGINE_LIMIT}其他引擎只能在 Mac 上开始。`
-  return access.local && access.admin
-    ? `${LATCH_ENGINE_LIMIT}要运行命令，在输入框的模型菜单里添加一个引擎。`
-    : `${LATCH_ENGINE_LIMIT}要运行命令，在 Mac 上的 Latch 里添加一个引擎。`
+    return '其他 Harness 只能在 Mac 上开始。'
+  return access.local && access.admin ? undefined : '要运行命令，在 Mac 上的 Latch 里添加一个 Harness。'
 }
 
-/** Said before a full-access engine starts, however it came to be chosen: remembered, forked or just picked. */
-export const fullAccessStartNote = (harness: Pick<HarnessInfo, 'name'>) =>
-  `${harness.name} 由它自己决定权限，Latch 不限制它。开始时要在这台 Mac 上确认。`
-
-const builtinFirst = (a: HarnessInfo, b: HarnessInfo) => Number(b.source === 'builtin') - Number(a.source === 'builtin')
+/** Presets in their fixed order, then anything else; the built-in one last. `codex-2` ranks with `codex`. */
+function harnessRank(harness: HarnessInfo): number {
+  if (harness.source === 'builtin') return AGENT_PRESETS.length + 1
+  const preset = AGENT_PRESETS.findIndex(item => item.id === harness.id.replace(/-\d+$/u, ''))
+  return preset < 0 ? AGENT_PRESETS.length : preset
+}
 
 /**
- * The engines a new session can run on from this device, in a fixed order with the built-in one first. What is not
+ * The engines a new session can run on from this device, in a fixed order with the built-in one last. What is not
  * installed, or may only start on the Mac, is not offered: another device gets the built-in engine alone.
  */
 export function engineEntries(catalog: HostCatalog, access: StartAccess = openAccess, workspaceId?: string): EngineEntry[] {
@@ -85,12 +84,13 @@ export function engineEntries(catalog: HostCatalog, access: StartAccess = openAc
   const count = project?.folders?.length ?? 1
   return catalog.harnesses
     .filter(harness => harness.status === 'ready' && harnessGate(harness, access).allowed)
-    .toSorted(builtinFirst)
+    .toSorted((a, b) => harnessRank(a) - harnessRank(b))
     .map(harness => {
       const max = harness.projectFolders?.access === 'all' ? harness.projectFolders.max : undefined
       return {
         harness,
         label: harnessName(harness),
+        line: harness.source === 'builtin' ? '只能读写文件，不能运行命令' : (harness.statusMessage ?? '能读写这台 Mac 上的文件并运行命令'),
         fullAccess: !access.legacy && harnessLevel(harness) === 'L3',
         ...(max !== undefined && count > max ? { disabledReason: `这个项目有 ${count} 个文件夹，${harness.name} 最多使用 ${max} 个` } : {}),
       }
@@ -174,9 +174,25 @@ export function isPinnedChoice(catalog: HostCatalog, harness: Pick<HarnessInfo, 
 }
 
 /**
+ * The mode follows from where the session runs, and nobody picks it. With no project and no folder the owner set, a
+ * harness that can chat does: Latch 内置 cannot run commands, so a new empty folder would give it nothing to work on.
+ * One that cannot chat gets that folder from the Host.
+ */
+function startMode(catalog: HostCatalog, harness: HarnessInfo | undefined, workspaceId: string | undefined): TaskMode {
+  const modes = harness?.modes.length ? harness.modes : (['chat', 'agent'] as TaskMode[])
+  const noFolder = catalog.sessionFolders === true && (workspaceId ?? 'default') === 'default'
+  if (noFolder && modes.includes('chat')) return 'chat'
+  return modes.includes('agent') ? 'agent' : modes[0]!
+}
+
+/** What 不选项目 will do for this Harness, where the Host has no folder set. */
+export const noProjectLine = (harness: Pick<HarnessInfo, 'modes'> | undefined): string =>
+  harness?.modes.includes('chat') ? '不读写文件，不运行命令' : '在一个新的空文件夹里开始'
+
+/**
  * A remembered or partial choice, repaired against what the Host offers now: a
- * missing harness, unsupported mode, removed workspace or model falls back to
- * the Host defaults instead of failing at submit time.
+ * missing harness, removed workspace or model falls back to the Host defaults
+ * instead of failing at submit time.
  */
 export function resolveChoice(
   catalog: HostCatalog | undefined,
@@ -185,25 +201,63 @@ export function resolveChoice(
 ): ComposerChoice {
   if (!catalog) return { mode: stored?.mode ?? 'agent' }
   const usable = engineEntries(catalog, access).map(entry => entry.harness)
-  // This device's last engine. With none, one engine that asks before each step needs no question; a full-access one
-  // is never chosen for the person, and neither is one engine among several.
-  const harness =
-    usable.find(item => item.id === stored?.harnessId) ?? (usable.length === 1 && harnessLevel(usable[0]!) !== 'L3' ? usable[0] : undefined)
-  const modes = harness?.modes.length ? harness.modes : (['chat', 'agent'] as TaskMode[])
-  const mode =
-    [stored?.mode, catalog.defaults.mode].find((item): item is TaskMode => item !== undefined && modes.includes(item)) ?? modes.at(-1)!
+  // This device's last engine, otherwise the first it can start. Nothing is asked: the first send says what will run.
+  const harness = usable.find(item => item.id === stored?.harnessId) ?? usable[0]
   const workspaces = startableWorkspaces(catalog)
-  const workspace =
+  const named =
     workspaces.find(item => item.id === stored?.workspaceId)
     ?? workspaces.find(item => item.id === catalog.defaults.workspaceId)
     ?? workspaces[0]
+  // With the Host's own start directory, 'default' means no folder was picked yet, and a saved project is a better guess.
+  const skipped = stored?.projectSkipped === true
+  const workspace =
+    named?.id === 'default' && !skipped && catalog.sessionFolders ? (workspaces.find(item => item.id !== 'default') ?? named) : named
   const model = harness?.models === 'host' ? (validModel(catalog, stored?.model) ?? defaultModel(catalog)) : undefined
   return {
-    mode,
+    mode: startMode(catalog, harness, workspace?.id),
     ...(harness ? { harnessId: harness.id } : {}),
     ...(workspace ? { workspaceId: workspace.id } : {}),
     ...(model ? { model } : {}),
+    ...(skipped && workspace?.id === 'default' ? { projectSkipped: true } : {}),
   }
+}
+
+/** A fork keeps the mode of its source, while the Harness it now names has that mode: an agent session's folder goes with it. */
+export function forkedChoice(
+  catalog: HostCatalog | undefined,
+  start: Partial<ComposerChoice> | null,
+  borrowed: Partial<ComposerChoice>,
+  access: StartAccess = openAccess,
+): ComposerChoice {
+  const choice = resolveChoice(catalog, { ...start, ...borrowed }, access)
+  const harness = findHarness(catalog, choice.harnessId)
+  return borrowed.mode && harness?.modes.includes(borrowed.mode) ? { ...choice, mode: borrowed.mode } : choice
+}
+
+/**
+ * Whether sending should ask for a folder first: a Harness works in one, and the Host has none in mind. A start directory
+ * the owner set is a folder in mind; so is a fork. The built-in engine is fine without, as it reads and writes only what
+ * it is given.
+ */
+export function needsProject(catalog: HostCatalog | undefined, choice: ComposerChoice): boolean {
+  if (!catalog?.sessionFolders || choice.mode === 'chat' || choice.projectSkipped) return false
+  if (choice.workspaceId !== undefined && choice.workspaceId !== 'default') return false
+  const harness = catalog.harnesses.find(item => item.id === choice.harnessId)
+  return harness !== undefined && harness.source !== 'builtin'
+}
+
+/**
+ * Nothing on this computer can run a session yet, so the page says what to install. Only where a definition can be saved
+ * and a service added; a service that is saved but held back has its own way out.
+ */
+export function nothingInstalled(
+  block: StartBlock | null,
+  catalog: HostCatalog | undefined,
+  access: Pick<DeviceAccess, 'legacy' | 'local' | 'admin'>,
+): boolean {
+  if (block?.kind !== 'model-required' || block.action !== undefined || !catalog || access.legacy || !access.local || !access.admin)
+    return false
+  return !engineEntries(catalog, access).some(entry => entry.harness.source !== 'builtin')
 }
 
 /**
@@ -211,7 +265,6 @@ export function resolveChoice(
  * missing (its address is not confirmed, or it has no key), so the card does not ask for another service.
  */
 export type StartBlock =
-  | { kind: 'engine-required'; message: string }
   | { kind: 'harness-unavailable'; message: string }
   | { kind: 'model-required'; message: string; hint?: string; action?: string; settable?: false }
 
@@ -232,13 +285,10 @@ export function startBlock(snapshot: AppSnapshot, choice: ComposerChoice, access
   }
   const harness = catalog.harnesses.find(item => item.id === choice.harnessId)
   if (!harness) {
-    // Only a choice not yet made is a question; an assistant whose engine is gone cannot be answered by picking one here.
-    if (choice.harnessId === undefined && engineEntries(catalog, access).length > 0)
-      return { kind: 'engine-required', message: '先选一个引擎。' }
     const builtin = catalog.harnesses.find(item => item.source === 'builtin')
     return {
       kind: 'harness-unavailable',
-      message: builtin?.status === 'unavailable' && builtin.statusMessage ? builtin.statusMessage : '没有可用的引擎。',
+      message: builtin?.status === 'unavailable' && builtin.statusMessage ? builtin.statusMessage : '没有可用的 Harness。',
     }
   }
   if (harness.status !== 'ready')
@@ -299,6 +349,7 @@ export function readChoice(deviceId: string): Partial<ComposerChoice> | null {
       ...(model && typeof model.providerId === 'string' && typeof model.model === 'string'
         ? { model: { providerId: model.providerId, model: model.model } }
         : {}),
+      ...(item.projectSkipped === true ? { projectSkipped: true } : {}),
     }
   } catch {
     return null

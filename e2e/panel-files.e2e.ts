@@ -113,7 +113,7 @@ describe('the right panel', () => {
         await settleShell(page)
         await shot(page, 'launcher', width, theme)
         // Only what is real: neither a browser nor a terminal row until those exist.
-        expect(await launcher.locator('.panel-launcher-row').allTextContents()).toEqual(['变更D', '文件F'])
+        expect(await launcher.locator('.panel-launcher-row').allTextContents()).toEqual(['改动D', '文件F'])
         if (width >= 768) {
           await expect.poll(() => page.evaluate(() => document.activeElement?.className)).toBe('panel-launcher')
           await page.keyboard.press('f')

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronLeft, ChevronRight, Cpu, Box, Pin, PinOff, Plus, Sparkles } from 'lucide-react'
+import { Box, ChevronLeft, Cpu, Pin, PinOff, Plus, Sparkles } from 'lucide-react'
 import type { AgentPresetSettings, AgentSettings, HarnessInfo, HostCatalog, ModelRef, SessionConfigOption } from '@latch/protocol'
 import {
   Button,
@@ -7,8 +7,8 @@ import {
   InlineNotice,
   MenuFooterLink,
   MenuFooterNote,
+  Popover,
   SegmentedControl,
-  Tooltip,
   ValuePicker,
   useLayerClose,
   type PickerGroup,
@@ -18,15 +18,16 @@ import { harnessLevel, type DeviceAccess } from '../core/permissions.ts'
 import { SETUP_COPY } from '../core/securityCopy.ts'
 import {
   engineEntries,
+  findProvider,
   harnessName,
   isPinnedChoice,
-  LATCH_ENGINE_LIMIT,
+  otherHarnessesNote,
   presetsToAdd,
   sameModel,
   type ComposerChoice,
 } from '../composerChoice.ts'
 import { fuzzyModelMatch, modelKey, rememberModel, useModelPreferences } from '../modelPreferences.ts'
-import { HarnessTile } from '../components/BrandTile.tsx'
+import { HarnessTile, ProviderTile } from '../components/BrandTile.tsx'
 import { ModelAddPanel, modelGroups } from '../components/Pickers.tsx'
 import { AgentPresetList, AgentSetupPanel } from '../components/SetupPanels.tsx'
 import { escapeHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
@@ -35,35 +36,30 @@ import {
   agentConfigChoice,
   agentConfigLabel,
   agentConfigValues,
-  agentModelControls,
+  BUILTIN_THINKING_NOTE,
+  DEFAULT_MODEL,
+  modelChipText,
+  unreportedNote,
   type AgentConfigState,
 } from './modelReasoning.ts'
-import { draftPermission, type PermissionView } from './permission.ts'
-import { MODE_ICONS, PermissionList } from './PermissionList.tsx'
-import { useFooterFoldLevel } from './useFooterFold.ts'
 
 type Access = Pick<DeviceAccess, 'legacy' | 'local' | 'admin'>
 /** The most levels a segmented row holds in the popover's width; more go in a row that opens its own list. */
 const SEGMENTED_LEVELS = 5
+const OWN_MODEL = 'own'
 
 const pendingModelText = (model: string) => `下一条：${model}`
 const resetModelLabel = (current: ModelRef | undefined) => (current ? `撤销切换，继续使用 ${current.model}` : '撤销切换')
-
-const engineKey = (harnessId: string, model?: ModelRef) => `${harnessId}\u0000${model ? modelKey(model) : ''}`
-const fromEngineKey = (key: string): { harnessId: string; model?: ModelRef } => {
-  const [harnessId = '', providerId = '', model = ''] = key.split('\u0000')
-  return { harnessId, ...(providerId ? { model: { providerId, model } } : {}) }
-}
 
 /** 思考: a segmented row of the levels the engine reported; the menu stays open. */
 function LevelRow({ option, disabled, onChoose }: { option: SessionConfigOption; disabled: boolean; onChoose: (value: string) => void }) {
   const values = agentConfigValues(option)
   return (
     <div className="model-setting">
-      <span className="model-setting-name">{escapeHiddenCharacters(option.name)}</span>
+      <span className="model-setting-name">思考</span>
       {values.length <= SEGMENTED_LEVELS ? (
         <SegmentedControl
-          label={escapeHiddenCharacters(option.name)}
+          label="思考"
           value={option.currentValue}
           disabled={disabled}
           options={values.map(item => ({ value: item.value, label: escapeHiddenCharacters(item.name) }))}
@@ -72,7 +68,7 @@ function LevelRow({ option, disabled, onChoose }: { option: SessionConfigOption;
       ) : (
         <ValuePicker
           variant="row"
-          label={escapeHiddenCharacters(option.name)}
+          label="思考"
           value={option.currentValue}
           disabled={disabled}
           options={values.map(item => ({ value: item.value, label: escapeHiddenCharacters(item.name) }))}
@@ -83,31 +79,16 @@ function LevelRow({ option, disabled, onChoose }: { option: SessionConfigOption;
   )
 }
 
-/** 权限 in the popover: the current mode, opening the list; or a sentence for an engine without modes. */
-function PermissionRowLink({ view, onOpen }: { view: PermissionView | undefined; onOpen: () => void }) {
-  if (!view) return null
-  const Glyph = MODE_ICONS[view.icon]
-  if (!view.rows)
-    return (
-      <Tooltip content={view.tooltip}>
-        <div className="model-setting" tabIndex={0}>
-          <span className="model-setting-name">权限</span>
-          <span className="model-setting-value">
-            <Glyph size={14} aria-hidden="true" />
-            {view.label}
-          </span>
-        </div>
-      </Tooltip>
-    )
+/** 思考 with nothing to choose from: the value in place, and the one sentence on why. */
+function FixedThinking({ note }: { note: string | undefined }) {
   return (
-    <button type="button" className="model-setting model-setting-link" onClick={onOpen}>
-      <span className="model-setting-name">权限</span>
-      <span className="model-setting-value" data-amber={view.amber ? '' : undefined}>
-        <Glyph size={14} aria-hidden="true" />
-        {escapeHiddenCharacters(view.label)}
-      </span>
-      <ChevronRight size={12} aria-hidden="true" />
-    </button>
+    <>
+      <div className="model-setting">
+        <span className="model-setting-name">思考</span>
+        <span className="model-setting-value">默认</span>
+      </div>
+      {note && <p className="model-note">{note}</p>}
+    </>
   )
 }
 
@@ -173,24 +154,6 @@ function PinChoiceRow({
   )
 }
 
-function ManageLinks({ engines, models }: { engines?: (() => void) | undefined; models?: (() => void) | undefined }) {
-  if (!engines && !models) return null
-  return (
-    <div className="model-manage">
-      {engines && (
-        <MenuFooterLink icon={Cpu} chevron={false} closes onClick={engines}>
-          管理引擎…
-        </MenuFooterLink>
-      )}
-      {models && (
-        <MenuFooterLink icon={Box} chevron={false} closes onClick={models}>
-          管理模型…
-        </MenuFooterLink>
-      )}
-    </div>
-  )
-}
-
 /** Adding an engine where it is chosen: the presets not added yet, then the one picked with its panel. */
 function EngineAddPanel({
   onBack,
@@ -243,7 +206,7 @@ function EngineAddPanel({
     <div className="permission-list">
       <header className="permission-list-head">
         <IconButton size="xs" icon={ChevronLeft} label="返回" onClick={onBack} />
-        <span>添加引擎</span>
+        <span>添加 Harness</span>
       </header>
       <AgentPresetList
         presets={presets}
@@ -255,21 +218,15 @@ function EngineAddPanel({
   )
 }
 
-/**
- * The one control for what a new session runs on: the engine as its icon, the model as its name. Its popover has a
- * section per engine usable from this device, then 权限 and the ways to add or manage. An engine that brings its own
- * models is one row until it has started, because nothing tells Latch its list before that.
- */
-export function DraftModelControl({
+/** The Harness of a new session: each one this device can start, with what it can do. Choosing one never touches the others' settings. */
+export function DraftHarnessControl({
   catalog,
   choice,
   onChoice,
   access,
   disabled,
-  onManageEngines,
-  onManageModels,
-  onProvidersChanged,
-  onEngineAdded,
+  onManage,
+  onAdded,
   onDefaultsChanged,
 }: {
   catalog: HostCatalog
@@ -277,152 +234,283 @@ export function DraftModelControl({
   onChoice: (patch: Partial<ComposerChoice>) => void
   access: Access
   disabled: boolean
-  onManageEngines?: (() => void) | undefined
-  onManageModels?: (() => void) | undefined
-  onProvidersChanged?: (() => void) | undefined
-  onEngineAdded?: ((agent: AgentSettings) => void) | undefined
+  onManage?: (() => void) | undefined
+  onAdded?: ((agent: AgentSettings) => void) | undefined
   onDefaultsChanged?: (() => void | Promise<void>) | undefined
 }) {
-  const [panel, setPanel] = useState<'service' | 'engine' | null>(null)
-  const [showHidden, setShowHidden] = useState(false)
-  const preferences = useModelPreferences()
+  const [adding, setAdding] = useState(false)
   const entries = engineEntries(catalog, access, choice.workspaceId)
   const harness = entries.find(entry => entry.harness.id === choice.harnessId)?.harness
-  // One flat list per engine, the most recently used first.
-  const hostModels = modelGroups(catalog, preferences, choice.model, showHidden, access).flatMap(group => group.options)
-  const groups: Array<PickerGroup<string>> = entries.map(entry => ({
-    id: entry.harness.id,
-    label: entry.label,
-    media: <HarnessTile harness={entry.harness} size={16} />,
-    options:
-      entry.harness.models === 'host'
-        ? hostModels.map(option => {
-            const [providerId = '', model = ''] = option.value.split('\u0000')
-            return {
-              ...option,
-              // Two services can offer one name; only then does the row need to say whose it is.
-              description: hostModels.filter(other => other.label === option.label).length > 1 ? option.description : undefined,
-              value: engineKey(entry.harness.id, { providerId, model }),
-              ...(entry.disabledReason ? { disabledReason: entry.disabledReason } : {}),
-            }
-          })
-        : [
-            {
-              value: engineKey(entry.harness.id),
-              label: `${entry.label} 自带的模型`,
-              description: '开始后可以换',
-              ...(entry.disabledReason ? { disabledReason: entry.disabledReason } : {}),
-            },
-          ],
-  }))
-  // With a saved service the new session runs on the engine that uses it, whichever one was chosen before.
-  const hostEngine = harness?.models === 'host' ? harness : entries.find(entry => entry.harness.models === 'host')?.harness
-  const value = harness ? engineKey(harness.id, harness.models === 'host' ? choice.model : undefined) : undefined
-  const count = groups.reduce((sum, group) => sum + group.options.length, 0)
-  const canAddEngine = !access.legacy && access.local && access.admin && presetsToAdd(catalog).length > 0
-  const elsewhere =
-    !access.local && !access.legacy && catalog.harnesses.some(item => item.status === 'ready' && harnessLevel(item) === 'L3')
+  const canAdd = !access.legacy && access.local && access.admin && presetsToAdd(catalog).length > 0
   const noService = harness?.models === 'host' && !choice.model
-  const permission = draftPermission(harness)
-  const canPin = !access.legacy && access.local && access.admin && catalog.features?.pinnedDefaults === true && !noService
+  // A pin names a saved Harness; one still on offer is saved by its first session.
+  const canPin =
+    !access.legacy && access.local && access.admin && catalog.features?.pinnedDefaults === true && !noService && !harness?.offer
+  const note = otherHarnessesNote(catalog, access)
+  const elsewhere =
+    note === undefined
+    && !access.local
+    && !access.legacy
+    && catalog.harnesses.some(item => item.status === 'ready' && harnessLevel(item) === 'L3')
   return (
     <ValuePicker
-      label="模型"
-      placeholder="选择引擎"
-      value={value}
-      valueText={harness ? (harness.models === 'host' ? (choice.model?.model ?? harnessName(harness)) : harnessName(harness)) : undefined}
-      groups={groups}
-      searchable={count >= 8 && panel === null}
-      searchMatch={(option, query) => fuzzyModelMatch(option.label, query)}
-      width={panel ? 360 : 320}
+      label="Harness"
+      placeholder="选择 Harness"
+      value={harness?.id}
+      options={entries.map(entry => ({
+        value: entry.harness.id,
+        label: entry.label,
+        description: entry.line,
+        media: <HarnessTile harness={entry.harness} size={20} />,
+        ...(entry.disabledReason ? { disabledReason: entry.disabledReason } : {}),
+      }))}
+      header={{ title: '开始后这个会话不能换 Harness。' }}
+      width={adding ? 360 : 340}
       leading={harness ? <HarnessTile harness={harness} size={16} /> : Sparkles}
-      className="model-picker"
+      className="harness-picker"
       menuChevron
       disabled={disabled}
       onOpenChange={open => {
-        if (!open) setPanel(null)
+        if (!open) setAdding(false)
       }}
-      onValueChange={key => {
-        const next = fromEngineKey(key)
-        if (next.model) rememberModel(modelKey(next.model))
-        const chosen = entries.find(entry => entry.harness.id === next.harnessId)?.harness
-        const modes = chosen?.modes ?? []
-        onChoice({
-          harnessId: next.harnessId,
-          ...(next.model ? { model: next.model } : {}),
-          ...(choice.mode === 'chat' && !modes.includes('chat') ? { mode: 'agent' as const } : {}),
-        })
-      }}
+      onValueChange={harnessId => onChoice({ harnessId })}
       footer={
         <div className="model-footer">
-          {harness?.source === 'builtin' && <p className="model-note">{LATCH_ENGINE_LIMIT}</p>}
-          {elsewhere && <p className="model-note">其他引擎只能在 Mac 上开始。</p>}
-          {noService && access.admin && (
+          {note && <p className="model-note">{note}</p>}
+          {elsewhere && <p className="model-note">其他 Harness 只能在 Mac 上开始。</p>}
+          {canPin && harness && <PinChoiceRow catalog={catalog} harness={harness} model={choice.model} onChanged={onDefaultsChanged} />}
+          {canAdd && (
             <MenuFooterLink
               icon={Plus}
               chevron={false}
               onClick={() => {
-                setPanel('service')
+                setAdding(true)
               }}>
-              添加模型服务…
+              添加 Harness…
             </MenuFooterLink>
           )}
-          {noService && !access.admin && <MenuFooterNote>{SETUP_COPY.addProviderElsewhere}</MenuFooterNote>}
-          <PermissionRowLink view={permission} onOpen={() => {}} />
-          {canPin && harness && <PinChoiceRow catalog={catalog} harness={harness} model={choice.model} onChanged={onDefaultsChanged} />}
+          {onManage && (
+            <MenuFooterLink icon={Cpu} chevron={false} closes onClick={onManage}>
+              管理 Harness…
+            </MenuFooterLink>
+          )}
+        </div>
+      }
+      panel={
+        adding ? (
+          <EngineAddPanel
+            catalog={catalog}
+            canAdd={canAdd}
+            admin={access.admin}
+            onBack={() => {
+              setAdding(false)
+            }}
+            onAdded={agent => {
+              onAdded?.(agent)
+            }}
+          />
+        ) : undefined
+      }
+    />
+  )
+}
+
+/** The Harness of a running session: its mark and name, locked, and why. The chip still opens, since a tooltip never reaches touch. */
+export function SessionHarnessControl({ harness, onNewSession }: { harness: HarnessInfo; onNewSession: () => void }) {
+  const name = harnessName(harness)
+  return (
+    <Popover
+      label="Harness"
+      width={300}
+      side="top"
+      trigger={props => (
+        <button {...props} type="button" className="chip chip-harness" aria-label={`Harness：${name}`}>
+          <HarnessTile harness={harness} size={16} />
+          <span className="chip-text">{name}</span>
+        </button>
+      )}>
+      <div className="model-footer">
+        <p className="model-note">会话开始后不能换 Harness。要换就新开一个会话，或从某一轮分叉。</p>
+        <MenuFooterLink icon={Plus} chevron={false} closes onClick={onNewSession}>
+          新会话
+        </MenuFooterLink>
+      </div>
+    </Popover>
+  )
+}
+
+const UNUSABLE_WORDS = {
+  'key-missing': '没有密钥 · 在设置 › 模型里添加',
+  'origin-unconfirmed': '地址还没确认 · 在这台 Mac 上确认',
+} as const
+
+/** Saved services the built-in Harness cannot use yet, each saying what is missing. */
+function unusableGroups(catalog: HostCatalog): Array<PickerGroup<string>> {
+  return (catalog.unusableProviders ?? []).map(provider => ({
+    id: `~unusable-${provider.id}`,
+    label: provider.name,
+    options: [{ value: `~unusable-${provider.id}`, label: provider.name, disabledReason: UNUSABLE_WORDS[provider.reason] }],
+  }))
+}
+
+/** A Harness with its own models lists them first; each saved service follows, disabled, until Latch can forward to it. */
+function ownModelGroups(
+  catalog: HostCatalog,
+  name: string,
+  own: Array<PickerGroup<string>['options'][number]>,
+): Array<PickerGroup<string>> {
+  const services = catalog.providers.filter(provider => provider.kind !== 'demo')
+  return [
+    { id: '~own', label: `${name} 自己的模型`, options: own },
+    ...(services.length
+      ? [
+          {
+            id: '~services',
+            label: '模型服务',
+            options: services.map(provider => ({
+              value: `~service-${provider.id}`,
+              label: provider.name,
+              media: <ProviderTile provider={provider} size={16} />,
+              disabledReason: `让 Latch 把 ${name} 的请求转给它，尚未实现`,
+            })),
+          },
+        ]
+      : []),
+  ]
+}
+
+/** The model and thinking of a new session. A Harness with its own models tells Latch nothing before it starts, and this says so in place. */
+export function DraftModelControl({
+  catalog,
+  choice,
+  onChoice,
+  access,
+  disabled,
+  onManageModels,
+  onProvidersChanged,
+}: {
+  catalog: HostCatalog
+  choice: ComposerChoice
+  onChoice: (patch: Partial<ComposerChoice>) => void
+  access: Access
+  disabled: boolean
+  onManageModels?: (() => void) | undefined
+  onProvidersChanged?: (() => void) | undefined
+}) {
+  const [adding, setAdding] = useState(false)
+  const [showHidden, setShowHidden] = useState(false)
+  const preferences = useModelPreferences()
+  const entries = engineEntries(catalog, access, choice.workspaceId)
+  const harness = entries.find(entry => entry.harness.id === choice.harnessId)?.harness
+  const manage = onManageModels && (
+    <MenuFooterLink icon={Box} chevron={false} closes onClick={onManageModels}>
+      管理模型…
+    </MenuFooterLink>
+  )
+  if (!harness)
+    return (
+      <ValuePicker
+        label="模型"
+        placeholder="模型"
+        value={undefined}
+        options={[]}
+        className="model-picker"
+        menuChevron
+        disabled
+        disabledReason="先选一个 Harness，才知道有哪些模型。"
+        onValueChange={() => {}}
+      />
+    )
+  if (harness.models !== 'host') {
+    const name = harnessName(harness)
+    return (
+      <ValuePicker
+        label="模型"
+        value={OWN_MODEL}
+        valueText={modelChipText(undefined, undefined)}
+        groups={ownModelGroups(catalog, name, [{ value: OWN_MODEL, label: DEFAULT_MODEL }])}
+        width={340}
+        className="model-picker"
+        menuChevron
+        disabled={disabled}
+        onValueChange={() => {}}
+        footer={
+          <div className="model-footer">
+            <FixedThinking note={unreportedNote(name, false, [])} />
+            {manage}
+          </div>
+        }
+      />
+    )
+  }
+  const noService = !choice.model
+  const groups = [
+    ...modelGroups(catalog, preferences, choice.model, showHidden, access).map(group => ({
+      ...group,
+      options: group.options.map(option => ({ ...option, description: undefined })),
+    })),
+    ...unusableGroups(catalog),
+  ]
+  const count = groups.reduce((sum, group) => sum + group.options.length, 0)
+  const provider = findProvider(catalog, choice.model?.providerId)
+  return (
+    <ValuePicker
+      label="模型"
+      placeholder="选择模型"
+      value={choice.model ? modelKey(choice.model) : undefined}
+      {...(choice.model ? { valueText: modelChipText(choice.model.model, undefined) } : {})}
+      groups={groups}
+      searchable={count >= 8 && !adding}
+      searchMatch={(option, query) => fuzzyModelMatch(option.label, query)}
+      width={adding ? 360 : 320}
+      {...(provider ? { leading: <ProviderTile provider={provider} size={16} /> } : {})}
+      className="model-picker"
+      menuChevron
+      disabled={disabled}
+      onOpenChange={open => {
+        if (!open) setAdding(false)
+      }}
+      onValueChange={key => {
+        rememberModel(key)
+        const [providerId = '', model = ''] = key.split('\u0000')
+        onChoice({ model: { providerId, model } })
+      }}
+      footer={
+        <div className="model-footer">
+          {!noService && <FixedThinking note={BUILTIN_THINKING_NOTE} />}
           <HiddenModelsLink
             shown={showHidden}
             onToggle={() => {
               setShowHidden(!showHidden)
             }}
           />
-          {canAddEngine && (
+          {access.admin ? (
             <MenuFooterLink
               icon={Plus}
               chevron={false}
               onClick={() => {
-                setPanel('engine')
-              }}>
-              添加引擎…
-            </MenuFooterLink>
-          )}
-          {access.admin && !noService && hostEngine && (
-            <MenuFooterLink
-              icon={Plus}
-              chevron={false}
-              onClick={() => {
-                setPanel('service')
+                setAdding(true)
               }}>
               添加模型服务…
             </MenuFooterLink>
+          ) : (
+            noService && <MenuFooterNote>{SETUP_COPY.addProviderElsewhere}</MenuFooterNote>
           )}
-          <ManageLinks engines={onManageEngines} models={onManageModels} />
+          {manage}
         </div>
       }
       panel={
-        panel === 'service' ? (
+        adding ? (
           <ModelAddPanel
             access={access}
             onCancel={() => {
-              setPanel(null)
+              setAdding(false)
             }}
             onManage={onManageModels}
             onSaved={model => {
               rememberModel(modelKey(model))
-              onChoice({ model, ...(hostEngine ? { harnessId: hostEngine.id } : {}) })
+              onChoice({ model })
               onProvidersChanged?.()
-            }}
-          />
-        ) : panel === 'engine' ? (
-          <EngineAddPanel
-            catalog={catalog}
-            canAdd={canAddEngine}
-            admin={access.admin}
-            onBack={() => {
-              setPanel(null)
-            }}
-            onAdded={agent => {
-              onEngineAdded?.(agent)
             }}
           />
         ) : undefined
@@ -432,43 +520,40 @@ export function DraftModelControl({
 }
 
 /**
- * The same control in a session: the engine is fixed, the model, 思考 and 权限 change when the engine allows it. Latch's
- * own engine lists your services and a switch goes with the next message; an external engine lists what it reported,
- * and a change is written to it at once.
+ * The same control in a session. The built-in Harness lists your services and a switch goes with the next message; a
+ * Harness with its own models lists what it reported, and a change is written to it at once.
  */
 export function SessionModelControl({
   catalog,
   harness,
   model,
   current,
+  reported,
   onModel,
   config,
   busy,
   feedback,
   onRefresh,
   onConfig,
-  permission,
-  onManageEngines,
   onManageModels,
+  locked,
 }: AgentConfigState & {
+  /** This device may read the session but not change it: why, as the picker's tooltip. */
+  locked?: string | undefined
   catalog: HostCatalog
   harness: HarnessInfo | undefined
   model: ModelRef | undefined
   current: ModelRef | undefined
+  /** The model name the session last ran on, for when the agent lists no options. */
+  reported?: string | undefined
   onModel: (model: ModelRef | undefined) => void
   config: readonly SessionConfigOption[]
   onRefresh?: (() => void | Promise<void>) | undefined
   onConfig: (configId: string, value: string) => void | Promise<void>
-  permission: PermissionView | undefined
-  onManageEngines?: (() => void) | undefined
   onManageModels?: (() => void) | undefined
 }) {
-  const fold = useFooterFoldLevel()
-  const [panel, setPanel] = useState<'permission' | null>(null)
   const [showHidden, setShowHidden] = useState(false)
   const preferences = useModelPreferences()
-  const header = harness ? { title: harnessName(harness), meta: '会话开始后不能换引擎' } : undefined
-  const leading = harness ? <HarnessTile harness={harness} size={16} /> : Sparkles
   const state: AgentConfigState = { busy, ...(feedback ? { feedback } : {}) }
   const blocked = agentConfigBlocked(state)
   const choose = (id: string, value: string) => {
@@ -476,49 +561,33 @@ export function SessionModelControl({
     if (intent) return onConfig(intent.configId, intent.value)
     return undefined
   }
-  const permissionRow = (
-    <PermissionRowLink
-      view={permission}
-      onOpen={() => {
-        setPanel('permission')
-      }}
-    />
+  const manage = onManageModels && (
+    <MenuFooterLink icon={Box} chevron={false} closes onClick={onManageModels}>
+      管理模型…
+    </MenuFooterLink>
   )
-  const permissionPanel =
-    panel === 'permission' && permission?.rows && permission.option ? (
-      <PermissionList
-        rows={permission.rows}
-        onBack={() => {
-          setPanel(null)
-        }}
-        onChoose={value => {
-          void choose(permission.option!.id, value)
-        }}
-      />
-    ) : undefined
   if (harness?.models === 'host' && catalog.providers.length > 0) {
     const groups = modelGroups(catalog, preferences, model, showHidden).map(group => ({
       ...group,
       options: group.options.map(option => ({ ...option, description: undefined })),
     }))
     const count = groups.reduce((sum, group) => sum + group.options.length, 0)
+    const provider = findProvider(catalog, model?.providerId)
     return (
       <ValuePicker
         label="模型"
         placeholder="选择模型"
         value={model ? modelKey(model) : undefined}
-        {...(model && !sameModel(model, current) ? { valueText: pendingModelText(model.model) } : {})}
+        valueText={!model || sameModel(model, current) ? modelChipText(model?.model, undefined) : pendingModelText(model.model)}
         groups={groups}
-        header={header}
-        searchable={count >= 8 && panel === null}
+        searchable={count >= 8}
         searchMatch={(option, query) => fuzzyModelMatch(option.label, query)}
         width={320}
-        leading={leading}
+        {...(provider ? { leading: <ProviderTile provider={provider} size={16} /> } : {})}
         className="model-picker"
         menuChevron
-        onOpenChange={open => {
-          if (!open) setPanel(null)
-        }}
+        disabled={locked !== undefined}
+        disabledReason={locked}
         onValueChange={key => {
           rememberModel(key)
           const [providerId = '', name = ''] = key.split('\u0000')
@@ -526,7 +595,7 @@ export function SessionModelControl({
         }}
         footer={
           <div className="model-footer">
-            {harness?.source === 'builtin' && <p className="model-note">{LATCH_ENGINE_LIMIT}</p>}
+            <FixedThinking note={BUILTIN_THINKING_NOTE} />
             {model && !sameModel(model, current) && (
               <MenuFooterLink
                 chevron={false}
@@ -537,23 +606,21 @@ export function SessionModelControl({
                 {resetModelLabel(current)}
               </MenuFooterLink>
             )}
-            {permissionRow}
             <HiddenModelsLink
               shown={showHidden}
               onToggle={() => {
                 setShowHidden(!showHidden)
               }}
             />
-            <ManageLinks engines={onManageEngines} models={onManageModels} />
+            {manage}
           </div>
         }
-        panel={permissionPanel}
       />
     )
   }
-  const { primary, related } = agentModelControls(config)
-  const thought = related.find(option => option.category === 'thought_level')
-  const others = related.filter(option => option !== thought)
+  const modelOption = config.find(option => option.category === 'model')
+  const thought = config.find(option => option.category === 'thought_level')
+  const others = config.filter(option => option.category === 'model_config')
   const values = (option: SessionConfigOption) =>
     agentConfigValues(option).map(item => ({
       value: item.value,
@@ -563,65 +630,64 @@ export function SessionModelControl({
         ? { disabledReason: feedback?.kind === 'unknown' ? '上次切换的结果未知，请先刷新当前设置。' : '正在切换，请稍后。' }
         : {}),
     }))
-  const name = harness ? harnessName(harness) : '引擎'
-  const shown = primary ? agentConfigLabel(primary) : name
-  const level = primary?.category === 'model' && thought ? agentConfigLabel(thought) : undefined
-  const text = level && fold < 2 ? `${shown} · ${level}` : shown
-  const footer = (
-    <div className="model-footer">
-      {primary?.category === 'model' && thought && (
-        <LevelRow
-          option={thought}
-          disabled={blocked}
-          onChoose={value => {
-            void choose(thought.id, value)
-          }}
-        />
-      )}
-      {permissionRow}
-      {others.map(option => (
-        <ConfigRow
-          key={option.id}
-          option={option}
-          disabled={blocked}
-          onChoose={value => {
-            void choose(option.id, value)
-          }}
-        />
-      ))}
-      {feedback && (
-        <InlineNotice
-          tone={feedback.kind === 'unknown' ? 'warn' : 'error'}
-          action={feedback.kind === 'unknown' && onRefresh ? <RefreshConfig refresh={onRefresh} /> : undefined}>
-          <VisibleText text={feedback.message} />
-        </InlineNotice>
-      )}
-      <ManageLinks engines={onManageEngines} />
-    </div>
-  )
+  const name = harness ? harnessName(harness) : 'Harness'
+  const reportedOr = modelOption ? agentConfigLabel(modelOption) : reported
+  const text = modelChipText(reportedOr, thought ? agentConfigLabel(thought) : undefined)
+  const note = unreportedNote(name, true, config)
   return (
     <ValuePicker
-      label={primary ? escapeHiddenCharacters(primary.name) : '引擎'}
-      value={primary?.currentValue ?? 'engine'}
+      label="模型"
+      value={modelOption?.currentValue ?? OWN_MODEL}
       valueText={escapeHiddenCharacters(feedback?.kind === 'unknown' ? `${text} · 结果未知` : text)}
-      options={primary ? values(primary) : [{ value: 'engine', label: `${name} 自己决定用哪个模型` }]}
-      header={header}
-      leading={leading}
+      groups={ownModelGroups(catalog, name, modelOption ? values(modelOption) : [{ value: OWN_MODEL, label: reportedOr ?? DEFAULT_MODEL }])}
       className="model-picker"
       menuChevron
-      searchable={(primary?.options.length ?? 0) >= 8 && panel === null}
-      width={320}
+      searchable={(modelOption?.options.length ?? 0) >= 8}
+      width={340}
       pending={busy !== null}
       pendingLabel="正在切换…"
-      onOpenChange={open => {
-        if (!open) setPanel(null)
-      }}
+      disabled={locked !== undefined}
+      disabledReason={locked}
       onValueChange={value => {
-        if (primary) return choose(primary.id, value)
+        if (modelOption) return choose(modelOption.id, value)
         return undefined
       }}
-      footer={footer}
-      panel={permissionPanel}
+      footer={
+        <div className="model-footer">
+          {thought ? (
+            <>
+              <LevelRow
+                option={thought}
+                disabled={blocked}
+                onChoose={value => {
+                  void choose(thought.id, value)
+                }}
+              />
+              {note && <p className="model-note">{note}</p>}
+            </>
+          ) : (
+            <FixedThinking note={note} />
+          )}
+          {others.map(option => (
+            <ConfigRow
+              key={option.id}
+              option={option}
+              disabled={blocked}
+              onChoose={value => {
+                void choose(option.id, value)
+              }}
+            />
+          ))}
+          {feedback && (
+            <InlineNotice
+              tone={feedback.kind === 'unknown' ? 'warn' : 'error'}
+              action={feedback.kind === 'unknown' && onRefresh ? <RefreshConfig refresh={onRefresh} /> : undefined}>
+              <VisibleText text={feedback.message} />
+            </InlineNotice>
+          )}
+          {manage}
+        </div>
+      }
     />
   )
 }

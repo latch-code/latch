@@ -312,7 +312,7 @@ function Pills() {
         </Cell>
         <Cell caption="新结果">
           <span className="gallery-inline">
-            自动化 <Count value={2} tone="strong" />
+            定时任务 <Count value={2} tone="strong" />
           </span>
         </Cell>
         <Cell caption="等你处理">

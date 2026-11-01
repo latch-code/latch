@@ -92,7 +92,7 @@ it('opens every tool edit of a file in the same column and keeps history availab
           .getByRole('region', { name: '这一轮改动的文件', exact: true })
           .locator('button.summary-file', { hasText: 'report.txt' })
           .click()
-        const history = page.getByRole('region', { name: '文件历史变更', exact: true })
+        const history = page.getByRole('region', { name: '文件历史改动', exact: true })
         await history.getByText('2 次工具修改', { exact: false }).waitFor()
         const first = history.getByRole('region', { name: '第 1 次修改', exact: true }),
           second = history.getByRole('region', { name: '第 2 次修改', exact: true })
@@ -114,13 +114,13 @@ it('opens every tool edit of a file in the same column and keeps history availab
           expect((await history.boundingBox())!.width).toBeGreaterThan(900)
           await history.getByRole('region', { name: '修改前代码', exact: true }).getByText('version 1', { exact: true }).waitFor()
           await history.getByRole('region', { name: '修改后代码', exact: true }).getByText('version 2', { exact: true }).waitFor()
-          await history.getByRole('navigation', { name: '变更文件' }).getByRole('button', { name: 'connection.ts', exact: false }).click()
+          await history.getByRole('navigation', { name: '改动的文件' }).getByRole('button', { name: 'connection.ts', exact: false }).click()
           await history
             .getByRole('region', { name: '修改后代码', exact: true })
             .getByText('connectAutomatically', { exact: false })
             .waitFor()
           await page.screenshot({ path: `test-results/file-history/code-split-${width}-${theme}.png`, animations: 'disabled' })
-          await history.getByRole('navigation', { name: '变更文件' }).getByRole('button', { name: 'report.txt', exact: false }).click()
+          await history.getByRole('navigation', { name: '改动的文件' }).getByRole('button', { name: 'report.txt', exact: false }).click()
         } else expect(await history.getByRole('button', { name: '左右对照', exact: true }).count()).toBe(0)
         await page.screenshot({ path: `test-results/file-history/${width}-${theme}.png`, animations: 'disabled' })
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
@@ -128,7 +128,7 @@ it('opens every tool edit of a file in the same column and keeps history availab
         const preview = page.getByRole('region', { name: '文件预览', exact: true })
         await preview.getByText('version 2', { exact: true }).waitFor()
         await preview.getByRole('button', { name: '文件操作', exact: true }).click()
-        await page.getByRole('menuitem', { name: '查看变更', exact: true }).click()
+        await page.getByRole('menuitem', { name: '查看改动', exact: true }).click()
         await history.getByText('2 次工具修改', { exact: false }).waitFor()
         if (width === 1440 && theme === 'dark') {
           await rm(join(host.workspaceRoot, 'report.txt'))

@@ -190,6 +190,8 @@ export interface EnrollmentInfo {
   presence: { status: 'available' | 'unavailable'; message?: string }
   /** Only on host.sock: no active device holds `admin`. */
   firstDevice?: boolean
+  /** Only on host.sock: this computer's name, which the desktop app takes as its own. */
+  hostName?: string
   /** True on every listener but host.sock (see `isLocalListener`). */
   invitationRequired: boolean
   /** host.sock only, while at least one unexpired offline ticket exists. */

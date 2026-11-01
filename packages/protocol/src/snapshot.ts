@@ -62,7 +62,7 @@ export interface AppSnapshot {
   catalog?: HostCatalog
   /** 我的 Agent, for devices that may read them; absent otherwise and on older Hosts. */
   customAgents?: CustomAgentSummary[]
-  /** 自动化, under the same condition. */
+  /** 定时任务, under the same condition. */
   automations?: AutomationSummary[]
   version?: string
   /** The Host's clock when it answered. */

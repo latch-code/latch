@@ -15,7 +15,7 @@ export function ArgumentList({ text, covered = [], quiet = false }: { text?: str
       </pre>
     )
   const entries = view.entries.filter(([, value]) => !covered.includes(value))
-  if (entries.length === 0) return quiet ? null : <p className="muted-line">内容见变更</p>
+  if (entries.length === 0) return quiet ? null : <p className="muted-line">内容见改动</p>
   return (
     <dl className="argument-list">
       {entries.map(([key, value]) => (

@@ -80,7 +80,7 @@ struct ConversationView: View {
                     let latest = index == turns.count - 1
                     TurnView(turn: turn, latest: latest, status: latest ? status : nil, running: latest && running, frozen: !model.connected,
                         delivery: latest && running ? PhoneConversation.delivery(model.detail, turn: turn) : nil,
-                        harnessId: summary["harnessId"].string, engine: engine, assistant: summary["personal"]["assistantId"].string == nil ? "通用" : "助手",
+                        harnessId: summary["harnessId"].string, engine: engine,
                         endSaid: latest && !running && PhoneConversation.runEnd(model.detail["summary"], engine: engine) != nil, open: openFile).equatable()
                 }
                 if running { RunStatusLine().id("status") }

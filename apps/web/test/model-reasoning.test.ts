@@ -3,8 +3,15 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { HarnessInfo, HostCatalog, SessionConfigOption } from '@latch/protocol'
 import { SessionModelControl } from '../src/composer/ModelControl.tsx'
-import { contextUse, contextWords, permissionView } from '../src/composer/permission.ts'
-import { agentConfigChoice, agentConfigValues, agentModelControls, composerOptions } from '../src/composer/modelReasoning.ts'
+import { contextUse, contextWords, draftPermission, permissionView } from '../src/composer/permission.ts'
+import {
+  agentConfigChoice,
+  agentConfigValues,
+  agentModelControls,
+  composerOptions,
+  modelChipText,
+  unreportedNote,
+} from '../src/composer/modelReasoning.ts'
 
 const model: SessionConfigOption = {
   id: 'opaque-model',
@@ -93,19 +100,20 @@ describe('Agent model and reasoning controls', () => {
   it('does not expose a reasoning slot for model-only or uncategorized options', () => {
     const modelOnly = html({ ...props(), config: [model] })
     expect(modelOnly).toContain('First model')
-    expect(modelOnly).not.toContain('思考预算')
     expect(modelOnly).not.toContain('role="slider"')
-    // Nothing reported: the control still names the engine, and says the engine decides.
-    expect(html({ ...props(), config: [] })).toContain('Fake Agent')
+    expect(modelOnly).toContain('First model · 默认思考')
+    // Nothing reported: the control still names both facts, and says the Harness decides.
+    const silent = html({ ...props(), config: [] })
+    expect(silent).toContain('默认模型 · 默认思考')
+    expect(silent).toContain('Fake Agent 没有报告模型和思考深度')
   })
 
-  it('holds model and thinking in one control, under their original names, with every choice still reachable', () => {
+  it('holds model and thinking in one control, with every choice still reachable', () => {
     const rendered = html(props())
     expect(rendered).toContain('First model · 均衡')
-    expect(rendered).toContain('思考预算')
+    expect(rendered).toContain('思考')
     expect(rendered).toContain('上下文窗口')
     expect(rendered).toContain('Agent description')
-    expect(rendered).toContain('会话开始后不能换引擎')
     expect(rendered).toContain('aria-checked="true"')
     expect(rendered).not.toContain('role="slider"')
   })
@@ -130,7 +138,7 @@ describe('Agent model and reasoning controls', () => {
   })
 
   it('renders Agent text safely and visibly exposes direction controls', () => {
-    const rendered = html({ ...props(), config: [{ ...model, name: '<script>\u202EModel' }] })
+    const rendered = html({ ...props(), config: [{ ...model, options: [{ value: 'one', name: '<script>\u202EModel' }] }] })
     expect(rendered).not.toContain('<script>')
     expect(rendered).not.toContain('\u202E')
     expect(rendered).toContain('&lt;script&gt;')
@@ -164,29 +172,38 @@ describe('the 权限 chip', () => {
   const view = (currentValue: string, access = local) =>
     permissionView({ harness, permission, config: [{ ...modes, currentValue }], access })!
 
-  it('draws nothing on the engine’s default, the mode otherwise, and amber only where it never asks', () => {
-    expect(view('read-only')).toMatchObject({ chip: false, amber: false, label: '只读', icon: 'eye' })
-    expect(view('workspace-write')).toMatchObject({ chip: true, amber: false, label: '自动', icon: 'shield' })
-    expect(view('agent-full-access')).toMatchObject({ chip: true, amber: true, icon: 'shield-alert' })
+  it('always names the mode, amber only where it never asks', () => {
+    expect(view('read-only')).toMatchObject({ amber: false, label: '只读', icon: 'eye' })
+    expect(view('workspace-write')).toMatchObject({ amber: false, label: '自动', icon: 'shield' })
+    expect(view('agent-full-access')).toMatchObject({ amber: true, icon: 'shield-alert' })
+    expect(view('read-only').note).toContain('也不隔离它')
   })
 
-  it('judges the default by the mode a session starts in, not the one it was last set to', () => {
-    const moved = { ...permission, expectedMode: 'workspace-write' }
-    expect(
-      permissionView({ harness, permission: moved, config: [{ ...modes, currentValue: 'workspace-write' }], access: local })?.chip,
-    ).toBe(true)
-  })
-
-  it('keeps the chip for an engine Latch cannot limit or read back', () => {
+  it('makes the widest and the unconfirmable case the visible ones', () => {
     const decides = permissionView({ harness, permission: { ...permission, approvals: 'none' }, config: [], access: local })
-    expect(decides).toMatchObject({ chip: true, label: '由 Fake Agent 决定' })
+    expect(decides).toMatchObject({ amber: true, label: '不询问 · 由 Fake Agent 决定' })
     const blind = permissionView({ harness, permission: { ...permission, readback: 'none' }, config: [], access: local })
-    expect(blind).toMatchObject({ chip: true, label: '权限无法确认' })
+    expect(blind).toMatchObject({ amber: true, label: '权限无法确认' })
   })
 
-  it('says nothing for the built-in engine, which asks before each step', () => {
+  it('says what the built-in Harness does', () => {
     const builtin = { ...harness, source: 'builtin' as const, level: 'L1' as const }
-    expect(permissionView({ harness: builtin, config: [], access: local })).toMatchObject({ chip: false, label: '需要时询问' })
+    expect(permissionView({ harness: builtin, config: [], access: local })).toMatchObject({ amber: false, label: '先问你' })
+  })
+
+  it('says a chat touches no files, in a draft and in a session, whatever the Harness declares', () => {
+    expect(draftPermission(harness, 'chat')).toMatchObject({ label: '不读写文件', amber: false })
+    expect(permissionView({ harness, mode: 'chat', config: [], access: local })).toMatchObject({ label: '不读写文件', amber: false })
+  })
+
+  it('tells a draft only what the Harness declares', () => {
+    const draft = (declared?: { approvals: 'prompts' | 'none'; readback: 'mode' | 'none' }) =>
+      draftPermission({ ...harness, ...(declared ? { permission: declared } : {}) }, 'agent')
+    expect(draft({ approvals: 'prompts', readback: 'mode' })).toMatchObject({ label: '先问你', amber: false })
+    expect(draft({ approvals: 'prompts', readback: 'mode' })?.note).toContain('发第一条消息后可以换')
+    expect(draft({ approvals: 'none', readback: 'none' })).toMatchObject({ label: '不询问 · 由 Fake Agent 决定', amber: true })
+    expect(draft({ approvals: 'prompts', readback: 'none' })).toMatchObject({ label: '权限无法确认', amber: true })
+    expect(draft()).toMatchObject({ label: '开始后可以选', amber: false })
   })
 
   it('disables wider rows on another device, with where to do it', () => {
@@ -223,5 +240,27 @@ describe('options the composer has no control for', () => {
     expect(composerOptions(config, false).map(item => item.id)).toEqual(['x'])
     expect(composerOptions(config, true).map(item => item.id)).toEqual(['c', 'x'])
     expect(composerOptions([option('c', 'model_config'), option('x')], false).map(item => item.id)).toEqual(['c', 'x'])
+  })
+})
+
+describe('the model control label', () => {
+  const option = (category: string) => ({
+    id: category,
+    name: category,
+    category,
+    type: 'select' as const,
+    currentValue: 'a',
+    options: [{ value: 'a', name: 'A' }],
+  })
+  it('always has both facts, with words for the one not known', () => {
+    expect(modelChipText('GPT-5.5', '高')).toBe('GPT-5.5 · 高')
+    expect(modelChipText(undefined, undefined)).toBe('默认模型 · 默认思考')
+  })
+  it('gives one sentence on what the Harness has not reported', () => {
+    expect(unreportedNote('pi', false, [])).toContain('开始后才报告')
+    expect(unreportedNote('pi', true, [])).toBe('pi 没有报告模型和思考深度，由它自己决定。')
+    expect(unreportedNote('pi', true, [option('model')])).toBe('pi 没有报告思考深度，用它自己的默认值。')
+    expect(unreportedNote('pi', true, [option('thought_level')])).toBe('pi 没有报告可选的模型，由它自己决定。')
+    expect(unreportedNote('pi', true, [option('model'), option('thought_level')])).toBeUndefined()
   })
 })

@@ -17,7 +17,7 @@ function Licences() {
       <SettingsGroup>
         <SettingsRow record title="Latch" trailing={<span className="settings-row-value">Apache License 2.0</span>} />
       </SettingsGroup>
-      <SettingsGroup title="引擎">
+      <SettingsGroup title="Harness">
         {engines.map(preset => (
           <SettingsRow
             key={preset.id}
@@ -56,7 +56,7 @@ export function AboutSettings({ snapshot, access }: { snapshot: AppSnapshot; acc
         </div>
       </header>
       {host?.presence.status === 'unavailable' && <InlineNotice tone="warn">{presenceUnavailableText(host.presence.message)}</InlineNotice>}
-      <SettingsGroup caption="Agent 和插件以你的权限在这台电脑上运行。" captionIcon={null}>
+      <SettingsGroup caption="Harness 和插件以你的权限在这台电脑上运行。" captionIcon={null}>
         <SettingsRow
           title="开源许可"
           trailing={

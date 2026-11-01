@@ -9,8 +9,7 @@ body {
 }
 
 /*
- * Shell, from 768px: the 52px title row spans the window; under it the 52px rail, the panel next to the rail, the main
- * area and the right panel. The canvas is full-bleed. The page sets --sidebar-width (0 while shut, and on tablets, where
+ * Shell, from 768px: the 52px title row spans the window; under it the sidebar, the main area and the right panel. The canvas is full-bleed. The page sets --sidebar-width (0 while shut, and on tablets, where
  * the panel slides over) with --sidebar-open-width (the width its content keeps), and --inspector-width (0 while closed
  * or overlaying) with --inspector-open-width: opening and shutting slide the tracks (--m-panel) while the content stays
  * as wide as it was and is clipped, and a drag writes the variables each frame and persists once, on release. Phones
@@ -20,7 +19,7 @@ body {
   --entry-nav-width: var(--sidebar-width);
   position: relative;
   display: grid;
-  grid-template-columns: 52px var(--sidebar-width) minmax(0, 1fr) var(--inspector-width);
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr) var(--inspector-width);
   grid-template-rows: 52px minmax(0, 1fr);
   height: 100vh;
   height: 100dvh;
@@ -59,7 +58,7 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .titlebar {
 }
 /* The panel's strip takes its end of the title row, and moves the window like the rest of it. */
 .app-shell[data-inspector='open'] .titlebar {
-  grid-column-end: 4;
+  grid-column-end: 3;
 }
 .inspector-column .session-panel-strip {
   -webkit-app-region: drag;
@@ -79,7 +78,7 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
   align-items: center;
   gap: var(--sp-4);
   flex-shrink: 0;
-  width: calc(52px + var(--sidebar-width));
+  width: var(--sidebar-width);
   height: 100%;
   padding-left: var(--lead-inset);
   border-right: 1px solid var(--line);
@@ -103,7 +102,7 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
 .titlebar[data-lights] .titlebar-lead {
   --lead-inset: 78px;
 }
-/* Shut, the zone for the lights is wider than the rail: the row turns canvas and the rail starts under it. */
+/* Shut, the row turns canvas and holds only ◧ and what the sidebar would otherwise offer. */
 .titlebar[data-shut] .titlebar-lead {
   --surface: var(--canvas);
   /* Explicit, so it glides with the track: the left padding, ◧, the gap and ✎, then 等你处理 while something waits. */
@@ -130,72 +129,13 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
   font-weight: 600;
 }
 
-/* Another entry covers the session's columns; they stay laid out, so nothing about them moves. */
+/* A page covers the session's columns; they stay laid out, so nothing about them moves. */
 .app-shell:not([data-entry='sessions']) :is(.sidebar, .workspace, .inspector-column, .inspector-resize, .phone-list) {
   visibility: hidden;
 }
 
-.rail {
-  /* Counts on the rail's buttons are cut out of the ground. */
-  --surface: var(--sidebar);
-  grid-area: 2 / 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--sp-4);
-  min-height: 0;
-  padding: var(--sp-4) 0 calc(var(--sp-8) + env(safe-area-inset-bottom));
-  background: var(--sidebar);
-  box-shadow: inset -1px 0 var(--line);
-}
-.rail-entry.ui-icon-button {
-  --icon-button-size: 36px;
-  width: 36px;
-  height: 36px;
-  border-radius: var(--r-8);
-  color: var(--muted);
-}
-.rail-entry.ui-icon-button > .ui-icon {
-  width: 18px;
-  height: 18px;
-}
-.rail-entry.ui-icon-button:hover {
-  background: var(--hover);
-}
-.rail-entry.ui-icon-button[aria-current='page'] {
-  background: var(--selected);
-  color: var(--ink);
-}
-/* 会话 while something waits and it is not the entry on show. */
-.rail-entry .ui-icon-button-badge {
-  top: 5px;
-  right: 5px;
-  min-width: 0;
-  padding: 0;
-}
-.rail-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--r-full);
-  background: var(--amber);
-}
-.rail-spacer {
-  flex: 1;
-}
-/* Above 手机, only while the Mac cannot be reached as it should; the sentence is in its title. */
-.rail-trouble {
-  width: 8px;
-  height: 8px;
-  margin-bottom: var(--sp-4);
-  border-radius: var(--r-full);
-  background: var(--amber);
-}
-.rail-trouble[data-tone='error'] {
-  background: var(--red);
-}
-
 .sidebar {
-  grid-area: 2 / 2;
+  grid-area: 2 / 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -217,12 +157,12 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
   }
 }
 
-/* The panel's resize handle straddles its edge; at the rail's edge while shut. It serves every entry's panel. */
+/* The sidebar's resize handle straddles its edge; at the window's edge while shut. It serves a page's list too. */
 .sidebar-resize {
   z-index: 7;
   top: 52px;
   bottom: 0;
-  left: calc(52px + var(--sidebar-width) - 3px);
+  left: max(0px, calc(var(--sidebar-width) - 3px));
   transition: left var(--m-panel) var(--e-panel);
 }
 .app-shell[data-resizing] .sidebar-resize {
@@ -230,7 +170,7 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
 }
 
 .workspace {
-  grid-area: 2 / 3;
+  grid-area: 2 / 2;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -258,12 +198,18 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
 
 /*
  * Tablets: the session list slides over from the left as a floating sheet of the ground, set in 8 and rounded (12), with
- * the floating shadow over the scrim; it slides in over --m-sheet and out in 70% of it. A page entry keeps its short list
- * beside the main area.
+ * the floating shadow over the scrim; it slides in over --m-sheet and out in 70% of it. A page keeps its short list
+ * beside the main area, with the title row's lead over it.
  */
 @media (max-width: 1023.98px) {
   .app-shell {
     --entry-nav-width: 200px;
+  }
+  .titlebar-lead {
+    min-width: calc(var(--lead-inset) + 40px);
+  }
+  .app-shell:not([data-entry='sessions']) .titlebar-lead {
+    width: var(--entry-nav-width);
   }
   .sidebar {
     position: fixed;
@@ -423,6 +369,8 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
   height: 6px;
   border-radius: var(--r-full);
   background: var(--ink);
+  /* The shared badge sits outside the button, for a count; a dot belongs on the icon's corner. */
+  transform: translate(-5px, 10px);
 }
 .topbar-title {
   display: flex;
@@ -572,6 +520,12 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
   margin: 0 auto;
   padding: var(--sp-16) var(--gutter) var(--sp-32);
 }
+.session-start-note {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  text-align: center;
+  margin: 0 0 var(--sp-16);
+}
 .transcript-empty {
   color: var(--muted);
   text-align: center;
@@ -685,14 +639,20 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
 .project-inline > svg {
   display: none;
 }
-.engine-question {
-  display: grid;
-  gap: var(--sp-12);
-}
-.engine-question-options {
-  display: flex;
+/* With no project the question and the picker sit on one line and wrap as a pair, centred on both. */
+.new-session-question {
+  display: inline-flex;
   flex-wrap: wrap;
-  gap: var(--sp-8);
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-4) var(--sp-16);
+}
+.new-session-question > span:first-child {
+  white-space: nowrap;
+}
+/* The list of what to install is tall: the page starts higher, so the input is not left below the window. */
+.new-session-inner:has(.harness-install) {
+  padding-top: var(--sp-48);
 }
 @media (max-width: 767.98px) {
   .new-session-inner {
@@ -708,7 +668,7 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
  */
 .inspector-column {
   --panel-strip-height: 52px;
-  grid-area: 1 / 4 / 3 / 5;
+  grid-area: 1 / 3 / 3 / 4;
   z-index: 1;
   min-width: 0;
   min-height: 0;

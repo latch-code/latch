@@ -11,7 +11,7 @@ export function codeRootWorkspace(workspaces: readonly WorkspaceInfo[] | undefin
 
 /**
  * The amber warning wherever such a folder is chosen or shown (设置 › 项目, the new session, the breadcrumb's popover): why every
- * write will ask, and, for the start directory, that the way out is a new project, with 新建项目… where this device can
+ * write will ask, and, for the start directory, that the way out is a new project, with 添加项目… where this device can
  * make one.
  */
 export function CodeRootNotice({

@@ -223,7 +223,7 @@ describe('private attachments through the composer', () => {
       expect(await page.getByLabel('引用项目文件').count()).toBe(0)
       await input.fill('@refer')
       const chooser = page.getByLabel('引用项目文件', { exact: true })
-      await chooser.getByRole('button', { name: 'reference.txt default', exact: true }).click()
+      await chooser.getByRole('button', { name: 'reference.txt', exact: true }).click()
       expect(await input.inputValue()).toBe('@default:reference.txt ')
       await page.screenshot({ path: 'test-results/attachments/1440-light-file-reference.png', animations: 'disabled' })
       await page.getByRole('button', { name: '发送', exact: true }).click()

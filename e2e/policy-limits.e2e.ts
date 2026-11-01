@@ -261,13 +261,16 @@ describe('what this computer limits and what it can take back', () => {
     const picker = page.locator('.composer-stack .model-picker')
     await picker.click()
     await page.getByRole('menuitemradio', { name: /model-a/u }).click()
-    await picker.click()
+    const harness = page.locator('.composer-stack .harness-picker')
+    await harness.click()
     await page.getByRole('menuitem', { name: '设为新会话默认' }).click()
     await page.getByRole('menuitem', { name: '取消新会话默认' }).waitFor()
     await page.getByText('每个新会话都从这里开始', { exact: false }).waitFor()
     await page.screenshot({ path: `${OUTPUT}/pinned--desktop--light.png` })
+    await page.keyboard.press('Escape')
 
     // Another model for this one session.
+    await picker.click()
     await page.getByRole('menuitemradio', { name: /model-b/u }).click()
     // A pick is the draft's alone, so a reload is back at the pin.
     await expect.poll(() => picker.textContent()).toContain('model-b')
@@ -303,13 +306,13 @@ describe('what this computer limits and what it can take back', () => {
     await elsewhere.reload()
     await connected(elsewhere)
     await expect.poll(() => there.textContent()).toContain('model-b')
-    await there.click()
-    await elsewhere.getByRole('menuitemradio', { name: /model-b/u }).waitFor()
+    await elsewhere.locator('.composer-stack .harness-picker').click()
     expect(await elsewhere.getByRole('menuitem', { name: /新会话默认/u }).count()).toBe(0)
+    await elsewhere.keyboard.press('Escape')
     await remote.close()
 
     // Taking it back: the last pick carries on again.
-    await picker.click()
+    await harness.click()
     await page.getByRole('menuitem', { name: '取消新会话默认' }).click()
     await page.getByRole('menuitem', { name: '设为新会话默认' }).waitFor()
     expect((await local.json<AppSnapshot>('snapshot')).catalog!.defaults.pinned).toBeUndefined()
@@ -320,8 +323,7 @@ describe('what this computer limits and what it can take back', () => {
   it('reports a pin that failed in the menu, and leaves the choice unset', async () => {
     const { page, context } = await open(VIEWPORTS[2], 'dark')
     await page.route('**/link/api/preferences', route => route.fulfill({ status: 500, json: { error: 'internal', message: '没有保存' } }))
-    const picker = page.locator('.composer-stack .model-picker')
-    await picker.click()
+    await page.locator('.composer-stack .harness-picker').click()
     await page.getByRole('menuitem', { name: '设为新会话默认' }).click()
     await page.getByText('没有保存', { exact: false }).waitFor()
     await page.screenshot({ path: `${OUTPUT}/pin-failed--desktop--dark.png` })

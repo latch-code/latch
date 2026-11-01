@@ -390,7 +390,7 @@ function closeBatch(task: StoredTask, cancelled: boolean, at: string): UnknownRe
       call,
       at,
       unknown
-        ? 'TOOL_OUTCOME_UNKNOWN: 执行未取得已确认结果。请先核对实际副作用；系统不会自动重放此操作。'
+        ? 'TOOL_OUTCOME_UNKNOWN: 结果未知，请先核对它做了什么。Latch 不会自动重做。'
         : 'TOOL_NOT_STARTED: 本次运行已结束，工具没有开始执行。',
       true,
       cancelled && !unknown,
@@ -758,7 +758,7 @@ class HarnessRuntime implements Bridge {
           return { sessionId: receipt.taskId }
         }
         if (cwd === undefined) throw new AppError(400, 'workspace-unavailable', '所选项目目录不是此节点允许的工作区')
-        if (scope === null) throw new AppError(400, 'workspace-unavailable', '所选项目的文件夹与此节点登记的不一致')
+        if (scope === null) throw new AppError(400, 'workspace-unavailable', '所选项目的文件夹与这台电脑记录的不一致')
         const selection: Selection = model ? { ...model, source: 'request', persist: true } : this.defaultSelection()
         const folders = scope?.folders ?? [{ id: SINGLE_FOLDER_ID, path: cwd }]
         let context: string
@@ -1119,7 +1119,7 @@ class HarnessRuntime implements Bridge {
       reason:
         risk === 'R2'
           ? '这是高风险操作，每次执行前都需要你确认，不能设为始终允许。'
-          : '该工具可能修改工作区或产生外部副作用，需要你确认本次操作。',
+          : '该工具可能修改项目文件或产生外部副作用，需要你确认本次操作。',
       arguments: JSON.stringify(call.arguments, null, 2),
       requestedAt: this.now(),
       options: structuredClone([...(risk === 'R2' ? HIGH_RISK_APPROVAL_OPTIONS : APPROVAL_OPTIONS)]),

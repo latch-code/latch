@@ -21,7 +21,6 @@ import { basename } from '../format.ts'
 import { setPreference, usePreferences } from '../preferences.ts'
 import { shortcutWorksOnPage, workbenchShortcut } from '../workbenchShortcuts.ts'
 import {
-  RAIL_WIDTH,
   RIGHT_PANEL_DEFAULT,
   SIDEBAR_DEFAULT,
   SIDEBAR_SNAP_MS,
@@ -32,7 +31,7 @@ import {
   sidebarAfterDrag,
   sidebarMax,
 } from './panelLayout.ts'
-import { entryOfSection, routeAtWidth, visibleEntries, type AgentPageTarget, type RailEntry, type ShellRoute } from './routes.ts'
+import { entryOfSection, routeAtWidth, visibleEntries, type AgentPageTarget, type ShellEntry, type ShellRoute } from './routes.ts'
 import type { PaletteLevel } from '../palette/model.ts'
 import { projectOf, listedSessions, readFolded, shelvesKey, steppedSession, type SessionFilter } from '../sessions.ts'
 import { hostNoticeCopy } from '../core/hostState.ts'
@@ -111,6 +110,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     block,
     gate,
     presenceDown,
+    askProject,
   } = session
 
   const conversationEpoch = `${harness.resyncs}:${selectedId ?? ''}`
@@ -119,7 +119,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const preferences = usePreferences()
   const phone = viewport === 'phone'
   const drawerMode = usesDrawer(viewport)
-  // From 1024px the panel next to the rail can be dragged wider or narrower, or shut.
+  // From 1024px the sidebar can be dragged wider or narrower, or shut.
   const sidebarColumn = viewport === 'laptop' || viewport === 'desktop'
   const windowWidth = useWindowWidth()
   /** A drag in progress, and whether it is past the snap point; the width under the pointer goes straight to the page. */
@@ -139,7 +139,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const [inspectorDrag, setInspectorDrag] = useState(false)
   const appShell = useRef<HTMLDivElement>(null)
   const titlebar = useRef<HTMLDivElement>(null)
-  /** The rail's current entry, its section, and where other entries put their title. */
+  /** The current entry, its section, and where a page puts its title. */
   const [chosenRoute, setRoute] = useState<ShellRoute>({ entry: 'sessions' })
   const route = routeAtWidth(chosenRoute, phone)
   const [titleSlot, setTitleSlot] = useState<HTMLElement | null>(null)
@@ -167,7 +167,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   )
   const navigation = useRef<HTMLElement>(null)
   const main = useRef<HTMLElement>(null)
-  const rail = useRef<HTMLElement>(null)
   const sidebarToggle = useRef<HTMLButtonElement>(null)
   /** The new-session page's 「添加 Agent」 tile, which the line under the input opens as well. */
   const setupTrigger = useRef<HTMLButtonElement>(null)
@@ -201,7 +200,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const audit = useAuditCheckpoint(host?.hostId, connection === 'connected')
   const fileContext: FileContext | null = selectedId
     ? { kind: 'session', sessionId: selectedId }
-    : !personalDraft && choice.mode !== 'chat' && choice.workspaceId && choice.workspaceId !== 'default'
+    : !personalDraft && choice.workspaceId && choice.workspaceId !== 'default'
       ? { kind: 'workspace', workspaceId: choice.workspaceId, harnessId: choice.harnessId ?? catalog?.defaults.harnessId ?? 'standard' }
       : null
   const fileAuthority = JSON.stringify([snapshot.device.dataScope, access.scopes.has('view'), catalog?.features?.filePreview])
@@ -242,7 +241,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const storedSidebar = preferences.sidebar.width ?? SIDEBAR_DEFAULT
   const sidebarWidth = clampSidebar(storedSidebar, windowWidth)
   const sidebarCollapsed = sidebarShut
-  const panelLeft = RAIL_WIDTH + (sidebarColumn && !sidebarCollapsed ? sidebarWidth : 0)
+  const panelLeft = sidebarColumn && !sidebarCollapsed ? sidebarWidth : 0
   const showingChanges = changesOpen && !fileTabs.active
   const panelWidth =
     preferences.rightPanel.width
@@ -264,7 +263,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const columnOpen =
     placement !== null && placement.kind !== 'page' && (filesVisible || changesOpen || (!!summary && preferences.rightPanel.open))
   const inspectorWidth = placement !== null && placement.kind !== 'page' ? placement.width : RIGHT_PANEL_DEFAULT
-  const drawer = useDrawer({ enabled: drawerMode, navigation, inertWhenOpen: [main, rail, titlebar], shut: sidebarCollapsed })
+  const drawer = useDrawer({ enabled: drawerMode, navigation, inertWhenOpen: [main, titlebar], shut: sidebarCollapsed })
   /** Where focus goes once the sidebar has opened or shut: after the drawer hook made the column usable or inert. */
   const focusAfterToggle = useRef<{ target: RefObject<HTMLElement | null>; shut: boolean } | null>(null)
   useEffect(() => {
@@ -384,12 +383,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setNewSheet(false)
     setRoute(section ? { entry: entryOfSection(section, phone), section } : { entry: 'settings' })
   }
-  /** A rail entry or tab. 会话 returns to the last open session; pressed again on a tablet it opens the list. */
-  const goEntry = (entry: RailEntry) => {
-    if (entry === 'sessions' && route.entry === 'sessions' && drawerMode) {
-      drawer.setOpen(!drawer.open)
-      return
-    }
+  /** A foot icon, a tab or the way back. 会话 returns to the last open session. */
+  const goEntry = (entry: ShellEntry) => {
     setNewSheet(false)
     drawer.setOpen(false)
     setRoute({ entry })
@@ -483,24 +478,34 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
         openSettings('providers')
       }
     : undefined
+  /** A project or 不选项目 from the list: the person was on their way to sending, so the input takes the keys again. */
+  const chooseProject = (workspaceId: string) => {
+    submission.updateChoice({ workspaceId, projectSkipped: workspaceId === 'default' })
+    requestAnimationFrame(() => (phone ? sheetComposerRef : composerRef).current?.focus())
+  }
   const folders = shellFolders()
   const pickProject =
     folders && access.local && owner && catalog
       ? async (start: boolean) => {
           const result = await folders.pick()
           if (result.status !== 'added') {
-            if (result.status === 'failed') setToast({ text: '没有新建项目。请在设置 › 项目中重试。', tone: 'error' })
+            if (result.status === 'failed') setToast({ text: '没有打开文件夹。请在设置 › 项目中重试。', tone: 'error' })
             if (result.status === 'busy') setToast({ text: '另一个系统对话框还没结束。', tone: 'error' })
             return
           }
           const added = result.added[0]
           const refused = result.refused[0]
-          if (refused)
-            setToast({ text: `没有加入 ${basename(refused.path)}：${refused.message ?? 'Latch 拒绝了这个文件夹。'}`, tone: 'error' })
           await refresh()
           if (added) {
             if (start) startNew()
-            submission.updateChoice({ workspaceId: added.workspaceId })
+            chooseProject(added.workspaceId)
+          }
+          // Said where it was chosen, at once, rather than when sending fails later.
+          if (refused) {
+            const refusal = `没有打开 ${basename(refused.path)}：${refused.message ?? 'Latch 拒绝了这个文件夹。'}`
+            // The list that says so stands on the new-session page; over a session it would say nothing.
+            if (selectedId === null) askProject(refusal)
+            else setToast({ text: refusal, tone: 'error' })
           }
         }
       : undefined
@@ -676,10 +681,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       if (entries.includes('settings')) goEntry('settings')
       return
     }
-    if (typeof action === 'object') {
-      if (entries.includes(action.entry)) goEntry(action.entry)
-      return
-    }
     if (action === 'shortcuts') {
       if (settingsSections(snapshot, access).includes('shortcuts') && !phone) openSettings('shortcuts')
       return
@@ -818,10 +819,10 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
         submission.updateChoice({ workspaceId })
       }
     : undefined
-  const startChat = canStart
+  const startWithoutProject = canStart
     ? () => {
         startNew()
-        submission.updateChoice({ mode: 'chat' })
+        submission.updateChoice({ workspaceId: 'default', projectSkipped: true })
       }
     : undefined
   const connectionProblem = harness.error || connection === 'reconnecting' || connection === 'offline'
@@ -1004,7 +1005,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     snapSidebar,
     navigation,
     main,
-    rail,
     setupTrigger,
     sheetComposerRef,
     searchRef,
@@ -1076,6 +1076,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     folders,
     pickProject,
     createProject,
+    chooseProject,
     createProjectAndStart,
     newChoicesLocked,
     sheetCanStart,
@@ -1094,7 +1095,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     searchResults,
     archiveBatch,
     archiveUndo,
-    startChat,
+    startWithoutProject,
     findReveal,
     topHarness,
     savedProject,
