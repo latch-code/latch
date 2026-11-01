@@ -1,3 +1,4 @@
+import type { AgentExecutionContext } from './custom-agents.ts'
 import type { ModelRef, TaskMode, TaskSummary, PluginInfo } from './types.ts'
 
 export interface PersonalAssistantConfig {
@@ -56,17 +57,8 @@ export interface PersonalSessionOwner {
   assistantId: string
   groupId?: string
 }
-/** Host-to-driver context; never accepted as authority from an HTTP client or included in public messages. */
-export interface PersonalExecutionContext {
-  owner: PersonalSessionOwner
-  /** Host-frozen capability revisions for delegated or scheduled execution. */
-  expectedRevisions?: Record<string, string>
-  instructions: string
-  /** Explicit group history only, with its original roles. Transient and never inherited by another session. */
-  sharedMessages?: Array<{ role: 'user' | 'assistant'; text: string }>
-  pluginIds: string[]
-  revision: string
-}
+/** The agent context of a 个人助手 session: always an owner, and an explicit plugin selection. */
+export type PersonalAgentContext = AgentExecutionContext & { personal: PersonalSessionOwner; pluginIds: string[] }
 
 export interface PersonalRoutineConfig {
   assistantId: string

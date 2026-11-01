@@ -76,8 +76,14 @@ export interface HarnessHostOptions {
 
 /** A complete harness implementation. This is distinct from a model API adapter. */
 export interface HarnessDriver {
-  /** Keeps personal instructions out of public/forkable history and enforces the selected Host capabilities. */
-  personalContext?: 'private'
+  /**
+   * How an agent's instructions and memories reach the driver. `private`: a transient system context on every turn, kept
+   * out of public and forkable history, with the selected Host capabilities enforced. `first-turn`: a labelled block sent
+   * once with the first prompt, because the engine keeps its own history. Absent: the driver takes none.
+   */
+  agentContext?: 'private' | 'first-turn'
+  /** How an agent's skills reach the engine: `skillIds` for `native`, `skillBodies` for `server`. Absent: they do not. */
+  skills?: 'native' | 'server'
   id: string
   name: string
   version: string

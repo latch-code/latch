@@ -5,8 +5,8 @@ sources:
   - apps/host/src/personal-routes.ts
   - apps/host/src/personal-routines.ts
   - apps/host/src/personal-groups.ts
-  - apps/host/src/personal-journal.ts
-  - apps/host/src/personal-revisions.ts
+  - apps/host/src/agent-journal.ts
+  - apps/host/src/agent-revisions.ts
   - apps/host/scripts/host-bundle.ts
   - apps/host/src/server.ts
   - native/ios/App
@@ -36,7 +36,7 @@ Web 与桌面在导航提供「个人助手」，展示真实助手、职责、�
 
 职责和私有记忆只放在当前运行的系统上下文中，不写入用户 `Message.text`、模型持久历史、分叉种子或导出记录。下一轮由 Host 重新读取本助手的显式记忆；其他助手、项目会话和群聊不自动继承。助手生成的可见回复仍属于用户选择查看或分享的会话内容。
 
-Driver 必须显式声明 `personalContext: 'private'`，确保隐藏上下文不进入可分叉历史并执行所选 Host 能力边界。当前内置 Standard 实现该契约；没有声明的 ACP 或自定义 Driver 在界面中给出不可用原因，不会静默回退。更换 Harness 或模式后，原会话不能迁移执行，需创建新会话。个人会话的队列能力由 `catalog.features.personalQueue` 单独声明；缺少时客户端不能把普通队列当作已支持。
+Driver 必须显式声明 `agentContext: 'private'`，确保隐藏上下文不进入可分叉历史并执行所选 Host 能力边界。当前内置 Standard 实现该契约；没有声明的 ACP 或自定义 Driver 在界面中给出不可用原因，不会静默回退。更换 Harness 或模式后，原会话不能迁移执行，需创建新会话。个人会话的队列能力由 `catalog.features.personalQueue` 单独声明；缺少时客户端不能把普通队列当作已支持。
 
 ## 个人会话队列
 

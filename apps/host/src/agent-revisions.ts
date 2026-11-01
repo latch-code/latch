@@ -2,7 +2,7 @@ import type { PluginPackageBundle } from '@latch/protocol'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 
 /** Display metadata is excluded; skill instructions and every supplied source/config byte remain execution inputs. */
-export function personalPluginRevision(bundle: PluginPackageBundle): string {
+export function agentPluginRevision(bundle: PluginPackageBundle): string {
   const manifest = bundle.manifest
   return sha256Hex(
     canonicalJson({

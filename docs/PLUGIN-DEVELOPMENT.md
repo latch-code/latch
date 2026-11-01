@@ -380,7 +380,7 @@ pnpm test:e2e
 
 ### 个人助手上下文
 
-`CreateTaskInput.personal?` / `PromptOptions.personal?` 是 Host 构造的 `PersonalExecutionContext`，不是可由 HTTP 客户端授予的权限。`owner` 持久化为会话归属，`instructions` 只对当前运行可见。Driver 声明 `personalContext: 'private'` 之前，必须保证指令不会进入公开消息或可分叉历史，并对每轮输入校验原归属。Standard 已实现；缺少声明的 Driver 不提供个人助手执行。
+`CreateTaskInput.agentContext?` / `PromptOptions.agentContext?` 是 Host 构造的 `AgentExecutionContext`，不是可由 HTTP 客户端授予的权限。`agent` 持久化为会话归属。Driver 用 `agentContext` 声明接收方式：`private` 必须保证 `instructions` 只对当前运行可见、不进入公开消息或可分叉历史，并对每轮输入校验原归属，Standard 已实现；`first-turn` 把 `brief` 随第一轮发给引擎，并记录到那条用户消息的 `agentBrief`，ACP 已实现。未声明的 Driver 收不到 Agent 上下文。
 
 `registry.acquire(providerId, {tools, pluginIds})` 的可选 `pluginIds` 固定本轮工具和技能的归属插件。缺省保持旧行为；显式空列表不租用工具或技能；选择的插件已停用或移除时报错。Provider 独立租用，不能通过 Provider 所属关系额外提供未选中的工具。私有记忆、请求预留与数据范围规则见 [PERSONAL.md](PERSONAL.md)。
 

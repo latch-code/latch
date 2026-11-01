@@ -19,7 +19,7 @@ import { canonicalJson, sha256Hex, type AtomicWriteFs } from '@latch/core/node-k
 import type { AuditLog } from './audit.ts'
 import type { PersonalActor } from './personal-store.ts'
 import type { RoutinePlan } from './personal-routines.ts'
-import { PersonalJournal } from './personal-journal.ts'
+import { AgentJournal } from './agent-journal.ts'
 
 const hash = z.string().regex(/^[a-f0-9]{64}$/u),
   rid = z.uuid(),
@@ -143,17 +143,17 @@ export class PersonalGroups {
   private closed = false
   private constructor(
     private readonly options: Options,
-    private readonly journal: PersonalJournal<State>,
+    private readonly journal: AgentJournal<State>,
   ) {
     for (const [key, value] of Object.entries(journal.read().receipts)) this.identities.set(key, value.hash)
   }
   static async open(options: Options): Promise<PersonalGroups> {
-    const journal = await PersonalJournal.open(
+    const journal = await AgentJournal.open(
         options.dataDir,
         'groups.json',
         stateSchema,
         { version: 1, groups: [], receipts: {} },
-        { atomicFs: options.atomicFs },
+        { directory: 'personal', atomicFs: options.atomicFs },
       ),
       service = new PersonalGroups(options, journal)
     await journal.change('startup', 'startup', state => {

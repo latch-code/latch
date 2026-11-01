@@ -3,7 +3,7 @@ import { mkdir, open, readFile, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { isFileChange, type FileChange, isFileMention, type FileMention, isAttachmentRef, type AttachmentRef } from '@latch/protocol'
-import type { Message, SessionCommand, PlanEntry, SessionConfigOption, TaskSummary, UsageReport } from '@latch/protocol'
+import type { AgentBrief, Message, SessionCommand, PlanEntry, SessionConfigOption, TaskSummary, UsageReport } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { writeFileAtomic } from '@latch/core/node-kit'
 import { runEndSchema } from '@latch/core/run-end'
@@ -16,6 +16,8 @@ export interface AcpRecord {
   agentVersion?: string
   /** Number of prompts sent in this task; scopes tool message IDs. */
   turnSeq: number
+  /** The agent's first-turn block until a turn has actually carried it to the engine. */
+  brief?: AgentBrief
   /** Whether `config` came from `configOptions` or the legacy `models`/`modes` fields. */
   configSource?: ConfigSource
   /** The agent offered session/delete when this session was last bound, so removal may start it to ask. */
@@ -39,6 +41,8 @@ export interface AcpRecord {
    */
   folders?: string[]
   folderVia?: 'acp' | 'args'
+  /** The session has an agent's skills in its own folder, served to the engine read-only. */
+  skills?: true
 }
 
 export interface AcpTask {
@@ -98,7 +102,9 @@ const toolDetail = z.object({
     })
     .optional(),
 })
+const agentBrief = z.object({ segments: z.array(z.object({ source: z.enum(['latch', 'user']), text: z.string() })) })
 const message = z.object({
+  agentBrief: agentBrief.optional(),
   fileRefs: z.array(z.custom<FileMention>(isFileMention)).max(32).optional(),
   outputs: z.array(z.custom<FileChange>(isFileChange)).max(1000).optional(),
   outputsPending: z.literal(true).optional(),
@@ -148,6 +154,8 @@ const stateSchema = z.object({
         runId: z.string().min(1).max(128).optional(),
         runOutcome: z.enum(['completed', 'failed', 'cancelled', 'interrupted']).optional(),
         runEnd: runEndSchema.optional(),
+        agent: z.strictObject({ customAgentId: z.string().min(1).max(128) }).optional(),
+        agentPrivate: z.literal(true).optional(),
       }),
       messages: z.array(message),
       plan: z
@@ -195,6 +203,7 @@ const stateSchema = z.object({
         cwd: z.string(),
         agentVersion: z.string().optional(),
         turnSeq: z.number().int().nonnegative(),
+        brief: agentBrief.optional(),
         configSource: z.enum(['options', 'legacy']).optional(),
         deletable: z.boolean().optional(),
         launchHash: z
@@ -210,6 +219,7 @@ const stateSchema = z.object({
         profilePresetId: z.string().optional(),
         folders: z.array(z.string()).optional(),
         folderVia: z.enum(['acp', 'args']).optional(),
+        skills: z.literal(true).optional(),
       }),
     }),
   ),

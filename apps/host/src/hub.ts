@@ -39,6 +39,8 @@ export interface HubCreateInput extends CreateTaskInput {
   sessionFolder?: string
   forkOf?: TaskSummary['forkOf']
   initialTitle?: string
+  /** The automation this session is a run of. */
+  automationId?: string
 }
 
 /** Host-level session metadata; it applies to every harness. `title: null` removes an override. */
@@ -191,6 +193,8 @@ export class HarnessHub implements Bridge {
   private readonly entries = new Map<string, Entry>()
   private readonly routes = new Map<string, string>()
   private readonly personalOwners = new Map<string, NonNullable<TaskSummary['personal']>>()
+  private readonly agentOwners = new Map<string, NonNullable<TaskSummary['agent']>>()
+  private readonly briefSessions = new Set<string>()
   /** Approvals seen only through `detail()`, for drivers that do not list them in `approvals()`. */
   private readonly detailApprovals = new Map<string, string>()
   private readonly listeners = new Set<(sessionId?: string) => void>()
@@ -274,9 +278,11 @@ export class HarnessHub implements Bridge {
       // close() or detach() ran while this driver was starting; it was never visible, so retire it here.
       if (this.closing || this.entries.get(driver.id) !== entry)
         throw new AppError(503, 'harness-detached', `Harness ${driver.id} 已在启动期间停用`)
-      if (driver.personalContext === 'private')
+      if (driver.agentContext)
         for (const task of await bridge.listTasks()) {
           if (task.personal) await this.recordPersonal(task.id, task.personal)
+          if (task.agent) await this.recordAgent(task.id, task.agent)
+          if (task.agentPrivate) this.briefSessions.add(task.id)
         }
       Object.assign(entry, { bridge, release: mount.release })
     } catch (error) {
@@ -478,7 +484,7 @@ export class HarnessHub implements Bridge {
   }
 
   async createTask(input: HubCreateInput): Promise<{ sessionId: string }> {
-    const { harnessId, workspaceId, folders, sessionFolder, forkOf, initialTitle, ...rest } = input
+    const { harnessId, workspaceId, folders, sessionFolder, forkOf, initialTitle, automationId, ...rest } = input
     const id = harnessId ?? this.options.defaultId()
     const entry = this.entries.get(id)
     if (!entry?.bridge) throw new AppError(409, 'harness-unavailable', `Harness ${id} 当前不可用`)
@@ -488,7 +494,14 @@ export class HarnessHub implements Bridge {
     if (!this.claim(id, result.sessionId)) {
       throw new AppError(502, 'session-id-collision', `Harness ${id} 返回的会话标识已属于另一个 Harness`)
     }
-    if (input.personal) await this.recordPersonal(result.sessionId, input.personal.owner)
+    if (input.agentContext?.personal) await this.recordPersonal(result.sessionId, input.agentContext.personal)
+    if (input.agentContext?.agent) await this.recordAgent(result.sessionId, input.agentContext.agent)
+    if (input.agentContext && !input.agentContext.personal && !input.agentContext.agent)
+      await this.recordPrivate(result.sessionId).catch(error => this.log(`会话 ${result.sessionId} 的私有标记写入失败：${message(error)}`))
+    if (automationId)
+      await this.meta
+        .update(result.sessionId, current => ({ ...current, automationId, ...(initialTitle ? { title: initialTitle.slice(0, 120) } : {}) }))
+        .catch(error => this.log(`会话 ${result.sessionId} 的自动化记录写入失败：${message(error)}`))
     // Without it the session is grouped and matched by its directory, as sessions from before projects had several folders.
     if (workspaceId)
       await this.meta
@@ -522,6 +535,33 @@ export class HarnessHub implements Bridge {
     const persisted = this.meta.get(sessionId)?.personal
     if (persisted && persisted.assistantId === owner.assistantId && persisted.groupId === owner.groupId) return
     await this.meta.update(sessionId, current => ({ ...current, personal: structuredClone(owner) }))
+  }
+
+  /** Whether reading the session takes the agent data scope, without asking the driver. */
+  agentPrivate(sessionId: string): boolean {
+    const meta = this.meta.get(sessionId)
+    return this.briefSessions.has(sessionId) || !!meta?.agentPrivate || !!meta?.automationId || this.agentOf(sessionId) !== undefined
+  }
+  /** Mark private before awaiting storage; a failed write never reclassifies a real session as ordinary. */
+  private async recordPrivate(sessionId: string): Promise<void> {
+    this.briefSessions.add(sessionId)
+    if (!this.meta.get(sessionId)?.agentPrivate) await this.meta.update(sessionId, current => ({ ...current, agentPrivate: true as const }))
+  }
+  /** The session's agent, which makes its contents private; available even when the driver cannot list its tasks. */
+  agentOf(sessionId: string): TaskSummary['agent'] {
+    return this.agentOwners.get(sessionId) ?? this.meta.get(sessionId)?.agent
+  }
+  private rememberAgent(sessionId: string, owner: NonNullable<TaskSummary['agent']>): void {
+    if (!/^agt_[a-f0-9-]{36}$/u.test(owner.customAgentId)) throw new AppError(502, 'agent-owner-invalid', '执行端返回了无效的 Agent 归属。')
+    const current = this.agentOf(sessionId)
+    if (current && current.customAgentId !== owner.customAgentId) throw new AppError(409, 'agent-owner-changed', '会话的 Agent 已改变。')
+    this.agentOwners.set(sessionId, structuredClone(owner))
+  }
+  /** Mark private before awaiting storage; a failed write never reclassifies a real session as ordinary. */
+  async recordAgent(sessionId: string, owner: NonNullable<TaskSummary['agent']>): Promise<void> {
+    this.rememberAgent(sessionId, owner)
+    if (this.meta.get(sessionId)?.agent?.customAgentId === owner.customAgentId) return
+    await this.meta.update(sessionId, current => ({ ...current, agent: structuredClone(owner) }))
   }
 
   /** The names of the folders the Host made for sessions, from the session metadata. */
@@ -566,6 +606,8 @@ export class HarnessHub implements Bridge {
 
   async prompt(sessionId: string, prompt: string, requestId: string, options?: PromptOptions): Promise<void> {
     const member = await this.route(sessionId)
+    // Before the turn is accepted, so the session is never readable as ordinary while the context is on its way.
+    if (options?.agentContext && !options.agentContext.personal && !options.agentContext.agent) await this.recordPrivate(sessionId)
     // Not a step of its own without a watched run: `accept` follows the route directly.
     if (this.options.lifecycle?.watchedRun(sessionId)) await this.readRunNow(member.bridge, sessionId)
     // As above: without a note to read, `accept` follows the route directly.
@@ -811,6 +853,8 @@ export class HarnessHub implements Bridge {
 
   private present(harnessId: string, summary: TaskSummary): TaskSummary {
     if (summary.personal) this.rememberPersonal(summary.id, summary.personal)
+    if (summary.agent) this.rememberAgent(summary.id, summary.agent)
+    if (summary.agentPrivate) this.briefSessions.add(summary.id)
     // Only the Host makes a session's own folder: a driver's claim is dropped.
     const {
       pinned: _pinned,
@@ -818,12 +862,14 @@ export class HarnessHub implements Bridge {
       level: _level,
       sessionFolder: _sessionFolder,
       forkOf: _forkOf,
+      automationId: _automationId,
       runId,
       live,
       ...rest
     } = summary
     const meta = this.meta.get(summary.id)
     const personal = this.personalOf(summary.id)
+    const agent = this.agentOf(summary.id)
     return this.branches.decorate({
       ...rest,
       // A run ID a cancel could not carry is left out, so the page sends a plain stop rather than one the Host refuses.
@@ -838,6 +884,9 @@ export class HarnessHub implements Bridge {
       ...(meta?.workspaceId ? { workspaceId: meta.workspaceId } : {}),
       ...(meta?.forkOf ? { forkOf: meta.forkOf } : {}),
       ...(personal ? { personal } : {}),
+      ...(agent ? { agent } : {}),
+      ...(this.agentPrivate(summary.id) && !agent ? { agentPrivate: true as const } : {}),
+      ...(meta?.automationId ? { automationId: meta.automationId } : {}),
       ...(meta?.sessionFolder ? { sessionFolder: true as const } : {}),
     })
   }
@@ -874,7 +923,8 @@ export class HarnessHub implements Bridge {
       ...(statusMessage ? { statusMessage } : {}),
       modes: [...capabilities.modes],
       models: capabilities.models,
-      ...(driver.personalContext === 'private' ? { personalContext: 'private' as const } : {}),
+      ...(driver.agentContext ? { agentContext: driver.agentContext } : {}),
+      ...(driver.skills ? { skills: driver.skills } : {}),
       ...(capabilities.attachments ? { attachments: structuredClone(capabilities.attachments) } : {}),
       level: levelFor(entry.source),
       ...folderInfo(driver),

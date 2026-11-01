@@ -152,6 +152,8 @@ const stateSchema = z.object({
         runEnd: runEndSchema.optional(),
         skills: z.array(z.string()).optional(),
         personal: z.strictObject({ assistantId: z.string().min(1).max(128), groupId: z.string().min(1).max(128).optional() }).optional(),
+        agent: z.strictObject({ customAgentId: z.string().min(1).max(128) }).optional(),
+        agentPrivate: z.literal(true).optional(),
         pluginIds: z.array(z.string().min(1).max(64)).max(64).optional(),
       }),
       messages: z.array(messageSchema),

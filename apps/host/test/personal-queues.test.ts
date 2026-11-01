@@ -98,8 +98,8 @@ test('dispatches genuine private context after settlement, retains raw RID, and 
   expect((await f.work.request(`${f.path}/queue/${queued.queued.id}`, { method: 'PATCH', body: { text: 'bypass' } })).status).toBe(403)
   f.release.shift()!()
   await expect.poll(() => f.seen.length).toBe(2)
-  expect(f.seen[1]?.messages[0]?.content).toContain('PRIVATE QUEUE ROLE')
-  expect(f.seen[1]?.messages[0]?.content).toContain('PRIVATE QUEUE MEMORY')
+  expect(f.seen[1]?.messages[1]?.content).toContain('PRIVATE QUEUE ROLE')
+  expect(f.seen[1]?.messages[1]?.content).toContain('PRIVATE QUEUE MEMORY')
   expect(f.seen[1]?.model).toBe('first')
   await expect.poll(async () => (await f.detail()).queue).toEqual([])
   const sent = (await f.detail()).messages.find(message => message.requestId === input.requestId)
@@ -156,7 +156,7 @@ test.each(['role', 'memory', 'model'] as const)(
     await f.owner.json(`${f.path}/queue/${queued.queued.id}`, { method: 'DELETE' })
     await f.owner.json(`${f.path}/prompt`, { method: 'POST', body: next() })
     await expect.poll(() => f.seen.length).toBe(2)
-    if (changed === 'memory') expect(f.seen[1]?.messages[0]?.content).toContain('CHANGED PRIVATE MEMORY')
+    if (changed === 'memory') expect(f.seen[1]?.messages[1]?.content).toContain('CHANGED PRIVATE MEMORY')
   },
 )
 

@@ -747,7 +747,7 @@ function AssistantEditor({
           ...(catalog?.defaults.model ? { model: catalog.defaults.model } : {}),
         },
   )
-  const harnesses = catalog?.harnesses.filter(item => item.personalContext === 'private') ?? []
+  const harnesses = catalog?.harnesses.filter(item => item.agentContext === 'private') ?? []
   const harness = harnesses.find(item => item.id === config.harnessId)
   return (
     <Dialog

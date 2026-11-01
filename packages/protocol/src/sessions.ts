@@ -4,6 +4,7 @@ import type { AttachmentRef } from './attachments.ts'
 import type { PromptQueueItem } from './features.ts'
 import type { AgentQuestion } from './questions.ts'
 import type { PersonalSessionOwner } from './personal.ts'
+import type { AgentBrief, SessionAgentRef } from './custom-agents.ts'
 
 export interface SessionCommand {
   name: string
@@ -55,6 +56,12 @@ export interface TaskSummary {
   pluginIds?: string[]
   /** Host-owned personal context, independent of a saved project. Absent for ordinary project sessions. */
   personal?: PersonalSessionOwner
+  /** One of 我的 Agent; absent: 通用. The session's agent is fixed once it starts. */
+  agent?: SessionAgentRef
+  /** It received private context with no agent named, such as 通用, an automation's run or a fork of a private session: reading it takes the same scope as an agent. */
+  agentPrivate?: true
+  /** The automation this session is a run of. */
+  automationId?: string
   /** Host-derived count only; question bodies remain in gated detail. Absent on older Hosts. */
   pendingQuestions?: number
   id: string
@@ -307,6 +314,8 @@ export interface Message {
   providerId?: string
   /** User: what the turn this message opened took. */
   turn?: TurnStats
+  /** User, external engines: the agent context sent with this first turn, shown as 「Agent 指令」. */
+  agentBrief?: AgentBrief
   /** User: the turn it opened in the changes record (`TurnChanges.turnId`); absent when the run reached no folder, or from before this field. */
   turnId?: string
 }

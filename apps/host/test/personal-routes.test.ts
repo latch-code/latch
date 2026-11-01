@@ -63,8 +63,8 @@ test('runs real no-project personal sessions with scoped private context, owners
   const request = { prompt: 'Plan my day', assistantId: assistant.id, requestId: randomUUID() }
   const created = await owner.json<{ sessionId: string }>('tasks', { method: 'POST', body: request })
   await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${created.sessionId}`)).summary.status).toBe('idle')
-  expect(seen[0]?.[0]?.content).toContain('PRIVATE MEMORY ONLY')
-  expect(seen[0]?.[0]?.content).toContain('PRIVATE ROLE ONLY')
+  expect(seen[0]?.[1]?.content).toContain('PRIVATE MEMORY ONLY')
+  expect(seen[0]?.[1]?.content).toContain('PRIVATE ROLE ONLY')
   const detail = await owner.json<TaskDetail>(`tasks/${created.sessionId}`)
   expect(detail.summary.personal).toEqual({ assistantId: assistant.id })
   expect(detail.messages[0]?.text).toBe('Plan my day')
@@ -76,7 +76,7 @@ test('runs real no-project personal sessions with scoped private context, owners
   expect(seen).toHaveLength(1)
   await owner.json(`tasks/${created.sessionId}/prompt`, { method: 'POST', body: { prompt: 'Continue', requestId: randomUUID() } })
   await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${created.sessionId}`)).summary.status).toBe('idle')
-  expect(seen[1]?.[0]?.content).toContain('PRIVATE MEMORY ONLY')
+  expect(seen[1]?.[1]?.content).toContain('PRIVATE MEMORY ONLY')
   const ordinary = await owner.json<{ sessionId: string }>('tasks', {
     method: 'POST',
     body: { prompt: 'Ordinary project', model: { providerId: 'personal-provider', model: 'fixture' }, requestId: randomUUID() },

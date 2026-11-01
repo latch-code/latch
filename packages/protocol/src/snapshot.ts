@@ -1,5 +1,7 @@
 import type { SkillInfo, UiPanelInfo } from './ui.ts'
 import type { HostFeatures } from './features.ts'
+import type { CustomAgentSummary } from './custom-agents.ts'
+import type { AutomationSummary } from './automations.ts'
 import type { Approval, TaskDetail, TaskSummary } from './sessions.ts'
 import type { CurrentDevice, PermissionLevel, PresenceAvailability } from './devices.ts'
 import type { HarnessInfo } from './harnesses.ts'
@@ -58,6 +60,10 @@ export interface AppSnapshot {
   /** Host-known prerequisites; external drivers own their backend configuration. */
   execution?: { ready: boolean; providerId?: string; modelConfigurationRequired?: boolean }
   catalog?: HostCatalog
+  /** 我的 Agent, for devices that may read them; absent otherwise and on older Hosts. */
+  customAgents?: CustomAgentSummary[]
+  /** 自动化, under the same condition. */
+  automations?: AutomationSummary[]
   version?: string
   /** The Host's clock when it answered. */
   hostTime?: string

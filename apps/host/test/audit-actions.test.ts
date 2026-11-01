@@ -119,6 +119,9 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'agent.probed': { agentId: 'codex', launchHash: hex, status: 'authentication-required' },
   'agent.defined': { agentId: 'codex', definitionHash: hex, created: true },
   'agent.deleted': { agentId: 'codex' },
+  'agent.changed': { kind: 'agent', operation: 'update', before: hex, after: hex, customAgentId: 'agt_1' },
+  'automation.changed': { operation: 'create', before: hex, after: hex },
+  'automation.ran': { trigger: 'schedule', attempt: hex },
 }
 
 describe('audit actions', () => {

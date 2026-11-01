@@ -380,7 +380,13 @@ describe('route guards', () => {
       ['GET', 'devices', undefined, { phone: [403, 'native-verification-required'] }],
       ['GET', 'native/info', undefined, { phone: [403, 'native-verification-required'] }],
       ['POST', 'pairings', {}, { phone: [403, 'native-verification-required'] }],
+      ['GET', 'custom-agents', undefined, { phone: [403, 'native-verification-required'] }],
+      ['GET', 'automations', undefined, { phone: [403, 'native-verification-required'] }],
     ])
+    const locked = await phone.request('GET', '/link/api/snapshot')
+    expect(locked.status).toBe(200)
+    expect(locked.body).not.toHaveProperty('customAgents')
+    expect(locked.body).not.toHaveProperty('automations')
     await verifyPhone(t, phone, deviceId, verificationKey)
     await check('verified', phone, [
       ['POST', 'credentials/renew', { nonce: 'x', signature: 'x' }, { phone: [403, 'native-credential-route'] }],

@@ -3,7 +3,7 @@ import type {
   FileMention,
   Approval,
   ModelRef,
-  PersonalExecutionContext,
+  AgentExecutionContext,
   RunLive,
   TaskDetail,
   TaskMode,
@@ -17,8 +17,8 @@ export interface ProjectFolder {
 }
 
 export interface CreateTaskInput {
-  /** Authoritative Host-only personal instructions, transient for this run. */
-  personal?: PersonalExecutionContext
+  /** Authoritative Host-only agent context, transient for this run. */
+  agentContext?: AgentExecutionContext
   fileRefs?: FileMention[]
   attachments?: AttachmentRef[]
   prompt: string
@@ -44,8 +44,8 @@ export interface CreateTaskInput {
 }
 
 export interface PromptOptions {
-  /** Required on every turn of a personal session; never accepted from an HTTP body. */
-  personal?: PersonalExecutionContext
+  /** The agent's context as it stands for this turn; never accepted from an HTTP body. */
+  agentContext?: AgentExecutionContext
   /** Host queue time, for the accepted user message. */
   queuedAt?: string
   fileRefs?: FileMention[]

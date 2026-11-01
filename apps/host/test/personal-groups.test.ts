@@ -62,7 +62,7 @@ async function fixture(overrides: Partial<Parameters<typeof PersonalGroups.open>
         mode: 'chat' as const,
         model: { providerId: 'fixture', model: 'model' },
         personal: {
-          owner: { assistantId: id, groupId: group.id },
+          personal: { assistantId: id, groupId: group.id },
           instructions: group.instructions,
           pluginIds: [],
           revision: '1'.repeat(64),
@@ -119,7 +119,7 @@ test('executes only explicit bounded members, projects original request identity
     accepted = await f.service.submit(group.id, input, f.actor)
   await vi.waitFor(async () => expect((await f.service.detail(group.id, f.actor)).turn?.state).toBe('completed'))
   expect(f.starts).toHaveLength(2)
-  expect(f.starts.map(start => start.plan.personal.owner.assistantId)).toEqual([memberA, memberB])
+  expect(f.starts.map(start => start.plan.personal.personal.assistantId)).toEqual([memberA, memberB])
   expect((await f.service.detail(group.id, f.actor)).messages[0]?.requestId).toBe(input.requestId)
   expect(f.starts[1]!.plan.personal.sharedMessages).toEqual([
     { role: 'user', text: 'Shared task' },
@@ -261,7 +261,7 @@ test('an unknown durable incoming turn never starts on retry or restart', async 
     }),
     group = await f.service.create(groupInput(), f.actor),
     request = { requestId: randomUUID(), prompt: 'unknown' }
-  await expect(f.service.submit(group.id, request, f.actor)).rejects.toMatchObject({ code: 'personal-write-unknown' })
+  await expect(f.service.submit(group.id, request, f.actor)).rejects.toMatchObject({ code: 'agent-write-unknown' })
   expect(f.starts).toEqual([])
   fault = false
   await f.service.submit(group.id, request, f.actor)

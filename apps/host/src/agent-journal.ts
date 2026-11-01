@@ -6,8 +6,12 @@ import { AppError } from '@latch/sdk'
 import { writeFileAtomic, type AtomicWriteFs } from '@latch/core/node-kit'
 
 interface JournalOptions {
+  /** Below the data directory, created private; absent: the data directory itself. */
+  directory?: string
   atomicFs?: AtomicWriteFs
   maximumBytes?: number
+  /** Finish a write whose result is unknown on its own. Only for state with no execution intent to reconcile afterwards. */
+  retryMs?: number
 }
 interface Pending<State> {
   key: string
@@ -21,9 +25,11 @@ export interface JournalChange<Value> {
 }
 
 /** Private domain state only. A recovered write publishes the same intent; it never calls an execution callback. */
-export class PersonalJournal<State> {
+export class AgentJournal<State> {
   private tail: Promise<unknown> = Promise.resolve()
   private pending?: Pending<State>
+  private retry?: ReturnType<typeof setTimeout>
+  private closed = false
   private constructor(
     private readonly path: string,
     private state: State,
@@ -36,18 +42,18 @@ export class PersonalJournal<State> {
     schema: z.ZodType<State>,
     initial: State,
     options: JournalOptions = {},
-  ): Promise<PersonalJournal<State>> {
-    if (!/^[a-z][a-z-]{0,40}\.json$/u.test(name)) throw new AppError(500, 'personal-journal-name', '个人助手记录类型无效。')
-    const directory = join(dataDir, 'personal'),
+  ): Promise<AgentJournal<State>> {
+    if (!/^[a-z][a-z-]{0,40}\.json$/u.test(name)) throw new AppError(500, 'agent-journal-name', 'Agent 记录类型无效。')
+    const directory = options.directory ? join(dataDir, options.directory) : dataDir,
       path = join(directory, name),
       uid = process.getuid?.(),
       maximum = options.maximumBytes ?? 16 * 1024 * 1024
     if (!Number.isSafeInteger(maximum) || maximum < 1024 || maximum > 32 * 1024 * 1024)
-      throw new AppError(500, 'personal-journal-budget', '个人助手记录容量无效。')
+      throw new AppError(500, 'agent-journal-budget', 'Agent 记录容量无效。')
     await mkdir(directory, { recursive: true, mode: 0o700 })
     const folder = await lstat(directory)
     if (!folder.isDirectory() || folder.isSymbolicLink() || folder.mode & 0o077 || (uid !== undefined && folder.uid !== uid))
-      throw new AppError(500, 'personal-private', '个人助手目录必须只有本人可访问。')
+      throw new AppError(500, 'agent-private', 'Agent 记录目录必须只有本人可访问。')
     let state: State
     try {
       const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
@@ -69,16 +75,15 @@ export class PersonalJournal<State> {
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
-        throw new AppError(500, 'personal-journal-invalid', '个人助手运行记录无法读取，原文件已保留。')
+        throw new AppError(500, 'agent-journal-invalid', 'Agent 记录无法读取，原文件已保留。')
       state = schema.parse(structuredClone(initial))
-      if (Buffer.byteLength(JSON.stringify(state)) > maximum)
-        throw new AppError(500, 'personal-journal-budget', '个人助手初始记录超过容量。')
+      if (Buffer.byteLength(JSON.stringify(state)) > maximum) throw new AppError(500, 'agent-journal-budget', 'Agent 初始记录超过容量。')
       await writeFileAtomic(path, JSON.stringify(state) + '\n')
     }
-    return new PersonalJournal(path, state, schema, options)
+    return new AgentJournal(path, state, schema, options)
   }
   read(): State {
-    if (this.pending) throw new AppError(503, 'personal-write-unknown', '修改结果尚未确认，请稍后同步。')
+    if (this.pending) throw new AppError(503, 'agent-write-unknown', '修改结果尚未确认，请稍后同步。')
     return structuredClone(this.state)
   }
   hasPending(): boolean {
@@ -95,7 +100,7 @@ export class PersonalJournal<State> {
       .then(async () => {
         authorize()
         if (this.pending) {
-          if (this.pending.key !== key) throw new AppError(503, 'personal-write-unknown', '上一项修改尚未确认，请稍后同步。')
+          if (this.pending.key !== key) throw new AppError(503, 'agent-write-unknown', '上一项修改尚未确认，请稍后同步。')
           if (this.pending.hash !== hash) throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同修改。')
           const value = this.pending.value as Value
           await this.publish(this.pending)
@@ -107,9 +112,9 @@ export class PersonalJournal<State> {
         authorize()
         if (result.changed !== false) {
           if (!this.schema.safeParse(draft).success)
-            throw new AppError(409, 'personal-storage-limit', '个人助手运行记录已达到容量上限，请先整理记录。')
+            throw new AppError(409, 'agent-storage-limit', 'Agent 记录已达到容量上限，请先整理记录。')
           if (Buffer.byteLength(JSON.stringify(draft)) > (this.options.maximumBytes ?? 16 * 1024 * 1024))
-            throw new AppError(409, 'personal-storage-limit', '个人助手运行记录已达到存储上限。')
+            throw new AppError(409, 'agent-storage-limit', 'Agent 记录已达到存储上限。')
           await this.publish({ key, hash, state: draft, value: structuredClone(result.value) })
         }
         authorize()
@@ -133,12 +138,23 @@ export class PersonalJournal<State> {
       await writeFileAtomic(this.path, JSON.stringify(pending.state) + '\n', { fs: this.options.atomicFs })
     } catch {
       this.pending = pending
-      throw new AppError(503, 'personal-write-unknown', '修改结果尚未确认，请稍后同步。')
+      this.retryLater()
+      throw new AppError(503, 'agent-write-unknown', '修改结果尚未确认，请稍后同步。')
     }
     this.state = pending.state
     this.pending = undefined
   }
+  private retryLater(): void {
+    if (!this.options.retryMs || this.retry || this.closed) return
+    this.retry = setTimeout(() => {
+      this.retry = undefined
+      void this.recover().catch(() => {})
+    }, this.options.retryMs)
+    this.retry.unref()
+  }
   async close(): Promise<void> {
+    this.closed = true
+    clearTimeout(this.retry)
     await this.tail.catch(() => {})
   }
 }

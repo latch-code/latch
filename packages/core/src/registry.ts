@@ -67,6 +67,8 @@ export interface ReplaceOptions extends RegisterOptions {
 export interface AcquireOptions {
   /** A saved execution grant must still name exactly these enabled plugin revisions. */
   expectedRevisions?: Readonly<Record<string, string>>
+  /** `pluginId:skillId` to lease, from any enabled plugin; `pluginIds` then limits tools only. */
+  skillIds?: string[]
   /** Explicit capability owners; an empty list leases no tools or skills. Provider availability is independent. */
   pluginIds?: ReadonlyArray<string>
   /** `false` leases only the provider's plugin, so tool plugins stay free to change during chat runs. */
@@ -403,23 +405,44 @@ export class PluginRegistry implements RuntimeRegistry {
     const withTools = options.tools !== false
     const requested = options.pluginIds === undefined ? undefined : new Set(options.pluginIds)
     if (requested && [...requested].some(id => !selected.some(entry => entry.plugin.id === id)))
-      throw new AppError(409, 'personal-plugin-unavailable', '选择的插件已停用或移除，请更新个人助手。')
+      throw new AppError(409, 'agent-plugin-unavailable', '选择的插件已停用或移除，请更新这个 Agent。')
     const capabilities = selected.filter(entry => requested === undefined || requested.has(entry.plugin.id))
-    if (
-      options.expectedRevisions !== undefined
-      && [owner.plugin.id, ...capabilities.map(entry => entry.plugin.id)].some(id => !Object.hasOwn(options.expectedRevisions!, id))
-    )
+    const skillIds = options.skillIds === undefined ? undefined : new Set(options.skillIds)
+    const skillOwners = skillIds
+      ? selected.filter(entry => entry.skills.some(skill => skillIds.has(`${entry.plugin.id}:${skill.id}`)))
+      : capabilities
+    const contributors = [
+      ...new Set([owner, ...capabilities.filter(e => withTools && e.tools.length), ...skillOwners.filter(e => e.skills.length)]),
+    ]
+    // Only what the run actually receives: a plugin giving it nothing, such as an engine, is not part of the authority.
+    if (options.expectedRevisions !== undefined && contributors.some(entry => !Object.hasOwn(options.expectedRevisions!, entry.plugin.id)))
       throw new AppError(409, 'plugin-revision-missing', '执行授权缺少实际插件修订，请重新确认设置。')
-    const contributors = [...new Set([owner, ...capabilities.filter(e => e.skills.length || (withTools && e.tools.length))])]
     if (contributors.some(entry => this.mutating.has(entry.plugin.id))) {
       throw new AppError(409, 'plugin-busy', '本次任务需要的插件正在变更，请稍后重试')
     }
     const tools = withTools ? capabilities.flatMap(e => e.tools) : []
-    const skills = capabilities.flatMap(entry => entry.skills.map(skill => ({ ...skill, id: `${entry.plugin.id}:${skill.id}` })))
+    const skills = skillOwners
+      .flatMap(entry => entry.skills.map(skill => ({ ...skill, id: `${entry.plugin.id}:${skill.id}` })))
+      .filter(skill => skillIds === undefined || skillIds.has(skill.id))
+    if (skillIds && skills.length !== skillIds.size)
+      throw new AppError(409, 'agent-skill-unavailable', '选择的技能已停用或移除，请更新这个 Agent。')
     if (skills.reduce((size, skill) => size + skill.content.length, 0) > 256_000) {
       throw new AppError(409, 'skills-too-large', '已启用技能的总长度超过 256 KB，请停用部分插件后重试。')
     }
     return { provider, tools, ...(skills.length ? { skills } : {}), release: this.lease(contributors, true) }
+  }
+
+  /** The text of enabled skills by `pluginId:skillId`, for a read-only server; same limit as a lease. */
+  skillBodies(ids: readonly string[]): Array<{ id: string; name: string; description: string; content: string }> {
+    const wanted = new Set(ids)
+    const skills = [...this.entries.values()]
+      .filter(entry => entry.enabled)
+      .flatMap(entry => entry.skills.map(skill => ({ ...skill, id: `${entry.plugin.id}:${skill.id}` })))
+      .filter(skill => wanted.has(skill.id))
+    if (skills.length !== wanted.size) throw new AppError(409, 'agent-skill-unavailable', '选择的技能已停用或移除，请更新这个 Agent。')
+    if (skills.reduce((size, skill) => size + skill.content.length, 0) > 256_000)
+      throw new AppError(409, 'skills-too-large', '已启用技能的总长度超过 256 KB，请停用部分插件后重试。')
+    return skills.map(({ id, name, description, content }) => ({ id, name, description, content }))
   }
 
   /** Providers of enabled plugins, for catalogs. Use `acquire` to run one. */

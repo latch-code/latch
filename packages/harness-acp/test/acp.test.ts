@@ -1,5 +1,7 @@
 import type { FileTrackingInput, FileTrackingResult } from '@latch/sdk'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import { once } from 'node:events'
 import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, isAbsolute, join } from 'node:path'
@@ -3259,4 +3261,124 @@ it('marks a recovered idle ACP file observation partial without changing the con
   expect(detail.summary.updatedAt).toBe('2020-01-01T00:00:00Z')
   expect(detail.messages[0]).toMatchObject({ outputs: [{ path: 'result.txt' }], outputsTruncated: true })
   expect(detail.messages[0]!.outputsPending).toBeUndefined()
+})
+
+describe('agent context', () => {
+  const brief = {
+    segments: [
+      { source: 'latch' as const, text: '这是用户为「代码审阅」写的指令，第一轮发给 Fake。' },
+      { source: 'user' as const, text: 'ONLY REVIEW' },
+    ],
+  }
+  const skills = [{ id: 'plugin:list', name: '审阅清单', description: '逐项检查', content: 'SKILL BODY' }]
+  const context = (extra = {}) => ({
+    agent: { customAgentId: `agt_${randomUUID()}` },
+    instructions: '',
+    brief,
+    revision: 'a'.repeat(64),
+    ...extra,
+  })
+
+  it('sends the block once with the first turn, shows it on that message, and leaves the text alone', async () => {
+    const fixture = await setup()
+    const bridge = await fixture.open()
+    const agentContext = context()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo hello', requestId: rid(), agentContext })
+    await settled(bridge, sessionId)
+    const prompt = received(await fixture.log(), 'session/prompt')[0]!
+    expect((prompt.params as { prompt: unknown[] }).prompt).toEqual([
+      { type: 'text', text: '这是用户为「代码审阅」写的指令，第一轮发给 Fake。\nONLY REVIEW' },
+      { type: 'text', text: 'echo hello' },
+    ])
+    const detail = await bridge.detail(sessionId)
+    expect(detail.messages[0]).toMatchObject({ text: 'echo hello', agentBrief: brief })
+    expect(detail.summary.agent).toEqual(agentContext.agent)
+    await bridge.prompt(sessionId, 'echo again', rid(), {})
+    await settled(bridge, sessionId)
+    const second = received(await fixture.log(), 'session/prompt')[1]!
+    expect((second.params as { prompt: unknown[] }).prompt).toEqual([{ type: 'text', text: 'echo again' }])
+    expect((await bridge.detail(sessionId)).messages.filter(message => message.agentBrief)).toHaveLength(1)
+    await bridge.close()
+    const restored = await fixture.open()
+    expect((await restored.detail(sessionId)).summary.agent).toEqual(agentContext.agent)
+  })
+
+  it('keeps the block for the first turn that reaches the engine, across a restart, and only then records it', async () => {
+    const fixture = await setup({ FAKE_ACP_SLOW_SETUP: '300' })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo first', requestId: rid(), agentContext: context() })
+    expect(await bridge.cancel(sessionId)).toBe(true)
+    await settled(bridge, sessionId)
+    expect(received(await fixture.log(), 'session/prompt')).toHaveLength(0)
+    const stopped = await bridge.detail(sessionId)
+    expect(stopped.messages.filter(message => message.agentBrief)).toHaveLength(0)
+    await bridge.close()
+    const restored = await fixture.open()
+    await restored.prompt(sessionId, 'echo second', rid(), {})
+    await settled(restored, sessionId)
+    const sent = received(await fixture.log(), 'session/prompt')
+    expect(sent).toHaveLength(1)
+    expect((sent[0]!.params as { prompt: unknown[] }).prompt).toEqual([
+      { type: 'text', text: '这是用户为「代码审阅」写的指令，第一轮发给 Fake。\nONLY REVIEW' },
+      { type: 'text', text: 'echo second' },
+    ])
+    const users = (await restored.detail(sessionId)).messages.filter(message => message.role === 'user')
+    expect(users.map(message => message.agentBrief)).toEqual([undefined, brief])
+    await restored.prompt(sessionId, 'echo third', rid(), {})
+    await settled(restored, sessionId)
+    expect((received(await fixture.log(), 'session/prompt')[1]!.params as { prompt: unknown[] }).prompt).toEqual([
+      { type: 'text', text: 'echo third' },
+    ])
+  })
+
+  it('attaches a read-only skills server that lists and reads exactly the given skills, and removes it with the session', async () => {
+    const fixture = await setup()
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo hi', requestId: rid(), agentContext: context({ skillBodies: skills }) })
+    await settled(bridge, sessionId)
+    const params = received(await fixture.log(), 'session/new')[0]!.params as {
+      mcpServers: Array<{ name: string; command: string; args: string[]; env: unknown[] }>
+    }
+    const server = params.mcpServers[0]!
+    expect(server).toMatchObject({ name: 'latch-skills', command: process.execPath, env: [] })
+    const child = spawn(server.command, server.args, { stdio: ['pipe', 'pipe', 'inherit'] })
+    const lines: Array<Record<string, unknown>> = []
+    let buffer = ''
+    child.stdout.on('data', chunk => {
+      buffer += String(chunk)
+      for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
+        lines.push(JSON.parse(buffer.slice(0, end)) as Record<string, unknown>)
+        buffer = buffer.slice(end + 1)
+      }
+    })
+    const ask = async (id: number, method: string, params?: unknown) => {
+      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`)
+      await vi.waitFor(() => expect(lines.some(line => line.id === id)).toBe(true))
+      return lines.find(line => line.id === id)!
+    }
+    expect((await ask(1, 'initialize', { protocolVersion: '2025-06-18' })).result).toMatchObject({ capabilities: { tools: {} } })
+    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`)
+    const listed = (await ask(2, 'tools/list')).result as { tools: Array<{ name: string }> }
+    expect(listed.tools.map(tool => tool.name)).toEqual(['list_skills', 'read_skill'])
+    const names = (await ask(3, 'tools/call', { name: 'list_skills', arguments: {} })).result as { content: Array<{ text: string }> }
+    expect(JSON.parse(names.content[0]!.text)).toEqual([{ id: 'plugin:list', name: '审阅清单', description: '逐项检查' }])
+    expect(JSON.stringify((await ask(4, 'tools/call', { name: 'read_skill', arguments: { id: 'plugin:list' } })).result)).toContain(
+      'SKILL BODY',
+    )
+    expect((await ask(5, 'tools/call', { name: 'read_skill', arguments: { id: 'x' } })).result).toMatchObject({ isError: true })
+    expect((await ask(6, 'tools/call', { name: 'write_file', arguments: {} })).error).toMatchObject({ code: -32602 })
+    expect((await ask(7, 'resources/list')).error).toMatchObject({ code: -32601 })
+    child.stdin.end()
+    await once(child, 'exit')
+    await bridge.remove!(sessionId)
+    await expect(stat(server.args.at(-1)!)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('attaches no server without skills', async () => {
+    const fixture = await setup()
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo hi', requestId: rid(), agentContext: context() })
+    await settled(bridge, sessionId)
+    expect((received(await fixture.log(), 'session/new')[0]!.params as { mcpServers: unknown[] }).mcpServers).toEqual([])
+  })
 })

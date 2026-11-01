@@ -77,6 +77,9 @@ export function createAcpAgentPlugin(agent: AgentRecord, options: AcpAgentOption
         version: CLIENT_VERSION,
         description,
         capabilities: { modes: ['agent'], models: 'agent', attachments: { images: true, text: true, textBytes: 25 * 1024 * 1024 } },
+        agentContext: 'first-turn',
+        // ACP asks every agent to accept MCP servers over stdio; a preset says when one is known not to.
+        ...(AGENT_PRESETS.find(item => item.id === record.presetId)?.skillServer === false ? {} : { skills: 'server' as const }),
         ...folderDeclaration(selectProfile(record).profile),
         status() {
           const preset = AGENT_PRESETS.find(item => item.id === record.presetId)

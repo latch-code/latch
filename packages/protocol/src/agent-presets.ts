@@ -14,6 +14,8 @@ export interface AgentPreset {
    * the same way, so the page can say which of the two is missing.
    */
   companion?: string
+  /** False when the agent takes no MCP servers over ACP, so it cannot fetch an agent's skills. */
+  skillServer?: false
 }
 
 export const AGENT_PRESETS: AgentPreset[] = [
@@ -29,6 +31,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
   },
   {
     id: 'pi',
+    skillServer: false,
     name: 'pi',
     command: 'pi-acp',
     args: [],
@@ -50,6 +53,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
   },
   {
     id: 'dsh',
+    skillServer: false,
     name: 'DeepSeek Harness',
     command: 'dsh',
     args: ['--profile', 'acp'],

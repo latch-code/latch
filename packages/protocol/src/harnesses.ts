@@ -4,8 +4,10 @@ import type { TaskMode } from './sessions.ts'
 
 export type HarnessSource = 'builtin' | 'acp' | 'plugin'
 export interface HarnessInfo {
-  /** Explicit driver support for private personal instructions and selected Host capabilities. */
-  personalContext?: 'private'
+  /** How an agent's instructions and memories reach this engine. Absent: they cannot, so no agent can run on it. */
+  agentContext?: 'private' | 'first-turn'
+  /** How an agent's skills reach it: loaded natively, or fetched from a read-only server. Absent: they do not. */
+  skills?: 'native' | 'server'
   attachments?: { images?: boolean; text?: boolean; textBytes?: number }
   id: string
   name: string

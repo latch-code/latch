@@ -9,7 +9,7 @@ import type { PersonalRoutine, TaskDetail } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { startHostFixture } from '@latch/testkit'
 import { hostBundleOptions } from '../scripts/host-bundle.ts'
-import { personalPluginRevision } from '../src/personal-revisions.ts'
+import { agentPluginRevision } from '../src/agent-revisions.ts'
 import { checkedPluginBundle } from '../src/plugin-package-bundle.ts'
 import { PersonalRoutines, type RoutinePlan } from '../src/personal-routines.ts'
 import { dailyDate, nextDaily } from '../src/personal-schedule.ts'
@@ -36,7 +36,7 @@ const assistantId = `asst_${randomUUID()}`,
     persistent: true,
     mode: 'chat',
     model: { providerId: 'fixture', model: 'test' },
-    personal: { owner: { assistantId }, pluginIds: [], instructions: 'private memory', revision: '2'.repeat(64) },
+    personal: { personal: { assistantId }, pluginIds: [], instructions: 'private memory', revision: '2'.repeat(64) },
   }
 async function fixture(overrides: Partial<Parameters<typeof PersonalRoutines.open>[0]> = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'latch-routines-'))
@@ -119,12 +119,12 @@ test('execution authorization ignores package display metadata but binds skills 
       },
       files: [{ path: 'SKILL.md', content: 'Original instructions' }],
     }).bundle,
-    original = personalPluginRevision(bundle)
+    original = agentPluginRevision(bundle)
   expect(
-    personalPluginRevision({ ...bundle, manifest: { ...bundle.manifest, name: 'Renamed', version: '2', description: 'New display' } }),
+    agentPluginRevision({ ...bundle, manifest: { ...bundle.manifest, name: 'Renamed', version: '2', description: 'New display' } }),
   ).toBe(original)
-  expect(personalPluginRevision({ ...bundle, files: [{ path: 'SKILL.md', content: 'Changed instructions' }] })).not.toBe(original)
-  expect(personalPluginRevision({ ...bundle, manifest: { ...bundle.manifest, config: { destination: 'changed' } } })).not.toBe(original)
+  expect(agentPluginRevision({ ...bundle, files: [{ path: 'SKILL.md', content: 'Changed instructions' }] })).not.toBe(original)
+  expect(agentPluginRevision({ ...bundle, manifest: { ...bundle.manifest, config: { destination: 'changed' } } })).not.toBe(original)
 })
 test('persists before dispatch, settles only a real outcome and never repeats the same local date', async () => {
   const f = await fixture(),

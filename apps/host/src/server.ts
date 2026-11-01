@@ -1,12 +1,21 @@
 import { ConfigRequests } from './config-requests.ts'
 import { PersonalStore } from './personal-store.ts'
+import { CustomAgents, type AgentActor } from './custom-agents.ts'
+import { Automations, automationSummary } from './automations.ts'
+import { AgentPlans } from './agent-plans.ts'
 import { createPersonalRoutes } from './personal-routes.ts'
 import { PersonalRoutines, type RoutinePlan } from './personal-routines.ts'
 import { PersonalGroups } from './personal-groups.ts'
 import type { PersonalGroup, PersonalGroupMessage } from '@latch/protocol'
-import { personalPluginRevision } from './personal-revisions.ts'
+import { agentPluginRevision } from './agent-revisions.ts'
 import { executionBuildRevision } from './execution-build.ts'
-import type { PersonalAssistant, PersonalAssistantSummary, PersonalExecutionContext } from '@latch/protocol'
+import type {
+  AgentExecutionContext,
+  AutomationConfig,
+  PersonalAgentContext,
+  PersonalAssistant,
+  PersonalAssistantSummary,
+} from '@latch/protocol'
 import { readPreviewFrame, WORKER_CSP } from './preview-frames.ts'
 import { PromptQueues, type QueueActor } from './prompt-queues.ts'
 import { Questions } from './questions.ts'
@@ -277,6 +286,10 @@ const createTaskSchema = promptSchema.extend({
   assistantId: z
     .string()
     .regex(/^asst_[a-f0-9-]{36}$/u)
+    .optional(),
+  customAgentId: z
+    .string()
+    .regex(/^agt_[a-f0-9-]{36}$/u)
     .optional(),
 })
 const taskPatchSchema = z
@@ -870,6 +883,17 @@ function parseArguments(text: string | undefined): Record<string, unknown> | und
   }
 }
 
+/**
+ * The confirmation sentence's slot for one of 我的 Agent. The slot cuts at its end, and what the sentence must name is the
+ * program that gets access, so a long agent name is shortened first and the engine always survives.
+ */
+function agentSlot(name: string, engine: string): string {
+  const room = 16 - [...engine].length - 2
+  if (room < 2) return engine
+  const letters = [...name]
+  return `${letters.length > room ? `${letters.slice(0, room - 1).join('')}…` : name}（${engine}）`
+}
+
 /** The built-in file writer, as `<owner>:<tool>`; the risk classifier keys it the same way. */
 const BUILTIN_FILES = 'workspace-files'
 const BUILTIN_WRITE = `${BUILTIN_FILES}:write_file`
@@ -1260,10 +1284,23 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     await registry.enable('standard-harness')
     const personalStore = await PersonalStore.open(dataDir, { audit, now })
     startupCleanup.push(() => personalStore.close())
+    const customAgents = await CustomAgents.open({ dataDir, audit, now })
+    startupCleanup.push(() => customAgents.close())
     const questions = await Questions.open({ dataDir, changed: id => refresh(id), detail: id => hub!.detail(id) })
     startupCleanup.push(() => questions.close())
     registry.register(createQuestionsPlugin(questions), { managed: 'core', revision: executionBuildRevision('user-questions') })
     await registry.enable('user-questions')
+    /** Names and schedules of private definitions: for a device that may read them, and on a phone only while verified. */
+    function agentSummaries(caller: Caller, tasks: readonly TaskSummary[]): Pick<AppSnapshot, 'customAgents' | 'automations'> {
+      if (!caller.device || devices.get(caller.device.id)?.dataScope !== 'all') return {}
+      if (caller.nativeOpening && nativeRoutes.verifiedUntil(caller.nativeOpening) <= now()) return {}
+      // Absent, as on a Host without them, while a write is being confirmed: the rest of the app has nothing to wait for.
+      if (customAgents.hasPending() || automations.hasPending()) return {}
+      return {
+        customAgents: customAgents.list().map(agent => agentPlans.summary(agent, tasks)),
+        automations: automations.list().map(automationSummary),
+      }
+    }
     function questionSummary(task: TaskSummary): TaskSummary {
       const { pendingQuestions: _untrustedCount, ...summary } = task
       return { ...summary, pendingQuestions: questions.view(task.id).length }
@@ -1553,7 +1590,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       async prepare(actor, sessionId, model) {
         await checkQueuedPrompt(actor, sessionId, model, undefined, true)
         const plan = await queuedPersonalPlan(sessionId)
-        return plan ? { binding: plan.basis, model: plan.model } : undefined
+        if (plan) return { binding: plan.basis, model: plan.model }
+        const turn = await queuedAgentTurn(sessionId, actor.dataScope)
+        return turn?.binding && turn.model ? { binding: turn.binding, model: turn.model } : undefined
       },
       beforeEnqueue: async (actor, sessionId, itemId) => {
         await audited({
@@ -1573,9 +1612,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         await checkQueuedPrompt(actor, sessionId, input.model, input.binding)
         await input.authorize?.()
         const plan = await queuedPersonalPlan(sessionId)
-        if (plan?.basis !== input.binding) throw queueContextChanged()
+        const turn = plan ? undefined : await queuedAgentTurn(sessionId, actor.dataScope)
+        if ((plan?.basis ?? turn?.binding) !== input.binding) throw queueContextChanged()
+        const agentContext = plan?.personal ?? turn?.agentContext
         await harnessHub.prompt(sessionId, input.text, input.requestId, {
-          ...(plan ? { personal: plan.personal } : {}),
+          ...(agentContext ? { agentContext } : {}),
           ...(input.model ? { model: input.model } : {}),
           ...(input.queuedAt ? { queuedAt: input.queuedAt } : {}),
         })
@@ -1675,6 +1716,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         },
       },
       terminals,
+      agents: {
+        agents: customAgents,
+        plans: () => agentPlans,
+        automations: () => automations,
+        access: agentAccess,
+        sessions: () => hub!.listTasks(),
+        plugins: enabledPluginInfo,
+      },
+      automations: { automations: () => automations, access: agentAccess },
     })
 
     // ---- Callers, scopes and audit ---------------------------------------------------------------
@@ -1756,7 +1806,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const selection = assistant.model ?? defaultModelRef()
       return !harness || harness.status !== 'ready'
         ? '这个 Harness 暂时不可用，请检查电脑上的配置。'
-        : driver?.personalContext !== 'private'
+        : driver?.agentContext !== 'private'
           ? '这个 Harness 尚未提供私有上下文接口，暂不能用于个人助手。'
           : assistant.pluginIds.some(id => !enabled.has(id))
             ? '选择的插件已停用或移除，请更新个人助手。'
@@ -1777,13 +1827,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         canSchedule: unavailableReason === undefined && assistant.harnessId === 'standard',
       }
     }
-    function personalContext(id: string): PersonalExecutionContext {
+    function personalContext(id: string): PersonalAgentContext {
       const assistant = personalStore.assistant(id)
       const summary = personalSummary(assistant, [])
       if (!summary.available) throw new AppError(409, 'personal-unavailable', summary.unavailableReason!)
       const memories = personalStore.memories(id)
       return {
-        owner: { assistantId: id },
+        personal: { assistantId: id },
         pluginIds: [...assistant.pluginIds],
         revision: personalStore.definitionHash(id),
         instructions: [
@@ -1795,8 +1845,60 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
     }
     function personalVisible(caller: Caller, summary: TaskSummary): boolean {
-      return !summary.personal || (!!caller.device && devices.get(caller.device.id)?.dataScope === 'all')
+      return !privateSession(summary) || (!!caller.device && devices.get(caller.device.id)?.dataScope === 'all')
     }
+    /** A session of an assistant or of one of 我的 Agent shows that agent's private instructions and memories. */
+    function privateSession(summary: Pick<TaskSummary, 'personal' | 'agent' | 'agentPrivate'> | undefined): boolean {
+      return !!summary?.personal || !!summary?.agent || !!summary?.agentPrivate
+    }
+    function privateAccess(caller: Caller, summary: Pick<TaskSummary, 'personal' | 'agent' | 'agentPrivate'> | undefined): void {
+      if (summary?.personal) personalAccess(caller)
+      else if (privateSession(summary)) agentAccess(caller)
+    }
+    function enabledPluginInfo() {
+      return registry
+        .list()
+        .filter(plugin => plugin.enabled)
+        .map(({ id, name, description, capabilities }) => ({ id, name, description, capabilities }))
+    }
+    function agentAccess(caller: Caller, write = false): AgentActor {
+      requireScope(caller, write ? 'run' : 'view')
+      const authorize = () => {
+        recheck(caller, write ? 'run' : 'view')
+        if (devices.get(caller.device!.id)?.dataScope !== 'all')
+          throw new AppError(403, 'agent-scope-required', 'Agent 含有私有记忆，请先在电脑上允许这台设备使用。')
+      }
+      authorize()
+      return { actor: { ...actorOf(caller), deviceId: caller.device.id }, authorize }
+    }
+    const agentPlans = new AgentPlans({
+      agents: customAgents,
+      harness: id => hub!.info(id),
+      plugins: () => registry.list().filter(plugin => plugin.enabled),
+      skills: () => registry.skills(),
+      skillBodies: ids => registry.skillBodies(ids),
+      defaultModel: () => defaultModelRef(),
+      modelAvailable,
+      providerOwner: id => registry.providerOwner(id),
+      revisions(ids) {
+        const snapshot = registry.revisionSnapshot(ids),
+          assets = pluginAssets.list()
+        return {
+          revisions: snapshot.revisions,
+          persistent: snapshot.persistent,
+          hashed: Object.entries(snapshot.revisions).map(([id, revision]) => {
+            const asset = assets.find(record => record.id === id)
+            return [id, asset?.appliedBundle ? agentPluginRevision(asset.appliedBundle) : revision]
+          }),
+        }
+      },
+      projectUsable: id => savedProject(id) !== undefined,
+      environment: projectId => ({
+        policy: policy.hash(),
+        workspace: canonicalWorkspace,
+        ...(projectId ? { folders: savedProject(projectId)?.folders.map(folder => folder.path) ?? [] } : {}),
+      }),
+    })
     function routinePlan(id: string, selection?: ModelRef): RoutinePlan {
       const assistant = personalStore.assistant(id),
         personal = personalContext(id)
@@ -1809,7 +1911,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         assets = pluginAssets.list(),
         revisions = Object.entries(snapshot.revisions).map(([id, revision]) => {
           const asset = assets.find(record => record.id === id)
-          return [id, asset?.appliedBundle ? personalPluginRevision(asset.appliedBundle) : revision]
+          return [id, asset?.appliedBundle ? agentPluginRevision(asset.appliedBundle) : revision]
         })
       return {
         basis: sha256Hex(
@@ -1867,7 +1969,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           workspaceId: 'default',
           mode: plan.mode,
           model: plan.model,
-          personal: plan.personal,
+          agentContext: plan.personal,
         }
         return projectOperationForRoutine(async () => {
           authorize()
@@ -1894,7 +1996,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         assets = pluginAssets.list(),
         revisions = Object.entries(snapshot.revisions).map(([id, revision]) => {
           const asset = assets.find(record => record.id === id)
-          return [id, asset?.appliedBundle ? personalPluginRevision(asset.appliedBundle) : revision]
+          return [id, asset?.appliedBundle ? agentPluginRevision(asset.appliedBundle) : revision]
         }),
         basis = sha256Hex(
           canonicalJson({
@@ -1928,7 +2030,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         mode: assistant.mode,
         model,
         personal: {
-          owner: { assistantId: id, groupId: group.id },
+          personal: { assistantId: id, groupId: group.id },
           pluginIds: [...assistant.pluginIds],
           expectedRevisions: snapshot.revisions,
           revision: basis,
@@ -1956,7 +2058,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             workspaceId: 'default',
             mode: plan.mode,
             model: plan.model,
-            personal: plan.personal,
+            agentContext: plan.personal,
           }
           if (makeOwnFolders && plan.mode === 'agent') {
             const folder = await ownFolders.allocate(requestId)
@@ -1979,7 +2081,70 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     function checkPersonalSession(caller: Caller, id: string, write = false): void {
       recheck(caller)
       if (hub!.personalOf(id)) personalAccess(caller, write)
+      if (hub!.agentPrivate(id)) agentAccess(caller, write)
     }
+    /** Whether this device's authority can still stand behind a run that starts while nobody is looking. */
+    function authorizeAutomation(deviceId: string, definition: AutomationConfig): void {
+      const device = devices.get(deviceId),
+        current = policy.get()
+      const remote = current.remote
+      if (
+        !device
+        || !devices.standsBehind(deviceId)
+        || device.dataScope !== 'all'
+        || !device.scopes.includes('run')
+        || !levelAtMost('L1', ceilingFor(current, device.listener))
+        || !levelAtMost('L1', current.unattended.maxLevel)
+        || now() - Date.parse(device.lastSeenAt) > current.unattended.pauseAfterIdleDays * 86400000
+        || (!isLocalListener(device.listener)
+          && (!remote.allowRemoteStart
+            || (remote.harnesses !== null && !remote.harnesses.includes(STANDARD))
+            || (remote.workspaces !== null && !remote.workspaces.includes(definition.projectId ?? 'default'))))
+      )
+        throw new AppError(403, 'automation-owner', '这台设备不能开启这个自动化。')
+    }
+    const automations = await Automations.open({
+      dataDir,
+      audit,
+      now,
+      plan: definition => agentPlans.automation(definition),
+      authorize: authorizeAutomation,
+      changed: () => refresh(),
+      detail: id => hub!.detail(id),
+      cancel: (id, runId) => hub!.cancel(id, runId ? { runId } : undefined),
+      approvalTtlMs: () => policy.get().unattended.approvalTtlHours.standard * 3600000,
+      async start({ requestId, automationId, title, prompt, projectId, plan, authorize }) {
+        authorize()
+        return projectOperationForRoutine(async () => {
+          authorize()
+          const chosen = projectId ? savedProject(projectId) : undefined
+          if (projectId && !chosen) throw new AppError(409, 'workspace-unavailable', '找不到所选项目')
+          if (chosen) await assertWorkspaceUsable(chosen)
+          const task: HubCreateInput = {
+            requestId,
+            prompt,
+            harnessId: STANDARD,
+            workspaceId: projectId ?? 'default',
+            mode: plan.mode,
+            model: plan.model,
+            automationId,
+            initialTitle: title,
+            ...(plan.agentContext ? { agentContext: plan.agentContext } : {}),
+          }
+          if (chosen) {
+            authorize()
+            return hub!.createTask({ ...task, cwd: chosen.folders[0].path, folders: chosen.folders.map(({ id, path }) => ({ id, path })) })
+          }
+          if (makeOwnFolders && plan.mode === 'agent') {
+            const folder = await ownFolders.allocate(requestId)
+            return createInOwnFolder({ ...task, cwd: folder.path, sessionFolder: folder.name }, requestId, authorize)
+          }
+          authorize()
+          return hub!.createTask(task)
+        })
+      },
+    })
+    startupCleanup.push(() => automations.close())
     const personalRoutes = createPersonalRoutes<Caller>({
       store: personalStore,
       routines: personalRoutines,
@@ -2004,11 +2169,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       },
       authorize: personalAccess,
       summary: personalSummary,
-      plugins: () =>
-        registry
-          .list()
-          .filter(plugin => plugin.enabled)
-          .map(({ id, name, description, capabilities }) => ({ id, name, description, capabilities })),
+      plugins: enabledPluginInfo,
       sessions: () => hub!.listTasks(),
       changed: () => refresh(),
     })
@@ -3739,7 +3900,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (!found) throw settled(approvalId, caller)
       const source = hub!.sourceOf(found.harnessId)
       const session = (await hub!.listTasks()).find(task => task.id === found.approval.sessionId)
-      if (session?.personal && (input.decision === 'allow' || input.note !== undefined)) personalAccess(caller)
+      if (input.decision === 'allow' || input.note !== undefined) privateAccess(caller, session)
       const approval = await decorate(found.approval, source, session)
       const option = input.optionId ? approval.options?.find(item => item.id === input.optionId) : undefined
       if (input.optionId && !option) {
@@ -3848,7 +4009,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         recheck(caller, needed)
         if (input.decision === 'allow') {
           assertSessionCeiling(caller, level)
-          if (session?.personal) personalAccess(caller)
+          privateAccess(caller, session)
         }
       } catch (error) {
         auditFailed(intent, caller)
@@ -3996,7 +4157,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         streams.delete(res)
         return
       }
-      if (event.type === 'task-state' && event.detail.summary.personal && devices.get(stream.deviceId)?.dataScope !== 'all') return
+      if (event.type === 'task-state' && privateSession(event.detail.summary) && devices.get(stream.deviceId)?.dataScope !== 'all') return
       // A connection can join while an older batch awaits an external Bridge.
       // Equal revisions are valid for different events in the same batch.
       if (event.revision < stream.lastSentRevision) return
@@ -4446,8 +4607,45 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         throw new AppError(400, 'invalid-prompt', '请输入任务内容或添加附件。')
       await projectOperation(caller, 'run', async () => {
         recheck(caller, 'run')
-        let personal: PersonalExecutionContext | undefined
+        let personal: PersonalAgentContext | undefined
         let personalRevision: string | undefined
+        const customAgentId = input.customAgentId
+        let selected: ReturnType<typeof customAgents.get> | undefined
+        if (customAgentId) {
+          if (input.assistantId) throw new AppError(400, 'invalid-input', '一个会话只能属于一个 Agent。')
+          const actor = agentAccess(caller, true)
+          const saved = customAgents.get(customAgentId)
+          const { harnessId, workspaceId, mode, model } = input
+          const start = await customAgents.reserveStart(
+            customAgentId,
+            input.requestId,
+            () =>
+              agentPlans.selection(saved, {
+                ...(harnessId ? { harnessId } : {}),
+                ...(workspaceId ? { workspaceId } : {}),
+                ...(mode ? { mode } : {}),
+                ...(model ? { model } : {}),
+              }),
+            actor,
+          )
+          const { model: startModel, workspaceId: startWorkspace, ...choice } = start
+          // Judged on what this start uses, not on defaults it replaced.
+          const { defaultProjectId: _project, ...savedRest } = saved
+          const reason = agentPlans.unavailable({
+            ...savedRest,
+            harnessId: start.harnessId,
+            ...(startModel ? { model: startModel } : {}),
+            ...(startWorkspace ? { defaultProjectId: startWorkspace } : {}),
+          })
+          if (reason) throw new AppError(409, 'agent-unavailable', reason)
+          selected = saved
+          input = {
+            ...input,
+            ...choice,
+            ...(startModel ? { model: startModel } : {}),
+            ...(startWorkspace ? { workspaceId: startWorkspace } : {}),
+          }
+        }
         if (input.assistantId) {
           const actor = personalAccess(caller, true)
           if (
@@ -4490,12 +4688,20 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               await checkPersonalSession(caller, input.forkOf!.taskId)
               const detail = await hub!.detail(input.forkOf!.taskId)
               recheck(caller, 'view')
-              if (detail.summary.personal) personalAccess(caller)
+              privateAccess(caller, detail.summary)
               return { ...forkSeed(detail, input.forkOf!.upToMessageId), source: detail.summary }
             })()
           : undefined
         const prompt = fork ? fork.text + (input.prompt || '请接着这个会话继续。') : input.prompt
         const harnessId = input.harnessId ?? defaultHarnessId()
+        const agentContext: AgentExecutionContext | undefined =
+          personal
+          ?? (customAgentId
+            ? agentPlans.agentContext(customAgentId, harnessId)
+            : generalContextFor(devices.get(caller.device.id)?.dataScope, harnessId))
+          ?? (fork && privateSession(fork.source)
+            ? { instructions: '', revision: sha256Hex(canonicalJson(['fork', fork.source.id])) }
+            : undefined)
         const harness = hub!.info(harnessId)
         if (!harness || !hub!.has(harnessId)) throw new AppError(409, 'harness-unavailable', `Harness ${harnessId} 未启用`)
         if (harness.status !== 'ready')
@@ -4582,7 +4788,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ...(fileRefs.length ? { fileRefs } : {}),
           ...(attachments.length ? { attachments } : {}),
           requestId: personal ? sha256Hex(canonicalJson(['personal-session', caller.device.id, input.requestId])) : input.requestId,
-          ...(personal ? { personal } : {}),
+          ...(agentContext ? { agentContext } : {}),
           harnessId,
           workspaceId,
           ...(input.mode ? { mode: input.mode } : {}),
@@ -4599,14 +4805,19 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           recheck(caller, 'run')
           if (personal) {
             personalAccess(caller, true)
-            if (personalStore.definitionHash(personal.owner.assistantId) !== personalRevision)
+            if (personalStore.definitionHash(personal.personal.assistantId) !== personalRevision)
               throw new AppError(409, 'personal-definition-changed', '助手设置或记忆已改变，请重新开始。')
           }
+          if (customAgentId) {
+            agentAccess(caller, true)
+            if (customAgents.definitionHash(customAgentId) !== agentContext?.revision)
+              throw new AppError(409, 'agent-changed', '这个 Agent 的设置或记忆已改变，请重新开始。')
+          } else if (agentContext && !personal) agentAccess(caller, true)
           if (fileRefs.length && devices.get(caller.device.id)?.dataScope !== 'all')
             throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
           if (fork) {
             recheck(caller, 'view')
-            if (fork.source.personal) personalAccess(caller)
+            privateAccess(caller, fork.source)
           }
           if (hub!.levelOf(harnessId) === 'L1') assertStandardCeiling(caller, { harnessId, workspaceId })
           else assertSessionCeiling(caller, 'L3')
@@ -4644,9 +4855,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               ? chosen.folders.map(({ id, path }) => ({ id, path }))
               : [{ id: 'default', path: workspaceRoot }]
         const promptHash = sha256Hex(
-          attachments.length || fileRefs.length
+          attachments.length || fileRefs.length || agentContext?.brief || agentContext?.skillBodies
             ? canonicalJson({
                 prompt,
+                // The block goes out with the prompt, so what was confirmed includes it.
+                ...(agentContext?.brief ? { brief: agentContext.brief } : {}),
+                ...(agentContext?.skillBodies ? { skills: agentContext.skillBodies } : {}),
                 ...(attachments.length ? { attachments: attachments.map(ref => ({ id: ref.id, sha256: ref.sha256 })) } : {}),
                 ...(fileRefs.length ? { fileRefs } : {}),
               })
@@ -4663,7 +4877,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const foldersAudited = passed.length ? { folderCount: passed.length + 1 } : {}
         const project = chosen && chosen.id !== 'default' ? chosen.name : undefined
         // A session without a saved project leaves the place out of the sentence.
-        const place = { agent: harness.name, project: project ?? '' }
+        const place = { agent: selected ? agentSlot(selected.name, harness.name) : harness.name, project: project ?? '' }
         let subject: PresenceSubject
         let launchHash: string
         let lines: PreviewLine[]
@@ -4696,6 +4910,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             { label: '定义状态', value: preview.verified ? '已验证的预设' : '未验证的定义' },
             { label: '模式读回', value: preview.readback === 'mode' ? '可读回' : '无法读回' },
             { label: '审批', value: preview.approvals === 'prompts' ? '会请求审批' : '不请求审批' },
+            ...(agentContext?.skillBodies ? [{ label: '说明', value: '随会话附加只读技能服务：只能列出和读取所选技能。' }] : []),
             ...preview.notes.map(note => ({ label: '说明', value: note })),
             { label: '启动指纹', value: hashDisplay(launchHash) },
             { label: '首条输入', value: hashDisplay(promptHash) },
@@ -4848,6 +5063,38 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         throw error
       }
     }
+    /** 通用's instructions and memories go only to a device that could read them, or its model's reply would carry them there. */
+    function generalContextFor(dataScope: 'work' | 'all' | undefined, harnessId: string): AgentExecutionContext | undefined {
+      return dataScope === 'all' ? agentPlans.generalContext(harnessId) : undefined
+    }
+    /** A queued turn of an agent's session runs on the definition it was queued under; 通用 applies as it stands when sent. */
+    async function queuedAgentTurn(
+      sessionId: string,
+      dataScope: 'work' | 'all',
+    ): Promise<{ binding?: string; model?: ModelRef; agentContext?: AgentExecutionContext } | undefined> {
+      const harnessId = await hub!.harnessOf(sessionId)
+      const context = turnContext(sessionId, harnessId, dataScope)
+      const owner = hub!.agentOf(sessionId)
+      if (!owner) return context ? { agentContext: context } : undefined
+      if (hub!.info(harnessId)?.agentContext !== 'private') return undefined
+      const session = await hub!.summary(sessionId)
+      const model = session.providerId && session.model ? { providerId: session.providerId, model: session.model } : undefined
+      if (!context || !model) throw queueContextChanged()
+      return { binding: context.revision, model, agentContext: context }
+    }
+    /** What this turn of a session sends: an engine that got the first-turn block keeps it in its own history. */
+    function turnContext(sessionId: string, harnessId: string, dataScope: 'work' | 'all' | undefined): AgentExecutionContext | undefined {
+      if (hub!.info(harnessId)?.agentContext !== 'private') return undefined
+      const owner = hub!.agentOf(sessionId)
+      if (!owner) return generalContextFor(dataScope, harnessId)
+      try {
+        return agentPlans.agentContext(owner.customAgentId, harnessId)
+      } catch (error) {
+        if (codeOf(error) === 'agent-not-found') throw new AppError(409, 'agent-deleted', '这个 Agent 已删除，请在新会话中继续。')
+        throw error
+      }
+    }
+
     async function checkQueuedPrompt(
       actor: QueueActor,
       sessionId: string,
@@ -4894,7 +5141,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           assertModel(model)
         }
         const plan = await queuedPersonalPlan(sessionId)
-        if (!preparing && (plan?.basis !== binding || (plan && canonicalJson(model) !== canonicalJson(plan.model))))
+        const turn = plan ? undefined : await queuedAgentTurn(sessionId, actor.dataScope)
+        if (!preparing && ((plan?.basis ?? turn?.binding) !== binding || (plan && canonicalJson(model) !== canonicalJson(plan.model))))
           throw queueContextChanged()
         recheck(caller, 'run')
       } catch (error) {
@@ -4985,7 +5233,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const detailRevision = revision
         const detail = await decoratedDetail(id)
         recheck(caller, 'view')
-        if (detail.summary.personal) personalAccess(caller)
+        privateAccess(caller, detail.summary)
         traffic.response('detail', json(res, { ...detail, sync: { instanceId, revision: detailRevision } }), id)
         return true
       }
@@ -5039,12 +5287,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const personal = personalOwner ? personalContext(personalOwner.assistantId) : undefined
         if (
           personal
-          && (personalStore.assistant(personal.owner.assistantId).harnessId !== session?.harnessId
-            || personalStore.assistant(personal.owner.assistantId).mode !== session?.mode)
+          && (personalStore.assistant(personal.personal.assistantId).harnessId !== session?.harnessId
+            || personalStore.assistant(personal.personal.assistantId).mode !== session?.mode)
         )
           throw new AppError(409, 'personal-harness-changed', '这个助手的 Harness 或模式已改变，请创建新会话。')
         if (personal && input.model) throw new AppError(400, 'personal-selection-fixed', '请在个人助手设置中修改模型。')
         const harnessId = await hub!.harnessOf(id),
+          agentTurn = personal ? undefined : turnContext(id, harnessId, devices.get(caller.device.id)?.dataScope),
           attachments = await promptAttachments(
             caller,
             input.attachmentIds,
@@ -5075,18 +5324,21 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
           if (personal) {
             personalAccess(caller, true)
-            if (personalStore.definitionHash(personal.owner.assistantId) !== personal.revision)
+            if (personalStore.definitionHash(personal.personal.assistantId) !== personal.revision)
               throw new AppError(409, 'personal-definition-changed', '助手设置已改变，请重新发送。')
           }
+          if (agentTurn) agentAccess(caller, true)
           await hub!.prompt(id, input.prompt, input.requestId, {
             ...(personal
               ? {
-                  personal,
-                  ...(personalStore.assistant(personal.owner.assistantId).model
-                    ? { model: personalStore.assistant(personal.owner.assistantId).model }
+                  agentContext: personal,
+                  ...(personalStore.assistant(personal.personal.assistantId).model
+                    ? { model: personalStore.assistant(personal.personal.assistantId).model }
                     : {}),
                 }
-              : {}),
+              : agentTurn
+                ? { agentContext: agentTurn }
+                : {}),
             ...(fileRefs.length ? { fileRefs } : {}),
             ...(input.model ? { model: input.model } : {}),
             ...(attachments.length ? { attachments } : {}),
@@ -5851,7 +6103,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (!ANONYMOUS_UNIX.has(route) || path === '/link/api/devices/current') throw authFailure('unauthorized')
       }
       const privateTaskId = /^\/link\/api\/tasks\/([^/]+)/u.exec(path)?.[1]
-      if (privateTaskId && !path.endsWith('/cancel') && hub!.personalOf(safeDecode(privateTaskId))) personalAccess(caller)
+      if (privateTaskId && !path.endsWith('/cancel')) {
+        const taskId = safeDecode(privateTaskId)
+        if (hub!.personalOf(taskId)) personalAccess(caller)
+        else if (hub!.agentPrivate(taskId)) agentAccess(caller)
+      }
       if (await routes.route(authenticated)) return
       if (path === '/link/api/snapshot' && method === 'GET') {
         requireScope(caller, 'view')
@@ -5885,6 +6141,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           harness: { id: defaultId, name: hub!.info(defaultId)?.name ?? defaultId },
           execution,
           catalog: await catalog(caller),
+          ...agentSummaries(caller, tasks),
           version: LATCH_VERSION,
           hostTime: hostTime(),
         }
@@ -5901,7 +6158,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (sessionId && sessionId.length > 256) throw new AppError(400, 'invalid-session', '会话标识过长')
         if (nativeOpening && sessionId) {
           const summary = await hub!.summary(sessionId)
-          if (summary.personal) personalAccess(caller)
+          privateAccess(caller, summary)
           recheck(caller, 'view')
         }
         let resume: ReturnType<NativeReplay['resume']> | undefined
@@ -6004,8 +6261,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           res.once('close', abort)
           const { summary } = await hub!.detail(sessionId)
           recheck(caller, 'view')
-          if (summary.personal && !summary.pluginIds?.includes(lease.info.pluginId))
-            throw new AppError(404, 'ui-panel-unavailable', '这个助手没有选择此插件。')
+          if (
+            (summary.personal && !summary.pluginIds?.includes(lease.info.pluginId))
+            || (summary.agent && summary.pluginIds && !summary.pluginIds.includes(lease.info.pluginId))
+          )
+            throw new AppError(404, 'ui-panel-unavailable', '这个 Agent 没有选择此插件。')
           if (lease.info.harnessIds !== undefined && !lease.info.harnessIds.includes(summary.harnessId ?? STANDARD)) {
             throw new AppError(404, 'ui-panel-unavailable', '这个扩展面板不适用于当前会话。')
           }
@@ -6295,6 +6555,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       close() {
         return (shutdown ??= (async () => {
           closing = true
+          // First, while the engines still answer: a check made against a closing Host would pause on its way out.
+          await automations.close()
           await sessionLifecycle.hostStopping()
           await nativeRoutes.close()
           clearInterval(heartbeat)
@@ -6312,6 +6574,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             () => harnessHub.close(),
             () => questions.close(),
             () => personalStore.close(),
+            () => customAgents.close(),
             () => fileTracking.close(),
             () => fileRoutes.close(),
             () => pluginAssets.close(),

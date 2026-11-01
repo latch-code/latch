@@ -1,12 +1,15 @@
 import { RunFileTracking, recordFileOutputs } from '@latch/core/file-tracking'
 import { fileMentionContext, type FileMention } from '@latch/protocol'
 import { checkedAttachments, promptBlocks } from './attachments.ts'
+import { removeSessionSkills, skillsDirectory, skillsServer, writeSessionSkills } from './skills-server.ts'
 import type { AttachmentRef } from '@latch/protocol'
 import { createHash, randomUUID } from 'node:crypto'
 import { lstat, mkdir, realpath, rm } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import type {
+  AgentBrief,
+  AgentExecutionContext,
   Approval,
   ApprovalOptionKind,
   Message,
@@ -676,6 +679,7 @@ export class AcpBridge implements Bridge {
       cwd,
       launch,
       ...(scope ? { scope } : {}),
+      ...(input.agentContext ? { agentContext: input.agentContext } : {}),
     }
     if (scope?.passed?.via !== 'acp') return this.record(create)
     // Whether the agent takes the other folders is known only once it has started, so it starts before the session
@@ -712,8 +716,9 @@ export class AcpBridge implements Bridge {
     cwd: string
     launch: Launch
     scope?: Scope
+    agentContext?: AgentExecutionContext
   }): Promise<{ sessionId: string }> {
-    const { sessionId, prompt, cwd, launch, scope, attachments, fileRefs = [] } = create
+    const { sessionId, prompt, cwd, launch, scope, attachments, fileRefs = [], agentContext } = create
     this.assertOpen()
     let context: string
     try {
@@ -721,6 +726,8 @@ export class AcpBridge implements Bridge {
     } catch {
       throw new AppError(400, 'file-reference-invalid', '文件引用无效。')
     }
+    if (agentContext?.skillBodies?.length)
+      await writeSessionSkills(skillsDirectory(this.options.dataDir, sessionId), agentContext.skillBodies)
     const run = this.reserve(sessionId, 1, context)
     run.attachments = attachments
     const at = isoTime(run.clock.startedAt)
@@ -738,6 +745,8 @@ export class AcpBridge implements Bridge {
           ? { workspaceId: scope.workspaceId, folders: scope.folders.map(({ id, path }) => ({ id, path })), folderAccess: 'all' as const }
           : {}),
         runId: run.id,
+        ...(agentContext?.agent ? { agent: agentContext.agent } : {}),
+        ...(agentContext && !agentContext.personal && !agentContext.agent ? { agentPrivate: true as const } : {}),
       },
       messages: [
         {
@@ -759,6 +768,8 @@ export class AcpBridge implements Bridge {
         definitionHash: launch.definitionHash,
         ...(this.selection.profile ? { profilePresetId: this.selection.profile.presetId } : {}),
         ...(scope?.passed ? { folders: [...scope.passed.paths], folderVia: scope.passed.via } : {}),
+        ...(agentContext?.skillBodies?.length ? { skills: true as const } : {}),
+        ...(agentContext?.brief ? { brief: agentContext.brief } : {}),
       },
     }
     this.state.receipts[create.key] = { taskId: sessionId, payloadHash: create.payloadHash, kind: 'create' }
@@ -925,6 +936,7 @@ export class AcpBridge implements Bridge {
     const { acpSessionId, cwd, deletable } = task.acp
     const recorded = structuredClone(task)
     this.fileTracking.dispose(sessionId)
+    if (task.acp.skills) await removeSessionSkills(skillsDirectory(this.options.dataDir, sessionId))
     delete this.state.tasks[sessionId]
     for (const [key, receipt] of Object.entries(this.state.receipts)) {
       if (receipt.taskId !== sessionId) continue
@@ -1601,7 +1613,9 @@ export class AcpBridge implements Bridge {
       run.live = binding.live
       run.acpSessionId = binding.acpSessionId
       this.holdIdle(binding.live)
-      const blocks = await promptBlocks(run.prompt, run.attachments ?? [], binding.live.capabilities, this.options.readAttachment)
+      const content = await promptBlocks(run.prompt, run.attachments ?? [], binding.live.capabilities, this.options.readAttachment)
+      const brief = this.state.tasks[run.taskId]?.acp.brief
+      const blocks = brief ? [{ type: 'text', text: brief.segments.map(segment => segment.text).join('\n') }, ...content] : content
       if (run.cancelRequested) {
         status = 'cancelled'
         return
@@ -1609,10 +1623,12 @@ export class AcpBridge implements Bridge {
       run.sent = true
       this.phase(run, 'model')
       this.notify(run.taskId)
-      const result = await binding.live.connection.request('session/prompt', {
+      const answer = binding.live.connection.request('session/prompt', {
         sessionId: binding.acpSessionId,
         prompt: blocks,
       })
+      if (brief) this.briefSent(run, brief)
+      const result = await answer
       status = this.outcome(run, result, notes)
     } catch (error) {
       status = this.failure(run, error, notes)
@@ -1620,6 +1636,20 @@ export class AcpBridge implements Bridge {
       await run.imageChain
       this.finishTurn(run, status, [...run.notes, ...notes])
     }
+  }
+
+  /**
+   * Recorded on the turn that carried it, and no sooner: a first turn that never reached the engine leaves it pending for
+   * the next. A crash before this reaches the disk sends it twice, which an agent survives better than never getting it.
+   */
+  private briefSent(run: Run, brief: AgentBrief): void {
+    const task = this.state.tasks[run.taskId]
+    if (!task) return
+    delete task.acp.brief
+    const message = task.messages.find(item => item.id === run.userMessageId)
+    if (message?.role === 'user') message.agentBrief = brief
+    this.mark()
+    this.notify(run.taskId)
   }
 
   private outcome(run: Run, result: unknown, notes: string[]): TaskStatus {
@@ -2093,6 +2123,7 @@ export class AcpBridge implements Bridge {
     // ACP wants the whole list again for every new, resumed or loaded session: omitting it would drop the folders.
     const passed = storedFolders(task.acp)
     const directories = passed?.via === 'acp' ? { additionalDirectories: [...passed.paths] } : {}
+    const mcpServers = task.acp.skills ? [skillsServer(skillsDirectory(this.options.dataDir, taskId))] : []
     if (passed?.via === 'acp' && !live.capabilities.additionalDirectories) {
       void live.connection.stop('stop', this.limits.stopGraceMs)
       throw this.foldersUnsupported(false)
@@ -2100,16 +2131,16 @@ export class AcpBridge implements Bridge {
     let acpSessionId: string
     let result: unknown
     if (!current) {
-      result = await setup('session/new', { cwd, mcpServers: [], ...directories })
+      result = await setup('session/new', { cwd, mcpServers, ...directories })
       const id = sessionState.safeParse(result)
       if (!id.success || !id.data.sessionId) throw new AppError(502, 'agent-protocol', `${this.agent.name} 未返回有效的会话标识`)
       acpSessionId = id.data.sessionId
     } else if (live.capabilities.resume) {
-      result = await setup('session/resume', { sessionId: current, cwd, mcpServers: [], ...directories })
+      result = await setup('session/resume', { sessionId: current, cwd, mcpServers, ...directories })
       acpSessionId = current
     } else if (live.capabilities.load) {
       // The replay arrives before the response while the session is still unbound, so it is discarded.
-      result = await setup('session/load', { sessionId: current, cwd, mcpServers: [], ...directories })
+      result = await setup('session/load', { sessionId: current, cwd, mcpServers, ...directories })
       acpSessionId = current
     } else {
       throw new AppError(409, 'harness-session-lost', '该 Harness 不支持恢复会话，请新建会话')

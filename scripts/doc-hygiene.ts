@@ -10,9 +10,11 @@ const DOCUMENTS: ReadonlySet<string> = new Set(
   [
     'ARCHITECTURE',
     'ATTACHMENTS',
+    'AUTOMATIONS',
     'BRANCHES',
     'CHANGES',
     'CLIENT-LOADING',
+    'CUSTOM-AGENTS',
     'DESIGN',
     'DOCUMENT-PERFORMANCE',
     'DOCUMENT-PREVIEWS',

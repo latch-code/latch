@@ -68,7 +68,7 @@ describe('explicit file choices', () => {
     })
     expect(limitedPreview.files[0]!.status).toBe('ok')
 
-    expect(seen[0]![0]!.content).toContain(join(paths[1]!, 'report.txt'))
+    expect(seen[0]![1]!.content).toContain(join(paths[1]!, 'report.txt'))
     expect(await owner.json('tasks', { body: input })).toEqual(created)
     expect(
       (await owner.request('tasks', { body: { ...input, fileRefs: [{ root: fileRefs[0]!.root, path: '.env' }], requestId: randomUUID() } }))

@@ -4,9 +4,9 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { afterEach, expect, test, vi } from 'vitest'
 import { z } from 'zod'
-import { PersonalJournal } from '../src/personal-journal.ts'
+import { AgentJournal } from '../src/agent-journal.ts'
 const roots: string[] = [],
-  journals: Array<PersonalJournal<unknown>> = []
+  journals: Array<AgentJournal<unknown>> = []
 afterEach(async () => {
   for (const journal of journals.splice(0)) await journal.close()
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true })
@@ -22,7 +22,7 @@ async function root() {
 test('recovers only the exact durable intent after rename without calling the mutation a second time', async () => {
   const dir = await root()
   let fail = true
-  const journal = await PersonalJournal.open(dir, 'activity.json', schema, initial, {
+  const journal = await AgentJournal.open(dir, 'activity.json', schema, initial, {
     atomicFs: {
       open,
       async rename(from, to) {
@@ -31,13 +31,13 @@ test('recovers only the exact durable intent after rename without calling the mu
       },
     },
   })
-  journals.push(journal as PersonalJournal<unknown>)
+  journals.push(journal as AgentJournal<unknown>)
   const id = randomUUID(),
     mutate = vi.fn((draft: typeof initial) => {
       draft.records.push({ id, value: 'private input' })
       return { value: id }
     })
-  await expect(journal.change('original', 'hash', mutate)).rejects.toMatchObject({ code: 'personal-write-unknown' })
+  await expect(journal.change('original', 'hash', mutate)).rejects.toMatchObject({ code: 'agent-write-unknown' })
   expect(() => journal.read()).toThrow('修改结果尚未确认')
   await expect(journal.change('original', 'different', mutate)).rejects.toMatchObject({ status: 409 })
   await expect(journal.change('other', 'hash', mutate)).rejects.toMatchObject({ status: 503 })
@@ -45,15 +45,15 @@ test('recovers only the exact durable intent after rename without calling the mu
   await journal.recover()
   expect(mutate).toHaveBeenCalledOnce()
   expect(journal.read().records).toEqual([{ id, value: 'private input' }])
-  const reopened = await PersonalJournal.open(dir, 'activity.json', schema, initial)
-  journals.push(reopened as PersonalJournal<unknown>)
+  const reopened = await AgentJournal.open(dir, 'activity.json', schema, initial)
+  journals.push(reopened as AgentJournal<unknown>)
   expect(reopened.read().records[0]?.id).toBe(id)
 })
 
 test('serializes updates and rechecks authorization after an awaited transaction', async () => {
   const dir = await root(),
-    journal = await PersonalJournal.open(dir, 'activity.json', schema, initial)
-  journals.push(journal as PersonalJournal<unknown>)
+    journal = await AgentJournal.open(dir, 'activity.json', schema, initial)
+  journals.push(journal as AgentJournal<unknown>)
   await Promise.all(
     ['one', 'two'].map(value =>
       journal.change(value, value, draft => {
@@ -80,27 +80,27 @@ test('serializes updates and rechecks authorization after an awaited transaction
     ),
   ).rejects.toMatchObject({ status: 403 })
   expect(journal.read().records).toHaveLength(2)
-  const text = await readFile(join(dir, 'personal/activity.json'), 'utf8')
+  const text = await readFile(join(dir, 'activity.json'), 'utf8')
   expect(text).not.toContain('must not persist')
 })
 
 test('retains malformed private files and bounds initial and saved state', async () => {
   const dir = await root(),
-    journal = await PersonalJournal.open(dir, 'activity.json', schema, initial, { maximumBytes: 1024 })
-  journals.push(journal as PersonalJournal<unknown>)
+    journal = await AgentJournal.open(dir, 'activity.json', schema, initial, { maximumBytes: 1024 })
+  journals.push(journal as AgentJournal<unknown>)
   await expect(
     journal.change('large', 'hash', draft => {
       draft.records.push({ id: randomUUID(), value: 'x'.repeat(2048) })
       return { value: true }
     }),
-  ).rejects.toMatchObject({ code: 'personal-storage-limit' })
+  ).rejects.toMatchObject({ code: 'agent-storage-limit' })
   expect(journal.read().records).toHaveLength(0)
-  const path = join(dir, 'personal/activity.json'),
+  const path = join(dir, 'activity.json'),
     bad = JSON.stringify({ ...initial, secret: 'unknown field' })
   await writeFile(path, bad, { mode: 0o600 })
-  await expect(PersonalJournal.open(dir, 'activity.json', schema, initial)).rejects.toMatchObject({ code: 'personal-journal-invalid' })
+  await expect(AgentJournal.open(dir, 'activity.json', schema, initial)).rejects.toMatchObject({ code: 'agent-journal-invalid' })
   expect(await readFile(path, 'utf8')).toBe(bad)
-  await expect(PersonalJournal.open(dir, 'other.json', schema, initial, { maximumBytes: Infinity })).rejects.toMatchObject({
-    code: 'personal-journal-budget',
+  await expect(AgentJournal.open(dir, 'other.json', schema, initial, { maximumBytes: Infinity })).rejects.toMatchObject({
+    code: 'agent-journal-budget',
   })
 })

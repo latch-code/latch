@@ -111,7 +111,7 @@ struct PersonalAssistantEditor: View {
     @State private var deleting = false
     private var editing: Bool { assistant["id"].string != nil }
     private var changedModel: NativeJSON { modelChoice == "saved-unavailable" ? assistant["model"] : models.first { $0.id == modelChoice }?.value ?? .null }
-    private var harnesses: [NativeJSON] { model.snapshot["catalog"]["harnesses"].array.filter { $0["personalContext"].string == "private" && $0["status"].string == "ready" && $0["level"].string == "L1" } }
+    private var harnesses: [NativeJSON] { model.snapshot["catalog"]["harnesses"].array.filter { $0["agentContext"].string == "private" && $0["status"].string == "ready" && $0["level"].string == "L1" } }
     private struct ModelChoice: Identifiable {
         let id: String, label: String
         let value: NativeJSON

@@ -864,6 +864,19 @@ export class DeviceStore {
     return device !== undefined && this.usable(device)
   }
 
+  /** Whether the device can still stand behind unattended work. Asks without counting as the device being seen. */
+  standsBehind(deviceId: string): boolean {
+    const device = this.find(deviceId)
+    if (!device) return false
+    if (!isNativeListener(device.listener)) return this.usable(device)
+    return (
+      !!device.native
+      && !!device.credential
+      && (device.status === 'active' || device.status === 'review')
+      && this.now() - device.native.lastVerifiedAt <= CREDENTIAL_LIFETIME
+    )
+  }
+
   nativeCandidates(): Array<{ id: string; kind: 'registered'; certificate: string; knockKey: Uint8Array }> {
     return this.state.devices
       .filter(device => device.native && device.credential && (device.status === 'active' || device.status === 'review'))

@@ -6,7 +6,7 @@ import type {
   PersonalRoutinePatch,
   PersonalRoutineEnable,
   PersonalRoutinePauseReason,
-  PersonalExecutionContext,
+  PersonalAgentContext,
   TaskDetail,
   TaskMode,
   ModelRef,
@@ -15,7 +15,7 @@ import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex, type AtomicWriteFs } from '@latch/core/node-kit'
 import type { AuditLog } from './audit.ts'
 import type { PersonalActor } from './personal-store.ts'
-import { PersonalJournal } from './personal-journal.ts'
+import { AgentJournal } from './agent-journal.ts'
 import { dailyDate, nextDaily } from './personal-schedule.ts'
 
 const rid = z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u),
@@ -83,7 +83,7 @@ const digest = (value: unknown) => sha256Hex(canonicalJson(value))
 export interface RoutinePlan {
   basis: string
   persistent: boolean
-  personal: PersonalExecutionContext
+  personal: PersonalAgentContext
   mode: TaskMode
   model: ModelRef
 }
@@ -108,15 +108,15 @@ export class PersonalRoutines {
   private timer?: ReturnType<typeof setInterval>
   private constructor(
     private readonly options: Options,
-    private readonly journal: PersonalJournal<State>,
+    private readonly journal: AgentJournal<State>,
   ) {}
   static async open(options: Options): Promise<PersonalRoutines> {
-    const journal = await PersonalJournal.open(
+    const journal = await AgentJournal.open(
         options.dataDir,
         'routines.json',
         stateSchema,
         { version: 1, rows: [], receipts: {} },
-        { atomicFs: options.atomicFs },
+        { directory: 'personal', atomicFs: options.atomicFs },
       ),
       service = new PersonalRoutines(options, journal)
     await journal.change('startup', 'startup', draft => {

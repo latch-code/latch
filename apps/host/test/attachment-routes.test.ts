@@ -65,7 +65,7 @@ describe('authenticated attachment routes', () => {
     })
     expect(replay).toEqual(created)
     expect(seen).toHaveLength(1)
-    expect(seen[0]![0]!.attachments).toEqual([{ type: 'image', mimeType: 'image/png', data: png.toString('base64') }])
+    expect(seen[0]![1]!.attachments).toEqual([{ type: 'image', mimeType: 'image/png', data: png.toString('base64') }])
     const detail = await local.json<TaskDetail>(`tasks/${created.sessionId}`)
     expect(detail.messages[0]!.attachments).toEqual([ref])
     expect(JSON.stringify(detail)).not.toContain(png.toString('base64'))

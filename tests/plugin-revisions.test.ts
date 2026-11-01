@@ -147,3 +147,16 @@ test('keeps prototype-shaped package identities as ordinary, checked revision ke
   expect(lease.skills?.map(skill => skill.content)).toEqual(['checked'])
   lease.release()
 })
+
+test('a grant names what the run receives: a plugin giving it nothing is not asked for, one giving it tools is', async () => {
+  const registry = await fixture(true)
+  registry.register({ id: 'engine', name: 'engine', version: '1', description: '', activate() {} })
+  await registry.enable('engine')
+  const expectedRevisions = registry.revisionSnapshot(['provider', 'selected']).revisions
+  const lease = registry.acquire('fixture', { expectedRevisions })
+  expect(lease.tools.map(tool => tool.name)).toEqual(['selected_tool'])
+  lease.release()
+  expect(() => registry.acquire('fixture', { expectedRevisions: registry.revisionSnapshot(['provider']).revisions })).toThrow(
+    expect.objectContaining({ code: 'plugin-revision-missing' }),
+  )
+})
