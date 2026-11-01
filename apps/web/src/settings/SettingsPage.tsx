@@ -1,20 +1,19 @@
-import { useCallback, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  Bot,
+  AlarmClock,
+  Box,
   ChevronLeft,
   ChevronRight,
+  Cpu,
   Folder,
   Info,
   Keyboard,
-  Laptop,
   LockKeyhole,
   MonitorSmartphone,
-  AlarmClock,
   Puzzle,
-  UsersRound,
   SlidersHorizontal,
-  Sparkles,
+  UsersRound,
 } from 'lucide-react'
 import type { AppSnapshot } from '@latch/protocol'
 import { useViewport } from '../breakpoints.ts'
@@ -22,17 +21,15 @@ import { deviceAccess, type DeviceAccess } from '../core/permissions.ts'
 import { SETTINGS_ADMIN_HIDDEN } from '../core/securityCopy.ts'
 import { currentShell } from '../core/shell.ts'
 import { useBackLayer } from '../hooks/backStack.ts'
-import { LegacyProviderSettings } from './LegacyProviderSettings.tsx'
 import { SettingsNavigationProvider, type SettingsNavigation } from './navigation.tsx'
 import { deferredComponent } from '../components/DeferredContent.tsx'
-import { Icon, IconButton, type LucideIcon } from '@latch/ui'
+import { Icon, IconButton, SearchField, type LucideIcon } from '@latch/ui'
 import { entrySections, type AgentPageTarget, type PageEntry, type SettingsSection, type ShellRoute } from '../shell/routes.ts'
 
 export type { SettingsSection }
 
 const AboutSettings = deferredComponent(async () => ({ default: (await import('./AboutSettings.tsx')).AboutSettings }), '关于')
-const AgentsSettings = deferredComponent(async () => ({ default: (await import('./AgentsSettings.tsx')).AgentsSettings }), 'Agent 设置')
-const ComputerSettings = deferredComponent(async () => ({ default: (await import('./ComputerSettings.tsx')).ComputerSettings }), '电脑设置')
+const AgentsSettings = deferredComponent(async () => ({ default: (await import('./AgentsSettings.tsx')).AgentsSettings }), '引擎设置')
 const DevicesSettings = deferredComponent(async () => ({ default: (await import('./DevicesSettings.tsx')).DevicesSettings }), '设备设置')
 const GeneralSettings = deferredComponent(async () => ({ default: (await import('./GeneralSettings.tsx')).GeneralSettings }), '通用设置')
 const PluginsSettings = deferredComponent(async () => ({ default: (await import('./PluginsSettings.tsx')).PluginsSettings }), '插件设置')
@@ -48,6 +45,23 @@ const WorkspacesSettings = deferredComponent(
   async () => ({ default: (await import('./WorkspacesSettings.tsx')).WorkspacesSettings }),
   '项目设置',
 )
+
+/** What each section holds, so 搜索设置 finds a setting by the words on its row. */
+const SEARCH_TERMS: Partial<Record<SettingsSection, string>> = {
+  general: '外观 主题 深色 浅色 发送消息 回车 新文档 自动打开 通知 登录时打开 唤醒 名称',
+  providers: '服务 密钥 key 添加服务 用量 tokens 显示的模型',
+  engines: '已安装 可以安装 启动方式 环境变量 命令 agent',
+  workspaces: '文件夹 新建项目 快照',
+  shortcuts: '键盘',
+  about: '版本 开源许可',
+}
+
+/** The sections a search names: by their label or by the words on their rows, case aside. */
+export function searchSections<T extends { id: SettingsSection; label: string }>(list: readonly T[], query: string): T[] {
+  const needle = query.trim().toLocaleLowerCase()
+  if (!needle) return [...list]
+  return list.filter(section => `${section.label} ${SEARCH_TERMS[section.id] ?? ''}`.toLocaleLowerCase().includes(needle))
+}
 
 const ENTRY_LABELS: Record<PageEntry, string> = { agents: 'Agent', automations: '自动化', plugins: '插件', phone: '手机', settings: '设置' }
 
@@ -66,15 +80,14 @@ const sections: Array<{
   feature?: 'personal' | 'personalRoutines'
 }> = [
   { id: 'general', label: '通用', icon: SlidersHorizontal, admin: false },
-  { id: 'computer', label: '电脑', icon: Laptop, admin: false, secured: true },
-  { id: 'providers', label: '模型服务', icon: Sparkles, admin: true },
-  { id: 'agents', label: 'Agent 成员', icon: Bot, admin: true, catalog: true },
+  { id: 'providers', label: '模型', icon: Box, admin: true, catalog: true },
+  { id: 'engines', label: '引擎', icon: Cpu, admin: true, catalog: true },
   { id: 'assistants', label: '个人助手', icon: UsersRound, admin: false, feature: 'personal' },
   { id: 'routines', label: '例行任务', icon: AlarmClock, admin: false, feature: 'personalRoutines' },
   { id: 'workspaces', label: '项目', icon: Folder, admin: true, catalog: true },
+  { id: 'shortcuts', label: '快捷键', icon: Keyboard, admin: false },
   { id: 'plugins', label: '插件', icon: Puzzle, admin: true },
   { id: 'devices', label: '设备', icon: MonitorSmartphone, admin: false, secured: true },
-  { id: 'shortcuts', label: '快捷键', icon: Keyboard, admin: false },
   { id: 'about', label: '关于', icon: Info, admin: false },
 ]
 
@@ -157,6 +170,10 @@ export function SettingsPage({
   const allowed = settingsSections(snapshot, access)
   const ids = entrySections(entry, phone).filter(id => allowed.includes(id))
   const available = ids.flatMap(id => sections.filter(section => section.id === id))
+  const [query, setQuery] = useState('')
+  const found = searchSections(available, query)
+  const searchable = entry === 'settings' && available.length > 1
+  const search = useRef<HTMLDivElement>(null)
   const caption = entry === 'settings' ? hiddenSectionsCaption(snapshot, access) : undefined
   // On phones the last section stays laid out under the list, so going back slides it away instead of blanking it.
   const [shown, setShown] = useState<SettingsSection | null>(chosen ?? (phone ? null : (ids[0] ?? null)))
@@ -185,7 +202,17 @@ export function SettingsPage({
     levelBack.current = back
     setDepthState(next)
   }, [])
-  const navigation: SettingsNavigation = { phone, section: current?.label ?? '', layers, setDepth }
+  // 插件 lists its plugins beside the rail and titles the page with the one it shows; every other entry lists sections.
+  const objectEntry = entry === 'plugins' && !phone
+  const [navSlot, setNavSlot] = useState<HTMLElement | null>(null)
+  const navigation: SettingsNavigation = {
+    phone,
+    section: current?.label ?? '',
+    layers,
+    setDepth,
+    navSlot,
+    titleSlot: titleSlot ?? null,
+  }
   const level = !phone ? undefined : depth > 0 && pushed ? 'page' : pushed ? 'section' : 'root'
 
   const open = (id: SettingsSection) => {
@@ -196,14 +223,15 @@ export function SettingsPage({
     const keys = ['ArrowDown', 'ArrowUp', 'Home', 'End']
     if (!keys.includes(event.key)) return
     event.preventDefault()
-    const index = available.findIndex(section => section.id === active)
+    if (found.length === 0) return
+    const index = found.findIndex(section => section.id === active)
     const next =
       event.key === 'Home'
         ? 0
         : event.key === 'End'
-          ? available.length - 1
-          : (index + (event.key === 'ArrowDown' ? 1 : -1) + available.length) % available.length
-    const target = available[next]
+          ? found.length - 1
+          : (index + (event.key === 'ArrowDown' ? 1 : -1) + found.length) % found.length
+    const target = found[next]
     if (!phone) open(target.id)
     tabs.current?.querySelector<HTMLButtonElement>(`#settings-tab-${target.id}`)?.focus()
   }
@@ -224,9 +252,26 @@ export function SettingsPage({
   // theirs in SettingsPages), so the platform's back returns one level.
   useBackLayer(pushed, back)
 
+  // `/` goes to the search unless the person is typing somewhere or a sheet is open.
+  useEffect(() => {
+    if (!searchable || phone) return undefined
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== '/' || event.metaKey || event.ctrlKey || event.altKey) return
+      const target = event.target
+      if (target instanceof HTMLElement && (target.isContentEditable || target.closest('input, textarea, select, dialog, [popover]')))
+        return
+      event.preventDefault()
+      search.current?.querySelector('input')?.focus()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [searchable, phone])
+
   return (
     <section aria-label={ENTRY_LABELS[entry]} className="settings-page" data-entry={entry} onKeyDown={escape}>
-      {!phone && titleSlot && current && createPortal(<h1 className="titlebar-page-title">{current.label}</h1>, titleSlot)}
+      {!phone && !objectEntry && titleSlot && current && createPortal(<h1 className="titlebar-page-title">{current.label}</h1>, titleSlot)}
       <SettingsNavigationProvider value={navigation}>
         <div ref={layout} className="settings-layout" data-level={level}>
           <div className="settings-nav-pane" inert={pushed || undefined}>
@@ -236,14 +281,35 @@ export function SettingsPage({
                 <h2>{ENTRY_LABELS[entry]}</h2>
               </header>
             )}
+            {searchable && (
+              <div ref={search} className="settings-search">
+                <SearchField
+                  variant="ghost"
+                  label="搜索设置"
+                  placeholder="搜索设置"
+                  value={query}
+                  onValueChange={setQuery}
+                  onKeyDown={event => {
+                    if (event.key === 'Enter' && found[0]) open(found[0].id)
+                  }}
+                />
+                {!phone && !query && (
+                  <span className="settings-search-key" aria-hidden="true">
+                    /
+                  </span>
+                )}
+              </div>
+            )}
+            {objectEntry && <div ref={setNavSlot} className="settings-objects" />}
             <div
               ref={tabs}
+              hidden={objectEntry}
               className="settings-nav"
               role="tablist"
               aria-orientation="vertical"
               aria-label={`${ENTRY_LABELS[entry]}分类`}
               onKeyDown={keydown}>
-              {available.map(section => (
+              {found.map(section => (
                 <button
                   key={section.id}
                   id={`settings-tab-${section.id}`}
@@ -261,6 +327,7 @@ export function SettingsPage({
                 </button>
               ))}
             </div>
+            {found.length === 0 && <p className="settings-nav-caption">没有找到「{query.trim()}」</p>}
             {caption && (
               <p className="settings-nav-caption">
                 <Icon icon={LockKeyhole} size={14} />
@@ -287,14 +354,8 @@ export function SettingsPage({
                 {panel !== null && (
                   <div key={panel} className="settings-content settings-enter">
                     {panel === 'general' && <GeneralSettings snapshot={snapshot} admin={access.admin} onChanged={onChanged} />}
-                    {panel === 'computer' && <ComputerSettings snapshot={snapshot} access={access} onChanged={onChanged} />}
-                    {panel === 'providers'
-                      && (snapshot.catalog ? (
-                        <ProvidersSettings snapshot={snapshot} access={access} onChanged={onChanged} />
-                      ) : (
-                        <LegacyProviderSettings onChanged={onChanged} />
-                      ))}
-                    {panel === 'agents' && (
+                    {panel === 'providers' && <ProvidersSettings snapshot={snapshot} access={access} onChanged={onChanged} />}
+                    {panel === 'engines' && (
                       <AgentsSettings snapshot={snapshot} access={access} onChanged={onChanged} initialPage={initialAgent} />
                     )}
                     {panel === 'shortcuts' && <ShortcutsSettings />}
@@ -304,7 +365,6 @@ export function SettingsPage({
                         access={access}
                         onChanged={onChanged}
                         initialProjectId={initialProjectId}
-                        onComputer={() => onSection('computer')}
                         {...(access.scopes.has('view') && onOpenSession ? { onOpenSession } : {})}
                       />
                     )}
@@ -312,7 +372,7 @@ export function SettingsPage({
                       <PluginsSettings onManage={onSection} snapshot={snapshot} access={access} onChanged={onChanged} />
                     )}
                     {panel === 'devices' && <DevicesSettings snapshot={snapshot} access={access} onChanged={onChanged} />}
-                    {panel === 'about' && <AboutSettings snapshot={snapshot} />}
+                    {panel === 'about' && <AboutSettings snapshot={snapshot} access={access} />}
                   </div>
                 )}
               </div>

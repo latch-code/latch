@@ -1,313 +1,156 @@
-import { UsageSettings } from './UsageSettings.tsx'
-import { ModelVisibilitySettings } from './ModelVisibilitySettings.tsx'
-import { PromptTemplatesSettings } from './PromptTemplatesSettings.tsx'
-import { NotificationSettings } from './NotificationSettings.tsx'
 import { useState } from 'react'
-import type { AppSnapshot, HostCatalog, ModelRef, SessionDefaults, TaskMode } from '@latch/protocol'
-import { api, errorMessage } from '../core/api.ts'
-import { defaultModel, findHarness, harnessName, startableWorkspaces } from '../composerChoice.ts'
-import { basename } from '../format.ts'
+import type { AppSnapshot } from '@latch/protocol'
+import { InlineNotice, SegmentedControl, SwitchRow } from '@latch/ui'
+import { useViewport } from '../breakpoints.ts'
+import { currentShell } from '../core/shell.ts'
+import { keepAwakeLine, loginItemNote, useShellLifecycle } from '../core/shellLifecycle.ts'
 import { setPreference, usePreferences, type SendKey, type ThemePreference } from '../preferences.ts'
-import { HarnessTile, ProviderTile } from '../components/BrandTile.tsx'
-import { hostLine, hostNeedsStart, keepAwakeLine, loginItemNote, useShellLifecycle } from '../core/shellLifecycle.ts'
-import type { ShellLifecycle } from '../core/shell.ts'
-import { Button, ChoiceList, InlineNotice, SegmentedControl, StatusPill, SwitchRow, ValuePicker, type PickerGroup } from '@latch/ui'
-import { SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
+import { SettingsGroup, SettingsRow } from './common.tsx'
+import { NotificationSettings } from './NotificationSettings.tsx'
+import { PromptTemplatesSettings } from './PromptTemplatesSettings.tsx'
 
-const encodeModel = (ref: ModelRef | undefined) => (ref ? JSON.stringify([ref.providerId, ref.model]) : undefined)
-function decodeModel(value: string): ModelRef | undefined {
-  try {
-    const parsed: unknown = JSON.parse(value)
-    if (!Array.isArray(parsed)) return undefined
-    const [providerId, model] = parsed as unknown[]
-    return typeof providerId === 'string' && typeof model === 'string' ? { providerId, model } : undefined
-  } catch {
-    return undefined
-  }
-}
-const MODE_LABELS: Record<TaskMode, string> = { chat: '对话', agent: 'Agent' }
-/** What the chosen way does, as the row's one sentence. */
-const MODE_EFFECTS: Record<TaskMode, string> = { chat: '不读写文件、不运行命令', agent: '会读写项目文件、运行命令（按权限询问）' }
+const THEMES: Array<{ value: ThemePreference; label: string }> = [
+  { value: 'system', label: '跟随系统' },
+  { value: 'light', label: '浅色' },
+  { value: 'dark', label: '深色' },
+]
 
-/** What the Host stores: a mode the harness offers, a startable project, and a model only for a harness that uses the Host's. */
-function normalized(catalog: HostCatalog, draft: SessionDefaults): SessionDefaults {
-  const harness = findHarness(catalog, draft.harnessId)
-  const modes: TaskMode[] = harness?.modes.length ? harness.modes : ['chat', 'agent']
-  const workspaces = startableWorkspaces(catalog)
-  const workspaceId = workspaces.some(item => item.id === draft.workspaceId) ? draft.workspaceId : (workspaces[0]?.id ?? draft.workspaceId)
-  return {
-    harnessId: draft.harnessId,
-    mode: modes.includes(draft.mode) ? draft.mode : modes[0],
-    workspaceId,
-    ...(harness?.models === 'host' && draft.model ? { model: draft.model } : {}),
-  }
-}
-
-/**
- * Host-wide defaults that a new session starts from on every device, one picker per row. A choice applies at once,
- * as every settings value does; the row goes back to the Host's value if the Host refuses it.
- */
-function SessionDefaultsGroup({ catalog, onChanged }: { catalog: HostCatalog; onChanged: () => void }) {
-  const stored = (): SessionDefaults => ({ ...catalog.defaults, ...(catalog.defaults.model ? {} : { model: defaultModel(catalog) }) })
-  const [draft, setDraft] = useState<SessionDefaults>(stored)
-  const [error, setError] = useState('')
-  // A change of the Host's defaults (this device's, once refreshed, or another device's) replaces the draft.
-  const basis = JSON.stringify(catalog.defaults)
-  const [seen, setSeen] = useState(basis)
-  if (seen !== basis) {
-    setSeen(basis)
-    setDraft(stored())
-  }
-  const harness = findHarness(catalog, draft.harnessId)
-  const shown = normalized(catalog, draft)
-  const modes: TaskMode[] = harness?.modes.length ? harness.modes : ['chat', 'agent']
-  // The Host already answers a disabled saved default with the default workspace, so disabled ones are never offered.
-  const workspaces = startableWorkspaces(catalog)
-
-  const commit = async (patch: Partial<SessionDefaults>) => {
-    const next = { ...draft, ...patch }
-    setDraft(next)
-    setError('')
-    try {
-      await api('preferences', { method: 'PUT', body: { defaults: normalized(catalog, next) } })
-      onChanged()
-    } catch (cause) {
-      setError(errorMessage(cause))
-      setDraft(stored())
-    }
-  }
-
-  const modelGroups: Array<PickerGroup<string>> = catalog.providers.map(provider => ({
-    id: provider.id,
-    label: provider.name,
-    options: (provider.models.length ? provider.models : [provider.defaultModel]).filter(Boolean).map(model => ({
-      value: encodeModel({ providerId: provider.id, model })!,
-      label: model,
-    })),
-  }))
-  const modelCount = modelGroups.reduce((sum, group) => sum + group.options.length, 0)
-  const provider = shown.model ? catalog.providers.find(item => item.id === shown.model?.providerId) : undefined
-
+/** The three looks as small windows; the tile itself is the choice. Arrows move between them, as a radio group does. */
+function ThemeTiles({ value, onValueChange }: { value: ThemePreference; onValueChange: (value: ThemePreference) => void }) {
   return (
-    <>
-      <SettingsGroup title="新会话默认值" caption="对所有设备生效。每台设备会记住自己上次的选择；首次使用或选择失效时采用这里的默认值。">
-        <SettingsRow
-          title="Agent"
-          description="新会话由谁来执行"
-          trailing={
-            <ValuePicker
-              label="Agent"
-              value={shown.harnessId}
-              bleed="end"
-              leading={harness ? <HarnessTile harness={harness} size={16} /> : undefined}
-              options={catalog.harnesses.map(item => ({
-                value: item.id,
-                label: harnessName(item),
-                disabledReason: item.status === 'ready' ? undefined : item.statusMessage || '暂不可用',
-              }))}
-              onValueChange={value => {
-                void commit({ harnessId: value })
-              }}
-            />
-          }
-        />
-        <SettingsRow
-          title="方式"
-          description={MODE_EFFECTS[shown.mode]}
-          trailing={
-            <ValuePicker
-              label="方式"
-              value={shown.mode}
-              bleed="end"
-              options={modes.map(mode => ({ value: mode, label: MODE_LABELS[mode] }))}
-              onValueChange={value => {
-                void commit({ mode: value })
-              }}
-            />
-          }
-        />
-        {harness?.models === 'host' && (
-          <SettingsRow
-            title="模型"
-            description="Latch 内置使用执行端的模型服务"
-            trailing={
-              <ValuePicker
-                label="模型"
-                value={encodeModel(shown.model)}
-                placeholder="选择模型"
-                bleed="end"
-                searchable={modelCount > 8}
-                leading={provider ? <ProviderTile provider={provider} size={16} /> : undefined}
-                groups={modelGroups}
-                onValueChange={value => {
-                  const model = decodeModel(value)
-                  if (model) void commit({ model })
-                }}
-              />
-            }
-          />
-        )}
-        <SettingsRow
-          title="项目"
-          description="新会话在哪个目录中工作"
-          trailing={
-            <ValuePicker
-              label="项目"
-              value={shown.workspaceId}
-              bleed="end"
-              options={workspaces.map(item => ({
-                value: item.id,
-                label: item.id === 'default' ? '启动目录' : item.name || basename(item.path),
-              }))}
-              onValueChange={value => {
-                void commit({ workspaceId: value })
-              }}
-            />
-          }
-        />
-      </SettingsGroup>
-      {error && <InlineNotice tone="error">{error}</InlineNotice>}
-    </>
+    <div
+      className="theme-tiles"
+      role="radiogroup"
+      aria-label="外观"
+      onKeyDown={event => {
+        const step =
+          event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 0
+        if (step === 0) return
+        event.preventDefault()
+        const index = THEMES.findIndex(theme => theme.value === value)
+        const next = THEMES[(index + step + THEMES.length) % THEMES.length]!
+        onValueChange(next.value)
+        event.currentTarget.querySelector<HTMLButtonElement>(`[data-value="${next.value}"]`)?.focus()
+      }}>
+      {THEMES.map(theme => (
+        <button
+          key={theme.value}
+          type="button"
+          role="radio"
+          className="theme-tile"
+          data-value={theme.value}
+          aria-checked={value === theme.value}
+          tabIndex={value === theme.value ? 0 : -1}
+          onClick={() => {
+            onValueChange(theme.value)
+          }}>
+          <span className="theme-preview" data-look={theme.value} aria-hidden="true">
+            <span className="theme-preview-side" />
+            <span className="theme-preview-line" />
+            <span className="theme-preview-line is-short" />
+            <span className="theme-preview-input" />
+          </span>
+          <span className="theme-tile-label">
+            <span className="theme-tile-dot" aria-hidden="true" />
+            {theme.label}
+          </span>
+        </button>
+      ))}
+    </div>
   )
 }
 
-/** The Host's state in its row: plain while it runs, a pill otherwise (the text beside it says what happened). */
-const HOST_STATUS_LABELS: Record<ShellLifecycle['host']['status'], string> = {
-  running: '运行中',
-  starting: '正在启动',
-  restarting: '正在重启',
-  stopped: '已停止',
-  crashed: '已退出',
-  'crash-loop': '已停止重启',
-  unresponsive: '没有响应',
-}
-
-/** Desktop only: how this Mac keeps the Host reachable. Main owns all of it; the page shows and asks. */
-function BackgroundSettings() {
+/** The name of the computer and, in the desktop app, how it starts and stays awake. Main owns the state; the page asks. */
+function ThisMac({ hostName }: { hostName: string }) {
   const lifecycle = useShellLifecycle()
-  const [busy, setBusy] = useState<'login' | 'awake' | 'restart' | null>(null)
+  const [busy, setBusy] = useState<'login' | 'awake' | null>(null)
   const [error, setError] = useState('')
-  if (!lifecycle.view) return null
-  const { loginItem, keepAwake, host } = lifecycle.view
-  const note = loginItemNote(loginItem)
-  const status = hostLine(host)
-  const restartable = (host.supervised && host.status !== 'unresponsive') || hostNeedsStart(host)
-  const act = async (kind: 'login' | 'awake' | 'restart', action: () => Promise<string>) => {
+  const act = async (kind: 'login' | 'awake', action: () => Promise<string>) => {
     setBusy(kind)
     setError('')
     setError(await action())
     setBusy(null)
   }
+  const view = lifecycle.view
+  const note = view ? loginItemNote(view.loginItem) : ''
   return (
-    <>
-      <SettingsGroup
-        title="后台运行"
-        caption="插着电源时，有会话运行或审批等待就阻止电脑自动休眠；合上盖子（没有接外接显示器）时 Mac 仍会休眠。关闭窗口后 Latch 仍在后台重启 Host 并保持唤醒，退出 Latch（⌘Q）后这两项停止，Host 继续运行。">
-        <SwitchRow
-          className="settings-row"
-          title="让 Latch 在后台运行，手机随时能连上这台 Mac"
-          description={note || '登录这台 Mac 后自动打开 Latch 并启动 Host，不弹出窗口。'}
-          checked={loginItem.enabled}
-          disabled={!loginItem.available || busy !== null}
-          onCheckedChange={enabled => {
-            void act('login', () => lifecycle.setLoginItem(enabled))
-          }}
-        />
-        <SwitchRow
-          className="settings-row"
-          title="有任务时保持唤醒"
-          description={keepAwakeLine(keepAwake)}
-          checked={keepAwake.enabled}
-          disabled={busy !== null}
-          onCheckedChange={enabled => {
-            void act('awake', () => lifecycle.setKeepAwake(enabled))
-          }}
-        />
-        <SettingsRow
-          title="Latch Host"
-          description={status.text}
-          trailing={
-            restartable ? (
-              <Button
-                disabled={busy !== null || host.status === 'starting' || host.status === 'restarting'}
-                loading={busy === 'restart'}
-                onClick={() => {
-                  void act('restart', lifecycle.restartHost)
-                }}>
-                {host.status === 'running' ? '重新启动 Host' : '启动 Host'}
-              </Button>
-            ) : status.tone === 'neutral' ? (
-              <span className="settings-row-value">{HOST_STATUS_LABELS[host.status]}</span>
-            ) : (
-              <StatusPill tone={status.tone === 'error' ? 'err' : 'warn'}>{HOST_STATUS_LABELS[host.status]}</StatusPill>
-            )
-          }
-        />
-        <SettingsRow
-          title="时间机器备份"
-          description="模型密钥、Agent 定义（含环境变量）与项目列表、设备登记和 Host 身份不进入时间机器备份；会话、审计记录与安全策略会进入备份，建议加密备份盘。"
-        />
-      </SettingsGroup>
+    <SettingsGroup title={currentShell() ? '这台 Mac' : '运行 Latch 的电脑'}>
+      <SettingsRow title="名称" trailing={<span className="settings-row-value">{hostName || '本机'}</span>} />
+      {view && (
+        <>
+          <SwitchRow
+            className="settings-row"
+            title="登录时打开 Latch"
+            description={note || undefined}
+            checked={view.loginItem.enabled}
+            disabled={!view.loginItem.available || busy !== null}
+            onCheckedChange={enabled => {
+              void act('login', () => lifecycle.setLoginItem(enabled))
+            }}
+          />
+          <SwitchRow
+            className="settings-row"
+            title="有任务时保持 Mac 唤醒"
+            description={keepAwakeLine(view.keepAwake)}
+            checked={view.keepAwake.enabled}
+            disabled={busy !== null}
+            onCheckedChange={enabled => {
+              void act('awake', () => lifecycle.setKeepAwake(enabled))
+            }}
+          />
+        </>
+      )}
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
-    </>
+    </SettingsGroup>
   )
 }
 
 export function GeneralSettings({ snapshot, admin, onChanged }: { snapshot: AppSnapshot; admin: boolean; onChanged: () => void }) {
   const preferences = usePreferences()
+  const phone = useViewport() === 'phone'
+  // Touch screens always send with the button, and phones never open a document by themselves: nothing to choose there.
+  const usage = !phone
   return (
     <>
-      <SectionHeading title="通用" description="外观与发送方式只影响这台设备。" />
-      <NotificationSettings />
-      {snapshot.catalog?.features?.usage && <UsageSettings catalog={snapshot.catalog} />}
-      {snapshot.catalog && <ModelVisibilitySettings catalog={snapshot.catalog} />}
-      {admin && snapshot.catalog?.features?.promptTemplates && <PromptTemplatesSettings snapshot={snapshot} onChanged={onChanged} />}
-      <SettingsGroup title="外观">
-        <SettingsRow
-          title="主题"
-          description="跟随系统时随系统的浅色与深色切换"
-          trailing={
-            <SegmentedControl<ThemePreference>
-              label="外观"
-              value={preferences.theme}
-              onValueChange={value => {
-                setPreference('theme', value)
-              }}
-              options={[
-                { value: 'system', label: '跟随系统' },
-                { value: 'light', label: '浅色' },
-                { value: 'dark', label: '深色' },
-              ]}
-            />
-          }
-        />
-      </SettingsGroup>
-      <SettingsGroup title="发送消息" bare caption="触屏设备上 Enter 始终换行，点按发送按钮发送；⌘/Ctrl + Enter 在任何设备上都会发送。">
-        <ChoiceList<SendKey>
-          label="发送消息"
-          value={preferences.sendKey}
+      <SettingsGroup title="外观" bare>
+        <ThemeTiles
+          value={preferences.theme}
           onValueChange={value => {
-            setPreference('sendKey', value)
+            setPreference('theme', value)
           }}
-          options={[
-            { value: 'enter', title: 'Enter 发送', description: 'Shift + Enter 换行' },
-            { value: 'mod-enter', title: '⌘/Ctrl + Enter 发送', description: 'Enter 换行，适合输入长段落' },
-          ]}
         />
       </SettingsGroup>
-      {snapshot.catalog?.features?.filePreview && (
-        <SettingsGroup title="文件预览">
-          <SwitchRow
-            className="settings-row"
-            title="运行结束后自动打开新生成的文档"
-            description="在宽屏上展开新文档，保留正在输入的草稿和焦点。手机仍在对话中显示文件入口。只影响这台设备。"
-            checked={preferences.autoOpenDocuments}
-            onCheckedChange={enabled => setPreference('autoOpenDocuments', enabled)}
+      {usage && (
+        <SettingsGroup title="使用">
+          <SettingsRow
+            title="发送消息"
+            trailing={
+              <SegmentedControl<SendKey>
+                label="发送消息"
+                value={preferences.sendKey}
+                options={[
+                  { value: 'enter', label: '⏎ 发送' },
+                  { value: 'mod-enter', label: /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘⏎ 发送' : 'Ctrl ⏎ 发送' },
+                ]}
+                onValueChange={value => {
+                  setPreference('sendKey', value)
+                }}
+              />
+            }
           />
+          {snapshot.catalog?.features?.filePreview && (
+            <SwitchRow
+              className="settings-row"
+              title="新文档生成后自动打开"
+              checked={preferences.autoOpenDocuments}
+              onCheckedChange={enabled => setPreference('autoOpenDocuments', enabled)}
+            />
+          )}
         </SettingsGroup>
       )}
-      <BackgroundSettings />
-      {admin && snapshot.catalog && <SessionDefaultsGroup catalog={snapshot.catalog} onChanged={onChanged} />}
+      <NotificationSettings />
+      <ThisMac hostName={snapshot.hostName} />
+      {admin && snapshot.catalog?.features?.promptTemplates && <PromptTemplatesSettings snapshot={snapshot} onChanged={onChanged} />}
     </>
   )
 }

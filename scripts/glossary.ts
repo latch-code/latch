@@ -141,7 +141,6 @@ export const GLOSSARY_SCOPE = {
   files: [
     COPY_FILE,
     'apps/web/src/core/permissions.ts',
-    'apps/web/src/core/ceilings.ts',
     'apps/web/src/core/hostState.ts',
     'apps/web/src/core/blocking.ts',
     'apps/web/src/core/confirmations.ts',

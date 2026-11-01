@@ -2,7 +2,7 @@ import { createElement } from 'react'
 import { renderToReadableStream, renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { deferredComponent } from '../src/components/DeferredContent.tsx'
-import { entrySection, settingsPanel, type SettingsSection } from '../src/settings/SettingsPage.tsx'
+import { entrySection, searchSections, settingsPanel, type SettingsSection } from '../src/settings/SettingsPage.tsx'
 import { pairingQr } from '../src/settings/pairingQr.ts'
 
 describe('optional settings loading', () => {
@@ -43,14 +43,27 @@ describe('optional settings loading', () => {
   })
 
   it('names the section a page entry shows, for what stands over the page', () => {
-    const all: SettingsSection[] = ['general', 'agents', 'assistants', 'routines']
+    const all: SettingsSection[] = ['general', 'engines', 'assistants', 'routines']
     expect(entrySection({ entry: 'automations' }, all, false)).toBe('routines')
-    expect(entrySection({ entry: 'agents' }, all, false)).toBe('agents')
-    // A device without 管理此 Host has no Agent 成员, so the entry starts on 个人助手.
-    expect(entrySection({ entry: 'agents' }, ['general', 'assistants'], false)).toBe('assistants')
-    expect(entrySection({ entry: 'agents', section: 'agents' }, ['general', 'assistants'], false)).toBe('assistants')
+    expect(entrySection({ entry: 'agents' }, all, false)).toBe('assistants')
+    expect(entrySection({ entry: 'settings', section: 'engines' }, all, false)).toBe('engines')
+    // A device without 管理此 Host has no 引擎, so the entry falls back to its first section.
+    expect(entrySection({ entry: 'settings', section: 'engines' }, ['general', 'assistants'], false)).toBe('general')
     expect(entrySection({ entry: 'agents', section: 'routines' }, all, true)).toBe('routines')
     expect(entrySection({ entry: 'agents' }, all, true)).toBeNull()
     expect(entrySection({ entry: 'sessions' }, all, false)).toBeNull()
+  })
+
+  it('finds a section by its name or by the words on its rows', () => {
+    const list: Array<{ id: SettingsSection; label: string }> = [
+      { id: 'general', label: '通用' },
+      { id: 'providers', label: '模型' },
+      { id: 'shortcuts', label: '快捷键' },
+    ]
+    expect(searchSections(list, '').map(item => item.id)).toEqual(['general', 'providers', 'shortcuts'])
+    expect(searchSections(list, '模型').map(item => item.id)).toEqual(['providers'])
+    expect(searchSections(list, '深色').map(item => item.id)).toEqual(['general'])
+    expect(searchSections(list, 'KEY').map(item => item.id)).toEqual(['providers'])
+    expect(searchSections(list, '没有这个')).toEqual([])
   })
 })

@@ -201,13 +201,20 @@ export function resolveChoice(
  */
 export type StartBlock =
   | { kind: 'harness-unavailable'; message: string }
-  | { kind: 'model-required'; message: string; hint?: string; action?: string }
+  | { kind: 'model-required'; message: string; hint?: string; action?: string; settable?: false }
 
 /** Why a new session cannot start with this choice, or null when it can. */
 export function startBlock(snapshot: AppSnapshot, choice: ComposerChoice, access: StartAccess = openAccess): StartBlock | null {
   const catalog = snapshot.catalog
   if (!catalog) {
-    if (snapshot.execution?.modelConfigurationRequired) return { kind: 'model-required', message: '需要先连接模型服务。' }
+    // A Host from before the catalog has no model-service pages to send anyone to.
+    if (snapshot.execution?.modelConfigurationRequired)
+      return {
+        kind: 'model-required',
+        message: '这台 Mac 上的 Latch 较旧，不能在这里连接模型服务。',
+        hint: '更新 Latch 并重新启动后再添加。',
+        settable: false,
+      }
     if (snapshot.execution?.ready === false) return { kind: 'harness-unavailable', message: '当前模型接口不可用，请检查模型插件状态。' }
     return null
   }

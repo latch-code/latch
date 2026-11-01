@@ -492,68 +492,15 @@ describe('permission states in a browser', () => {
 
   const policy = () => testHost.host.security.policy.get()
 
-  it('lets an admin browser lower the ceilings in 设置 › 电脑 but never raise them', async () => {
-    expect(policy().local).toEqual({ maxLevel: 'L2', allowL3: true })
+  it('lets an admin browser turn 手机可以开始新会话 off but never back on', async () => {
     expect(policy().remote).toMatchObject({ maxLevel: 'L1', allowRemoteStart: true })
-    const settings = await openSettings(page)
-    await openSection(settings, '电脑')
-    const raiseHere = '在 Mac 上放宽'
-
-    // Lowering applies at once from any admin device: 完全访问 → 需要时询问 writes both local fields in one change.
-    const menu = (name: string) => page.getByRole('menu', { name: new RegExp(`^${name}：`) })
-    await settings.getByRole('button', { name: '在这台 Mac 上开始：完全访问', exact: true }).click()
-    await menu('在这台 Mac 上开始')
-      .getByRole('menuitemradio', { name: /^需要时询问/ })
-      .click()
-    await expect.poll(() => policy().local).toEqual({ maxLevel: 'L1', allowL3: false })
-    await settings.getByRole('button', { name: '在这台 Mac 上开始：需要时询问', exact: true }).waitFor()
-    await settings.getByRole('button', { name: '从手机和其他电脑开始：需要时询问', exact: true }).click()
-    await menu('从手机和其他电脑开始')
-      .getByRole('menuitemradio', { name: /^只读/ })
-      .click()
-    await expect.poll(() => policy().remote.maxLevel).toBe('L0')
-
-    // Raising is not offered in a browser: every higher step says why before anything is sent.
-    await settings.getByRole('button', { name: '从手机和其他电脑开始：只读', exact: true }).click()
-    // An item's name is its title and its 默认 badge.
-    for (const level of ['需要时询问', '自动编辑']) {
-      const item = menu('从手机和其他电脑开始').getByRole('menuitemradio', { name: new RegExp(`^${level}`) })
-      expect(await item.getAttribute('aria-disabled')).toBe('true')
-      expect(await item.textContent()).toContain(raiseHere)
-    }
-    const full = menu('从手机和其他电脑开始').getByRole('menuitemradio', { name: /^完全访问/ })
-    expect(await full.textContent()).toContain('完全访问的会话只能在 Mac 上开始')
-    await full.click({ force: true })
-    await page.keyboard.press('Escape')
-    await settings.getByRole('button', { name: '在这台 Mac 上开始：需要时询问', exact: true }).click()
-    expect(
-      await menu('在这台 Mac 上开始')
-        .getByRole('menuitemradio', { name: /^完全访问/ })
-        .textContent(),
-    ).toContain(raiseHere)
-    await page.keyboard.press('Escape')
-
-    // Turning remote starts off is a lowering; turning it back on is locked here.
+    const settings = await openSettings(page, '设备')
     const remoteStart = settings.getByRole('switch', { name: '手机可以开始新会话', exact: true })
     await remoteStart.click()
     await expect.poll(() => policy().remote.allowRemoteStart).toBe(false)
-    await expect.poll(() => remoteStart.getAttribute('aria-disabled')).toBe('true')
+    // Turning it on takes this Mac's Touch ID, so a browser says where and sends nothing.
     await settings.getByText('在 Mac 上开启', { exact: true }).waitFor()
-    await page.screenshot({ path: `${OUTPUT}/ceilings-browser.png`, animations: 'disabled' })
-
-    // The Host refuses a raise from a browser whatever the page shows; nothing changed.
-    const refused = await page.evaluate(async () => {
-      const response = await fetch('/link/api/policy', {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ remote: { maxLevel: 'L1' } }),
-      })
-      return { status: response.status, body: await response.text() }
-    })
-    expect(refused.status).toBe(403)
-    expect(refused.body).toContain('"error":"local-only"')
-    expect(policy().local).toEqual({ maxLevel: 'L1', allowL3: false })
-    expect(policy().remote).toMatchObject({ maxLevel: 'L0', allowRemoteStart: false })
-    await closeSettings(settings)
+    await remoteStart.click({ force: true })
+    expect(policy().remote.allowRemoteStart).toBe(false)
   })
 })

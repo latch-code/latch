@@ -1,8 +1,7 @@
 export type SettingsSection =
   | 'general'
-  | 'computer'
   | 'providers'
-  | 'agents'
+  | 'engines'
   | 'assistants'
   | 'routines'
   | 'workspaces'
@@ -30,17 +29,17 @@ export interface ShellRoute {
 
 /** Each page entry's sections on wide windows; what is left over lives in 设置. */
 const WIDE_SECTIONS: Record<PageEntry, readonly SettingsSection[]> = {
-  agents: ['agents', 'assistants'],
+  agents: ['assistants'],
   automations: ['routines'],
   plugins: ['plugins'],
   phone: ['devices'],
-  settings: ['general', 'computer', 'providers', 'workspaces', 'shortcuts', 'about'],
+  settings: ['general', 'providers', 'engines', 'workspaces', 'shortcuts', 'about'],
 }
 
 /** A phone has three tabs: 自动化 sits inside Agent, and 插件 and 手机 sit inside 设置. */
 const PHONE_SECTIONS: Partial<Record<PageEntry, readonly SettingsSection[]>> = {
-  agents: ['agents', 'assistants', 'routines'],
-  settings: ['general', 'computer', 'providers', 'workspaces', 'plugins', 'devices', 'about'],
+  agents: ['assistants', 'routines'],
+  settings: ['general', 'providers', 'engines', 'workspaces', 'plugins', 'devices', 'about'],
 }
 
 export function entrySections(entry: PageEntry, phone: boolean): readonly SettingsSection[] {

@@ -568,27 +568,23 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await page.screenshot({ path: 'test-results/native-desktop.png', animations: 'disabled' })
 
       // Settings › 通用: main keeps the Mac awake while the session runs (it reads host-info over host.sock every few
-      // seconds). The login item needs a packaged app, so a development run shows why it is off. The test Host was not
-      // started by the desktop app, so main says it will not start it again after a crash.
+      // seconds). The login item needs a packaged app, so a development run shows why it is off.
       const general = await openSettings(page, '设置')
       await openSection(general, '通用')
-      const background = general.getByRole('region', { name: '后台运行', exact: true })
-      const loginItem = background.getByRole('switch', { name: '让 Latch 在后台运行，手机随时能连上这台 Mac', exact: true })
+      const background = general.getByRole('region', { name: '这台 Mac', exact: true })
+      const loginItem = background.getByRole('switch', { name: '登录时打开 Latch', exact: true })
       await loginItem.waitFor()
       expect(await loginItem.getAttribute('aria-checked')).toBe('false')
       expect(await loginItem.getAttribute('aria-disabled')).toBe('true')
       await background
         .getByText('只有打包后的 Latch 应用能登记为登录项。当前是开发运行（pnpm desktop），打包版本尚未提供。', { exact: true })
         .waitFor()
-      const keepAwake = background.getByRole('switch', { name: '有任务时保持唤醒', exact: true })
+      const keepAwake = background.getByRole('switch', { name: '有任务时保持 Mac 唤醒', exact: true })
       expect(await keepAwake.getAttribute('aria-checked')).toBe('true')
       await background.getByText('保持唤醒中：有会话正在运行。显示器仍按系统设置熄灭。', { exact: true }).waitFor({ timeout: 20_000 })
-      await background.getByText('Latch Host 运行中。它不是由 Latch 桌面端启动的，意外退出后不会自动重新启动。', { exact: true }).waitFor()
-      expect(await background.getByRole('button', { name: '重新启动 Host', exact: true }).count()).toBe(0)
+      expect(await general.getByRole('button', { name: '重新启动 Host', exact: true }).count()).toBe(0)
       await page.screenshot({ path: 'test-results/native-desktop-background.png', animations: 'disabled' })
-      // What stays out of Time Machine, at the end of the section, in light and dark.
-      const backupHint = background.getByText(/^模型密钥、Agent 定义（含环境变量）与项目列表、设备登记和 Host 身份不进入时间机器备份/u)
-      await backupHint.scrollIntoViewIfNeeded()
+      // The end of the section, in light and dark.
       for (const scheme of ['light', 'dark'] as const) {
         await page.emulateMedia({ colorScheme: scheme })
         await page.screenshot({ path: `test-results/native-desktop-background-end-${scheme}.png`, animations: 'disabled' })
@@ -834,11 +830,11 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       const confirmationsBefore = testHost.presence.requests.length
       await page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '设置', exact: true }).click()
       const heldBack = page.locator('.settings-page')
-      await openSection(heldBack, '电脑')
-      await heldBack.getByRole('button', { name: '添加…', exact: true }).click()
-      const allowAddress = page.getByRole('dialog', { name: '加入出站白名单', exact: true })
-      await allowAddress.getByRole('textbox', { name: '地址' }).fill('127.0.0.1:9')
-      await allowAddress.getByRole('button', { name: '加入', exact: true }).click()
+      await openSection(heldBack, '设备')
+      const heldSwitch = heldBack.getByRole('switch', { name: '手机可以开始新会话', exact: true })
+      await heldSwitch.click()
+      await waitFor(() => !policy().remote.allowRemoteStart)
+      await heldSwitch.click()
       const blockedDock = page.locator('.inline-confirm[data-confirmation-phase="paused"]')
       await blockedDock.waitFor()
       expect(await blockedDock.getAttribute('data-paused-reason')).toBe('blocked')
@@ -854,7 +850,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await blockedDock.waitFor({ state: 'detached' })
       await heldBack.waitFor({ state: 'detached' })
       await advisory.getByText('仅提示', { exact: true }).waitFor()
-      expect(policy().hostEgressAllow).not.toContain('127.0.0.1:9')
+      expect(policy().remote.allowRemoteStart).toBe(false)
 
       await advisory.getByRole('button', { name: '拒绝', exact: true }).click()
       await waitFor(async () => (await host.bridge.detail(advisoryId)).summary.status === 'idle')
@@ -906,7 +902,6 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await waitFor(async () => (await host.bridge.detail(hangId)).summary.status === 'running')
       const hangTitle = (await host.bridge.detail(hangId)).summary.title
 
-      // 设置 › 电脑 in the desktop app: lowering applies at once, raising takes the local confirmation.
       await page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '设置', exact: true }).click()
       const computer = page.locator('.settings-page')
       // Pairing starts here, so this is where the running agent that would hold a phone back is named.
@@ -921,13 +916,10 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect(await pairingBlocked.getByRole('button').allInnerTexts()).toEqual(['查看', '停止'])
       await computer.getByRole('button', { name: '连接手机', exact: true }).scrollIntoViewIfNeeded()
       await captureThemes(page, 'native-desktop-pairing-blocked')
-      await openSection(computer, '电脑')
-      await computer.getByRole('button', { name: '在这台 Mac 上开始：完全访问', exact: true }).click()
-      await page.getByRole('menuitemradio', { name: /^需要时询问/ }).click()
-      await waitFor(() => !policy().local.allowL3)
-      expect(policy().local).toEqual({ maxLevel: 'L1', allowL3: false })
-      await computer.getByRole('button', { name: '在这台 Mac 上开始：需要时询问', exact: true }).click()
-      await page.getByRole('menuitemradio', { name: /^完全访问/ }).click()
+      // 手机可以开始新会话 in the desktop app: turning it off applies at once, turning it on takes the local confirmation.
+      const remoteStart = computer.getByRole('switch', { name: '手机可以开始新会话', exact: true })
+      await expect.poll(() => remoteStart.getAttribute('aria-checked')).toBe('false')
+      await remoteStart.click()
       await blockedDock.waitFor()
       expect(await blockedDock.getAttribute('data-paused-reason')).toBe('blocked')
       expect(await blockedDock.locator('.ui-notice-text').innerText()).toBe(`Fake Agent 正在运行「${hangTitle}」，结束后才能放宽设置。`)
@@ -942,70 +934,63 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await captureThemes(page, 'native-desktop-confirmation-blocked-ended')
       await blockedDock.getByRole('button', { name: '好', exact: true }).click()
       await blockedDock.waitFor({ state: 'detached' })
-      expect(policy().local.allowL3).toBe(false)
-      await computer.getByRole('button', { name: '在这台 Mac 上开始：需要时询问', exact: true }).click()
-      await page.getByRole('menuitemradio', { name: /^完全访问/ }).click()
+      expect(policy().remote.allowRemoteStart).toBe(false)
+      await remoteStart.click()
       const raise = await testHost.presence.waitForRequest(15_000)
       expect(raise.preview.action).toBe('policy.change')
       expect(raise.preview.requester.listener).toBe('unix')
       // The control that asked shows it waits; there is no card and no dock.
       await page.locator('.inline-confirm[data-confirmation-phase="waiting"]').waitFor({ state: 'attached' })
       expect(await page.locator('.presence-dock').count()).toBe(0)
-      await computer.getByRole('button', { name: '在这台 Mac 上开始：等待验证…', exact: true }).waitFor()
-      expect(policy().local.allowL3).toBe(false)
+      await computer.getByText('等待 Touch ID…', { exact: true }).waitFor()
+      expect(policy().remote.allowRemoteStart).toBe(false)
       testHost.presence.approveNext()
-      await waitFor(() => policy().local.allowL3)
-      expect(policy().local).toEqual({ maxLevel: 'L1', allowL3: true })
-      await computer.getByRole('button', { name: '在这台 Mac 上开始：完全访问', exact: true }).waitFor()
-      await page.screenshot({ path: 'test-results/native-desktop-computer.png', animations: 'disabled' })
-
-      // The egress allow list takes an address only here; the dialog opens from the group's 添加….
-      await computer.getByRole('button', { name: '添加…', exact: true }).click()
-      await page.getByRole('dialog', { name: '加入出站白名单', exact: true }).waitFor()
-      await page.screenshot({ path: 'test-results/native-desktop-egress.png', animations: 'disabled' })
-      await page.keyboard.press('Escape')
-      await page.getByRole('dialog', { name: '加入出站白名单', exact: true }).waitFor({ state: 'hidden' })
+      await waitFor(() => policy().remote.allowRemoteStart)
+      await expect.poll(() => remoteStart.getAttribute('aria-checked')).toBe('true')
 
       // 设置 › 模型服务: a preset provider's key saves without a confirmation; a local address is confirmed once,
       // before its models are listed, and saving the service there then asks nothing more.
       const models = await localModels()
       try {
         const asked = testHost.presence.requests.length
-        await openSection(computer, '模型服务')
-        await computer.getByRole('button', { name: '添加服务…', exact: true }).click()
-        await computer.getByRole('button', { name: /^DeepSeek/ }).click()
-        await computer.getByLabel('API Key', { exact: true }).fill('sk-e2e-preset-key')
-        const manual = computer.getByLabel('手动添加模型 ID', { exact: true })
+        await openSection(computer, '模型')
+        const addService = computer.getByRole('button', { name: '添加服务', exact: true })
+        const sheet = page.getByRole('dialog', { name: '添加服务', exact: true })
+        await addService.click()
+        await sheet.getByRole('button', { name: 'DeepSeek', exact: true }).click()
+        await sheet.getByLabel('密钥', { exact: true }).fill('sk-e2e-preset-key')
+        const manual = sheet.getByLabel('手动添加模型 ID', { exact: true })
         await manual.fill('deepseek-chat')
         await manual.press('Enter')
-        await computer.getByRole('button', { name: '保存服务', exact: true }).click()
-        await computer.getByRole('heading', { name: 'DeepSeek', exact: true }).waitFor()
+        await sheet.getByRole('button', { name: '保存服务', exact: true }).click()
+        await sheet.waitFor({ state: 'hidden' })
         expect(testHost.presence.requests.length).toBe(asked)
         expect(host.config.provider('deepseek')).toMatchObject({ apiKey: 'sk-e2e-preset-key', keyOrigin: 'https://api.deepseek.com:443' })
         expect(host.security.audit.lastOf('provider.secret.set')).toMatchObject({ stepup: 'none', actor: { listener: 'unix' } })
+        // Checked as soon as it is listed; here the name does not resolve, and the row says so in one word.
+        await computer.locator('.provider-row', { hasText: 'DeepSeek' }).getByText('连不上', { exact: true }).waitFor()
+        await computer.getByRole('button', { name: '编辑 DeepSeek', exact: true }).click()
         // The key's scope is shown without the port https implies.
         await computer.getByText('只发往 https://api.deepseek.com/v1', { exact: true }).waitFor()
-        // Checked at once after saving; here the name does not resolve, and the reason is one sentence.
-        await computer.getByText('Host 找不到这个域名。检查地址的拼写和网络。', { exact: true }).waitFor()
         await captureThemes(page, 'native-desktop-provider-preset')
 
-        await computer.getByRole('button', { name: '模型服务', exact: true }).click()
-        await computer.getByRole('button', { name: '添加服务…', exact: true }).click()
-        await computer.getByRole('button', { name: /^Ollama/ }).click()
-        await computer.getByLabel('API 地址', { exact: true }).fill(models.baseURL)
-        await computer.getByRole('button', { name: '用 Touch ID 保存', exact: true }).waitFor()
-        await computer.getByText('第一次使用这个地址：保存时用 Touch ID 确认一次，之后不再询问。', { exact: true }).waitFor()
+        await computer.getByRole('button', { name: '模型', exact: true }).click()
+        await addService.click()
+        await sheet.getByRole('button', { name: 'Ollama', exact: true }).click()
+        await sheet.getByLabel('地址', { exact: true }).fill(models.baseURL)
+        await sheet.getByRole('button', { name: '用 Touch ID 保存', exact: true }).waitFor()
+        await sheet.getByText('第一次使用这个地址：保存时用 Touch ID 确认一次，之后不再询问。', { exact: true }).waitFor()
         // Listing a local address waits for its confirmation; the save button is the one lock on screen.
-        await computer.getByRole('button', { name: '获取模型', exact: true }).click()
-        await computer
+        await sheet.getByRole('button', { name: '检测连接', exact: true }).click()
+        await sheet
           .getByText(`这是这台 Mac 或局域网上的地址，保存时确认一次，之后 Latch 才会访问 ${models.allow}。`, { exact: true })
           .waitFor()
-        expect(await computer.getByRole('button', { name: /Touch ID/u }).allInnerTexts()).toEqual(['用 Touch ID 保存'])
+        expect(await sheet.getByRole('button', { name: /Touch ID/u }).allInnerTexts()).toEqual(['用 Touch ID 保存'])
         await captureThemes(page, 'native-desktop-provider-local-address')
         // One press: the confirmation, then the listing, and a single model saves at once.
-        await computer.getByRole('button', { name: '用 Touch ID 保存', exact: true }).click()
+        await sheet.getByRole('button', { name: '用 Touch ID 保存', exact: true }).click()
         const confirmation = await testHost.presence.waitForRequest(15_000)
-        await computer.getByRole('button', { name: '等待 Touch ID…', exact: true }).waitFor()
+        await sheet.getByRole('button', { name: '等待 Touch ID…', exact: true }).waitFor()
         await page.screenshot({ path: 'test-results/native-desktop-provider-waiting.png', animations: 'disabled' })
         expect(confirmation.preview).toMatchObject({ action: 'provider.confirm-origin', title: `确认模型服务地址 ${models.allow}` })
         expect(confirmation.preview.lines).toContainEqual({
@@ -1014,9 +999,9 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         })
         expect(models.listings).toEqual([])
         testHost.presence.approveNext()
-        await computer.getByRole('heading', { name: 'Ollama', exact: true }).waitFor()
+        await sheet.waitFor({ state: 'hidden' })
         expect(host.config.provider('ollama')).toMatchObject({ baseURL: models.baseURL, models: ['llama3'], defaultModel: 'llama3' })
-        await computer.getByText('连接正常', { exact: false }).waitFor()
+        await computer.locator('.provider-row', { hasText: 'Ollama' }).getByText('已连接', { exact: true }).waitFor()
         expect(testHost.presence.requests.length).toBe(asked + 1)
         expect(policy()).toMatchObject({ confirmedAddresses: [models.baseURL], hostEgressAllow: [models.allow] })
         await captureThemes(page, 'native-desktop-provider-local')
@@ -1035,7 +1020,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         const custom = page.getByRole('region', { name: '自定义 OpenAI 兼容', exact: true })
         const customURL = `${models.origin}/custom/v1`
         await custom.getByLabel('名称', { exact: true }).fill('本机自定义模型')
-        await custom.getByLabel('API 地址', { exact: true }).fill(customURL)
+        await custom.getByLabel('地址', { exact: true }).fill(customURL)
         const customModel = custom.getByLabel('手动添加模型 ID', { exact: true })
         await customModel.fill('local-custom')
         await customModel.press('Enter')
@@ -1062,7 +1047,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await models.close()
       }
 
-      // 设置 › 项目: 新建项目… opens the system's open panel for several folders. Main takes a nonce, signs the body with
+      // 设置 › 项目: 新建项目 opens the system's open panel for several folders. Main takes a nonce, signs the body with
       // the device key and adds the project over host.sock itself; the page never sends a path. 在访达中显示 shows only
       // folders the Host has registered and never opens anything. The panel, Finder and openPath are recorded in main
       // instead, and the window counts as focused (folder dialogs open only for the focused window; the test runner
@@ -1096,11 +1081,11 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           return record
         })
       await openSection(computer, '项目')
-      await computer.getByRole('button', { name: '新建项目…', exact: true }).click()
+      await computer.getByRole('button', { name: '新建项目', exact: true }).click()
       await computer.locator('.project-editor').waitFor()
       await computer.getByRole('button', { name: '项目', exact: true }).click()
-      const projectCard = computer.locator('.project-card', { hasText: 'picked-project' })
-      await projectCard.waitFor()
+      const projectRow = computer.locator('.project-row', { hasText: 'picked-project' })
+      await projectRow.waitFor()
       expect(host.security.audit.lastOf('workspace.added')).toMatchObject({
         target: 'picked-project',
         actor: { listener: 'unix', deviceId: device.id },
@@ -1117,7 +1102,8 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       const { workspaces } = await helper.json<{ workspaces: WorkspaceInfo[] }>('workspaces')
       const project = workspaces.find(item => item.id === 'picked-project')!
       expect(project.folders?.map(folder => folder.path)).toEqual([await realpath(picked), await realpath(pickedDocs)])
-      await projectCard.getByRole('button', { name: '在访达中显示', exact: true }).first().click()
+      await projectRow.getByRole('button', { name: /的操作$/ }).click()
+      await page.getByRole('menuitem', { name: '在访达中显示', exact: true }).click()
       await waitFor(async () => (await folderRecord()).shown.length === 1)
       expect((await folderRecord()).shown).toEqual([await realpath(picked)])
       // Any folder of a project by its ID, at most twice a second; an ID the Host does not know shows nothing, and the
@@ -1240,9 +1226,11 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await waitFor(async () => (await host.bridge.detail(runningId)).summary.status === 'running')
       const runningTitle = (await host.bridge.detail(runningId)).summary.title
       const beforeRunningConfirmation = testHost.presence.requests.length
-      await openSection(computer, '电脑')
-      await computer.getByRole('button', { name: /^从手机和其他电脑开始：/ }).click()
-      await page.getByRole('menuitemradio', { name: /^自动编辑/ }).click()
+      await openSection(computer, '设备')
+      const remoteStartOff = computer.getByRole('switch', { name: '手机可以开始新会话', exact: true })
+      await remoteStartOff.click()
+      await waitFor(() => !policy().remote.allowRemoteStart)
+      await remoteStartOff.click()
       const refused = page.locator('.inline-confirm[data-confirmation-phase="paused"]')
       await refused.waitFor()
       await refused.getByText(`Fake Agent 正在运行「${runningTitle}」，结束后才能放宽设置。`, { exact: true }).waitFor()
@@ -1397,7 +1385,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       )
       expect(created).toBe(201)
       const settings = await openSettings(page)
-      await openSection(settings, 'Agent 成员')
+      await openSection(settings, '引擎')
       await settings.getByRole('button', { name: '编辑 Probe fixture', exact: true }).click()
       const probe = settings.locator('.settings-group', { has: page.getByRole('heading', { name: '测试启动', exact: true }) })
       for (const [width, height] of [

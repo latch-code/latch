@@ -157,29 +157,27 @@ describe('responsive workspace controls', () => {
 
       const settings = await openSettings(page, '设置')
       await noHorizontalOverflow(page, settings)
-      await openSection(settings, '模型服务')
-      await reachable(settings.getByRole('button', { name: '添加服务…', exact: true }))
-      await settings.getByRole('button', { name: '添加服务…', exact: true }).click()
-      await settings.getByRole('button', { name: /^OpenAI/ }).click()
+      await openSection(settings, '模型')
+      await reachable(settings.getByRole('button', { name: '添加服务', exact: true }))
+      await settings.getByRole('button', { name: '添加服务', exact: true }).click()
+      const sheet = page.getByRole('dialog', { name: '添加服务', exact: true })
+      await sheet.getByRole('button', { name: 'OpenAI', exact: true }).click()
       // Unsaved form input only; nothing is submitted, checked or persisted. A browser cannot set keys.
-      for (const input of [
-        settings.getByLabel('名称', { exact: true }),
-        settings.getByLabel('API 地址', { exact: true }),
-        settings.getByLabel('手动添加模型 ID', { exact: true }),
-      ]) {
+      for (const input of [sheet.getByLabel('地址', { exact: true }), sheet.getByLabel('手动添加模型 ID', { exact: true })]) {
         await reachable(input)
       }
       // OpenAI needs a key: the form says before saving where it is typed and that the service waits for it.
-      await settings.getByText('这个服务需要密钥：保存后，在 Mac 上的 Latch 里填写密钥，它才能使用。', { exact: true }).waitFor()
-      await reachable(settings.getByRole('button', { name: '检测连接', exact: true }))
-      await reachable(settings.getByRole('button', { name: '保存服务', exact: true }))
-      await noHorizontalOverflow(page, settings)
+      await sheet.getByText('这个服务需要密钥：保存后，在 Mac 上的 Latch 里填写密钥，它才能使用。', { exact: true }).waitFor()
+      await reachable(sheet.getByRole('button', { name: '检测连接', exact: true }))
+      await reachable(sheet.getByRole('button', { name: '保存服务', exact: true }))
       await capture(page, `${label}-model-settings`)
+      await sheet.getByRole('button', { name: '取消', exact: true }).click()
+      await sheet.waitFor({ state: 'hidden' })
 
       await openSection(settings, '插件')
-      const switches = settings.getByRole('switch')
-      await switches.first().waitFor()
-      for (let index = 0; index < (await switches.count()); index++) await reachable(switches.nth(index), { allowDisabled: true })
+      const plugins = page.locator('.plugin-nav-row')
+      await plugins.first().waitFor()
+      for (let index = 0; index < (await plugins.count()); index++) await reachable(plugins.nth(index))
       await noHorizontalOverflow(page, settings)
       await capture(page, `${label}-plugin-settings`)
       await closeSettings(settings)

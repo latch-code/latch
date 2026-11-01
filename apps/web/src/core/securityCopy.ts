@@ -354,10 +354,13 @@ export const DESKTOP_SCOPES: readonly string[] = (['view', 'run', 'approve:stand
   scope => ENROLLMENT_SCOPE_LABELS[scope],
 )
 
+/** This Mac cannot confirm anything now, in the Host's words when it gave some. */
+export const presenceUnavailableText = (message: string | undefined) =>
+  message ? `这台 Mac 暂时不能确认：${message}` : '这台 Mac 暂时不能确认，需要它确认的操作都不能进行。'
+
 /** Pairing a phone from 设置 › 设备. */
 export const PAIRING_COPY = {
-  /** 设置 › 电脑's phone access row: where it is set up, never the start options. */
-  computerRow: '连接设置在 设置 › 设备 中',
+  /** Where pairing is set up, never the start options. */
   needsDesktop: '配对二维码要在 Latch 桌面端生成：在运行 Latch 的电脑上打开桌面端的 设置 › 设备。',
   needsAdmin: '此设备没有「管理此 Host」权限',
 } as const
@@ -503,6 +506,31 @@ export function fileRefusalText(code: string, context: FileNoteContext = {}): st
 }
 
 /**
+ * Where a plugin's parts run and who receives them, for the plugin form. Plain facts rather than a warning: a page module
+ * is delivered to every device that may view sessions and runs with that page's rights; nothing isolates it.
+ */
+export const PLUGIN_REACH_COPY = {
+  title: '代码在哪里运行',
+  page: {
+    title: '界面面板',
+    body: '代码会发到每台能查看会话的设备，在那台设备的 Latch 页面里运行：这台 Mac 上的 Latch，以及手机和其他电脑的浏览器。那个页面能做的事它都能做，没有隔离。iPhone App 不运行它。',
+  },
+  host: {
+    title: '工具和后台代码',
+    body: '在这台 Mac 上运行，权限和 Latch 相同：可以读写你的文件、运行程序、访问网络，也可以注册界面面板，发到能查看会话的设备。',
+  },
+  text: {
+    title: '技能和静态面板',
+    body: '只是文字，不运行代码。技能交给这台 Mac 上的 Latch 引擎；静态面板每台能查看会话的设备都能看到。',
+  },
+  unread: {
+    title: '没能读取这个插件的声明',
+    body: '上面的内容可能不完整。',
+    retry: '重试',
+  },
+} as const
+
+/**
  * Model services: where keys are typed and how an address becomes usable. Keys are typed only in the Latch app on this
  * Mac; a known service's HTTPS address and an address confirmed once take a key directly; any other address is confirmed
  * once (Touch ID or the login password), together with its key. Every restricted control says why and where to go.
@@ -523,6 +551,8 @@ export const PROVIDER_COPY = {
   missingKeyElsewhere: (name: string) => `在 Mac 上的 Latch 里填写密钥：设置 › 模型 › ${name}。`,
   /** The check is a model listing: a service without one is not a failed connection. */
   listingUnavailable: '无法自动检测：这个服务不提供模型列表',
+  /** 已连接 comes from a listing, and some services list their models without looking at the key. */
+  connectedReason: '服务刚刚回答了模型列表请求。有些服务列出模型不需要密钥，所以这不证明密钥能用于对话。',
   checkNeedsAddress: '确认地址后才能检测',
   checkNeedsKey: '填写密钥后才能检测',
   enabled: '内置 Agent 可以使用它的模型',
@@ -646,7 +676,7 @@ const FIXED: Record<string, string> = {
   'listener-mismatch': ENROLLMENT_REASON_TEXT['listener-mismatch']!,
   'legacy-reconfirm': '这台设备需要重新连接',
   'local-only': LOCAL_ONLY_TEXT,
-  'ceiling-exceeded': '这台设备不能这样做',
+  'ceiling-exceeded': '这台设备不能这样做：这台 Mac 的 policy.json 限制了它。运行 pnpm stop 后才能修改这个文件。',
   'policy-changed': '设置刚被修改过，这次更改没有应用。请查看最新的设置后重试。',
   'presence-unavailable': '这台 Mac 暂时不能确认',
   'origin-unconfirmed': '这个模型服务的地址还没有确认，Latch 不会向它发送请求。请在 Mac 上的 Latch 里确认：设置 › 模型。',

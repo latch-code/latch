@@ -255,7 +255,7 @@ describe('the phone stack', () => {
         if (label === '模型') {
           await picker.getByRole('button', { name: link, exact: true }).click()
           await sheet.waitFor({ state: 'hidden' })
-          await page.locator('.settings-page').getByRole('heading', { name: '模型服务', exact: true, level: 2 }).waitFor()
+          await page.locator('.settings-page').getByRole('heading', { name: '模型', exact: true, level: 2 }).waitFor()
         } else {
           await page.keyboard.press('Escape')
           await picker.waitFor({ state: 'hidden' })

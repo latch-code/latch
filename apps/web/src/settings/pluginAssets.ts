@@ -1,4 +1,5 @@
-import type { PluginPackageBundle } from '@latch/protocol'
+import type { PluginInfo, PluginPackageBundle, PluginPackageManifest } from '@latch/protocol'
+import { PLUGIN_REACH_COPY } from '../core/securityCopy.ts'
 
 const fail = () => new Error('请选择有效的 .latch-plugin.json 文件，文件总大小不超过 8 MiB。')
 
@@ -75,4 +76,65 @@ export function addPluginSource(bundle: PluginPackageBundle, path: string): Plug
   )
     throw new Error('使用未被占用的包内相对路径，例如 helpers/format.mjs。最多 128 个文件。')
   return { ...bundle, files: [...bundle.files, { path, content: '' }] }
+}
+
+export interface PluginReach {
+  id: 'page' | 'host' | 'text'
+  title: string
+  body: string
+}
+
+type ReachParts = Record<PluginReach['id'], boolean>
+
+function reach(parts: ReachParts): PluginReach[] {
+  return (['page', 'host', 'text'] as const).filter(part => parts[part]).map(part => ({ id: part, ...PLUGIN_REACH_COPY[part] }))
+}
+
+const manifestParts = (manifest: PluginPackageManifest): ReachParts => ({
+  page: (manifest.panels?.length ?? 0) > 0,
+  host: (manifest.host?.length ?? 0) > 0,
+  text: (manifest.skills?.length ?? 0) > 0 || (manifest.dataPanels?.length ?? 0) > 0,
+})
+
+function capabilityParts(capabilities: readonly string[]): ReachParts {
+  const kinds = new Set(capabilities.map(capability => capability.split(':')[0]))
+  return {
+    page: kinds.has('ui'),
+    host: ['tool', 'harness', 'provider', 'transport'].some(kind => kinds.has(kind)),
+    text: kinds.has('skill') || kinds.has('data'),
+  }
+}
+
+/** What the form says about a plugin being edited: it follows the manifest as typed, so a panel added now is named now. */
+export function manifestReach(manifest: PluginPackageManifest): PluginReach[] {
+  return reach(manifestParts(manifest))
+}
+
+/**
+ * The manifest the form describes while 高级声明 is open: the text as typed once it parses, because 保存并应用 applies that
+ * text without leaving the tab. Until it parses, nothing can be applied, so the last good manifest stands.
+ */
+export function typedManifest(text: string, last: PluginPackageManifest): PluginPackageManifest {
+  try {
+    const value: unknown = JSON.parse(text)
+    return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as PluginPackageManifest) : last
+  } catch {
+    return last
+  }
+}
+
+/** The same for a plugin the Host already loaded, from the capabilities it reports. */
+export function pluginReach(plugin: Pick<PluginInfo, 'capabilities'>): PluginReach[] {
+  return reach(capabilityParts(plugin.capabilities))
+}
+
+/**
+ * What a package's page says: what its saved manifest declares and what the Host runs now. Neither alone is true: a Host
+ * module can register a panel its manifest never names, and the saved draft can drop a panel the applied revision still
+ * delivers.
+ */
+export function packageReach(manifest: PluginPackageManifest | undefined, running: Pick<PluginInfo, 'capabilities'>): PluginReach[] {
+  const declared = manifest ? manifestParts(manifest) : { page: false, host: false, text: false }
+  const loaded = capabilityParts(running.capabilities)
+  return reach({ page: declared.page || loaded.page, host: declared.host || loaded.host, text: declared.text || loaded.text })
 }

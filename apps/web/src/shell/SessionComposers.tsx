@@ -114,13 +114,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
       below={
         selectedId === null && catalog && !personalDraft ? (
           <>
-            <ContextRow
-              hostName={snapshot.hostName}
-              fullAccess={startsL3}
-              onComputer={() => {
-                openSettings('computer')
-              }}
-            />
+            <ContextRow hostName={snapshot.hostName} fullAccess={startsL3} />
             {/* Captions open under the row like disclosures, so the input and everything above it stay put. */}
             <Collapse open={codeRootChoice !== undefined}>
               <p className="composer-notice" data-tint="warn" role="note">
@@ -301,7 +295,7 @@ export function HarnessChoices({ shell }: { shell: ShellState }) {
       value={choice.harnessId ? entryKey(choice.harnessId, choice.mode) : undefined}
       access={access}
       disabled={newChoicesLocked}
-      onManage={owner ? () => openSettings('agents') : undefined}
+      onManage={owner ? () => openSettings('engines') : undefined}
       onChange={entry => submission.updateChoice({ harnessId: entry.harness.id, mode: entry.mode })}
       onAdded={agent => {
         submission.updateChoice({ harnessId: agent.id, mode: 'agent' })
@@ -341,7 +335,7 @@ export function SetupNotices({ shell }: { shell: ShellState }) {
               : undefined
           }
           onSetup={() => {
-            openSettings(block.kind === 'model-required' ? 'providers' : catalog ? 'agents' : 'plugins')
+            openSettings(block.kind === 'model-required' ? 'providers' : catalog ? 'engines' : 'plugins')
           }}
         />
       )}

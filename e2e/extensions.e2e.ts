@@ -53,7 +53,8 @@ describe('custom model extension in the app', () => {
       await expect.poll(async () => (await host.bridge.listTasks())[0]?.status).toBe('idle')
 
       await page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '插件', exact: true }).click()
-      const toggle = page.getByRole('switch', { name: '验收模型插件', exact: true })
+      await page.locator('.plugin-nav-row', { hasText: '验收模型插件' }).click()
+      const toggle = page.getByRole('switch', { name: '启用 验收模型插件', exact: true })
       await toggle.click()
       await expect.poll(() => toggle.getAttribute('aria-checked')).toBe('false')
       await page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '会话', exact: true }).click()
@@ -65,6 +66,7 @@ describe('custom model extension in the app', () => {
       await page.getByText('连接模型服务', { exact: true }).waitFor()
 
       await page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '插件', exact: true }).click()
+      await page.locator('.plugin-nav-row', { hasText: '验收模型插件' }).click()
       await toggle.click()
       await expect.poll(() => toggle.getAttribute('aria-checked')).toBe('true')
       await page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '会话', exact: true }).click()

@@ -3,9 +3,12 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DeviceAccess } from '../src/core/permissions.ts'
 import { ENROLLMENT_COPY, NATIVE_LINK_COPY, PAIRING_COPY, PAIRING_WAITING_COPY } from '../src/core/securityCopy.ts'
-import { missingText } from '../src/settings/AgentsSettings.tsx'
+import type { AgentPreset, AgentSettings, AppSnapshot } from '@latch/protocol'
+import { AboutSettings } from '../src/settings/AboutSettings.tsx'
+import { AgentRow, engineGroups, missingText } from '../src/settings/AgentsSettings.tsx'
 import { PairingSection } from '../src/settings/PhonePairing.tsx'
-import { ProjectCard } from '../src/settings/WorkspacesSettings.tsx'
+import { usageTotal } from '../src/settings/UsageSettings.tsx'
+import { ProjectRow } from '../src/settings/WorkspacesSettings.tsx'
 
 const noop = () => {}
 afterEach(() => {
@@ -15,6 +18,55 @@ afterEach(() => {
 const adapter = (found: boolean, companion?: boolean) => ({
   command: 'pi-acp',
   detected: { found, ...(companion === undefined ? {} : { companion: { command: 'pi', found: companion } }) },
+})
+
+describe('about', () => {
+  const snapshot = (presence: { status: 'available' | 'unavailable'; message?: string }) =>
+    ({ version: '1', host: { hostId: 'h', presence, devMode: false } }) as unknown as AppSnapshot
+  const render = (value: AppSnapshot) => renderToStaticMarkup(createElement(AboutSettings, { snapshot: value, access: { legacy: false } }))
+
+  it('says when this Mac cannot confirm, and is quiet when it can', () => {
+    expect(render(snapshot({ status: 'unavailable', message: '确认组件已变化' }))).toContain('确认组件已变化')
+    expect(render(snapshot({ status: 'available' }))).not.toContain('暂时不能确认')
+  })
+})
+
+describe('engine rows', () => {
+  const agent = (overrides: Partial<AgentSettings>) =>
+    ({
+      id: 'a',
+      name: 'pi',
+      presetId: 'pi',
+      enabled: true,
+      verified: true,
+      command: 'pi-acp',
+      args: [],
+      detected: { found: true },
+      ...overrides,
+    }) as AgentSettings
+  const row = (value: AgentSettings) =>
+    renderToStaticMarkup(
+      createElement(AgentRow, {
+        agent: value,
+        preset: { id: 'pi', description: '预设的说明' } as AgentPreset,
+        busy: false,
+        onOpen: noop,
+        onToggle: noop,
+      }),
+    )
+
+  it('shows what an altered definition really runs, not the description of the preset it left', () => {
+    expect(row(agent({}))).toContain('预设的说明')
+    const altered = row(agent({ verified: false, command: '/tmp/other', args: ['--flag'] }))
+    expect(altered).toContain('未验证的定义')
+    expect(altered).toContain('/tmp/other --flag')
+    expect(altered).not.toContain('预设的说明')
+  })
+
+  it('keeps a definition whose program is missing out of 已安装', () => {
+    const missing = agent({ id: 'b', detected: { found: false } })
+    expect(engineGroups([agent({}), missing])).toEqual({ installed: [agent({})], missing: [missing] })
+  })
 })
 
 describe('phone pairing', () => {
@@ -37,7 +89,6 @@ describe('phone pairing', () => {
     const body = [
       NATIVE_LINK_COPY.intro,
       ...NATIVE_LINK_COPY.steps,
-      PAIRING_COPY.computerRow,
       PAIRING_COPY.needsDesktop,
       PAIRING_COPY.needsAdmin,
       ENROLLMENT_COPY.invitationRequired,
@@ -77,7 +128,7 @@ describe('workspace settings', () => {
   it('lists a workspace the Host disabled with its reason and keeps the remove action', () => {
     const reason = '该目录位于受保护目录（如 .git）内，不能作为项目'
     const html = renderToStaticMarkup(
-      createElement(ProjectCard, {
+      createElement(ProjectRow, {
         workspace: { id: 'w1', name: 'hooks', path: '/w/.git/hooks', unavailable: reason },
         owner: true,
         isDefault: false,
@@ -85,14 +136,12 @@ describe('workspace settings', () => {
         onRemove: noop,
       }),
     )
-    expect(html).toContain('class="settings-card project-card is-unavailable"')
     expect(html).toContain('<span class="ui-status-word" data-tone="warn">不可用</span>')
     expect(html).toContain(`<span class="workspace-unavailable">${reason}</span>`)
-    // Removing is in the project's ⋯ menu; a browser copies the folder's path instead of showing it in Finder.
+    // Removing is in the project's ⋯ menu.
     expect(html).toContain('aria-label="hooks 的操作"')
-    expect(html).toContain('aria-label="复制路径"')
     const usable = renderToStaticMarkup(
-      createElement(ProjectCard, {
+      createElement(ProjectRow, {
         workspace: { id: 'w2', name: 'app', path: '/w/app' },
         owner: false,
         isDefault: true,
@@ -102,5 +151,18 @@ describe('workspace settings', () => {
     )
     expect(usable).not.toMatch(/不可用|的操作/)
     expect(usable).toContain('默认')
+  })
+})
+
+describe('the usage total', () => {
+  it('adds input and output across the rows', () => {
+    const row = (inputTokens: number, outputTokens: number) => ({
+      harnessId: 'standard',
+      source: 'provider' as const,
+      messages: 1,
+      usage: { inputTokens, outputTokens },
+      partial: { cacheReadTokens: false, cacheWriteTokens: false, reasoningTokens: false },
+    })
+    expect(usageTotal([row(100, 20), row(5, 1)])).toBe(126)
   })
 })

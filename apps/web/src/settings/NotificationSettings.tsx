@@ -23,37 +23,34 @@ export function NotificationSettings() {
     }
   }, [api])
   if (!api || !value) return error ? <InlineNotice tone="error">{error}</InlineNotice> : null
-  const change = async (key: 'completion' | 'approval' | 'title', checked: boolean) => {
+  const change = async (patch: Partial<Pick<NotificationPreferences, 'completion' | 'approval' | 'title'>>) => {
     try {
-      const result = await api.set({ completion: value.completion, approval: value.approval, title: value.title, [key]: checked })
+      const result = await api.set({ completion: value.completion, approval: value.approval, title: value.title, ...patch })
       if (result) setValue(result)
       else setError('无法保存通知设置。')
     } catch {
       setError('无法保存通知设置。')
     }
   }
+  // Saved separately in the past, the two can still differ: say which one holds instead of drawing the switch as all or nothing.
+  const partly = value.completion !== value.approval
   return (
     <SettingsGroup title="通知">
       {!value.supported && <InlineNotice>当前系统不支持通知。</InlineNotice>}
       <SwitchRow
-        title="会话完成时通知"
-        description="只在 Latch 没有前台窗口时通知"
-        checked={value.completion}
+        className="settings-row"
+        title="完成或需要我处理时通知"
+        description={partly ? (value.completion ? '现在只在完成时通知' : '现在只在需要你处理时通知') : undefined}
+        checked={value.completion || value.approval}
         disabled={!value.supported}
-        onCheckedChange={checked => change('completion', checked)}
+        onCheckedChange={checked => change({ completion: checked, approval: checked })}
       />
       <SwitchRow
-        title="有请求等你处理时通知"
-        checked={value.approval}
-        disabled={!value.supported}
-        onCheckedChange={checked => change('approval', checked)}
-      />
-      <SwitchRow
-        title="通知中包含会话标题"
-        description="关闭时只显示固定提示，不显示会话内容"
+        className="settings-row"
+        title="通知中显示会话标题"
         checked={value.title}
         disabled={!value.supported}
-        onCheckedChange={checked => change('title', checked)}
+        onCheckedChange={checked => change({ title: checked })}
       />
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
     </SettingsGroup>

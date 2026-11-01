@@ -111,6 +111,9 @@
   background: var(--raised);
   box-shadow: var(--sh-dialog);
 }
+.ui-dialog-surface[data-size='sheet'] {
+  width: min(480px, calc(100vw - 2 * var(--sp-16)));
+}
 .ui-dialog-surface[data-size='form'] {
   width: min(560px, calc(100vw - 2 * var(--sp-16)));
 }

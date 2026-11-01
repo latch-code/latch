@@ -18,13 +18,19 @@ export interface SettingsNavigation {
   layers: HTMLElement | null
   /** How many pages the section has open on a phone, and the way back from the top one (the bar's back, Escape). */
   setDepth: (depth: number, back: (() => void) | undefined) => void
+  /** Wide windows: the panel beside the rail, for an entry that lists its own objects there instead of sections. */
+  navSlot: HTMLElement | null
+  /** Wide windows: the title row, for a page whose title is the object it shows. */
+  titleSlot: HTMLElement | null
 }
 
-const NavigationContext = createContext<SettingsNavigation>({
+export const NavigationContext = createContext<SettingsNavigation>({
   phone: false,
   section: '',
   layers: null,
   setDepth: () => {},
+  navSlot: null,
+  titleSlot: null,
 })
 export const SettingsNavigationProvider = NavigationContext.Provider
 

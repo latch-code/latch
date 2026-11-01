@@ -32,9 +32,8 @@ const glyph = (icon: LucideIcon) => <Icon icon={icon} size={16} />
 /** Each settings section, in the order of the page, with the words it also answers to. */
 const SETTINGS_ROWS: ReadonlyArray<{ section: SettingsSection; keywords?: string }> = [
   { section: 'general', keywords: '外观 主题 通知 发送键 用量' },
-  { section: 'computer', keywords: '安全 完全访问' },
   { section: 'providers', keywords: '模型 密钥' },
-  { section: 'agents' },
+  { section: 'engines', keywords: 'agent' },
   { section: 'assistants' },
   { section: 'routines', keywords: '自动化' },
   { section: 'workspaces', keywords: '文件夹' },
@@ -93,7 +92,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
   const allowed = settingsSections(snapshot, access)
   const canSearchFiles =
     catalog?.features?.fileSearch === true && catalog.features.filePreview === true && snapshot.device.dataScope === 'all'
-  const canDefineAgents = allowed.includes('agents') && (access.legacy || access.local)
+  const canDefineAgents = allowed.includes('engines') && (access.legacy || access.local)
 
   const folders = summary?.folders
   const fileRootName = useCallback(
@@ -128,7 +127,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
     [snapshot.tasks, sessionEntry],
   )
 
-  const agents: PaletteEntry[] = allowed.includes('agents')
+  const agents: PaletteEntry[] = allowed.includes('engines')
     ? (catalog?.harnesses ?? [])
         .filter(harness => harness.source === 'acp')
         .map(harness => ({

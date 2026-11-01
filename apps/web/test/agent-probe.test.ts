@@ -1,8 +1,7 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import type { AgentProbeResult, AgentSettings, TaskSummary } from '@latch/protocol'
-import { agentUsage } from '../src/settings/AgentsSettings.tsx'
+import type { AgentProbeResult, AgentSettings } from '@latch/protocol'
 import { AgentProbe } from '../src/settings/AgentProbe.tsx'
 const base: AgentProbeResult = {
   status: 'ready',
@@ -26,16 +25,6 @@ const agent = (result?: AgentProbeResult): AgentSettings => ({
 const render = (result?: AgentProbeResult, disabledReason?: string) =>
   renderToStaticMarkup(createElement(AgentProbe, { agent: agent(result), disabledReason, onSaved: () => {} }))
 describe('Agent diagnostic presentation', () => {
-  it('counts visible snapshot sessions by harness and uses their latest valid activity timestamp', () => {
-    const tasks: TaskSummary[] = [
-      { id: 'first', title: 'First', status: 'idle', harnessId: 'fake', updatedAt: '2026-10-24T06:00:00.000Z' },
-      { id: 'second', title: 'Second', status: 'idle', harnessId: 'fake', updatedAt: '2026-10-25T06:00:00.000Z' },
-      { id: 'elsewhere', title: 'Elsewhere', status: 'idle', harnessId: 'other', updatedAt: '2026-10-26T06:00:00.000Z' },
-    ]
-    expect(agentUsage(tasks, 'fake')).toEqual({ count: 2, lastUsedAt: '2026-10-25T06:00:00.000Z' })
-    expect(agentUsage([], 'fake')).toEqual({ count: 0 })
-  })
-
   it('labels an initialize success honestly even when login methods are advertised', () => {
     const html = render(base)
     expect(html).toContain('启动握手成功')

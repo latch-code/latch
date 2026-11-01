@@ -89,21 +89,6 @@ async function startNew(page: Page, width: number) {
   expect(opened).toBe(true)
   await page.getByRole('textbox', { name: '新会话消息', exact: true }).waitFor()
 }
-async function showOnboarding(page: Page, width: number) {
-  if (width === 390) {
-    const sheet = page.getByRole('dialog', { name: '新会话', exact: true })
-    if (await sheet.isVisible()) {
-      await page.keyboard.press('Escape')
-      await sheet.waitFor({ state: 'hidden' })
-    }
-  }
-  const settings = await openSettings(page)
-  await openSection(settings, '关于')
-  await settings.getByRole('button', { name: '重新显示入门', exact: true }).click()
-  await closeSettings(settings)
-  if (width === 390) await startNew(page, width)
-}
-
 describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 'darwin')(
   'actual desktop first use and slash commands',
   () => {
@@ -152,8 +137,6 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
             await row.waitFor({ state: 'detached' })
           }
           await guide.waitFor({ state: 'detached' })
-          await showOnboarding(page, width)
-          await expect.poll(() => guide.locator(':scope > div').count()).toBe(3)
           expect(await input.inputValue()).toBe(draft)
         }
         const prompt = '这是通过本地假 Provider 执行的第一个实际任务。'
@@ -171,21 +154,12 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         ).toEqual([prompt])
         await startNew(page, width)
         expect(await guide.count()).toBe(0)
-        await showOnboarding(page, width)
-        if (width !== 390) await expect.poll(() => guide.locator(':scope > div').count()).toBe(3)
-        else expect(await guide.count()).toBe(0)
         const missingDraft = '缺少模型时也不能丢掉这份草稿。'
         await input.fill(missingDraft)
         expect((await owner.request('plugins/' + provider.id, { method: 'POST', body: { enabled: false } })).status).toBe(200)
         const setup = page.locator('.setup-card')
         await setup.getByText('连接模型服务', { exact: true }).waitFor()
-        if (width === 390) await setup.getByRole('button', { name: '添加模型服务', exact: true }).click()
-        else
-          await guide
-            .locator(':scope > div')
-            .filter({ hasText: '选择 Agent 与模型' })
-            .getByRole('button', { name: '选择', exact: true })
-            .click()
+        await setup.getByRole('button', { name: '添加模型服务', exact: true }).click()
         await setup.getByRole('region', { name: '添加模型服务', exact: true }).waitFor()
         await setup.getByRole('group', { name: '选择服务', exact: true }).waitFor()
         expect(await page.locator('.settings-page').count()).toBe(0)

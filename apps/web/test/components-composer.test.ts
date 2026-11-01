@@ -14,7 +14,7 @@ import type { ApprovalGate } from '../src/core/permissions.ts'
 import { APPROVAL_COPY, CODE_ROOT_COPY, CONFIRMATION_COPY, CONFIRMATION_RESULT_TEXT } from '../src/core/securityCopy.ts'
 import { ConfirmationContent } from '../src/components/InlineConfirm.tsx'
 import type { ConfirmationActions, ConfirmationView } from '../src/core/confirmations.ts'
-import { ProjectCard, WorkspacesSettings } from '../src/settings/WorkspacesSettings.tsx'
+import { ProjectRow, WorkspacesSettings } from '../src/settings/WorkspacesSettings.tsx'
 
 const noop = () => {}
 afterEach(() => {
@@ -571,7 +571,7 @@ describe('a folder inside Latch’s program directory', () => {
     expect(renderToStaticMarkup(createElement('div', null, flagged?.tag))).toContain(`data-tone="warn">${CODE_ROOT_COPY.badge}</span>`)
     expect(items.find(item => item.id === 'w2')?.tag).toBeUndefined()
     const card = renderToStaticMarkup(
-      createElement(ProjectCard, { workspace: { ...start, id: 'p1' }, owner: true, isDefault: false, folders: null, onRemove: noop }),
+      createElement(ProjectRow, { workspace: { ...start, id: 'p1' }, owner: true, isDefault: false, folders: null, onRemove: noop }),
     )
     expect(card).toContain(CODE_ROOT_COPY.notice)
     // A saved project cannot be moved from here yet: no start-directory sentence and no action.
@@ -589,12 +589,10 @@ describe('a folder inside Latch’s program directory', () => {
       )
     const flagged = settings(start)
     expect(flagged).toContain(CODE_ROOT_COPY.startDir)
-    expect(flagged).toContain('Host 启动时使用的目录，不能移除。')
     expect(flagged).not.toContain('要在其他文件夹中工作，请新建项目。')
     const { codeRoot: _codeRoot, ...ordinary } = start
     const plain = settings(ordinary)
     expect(plain).not.toContain(CODE_ROOT_COPY.startDir)
-    expect(plain).toContain('Host 启动时使用的目录，不能移除；要在其他文件夹中工作，请新建项目。')
   })
 })
 
@@ -706,12 +704,13 @@ describe('composer', () => {
 })
 
 describe('context row', () => {
-  it('names the computer and shows the level only when it is full access, leading to the ceilings', () => {
-    const asking = renderToStaticMarkup(createElement(ContextRow, { hostName: 'MacBook Pro', fullAccess: false, onComputer: noop }))
+  it('names the computer and shows the level only when it is full access', () => {
+    const asking = renderToStaticMarkup(createElement(ContextRow, { hostName: 'MacBook Pro', fullAccess: false }))
     expect(asking).toContain('MacBook Pro')
     expect(asking).not.toContain('完全访问')
-    const full = renderToStaticMarkup(createElement(ContextRow, { hostName: 'MacBook Pro', fullAccess: true, onComputer: noop }))
-    expect(full).toContain('aria-label="权限：完全访问，查看电脑与权限上限"')
+    const full = renderToStaticMarkup(createElement(ContextRow, { hostName: 'MacBook Pro', fullAccess: true }))
+    expect(full).toContain('完全访问')
+    expect(full).not.toContain('<button')
     expect(full).toContain('context-risk')
   })
 })

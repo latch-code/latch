@@ -4,8 +4,8 @@ import { usePresence } from '../hooks/useListMotion.ts'
 import { Button, Icon, IconButton, Loading as InlineLoading, type LucideIcon, type MenuTriggerProps } from '@latch/ui'
 
 /**
- * The page's own layout for settings: a page head, groups of cards and rows of a fixed height. Controls inside are the
- * design system's primitives; these only place them.
+ * The page's own layout for settings: groups of rows on the canvas, divided by hairlines, with no card around them.
+ * Controls inside are the design system's primitives; these only place them.
  */
 
 /** The page head: an 18/26 title, one paragraph under it and at most one page action (a sm secondary button). */
@@ -22,15 +22,14 @@ export function SectionHeading({ title, description, action }: { title: string; 
 }
 
 /**
- * A group: its heading (with meta text or a link on the right), the card of rows, and at most one caption under the
- * card. A danger group outlines its card in red; a secure group is a security surface (data-secure, security.css).
+ * A group: its heading (with meta text or an action on the right), its rows, and at most one caption under them. A
+ * secure group is a security surface (data-secure, security.css).
  */
 export function SettingsGroup({
   title,
   meta,
   caption,
   captionIcon = 'info',
-  danger = false,
   bare = false,
   secure = false,
   children,
@@ -39,8 +38,7 @@ export function SettingsGroup({
   meta?: ReactNode
   caption?: ReactNode
   captionIcon?: 'info' | 'lock' | null
-  danger?: boolean
-  /** The children draw their own card (a single-choice list). */
+  /** The children lay out themselves instead of as rows. */
   bare?: boolean
   secure?: boolean
   children: ReactNode
@@ -54,7 +52,7 @@ export function SettingsGroup({
           {meta && <span className="settings-group-meta">{meta}</span>}
         </div>
       )}
-      {bare ? children : <div className={danger ? 'settings-card is-danger' : 'settings-card'}>{children}</div>}
+      {bare ? children : <div className="settings-card">{children}</div>}
       {caption && (
         <p className="settings-caption">
           {captionIcon && <Icon icon={captionIcon === 'lock' ? Lock : Info} size={14} />}
@@ -101,7 +99,7 @@ function RowText({ title, description, record, ids }: Pick<RowContent, 'title' |
   )
 }
 
-/** A row of a card, 56px, with one trailing element (a picker, a switch, a button or a value) on the card's 16px line. */
+/** A row of a group, 52px or 60px with a description, with one trailing element (a picker, a switch, a button or a value) on the card's 16px line. */
 export function SettingsRow({ leading, title, description, record, dim, className, trailing }: RowContent & { trailing?: ReactNode }) {
   return (
     <div
@@ -110,6 +108,43 @@ export function SettingsRow({ leading, title, description, record, dim, classNam
       data-dim={dim ? '' : undefined}>
       {leading && <span className="settings-row-lead">{leading}</span>}
       <RowText title={title} description={description} record={record} />
+      {trailing !== undefined && <span className="settings-row-end">{trailing}</span>}
+    </div>
+  )
+}
+
+/**
+ * A row that is an object with its own actions: the tile and words open it, and what stands at the end (a status, a ⋯
+ * menu) stays separate, because a button cannot hold other buttons.
+ */
+export function ObjectRow({
+  leading,
+  title,
+  description,
+  dim,
+  className,
+  label,
+  trailing,
+  onOpen,
+}: RowContent & { label: string; trailing?: ReactNode; onOpen?: () => void }) {
+  const body = (
+    <>
+      {leading && <span className="settings-row-lead">{leading}</span>}
+      <RowText title={title} description={description} record />
+    </>
+  )
+  return (
+    <div
+      className={className ? `settings-row ${className}` : 'settings-row'}
+      data-leading={leading ? '' : undefined}
+      data-dim={dim ? '' : undefined}>
+      {onOpen ? (
+        <button type="button" className="settings-row-main" aria-label={label} onClick={onOpen}>
+          {body}
+        </button>
+      ) : (
+        body
+      )}
       {trailing !== undefined && <span className="settings-row-end">{trailing}</span>}
     </div>
   )

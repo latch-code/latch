@@ -58,7 +58,7 @@ describe('settings navigation motion', () => {
       const token = await tokens(page)
       const settings = await openSettings(page, '设置')
       // The first push: the section was laid out off-screen from the start, so it slides in like every later one.
-      const push = await motions(page, () => settings.getByRole('tab', { name: '电脑', exact: true }).click())
+      const push = await motions(page, () => settings.getByRole('tab', { name: '关于', exact: true }).click())
       expect(push).toContainEqual({
         kind: 'transition',
         target: 'settings-panel',
@@ -74,7 +74,7 @@ describe('settings navigation motion', () => {
         easing: token.ePush,
       })
       // A page inside the section: its own bar and back, sliding in over the section, which moves aside.
-      const deeper = await motions(page, () => settings.getByRole('button', { name: /^手机可用的 Agent/ }).click())
+      const deeper = await motions(page, () => settings.getByRole('button', { name: '查看', exact: true }).click())
       expect(deeper).toContainEqual({
         kind: 'transition',
         target: 'settings-level',
@@ -90,12 +90,10 @@ describe('settings navigation motion', () => {
         easing: token.ePush,
       })
       const level = settings.locator('.settings-level[data-state="top"]')
-      await level.getByRole('heading', { name: '手机可用的 Agent', exact: true }).waitFor()
-      // This browser is on loopback, so the list holds it back too, and the page never calls it 本机.
-      await level.getByText(/^手机、这台 Mac 上的浏览器和其他电脑只能用这里允许的 Agent/u).waitFor()
+      await level.getByRole('heading', { name: '开源许可', exact: true, level: 2 }).first().waitFor()
       // One way back per level: the bar's, named after where it goes; the section's own bar is covered.
       expect(await settings.locator('.settings-back').count()).toBe(0)
-      const back = await motions(page, () => level.getByRole('button', { name: '返回电脑', exact: true }).click())
+      const back = await motions(page, () => level.getByRole('button', { name: '返回关于', exact: true }).click())
       expect(back).toContainEqual({
         kind: 'transition',
         target: 'settings-level',
@@ -122,7 +120,7 @@ describe('settings navigation motion', () => {
     try {
       const token = await tokens(page)
       const settings = await openSettings(page, '设置')
-      const push = await motions(page, () => settings.getByRole('tab', { name: '电脑', exact: true }).click())
+      const push = await motions(page, () => settings.getByRole('tab', { name: '关于', exact: true }).click())
       expect(push).toContainEqual({
         kind: 'transition',
         target: 'settings-panel',
@@ -130,7 +128,7 @@ describe('settings navigation motion', () => {
         duration: token.micro,
         easing: token.eMicro,
       })
-      const deeper = await motions(page, () => settings.getByRole('button', { name: /^手机可用的 Agent/ }).click())
+      const deeper = await motions(page, () => settings.getByRole('button', { name: '查看', exact: true }).click())
       expect(deeper).toContainEqual({
         kind: 'transition',
         target: 'settings-level',
@@ -153,8 +151,8 @@ describe('settings navigation motion', () => {
     try {
       const token = await tokens(page)
       const settings = await openSettings(page, '设置')
-      await openSection(settings, '电脑')
-      const forward = await motions(page, () => settings.getByRole('button', { name: /^手机可用的 Agent/ }).click())
+      await openSection(settings, '关于')
+      const forward = await motions(page, () => settings.getByRole('button', { name: '查看', exact: true }).click())
       expect(forward).toContainEqual({
         kind: 'animation',
         target: 'settings-subpage settings-enter',
@@ -170,7 +168,7 @@ describe('settings navigation motion', () => {
         duration: token.micro,
         easing: token.eMicro,
       })
-      await settings.getByRole('button', { name: /^在这台 Mac 上开始：/ }).waitFor()
+      await settings.getByRole('button', { name: '查看', exact: true }).waitFor()
     } finally {
       await context.close()
     }
@@ -227,36 +225,41 @@ describe('adding a model service', () => {
       const page = await context.newPage()
       await enrollBrowser(page, testHost, { name: '模型服务电脑', scopes: ['view', 'run', 'approve:standard', 'admin'] })
       const settings = await openSettings(page, '设置')
-      await openSection(settings, '模型服务')
-      await settings.getByRole('button', { name: '添加服务…', exact: true }).click()
-      await settings.getByRole('button', { name: /^自定义 OpenAI 兼容/ }).click()
-      await settings.getByLabel('名称', { exact: true }).fill('实验室模型')
-      await settings.getByLabel('API 地址', { exact: true }).fill(service.baseURL)
-      await settings.getByText('密钥只能在 Mac 上的 Latch 里填写：设置 › 模型。', { exact: true }).waitFor()
+      await openSection(settings, '模型')
+      const addService = settings.getByRole('button', { name: '添加服务', exact: true })
+      const sheet = page.getByRole('dialog', { name: '添加服务', exact: true })
+      await addService.click()
+      await sheet.getByRole('button', { name: '自定义', exact: true }).click()
+      await sheet.getByLabel('名称', { exact: true }).fill('实验室模型')
+      await sheet.getByLabel('地址', { exact: true }).fill(service.baseURL)
+      await sheet.getByText('密钥只能在 Mac 上的 Latch 里填写：设置 › 模型。', { exact: true }).waitFor()
 
-      await settings.getByRole('button', { name: '获取模型', exact: true }).click()
-      await settings.getByText('模型服务返回了错误（HTTP 500）。可以手动输入模型 ID。', { exact: true }).waitFor()
-      const manual = settings.getByLabel('手动添加模型 ID', { exact: true })
+      await sheet.getByRole('button', { name: '检测连接', exact: true }).click()
+      await sheet.getByText('模型服务返回了错误（HTTP 500）。', { exact: false }).waitFor()
+      const manual = sheet.getByLabel('手动添加模型 ID', { exact: true })
       // An ID the Host would refuse is explained in place and not added.
       await manual.fill('m'.repeat(201))
       await manual.press('Enter')
-      await settings.getByText('模型 ID 不能超过 200 个字符。', { exact: true }).waitFor()
+      await sheet.getByText('模型 ID 不能超过 200 个字符。', { exact: true }).waitFor()
       await manual.fill('lab-model')
       await manual.press('Enter')
-      await settings.getByRole('radio', { name: '默认使用 lab-model', exact: true }).waitFor()
+      await sheet.getByRole('switch', { name: '使用 lab-model', exact: true }).waitFor()
       await page.screenshot({ path: 'test-results/settings-provider-manual-model.png', animations: 'disabled' })
 
-      const names = await buttonNames(settings.locator('.provider-add'))
+      const names = await buttonNames(sheet)
       expect(names).toContain('保存服务')
       expect(names).toContain('添加输入的模型 ID')
       expect(names.filter((name, index) => names.indexOf(name) !== index)).toEqual([])
 
-      await settings.getByRole('button', { name: '保存服务', exact: true }).click()
-      await settings.getByRole('heading', { name: '实验室模型', exact: true }).waitFor()
+      await sheet.getByRole('button', { name: '保存服务', exact: true }).click()
+      await sheet.waitFor({ state: 'hidden' })
       const saved = testHost.host.config.providers().find(provider => provider.name === '实验室模型')
       expect(saved).toMatchObject({ baseURL: service.baseURL, models: ['lab-model'], defaultModel: 'lab-model', apiKey: '' })
-      // The form already showed there is no model list, so nothing is checked at once; checking says it cannot tell,
-      // which is not a failed connection, and never suggests removing the service.
+      // The row says nothing about a service whose listing cannot tell: not 已连接, and not a failure either.
+      const lab = settings.locator('.provider-row', { hasText: '实验室模型' })
+      await lab.waitFor()
+      await expect.poll(() => lab.locator('.service-status').count()).toBe(0)
+      await settings.getByRole('button', { name: '编辑 实验室模型', exact: true }).click()
       await settings.getByText('用这个地址和密钥请求服务的模型列表', { exact: true }).waitFor()
       await settings.getByRole('button', { name: '检测连接', exact: true }).click()
       await settings.getByText('无法自动检测：这个服务不提供模型列表', { exact: true }).waitFor()
@@ -264,16 +267,21 @@ describe('adding a model service', () => {
       expect(await settings.locator('.check-result.is-error').count()).toBe(0)
       await page.screenshot({ path: 'test-results/settings-provider-saved-no-listing.png', animations: 'disabled' })
 
-      // A preset that needs a key, saved from a device that cannot type one: said before saving, and after it the page
-      // and the list say the key is missing instead of checking with none.
-      await settings.getByRole('button', { name: '模型服务', exact: true }).click()
-      await settings.getByRole('button', { name: '添加服务…', exact: true }).click()
-      await settings.getByRole('button', { name: /^DeepSeek/ }).click()
-      await settings.getByText('这个服务需要密钥：保存后，在 Mac 上的 Latch 里填写密钥，它才能使用。', { exact: true }).waitFor()
-      await settings.getByLabel('手动添加模型 ID', { exact: true }).fill('deepseek-chat')
-      await settings.getByLabel('手动添加模型 ID', { exact: true }).press('Enter')
-      await settings.getByRole('button', { name: '保存服务', exact: true }).click()
-      await settings.getByRole('heading', { name: 'DeepSeek', exact: true }).waitFor()
+      // A preset that needs a key, saved from a device that cannot type one: said before saving, and after it the row
+      // and the page say the key is missing instead of checking with none.
+      await settings.getByRole('button', { name: '模型', exact: true }).click()
+      await addService.click()
+      await sheet.getByRole('button', { name: 'DeepSeek', exact: true }).click()
+      await sheet.getByText('这个服务需要密钥：保存后，在 Mac 上的 Latch 里填写密钥，它才能使用。', { exact: true }).waitFor()
+      await sheet.getByLabel('手动添加模型 ID', { exact: true }).fill('deepseek-chat')
+      await sheet.getByLabel('手动添加模型 ID', { exact: true }).press('Enter')
+      await sheet.getByRole('button', { name: '保存服务', exact: true }).click()
+      await sheet.waitFor({ state: 'hidden' })
+      const deepseek = settings.locator('.provider-row', { hasText: 'DeepSeek' })
+      await deepseek.getByText('缺密钥', { exact: true }).waitFor()
+      // The way out is drawn on every device; here it is held back and says where to go.
+      expect(await deepseek.getByRole('button', { name: '设置密钥', exact: true }).getAttribute('aria-disabled')).toBe('true')
+      await settings.getByRole('button', { name: '编辑 DeepSeek', exact: true }).click()
       await settings.getByText('还没有填写密钥，Latch 不会使用它。', { exact: true }).waitFor()
       await settings.getByText('在 Mac 上的 Latch 里填写密钥：设置 › 模型 › DeepSeek。').waitFor()
       await settings.getByText('填写密钥后内置 Agent 才能使用它的模型', { exact: true }).waitFor()
@@ -281,21 +289,28 @@ describe('adding a model service', () => {
       expect(await settings.getByRole('button', { name: '获取模型', exact: true }).getAttribute('aria-disabled')).toBe('true')
       expect(await settings.getByText('密钥不对或已过期', { exact: false }).count()).toBe(0)
       await page.screenshot({ path: 'test-results/settings-provider-missing-key.png', animations: 'disabled' })
-      await settings.getByRole('button', { name: '模型服务', exact: true }).click()
-      await settings.getByText('缺密钥', { exact: true }).waitFor()
-      await settings.getByText(/还没有填写密钥$/u).waitFor()
+      await settings.getByRole('button', { name: '模型', exact: true }).click()
 
       // An address nobody has confirmed: saved from here, never used, and the page says where to confirm it.
-      await settings.getByRole('button', { name: '添加服务…', exact: true }).click()
-      await settings.getByRole('button', { name: /^Ollama/ }).click()
-      await settings
+      await addService.click()
+      await sheet.getByRole('button', { name: 'Ollama', exact: true }).click()
+      await sheet
         .getByText('这个地址要在运行 Latch 的电脑上确认后才能使用。保存后它会显示在列表里，等你在 Mac 上确认地址。', {
           exact: true,
         })
         .waitFor()
-      await settings.getByLabel('手动添加模型 ID', { exact: true }).fill('llama3')
-      await settings.getByLabel('手动添加模型 ID', { exact: true }).press('Enter')
-      await settings.getByRole('button', { name: '保存服务', exact: true }).click()
+      await sheet.getByLabel('手动添加模型 ID', { exact: true }).fill('llama3')
+      await sheet.getByLabel('手动添加模型 ID', { exact: true }).press('Enter')
+      await sheet.getByRole('button', { name: '保存服务', exact: true }).click()
+      await sheet.waitFor({ state: 'hidden' })
+      const ollama = settings.locator('.provider-row', { hasText: 'Ollama' })
+      await ollama.getByText('未确认', { exact: true }).waitFor()
+      for (const scheme of ['light', 'dark'] as const) {
+        await page.emulateMedia({ colorScheme: scheme })
+        await page.screenshot({ path: `test-results/settings-providers-unconfirmed-row-${scheme}.png`, animations: 'disabled' })
+      }
+      await page.emulateMedia({ colorScheme: 'light' })
+      await settings.getByRole('button', { name: '编辑 Ollama', exact: true }).click()
       await settings.getByText('这个服务的地址还没有确认，Latch 不会使用它。', { exact: true }).waitFor()
       // The notice's sentence follows its title in the same element.
       await settings.getByText('需要在 Mac 上确认这个地址：设置 › 模型 › Ollama。').waitFor()
@@ -310,17 +325,7 @@ describe('adding a model service', () => {
         await page.emulateMedia({ colorScheme: scheme })
         await page.screenshot({ path: `test-results/settings-provider-unconfirmed-${scheme}.png`, animations: 'disabled' })
       }
-      await settings.getByRole('button', { name: '模型服务', exact: true }).click()
-      await settings.getByText('未确认', { exact: true }).waitFor()
-      await settings.getByText(/需要在 Mac 上确认这个地址$/u).waitFor()
-      for (const scheme of ['light', 'dark'] as const) {
-        await page.emulateMedia({ colorScheme: scheme })
-        await page.screenshot({ path: `test-results/settings-providers-unconfirmed-row-${scheme}.png`, animations: 'disabled' })
-      }
-      await page.setViewportSize({ width: 390, height: 844 })
       await page.emulateMedia({ colorScheme: 'light' })
-      await settings.getByText('未确认', { exact: true }).waitFor()
-      await page.screenshot({ path: 'test-results/settings-providers-unconfirmed-row-phone.png', animations: 'disabled' })
       await context.close()
     } finally {
       await browser.close()
@@ -363,9 +368,9 @@ describe('an agent that has not started yet', () => {
       await page.reload()
       await connected(page)
       const settings = await openSettings(page, '设置')
-      await openSection(settings, 'Agent 成员')
-      const row = settings.locator(`[data-agent-id="${agent.id}"]`)
-      await row.getByText('还没有开启过会话', { exact: true }).waitFor()
+      await openSection(settings, '引擎')
+      const row = settings.locator('.agent-row', { hasText: '本地 ACP Agent' })
+      await row.waitFor()
       for (const scheme of ['light', 'dark'] as const) {
         await page.emulateMedia({ colorScheme: scheme })
         await page.screenshot({ path: `test-results/settings-agent-not-started-${scheme}.png`, animations: 'disabled' })
@@ -392,7 +397,6 @@ describe('an agent that has not started yet', () => {
         .toBe(0)
       await backToSection(settings)
       await row.waitFor()
-      expect(await row.getByText('还没有开启过会话', { exact: true }).count()).toBe(0)
       await context.close()
     } finally {
       await browser.close()

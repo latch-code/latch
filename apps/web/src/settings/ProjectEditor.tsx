@@ -37,7 +37,6 @@ export function ProjectEditor({
   reload,
   onChanged,
   onRemoved,
-  onComputer,
   onOpenSession,
 }: {
   project: WorkspaceInfo
@@ -47,7 +46,6 @@ export function ProjectEditor({
   reload(): Promise<void>
   onChanged(): void
   onRemoved(): void
-  onComputer?(): void
   onOpenSession?(id: string): void
 }) {
   const folders = projectFolders(project)
@@ -442,15 +440,8 @@ export function ProjectEditor({
             ))}
         </SettingsGroup>
       )}
-      <SettingsGroup title="其他设备">
-        {onComputer ? (
-          <NavRow title="其他设备" description={project.remoteStart ? '可以在这里发起会话' : '不能在这里发起会话'} onClick={onComputer} />
-        ) : (
-          <SettingsRow title="其他设备" description={project.remoteStart ? '可以在这里发起会话' : '不能在这里发起会话'} />
-        )}
-      </SettingsGroup>
       {owner && (
-        <SettingsGroup danger>
+        <SettingsGroup>
           <SettingsRow
             title="移除项目"
             description="文件夹中的文件不会被删除。"

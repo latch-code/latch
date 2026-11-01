@@ -112,7 +112,6 @@ describe('the shell', () => {
     await openEntry(page, '自动化')
     await page.getByRole('region', { name: '个人助手', exact: true }).waitFor()
     expect(await page.locator('.topbar .titlebar-page-title').textContent()).toBe('例行任务')
-    // A device without 管理此 Host has no Agent 成员, so its Agent entry starts on 个人助手.
     await openEntry(page, 'Agent')
     await page.getByRole('region', { name: '个人助手', exact: true }).waitFor()
     expect(await page.locator('.topbar .titlebar-page-title').textContent()).toBe('个人助手')
@@ -124,9 +123,6 @@ describe('the shell', () => {
     await allData(page)
     const tabs = page.getByRole('navigation', { name: '主导航', exact: true })
     await tabs.getByRole('button', { name: 'Agent', exact: true }).click()
-    await page.getByRole('tab', { name: 'Agent 成员', exact: true }).click()
-    await page.locator('.settings-layout[data-level="section"]').waitFor()
-    await page.locator('#settings-panel').getByRole('button', { name: '返回', exact: true }).click()
     await page.locator('.settings-page[data-entry="agents"] .settings-layout[data-level="root"]').waitFor()
     await page.getByRole('tab', { name: '例行任务', exact: true }).click()
     const routines = page.getByRole('region', { name: '个人助手', exact: true })
@@ -175,8 +171,8 @@ describe('the shell', () => {
 
     it('still moves between entries and starts a new session', async () => {
       const page = await openOnSettings(1440, '壳层快捷键入口')
-      await page.keyboard.press('Alt+Digit2')
-      await page.locator('.settings-page[data-entry="agents"]').waitFor()
+      await page.keyboard.press('Alt+Digit4')
+      await page.locator('.settings-page[data-entry="plugins"]').waitFor()
       await page.keyboard.press('Alt+KeyN')
       await page.locator('.settings-page').waitFor({ state: 'detached' })
       expect(await page.locator('main.workspace').getAttribute('class')).toContain('is-new')

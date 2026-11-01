@@ -652,70 +652,6 @@ describe('visual capture of the real product', () => {
   }
 
   /**
-   * The ceilings of 设置 › 电脑 as a browser that manages the Host sees them: the local ladder (everything below the
-   * current 完全访问 can be chosen), the remote ladder (raising shows why it is not possible here) and the list page of
-   * agents other devices may use. Nothing is changed.
-   */
-  async function captureCeilings(target: Page, viewport: VisualViewport, settings: Locator): Promise<void> {
-    for (const [surface, name, description] of [
-      ['settings-computer-local-menu', '在这台 Mac 上开始', 'the ceiling for sessions started on this computer'],
-      ['settings-computer-remote-menu', '从手机和其他电脑开始', 'the ceiling for other devices; raising is not possible here'],
-    ] as const) {
-      await settings.getByRole('button', { name: new RegExp(`^${name}：`) }).click()
-      const layer =
-        viewport.name === 'phone'
-          ? target.getByRole('dialog', { name, exact: true })
-          : target.getByRole('menu', { name: new RegExp(`^${name}：`) })
-      await layer.waitFor()
-      for (const item of await layer.getByRole(viewport.name === 'phone' ? 'radio' : 'menuitemradio').all())
-        await reachable(item, { allowDisabled: true })
-      await recorder.capture(target, viewport, surface, description)
-      await target.keyboard.press('Escape')
-      await layer.waitFor({ state: 'hidden' })
-    }
-    // The list pages: a page of its own, pushed with its own bar on phones and with a way back above it elsewhere.
-    for (const [surface, row, all, description] of [
-      ['settings-computer-agents', /^手机可用的 Agent/, '全部 Agent', 'the agents other devices may use'],
-      ['settings-computer-workspaces', /^手机可用的项目/, '全部项目', 'the projects other devices may use'],
-    ] as const) {
-      await settings.getByRole('button', { name: row }).click()
-      const list = viewport.name === 'phone' ? settings.locator('.settings-level[data-state="top"]') : settings
-      // A browser cannot widen the list: the switch is locked with its reason when only some are allowed.
-      await reachable(list.getByRole('switch', { name: all, exact: true }), { allowDisabled: true })
-      const back = list.getByRole('button', { name: viewport.name === 'phone' ? '返回电脑' : '电脑', exact: true })
-      await reachable(back)
-      await noHorizontalOverflow(target, settings)
-      await recorder.capture(target, viewport, surface, description)
-      await back.click()
-      await settings.getByRole('button', { name: /^在这台 Mac 上开始：/ }).waitFor()
-      await expect.poll(() => settings.locator('.settings-layout').getAttribute('data-level')).not.toBe('page')
-    }
-
-    // A lowering the Host applied without writing its audit log: the change stays, and the page says so in red.
-    const audit = host.security.audit
-    const append = audit.append.bind(audit)
-    audit.append = () => Promise.reject(new AppError(503, 'audit-unavailable', '审计记录写入失败，操作未执行'))
-    try {
-      const remoteStart = settings.getByRole('switch', { name: '手机可以开始新会话', exact: true })
-      await remoteStart.click()
-      await expect.poll(() => host.security.policy.get().remote.allowRemoteStart).toBe(false)
-      await settings.getByText('改动已生效，但没有写入记录', { exact: false }).waitFor()
-    } finally {
-      audit.append = append
-    }
-    await noHorizontalOverflow(target, settings)
-    await recorder.capture(target, viewport, 'settings-computer-audit-failed', 'a lowering applied without an audit record')
-    // Back as it was. A full-access session waits by now, so the Host's local confirmation would refuse the raise; the
-    // test sets it the way the offline command does, while the Host is stopped.
-    const current = host.security.policy.get()
-    await host.security.policy.update(
-      { ...current, remote: { ...current.remote, allowRemoteStart: true } },
-      { listener: 'cli', via: 'cli' },
-      'offline',
-    )
-  }
-
-  /**
    * A phone's root page: the list with 等你处理 and a section per group, its search, the menu of a row pressed and
    * held, a pinned session and the archived filter. Every change made here is undone before it returns.
    */
@@ -1282,7 +1218,7 @@ describe('visual capture of the real product', () => {
         await recorder.capture(desktopApp, viewport, 'new-session-full-access-empty', 'starting a full-access session, nothing typed yet')
         await desktopApp.getByRole('textbox', { name: '新会话消息', exact: true }).fill('列出项目根目录')
         await reachable(desktopApp.getByRole('button', { name: '发送', exact: true }))
-        await reachable(desktopApp.getByRole('button', { name: '权限：完全访问，查看电脑与权限上限', exact: true }))
+        await desktopApp.locator('.composer-context').getByText('完全访问', { exact: false }).waitFor()
         expect(await desktopApp.getByText('它可以读写这台 Mac 上的文件并运行命令，Latch 不隔离它。').count()).toBe(0)
         await desktopApp.getByRole('textbox', { name: '新会话消息', exact: true }).blur()
         await desktopApp.evaluate(() => new Promise(done => setTimeout(done, 400)))
@@ -1949,26 +1885,24 @@ describe('visual capture of the real product', () => {
         await recorder.capture(target, viewport, 'settings', 'section list')
         await openSection(settings, '通用')
       }
-      await settings.getByRole('heading', { name: '新会话默认值' }).waitFor()
+      await settings.getByRole('radio', { name: '跟随系统' }).waitFor()
       await recorder.capture(target, viewport, 'settings-general', 'general')
       for (const [surface, section, ready] of [
-        ['settings-computer', '电脑', settings.getByRole('button', { name: /^在这台 Mac 上开始：/ })],
-        ['settings-providers', '模型服务', settings.getByText('本地模型服务').first()],
-        ['settings-agents', 'Agent 成员', settings.getByText('本地 ACP Agent').first()],
+        ['settings-providers', '模型', settings.getByText('本地模型服务').first()],
+        ['settings-agents', '引擎', settings.getByText('本地 ACP Agent').first()],
         ['settings-workspaces', '项目', settings.getByText('website').first()],
-        ['settings-plugins', '插件', settings.getByRole('switch').first()],
+        ['settings-plugins', '插件', target.locator('.plugin-nav-row').first()],
         ['settings-devices', '设备', settings.getByText('本机桌面端').first()],
-        ['settings-about', '关于', settings.getByText('Apache License 2.0').first()],
+        ['settings-about', '关于', settings.getByText('Agent 和插件以你的权限在这台电脑上运行。').first()],
       ] as const) {
         await openSection(settings, section)
         await ready.waitFor()
         await noHorizontalOverflow(target, settings)
         await recorder.capture(target, viewport, surface, section)
-        if (surface === 'settings-computer') await captureCeilings(target, viewport, settings)
         const top = () => (viewport.name === 'phone' ? settings.locator('.settings-level[data-state="top"]') : settings)
         if (surface === 'settings-providers') {
-          // A saved service's page: its connection, key, models and the red group, every value in a card.
-          await settings.getByRole('button', { name: /^DeepSeek/ }).click()
+          // A saved service's page: its connection, key, models and the way to remove it.
+          await settings.getByRole('button', { name: '编辑 DeepSeek', exact: true }).click()
           await reachable(top().getByRole('switch', { name: '启用', exact: true }))
           await reachable(top().getByRole('button', { name: '检测连接', exact: true }))
           await reachable(top().getByRole('button', { name: '获取模型', exact: true }))
@@ -1978,28 +1912,25 @@ describe('visual capture of the real product', () => {
           await recorder.capture(target, viewport, 'settings-provider', 'a saved model service')
           await backToSection(settings)
           // Every model-service preset with its brand's icon (a custom service has the plug glyph).
-          await settings.getByRole('button', { name: '添加服务…', exact: true }).click()
-          const presets = top().locator('.preset-card')
+          await settings.getByRole('button', { name: '添加服务', exact: true }).click()
+          const sheet = target.getByRole('dialog', { name: '添加服务', exact: true })
+          const presets = sheet.locator('.preset-card')
           await expect.poll(() => presets.count()).toBe(13)
           expect(await presets.locator('.ui-tile').count()).toBe(13)
-          await noHorizontalOverflow(target, settings)
           await recorder.capture(target, viewport, 'settings-provider-presets', 'choosing a model-service preset')
-          // Adding one: fields in cards, the check, the models and 保存服务 at the end; a browser cannot set keys.
-          await top()
-            .getByRole('button', { name: /^OpenAI/ })
-            .click()
+          // Adding one: the address, the check, the models and 保存服务; a browser cannot set keys.
+          await sheet.getByRole('button', { name: 'OpenAI', exact: true }).click()
           for (const control of [
-            top().getByLabel('名称', { exact: true }),
-            top().getByLabel('API 地址', { exact: true }),
-            top().getByRole('button', { name: '检测连接', exact: true }),
-            top().getByLabel('手动添加模型 ID', { exact: true }),
-            top().getByRole('button', { name: '保存服务', exact: true }),
+            sheet.getByLabel('地址', { exact: true }),
+            sheet.getByRole('button', { name: '检测连接', exact: true }),
+            sheet.getByLabel('手动添加模型 ID', { exact: true }),
+            sheet.getByRole('button', { name: '保存服务', exact: true }),
           ])
             await reachable(control, { allowDisabled: true })
-          await top().getByText('这个服务需要密钥：保存后，在 Mac 上的 Latch 里填写密钥，它才能使用。', { exact: true }).waitFor()
-          await noHorizontalOverflow(target, settings)
+          await sheet.getByText('这个服务需要密钥：保存后，在 Mac 上的 Latch 里填写密钥，它才能使用。', { exact: true }).waitFor()
           await recorder.capture(target, viewport, 'settings-provider-add', 'adding a model service from a preset')
-          await backToSection(settings)
+          await sheet.getByRole('button', { name: '取消', exact: true }).click()
+          await sheet.waitFor({ state: 'hidden' })
         }
         if (surface === 'settings-agents') {
           // An agent's page: 启用, its definition read-only in a browser, detection with the path and the red group.
@@ -2021,20 +1952,19 @@ describe('visual capture of the real product', () => {
   // ---- A device that cannot manage the Host ------------------------------------------------------------------
 
   it.each(VISUAL_VIEWPORTS)(
-    'captures 设置 › 电脑 read-only for a device without 管理此 Host at $name width',
+    'captures settings for a device without 管理此 Host at $name width',
     async viewport => {
       const target = readOnlyPages.get(viewport.name)!.page
       await target.goto(`${host.loopbackOrigin}/link/`)
       await connected(target)
       {
         const settings = await openSettings(target, '设置')
-        await openSection(settings, '电脑')
-        await settings.getByRole('heading', { name: '权限上限', exact: true }).waitFor()
-        // The ceilings are values here, with no picker; the caption says who can change them.
-        expect(await settings.getByRole('button', { name: /^在这台 Mac 上开始：/ }).count()).toBe(0)
-        await settings.getByText('只有能管理这台 Mac 的设备可以修改。', { exact: true }).waitFor()
+        await openSection(settings, '通用')
+        await settings.getByRole('radio', { name: '跟随系统' }).waitFor()
+        // Only what this device may use is listed, and the list says where the rest is.
+        expect(await settings.getByRole('tab', { name: '模型', exact: true }).count()).toBe(0)
         await noHorizontalOverflow(target, settings)
-        await recorder.capture(target, viewport, 'settings-computer-readonly', 'the ceilings for a device that cannot manage the Host')
+        await recorder.capture(target, viewport, 'settings-readonly', 'settings for a device that cannot manage the Host')
         await closeSettings(settings)
       }
     },

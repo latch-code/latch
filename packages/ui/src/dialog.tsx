@@ -241,7 +241,7 @@ export function Scrim({
   )
 }
 
-export type DialogSize = 'confirm' | 'form' | 'wide'
+export type DialogSize = 'confirm' | 'sheet' | 'form' | 'wide'
 
 /** A content-owned modal, including full-window pages such as settings. Shares dismissal and focus with Dialog. */
 export function Modal({

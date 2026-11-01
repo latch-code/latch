@@ -170,7 +170,6 @@ export async function backToSection(settings: Locator): Promise<void> {
 const SECTION_ENTRIES: Record<string, { wide: string; phone: string }> = {
   插件: { wide: '插件', phone: '设置' },
   设备: { wide: '手机', phone: '设置' },
-  'Agent 成员': { wide: 'Agent', phone: 'Agent' },
   个人助手: { wide: 'Agent', phone: 'Agent' },
   例行任务: { wide: '自动化', phone: 'Agent' },
 }
@@ -193,6 +192,8 @@ export async function openSection(settings: Locator, name: string): Promise<void
     await mainNavigation(page)
       .getByRole('button', { name: phone ? entry.phone : entry.wide, exact: true })
       .click()
+    // 插件 lists its plugins beside the rail on wide windows, in place of a section list.
+    if (name === '插件' && !phone) return
     await tab.waitFor()
   }
   await reachable(tab)

@@ -2530,9 +2530,17 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const egress = plan.egress && !current.hostEgressAllow.includes(plan.egress) ? plan.egress : undefined
       if (!address && !egress) return async () => {}
       if (address && addresses.length >= 256)
-        throw new AppError(409, 'origins-full', '已确认的模型服务地址已有 256 个。请先在 设置 › 电脑 中移除不再使用的地址。')
+        throw new AppError(
+          409,
+          'origins-full',
+          '已确认的模型服务地址已有 256 个。停止 Host 后，从 policy.json 的 confirmedAddresses 中移除不再使用的地址。',
+        )
       if (egress && current.hostEgressAllow.length >= 64)
-        throw new AppError(409, 'egress-full', '出站白名单已有 64 条。请先在 设置 › 电脑 中移除不再使用的条目。')
+        throw new AppError(
+          409,
+          'egress-full',
+          '允许访问的地址已有 64 个。停止 Host 后，从 policy.json 的 hostEgressAllow 中移除不再使用的地址。',
+        )
       const next = structuredClone(current)
       if (address) next.confirmedAddresses = [...addresses, address]
       if (egress) next.hostEgressAllow = [...current.hostEgressAllow, egress]

@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import { PROVIDER_PRESETS } from '@latch/protocol'
 import { confirmationStore } from '../src/core/confirmations.ts'
 import { ApiError, ApiTimeoutError } from '../src/core/api.ts'
-import { applyPatch, parsePolicy, widens, type PolicyView } from '../src/core/ceilings.ts'
 import {
   checkAction,
   describeProbeFailure,
@@ -10,10 +9,12 @@ import {
   heldBackService,
   isConnectionFailure,
   keyScopeOf,
+  latestQuestions,
   missingKey,
   modelIdProblem,
   originOf,
   presetKeyOrigins,
+  serviceHealth,
   shownAddress,
   trackedPresenter,
 } from '../src/core/providerSetup.ts'
@@ -21,6 +22,19 @@ import { describeFailure, isCatalogCode, PROVIDER_COPY } from '../src/core/secur
 
 const failure = (code: string, details: Record<string, unknown> = {}, message = '主机原文') =>
   describeProbeFailure(new ApiError(code === 'http-error' ? 502 : 403, code, message, details))
+
+describe('a service asked again', () => {
+  it('drops an answer to a question asked before the latest one', () => {
+    const questions = latestQuestions()
+    const before = questions.ask('a')
+    const other = questions.ask('b')
+    expect(before()).toBe(true)
+    const after = questions.ask('a')
+    expect(before()).toBe(false)
+    expect(after()).toBe(true)
+    expect(other()).toBe(true)
+  })
+})
 
 describe('model-service addresses', () => {
   it('does not let an older provider request close the confirmation of a newer request', () => {
@@ -87,7 +101,10 @@ describe('model-service addresses', () => {
       kind: 'other',
     })
     expect(failure('http-error', { upstreamStatus: 401 })).toEqual({ kind: 'key', text: '密钥不对或已过期。检查密钥后重新检测。' })
-    expect(failure('http-error', { upstreamStatus: 403 }).kind).toBe('key')
+    // A key restricted to chat can get 403 on the listing alone: not called invalid, and no new key is suggested.
+    expect(failure('http-error', { upstreamStatus: 403 }).kind).toBe('listing')
+    expect(serviceHealth(failure('http-error', { upstreamStatus: 403 }))).toBe('unknown')
+    expect(serviceHealth(failure('http-error', { upstreamStatus: 401 }))).toBe('key')
     expect(failure('http-error', { upstreamStatus: 404 }).text).toContain('没有模型列表')
     expect(failure('http-error', { upstreamStatus: 500 }).text).toBe('模型服务返回了错误（HTTP 500）。')
     expect(failure('network-error', { networkCode: 'ECONNREFUSED' }).text).toBe(
@@ -144,23 +161,6 @@ describe('model-service addresses', () => {
     expect(modelIdProblem('llama3.2', ['llama3.2'])).toBe('这个模型已经添加。')
     expect(modelIdProblem(' qwen2.5-coder:7b ')).toBeUndefined()
     expect(modelIdProblem('m'.repeat(200))).toBeUndefined()
-  })
-
-  it('removes a confirmed address as a lowering, from any admin device', () => {
-    const raw = {
-      local: { maxLevel: 'L2', allowL3: true },
-      remote: { maxLevel: 'L1', allowRemoteStart: true, harnesses: ['standard'], workspaces: null },
-      hostEgressAllow: ['127.0.0.1:11434'],
-      confirmedAddresses: ['http://127.0.0.1:11434/v1', 'https://gateway.example:443/v1/acct/openai'],
-    }
-    const policy = parsePolicy(raw) as PolicyView
-    expect(policy.confirmedAddresses).toEqual(['http://127.0.0.1:11434/v1', 'https://gateway.example:443/v1/acct/openai'])
-    const patch = { confirmedAddresses: { remove: ['https://gateway.example:443/v1/acct/openai'] } }
-    expect(widens(policy, patch)).toBe(false)
-    expect(applyPatch(policy, patch).confirmedAddresses).toEqual(['http://127.0.0.1:11434/v1'])
-    // An older Host's policy has no confirmed addresses at all.
-    const { confirmedAddresses: _none, ...older } = raw
-    expect(parsePolicy(older)).not.toHaveProperty('confirmedAddresses')
   })
 
   it('shows the catalog text for an unconfirmed address, never the Host text', () => {

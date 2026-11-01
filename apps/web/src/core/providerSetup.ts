@@ -93,8 +93,8 @@ export function heldBackService(catalog: Pick<HostCatalog, 'unusableProviders'>)
   if (!first) return undefined
   const name = `「${escapeSecurityText(first.name)}」`
   return first.reason === 'key-missing'
-    ? { message: `${name}还没有填写密钥。`, hint: '在运行 Latch 的电脑上，打开 设置 › 模型服务 填写密钥后即可开始。' }
-    : { message: `${name}的地址还没有确认。`, hint: '在运行 Latch 的电脑上，打开 设置 › 模型服务 确认地址后即可开始。' }
+    ? { message: `${name}还没有填写密钥。`, hint: '在运行 Latch 的电脑上，打开 设置 › 模型 填写密钥后即可开始。' }
+    : { message: `${name}的地址还没有确认。`, hint: '在运行 Latch 的电脑上，打开 设置 › 模型 确认地址后即可开始。' }
 }
 
 /** A saved service's destination; older Hosts do not report it and enforce their own rules. */
@@ -141,6 +141,29 @@ export function checkAction(
   return options.justSaved ? 'remove' : undefined
 }
 
+/** What a service's row says after a listing: `unknown` is a listing that cannot tell, and the row stays quiet. */
+export type ServiceHealth = 'checking' | 'ok' | 'key' | 'unreachable' | 'local' | 'unknown'
+
+export const serviceHealth = (failure: ProbeFailure | null): ServiceHealth => {
+  if (failure === null) return 'ok'
+  return failure.kind === 'key' ? 'key' : failure.kind === 'network' ? 'unreachable' : failure.kind === 'local' ? 'local' : 'unknown'
+}
+
+/**
+ * Keeps the latest question per key. `ask` returns whether that question is still the latest, so a slow answer from before
+ * a key was updated cannot overwrite the answer that came after it.
+ */
+export function latestQuestions() {
+  const latest = new Map<string, number>()
+  return {
+    ask(key: string): () => boolean {
+      const asked = (latest.get(key) ?? 0) + 1
+      latest.set(key, asked)
+      return () => latest.get(key) === asked
+    },
+  }
+}
+
 const NETWORK_TEXT: Record<string, string> = {
   ECONNREFUSED: 'Host 连不上这个地址：那里没有服务在监听。确认服务已经启动、端口正确。',
   ECONNRESET: 'Host 连上了这个地址，但连接被对方断开。检查地址和协议（http 或 https）是否正确。',
@@ -166,7 +189,10 @@ export function describeProbeFailure(error: unknown): ProbeFailure {
     }
     case 'http-error': {
       const status = typeof details.upstreamStatus === 'number' ? details.upstreamStatus : undefined
-      if (status === 401 || status === 403) return { kind: 'key', text: '密钥不对或已过期。检查密钥后重新检测。' }
+      if (status === 401) return { kind: 'key', text: '密钥不对或已过期。检查密钥后重新检测。' }
+      // A key restricted to chat can get 403 on the listing alone, so this does not say the key is bad.
+      if (status === 403)
+        return { kind: 'listing', text: '服务拒绝列出模型（HTTP 403）。可能是密钥不对，也可能是它没有列表权限；可以手动添加模型 ID。' }
       if (status === 404)
         return { kind: 'listing', text: '这个地址没有模型列表。检查 API 地址是否完整（常见的以 /v1 结尾），也可以手动添加模型 ID。' }
       if (status === 429) return { kind: 'other', text: '服务拒绝了请求：太频繁，或账户额度不足。' }

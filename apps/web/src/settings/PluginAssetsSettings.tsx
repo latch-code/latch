@@ -1,24 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
-import { Download, Plus, Puzzle, Upload } from 'lucide-react'
+import { Download, Upload } from 'lucide-react'
 import { createPluginPackageTemplate, type PluginPackageBundle, type PluginPackageDetail, type PluginPackageSummary } from '@latch/protocol'
-import {
-  Button,
-  ChoiceList,
-  ConfirmDialog,
-  Dialog,
-  Icon,
-  InlineNotice,
-  StatusPill,
-  Switch,
-  Tabs,
-  TextAreaField,
-  TextField,
-} from '@latch/ui'
+import { Button, ChoiceList, ConfirmDialog, Dialog, InlineNotice, StatusPill, Switch, Tabs, TextAreaField, TextField } from '@latch/ui'
 import { api, inlineError, isUncertain, newRequestId, type ApiOptions } from '../core/api.ts'
 import { withConfirmation } from '../core/confirmations.ts'
 import { InlineConfirm } from '../components/InlineConfirm.tsx'
-import { NavRow, SettingsGroup } from './common.tsx'
-import { addPluginSource, editPluginSource, readPluginBundle } from './pluginAssets.ts'
+import { PLUGIN_REACH_COPY } from '../core/securityCopy.ts'
+import { SettingsGroup, SettingsRow } from './common.tsx'
+import { addPluginSource, editPluginSource, manifestReach, readPluginBundle, typedManifest, type PluginReach } from './pluginAssets.ts'
 
 type Template = 'skill' | 'tool' | 'react-ui'
 interface PendingChange {
@@ -31,7 +20,7 @@ interface Editor {
   record?: PluginPackageDetail
 }
 const route = (id: string) => 'plugin-packages/' + encodeURIComponent(id)
-const stateText = (record: PluginPackageSummary) =>
+export const packageState = (record: PluginPackageSummary) =>
   record.unavailableReason
     ? '需要处理'
     : record.state === 'draft'
@@ -39,19 +28,33 @@ const stateText = (record: PluginPackageSummary) =>
       : record.state === 'update-available'
         ? '有未应用修改'
         : record.enabled
-          ? '已应用'
-          : '已停用'
+          ? '已开启'
+          : '未开启'
 
-/** Edits are inert until the exact saved revision is applied. */
-export function PluginAssetsSettings({
-  canEdit,
-  onChanged,
-  onOwned,
-}: {
-  canEdit: boolean
-  onChanged: () => void
-  onOwned: (ids: string[]) => void
-}) {
+/** Where a plugin's parts run and which devices receive them, in the words a person would use. */
+export function PluginReachGroup({ reach, onRetryRead }: { reach: PluginReach[]; onRetryRead?: () => void }) {
+  if (reach.length === 0 && !onRetryRead) return null
+  return (
+    <SettingsGroup title={PLUGIN_REACH_COPY.title}>
+      {reach.map(item => (
+        <SettingsRow key={item.id} className="plugin-reach" title={item.title} description={item.body} />
+      ))}
+      {onRetryRead && (
+        <SettingsRow
+          title={PLUGIN_REACH_COPY.unread.title}
+          description={PLUGIN_REACH_COPY.unread.body}
+          trailing={<Button onClick={onRetryRead}>{PLUGIN_REACH_COPY.unread.retry}</Button>}
+        />
+      )}
+    </SettingsGroup>
+  )
+}
+
+/**
+ * The custom plugins this device may edit, and the sheets that do it: 添加插件… (create or import) and the editor. Edits
+ * are inert until the exact saved revision is applied.
+ */
+export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onChanged: () => void }) {
   const [records, setRecords] = useState<PluginPackageSummary[] | null>(null)
   const [editor, setEditor] = useState<Editor | null>(null)
   const [template, setTemplate] = useState<Template | null>(null)
@@ -66,16 +69,11 @@ export function PluginAssetsSettings({
   const [manifestText, setManifestText] = useState('')
   const input = useRef<HTMLInputElement>(null)
   const alive = useRef(true)
-  const changed = useRef(onChanged),
-    owned = useRef(onOwned)
+  const changed = useRef(onChanged)
   changed.current = onChanged
-  owned.current = onOwned
   async function load() {
     const value = await api<{ packages: PluginPackageSummary[] }>('plugin-packages')
-    if (alive.current) {
-      setRecords(value.packages)
-      owned.current(value.packages.map(record => record.id))
-    }
+    if (alive.current) setRecords(value.packages)
   }
   useEffect(() => {
     alive.current = canEdit
@@ -127,10 +125,12 @@ export function PluginAssetsSettings({
           }),
         )
       let result = await send(current)
-      if (result.package && alive.current) {
-        setEditor({ bundle: result.package.bundle, record: result.package })
+      // The switch on a plugin's page changes a package with no editor open, and must not open one.
+      const shown = result.package
+      if (shown && alive.current) {
+        setEditor(current => (current ? { bundle: shown.bundle, record: shown } : null))
         setDirty(false)
-        setManifestText(JSON.stringify(result.package.bundle.manifest, null, 2))
+        setManifestText(JSON.stringify(shown.bundle.manifest, null, 2))
       }
       if (current.thenApply && result.package) {
         current = {
@@ -139,7 +139,8 @@ export function PluginAssetsSettings({
         }
         if (alive.current) setPending(current)
         result = await send(current)
-        if (result.package && alive.current) setEditor({ bundle: result.package.bundle, record: result.package })
+        const applied = result.package
+        if (applied && alive.current) setEditor(editing => (editing ? { bundle: applied.bundle, record: applied } : null))
       }
       if (alive.current) {
         setPending(null)
@@ -212,106 +213,45 @@ export function PluginAssetsSettings({
   const shownFiles = editor?.bundle.files.filter(item => (tab === 'content' ? skillFiles.has(item.path) : true)) ?? []
   const selectedFile = shownFiles.find(item => item.path === file) ?? shownFiles[0]
   const record = editor?.record
-  if (!canEdit)
-    return (
-      <SettingsGroup
-        title="自定义插件"
-        caption="在运行 Latch 的 Mac 上创建和编辑；应用后的技能与面板可以在其他设备使用。"
-        captionIcon={null}>
-        <p className="plugin-asset-empty">插件随会话同步。</p>
-      </SettingsGroup>
-    )
-  return (
-    <SettingsGroup
-      title="自定义插件"
-      caption={
-        canEdit
-          ? '从技能开始，也可以加入工具、界面和 Harness。应用后在会话中使用。'
-          : '在运行 Latch 的 Mac 上创建和编辑；应用后的技能与面板可以在其他设备使用。'
-      }
-      captionIcon={null}
-      meta={
-        canEdit && (
-          <div className="plugin-asset-actions">
-            <Button icon={Upload} disabled={locked} onClick={() => input.current?.click()}>
-              导入
-            </Button>
-            <Button
-              icon={Plus}
-              disabled={locked}
-              onClick={() => {
-                setTemplate('skill')
-                setError('')
-              }}>
-              创建插件
-            </Button>
-          </div>
-        )
-      }>
-      {canEdit && (
-        <input
-          ref={input}
-          type="file"
-          accept=".json,application/json"
-          hidden
-          onChange={event => {
-            const selected = event.target.files?.[0]
-            event.target.value = ''
-            if (!selected || locked) return
-            if (selected.size > 8 * 1024 * 1024) {
-              setError('插件文件不能超过 8 MiB。')
-              return
-            }
-            void selected
-              .text()
-              .then(text => {
-                const bundle = readPluginBundle(text)
-                if (alive.current) open({ bundle })
-              })
-              .catch(cause => {
-                if (alive.current) setError(cause instanceof Error ? cause.message : '无法读取插件文件。')
-              })
-          }}
-        />
-      )}
-      {canEdit && records === null && <p className="plugin-asset-empty">正在读取自定义插件…</p>}
-      {canEdit && records?.length === 0 && (
-        <div className="plugin-asset-empty">
-          <Icon icon={Puzzle} size={20} />
-          <p>让 Agent 按你的方法工作</p>
-          <span>写一项技能，或把常用工具与界面放进同一个插件。</span>
-        </div>
-      )}
-      {records?.map(item => (
-        <NavRow
-          key={item.id}
-          record
-          title={item.name}
-          description={item.unavailableReason ?? item.description}
-          value={stateText(item)}
-          onClick={() => {
-            void selectRecord(item)
-          }}
-        />
-      ))}
-      {!editor && error && (
-        <InlineNotice tone="error">
-          {error}
-          <Button
-            variant="ghost"
-            onClick={() => {
-              setError('')
-              void load().catch(cause => setError(inlineError(cause)))
-            }}>
-            重试
-          </Button>
-        </InlineNotice>
-      )}
+  const dialogs = (
+    <>
+      <input
+        ref={input}
+        type="file"
+        accept=".json,application/json"
+        hidden
+        onChange={event => {
+          const selected = event.target.files?.[0]
+          event.target.value = ''
+          if (!selected || locked) return
+          if (selected.size > 8 * 1024 * 1024) {
+            setError('插件文件不能超过 8 MiB。')
+            return
+          }
+          void selected
+            .text()
+            .then(text => {
+              const bundle = readPluginBundle(text)
+              if (alive.current) {
+                setTemplate(null)
+                open({ bundle })
+              }
+            })
+            .catch((cause: unknown) => {
+              if (alive.current) setError(cause instanceof Error ? cause.message : '无法读取插件文件。')
+            })
+        }}
+      />
       <Dialog
         open={template !== null}
-        title="创建自定义插件"
-        size="form"
+        title="添加插件"
+        size="sheet"
         subtitle="选择一个起点，之后可以自由组合。"
+        note={
+          <Button variant="ghost" icon={Upload} disabled={locked} onClick={() => input.current?.click()}>
+            导入文件…
+          </Button>
+        }
         onClose={() => setTemplate(null)}
         footer={
           <Button
@@ -329,9 +269,9 @@ export function PluginAssetsSettings({
           value={template ?? 'skill'}
           onValueChange={value => setTemplate(value)}
           options={[
-            { value: 'skill' as const, title: '技能', description: '用文字说明工作方法，直接开始使用。' },
-            { value: 'tool' as const, title: '工具', description: '编写在电脑上执行的工具模块。' },
-            { value: 'react-ui' as const, title: '界面', description: '为会话增加自己的交互面板。' },
+            { value: 'skill' as const, title: '技能', description: '用文字说明工作方法，不运行代码。' },
+            { value: 'tool' as const, title: '工具', description: '在这台 Mac 上运行的代码，权限和 Latch 相同。' },
+            { value: 'react-ui' as const, title: '界面', description: '会话里的面板；代码会发到每台能查看会话的设备，在那里运行。' },
           ]}
         />
       </Dialog>
@@ -369,7 +309,7 @@ export function PluginAssetsSettings({
         {editor && (
           <div className="settings-form plugin-editor">
             <div className="plugin-asset-toolbar">
-              <StatusPill>{dirty ? '未保存修改' : record ? stateText(record) : '未保存'}</StatusPill>
+              <StatusPill>{dirty ? '未保存修改' : record ? packageState(record) : '未保存'}</StatusPill>
               <span className="plugin-asset-spacer" />
               {record?.appliedRevision && (
                 <Switch
@@ -396,6 +336,9 @@ export function PluginAssetsSettings({
               )}
             </div>
             {record?.unavailableReason && <InlineNotice tone="error">{record.unavailableReason}</InlineNotice>}
+            <PluginReachGroup
+              reach={manifestReach(tab === 'manifest' ? typedManifest(manifestText, editor.bundle.manifest) : editor.bundle.manifest)}
+            />
             <fieldset disabled={locked} className="plugin-asset-fields">
               <div className="form-grid">
                 <TextField
@@ -520,7 +463,7 @@ export function PluginAssetsSettings({
                   maxLength={64}
                   onChange={event => editBundle({ ...editor.bundle, manifest: { ...editor.bundle.manifest, id: event.target.value } })}
                 />
-                <p>技能与静态数据可以直接应用。Host 和界面模块是你信任的代码，首次应用会在 Mac 上确认；代码可以访问其运行环境。</p>
+                <p>技能和静态面板可以直接应用。含代码的插件第一次应用时，要在这台 Mac 上确认。</p>
               </details>
             </fieldset>
             {error && <InlineNotice tone="error">{error}</InlineNotice>}
@@ -557,6 +500,49 @@ export function PluginAssetsSettings({
           }}
         />
       )}
-    </SettingsGroup>
+    </>
   )
+  return {
+    records,
+    error,
+    locked,
+    dialogs,
+    add: () => {
+      setTemplate('skill')
+      setError('')
+    },
+    open: (record: PluginPackageSummary) => {
+      void selectRecord(record)
+    },
+    /** Turns an applied package on or off from its page. */
+    setEnabled: (record: PluginPackageSummary, enabled: boolean) => {
+      void perform({ path: route(record.id) + '/enabled', options: { method: 'POST', body: { requestId: newRequestId(), enabled } } })
+    },
+    /** A change from the page, with no editor open to show its confirmation or an unknown result. */
+    pageStatus:
+      editor === null && (busy || pending) ? (
+        <>
+          <InlineConfirm active={busy} rank={1} />
+          {pending && !busy && (
+            <InlineNotice tone="warn">
+              结果尚未确认。
+              <Button
+                onClick={() => {
+                  void perform(pending)
+                }}>
+                重试同一请求
+              </Button>
+            </InlineNotice>
+          )}
+        </>
+      ) : null,
+    /** A package's whole content, for what its page says about it. */
+    read: async (record: PluginPackageSummary) => (await api<{ package: PluginPackageDetail }>(route(record.id))).package,
+    retry: () => {
+      setError('')
+      void load().catch((cause: unknown) => {
+        setError(inlineError(cause))
+      })
+    },
+  }
 }

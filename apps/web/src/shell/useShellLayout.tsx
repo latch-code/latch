@@ -393,7 +393,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const openAgentPage = (target: AgentPageTarget) => {
     drawer.setOpen(false)
     setNewSheet(false)
-    setRoute({ entry: entryOfSection('agents', phone), section: 'agents', agent: target })
+    setRoute({ entry: entryOfSection('engines', phone), section: 'engines', agent: target })
   }
   /** The palette searches, except on a phone, which keeps its search under the title. */
   const openSearch = () => {
@@ -458,7 +458,10 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   useEffect(() => {
     if (notified === null || !snapshot.tasks.some(task => task.id === notified.id)) return
     const done = openNotified(notified.id, !notified.arrived)
-    setNotified(done || notified.read ? null : { ...notified, arrived: true })
+    // Unchanged once it has arrived: a new object here would run this again at once, for as long as the page's read takes,
+    // and each run would put this session back over a newer click.
+    if (done || notified.read) setNotified(null)
+    else if (!notified.arrived) setNotified({ ...notified, arrived: true })
   }, [notified, snapshot.tasks, snapshot.approvals, openNotified])
   const manageProviders = owner
     ? () => {

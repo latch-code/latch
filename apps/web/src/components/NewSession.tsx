@@ -1,5 +1,5 @@
 import { useState, type ReactNode, type RefObject } from 'react'
-import { BookOpenText, ChevronRight, FileCheck, Laptop, PlugZap, ShieldAlert, Timer, TriangleAlert } from 'lucide-react'
+import { BookOpenText, FileCheck, Laptop, PlugZap, ShieldAlert, Timer, TriangleAlert } from 'lucide-react'
 import type { ModelRef, TaskMode } from '@latch/protocol'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { ProviderSetupPanel } from './SetupPanels.tsx'
@@ -66,7 +66,8 @@ export function SetupCard({
   const model = block.kind === 'model-required'
   const held = block.kind === 'model-required' ? block : undefined
   const [adding, setAdding] = useState(false)
-  const inPlace = model && owner && providers !== undefined && held?.action === undefined
+  const settable = held?.settable !== false
+  const inPlace = model && settable && owner && providers !== undefined && held?.action === undefined
   return (
     <div className="setup-card" role="status">
       <div className="setup-card-row">
@@ -84,7 +85,7 @@ export function SetupCard({
                 : SETUP_COPY.harnessNeedsAdmin}
           </p>
         </div>
-        {owner && !adding && (
+        {owner && settable && !adding && (
           <Button
             ref={triggerRef}
             variant="primary"
@@ -118,10 +119,10 @@ export function SetupCard({
 }
 
 /**
- * The row under a new session's input: where it runs (this computer, the only one) and, for a full-access harness,
- * that level in amber with a way to the ceilings in 设置 › 电脑. Asking per step is the default and says nothing.
+ * The row under a new session's input: where it runs (this computer, the only one) and, for a full-access harness, that
+ * level in amber. Asking per step is the default and says nothing.
  */
-export function ContextRow({ hostName, fullAccess, onComputer }: { hostName: string; fullAccess: boolean; onComputer?: () => void }) {
+export function ContextRow({ hostName, fullAccess }: { hostName: string; fullAccess: boolean }) {
   return (
     <div className="composer-context">
       <Tooltip content="会话在这台电脑上运行">
@@ -131,26 +132,13 @@ export function ContextRow({ hostName, fullAccess, onComputer }: { hostName: str
           {hostName}
         </span>
       </Tooltip>
-      {fullAccess
-        && (onComputer ? (
-          <Tooltip content="电脑与权限上限…">
-            <button
-              type="button"
-              className="context-value context-link"
-              aria-label="权限：完全访问，查看电脑与权限上限"
-              onClick={onComputer}>
-              <ShieldAlert className="context-risk" size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-              完全访问
-              <ChevronRight className="context-chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
-            </button>
-          </Tooltip>
-        ) : (
-          <span className="context-value">
-            <ShieldAlert className="context-risk" size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-            <span className="sr-only">权限：</span>
-            完全访问
-          </span>
-        ))}
+      {fullAccess && (
+        <span className="context-value context-level">
+          <ShieldAlert className="context-risk" size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+          <span className="sr-only">权限：</span>
+          完全访问
+        </span>
+      )}
     </div>
   )
 }

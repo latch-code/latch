@@ -378,8 +378,8 @@
 }
 
 /*
- * Under a new session's input, 8 below its frame: the context row (28; where it runs, and a full-access level in amber
- * that leads to 设置 › 电脑), then captions. Values in the row are ghost values like a picker with a single value: an
+ * Under a new session's input, 8 below its frame: the context row (28; where it runs, and a full-access level in amber),
+ * then captions. Values in the row are ghost values like a picker with a single value: an
  * icon for a label, the value in ink-2.
  */
 .composer-context {
@@ -413,21 +413,9 @@
 }
 /* The full-access level comes in as the harness is chosen (its caption and the line under it open as disclosures). */
 @media (prefers-reduced-motion: no-preference) {
-  .context-link {
+  .context-level {
     animation: fade-in var(--m-micro) var(--e-micro);
   }
-}
-.context-link {
-  transition:
-    background-color var(--m-micro) var(--e-micro),
-    color var(--m-micro) var(--e-micro);
-}
-.context-link:hover {
-  background: var(--hover);
-  color: var(--ink);
-}
-.context-link:active {
-  background: var(--press);
 }
 /*
  * The captions under the row start where the toolbar's first glyph does: the toolbar's 8 plus a picker's 6 inside.

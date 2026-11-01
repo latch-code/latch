@@ -127,24 +127,6 @@ describe('composer choice', () => {
     expect(desktop.find(option => option.harness.id === 'codex')?.disabledReason).toBeUndefined()
   })
 
-  it('never offers a disabled workspace in the Host defaults, even when it is named as the default', () => {
-    const disabled = catalog({
-      workspaces: [
-        { id: 'default', name: '默认工作区', path: '/work/app' },
-        { id: 'docs', name: 'docs', path: '/work/docs', unavailable: '未通过安全检查' },
-      ],
-      defaults: { harnessId: 'standard', mode: 'agent', workspaceId: 'docs' },
-    })
-    const html = renderToStaticMarkup(
-      createElement(GeneralSettings, { snapshot: snapshot({ catalog: disabled }), admin: true, onChanged: () => {} }),
-    )
-    // The only project left to offer, the start directory (named so in settings): the picker shows it as plain text,
-    // without a menu of others.
-    const project = /<span class="sr-only">项目：<\/span>(.*?)<\/span><\/span><\/span>/.exec(html)?.[1]
-    expect(project).toBe('<span class="ui-value-picker-value"><span class="ui-value-picker-text" data-shown="">启动目录')
-    expect(html).not.toContain('docs')
-  })
-
   it('keeps a valid remembered choice', () => {
     const stored = { mode: 'chat' as const, harnessId: 'standard', workspaceId: 'docs', model: { providerId: 'local', model: 'qwen3' } }
     expect(resolveChoice(catalog(), stored)).toEqual(stored)
@@ -187,13 +169,13 @@ describe('composer choice', () => {
     expect(startBlock(snapshot({ catalog: held }), resolveChoice(held, null))).toEqual({
       kind: 'model-required',
       message: 'Standard 需要一个模型服务。「Ollama\\u{202E}」的地址还没有确认。',
-      hint: '在运行 Latch 的电脑上，打开 设置 › 模型服务 确认地址后即可开始。',
+      hint: '在运行 Latch 的电脑上，打开 设置 › 模型 确认地址后即可开始。',
       action: '打开模型服务',
     })
     const keyless = catalog({ providers: [], unusableProviders: [{ id: 'deepseek', name: 'DeepSeek', reason: 'key-missing' }] })
     expect(startBlock(snapshot({ catalog: keyless }), resolveChoice(keyless, null))).toMatchObject({
       message: 'Standard 需要一个模型服务。「DeepSeek」还没有填写密钥。',
-      hint: '在运行 Latch 的电脑上，打开 设置 › 模型服务 填写密钥后即可开始。',
+      hint: '在运行 Latch 的电脑上，打开 设置 › 模型 填写密钥后即可开始。',
     })
     // Agent harnesses bring their own models.
     expect(

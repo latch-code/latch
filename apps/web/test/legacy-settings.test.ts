@@ -2,9 +2,10 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { AppSnapshot, HostCatalog } from '@latch/protocol'
+import { SetupCard } from '../src/components/NewSession.tsx'
 import { sessionMenuSections } from '../src/sessionMenu.ts'
 import { SettingsPage, settingsSections } from '../src/settings/SettingsPage.tsx'
-import { harnessName } from '../src/composerChoice.ts'
+import { harnessName, startBlock } from '../src/composerChoice.ts'
 import { pluginName } from '../src/settings/PluginsSettings.tsx'
 
 const noop = () => {}
@@ -29,24 +30,30 @@ const legacy = {
 } as unknown as AppSnapshot
 
 describe('older Host without a catalog', () => {
-  it('offers only settings the Host can serve, with the single-provider form for model setup', () => {
-    // The device page needs the newer device API, so it is hidden on such a Host.
-    expect(settingsSections(legacy)).toEqual(['general', 'providers', 'plugins', 'shortcuts', 'about'])
+  it('offers only settings the Host can serve', () => {
+    // The device page needs the newer device API, and model services the catalog, so both are hidden on such a Host.
+    expect(settingsSections(legacy)).toEqual(['general', 'shortcuts', 'plugins', 'about'])
     expect(settingsSections({ ...legacy, catalog })).toEqual([
       'general',
       'providers',
-      'agents',
+      'engines',
       'workspaces',
-      'plugins',
       'shortcuts',
+      'plugins',
       'about',
     ])
     const html = renderToStaticMarkup(
-      createElement(SettingsPage, { snapshot: legacy, section: 'providers', onSection: noop, onChanged: noop }),
+      createElement(SettingsPage, { snapshot: legacy, section: 'general', onSection: noop, onChanged: noop }),
     )
-    expect(html).toContain('当前执行端版本只支持一个 OpenAI 兼容接口')
-    expect(html).not.toContain('settings-tab-agents')
-    expect(html).not.toContain('settings-tab-workspaces')
+    expect(html).not.toContain('settings-tab-engines')
+  })
+
+  it('says model services cannot be set up here instead of offering a page the Host cannot serve', () => {
+    const block = startBlock(legacy, { harnessId: 'standard', mode: 'agent' } as never)
+    expect(block).toMatchObject({ kind: 'model-required', settable: false })
+    const html = renderToStaticMarkup(createElement(SetupCard, { block: block!, owner: true, onSetup: noop }))
+    expect(html).toContain('较旧')
+    expect(html).not.toContain('<button')
   })
 
   it('keeps session actions to export', () => {

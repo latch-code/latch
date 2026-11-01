@@ -15,13 +15,21 @@ import { withConfirmation } from '../core/confirmations.ts'
 import { InlineConfirm } from '../components/InlineConfirm.tsx'
 import { dateTime, looksLikePhone, relativeTime } from '../format.ts'
 import { DEV_MODE_TEXT, hostView, type DeviceAccess } from '../core/permissions.ts'
-import { CONNECTION_DETAILS, DEVICE_NAME_INVALID_TEXT, describeFailure, LOCAL_ONLY_TEXT, NATIVE_LINK_COPY } from '../core/securityCopy.ts'
+import {
+  CONNECTION_DETAILS,
+  DEVICE_NAME_INVALID_TEXT,
+  describeFailure,
+  LOCAL_ONLY_TEXT,
+  NATIVE_LINK_COPY,
+  presenceUnavailableText,
+} from '../core/securityCopy.ts'
 import { currentShell, type LatchShell } from '../core/shell.ts'
 import { ConfirmDialog, Modal, ModalHeader } from '../components/overlays.tsx'
 import { Badge, Button, InlineNotice, type LucideIcon, Menu, StatusPill, TextField } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { useViewport } from '../breakpoints.ts'
 import { IconTile, Loading, moreButton, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
+import { RemoteStartRow } from './RemoteStartRow.tsx'
 import { PairingSection } from './PhonePairing.tsx'
 
 const STATUS: Record<Device['status'], { label: string; tone: 'neutral' | 'warn' | 'err' | 'ok' }> = {
@@ -137,7 +145,7 @@ function RevokeThisDevice({ device, onChanged }: { device: AppSnapshot['device']
   const [revoking, setRevoking] = useState(false)
   return (
     <>
-      <SettingsGroup danger>
+      <SettingsGroup>
         <SettingsRow
           title="撤销此设备"
           description="撤销立即生效；这台设备要重新登记并在执行端确认后才能再连接"
@@ -496,6 +504,15 @@ export function DevicesSettings({ snapshot, access, onChanged }: { snapshot: App
       <ThisDevice device={snapshot.device} devMode={host?.devMode === true} onChanged={onChanged} />
       {access.admin && <RegisteredDevices currentId={snapshot.device.id} local={access.local} onChanged={onChanged} />}
       {access.local && access.admin && <BrowserHere openInBrowser={openInBrowser} />}
+      {access.admin && (
+        <RemoteStartRow
+          {...(!access.local
+            ? { raiseBlocked: '在 Mac 上开启' }
+            : host?.presence.status === 'unavailable'
+              ? { raiseBlocked: presenceUnavailableText(host.presence.message) }
+              : {})}
+        />
+      )}
       <PairingSection access={access} snapshot={snapshot} />
       <RevokeThisDevice device={snapshot.device} onChanged={onChanged} />
     </>

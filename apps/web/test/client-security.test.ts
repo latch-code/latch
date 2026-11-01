@@ -389,7 +389,7 @@ describe('a Host of the previous build (no snapshot.host)', () => {
   it('falls back to the old rules: plain approvals, owner settings, no device pages, no L3 gating', () => {
     const access = deviceAccess(legacy, null)
     expect(access).toMatchObject({ legacy: true, local: false, admin: true, device: null })
-    expect(settingsSections(legacy, access)).toEqual(['general', 'providers', 'agents', 'workspaces', 'plugins', 'shortcuts', 'about'])
+    expect(settingsSections(legacy, access)).toEqual(['general', 'providers', 'engines', 'workspaces', 'shortcuts', 'plugins', 'about'])
     expect(composerGate({ summary: { level: 'L3' }, access })).toEqual({ kind: 'open' })
     expect(harnessGate(catalog.harnesses[0]!, access).allowed).toBe(true)
     expect(labels(approvalActions(approval({ risk: 'R2' }), access.device, null))).toEqual(['允许一次', '本会话始终允许', '拒绝'])
@@ -410,7 +410,7 @@ describe('error copy', () => {
     expect(describeFailure(403, 'scope-required', forged, { required: 'approve:standard' })).toBe('这台设备不能允许这一步')
     expect(describeFailure(403, 'scope-required', forged, { required: 'root' as DeviceScope })).toBe('这台设备不能这样做')
     expect(describeFailure(403, 'local-only', forged)).toBe('只能在 Mac 上的 Latch 里操作')
-    expect(describeFailure(403, 'ceiling-exceeded', forged)).toBe('这台设备不能这样做')
+    expect(describeFailure(403, 'ceiling-exceeded', forged)).toContain('policy.json')
     expect(describeFailure(403, 'stepup-required', forged, { stepup: { where: 'host-desktop' } })).toBe('要在 Mac 上的 Latch 里确认。')
     expect(describeFailure(429, 'presence-cooldown', forged, { retryAfter: 290 })).toBe('连续取消了 3 次，请 5 分钟后再试')
     expect(describeFailure(409, 'presence-busy', forged)).toBe('另一个确认还没完成，先完成或取消它。')

@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode, type Ref } from 'react'
-import { CircleAlert, CircleCheck, Info, KeyRound, LockKeyhole, Plus, Trash } from 'lucide-react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode, type Ref } from 'react'
+import { createPortal } from 'react-dom'
+import { CircleAlert, CircleCheck, Info, KeyRound, ListRestart, LockKeyhole, Pencil, Plus, Trash } from 'lucide-react'
 import type { AppSnapshot, ProviderKind, ProviderPreset, ProviderSettings } from '@latch/protocol'
 import { api, errorMessage, inlineError } from '../core/api.ts'
 import { keepWhileAway } from '../core/blocking.ts'
@@ -11,6 +12,8 @@ import {
   confirmAddress,
   createProvider,
   describeProbeFailure,
+  latestQuestions,
+  serviceHealth,
   destinationOf,
   isUnconfirmed,
   keyScopeOf,
@@ -22,22 +25,38 @@ import {
   updateProvider,
   type Destination,
   type ProbeFailure,
+  type ServiceHealth,
   type ProvidersResponse,
 } from '../core/providerSetup.ts'
 import { PROVIDER_COPY } from '../core/securityCopy.ts'
-import { hostOf } from '../format.ts'
 import { InlineConfirm } from '../components/InlineConfirm.tsx'
 import { ConfirmDialog } from '../components/overlays.tsx'
-import { Badge, Button, DemoMark, Icon, IconButton, InlineNotice, Radio, SearchField, Switch, SwitchRow, TextField } from '@latch/ui'
+import {
+  Badge,
+  Button,
+  DemoMark,
+  Dialog,
+  Icon,
+  IconButton,
+  InlineNotice,
+  Menu,
+  Radio,
+  SearchField,
+  Switch,
+  SwitchRow,
+  TextField,
+} from '@latch/ui'
 import { ProviderTile } from '../components/BrandTile.tsx'
-import { IconTile, Loading, MiddleEllipsis, NavRow, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
+import { IconTile, Loading, MiddleEllipsis, moreButton, ObjectRow, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
 import { FieldDialog } from './dialogs.tsx'
 import { dropProviderDraft, keepProviderDraft, peekProviderDraft, type ProviderDraft } from './providerDraft.ts'
+import { ModelVisibilitySettings } from './ModelVisibilitySettings.tsx'
 import { SettingsPages, type SettingsLevel } from './navigation.tsx'
+import { UsageSettings } from './UsageSettings.tsx'
 import { providerAbilities, type ProviderAbilities } from '../core/providerAbilities.ts'
 export { providerAbilities, type ProviderAbilities } from '../core/providerAbilities.ts'
 
-type Selection = { kind: 'provider'; id: string; check?: boolean } | { kind: 'new'; preset: ProviderPreset } | { kind: 'presets' } | null
+type Selection = { kind: 'provider'; id: string; check?: boolean; fetch?: boolean } | null
 type CheckState = { ok: true; latencyMs: number; count: number } | { ok: false; failure: ProbeFailure }
 type Access = Pick<DeviceAccess, 'legacy' | 'local' | 'admin'>
 
@@ -49,7 +68,18 @@ function offlineText(abilities: ProviderAbilities, providerId?: string): string 
 
 const kindLabels: Record<ProviderKind, string> = { 'openai-compatible': 'OpenAI 兼容', anthropic: 'Anthropic 原生' }
 
-function PresetGrid({ presets, onPick }: { presets: ProviderPreset[]; onPick: (preset: ProviderPreset) => void }) {
+/** The services one can add, as a grid of brand tiles; the chosen one stays marked while its form shows below. */
+function PresetGrid({
+  presets,
+  chosen,
+  disabled = false,
+  onPick,
+}: {
+  presets: ProviderPreset[]
+  chosen?: string
+  disabled?: boolean
+  onPick: (preset: ProviderPreset) => void
+}) {
   return (
     <div className="preset-grid">
       {presets.map(preset => (
@@ -57,15 +87,13 @@ function PresetGrid({ presets, onPick }: { presets: ProviderPreset[]; onPick: (p
           key={preset.id}
           type="button"
           className="preset-card"
+          aria-pressed={chosen === preset.id}
+          disabled={disabled}
           onClick={() => {
             onPick(preset)
           }}>
           <ProviderTile provider={{ id: preset.id, kind: preset.kind, presetId: preset.id }} size={24} />
-          <span className="preset-card-text">
-            <strong>{preset.name}</strong>
-            <span>{preset.baseURL ? (preset.kind === 'anthropic' ? kindLabels.anthropic : hostOf(preset.baseURL)) : '任意兼容地址'}</span>
-          </span>
-          {!preset.requiresKey && preset.baseURL && <Badge>本地</Badge>}
+          <span className="preset-card-name">{preset.id === 'custom' || !preset.baseURL ? '自定义' : preset.name}</span>
         </button>
       ))}
     </div>
@@ -90,7 +118,8 @@ function useProbe(probe: () => Promise<{ models: string[]; latencyMs?: number }>
     if (described.kind === 'key' && described.text.startsWith('已保存的密钥')) onKeyMismatch?.()
     return described
   }
-  const runCheck = async () => {
+  /** The models it found, or undefined after a failure (shown as `check`). */
+  const runCheck = async (): Promise<string[] | undefined> => {
     setBusy('check')
     setCheck(null)
     setFailure(null)
@@ -98,9 +127,10 @@ function useProbe(probe: () => Promise<{ models: string[]; latencyMs?: number }>
     try {
       const result = await probe()
       setCheck({ ok: true, latencyMs: result.latencyMs ?? Math.round(performance.now() - started), count: result.models.length })
-      setFetched(current => current ?? null)
+      return result.models
     } catch (cause) {
       setCheck({ ok: false, failure: failed(cause) })
+      return undefined
     } finally {
       setBusy(null)
     }
@@ -127,7 +157,7 @@ function useProbe(probe: () => Promise<{ models: string[]; latencyMs?: number }>
     setFetched(null)
     setFailure(null)
   }
-  return { busy, check, fetched, failure, runCheck, fetchModels, reset, lastFailure: () => last.current }
+  return { busy, check, fetched, failure, runCheck, fetchModels, setFetched, reset, lastFailure: () => last.current }
 }
 
 /**
@@ -439,6 +469,60 @@ function ModelsGroups({
   )
 }
 
+/** How many models a listing may turn on by itself: a short list is what the person wants, a catalogue is not. */
+const TAKE_ALL_UP_TO = 12
+
+/** The models found at the address, each with a switch, and a row to type one the listing left out. */
+function FoundModels({
+  models,
+  fetched,
+  disabled,
+  failed,
+  manualRef,
+  onToggle,
+  onAdd,
+}: {
+  models: string[]
+  fetched: string[] | null
+  disabled: boolean
+  failed?: string
+  manualRef?: Ref<HTMLInputElement>
+  onToggle: (model: string, on: boolean) => void
+  onAdd: (model: string) => void
+}) {
+  const [filter, setFilter] = useState('')
+  const all = [...new Set([...(fetched ?? []), ...models])]
+  const needle = filter.trim().toLocaleLowerCase()
+  const shown = all.filter(model => model.toLocaleLowerCase().includes(needle))
+  return (
+    <div className="provider-found">
+      <span className="provider-found-title">
+        {fetched === null ? '模型' : fetched.length ? `找到 ${fetched.length} 个模型` : '服务没有列出模型'}
+      </span>
+      {all.length > 8 && <SearchField label="筛选模型" value={filter} onValueChange={setFilter} />}
+      {shown.length > 0 && (
+        <div className="provider-found-list">
+          {shown.map(model => (
+            <div key={model} className="provider-found-row">
+              <code className="settings-mono model-id">{model}</code>
+              <Switch
+                label={`使用 ${model}`}
+                checked={models.includes(model)}
+                disabled={disabled}
+                onCheckedChange={on => {
+                  onToggle(model, on)
+                }}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+      <ManualModel models={models} disabled={disabled} inputRef={manualRef} onAdd={onAdd} />
+      {failed && <p className="settings-caption">{failed}可以手动输入模型 ID。</p>}
+    </div>
+  )
+}
+
 /** The address's state under the add form's fields: confirmed once on first use, and where that happens. */
 function addressNote(destination: Destination, abilities: ProviderAbilities, localTarget: string | undefined): ReactNode {
   if (destination !== 'unconfirmed') return null
@@ -460,9 +544,15 @@ export function ProviderAddForm({
   onCancel,
   compact = false,
   saveLabel,
+  footer,
+  onBusy,
 }: {
   compact?: boolean
   saveLabel?: string
+  /** Where the sheet wants 取消 and 保存, in its own footer. */
+  footer?: HTMLElement | null
+  /** A save is on its way: closing the form now would hide its failure, or its success after the person thought it cancelled. */
+  onBusy?: (busy: boolean) => void
   preset: ProviderPreset
   data: ProvidersResponse
   abilities: ProviderAbilities
@@ -493,6 +583,7 @@ export function ProviderAddForm({
     [],
   )
   const [saving, setSaving] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
   const [waiting, setWaiting] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [error, setError] = useState('')
@@ -550,14 +641,23 @@ export function ProviderAddForm({
       setConfirming(false)
     }
   }
+  /** A listing turns on a short list by itself, unless the person already chose. */
+  const take = (listed: string[] | undefined) => {
+    if (listed && listed.length > 0 && listed.length <= TAKE_ALL_UP_TO) {
+      setModels(previous => {
+        if (previous.length > 0) return previous
+        setDefaultModel(listed[0]!)
+        return listed
+      })
+      setGuide('')
+    }
+  }
   /** Confirms the address, then lists its models. */
   const allowAndFetch = async () => {
-    if (await confirmNow()) await probe.fetchModels()
+    if (await confirmNow()) take(await probe.fetchModels())
   }
 
-  const save = async (event?: FormEvent) => {
-    event?.preventDefault()
-    event?.stopPropagation()
+  const submit = async () => {
     if (!name.trim() || !baseURL.trim()) {
       setError('请填写名称和 API 地址。')
       return
@@ -591,12 +691,12 @@ export function ProviderAddForm({
         return
       }
       listingFailed = false
-      if (listed.length !== 1) {
+      if (listed.length === 0 || listed.length > TAKE_ALL_UP_TO) {
         if (listed.length === 0) manual.current?.focus()
         setGuide(
           listed.length === 0
-            ? '服务没有列出模型。在上面手动输入一个模型 ID，再保存。'
-            : `获取到 ${listed.length} 个模型。在「可添加的模型」里点「添加」，第一个添加的是默认模型，然后再保存。`,
+            ? '服务没有列出模型。手动输入一个模型 ID，再保存。'
+            : `找到 ${listed.length} 个模型。打开要用的模型，第一个打开的是默认模型，然后再保存。`,
         )
         return
       }
@@ -628,8 +728,26 @@ export function ProviderAddForm({
       setSaving(false)
     }
   }
+  // The whole press counts, including the listing before the save: the save goes on from there even with the form gone.
+  const save = async (event?: FormEvent) => {
+    event?.preventDefault()
+    event?.stopPropagation()
+    setSubmitting(true)
+    try {
+      await submit()
+    } finally {
+      setSubmitting(false)
+    }
+  }
 
   const busy = saving || confirming || probe.busy !== null
+  const committing = submitting || confirming
+  useEffect(() => {
+    onBusy?.(committing)
+    return () => {
+      onBusy?.(false)
+    }
+  }, [committing, onBusy])
   const locked = destination === 'unconfirmed' && abilities.confirm
   const note = addressNote(destination, abilities, localTarget)
   const failure = probe.failure
@@ -639,13 +757,39 @@ export function ProviderAddForm({
       : failure.kind === 'key' && !keyEditable && requiresKey
         ? `列出模型需要密钥。${PROVIDER_COPY.keyElsewhere}`
         : failure.text
-  const keyCaption = destination === 'preset' ? `${PROVIDER_COPY.presetKey}${PROVIDER_COPY.keyHeld}` : PROVIDER_COPY.keyHeld
   const keyElsewhere = abilities.keys ? offlineText(abilities) : requiresKey ? PROVIDER_COPY.keyAfterSave : PROVIDER_COPY.keyElsewhere
   // The picker can live inside the composer's form. Its compact panel must not nest another native form there.
   const Form = compact ? 'div' : 'form'
+  const formId = useId()
+  /** The check is a listing, so what it finds fills the list at once instead of asking for a second press. */
+  const checkAndTake = async () => {
+    const listed = await probe.runCheck()
+    if (listed) probe.setFetched(listed)
+    take(listed)
+  }
+  const actions = (
+    <>
+      <Button size="md" disabled={saving} onClick={onCancel}>
+        取消
+      </Button>
+      <Button
+        size="md"
+        type={compact ? 'button' : 'submit'}
+        form={compact ? undefined : formId}
+        onClick={compact ? () => void save() : undefined}
+        variant="primary"
+        icon={locked ? LockKeyhole : undefined}
+        disabled={busy}
+        loading={saving}
+        loadingLabel={waiting ? PROVIDER_COPY.waitingTouchID : '保存中…'}>
+        {saveLabel ? (locked ? `用 Touch ID ${saveLabel}` : saveLabel) : locked ? PROVIDER_COPY.saveWithTouchID : PROVIDER_COPY.save}
+      </Button>
+    </>
+  )
   return (
     <Form
-      className={compact ? 'provider-add provider-add-inline' : 'settings-subpage provider-add'}
+      id={compact ? undefined : formId}
+      className={compact ? 'provider-add provider-add-inline' : 'provider-add'}
       onSubmit={event => {
         void save(event)
       }}
@@ -656,14 +800,8 @@ export function ProviderAddForm({
         event.stopPropagation()
         if (!busy) void save()
       }}>
-      {!compact && (
-        <SectionHeading
-          title={`添加 ${preset.name}`}
-          description={preset.baseURL ? kindLabels[kind] : '任何 OpenAI 兼容或 Anthropic 原生接口的服务'}
-        />
-      )}
-      <SettingsGroup title="连接">
-        <div className="settings-card-body settings-fields">
+      <div className="settings-fields">
+        {customKind && (
           <TextField
             label="名称"
             value={name}
@@ -673,67 +811,62 @@ export function ProviderAddForm({
               setName(event.target.value)
             }}
           />
-          {customKind && (
-            <label className="field">
-              <span>接口类型</span>
-              <select
-                value={kind}
-                onChange={event => {
-                  setKind(event.target.value === 'anthropic' ? 'anthropic' : 'openai-compatible')
-                  probe.reset()
-                }}>
-                <option value="openai-compatible">{kindLabels['openai-compatible']}</option>
-                <option value="anthropic">{kindLabels.anthropic}</option>
-              </select>
-            </label>
-          )}
+        )}
+        {customKind && (
+          <label className="field">
+            <span>接口类型</span>
+            <select
+              value={kind}
+              onChange={event => {
+                setKind(event.target.value === 'anthropic' ? 'anthropic' : 'openai-compatible')
+                probe.reset()
+              }}>
+              <option value="openai-compatible">{kindLabels['openai-compatible']}</option>
+              <option value="anthropic">{kindLabels.anthropic}</option>
+            </select>
+          </label>
+        )}
+        <TextField
+          label="地址"
+          type="url"
+          value={baseURL}
+          placeholder="https://api.example.com/v1"
+          spellCheck={false}
+          autoComplete="off"
+          onChange={event => {
+            setBaseURL(event.target.value)
+            probe.reset()
+            setGuide('')
+          }}
+        />
+        {keyEditable ? (
           <TextField
-            label="API 地址"
-            type="url"
-            value={baseURL}
-            placeholder="https://api.example.com/v1"
-            spellCheck={false}
-            autoComplete="off"
+            label="密钥"
+            type="password"
+            value={apiKey}
+            placeholder={requiresKey ? '输入密钥' : '本地服务通常无需密钥'}
+            autoComplete="new-password"
+            hint={requiresKey ? undefined : '可选'}
             onChange={event => {
-              setBaseURL(event.target.value)
+              setApiKey(event.target.value)
               probe.reset()
-              setGuide('')
             }}
           />
-        </div>
-        <CheckRow busy={probe.busy === 'check'} disabled={busy} result={probe.check} onCheck={needsAddress(probe.runCheck)} />
-      </SettingsGroup>
-      <SettingsGroup title="密钥" caption={keyEditable ? keyCaption : undefined} captionIcon={keyEditable ? 'info' : null}>
-        {keyEditable ? (
-          <div className="settings-card-body settings-fields">
-            <TextField
-              label="API Key"
-              type="password"
-              value={apiKey}
-              placeholder={requiresKey ? '输入密钥' : '本地服务通常无需密钥'}
-              autoComplete="new-password"
-              hint={requiresKey ? undefined : '可选'}
-              onChange={event => {
-                setApiKey(event.target.value)
-                probe.reset()
-              }}
-            />
-          </div>
         ) : (
-          <SettingsRow leading={<IconTile icon={LockKeyhole} />} title="未设置" description={keyElsewhere} />
+          <p className="settings-caption">{keyElsewhere}</p>
         )}
-      </SettingsGroup>
-      <ModelsGroups
+      </div>
+      <CheckRow busy={probe.busy !== null} disabled={busy} result={probe.check} onCheck={needsAddress(checkAndTake)} />
+      <FoundModels
         models={models}
-        defaultModel={defaultModel}
         fetched={probe.fetched}
-        fetching={probe.busy === 'fetch'}
         disabled={busy}
         failed={listingFailed}
         manualRef={manual}
-        onFetch={needsAddress(probe.fetchModels)}
-        onDefault={setDefaultModel}
-        onRemove={removeModel}
+        onToggle={(model, on) => {
+          if (on) addModel(model)
+          else removeModel(model)
+        }}
         onAdd={addModel}
       />
       {localTarget !== undefined && (
@@ -754,22 +887,7 @@ export function ProviderAddForm({
       {guide && <InlineNotice tone="neutral">{guide}</InlineNotice>}
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
       <InlineConfirm active={saving || confirming} rank={2} />
-      <div className="settings-actions">
-        <Button size="md" disabled={saving} onClick={onCancel}>
-          取消
-        </Button>
-        <Button
-          size="md"
-          type={compact ? 'button' : 'submit'}
-          onClick={compact ? () => void save() : undefined}
-          variant="primary"
-          icon={locked ? LockKeyhole : undefined}
-          disabled={busy}
-          loading={saving}
-          loadingLabel={waiting ? PROVIDER_COPY.waitingTouchID : '保存中…'}>
-          {saveLabel ? (locked ? `用 Touch ID ${saveLabel}` : saveLabel) : locked ? PROVIDER_COPY.saveWithTouchID : PROVIDER_COPY.save}
-        </Button>
-      </div>
+      {footer ? createPortal(actions, footer) : footer === undefined && <div className="settings-actions">{actions}</div>}
     </Form>
   )
 }
@@ -787,6 +905,8 @@ function ProviderPage({
   abilities,
   isDefault,
   checkOnOpen,
+  fetchOnOpen,
+  onProbed,
   onSaved,
   onDeleted,
 }: {
@@ -797,6 +917,10 @@ function ProviderPage({
   isDefault: boolean
   /** Just saved: check the connection at once and say what failed in place. */
   checkOnOpen: boolean
+  /** Opened by 刷新模型列表: list what the service offers now. */
+  fetchOnOpen: boolean
+  /** What a listing from this page found, for the service's row. */
+  onProbed: (failure: ProbeFailure | null) => void
   onSaved: (provider: ProviderSettings) => void
   onDeleted: () => void
 }) {
@@ -817,13 +941,29 @@ function ProviderPage({
   const keyEditable = abilities.keys && !(unconfirmed && abilities.offline)
   const requiresKey = data.presets.find(item => item.id === provider.presetId)?.requiresKey ?? false
   const presenter = trackedPresenter(setWaiting)
-  const probe = useProbe(() => listModels(provider.id))
+  const probe = useProbe(async () => {
+    try {
+      const listed = await listModels(provider.id)
+      onProbed(null)
+      return listed
+    } catch (cause) {
+      onProbed(describeProbeFailure(cause))
+      throw cause
+    }
+  })
   const checked = useRef(false)
   useEffect(() => {
     if (!checkOnOpen || unconfirmed || keyless || checked.current) return
     checked.current = true
     void probe.runCheck()
   }, [checkOnOpen, unconfirmed, keyless, probe])
+
+  const fetched = useRef(false)
+  useEffect(() => {
+    if (!fetchOnOpen || unconfirmed || keyless || fetched.current) return
+    fetched.current = true
+    void probe.fetchModels()
+  }, [fetchOnOpen, unconfirmed, keyless, probe])
 
   /** One change; a confirmation, when the Host asks for one, resends the identical body. Returns the error. */
   const update = async (body: Record<string, unknown>): Promise<string> => {
@@ -1068,7 +1208,7 @@ function ProviderPage({
           apply({ models: [...provider.models, model] })
         }}
       />
-      <SettingsGroup danger>
+      <SettingsGroup>
         {provider.hasKey && (
           <SettingsRow
             title="移除密钥"
@@ -1187,14 +1327,134 @@ function ProviderPage({
   )
 }
 
+const EMPTY_PROVIDERS: ProviderSettings[] = []
+const EMPTY_PRESETS: ProviderPreset[] = []
+
+/** What a service's row says about it: facts it knows, or what the latest listing in this visit found. */
+type Health = ServiceHealth
+
+/** How many services are asked at once; each answer can take up to 20 seconds. */
+const CHECKS_AT_ONCE = 4
+
+/**
+ * 已连接 has to be something the app just saw, not something it assumes from a saved key, so opening the page lists each
+ * usable service's models once. A listing spends no tokens. A new address or key asks again, and a check on a service's
+ * own page counts too, so its row never disagrees with the page.
+ */
+function useServiceHealth(
+  providers: readonly ProviderSettings[],
+  presets: readonly ProviderPreset[],
+): { health: Record<string, Health>; recheck: (id: string) => void; report: (id: string, failure: ProbeFailure | null) => void } {
+  const [health, setHealth] = useState<Record<string, Health>>({})
+  const usable = useMemo(
+    () => providers.filter(provider => provider.enabled && !isUnconfirmed(provider) && !missingKey(provider, presets)),
+    [providers, presets],
+  )
+  const asked = useRef(new Map<string, string>())
+  const questions = useRef(latestQuestions())
+  useEffect(() => {
+    const due = usable.filter(provider => asked.current.get(provider.id) !== provider.baseURL)
+    if (due.length === 0) return
+    for (const provider of due) asked.current.set(provider.id, provider.baseURL)
+    setHealth(current => ({ ...current, ...Object.fromEntries(due.map(provider => [provider.id, 'checking' as const])) }))
+    const queue = due.map(provider => ({ id: provider.id, latest: questions.current.ask(provider.id) }))
+    const next = async (): Promise<void> => {
+      const question = queue.shift()
+      if (!question) return
+      if (question.latest()) {
+        const result = await listModels(question.id).then(
+          () => serviceHealth(null),
+          (cause: unknown) => serviceHealth(describeProbeFailure(cause)),
+        )
+        if (question.latest()) setHealth(current => ({ ...current, [question.id]: result }))
+      }
+      await next()
+    }
+    for (let worker = 0; worker < CHECKS_AT_ONCE; worker++) void next()
+  }, [usable])
+  return {
+    health,
+    recheck: id => {
+      asked.current.delete(id)
+    },
+    report: useCallback((id, failure) => {
+      questions.current.ask(id)
+      setHealth(current => ({ ...current, [id]: serviceHealth(failure) }))
+    }, []),
+  }
+}
+
+/** The state at a service's end: quiet while it works, a red word with the way out when it does not. */
+function ServiceStatus({
+  provider,
+  presets,
+  health,
+  abilities,
+  onUpdateKey,
+}: {
+  provider: ProviderSettings
+  presets: readonly ProviderPreset[]
+  health: Health | undefined
+  abilities: ProviderAbilities
+  onUpdateKey: () => void
+}) {
+  const word = (text: string, tone?: 'err' | 'warn', reason?: string) => (
+    <span className="service-status" data-tone={tone} title={reason}>
+      {text}
+    </span>
+  )
+  if (!provider.enabled) return word('已停用')
+  if (isUnconfirmed(provider)) return word(PROVIDER_COPY.unconfirmedBadge, 'warn', PROVIDER_COPY.unconfirmedRow)
+  const keyAction = (label: string) => (
+    <Button
+      variant="outline"
+      disabled={!abilities.keys}
+      tooltip={abilities.keys ? undefined : PROVIDER_COPY.keyElsewhere}
+      onClick={onUpdateKey}>
+      {label}
+    </Button>
+  )
+  if (missingKey(provider, presets))
+    return (
+      <>
+        {word(PROVIDER_COPY.missingKeyBadge, 'warn')}
+        {keyAction('设置密钥')}
+      </>
+    )
+  switch (health) {
+    case 'key':
+      return (
+        <>
+          {word('密钥无效', 'err')}
+          {keyAction('更新密钥')}
+        </>
+      )
+    case 'unreachable':
+      return word('连不上', 'err')
+    case 'local':
+      return word('等待允许', 'warn')
+    case 'ok':
+      return word('已连接', undefined, PROVIDER_COPY.connectedReason)
+    case 'checking':
+      return word('检测中')
+    default:
+      return null
+  }
+}
+
 export function ProvidersSettings({ snapshot, access, onChanged }: { snapshot: AppSnapshot; access: Access; onChanged: () => void }) {
   const [data, setData] = useState<ProvidersResponse | null>(null)
   const [error, setError] = useState('')
+  const [selection, setSelection] = useState<Selection>(null)
   // A form left for a session (查看会话) opens again where it was.
-  const [selection, setSelection] = useState<Selection>(() => {
+  const [adding, setAdding] = useState<{ preset: ProviderPreset | null } | null>(() => {
     const draft = peekProviderDraft()
-    return draft ? { kind: 'new', preset: draft.preset } : null
+    return draft ? { preset: draft.preset } : null
   })
+  const [sheetFooter, setSheetFooter] = useState<HTMLElement | null>(null)
+  const [addCommitting, setAddCommitting] = useState(false)
+  const [keyFor, setKeyFor] = useState<ProviderSettings | null>(null)
+  const [removing, setRemoving] = useState<ProviderSettings | null>(null)
   const load = useCallback(async (select?: Selection) => {
     try {
       const next = await api<ProvidersResponse>('providers')
@@ -1208,12 +1468,14 @@ export function ProvidersSettings({ snapshot, access, onChanged }: { snapshot: A
   useEffect(() => {
     void load()
   }, [load])
+  const { health, recheck, report } = useServiceHealth(data?.providers ?? EMPTY_PROVIDERS, data?.presets ?? EMPTY_PRESETS)
 
   const abilities = providerAbilities(access, hostView(snapshot)?.presence)
   const external = snapshot.catalog?.providers.filter(provider => provider.kind === 'demo' || provider.kind === 'plugin') ?? []
   const defaultProvider = snapshot.catalog?.defaults.model?.providerId
   const selected = selection?.kind === 'provider' ? data?.providers.find(provider => provider.id === selection.id) : undefined
   const saved = (provider: ProviderSettings, check = false) => {
+    recheck(provider.id)
     onChanged()
     void load({ kind: 'provider', id: provider.id, check })
   }
@@ -1223,7 +1485,7 @@ export function ProvidersSettings({ snapshot, access, onChanged }: { snapshot: A
     void load()
   }
   const addService = () => {
-    setSelection({ kind: 'presets' })
+    setAdding({ preset: null })
   }
   const confirmed = (address: string) => {
     setData(current =>
@@ -1235,79 +1497,119 @@ export function ProvidersSettings({ snapshot, access, onChanged }: { snapshot: A
   }
 
   if (data === null)
-    return (
-      <>
-        <SectionHeading title="模型服务" />
-        {error ? (
-          <InlineNotice
-            tone="error"
-            action={
-              <Button
-                onClick={() => {
-                  void load()
-                }}>
-                重试
-              </Button>
-            }>
-            {error}
-          </InlineNotice>
-        ) : (
-          <Loading />
-        )}
-      </>
+    return error ? (
+      <InlineNotice
+        tone="error"
+        action={
+          <Button
+            onClick={() => {
+              void load()
+            }}>
+            重试
+          </Button>
+        }>
+        {error}
+      </InlineNotice>
+    ) : (
+      <Loading />
     )
 
+  const local = (provider: ProviderSettings) => data.presets.find(preset => preset.id === provider.presetId)?.requiresKey === false
   const main = (
     <>
-      <SectionHeading
-        title="模型服务"
-        description="Latch 内置通过这些服务调用模型。Agent 成员通常自带模型与登录。"
-        action={
-          <Button icon={Plus} onClick={addService}>
-            添加服务…
-          </Button>
-        }
-      />
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
-      <SettingsGroup title="模型服务" meta={data.providers.length ? `${data.providers.length} 个服务` : undefined}>
+      <SettingsGroup
+        title="服务"
+        meta={
+          <Button variant="outline" icon={Plus} onClick={addService}>
+            添加服务
+          </Button>
+        }>
         {data.providers.length === 0 ? (
-          <NavRow
-            leading={<IconTile icon={Plus} />}
-            title="还没有模型服务"
-            description="添加一个后，Latch 内置即可使用它"
-            value="选择服务"
-            onClick={addService}
-          />
+          <SettingsRow title="还没有模型服务" description="添加一个后，Latch 引擎就能用它" />
         ) : (
           data.providers.map(provider => (
-            <NavRow
+            <ObjectRow
               key={provider.id}
               className="provider-row"
+              label={`编辑 ${provider.name}`}
               leading={<ProviderTile provider={provider} size={24} />}
-              record
-              dim={!provider.enabled || isUnconfirmed(provider) || missingKey(provider, data.presets)}
+              dim={!provider.enabled}
               title={
                 <span className="settings-row-name">
                   {provider.name}
-                  {defaultProvider === provider.id && <Badge>默认</Badge>}
-                  {isUnconfirmed(provider) ? (
-                    <Badge tone="warn">{PROVIDER_COPY.unconfirmedBadge}</Badge>
-                  ) : (
-                    missingKey(provider, data.presets) && <Badge tone="warn">{PROVIDER_COPY.missingKeyBadge}</Badge>
-                  )}
+                  {local(provider) && <span className="settings-row-note">本地</span>}
+                  {defaultProvider === provider.id && <span className="settings-row-note">默认</span>}
                 </span>
               }
-              description={
-                isUnconfirmed(provider)
-                  ? `${hostOf(provider.baseURL)} · ${PROVIDER_COPY.unconfirmedRow}`
-                  : missingKey(provider, data.presets)
-                    ? `${hostOf(provider.baseURL)} · ${PROVIDER_COPY.missingKeyRow}`
-                    : `${hostOf(provider.baseURL)} · ${provider.models.length} 个模型`
-              }
-              value={provider.enabled ? undefined : '已停用'}
-              onClick={() => {
+              description={`${provider.models.length} 个模型`}
+              onOpen={() => {
                 setSelection({ kind: 'provider', id: provider.id })
               }}
+              trailing={
+                <>
+                  <ServiceStatus
+                    provider={provider}
+                    presets={data.presets}
+                    health={health[provider.id]}
+                    abilities={abilities}
+                    onUpdateKey={() => {
+                      setKeyFor(provider)
+                    }}
+                  />
+                  <Menu
+                    label={`${provider.name} 的操作`}
+                    align="end"
+                    sections={[
+                      {
+                        id: 'service',
+                        items: [
+                          {
+                            id: 'edit',
+                            label: '编辑…',
+                            icon: Pencil,
+                            onSelect: () => {
+                              setSelection({ kind: 'provider', id: provider.id })
+                            },
+                          },
+                          {
+                            id: 'key',
+                            label: '更新密钥…',
+                            icon: KeyRound,
+                            ...(abilities.keys ? {} : { disabledReason: PROVIDER_COPY.keyElsewhere }),
+                            onSelect: () => {
+                              setKeyFor(provider)
+                            },
+                          },
+                          {
+                            id: 'models',
+                            label: '刷新模型列表',
+                            icon: ListRestart,
+                            onSelect: () => {
+                              setSelection({ kind: 'provider', id: provider.id, fetch: true })
+                            },
+                          },
+                        ],
+                      },
+                      {
+                        id: 'danger',
+                        items: [
+                          {
+                            id: 'remove',
+                            label: '移除…',
+                            icon: Trash,
+                            danger: true,
+                            onSelect: () => {
+                              setRemoving(provider)
+                            },
+                          },
+                        ],
+                      },
+                    ]}
+                    trigger={moreButton(`${provider.name} 的操作`)}
+                  />
+                </>
+              }
             />
           ))
         )}
@@ -1331,56 +1633,113 @@ export function ProvidersSettings({ snapshot, access, onChanged }: { snapshot: A
           ))}
         </SettingsGroup>
       )}
+      {snapshot.catalog?.features?.usage && <UsageSettings catalog={snapshot.catalog} />}
+      {snapshot.catalog && <ModelVisibilitySettings catalog={snapshot.catalog} />}
+      <Dialog
+        open={adding !== null}
+        size="sheet"
+        title="添加服务"
+        onClose={() => {
+          if (!addCommitting) setAdding(null)
+        }}
+        footer={
+          adding?.preset ? (
+            <div ref={setSheetFooter} className="provider-sheet-footer" />
+          ) : (
+            <Button
+              size="md"
+              onClick={() => {
+                setAdding(null)
+              }}>
+              取消
+            </Button>
+          )
+        }>
+        {adding && (
+          <div className="provider-sheet">
+            <PresetGrid
+              presets={data.presets}
+              chosen={adding.preset?.id}
+              disabled={addCommitting}
+              onPick={preset => {
+                setAdding({ preset })
+              }}
+            />
+            {adding.preset && (
+              <ProviderAddForm
+                key={adding.preset.id}
+                preset={adding.preset}
+                data={data}
+                abilities={abilities}
+                footer={sheetFooter}
+                onBusy={setAddCommitting}
+                onConfirmed={confirmed}
+                onSaved={() => {
+                  setAdding(null)
+                  onChanged()
+                  void load()
+                }}
+                onCancel={() => {
+                  if (!addCommitting) setAdding(null)
+                }}
+              />
+            )}
+          </div>
+        )}
+      </Dialog>
+      <FieldDialog
+        open={keyFor !== null}
+        title={keyFor?.hasKey ? '更新密钥' : '设置密钥'}
+        subtitle={keyFor && keyScopeOf(keyFor.baseURL) ? `密钥只发往 ${shownAddress(keyScopeOf(keyFor.baseURL)!)}` : undefined}
+        note={keyFor && isUnconfirmed(keyFor) && abilities.confirm ? '保存时要用 Touch ID 确认这个地址' : undefined}
+        label="API Key"
+        type="password"
+        placeholder="输入密钥"
+        hint={PROVIDER_COPY.keyHeld}
+        confirmLabel={keyFor && isUnconfirmed(keyFor) && abilities.confirm ? '用 Touch ID 保存' : '保存'}
+        onSubmit={async value => {
+          if (!keyFor) return ''
+          try {
+            await updateProvider(keyFor.id, {
+              apiKey: value,
+              ...(isUnconfirmed(keyFor) && abilities.confirm ? { confirmOrigin: true } : {}),
+            })
+            recheck(keyFor.id)
+            onChanged()
+            await load()
+            return ''
+          } catch (cause) {
+            return inlineError(cause)
+          }
+        }}
+        onClose={() => {
+          setKeyFor(null)
+        }}
+      />
+      {removing && (
+        <ConfirmDialog
+          title={`移除「${removing.name}」？`}
+          danger
+          confirmLabel="移除"
+          message="它保存的密钥一起删除；正在使用它的会话要换用其他模型。"
+          onClose={() => {
+            setRemoving(null)
+          }}
+          onConfirm={async () => {
+            try {
+              await api(`providers/${encodeURIComponent(removing.id)}`, { method: 'DELETE' })
+            } catch (cause) {
+              throw new Error(errorMessage(cause), { cause })
+            }
+            deleted()
+          }}
+        />
+      )}
     </>
   )
 
-  const presetsLevel: SettingsLevel = {
-    key: 'presets',
-    title: '选择服务',
-    onBack: () => {
-      setSelection(null)
-    },
-    content: (
-      <>
-        <SectionHeading title="选择服务" description="预设会填好 API 地址；之后填写密钥并获取模型。" />
-        <PresetGrid
-          presets={data.presets}
-          onPick={preset => {
-            setSelection({ kind: 'new', preset })
-          }}
-        />
-      </>
-    ),
-  }
   const levels: SettingsLevel[] = []
   const notice: ReactNode = error ? <InlineNotice tone="error">{error}</InlineNotice> : null
-  if (selection?.kind === 'presets') levels.push(presetsLevel)
-  if (selection?.kind === 'new')
-    levels.push(presetsLevel, {
-      key: `new:${selection.preset.id}`,
-      title: `添加 ${selection.preset.name}`,
-      onBack: () => {
-        setSelection({ kind: 'presets' })
-      },
-      content: (
-        <>
-          {notice}
-          <ProviderAddForm
-            key={selection.preset.id}
-            preset={selection.preset}
-            data={data}
-            abilities={abilities}
-            onConfirmed={confirmed}
-            onSaved={(provider, check) => {
-              saved(provider, check)
-            }}
-            onCancel={() => {
-              setSelection({ kind: 'presets' })
-            }}
-          />
-        </>
-      ),
-    })
   if (selected)
     levels.push({
       key: `provider:${selected.id}`,
@@ -1399,6 +1758,10 @@ export function ProvidersSettings({ snapshot, access, onChanged }: { snapshot: A
             abilities={abilities}
             isDefault={defaultProvider === selected.id}
             checkOnOpen={selection?.kind === 'provider' && selection.check === true}
+            fetchOnOpen={selection?.kind === 'provider' && selection.fetch === true}
+            onProbed={failure => {
+              report(selected.id, failure)
+            }}
             onSaved={provider => {
               saved(provider)
             }}
