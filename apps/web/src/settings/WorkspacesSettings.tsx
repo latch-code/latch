@@ -337,11 +337,7 @@ export function WorkspacesSettings({
                   className="project-row"
                   label="默认文件夹"
                   leading={<IconTile icon={Folder} />}
-                  title={
-                    <span className="settings-row-name">
-                      默认文件夹
-                    </span>
-                  }
+                  title={<span className="settings-row-name">默认文件夹</span>}
                   description={<MiddleEllipsis text={escapeSecurityText(start.path)} />}
                   trailing={
                     folders ? (

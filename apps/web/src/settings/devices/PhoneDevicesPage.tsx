@@ -545,10 +545,7 @@ export function PhoneDevicesPage({ snapshot, access, onChanged }: { snapshot: Ap
       <span className="pair-glyph" aria-hidden="true">
         <Icon icon={deviceIcon({ listener: 'native-direct', name: '' })} size={20} />
       </span>
-      <EmptyState
-        title={COPY.empty}
-        description={canPair ? COPY.emptyBody : COPY.pairElsewhere}
-      />
+      <EmptyState title={COPY.empty} description={canPair ? COPY.emptyBody : COPY.pairElsewhere} />
     </div>
   )
   const detail = selected && (
