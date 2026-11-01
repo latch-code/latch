@@ -33,8 +33,8 @@ import { messageTime } from '../format.ts'
 import { FileSession } from './FileChip.tsx'
 import { FileReferences } from './FileReferences.tsx'
 import { AuthorLine, MessageRow, ThinkingRow, type LiveReasoning } from './MessageRow.tsx'
-import { ToolCard, type ApprovalGateFor, type DecideHandler } from './ToolCard.tsx'
-import { QuestionCard, QuestionResultCard, type QuestionActions } from './QuestionCard.tsx'
+import { ToolCard } from './ToolCard.tsx'
+import { QuestionResultCard } from '../composer/QuestionDrawer.tsx'
 import { TurnFooter, type TurnRetry } from './TurnFooter.tsx'
 import { VisibleText } from './VisibleText.tsx'
 import { transcriptMarkdown } from '../exportMarkdown.ts'
@@ -55,38 +55,23 @@ interface RowContext {
   sessionId: string
   approvals: readonly Approval[]
   questions: readonly Question[]
-  busy: ReadonlyMap<string, string>
-  onDecide: DecideHandler
-  gateFor?: ApprovalGateFor
   /** The reply streaming in this turn, under the ID it keeps once committed. */
   streamingId?: string
   liveReasoning?: LiveReasoning
   coarse: boolean
-  questionActions?: QuestionActions
   /** The connection is down: rows stop spinning and ticking. */
   frozen: boolean
 }
 
 function ToolRow({ message, context, onRetry }: { message: Message; context: RowContext; onRetry?: (() => void) | undefined }) {
   const approval = context.approvals.find(item => toolRowId(item) === message.id)
-  return (
-    <ToolCard
-      message={message}
-      approval={approval}
-      busy={approval ? context.busy.get(approval.id) : undefined}
-      onDecide={context.onDecide}
-      gateFor={context.gateFor}
-      onRetry={onRetry}
-      frozen={context.frozen}
-    />
-  )
+  return <ToolCard message={message} approval={approval} onRetry={onRetry} frozen={context.frozen} />
 }
 
-/** A question in reading order: its card while it waits, then the record of what was chosen. */
+/** A question in reading order: it is answered in the drawer above the composer, and then this is the record of what was chosen. */
 function QuestionRow({ message, context }: { message: Message; context: RowContext }) {
   const question = context.questions.find(item => `tool:${item.toolCallId}` === message.id)
-  if (question && context.questionActions)
-    return <QuestionCard question={question} sessionId={context.sessionId} actions={context.questionActions} />
+  if (question) return null
   if (message.state === 'completed' && message.text.startsWith('{"kind":"latch.question-result"'))
     return <QuestionResultCard text={message.text} />
   return <ToolRow message={message} context={context} />
@@ -158,7 +143,6 @@ interface TurnViewProps {
   outcome?: TurnOutcome
   /** The page saw this turn arrive: its prompt rises in. */
   arrived: boolean
-  standalone: readonly Approval[]
   status?: StatusLineProps
   /** How far the prompt has got, while the agent has not answered. */
   delivery?: string
@@ -204,7 +188,6 @@ function sameTurnProps(a: TurnViewProps, b: TurnViewProps): boolean {
 }
 
 const NONE: readonly never[] = []
-const NO_BUSY: ReadonlyMap<string, string> = new Map()
 
 /** Why a turn did not simply finish, on a line that stays: a failed one in red with 重试, a stopped one quietly. */
 function OutcomeRecord({ turn, outcome, onRetry }: { turn: Turn; outcome: TurnOutcome; onRetry?: (() => void) | undefined }) {
@@ -240,7 +223,6 @@ const TurnView = memo(function TurnView({
   latest,
   outcome,
   arrived,
-  standalone,
   status,
   delivery,
   summary,
@@ -272,7 +254,7 @@ const TurnView = memo(function TurnView({
   )
   const outputs = recorded && !recorded.outputsPending ? recorded : undefined
   const hasOutputs = !!(recorded?.outputs?.length || recorded?.outputsTruncated || recorded?.outputsUnavailable)
-  const hasReply = turn.replies.length > 0 || trailingLive || standalone.length > 0 || hasOutputs
+  const hasReply = turn.replies.length > 0 || trailingLive || hasOutputs
   // The reply's author line and first block fade in when the page saw them appear, not after a load or a switch.
   const replyBefore = useLivePrevious(hasReply)
   const replyArrived = hasReply && (arrived || replyBefore === false)
@@ -367,17 +349,6 @@ const TurnView = memo(function TurnView({
               </Collapse>
             )
           })}
-          {standalone.map(approval => (
-            <ToolCard
-              key={approval.id}
-              message={null}
-              approval={approval}
-              busy={rowContext.busy.get(approval.id)}
-              onDecide={rowContext.onDecide}
-              gateFor={rowContext.gateFor}
-              frozen={rowContext.frozen}
-            />
-          ))}
           {!trailingLive && (
             <TurnCards
               sessionId={rowContext.sessionId}
@@ -469,9 +440,6 @@ const TurnView = memo(function TurnView({
 export function Transcript({
   detail,
   approvals,
-  busy,
-  onDecide,
-  gateFor,
   harnessName,
   harness,
   personal = false,
@@ -487,15 +455,11 @@ export function Transcript({
   onCopyError,
   onStop,
   onReveal,
-  questionActions,
   changes,
 }: {
   detail: TaskDetail
   approvals: Approval[]
-  busy: ReadonlyMap<string, string>
-  onDecide: DecideHandler
   /** This device's approval buttons; omitted, every offered option is shown. */
-  gateFor?: ApprovalGateFor
   harnessName: string
   /** The session's harness, for the tile on each turn's author line. */
   harness?: Pick<HarnessInfo, 'id' | 'source'>
@@ -522,7 +486,6 @@ export function Transcript({
   onStop?: () => void
   /** Brings a row into view, for what the status line points at. */
   onReveal?: (messageId: string) => void
-  questionActions?: QuestionActions
   /** The Host's per-turn records and what this device may do with them. */
   changes?: Pick<TurnSummaryOptionsValue, 'undo'> & { enabled: boolean }
 }) {
@@ -532,12 +495,7 @@ export function Transcript({
   const turns = stableTurns(lastTurns.current, turnsOf(messages))
   lastTurns.current = turns
   const ids = new Set(messages.map(message => message.id))
-  const standalone = approvals.filter(approval => {
-    const id = toolRowId(approval)
-    return id === undefined || !ids.has(id)
-  })
   const liveId = isLive(detail) ? liveMessageId(detail) : undefined
-  const decide = useStableCallback<Parameters<DecideHandler>, ReturnType<DecideHandler>>((...args) => onDecide(...args))
   const forkFrom = useStableCallback((messageId: string) => onFork?.(messageId))
   const copyUpTo = useStableCallback((messageId: string) => {
     const index = detail.messages.findIndex(message => message.id === messageId)
@@ -629,7 +587,6 @@ export function Transcript({
             const ownQuestions = detail.questions?.length
               ? detail.questions.filter(question => rowIds.includes(`tool:${question.toolCallId}`))
               : NONE
-            const asks = ownApprovals.length > 0 || (latest && standalone.length > 0)
             const streaming = liveId !== undefined && turn.replies.some(message => message.id === liveId)
             const stamped = turnModel(turn)
             const providerId = stamped?.model ? stamped.providerId : trailingLive ? detail.summary.providerId : undefined
@@ -643,13 +600,9 @@ export function Transcript({
                   sessionId,
                   approvals: ownApprovals,
                   questions: ownQuestions,
-                  busy: asks ? busy : NO_BUSY,
-                  onDecide: decide,
-                  ...(asks && gateFor ? { gateFor } : {}),
                   ...(streaming ? { streamingId: liveId } : {}),
                   ...(streaming ? { liveReasoning: { startedAt: detail.liveReasoningStartedAt, ms: detail.liveReasoningMs } } : {}),
                   coarse,
-                  ...(ownQuestions.length > 0 && questionActions ? { questionActions } : {}),
                   frozen: frozen && trailingLive,
                 }}
                 author={author}
@@ -662,7 +615,6 @@ export function Transcript({
                 trailingLive={trailingLive}
                 outcome={outcome}
                 arrived={latest && previousLast !== undefined && previousLast !== lastKey}
-                standalone={latest ? standalone : NONE}
                 {...(trailingLive ? { status: statusProps } : {})}
                 {...(delivery ? { delivery } : {})}
                 {...(latest ? { summary: detail.summary } : {})}
@@ -681,22 +633,6 @@ export function Transcript({
               />
             )
           })}
-          {turns.length === 0 && standalone.length > 0 && (
-            <div className="turn">
-              <div className="turn-reply">
-                {standalone.map(approval => (
-                  <ToolCard
-                    key={approval.id}
-                    message={null}
-                    approval={approval}
-                    busy={busy.get(approval.id)}
-                    onDecide={onDecide}
-                    gateFor={gateFor}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
         </FileReferences>
       </TurnSummaryOptions.Provider>
     </FileSession.Provider>

@@ -136,7 +136,7 @@ it.each([
       const approvals = pending.flatMap(detail => detail.approvals).toSorted((a, b) => a.requestedAt.localeCompare(b.requestedAt))
       for (const approval of [...approvals, approvals[0]!]) {
         await page.keyboard.press('Alt+Shift+a')
-        const card = page.locator(`.transcript [data-approval-id="${approval.id}"]`)
+        const card = page.locator(`.transcript [data-message-id="tool:${approval.toolCallId}"]`)
         await card.waitFor({ state: 'visible' })
         await expect
           .poll(() => card.evaluate(element => element === document.activeElement && element.hasAttribute('data-approval-target')))
@@ -147,7 +147,8 @@ it.each([
       }
       await mkdir('test-results/workbench-keyboard', { recursive: true })
       await page.screenshot({ path: `test-results/workbench-keyboard/approval-${width}-${theme}.png`, animations: 'disabled' })
-      expect(await input.inputValue()).toBe('')
+      // The input of a session waiting on a request is named for what typing does there.
+      expect(await page.locator('.composer textarea').inputValue()).toBe('')
       await choose(page, neutral.summary.title)
       expect(await input.inputValue()).toBe(draft)
 

@@ -2,14 +2,13 @@ import { useFileMentions, type FileMentionChoice } from '../hooks/useFileMention
 import type { AttachmentDraftController } from '../hooks/useAttachments.ts'
 import { AttachmentButton, AttachmentDrafts, pasteAttachments, dropAttachments } from './AttachmentDrafts.tsx'
 import { useLayoutEffect, useRef, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
-import { ArrowUp, LockKeyhole } from 'lucide-react'
+import { ArrowUp, ListPlus, LockKeyhole } from 'lucide-react'
 import type { PromptTemplate, SessionCommand } from '@latch/protocol'
 import type { PendingSubmission } from '../core/api.ts'
 import type { SendKey } from '../preferences.ts'
-import { DECISION_COPY } from '../core/securityCopy.ts'
 import { escapeIsLeftover } from '../escapeGrace.ts'
 import { SlashCommands, useSlashCommands } from './SlashCommands.tsx'
-import { VisibleText } from './VisibleText.tsx'
+import { FooterFoldContext, useFooterFold } from './useFooterFold.ts'
 import { Button, Collapse, EASING, ICON_STROKE, InlineNotice, MOTION, Spinner, Swap, Tooltip, useLiveChange } from '@latch/ui'
 
 /**
@@ -23,17 +22,17 @@ export interface RunState {
 }
 
 const isMac = () => typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
-/** Ten lines of body text plus padding; the transcript keeps the remaining height. */
-const MAX_TEXTAREA = 292
+/** Eight lines of body text plus padding; the transcript keeps the remaining height. */
+const MAX_TEXTAREA = 232
 
 /**
- * The message input, on the new-session page and docked under a conversation. The input stays editable while a run
- * is active so the next message can be drafted; a Host that supports queues accepts the next input for later.
- * Its ring turns line-strong with focus inside, never blue. The send slot is the one blue control: an arrow (a neutral
- * fill while there is nothing to send, still focusable with its reason as its tooltip), or, for a session that needs
- * the local confirmation to start, a button that says so. While a run is active the slot is the stop button, which is
- * never red. A device that may only watch sees a dashed, sunken frame with a lock and the reason instead of the
- * input; the bar above it and the stop button stay.
+ * The message input, on the new-session page and docked under a conversation, with its drawers attached above the
+ * card. The input stays editable while a run is active so the next message can be drafted; a Host that supports queues
+ * accepts the next input for later. Its ring turns line-strong with focus inside, never blue. The send slot is the one
+ * blue control: an arrow (a neutral fill while there is nothing to send, still focusable with its reason as its
+ * tooltip), 排队 while a run is active and there is text, or the stop circle, which is never red and steps back while an
+ * approval waits. A device that may only watch sees a dashed, sunken frame with a lock and the reason instead of the
+ * input; the drawers and the stop button stay.
  */
 export function Composer({
   textareaRef,
@@ -56,9 +55,10 @@ export function Composer({
   controls,
   run,
   readOnly,
-  hint,
   answer,
-  confirmStart,
+  meta,
+  drawers,
+  stepBack = false,
   below,
   inline = false,
   confirmation,
@@ -94,15 +94,18 @@ export function Composer({
   run?: RunState
   /** This device may watch, reject and cancel but not type: the text replaces the input. */
   readOnly?: string
-  /** A plain line under the input, such as where the text will go after 拒绝. */
-  hint?: string
   /**
-   * The input answers an approval (「告诉 Agent 改做什么」 after 拒绝): sending works while the run waits and with no text,
-   * the button reads `label`, and Esc leaves it without deciding.
+   * The input answers what a drawer waits on, so what is written goes there and not to the queue. `reject`: an approval;
+   * the slot stays the stop circle, and Enter sends only with text. `question`: with text the slot is send; with none it
+   * stays the stop circle, since nothing else stops a run that waits on a question.
    */
-  answer?: { label: string; onSubmit: () => void; onCancel: () => void }
-  /** Sending starts a session that the local confirmation must allow first: the slot says so in words. */
-  confirmStart?: string
+  answer?: { kind: 'reject' | 'question'; onSubmit: () => void }
+  /** The footer's right side, before send: the branch, usage and 「⋯」. */
+  meta?: ReactNode
+  /** Attached above the card: the approval, question, queue and notice drawers. */
+  drawers?: ReactNode
+  /** The stop circle gives way to what a drawer asks. */
+  stepBack?: boolean
   /** Under the input, outside its frame: the context row and captions of a new session. */
   below?: ReactNode
   /** Phone session: input and action share a row; options sit above it. */
@@ -111,8 +114,10 @@ export function Composer({
   confirmation?: ReactNode
 }) {
   const box = useRef<HTMLDivElement>(null)
+  const footer = useRef<HTMLDivElement>(null)
+  const fold = useFooterFold(footer)
   const mentions = useFileMentions(draft, onDraft, textareaRef, fileMentions)
-  // The input grows with its content a line at a time, up to ten lines, its height moving over 120ms (composer.css).
+  // The input grows with its content a line at a time, up to eight lines, its height moving over 120ms (composer.css).
   // Measuring needs the height let go for a moment; it is put back without a transition, so the move then starts from
   // the height the input had and not from the measurement.
   useLayoutEffect(() => {
@@ -138,7 +143,7 @@ export function Composer({
     && !fileMentions?.refs.length
     && answer === undefined
     && readOnly === undefined
-  const sendable = !locked && readOnly === undefined && (answer !== undefined || (canSend && !empty && (!run || queueDraft)))
+  const sendable = !locked && readOnly === undefined && (answer !== undefined ? !empty : canSend && !empty && (!run || queueDraft))
   const submit = answer?.onSubmit ?? onSubmit
   const escapeAt = useRef({ at: 0, run: run?.id })
   const slash = useSlashCommands({
@@ -156,11 +161,8 @@ export function Composer({
     if (mentions.keydown(event)) return
     if (event.nativeEvent.isComposing || event.keyCode === 229) return
     if (event.key === 'Escape' && escapeIsLeftover(event)) return
-    if (answer && event.key === 'Escape' && !event.nativeEvent.isComposing) {
-      event.preventDefault()
-      answer.onCancel()
-      return
-    }
+    // Esc belongs to the approval drawer while one waits (it refuses once), or to the text just written.
+    if (event.key === 'Escape' && answer?.kind === 'reject') return
     if (event.key === 'Escape' && run?.cancel === 'idle') {
       const now = performance.now()
       if (escapeAt.current.at && escapeAt.current.run === run.id && now - escapeAt.current.at <= 500) {
@@ -197,17 +199,8 @@ export function Composer({
 
   // The slot's control swaps in (from 90%, fading in) when the page sees it change: a run starting or ending, or a
   // harness chosen that starts with the local confirmation.
-  const slot = answer
-    ? 'answer'
-    : run && !queueDraft
-      ? 'stop'
-      : queueDraft
-        ? 'queue'
-        : readOnly !== undefined
-          ? 'none'
-          : confirmStart !== undefined
-            ? 'start'
-            : 'send'
+  const answering = answer?.kind === 'question' && !empty
+  const slot = answering ? 'send' : run && !queueDraft ? 'stop' : queueDraft ? 'queue' : readOnly !== undefined ? 'none' : 'send'
   useLiveChange(slot, (_previous, live) => {
     const element = box.current?.querySelector<HTMLElement>('.composer-slot > *')
     if (live && element)
@@ -235,7 +228,7 @@ export function Composer({
         aria-activedescendant={slash.open && slash.options[slash.active] ? slash.id + '-' + slash.active : undefined}
         placeholder={placeholder}
         value={draft}
-        rows={variant === 'sheet' ? 5 : variant === 'new' ? 3 : 1}
+        rows={variant === 'sheet' ? 5 : inline ? 1 : 2}
         disabled={locked}
         onChange={event => {
           mentions.setCaret(event.target.selectionStart)
@@ -248,52 +241,42 @@ export function Composer({
     )
   const action = (
     <div className="composer-slot" data-queue-draft={queueDraft ? '' : undefined}>
-      {queueDraft && run && <StopButton run={run} />}
+      {/* Touch has no Esc: stop stays beside 排队 and an answer's send there. */}
+      {(queueDraft || answering) && run && coarse && <StopButton run={run} stepBack={stepBack} />}
       {attachments?.preparing ? (
         <Button size="sm" onClick={attachments.cancel}>
           <Spinner size={14} />
           取消发送
         </Button>
-      ) : answer ? (
-        <span className="composer-answer">
-          <Button size="sm" variant="ghost" onClick={answer.onCancel}>
-            {DECISION_COPY.noteCancel}
-          </Button>
-          <Button type="submit" size="sm" variant="secondary" disabled={!sendable}>
-            {answer.label}
-          </Button>
-        </span>
-      ) : run && !queueDraft ? (
-        <StopButton run={run} />
-      ) : readOnly !== undefined ? null : confirmStart !== undefined ? (
-        <Button
-          type="submit"
-          variant="primary"
-          size="md"
-          icon={LockKeyhole}
-          className="start-button"
-          loading={sending}
-          disabled={!sendable}
-          tooltip={sendTip}
-          shortcut={sendTip === undefined ? shortcut : undefined}>
-          {confirmStart}
-        </Button>
-      ) : (
-        <Tooltip
-          content={sendTip ?? '发送'}
-          shortcut={sendTip === undefined || queueDraft ? shortcut : undefined}
-          describe={sendTip !== undefined}>
+      ) : run && !queueDraft && !answering ? (
+        <StopButton run={run} stepBack={stepBack} />
+      ) : queueDraft ? (
+        <Tooltip content={sendTip ?? '排队'} shortcut={sendTip === undefined ? shortcut : undefined} describe={sendTip !== undefined}>
+          <button
+            type="submit"
+            className="send-button queue-button"
+            aria-label="排队发送"
+            aria-disabled={!sendable || undefined}
+            onClick={event => {
+              if (!sendable) event.preventDefault()
+            }}>
+            <ListPlus size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+            排队
+          </button>
+        </Tooltip>
+      ) : readOnly !== undefined ? null : (
+        <Tooltip content={sendTip ?? '发送'} shortcut={sendTip === undefined ? shortcut : undefined} describe={sendTip !== undefined}>
           <button
             type="submit"
             className="send-button"
-            aria-label={queueDraft ? '排队发送' : '发送'}
+            aria-label="发送"
             aria-disabled={!sendable || undefined}
             aria-busy={sending || undefined}
             onClick={event => {
               if (!sendable) event.preventDefault()
             }}>
             <Swap value={sending ? 'sending' : 'idle'}>
-              {sending ? <Spinner size={16} /> : <ArrowUp size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />}
+              {sending ? <Spinner size={14} /> : <ArrowUp size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />}
             </Swap>
           </button>
         </Tooltip>
@@ -314,7 +297,7 @@ export function Composer({
           <Button onClick={onRetry}>重试这次提交</Button>
         </div>
       )}
-      {inline && controls && <div className="composer-above">{controls}</div>}
+      {drawers && <div className="composer-drawers">{drawers}</div>}
       <form
         className={`composer ${run ? 'is-running' : ''}`}
         data-inline={inline ? '' : undefined}
@@ -372,37 +355,37 @@ export function Composer({
         )}
         {variant === 'sheet' && attachments && <AttachmentButton controller={attachments} disabled={locked} />}
         {!inline && variant !== 'sheet' && (
-          <div className="composer-toolbar">
-            <div className="composer-controls">
-              {attachments && <AttachmentButton controller={attachments} disabled={locked} />}
-              {controls}
+          <FooterFoldContext.Provider value={fold}>
+            <div className="composer-toolbar" ref={footer} data-fold={fold}>
+              <div className="composer-controls">
+                {attachments && <AttachmentButton controller={attachments} disabled={locked} />}
+                {controls}
+              </div>
+              {meta && <div className="composer-meta">{meta}</div>}
+              {action}
             </div>
-            {action}
-          </div>
+          </FooterFoldContext.Provider>
         )}
       </form>
+      {inline && controls && <div className="composer-chips">{controls}</div>}
       {below}
-      {hint && readOnly === undefined && (
-        <p className="composer-hint" role="note">
-          {hint}
-        </p>
-      )}
     </div>
   )
 }
 
 /**
- * Stop, in the send slot while a run is active: a raised circle with a line-strong edge and a filled square. While
- * the stop is being confirmed it turns and takes no presses. When its outcome is unknown it stays the square and stops
- * again when pressed; the bar above says so, with 重试, once.
+ * Stop, in the send slot while a run is active: a dark circle with a small square, stepping back to a neutral fill while
+ * an approval waits. While the stop is being confirmed it turns and takes no presses. When its outcome is unknown it
+ * stays the square and stops again when pressed; the bar above says so, with 重试, once.
  */
-function StopButton({ run }: { run: RunState }) {
+function StopButton({ run, stepBack }: { run: RunState; stepBack: boolean }) {
   const cancelling = run.cancel === 'cancelling'
   return (
-    <Tooltip content={cancelling ? '正在停止…' : '停止'} describe={false}>
+    <Tooltip content={cancelling ? '正在停止…' : '停止'} shortcut={cancelling ? undefined : 'Esc Esc'} describe={false}>
       <button
         type="button"
         className="send-button stop-button"
+        data-step-back={stepBack ? '' : undefined}
         aria-label="停止"
         aria-disabled={cancelling || undefined}
         aria-busy={cancelling || undefined}

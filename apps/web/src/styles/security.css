@@ -184,14 +184,8 @@
   translate: none !important;
   rotate: none !important;
 }
-/* What is hidden or dimmed on purpose stays so: the key hint until the card holds focus, a folded preview, a
- * disabled field or menu item, and the countdown's remaining share. */
-[data-secure] .approval-keys {
-  opacity: 0 !important;
-}
-[data-secure] .approval-panel:focus-within .approval-keys {
-  opacity: 1 !important;
-}
+/* What is hidden or dimmed on purpose stays so: a folded preview, a disabled field or menu item, and the countdown's
+ * remaining share. */
 [data-secure] .approval-preview:not([data-open]) > .approval-preview-inner {
   opacity: 0 !important;
 }
@@ -214,9 +208,6 @@
 @media (max-width: 767.98px) {
   [data-secure] .diff-line > .diff-ln.diff-ln-old,
   [data-secure] .diff-line > .diff-ln.diff-ln-new,
-  .tool-card.has-approval .tool-card-name {
-    display: none !important;
-  }
   [data-secure] .diff-line > .diff-ln.diff-ln-one {
     display: block !important;
   }
@@ -467,7 +458,6 @@
   }
   .approval-preview,
   .approval-preview[data-open],
-  .approval-toggle .chevron,
   .pair-toggle .chevron,
   .presence-track > i {
     transition: none;

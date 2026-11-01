@@ -104,16 +104,11 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           await page.waitForFunction(value => innerWidth === value, width)
           await page.emulateMedia({ colorScheme: width === 900 ? 'dark' : 'light' })
           await modelPicker.click()
-          await page
-            .locator('.ui-popover:popover-open,dialog[open]')
-            .getByRole('button', { name: /^Effort：/u })
-            .click()
           const effort = width === 900 ? 'Low' : 'High'
           await page.getByRole('radio', { name: effort, exact: true }).click()
           await expect
             .poll(async () => (await owner.json<TaskDetail>('tasks/' + sessionId)).config?.find(item => item.id === 'effort')?.currentValue)
             .toBe(effort.toLowerCase())
-          await page.getByRole('dialog', { name: 'Effort', exact: true }).waitFor({ state: 'hidden' })
           await expect.poll(() => modelPicker.getAttribute('aria-busy')).not.toBe('true')
           if (width === 390)
             await page.getByRole('dialog', { name: 'Model', exact: true }).getByRole('button', { name: '取消', exact: true }).click()

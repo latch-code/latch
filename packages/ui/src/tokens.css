@@ -146,6 +146,8 @@
     --lh-title: 28px;
     --fs-hero: 24px;
     --lh-hero: 32px;
+    --fs-question: 28px;
+    --lh-question: 36px;
     --fs-mono: 12px;
     --lh-mono: 18px;
     --fs-code: 12px;
@@ -254,6 +256,8 @@
       --fs-title: 17px;
       --lh-title: 24px;
       --fs-hero: 22px;
+      --fs-question: 24px;
+      --lh-question: 32px;
       --lh-hero: 30px;
       --gutter: 16px;
       --topbar-height: 52px;
@@ -492,6 +496,8 @@
     --lh-title: 28px !important;
     --fs-hero: 24px !important;
     --lh-hero: 32px !important;
+    --fs-question: 28px !important;
+    --lh-question: 36px !important;
     --fs-mono: 12px !important;
     --lh-mono: 18px !important;
     --fs-code: 12px !important;
@@ -541,6 +547,8 @@
       --fs-title: 17px !important;
       --lh-title: 24px !important;
       --fs-hero: 22px !important;
+      --fs-question: 24px !important;
+      --lh-question: 32px !important;
       --lh-hero: 30px !important;
     }
   }

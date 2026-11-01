@@ -1329,6 +1329,8 @@ export class AcpBridge implements Bridge {
       verifiedDefinition: this.selection.verified,
       approvals: this.profile?.approvals ?? 'prompts',
       ...(expected !== undefined ? { expectedMode: expected } : {}),
+      ...(this.profile?.expectedMode !== undefined ? { defaultMode: this.profile.expectedMode } : {}),
+      ...(this.profile?.neverAskModes ? { neverAskModes: [...this.profile.neverAskModes] } : {}),
       ...(task.acp.drift ? { drift: task.acp.drift } : {}),
       notes: this.permissionNotes(),
     }

@@ -21,7 +21,6 @@ export interface Preferences {
   diffWrap: boolean
   /** 文件树 in the 变更 tab; absent until the person chooses, so it opens by itself where it fits. */
   diffTree?: boolean
-  onboarding: 'auto' | 'show' | 'hidden'
   theme: ThemePreference
   /** Desktop only; touch keyboards always insert a newline on Enter. */
   sendKey: SendKey
@@ -42,7 +41,6 @@ const defaults: Preferences = {
   diffScope: 'history',
   diffMode: 'auto',
   diffWrap: false,
-  onboarding: 'auto',
   theme: 'system',
   sendKey: 'enter',
   rightPanel: { open: false, collapsed: [] },
@@ -76,7 +74,6 @@ export function parsePreferences(raw: string | null): Preferences {
       diffMode: item.diffMode === 'stacked' || item.diffMode === 'split' ? item.diffMode : 'auto',
       diffWrap: item.diffWrap === true,
       ...(typeof item.diffTree === 'boolean' ? { diffTree: item.diffTree } : {}),
-      onboarding: item.onboarding === 'show' || item.onboarding === 'hidden' ? item.onboarding : 'auto',
       theme: item.theme === 'light' || item.theme === 'dark' ? item.theme : 'system',
       sendKey: item.sendKey === 'mod-enter' ? 'mod-enter' : 'enter',
       rightPanel: parseRightPanelPreference(item.rightPanel),

@@ -1,9 +1,9 @@
 import { useEffect, useId, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { PromptQueueItem } from '@latch/protocol'
-import { Button, Collapse, Count, Dialog, InlineNotice, MOTION, TextAreaField } from '@latch/ui'
+import { Button, Collapse, Dialog, InlineNotice, MOTION, TextAreaField } from '@latch/ui'
 import { api, inlineError } from '../core/api.ts'
-import { VisibleText, escapeHiddenCharacters } from './VisibleText.tsx'
+import { VisibleText, escapeHiddenCharacters } from '../components/VisibleText.tsx'
 
 function QueueRow({ open, arrived, children }: { open: boolean; arrived: boolean; children: ReactNode }) {
   const [entered, setEntered] = useState(!arrived)
@@ -108,7 +108,7 @@ function QueueEditor({ item, save, close }: { item: PromptQueueItem; save(text: 
 }
 
 /** Queue contents come from the Host; actions use each item's stable identity even after an uncertain response. */
-export function PromptQueue({
+export function QueueDrawer({
   sessionId,
   items,
   canSend,
@@ -131,15 +131,11 @@ export function PromptQueue({
     if (items.length) setOpening(current => current + 1)
   }
   const paused = items.some(item => item.state !== 'waiting')
-  const heading = items.some(item => item.state === 'parked') ? (
-    '已暂停 · 请确认后发送'
-  ) : items.some(item => item.state === 'dropped') ? (
-    '未发送 · 请检查排队内容'
-  ) : (
-    <>
-      排队 <Count value={items.length} /> 条 · 本轮完成后依次发送
-    </>
-  )
+  const heading = items.some(item => item.state === 'parked')
+    ? '已暂停 · 请确认后发送'
+    : items.some(item => item.state === 'dropped')
+      ? '未发送 · 请检查排队内容'
+      : `接下来 · ${items.length}`
   const change = async (item: PromptQueueItem, action: 'send' | 'remove') => {
     if (busy) return
     setBusy(item.id)
@@ -161,7 +157,7 @@ export function PromptQueue({
     <>
       {/* Rows enter after the ancestor is open; reopening a skipped until-found subtree can freeze its transitions. */}
       <Collapse key={opening} open={items.length > 0}>
-        <section className="prompt-queue" aria-label="排队发送" data-paused={paused ? '' : undefined}>
+        <section className="composer-drawer prompt-queue" aria-label="排队发送" data-paused={paused ? '' : undefined}>
           <p className="prompt-queue-title" role="status">
             {heading}
           </p>

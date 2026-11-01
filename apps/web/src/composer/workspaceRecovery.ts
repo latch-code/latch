@@ -65,12 +65,12 @@ export function workspaceRecovery(input: WorkspaceRecoveryInput): {
     || input.source.activity?.phase === 'cancelling'
   )
     blockedReason = '请等原会话这一轮结束后再继续。'
-  else if (!input.forkSupported) blockedReason = '当前 Host 尚不支持从会话记录继续，请先更新执行端。'
+  else if (!input.forkSupported) blockedReason = '这台 Mac 上的 Latch 较旧，不能从会话记录继续，请先更新。'
   else if (!input.runGate.allowed) blockedReason = input.runGate.reason
 
   const upToMessageId = recoveryMessage(input.source)
   if (blockedReason === undefined && upToMessageId === undefined) blockedReason = '原会话还没有可继续的已结束回复。'
-  if (blockedReason === undefined && !workspaces.length) blockedReason = '暂时没有可用项目，请先在执行端添加或修复项目。'
+  if (blockedReason === undefined && !workspaces.length) blockedReason = '暂时没有可用项目，请先在 Mac 上添加或修复项目。'
   if (blockedReason === undefined && !workspaces.some(workspace => workspace.id === input.workspaceId))
     blockedReason = '请选择一个当前可用的项目。'
 

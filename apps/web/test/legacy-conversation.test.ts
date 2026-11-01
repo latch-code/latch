@@ -4,8 +4,6 @@ import { describe, expect, it } from 'vitest'
 import type { TaskDetail } from '@latch/protocol'
 import { Transcript } from '../src/components/Transcript.tsx'
 
-const noop = () => {}
-
 describe('history from a Host that records no times', () => {
   it('renders without times, durations, separators or a thinking timer, and its footer keeps the tokens', () => {
     const detail: TaskDetail = {
@@ -20,9 +18,7 @@ describe('history from a Host that records no times', () => {
       liveText: '',
       cursor: 1,
     }
-    const html = renderToStaticMarkup(
-      createElement(Transcript, { detail, approvals: [], busy: new Map(), onDecide: noop, harnessName: 'Latch' }),
-    )
+    const html = renderToStaticMarkup(createElement(Transcript, { detail, approvals: [], harnessName: 'Latch' }))
     expect(html).not.toContain('<time')
     expect(html).not.toContain('time-separator')
     expect(html).not.toContain('用时')

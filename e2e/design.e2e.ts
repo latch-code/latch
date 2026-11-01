@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openSection, openSettings, reachable, closeSettings } from './helpers/layout.ts'
+import { noHorizontalOverflow, openSection, openSettings, reachable, closeSettings, setChatOnly } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/design'
 const VIEWPORTS = [
@@ -101,23 +101,15 @@ describe('responsive workspace controls', () => {
       expect(await page.locator('textarea[aria-label="新会话消息"]').count()).toBe(1)
       await reachable(composer)
       await composer.fill('这是一条未提交的布局验收草稿。')
-      // The harness tiles: the built-in harness as 只对话 and as an agent, and the way to add another.
-      const harnesses = page.getByRole('radiogroup', { name: 'Agent', exact: true })
-      for (const way of [/^Latch 内置\s*只对话$/, /^Latch 内置\s*Agent$/]) {
-        const button = harnesses.getByRole('radio', { name: way })
-        await reachable(button)
-        await button.click()
-        expect(await button.getAttribute('aria-checked')).toBe('true')
+      // 只聊天 and back keep the draft, and the page never overflows.
+      for (const chat of [true, false]) {
+        await setChatOnly(page, chat)
         expect(await composer.inputValue()).toBe('这是一条未提交的布局验收草稿。')
         await noHorizontalOverflow(page)
       }
-      await reachable(page.getByRole('button', { name: /^添加 Agent/ }))
-      // Harness, model and project: tiles and rows of the sheet on phones, pickers in the input elsewhere.
+      // Model and project: rows of the sheet on phones, the one control in the input elsewhere.
       if (phone) {
-        const harnesses = page.getByRole('radiogroup', { name: 'Agent', exact: true })
-        await reachable(harnesses.getByRole('radio', { name: /^Latch 内置\s*Agent$/ }))
-        expect(await harnesses.getByRole('radio', { name: /^Latch 内置\s*Agent$/ }).getAttribute('aria-checked')).toBe('true')
-        await page.locator('.new-sheet-card').getByText('电脑', { exact: true }).waitFor()
+        for (const row of ['Agent', '引擎', '权限']) await page.locator('.new-sheet-card').getByText(row, { exact: true }).first().waitFor()
         await page
           .locator('.new-sheet-card')
           .getByRole('button', { name: /^模型：/ })

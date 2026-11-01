@@ -63,7 +63,7 @@ describe('custom model extension in the app', () => {
       // Drafting stays possible; starting is blocked and the setup card explains why.
       await composer.fill('停用模型后不能发起')
       await expect.poll(() => send.isDisabled()).toBe(true)
-      await page.getByText('连接模型服务', { exact: true }).waitFor()
+      await page.locator('.setup-card').getByText('还没有模型服务。', { exact: true }).waitFor()
 
       await page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '插件', exact: true }).click()
       await page.locator('.plugin-nav-row', { hasText: '验收模型插件' }).click()

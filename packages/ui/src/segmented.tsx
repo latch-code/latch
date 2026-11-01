@@ -29,7 +29,7 @@ export function SegmentedControl<T extends string>({
 }: {
   label: string
   value: T
-  options: readonly [SegmentOption<T>, SegmentOption<T>] | readonly [SegmentOption<T>, SegmentOption<T>, SegmentOption<T>]
+  options: ReadonlyArray<SegmentOption<T>>
   onValueChange: (value: T) => void
   /**
    * xs: 24 overall (20px segments, 11/14), for a panel's strip. sm: 28 overall (24px segments, 12/16), md: 32 (28px

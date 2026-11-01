@@ -6,7 +6,7 @@ import type { AppSnapshot } from '@latch/protocol'
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { backToPhoneSessions } from './helpers/layout.ts'
+import { backToPhoneSessions, setChatOnly } from './helpers/layout.ts'
 
 describe('desktop to phone takeover', () => {
   let testHost: TestHost
@@ -60,11 +60,8 @@ describe('desktop to phone takeover', () => {
   async function start(prompt: string): Promise<string> {
     const before = (await snapshot()).tasks.map(t => t.id)
     await desktop.getByRole('button', { name: '新建会话', exact: true }).click()
-    // The device remembers its last choice; demo tasks that use tools need the built-in harness working as an agent.
-    await desktop
-      .getByRole('radiogroup', { name: 'Agent', exact: true })
-      .getByRole('radio', { name: /^Latch 内置\s*Agent$/ })
-      .click()
+    // The device remembers its last choice; demo tasks that use tools need the built-in engine working as an agent.
+    await setChatOnly(desktop, false)
     await desktop.getByRole('textbox', { name: '新会话消息' }).fill(prompt)
     await desktop.getByRole('button', { name: '发送', exact: true }).click()
     await expect.poll(async () => (await snapshot()).tasks.filter(t => !before.includes(t.id)).length).toBe(1)
@@ -117,16 +114,16 @@ describe('desktop to phone takeover', () => {
   it('starts on desktop, approves on phone, and shows the same real result after reconnect', async () => {
     approvedTask = await start('批准生成验收报告')
     await choosePhone(approvedTask)
-    await mobile.getByRole('button', { name: '允许一次', exact: true }).waitFor()
-    await desktop.getByRole('button', { name: '允许一次', exact: true }).waitFor()
+    await mobile.getByRole('button', { name: '允许', exact: true }).waitFor()
+    await desktop.getByRole('button', { name: '允许', exact: true }).waitFor()
     expect(await mobile.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-    const button = await mobile.getByRole('button', { name: '允许一次', exact: true }).boundingBox()
+    const button = await mobile.getByRole('button', { name: '允许', exact: true }).boundingBox()
     expect(button!.x).toBeGreaterThanOrEqual(0)
     expect(button!.x + button!.width).toBeLessThanOrEqual(390)
     expect(button!.y).toBeGreaterThanOrEqual(0)
     expect(button!.y + button!.height).toBeLessThanOrEqual(844)
     expect(
-      await mobile.getByRole('button', { name: '允许一次', exact: true }).evaluate(element => {
+      await mobile.getByRole('button', { name: '允许', exact: true }).evaluate(element => {
         const rect = element.getBoundingClientRect()
         const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)
         return hit !== null && element.contains(hit)
@@ -139,8 +136,8 @@ describe('desktop to phone takeover', () => {
     expect((await snapshot()).tasks.find(t => t.id === approvedTask)?.status).toBe('waiting-approval')
     await phoneContext.setOffline(false)
     await mobile.reload()
-    await mobile.getByRole('button', { name: '允许一次', exact: true }).waitFor()
-    await mobile.getByRole('button', { name: '允许一次', exact: true }).click()
+    await mobile.getByRole('button', { name: '允许', exact: true }).waitFor()
+    await mobile.getByRole('button', { name: '允许', exact: true }).click()
     await expect.poll(async () => (await snapshot()).tasks.find(t => t.id === approvedTask)?.status).toBe('idle')
     await desktop.locator('[data-approval-id]').waitFor({ state: 'detached' })
     // The Host goes on noting the run's files after it goes idle, so two reads may straddle a change; they must agree once it rests.
@@ -225,10 +222,7 @@ describe('desktop to phone takeover', () => {
   it('creates a tool-free conversation from the real mode selector', async () => {
     const before = (await snapshot()).tasks.map(task => task.id)
     await desktop.getByRole('button', { name: '新建会话', exact: true }).click()
-    await desktop
-      .getByRole('radiogroup', { name: 'Agent', exact: true })
-      .getByRole('radio', { name: /只对话/ })
-      .click()
+    await setChatOnly(desktop, true)
     await desktop.getByRole('textbox', { name: '新会话消息' }).fill('批准生成验收报告')
     await desktop.getByRole('button', { name: '发送', exact: true }).click()
     await expect.poll(async () => (await snapshot()).tasks.filter(task => !before.includes(task.id)).length).toBe(1)
@@ -247,7 +241,6 @@ describe('desktop to phone takeover', () => {
     await mobile.screenshot({ path: 'test-results/mobile-chat.png', fullPage: true, animations: 'disabled' })
     await desktop.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '插件', exact: true }).click()
     await desktop.locator('.settings-page').waitFor()
-    await desktop.getByRole('switch').first().waitFor()
     await desktop.screenshot({ path: 'test-results/desktop-plugins.png', fullPage: true, animations: 'disabled' })
     await desktop.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '会话', exact: true }).click()
     await desktop.locator('.settings-page').waitFor({ state: 'detached' })

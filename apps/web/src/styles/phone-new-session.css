@@ -7,10 +7,6 @@
   gap: var(--sp-16);
   padding-top: var(--sp-4);
 }
-.new-sheet-group {
-  display: grid;
-  gap: var(--sp-8);
-}
 .new-sheet-card {
   --surface: var(--canvas);
   display: grid;
@@ -67,9 +63,6 @@
   color: var(--muted);
 }
 .new-session-sheet .setup-card,
-.new-session-sheet .suggestions {
-  margin: 0;
-}
 .composer-sheet .composer textarea {
   min-height: calc(var(--lh-input) * 5 + 16px);
   padding-bottom: var(--sp-12);

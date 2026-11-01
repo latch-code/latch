@@ -1,4 +1,4 @@
-import { memo, useId, useMemo, useRef, useState } from 'react'
+import { memo, useId, useMemo, useState } from 'react'
 import { ChevronRight, CircleDashed, CircleSlash, FileDiff as FileDiffIcon, FilePlus, RotateCcw, TimerOff, X } from 'lucide-react'
 import type { Approval, FileDiff, Message, ToolDecision, ToolDetail } from '@latch/protocol'
 import { previousState } from '../diff.ts'
@@ -20,17 +20,13 @@ import { useChangesLink } from '../conversation/changesLink.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
 import { argumentView, formatDuration } from '../format.ts'
 import { toolKind, toolKindIcons } from '../icons.tsx'
-import { approvalActions, type ApprovalGate } from '../core/permissions.ts'
-import { APPROVAL_COPY } from '../core/securityCopy.ts'
-import { ApprovalPill, ApprovalSlot, approvalHidesText, type DecideHandler } from './ApprovalCard.tsx'
 import { ArgumentList } from './ArgumentList.tsx'
 import { DiffView, type DiffViewFile } from './DiffView.tsx'
 import { FileChip, FileRootContext } from './FileChip.tsx'
 import { toolFileTargets, useKnownFiles } from './FileReferences.tsx'
 import { DecisionRecord, DecisionWords } from './DecisionRecord.tsx'
-import { Button, Collapse, ICON_STROKE, StatusGlyph, StatusWord, StatusWords, CopyButton } from '@latch/ui'
+import { Button, Collapse, ICON_STROKE, StatusGlyph, StatusWords, CopyButton } from '@latch/ui'
 import { VisibleText } from './VisibleText.tsx'
-import { useReportApprovalVisibility } from '../hooks/useApprovalsInView.ts'
 
 type ToolState = NonNullable<Message['state']>
 /**
@@ -39,16 +35,10 @@ type ToolState = NonNullable<Message['state']>
  * why on the line under it.
  */
 const stateWords: Partial<Record<ShownToolState, string>> = {
-  'awaiting-approval': APPROVAL_COPY.waiting,
   cancelled: '已取消',
   rejected: '已拒绝',
   expired: '已过期',
 }
-
-export type { DecideHandler } from './ApprovalCard.tsx'
-/** This device's buttons for an approval; the default keeps every offered option (a Host without device scopes). */
-export type ApprovalGateFor = (approval: Approval) => ApprovalGate
-const plainGate: ApprovalGateFor = approval => approvalActions(approval, null, null)
 
 const sameDiffs = (a: FileDiff[] | undefined, b: FileDiff[] | undefined) =>
   a === b
@@ -104,32 +94,23 @@ function ToolOutput({ text, running }: { text: string; running: boolean }) {
  * object and the lines it changed, and its duration under the pointer. A failed row says why on one line, with 重试 when
  * this device may resend the turn. Opening a row shows what it did indented under its words: a file edit's short preview
  * (never while the right panel is open: there the row stays one line and selects its file in 变更), otherwise its
- * arguments and output. A pending approval grows the row into the card that holds the decision.
+ * arguments and output. A pending approval is decided in the drawer above the composer; here the row only says what it is.
  */
 export const ToolCard = memo(
   function ToolCard({
     message,
     approval,
-    busy,
-    onDecide,
-    gateFor = plainGate,
     onRetry,
     frozen = false,
   }: {
     message: Message | null
     approval?: Approval
-    busy?: string
-    onDecide: DecideHandler
-    gateFor?: ApprovalGateFor
     /** Resends the turn; present when this device may, on the latest turn. */
     onRetry?: () => void
     /** Nothing is known to move: the connection is down, so the row stops spinning and ticking. */
     frozen?: boolean
   }) {
     const bodyId = useId()
-    const card = useRef<HTMLElement>(null)
-    // A waiting card says whether it is in view, so the way back to it shows only while it is not.
-    useReportApprovalVisibility(card, approval?.id)
     const link = useChangesLink()
     const state: ToolState = message?.state ?? (approval ? 'awaiting-approval' : 'completed')
     const facts = message ? { ...message, state } : undefined
@@ -155,17 +136,15 @@ export const ToolCard = memo(
     // A new file says its length in its words; its added lines would only repeat that.
     const stat = useMemo(() => (applied && !newFile ? diffStat(tool) : undefined), [applied, newFile, tool])
     // A command that streams output shows its tail while it runs and folds when it settles, unless the reader chose.
-    const open = approval ? true : (choice ?? (running && kind === 'execute' && output.length > 0))
+    const open = approval ? false : (choice ?? (running && kind === 'execute' && output.length > 0))
     const panelEdit = applied && link?.panelOpen === true
     const selected = panelEdit && diffs.some(diff => diff.path === link.selected?.path)
     const showOutput = message !== null && state !== 'awaiting-approval' && state !== 'queued'
-    const gate = approval ? gateFor(approval) : undefined
     // In the desktop app, the files a finished tool read or wrote become path chips once the Host says they are files.
     const input = argumentView(tool?.input)
     const folder = input.kind === 'entries' ? input.entries.find(([key]) => key === 'folder')?.[1] : undefined
     const rootId = folder && /^[A-Za-z0-9_-]{1,32}$/u.test(folder) ? folder : undefined
     const files = useKnownFiles(message ? toolFileTargets(message) : [], state === 'completed' || state === 'failed', rootId)
-    const hidden = approval !== undefined && approvalHidesText(approval, title, diffs)
     const failed = shown === 'failed'
     const KindIcon = newFile ? FilePlus : toolKindIcons[kind]
     const glyph = failed ? (
@@ -193,30 +172,15 @@ export const ToolCard = memo(
     // A state change the page saw happen: the spinner and the result icon cross-fade and the new words fade in.
     const heading = (
       <>
-        {!approval && (
-          <StatusGlyph className="tool-card-icon process-slot" running={running} state={shown}>
-            {glyph}
-          </StatusGlyph>
-        )}
-        {/* An approval card names the call by the tool's own title, the text the approver weighs; a row says what it does. */}
-        {approval ? (
-          <span className="tool-card-title">
-            <VisibleText text={title} />
+        <StatusGlyph className="tool-card-icon process-slot" running={running} state={shown}>
+          {glyph}
+        </StatusGlyph>
+        <StatusWords state={label.verb ? 'row' : 'title'} className="process-label">
+          {label.verb && <span className="process-verb">{label.verb}</span>}
+          <span className={label.mono ? 'process-object is-mono' : 'process-object'}>
+            <VisibleText text={label.object} />
           </span>
-        ) : (
-          <StatusWords state={label.verb ? 'row' : 'title'} className="process-label">
-            {label.verb && <span className="process-verb">{label.verb}</span>}
-            <span className={label.mono ? 'process-object is-mono' : 'process-object'}>
-              <VisibleText text={label.object} />
-            </span>
-          </StatusWords>
-        )}
-        {/* The approver weighs a tool's own title against its ID; a row of a titled tool keeps the ID in its tooltip. */}
-        {approval && toolName && toolName !== title && (
-          <code className="tool-card-name">
-            <VisibleText text={toolName} />
-          </code>
-        )}
+        </StatusWords>
         {stat && (
           <span className="process-stat">
             <span className="stat-add">+{stat.add}</span> <span className="stat-del">−{stat.del}</span>
@@ -226,127 +190,102 @@ export const ToolCard = memo(
     )
     const stateSlot = (
       <StatusWords state={shown} className={`tool-card-state state-${shown}`}>
-        {state === 'awaiting-approval' ? (
-          gate ? (
-            <ApprovalPill gate={gate} hidden={hidden} className="tool-card-waiting" />
-          ) : (
-            <StatusWord tone="waiting" className="tool-card-waiting">
-              {stateWords[state]}
-            </StatusWord>
-          )
-        ) : decision && (unrun || (decision.outcome === 'allowed' && (state === 'completed' || state === 'running'))) ? (
+        {state === 'awaiting-approval' ? null : decision
+          && (unrun || (decision.outcome === 'allowed' && (state === 'completed' || state === 'running'))) ? (
           <DecisionWords decision={decision} />
         ) : (
           stateWords[shown]
         )}
       </StatusWords>
     )
-    // The tray turns red only for a high-risk request, a current Host's request without a risk included.
-    const risk = gate === undefined ? '' : gate.kind === 'advisory' ? ' is-advisory' : gate.badge?.tone === 'err' ? ' is-r2' : ''
     const hasDetails = !panelEdit
     return (
       <FileRootContext.Provider value={rootId}>
         <article
-          ref={card}
-          className={`tool-card tool-${shown} ${approval ? 'has-approval' : ''}${risk}`}
+          className={`tool-card tool-${shown}`}
           data-kind={newFile ? 'new' : kind}
           data-open={open && hasDetails ? '' : undefined}
           data-selected={selected ? '' : undefined}
-          data-tint={risk === ' is-r2' ? 'err' : undefined}
-          data-secure={approval ? '' : undefined}
-          data-approval-id={approval?.id}
-          data-risk={approval?.advisory ? 'advisory' : approval?.risk}
           {...(message ? { 'data-message-id': message.id } : {})}>
-          {approval ? (
-            <div className="tool-card-header">
-              {stateSlot}
-              <div className="tool-card-what">{heading}</div>
-            </div>
-          ) : (
-            <div className="tool-tray">
-              <button
-                type="button"
-                className="tool-card-header"
-                aria-expanded={hasDetails ? open : undefined}
-                aria-controls={hasDetails ? bodyId : undefined}
-                title={tooltip || undefined}
-                onClick={() => {
-                  if (panelEdit) openInChanges(diffs[0]!)
-                  else setChoice(!open)
+          <div className="tool-tray">
+            <button
+              type="button"
+              className="tool-card-header"
+              aria-expanded={hasDetails ? open : undefined}
+              aria-controls={hasDetails ? bodyId : undefined}
+              title={tooltip || undefined}
+              onClick={() => {
+                if (panelEdit) openInChanges(diffs[0]!)
+                else setChoice(!open)
+              }}>
+              {heading}
+              {hasDetails && <ChevronRight className="process-chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />}
+              <span className="process-fill" />
+              <span className="process-end">
+                {stateSlot}
+                {message && <ToolTime message={message} frozen={frozen} />}
+              </span>
+            </button>
+            {failed && (
+              <p className="tool-failure">
+                <VisibleText text={failureReason(message ?? { text: '' })} />
+                {onRetry && (
+                  <Button size="xs" variant="ghost" icon={RotateCcw} onClick={onRetry}>
+                    重试
+                  </Button>
+                )}
+              </p>
+            )}
+            {hasDetails && (
+              <Collapse
+                id={bodyId}
+                open={open}
+                lazy
+                onReveal={() => {
+                  setChoice(true)
                 }}>
-                {heading}
-                {hasDetails && <ChevronRight className="process-chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />}
-                <span className="process-fill" />
-                <span className="process-end">
-                  {stateSlot}
-                  {message && <ToolTime message={message} frozen={frozen} />}
-                </span>
-              </button>
-              {failed && (
-                <p className="tool-failure">
-                  <VisibleText text={failureReason(message ?? { text: '' })} />
-                  {onRetry && (
-                    <Button size="xs" variant="ghost" icon={RotateCcw} onClick={onRetry}>
-                      重试
-                    </Button>
+                <div className="tool-card-body">
+                  {applied && link && (
+                    <DiffView
+                      diffs={diffs}
+                      mode="compact"
+                      fileActions={diff => (
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          icon={FileDiffIcon}
+                          onClick={() => {
+                            openInChanges(diff)
+                          }}>
+                          {previousState(diff) === 'none' ? '打开文件' : '在变更中打开'}
+                        </Button>
+                      )}
+                    />
                   )}
-                </p>
-              )}
-              {hasDetails && (
-                <Collapse
-                  id={bodyId}
-                  open={open}
-                  lazy
-                  onReveal={() => {
-                    setChoice(true)
-                  }}>
-                  <div className="tool-card-body">
-                    {applied && link && (
-                      <DiffView
-                        diffs={diffs}
-                        mode="compact"
-                        fileActions={diff => (
-                          <Button
-                            size="xs"
-                            variant="ghost"
-                            icon={FileDiffIcon}
-                            onClick={() => {
-                              openInChanges(diff)
-                            }}>
-                            {previousState(diff) === 'none' ? '打开文件' : '在变更中打开'}
-                          </Button>
-                        )}
-                      />
-                    )}
-                    {applied && !link && <DiffView diffs={diffs} mode="compact" />}
-                    {!applied && files.length > 0 && (
-                      <p className="tool-files">
-                        {files.map(path => (
-                          <FileChip key={path} path={path} />
-                        ))}
-                      </p>
-                    )}
-                    {!applied && <ArgumentList text={tool?.input} covered={[label.object]} quiet />}
-                    {showOutput
-                      && !applied
-                      && (output ? <ToolOutput text={output} running={running} /> : !running && <p className="muted-line">没有输出</p>)}
-                  </div>
-                </Collapse>
-              )}
-            </div>
-          )}
+                  {applied && !link && <DiffView diffs={diffs} mode="compact" />}
+                  {!applied && files.length > 0 && (
+                    <p className="tool-files">
+                      {files.map(path => (
+                        <FileChip key={path} path={path} />
+                      ))}
+                    </p>
+                  )}
+                  {!applied && <ArgumentList text={tool?.input} covered={[label.object]} quiet />}
+                  {showOutput
+                    && !applied
+                    && (output ? <ToolOutput text={output} running={running} /> : !running && <p className="muted-line">没有输出</p>)}
+                </div>
+              </Collapse>
+            )}
+          </div>
           {/* A call the agent reports as run after it was not allowed: one line under the row says so. */}
           {contradicted && <DecisionRecord decision={contradicted} />}
-          <ApprovalSlot approval={approval} gate={gate} title={title} diffs={diffs} hidden={hidden} busy={busy} onDecide={onDecide} />
         </article>
       </FileRootContext.Provider>
     )
   },
   (a, b) =>
-    a.busy === b.busy
-    && a.approval === b.approval
-    && a.onDecide === b.onDecide
-    && a.gateFor === b.gateFor
+    a.approval === b.approval
     && a.onRetry === b.onRetry
     && a.frozen === b.frozen
     && (a.message === b.message

@@ -15,6 +15,7 @@ export const geminiProfile: HarnessProfile = {
     defaultEnv: {},
     expectedMode: 'default',
     modeLadder: ['plan', 'default', 'autoEdit', 'yolo'],
+    neverAskModes: ['yolo'],
     hiddenOptionIds: ['proceed_always_and_save', 'ProceedAlwaysAndSave'],
     readback: 'mode',
     systemSettings: SYSTEM_SETTINGS,

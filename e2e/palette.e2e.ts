@@ -356,7 +356,7 @@ it.each([
       await input.fill('补充审批')
       await input.press('Enter')
       await palette.waitFor({ state: 'detached' })
-      await page.locator('[data-message-id].has-approval').first().waitFor()
+      await page.locator('.approval-panel').first().waitFor()
       await open()
       await input.fill('x')
       for (let press = 0; press < 4; press++) await page.keyboard.press('Escape')

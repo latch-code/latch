@@ -141,7 +141,7 @@ it('browses a saved project before creating a session, previews and quotes real 
           await tree.getByRole('button', { name: '搜索文件', exact: true }).click()
           const search = page.getByRole('dialog', { name: '搜索文件', exact: true })
           await search.getByLabel('搜索文件名', { exact: true }).fill('notes.txt')
-          await search.getByRole('option', { name: 'notes.txt · notes.txt', exact: true }).click()
+          await search.getByRole('option', { name: /^notes\.txt/u }).click()
           await preview.getByText('second root', { exact: true }).waitFor()
           await settleShell(page)
           expect(await host.host.bridge.listTasks()).toHaveLength(taskCount)

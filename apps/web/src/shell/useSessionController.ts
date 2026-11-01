@@ -11,7 +11,7 @@ import { choiceKind, DecisionRequests, settledOutcome } from '../core/approvalDe
 import { cancelAnswer, CancelRequests } from '../core/cancelRequest.ts'
 import { ConfigRequests } from '../core/configRequest.ts'
 import { SessionDrafts } from '../core/sessionDrafts.ts'
-import type { SessionConfigFeedback } from '../components/modelReasoning.ts'
+import type { SessionConfigFeedback } from '../composer/modelReasoning.ts'
 import { findHarness, findProvider, harnessName as harnessLabel, sessionHarness, sessionModel, startBlock } from '../composerChoice.ts'
 import { openSession } from '../core/blocking.ts'
 import { ConfirmationError, withConfirmation, type ConfirmationPresenter } from '../core/confirmations.ts'
@@ -20,7 +20,8 @@ import { exportFileName, saveText, transcriptMarkdown } from '../exportMarkdown.
 import { isActive } from '../format.ts'
 import { approvalActions, composerGate, deviceAccess, harnessLevel, hostView } from '../core/permissions.ts'
 import { setPreference } from '../preferences.ts'
-import { isSessionStopCode, type SessionStopCode } from '../core/securityCopy.ts'
+import { CONFIG_UNVERIFIED_TEXT, isSessionStopCode, SESSION_STOP_TEXT, stopLocksInput, type SessionStopCode } from '../core/securityCopy.ts'
+import { retryOfRefused, type RefusedInput } from '../core/refusedInput.ts'
 import { sessionMenuSections } from '../sessionMenu.ts'
 import {
   emptySeen,
@@ -35,17 +36,17 @@ import {
   type SeenState,
 } from '../sessions.ts'
 import { useReadingPosition } from '../core/useReadingPosition.ts'
-import { useApprovalVisibility, useApprovalsInView } from '../hooks/useApprovalsInView.ts'
 import { currentShell } from '../core/shell.ts'
-import { useRejectionNote } from '../hooks/useRejectionNote.ts'
+import { useEarlierDraft } from '../composer/useEarlierDraft.ts'
+import { useRejectionNote } from '../composer/useRejectionNote.ts'
 import { useStableCallback } from '../hooks/useStableCallback.ts'
 import { useRunClock } from '../hooks/useRunClock.ts'
 import { useSubmission } from '../hooks/useSubmission.ts'
 import { usePersonalName } from '../hooks/usePersonalName.ts'
 import { useSwitchFade } from '../hooks/useSwitchFade.ts'
-import { type RunState } from '../components/Composer.tsx'
+import { type RunState } from '../composer/Composer.tsx'
 import { type MenuSection } from '../components/overlays.tsx'
-import { type ApprovalStatus } from '../components/ApprovalCard.tsx'
+import { type ApprovalStatus } from '../composer/ApprovalDrawer.tsx'
 import { codeRootWorkspace } from '../components/CodeRootNotice.tsx'
 import { sendingMessageFor } from '../core/sendingMessage.ts'
 import { toolRowId } from '../conversation.ts'
@@ -117,6 +118,7 @@ export function useSessionController({
   const [now, setNow] = useState(() => Date.now())
   /** Sessions that stopped accepting input, learned from the Host's refusal. */
   const [stopped, setStopped] = useState<ReadonlyMap<string, SessionStopCode>>(new Map())
+  const [refused, setRefused] = useState<ReadonlyMap<string, RefusedInput>>(new Map())
   const decisions = useRef(new DecisionRequests())
   const cancels = useRef(new CancelRequests())
 
@@ -154,10 +156,7 @@ export function useSessionController({
   })
   // Fade the content, not the masked scroller: animating the latter can leave Chromium's hit-test region empty.
   useSwitchFade(reading.contentRef, current?.summary.id ?? null)
-  // The way back to a waiting approval shows only while none of the cards is in view.
-  const approvalVisibility = useApprovalVisibility()
-  const approvalsInView = useApprovalsInView(approvalVisibility)
-  const stopSession = (sessionId: string, cause: unknown) => {
+  const stopSession = (sessionId: string, cause: unknown, what: RefusedInput) => {
     if (cause instanceof ApiError && cause.code === 'workspace-changed') {
       setWorkspaceChanged(previous => new Set(previous).add(sessionId))
       return true
@@ -165,7 +164,22 @@ export function useSessionController({
     if (cause instanceof ApiError && isSessionStopCode(cause.code)) {
       const code = cause.code
       setStopped(previous => new Map(previous).set(sessionId, code))
+      setRefused(previous => new Map(previous).set(sessionId, what))
     }
+  }
+  /** A mode that could not be read this once clears when something is tried again; the Host says if it still cannot. */
+  const clearUnverified = (sessionId: string) => {
+    if (stopped.get(sessionId) !== 'permission-unverified') return
+    setStopped(previous => {
+      const next = new Map(previous)
+      next.delete(sessionId)
+      return next
+    })
+    setRefused(previous => {
+      const next = new Map(previous)
+      next.delete(sessionId)
+      return next
+    })
   }
   const submission = useSubmission({
     snapshot,
@@ -178,12 +192,11 @@ export function useSessionController({
       if (consumedDraft && sent.sessionId !== undefined) sessionDrafts.current.remove(sent.sessionId)
       if (!foreground || sent.queue) return
       draftSessionId.current = sessionId
-      if (sent.sessionId === undefined) setPreference('onboarding', 'hidden')
       setPersonalDraft(null)
       onForegroundSent()
       reading.show(sessionId)
     },
-    onRefused: stopSession,
+    onRefused: (sessionId, cause, resent) => stopSession(sessionId, cause, { from: 'send', ...(resent ? { prompt: resent } : {}) }),
   })
   // A remote deletion clears selection without going through choose; never transfer that session's text to a new task.
   useLayoutEffect(() => {
@@ -258,6 +271,7 @@ export function useSessionController({
       return
     }
     const ids = await attachmentDraft.wait()
+    if (ids && selectedId !== null) clearUnverified(selectedId)
     if (ids && (await submission.submit(undefined, undefined, active && canQueue, ids, mentionChoice.refs))) {
       attachmentDraft.clear()
       setFileMentions([])
@@ -373,11 +387,6 @@ export function useSessionController({
     }
   }, [openBlocking, stopBlocking, snapshot])
   const { reveal, jumpToLatest } = reading
-  const revealApprovals = () => {
-    const target = approvals[0]
-    if (selectedId !== null) reading.show(selectedId, target && toolRowId(target))
-  }
-
   /** The session that waits longest: its oldest request, or else a run that has gone quiet. */
   const openApprovals = () => {
     const oldest = [...snapshot.approvals].sort((a, b) => a.requestedAt.localeCompare(b.requestedAt))[0]
@@ -471,8 +480,10 @@ export function useSessionController({
   }, [nextApproval])
   // `note`: with a rejection of the built-in harness's approval, what to do instead (see `rejectionNoteFor`).
   const decide = useCallback(
-    async (approval: Approval, decision: 'allow' | 'reject', optionId: string | undefined, note?: string) => {
-      if (approvalFlights.current.has(approval.id)) return
+    async (approval: Approval, decision: 'allow' | 'reject', optionId: string | undefined, note?: string): Promise<boolean> => {
+      if (approvalFlights.current.has(approval.id)) return false
+      // False once the choice definitely did not take effect; an unknown outcome keeps its note on the card's retry.
+      let taken = true
       approvalFlights.current.add(approval.id)
       setApprovalBusy(previous => new Map(previous).set(approval.id, optionId ?? (decision === 'allow' ? 'allow_once' : 'reject_once')))
       clearAction(approval.sessionId)
@@ -495,7 +506,10 @@ export function useSessionController({
           if (view.phase === 'waiting' || view.phase === 'sending') mark({ confirming: view.phase })
           else mark({ failure: { text: view.message, tone: view.phase === 'failed' ? 'error' : 'warn' } })
         },
-        close: () => {},
+        // 取消 in the sheet ends here: without this the buttons would keep waiting for it.
+        close: () => {
+          mark({})
+        },
       }
       mark({})
       try {
@@ -515,6 +529,7 @@ export function useSessionController({
         const optionKind = choiceKind(approval, decision, optionId)
         const settled = settledOutcome(cause, { decision, ...(optionKind ? { optionKind } : {}) })
         const unknown = settled === undefined && isUncertain(cause)
+        taken = unknown || settled?.applied === true
         // An unknown outcome stays on the card, which offers to send the same choice again with the same requestId; a
         // reason the card already shows (a confirmation that did not pass) stays too; anything else clears it.
         if (unknown) mark({ uncertain: { decision, optionId, ...(note && decision === 'reject' ? { note } : {}) } })
@@ -533,6 +548,7 @@ export function useSessionController({
           return next
         })
       }
+      return taken
     },
     [refresh],
   )
@@ -593,8 +609,8 @@ export function useSessionController({
       await refresh()
     } catch (cause) {
       configRequests.current.settle(id, request, cause)
-      stopSession(id, cause)
-      const text = inlineError(cause)
+      stopSession(id, cause, { from: 'config' })
+      const text = cause instanceof ApiError && cause.code === 'permission-unverified' ? CONFIG_UNVERIFIED_TEXT : inlineError(cause)
       setConfigFeedback(previous =>
         new Map(previous).set(id, {
           kind: isUncertain(cause) ? 'unknown' : 'failed',
@@ -706,7 +722,7 @@ export function useSessionController({
   )
 
   const block = selectedId === null ? startBlock(snapshot, choice, access) : null
-  const chosenHarness = selectedId === null ? findHarness(catalog, choice.harnessId) : undefined
+  const chosenHarness = selectedId === null ? catalog?.harnesses.find(item => item.id === choice.harnessId) : undefined
   const chosenScopeCaption =
     choice.mode === 'chat'
       ? undefined
@@ -717,6 +733,22 @@ export function useSessionController({
   const startsL3 = !access.legacy && chosenHarness !== undefined && harnessLevel(chosenHarness) === 'L3'
   const stopCode: SessionStopCode | undefined =
     selectedId === null ? undefined : summary?.permissionDrift || current?.permission?.drift ? 'permission-drift' : stopped.get(selectedId)
+  const refusedInput = selectedId === null ? undefined : refused.get(selectedId)
+  const stopText =
+    stopCode === 'permission-unverified' && refusedInput?.from === 'config'
+      ? CONFIG_UNVERIFIED_TEXT
+      : stopCode && SESSION_STOP_TEXT[stopCode]
+  const stopRetry =
+    stopCode === undefined || stopLocksInput(stopCode)
+      ? undefined
+      : retryOfRefused(refusedInput, { draft: submission.draft, attachments: attachmentDraft.items.length })
+  const retryStopped = () => {
+    if (stopRetry?.kind === 'draft') void sendDraft()
+    else if (stopRetry?.kind === 'prompt' && selectedId !== null) {
+      clearUnverified(selectedId)
+      void submission.resend(stopRetry.prompt)
+    }
+  }
   const gate =
     selectedId === null
       ? access.legacy || access.scopes.has('run')
@@ -728,7 +760,7 @@ export function useSessionController({
             summary,
             permission: current?.permission,
             access,
-            stopped: stopCode !== undefined,
+            stopped: stopCode !== undefined && stopLocksInput(stopCode),
           })
   const sessionBlock =
     selectedId === null
@@ -740,21 +772,36 @@ export function useSessionController({
           : !catalog && snapshot.execution?.ready === false
             ? '当前模型接口不可用，请检查模型插件状态。'
             : undefined
-  // 「告诉 Agent 改做什么」 after 拒绝: a Latch 内置 rejection waits for the note in the composer; an agent's goes at once.
+  const [approvalIndex, setApprovalIndex] = useState(0)
+  useEffect(() => {
+    setApprovalIndex(0)
+  }, [selectedId])
+  const shownApproval = approvals[Math.min(approvalIndex, approvals.length - 1)]
+  const earlierDraft = useEarlierDraft(
+    useMemo(() => [...approvals.map(item => item.id), ...(current?.questions ?? []).map(item => item.id)], [approvals, current?.questions]),
+    submission.draft,
+  )
+  // While an approval waits, what is typed goes back with the rejection, where the Host takes a note.
   const rejection = useRejectionNote({
     selectedId,
-    open: snapshot.approvals,
-    active,
-    mayType: selectedId !== null && gate.kind === 'open' && sessionBlock === undefined && submission.pending === null,
+    approval: shownApproval,
+    mayType: selectedId !== null && gate.kind === 'open' && sessionBlock === undefined && submission.pending === null && !earlierDraft.held,
     hostTakesNote: host?.rejectionNote === true,
-    decide: (approval, optionId, note) => {
-      void decide(approval, 'reject', optionId, note)
+    draft: submission.draft,
+    clearDraft: () => {
+      submission.setDraft('')
     },
-    focusComposer: () => {
-      composerRef.current?.focus({ preventScroll: true })
+    restoreDraft: (sessionId, text) => {
+      if (draftSessionId.current === sessionId) submission.setDraft(previous => (previous.trim() ? previous : text))
+      else if (!sessionDrafts.current.read(sessionId, privateVisible))
+        sessionDrafts.current.save(sessionId, text, Boolean(snapshot.tasks.find(task => task.id === sessionId)?.personal))
     },
-    keepText: text => {
-      if (!submission.draft.trim()) submission.setDraft(text)
+    decide: (approval, optionId, note) => decide(approval, 'reject', optionId, note),
+    rejectOption: approval => {
+      const gated = gateFor(approval)
+      const reject =
+        gated.options.find(option => option.kind === 'reject_once') ?? gated.options.find(option => !option.kind.startsWith('allow'))
+      return gated.explicit ? reject?.id : undefined
     },
   })
   const onDecide = useStableCallback(
@@ -763,13 +810,7 @@ export function useSessionController({
       else void decide(approval, decision, optionId, again?.note)
     },
   )
-  const statuses = useMemo(
-    () =>
-      rejection.noting === undefined
-        ? approvalStatuses
-        : new Map(approvalStatuses).set(rejection.noting, { ...approvalStatuses.get(rejection.noting), noting: true as const }),
-    [approvalStatuses, rejection.noting],
-  )
+  const statuses = approvalStatuses
   const noteComposer = rejection.composer
   // A new Agent session in a folder inside Latch's program directory: every write will ask on the Host's computer.
   const codeRootChoice =
@@ -809,26 +850,31 @@ export function useSessionController({
       ? {
           fullAccess: (current?.permission?.level ?? summary?.level) === 'L3',
           onResend: (prompt: string) => {
+            if (selectedId !== null) clearUnverified(selectedId)
             void submission.resend(prompt)
           },
         }
       : undefined
+  const askedQuestion = current?.questions?.[0]?.state === 'answering' ? undefined : current?.questions?.[0]
+  const startWords = mode === 'chat' ? '写下问题或想法…' : '让 Agent 做点什么…  @ 文件，/ 命令'
   const placeholder =
     submission.pending !== null
       ? '等待确认上一条提交…'
-      : selectedId === null
-        ? mode === 'chat'
-          ? '写下问题或想法…'
-          : '描述任务，以及你希望得到的结果…'
-        : active
-          ? catalog?.features?.queue
-            ? '可以先写，本轮完成后自动发送…'
-            : '可以先写，本轮结束后发送…'
-          : mode === 'chat'
-            ? '继续对话 · 不读写文件、不运行命令'
-            : `回复 ${harnessInfo ? harnessLabel(harnessInfo) : harnessName}…`
-  // Starting a full-access session takes the local confirmation: the send slot says so, and is blocked while this
-  // computer cannot confirm.
+      : gate.kind === 'stopped'
+        ? '这个会话不再接收输入'
+        : askedQuestion && gate.kind === 'open'
+          ? '输入你自己的回答'
+          : selectedId === null
+            ? startWords
+            : active
+              ? catalog?.features?.queue
+                ? '补充或排队一条消息'
+                : '可以先写，本轮结束后发送…'
+              : mode === 'chat'
+                ? '继续对话 · 不读写文件、不运行命令'
+                : startWords
+  // Starting a full-access session takes the local confirmation: a note under the input says so, and sending is blocked
+  // while this computer cannot confirm.
   const presenceDown = startsL3 && host?.presence.status === 'unavailable'
   const startReason = presenceDown ? `在 Mac 上确认不可用${host?.presence.message ? `：${host.presence.message}` : ''}` : undefined
 
@@ -857,6 +903,8 @@ export function useSessionController({
     setApprovalBusy,
     approvalStatuses,
     setApprovalStatuses,
+    approvalIndex,
+    setApprovalIndex,
     approvalFlights,
     cancelling,
     setCancelling,
@@ -892,8 +940,6 @@ export function useSessionController({
     personalName,
     harnessName,
     reading,
-    approvalVisibility,
-    approvalsInView,
     stopSession,
     submission,
     choice,
@@ -919,7 +965,6 @@ export function useSessionController({
     stopBlocking,
     reveal,
     jumpToLatest,
-    revealApprovals,
     openApprovals,
     previousApprovals,
     approvalToast,
@@ -949,8 +994,13 @@ export function useSessionController({
     chosenScopeCaption,
     startsL3,
     stopCode,
+    stopText,
+    stopRetry,
+    retryStopped,
+    refusedInput,
     gate,
     sessionBlock,
+    earlierDraft,
     rejection,
     onDecide,
     statuses,

@@ -2,8 +2,8 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import type { TaskDetail, WorkspaceInfo } from '@latch/protocol'
-import { WorkspaceRecovery } from '../src/components/WorkspaceRecovery.tsx'
-import { recoveryMessage, recoveryWorkspaces, workspaceRecovery, type WorkspaceRecoveryInput } from '../src/components/workspaceRecovery.ts'
+import { WorkspaceRecovery } from '../src/composer/WorkspaceRecovery.tsx'
+import { recoveryMessage, recoveryWorkspaces, workspaceRecovery, type WorkspaceRecoveryInput } from '../src/composer/workspaceRecovery.ts'
 
 const project: WorkspaceInfo = { id: 'target', name: 'New project', path: '/projects/new' }
 const source = (): TaskDetail => ({
@@ -106,8 +106,8 @@ describe('workspace recovery', () => {
         }),
       )
     const html = render(input())
-    expect(html).toContain('草稿和会话记录都还在')
-    expect(html).toContain('文件保留在各自的项目中')
+    expect(html).toContain('找不到了')
+    expect(html).toContain('在新会话中继续')
     expect(html).toContain('New project')
     const blocked = render({ ...input(), phase: 'unknown' })
     expect(blocked).toContain('aria-disabled="true"')

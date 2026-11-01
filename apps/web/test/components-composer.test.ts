@@ -2,15 +2,13 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Approval, AppSnapshot, HostCatalog, Message, TaskSummary } from '@latch/protocol'
-import { newSessionGroups, SessionControls } from '../src/components/ComposerControls.tsx'
-import { RunSettingsGroups, workspaceSections } from '../src/components/Pickers.tsx'
-import { Composer } from '../src/components/Composer.tsx'
+import { workspaceSections } from '../src/components/Pickers.tsx'
+import { Composer } from '../src/composer/Composer.tsx'
 import { Inspector } from '../src/components/Inspector.tsx'
-import { ContextRow } from '../src/components/NewSession.tsx'
 import { DiffView, PREVIOUS_UNAVAILABLE_TEXT, PREVIOUS_UNKNOWN_TEXT } from '../src/components/DiffView.tsx'
-import { ApprovalStatuses, type ApprovalStatus } from '../src/components/ApprovalCard.tsx'
+import { ApprovalDrawer, type ApprovalStatus } from '../src/composer/ApprovalDrawer.tsx'
 import { ToolCard } from '../src/components/ToolCard.tsx'
-import type { ApprovalGate } from '../src/core/permissions.ts'
+import { approvalActions, type ApprovalGate } from '../src/core/permissions.ts'
 import { APPROVAL_COPY, CODE_ROOT_COPY, CONFIRMATION_COPY, CONFIRMATION_RESULT_TEXT } from '../src/core/securityCopy.ts'
 import { ConfirmationContent } from '../src/components/InlineConfirm.tsx'
 import type { ConfirmationActions, ConfirmationView } from '../src/core/confirmations.ts'
@@ -39,19 +37,41 @@ const tool = (extra: Partial<Message> = {}): Message => ({
   ...extra,
 })
 
+/** The approval drawer of one request, as the composer draws it. */
+const Drawer = ({
+  message,
+  approval,
+  gateFor,
+  busy,
+  status,
+}: {
+  message: Message | null
+  approval: Approval
+  gateFor?: (approval: Approval) => ApprovalGate
+  busy?: string
+  status?: ApprovalStatus
+  onDecide?: unknown
+}) =>
+  createElement(ApprovalDrawer, {
+    approvals: [approval],
+    messages: message ? [message] : [],
+    index: 0,
+    onIndex: () => {},
+    gateFor: gateFor ?? (item => approvalActions(item, null, null)),
+    busy: new Map(busy ? [[approval.id, busy]] : []),
+    statuses: new Map(status ? [[approval.id, status]] : []),
+    onDecide: () => {},
+  })
+
 /** An approval card as the page renders it, with what this device's last choice left on it. */
 const approvalCard = (extra: Partial<Approval>, status?: ApprovalStatus, gate?: ApprovalGate) =>
   renderToStaticMarkup(
-    createElement(
-      ApprovalStatuses.Provider,
-      { value: new Map(status ? [['ap1', status]] : []) },
-      createElement(ToolCard, {
-        message: tool(),
-        approval: approval(extra),
-        onDecide: noop,
-        ...(gate ? { gateFor: () => gate } : {}),
-      }),
-    ),
+    createElement(Drawer, {
+      message: tool(),
+      approval: approval(extra),
+      ...(status ? { status } : {}),
+      ...(gate ? { gateFor: () => gate } : {}),
+    }),
   )
 /** The words on a card's buttons, in order. */
 const buttonLabels = (html: string) =>
@@ -115,7 +135,6 @@ describe('decided approvals', () => {
           },
           ...extra,
         }),
-        onDecide: noop,
       }),
     )
   const at = new Date().toISOString()
@@ -186,7 +205,6 @@ describe('decided approvals', () => {
           text: 'APPROVAL_REJECTED: 用户拒绝了本次工具调用，未执行该操作。',
           tool: { title: 'write_file', output: 'APPROVAL_REJECTED: 用户拒绝了本次工具调用，未执行该操作。' },
         }),
-        onDecide: noop,
       }),
     )
     expect(stateSlot(html)).toBe('已拒绝')
@@ -198,7 +216,7 @@ describe('decided approvals', () => {
     expect(row).not.toContain('tool-card-name')
     expect(row).toMatch(/title="写入文件 notes\/plan.md\nwrite_file\n已允许 · /u)
     const card = renderToStaticMarkup(
-      createElement(ToolCard, {
+      createElement(Drawer, {
         message: tool({ tool: { kind: 'edit', toolTitle: '写入文件', title: 'write_file', input: '{"path":"notes/plan.md"}' } }),
         approval: approval(),
         onDecide: noop,
@@ -211,7 +229,7 @@ describe('decided approvals', () => {
 describe('approval cards', () => {
   it('shows each argument once: no repeated reason, and file content only as the diff', () => {
     const html = renderToStaticMarkup(
-      createElement(ToolCard, {
+      createElement(Drawer, {
         message: tool({ tool: { kind: 'edit', title: 'Run ls' } }),
         onDecide: noop,
         approval: approval({
@@ -227,14 +245,56 @@ describe('approval cards', () => {
     expect(html).not.toContain('<dt>content</dt>')
     expect(html).not.toContain('内容见变更')
     expect(html.match(/SECRET_BODY/g)).toHaveLength(1)
-    // With the approval open there is nothing else to expand.
-    expect(html).toContain('<div class="tool-card-header">')
+  })
+
+  it('never lets a tool’s own title stand alone: its ID shows, and only a routine diff starts folded', () => {
+    const asked = (extra: Partial<Approval>, gate?: ApprovalGate) =>
+      renderToStaticMarkup(
+        createElement(ApprovalDrawer, {
+          approvals: [
+            approval({
+              toolName: 'shell',
+              arguments: JSON.stringify({ command: 'rm -rf build' }),
+              tool: { title: '读取配置', input: JSON.stringify({ command: 'rm -rf build' }) },
+              ...extra,
+            }),
+          ],
+          messages: [],
+          index: 0,
+          onIndex: noop,
+          gateFor: gate ? () => gate : item => approvalActions(item, null, null),
+          busy: new Map(),
+          statuses: new Map(),
+          onDecide: noop,
+        }),
+      )
+    const open = /class="approval-preview"[^>]*data-open=""/u
+    for (const html of [asked({ risk: 'R1' }), asked({ risk: 'R2' }), asked({ advisory: true })]) {
+      expect(html).toContain('读取配置')
+      expect(html).toContain('<code class="tool-card-name">shell</code>')
+      expect(html).toMatch(open)
+    }
+    const routine = asked({
+      risk: 'R1',
+      toolName: 'write_file',
+      tool: { title: '写入文件', diffs: [{ path: 'a.ts', newText: 'x\n' }] },
+      arguments: JSON.stringify({ path: 'a.ts', content: 'x\n' }),
+    })
+    expect(routine).toContain('<code class="tool-card-name">write_file</code>')
+    expect(routine).not.toMatch(open)
+    const riskyDiff = asked({
+      risk: 'R2',
+      toolName: 'write_file',
+      tool: { title: '写入文件', diffs: [{ path: 'a.ts', newText: 'x\n' }] },
+      arguments: JSON.stringify({ path: 'a.ts', content: 'x\n' }),
+    })
+    expect(riskyDiff).toMatch(open)
   })
 
   it('marks bidirectional and invisible characters so the reviewed text is the written text', () => {
     const content = 'if (accessLevel != "user\u202E \u2066// Check if admin\u2069 \u2066") { grant() }\n'
     const html = renderToStaticMarkup(
-      createElement(ToolCard, {
+      createElement(Drawer, {
         message: tool({ tool: { kind: 'edit', title: '写入 a\u200B.ts' } }),
         onDecide: noop,
         approval: approval({
@@ -265,7 +325,7 @@ describe('approval cards', () => {
     const html = approvalCard({ risk: 'R1', reason: '写入 a\u200B.ts', options: [...ALWAYS] })
     expect(html).toContain(APPROVAL_COPY.hiddenCharacters)
     expect(html).not.toContain(`aria-label="${APPROVAL_COPY.more}"`)
-    expect(buttonLabels(html)).toEqual(['拒绝', '允许一次'])
+    expect(buttonLabels(html)).toEqual(['拒绝', '允许'])
     expect(html).not.toContain('data-variant="primary"')
     // A clean request still offers it.
     expect(approvalCard({ risk: 'R1', options: [...ALWAYS] })).toContain(`aria-label="${APPROVAL_COPY.more}"`)
@@ -275,7 +335,7 @@ describe('approval cards', () => {
     const html = approvalCard({ risk: 'R1', options: [...ALWAYS] }, { uncertain: { decision: 'reject', optionId: 'reject_once' } })
     expect(html).toContain(APPROVAL_COPY.uncertainTitle('拒绝'))
     expect(html).toContain('「拒绝」的结果未知')
-    expect(buttonLabels(html)).toEqual(['重试', '拒绝', '允许一次'])
+    expect(buttonLabels(html)).toEqual(['拒绝', '允许', '重试'])
     expect(html).not.toContain('data-variant="primary"')
     expect(html).not.toContain(`aria-label="${APPROVAL_COPY.more}"`)
   })
@@ -291,13 +351,13 @@ describe('approval cards', () => {
         { id: 'a', label: 'Allow', kind: 'allow_once' },
       ],
     })
-    expect(buttonLabels(html)).toEqual(['拒绝', '允许一次'])
+    expect(buttonLabels(html)).toEqual(['拒绝', '允许'])
     // The agent's own words are only in the tooltip.
     expect(html).toContain('class="ui-tooltip"><span>Reject</span>')
     expect(html).not.toContain('>Reject</button>')
   })
 
-  it('keeps a high-risk allow in its words while it waits, and leaves a failed confirmation in the card', () => {
+  it('says the allow waits while the sheet is open, disables both buttons, and leaves a failed confirmation in the card', () => {
     const gate: ApprovalGate = {
       kind: 'R2',
       badge: { label: APPROVAL_COPY.highRisk, tone: 'err' },
@@ -313,7 +373,7 @@ describe('approval cards', () => {
     expect(waiting).toContain(CONFIRMATION_COPY.waiting)
     expect(waiting).toMatch(/class="sr-only" role="status"/u)
     expect(waiting).not.toContain('确认详情')
-    expect(buttonLabels(waiting)).toEqual(['拒绝', APPROVAL_COPY.allowLocal])
+    expect(waiting).toContain(CONFIRMATION_COPY.waitingShort)
     const failed = approvalCard({ risk: 'R2' }, { failure: { text: CONFIRMATION_RESULT_TEXT.denied, tone: 'error' } }, gate)
     expect(failed).toMatch(/class="ui-notice approval-failure" data-tone="error"/)
     expect(failed).toContain(CONFIRMATION_RESULT_TEXT.denied)
@@ -431,20 +491,37 @@ describe('approval cards', () => {
     expect(html).toContain('展开其余 12 行')
     expect(html).toContain('line 6')
     expect(html).not.toContain('line 7<')
-    // The rows that fit open by default on wider screens (this render has no viewport, so it is the desktop).
-    expect(html).toMatch(/class="approval-preview" id="[^"]+" data-open=""/)
   })
 
-  it('carries the waiting in the header as one amber status word after its shield', () => {
-    const html = renderToStaticMarkup(createElement(ToolCard, { message: tool(), approval: approval({ risk: 'R1' }), onDecide: noop }))
-    expect(html).toMatch(
-      /<span class="ui-status-word tool-card-waiting" data-tone="waiting"><svg[^>]*lucide-shield[^>]*>.*?<\/svg>需要你允许<\/span>/u,
+  it('says it waits once, in amber after its shield, and pages through several requests', () => {
+    const html = renderToStaticMarkup(createElement(Drawer, { message: tool(), approval: approval({ risk: 'R1' }), onDecide: noop }))
+    expect(html.match(/需要你允许/gu)).toHaveLength(1)
+    expect(html).toMatch(/lucide-shield[^>]*>.*?<\/svg><span>需要你允许<\/span>/u)
+    const two = renderToStaticMarkup(
+      createElement(ApprovalDrawer, {
+        approvals: [approval({ risk: 'R1' }), approval({ id: 'ap2', risk: 'R1' })],
+        messages: [],
+        index: 1,
+        onIndex: noop,
+        gateFor: item => approvalActions(item, null, null),
+        busy: new Map(),
+        statuses: new Map(),
+        onDecide: noop,
+      }),
     )
+    expect(two).toContain('<span>2/2</span>')
   })
 
-  it('keeps blue off a high-risk card: allowing is a secondary button led by a lock', () => {
+  it('takes no press until it has armed, so a click meant for what was there cannot land on it', () => {
+    const html = renderToStaticMarkup(createElement(Drawer, { message: tool(), approval: approval({ risk: 'R1' }), onDecide: noop }))
+    expect(html).toContain('data-arming=""')
+    expect(buttonLabels(html)).toEqual(['拒绝', '允许'])
+    expect(html.match(/<button[^>]*aria-disabled="true"/gu)).toHaveLength(2)
+  })
+
+  it('gives a high-risk request its reason on a line of its own, and allowing a lock', () => {
     const html = renderToStaticMarkup(
-      createElement(ToolCard, {
+      createElement(Drawer, {
         message: tool(),
         approval: approval({ risk: 'R2' }),
         onDecide: noop,
@@ -460,17 +537,14 @@ describe('approval cards', () => {
         }),
       }),
     )
-    expect(html).toContain('class="tool-card tool-awaiting-approval has-approval is-r2"')
-    expect(html).not.toContain('data-variant="primary"')
-    expect(html).toMatch(/<button type="button" class="ui-button" data-variant="secondary" data-size="sm">拒绝<\/button>/)
-    expect(html).toMatch(
-      /<button type="button" class="ui-button" data-variant="secondary" data-size="sm" data-leading="">(?:(?!<\/button>).)*?<svg[^>]*lucide-lock-keyhole[^>]*>.*?<\/svg>在这台 Mac 上允许<\/button>/,
-    )
+    expect(html).toContain('data-risky=""')
+    expect(html).toContain('<p class="approval-clause">')
+    expect(html).toMatch(/data-variant="primary"[^>]*>(?:(?!<\/button>).)*?lucide-lock-keyhole[^>]*>.*?<\/svg>在这台 Mac 上允许<\/button>/u)
   })
 
   it('never labels a write without previous text as a new file', () => {
     const html = renderToStaticMarkup(
-      createElement(ToolCard, {
+      createElement(Drawer, {
         message: tool(),
         onDecide: noop,
         approval: approval({
@@ -504,7 +578,7 @@ describe('approval cards', () => {
     expect(edited).not.toMatch(/新文件|原内容/)
     expect(edited).toContain('−1')
     const card = renderToStaticMarkup(
-      createElement(ToolCard, {
+      createElement(Drawer, {
         message: tool(),
         onDecide: noop,
         approval: approval({
@@ -596,52 +670,6 @@ describe('a folder inside Latch’s program directory', () => {
   })
 })
 
-describe('session model switch', () => {
-  const props = {
-    catalog: hostCatalog(),
-    summary: session({ harnessId: 'standard', providerId: 'fake', model: 'fake-chat' }),
-    harness: hostCatalog().harnesses[0],
-    current: { providerId: 'fake', model: 'fake-chat' },
-    onModel: noop,
-    config: [],
-    configBusy: null,
-    onConfig: noop,
-    access: { legacy: false, local: false, admin: true },
-  }
-  it('marks a switch that the next message will carry', () => {
-    const idle = renderToStaticMarkup(createElement(SessionControls, { ...props, model: props.current, phone: false }))
-    expect(idle).not.toContain('is-pending')
-    const desktop = renderToStaticMarkup(
-      createElement(SessionControls, { ...props, model: { providerId: 'fake', model: 'fake-coder-32k' }, phone: false }),
-    )
-    expect(desktop).toContain('model-picker is-pending')
-    expect(desktop).toContain('aria-label="模型：下一条：fake-coder-32k"')
-    const phone = renderToStaticMarkup(
-      createElement(SessionControls, { ...props, model: { providerId: 'fake', model: 'fake-coder-32k' }, phone: true }),
-    )
-    expect(phone).toMatch(/^<span class="chip chip-static is-pending" title="下一条消息使用：fake-coder-32k">.*下一条：fake-coder-32k/)
-    expect(renderToStaticMarkup(createElement(SessionControls, { ...props, model: props.current, phone: true }))).toBe('')
-  })
-})
-
-describe('phone run settings', () => {
-  it('places each manage link inside the group it manages', () => {
-    const groups = newSessionGroups(
-      hostCatalog(),
-      { mode: 'agent', harnessId: 'standard', workspaceId: 'default', model: { providerId: 'fake', model: 'fake-chat' } },
-      noop,
-      { providers: noop, workspaces: noop },
-    )
-    expect(groups.map(group => [group.id, group.links?.map(link => link.label)])).toEqual([
-      ['model', ['管理模型服务…']],
-      ['workspace', ['管理项目…']],
-    ])
-    const html = renderToStaticMarkup(createElement(RunSettingsGroups, { groups, close: noop }))
-    expect(html.indexOf('管理模型服务…')).toBeLessThan(html.indexOf('<h3>项目</h3>'))
-    expect(html.indexOf('管理项目…')).toBeGreaterThan(html.indexOf('<h3>项目</h3>'))
-  })
-})
-
 describe('composer', () => {
   const base = {
     textareaRef: { current: null },
@@ -661,23 +689,42 @@ describe('composer', () => {
     controls: null,
   }
 
-  it('says in the send slot that starting takes the local confirmation, and keeps an empty send focusable with its reason', () => {
-    const start = renderToStaticMarkup(createElement(Composer, { ...base, confirmStart: '开始会话' }))
-    expect(start).toContain('开始会话')
-    expect(start).toContain('start-button')
-    expect(start).not.toContain('aria-label="发送"')
+  it('keeps an empty send focusable with its reason', () => {
     const empty = renderToStaticMarkup(createElement(Composer, { ...base, draft: '' }))
     expect(empty).toContain('aria-label="发送"')
     expect(empty).toContain('aria-disabled="true"')
     expect(empty).not.toMatch(/<button[^>]*aria-label="发送"[^>]*disabled=""/u)
   })
 
-  it('says nothing above the input while a request waits: its card does, and the way back to it is the jump button', () => {
+  it('puts stop in the send slot, and steps it back while an approval waits', () => {
     const html = renderToStaticMarkup(createElement(Composer, { ...base, variant: 'session', run: { cancel: 'idle', onCancel: noop } }))
-    expect(html).not.toContain('待批准')
-    expect(html).not.toContain('is-waiting')
     // Stop takes the send slot and is never red.
     expect(html).toContain('aria-label="停止"')
+    expect(html).not.toContain('data-step-back')
+    const waiting = renderToStaticMarkup(
+      createElement(Composer, { ...base, draft: '', variant: 'session', stepBack: true, run: { cancel: 'idle', onCancel: noop } }),
+    )
+    expect(waiting).toContain('data-step-back')
+  })
+
+  it('keeps a way to stop while a question waits: stop until text is written, and beside send on touch', () => {
+    const asking = {
+      ...base,
+      variant: 'session' as const,
+      stepBack: true,
+      answer: { kind: 'question' as const, onSubmit: noop },
+      run: { cancel: 'idle' as const, onCancel: noop },
+    }
+    const empty = renderToStaticMarkup(createElement(Composer, { ...asking, draft: '' }))
+    expect(empty).toContain('aria-label="停止"')
+    expect(empty).toContain('data-step-back')
+    expect(empty).not.toContain('aria-label="发送"')
+    const written = renderToStaticMarkup(createElement(Composer, asking))
+    expect(written).toContain('aria-label="发送"')
+    expect(written).not.toContain('aria-label="停止"')
+    const touch = renderToStaticMarkup(createElement(Composer, { ...asking, coarse: true }))
+    expect(touch).toContain('aria-label="发送"')
+    expect(touch).toContain('aria-label="停止"')
   })
 
   it('says a stop whose outcome is unknown once, in the bar with 重试, and leaves the stop button a square', () => {
@@ -700,17 +747,5 @@ describe('composer', () => {
     expect(html).toContain('这台设备不能发送消息')
     expect(html).not.toContain('<textarea')
     expect(html).not.toContain('aria-label="发送"')
-  })
-})
-
-describe('context row', () => {
-  it('names the computer and shows the level only when it is full access', () => {
-    const asking = renderToStaticMarkup(createElement(ContextRow, { hostName: 'MacBook Pro', fullAccess: false }))
-    expect(asking).toContain('MacBook Pro')
-    expect(asking).not.toContain('完全访问')
-    const full = renderToStaticMarkup(createElement(ContextRow, { hostName: 'MacBook Pro', fullAccess: true }))
-    expect(full).toContain('完全访问')
-    expect(full).not.toContain('<button')
-    expect(full).toContain('context-risk')
   })
 })

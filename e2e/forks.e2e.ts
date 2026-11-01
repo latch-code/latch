@@ -34,6 +34,8 @@ describe('conversation forks', () => {
         await page.getByText('文件不会复制或回滚', { exact: false }).waitFor()
         const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
         expect(await input.inputValue()).toBe('请接着这个会话继续。')
+        // What a fork borrows from its source is for this draft: nothing goes into what this device remembers.
+        expect(await page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('latch.composer.')))).toEqual([])
         await input.fill('请走另一条路')
         if (width === 390)
           await page.getByRole('dialog', { name: '新会话', exact: true }).getByRole('button', { name: '开始', exact: true }).click()

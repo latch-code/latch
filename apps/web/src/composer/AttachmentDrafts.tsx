@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react'
-import { FileText, Image, Paperclip, X } from 'lucide-react'
+import { FileText, Image, Plus, X } from 'lucide-react'
 import { Button, ConfirmDialog, Icon, IconButton, InlineNotice, Modal, ModalHeader, Spinner, TextAreaField } from '@latch/ui'
 import type { AttachmentDraftController, DraftAttachment } from '../hooks/useAttachments.ts'
 import { storageGet, storageSet } from '../preferences.ts'
-import { VisibleText } from './VisibleText.tsx'
+import { VisibleText } from '../components/VisibleText.tsx'
 
 const uploadBytes = (value: number) =>
   value < 1024
@@ -53,7 +53,7 @@ export function AttachmentButton({ controller, disabled = false }: { controller:
         }}
       />
       <IconButton
-        icon={Paperclip}
+        icon={Plus}
         label="添加文件…"
         disabled={disabled || !available}
         tooltip={disabled ? '等待这次提交完成' : available ? '添加文件…' : (controller.caps?.reason ?? '正在检查附件能力…')}

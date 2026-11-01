@@ -75,7 +75,7 @@ export const APPROVAL_COPY = {
   allowLocalTooltip: '在这台 Mac 的系统窗口中确认',
   more: '更多批准选项',
   moreSheet: '更多选项',
-  alwaysNote: '只在这个会话里有效',
+  allowSession: '这个会话都允许这类操作',
   moreBusy: '正在提交另一个选择',
   noStandard: '这台设备不能允许这一步',
   noElevated: '这台设备不能允许这一步',
@@ -88,12 +88,14 @@ export const APPROVAL_COPY = {
   uncertain: '可重试同一选择，不会重复提交。',
   retry: '重试',
   /** The drawer above the composer. */
-  drawerTitle: '需要你允许',
   drawerCount: (index: number, total: number) => `${index}/${total}`,
   allow: '允许',
   reject: '拒绝',
   stop: '停止',
   rejectAndSend: '拒绝并发送',
+  stopTurn: '停止这一轮',
+  hidePreview: '收起',
+  viewDetail: '查看详情',
   rejectPlaceholder: '输入内容会拒绝并告诉 Agent 改做什么',
   viewChange: '查看改动',
   /** The proposal's label in 变更 while it waits. */
@@ -119,19 +121,8 @@ export const DECISION_COPY = {
   cancelledNote: '会话停止时还没有人回答',
   ranDespite: 'Agent 报告仍执行了这次调用',
   ranDespiteNote: 'Agent 的询问只是提示：拒绝会转达给它，但不能阻止它执行。这一行显示的是 Agent 自己的报告。',
-  /** Why a note cannot go with a rejection (「告诉 Agent 改做什么」). */
+  /** Why what was typed cannot go with a rejection. */
   noteInvalid: '说明最多 500 个字，不能包含控制字符、不可见字符或改变文字方向的字符',
-  /** After 拒绝, the composer asks what to do instead. */
-  notePlaceholder: '告诉 Agent 改做什么…',
-  noteLabel: '告诉 Agent 改做什么',
-  /** Latch 内置: the rejection waits for the note, which goes to the model with it. */
-  noteHint: '写下的话会和拒绝一起交给模型；不写也可以直接拒绝。',
-  noteCard: '在输入框里告诉 Agent 改做什么，再按「拒绝」；不写也可以。',
-  noteSubmit: '拒绝',
-  noteSubmitLabel: '拒绝并交给模型',
-  noteCancel: '返回',
-  /** An agent's ask: the rejection went at once, and the text waits for the turn to end. */
-  noteAfterTurn: 'Agent 的询问不能附带文字，本轮结束后再发送。',
 } as const
 
 /**
@@ -141,6 +132,13 @@ export const DECISION_COPY = {
 export function highRiskLabel(reason: unknown): string {
   return typeof reason === 'string' && Object.hasOwn(RISK_REASON_TEXT, reason)
     ? `${APPROVAL_COPY.highRisk} · ${RISK_REASON_TEXT[reason as ApprovalRiskReason]}`
+    : APPROVAL_COPY.highRisk
+}
+
+/** A risky request's reason on its own line; the words come from @latch/protocol, the same the system sheet uses. */
+export function RISK_CLAUSE(reason: unknown): string {
+  return typeof reason === 'string' && Object.hasOwn(RISK_REASON_TEXT, reason)
+    ? RISK_REASON_TEXT[reason as ApprovalRiskReason]
     : APPROVAL_COPY.highRisk
 }
 
@@ -164,6 +162,7 @@ export const CONFIRMATION_COPY = {
   label: '在 Mac 上确认',
   /** Either window: the helper's Touch ID sheet, or the desktop's own 取消/允许 sheet. */
   waiting: '在系统窗口中确认',
+  waitingShort: '等待确认',
   /** Above what a system form's sentence leaves out. */
   details: '确认详情',
   confirmed: '已确认，正在',
@@ -606,7 +605,11 @@ export const DOCUMENT_PREVIEW_ERRORS = {
   fallback: '无法显示这个文档，请下载或在 Mac 上打开。',
 } as const
 export type SessionStopCode = keyof typeof SESSION_STOP_TEXT
+/** The same stop after a mode change, where no message was on its way. */
+export const CONFIG_UNVERIFIED_TEXT = '确认不了 Agent 是否切换到了所选的权限模式'
 export const isSessionStopCode = (code: string): code is SessionStopCode => code in SESSION_STOP_TEXT
+/** A mode that could not be read back this once: nothing went out, the session may read true on the next try. */
+export const stopLocksInput = (code: SessionStopCode) => code !== 'permission-unverified'
 
 /** Disabled controls: the hover reason, for a control the Mac alone can change. */
 export const HOVER_REASONS = {
@@ -624,11 +627,17 @@ export const HOVER_REASONS = {
 export const MODE_COPY = {
   askWhenNeeded: '需要时询问',
   askWhenNeededTooltip: '改文件或运行命令前会问你',
+  /** The built-in engine has no way to run a command, so its mode cannot speak of one. */
+  askBeforeWritesTooltip: '改文件前会问你',
   fullAccess: '完全访问',
   /** One meaning only. */
   fullAccessTooltip: 'Agent 可以读写这台 Mac 上的文件并运行命令，不再询问',
   agentDecides: (agent: string) => `由 ${agent} 决定`,
   agentDecidesTooltip: (agent: string) => `${agent} 自己决定什么时候问你，Latch 不能限制它`,
+  unverifiable: '权限无法确认',
+  unverifiableTooltip: (agent: string) => `Latch 启动时把 ${agent} 设为只读，但读不回来，无法确认它是否生效`,
+  afterStart: '开始后可以选',
+  afterStartTooltip: (agent: string) => `${agent} 开始后才告诉 Latch 它有哪些权限模式`,
   readOnlyLine: (agent: string) => `${agent} 只看不改`,
   autoLine: (agent: string) => `${agent} 在项目里改文件和运行命令，越界前问你`,
   neverAsksLine: (agent: string) => `${agent} 不再询问，直接读写这台 Mac 上的文件并运行命令`,

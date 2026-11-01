@@ -66,6 +66,7 @@ export function TitleBar({ shell }: { shell: ShellState }) {
             />
           )
         )}
+        {sidebarColumn && !sidebarCollapsed && <span className="titlebar-wordmark">Latch</span>}
         {shut && (
           <>
             <IconButton label="新建会话" icon={SquarePen} pressed={sessions && selectedId === null} onClick={startNew} />

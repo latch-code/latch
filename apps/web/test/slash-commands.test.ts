@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { slashMatches, slashOptions } from '../src/components/SlashCommands.tsx'
+import { slashMatches, slashOptions } from '../src/composer/SlashCommands.tsx'
 describe('advertised slash commands', () => {
   const commands = [{ name: 'init', description: 'Prepare' }, { name: 'review' }]
   it('suggests only an initial slash token, filters case-insensitively, and never treats prose or arguments as commands', () => {

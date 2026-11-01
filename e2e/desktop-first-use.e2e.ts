@@ -106,39 +106,10 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await resize(application, page, width)
         await enroll(page, '首次使用 ' + width)
         if (width === 390) await startNew(page, width)
-        const guide = page.getByRole('region', { name: '开始使用', exact: true }),
-          input = page.getByRole('textbox', { name: '新会话消息', exact: true }),
-          draft = '选择 Agent 的时候保留这一份尚未发送的草稿。'
-        await input.fill(draft)
-        if (width === 390) {
-          // The phone uses the actual new-session sheet, which does not claim to render desktop onboarding.
-          expect(await guide.count()).toBe(0)
-          await page.getByRole('dialog', { name: '新会话', exact: true }).getByRole('button', { name: '添加 Agent', exact: true }).click()
-        } else {
-          await guide.waitFor()
-          expect(await guide.locator(':scope > div').count()).toBe(3)
-          await guide
-            .locator(':scope > div')
-            .filter({ hasText: '选择 Agent 与模型' })
-            .getByRole('button', { name: '更换', exact: true })
-            .click()
-        }
-        const agents = page.getByRole('group', { name: '添加 Agent', exact: true })
-        await agents.waitFor()
-        expect(await page.locator('.settings-page').count()).toBe(0)
-        expect(await input.inputValue()).toBe(draft)
-        expect((await owner.json<AppSnapshot>('snapshot')).tasks).toHaveLength(0)
-        await page.keyboard.press('Escape')
-        await agents.waitFor({ state: 'hidden' })
-        if (width !== 390) {
-          for (const title of ['选择 Agent 与模型', '选择项目', '写下第一个任务']) {
-            const row = guide.locator(':scope > div').filter({ hasText: title })
-            await row.getByRole('button', { name: '跳过', exact: true }).click()
-            await row.waitFor({ state: 'detached' })
-          }
-          await guide.waitFor({ state: 'detached' })
-          expect(await input.inputValue()).toBe(draft)
-        }
+        const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
+        // With the built-in engine alone there is nothing to ask, and the page says what that engine cannot do.
+        await page.locator('.composer-engine-note').filter({ hasText: 'Latch 内置只能读写项目里的文件，不能运行命令' }).waitFor()
+        expect(await page.locator('.engine-question').count()).toBe(0)
         const prompt = '这是通过本地假 Provider 执行的第一个实际任务。'
         await input.fill(prompt)
         await input.press('Meta+Enter')
@@ -153,12 +124,11 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
             .map(message => message.text),
         ).toEqual([prompt])
         await startNew(page, width)
-        expect(await guide.count()).toBe(0)
         const missingDraft = '缺少模型时也不能丢掉这份草稿。'
         await input.fill(missingDraft)
         expect((await owner.request('plugins/' + provider.id, { method: 'POST', body: { enabled: false } })).status).toBe(200)
         const setup = page.locator('.setup-card')
-        await setup.getByText('连接模型服务', { exact: true }).waitFor()
+        await setup.getByText('还没有模型服务。', { exact: true }).waitFor()
         await setup.getByRole('button', { name: '添加模型服务', exact: true }).click()
         await setup.getByRole('region', { name: '添加模型服务', exact: true }).waitFor()
         await setup.getByRole('group', { name: '选择服务', exact: true }).waitFor()

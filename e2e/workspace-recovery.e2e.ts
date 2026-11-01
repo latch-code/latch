@@ -61,7 +61,7 @@ describe('continue in a saved project after the old folder disappears', () => {
       page.on('request', request => {
         if (request.url().endsWith('/link/api/tasks') && request.method() === 'POST') creates++
       })
-      await recovery.getByRole('button', { name: '在所选项目继续', exact: true }).click()
+      await recovery.getByRole('button', { name: '在新会话中继续', exact: true }).click()
       const nextInput = page.getByRole('textbox', { name: '新会话消息', exact: true })
       await nextInput.waitFor()
       expect(await nextInput.inputValue()).toBe(draft)

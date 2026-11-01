@@ -87,7 +87,7 @@ describe('queued follow-ups', () => {
         await enqueue(`下一句 ${width}`)
         await tray.getByText(`下一句 ${width}`, { exact: true }).waitFor()
         await enqueue(second)
-        await expect.poll(() => tray.locator('.prompt-queue-title').textContent()).toContain('本轮完成后依次发送')
+        await expect.poll(() => tray.locator('.prompt-queue-title').textContent()).toBe('接下来 · 2')
         await expect.poll(async () => (await owner.json<TaskDetail>(path)).queue?.length).toBe(2)
         await input.fill(`仍在输入的草稿 ${width}`)
         await tray.getByRole('button', { name: '编辑', exact: true }).first().click()

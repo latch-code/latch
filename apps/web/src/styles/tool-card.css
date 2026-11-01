@@ -149,21 +149,6 @@
   overflow-wrap: anywhere;
 }
 
-/* A pending approval is always the card: the tray is the card's own surface. */
-.tool-card.has-approval {
-  margin: var(--sp-4) 0;
-  border: 1px solid var(--line);
-  border-radius: var(--r-12);
-  background: var(--sunken);
-}
-.tool-card.has-approval > .tool-card-header {
-  display: grid;
-  gap: var(--sp-4);
-  padding: var(--sp-8) var(--sp-12) var(--sp-4);
-  color: var(--ink-2);
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui);
-}
 /* What the request would do, with the lines it would change. */
 .tool-card-what {
   display: flex;

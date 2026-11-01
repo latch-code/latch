@@ -12,6 +12,8 @@ export interface AcpPermissionProfile {
   expectedMode?: string
   /** Strictest → widest. Modes outside the ladder count as wider. */
   modeLadder?: readonly string[]
+  /** Modes in the ladder where the harness stops asking; the composer names them. Display only. */
+  neverAskModes?: readonly string[]
   /** Modes where a model approves on the user's behalf; never offered. */
   forbiddenModes?: readonly string[]
   /** Permission option IDs never shown; exact IDs, or prefixes ending in '*'. */

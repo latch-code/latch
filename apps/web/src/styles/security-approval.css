@@ -1,99 +1,120 @@
 /* The approval card and the input while a device may only watch. */
 /*
- * Approval card: the tool card's tray waiting for a decision. The header row carries the title (14/20, 600) and the
- * state pill; under it the agent's reason, when it asked and the notes that change what allowing means; then the
- * preview on paper behind a disclosure, one sentence on what allowing does and the button row (44): a lock with the
- * reason where this device cannot allow, else the key hint while the card holds focus; ⋯, 拒绝 and the one blue
- * 允许一次 on the right. A high-risk request turns the tray red and has no blue at all.
+ * The approval drawer above the input. A neutral surface in both themes; amber is only the shield and 「需要你允许」. Row 1:
+ * those and the pager. Row 2: what it does and to what, the lines it changes and 查看改动. A risky request adds its reason on
+ * a red line of its own. Buttons at the right; on a phone they take their own row. This layer keeps injected page styles
+ * from moving or hiding what the approver weighs.
  */
-.tool-card[data-secure] {
-  display: block !important;
+.approval-panel {
+  display: grid !important;
+  gap: var(--sp-8);
+  border-color: var(--line-strong) !important;
+  background: var(--raised) !important;
   opacity: 1 !important;
-  border-color: var(--line) !important;
-  background: var(--sunken) !important;
   color: var(--ink) !important;
   font-size: var(--fs-ui) !important;
   line-height: var(--lh-ui-para) !important;
 }
-/* The tint lies on an opaque surface, so nothing behind the card can show through its words. Quiet lines take ink-2:
- * muted falls under 4.5:1 on this ground. */
-.tool-card[data-secure].is-r2 {
-  border-color: var(--red-line) !important;
-  background: linear-gradient(var(--red-soft), var(--red-soft)) var(--canvas) !important;
-}
-.tool-card[data-secure].is-r2 :is(.tool-card-name, .approval-footnote, .approval-keys) {
-  color: var(--ink-2) !important;
-}
-.tool-card.has-approval .tool-card-header,
-.tool-card.has-approval .tool-card-header:hover {
+.approval-row {
   display: flex !important;
-  background: transparent !important;
-  color: var(--ink) !important;
-  font-size: var(--fs-ui) !important;
-  line-height: var(--lh-ui) !important;
+  align-items: center;
+  gap: var(--sp-12);
+  min-width: 0;
 }
-.tool-card.has-approval .tool-card-title {
-  display: block !important;
-  color: var(--ink) !important;
-  font-size: var(--fs-ui) !important;
-  line-height: var(--lh-ui) !important;
-  font-weight: 600 !important;
+.approval-what {
+  display: grid !important;
+  flex: 1;
+  gap: var(--sp-2);
+  min-width: 0;
 }
-.tool-card.has-approval .tool-card-name {
-  display: block !important;
+.approval-title {
+  display: flex !important;
+  align-items: center;
+  gap: var(--sp-6);
+  color: var(--amber) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption) !important;
+  font-weight: 500;
+}
+.approval-shield {
+  color: var(--amber-icon) !important;
+}
+.approval-pager {
+  display: inline-flex !important;
+  align-items: center;
+  gap: var(--sp-2);
   color: var(--muted) !important;
+  font-weight: 400;
+}
+.approval-action {
+  display: flex !important;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-8);
+  min-width: 0;
+}
+.approval-object {
+  display: inline !important;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink) !important;
   font-family: var(--mono) !important;
   font-size: var(--fs-mono) !important;
   line-height: var(--lh-mono) !important;
 }
-.tool-card.has-approval .tool-card-state {
-  display: inline-flex !important;
+.approval-stat {
+  display: inline !important;
+  font-family: var(--mono) !important;
+  font-size: var(--fs-mono) !important;
+  white-space: nowrap;
 }
-/* Folds away by its height once the Host settled it: the rows of the slot close to 0fr, the content clipped. */
-.approval-slot {
-  display: grid !important;
-  grid-template-rows: 1fr;
-  transition:
-    grid-template-rows calc(var(--m-panel) * 0.7) var(--e-exit),
-    opacity calc(var(--m-micro) * 0.7) var(--e-exit);
+.approval-see {
+  display: inline !important;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-2) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption) !important;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  white-space: nowrap;
 }
-.approval-slot:not([data-leaving]) {
-  grid-template-rows: 1fr !important;
-  opacity: 1 !important;
-}
-.approval-slot[data-leaving] {
-  grid-template-rows: 0fr !important;
-  opacity: 0 !important;
-}
-/* It arrives by fading in, never by growing: the transcript keeps the reading position it was given. */
-@media (prefers-reduced-motion: no-preference) {
-  .approval-slot:not([data-leaving]) {
-    transition: opacity var(--m-enter) var(--e-enter);
-  }
-  @starting-style {
-    [data-secure] > .approval-slot:not([data-leaving]) {
-      opacity: 0 !important;
-    }
-  }
-}
-.approval-slot-inner {
+.approval-clause {
   display: block !important;
-  min-height: 0;
-  overflow: clip;
-  overflow-clip-margin: var(--sp-6);
-}
-.approval-panel {
-  display: grid !important;
-  padding: 0 var(--sp-4) var(--sp-4);
-  opacity: 1 !important;
-  color: var(--ink) !important;
+  color: var(--red) !important;
   font-size: var(--fs-ui) !important;
-  line-height: var(--lh-ui-para) !important;
+  line-height: var(--lh-ui) !important;
+  font-weight: 500;
 }
-.approval-notes {
-  display: grid !important;
-  gap: var(--sp-2);
-  padding: 0 var(--sp-8) var(--sp-8);
+.composer-stop[data-secure] {
+  display: flex !important;
+  opacity: 1 !important;
+  background: transparent !important;
+  color: var(--ink-2) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui) !important;
+}
+.composer-stop[data-secure][data-tone='err'] {
+  color: var(--red) !important;
+}
+.composer-stop[data-secure] > span {
+  display: inline !important;
+  color: inherit !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
+}
+/* The buttons look ready while they arm: only presses wait. */
+.approval-panel[data-arming] .approval-buttons [aria-disabled='true'] {
+  opacity: 1;
+}
+.tool-card-name {
+  display: block !important;
+  padding: 0 !important;
+  color: var(--muted) !important;
+  font-family: var(--mono) !important;
+  font-size: var(--fs-mono) !important;
+  line-height: var(--lh-mono) !important;
 }
 .approval-reason {
   display: block !important;
@@ -109,42 +130,6 @@
   font-size: var(--fs-caption) !important;
   line-height: var(--lh-caption-para) !important;
 }
-.tool-card.is-r2 .approval-warning {
-  color: var(--red) !important;
-}
-.approval-toggle {
-  display: inline-flex !important;
-  align-items: center;
-  justify-self: start;
-  gap: var(--sp-6);
-  min-height: 28px;
-  padding: 0 var(--sp-8);
-  border: 0;
-  border-radius: var(--r-8);
-  background: transparent !important;
-  color: var(--ink-2) !important;
-  font-size: var(--fs-ui) !important;
-  line-height: var(--lh-ui) !important;
-  transition:
-    background-color var(--m-micro) var(--e-micro),
-    color var(--m-micro) var(--e-micro);
-}
-.approval-toggle:hover {
-  background: var(--hover) !important;
-  color: var(--ink) !important;
-}
-.approval-toggle .chevron {
-  flex-shrink: 0;
-  color: var(--muted);
-  transition: transform var(--m-panel) var(--e-panel);
-}
-.approval-toggle[aria-expanded='true'] .chevron {
-  transform: rotate(90deg);
-}
-/*
- * The preview folds by its height like any disclosure; the head stays where it is and the card grows down over
- * --m-panel with its content fading in. Folding takes 70% of that on the exit curve, its content fading as it closes.
- */
 .approval-preview {
   display: grid !important;
   grid-template-rows: 0fr;
@@ -155,6 +140,7 @@
   transition: grid-template-rows var(--m-panel) var(--e-panel);
 }
 .approval-preview-inner {
+  max-height: 40vh;
   display: grid !important;
   gap: var(--sp-8);
   min-height: 0;
@@ -164,6 +150,8 @@
   transition: opacity calc(var(--m-panel) * 0.7) var(--e-exit);
 }
 .approval-preview[data-open] > .approval-preview-inner {
+  /* Everything under review stays reachable: a long diff scrolls here rather than being cut off. */
+  overflow: hidden auto;
   padding-top: var(--sp-4);
   opacity: 1 !important;
   transition: opacity var(--m-panel) var(--e-panel);
@@ -305,35 +293,15 @@
   color: var(--amber) !important;
   font-family: var(--mono) !important;
 }
-.approval-footnote {
-  display: block !important;
-  padding: var(--sp-8) var(--sp-8) 0;
-  color: var(--muted) !important;
-  font-size: var(--fs-caption) !important;
-  line-height: var(--lh-caption-para) !important;
-}
 .approval-uncertain,
 .approval-failure {
   margin-top: var(--sp-8);
-}
-.approval-actions {
-  display: flex !important;
-  align-items: center;
-  gap: var(--sp-8);
-  min-height: 44px;
-  padding: var(--sp-8) var(--sp-4) var(--sp-4) var(--sp-8);
 }
 .approval-buttons {
   display: flex !important;
   align-items: center;
   gap: var(--sp-8);
   margin-left: auto;
-}
-.approval-actions > .ui-icon-button {
-  margin-left: auto;
-}
-.approval-actions > .ui-icon-button ~ .approval-buttons {
-  margin-left: 0;
 }
 /* Why this device cannot allow: a lock and the reason, where the key hint would be. */
 .approval-hint {
@@ -350,44 +318,21 @@
   margin-top: var(--sp-2);
   color: var(--muted);
 }
-/* The shortcuts, shown only while the card holds focus. */
-.approval-keys {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-4);
-  min-width: 0;
-  color: var(--muted);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-  white-space: nowrap;
-  opacity: 0;
-  transition: opacity var(--m-micro) var(--e-micro);
-}
-.approval-panel:focus-within .approval-keys {
-  opacity: 1;
-  transition-timing-function: var(--e-micro);
-}
 @media (max-width: 767.98px) {
-  .approval-toggle {
-    min-height: 44px;
-  }
-  .approval-actions {
+  .approval-row {
     display: grid !important;
-    gap: var(--sp-8);
-    padding: var(--sp-8) var(--sp-4) var(--sp-4);
-  }
-  .approval-hint,
-  .approval-footnote {
-    font-size: var(--fs-caption) !important;
-    line-height: var(--lh-caption-para) !important;
   }
   .approval-buttons {
     display: grid !important;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     margin-left: 0;
   }
-  .approval-actions[data-single] .approval-buttons {
+  .approval-buttons[data-single] {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .approval-buttons > :not(.ui-button),
+  .approval-buttons > .approval-more {
+    grid-column: 1 / -1;
   }
 }
 

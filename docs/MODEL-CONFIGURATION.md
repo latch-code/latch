@@ -1,9 +1,8 @@
 ---
 description: Agent 上报的模型、推理级别和模型参数如何进入同一选择菜单，以及权威选中值与未知结果的接线。
 sources:
-  - apps/web/src/components/ModelReasoningPicker.tsx
-  - apps/web/src/components/modelReasoning.ts
-  - apps/web/src/components/ComposerControls.tsx
+  - apps/web/src/composer/ModelControl.tsx
+  - apps/web/src/composer/modelReasoning.ts
   - apps/web/test/model-reasoning.test.ts
   - packages/protocol/src/types.ts
   - packages/harness-acp/src/mapping.ts
@@ -12,7 +11,7 @@ sources:
 
 模型与推理能力来自会话当前的 `TaskDetail.config`，不从模型名称、选项 ID 或预设猜测。ACP v1 将 `model` 定义为模型选择、`thought_level` 定义为推理级别，而 `model_config` 可以是上下文或速度等普通参数；后者按 Agent 原名放在模型附近。分类缺失和未知分类仍在会话信息的普通配置中处理，不被改造成推理控件。选项名称、顺序、描述和实际值均来自 Agent。[ACP v1 会话配置规范](https://agentclientprotocol.com/protocol/v1/session-config-options)
 
-`ModelReasoningPicker` 用同一个 `@latch/ui` 模型菜单容纳这些选项。桌面使用顶层菜单、键盘单选与搜索；手机由同一原语提供底部面板。身份图标为 16px。没有 `thought_level` 时不留推理占位或伪造禁用滑块；只有单个可用值时沿用原语的静态值展示。`model_config` 不改变语义，也不转换成强弱刻度。重复类别按 Agent 顺序取第一个作为主要入口，其余明确的推理和模型参数按原顺序保留；重复值 ID 只保留首个。
+输入框页脚的 `SessionModelControl` 用同一个 `@latch/ui` 模型菜单容纳这些选项，其中思考档位是一行分段控件，菜单不随之关闭。桌面使用顶层菜单、键盘单选与搜索；手机由同一原语提供底部面板。身份图标为 16px。没有 `thought_level` 时不留推理占位或伪造禁用滑块；只有单个可用值时沿用原语的静态值展示。`model_config` 不改变语义，也不转换成强弱刻度。重复类别按 Agent 顺序取第一个作为主要入口，其余明确的推理和模型参数按原顺序保留；重复值 ID 只保留首个。
 
 Standard 的模型选择继续使用真实 `ModelRef` 与“下一条”草稿语义，没有新增推理字段。新会话尚未得到 Agent 的会话配置时也不虚构推理能力。
 

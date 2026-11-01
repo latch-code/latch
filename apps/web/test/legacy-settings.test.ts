@@ -2,7 +2,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { AppSnapshot, HostCatalog } from '@latch/protocol'
-import { SetupCard } from '../src/components/NewSession.tsx'
+import { SetupCard } from '../src/newSession/NewSession.tsx'
 import { sessionMenuSections } from '../src/sessionMenu.ts'
 import { SettingsPage, settingsSections } from '../src/settings/SettingsPage.tsx'
 import { harnessName, startBlock } from '../src/composerChoice.ts'
@@ -51,7 +51,8 @@ describe('older Host without a catalog', () => {
   it('says model services cannot be set up here instead of offering a page the Host cannot serve', () => {
     const block = startBlock(legacy, { harnessId: 'standard', mode: 'agent' } as never)
     expect(block).toMatchObject({ kind: 'model-required', settable: false })
-    const html = renderToStaticMarkup(createElement(SetupCard, { block: block!, owner: true, onSetup: noop }))
+    if (block?.kind !== 'model-required') throw new Error('expected the model service block')
+    const html = renderToStaticMarkup(createElement(SetupCard, { block, owner: true, onSetup: noop }))
     expect(html).toContain('较旧')
     expect(html).not.toContain('<button')
   })

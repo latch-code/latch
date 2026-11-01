@@ -1,58 +1,68 @@
 .question-card {
-  border: 1px solid var(--line);
-  border-radius: var(--r-12);
-  background: var(--surface);
-  padding: 16px;
-  margin-block: 8px;
-}
-.question-heading,
-.question-actions,
-.question-actions > div {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  display: grid;
+  gap: var(--sp-8);
 }
 .question-heading {
-  justify-content: space-between;
-  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  color: var(--ink-2);
   font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
 }
-.question-prompt {
+.question-count {
+  color: var(--muted);
+  font-weight: 400;
+}
+.question-prompt,
+.question-label {
   font-size: var(--fs-prose);
-  margin-block: 12px;
+  line-height: var(--lh-ui-para);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.question-card fieldset {
-  border: 0;
-  margin: 0;
-  padding: 0;
-  min-width: 0;
-}
-.question-card legend {
-  font-size: var(--fs-prose);
-  font-weight: 500;
-  margin-bottom: 12px;
-  overflow-wrap: anywhere;
-}
 .question-hint {
-  margin-left: 8px;
-  font-weight: 400;
+  margin-left: var(--sp-8);
   color: var(--muted);
   font-size: var(--fs-caption);
 }
 .question-options {
-  display: grid;
-  gap: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-6);
+}
+.question-option {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-8);
+  min-height: 32px;
+  padding: 0 var(--sp-12) 0 var(--sp-8);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-8);
+  background: none;
+  color: var(--ink);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  transition: background-color var(--m-micro) var(--e-micro);
+}
+.question-option:hover:not(:disabled) {
+  background: var(--hover);
+}
+.question-option[aria-pressed='true'] {
+  background: var(--press);
+}
+.question-option:disabled {
+  opacity: 0.45;
+}
+.question-other {
+  border-color: transparent;
+  color: var(--muted);
 }
 .question-actions {
-  justify-content: space-between;
-  margin-top: 16px;
-  flex-wrap: wrap;
-}
-.question-actions > span {
-  font-size: var(--fs-meta);
-  color: var(--muted);
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-8);
 }
 .question-result {
   font-size: var(--fs-caption);

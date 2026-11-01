@@ -79,6 +79,13 @@ describe('saved projects', () => {
         await recent.getByRole('button', { name: '打开会话：' + selected.title, exact: true }).click()
         await settings.waitFor({ state: 'detached' })
         await page.locator('.transcript').getByText(messages.get(selected.id)!, { exact: true }).waitFor()
+        // The project in the title row opens where the session runs, and does not invent a branch it could not read.
+        if (width !== 390) {
+          await page.getByRole('button', { name: `项目：最近项目 ${width}`, exact: true }).click()
+          await page.locator('.crumb-row').filter({ hasText: '读不到分支' }).waitFor()
+          await page.screenshot({ path: `test-results/project-crumb-${width}.png`, animations: 'disabled' })
+          await page.keyboard.press('Escape')
+        }
         // A later permission loss must remove the entry, including on an already-open settings page.
         if (width !== 390) {
           if (width === 900) await page.getByRole('button', { name: '打开会话列表', exact: true }).click()

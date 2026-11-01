@@ -650,7 +650,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       })
       await waitFor(() => host.bridge.approvals().some(approval => approval.sessionId === sessionId))
       await page.getByText(R2_PROMPT).first().click()
-      await page.getByText('高风险').first().waitFor()
+      await page.locator('[data-approval-id] .approval-clause').waitFor()
       const card = page.locator('[data-approval-id]')
       const allow = card.getByRole('button', { name: '在这台 Mac 上允许', exact: true })
       const resting = (await allow.boundingBox())!.width
@@ -660,20 +660,21 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       const confirmation = { preview: { reason: (await nativeSheets())[0]!.message as string } }
       expect((await nativeSheets())[0]).toMatchObject({ defaultId: 0, cancelId: 0, buttons: ['取消', '允许'] })
       expect((await nativeSheets())[0]!.detail).toContain(MARK_TOOL)
-      // The system sheet is the only window: the button keeps its words and width while it waits, and the card repeats
-      // nothing of the sheet.
-      await card.locator('.ui-button[aria-busy="true"]', { hasText: '在这台 Mac 上允许' }).waitFor()
+      // The system sheet is the only window: the button says it waits, both buttons rest, and the card repeats nothing
+      // of the sheet.
+      await card.locator('.ui-button[aria-busy="true"]', { hasText: '等待确认' }).waitFor()
+      expect(await card.getByRole('button', { name: '拒绝', exact: true }).isDisabled()).toBe(true)
       await card.getByText('在系统窗口中确认', { exact: true }).waitFor()
       expect(confirmation.preview.reason).toMatch(new RegExp(`^允许运行 ${MARK_TOOL}`, 'u'))
       expect(await card.getByText(confirmation.preview.reason).count()).toBe(0)
       expect(await page.locator('.presence-dock').count()).toBe(0)
-      expect(Math.abs((await allow.boundingBox())!.width - resting)).toBeLessThanOrEqual(1)
+      expect(Math.abs((await card.locator('.ui-button[aria-busy="true"]').boundingBox())!.width - resting)).toBeLessThanOrEqual(1)
       await captureThemes(page, 'native-desktop-confirmation')
       await captureTablet(application, page, 'native-tablet-confirmation')
       // The card keeps its look under styles added to the page while it waits.
       await expectUnmovedByInjectedStyles(page, [
-        '[data-approval-id] .tool-card-header .ui-status-word',
-        '[data-approval-id] .tool-card-header .ui-status-word-glyph',
+        '[data-approval-id] .approval-title',
+        '[data-approval-id] .approval-clause',
         '[data-approval-id] .ui-button',
       ])
       // A denial returns the buttons at once with the reason in the card; nothing ran.
@@ -795,7 +796,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect(host.security.devices.get(phone.device.id)?.scopes).toEqual(['view'])
       await closeSettings(settings)
 
-      // A full-access agent's question: advisory, and on the Host's own desktop it may be answered with 允许一次.
+      // A full-access agent's question: advisory, and on the Host's own desktop it may be answered with 允许.
       const policy = () => host.security.policy.get()
       const helper = await testHost.enroll({ listener: 'unix', name: '本机测试设备' })
       const saved = await helper.confirmed('agents', {
@@ -813,15 +814,13 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await waitFor(() => host.bridge.approvals().some(approval => approval.sessionId === advisoryId))
       await page.locator(`[data-task-id="${advisoryId}"]`).click()
       const advisory = page.locator('[data-approval-id]')
-      await advisory.getByText('仅提示', { exact: true }).waitFor()
-      await advisory.locator('.ui-button[data-variant="primary"]', { hasText: '允许一次' }).waitFor()
+      await advisory.locator('.ui-button[data-variant="primary"]', { hasText: '允许' }).waitFor()
       expect(
         await advisory
           .getByRole('button')
-          .filter({ hasText: /^(拒绝|允许一次)$/ })
+          .filter({ hasText: /^(拒绝|允许)$/ })
           .allInnerTexts(),
-      ).toEqual(['拒绝', '允许一次'])
-      expect(await advisory.locator('.approval-more').count()).toBe(0)
+      ).toEqual(['拒绝', '允许'])
       await captureThemes(page, 'native-desktop-advisory')
 
       // While it waits for an answer, a confirmation that would outlive the session is held back, and the dock where it
@@ -849,7 +848,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await blockedDock.getByRole('button', { name: '查看', exact: true }).click()
       await blockedDock.waitFor({ state: 'detached' })
       await heldBack.waitFor({ state: 'detached' })
-      await advisory.getByText('仅提示', { exact: true }).waitFor()
+      await advisory.locator('.approval-note').waitFor()
       expect(policy().remote.allowRemoteStart).toBe(false)
 
       await advisory.getByRole('button', { name: '拒绝', exact: true }).click()
@@ -865,7 +864,8 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect(second.status).toBe(201)
       const { agent: secondAgent }: { agent: AgentSettings } = await second.json()
       await page.getByRole('button', { name: '新建会话', exact: true }).first().click()
-      await page.getByRole('radio', { name: /Second Agent/ }).click()
+      await page.getByRole('button', { name: /^模型：|^选择引擎/ }).click()
+      await page.getByRole('menuitemradio', { name: /Second Agent/ }).click()
       await page.getByRole('textbox', { name: '新会话消息' }).fill('echo 开始')
       await page.getByRole('button', { name: '发送', exact: true }).click()
       const start = await testHost.presence.waitForRequest(15_000)
@@ -1010,7 +1010,6 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         // picker, confirms the new address once, and selects the saved model without opening settings.
         await closeSettings(computer)
         await page.getByRole('button', { name: '新建会话', exact: true }).first().click()
-        await page.getByRole('radio', { name: /^Latch 内置\s*只对话$/ }).click()
         await page.getByRole('button', { name: /^模型：/ }).click()
         await page.getByRole('menuitem', { name: '添加模型服务…', exact: true }).click()
         await page

@@ -57,8 +57,6 @@ function Harness() {
             <Transcript
               detail={detail}
               approvals={detail.approvals ?? none}
-              busy={noApprovals}
-              onDecide={onDecide}
               harnessName="夹具"
               active={detail.summary.status === 'running' || detail.summary.status === 'waiting-approval'}
             />

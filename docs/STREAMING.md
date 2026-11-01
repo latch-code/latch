@@ -155,7 +155,7 @@ snapshot 与 task-state 可能交错。摘要与审批只在 detail.revision 大
 - 每次模型调用在收到文字前创建 `liveMessageId`。文字只更新内存里的累计 `liveText`，思考更新 `liveReasoning`；正常完成或异常保留部分内容时，最终 assistant 消息沿用该 ID，思考保存在其 `reasoning` 中。detail 不同时暴露同 ID 的 live 与已提交消息。
 - React 按 message.id 渲染，并为消息行设置 `data-message-id`。消息组件比较 ID、正文、状态和角色等字段，未变化的历史行不因每次状态替换而重渲染。
 - 收到完整模型终止事件后，先持久化助手文字和工具批次，再串行执行工具。工具消息使用 `tool:<callId>`，按 `queued → awaiting-approval（若需要）→ running → completed/failed/cancelled` 更新同一行。拒绝不会经过 running。
-- 审批携带 `toolCallId` 时合并进 `tool:<toolCallId>` 对应的工具卡片；旧 Driver 未提供该字段或找不到工具行时，作为独立卡片放在最新一轮的末尾。审批按钮来自 `Approval.options`，缺省为允许一次与拒绝；当前设备能看到哪些按钮由风险等级与设备权限决定（见 [DESIGN.md](./DESIGN.md)）。工具行默认收起（带输出的失败自己展开），展开后显示参数、文件差异与纯文本输出（第一次展开时才渲染）；收起时文件差异作为证据显示在行下。
+- 审批显示在输入框上方的抽屉里，不进入对话；携带 `toolCallId` 时用 `tool:<toolCallId>` 工具行的文字与差异。审批按钮来自 `Approval.options`，缺省为允许与拒绝；当前设备能看到哪些按钮由风险等级与设备权限决定（见 [DESIGN.md](./DESIGN.md)）。工具行默认收起（带输出的失败自己展开），展开后显示参数、文件差异与纯文本输出（第一次展开时才渲染）；收起时文件差异作为证据显示在行下。
 - 客户端把消息按回合分组（一条用户消息与回答它的一切，[conversation.ts](../apps/web/src/conversation.ts)），只是排列方式：每一行仍按 message.id 渲染、带 `data-message-id`。正常完成的回合把答案前的过程折叠成一行时，被折叠的行仍挂载在 `hidden="until-found"` 的容器里，文档里行的顺序与身份不变。
 - `activity` 表达当前 `starting / model / tool / approval / cancelling`，用于区分正在启动 Agent（进程与会话在准备，还没有发出提示）、等待模型、执行工具、等待用户和取消中；`since` 是这个阶段开始的时间，只在阶段变化时更新。它不代表百分比进度。`plan` 为 Harness 报告的最新计划（整体替换）；`config` 为 Harness 允许修改的会话选项。
 - 审批认领在异步等待前完成，重复或迟到的决定失败；同一审批的决定在 Host 上串行处理。取消会请求 Provider/工具中止，等待实际结束与状态提交；如果仅网络请求失败，UI 不能宣称已取消。

@@ -8,6 +8,7 @@ export const codexProfile: HarnessProfile = {
     defaultEnv: { INITIAL_AGENT_MODE: 'read-only' },
     expectedMode: 'read-only',
     modeLadder: ['read-only', 'workspace-write', 'agent-full-access'],
+    neverAskModes: ['agent-full-access'],
     forbiddenModes: ['agent'],
     // Accepting these would store a rule inside Codex that outlives the session.
     hiddenOptionIds: ['accept_execpolicy_amendment', 'apply_network_policy_amendment*'],

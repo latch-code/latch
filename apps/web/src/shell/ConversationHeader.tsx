@@ -1,13 +1,14 @@
-import { useRef, type RefObject } from 'react'
-import { ChevronDown, ChevronLeft, Ellipsis, Folder, GitCompare, PanelRight, Pencil, RefreshCw, ShieldAlert } from 'lucide-react'
+import { useRef, type ReactNode, type RefObject } from 'react'
+import { ChevronDown, ChevronLeft, Ellipsis, Folder, GitCompare, PanelRight, Pencil, RefreshCw } from 'lucide-react'
 import { escapeSecurityText, type HarnessInfo, type TaskSummary } from '@latch/protocol'
 import { harnessName } from '../composerChoice.ts'
-import { LEVEL_LABELS, LEVEL_TOOLTIPS } from '../core/permissions.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { Menu, type MenuSection } from '../components/overlays.tsx'
 import { connectionLabels, connectionProblem } from '../components/Sidebar.tsx'
-import { ICON_STROKE, IconButton, StatusPill } from '@latch/ui'
+import { ICON_STROKE, IconButton, Popover, StatusPill } from '@latch/ui'
+import { VisibleText } from '../components/VisibleText.tsx'
+import { contextWords } from '../composer/permission.ts'
 import { currentShell } from '../core/shell.ts'
 import type { ConversationHeaderSlots, HeaderToggle } from './slots.ts'
 import type { ShellState } from './useShellLayout.tsx'
@@ -58,12 +59,66 @@ function TitleMenu({ title, sections }: { title: string; sections: MenuSection[]
   )
 }
 
-const fullAccessPill = (
-  <StatusPill tone="neutral" className="level-pill" title={LEVEL_TOOLTIPS.L3}>
-    <ShieldAlert size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
-    {LEVEL_LABELS.L3}
-  </StatusPill>
-)
+/** One line of the breadcrumb's popover. */
+function CrumbRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="crumb-row">
+      <span className="crumb-label">{label}</span>
+      <div className="crumb-value">{children}</div>
+    </div>
+  )
+}
+
+/**
+ * The project in the breadcrumb, which opens where the session really runs: its branch as the Host read it, its folders
+ * and how full the context is. A branch that could not be verified says so; it does not mean there is no repository.
+ */
+function ProjectCrumb({
+  project,
+  summary,
+  usage,
+}: {
+  project: string
+  summary: TaskSummary
+  usage?: { contextUsed?: number; contextSize?: number } | undefined
+}) {
+  const folders = summary.folders?.map(folder => folder.path) ?? (summary.cwd ? [summary.cwd] : [])
+  const context = contextWords(usage)
+  return (
+    <span className="topbar-crumb">
+      <Popover
+        label="项目"
+        width={320}
+        side="bottom"
+        align="start"
+        trigger={props => (
+          <button {...props} type="button" className="topbar-crumb-button" title={project} aria-label={`项目：${project}`}>
+            <Folder size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+            <span className="topbar-crumb-text">
+              <VisibleText text={project} />
+            </span>
+          </button>
+        )}>
+        <div className="crumb-body">
+          <CrumbRow label="分支">{summary.branch ? <VisibleText text={summary.branch} /> : '读不到分支'}</CrumbRow>
+          {folders.length > 0 && (
+            <CrumbRow label={folders.length > 1 ? `文件夹 · ${folders.length}` : '文件夹'}>
+              {folders.map(path => (
+                <code key={path}>
+                  <VisibleText text={path} />
+                </code>
+              ))}
+            </CrumbRow>
+          )}
+          {context && <CrumbRow label="上下文">{context.words.replace(/^上下文已用 /u, '')}</CrumbRow>}
+        </div>
+      </Popover>
+      <span className="topbar-crumb-separator" aria-hidden="true">
+        /
+      </span>
+    </span>
+  )
+}
 
 /**
  * A phone's session page header (52): the round way back to the session list, the title (a button with chevron-down that
@@ -75,7 +130,6 @@ function PhoneTopBar({
   summary,
   source,
   cancelling,
-  level,
   demo,
   onBack,
   inspectorOpen,
@@ -90,7 +144,6 @@ function PhoneTopBar({
   summary?: TaskSummary
   source?: string
   cancelling: boolean
-  level?: 'L1' | 'L3'
   demo: boolean
   onBack?: () => void
   inspectorOpen: boolean
@@ -103,7 +156,6 @@ function PhoneTopBar({
   const title = summary ? summary.title || '未命名会话' : '新会话'
   const state = summary && sessionPill(summary, cancelling)
   const where = summary && source
-  const fullAccess = summary !== undefined && level === 'L3'
   const branch = summary?.branch
   return (
     <header className="topbar" data-phone="">
@@ -112,15 +164,10 @@ function PhoneTopBar({
         <h1 title={title}>
           <TitleMenu title={title} sections={summary ? menu : []} />
         </h1>
-        {(where || state || fullAccess || branch || demo || connectionProblem(connection)) && (
+        {(where || state || branch || demo || connectionProblem(connection)) && (
           <div className="topbar-subline">
             {where && <span className="topbar-source-text">{where}</span>}
             {state}
-            {fullAccess && (
-              <span className="topbar-full-access" title={LEVEL_TOOLTIPS.L3}>
-                {LEVEL_LABELS.L3}
-              </span>
-            )}
             {branch && <span className="topbar-branch">{escapeSecurityText(branch)}</span>}
             {demo && (
               <StatusPill tone="warn" title="此会话使用演示模型，回复由本地脚本生成">
@@ -158,7 +205,7 @@ function Toggle({ toggle }: { toggle: HeaderToggle }) {
 
 /**
  * The conversation's half of the title row. Left: the breadcrumb, project / title (a button that opens the session's
- * menu, with the rename pencil on hover), then where it runs and its state when that is not the default. Right: the
+ * menu, with the rename pencil on hover), then its state when that is not the default. The project opens where it runs. Right: the
  * connection only when it is not healthy, full access, the demo model, the surfaces' slots, the panel toggle and ⋯.
  * Phones draw their own header in the conversation's page (above).
  */
@@ -167,8 +214,8 @@ export function SessionHeader({
   summary,
   harness,
   project,
+  usage,
   cancelling,
-  level,
   demo,
   phone,
   onBack,
@@ -189,10 +236,9 @@ export function SessionHeader({
   harness?: Pick<HarnessInfo, 'id' | 'name' | 'source'>
   /** The basename of the session's working directory. */
   project?: string
+  /** What the engine last reported about its context. */
+  usage?: { contextUsed?: number; contextSize?: number } | undefined
   cancelling: boolean
-  /** Who enforces the session's permissions; omitted on Hosts that do not report it. Only full access (L3) shows here:
-   * asking before each step is the default, so the inspector alone states it. */
-  level?: 'L1' | 'L3'
   demo: boolean
   phone: boolean
   /** Phones: back to the session list. */
@@ -214,9 +260,6 @@ export function SessionHeader({
   slots?: ConversationHeaderSlots
 }) {
   const title = summary ? summary.title || '未命名会话' : '新会话'
-  const source = [identity ?? (harness ? harnessName(harness) : undefined), summary?.branch && escapeSecurityText(summary.branch)]
-    .filter(Boolean)
-    .join(' · ')
   if (phone)
     return (
       <PhoneTopBar
@@ -228,7 +271,6 @@ export function SessionHeader({
           .filter(Boolean)
           .join(' · ')}
         cancelling={cancelling}
-        level={level}
         demo={demo}
         onBack={onBack}
         inspectorOpen={inspectorOpen}
@@ -244,30 +286,23 @@ export function SessionHeader({
   return (
     <header className="topbar">
       <div className="topbar-title">
-        {summary && project && (
-          <span className="topbar-crumb" title={project}>
-            <Folder size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-            <span className="topbar-source-text">{project}</span>
-            <span className="topbar-crumb-separator" aria-hidden="true">
-              /
-            </span>
-          </span>
+        {summary && project && <ProjectCrumb project={project} summary={summary} usage={usage} />}
+        {summary && (
+          <h1 title={title}>
+            <TitleMenu title={title} sections={sessionMenu} />
+          </h1>
         )}
-        <h1 title={summary ? title : undefined}>
-          <TitleMenu title={title} sections={summary ? sessionMenu : []} />
-        </h1>
         {summary && onRename && <IconButton className="topbar-rename" label="重命名会话" icon={Pencil} size="xs" onClick={onRename} />}
-        {summary && harness && source && (
-          <span className="topbar-source" title={source}>
+        {summary && harness && identity && (
+          <span className="topbar-source" title={identity}>
             <HarnessTile harness={harness} size={16} />
-            <span className="topbar-source-text">{source}</span>
+            <span className="topbar-source-text">{identity}</span>
           </span>
         )}
         {summary && sessionPill(summary, cancelling)}
       </div>
       <div className="topbar-actions">
         <ConnectionPill connection={connection} onRefresh={onRefresh} />
-        {summary && level === 'L3' && fullAccessPill}
         {demo && (
           <StatusPill tone="warn" title="此会话使用演示模型，回复由本地脚本生成">
             演示模型
@@ -287,7 +322,7 @@ export function SessionHeader({
             onClick={onInspector}
           />
         )}
-        {menu.length > 0 && (
+        {summary && menu.length > 0 && (
           <Menu
             label="会话操作"
             placement="bottom-end"
@@ -314,7 +349,6 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
     selectedId,
     stopping,
     access,
-    level,
     demo,
     phone,
     back,
@@ -356,8 +390,8 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
       summary={summary}
       harness={topHarness}
       project={project}
+      usage={current?.usageReport}
       cancelling={selectedId !== null && stopping.has(selectedId)}
-      level={access.legacy ? undefined : level}
       demo={demo}
       phone={phone}
       onBack={() => {

@@ -1,11 +1,10 @@
-import { dropAttachments } from '../components/AttachmentDrafts.tsx'
+import { dropAttachments } from '../composer/AttachmentDrafts.tsx'
 import { FileOpenContext } from '../preview/fileContext.ts'
 import { ChevronLeft } from 'lucide-react'
 import { SIDEBAR_MIN } from './panelLayout.ts'
 import { keepAwakeLine } from '../core/shellLifecycle.ts'
 import { openLayer } from '../hooks/backStack.ts'
-import { DemoSuggestions } from '../components/NewSession.tsx'
-import { NewSessionSheet } from '../components/NewSessionSheet.tsx'
+import { NewSessionSheet } from '../newSession/NewSessionSheet.tsx'
 import { PhoneSessionList } from '../components/PhoneSessionList.tsx'
 import { Sidebar } from '../components/Sidebar.tsx'
 import { ConversationHeader } from './ConversationHeader.tsx'
@@ -19,7 +18,7 @@ import { SettingsPage } from '../settings/SettingsPage.tsx'
 import { ConversationView } from './ConversationView.tsx'
 import { Overlays } from './Overlays.tsx'
 import { RightPanel } from './RightPanel.tsx'
-import { HarnessChoices, SendingBubble, SetupNotices, SheetComposer } from './SessionComposers.tsx'
+import { SendingBubble, SetupNotices, SheetComposer } from './SessionComposers.tsx'
 import { useShellLayout } from './useShellLayout.tsx'
 import type { AppSnapshot } from '@latch/protocol'
 import type { useHarness } from '../core/useHarness.ts'
@@ -116,7 +115,6 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     startIn,
     browseFiles,
     workspaceForFiles,
-    suggest,
     column,
     page,
     closeInfoPage,
@@ -401,7 +399,6 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 onStart={() => {
                   void sendDraft()
                 }}
-                harnesses={!personalDraft && catalog ? <HarnessChoices shell={shell} /> : undefined}
                 onManageProviders={manageProviders}
                 onProvidersChanged={() => {
                   void refresh()
@@ -416,7 +413,6 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 }
                 setup={<SetupNotices shell={shell} />}
                 demo={demo}
-                suggestions={<DemoSuggestions demo={demo} mode={choice.mode} onSuggestion={suggest} />}
               />
             )}
             <Overlays shell={shell} />

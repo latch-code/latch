@@ -1897,6 +1897,14 @@ describe('ACP permission mode', () => {
     expect(received(await fixture.log(), 'session/prompt')).toHaveLength(1)
   })
 
+  it('reports the mode a session starts in and the modes that never ask', async () => {
+    const fixture = await qwen()
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo one', requestId: rid() })
+    const detail = await settled(bridge, sessionId)
+    expect(detail.permission).toMatchObject({ defaultMode: 'default', neverAskModes: ['yolo'] })
+  })
+
   it('keeps tracking a mode option whose category disappears and treats a missing one as drift', async () => {
     const uncategorized = await qwen({ FAKE_ACP_MODE_REPORT: 'uncategorized' })
     let bridge = await uncategorized.open()

@@ -37,7 +37,7 @@ export interface DeviceAccess {
 
 const ALL_SCOPES: DeviceScope[] = ['view', 'run', 'approve:standard', 'approve:elevated', 'admin', 'secrets']
 
-export function isLocalDevice(device: Pick<CurrentDevice, 'listener'> | null, shell: LatchShell | null): boolean {
+function isLocalDevice(device: Pick<CurrentDevice, 'listener'> | null, shell: LatchShell | null): boolean {
   return device !== null && isLocalListener(device.listener) && shell !== null
 }
 
@@ -62,8 +62,7 @@ export const harnessLevel = (harness: Pick<HarnessInfo, 'level' | 'source'>): 'L
 
 /** The session's level as words, in neutral ink: 完全访问 is a fact about the agent, not a warning. */
 export const LEVEL_LABELS = { L1: MODE_COPY.askWhenNeeded, L3: MODE_COPY.fullAccess } as const
-export const LEVEL_TOOLTIPS = { L1: MODE_COPY.askWhenNeededTooltip, L3: MODE_COPY.fullAccessTooltip } as const
-export const LOCAL_ONLY_HARNESS = HOVER_REASONS.startOnMac
+const LOCAL_ONLY_HARNESS = HOVER_REASONS.startOnMac
 export const L3_READ_ONLY = '这个会话只能在 Mac 上继续。这台设备可以查看、拒绝和停止。'
 export const DEV_MODE_TEXT = '开发模式：这台 Mac 上的程序可以修改 Latch 的代码'
 export const LEGACY_HOST_TEXT = '这台 Mac 上的 Latch 还是旧版本，重新启动后才能确认设备。'
@@ -99,7 +98,7 @@ export interface ApprovalGate {
 }
 
 /** Allow once and reject for drivers that offer no explicit options; these send no optionId. */
-export const FALLBACK_OPTIONS: ApprovalOption[] = [
+const FALLBACK_OPTIONS: ApprovalOption[] = [
   { id: 'reject_once', label: '拒绝', kind: 'reject_once' },
   { id: 'allow_once', label: '允许一次', kind: 'allow_once' },
 ]

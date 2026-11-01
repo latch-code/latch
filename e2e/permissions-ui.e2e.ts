@@ -81,8 +81,6 @@ describe('permission states in a browser', () => {
   /** A Latch 内置 card: 拒绝 asks what to do instead in the composer, and the second 拒绝 rejects without a note. */
   async function rejectWithoutNote(card: Locator): Promise<void> {
     await card.getByRole('button', { name: '拒绝', exact: true }).click()
-    await card.getByText('在输入框里告诉 Agent 改做什么，再按「拒绝」；不写也可以。', { exact: true }).waitFor()
-    await card.getByRole('button', { name: '拒绝', exact: true }).click()
   }
   async function open(sessionId: string): Promise<void> {
     await page.locator(`[data-task-id="${sessionId}"]`).click()
@@ -108,15 +106,14 @@ describe('permission states in a browser', () => {
     expect((await detail(sessionId)).approvals[0]?.risk).toBe('R2')
     await open(sessionId)
     const card = page.locator('[data-approval-id]')
-    await card.getByText('高风险 · Latch 不认识的工具', { exact: true }).waitFor()
+    await card.getByText('Latch 不认识的工具', { exact: true }).waitFor()
     await card.getByText('在 Mac 上的 Latch 里允许', { exact: true }).waitFor()
     expect(await card.getByRole('button', { name: /允许/ }).count()).toBe(0)
     await page.screenshot({ path: `${OUTPUT}/r2-browser-desktop.png`, fullPage: true, animations: 'disabled' })
-    // 拒绝 asks what to do instead; pressing it again rejects without a note.
     await rejectWithoutNote(card)
     await expect.poll(async () => (await detail(sessionId)).summary.status).toBe('idle')
     await card.waitFor({ state: 'detached' })
-    // The card folds into its row: the state slot reads the record, 已拒绝 and its time in the hint ink, never 失败, and
+    // The drawer goes and the row says it: the state slot reads the record, 已拒绝 and its time in the hint ink, never 失败, and
     // nothing says it a second time.
     const row = page.locator('.tool-card', { has: page.locator('.tool-decision-words') })
     const record = row.locator('.tool-card-state .tool-decision-words')
@@ -139,7 +136,7 @@ describe('permission states in a browser', () => {
     await page.screenshot({ path: `${OUTPUT}/r2-rejected-record.png`, fullPage: true, animations: 'disabled' })
   })
 
-  it('asks what to do instead after 拒绝 and hands it to Latch 内置 with the rejection', async () => {
+  it('turns 拒绝 into 拒绝并发送 while typing, and hands what was written to Latch 内置 with the rejection', async () => {
     const { sessionId } = await remote.json<{ sessionId: string }>('tasks', {
       method: 'POST',
       body: { prompt: '生成需要审批的报告', requestId: randomUUID(), mode: 'agent', model: { providerId: 'demo', model: 'demo' } },
@@ -147,27 +144,49 @@ describe('permission states in a browser', () => {
     await expect.poll(async () => (await detail(sessionId)).approvals.length).toBe(1)
     await open(sessionId)
     const card = page.locator('[data-approval-id]')
-    await card.getByRole('button', { name: '拒绝', exact: true }).click()
-    // The rejection waits: the composer takes focus and asks, and the card says where to write.
-    const note = page.getByRole('textbox', { name: '告诉 Agent 改做什么', exact: true })
-    await expect.poll(() => note.evaluate(element => element === document.activeElement)).toBe(true)
-    expect(await note.getAttribute('placeholder')).toBe('告诉 Agent 改做什么…')
-    await card.getByText('在输入框里告诉 Agent 改做什么，再按「拒绝」；不写也可以。', { exact: true }).waitFor()
-    await page.getByText('写下的话会和拒绝一起交给模型；不写也可以直接拒绝。', { exact: true }).waitFor()
+    await card.getByRole('button', { name: '拒绝', exact: true }).waitFor()
+    const note = page.getByRole('textbox', { name: '输入内容会拒绝并告诉 Agent 改做什么', exact: true })
+    expect(await note.getAttribute('placeholder')).toBe('输入内容会拒绝并告诉 Agent 改做什么')
+    // Enter with nothing written decides nothing.
+    await note.press('Enter')
     expect((await detail(sessionId)).approvals).toHaveLength(1)
-    await page.screenshot({ path: `${OUTPUT}/reject-note-asking.png`, fullPage: true, animations: 'disabled' })
     await note.fill('改写到 docs/ 下')
+    await card.getByRole('button', { name: '拒绝并发送', exact: true }).waitFor()
+    await page.screenshot({ path: `${OUTPUT}/reject-note-typing.png`, fullPage: true, animations: 'disabled' })
     await note.press('Enter')
     await expect.poll(async () => (await detail(sessionId)).summary.status).toBe('idle')
     const settled = await detail(sessionId)
     expect(settled.messages.find(message => message.role === 'tool')?.tool?.decision).toMatchObject({ outcome: 'rejected' })
     expect(settled.messages.filter(message => message.role === 'assistant').at(-1)?.text).toContain('收到你的说明：「改写到 docs/ 下」')
     await page.getByText(/收到你的说明：「改写到 docs\/ 下」/u).waitFor()
-    // The composer is itself again, and what was written went with the rejection, not into the draft.
+    // What was written went with the rejection, not into the draft.
     const composer = page.getByRole('textbox', { name: '继续对话', exact: true })
     await composer.waitFor()
     expect(await composer.inputValue()).toBe('')
-    expect(await page.getByText('写下的话会和拒绝一起交给模型；不写也可以直接拒绝。', { exact: true }).count()).toBe(0)
+  })
+
+  it('arms the drawer before it takes a press, ignores Enter, and refuses once on Esc', async () => {
+    const first = await startHighRisk('第一个请求')
+    await open(first)
+    const card = page.locator('[data-approval-id]')
+    const reject = card.getByRole('button', { name: '拒绝', exact: true })
+    await reject.waitFor()
+    await expect.poll(() => card.getAttribute('data-arming')).toBeNull()
+    await page.locator('.transcript').click({ position: { x: 4, y: 4 } })
+    await page.keyboard.press('Enter')
+    expect((await detail(first)).approvals).toHaveLength(1)
+    // Text in the input keeps Esc from throwing it away along with a refusal.
+    const input = page.getByRole('textbox', { name: '继续对话', exact: true })
+    if ((await input.count()) > 0) {
+      await input.fill('还在写')
+      await input.press('Escape')
+      expect((await detail(first)).approvals).toHaveLength(1)
+      await input.fill('')
+      await page.locator('.transcript').click({ position: { x: 4, y: 4 } })
+    }
+    await page.keyboard.press('Escape')
+    await expect.poll(async () => (await detail(first)).summary.status).toBe('idle')
+    expect((await detail(first)).messages.find(message => message.role === 'tool')?.tool?.decision).toMatchObject({ outcome: 'rejected' })
   })
 
   it.each([
@@ -207,15 +226,12 @@ describe('permission states in a browser', () => {
     await expect.poll(async () => (await detail(sessionId)).approvals.length).toBe(1)
     await open(sessionId)
     const card = '[data-approval-id]'
-    await page.locator(card).getByText('高风险 · Latch 不认识的工具', { exact: true }).waitFor()
+    await page.locator(card).getByText('Latch 不认识的工具', { exact: true }).waitFor()
     await expectUnmovedByInjectedStyles(page, [
       card,
-      `${card} .tool-card-header`,
-      `${card} .tool-card-title`,
-      `${card} .tool-card-header .ui-status-word`,
-      `${card} .tool-card-header .ui-status-word-glyph`,
-      `${card} .approval-panel`,
-      `${card} .approval-preview .muted-line`,
+      `${card} .approval-title`,
+      `${card} .approval-object`,
+      `${card} .approval-clause`,
       `${card} .approval-hint`,
       `${card} .ui-button`,
     ])
@@ -223,200 +239,20 @@ describe('permission states in a browser', () => {
     await expect.poll(async () => (await detail(sessionId)).summary.status).toBe('idle')
   })
 
-  it('brings an approval card in and folds it away with the motion tokens, and only fades under reduced motion', async () => {
-    const quiet = await startHighRisk('先看这一个')
-    const arriving = await startHighRisk('看它到达')
-    await open(quiet)
-    const card = page.locator('[data-approval-id]')
-    await card.getByText('高风险 · Latch 不认识的工具', { exact: true }).waitFor()
-    // The motion tokens as the browser resolves them (a probe reads each through a transition property).
-    const tokens = await page.evaluate(() => {
-      const probe = document.createElement('div')
-      document.body.append(probe)
-      const computed = (property: 'transitionDuration' | 'transitionTimingFunction', token: string) => {
-        probe.style[property] = `var(${token})`
-        return getComputedStyle(probe)[property]
-      }
-      const ms = (token: string) => Math.round(parseFloat(computed('transitionDuration', token)) * 1000)
-      const result = {
-        micro: ms('--m-micro'),
-        enter: ms('--m-enter'),
-        panel: ms('--m-panel'),
-        eEnter: computed('transitionTimingFunction', '--e-enter'),
-        ePanel: computed('transitionTimingFunction', '--e-panel'),
-        exit: computed('transitionTimingFunction', '--e-exit'),
-      }
-      probe.remove()
-      return result
-    })
-    expect(tokens).toEqual({
-      micro: 120,
-      enter: 160,
-      panel: 200,
-      eEnter: 'cubic-bezier(0.2, 0.8, 0.2, 1)',
-      ePanel: 'cubic-bezier(0.32, 0.72, 0, 1)',
-      exit: 'cubic-bezier(0.4, 0, 1, 1)',
-    })
-    /** An exit takes 70% of its entrance. */
-    const exit = (ms: number) => Math.round(ms * 0.7)
-
-    /**
-     * From now on, pauses every transition of an approval slot within a frame of its start, so a card that the page
-     * renders again (the transcript of a session it switches to) still has its arrival to step through.
-     */
-    const hold = () =>
-      page.evaluate(() => {
-        const flag = 'holdingSlots'
-        Reflect.set(globalThis, flag, true)
-        const tick = () => {
-          if (Reflect.get(globalThis, flag) !== true) return
-          for (const animation of document.getAnimations()) {
-            const target = animation.effect instanceof KeyframeEffect ? animation.effect.target : null
-            if (target?.matches('.approval-slot') && animation.playState === 'running') animation.pause()
-          }
-          requestAnimationFrame(tick)
-        }
-        requestAnimationFrame(tick)
-      })
-    /** The held transitions of the slot under the tool card, once the page has settled for a moment. */
-    const held = async () => {
-      await page.waitForTimeout(400)
-      return page.evaluate(() =>
-        document
-          .getAnimations()
-          .filter(
-            animation =>
-              animation.effect instanceof KeyframeEffect
-              && animation.effect.target?.matches('.tool-card[data-message-id] > .approval-slot'),
-          )
-          .map(animation => ({
-            property: animation instanceof CSSTransition ? animation.transitionProperty : '',
-            // An exit is calc(token * 0.7), which the browser reports with floating-point noise (139.99999999999997).
-            duration: Math.round(Number(animation.effect!.getTiming().duration)),
-            easing: String(animation.effect!.getTiming().easing),
-          }))
-          .toSorted((a, b) => a.property.localeCompare(b.property)),
-      )
-    }
-    /** Puts the held transitions at `ms` and every other animation at its end, then captures the card's frame. */
-    const frames = async (name: string, target: Locator) => {
-      for (const ms of [0, 60, 120, 180]) {
-        await page.evaluate(at => {
-          for (const animation of document.getAnimations()) {
-            const element = animation.effect instanceof KeyframeEffect ? animation.effect.target : null
-            if (element?.matches('.approval-slot')) {
-              animation.pause()
-              animation.currentTime = at
-            } else if (Number.isFinite(Number(animation.effect?.getComputedTiming().endTime))) animation.finish()
-          }
-        }, ms)
-        await target.screenshot({ path: `${OUTPUT}/approval-${name}-${ms}ms.png` })
-      }
-      await page.evaluate(() => {
-        Reflect.set(globalThis, 'holdingSlots', false)
-        for (const animation of document.getAnimations())
-          if (Number.isFinite(Number(animation.effect?.getComputedTiming().endTime))) animation.finish()
-      })
-    }
-
-    // Arrival: the card fades in over --m-enter and does not grow, so nothing above it moves.
-    await hold()
-    await open(arriving)
-    expect(await held()).toEqual([{ property: 'opacity', duration: tokens.enter, easing: tokens.eEnter }])
-    await frames('arrival', card)
-
-    // Settled: the slot folds by its height (70% of --m-panel) while its content fades (70% of --m-micro), both on the
-    // exit curve. The folding copy stays until those transitions end, so the held frames show it. The first 拒绝 asks
-    // for a note.
-    await card.getByRole('button', { name: '拒绝', exact: true }).click()
-    await card.getByText('在输入框里告诉 Agent 改做什么，再按「拒绝」；不写也可以。', { exact: true }).waitFor()
-    await hold()
-    await card.getByRole('button', { name: '拒绝', exact: true }).click()
-    await page.locator('.approval-slot[data-leaving]').waitFor()
-    expect(await held()).toEqual([
-      { property: 'grid-template-rows', duration: exit(tokens.panel), easing: tokens.exit },
-      { property: 'opacity', duration: exit(tokens.micro), easing: tokens.exit },
-    ])
-    await frames('settle', page.locator('.transcript'))
-    await page.locator('.approval-slot').waitFor({ state: 'detached' })
-    await expect.poll(async () => (await detail(arriving)).summary.status).toBe('idle')
-
-    // The preview's disclosure opens over --m-panel and folds in 70% of it on the exit curve.
-    await open(quiet)
-    await card.getByText('高风险 · Latch 不认识的工具', { exact: true }).waitFor()
-    const disclosure = await page.evaluate(() => {
-      const panel = document.querySelector('[data-approval-id] .approval-panel')!
-      const probe = document.createElement('div')
-      probe.className = 'approval-preview'
-      panel.append(probe)
-      const style = getComputedStyle(probe)
-      const folded = `${style.transitionProperty} ${style.transitionDuration} ${style.transitionTimingFunction}`
-      probe.setAttribute('data-open', '')
-      const opened = `${style.transitionProperty} ${style.transitionDuration} ${style.transitionTimingFunction}`
-      probe.remove()
-      return { folded, open: opened }
-    })
-    expect(disclosure).toEqual({
-      folded: `grid-template-rows ${exit(tokens.panel) / 1000}s ${tokens.exit}`,
-      open: `grid-template-rows ${tokens.panel / 1000}s ${tokens.ePanel}`,
-    })
-
-    // Reduced motion: no slide or growth; only fades of 120ms or less remain.
-    await page.emulateMedia({ reducedMotion: 'reduce' })
-    const reduced = await page.evaluate(() =>
-      ['.approval-slot', '.approval-preview'].map(selector => {
-        const style = getComputedStyle(document.querySelector(`[data-approval-id] ${selector}`)!)
-        return { properties: style.transitionProperty, durations: style.transitionDuration }
-      }),
-    )
-    for (const { properties, durations } of reduced) {
-      expect(properties).not.toMatch(/grid-template-rows|transform|translate|scale/u)
-      expect(durations.split(', ').every(part => parseFloat(part) <= 0.12)).toBe(true)
-    }
-    await page.emulateMedia({ reducedMotion: 'no-preference' })
-    await rejectWithoutNote(card)
-    await expect.poll(async () => (await detail(quiet)).summary.status).toBe('idle')
-    await card.waitFor({ state: 'detached' })
-  })
-
-  it('says once that an approval waits, and offers the way back only while its card is out of view', async () => {
-    // A long request makes the conversation taller than the window, so the card can be scrolled out of view.
+  it('keeps the request in view wherever the conversation is scrolled', async () => {
     const sessionId = await startHighRisk(Array.from({ length: 40 }, (_, line) => `第 ${line + 1} 行要求`).join('\n'))
     await page.setViewportSize({ width: 1440, height: 640 })
     try {
       await open(sessionId)
       const card = page.locator('[data-approval-id]')
-      await card.getByText('高风险 · Latch 不认识的工具', { exact: true }).waitFor()
+      await card.getByText('Latch 不认识的工具', { exact: true }).waitFor()
       const transcript = page.locator('.transcript')
-      const back = page.locator('.jump-latest.is-waiting')
-      const cardShows = () =>
-        card.evaluate(element => {
-          const box = element.getBoundingClientRect()
-          const frame = element.closest('.transcript')!.getBoundingClientRect()
-          return box.bottom > frame.top && box.top < frame.bottom
-        })
-      // The page opens on the latest output: the card is in view and says so itself. Nothing above the input repeats it,
-      // and the turn has no line of its own.
-      expect(await cardShows()).toBe(true)
-      expect(await back.count()).toBe(0)
-      expect(await page.locator('.run-bar-collapse[data-state="open"]').count()).toBe(0)
-      expect(await page.locator('.turn').last().locator('.status-line').count()).toBe(0)
-      await page.screenshot({ path: `${OUTPUT}/run-bar-card-in-view.png`, animations: 'disabled' })
-
-      // The long request clamps behind 显示全部; opened, it pushes the card out of view when scrolled to the top. Scrolled
-      // away from it by the reader, the way back says why.
       await page.getByRole('button', { name: '显示全部', exact: true }).click()
       await transcript.hover()
       await page.mouse.wheel(0, -4000)
       await expect.poll(() => transcript.evaluate(element => element.scrollTop)).toBe(0)
-      expect(await cardShows()).toBe(false)
-      await back.waitFor()
-      await page.screenshot({ path: `${OUTPUT}/run-bar-waiting.png`, animations: 'disabled' })
-
-      // It brings the card back into view, and goes.
-      await back.click()
-      await expect.poll(cardShows).toBe(true)
-      await back.waitFor({ state: 'detached' })
+      await expect.poll(() => card.isVisible()).toBe(true)
+      expect(await page.locator('.jump-latest.is-waiting').count()).toBe(0)
       await rejectWithoutNote(card)
       await expect.poll(async () => (await detail(sessionId)).summary.status).toBe('idle')
     } finally {
@@ -440,11 +276,9 @@ describe('permission states in a browser', () => {
     await expect.poll(async () => (await detail(sessionId)).approvals.length).toBe(1)
     await open(sessionId)
 
-    await page.locator('.topbar').getByText('完全访问', { exact: true }).waitFor()
     await page.getByText('这个会话只能在 Mac 上继续。这台设备可以查看、拒绝和停止。', { exact: true }).waitFor()
     expect(await page.getByRole('textbox', { name: '继续对话' }).count()).toBe(0)
     const card = page.locator('[data-approval-id]')
-    await card.getByText('仅提示', { exact: true }).waitFor()
     await card.getByText('Agent 的询问只是提示：拒绝会转达给它，但不能阻止它执行其他操作。', { exact: true }).waitFor()
     await card.getByText('在 Mac 上的 Latch 里允许', { exact: true }).waitFor()
     expect(await card.getByRole('button', { name: /允许/ }).count()).toBe(0)
@@ -467,27 +301,22 @@ describe('permission states in a browser', () => {
     await page.screenshot({ path: `${OUTPUT}/l3-drift-desktop.png`, fullPage: true, animations: 'disabled' })
     // The banner that stops the session is a security surface too.
     await expectUnmovedByInjectedStyles(page, [
-      '.ui-notice[data-secure]',
-      '.ui-notice[data-secure] .ui-notice-text',
-      '.ui-notice[data-secure] .ui-button',
+      '.composer-stop[data-secure]',
+      '.composer-stop[data-secure] > span',
+      '.composer-stop[data-secure] .ui-button',
     ])
     await page.emulateMedia({ colorScheme: 'dark' })
     await page.screenshot({ path: `${OUTPUT}/l3-drift-dark.png`, fullPage: true, animations: 'disabled' })
     await page.emulateMedia({ colorScheme: 'light' })
   })
 
-  it('marks full-access harnesses as desktop-only in the new-session picker', async () => {
+  it('offers another device only the built-in engine, and says where the others start', async () => {
     await page.getByRole('button', { name: '新建会话', exact: true }).first().click()
-    const item = page.getByRole('radiogroup', { name: 'Agent', exact: true }).getByRole('radio', { name: /Fake Agent/ })
-    await item.waitFor()
-    expect(await item.getAttribute('aria-disabled')).toBe('true')
-    expect(await item.getAttribute('aria-checked')).toBe('false')
-    // Its line says so on the tile; pressed, the reason is said under the row (touch screens have no tooltip).
-    expect(await item.textContent()).toContain('在 Mac 上开始')
-    await item.click({ force: true })
-    expect(await item.getAttribute('aria-checked')).toBe('false')
-    await page.locator('.harness-choice .ui-tile-choice-reason', { hasText: '在 Mac 上开始' }).waitFor()
-    await page.screenshot({ path: `${OUTPUT}/harness-picker-desktop.png`, animations: 'disabled' })
+    await page.locator('.composer .model-picker').click()
+    await page.getByText('其他引擎只能在 Mac 上开始。', { exact: true }).waitFor()
+    expect(await page.getByRole('menuitemradio', { name: /Fake Agent/ }).count()).toBe(0)
+    await page.screenshot({ path: `${OUTPUT}/engine-picker-remote.png`, animations: 'disabled' })
+    await page.keyboard.press('Escape')
   })
 
   const policy = () => testHost.host.security.policy.get()

@@ -64,10 +64,13 @@ it.each([
     await enrollBrowser(page, host, { name: 'Auto document', scopes: ['admin'] })
     await page.locator(`[data-task-id="${sessionId}"]`).first().click()
     const settings = await openSettings(page)
-    await openSection(settings, '通用')
-    const preference = settings.getByRole('switch', { name: '运行结束后自动打开新生成的文档', exact: true })
-    expect(await preference.getAttribute('aria-checked')).toBe('true')
-    if (!enabled) await preference.click()
+    // A phone has no such row: it never opens a second pane.
+    if (width >= 768) {
+      await openSection(settings, '通用')
+      const preference = settings.getByRole('switch', { name: '新文档生成后自动打开', exact: true })
+      expect(await preference.getAttribute('aria-checked')).toBe('true')
+      if (!enabled) await preference.click()
+    }
     await closeSettings(settings)
     if (width < 768) await page.locator(`[data-task-id="${sessionId}"]`).first().click()
     await settleShell(page)

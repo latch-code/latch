@@ -1,8 +1,9 @@
 import { FolderInput } from 'lucide-react'
-import { Button, Icon, ValuePicker } from '@latch/ui'
-import { middleEllipsis } from '../format.ts'
+import { Button, ValuePicker } from '@latch/ui'
+import { RECOVERY_COPY } from '../core/securityCopy.ts'
+import { basename, middleEllipsis } from '../format.ts'
 import { ProjectIcon, projectName } from '../projects.tsx'
-import { escapeHiddenCharacters } from './VisibleText.tsx'
+import { escapeHiddenCharacters } from '../components/VisibleText.tsx'
 import { workspaceRecovery, type WorkspaceRecoveryInput } from './workspaceRecovery.ts'
 
 export interface WorkspaceRecoveryProps extends WorkspaceRecoveryInput {
@@ -17,14 +18,14 @@ export function WorkspaceRecovery(props: WorkspaceRecoveryProps) {
   const selected = state.workspaces.find(workspace => workspace.id === props.workspaceId)
   const locked = props.phase !== 'idle'
   return (
-    <section className="setup-panel" aria-label="选择项目继续会话">
-      <header className="setup-panel-head">
-        <Icon icon={FolderInput} size={16} />
-        <h3>换个项目继续</h3>
-      </header>
-      <div className="setup-panel-body">
-        <p className="setup-panel-text">原文件夹暂不可用。你的草稿和会话记录都还在，可以换个项目继续。</p>
-        <p className="setup-panel-caption">从上次回复接着写，文件保留在各自的项目中。</p>
+    <section className="composer-drawer recovery-drawer" aria-label="选择项目继续会话">
+      <p className="recovery-line" role="status">
+        <FolderInput size={16} aria-hidden="true" />
+        {RECOVERY_COPY.folderMissing(
+          escapeHiddenCharacters(basename(props.source.summary.cwd ?? '') || props.source.summary.title || '这个会话'),
+        )}
+      </p>
+      <div className="recovery-actions">
         <ValuePicker
           label="继续会话的项目"
           placeholder="选择项目…"
@@ -42,23 +43,17 @@ export function WorkspaceRecovery(props: WorkspaceRecoveryProps) {
             if (!locked && state.workspaces.some(workspace => workspace.id === workspaceId)) props.onWorkspaceChange(workspaceId)
           }}
         />
-        {state.blockedReason && (
-          <p className="setup-panel-caption" role="status">
-            {state.blockedReason}
-          </p>
-        )}
-      </div>
-      <footer className="setup-panel-foot">
         <Button
+          size="sm"
           variant="primary"
           disabled={!state.intent}
           tooltip={state.blockedReason}
           onClick={() => {
             if (state.intent) props.onFork(state.intent.taskId, state.intent.upToMessageId, state.intent.workspaceId)
           }}>
-          在所选项目继续
+          {RECOVERY_COPY.continueInNew}
         </Button>
-      </footer>
+      </div>
     </section>
   )
 }

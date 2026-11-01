@@ -19,6 +19,7 @@ import {
   backToPhoneSessions,
   reachable,
   closeSettings,
+  setChatOnly,
 } from './helpers/layout.ts'
 import { expectUnmovedByInjectedStyles } from './helpers/security.ts'
 import {
@@ -1027,41 +1028,22 @@ describe('visual capture of the real product', () => {
         )
         .toEqual([sessions.unread])
 
-      // New session: the harness tiles, the input and its pickers.
+      // New session: the question and the input with its one control.
       await newSession(target)
       const composer = target.getByRole('textbox', { name: '新会话消息', exact: true })
       await reachable(composer)
       await reachable(target.getByRole('button', { name: viewport.name === 'phone' ? '开始' : '发送', exact: true }), {
         allowDisabled: true,
       })
-      const harnesses = target.getByRole('radiogroup', { name: 'Agent', exact: true })
-      for (const way of [/^Latch 内置\s*Agent$/, /^Latch 内置\s*只对话$/]) await reachable(harnesses.getByRole('radio', { name: way }))
-      // The full-access agent can only start from the desktop app: its tile says so and cannot be chosen here.
-      const agentTile = harnesses.getByRole('radio', { name: /本地 ACP Agent/ })
-      await reachable(agentTile, { allowDisabled: true })
-      expect(await agentTile.getAttribute('aria-disabled')).toBe('true')
-      expect(await agentTile.textContent()).toContain('在 Mac 上开始')
+      // This browser runs on the built-in engine alone: nothing to ask, and the full-access agent is not offered.
+      expect(await target.locator('.engine-question').count()).toBe(0)
       await recorder.capture(target, viewport, 'new-session', 'empty')
       await target.getByRole('textbox', { name: '新会话消息', exact: true }).blur()
       await settleMotion(target)
       if (viewport.name !== 'phone')
         await recorder.capture(target, viewport, 'new-session-draft', 'the quiet empty workspace with compact agent choices')
       if (viewport.name === 'phone') {
-        // The harness tiles: an added full-access agent and the presets not added yet cannot start here, and say why.
         const sheet = target.getByRole('dialog', { name: '新会话', exact: true })
-        const tiles = sheet.getByRole('radiogroup', { name: 'Agent', exact: true })
-        expect(await tiles.getByRole('radio', { name: /^Latch 内置\s*Agent$/ }).getAttribute('aria-checked')).toBe('true')
-        const agent = tiles.getByRole('radio', { name: /^本地 ACP Agent/ })
-        expect(await agent.getAttribute('aria-disabled')).toBe('true')
-        await agent.click({ force: true })
-        await sheet.locator('.ui-tile-choice-reason').waitFor()
-        expect(await tiles.getByRole('radio', { name: /^Latch 内置\s*Agent$/ }).getAttribute('aria-checked')).toBe('true')
-        await recorder.capture(
-          target,
-          viewport,
-          'new-session-phone-harness-unavailable',
-          'a full-access agent says why it cannot start from a phone',
-        )
         // The project and the model are rows that open single-choice sheets of their own.
         for (const [surface, row, title] of [
           ['new-session-project', /^项目：/, '项目'],
@@ -1108,38 +1090,10 @@ describe('visual capture of the real product', () => {
         await target.keyboard.press('Escape')
         await target.getByRole('region', { name: 'DeepSeek', exact: true }).waitFor({ state: 'hidden' })
       }
-      // Adding an agent in place: the presets not added yet, then one of them with its install command.
-      await presetsAsMissing(target)
-      await target.getByRole('button', { name: /^添加 Agent/ }).click()
-      const presetList = target.getByRole('group', { name: '添加 Agent', exact: true })
-      await reachable(presetList.getByRole('button', { name: /^Codex/ }))
+      await setChatOnly(target, true)
       await settleMotion(target)
-      await recorder.capture(target, viewport, 'new-session-harness', 'the presets that can be added')
-      await presetList.getByRole('button', { name: /^Codex/ }).click()
-      const codex = target.getByRole('region', { name: 'Codex', exact: true })
-      await reachable(codex.getByRole('button', { name: '复制安装命令', exact: true }))
-      await codex.getByText('在 Mac 上的 Latch 里添加：设置 › Agent').waitFor()
-      await settleMotion(target)
-      await recorder.capture(target, viewport, 'new-session-add-agent', 'one preset: what is missing and where to add it')
-      await target.keyboard.press('Escape')
-      await codex.waitFor({ state: 'hidden' })
-      await target.unroute('**/link/api/agents')
-      if (viewport.name === 'desktop') {
-        // ⋯ on the new-session page holds 同步最新状态, the only place it lives while the connection is healthy.
-        await target.locator('.topbar').getByRole('button', { name: '会话操作', exact: true }).click()
-        const more = target.getByRole('menu', { name: '会话操作', exact: true })
-        await reachable(more.getByRole('menuitem', { name: '同步最新状态', exact: true }))
-        await recorder.capture(target, viewport, 'new-session-more-menu', '⋯ open on the new-session page')
-        await target.keyboard.press('Escape')
-        await more.waitFor({ state: 'detached' })
-      }
-      await harnesses.getByRole('radio', { name: /^Latch 内置\s*只对话$/ }).click()
-      await recorder.capture(target, viewport, 'new-session-chat', 'the built-in harness for conversation only: no project')
-      // Pressed, a tile that cannot be chosen says why under the row.
-      await agentTile.click({ force: true })
-      await target.locator('.harness-choice .ui-tile-choice-reason', { hasText: '在 Mac 上开始' }).waitFor()
-      await recorder.capture(target, viewport, 'new-session-harness-unavailable', 'why a harness cannot be chosen here')
-      await harnesses.getByRole('radio', { name: /^Latch 内置\s*Agent$/ }).click()
+      await recorder.capture(target, viewport, 'new-session-chat', 'only chatting: no project, no files')
+      await setChatOnly(target, false)
 
       // Nothing to start with yet: no model service. The card above the input offers one, and the same panel as the
       // model picker's opens inside it. The Host's catalog is read without its services for this.
@@ -1155,7 +1109,7 @@ describe('visual capture of the real product', () => {
       })
       await newSession(target)
       const setup = target.locator('.setup-card')
-      await setup.getByText('连接模型服务', { exact: true }).waitFor()
+      await setup.getByText('还没有模型服务。', { exact: true }).waitFor()
       await reachable(setup.getByRole('button', { name: '添加模型服务', exact: true }))
       await reachable(target.getByRole('button', { name: viewport.name === 'phone' ? '开始' : '发送', exact: true }), {
         allowDisabled: true,
@@ -1168,8 +1122,8 @@ describe('visual capture of the real product', () => {
       await recorder.capture(target, viewport, 'new-session-setup-add', 'the services to add, opened inside the card')
       await target.unroute('**/link/api/snapshot')
 
-      // The built-in demo model: the prompts it knows, each marked 演示. The catalog reads the scripted service as the
-      // demo one for this.
+      // The built-in demo model is marked, on the page's header or the sheet. The catalog reads the scripted service as
+      // the demo one for this.
       await target.route('**/link/api/snapshot', async route => {
         const response = await route.fetch()
         const snapshot: AppSnapshot = await response.json()
@@ -1182,10 +1136,12 @@ describe('visual capture of the real product', () => {
         await route.fulfill({ response, json: { ...snapshot, ...(catalog ? { catalog } : {}) } })
       })
       await newSession(target)
-      const demoTasks = target.getByRole('region', { name: '演示任务', exact: true })
-      await demoTasks.getByText('演示', { exact: true }).first().waitFor()
-      for (const card of await demoTasks.getByRole('button').all()) await reachable(card)
-      await recorder.capture(target, viewport, 'new-session-demo', 'the demo model: prompts it knows, each marked 演示')
+      await target
+        .getByText(/^演示/u)
+        .filter({ visible: true })
+        .first()
+        .waitFor()
+      await recorder.capture(target, viewport, 'new-session-demo', 'the demo model is marked')
       await target.unroute('**/link/api/snapshot')
       await home(target)
 
@@ -1201,15 +1157,23 @@ describe('visual capture of the real product', () => {
           const snapshot: AppSnapshot = await response.json()
           await route.fulfill({ response, json: { ...snapshot, device: { ...snapshot.device, listener: 'unix' } } })
         })
+        // A device with nothing remembered: more than one engine, so it asks, with none marked.
+        await desktopApp.addInitScript(() => {
+          for (const key of Object.keys(localStorage)) if (key.startsWith('latch.composer.')) localStorage.removeItem(key)
+        })
+        await presetsAsMissing(desktopApp)
         await desktopApp.emulateMedia({ reducedMotion: 'reduce' })
         await desktopApp.goto(`${host.loopbackOrigin}/link/`)
         await connected(desktopApp)
         await desktopApp.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
         await desktopApp.locator('.workspace.is-new').waitFor()
-        await desktopApp
-          .getByRole('radiogroup', { name: 'Agent', exact: true })
-          .getByRole('radio', { name: /本地 ACP Agent/ })
-          .click()
+        const question = desktopApp.getByRole('region', { name: '选择引擎', exact: true })
+        await reachable(question.getByRole('button', { name: /本地 ACP Agent/ }))
+        expect(await desktopApp.getByRole('button', { name: '发送', exact: true }).getAttribute('aria-disabled')).toBe('true')
+        await desktopApp.evaluate(() => new Promise(done => setTimeout(done, 400)))
+        await recorder.capture(desktopApp, viewport, 'new-session-engine-question', 'first use on a device: which engine, none preselected')
+        await question.getByRole('button', { name: /本地 ACP Agent/ }).click()
+        await question.waitFor({ state: 'detached' })
         // Nothing typed yet: the start button rests on the same neutral fill as an empty send, its lock kept.
         const startButton = desktopApp.getByRole('button', { name: '发送', exact: true })
         await reachable(startButton, { allowDisabled: true })
@@ -1218,11 +1182,23 @@ describe('visual capture of the real product', () => {
         await recorder.capture(desktopApp, viewport, 'new-session-full-access-empty', 'starting a full-access session, nothing typed yet')
         await desktopApp.getByRole('textbox', { name: '新会话消息', exact: true }).fill('列出项目根目录')
         await reachable(desktopApp.getByRole('button', { name: '发送', exact: true }))
-        await desktopApp.locator('.composer-context').getByText('完全访问', { exact: false }).waitFor()
         expect(await desktopApp.getByText('它可以读写这台 Mac 上的文件并运行命令，Latch 不隔离它。').count()).toBe(0)
         await desktopApp.getByRole('textbox', { name: '新会话消息', exact: true }).blur()
         await desktopApp.evaluate(() => new Promise(done => setTimeout(done, 400)))
         await recorder.capture(desktopApp, viewport, 'new-session-full-access', 'starting a full-access session in the desktop app')
+        // An engine is added where it is chosen: the presets not added yet, then one of them with its install command.
+        await desktopApp.getByRole('button', { name: /^模型：/ }).click()
+        await desktopApp.getByRole('menuitem', { name: '添加引擎…', exact: true }).click()
+        const presets = desktopApp.getByRole('group', { name: '添加 Agent', exact: true })
+        await reachable(presets.getByRole('button', { name: /^Codex/ }))
+        await desktopApp.evaluate(() => new Promise(done => setTimeout(done, 400)))
+        await recorder.capture(desktopApp, viewport, 'new-session-harness', 'the engines that can be added')
+        await presets.getByRole('button', { name: /^Codex/ }).click()
+        const codex = desktopApp.getByRole('region', { name: 'Codex', exact: true })
+        await reachable(codex.getByRole('button', { name: '复制安装命令', exact: true }))
+        await desktopApp.evaluate(() => new Promise(done => setTimeout(done, 400)))
+        await recorder.capture(desktopApp, viewport, 'new-session-add-agent', 'one engine: what is missing and how to install it')
+        await desktopApp.keyboard.press('Escape')
         await desktopApp.close()
 
         // The same tab where this computer cannot confirm (its helper is missing): starting is blocked, and why is the
@@ -1248,10 +1224,8 @@ describe('visual capture of the real product', () => {
         await connected(blockedApp)
         await blockedApp.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
         await blockedApp.locator('.workspace.is-new').waitFor()
-        await blockedApp
-          .getByRole('radiogroup', { name: 'Agent', exact: true })
-          .getByRole('radio', { name: /本地 ACP Agent/ })
-          .click()
+        await blockedApp.getByRole('button', { name: /^模型：/ }).click()
+        await blockedApp.getByRole('menuitemradio', { name: /本地 ACP Agent/ }).click()
         await blockedApp.getByRole('textbox', { name: '新会话消息', exact: true }).fill('列出项目根目录')
         const blockedStart = blockedApp.getByRole('button', { name: '发送', exact: true })
         await reachable(blockedStart, { allowDisabled: true })
@@ -1398,7 +1372,10 @@ describe('visual capture of the real product', () => {
         // The input's own picker; the session information has one too.
         const input = target.locator('.composer')
         await input.getByRole('button', { name: /^模型：/ }).click()
-        await target.getByRole('menu', { name: '模型', exact: true }).getByRole('menuitemradio', { name: 'fixture-small' }).click()
+        await target
+          .getByRole('menu', { name: /^模型/ })
+          .getByRole('menuitemradio', { name: 'fixture-small' })
+          .click()
         const switched = input.getByRole('button', { name: '模型：下一条：fixture-small', exact: true })
         await switched.click()
         const undo = target.getByRole('menuitem', { name: '撤销切换，继续使用 fixture-large', exact: true })
@@ -1485,37 +1462,12 @@ describe('visual capture of the real product', () => {
       // Approvals.
       await openSession(target, viewport, sessions.r1)
       const r1 = target.locator('[data-approval-id]')
-      await reachable(r1.getByRole('button', { name: '允许一次', exact: true }))
+      await target.locator('[data-approval-id]:not([data-arming])').waitFor()
+      await reachable(r1.getByRole('button', { name: '允许', exact: true }))
       await reachable(r1.getByRole('button', { name: '拒绝', exact: true }))
-      // The card waits for the person with the one amber status word in its header.
-      await r1.locator('.tool-card-header .ui-status-word[data-tone="waiting"]', { hasText: '需要你允许' }).waitFor()
+      await r1.locator('.approval-title', { hasText: '需要你允许' }).waitFor()
       await recorder.capture(target, viewport, 'approval-r1', 'R1 waiting for approval')
       if (sidebar) await recorder.capture(target, viewport, 'sidebar-waiting', 'session waiting for approval selected', sidebar)
-      if (viewport.name === 'desktop') {
-        // Each line of the open preview reads both numbers, sign and text on one row; the phones' single column stays out.
-        const rows = await r1.locator('.approval-preview .diff-line').evaluateAll(lines =>
-          lines.map(line => ({
-            one: getComputedStyle(line.querySelector('.diff-ln-one')!).display,
-            height: line.getBoundingClientRect().height,
-            lineHeight: parseFloat(getComputedStyle(line).lineHeight),
-          })),
-        )
-        expect(rows.length).toBeGreaterThan(0)
-        for (const row of rows) expect(row).toEqual({ one: 'none', height: row.lineHeight, lineHeight: row.lineHeight })
-        expect(await r1.locator('.diff-path').getAttribute('title')).toBe('docs/notes.md')
-        // The card and the diff under review keep their look under styles added to the page.
-        await expectUnmovedByInjectedStyles(target, [
-          '[data-approval-id] .tool-card-title',
-          '[data-approval-id] .approval-reason',
-          '[data-approval-id] .diff-fold',
-          '[data-approval-id] .diff-path',
-          '[data-approval-id] .diff-path-name',
-          '[data-approval-id] .diff-line',
-          '[data-approval-id] .diff-text',
-          '[data-approval-id] .ui-button',
-        ])
-      }
-
       // The rest of the Host's choices sit behind ⋯ (a bottom sheet of 更多选项 on phones).
       const choices =
         viewport.name === 'phone'
@@ -1523,52 +1475,47 @@ describe('visual capture of the real product', () => {
           : r1.getByRole('button', { name: '更多批准选项', exact: true })
       await reachable(choices)
       await choices.click()
-      await target.getByRole('menuitem', { name: /本会话始终允许/ }).waitFor()
+      await target.getByRole('menuitem', { name: /这个会话都允许这类操作/ }).waitFor()
       await recorder.capture(target, viewport, 'approval-r1-more', 'the other approval choices open')
       await target.keyboard.press('Escape')
-      await target.getByRole('menuitem', { name: /本会话始终允许/ }).waitFor({ state: 'hidden' })
+      await target.getByRole('menuitem', { name: /这个会话都允许这类操作/ }).waitFor({ state: 'hidden' })
 
-      // The preview folds from its default: open on wider screens (it fits in 240 with its fold bar), folded on phones.
-      const toggle = r1.locator('.approval-toggle')
+      // What it will do unfolds in place from 查看改动; the input and the buttons stay where they are.
+      const toggle = r1.locator('.approval-see')
       await reachable(toggle)
       await toggle.click()
-      await expect.poll(() => toggle.getAttribute('aria-expanded')).toBe(viewport.name === 'phone' ? 'true' : 'false')
+      await expect.poll(() => toggle.getAttribute('aria-expanded')).toBe('true')
       if (viewport.name === 'phone') {
         // The paper stays short: the first rows of the diff and a fold bar for the rest.
         await reachable(r1.getByRole('button', { name: '展开其余 13 行', exact: true }))
-        const paper = await r1.locator('.approval-preview .diff-file').boundingBox()
-        expect(paper && paper.height <= 240).toBe(true)
-        // Each line reads number, sign, text on one row: one line-number column on phones.
-        const lines = await r1.locator('.approval-preview .diff-line').evaluateAll(rows =>
-          rows.map(row => ({
-            old: getComputedStyle(row.querySelector('.diff-ln-old')!).display,
-            height: row.getBoundingClientRect().height,
-            lineHeight: parseFloat(getComputedStyle(row).lineHeight),
-          })),
-        )
-        expect(lines.length).toBeGreaterThan(0)
-        for (const line of lines) expect(line).toEqual({ old: 'none', height: line.lineHeight, lineHeight: line.lineHeight })
       }
-      await recorder.capture(target, viewport, 'approval-r1-preview', 'the preview toggled from its default')
-
-      // With the keyboard on the card, its shortcuts show next to the buttons (not on touch screens).
-      if (!viewport.touch) {
-        await r1.getByRole('button', { name: '允许一次', exact: true }).focus()
-        await expect.poll(() => r1.locator('.approval-keys').evaluate(element => getComputedStyle(element).opacity)).toBe('1')
-        await recorder.capture(target, viewport, 'approval-r1-keys', 'the card holds focus and shows its shortcuts')
+      await settleMotion(target)
+      await recorder.capture(target, viewport, 'approval-r1-preview', 'the preview unfolded')
+      if (viewport.name === 'desktop') {
+        // The card and the diff under review keep their look under styles added to the page.
+        await expectUnmovedByInjectedStyles(target, [
+          '[data-approval-id] .approval-title',
+          '[data-approval-id] .approval-object',
+          '[data-approval-id] .diff-line',
+          '[data-approval-id] .diff-text',
+          '[data-approval-id] .ui-button',
+        ])
       }
+      await toggle.click()
 
       // A decision whose answer never arrived: the card offers to send the same choice again.
       await target.route('**/link/api/approvals/**', route => route.abort('connectionreset'))
-      // The first 拒绝 asks what to do instead in the composer; the second sends the rejection.
-      await r1.getByRole('button', { name: '拒绝', exact: true }).click()
-      await target.getByRole('textbox', { name: '告诉 Agent 改做什么', exact: true }).waitFor()
-      await recorder.capture(target, viewport, 'approval-r1-note', 'after 拒绝, the composer asks what to do instead')
+      // Typing says what to do instead: 拒绝 becomes 拒绝并发送, and the text goes with it.
+      const answerBox = target.getByRole('textbox', { name: '输入内容会拒绝并告诉 Agent 改做什么', exact: true })
+      await answerBox.fill('先写到草稿目录')
+      await r1.getByRole('button', { name: '拒绝并发送', exact: true }).waitFor()
+      await settleMotion(target)
+      await recorder.capture(target, viewport, 'approval-r1-note', 'typing turns 拒绝 into 拒绝并发送')
+      await answerBox.fill('')
       await r1.getByRole('button', { name: '拒绝', exact: true }).click()
       await r1.getByText('「拒绝」的结果未知', { exact: true }).waitFor()
-      // 重试 is the one clear action: no blue, nothing behind ⋯.
+      // 重试 is the one clear action: no blue.
       expect(await r1.locator('.ui-button[data-variant="primary"]').count()).toBe(0)
-      expect(await r1.locator('.approval-more').count()).toBe(0)
       await reachable(r1.getByRole('button', { name: '重试', exact: true }))
       await recorder.capture(target, viewport, 'approval-uncertain', 'the outcome of a decision is unknown')
       await target.unroute('**/link/api/approvals/**')
@@ -1590,12 +1537,15 @@ describe('visual capture of the real product', () => {
         await reachable(info.getByRole('button', { name: '撤销切换', exact: true }))
         await settleMotion(target)
         await recorder.capture(target, viewport, 'session-info-model-switch', 'a model switch for the next message, with the way back')
-        // Back in the conversation, a small chip above the input says which model the next message uses.
+        // Back in the conversation, the model control says which model the next message uses.
         await closeDetails(target, viewport)
-        const chip = target.locator('.composer-dock .composer-above').getByText(/fixture-small/)
-        await chip.waitFor()
+        await target
+          .locator('.composer-chips')
+          .getByText(/fixture-small/)
+          .first()
+          .waitFor()
         await settleMotion(target)
-        await recorder.capture(target, viewport, 'session-next-model', 'the chip above the input after a model switch')
+        await recorder.capture(target, viewport, 'session-next-model', 'the model control after a switch for the next message')
         await openDetails(target, viewport)
         await info.getByRole('button', { name: '撤销切换', exact: true }).click()
         await info.getByText('下一条消息起使用 fixture-small').waitFor({ state: 'detached' })
@@ -1616,6 +1566,7 @@ describe('visual capture of the real product', () => {
 
       await openSession(target, viewport, sessions.r2)
       const r2 = target.locator('[data-approval-id]')
+      await target.locator('[data-approval-id]:not([data-arming])').waitFor()
       await r2.getByText('在 Mac 上的 Latch 里允许', { exact: true }).waitFor()
       expect(await r2.getByRole('button', { name: /允许/ }).count()).toBe(0)
       await reachable(r2.getByRole('button', { name: '拒绝', exact: true }))
@@ -1623,16 +1574,16 @@ describe('visual capture of the real product', () => {
 
       await openSession(target, viewport, sessions.hidden)
       const hidden = target.locator('[data-approval-id]')
+      await target.locator('[data-approval-id]:not([data-arming])').waitFor()
       await hidden.getByText('含有不可见字符，已标出', { exact: true }).waitFor()
-      await reachable(hidden.getByRole('button', { name: '允许一次', exact: true }))
-      // Nothing broader than allowing once is one tap away from content that may read as something else.
-      expect(await hidden.locator('.approval-more').count()).toBe(0)
+      await reachable(hidden.getByRole('button', { name: '允许', exact: true }))
       expect(await hidden.locator('.ui-button[data-variant="primary"]').count()).toBe(0)
       await recorder.capture(target, viewport, 'approval-hidden', 'R1 whose content hides characters')
 
       await openSession(target, viewport, sessions.advisory)
       const advisory = target.locator('[data-approval-id]')
-      await advisory.getByText('仅提示', { exact: true }).waitFor()
+      await target.locator('[data-approval-id]:not([data-arming])').waitFor()
+      await advisory.locator('.approval-note').waitFor()
       // The agent's own words for its option stay in the tooltip; the button reads in the product's words.
       await reachable(advisory.getByRole('button', { name: '拒绝', exact: true }))
       await recorder.capture(target, viewport, 'approval-advisory', 'full-access question shown as advisory')
@@ -1656,15 +1607,16 @@ describe('visual capture of the real product', () => {
       })
       await openSession(target, viewport, sessions.r1)
       const locked = target.locator('[data-approval-id]')
+      await target.locator('[data-approval-id]:not([data-arming])').waitFor()
       await locked.getByText('这台设备不能允许这一步', { exact: true }).waitFor()
       expect(await locked.getByRole('button', { name: /允许/ }).count()).toBe(0)
-      await locked.locator('.tool-card-header .ui-status-word[data-tone="waiting"]', { hasText: '需要你允许' }).waitFor()
+      await locked.locator('.approval-title', { hasText: '需要你允许' }).waitFor()
       await reachable(locked.getByRole('button', { name: '拒绝', exact: true }))
       await recorder.capture(target, viewport, 'approval-r1-locked', 'R1 on a device without 批准普通操作')
       await target.unroute('**/link/api/snapshot')
 
       // A Host of the previous build: no device rights or risk in what it sends, so the card offers plain 拒绝 and
-      // 允许一次 under the legacy-Host banner.
+      // 允许 under the legacy-Host banner.
       await target.route('**/link/api/snapshot', async route => {
         const response = await route.fetch()
         const body: AppSnapshot = await response.json()
@@ -1679,10 +1631,10 @@ describe('visual capture of the real product', () => {
       })
       await openSession(target, viewport, sessions.r1)
       const legacy = target.locator('[data-approval-id]')
+      await target.locator('[data-approval-id]:not([data-arming])').waitFor()
       await target.getByText('这台 Mac 上的 Latch 还是旧版本，重新启动后才能确认设备。', { exact: true }).waitFor()
-      await reachable(legacy.getByRole('button', { name: '允许一次', exact: true }))
+      await reachable(legacy.getByRole('button', { name: '允许', exact: true }))
       await reachable(legacy.getByRole('button', { name: '拒绝', exact: true }))
-      expect(await legacy.locator('.approval-more').count()).toBe(0)
       await recorder.capture(target, viewport, 'approval-legacy', 'a Host of the previous build: plain allow and reject')
       await target.unroute(`**/link/api/tasks/${sessions.r1}`)
       await target.unroute('**/link/api/snapshot')
@@ -2077,7 +2029,7 @@ describe('visual capture of the real product', () => {
         'approval-r1',
         async () => {
           await openSession(target, viewport, sessions.r1)
-          await target.locator('[data-approval-id]').getByRole('button', { name: '允许一次', exact: true }).waitFor()
+          await target.locator('[data-approval-id]').getByRole('button', { name: '允许', exact: true }).waitFor()
         },
       ],
     ]

@@ -205,3 +205,16 @@ export async function closeSettings(settings: Locator): Promise<void> {
   await backToSections(settings)
   await openSessions(settings.page())
 }
+
+/** 只聊天 on a new session: a row of the sheet on phones, in the input's 「⋯」 elsewhere. */
+export async function setChatOnly(page: Page, value: boolean): Promise<void> {
+  const name = '只聊天，不读写文件'
+  const sheet = page.locator('.new-session-sheet')
+  if (await sheet.isVisible()) {
+    await sheet.getByRole('switch', { name, exact: true }).setChecked(value)
+    return
+  }
+  await page.locator('.composer-more').getByRole('button', { name: '更多选项', exact: true }).click()
+  await page.getByRole('switch', { name, exact: true }).setChecked(value)
+  await page.keyboard.press('Escape')
+}

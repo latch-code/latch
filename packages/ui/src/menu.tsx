@@ -11,7 +11,7 @@ import {
   type Ref,
   type RefObject,
 } from 'react'
-import { Check, ChevronRight, ChevronsUpDown, CircleSlash, Lock, ShieldAlert } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, ChevronsUpDown, CircleSlash, Lock, ShieldAlert } from 'lucide-react'
 import { Button } from './button.tsx'
 import { ChoiceList } from './choice.tsx'
 import { Sheet } from './dialog.tsx'
@@ -544,6 +544,8 @@ export interface ValuePickerProps<T extends string> extends LayerPlacement {
   bleed?: 'end' | 'both'
   /** hover: the arrow appears only on hover or focus, as in the inspector's column of values. */
   chevron?: 'always' | 'hover'
+  /** A toolbar control reads as a menu that opens one way, not a value to step through. */
+  menuChevron?: boolean
   /** Waiting for verification, set by the caller; a promise from onValueChange sets it as well. */
   pending?: boolean
   pendingLabel?: string
@@ -611,6 +613,7 @@ export function ValuePicker<T extends string>({
   size = 'sm',
   bleed,
   chevron = 'always',
+  menuChevron = false,
   pending: pendingProp = false,
   pendingLabel = '等待验证…',
   reserve = false,
@@ -780,7 +783,7 @@ export function ValuePicker<T extends string>({
       {variant === 'row' && <span className="ui-value-row-label">{label}</span>}
       {lead}
       {valueLayers}
-      <Icon icon={ChevronsUpDown} size={variant === 'row' ? 16 : 12} className="ui-value-picker-chevron" />
+      <Icon icon={menuChevron ? ChevronDown : ChevronsUpDown} size={variant === 'row' ? 16 : 12} className="ui-value-picker-chevron" />
     </button>
   )
   const trigger = <Tooltip content={disabled ? disabledReason : undefined}>{button}</Tooltip>

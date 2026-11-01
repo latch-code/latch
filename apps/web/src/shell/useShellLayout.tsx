@@ -170,7 +170,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const rail = useRef<HTMLElement>(null)
   const sidebarToggle = useRef<HTMLButtonElement>(null)
   /** The new-session page's 「添加 Agent」 tile, which the line under the input opens as well. */
-  const addAgentTrigger = useRef<HTMLButtonElement>(null)
   const setupTrigger = useRef<HTMLButtonElement>(null)
   /** The input of the phone's new-session sheet, apart from the open session's. */
   const sheetComposerRef = useRef<HTMLTextAreaElement>(null)
@@ -499,7 +498,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
         void pickProject(true)
       }
     : undefined
-  const onlyBuiltIn = catalog !== undefined && !catalog.harnesses.some(item => item.source !== 'builtin')
   const newChoicesLocked = submission.pending !== null || submission.sending || attachmentDraft.preparing || gate.kind !== 'open'
   const sheetCanStart =
     selectedId === null
@@ -912,10 +910,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     fileContext?.kind === 'workspace' ? catalog?.workspaces.find(item => item.id === fileContext.workspaceId) : undefined
   /** Phones: a session is pushed over the list, which stays beneath it, inert, until the session slides away. */
   const phoneSession = phone && (selectedId !== null || (infoPage && filesVisible))
-  const suggest = (prompt: string) => {
-    submission.setDraft(prompt)
-    ;(phone ? sheetComposerRef : composerRef).current?.focus()
-  }
   const column = usePresence(columnOpen, MOTION.panelExit)
   // Which way the columns last moved: a fold takes the exit timing. Unchanged state keeps the last direction.
   const columns = useRef({ right: columnOpen, left: sidebarCollapsed, folding: false })
@@ -1004,7 +998,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     navigation,
     main,
     rail,
-    addAgentTrigger,
     setupTrigger,
     sheetComposerRef,
     searchRef,
@@ -1075,7 +1068,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     pickProject,
     createProject,
     createProjectAndStart,
-    onlyBuiltIn,
     newChoicesLocked,
     sheetCanStart,
     inspectorBeside,
@@ -1122,7 +1114,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     mentionFile,
     quoteFile,
     workspaceForFiles,
-    suggest,
     column,
     page,
     closeInfoPage,

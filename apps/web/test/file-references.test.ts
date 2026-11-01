@@ -160,10 +160,10 @@ describe('asking main which references are files', () => {
       state: 'failed',
       tool: { kind: 'edit', input: '{"path":"out/deck.pptx"}', output: '写入后校验失败' },
     }
-    const html = within(known, createElement(ToolCard, { message, onDecide: async () => {} }))
+    const html = within(known, createElement(ToolCard, { message }))
     expect(html).not.toContain('tool-files')
     expect(html).toContain('tool-failure')
-    const running = within(known, createElement(ToolCard, { message: { ...message, state: 'running' }, onDecide: async () => {} }))
+    const running = within(known, createElement(ToolCard, { message: { ...message, state: 'running' } }))
     expect(running).not.toContain('tool-files')
   })
 })

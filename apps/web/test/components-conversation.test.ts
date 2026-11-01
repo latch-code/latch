@@ -8,6 +8,8 @@ import { Inspector } from '../src/components/Inspector.tsx'
 import { MessageRow, ThinkingRow } from '../src/components/MessageRow.tsx'
 import { PlanList } from '../src/components/PlanCard.tsx'
 import { DiffView } from '../src/components/DiffView.tsx'
+import { ApprovalDrawer } from '../src/composer/ApprovalDrawer.tsx'
+import { approvalActions, type ApprovalGate } from '../src/core/permissions.ts'
 import { ToolCard } from '../src/components/ToolCard.tsx'
 import { Transcript } from '../src/components/Transcript.tsx'
 import { JumpLatest } from '../src/components/JumpLatest.tsx'
@@ -114,7 +116,31 @@ const bareNumbers = (text: string) =>
 const localIso = (minutes: number) => new Date(2026, 9, 24, 14, minutes).toISOString()
 
 const transcriptOf = (detail: TaskDetail, active: boolean) =>
-  renderToStaticMarkup(createElement(Transcript, { detail, approvals: [], busy: new Map(), onDecide: noop, harnessName: 'Latch', active }))
+  renderToStaticMarkup(createElement(Transcript, { detail, approvals: [], harnessName: 'Latch', active }))
+
+/** The approval drawer of one request, as the composer draws it. */
+const Drawer = ({
+  message,
+  approval,
+  gateFor,
+  busy,
+}: {
+  message: Message | null
+  approval: Approval
+  gateFor?: (approval: Approval) => ApprovalGate
+  busy?: string
+  onDecide?: unknown
+}) =>
+  createElement(ApprovalDrawer, {
+    approvals: [approval],
+    messages: message ? [message] : [],
+    index: 0,
+    onIndex: () => {},
+    gateFor: gateFor ?? (item => approvalActions(item, null, null)),
+    busy: new Map(busy ? [[approval.id, busy]] : []),
+    statuses: new Map(),
+    onDecide: () => {},
+  })
 
 describe('with the connection down', () => {
   it('stops the thinking row and the caret, and says when it last knew', () => {
@@ -180,7 +206,7 @@ describe('the jump button', () => {
 describe('tool cards', () => {
   it('merges a pending approval into its tool card with the Host options, allow-once last', () => {
     const html = renderToStaticMarkup(
-      createElement(ToolCard, {
+      createElement(Drawer, {
         message: tool({ tool: { kind: 'edit', title: '写入 a.ts' } }),
         approval: approval({
           options: [
@@ -192,28 +218,26 @@ describe('tool cards', () => {
         onDecide: noop,
       }),
     )
-    expect(html).toContain('data-message-id="tool:c1"')
-    expect(html).toContain('data-approval-id="ap1"')
     expect(html).toContain('写入 a.ts')
     expect(html).toContain('<code class="tool-card-name">write_file</code>')
     expect(html).toContain('无参数')
     expect(html).not.toContain('{}')
     // Two buttons at most: reject, then the blue allow once; the Host's other options wait behind ⋯.
-    expect([...html.matchAll(/<button[^>]*class="ui-button"[^>]*>([^<]+)<\/button>/g)].map(match => match[1])).toEqual(['拒绝', '允许一次'])
-    expect(html).toMatch(/<button[^>]*class="ui-button"[^>]*data-variant="primary"[^>]*>允许一次<\/button>/)
+    expect([...html.matchAll(/<button[^>]*class="ui-button"[^>]*>([^<]+)<\/button>/g)].map(match => match[1])).toEqual(['拒绝', '允许'])
+    expect(html).toMatch(/<button[^>]*class="ui-button"[^>]*data-variant="primary"[^>]*>允许<\/button>/)
     expect(html).toContain('aria-label="更多批准选项"')
     expect(html).toContain('aria-haspopup="menu"')
   })
 
   it('offers allow once and reject when the driver sends no options', () => {
-    const html = renderToStaticMarkup(createElement(ToolCard, { message: tool(), approval: approval(), onDecide: noop }))
+    const html = renderToStaticMarkup(createElement(Drawer, { message: tool(), approval: approval(), onDecide: noop }))
     expect(html).toContain('>拒绝</button>')
-    expect(html).toContain('>允许一次</button>')
+    expect(html).toContain('>允许</button>')
   })
 
   it('shows the proposed diff in the approval and disables every option while one is in flight', () => {
     const html = renderToStaticMarkup(
-      createElement(ToolCard, {
+      createElement(Drawer, {
         message: tool(),
         busy: 'allow_once',
         onDecide: noop,
@@ -232,9 +256,7 @@ describe('tool cards', () => {
 
   it('shows a file edit as one row, whose preview opens under it only when asked', () => {
     const diffs = [{ path: 'src/a.ts', oldText: 'x\n', newText: 'y\n', previous: 'text' as const }]
-    const closed = renderToStaticMarkup(
-      createElement(ToolCard, { message: tool({ state: 'completed', tool: { kind: 'edit', diffs } }), onDecide: noop }),
-    )
+    const closed = renderToStaticMarkup(createElement(ToolCard, { message: tool({ state: 'completed', tool: { kind: 'edit', diffs } }) }))
     expect(closed).toContain('编辑')
     expect(closed).toContain('a.ts')
     expect(closed).toContain('+1')
@@ -256,10 +278,9 @@ describe('tool cards', () => {
 
   it('renders an approval without a matching tool row as its own card without a message anchor', () => {
     const html = renderToStaticMarkup(
-      createElement(ToolCard, { message: null, approval: approval({ toolCallId: undefined }), onDecide: noop }),
+      createElement(Drawer, { message: null, approval: approval({ toolCallId: undefined }), onDecide: noop }),
     )
     expect(html).not.toContain('data-message-id')
-    expect(html).toContain('data-approval-id="ap1"')
   })
 })
 
@@ -302,9 +323,7 @@ describe('assistant messages', () => {
       cursor: 1,
     }
     expect(renderedMessages(detail).map(message => message.id)).toEqual(['u1', 'a1', 'tool:c1', 'a2', 'u2', 'a3'])
-    const html = renderToStaticMarkup(
-      createElement(Transcript, { detail, approvals: [], busy: new Map(), onDecide: noop, harnessName: 'Standard' }),
-    )
+    const html = renderToStaticMarkup(createElement(Transcript, { detail, approvals: [], harnessName: 'Standard' }))
     // A block with neither prose nor reasoning draws nothing.
     expect([...html.matchAll(/data-message-id="([^"]+)"/g)].map(match => match[1])).toEqual(['u1', 'tool:c1', 'a2', 'u2', 'a3'])
     expect(html.match(/class="assistant-meta"/g)).toHaveLength(2)
@@ -341,7 +360,7 @@ describe('a file edit and the right panel', () => {
       createElement(
         ChangesLinkContext.Provider,
         { value: link },
-        createElement(ToolCard, { message: tool({ state: 'completed', tool: { kind: 'edit', diffs } }), onDecide: noop }),
+        createElement(ToolCard, { message: tool({ state: 'completed', tool: { kind: 'edit', diffs } }) }),
       ),
     )
 
@@ -393,8 +412,6 @@ describe('turn footers', () => {
           cursor: 1,
         },
         approvals: [],
-        busy: new Map(),
-        onDecide: noop,
         harnessName: 'Agent',
         active,
       }),
@@ -419,9 +436,7 @@ describe('turn footers', () => {
       liveText: '',
       cursor: 1,
     }
-    const html = renderToStaticMarkup(
-      createElement(Transcript, { detail, approvals: [], busy: new Map(), onDecide: noop, harnessName: 'Agent' }),
-    )
+    const html = renderToStaticMarkup(createElement(Transcript, { detail, approvals: [], harnessName: 'Agent' }))
     expect(html.match(/class="turn-footer[ "]/g)).toHaveLength(1)
     expect(html.match(/aria-label="复制"/g)).toHaveLength(2)
     expect(html).toContain('>输入 300 tokens</span>')
@@ -454,7 +469,7 @@ describe('write diff presentation', () => {
     for (const html of [
       renderToStaticMarkup(createElement(DiffView, { diffs: [{ path: 'src/a.ts', newText: text, previous: 'none' }] })),
       renderToStaticMarkup(
-        createElement(ToolCard, {
+        createElement(Drawer, {
           message: tool(),
           onDecide: noop,
           approval: approval({

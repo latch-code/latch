@@ -1,10 +1,10 @@
-import { createElement, isValidElement } from 'react'
+import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import type { HarnessInfo, HostCatalog, SessionConfigOption } from '@latch/protocol'
-import { ModelReasoningPicker, type ModelReasoningPickerProps } from '../src/components/ModelReasoningPicker.tsx'
-import { SessionControls } from '../src/components/ComposerControls.tsx'
-import { agentConfigChoice, agentConfigValues, agentModelControls } from '../src/components/modelReasoning.ts'
+import { SessionModelControl } from '../src/composer/ModelControl.tsx'
+import { contextUse, contextWords, permissionView } from '../src/composer/permission.ts'
+import { agentConfigChoice, agentConfigValues, agentModelControls } from '../src/composer/modelReasoning.ts'
 
 const model: SessionConfigOption = {
   id: 'opaque-model',
@@ -29,8 +29,35 @@ const reasoning: SessionConfigOption = {
   ],
 }
 const context: SessionConfigOption = { ...reasoning, id: 'context', name: '上下文窗口', category: 'model_config' }
-const props = (): ModelReasoningPickerProps => ({ config: structuredClone([model, reasoning, context]), busy: null, onChange() {} })
-const html = (value: ModelReasoningPickerProps) => renderToStaticMarkup(createElement(ModelReasoningPicker, value))
+const harness: HarnessInfo = {
+  id: 'fake-agent',
+  name: 'Fake Agent',
+  source: 'acp',
+  status: 'ready',
+  modes: ['agent'],
+  models: 'agent',
+  level: 'L3',
+}
+const catalog: HostCatalog = {
+  harnesses: [harness],
+  providers: [],
+  workspaces: [],
+  defaults: { harnessId: harness.id, mode: 'agent', workspaceId: 'default' },
+}
+const props = () => ({
+  catalog,
+  harness,
+  model: undefined,
+  current: undefined,
+  onModel() {},
+  config: structuredClone([model, reasoning, context]),
+  busy: null as string | null,
+  onConfig() {},
+  permission: undefined,
+  access: { local: true, legacy: false, admin: true },
+})
+const html = (value: ReturnType<typeof props> & { feedback?: { kind: 'failed' | 'unknown'; message: string }; onRefresh?: () => void }) =>
+  renderToStaticMarkup(createElement(SessionModelControl, value))
 
 describe('Agent model and reasoning controls', () => {
   it('uses only semantic categories, preserves priority and does not infer capabilities from familiar model or option names', () => {
@@ -67,21 +94,19 @@ describe('Agent model and reasoning controls', () => {
     const modelOnly = html({ ...props(), config: [model] })
     expect(modelOnly).toContain('First model')
     expect(modelOnly).not.toContain('思考预算')
-    expect(modelOnly).not.toContain('setup-panel')
     expect(modelOnly).not.toContain('role="slider"')
-    expect(html({ ...props(), config: [{ ...reasoning, category: undefined }] })).toBe('')
-    expect(html({ ...props(), config: [] })).toBe('')
+    // Nothing reported: the control still names the engine, and says the engine decides.
+    expect(html({ ...props(), config: [] })).toContain('Fake Agent')
   })
 
-  it('keeps model parameters under their original names and reasoning under the actual selected label', () => {
+  it('holds model and thinking in one control, under their original names, with every choice still reachable', () => {
     const rendered = html(props())
     expect(rendered).toContain('First model · 均衡')
     expect(rendered).toContain('思考预算')
     expect(rendered).toContain('上下文窗口')
-    expect(rendered).toContain('Only the choices this Agent reports')
     expect(rendered).toContain('Agent description')
+    expect(rendered).toContain('会话开始后不能换引擎')
     expect(rendered).toContain('aria-checked="true"')
-    expect(rendered).toContain('aria-haspopup="menu"')
     expect(rendered).not.toContain('role="slider"')
   })
 
@@ -104,32 +129,6 @@ describe('Agent model and reasoning controls', () => {
     expect(html({ ...props(), busy: reasoning.id })).toContain('aria-busy="true"')
   })
 
-  it('passes a selected intent and its Promise through without treating a resolved callback as a new selected value', async () => {
-    let finish!: () => void
-    const pending = new Promise<void>(resolve => {
-      finish = resolve
-    })
-    const onChange = vi.fn(() => pending)
-    const value = { ...props(), onChange }
-    const control = ModelReasoningPicker(value)
-    expect(isValidElement(control)).toBe(true)
-    if (!isValidElement<{ onValueChange: (value: string) => void | Promise<void> }>(control)) throw new Error('Missing model control')
-    const result = control.props.onValueChange('two')
-    expect(result).toBe(pending)
-    expect(onChange).toHaveBeenCalledExactlyOnceWith(model.id, 'two')
-    expect(value.config[0]!.currentValue).toBe('one')
-    finish()
-    await result
-    expect(html(value)).toContain('First model · 均衡')
-    expect(value.config[0]!.currentValue).toBe('one')
-    const settled = { ...value, config: value.config.map(option => (option.id === model.id ? { ...option, currentValue: 'two' } : option)) }
-    expect(html(settled)).toContain('Second model · 均衡')
-    const stopped = ModelReasoningPicker({ ...value, feedback: { kind: 'unknown', message: 'Unknown' } })
-    if (!isValidElement<{ onValueChange: (value: string) => void | Promise<void> }>(stopped)) throw new Error('Missing unknown control')
-    expect(stopped.props.onValueChange('two')).toBeUndefined()
-    expect(onChange).toHaveBeenCalledTimes(1)
-  })
-
   it('renders Agent text safely and visibly exposes direction controls', () => {
     const rendered = html({ ...props(), config: [{ ...model, name: '<script>\u202EModel' }] })
     expect(rendered).not.toContain('<script>')
@@ -137,30 +136,75 @@ describe('Agent model and reasoning controls', () => {
     expect(rendered).toContain('&lt;script&gt;')
     expect(rendered).toContain('\\u{202E}')
   })
+})
 
-  it('exposes the same real Agent options from desktop and phone SessionControls while respecting its locked gate', () => {
-    const harness: HarnessInfo = { id: 'fake-agent', name: 'Fake Agent', source: 'acp', status: 'ready', modes: ['agent'], models: 'agent' }
-    const catalog: HostCatalog = {
-      harnesses: [harness],
-      providers: [],
-      workspaces: [],
-      defaults: { harnessId: harness.id, mode: 'agent', workspaceId: 'default' },
-    }
-    const value = {
-      catalog,
-      harness,
-      summary: { id: 's', title: '', status: 'idle' as const, updatedAt: '' },
-      config: [...props().config],
-      configBusy: null,
-      onConfig() {},
-      onModel() {},
-      access: { local: true, legacy: false, admin: true },
-    }
-    for (const phone of [false, true]) {
-      const rendered = renderToStaticMarkup(createElement(SessionControls, { ...value, phone }))
-      expect(rendered).toContain('First model · 均衡')
-      expect(rendered).toContain('思考预算')
-      expect(renderToStaticMarkup(createElement(SessionControls, { ...value, phone, locked: true }))).toBe('')
-    }
+describe('the 权限 chip', () => {
+  const modes: SessionConfigOption = {
+    id: 'mode',
+    name: '模式',
+    category: 'mode',
+    currentValue: 'read-only',
+    options: [
+      { value: 'read-only', name: '只读' },
+      { value: 'workspace-write', name: '自动' },
+      { value: 'agent-full-access', name: '完全访问' },
+    ],
+  }
+  const permission = {
+    level: 'L3' as const,
+    enforcer: 'NONE' as const,
+    readback: 'mode' as const,
+    approvals: 'prompts' as const,
+    expectedMode: 'read-only',
+    defaultMode: 'read-only',
+    neverAskModes: ['agent-full-access'],
+    notes: [],
+  }
+  const local = { legacy: false, local: true }
+  const view = (currentValue: string, access = local) =>
+    permissionView({ harness, permission, config: [{ ...modes, currentValue }], access })!
+
+  it('draws nothing on the engine’s default, the mode otherwise, and amber only where it never asks', () => {
+    expect(view('read-only')).toMatchObject({ chip: false, amber: false, label: '只读', icon: 'eye' })
+    expect(view('workspace-write')).toMatchObject({ chip: true, amber: false, label: '自动', icon: 'shield' })
+    expect(view('agent-full-access')).toMatchObject({ chip: true, amber: true, icon: 'shield-alert' })
+  })
+
+  it('judges the default by the mode a session starts in, not the one it was last set to', () => {
+    const moved = { ...permission, expectedMode: 'workspace-write' }
+    expect(
+      permissionView({ harness, permission: moved, config: [{ ...modes, currentValue: 'workspace-write' }], access: local })?.chip,
+    ).toBe(true)
+  })
+
+  it('keeps the chip for an engine Latch cannot limit or read back', () => {
+    const decides = permissionView({ harness, permission: { ...permission, approvals: 'none' }, config: [], access: local })
+    expect(decides).toMatchObject({ chip: true, label: '由 Fake Agent 决定' })
+    const blind = permissionView({ harness, permission: { ...permission, readback: 'none' }, config: [], access: local })
+    expect(blind).toMatchObject({ chip: true, label: '权限无法确认' })
+  })
+
+  it('says nothing for the built-in engine, which asks before each step', () => {
+    const builtin = { ...harness, source: 'builtin' as const, level: 'L1' as const }
+    expect(permissionView({ harness: builtin, config: [], access: local })).toMatchObject({ chip: false, label: '需要时询问' })
+  })
+
+  it('disables wider rows on another device, with where to do it', () => {
+    const rows = view('workspace-write', { legacy: false, local: false }).rows!
+    expect(rows.map(row => row.disabledReason)).toEqual([undefined, undefined, '在 Mac 上开启'])
+  })
+})
+
+describe('the context ring', () => {
+  it('appears from half full, only from what the engine reported', () => {
+    expect(contextUse(undefined)).toBeUndefined()
+    expect(contextUse({ contextUsed: 100 })).toBeUndefined()
+    expect(contextUse({ contextUsed: 100_000, contextSize: 400_000 })).toBeUndefined()
+    expect(contextUse({ contextUsed: 248_000, contextSize: 400_000 })).toEqual({ percent: 62, words: '上下文已用 62% · 248K / 400K' })
+  })
+
+  it('still has the words below that, for the breadcrumb', () => {
+    expect(contextWords({ contextUsed: 100_000, contextSize: 400_000 })?.percent).toBe(25)
+    expect(contextWords({ contextUsed: 100 })).toBeUndefined()
   })
 })

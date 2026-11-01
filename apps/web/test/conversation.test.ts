@@ -378,8 +378,6 @@ describe('resending a turn', () => {
         createElement(Transcript, {
           detail: detail([user('u1'), reply('a1', '好'), user('u2'), reply('a2', '部分', { state: 'failed' })], {}, status),
           approvals: [],
-          busy: new Map(),
-          onDecide: noop,
           harnessName: 'Latch',
           retry: { fullAccess: false, onResend: prompt => sent.push(prompt) },
         }),
@@ -557,8 +555,6 @@ const settledTranscript = (messages: Message[], status: TaskStatus) =>
     createElement(Transcript, {
       detail: detail(messages, {}, status),
       approvals: [],
-      busy: new Map(),
-      onDecide: noop,
       harnessName: 'Latch',
     }),
   )
@@ -572,8 +568,6 @@ const streamingTranscript = (status: TaskStatus) =>
         summary: { id: 's', title: 't', status, updatedAt: '', model: 'fixture-large', providerId: 'fixture' },
       },
       approvals: [],
-      busy: new Map(),
-      onDecide: noop,
       harnessName: 'Latch',
       active: status === 'running',
     }),
@@ -620,8 +614,6 @@ describe('a settled turn', () => {
       createElement(Transcript, {
         detail: detail(turn.user ? [turn.user, ...turn.replies] : []),
         approvals: [],
-        busy: new Map(),
-        onDecide: noop,
         harnessName: 'Latch',
       }),
     )

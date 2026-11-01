@@ -6,7 +6,7 @@ import type { TestDevice } from '@latch/testkit'
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, reachable } from './helpers/layout.ts'
+import { noHorizontalOverflow, reachable, setChatOnly } from './helpers/layout.ts'
 import { motions, tokens } from './helpers/motion.ts'
 
 /**
@@ -184,34 +184,19 @@ describe('the phone stack', () => {
       const sheet = page.getByRole('dialog', { name: '新会话', exact: true })
       await sheet.waitFor()
       await settled(page)
-      // The sheet opens high (92% of the window) with focus on the chosen harness, so the keyboard stays down.
+      // The sheet opens high (92% of the window), and the keyboard stays down until the input is pressed.
       expect(await page.locator('.new-session-sheet').getAttribute('data-detent')).toBe('large')
       const surface = page.locator('.new-session-sheet > .ui-sheet-surface')
       const standing = Math.round(844 * 0.92)
       expect(Math.round((await surface.boundingBox())!.height)).toBe(standing)
-      await expect
-        .poll(() => page.evaluate(() => document.activeElement?.getAttribute('role') === 'radio' && document.activeElement.textContent))
-        .toMatch(/^Latch 内置/)
-      // Unadded agents are offered in place, with a reason and where to add one on this device.
-      await sheet.getByRole('button', { name: /^添加 Agent/ }).click()
-      const adder = page.getByRole('dialog', { name: '添加 Agent', exact: true })
-      await adder.getByRole('button', { name: /^Codex/ }).click()
-      await adder.getByText('在 Mac 上的 Latch 里添加：设置 › Agent', { exact: true }).waitFor()
-      await page.keyboard.press('Escape')
-      await adder.waitFor({ state: 'hidden' })
-      expect(Math.round((await surface.boundingBox())!.height)).toBe(standing)
+      // Another device runs on the built-in engine alone: the engine row holds nothing else.
+      expect(await sheet.getByText('Codex').count()).toBe(0)
       // A chat reads and writes no files, so it has no project.
       const projectRow = sheet.locator('.new-sheet-card').getByRole('button', { name: /^项目：/ })
       await projectRow.waitFor()
-      await sheet
-        .getByRole('radiogroup', { name: 'Agent', exact: true })
-        .getByRole('radio', { name: /^Latch 内置\s*只对话$/ })
-        .click()
+      await setChatOnly(page, true)
       await projectRow.waitFor({ state: 'detached' })
-      await sheet
-        .getByRole('radiogroup', { name: 'Agent', exact: true })
-        .getByRole('radio', { name: /^Latch 内置\s*Agent$/ })
-        .click()
+      await setChatOnly(page, false)
       await projectRow.waitFor()
       const start = sheet.getByRole('button', { name: '开始', exact: true })
       expect(await start.getAttribute('aria-disabled')).toBe('true')

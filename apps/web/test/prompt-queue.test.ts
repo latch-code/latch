@@ -2,8 +2,8 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { PromptQueueItem } from '@latch/protocol'
-import { Composer } from '../src/components/Composer.tsx'
-import { PromptQueue } from '../src/components/PromptQueue.tsx'
+import { Composer } from '../src/composer/Composer.tsx'
+import { QueueDrawer } from '../src/composer/QueueDrawer.tsx'
 import { MessageRow } from '../src/components/MessageRow.tsx'
 import { submissionRequest } from '../src/core/api.ts'
 const noop = () => {}
@@ -37,12 +37,13 @@ const item: PromptQueueItem = {
   state: 'waiting',
 }
 const tray = (items: PromptQueueItem[], canSend: boolean) =>
-  renderToStaticMarkup(createElement(PromptQueue, { sessionId: 'task', items, canSend, canRemove: true, onChanged: async () => {} }))
+  renderToStaticMarkup(createElement(QueueDrawer, { sessionId: 'task', items, canSend, canRemove: true, onChanged: async () => {} }))
 describe('queued follow-up presentation', () => {
   it('offers queue and stop together only when the Host supports it', () => {
     const capable = renderComposer(true)
     expect(capable).toContain('aria-label="排队发送"')
-    expect(capable).toContain('aria-label="停止"')
+    // Esc stops on a keyboard; touch keeps the button beside 排队.
+    expect(capable).not.toContain('aria-label="停止"')
     expect(renderComposer(false)).not.toContain('aria-label="排队发送"')
   })
   it('keeps the queue intent in an exact retry body', () => {

@@ -8,6 +8,7 @@ export const qwenProfile: HarnessProfile = {
     defaultEnv: {},
     expectedMode: 'default',
     modeLadder: ['plan', 'default', 'auto-edit', 'yolo'],
+    neverAskModes: ['yolo'],
     forbiddenModes: ['auto'],
     readback: 'mode',
     notes: ['恢复会话会恢复旧模式，Latch 每轮前重新设置'],

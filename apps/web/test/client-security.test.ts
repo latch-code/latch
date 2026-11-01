@@ -67,6 +67,7 @@ import {
   isSessionStopCode,
   safeTarget,
   SESSION_STOP_TEXT,
+  stopLocksInput,
 } from '../src/core/securityCopy.ts'
 import type { LatchShell } from '../src/core/shell.ts'
 import { settingsSections } from '../src/settings/SettingsPage.tsx'
@@ -324,7 +325,7 @@ describe('session and harness gating', () => {
     expect(harnessGate(catalog.harnesses[0]!, browser)).toEqual({ allowed: false, reason: '在 Mac 上开始' })
     expect(harnessGate(catalog.harnesses[1]!, browser)).toEqual({ allowed: true })
     expect(resolveChoice(catalog, null, browser).harnessId).toBe('standard')
-    expect(resolveChoice(catalog, null, { legacy: false, local: true }).harnessId).toBe('codex')
+    expect(resolveChoice(catalog, { harnessId: 'codex' }, { legacy: false, local: true }).harnessId).toBe('codex')
     expect(startBlock(snapshotOf(device(), { catalog }), { mode: 'agent', harnessId: 'codex' }, browser)?.kind).toBe('harness-unavailable')
   })
 })
@@ -417,6 +418,8 @@ describe('error copy', () => {
     expect(describeFailure(503, 'presence-something-new', forged)).toBe('这台 Mac 暂时不能确认，请稍后重试')
     expect(describeFailure(410, 'confirmation-expired', forged)).toBe('没有执行：2 分钟内没有确认。')
     expect(describeFailure(409, 'permission-unverified', forged)).toBe('确认不了 Agent 的权限，这一轮没有发送')
+    expect(stopLocksInput('permission-unverified')).toBe(false)
+    expect(stopLocksInput('permission-drift')).toBe(true)
     expect(describeFailure(401, 'device-revoked', forged)).toBe('此设备已被撤销。如需继续使用，请重新登记。')
     expect(describeFailure(502, 'fingerprint-mismatch', forged)).toBe('服务器返回的指纹与本机计算的不一致，已停止登记。')
     for (const code of [

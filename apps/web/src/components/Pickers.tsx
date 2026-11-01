@@ -1,5 +1,5 @@
-import { useState, type ReactNode } from 'react'
-import { ChevronsUpDown, Folder, FolderPlus, Plus, SlidersHorizontal, Sparkles, Undo2 } from 'lucide-react'
+import { useState } from 'react'
+import { Folder, FolderPlus, Plus, Sparkles } from 'lucide-react'
 import type { HarnessInfo, HostCatalog, ModelRef, SessionConfigOption, TaskMode } from '@latch/protocol'
 import { findProvider, startableWorkspaces } from '../composerChoice.ts'
 import {
@@ -14,21 +14,19 @@ import { PROJECT_ICONS, ProjectIcon, projectFolders } from '../projects.tsx'
 import { basename, middleEllipsis } from '../format.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { ProviderTile } from './BrandTile.tsx'
-import { Modal, ModalHeader, type MenuSection } from './overlays.tsx'
+import type { MenuSection } from './overlays.tsx'
 import { CODE_ROOT_COPY, SETUP_COPY } from '../core/securityCopy.ts'
 import { ProviderSetupPanel } from './SetupPanels.tsx'
 import {
   Badge,
   ChoiceList,
   DemoMark,
-  ICON_STROKE,
   MenuFooterLink,
   MenuFooterNote,
   SegmentedControl,
   ValuePicker,
   useLayerClose,
   type PickerGroup,
-  type LucideIcon,
 } from '@latch/ui'
 
 /** A model as one value of a picker. */
@@ -38,7 +36,7 @@ const modelOf = (key: string): ModelRef => {
 }
 
 /** The models of every service, grouped under the service's tile and name; the demo model carries its mark. */
-function modelGroups(
+export function modelGroups(
   catalog: HostCatalog,
   preferences?: ModelPreferences,
   current?: ModelRef,
@@ -68,19 +66,9 @@ function modelGroups(
   ].filter(group => group.options.length)
 }
 
-/** A model switch chosen for an existing session that its next message will carry. */
-export interface PendingModel {
-  current?: ModelRef
-  onReset: () => void
-}
-
-export const pendingModelText = (model: string) => `下一条：${model}`
-export const resetModelLabel = (current: ModelRef | undefined) => (current ? `撤销切换，继续使用 ${current.model}` : '撤销切换')
-
 /**
  * The model, as a value picker in the composer: the service's tile, the model, the models of every service grouped
- * under it (searchable when there are many). A switch for the next message reads 「下一条：…」 and its undo is the
- * menu's first footer row. Adding a service happens in place: 「添加模型服务…」 turns the layer into the small panel;
+ * under it (searchable when there are many). Adding a service happens in place: 「添加模型服务…」 turns the layer into the small panel;
  * 管理模型服务… goes to settings. With no service yet the picker still opens, onto that offer.
  */
 export function ModelPicker({
@@ -88,7 +76,6 @@ export function ModelPicker({
   variant,
   value,
   onChange,
-  pending,
   access,
   onManage,
   onAdded,
@@ -98,7 +85,6 @@ export function ModelPicker({
   variant?: 'row'
   value?: ModelRef
   onChange: (model: ModelRef) => void
-  pending?: PendingModel
   access: Pick<DeviceAccess, 'legacy' | 'local' | 'admin'>
   /** Opens 设置 › 模型服务 (devices that may manage the Host). */
   onManage?: () => void
@@ -118,13 +104,12 @@ export function ModelPicker({
       label="模型"
       placeholder="选择模型"
       value={value ? modelKey(value) : undefined}
-      valueText={pending && value ? pendingModelText(value.model) : undefined}
       groups={groups}
       searchable={(count > 8 || showHidden) && !adding}
       searchMatch={(option, query) => fuzzyModelMatch(`${option.label} ${option.description ?? ''}`, query)}
       width={adding ? 360 : undefined}
       leading={provider ? <ProviderTile provider={provider} size={16} /> : Sparkles}
-      className={`${variant === 'row' ? 'new-sheet-row ' : ''}model-picker${pending ? ' is-pending' : ''}`}
+      className={`${variant === 'row' ? 'new-sheet-row ' : ''}model-picker`}
       disabled={disabled}
       onOpenChange={open => {
         if (!open) setAdding(false)
@@ -138,11 +123,6 @@ export function ModelPicker({
           {modelPreferences.hidden.length > 0 && (
             <MenuFooterLink onClick={() => setShowHidden(!showHidden)}>
               {showHidden ? '收起隐藏的模型' : `显示隐藏的模型（${modelPreferences.hidden.length}）`}
-            </MenuFooterLink>
-          )}
-          {pending && (
-            <MenuFooterLink icon={Undo2} chevron={false} closes onClick={pending.onReset}>
-              {resetModelLabel(pending.current)}
             </MenuFooterLink>
           )}
           {access.admin ? (
@@ -185,7 +165,7 @@ export function ModelPicker({
 }
 
 /** The model picker's layer as the panel that adds a service; saving uses its model and closes the layer. */
-function ModelAddPanel({
+export function ModelAddPanel({
   access,
   onCancel,
   onManage,
@@ -193,7 +173,7 @@ function ModelAddPanel({
 }: {
   access: Pick<DeviceAccess, 'legacy' | 'local' | 'admin'>
   onCancel: () => void
-  onManage?: () => void
+  onManage?: (() => void) | undefined
   onSaved: (model: ModelRef) => void
 }) {
   const close = useLayerClose()
@@ -217,6 +197,8 @@ function ModelAddPanel({
   )
 }
 
+const NO_PROJECT = '不选项目'
+
 /**
  * The project of a new session: the saved projects with their paths (the default one marked), then the Host's start
  * directory. In the desktop app 新建项目… opens the system's folder panel and chooses the new project; elsewhere a note
@@ -227,6 +209,7 @@ export function ProjectPicker({
   harness,
   access,
   variant,
+  inline = false,
   value,
   onChange,
   onManage,
@@ -234,14 +217,16 @@ export function ProjectPicker({
   disabled,
 }: {
   catalog: HostCatalog
-  harness?: HarnessInfo
+  harness?: HarnessInfo | undefined
   access?: Pick<DeviceAccess, 'local' | 'legacy'>
   variant?: 'row'
+  /** Inside the new-session question: only the name, underlined under the pointer. */
+  inline?: boolean
   value?: string
   onChange: (id: string) => void
-  onManage?: () => void
+  onManage?: (() => void) | undefined
   /** The desktop app on the Host's computer: a new project from a folder chosen in the system's panel. */
-  onCreate?: () => void
+  onCreate?: (() => void) | undefined
   disabled?: boolean
 }) {
   const workspaces = catalog.workspaces
@@ -277,17 +262,20 @@ export function ProjectPicker({
         .filter(workspace => workspace.id !== 'default')
         .map(workspace => option(workspace, workspace.name || basename(workspace.path))),
     },
-    ...(start ? [{ id: 'start', options: [option(start, '启动目录')] }] : []),
+    ...(start ? [{ id: 'start', options: [{ ...option(start, NO_PROJECT), description: undefined }] }] : []),
   ]
   return (
     <ValuePicker
       variant={variant}
       label="项目"
-      className={variant === 'row' ? 'new-sheet-row' : undefined}
+      className={inline ? 'project-inline' : variant === 'row' ? 'new-sheet-row' : undefined}
+      menuChevron={variant !== 'row'}
       leading={
-        workspaces.find(item => item.id === value)?.glyph
-          ? (PROJECT_ICONS[workspaces.find(item => item.id === value)!.glyph!]?.icon ?? Folder)
-          : Folder
+        inline
+          ? undefined
+          : workspaces.find(item => item.id === value)?.glyph
+            ? (PROJECT_ICONS[workspaces.find(item => item.id === value)!.glyph!]?.icon ?? Folder)
+            : Folder
       }
       placeholder="选择项目"
       header={{ title: '项目' }}
@@ -333,34 +321,13 @@ export function ModeSwitch({ value, onChange, disabled }: { value: TaskMode; onC
   )
 }
 
-// ---- The phone's run-settings sheet --------------------------------------------------------------------------
-
-export function modelSections(catalog: HostCatalog, value: ModelRef | undefined, onChange: (model: ModelRef) => void): MenuSection[] {
-  return modelGroups(catalog, getModelPreferences(), value).map(group => ({
-    id: group.id,
-    label: group.label,
-    leading: group.media,
-    items: group.options.map(option => ({
-      id: option.value,
-      label: option.label,
-      description: option.description,
-      tag: option.tag,
-      checked: value !== undefined && option.value === modelKey(value),
-      onSelect: () => {
-        rememberModel(option.value)
-        onChange(modelOf(option.value))
-      },
-    })),
-  }))
-}
-
 export function workspaceSections(catalog: HostCatalog, value: string | undefined, onChange: (id: string) => void): MenuSection[] {
   return [
     {
       id: 'workspaces',
       items: startableWorkspaces(catalog).map(workspace => ({
         id: workspace.id,
-        label: workspace.id === 'default' ? '启动目录' : workspace.name || basename(workspace.path),
+        label: workspace.id === 'default' ? NO_PROJECT : workspace.name || basename(workspace.path),
         description: middleEllipsis(workspace.path, 44),
         // A folder in Latch's program directory: every Latch 内置 write will ask on the Host's computer.
         tag: workspace.codeRoot ? <Badge tone="warn">{CODE_ROOT_COPY.badge}</Badge> : undefined,
@@ -371,168 +338,4 @@ export function workspaceSections(catalog: HostCatalog, value: string | undefine
       })),
     },
   ]
-}
-
-export function configSections(option: SessionConfigOption, onChange: (value: string) => void): MenuSection[] {
-  return [
-    {
-      id: option.id,
-      items: option.options.map(item => ({
-        id: item.value,
-        label: item.name,
-        description: item.description,
-        checked: item.value === option.currentValue,
-        onSelect: () => {
-          onChange(item.value)
-        },
-      })),
-    },
-  ]
-}
-
-export function RadioList({ label, sections }: { label: string; sections: MenuSection[] }) {
-  const items = sections.flatMap(section => section.items.map(item => ({ item, section })))
-  return (
-    <ChoiceList
-      label={label}
-      value={items.find(({ item }) => item.checked)?.item.id}
-      options={items.map(({ item, section }) => ({
-        value: item.id,
-        title: item.label,
-        description: [section.label, item.description].filter(Boolean).join(' · ') || undefined,
-        tag: item.tag,
-        media: item.leading,
-        disabledReason: item.disabled ? (item.disabledReason ?? '此项暂不可用') : undefined,
-      }))}
-      onValueChange={value => items.find(({ item }) => item.id === value)?.item.onSelect()}
-    />
-  )
-}
-
-export interface SettingsGroup {
-  id: string
-  title: string
-  sections: MenuSection[]
-  /** Actions that belong to this group, such as managing its services; shown under its choices. */
-  links?: Array<{ id: string; label: string; onSelect: () => void }>
-}
-
-export function RunSettingsGroups({ groups, close }: { groups: SettingsGroup[]; close: () => void }) {
-  return (
-    <>
-      {groups.map(group => (
-        <section key={group.id} className="sheet-group">
-          <h3>{group.title}</h3>
-          <RadioList label={group.title} sections={group.sections} />
-          {group.links?.map(link => (
-            <button
-              key={link.id}
-              type="button"
-              className="ui-menu-footer-link"
-              onClick={() => {
-                close()
-                link.onSelect()
-              }}>
-              {link.label}
-            </button>
-          ))}
-        </section>
-      ))}
-    </>
-  )
-}
-
-/** Phone: one chip summarizing the run settings, opening a bottom sheet with every choice. */
-export function RunSettingsSheet({
-  summary,
-  groups,
-  disabled,
-  pending = false,
-}: {
-  summary: string
-  groups: SettingsGroup[]
-  disabled?: boolean
-  /** The summary names a model switch waiting for the next message. */
-  pending?: boolean
-}) {
-  const [open, setOpen] = useState(false)
-  if (groups.length === 0) return null
-  return (
-    <>
-      <button
-        type="button"
-        className={pending ? 'chip run-settings-chip is-pending' : 'chip run-settings-chip'}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        aria-label={`运行设置：${summary}`}
-        disabled={disabled}
-        onClick={() => {
-          setOpen(true)
-        }}>
-        <SlidersHorizontal size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-        <span className="chip-text">{summary}</span>
-        <ChevronsUpDown className="chip-chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
-      </button>
-      {open && (
-        <Modal
-          label="运行设置"
-          variant="sheet"
-          onClose={() => {
-            setOpen(false)
-          }}>
-          <ModalHeader
-            title="运行设置"
-            onClose={() => {
-              setOpen(false)
-            }}
-          />
-          <div className="ui-modal-sheet-body">
-            <RunSettingsGroups
-              groups={groups}
-              close={() => {
-                setOpen(false)
-              }}
-            />
-          </div>
-        </Modal>
-      )}
-    </>
-  )
-}
-
-export function StaticChip({
-  icon: Icon,
-  leading,
-  text,
-  label,
-  className,
-}: {
-  icon: LucideIcon
-  leading?: ReactNode
-  text: string
-  label: string
-  className?: string
-}) {
-  return (
-    <span className={className ? `chip chip-static ${className}` : 'chip chip-static'} title={label}>
-      {leading ?? <Icon size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />}
-      <span className="chip-text">{text}</span>
-    </span>
-  )
-}
-
-function manageFooter(label: string, onManage: (() => void) | undefined) {
-  return onManage
-    ? (close: () => void) => (
-        <button
-          type="button"
-          className="ui-menu-footer-link"
-          onClick={() => {
-            close()
-            onManage()
-          }}>
-          {label}
-        </button>
-      )
-    : undefined
 }

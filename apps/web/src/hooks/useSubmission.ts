@@ -17,6 +17,19 @@ import type { DeviceAccess } from '../core/permissions.ts'
 import type { SendingMessage } from '../core/sendingMessage.ts'
 
 /**
+ * A new session forked from another. `choice`: what it borrows from its source, for this draft only. The source's engine
+ * may be one the person never picked here, so it stays out of what this device remembers.
+ */
+export type ForkDraft = NonNullable<PendingSubmission['forkOf']> & { title?: string; choice?: Partial<ComposerChoice> }
+
+const restoredChoice = (pending: PendingSubmission): Partial<ComposerChoice> => ({
+  ...(pending.mode ? { mode: pending.mode } : {}),
+  ...(pending.harnessId ? { harnessId: pending.harnessId } : {}),
+  ...(pending.workspaceId ? { workspaceId: pending.workspaceId } : {}),
+  ...(pending.model ? { model: pending.model } : {}),
+})
+
+/**
  * Draft, composer choice and the at-most-one unconfirmed submission of this
  * device. A submission is stored before it is sent and cleared only once the
  * Host answers definitively, so a retry repeats the identical request.
@@ -38,14 +51,14 @@ export function useSubmission({
   select: (id: string | null) => void
   refresh: () => Promise<void>
   onSent: (sessionId: string, submission: PendingSubmission, result: { foreground: boolean; consumedDraft: boolean }) => void
-  /** A definitive refusal. Return true when a dedicated recovery UI owns its explanation. */
-  onRefused?: (sessionId: string, error: unknown) => boolean | void
+  /** A definitive refusal; `resent`, a prompt that never sat in the input. Return true when a dedicated recovery UI owns its explanation. */
+  onRefused?: (sessionId: string, error: unknown, resent?: string) => boolean | void
 }) {
   const deviceId = snapshot.device.id
   const catalog = snapshot.catalog
   const pendingKey = `latch.pending.${location.origin}.${deviceId}`
   const [draft, setDraft] = useState('')
-  const [fork, setFork] = useState<(NonNullable<PendingSubmission['forkOf']> & { title?: string }) | null>(null)
+  const [fork, setFork] = useState<ForkDraft | null>(null)
   const [pending, setPending] = useState<PendingSubmission | null>(null)
   const [sending, setSending] = useState(false)
   const [sendingMessage, setSendingMessage] = useState<SendingMessage | null>(null)
@@ -65,14 +78,20 @@ export function useSubmission({
   const [error, setError] = useState('')
   const [stored, setStored] = useState<Partial<ComposerChoice> | null>(() => readChoice(deviceId))
   const { legacy, local } = access
-  const choice = useMemo(() => resolveChoice(catalog, stored, { legacy, local }), [catalog, stored, legacy, local])
+  const remembered = useMemo(() => resolveChoice(catalog, stored, { legacy, local }), [catalog, stored, legacy, local])
+  const borrowed = fork?.choice
+  const choice = useMemo(
+    () => (borrowed ? resolveChoice(catalog, { ...stored, ...borrowed }, { legacy, local }) : remembered),
+    [catalog, stored, borrowed, remembered, legacy, local],
+  )
   /** Model switches chosen for existing sessions; sent with that session's next prompt. */
   const [overrides, setOverrides] = useState<Record<string, ModelRef>>({})
 
   const updateChoice = (patch: Partial<ComposerChoice>) => {
     // Keep the remembered model when a harness without host models is picked, so switching back restores it.
-    const next = { ...stored, ...choice, ...patch }
+    const next = { ...stored, ...remembered, ...patch }
     setStored(next)
+    setFork(previous => previous && (previous.choice ? { ...previous, choice: { ...previous.choice, ...patch } } : previous))
     writeChoice(deviceId, resolveChoice(catalog, next, { legacy, local }))
   }
 
@@ -89,16 +108,10 @@ export function useSubmission({
       restored.sessionId === undefined ? selectedId === null && assistantId === restored.assistantId : selectedId === restored.sessionId
     if (ownsInput) {
       setDraft(restored.prompt)
-      setFork(restored.forkOf ?? null)
+      setFork(restored.forkOf ? { ...restored.forkOf, choice: restoredChoice(restored) } : null)
     }
     if (restored.sessionId === undefined) {
-      setStored(previous => ({
-        ...previous,
-        ...(restored.mode ? { mode: restored.mode } : {}),
-        ...(restored.harnessId ? { harnessId: restored.harnessId } : {}),
-        ...(restored.workspaceId ? { workspaceId: restored.workspaceId } : {}),
-        ...(restored.model ? { model: restored.model } : {}),
-      }))
+      if (!restored.forkOf) setStored(previous => ({ ...previous, ...restoredChoice(restored) }))
     } else if (restored.model) {
       const { sessionId, model } = restored
       setOverrides(previous => ({ ...previous, [sessionId]: model }))
@@ -217,7 +230,10 @@ export function useSubmission({
         writePending(pendingKey, null)
         setPending(null)
       }
-      const handled = !uncertain && submission.sessionId !== undefined && onRefused?.(submission.sessionId, cause) === true
+      const handled =
+        !uncertain
+        && submission.sessionId !== undefined
+        && onRefused?.(submission.sessionId, cause, origin.consumedDraft ? undefined : submission.prompt) === true
       // The persistent pending card owns unknown delivery; it is not a confirmed failure.
       setError(uncertain || handled ? '' : inlineError(cause))
       return false

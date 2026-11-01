@@ -71,10 +71,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.topbar-full-access {
-  flex-shrink: 0;
-  color: var(--amber);
-}
 
 @media (max-width: 767.98px) {
   /* The conversation fades under the header rather than stopping at an edge. */

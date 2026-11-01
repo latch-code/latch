@@ -77,6 +77,13 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .titlebar {
 .titlebar-lead .ui-icon-button[aria-expanded='true']:not(:hover) {
   background: transparent;
 }
+.titlebar-wordmark {
+  margin-left: var(--sp-8);
+  color: var(--ink);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  font-weight: 500;
+}
 /* The traffic lights sit in the lead's first 78px. */
 .titlebar[data-lights] .titlebar-lead {
   --lead-inset: 78px;
@@ -332,8 +339,58 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .titlebar {
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
 }
-.topbar-crumb > svg {
+.topbar-crumb-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+  height: 24px;
+  padding: 0 var(--sp-4);
+  border: 0;
+  border-radius: var(--r-6);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.topbar-crumb-button:hover,
+.topbar-crumb-button[aria-expanded='true'] {
+  background: var(--hover);
+  color: var(--ink);
+}
+.topbar-crumb-button > svg {
   flex-shrink: 0;
+}
+.topbar-crumb-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.crumb-body {
+  display: grid;
+  gap: var(--sp-8);
+  padding: var(--sp-12);
+}
+.crumb-row {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: var(--sp-8);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
+}
+.crumb-label {
+  color: var(--muted);
+}
+.crumb-value {
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.crumb-value code {
+  font-family: var(--mono);
 }
 .topbar-crumb-separator {
   flex-shrink: 0;
@@ -558,9 +615,8 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .titlebar {
 }
 
 /*
- * New session: the question, the harness tiles, the input with its context row, then the demo prompts. The block's top is fixed
- * where the plain page would sit centred in a paper of that height, so what opens under the input (a caption, the
- * reason a tile cannot be chosen) grows downward and nothing above it moves.
+ * New session: the question, centred on its ink, then the input. The block's top is fixed where the plain page would sit
+ * centred, so what opens under the input (a caption) grows downward and nothing above it moves.
  */
 .workspace.is-new .new-session {
   position: relative;
@@ -576,21 +632,54 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .titlebar {
   z-index: 1;
   align-self: start;
   display: grid;
-  gap: var(--sp-16);
+  gap: var(--sp-24);
   width: 100%;
   max-width: calc(var(--content-width) + 2 * var(--gutter));
   margin: 0 auto;
-  padding: max(var(--sp-48), calc(38vh - 96px)) var(--gutter) 12vh;
+  padding: max(var(--sp-48), calc(36vh - 52px)) var(--gutter) 12vh;
 }
 .new-session-title {
-  justify-self: start;
-  font-size: var(--fs-hero);
-  line-height: var(--lh-hero);
-  font-weight: 600;
-  text-align: left;
+  font-size: var(--fs-question);
+  line-height: var(--lh-question);
+  font-weight: 500;
+  text-align: center;
 }
-.new-session-harnesses {
-  min-width: 0;
+/* A full-width 「？」 is half blank: it hangs out, so the block centres on what can be seen. */
+.new-session-mark {
+  margin-right: -0.44em;
+}
+.project-inline.ui-value-picker {
+  display: inline-flex;
+  height: auto;
+  padding: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  vertical-align: baseline;
+}
+.project-inline.ui-value-picker:hover,
+.project-inline.ui-value-picker[aria-expanded='true'] {
+  background: none;
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+}
+.project-inline :is(.ui-value-picker-text, .ui-value-picker-value) {
+  font: inherit;
+  color: inherit;
+}
+.project-inline > svg {
+  display: none;
+}
+.engine-question {
+  display: grid;
+  gap: var(--sp-12);
+}
+.engine-question-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-8);
 }
 @media (max-width: 767.98px) {
   .new-session-inner {

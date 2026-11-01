@@ -36,16 +36,6 @@ describe('top bar', () => {
     expect(renderToStaticMarkup(createElement(SessionHeader, topBar))).not.toContain('connection-pill')
   })
 
-  it('names full access and leaves the default level, asking before each step, to the session details', () => {
-    const full = renderToStaticMarkup(createElement(SessionHeader, { ...topBar, level: 'L3' }))
-    expect(full).toMatch(
-      /<span class="ui-status-word level-pill" data-tone="neutral" title="Agent 可以读写这台 Mac 上的文件并运行命令，不再询问"><svg[^>]*lucide-shield-alert[^>]*>.*<\/svg>完全访问<\/span>/,
-    )
-    const asking = renderToStaticMarkup(createElement(SessionHeader, { ...topBar, level: 'L1' }))
-    expect(asking).not.toContain('需要时询问')
-    expect(asking).not.toContain('level-pill')
-  })
-
   it('shows the state only when it is not the default, and where the session runs', () => {
     const pill = (status: TaskSummary['status'], cancelling = false) =>
       /class="ui-status-word" data-tone="(\w+)">(?:<svg.*?<\/svg>)?([^<]+)</u
@@ -65,9 +55,9 @@ describe('top bar', () => {
         project: 'latch-app',
       }),
     )
-    expect(html).toContain('<span class="topbar-source-text">Codex</span>')
-    expect(html).toContain('<span class="topbar-source-text">latch-app</span>')
-    expect(html).toMatch(/<span class="topbar-source"[^>]*><span class="ui-tile"/)
+    // The engine and branch live in the composer; the project opens where the session runs.
+    expect(html).not.toContain('topbar-source')
+    expect(html).toContain('aria-label="项目：latch-app"')
   })
 
   it('heads a phone session page with the way back, the title over where it runs, and 会话信息', () => {
@@ -78,7 +68,6 @@ describe('top bar', () => {
         phone: true,
         onBack: noop,
         menu,
-        level: 'L3',
         summary: session({ status: 'failed' }),
         harness: { id: 'codex', name: 'Codex', source: 'acp' as const },
         project: 'latch-app',
@@ -88,7 +77,7 @@ describe('top bar', () => {
     // The title opens the session's menu (a sheet on a phone), 同步最新状态 included.
     expect(html).toMatch(/<h1[^>]*><button[^>]*aria-haspopup="(?:menu|dialog)"[^>]*class="topbar-title-button">/)
     expect(html).toMatch(
-      /<div class="topbar-subline"><span class="topbar-source-text">Codex · latch-app<\/span><span class="ui-status-word" data-tone="failed"><svg[^>]*lucide-circle-alert[^>]*>.*?<\/svg>失败<\/span><span class="topbar-full-access"/u,
+      /<div class="topbar-subline"><span class="topbar-source-text">Codex · latch-app<\/span><span class="ui-status-word" data-tone="failed"><svg[^>]*lucide-circle-alert[^>]*>.*?<\/svg>失败<\/span>/u,
     )
     expect(html).toMatch(/<button[^>]*aria-label="会话信息"[^>]*>.*<\/header>$/)
     expect(html).not.toContain('新建会话')
@@ -104,7 +93,6 @@ describe('top bar', () => {
         phone: true,
         onBack: noop,
         menu,
-        level: 'L3',
         harness: { id: 'codex', name: 'Codex', source: 'acp' as const },
         project: 'latch-app',
       }),

@@ -1,8 +1,8 @@
 ---
 description: 从目录失效会话的已结算历史显式选择有效项目继续，保留草稿与未知请求身份。
 sources:
-  - apps/web/src/components/WorkspaceRecovery.tsx
-  - apps/web/src/components/workspaceRecovery.ts
+  - apps/web/src/composer/WorkspaceRecovery.tsx
+  - apps/web/src/composer/workspaceRecovery.ts
   - apps/web/test/workspace-recovery.test.ts
   - apps/host/src/forks.ts
   - apps/host/src/server.ts
@@ -18,7 +18,7 @@ sources:
 
 ## 受控输入与接线
 
-`apps/web/src/components/WorkspaceRecovery.tsx` 接收完整 `source: TaskDetail`、当前 `workspaces`、受控的 `workspaceId` / `onWorkspaceChange`，以及下列真实状态：
+`apps/web/src/composer/WorkspaceRecovery.tsx` 接收完整 `source: TaskDetail`、当前 `workspaces`、受控的 `workspaceId` / `onWorkspaceChange`，以及下列真实状态：
 
 - `forkSupported` 只在 `catalog.features.fork === true` 时传入 `true`。旧 Host 缺少能力时显示不能继续的原因。
 - `runGate` 为 `{ allowed: true }` 或 `{ allowed: false, reason }`。调用方使用当前设备的 `run` 权限和实际所选 Harness 的启动门禁；原因沿用已有权限文案。组件展示判断不替代 Host 授权。

@@ -7,6 +7,85 @@ import type { HarnessPlugin, ModelProvider } from '@latch/sdk'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
 
+test('keeps text written before a question arrived as the next message, until 其他… makes it the answer', async () => {
+  let release!: () => void
+  const held = new Promise<void>(resolve => {
+    release = resolve
+  })
+  const seen: string[] = []
+  const provider: ModelProvider = {
+    id: 'question-arrival',
+    name: '测试模型',
+    model: 'fake',
+    async *stream({ messages }) {
+      if (messages.at(-1)?.role === 'tool') {
+        seen.push(messages.at(-1)!.content)
+        yield { type: 'text', text: '收到回答。' }
+        yield { type: 'finish', reason: 'stop' }
+        return
+      }
+      if (seen.length > 0) {
+        yield { type: 'text', text: '收到下一条。' }
+        yield { type: 'finish', reason: 'stop' }
+        return
+      }
+      await held
+      yield {
+        type: 'tool-call',
+        call: {
+          id: `ask-${randomUUID()}`,
+          name: 'ask_user',
+          arguments: {
+            prompt: '用什么语言？',
+            questions: [{ id: 'language', label: '用什么语言？', options: [{ id: 'ts', label: 'TypeScript' }] }],
+          },
+        },
+      }
+      yield { type: 'finish', reason: 'tool-calls' }
+    },
+  }
+  const plugin: HarnessPlugin = {
+    id: 'question-arrival-fixture',
+    name: '',
+    version: '1',
+    description: '',
+    activate(ctx) {
+      ctx.registerProvider(provider)
+    },
+  }
+  const host = await startTestHost({ uiDir: resolve('dist/web'), plugins: [plugin], providerId: provider.id }),
+    browser = await chromium.launch(browserLaunchOptions())
+  try {
+    const owner = await host.enroll({ listener: 'unix' })
+    const prompt = '等待中的问答'
+    const { sessionId } = await owner.json<{ sessionId: string }>('tasks', { method: 'POST', body: { prompt, requestId: randomUUID() } })
+    const context = await browser.newContext({ viewport: { width: 1440, height: 960 }, reducedMotion: 'reduce' }),
+      page = await context.newPage()
+    await enrollBrowser(page, host, { name: '问答到达' })
+    await page.locator(`[data-task-id="${sessionId}"]`).click()
+    const input = page.getByRole('textbox', { name: '继续对话', exact: true })
+    await input.fill('顺便看看手机端')
+    release()
+    const card = page.getByRole('region', { name: 'Agent 提问', exact: true })
+    await card.waitFor()
+    // The text stays in the input and the slot still queues; Enter would not have answered.
+    await page.getByRole('button', { name: '排队发送', exact: true }).waitFor()
+    expect(await page.getByRole('button', { name: '发送', exact: true }).count()).toBe(0)
+    expect(await input.inputValue()).toBe('顺便看看手机端')
+    // 其他… says this text is the answer.
+    await card.getByRole('button', { name: '其他…', exact: true }).click()
+    await page.getByRole('button', { name: '发送', exact: true }).waitFor()
+    await input.press('Meta+Enter')
+    await expect.poll(() => seen.length).toBe(1)
+    expect(JSON.parse(seen[0]!)).toMatchObject({ answers: [{ other: '顺便看看手机端' }] })
+    await context.close()
+  } finally {
+    release()
+    await browser.close()
+    await host.close()
+  }
+}, 60_000)
+
 test('answers a multi-question wizard, keeps per-device drafts across sessions, and continues on three widths', async () => {
   const seen: string[] = []
   const provider: ModelProvider = {
@@ -88,24 +167,32 @@ test('answers a multi-question wizard, keeps per-device drafts across sessions, 
       await open()
       const card = page.getByRole('region', { name: 'Agent 提问', exact: true })
       await expect.poll(() => card.isVisible()).toBe(true)
-      await card.getByRole('radio', { name: 'TypeScript', exact: true }).check()
-      await card.getByRole('button', { name: '下一题', exact: true }).click()
-      await card.getByRole('checkbox', { name: '单元测试', exact: true }).check()
-      await card.getByRole('checkbox', { name: '其他…', exact: true }).check()
-      await card.getByRole('textbox', { name: '补充你的答案', exact: true }).fill('再检查可访问性')
-      expect(await card.getByRole('checkbox', { name: '其他…', exact: true }).isChecked()).toBe(true)
+      // A single-choice question answers on the press and goes on to the next.
+      await card.getByRole('button', { name: /TypeScript/ }).click()
+      await card.getByText('2/2', { exact: true }).waitFor()
+      // Nothing else stops a run that waits on a question: the send slot stays stop until an answer is written.
+      await page.getByRole('button', { name: '停止', exact: true }).waitFor()
+      await card.getByRole('button', { name: /单元测试/ }).click()
       await page.screenshot({ path: `test-results/questions-pending-${width}.png`, fullPage: true })
       // Reload is a stronger draft lifetime boundary than a session switch; selected step and all choices survive.
       await page.reload()
       await connected(page)
       if (!(await card.isVisible())) await open()
-      await expect.poll(() => card.getByText('第 2 题，共 2 题', { exact: true }).isVisible()).toBe(true)
-      expect(await card.getByRole('checkbox', { name: '单元测试', exact: true }).isChecked()).toBe(true)
-      expect(await card.getByRole('textbox', { name: '补充你的答案', exact: true }).inputValue()).toBe('再检查可访问性')
+      await card.getByText('2/2', { exact: true }).waitFor()
+      expect(await card.getByRole('button', { name: /单元测试/ }).getAttribute('aria-pressed')).toBe('true')
       await card.getByRole('button', { name: '上一题', exact: true }).click()
-      expect(await card.getByRole('radio', { name: 'TypeScript', exact: true }).isChecked()).toBe(true)
-      await card.getByRole('button', { name: '下一题', exact: true }).click()
-      await card.getByRole('button', { name: '提交回答', exact: true }).click()
+      expect(await card.getByRole('button', { name: /TypeScript/ }).getAttribute('aria-pressed')).toBe('true')
+      // New choices take no press at first, so a key meant for what was there cannot land on them.
+      await page.locator('.question-card:not([data-arming])').waitFor()
+      // The number keys choose, and 其他… hands over to the input, where what is written answers this question.
+      await page.keyboard.press('1')
+      await card.getByText('2/2', { exact: true }).waitFor()
+      await card.getByRole('button', { name: '其他…', exact: true }).click()
+      const input = page.getByRole('textbox', { name: '继续对话', exact: true })
+      await expect.poll(() => input.evaluate(element => element === document.activeElement)).toBe(true)
+      expect(await input.getAttribute('placeholder')).toContain('输入你自己的回答')
+      await input.fill('再检查可访问性')
+      await input.press('Meta+Enter')
       await expect.poll(async () => (await owner.json<TaskDetail>(path)).summary.status).toBe('idle')
       await expect.poll(() => page.getByText('已按你的选择继续完成。', { exact: true }).isVisible()).toBe(true)
       expect(JSON.parse(seen.at(-1)!)).toMatchObject({

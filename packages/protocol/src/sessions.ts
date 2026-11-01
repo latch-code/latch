@@ -420,6 +420,10 @@ export interface SessionPermission {
   verifiedDefinition?: boolean
   approvals?: 'prompts' | 'none'
   expectedMode?: string
+  /** The mode a session of this harness starts in; `expectedMode` follows later changes. */
+  defaultMode?: string
+  /** Modes in which the harness stops asking before it acts. */
+  neverAskModes?: string[]
   drift?: { at: string; observed: string }
   /** Display-only Chinese notes, e.g. 'pi 执行工具前不请求审批'. */
   notes: string[]

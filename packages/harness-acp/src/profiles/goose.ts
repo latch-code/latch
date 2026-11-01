@@ -8,6 +8,7 @@ export const gooseProfile: HarnessProfile = {
     defaultEnv: { GOOSE_MODE: 'approve' },
     expectedMode: 'approve',
     modeLadder: ['chat', 'approve', 'auto'],
+    neverAskModes: ['auto'],
     forbiddenModes: ['smart_approve'],
     readback: 'mode',
     notes: [],

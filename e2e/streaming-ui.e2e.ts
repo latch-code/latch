@@ -6,6 +6,7 @@ import type { HarnessPlugin, ModelDelta } from '@latch/sdk'
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
+import { setChatOnly } from './helpers/layout.ts'
 
 /** The test releases each delta; no paid model, token timers, or simulated Host. */
 class ControlledReply {
@@ -150,11 +151,8 @@ describe('streamed messages in the real workspace', () => {
     // Phones show 新建会话 in their list's header and start from a sheet with 开始; wider layouts in the sidebar or rail.
     await page.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
     await page.locator('.drawer-backdrop').waitFor({ state: 'detached' })
-    // 只对话 is the built-in harness's second tile: no tools, no files.
-    await page
-      .getByRole('radiogroup', { name: 'Agent', exact: true })
-      .getByRole('radio', { name: /只对话/ })
-      .click()
+    // 只聊天: no tools, no files.
+    await setChatOnly(page, true)
     await page.getByRole('textbox', { name: '新会话消息' }).fill(prompt)
     const created = page.waitForResponse(
       response => response.request().method() === 'POST' && new URL(response.url()).pathname === '/link/api/tasks',
@@ -568,7 +566,7 @@ describe('streamed messages in the real workspace', () => {
         [page.getByRole('button', { name: /^模型：/ }), '模型'],
       ] as const) {
         await trigger.click()
-        const popover = page.getByRole('menu', { name: menu, exact: true })
+        const popover = page.getByRole('menu', { name: new RegExp(`^${menu}`, 'u') })
         await popover.waitFor()
         const before = (await geometry(page)).top
         for (let index = 1; index <= 6; index++) {
