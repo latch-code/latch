@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { userEvent } from 'vitest/browser'
 import { render } from 'vitest-browser-react'
-import { Button, Dialog, LayerHistory, Sheet, SheetSurface, TextField } from '../src/index.ts'
+import { Button, Dialog, LayerHistory, Modal, Sheet, SheetSurface, TextField } from '../src/index.ts'
 
 function Project({ onClose }: { onClose?: () => void }) {
   const [open, setOpen] = useState(false)
@@ -361,5 +361,64 @@ describe('bottom sheet', () => {
     top.dispatchEvent(new PointerEvent('pointermove', at(box.top + 300)))
     top.dispatchEvent(new PointerEvent('pointerup', at(box.top + 300)))
     await expect.element(screen.getByRole('dialog', { name: '运行设置' })).not.toBeInTheDocument()
+  })
+})
+
+describe('a modal that only an answer may end', () => {
+  function Question({ onClose }: { onClose: () => void }) {
+    const [answering, setAnswering] = useState(false)
+    return (
+      <Modal label="问题" dismissible={!answering} onClose={onClose}>
+        <Button
+          onClick={() => {
+            setAnswering(true)
+          }}>
+          开始询问
+        </Button>
+      </Modal>
+    )
+  }
+
+  it('stays through repeated Escape, even once it became undismissible while open', async () => {
+    const onClose = vi.fn()
+    const view = await render(<Question onClose={onClose} />)
+    await view.getByRole('button', { name: '开始询问' }).click()
+    const dialog = document.querySelector('dialog')!
+    await expect.element(view.getByRole('dialog', { name: '问题' })).toHaveAttribute('closedby', 'none')
+    for (let press = 0; press < 4; press++) {
+      await userEvent.keyboard('{Escape}')
+      await new Promise(done => setTimeout(done, 30))
+      expect(dialog.open).toBe(true)
+    }
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('opens again where the browser closes it anyway, with focus back inside', async () => {
+    const onClose = vi.fn()
+    const view = await render(<Question onClose={onClose} />)
+    await view.getByRole('button', { name: '开始询问' }).click()
+    await expect.element(view.getByRole('dialog', { name: '问题' })).toHaveAttribute('closedby', 'none')
+    const dialog = document.querySelector('dialog')!
+    dialog.close()
+    await vi.waitFor(() => {
+      expect(dialog.open).toBe(true)
+    })
+    expect(dialog.contains(document.activeElement)).toBe(true)
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('still reports a browser-made close when it may be dismissed', async () => {
+    const onClose = vi.fn()
+    await render(
+      <Modal label="问题" onClose={onClose}>
+        <Button>好</Button>
+      </Modal>,
+    )
+    // Let the close event of the test wrapper's rehearsed remount pass first.
+    await new Promise(done => setTimeout(done, 30))
+    document.querySelector('dialog')!.close()
+    await vi.waitFor(() => {
+      expect(onClose).toHaveBeenCalledOnce()
+    })
   })
 })

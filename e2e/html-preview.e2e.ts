@@ -207,7 +207,7 @@ describe('opaque HTML previews', () => {
         const page = await application.firstWindow()
         page.setDefaultTimeout(20_000)
         await page.getByRole('textbox', { name: '设备名称' }).fill('HTML desktop fixture')
-        await page.getByRole('button', { name: '请求本机确认' }).click()
+        await page.getByRole('button', { name: '请求连接' }).click()
         await host.presence.waitForRequest(15_000)
         host.presence.approveNext()
         await page.locator('.app-shell[data-connection="connected"]').waitFor()

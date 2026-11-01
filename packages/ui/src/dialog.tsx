@@ -28,6 +28,7 @@ function useModal(
   onClose: () => void,
   dismissible: boolean,
 ): {
+  closedby: 'none' | undefined
   onCancel: (event: { preventDefault: () => void; target: EventTarget; currentTarget: EventTarget }) => void
   onClose: (event: { currentTarget: HTMLDialogElement }) => void
   onPointerDown: (event: PointerEvent<HTMLDialogElement>) => void
@@ -36,9 +37,9 @@ function useModal(
 } {
   const restore = useRef<HTMLElement | null>(null)
   const pressedScrim = useRef(false)
-  const latest = useRef({ open, onClose })
+  const latest = useRef({ open, onClose, dismissible })
   useLayoutEffect(() => {
-    latest.current = { open, onClose }
+    latest.current = { open, onClose, dismissible }
   })
 
   useLayoutEffect(() => {
@@ -65,6 +66,8 @@ function useModal(
   }, [ref])
 
   return {
+    // A repeated Escape reaches the dialog as a `cancel` that cannot be refused, so one that must stay opts out of them.
+    closedby: dismissible ? undefined : 'none',
     onCancel: event => {
       // React passes the Escape of a dialog opened inside this one (a picker's sheet in a sheet) up the tree: only this
       // dialog's own closes it.
@@ -74,9 +77,16 @@ function useModal(
       if (dismissible) latest.current.onClose()
     },
     onClose: event => {
-      // The browser can still close it on its own (repeated Escape); report that as a close. The event arrives a task
-      // later, so one from a close this hook made and has since undone (a remount) finds the dialog open again.
-      if (latest.current.open && !event.currentTarget.open) latest.current.onClose()
+      // The browser can still close it on its own (repeated Escape); report that as a close, or, where it must stay and
+      // `closedby` is not supported, open it again. The event arrives a task later, so one from a close this hook made
+      // and has since undone (a remount) finds the dialog open again.
+      const dialog = event.currentTarget
+      if (!latest.current.open || dialog.open) return
+      if (latest.current.dismissible) latest.current.onClose()
+      else {
+        dialog.showModal()
+        focusInitial(dialog)
+      }
     },
     onPointerDown: event => {
       pressedScrim.current = event.target === event.currentTarget
@@ -251,6 +261,7 @@ export function Modal({
   children,
   className = '',
   secure = false,
+  dismissible = true,
 }: {
   label: string
   variant?: 'dialog' | 'sheet' | 'page'
@@ -258,9 +269,11 @@ export function Modal({
   children: ReactNode
   className?: string
   secure?: boolean
+  /** False while only an answer inside it may end it: Escape and the scrim do nothing, however often they are tried. */
+  dismissible?: boolean
 }) {
   const ref = useRef<HTMLDialogElement>(null)
-  const modal = useModal(ref, true, onClose, true)
+  const modal = useModal(ref, true, onClose, dismissible)
   useLeaveBehind(ref, variant !== 'page')
   return (
     <dialog

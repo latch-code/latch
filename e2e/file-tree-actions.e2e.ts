@@ -197,7 +197,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       const page = await application.firstWindow()
       page.setDefaultTimeout(15_000)
       await page.getByRole('textbox', { name: '设备名称', exact: true }).fill('文件树桌面端')
-      await page.getByRole('button', { name: '请求本机确认', exact: true }).click()
+      await page.getByRole('button', { name: '请求连接', exact: true }).click()
       await connected(page)
       await application.evaluate(({ shell }) => {
         const paths: string[] = []

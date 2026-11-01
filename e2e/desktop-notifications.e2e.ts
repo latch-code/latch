@@ -240,7 +240,7 @@ describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON
       page.setDefaultTimeout(20_000)
       await page.getByRole('heading', { name: '连接到 Latch' }).waitFor()
       await page.getByRole('textbox', { name: '设备名称' }).fill('Notification fixture desktop')
-      await page.getByRole('button', { name: '请求本机确认' }).click()
+      await page.getByRole('button', { name: '请求连接' }).click()
       await testHost.presence.waitForRequest(15_000)
       testHost.presence.approveNext()
       await page.locator('.app-shell[data-connection="connected"]').waitFor()

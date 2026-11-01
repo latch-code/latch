@@ -48,7 +48,14 @@ import {
   renewSigningText,
   signText,
 } from '../src/core/deviceKey.ts'
-import { defaultDeviceName, enrolledStep, enrollmentName, infoFailureStep, retryWithoutAdmin } from '../src/core/enrollment.ts'
+import {
+  browserDeviceName,
+  defaultDeviceName,
+  enrolledStep,
+  enrollmentName,
+  infoFailureStep,
+  requestedScopes,
+} from '../src/core/enrollment.ts'
 import {
   approvalActions,
   composerGate,
@@ -420,7 +427,7 @@ describe('error copy', () => {
     expect(describeFailure(409, 'permission-unverified', forged)).toBe('确认不了 Agent 的权限，这一轮没有发送')
     expect(stopLocksInput('permission-unverified')).toBe(false)
     expect(stopLocksInput('permission-drift')).toBe(true)
-    expect(describeFailure(401, 'device-revoked', forged)).toBe('此设备已被撤销。如需继续使用，请重新登记。')
+    expect(describeFailure(401, 'device-revoked', forged)).toBe('这台设备已被移除。要继续使用，请重新连接。')
     expect(describeFailure(502, 'fingerprint-mismatch', forged)).toBe('服务器返回的指纹与本机计算的不一致，已停止登记。')
     for (const code of [
       'unauthorized',
@@ -523,11 +530,31 @@ describe('error copy', () => {
     expect(defaultDeviceName('a'.repeat(81))).toBe(defaultDeviceName())
   })
 
-  it('retries enrollment without admin only for scope refusals with an invitation', () => {
-    expect(retryWithoutAdmin(new ApiError(400, 'scope-not-grantable', 'x'), true, true)).toBe(true)
-    expect(retryWithoutAdmin(new ApiError(403, 'invitation-invalid', 'x'), true, true)).toBe(false)
-    expect(retryWithoutAdmin(new ApiError(400, 'scope-not-grantable', 'x'), true, false)).toBe(false)
-    expect(retryWithoutAdmin(new ApiError(400, 'scope-not-grantable', 'x'), false, true)).toBe(false)
+  it('asks for management only when told to', () => {
+    expect(requestedScopes(false)).toEqual(['view', 'run', 'approve:standard'])
+    expect(requestedScopes(true)).toEqual(['view', 'run', 'approve:standard', 'admin'])
+  })
+
+  it('names a browser so the system sheet says which one asked, within the rule for device names', () => {
+    const mac = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) '
+    const cases: Array<[string, number, string]> = [
+      [`${mac}Chrome/126.0.0.0 Safari/537.36`, 0, 'Mac 上的 Chrome'],
+      [`${mac}Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0`, 0, 'Mac 上的 Edge'],
+      ['Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:128.0) Gecko/20100101 Firefox/128.0', 0, 'Mac 上的 Firefox'],
+      [
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1',
+        5,
+        'iPhone 上的 Safari',
+      ],
+      // iPadOS Safari introduces itself as a Mac; only the touch points tell.
+      ['Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15', 5, 'iPad 上的 Safari'],
+      ['Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/126.0.0.0 Mobile Safari/537.36', 5, 'Android 上的 Chrome'],
+      ['unknown', 0, '浏览器'],
+    ]
+    for (const [agent, touch, name] of cases) {
+      expect(browserDeviceName(agent, touch)).toBe(name)
+      expect(enrollmentName(name)).toBe(name)
+    }
   })
 })
 

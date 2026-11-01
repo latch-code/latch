@@ -681,6 +681,8 @@ describe('enrollment and credentials', () => {
           expiresAt: enrollment.expiresAt,
           invitationId: invitation.id,
           reason: enrollment.reason,
+          scopes: enrollment.scopes,
+          dataScope: enrollment.dataScope,
         },
       ],
       blockingTasks: [],

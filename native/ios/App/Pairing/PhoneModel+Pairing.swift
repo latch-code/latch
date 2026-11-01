@@ -30,7 +30,7 @@ enum PhonePairingFailure: Equatable {
         case .unreachable: "让 iPhone 和 Mac 连接同一个 Wi‑Fi，再扫一次。"
         case .localNetworkDenied: "在“设置”里允许 Latch 访问本地网络。"
         case .expired: "Mac 上会自动显示新的二维码，再扫一次。"
-        case .contended: "为安全起见已取消。如果不是你，到 Mac 的“手机与设备”里移除陌生设备。"
+        case .contended: "为安全起见已取消。如果不是你，到 Mac 的“手机”页里移除陌生设备。"
         case .blocked: "Mac 上有完全访问的会话在运行，结束后再扫一次。"
         case .unknown: "再扫一次 Mac 上的二维码。"
         default: nil

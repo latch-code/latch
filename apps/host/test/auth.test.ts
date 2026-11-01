@@ -884,6 +884,36 @@ describe('this computer', () => {
 })
 
 describe('enrollment', () => {
+  it('tells the holder of an invitation whether it allows management, spending nothing, on its own listener only', async () => {
+    const context = await fixture({ presence: createTestPresence({ mode: 'manual' }) })
+    const managing = await invitationFor(context, loopback, { scopes: ['view', 'run', 'approve:standard', 'admin'] })
+    const plain = await invitationFor(context, loopback, { scopes: ['view', 'run', 'approve:standard'] })
+    expect(context.enrollments.invitationOffer(managing, loopback)).toEqual({ admin: true })
+    expect(context.enrollments.invitationOffer(managing, loopback)).toEqual({ admin: true })
+    expect(context.enrollments.invitationOffer(plain, loopback)).toEqual({ admin: false })
+    for (const [code, connection] of [
+      [managing, tls],
+      [managing, unix],
+      ['lpi1-AAAAAAAAAAAAAAAAAAAAAAAAAA', loopback],
+      ['not a code', loopback],
+      [undefined, loopback],
+    ] as const)
+      expect(() => context.enrollments.invitationOffer(code, connection)).toThrowError(
+        expect.objectContaining({ status: 403, code: 'invitation-invalid' }),
+      )
+
+    // Reading did not spend it, and a request for what it allows still goes through; after that it is gone.
+    const view = await context.enrollments.create(
+      { publicKey: testDeviceKey().spki, name: '浏览器', scopes: ['view', 'run', 'approve:standard', 'admin'], invitation: managing },
+      loopback,
+    )
+    expect(view).toMatchObject({ scopes: ['view', 'run', 'approve:standard', 'admin'], dataScope: 'work' })
+    expect(context.enrollments.waiting()[0]).toMatchObject({ scopes: ['view', 'run', 'approve:standard', 'admin'], dataScope: 'work' })
+    expect(() => context.enrollments.invitationOffer(managing, loopback)).toThrowError(
+      expect.objectContaining({ code: 'invitation-invalid' }),
+    )
+  })
+
   it('shows the device on the Host and completes only with a signature from the enrolling key', async () => {
     const context = await fixture({ presence: createTestPresence({ mode: 'manual' }) })
     expect(await context.enrollments.info(loopback)).toEqual({
@@ -910,6 +940,8 @@ describe('enrollment', () => {
       hashDisplay: expect.stringMatching(/^[0-9a-f]{4}(-[0-9a-f]{4}){3}$/u),
       // A loopback peer may arrive through a forwarded port: the sheet names the device, never where it is.
       reason: '允许「我的浏览器」连接这台 Mac',
+      scopes,
+      dataScope: 'work',
     })
     const { preview } = await context.presence.waitForRequest()
     expect(preview.title).toBe('允许新设备连接')
@@ -938,6 +970,8 @@ describe('enrollment', () => {
       expiresAt: view.expiresAt,
       hashDisplay: view.hashDisplay,
       reason: view.reason,
+      scopes,
+      dataScope: 'work',
     })
     await expect(context.enrollments.complete(view.id, 'x', loopback)).rejects.toMatchObject({ status: 409, code: 'enrollment-pending' })
     expect(() => context.enrollments.status(view.id, otherLoopback)).toThrow(

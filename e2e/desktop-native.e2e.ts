@@ -68,14 +68,14 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       page.setDefaultTimeout(20000)
       await page.getByRole('heading', { name: '连接到 Latch' }).waitFor()
       await page.getByRole('textbox', { name: '设备名称' }).fill('手机连接测试桌面端')
-      await page.getByRole('button', { name: '请求本机确认' }).click()
+      await page.getByRole('button', { name: '请求连接' }).click()
       expect((await host.presence.waitForRequest()).preview.action).toBe('device.enroll')
       host.presence.approveNext()
       await page.locator('.app-shell[data-connection="connected"]').waitFor()
-      await openSettings(page, '设备')
+      await openSettings(page, '手机与设备')
       await capture(page, 'ready-desktop')
-      await page.getByText('iPhone 上的 Latch', { exact: true }).waitFor()
-      for (const text of ['设置连接', '暂停所有手机输入', '使用个人助手和项目文件', '浏览器配对'])
+      await page.locator('.device-connect').waitFor()
+      for (const text of ['设置连接', '暂停所有手机输入', '使用个人助手和项目文件', '浏览器配对', '发送到其他设备', '防火墙'])
         expect(await page.getByText(text, { exact: false }).count()).toBe(0)
       for (const width of [1280, 820, 390])
         for (const theme of ['light', 'dark'] as const) {
@@ -87,14 +87,10 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         }
       await size(application, page, 1280)
       await page.emulateMedia({ colorScheme: 'light' })
-      await expectUnmovedByInjectedStyles(page, [
-        '.settings-group[data-secure] .settings-row-title',
-        '.settings-group[data-secure] .ui-button',
-      ])
       const response = page.waitForResponse(
         value => value.url().endsWith('/link/api/native/pairings') && value.request().method() === 'POST',
       )
-      await page.getByRole('button', { name: '连接手机', exact: true }).click()
+      await page.locator('.device-connect').click()
       const issued = await response
       expect(issued.request().postDataJSON()).toEqual({})
       const value = (await issued.json()) as { invitation: { id: string; payload: string } }
@@ -106,13 +102,14 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       for (const text of ['六位', '核对码', '剩余', '复制配对信息', '重新生成']) expect(body.includes(text)).toBe(false)
       const before = host.presence.requests.length
       expect(host.host.security.enrollments.nativePairingStatus(value.invitation.id).state).toBe('ready')
+      await expectUnmovedByInjectedStyles(page, ['.pair-sheet .ui-modal-header h2', '.pair-foot-title', '.pair-foot-note'])
       await page.getByRole('button', { name: '关闭', exact: true }).click()
       await page.getByAltText('原生客户端配对二维码').waitFor({ state: 'hidden' })
       await expect.poll(() => host.host.security.enrollments.nativePairingOpen()).toBe(false)
       expect(host.presence.requests.length).toBe(before)
       // After Touch ID the panel asks about the phone in hand, with no way to close but an answer.
       const again = page.waitForResponse(value => value.url().endsWith('/link/api/native/pairings') && value.request().method() === 'POST')
-      await page.getByRole('button', { name: '连接手机', exact: true }).click()
+      await page.locator('.device-connect').click()
       const { invitation } = (await (await again).json()) as { invitation: { payload: string } }
       const qr = parsePairingPayload(invitation.payload),
         code = invitationCode(qr.secret),
@@ -156,9 +153,19 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await page.getByAltText('原生客户端配对二维码').waitFor({ state: 'hidden' })
       expect(await page.getByRole('button', { name: '关闭', exact: true }).count()).toBe(0)
       await capture(page, 'pairing-ask')
+      // Only an answer ends the question: Esc does nothing, however often it is pressed.
+      for (let press = 0; press < 4; press++) {
+        await page.keyboard.press('Escape')
+        await page.waitForTimeout(100)
+      }
+      await page.getByText('手机上显示已连接了吗？', { exact: true }).waitFor()
+      await page.waitForTimeout(300)
+      expect(await page.getByText('手机上显示已连接了吗？', { exact: true }).isVisible()).toBe(true)
       const shownBefore = host.presence.requests.length
       await page.getByRole('button', { name: '没有，移除', exact: true }).click()
       await page.getByText('它已断开，之后要重新扫码才能连接。', { exact: true }).waitFor()
+      await page.getByRole('button', { name: '好', exact: true }).click()
+      await page.getByText('它已断开，之后要重新扫码才能连接。', { exact: true }).waitFor({ state: 'hidden' })
       expect(host.presence.requests.length).toBe(shownBefore)
       const id = (completed.body as { device: { id: string } }).device.id
       expect(host.host.security.devices.get(id)?.status).toBe('revoked')

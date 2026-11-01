@@ -97,8 +97,8 @@ const PROJECT_REMOVE_RUNNING = 'Host 正在运行。请在 Latch 的「设置 �
 const OFFLINE_WARNING = '离线登记依赖本机此刻没有恶意的同用户进程。只在无法使用本机确认时使用。'
 const UNPINNED = '本机确认组件尚未登记。请先在这台电脑上打开一次 Latch，或停止 Host 后重试。'
 /**
- * What a loopback link offers unless --scopes says otherwise: the same as the desktop app's 「在这台电脑的浏览器中打开」
- * (apps/desktop/src/proxy.cjs). The page leaves 「管理此 Host」 unticked, and the confirmation warns when it is asked for.
+ * What a loopback link offers unless --scopes says otherwise: with no desktop app to raise it later, 「管理此 Host」 too, which
+ * the desktop app's own link leaves out (apps/desktop/src/proxy.cjs). The confirmation warns when it is asked for.
  */
 const BROWSER_SCOPES: readonly DeviceScope[] = ['view', 'run', 'approve:standard', 'admin']
 

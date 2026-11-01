@@ -200,7 +200,7 @@ describe('what this computer limits and what it can take back', () => {
         await settings.locator('.provider-row', { hasText: '本地服务' }).getByText('未确认', { exact: true }).waitFor()
         await shot('removed')
 
-        await openSection(settings, '设备')
+        await openSection(settings, '手机与设备')
         await settings.getByText('运行 pnpm stop', { exact: false }).scrollIntoViewIfNeeded()
         await settings.getByText('这台 Mac 不能开始完全访问会话', { exact: true }).waitFor()
         await settings.getByText('手机和浏览器只能在这些项目里工作', { exact: true }).waitFor()
@@ -233,8 +233,8 @@ describe('what this computer limits and what it can take back', () => {
 
   it('shows no limits group at the defaults, and other devices see neither group', async () => {
     const { page, context } = await open(VIEWPORTS[2], 'light')
-    const settings = await openSettings(page, '设备')
-    await settings.getByRole('heading', { name: '设备', exact: true }).first().waitFor()
+    const settings = await openSettings(page, '手机与设备')
+    await page.getByRole('button', { name: '关于连接', exact: true }).waitFor()
     await page.waitForTimeout(300)
     expect(await settings.getByRole('heading', { name: '这台 Mac 的限制', exact: true }).count()).toBe(0)
     await context.close()

@@ -145,7 +145,7 @@ describe('a Host refusing the device after it announced a stop', () => {
       // Revoked while the page waits out the announced ten seconds: the next stream attempt gets 401 device-revoked.
       expect((await testHost.raw('unix', `api/devices/${device.id}`, { method: 'DELETE' })).status).toBe(200)
       await page.getByRole('heading', { name: '连接到 Latch', exact: true }).waitFor({ timeout: 30_000 })
-      await page.getByText('此设备已被撤销。如需继续使用，请重新登记。', { exact: true }).first().waitFor()
+      await page.getByText('这台设备已被移除。要继续使用，请重新连接。', { exact: true }).first().waitFor()
       expect(await asleep.count()).toBe(0)
     } finally {
       await context.close()

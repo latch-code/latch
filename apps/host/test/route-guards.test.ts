@@ -147,6 +147,12 @@ describe('route guards', () => {
       ['GET', 'enrollment-info', undefined, { anonymous: [200], loopback: [200], tls: [200] }],
       [
         'POST',
+        'enrollment-invitation',
+        { invitation: 'lpi1-AAAAAAAAAAAAAAAAAAAAAAAAAA' },
+        { anonymous: [403, 'invitation-invalid'], loopback: [403, 'invitation-invalid'], tls: [403, 'invitation-invalid'] },
+      ],
+      [
+        'POST',
         'enrollments',
         { publicKey: testDeviceKey().spki, name: 'x' },
         { loopback: [403, 'invitation-required'], tls: [403, 'invitation-required'], browser: [403, 'invitation-required'] },
@@ -374,6 +380,7 @@ describe('route guards', () => {
       ['GET', 'native/revocation', undefined, { phone: [200] }],
       ['GET', 'enrollment-info', undefined, { phone: [200] }],
       ['POST', 'enrollments', { publicKey: testDeviceKey().spki, name: 'x' }, { phone: [401, 'unauthorized'] }],
+      ['POST', 'enrollment-invitation', { invitation: 'lpi1-AAAAAAAAAAAAAAAAAAAAAAAAAA' }, { phone: [401, 'unauthorized'] }],
       ['POST', 'credentials/challenge', {}, { phone: [403, 'native-credential-route'] }],
       ['POST', 'native/address-book', {}, { phone: [403, 'native-verification-required'] }],
       ['POST', 'native/proximity', { gatewayHash: '0'.repeat(64) }, { phone: [403, 'native-verification-required'] }],

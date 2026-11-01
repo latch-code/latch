@@ -1,16 +1,3 @@
-/* First connection keeps its technical identity inside a deliberate disclosure. */
-.connection-details {
-  margin: var(--sp-8) var(--sp-16);
-  color: var(--ink-2);
-  font-size: var(--fs-ui);
-}
-.connection-details summary {
-  padding-block: var(--sp-8);
-  cursor: pointer;
-}
-.enroll-waiting > .connection-details {
-  margin-inline: 0;
-}
 /* No title row before the shell: this strip moves the desktop window, and elsewhere no pointer ever meets it. */
 .enroll-page::before {
   content: '';
@@ -83,107 +70,6 @@
   justify-self: center;
 }
 
-/* What the device may do: the fixed permissions with a neutral check, then 管理此 Host as the one real choice. */
-.enroll-scopes {
-  display: grid !important;
-  gap: var(--sp-2);
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-.enroll-scopes legend {
-  display: block !important;
-  margin-bottom: var(--sp-6);
-  padding: 0;
-  color: var(--ink-2) !important;
-  font-size: var(--fs-caption) !important;
-  line-height: var(--lh-caption) !important;
-  font-weight: 500;
-}
-.enroll-scope {
-  display: flex !important;
-  align-items: center;
-  gap: var(--sp-12);
-  min-height: 32px;
-  padding: var(--sp-4) 0;
-  color: var(--ink-2) !important;
-  font-size: var(--fs-ui) !important;
-  line-height: var(--lh-ui) !important;
-}
-.enroll-scope.is-choice {
-  color: var(--ink) !important;
-}
-.enroll-scopes:disabled .enroll-scope.is-choice {
-  opacity: 0.45;
-}
-/* A permission that is always granted: a fixed check, neutral because nothing was chosen. */
-.scope-check {
-  display: grid !important;
-  place-items: center;
-  width: 16px;
-  height: 16px;
-  flex-shrink: 0;
-  border-radius: var(--r-4);
-  background: var(--hover) !important;
-  color: var(--ink-2) !important;
-}
-@media (pointer: coarse) {
-  .enroll-scope {
-    min-height: 44px;
-  }
-}
-
-/* The device permission dialog of 设置 › 设备: one checkbox per permission. */
-.scope-list {
-  display: grid;
-  gap: var(--sp-2);
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-.scope-list legend {
-  margin-bottom: var(--sp-6);
-  padding: 0;
-  color: var(--ink-2);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-  font-weight: 500;
-}
-.scope-item {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-12);
-  min-height: 32px;
-  padding: var(--sp-4) var(--sp-2);
-  color: var(--ink);
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui);
-}
-.scope-item input[type='checkbox'] {
-  width: 16px;
-  height: 16px;
-  margin: 0;
-  flex-shrink: 0;
-  accent-color: var(--accent);
-}
-.scope-item input[type='checkbox']:checked:focus-visible {
-  outline-offset: 2px;
-}
-label.scope-item {
-  cursor: pointer;
-}
-.scope-list:disabled label.scope-item {
-  cursor: default;
-  opacity: 0.45;
-}
-@media (pointer: coarse) {
-  .scope-item {
-    min-height: 44px;
-  }
-}
-
 /* Waiting for the Host's local confirmation: pending reads amber, like an approval. */
 .enroll-waiting {
   display: grid !important;
@@ -202,11 +88,14 @@ label.scope-item {
   line-height: var(--lh-heading) !important;
   font-weight: 600 !important;
 }
-.enroll-timer {
-  color: var(--amber) !important;
-  font-size: var(--fs-ui) !important;
-  line-height: var(--lh-ui) !important;
-  font-variant-numeric: tabular-nums;
+.enroll-command {
+  display: block !important;
+  margin-top: var(--sp-8);
+  color: var(--ink) !important;
+  font-family: var(--mono) !important;
+  font-size: var(--fs-mono) !important;
+  line-height: var(--lh-mono) !important;
+  user-select: all;
 }
 .enroll-compare {
   display: block !important;
@@ -215,50 +104,6 @@ label.scope-item {
   line-height: var(--lh-ui-para) !important;
 }
 
-/* The fingerprint is the one large text on the page, because it is what the person compares. */
-.fingerprint-block {
-  display: grid !important;
-  justify-items: center;
-  gap: var(--sp-8);
-  padding: var(--sp-16);
-  border: 1px solid var(--line);
-  border-radius: var(--r-12);
-  background: var(--sunken) !important;
-}
-.fingerprint-label {
-  display: block !important;
-  color: var(--muted) !important;
-  font-size: var(--fs-caption) !important;
-  line-height: var(--lh-caption) !important;
-  font-weight: 500;
-}
-/* Five groups read as three and two at every width, so no group is left alone on a line. */
-.fingerprint {
-  display: grid !important;
-  grid-template-columns: repeat(3, auto);
-  justify-content: center;
-  gap: var(--sp-4) var(--sp-12);
-  max-width: 100%;
-  color: var(--ink) !important;
-  font-family: var(--mono) !important;
-  font-size: var(--fs-mono-display) !important;
-  line-height: var(--lh-mono-display) !important;
-  font-weight: 600 !important;
-  letter-spacing: var(--ls-mono-display) !important;
-  font-variant-numeric: tabular-nums;
-}
-.fingerprint-hash {
-  display: block !important;
-  color: var(--muted) !important;
-  font-size: var(--fs-caption) !important;
-  line-height: var(--lh-caption) !important;
-}
-.fingerprint-hash code {
-  color: var(--ink-2) !important;
-  font-family: var(--mono) !important;
-  font-size: var(--fs-mono) !important;
-  line-height: var(--lh-mono) !important;
-}
 @media (max-width: 767.98px) {
   .enroll-form .ui-button[data-block],
   .enroll-waiting .ui-button[data-block] {
@@ -274,10 +119,66 @@ label.scope-item {
     padding: var(--sp-24) var(--sp-20);
     gap: var(--sp-16);
   }
-  .fingerprint-block {
-    padding: var(--sp-16) var(--sp-12);
-  }
-  .fingerprint {
-    gap: var(--sp-4) var(--sp-8);
-  }
+}
+
+/* A deliberate disclosure: the technical identity of a connection, shut until someone wants to check it. */
+.connection-details {
+  display: block !important;
+  color: var(--ink-2) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption-para) !important;
+}
+.connection-details summary {
+  display: list-item !important;
+  width: fit-content;
+  color: var(--ink-2) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption-para) !important;
+  cursor: pointer;
+}
+.connection-details-list {
+  display: grid !important;
+  gap: var(--sp-8);
+  margin-top: var(--sp-8);
+}
+.connection-details-row {
+  display: grid !important;
+  gap: var(--sp-2);
+}
+.connection-details-row dt {
+  display: block !important;
+  color: var(--muted) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption-para) !important;
+}
+.connection-details-row dd {
+  display: block !important;
+  color: var(--ink) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption-para) !important;
+  overflow-wrap: anywhere;
+}
+.connection-details-note {
+  display: block !important;
+  color: var(--muted) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption-para) !important;
+}
+/* Five groups read as three and two at every width, so no group is left alone on a line. */
+.connection-code {
+  display: grid !important;
+  grid-template-columns: repeat(3, max-content);
+  gap: var(--sp-2) var(--sp-8);
+  color: var(--ink) !important;
+  font-family: var(--mono) !important;
+  font-size: var(--fs-mono) !important;
+  line-height: var(--lh-mono) !important;
+  font-variant-numeric: tabular-nums;
+}
+.connection-details q {
+  display: inline !important;
+  color: var(--ink) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption-para) !important;
+  quotes: none;
 }

@@ -42,7 +42,7 @@ Cordis Context → 每个插件一个 fiber → 清理 effect
 | 层 | 职责 | 源码 |
 | --- | --- | --- |
 | 客户端 | 会话、选择器、消息、审批、设置、设备登记与本机确认对话框；断线后重新同步 | `apps/web/src`（入口 `App.tsx` → `shell/AppShell.tsx`；与 Host 通信、同步与阅读位置等无布局的核心在 `core/`） |
-| 桌面端 | Electron 主进程：`latch://app/` 协议、经 `host.sock` 转发并附加凭据、设备密钥与凭据、渲染进程限制、经系统文件管理器新建项目与在访达中显示、文件快速查看与默认应用打开、「在这台电脑的浏览器中打开」、「浏览器」标签的预览页（[PREVIEW-BROWSER.md](./PREVIEW-BROWSER.md)）、Host 的生命周期（崩溃后重启、忙时防睡、登录项、睡眠与停止报告） | `apps/desktop/src`（`main.cjs`、`proxy.cjs`、`credentials.cjs`、`host.cjs`、`folders.cjs`、`lifecycle.cjs`、`files.cjs`、`browser.cjs`、`preload.cjs`） |
+| 桌面端 | Electron 主进程：`latch://app/` 协议、经 `host.sock` 转发并附加凭据、设备密钥与凭据、渲染进程限制、经系统文件管理器新建项目与在访达中显示、文件快速查看与默认应用打开、「在浏览器中打开」、「浏览器」标签的预览页（[PREVIEW-BROWSER.md](./PREVIEW-BROWSER.md)）、Host 的生命周期（崩溃后重启、忙时防睡、登录项、睡眠与停止报告） | `apps/desktop/src`（`main.cjs`、`proxy.cjs`、`credentials.cjs`、`host.cjs`、`folders.cjs`、`lifecycle.cjs`、`files.cjs`、`browser.cjs`、`preload.cjs`） |
 | Host | 监听入口（含 HTTPS 证书热加载）、HTTP/SSE、运行状态通告、流量计数、访问规则、配置读写、插件挂载、密钥文件排除在时间机器之外 | `apps/host/src/server.ts`、`listeners.ts`、`lifecycle.ts`、`traffic.ts`、`access.ts`、`config.ts`、`providers.ts`、`backup.ts` |
 | HTTP 路由模块 | 按领域分组的路由，各自带守卫与 `catalog.features` 标记；设备、登记与配对邀请在 `devices.ts`，改动记录与撤销在 `changes.ts`（[CHANGES.md](CHANGES.md)），原生连接（验证窗口、撤销通知、地址簿、配对二维码与手机接入的生命周期）与中继的启动在 `native.ts`（见「HTTP API」） | `apps/host/src/routes/`（`registry.ts`、`index.ts`） |
 | 安全核心 | 设备与登记、本机确认、审计、安全策略、出站策略、路径与项目文件夹规则、风险分级、会话文件裁决 | `apps/host/src/auth.ts`、`presence.ts`、`presence-reason.ts`、`audit.ts`、`policy.ts`、`egress.ts`、`paths.ts`、`projects.ts`、`session-folders.ts`、`risk.ts`、`identity.ts`、`crypto.ts`、`files/` |
@@ -372,7 +372,7 @@ Host 约每 40ms 合并一次变化，把选中会话的完整 `task-state` 推�
 | `GET /health` | 无 | `{"ok":true}` |
 | `GET /host-info` | 无（仅 `host.sock`） | Host 实例信息 |
 | `POST /host/state` | 无（仅 `host.sock`；桌面端页面经转发时主进程返回 403） | 报告睡眠、唤醒与即将停止的原因（见「Host 的生命周期」） |
-| `GET /enrollment-info`、`POST /enrollments`、`GET/DELETE /enrollments/:id`、`POST /enrollments/:id/complete` | 无（同一入口与来源；完成需签名） | 设备登记 |
+| `GET /enrollment-info`、`POST /enrollment-invitation`（这条链接是否允许申请 `admin`，不用掉它；限流；手机连接拒绝）、`POST /enrollments`、`GET/DELETE /enrollments/:id`、`POST /enrollments/:id/complete` | 无（同一入口与来源；完成需签名） | 设备登记 |
 | `POST /login`、`POST /pair` | — | 410 `login-removed` |
 | `POST /credentials/challenge`、`POST /credentials/renew` | 设备（含待续期） | 凭据续期 |
 | `GET /snapshot`、`GET /events?sessionId=`、`GET /tasks/:id` | `view` | 状态、事件流、详情 |
@@ -401,7 +401,7 @@ Host 约每 40ms 合并一次变化，把选中会话的完整 `task-state` 推�
 | `POST /provider-origins` | `admin`，只在桌面端；尚未确认的地址经本机确认 | 保存服务之前确认一个模型服务地址 |
 | `POST /providers/:id/models`、`POST /provider-checks` | `admin` | 经出站策略获取模型列表、检测连接；用已保存的密钥时只发往已确认的地址 |
 | `GET/POST /agents`、`PUT/DELETE /agents/:id` | `admin`；新建，或修改命令、参数、环境变量与预设，只能在桌面端（不需要本机确认） | ACP Agent 定义；环境变量只返回名称，预设带命令检测结果，`started` 说明是否已以当前定义开启过 L3 会话 |
-| `GET /enrollments` | 桌面端 `admin` | 仍在等待的登记及其指纹与系统表单的理由，供配对面板核对；以及会挡住新配对的完全访问会话 |
+| `GET /enrollments` | 桌面端 `admin` | 仍在等待的登记及其指纹与系统表单的理由；以及会挡住新配对的完全访问会话。页面已不读取它，配对表单跟随 `GET /native/pairings/:id` |
 | `POST /folder-grants` | 桌面端 `admin` | `{ nonce, expiresAt }`：一次添加文件夹的 nonce |
 | `POST /workspaces`、`POST /workspaces/:id/folders` | 桌面端 `admin` + 签名 | `{ nonce, via, paths, name? \| replace?, signature }`：新建项目（201）、加入或重新选择文件夹（200），返回 `{ workspace, refused }`；`POST /workspaces` 也接受 `{ nonce, via: 'session', sessionId, signature }`，把会话自己的文件夹存为项目（201） |
 | `PATCH /workspaces/:id` | `admin` | `{ name?, glyph?, order? }`：重命名、图标、文件夹顺序（第一个是主文件夹） |

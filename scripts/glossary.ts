@@ -161,11 +161,17 @@ export const GLOSSARY_SCOPE = {
 } as const
 
 export const GLOSSARY_ALLOWANCES: readonly GlossaryAllowance[] = [
-  ...['ENROLLMENT_REASON_TEXT.', 'ENROLLMENT_COPY.', 'PAIRING_WAITING_COPY.', 'PAIRING_COPY.', 'NATIVE_LINK_COPY.'].map(key => ({
+  ...['ENROLLMENT_REASON_TEXT.', 'ENROLLMENT_COPY.', 'NATIVE_LINK_COPY.'].map(key => ({
     file: COPY_FILE,
     key,
     why: PAIRING_COPY,
   })),
+  {
+    file: COPY_FILE,
+    key: 'DEVICES_COPY.savedRelay',
+    words: ['中继'],
+    why: 'A relay saved by an earlier build is named only behind 「关于连接」, beside the way to remove it.',
+  },
   ...[
     'CONFIRMATION_VERBS.device.enroll',
     'CONFIRMATION_VERBS.device.enroll-native',

@@ -125,14 +125,14 @@ export async function openPersonal(page: Page): Promise<Locator> {
 }
 
 /**
- * Returns the opened page of the 设置 entry, on the devices section when `section` is 设备 (the 手机 entry; on a phone,
- * inside 设置).
+ * Returns the opened page of the 设置 entry, on the devices section when `section` is 手机与设备 (the 手机 entry; on a
+ * phone, inside 设置).
  */
-export async function openSettings(page: Page, section: '设置' | '设备' = '设置'): Promise<Locator> {
+export async function openSettings(page: Page, section: '设置' | '手机与设备' = '设置'): Promise<Locator> {
   await openEntry(page, '设置')
   const settings = page.locator('.settings-page')
   await settings.waitFor()
-  if (section === '设备') await openSection(settings, '设备')
+  if (section === '手机与设备') await openSection(settings, '手机与设备')
   return settings
 }
 
@@ -169,7 +169,7 @@ export async function backToSection(settings: Locator): Promise<void> {
 /** Where a section lives when it is not on the page shown: the rail's entry on wide windows, the tab on a phone. */
 const SECTION_ENTRIES: Record<string, { wide: string; phone: string }> = {
   插件: { wide: '插件', phone: '设置' },
-  设备: { wide: '手机', phone: '设置' },
+  手机与设备: { wide: '手机', phone: '设置' },
   个人助手: { wide: 'Agent', phone: 'Agent' },
   例行任务: { wide: '自动化', phone: 'Agent' },
 }
@@ -192,8 +192,8 @@ export async function openSection(settings: Locator, name: string): Promise<void
     await mainNavigation(page)
       .getByRole('button', { name: phone ? entry.phone : entry.wide, exact: true })
       .click()
-    // 插件 lists its plugins beside the rail on wide windows, in place of a section list.
-    if (name === '插件' && !phone) return
+    // 插件 and 手机 list their objects beside the rail on wide windows, in place of a section list.
+    if ((name === '插件' || name === '手机与设备') && !phone) return
     await tab.waitFor()
   }
   await reachable(tab)

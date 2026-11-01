@@ -36,10 +36,11 @@ const CLEARING_CODES = new Set(['device-revoked', 'credential-expired', 'listene
 const OPEN_IN_BROWSER = 'latch:open-in-browser'
 const PAIRINGS_PATH = '/link/api/pairings'
 /**
- * What a browser on this computer may ask for at enrollment; the Host confirms whatever it does ask for.
- * `pnpm latch device invite --loopback` offers the same (apps/host/scripts/latch.ts).
+ * What a browser on this computer may ask for at enrollment; the Host confirms whatever it does ask for. It starts without
+ * 管理此 Host because the loopback port may be forwarded and the desktop app can raise it later on the 手机 page.
+ * `pnpm latch device invite --loopback` offers more, for a Host with no desktop app to raise it (apps/host/scripts/latch.ts).
  */
-const BROWSER_INVITATION = Object.freeze({ target: 'loopback', scopes: Object.freeze(['view', 'run', 'approve:standard', 'admin']) })
+const BROWSER_INVITATION = Object.freeze({ target: 'loopback', scopes: Object.freeze(['view', 'run', 'approve:standard']) })
 const INVITATION_FRAGMENT = /^#pair=lpi1-[A-Z2-7]{26}$/
 const HOST_UNAVAILABLE = '无法连接到 Latch Host，请确认 Host 仍在运行。'
 const BROWSER_LINK_MANAGED = '这台电脑上浏览器的登记链接由 Latch 桌面端直接交给浏览器'

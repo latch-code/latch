@@ -323,7 +323,7 @@ describe('permission states in a browser', () => {
 
   it('lets an admin browser turn 手机可以开始新会话 off but never back on', async () => {
     expect(policy().remote).toMatchObject({ maxLevel: 'L1', allowRemoteStart: true })
-    const settings = await openSettings(page, '设备')
+    const settings = await openSettings(page, '手机与设备')
     const remoteStart = settings.getByRole('switch', { name: '手机可以开始新会话', exact: true })
     await remoteStart.click()
     await expect.poll(() => policy().remote.allowRemoteStart).toBe(false)

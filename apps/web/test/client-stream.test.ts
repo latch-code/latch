@@ -260,7 +260,7 @@ describe('api()', () => {
       await expect(api('snapshot')).rejects.toMatchObject({
         status: 401,
         code: 'device-revoked',
-        message: '此设备已被撤销。如需继续使用，请重新登记。',
+        message: '这台设备已被移除。要继续使用，请重新连接。',
       })
       expect(unauthorized).toHaveBeenCalledTimes(1)
     } finally {

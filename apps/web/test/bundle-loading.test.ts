@@ -86,7 +86,7 @@ describe('production entry loading graph', () => {
     expect(ids.some(id => id.includes('src/MessageContent.tsx'))).toBe(true)
     for (const optional of [
       'settings/PluginsSettings.tsx',
-      'settings/DevicesSettings.tsx',
+      'settings/devices/PhoneDevicesPage.tsx',
       'settings/AgentsSettings.tsx',
       'settings/ProvidersSettings.tsx',
       '/qrcode/',

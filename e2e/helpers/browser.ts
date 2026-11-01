@@ -3,9 +3,10 @@ import type { Device, DeviceScope } from '@latch/protocol'
 import { latchEnv } from '@latch/host/env'
 import type { TestHost } from './host.ts'
 
-const ADMIN_LABEL = '管理此 Host（模型服务、插件、项目和设备）'
-/** What the desktop app's invitation for a browser on this computer allows. */
+/** What the command line's invitation for a browser on this computer allows. */
 const ADMIN_CEILING: readonly DeviceScope[] = ['view', 'run', 'approve:standard', 'admin']
+const BASE_CEILING: readonly DeviceScope[] = ['view', 'run', 'approve:standard']
+const ENROLLMENTS_API = '**/link/api/enrollments'
 
 /** The shell reports its synchronized connection; the visible indicator differs per breakpoint. */
 export const connected = (page: Page) => page.locator('.app-shell[data-connection="connected"]').waitFor()
@@ -17,24 +18,33 @@ async function noAdminYet(testHost: TestHost): Promise<boolean> {
 }
 
 /**
+ * The enrollment page asks a browser for no name and sends its own, so a test that wants a name gives it the way a device
+ * does: in its request. Everything else about the request stays the page's.
+ */
+export async function nameNextEnrollment(page: Page, name: string): Promise<void> {
+  await page.route(
+    ENROLLMENTS_API,
+    route => route.continue({ postData: JSON.stringify({ ...(route.request().postDataJSON() as object), name }) }),
+    { times: 1 },
+  )
+}
+
+/**
  * Enrolls the browser behind `page` through the real enrollment page and waits for the synchronized workspace. Loopback
- * takes a one-time invitation, so the page opens with one in its fragment, as the desktop app's 「在这台电脑的浏览器中打开」
- * does (or at `url`). `scopes` decides only the admin checkbox (the rest are fixed on that page); without it admin is
- * asked for while no device can manage the Host yet. With a manual test presence the local confirmation is approved here.
+ * takes a one-time invitation, so the page opens with one in its fragment, as the desktop app's 「在浏览器中打开」 does (or at
+ * `url`). A browser asks for what its invitation allows, so `scopes` decides only whether the invitation includes admin;
+ * without it admin is allowed while no device can manage the Host yet. With a manual test presence the local confirmation
+ * is approved here.
  */
 export async function enrollBrowser(
   page: Page,
   testHost: TestHost,
   options: { name?: string; scopes?: DeviceScope[]; url?: string } = {},
 ): Promise<void> {
-  await page.goto(options.url ?? (await testHost.invite([...ADMIN_CEILING], 'loopback-tcp')).url)
-  const name = page.getByLabel('设备名称', { exact: true })
-  await name.waitFor()
-  if (options.name !== undefined) await name.fill(options.name)
-  const admin = page.getByRole('checkbox', { name: ADMIN_LABEL, exact: true })
   const wanted = options.scopes === undefined ? await noAdminYet(testHost) : options.scopes.includes('admin')
-  if ((await admin.isChecked()) !== wanted) await admin.setChecked(wanted)
-  await page.getByRole('button', { name: '请求本机确认', exact: true }).click()
+  await page.goto(options.url ?? (await testHost.invite([...(wanted ? ADMIN_CEILING : BASE_CEILING)], 'loopback-tcp')).url)
+  if (options.name !== undefined) await nameNextEnrollment(page, options.name)
+  await page.getByRole('button', { name: '连接这个浏览器', exact: true }).click()
   if (testHost.presence.mode === 'manual') {
     await testHost.presence.waitForRequest()
     testHost.presence.approveNext()

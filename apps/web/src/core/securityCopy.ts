@@ -29,13 +29,13 @@ export type EnrollmentReason =
   | 'renewal-not-stored'
 
 export const ENROLLMENT_REASON_TEXT: Partial<Record<EnrollmentReason, string>> = {
-  'device-revoked': '此设备已被撤销。如需继续使用，请重新登记。',
-  'credential-expired': '此设备的登记已满 30 天，请重新在本机确认。',
-  'listener-mismatch': '此设备的凭据属于另一个访问地址，请重新登记。',
-  'key-missing': '此浏览器已丢失设备密钥，请重新在本机确认。',
-  'credential-not-stored': '登记已完成，但此浏览器没有保存设备凭据（可能禁止了 Cookie）。请允许此网站保存 Cookie 后重新登记。',
+  'device-revoked': '这台设备已被移除。要继续使用，请重新连接。',
+  'credential-expired': '这台设备已连接满 30 天，请重新连接。',
+  'listener-mismatch': '这台设备的凭据属于另一个访问地址，请重新连接。',
+  'key-missing': '这个浏览器丢失了设备密钥，请重新连接。',
+  'credential-not-stored': '已经连上，但这个浏览器没有保存设备凭据（可能禁止了 Cookie）。请允许此网站保存 Cookie 后重新连接。',
   'renewal-not-stored':
-    '设备凭据已续期，但此浏览器没有保存新的凭据（可能禁止了 Cookie）。请允许此网站保存 Cookie 后重新加载页面；仍无法连接时再重新登记。',
+    '设备凭据已续期，但这个浏览器没有保存新的凭据（可能禁止了 Cookie）。请允许此网站保存 Cookie 后重新加载页面；仍连不上时再重新连接。',
 }
 
 export const HOST_DESKTOP_TEXT = '要在 Mac 上的 Latch 里确认。'
@@ -191,16 +191,6 @@ export const BLOCKED_VERBS: Record<
   'provider.confirm-origin': '确认模型服务地址',
 }
 
-/** The desktop's pairing panel while a device waits. */
-export const CONNECTION_DETAILS = '连接详情'
-export const PAIRING_WAITING_COPY = {
-  requesting: '正在请求连接',
-  compare: '确认是自己的设备后，在电脑弹出的窗口中允许连接。',
-  fingerprint: '设备指纹',
-  signing: '已允许，等这台设备完成登记…',
-  nativeConfirm: '在 Touch ID 窗口中确认。',
-} as const
-
 /** What the request does once the confirmation passes, for 「已确认，正在…」. */
 export const CONFIRMATION_VERBS: Record<PresenceAction, string> = {
   'plugin.package.apply': '应用插件',
@@ -292,111 +282,161 @@ export function waitText(seconds: number): string {
 /** The enrollment page. */
 export const ENROLLMENT_COPY = {
   title: '连接到 Latch',
-  local: '首次连接时，在这台电脑上允许 Latch 使用。之后打开即可继续工作。',
+  local: '第一次连接时，在 Mac 上允许一次。之后打开即可继续工作。',
   /** The intro while local confirmation is unavailable: the offline code is the way in. */
   offline: '这台设备会生成自己的密钥，再用离线登记码完成登记。',
   /** Why only the offline code is accepted, with the Host's reason (trailing full stops removed). */
   unavailable: (reason: string) =>
     `本机确认不可用：${reason || '未知原因'}。停止 Host 后，在运行 Latch 的电脑上运行 pnpm latch device enroll --offline，把生成的离线登记码填在下面。`,
   /** The same, where the Host takes no offline code (every listener but host.sock): nothing here can be submitted yet. */
-  unavailableRemote: (reason: string) =>
-    `本机确认不可用：${reason || '未知原因'}。新设备要在运行 Latch 的电脑上确认后才能登记，请先在那台电脑上处理。`,
-  invited: '已收到连接邀请。提交后，回到运行 Latch 的电脑上允许连接。',
+  unavailableRemote: (reason: string) => `Mac 现在不能确认：${reason || '未知原因'}。要等它能确认后才能连接。`,
+  invited: '点下面的按钮，再到 Mac 上允许。',
   invitationRequired:
-    '手机或其他电脑需要配对邀请：在运行 Latch 的电脑上打开 Latch 桌面端的 设置 › 设备，生成配对二维码。手机扫描二维码；其他电脑打开用「复制链接」得到的配对链接。',
-  /** A browser on loopback is not this computer either; the desktop app or the command line makes its link. */
-  browserInvitationRequired:
-    '这台电脑上的浏览器也需要一次性登记链接。请在 Latch 桌面端的「设备」页选择「在这台电脑的浏览器中打开」，或在终端运行 pnpm latch device invite --loopback。',
+    '这台设备还没连接到 Latch。要连接手机，在 Mac 上的 Latch 里打开 手机 › 连接手机，用 iPhone 上的 Latch 扫码；其他电脑用运行 Latch 的人发来的链接。',
+  /** A browser on loopback is not this computer either: the desktop app makes its link, or the command line where there is none. */
+  browserNotConnected: '这个浏览器还没连接到 Latch。在 Mac 上的 Latch 里点「在浏览器中打开」，或在终端运行：',
+  browserLinkCommand: 'pnpm latch device invite --loopback',
   name: '设备名称',
   namePlaceholder: '例如：我的手机',
-  scopes: '此设备的权限',
-  submit: '请求本机确认',
-  waiting: '等待本机确认',
-  /** The seconds left on the enrollment request. */
-  remaining: (seconds: number) => `剩余 ${seconds} 秒`,
+  submit: '请求连接',
+  connectBrowser: '连接这个浏览器',
+  /** The link lets this browser ask for management, and pressing the button would. Never left to the system sheet. */
+  linkCanManage: '这个链接还可以管理这台 Mac',
+  declineManage: '不要',
+  manageDeclined: '这个浏览器不会管理这台 Mac',
+  undoDecline: '还是要',
+  waiting: '在 Mac 上确认',
   cancel: '取消',
   retry: '重试',
-  fingerprint: '设备指纹',
-  compare: '请在运行 Latch 的电脑上允许这次连接。',
-  /** Before the sentence the computer's system sheet shows, which names the device. */
-  sheet: '电脑上的系统表单会写：',
-  completing: '正在完成登记…',
-  connecting: '正在连接执行端…',
-  confirmFailed: '登记已完成，但还没能读取执行端状态。',
-  denied: '本机拒绝了此设备。',
-  expired: '本机确认已超时，请重新提交。',
+  compare: '用 Touch ID 或登录密码允许这台设备。',
+  completing: '正在完成连接…',
+  connecting: '正在连接…',
+  confirmFailed: '已经连上，但还没能读取 Mac 上的状态。',
+  denied: 'Mac 上取消了连接。',
+  expired: 'Mac 上没有确认，请重新开始。',
   offlineField: '离线登记码',
   offlineSubmit: '使用离线登记码',
   unsupported: '此浏览器无法在当前地址安全地保存设备密钥。请使用最新版 Chrome、Edge、Firefox 或 Safari，或使用 Latch 桌面端。',
-  mismatch: '服务器返回的指纹与本机计算的不一致，已停止登记。',
-  legacyTitle: '此设备需要在本机重新确认',
-  legacyBody: 'Latch 已更新连接方式。请在运行 Latch 的电脑上重新允许这台设备。',
-  legacySubmit: '在本机重新确认',
-  oldHost: '此 Host 版本过旧，请在电脑上重启 Latch。',
-  admin: '管理此 Host（模型服务、插件、项目和设备）',
-  /** What the admin choice allows from this device, and what stays on the computer running Latch. */
-  adminNote: '可以修改模型服务、插件、项目列表和设备。密钥、Agent 的启动设置、新建项目和放宽安全策略仍只能在运行 Latch 的电脑上完成。',
+  mismatch: '这台设备的密钥和 Mac 读到的不一致，已停止连接。',
+  legacyTitle: '这台设备要在 Mac 上重新确认',
+  legacyBody: 'Latch 更新了连接方式。点下面的按钮，再到 Mac 上允许。',
+  legacySubmit: '重新确认',
+  oldHost: '这台 Mac 上的 Latch 版本太旧，请重新启动它。',
+} as const
+
+/**
+ * 连接详情, folded on the connecting device and in the Mac's pairing panel. The system sheet shows only the name a device
+ * gave itself, so the code is the way left to tell this device from another holding the same link.
+ */
+export const CONNECTION_DETAILS_COPY = {
+  title: '连接详情',
+  name: '名称',
+  code: '校验码',
+  /** On the connecting device. */
+  compareOnMac: '和 Mac 上 Latch 手机页里的校验码相同，才是这台设备。',
+  /** In the Mac's panel. */
+  compareOnDevice: '和那台设备页面上的校验码相同，才是它。',
+  sheet: '系统窗口写的是',
+  granted: '可以',
+  data: '能看到',
+  dataText: { all: '全部会话', work: '会话，不含私有内容' },
+} as const
+
+/** What a device may do once connected, in the words of a person deciding about it. */
+export const GRANTED_TEXT: Record<DeviceScope, string> = {
+  view: '查看会话',
+  run: '开始和继续会话',
+  'approve:standard': '批准普通操作',
+  'approve:elevated': '批准高风险操作',
+  admin: '管理这台 Mac（模型服务、插件、项目和设备）',
+  secrets: '设置密钥',
+}
+
+/** The Mac's list of devices asking to connect. */
+export const WAITING_DEVICES_COPY = {
+  asking: '想连接这台 Mac',
+  approved: '已允许，等它完成连接…',
+  confirm: '在系统窗口中确认',
+  canManage: '它还可以管理这台 Mac',
 } as const
 
 /** Under the settings sections of a device that cannot change them: why the others are not listed, and where they are. */
 export const SETTINGS_ADMIN_HIDDEN = '其他设置在 Mac 上的 Latch 里'
 
-/** The scopes as the enrollment page lists them: the device scopes, with what viewing and managing cover. */
-const ENROLLMENT_SCOPE_LABELS: Record<DeviceScope, string> = {
-  ...SCOPE_LABELS,
-  view: '查看会话',
-  admin: ENROLLMENT_COPY.admin,
-}
-/** What a browser always gets; 管理此 Host is its one choice. */
-export const BROWSER_SCOPES: readonly string[] = (['view', 'run', 'approve:standard'] as const).map(scope => ENROLLMENT_SCOPE_LABELS[scope])
-/** The desktop app enrolls on the Host's own socket and receives every scope. */
-export const DESKTOP_SCOPES: readonly string[] = (['view', 'run', 'approve:standard', 'approve:elevated', 'admin', 'secrets'] as const).map(
-  scope => ENROLLMENT_SCOPE_LABELS[scope],
-)
-
 /** This Mac cannot confirm anything now, in the Host's words when it gave some. */
 export const presenceUnavailableText = (message: string | undefined) =>
   message ? `这台 Mac 暂时不能确认：${message}` : '这台 Mac 暂时不能确认，需要它确认的操作都不能进行。'
 
-/** Pairing a phone from 设置 › 设备. */
-export const PAIRING_COPY = {
-  /** Where pairing is set up, never the start options. */
-  needsDesktop: '配对二维码要在 Latch 桌面端生成：在运行 Latch 的电脑上打开桌面端的 设置 › 设备。',
-  needsAdmin: '此设备没有「管理此 Host」权限',
+/** The 手机 page: the devices that use this Mac. It names no address, relay or scope; a waiting device's code is folded. */
+export const DEVICES_COPY = {
+  shelf: '设备',
+  empty: '还没有连接手机',
+  emptyBody: '用 iPhone 上的 Latch 扫一扫，在同一个 Wi‑Fi 下继续你的会话。',
+  /** A device that cannot open the pairing sheet: where to pair, in words. */
+  pairElsewhere: '要连接手机，请在 Mac 上的 Latch 里打开这一页',
+  name: '名称',
+  nameLabel: '设备名称',
+  unnamed: '未命名设备',
+  online: '在线',
+  lastSeen: '上次在线',
+  state: '状态',
+  /** `native.input` and `status` a person can act on; a healthy device says nothing about them. */
+  verificationRequired: '30 天未验证，现在只能查看；在手机上验证后恢复',
+  review: '只能查看，等你恢复',
+  reviewNote: '邀请它的设备已被移除。恢复后可以继续运行和允许操作。',
+  restore: '恢复使用',
+  legacy: '要在这台设备上重新确认',
+  manage: '可以管理这台 Mac',
+  manageNote: '修改模型、插件、项目和设备。密钥和放宽安全设置仍只能在 Mac 上操作。',
+  raiseOnMac: '在 Mac 上开启',
+  remove: '移除',
+  rename: '重命名',
+  removeTitle: (name: string) => `移除「${name}」？`,
+  removePhone: '它会立即断开，之后要重新扫码才能连接。',
+  removeBrowser: '它会立即断开，之后要重新邀请才能连接。',
+  removeDesktop: '它会立即断开，之后要在那个桌面端重新确认才能连接。',
+  removeSelf: '这台设备会立即断开，之后要重新邀请才能连接。',
+  /** Added when other devices were invited by this one. */
+  removeCascade: '由它邀请的设备会降为只能查看，等你恢复。',
+  removed: (name: string) => `已移除「${name}」`,
+  about: '关于连接',
+  aboutBody: '同一个 Wi‑Fi 下，手机直接连接这台 Mac，全程端到端加密。Latch 目前还不提供其他网络下的连接。',
+  savedRelay: '已保存的中继',
+  savedDirectory: '已保存的地址目录',
+  browser: '在浏览器中打开',
+  browserOpened: '已在浏览器中打开。在那里点「连接这个浏览器」后，这台 Mac 会请你确认。',
+  remoteStart: '手机可以开始新会话',
+  remoteStartNote: '关闭后只能查看、允许或停止已有会话',
 } as const
 
+/** The pairing sheet, one state per sentence. */
 export const NATIVE_LINK_COPY = {
   title: '连接手机',
-  app: 'iPhone 上的 Latch',
-  intro: '用手机扫码，在这台 Mac 上确认一次。手机和这台 Mac 在同一个 Wi‑Fi 下就能继续工作。',
   enable: '连接手机',
-  steps: ['用 iPhone 上的 Latch 扫码', 'iPhone 需要和这台 Mac 连接同一个 Wi‑Fi。', '在 Touch ID 窗口中确认'],
+  scan: '用 iPhone 上的 Latch 扫码',
+  sameWifi: 'iPhone 需要和这台 Mac 连接同一个 Wi‑Fi。',
   qrAlt: '原生客户端配对二维码',
   qrFailed: '二维码生成失败，请关闭后重新打开。',
+  connecting: '正在连接…',
+  /** Neutral on purpose: the snapshot does not say whether this Mac has Touch ID or takes the login password. */
+  confirming: '在系统窗口中确认',
+  /** A phone has claimed the QR and has not said its name yet. */
+  someDevice: '一台设备',
   contended: '有两台设备扫了同一个二维码，已全部取消。请重新扫码。',
   cancelled: '已取消。可以重新扫码。',
   timedOut: '没有确认，已取消。可以重新扫码。',
   offNetwork: '有设备从其他网络尝试连接，已拒绝。',
+  noNetwork: '这台 Mac 没有连接 Wi‑Fi 或有线网络。',
   connectedBefore: '已连接「',
-  connectedAfter: '」',
+  closingQuote: '」',
   ask: '手机上显示已连接了吗？',
   yes: '是的，完成',
   no: '没有，移除',
+  removedBefore: '已移除「',
   removed: '它已断开，之后要重新扫码才能连接。',
   removeFailed: '没能移除。请在设备列表里移除它。',
-  savedRelay: '已保存的中继',
-  savedDirectory: '已保存的地址目录',
-  removeSaved: '移除',
-  close: '关闭',
-  nativeInput: {
-    ready: '按登记权限输入',
-    'verification-required': '30 天未验证，仅查看；在手机验证后恢复',
-    review: '待 Mac 复核，仅查看',
-    revoked: '已撤销',
-  },
-  bodyLocked: '正文已锁定，需在手机验证',
-  registeredScopes: (text: string) => `登记权限：${text}`,
-  bodyUntil: (time: string) => `正文验证至 ${time}`,
+  done: '好',
+  retry: '重试',
 } as const
 
 /**
@@ -621,7 +661,7 @@ export const LIMIT_COPY = {
 } as const
 
 /** Why this device cannot start in a project, with where to see and change that. */
-export const REMOTE_PROJECT_REFUSED = '这台 Mac 不允许这台设备在这个项目里开始。到 Mac 上的 Latch 里，设置 › 设备 写着限制和改法。'
+export const REMOTE_PROJECT_REFUSED = '这台 Mac 不允许这台设备在这个项目里开始。到 Mac 上的 Latch 里，手机 页写着限制和改法。'
 
 /** Why a session no longer accepts input: one line, with 「在新会话中继续」 beside it. */
 export const SESSION_STOP_TEXT = {
@@ -691,22 +731,6 @@ export const RECOVERY_COPY = {
   contextUsed: (percent: number) => `上下文已用 ${percent}% · 压缩并继续`,
 } as const
 
-/** Rows in 设置 › 手机与设备. */
-export const DEVICE_ROW_COPY = {
-  online: '在线',
-  offline: '不在线',
-  lastOnline: (time: string) => `上次在线 ${time}`,
-  thisMacBrowser: '这台 Mac 上的浏览器',
-  openInBrowser: '在浏览器中打开',
-  rename: '重命名',
-  remove: '移除',
-  removeTitle: (name: string) => `移除「${name}」？`,
-  removeNote: '它会立即断开，之后要重新扫码才能连接。',
-  removed: (name: string) => `已移除「${name}」`,
-  empty: '还没有连接手机',
-  remoteStart: '手机可以开始新会话',
-} as const
-
 const FIXED: Record<string, string> = {
   'file-image-dimensions': fileNote('file-image-dimensions').text,
   'file-too-large': '文件或图片超过这台设备的预览上限，请在 Mac 上查看。',
@@ -741,8 +765,8 @@ const FIXED: Record<string, string> = {
   'enrollment-completed': '该登记已完成',
   'enrollment-expired': '登记请求已超时，请重新提交',
   'enrollment-cancelled': '登记已取消。',
-  'invitation-required': '新设备需要一次性邀请：请在运行 Latch 的电脑上用 Latch 桌面端生成',
-  'invitation-invalid': '配对码无效或已过期',
+  'invitation-required': '这台设备还没连接到 Latch。请在 Mac 上的 Latch 里连接它。',
+  'invitation-invalid': '这个链接已失效或已用过，请重新获取。',
   'offline-code-invalid': '离线登记码无效或已过期',
   'permission-drift': SESSION_STOP_TEXT['permission-drift'],
   'permission-unverified': SESSION_STOP_TEXT['permission-unverified'],
@@ -756,7 +780,7 @@ const FIXED: Record<string, string> = {
   'credential-store-failed': '无法安全保存设备凭据，登记未完成。',
   'browser-open-unsupported': '此系统上不能从桌面端直接打开浏览器，请运行 pnpm latch device invite --loopback。',
   'browser-open-failed': '无法在浏览器中打开 Latch，请重试。',
-  'native-not-configured': '请先在 设置 › 设备 › 连接手机 中设置连接方式。',
+  'native-not-configured': '请先在 手机 › 连接手机 中设置连接方式。',
   'native-config-changed': '手机连接配置已变化。请重新打开设置连接，再核对后保存。',
   'native-relay-duplicate': '每个中继节点只能添加一次。',
   'native-managed': '直连入口由启动参数管理，需要停止 Host 后修改参数。',

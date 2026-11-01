@@ -75,35 +75,3 @@ section.inline-confirm[data-secure] {
   margin-top: 0;
   margin-bottom: var(--sp-8);
 }
-/* The pairing panel: the device that used the invitation, its fingerprint to compare with its own screen. */
-[data-secure] .pair-waiting {
-  display: grid !important;
-  justify-items: start;
-  gap: var(--sp-6);
-  padding: var(--sp-12);
-  border: 1px solid var(--line) !important;
-  border-radius: var(--r-12);
-  background: var(--sunken) !important;
-}
-[data-secure] .pair-waiting .fingerprint {
-  justify-content: start;
-}
-.pair-waiting-title {
-  display: block !important;
-  color: var(--ink) !important;
-  font-size: var(--fs-ui) !important;
-  line-height: var(--lh-ui-para) !important;
-  font-weight: 600 !important;
-}
-.pair-waiting-note {
-  display: block !important;
-  color: var(--ink-2) !important;
-  font-size: var(--fs-caption) !important;
-  line-height: var(--lh-caption-para) !important;
-}
-/* The enrollment page: the computer's sentence under the fingerprint, which names it. */
-.fingerprint-hash q {
-  display: inline !important;
-  color: var(--ink-2) !important;
-  quotes: '「' '」';
-}

@@ -174,12 +174,12 @@ describe('responsive workspace controls', () => {
       await capture(page, `${label}-plugin-settings`)
       await closeSettings(settings)
 
-      const devices = await openSettings(page, '设备')
-      await reachable(devices.getByRole('button', { name: '撤销此设备', exact: true }))
-      await devices.getByRole('heading', { name: /已登记的设备/ }).waitFor()
-      // A browser cannot pair a phone: the page says where to, with no start options for a certificate.
-      await devices.getByText(/^配对二维码要在 Latch 桌面端生成/).waitFor()
-      expect(await devices.getByText(/--tls-cert/).count()).toBe(0)
+      const devices = await openSettings(page, '手机与设备')
+      // A browser cannot pair a phone, so it has no way to open the sheet; its page lists itself, with no address.
+      expect(await page.getByRole('button', { name: '连接手机', exact: true }).count()).toBe(0)
+      if (phone) await page.locator('.device-nav-row .plugin-nav-row').first().click()
+      await reachable(devices.getByRole('button', { name: '移除…', exact: true }))
+      expect(await devices.getByText(/--tls-cert|设备指纹|局域网|HTTPS/).count()).toBe(0)
       await noHorizontalOverflow(page, devices)
       await capture(page, `${label}-devices`)
       await closeSettings(devices)

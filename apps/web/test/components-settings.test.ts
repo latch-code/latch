@@ -2,11 +2,10 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DeviceAccess } from '../src/core/permissions.ts'
-import { ENROLLMENT_COPY, NATIVE_LINK_COPY, PAIRING_COPY, PAIRING_WAITING_COPY } from '../src/core/securityCopy.ts'
+import { DEVICES_COPY, ENROLLMENT_COPY, NATIVE_LINK_COPY } from '../src/core/securityCopy.ts'
 import type { AgentPreset, AgentSettings, AppSnapshot } from '@latch/protocol'
 import { AboutSettings } from '../src/settings/AboutSettings.tsx'
 import { AgentRow, engineGroups, missingText } from '../src/settings/AgentsSettings.tsx'
-import { PairingSection } from '../src/settings/PhonePairing.tsx'
 import { usageTotal } from '../src/settings/UsageSettings.tsx'
 import { ProjectRow } from '../src/settings/WorkspacesSettings.tsx'
 
@@ -79,36 +78,19 @@ describe('phone pairing', () => {
   })
   const FLAG = /(?:^|[\s「（(])--[a-z]/u
 
-  it('names where to make the code, in words, on a device that cannot, and never a flag in any body text', () => {
-    const html = renderToStaticMarkup(createElement(PairingSection, { access: access(false) }))
-    // Read on the computer running Latch (in its browser) as well as on a phone.
-    expect(html).toContain('配对二维码要在 Latch 桌面端生成：在运行 Latch 的电脑上打开桌面端的 设置 › 设备。')
-    // A laptop has no camera flow: it uses the copied link.
-    expect(ENROLLMENT_COPY.invitationRequired).toContain('其他电脑打开用「复制链接」得到的配对链接')
-    expect(html).not.toContain('pnpm latch')
-    const body = [
-      NATIVE_LINK_COPY.intro,
-      ...NATIVE_LINK_COPY.steps,
-      PAIRING_COPY.needsDesktop,
-      PAIRING_COPY.needsAdmin,
-      ENROLLMENT_COPY.invitationRequired,
-    ]
-    for (const text of body) {
+  it('never names a flag or a command in the words a person holding a phone reads', () => {
+    for (const text of [NATIVE_LINK_COPY.scan, NATIVE_LINK_COPY.sameWifi, DEVICES_COPY.pairElsewhere, ENROLLMENT_COPY.invitationRequired]) {
       expect(text).not.toMatch(FLAG)
       expect(text).not.toContain('pnpm ')
     }
   })
 
-  it('tells nothing of codes, countdowns, addresses or fingerprints in the pairing words', () => {
-    const words = JSON.stringify([
-      NATIVE_LINK_COPY.title,
-      NATIVE_LINK_COPY.intro,
-      NATIVE_LINK_COPY.steps,
-      NATIVE_LINK_COPY.contended,
-      NATIVE_LINK_COPY.offNetwork,
-      PAIRING_WAITING_COPY.nativeConfirm,
-    ])
-    for (const word of ['六位', '核对码', '指纹', '剩余', '直连', '中继', '局域网']) expect(words).not.toContain(word)
+  it('tells nothing of codes, countdowns, addresses, scopes or fingerprints on the page or in the sheet', () => {
+    // 关于连接 is the one place that may name the relay.
+    const { aboutBody: _about, savedRelay: _relay, ...page } = DEVICES_COPY
+    const words = JSON.stringify([page, NATIVE_LINK_COPY, ENROLLMENT_COPY.waiting, ENROLLMENT_COPY.compare, ENROLLMENT_COPY.submit])
+    for (const word of ['六位', '核对码', '指纹', '剩余', '直连', '中继', '局域网', '证书', '权限', 'HTTPS'])
+      expect(words).not.toContain(word)
   })
 })
 

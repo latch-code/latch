@@ -31,7 +31,7 @@ sources:
 
 ## 命令
 
-手机接入的 `desktop-native.e2e.ts` 经真实 Electron 的 host.sock 代理打开配对面板、签发非 URL 二维码，并核对没有设置表单、权限选择、暂停或倒计时，关闭面板后 Host 上的二维码失效。设置页覆盖 390/820/1280、浅深色与 CSS 覆盖；截图只在没有二维码时写到 `test-results/native-phone/`。`native-settings.test.ts` 检查 `native/info` 的内容，且配置与暂停路由已不存在。
+手机接入的 `desktop-native.e2e.ts` 经真实 Electron 的 host.sock 代理打开配对表单、签发非 URL 二维码，并核对没有设置表单、权限选择、暂停或倒计时，关闭表单后 Host 上的二维码失效，Touch ID 之后连按 Esc 也不起作用。设置页覆盖 390/820/1280、浅深色；截图只在没有二维码时写到 `test-results/native-phone/`。`phone-page.e2e.ts` 在浏览器里把这台设备当作 Mac 上的桌面端、Host 的回答换成固定值，走完手机页与配对表单的每个状态，三宽浅深色截图写到 `test-results/phone-page/`，并在桌面宽度核对列表读取失败、开关与恢复的请求、无法确认后恢复、被拦下与请求不重叠；那里的二维码由失效的固定内容生成。`native-settings.test.ts` 检查 `native/info` 的内容，且配置与暂停路由已不存在。
 
 Host、host-swift、link-client 与 relay 四个 Node project 的 globalSetup 会从本地产品源码构建原生 TLS 组件，UI project 不触发它。需要修复过 TLS 安全问题的 Go 1.26.x ≥1.26.10 或 1.27.x ≥1.27.3；`LATCH_RELAY_GO` 只选择构建编译器，不传运行时密钥。配置与清单约束直接读文件，不为它们添加字面断言。
 
@@ -163,7 +163,7 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 | 桌面端壳：请求范围与导航、外部链接确认、调试参数、转发与凭据附加、凭据文件（safeStorage、0600、写入失败不留临时文件）、续期（应答丢失、保存失败、失败退避）、CommonJS 的 Host 核对、「在这台电脑的浏览器中打开」（只接受本 Host 的回环链接与顶层页面的 IPC、只在 macOS、不记录链接；页面经转发只能申请手机邀请） | `desktop-proxy.test.ts`（含对测试 Host 的续期与回环邀请用例）、`desktop.e2e.ts` |
 | 桌面端的文件夹操作：只回应主窗口的顶层页面、输入校验、原生对话框与确认、签名提交、Host 拒绝的路径逐个报告、「存为项目」与在访达中显示 | `desktop-folders.test.ts`（含经真实代理与测试 Host 的新建、加入、存为项目与显示）；经真实的主进程、preload 与 Host 见 `desktop.e2e.ts`（面板、访达与 `openPath` 在主进程中记录） |
 | 桌面端的预览浏览器：分区、权限、导航、preload 的参数与事件、截图与标注的上限、遮挡、快捷键转发、开发者工具与清除数据 | `desktop-browser.test.ts`（假的 Electron 对象与真实的 preload）；经真实 Electron 见 `desktop.e2e.ts` |
-| 浏览器登记：回环需要邀请、指纹核对、拒绝后要新邀请、续期、旧版登录、本机确认不可用时不提交、HTTPS 邀请（没有邀请时的说明不写终端命令）、「管理此 Host」的说明；登记页在注入的样式下不变；离线登记码（只在 `host.sock` 上：本机确认不可用时登记页只提供它，介绍不提 Touch ID） | `enrollment.e2e.ts`；离线登记码在 `desktop.e2e.ts` |
+| 浏览器登记：回环需要邀请、指纹核对、拒绝后要新邀请、续期、旧版登录、本机确认不可用时不提交、HTTPS 邀请（手机的说明不写终端命令）；一个按钮、折叠的校验码与句子、链接能管理这台 Mac 时的一行与「不要」、桌面端链接与读取失败时不申请、失效的链接当场说明；登记页在注入的样式下不变；离线登记码（只在 `host.sock` 上：本机确认不可用时登记页只提供它，介绍不提 Touch ID） | `enrollment.e2e.ts`；离线登记码在 `desktop.e2e.ts` |
 | 启动目录位于 Latch 程序目录内：设置 › 项目、新会话与项目弹层三处的琥珀提示（桌面与手机宽度截图，含深色） | `code-root.e2e.ts` |
 | 权限展示：R2 审批的本机提示、L3 会话只读与漂移、完全访问 Harness 只在桌面端；审批卡与安全横幅在注入的样式下不变（`helpers/security.ts`）；审批卡到达与收起的过渡取自动效令牌（停在 0、60、120、180ms 截图），减少动效时近乎瞬时；「手机可以开始新会话」在浏览器里只能关闭（打开的原因写在行上，Host 也拒绝） | `permissions-ui.e2e.ts`；在桌面端经本机确认调高见 `desktop.e2e.ts` |
 | 电脑到手机、审批、断线与取消 | `takeover.e2e.ts` |
@@ -221,7 +221,7 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 
 ### `enrollBrowser()`
 
-`e2e/helpers/browser.ts`。`enrollBrowser(page, testHost, { name, scopes, url })` 通过真实的登记页面在回环地址上登记 `page` 所在的浏览器，并等待工作区连接（`connected(page)`，即 `.app-shell[data-connection="connected"]`）。回环登记需要邀请，所以它先经 `host.sock` 创建回环邀请（上限与桌面端「在这台电脑的浏览器中打开」相同），再打开带 `#pair=` 的地址（或 `url`）。`scopes` 只决定「管理此 Host」复选框，不给时在还没有设备能管理 Host 时勾选；`manual` 模式下由它批准本机确认。`browserLaunchOptions()` 返回无头启动参数，设置了 `LATCH_BROWSER_PATH` 时使用该路径的 Chrome。
+`e2e/helpers/browser.ts`。`enrollBrowser(page, testHost, { name, scopes, url })`（页面不问名称，`name` 经 `nameNextEnrollment` 写进登记请求）通过真实的登记页面在回环地址上登记 `page` 所在的浏览器，并等待工作区连接（`connected(page)`，即 `.app-shell[data-connection="connected"]`）。回环登记需要邀请，所以它先经 `host.sock` 创建回环邀请，再打开带 `#pair=` 的地址（或 `url`）。登记页请求邀请允许的权限，所以 `scopes` 只决定邀请是否包含「管理此 Host」，不给时在还没有设备能管理 Host 时包含；`manual` 模式下由它批准本机确认。`browserLaunchOptions()` 返回无头启动参数，设置了 `LATCH_BROWSER_PATH` 时使用该路径的 Chrome。
 
 ### 共享向量
 

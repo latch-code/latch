@@ -152,7 +152,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
 
       await page.getByRole('heading', { name: '连接到 Latch' }).waitFor()
       await page.getByRole('textbox', { name: '设备名称' }).fill('桌面端文件')
-      await page.getByRole('button', { name: '请求本机确认' }).click()
+      await page.getByRole('button', { name: '请求连接' }).click()
       await testHost.presence.waitForRequest(15_000)
       testHost.presence.approveNext()
       await page.locator('.app-shell[data-connection="connected"]').waitFor()

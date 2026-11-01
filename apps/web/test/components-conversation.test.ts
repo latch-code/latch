@@ -18,7 +18,7 @@ import { ChangesLinkContext, type ChangesLink } from '../src/conversation/change
 import { renderedMessages } from '../src/conversation.ts'
 import { escapeHiddenCharacters, hasHiddenCharacters, VisibleText } from '../src/components/VisibleText.tsx'
 import { contentHash } from '../src/core/contentHash.ts'
-import { revokeText } from '../src/settings/DevicesSettings.tsx'
+import { deviceLabel } from '../src/settings/devices/deviceRows.ts'
 
 const noop = () => {}
 afterEach(() => {
@@ -512,9 +512,9 @@ describe('names and text in security UI', () => {
   })
 
   it('shows device names escaped where a device is revoked', () => {
-    expect(revokeText('Mac\u202Ekoob')).toBe('撤销「Mac\\u{202E}koob」？由它邀请配对的设备会降为仅查看，等待复核。')
-    expect(revokeText('👨‍💻 Mac')).toBe('撤销「👨‍💻 Mac」？由它邀请配对的设备会降为仅查看，等待复核。')
-    expect(revokeText('')).toContain('「未命名设备」')
+    expect(deviceLabel('Mac\u202Ekoob')).toBe('Mac\\u{202E}koob')
+    expect(deviceLabel('👨‍💻 Mac')).toBe('👨‍💻 Mac')
+    expect(deviceLabel('')).toBe('未命名设备')
   })
 })
 

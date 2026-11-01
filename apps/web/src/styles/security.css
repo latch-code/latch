@@ -3,7 +3,7 @@
  * states; red only for real risk (R2 approvals, permission drift, audit rollback, revocation).
  *
  * Security surfaces carry data-secure: approval cards, the local confirmation, enrollment, phone pairing, this
- * computer's browser (设置 › 设备) and the security banners. Inside them the tokens are locked (tokens.css), and their rules here mark !important what decides
+ * computer's browser (the 手机 page) and the security banners. Inside them the tokens are locked (tokens.css), and their rules here mark !important what decides
  * whether they can be seen and read: display, visibility, opacity at rest, colours, type sizes and fonts, and the
  * transforms, filters and clipping that could hide or shrink them. Important rules of a layer win over styles outside
  * the layers, important or not, and normal rules of later layers lose to them, so styles added to the page cannot
@@ -69,22 +69,6 @@
     transform: scale(0.8);
   }
 }
-.presence-track {
-  display: block !important;
-  height: 2px;
-  overflow: hidden;
-  border-radius: var(--r-2);
-  background: var(--hover) !important;
-}
-.presence-track > i {
-  --fraction: 1;
-  display: block !important;
-  height: 100%;
-  background: var(--amber-icon) !important;
-  transform: scaleX(var(--fraction));
-  transform-origin: left center;
-  transition: transform 1s linear;
-}
 
 /*
  * Every security surface and everything in it: shown (an ancestor outside it can still hide the whole page, never one
@@ -126,8 +110,10 @@
 [data-secure]
   :is(
     time,
-    .fingerprint > span,
-    .enroll-scope > span:not(.scope-check),
+    .connection-code > span,
+    .connection-details q span,
+    .connection-details-row dd > span:not(.connection-details-note),
+    .device-waiting-title span,
     .diff-text > span:not(.hidden-char, .sr-only),
     .ui-notice-text > :not(.ui-notice-title),
     .settings-caption > span,
@@ -172,7 +158,14 @@
 [data-secure] :is(.ui-checkbox, .ui-status-glyph, .ui-spinner) {
   display: inline-grid !important;
 }
-[data-secure] :is(time, .fingerprint > span, .fingerprint-hash code, .enroll-scope > span:not(.scope-check), .enroll-timer) {
+[data-secure]
+  :is(
+    time,
+    .connection-code > span,
+    .connection-details q span,
+    .connection-details-row dd > span:not(.connection-details-note),
+    .device-waiting-title span
+  ) {
   display: inline !important;
 }
 [data-secure] .diff-view {
@@ -184,18 +177,21 @@
   translate: none !important;
   rotate: none !important;
 }
-/* What is hidden or dimmed on purpose stays so: a folded preview, a disabled field or menu item, and the countdown's
- * remaining share. */
+/* What is hidden or dimmed on purpose stays so: a folded preview, a disabled field or menu item, and a pairing code a
+ * device is already using. */
 [data-secure] .approval-preview:not([data-open]) > .approval-preview-inner {
   opacity: 0 !important;
 }
 [data-secure] :is(.ui-input, .ui-checkbox):disabled,
-[data-secure] .enroll-scopes:disabled .enroll-scope.is-choice,
 [data-secure] .ui-menu-item[aria-disabled='true'] :is(.ui-menu-item-lead, .ui-menu-item-label, .ui-menu-item-description) {
   opacity: 0.45 !important;
 }
-[data-secure] .presence-track > i {
-  transform: scaleX(var(--fraction)) !important;
+[data-secure] .pair-code[data-dim] .pair-qr {
+  opacity: 0.45 !important;
+  filter: blur(1.5px) !important;
+}
+[data-secure] .pair-foot[data-dim] {
+  opacity: 0.45 !important;
 }
 /*
  * A diff line has three number cells: the old and the new number, shown from 768px, and the single column phones show
@@ -458,8 +454,8 @@
   }
   .approval-preview,
   .approval-preview[data-open],
-  .pair-toggle .chevron,
-  .presence-track > i {
+  .pair-qr,
+  .pair-foot {
     transition: none;
   }
 }

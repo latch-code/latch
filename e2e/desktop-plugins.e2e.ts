@@ -52,7 +52,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         page.setDefaultTimeout(20000)
         await page.getByRole('heading', { name: '连接到 Latch' }).waitFor()
         await page.getByRole('textbox', { name: '设备名称' }).fill('插件编辑验收')
-        await page.getByRole('button', { name: '请求本机确认' }).click()
+        await page.getByRole('button', { name: '请求连接' }).click()
         await host.presence.waitForRequest(15000)
         host.presence.approveNext()
         await page.locator('.app-shell[data-connection="connected"]').waitFor()

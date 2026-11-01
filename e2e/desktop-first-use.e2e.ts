@@ -72,7 +72,7 @@ async function resize(application: ElectronApplication, page: Page, width: numbe
 async function enroll(page: Page, name: string) {
   page.setDefaultTimeout(15_000)
   await page.getByRole('textbox', { name: '设备名称', exact: true }).fill(name)
-  await page.getByRole('button', { name: '请求本机确认', exact: true }).click()
+  await page.getByRole('button', { name: '请求连接', exact: true }).click()
   await page.locator('.app-shell[data-connection="connected"]').waitFor()
 }
 async function startNew(page: Page, width: number) {

@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { isAcceptableDeviceName, type Device, type DeviceScope, type EnrollmentInfo, type EnrollmentView } from '@latch/protocol'
+import {
+  isAcceptableDeviceName,
+  type Device,
+  type DeviceScope,
+  type EnrollmentInfo,
+  type EnrollmentInvitationOffer,
+  type EnrollmentView,
+} from '@latch/protocol'
 import { api, ApiError, errorMessage } from './api.ts'
 import {
   base64urlDecode,
@@ -36,17 +43,48 @@ let invitation = captureFragment()
 export const pendingInvitation = () => invitation
 
 export const BASE_SCOPES: DeviceScope[] = ['view', 'run', 'approve:standard']
+/** What a browser asks for: management only when the person was shown it and did not turn it down. */
+export const requestedScopes = (admin: boolean): DeviceScope[] => [...BASE_SCOPES, ...(admin ? ['admin' as const] : [])]
 
 /** A device name to submit or show: the old one only when the security-text rule would leave it unchanged. */
 export function acceptableName(name: string | undefined): string | undefined {
   return name !== undefined && isAcceptableDeviceName(name) ? name.trim() : undefined
 }
 
+/** 「Mac 上的 Chrome」: the system sheet shows only this name, so it says which browser asked. */
+export function browserDeviceName(userAgent: string, touchPoints = 0): string {
+  const browser = /\bEdg/u.test(userAgent)
+    ? 'Edge'
+    : /\bOPR\//u.test(userAgent)
+      ? 'Opera'
+      : /\b(?:Firefox|FxiOS)\//u.test(userAgent)
+        ? 'Firefox'
+        : /(?:Chrome|CriOS)\//u.test(userAgent)
+          ? 'Chrome'
+          : /\bSafari\//u.test(userAgent)
+            ? 'Safari'
+            : '浏览器'
+  const system = /iPhone/u.test(userAgent)
+    ? 'iPhone'
+    : /iPad/u.test(userAgent) || (/Macintosh/u.test(userAgent) && touchPoints > 1)
+      ? 'iPad'
+      : /Android/u.test(userAgent)
+        ? 'Android'
+        : /Macintosh/u.test(userAgent)
+          ? 'Mac'
+          : /Windows/u.test(userAgent)
+            ? 'Windows'
+            : /Linux/u.test(userAgent)
+              ? 'Linux'
+              : ''
+  return system ? `${system} 上的 ${browser}` : browser
+}
+
 export function defaultDeviceName(legacyName?: string): string {
   const legacy = acceptableName(legacyName)
   if (legacy) return legacy
   if (currentShell()) return 'Latch 桌面端'
-  return typeof navigator !== 'undefined' && /Android|iPhone|iPad/i.test(navigator.userAgent) ? '我的手机' : '我的浏览器'
+  return typeof navigator === 'undefined' ? '浏览器' : browserDeviceName(navigator.userAgent, navigator.maxTouchPoints)
 }
 
 /** The name an enrollment submits: the default when left empty, null when the security-text rule would escape it. */
@@ -105,20 +143,12 @@ export function enrolledStep(result: EnrolledResult): EnrollmentStep | null {
   return { kind: 'confirm-failed', message: result.message }
 }
 
-/** Whether a refused enrollment request should be repeated without `admin` (an invitation may not allow it). */
-export function retryWithoutAdmin(error: unknown, requestedAdmin: boolean, withInvitation: boolean): boolean {
-  if (!requestedAdmin || !withInvitation || !(error instanceof ApiError)) return false
-  return (
-    (error.status === 400 && error.code === 'scope-not-grantable')
-    || (error.status === 403 && error.code !== 'invitation-required' && error.code !== 'invitation-invalid')
-  )
-}
-
 /** The browser (or desktop shell) side of device enrollment: request, wait for the Host's local confirmation, sign, complete. */
 export function useEnrollment(onEnrolled: () => Promise<EnrolledResult>) {
   const [info, setInfo] = useState<EnrollmentInfo | null>(null)
   const [step, setStep] = useState<EnrollmentStep>({ kind: 'loading' })
   const [error, setError] = useState('')
+  const [linkAllowsAdmin, setLinkAllowsAdmin] = useState(false)
   const flight = useRef<Flight | null>(null)
   const alive = useRef(true)
   const shell = currentShell()
@@ -129,6 +159,25 @@ export function useEnrollment(onEnrolled: () => Promise<EnrolledResult>) {
     try {
       const next = await api<EnrollmentInfo>('enrollment-info', { noRenew: true })
       if (!alive.current) return
+      // Anything but a clear answer leaves this false: a person is told before management is asked for, or it is not asked.
+      let admin = false
+      if (!shell && invitation !== null) {
+        try {
+          const offer = await api<EnrollmentInvitationOffer>('enrollment-invitation', {
+            method: 'POST',
+            body: { invitation },
+            noRenew: true,
+          })
+          admin = offer.admin === true
+        } catch (cause) {
+          if (cause instanceof ApiError && cause.code === 'invitation-invalid') {
+            invitation = null
+            setError(errorMessage(cause))
+          }
+        }
+        if (!alive.current) return
+      }
+      setLinkAllowsAdmin(admin)
       setInfo(next)
       if (!shell && !browserKeySupport()) setStep({ kind: 'unsupported' })
       else if (next.invitationRequired && invitation === null) setStep({ kind: 'invitation-required' })
@@ -226,26 +275,18 @@ export function useEnrollment(onEnrolled: () => Promise<EnrolledResult>) {
       try {
         const key = shell ? undefined : await generateDeviceKey(info.hostId)
         const offlineCode = form.offlineCode?.trim()
-        const create = (admin: boolean) =>
-          api<{ enrollment: EnrollmentView }>('enrollments', {
-            method: 'POST',
-            noRenew: true,
-            body: {
-              name,
-              ...(key ? { publicKey: key.publicKeySpki } : {}),
-              // The desktop shell enrolls on the Host's own socket, whose defaults are all scopes.
-              ...(shell ? {} : { scopes: [...BASE_SCOPES, ...(admin ? ['admin' as const] : [])] }),
-              ...(invitation ? { invitation } : {}),
-              ...(offlineCode ? { offlineCode } : {}),
-            },
-          })
-        let created: { enrollment: EnrollmentView }
-        try {
-          created = await create(form.admin)
-        } catch (cause) {
-          if (!retryWithoutAdmin(cause, form.admin, invitation !== null)) throw cause
-          created = await create(false)
-        }
+        const created = await api<{ enrollment: EnrollmentView }>('enrollments', {
+          method: 'POST',
+          noRenew: true,
+          body: {
+            name,
+            ...(key ? { publicKey: key.publicKeySpki } : {}),
+            // The desktop shell enrolls on the Host's own socket, whose defaults are all scopes.
+            ...(shell ? {} : { scopes: requestedScopes(form.admin) }),
+            ...(invitation ? { invitation } : {}),
+            ...(offlineCode ? { offlineCode } : {}),
+          },
+        })
         invitation = null
         const enrollment = created.enrollment
         if (!alive.current) return
@@ -341,5 +382,5 @@ export function useEnrollment(onEnrolled: () => Promise<EnrolledResult>) {
     if (!info) void load()
   }, [info, load])
 
-  return { info, step, error, submit, cancel, restart, reload: load, retryConfirm: confirm, electron: shell !== null }
+  return { info, step, error, linkAllowsAdmin, submit, cancel, restart, reload: load, retryConfirm: confirm, electron: shell !== null }
 }

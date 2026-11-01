@@ -14,6 +14,7 @@ import {
   type DeviceScope,
   type DeviceStatus,
   type EnrollmentInfo,
+  type EnrollmentInvitationOffer,
   type EnrollmentView,
   type WaitingEnrollmentView,
   type InvitationView,
@@ -2168,6 +2169,17 @@ export class EnrollmentService {
   }
 
   /** An unexpired invitation issued for exactly this listener and origin, from an inviter that is still active. */
+  /**
+   * Whether an invitation lets its holder ask for `admin`, so the page can say so before the person acts. Spends nothing,
+   * and tells the holder nothing a request would not: asking for `admin` under a smaller invitation is refused unspent.
+   */
+  invitationOffer(code: unknown, connection: ConnectionContext): EnrollmentInvitationOffer {
+    this.prune()
+    const invitation = this.findInvitation(code, connection)
+    if (!invitation) throw new AppError(403, 'invitation-invalid', '配对码无效或已过期')
+    return { admin: invitation.scopes.includes('admin') }
+  }
+
   private findInvitation(code: unknown, connection: ConnectionContext): Invitation | undefined {
     if (typeof code !== 'string' || !/^lpi1-[A-Z2-7]{26}$/u.test(code)) return undefined
     const hash = sha256Hex(code)
@@ -2248,6 +2260,8 @@ export class EnrollmentService {
       ...(enrollment.hashDisplay ? { hashDisplay: enrollment.hashDisplay } : {}),
       ...(enrollment.reason ? { reason: enrollment.reason } : {}),
       ...(enrollment.contended ? { contended: true } : {}),
+      scopes: [...enrollment.scopes],
+      dataScope: enrollment.dataScope,
     }
   }
 
@@ -2267,6 +2281,8 @@ export class EnrollmentService {
         expiresAt: iso(item.expiresAt),
         ...(item.invitationId ? { invitationId: item.invitationId } : {}),
         ...(item.reason ? { reason: item.reason } : {}),
+        scopes: [...item.scopes],
+        dataScope: item.dataScope,
       })
     }
     return views

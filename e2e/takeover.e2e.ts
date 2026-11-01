@@ -25,7 +25,7 @@ describe('desktop to phone takeover', () => {
     const desktopContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } })
     desktopContext.setDefaultTimeout(15_000)
     desktop = await desktopContext.newPage()
-    // The Host's first device; the enrollment page offers 管理此 Host by default.
+    // The Host's first device; its invitation allows 管理此 Host.
     await enrollBrowser(desktop, testHost, { name: '我的电脑' })
     await connected(desktop)
     // The second device is another loopback browser with a phone viewport (phones over HTTPS need an invitation).

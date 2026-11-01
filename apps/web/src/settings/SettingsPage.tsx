@@ -30,7 +30,10 @@ export type { SettingsSection }
 
 const AboutSettings = deferredComponent(async () => ({ default: (await import('./AboutSettings.tsx')).AboutSettings }), '关于')
 const AgentsSettings = deferredComponent(async () => ({ default: (await import('./AgentsSettings.tsx')).AgentsSettings }), '引擎设置')
-const DevicesSettings = deferredComponent(async () => ({ default: (await import('./DevicesSettings.tsx')).DevicesSettings }), '设备设置')
+const PhoneDevicesPage = deferredComponent(
+  async () => ({ default: (await import('./devices/PhoneDevicesPage.tsx')).PhoneDevicesPage }),
+  '手机与设备',
+)
 const GeneralSettings = deferredComponent(async () => ({ default: (await import('./GeneralSettings.tsx')).GeneralSettings }), '通用设置')
 const PluginsSettings = deferredComponent(async () => ({ default: (await import('./PluginsSettings.tsx')).PluginsSettings }), '插件设置')
 const ProvidersSettings = deferredComponent(
@@ -53,7 +56,7 @@ const SEARCH_TERMS: Partial<Record<SettingsSection, string>> = {
   engines: '已安装 可以安装 启动方式 环境变量 命令 agent',
   workspaces: '文件夹 新建项目 快照',
   shortcuts: '键盘',
-  devices: '手机 配对 邀请 撤销 限制 policy 开始新会话',
+  devices: '手机 连接手机 二维码 配对 邀请 重命名 移除 撤销 浏览器 限制 policy 开始新会话',
   about: '版本 开源许可',
 }
 
@@ -88,7 +91,7 @@ const sections: Array<{
   { id: 'workspaces', label: '项目', icon: Folder, admin: true, catalog: true },
   { id: 'shortcuts', label: '快捷键', icon: Keyboard, admin: false },
   { id: 'plugins', label: '插件', icon: Puzzle, admin: true },
-  { id: 'devices', label: '设备', icon: MonitorSmartphone, admin: false, secured: true },
+  { id: 'devices', label: '手机与设备', icon: MonitorSmartphone, admin: false, secured: true },
   { id: 'about', label: '关于', icon: Info, admin: false },
 ]
 
@@ -203,8 +206,8 @@ export function SettingsPage({
     levelBack.current = back
     setDepthState(next)
   }, [])
-  // 插件 lists its plugins beside the rail and titles the page with the one it shows; every other entry lists sections.
-  const objectEntry = entry === 'plugins' && !phone
+  // 插件 and 手机 list their objects beside the rail and title the page with the one shown; other entries list sections.
+  const objectEntry = (entry === 'plugins' || entry === 'phone') && !phone
   const [navSlot, setNavSlot] = useState<HTMLElement | null>(null)
   const navigation: SettingsNavigation = {
     phone,
@@ -372,7 +375,7 @@ export function SettingsPage({
                     {panel === 'plugins' && (
                       <PluginsSettings onManage={onSection} snapshot={snapshot} access={access} onChanged={onChanged} />
                     )}
-                    {panel === 'devices' && <DevicesSettings snapshot={snapshot} access={access} onChanged={onChanged} />}
+                    {panel === 'devices' && <PhoneDevicesPage snapshot={snapshot} access={access} onChanged={onChanged} />}
                     {panel === 'about' && <AboutSettings snapshot={snapshot} access={access} />}
                   </div>
                 )}

@@ -131,7 +131,7 @@ export interface LatchShell {
   folders?: ShellFolders
   confirmations?: ShellConfirmations
   /**
-   * 「在这台电脑的浏览器中打开」: main makes a one-time invitation and opens the browser with it; the page never sees
+   * 「在浏览器中打开」: main makes a one-time invitation and opens the browser with it; the page never sees
    * the invitation. Absent in shells from before this action.
    */
   openInBrowser?: () => Promise<OpenInBrowserResult>

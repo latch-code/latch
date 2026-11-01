@@ -1701,6 +1701,8 @@ describe('desktop shell proxy', () => {
     const pairing = context.host.seen.filter(item => item.url === '/link/api/pairings').at(-1)!
     expect(pairing.headers.authorization).toBe(`Latch-Device ${after.credential}`)
     expect(JSON.parse(pairing.body)).toEqual(proxy.BROWSER_INVITATION)
+    // The desktop app can raise it later with a confirmation, so a browser it opens does not start out managing the Host.
+    expect(proxy.BROWSER_INVITATION.scopes).not.toContain('admin')
 
     context.host.state.invitationUrl = 'https://example.com/#pair=lpi1-AAAAAAAAAAAAAAAAAAAAAAAAAA'
     expect(await context.handler.browserInvitation()).toMatchObject({ ok: false, error: 'browser-open-failed' })
@@ -1864,9 +1866,12 @@ describe('desktop shell against the Host', () => {
     expect(result.url).toMatch(new RegExp(`^${host.loopbackOrigin}/link/#pair=lpi1-[A-Z2-7]{26}$`))
     expect(host.security.audit.lastOf('pairing.invited')).toMatchObject({
       actor: { deviceId: desktop.deviceId, listener: 'unix' },
-      detail: { scopes: ['view', 'run', 'approve:standard', 'admin'], listener: 'loopback-tcp' },
+      detail: { scopes: ['view', 'run', 'approve:standard'], listener: 'loopback-tcp' },
     })
-    const browser = await testHost.enroll({ invitation: new URL(result.url).hash.slice('#pair='.length), scopes: ['view', 'admin'] })
+    const invitation = new URL(result.url).hash.slice('#pair='.length)
+    // Asking for more is refused without spending it: the enrollment page repeats the request without admin.
+    await expect(testHost.enroll({ invitation, scopes: ['view', 'admin'] })).rejects.toThrow('scope-not-grantable')
+    const browser = await testHost.enroll({ invitation, scopes: ['view', 'run'] })
     expect(browser.device).toMatchObject({ listener: 'loopback-tcp', pairedBy: { method: 'invitation', deviceId: desktop.deviceId } })
     expect(testHost.presence.requests.at(-1)!.preview.lines.at(-1)).toEqual({ label: '邀请来源', value: '桌面端' })
   })

@@ -63,7 +63,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         const page = await application.firstWindow()
         page.setDefaultTimeout(15_000)
         await page.getByRole('textbox', { name: '设备名称', exact: true }).fill('模型控件验收')
-        await page.getByRole('button', { name: '请求本机确认', exact: true }).click()
+        await page.getByRole('button', { name: '请求连接', exact: true }).click()
         await page.locator('.app-shell[data-connection="connected"]').waitFor()
         await page
           .locator('[data-task-id="' + sessionId + '"]')
@@ -184,7 +184,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         const page = await application.firstWindow()
         page.setDefaultTimeout(15_000)
         await page.getByRole('textbox', { name: '设备名称', exact: true }).fill('取回验收')
-        await page.getByRole('button', { name: '请求本机确认', exact: true }).click()
+        await page.getByRole('button', { name: '请求连接', exact: true }).click()
         await page.locator('.app-shell[data-connection="connected"]').waitFor()
         const asked = host.presence.requests.length
 
@@ -204,7 +204,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         expect(policy.confirmedAddresses).toEqual([])
         expect(policy.hostEgressAllow).toEqual([])
 
-        await openSection(settings, '设备')
+        await openSection(settings, '手机与设备')
         await settings.getByText('手机和浏览器只能在这些项目里工作', { exact: true }).waitFor()
         expect(host.presence.requests.length).toBe(asked)
       } finally {

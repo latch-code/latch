@@ -1,7 +1,6 @@
-/* 设置 › 设备 and phone pairing, security surfaces. */
 /*
- * 设置 › 设备 groups that are security surfaces (手机配对 and 这台电脑的浏览器, both hand out a one-time enrollment
- * invitation): the heading, the card and its rows, and the caption under it, at the look of the groups around them.
+ * The pairing sheet and 在浏览器中打开, security surfaces: both hand out a one-time enrollment invitation. Groups inside
+ * data-secure keep the look of the groups around them.
  */
 .settings-group[data-secure] {
   display: grid !important;
@@ -55,266 +54,272 @@
   display: inline !important;
 }
 
-/* Devices: pairing a phone, inside the 手机配对 group of 设置 › 设备 (a security surface). */
-[data-secure] .pair-section {
-  display: grid !important;
-  opacity: 1 !important;
-  color: var(--ink) !important;
-  font-size: var(--fs-ui) !important;
-  line-height: var(--lh-ui-para) !important;
-}
 /*
- * Pairing a phone: the intro and 生成配对二维码 (the section's one blue action); once created, the code on white (dark
- * modules on light paper in both themes, so scanners read it), the three numbered steps, the time left and the link.
+ * 连接手机: a 420 by 540 sheet. The code stays dark on white in both themes so scanners read it; while a device is being
+ * confirmed it dims and blurs, and the device's name rises over it.
  */
-.pair-empty {
-  display: grid !important;
-  justify-items: start;
-  gap: var(--sp-12);
+.pair-sheet.ui-modal-dialog {
+  width: min(420px, calc(100vw - 32px));
 }
-.native-config-body,
-.native-config-group {
-  display: grid !important;
-  gap: var(--sp-12);
-  min-width: 0;
-}
-.native-config-group {
-  border: 0;
-  padding: 0;
-  margin: 0;
-}
-.native-config-group + .native-config-group {
-  border-top: 1px solid var(--line);
-  padding-top: var(--sp-16);
-}
-.native-config-heading {
+.pair-sheet .ui-modal-surface {
   display: flex !important;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-8);
-  font-size: var(--fs-ui) !important;
+  background-color: var(--raised) !important;
 }
-.native-connect-dialog[open] {
-  display: block !important;
-  opacity: 1 !important;
-  color: var(--ink) !important;
-  background: transparent !important;
-  font-size: var(--fs-ui) !important;
-  line-height: var(--lh-ui) !important;
-  scale: none !important;
-}
-.native-connect-dialog :is(.ui-modal-surface, form, .native-config-body, .native-config-group, .ui-modal-footer) {
-  color: var(--ink) !important;
-  font-size: var(--fs-ui) !important;
-  line-height: var(--lh-ui) !important;
-}
-.native-config-heading {
-  color: var(--ink) !important;
-  line-height: var(--lh-ui) !important;
-}
-.native-connect-dialog > .ui-modal-surface {
-  display: flex !important;
-  background: var(--raised) !important;
-}
-.native-connect-dialog form {
-  display: flex !important;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-}
-.native-connect-dialog :is(.ui-modal-header, .ui-modal-footer) {
+.pair-sheet .ui-modal-header {
   display: flex !important;
 }
-.native-connect-dialog .ui-modal-header h2 {
+.pair-sheet .ui-modal-header h2 {
   display: block !important;
   color: var(--ink) !important;
   font-size: var(--fs-heading) !important;
   line-height: var(--lh-heading) !important;
+  font-weight: 600 !important;
 }
-.native-config-heading strong {
+.pair-body {
+  display: flex !important;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-16);
+  padding: var(--sp-8) var(--sp-24) var(--sp-32);
+  opacity: 1 !important;
+}
+@media (min-width: 768px) {
+  .pair-body {
+    height: min(484px, calc(100dvh - 120px));
+    overflow-y: auto;
+  }
+}
+.pair-body > .ui-notice {
+  align-self: stretch;
+}
+.pair-line {
   display: block !important;
   color: var(--ink) !important;
   font-size: var(--fs-ui) !important;
-  line-height: var(--lh-ui) !important;
-}
-.native-config-body .settings-hint {
-  display: block !important;
-  color: var(--ink-2) !important;
-  font-size: var(--fs-caption) !important;
-  line-height: var(--lh-caption-para) !important;
-}
-.native-connect-dialog .ui-modal-grabber {
-  display: block !important;
-  background: var(--line-strong) !important;
-}
-.pair-empty p {
-  color: var(--ink-2) !important;
-  font-size: var(--fs-ui) !important;
   line-height: var(--lh-ui-para) !important;
+  text-align: center;
 }
-.pair-empty .ui-notice {
-  justify-self: stretch;
+.pair-code {
+  display: grid !important;
+  place-items: center;
 }
-.pair-ready {
-  display: flex !important;
-  gap: var(--sp-24);
-  align-items: flex-start;
+.pair-code > * {
+  grid-area: 1 / 1;
 }
 .pair-qr {
   display: grid !important;
   place-items: center;
-  width: 200px;
-  height: 200px;
-  flex-shrink: 0;
-  padding: var(--sp-12);
+  width: 240px;
+  height: 240px;
+  padding: 12px;
   border: 1px solid var(--line);
   border-radius: var(--r-12);
   background: #ffffff !important;
+  transition:
+    opacity 160ms var(--e-micro),
+    filter 160ms var(--e-micro);
 }
 .pair-qr img {
   display: block !important;
   width: 100%;
   height: 100%;
-  opacity: 1 !important;
 }
-.pair-steps {
-  display: grid;
-  gap: var(--sp-12);
-  flex: 1;
+.pair-chip {
+  z-index: 1;
+  display: flex !important;
+  align-items: center;
+  gap: var(--sp-10);
+  min-width: 164px;
+  max-width: 228px;
+  padding: var(--sp-10);
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+  background: var(--raised) !important;
+  box-shadow: var(--sh-pop) !important;
+  animation: pair-chip-rise 220ms var(--e-enter);
+}
+/* Margin, because a security surface pins its transforms and its opacity at rest. */
+@keyframes pair-chip-rise {
+  from {
+    margin-block-start: var(--sp-16);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pair-chip {
+    animation: none;
+  }
+}
+.pair-chip-glyph,
+.pair-glyph {
+  display: grid !important;
+  place-items: center;
+  flex: none;
+  border-radius: var(--r-8);
+  background: var(--hover) !important;
+  color: var(--ink-2) !important;
+}
+.pair-chip-glyph {
+  width: 36px;
+  height: 36px;
+}
+.pair-glyph {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--r-12);
+}
+.pair-chip-text {
+  display: grid !important;
   min-width: 0;
 }
-.pair-steps ol {
-  list-style: none;
+.pair-chip-text b {
+  overflow: hidden;
+  color: var(--ink) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui) !important;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pair-chip-text > span {
+  display: inline-flex !important;
+  align-items: center;
+  gap: var(--sp-4);
+  color: var(--ink-2) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption) !important;
+}
+.pair-foot {
   display: grid !important;
-  gap: var(--sp-8);
+  justify-items: center;
+  gap: var(--sp-2);
+  text-align: center;
+  transition: opacity 160ms var(--e-micro);
+}
+.pair-foot-title {
+  display: block !important;
+  color: var(--ink) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui) !important;
+  font-weight: 500;
+}
+.pair-foot-note {
+  display: block !important;
+  color: var(--muted) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption) !important;
+}
+.pair-center {
+  display: flex !important;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 240px;
+  text-align: center;
+}
+.pair-check {
+  display: block !important;
+  width: 76px;
+  height: 76px;
+  margin-block-end: var(--sp-16);
+  fill: none;
+  stroke: var(--green);
+  stroke-width: 3.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.pair-check path {
+  stroke-dasharray: 44;
+  animation: pair-check-draw var(--m-enter) var(--e-enter);
+}
+@keyframes pair-check-draw {
+  from {
+    stroke-dashoffset: 44;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pair-check path {
+    animation: none;
+  }
+}
+.pair-center .pair-glyph {
+  margin-block-end: var(--sp-16);
+}
+.pair-title {
+  display: block !important;
+  color: var(--ink) !important;
+  font-size: var(--fs-heading) !important;
+  line-height: var(--lh-heading) !important;
+  font-weight: 600 !important;
+}
+.pair-note {
+  display: block !important;
+  margin-block-start: var(--sp-4);
   color: var(--ink-2) !important;
   font-size: var(--fs-ui) !important;
   line-height: var(--lh-ui-para) !important;
 }
-.pair-steps li {
-  display: flex !important;
-  align-items: flex-start;
-  gap: var(--sp-8);
-}
-/* (20 − 16) / 2: the number sits on the step's first line. */
-.pair-step-number {
-  display: grid !important;
-  place-items: center;
-  width: 16px;
-  height: 16px;
-  margin-top: var(--sp-2);
-  flex-shrink: 0;
-  border-radius: var(--r-full);
-  background: var(--hover) !important;
-  color: var(--ink-2) !important;
-  font-size: var(--fs-meta) !important;
-  line-height: var(--lh-meta) !important;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-.pair-expiry {
-  color: var(--muted) !important;
-  font-size: var(--fs-caption) !important;
-  line-height: var(--lh-caption) !important;
-  font-variant-numeric: tabular-nums;
-}
 .pair-actions {
   display: flex !important;
-  flex-wrap: wrap;
-  align-items: center;
   gap: var(--sp-8);
+  margin-block-start: var(--sp-24);
 }
-@media (max-width: 767.98px) {
-  .pair-ready {
-    flex-direction: column-reverse;
-    align-items: stretch;
-  }
-  .pair-qr {
-    align-self: center;
-  }
-  .pair-actions .ui-button {
-    flex: 1;
-    min-height: 44px;
-  }
+.pair-center-action {
+  margin-block-start: var(--sp-24);
 }
-
-/*
- * Without HTTPS: what is missing in body text, what is not built yet in hint text, and the start options folded under a
- * disclosure (chevron turns a quarter, the body grows by its height) as one wrapping mono line with its copy button.
- */
-.pair-setup {
+.pair-center > .ui-notice {
+  margin-block-start: var(--sp-12);
+}
+/* The two links at the panel's foot read alike; blue is only for what runs. */
+[data-secure] .device-foot-link.ui-button[data-variant='link'] {
+  color: var(--ink) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption) !important;
+}
+/* 在浏览器中打开: what it says after opening, and its failure, at the panel's foot. */
+.device-foot-browser {
+  display: grid !important;
   justify-items: start;
-  gap: var(--sp-8);
+  gap: var(--sp-4);
+  min-width: 0;
 }
-.pair-setup p {
-  color: var(--ink-2) !important;
-}
-.pair-setup .pair-pending {
+.device-foot-note {
+  display: block !important;
   color: var(--muted) !important;
   font-size: var(--fs-caption) !important;
   line-height: var(--lh-caption-para) !important;
 }
-.pair-setup > .ui-collapse {
-  justify-self: stretch;
-}
-.pair-toggle {
-  display: inline-flex !important;
-  align-items: center;
-  gap: var(--sp-6);
-  min-height: 28px;
-  margin-left: calc(-1 * var(--sp-8));
-  padding: 0 var(--sp-8);
-  border: 0;
-  border-radius: var(--r-8);
-  background: transparent !important;
-  color: var(--ink-2) !important;
-  font-size: var(--fs-ui) !important;
-  line-height: var(--lh-ui) !important;
-  text-align: left;
-  transition: background-color var(--m-micro) var(--e-micro);
-}
-/* Only a pointer that hovers: a tap would leave the hover on. */
-@media (hover: hover) {
-  .pair-toggle:hover {
-    background: var(--hover) !important;
-    color: var(--ink) !important;
-  }
-}
-.pair-toggle .chevron {
-  flex-shrink: 0;
-  color: var(--muted);
-  transition: transform var(--m-panel) var(--e-panel);
-}
-.pair-toggle[aria-expanded='true'] .chevron {
-  transform: rotate(90deg);
-}
-.pair-tls {
+
+/* A device asking to connect, in the Mac's panel: the name it gave, what it could do, and its code behind the fold. */
+.device-waiting {
   display: grid !important;
-  gap: var(--sp-8);
-  padding-top: var(--sp-4);
-}
-.pair-flags {
-  display: flex !important;
-  align-items: flex-start;
-  gap: var(--sp-4);
-  padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-8);
-  border-radius: var(--r-6);
+  gap: var(--sp-6);
+  align-self: stretch;
+  padding: var(--sp-12);
+  border: 1px solid var(--line) !important;
+  border-radius: var(--r-12);
   background: var(--sunken) !important;
 }
-.pair-flags code {
-  flex: 1;
-  min-width: 0;
-  padding: var(--sp-2) 0;
-  white-space: pre-wrap;
-  overflow-wrap: break-word;
+.device-waiting-title {
+  display: block !important;
   color: var(--ink) !important;
-  font-family: var(--mono) !important;
-  font-size: var(--fs-mono) !important;
-  line-height: var(--lh-mono) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui-para) !important;
+  font-weight: 600 !important;
+  overflow-wrap: anywhere;
 }
-@media (max-width: 767.98px) {
-  .pair-toggle {
-    min-height: 44px;
-  }
+.device-waiting-note {
+  display: block !important;
+  color: var(--ink-2) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption-para) !important;
+}
+.device-waiting-note[data-tone='warn'] {
+  color: var(--amber) !important;
+}
+.device-waiting-phone {
+  display: block !important;
+  align-self: stretch;
 }

@@ -212,6 +212,14 @@ export interface EnrollmentView {
   reason?: string
   /** `cancelled` because another device presented a QR of the same pairing sheet. */
   contended?: true
+  /** What the device will hold once confirmed. Absent from older Hosts. */
+  scopes?: DeviceScope[]
+  dataScope?: DataScope
+}
+
+/** What an unspent invitation lets the page ask for, read before anything is asked (`POST /link/api/enrollment-invitation`). */
+export interface EnrollmentInvitationOffer {
+  admin: boolean
 }
 
 /**
@@ -231,6 +239,8 @@ export interface WaitingEnrollmentView {
   /** The invitation it used, so the panel that showed that invitation can find it. */
   invitationId?: string
   reason?: string
+  scopes?: DeviceScope[]
+  dataScope?: DataScope
 }
 
 export interface InvitationView {

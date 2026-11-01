@@ -64,6 +64,7 @@ const enrollmentSchema = z.object({
     .strict()
     .optional(),
 })
+const invitationOfferSchema = z.object({ invitation: z.string().min(1).max(64) })
 export const signatureSchema = z.object({ signature: z.string().min(1).max(256) })
 const renewSchema = z.object({ nonce: z.string().min(1).max(128), signature: z.string().min(1).max(256) })
 const deviceScopesSchema = z
@@ -145,6 +146,13 @@ export function createDeviceRoutes(context: RouteContext, deps: DeviceRouteDeps)
         if (!outcome.ok && outcome.code === 'legacy-reconfirm') legacyName = outcome.legacyName
       }
       json(res, await enrollments.info(connection, legacyName))
+      return true
+    }
+    if (path === '/link/api/enrollment-invitation' && method === 'POST') {
+      if (isNativeListener(listener.listener)) throw authFailure('unauthorized')
+      limits.enrollmentPoll.take(`${listener.listener}:invitation`)
+      const input = invitationOfferSchema.parse(await jsonBody(req))
+      json(res, enrollments.invitationOffer(input.invitation, connection))
       return true
     }
     if (path === '/link/api/enrollments' && method === 'POST') {

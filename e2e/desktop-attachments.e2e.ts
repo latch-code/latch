@@ -64,7 +64,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       const page = await application.firstWindow()
       page.setDefaultTimeout(20000)
       await page.getByRole('textbox', { name: '设备名称' }).fill('附件桌面测试')
-      await page.getByRole('button', { name: '请求本机确认' }).click()
+      await page.getByRole('button', { name: '请求连接' }).click()
       await fixture.presence.waitForRequest(15000)
       fixture.presence.approveNext()
       await page.locator('.app-shell[data-connection="connected"]').waitFor()

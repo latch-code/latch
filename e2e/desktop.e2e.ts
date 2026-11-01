@@ -269,16 +269,17 @@ async function enrollShell(page: Page, testHost: TestHost, name: string) {
   const field = page.getByRole('textbox', { name: '设备名称' })
   await field.fill(name)
   await waitFor(async () => (await field.inputValue()) === name)
-  await page.getByRole('button', { name: '请求本机确认' }).click()
+  await page.getByRole('button', { name: '请求连接' }).click()
   const request = await testHost.presence.waitForRequest(15_000)
   expect(request.preview.action).toBe('device.enroll')
   expect(request.preview.requester.listener).toBe('unix')
   const fingerprint = request.preview.lines.find(line => line.label === '设备指纹')?.value
   expect(fingerprint).toMatch(/^[A-Z2-7]{4}( [A-Z2-7]{4}){4}$/)
-  expect(await page.locator('.fingerprint').isVisible()).toBe(false)
-  await page.getByText('连接详情', { exact: true }).click()
-  await page.getByText(fingerprint!).first().waitFor()
-  await page.getByText('连接详情', { exact: true }).click()
+  // The check is there for someone who wants it, and shut until then.
+  const details = page.locator('details.connection-details')
+  expect(await details.getAttribute('open')).toBeNull()
+  expect(await details.locator('.connection-code').getAttribute('aria-label')).toBe(`校验码 ${fingerprint}`)
+  expect(await details.locator('.connection-code').isVisible()).toBe(false)
   await page.screenshot({ path: 'test-results/native-desktop-enrollment.png', animations: 'disabled' })
   testHost.presence.approveNext()
   await page.locator('.app-shell[data-connection="connected"]').waitFor()
@@ -518,29 +519,20 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect(application.windows()).toHaveLength(1)
       expect(counter.connections()).toBe(0)
 
-      // 「在这台电脑的浏览器中打开」: main gets a one-time loopback invitation with the shell's credential and gives the
+      // 「在浏览器中打开」: main gets a one-time loopback invitation with the shell's credential and gives the
       // link to the default browser (recorded instead of opened) without a dialog; the page never sees the invitation.
-      const browserHere = await openSettings(page, '设备')
-      await browserHere.getByRole('heading', { name: '这台电脑的浏览器', exact: true }).waitFor()
-      await browserHere.getByRole('button', { name: '在这台电脑的浏览器中打开', exact: true }).click()
+      const browserHere = await openSettings(page, '手机与设备')
+      await page.getByRole('button', { name: '在浏览器中打开', exact: true }).click()
       await waitFor(async () => (await externalLinks()).opened.length === 2)
       const browserLink = (await externalLinks()).opened[1]
       expect(browserLink).toMatch(new RegExp(`^${host.loopbackOrigin}/link/#pair=lpi1-[A-Z2-7]{26}$`))
       expect((await externalLinks()).asked).toHaveLength(2)
-      await browserHere.getByText('已在浏览器中打开。在浏览器中提交登记后，这台电脑会显示确认窗口。', { exact: true }).waitFor()
+      await page.getByText('已在浏览器中打开。在那里点「连接这个浏览器」后，这台 Mac 会请你确认。', { exact: true }).waitFor()
       expect(await page.evaluate(() => document.documentElement.outerHTML)).not.toContain('lpi1-')
       await page.screenshot({ path: 'test-results/native-desktop-browser-here.png', animations: 'disabled' })
-      // It hands out an invitation like 手机配对 beside it, so the words of both groups keep their look under styles added
-      // to the page.
+      // It hands out an invitation like the pairing sheet, so its words keep their look under styles added to the page.
       await page.mouse.move(0, 0)
-      await expectUnmovedByInjectedStyles(page, [
-        '.settings-group[data-secure] .settings-group-head h3',
-        '.settings-group[data-secure] .settings-row-title',
-        '.settings-group[data-secure] .settings-row-description',
-        '.settings-group[data-secure] .ui-button',
-        '.settings-group[data-secure] .settings-caption',
-        '.settings-group[data-secure] .settings-caption [role="status"]',
-      ])
+      await expectUnmovedByInjectedStyles(page, ['.device-foot-browser[data-secure] .ui-button', '.device-foot-note'])
       // That link enrolls a browser over loopback only, and the confirmation names this desktop as the inviter.
       const pair = new URL(browserLink).hash.slice('#pair='.length)
       const enrollBrowser = () =>
@@ -552,7 +544,17 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       const invited = await testHost.presence.waitForRequest(15_000)
       expect(invited.preview.requester.listener).toBe('loopback-tcp')
       expect(invited.preview.lines.at(-1)).toEqual({ label: '邀请来源', value: '桌面端测试' })
+      // The panel names who is asking, and folds the code to compare with that browser's page.
+      const asking = page.locator('.device-waiting').filter({ hasText: '「这台电脑的浏览器」想连接这台 Mac' })
+      await asking.waitFor()
+      expect(await asking.getByText('它还可以管理这台 Mac').count()).toBe(0)
+      const askingCode = asking.locator('.connection-code')
+      expect(await askingCode.isVisible()).toBe(false)
+      expect(await askingCode.getAttribute('aria-label')).toBe(
+        `校验码 ${invited.preview.lines.find(line => line.label === '设备指纹')?.value}`,
+      )
       testHost.presence.denyNext()
+      await asking.waitFor({ state: 'detached' })
       // Single use: the same link does not work twice.
       expect((await enrollBrowser()).status).toBe(403)
       await closeSettings(browserHere)
@@ -693,16 +695,14 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await waitFor(() => marks.ran === 1)
       await waitFor(async () => (await host.bridge.detail(sessionId)).summary.status === 'idle')
 
-      // 设置 › 设备: the pairing panel, and the confirmation of an action that does not show it in place yet (the dock).
+      // 手机: the pairing sheet, and the confirmation of an action that does not show it in place yet (the dock).
       const phone = await testHost.enroll({ name: '测试手机', scopes: ['view'] })
-      const settings = await openSettings(page, '设备')
-      const pairing = settings.locator('.settings-group', { hasText: 'iPhone 上的 Latch' })
-      // The panel's end in view, so each capture shows all of it.
-      const showPairing = () => pairing.evaluate(element => element.scrollIntoView({ block: 'end' }))
-      await pairing.getByRole('button', { name: '连接手机', exact: true }).waitFor()
-      await showPairing()
+      const settings = await openSettings(page, '手机与设备')
+      const connectPhone = page.locator('.device-connect')
+      await connectPhone.waitFor()
       await captureThemes(page, 'native-desktop-pairing')
-      await pairing.getByRole('button', { name: '连接手机', exact: true }).click()
+      await connectPhone.click()
+      const pairing = page.getByRole('dialog', { name: '连接手机', exact: true })
       const qr = pairing.getByRole('img', { name: '原生客户端配对二维码', exact: true })
       await qr.waitFor()
       // The QR code carries the invitation, which never enters a screenshot, even a test Host's: the capture shows a
@@ -740,59 +740,34 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           await image.decode()
         })
       await maskQr()
-      await showPairing()
       await captureThemes(page, 'native-desktop-pairing-ready')
-      // A device that used an invitation waits in the panel, while the system sheet names it; a denial takes it away.
+      // A device that used an invitation is named by the system sheet; a denial changes nothing on this device.
       const invitation = await testHost.invite(['view'])
       const asked = await testHost.raw('tls', 'api/enrollments', {
         method: 'POST',
         body: { publicKey: testDeviceKey().spki, name: '新手机', invitation: invitation.code },
       })
-      const { enrollment } = (await asked.json()) as { enrollment: { fingerprint: string; reason: string } }
+      const { enrollment } = (await asked.json()) as { enrollment: { reason: string } }
       const enrolling = await testHost.presence.waitForRequest(15_000)
       expect(enrolling.preview.reason).toBe(enrollment.reason)
-      const waitingDevice = pairing.locator('.pair-waiting')
-      await waitingDevice.getByText('连接详情', { exact: true }).click()
-      await waitingDevice.getByLabel(`设备指纹 ${enrollment.fingerprint}`, { exact: true }).waitFor()
-      await waitingDevice.getByText('正在请求连接', { exact: false }).waitFor()
-      await maskQr()
-      await showPairing()
-      await captureThemes(page, 'native-desktop-pairing-waiting')
       testHost.presence.denyNext()
-      await waitingDevice.waitFor({ state: 'detached' })
       expect(phone.device.scopes).toEqual(['view'])
       // Closing the panel revokes its QRs at the Host.
       await pairing.getByRole('button', { name: '关闭', exact: true }).click()
       await qr.waitFor({ state: 'detached' })
       await waitFor(() => !host.security.enrollments.nativePairingOpen())
-      // A device's actions are in its row's ⋯ menu.
+      // A device's actions are in its row's ⋯ menu; 重命名 goes to the name on its page.
       const row = settings.locator(`[data-device-id="${phone.device.id}"]`)
+      await row.hover()
       const deviceActions = row.getByRole('button', { name: '测试手机 的操作', exact: true })
-      await reachable(deviceActions)
       await settleShell(page)
       await deviceActions.click()
-      await page.getByRole('menuitem', { name: '调整权限…', exact: true }).click()
-      const grant = page.getByRole('dialog', { name: '调整权限', exact: true })
-      await grant.getByRole('checkbox', { name: '发起和继续会话', exact: true }).check()
-      await grant.getByRole('button', { name: '用 Touch ID 授予', exact: true }).click()
-      const granting = await testHost.presence.waitForRequest(15_000)
-      expect(granting.preview.action).toBe('device.grant')
-      // The grant is confirmed from its own dialog: no dock over it, no countdown (the system sheet times out on its own).
-      const inline = grant.locator('.inline-confirm[data-confirmation-phase="waiting"]')
-      await inline.waitFor({ state: 'attached' })
-      expect(await grant.getByText(granting.preview.reason).count()).toBe(0)
-      expect(await page.locator('.presence-dock').count()).toBe(0)
-      expect(await inline.getByRole('timer').count()).toBe(0)
-      await captureThemes(page, 'native-desktop-confirmation-grant')
-      testHost.presence.denyNext()
-      const failed = grant.locator('.inline-confirm[data-confirmation-phase="failed"]', { hasText: '没有执行：确认没有通过。' })
-      await failed.waitFor()
-      // One line with 关闭: the grant is asked for again from its own button.
-      expect(await failed.getByRole('button').count()).toBe(1)
-      await captureThemes(page, 'native-desktop-confirmation-grant-failed')
-      await failed.getByRole('button', { name: '关闭', exact: true }).click()
-      await failed.waitFor({ state: 'detached' })
-      await grant.getByRole('button', { name: '取消', exact: true }).click()
+      await page.getByRole('menuitem', { name: '重命名', exact: true }).click()
+      const renamed = page.getByLabel('设备名称', { exact: true })
+      await renamed.fill('改名的手机')
+      await renamed.press('Enter')
+      await waitFor(() => host.security.devices.get(phone.device.id)?.name === '改名的手机')
+      await captureThemes(page, 'native-desktop-device')
       expect(host.security.devices.get(phone.device.id)?.scopes).toEqual(['view'])
       await closeSettings(settings)
 
@@ -829,7 +804,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       const confirmationsBefore = testHost.presence.requests.length
       await page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '设置', exact: true }).click()
       const heldBack = page.locator('.settings-page')
-      await openSection(heldBack, '设备')
+      await openSection(heldBack, '手机与设备')
       const heldSwitch = heldBack.getByRole('switch', { name: '手机可以开始新会话', exact: true })
       await heldSwitch.click()
       await waitFor(() => !policy().remote.allowRemoteStart)
@@ -904,18 +879,20 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
 
       await page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '设置', exact: true }).click()
       const computer = page.locator('.settings-page')
-      // Pairing starts here, so this is where the running agent that would hold a phone back is named.
-      await openSection(computer, '设备')
-      await computer
+      // Pairing starts here, so the sheet names the running agent that would hold a phone back.
+      await openSection(computer, '手机与设备')
+      await page.locator('.device-connect').click()
+      await page
+        .locator('.pair-sheet')
         .getByText(`Fake Agent 正在运行「${hangTitle}」，结束后才能配对新设备。`, {
           exact: true,
         })
         .waitFor()
       // One sentence, and both ways out: open the session, or stop it.
-      const pairingBlocked = computer.locator('.ui-notice', { hasText: `正在运行「${hangTitle}」` })
+      const pairingBlocked = page.locator('.pair-sheet .ui-notice', { hasText: `正在运行「${hangTitle}」` })
       expect(await pairingBlocked.getByRole('button').allInnerTexts()).toEqual(['查看', '停止'])
-      await computer.getByRole('button', { name: '连接手机', exact: true }).scrollIntoViewIfNeeded()
       await captureThemes(page, 'native-desktop-pairing-blocked')
+      await page.locator('.pair-sheet').getByRole('button', { name: '关闭', exact: true }).click()
       // 手机可以开始新会话 in the desktop app: turning it off applies at once, turning it on takes the local confirmation.
       const remoteStart = computer.getByRole('switch', { name: '手机可以开始新会话', exact: true })
       await expect.poll(() => remoteStart.getAttribute('aria-checked')).toBe('false')
@@ -1225,7 +1202,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await waitFor(async () => (await host.bridge.detail(runningId)).summary.status === 'running')
       const runningTitle = (await host.bridge.detail(runningId)).summary.title
       const beforeRunningConfirmation = testHost.presence.requests.length
-      await openSection(computer, '设备')
+      await openSection(computer, '手机与设备')
       const remoteStartOff = computer.getByRole('switch', { name: '手机可以开始新会话', exact: true })
       await remoteStartOff.click()
       await waitFor(() => !policy().remote.allowRemoteStart)
@@ -1495,7 +1472,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await page.getByText('这台设备会生成自己的密钥，再用离线登记码完成登记。', { exact: true }).waitFor()
       await page.getByText(/^本机确认不可用：.*pnpm latch device enroll --offline/u).waitFor()
       expect(await page.getByText(/Touch ID/u).count()).toBe(0)
-      expect(await page.getByRole('button', { name: '请求本机确认', exact: true }).count()).toBe(0)
+      expect(await page.getByRole('button', { name: '请求连接', exact: true }).count()).toBe(0)
       const submit = page.getByRole('button', { name: '使用离线登记码', exact: true })
       expect(await submit.isDisabled()).toBe(true)
       await page.getByRole('textbox', { name: '设备名称', exact: true }).fill('离线登记的桌面端')

@@ -9,7 +9,7 @@ import type { AgentPresetSettings, AgentSettings, AppSnapshot, Approval, TaskDet
 import { AppError, type HarnessPlugin, type ModelDelta, type ToolDefinition } from '@latch/sdk'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { latchEnv } from '@latch/host/env'
-import { browserLaunchOptions, connected } from './helpers/browser.ts'
+import { browserLaunchOptions, connected, nameNextEnrollment } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import {
   backToSection,
@@ -813,38 +813,34 @@ describe('visual capture of the real product', () => {
       pages.set(viewport.name, { context, page: target })
       // Loopback takes a one-time invitation; without one the page says where to get it.
       await target.goto(`${host.loopbackOrigin}/link/`)
-      await target.getByText(/^这台电脑上的浏览器也需要一次性登记链接。/).waitFor()
+      await target.getByText(/^这个浏览器还没连接到 Latch。/).waitFor()
       await recorder.capture(target, viewport, 'enrollment-invitation', 'browser without an invitation')
       const invitation = await testHost.invite(['view', 'run', 'approve:standard', 'admin'], 'loopback-tcp')
       await target.goto(invitation.url)
       await target.getByRole('heading', { name: '连接到 Latch', exact: true }).waitFor()
-      const name = target.getByLabel('设备名称', { exact: true })
-      await name.fill(DEVICE_NAMES[viewport.name])
-      await name.blur()
-      // Every browser device manages the Host, so each one reaches all settings.
-      await target.getByRole('checkbox', { name: '管理此 Host（模型服务、插件、项目和设备）', exact: true }).setChecked(true)
-      await reachable(target.getByRole('button', { name: '请求本机确认', exact: true }))
+      await nameNextEnrollment(target, DEVICE_NAMES[viewport.name])
+      // Every browser device here manages the Host (its invitation allows it), so each one reaches all settings.
+      await reachable(target.getByRole('button', { name: '连接这个浏览器', exact: true }))
       await recorder.capture(target, viewport, 'enrollment', 'form')
 
-      await target.getByRole('button', { name: '请求本机确认', exact: true }).click()
+      await target.getByRole('button', { name: '连接这个浏览器', exact: true }).click()
       await testHost.presence.waitForRequest()
-      await target.getByRole('heading', { name: '等待本机确认', exact: true }).waitFor()
+      await target.getByRole('heading', { name: '在 Mac 上确认', exact: true }).waitFor()
       await reachable(target.getByRole('button', { name: '取消', exact: true }))
       await recorder.capture(target, viewport, 'enrollment-waiting', 'waiting for local confirmation')
 
       // Refused on the Host computer: that request used the invitation up, so the outcome stands above the way to a new
       // link, and the browser comes back with a new one.
       testHost.presence.denyNext()
-      await target.getByText('本机拒绝了此设备。', { exact: true }).waitFor()
-      await target.getByText(/^这台电脑上的浏览器也需要一次性登记链接。/).waitFor()
+      await target.getByText('Mac 上取消了连接。', { exact: true }).waitFor()
+      await target.getByText(/^这个浏览器还没连接到 Latch。/).waitFor()
       await recorder.capture(target, viewport, 'enrollment-denied', 'refused on the Host computer')
 
       await target.goto((await testHost.invite(['view', 'run', 'approve:standard', 'admin'], 'loopback-tcp')).url)
-      await name.fill(DEVICE_NAMES[viewport.name])
-      await target.getByRole('checkbox', { name: '管理此 Host（模型服务、插件、项目和设备）', exact: true }).setChecked(true)
-      await target.getByRole('button', { name: '请求本机确认', exact: true }).click()
+      await nameNextEnrollment(target, DEVICE_NAMES[viewport.name])
+      await target.getByRole('button', { name: '连接这个浏览器', exact: true }).click()
       await testHost.presence.waitForRequest()
-      await target.getByRole('heading', { name: '等待本机确认', exact: true }).waitFor()
+      await target.getByRole('heading', { name: '在 Mac 上确认', exact: true }).waitFor()
       testHost.presence.approveNext()
       await connected(target)
       await target.getByText('会话会保存在这里').first().waitFor({ state: 'attached' })
@@ -865,10 +861,8 @@ describe('visual capture of the real product', () => {
       readOnlyPages.set(viewport.name, { context: readOnlyContext, page: readOnly })
       await readOnly.goto((await testHost.invite(['view', 'run', 'approve:standard'], 'loopback-tcp')).url)
       await readOnly.getByRole('heading', { name: '连接到 Latch', exact: true }).waitFor()
-      const readOnlyName = readOnly.getByLabel('设备名称', { exact: true })
-      await readOnlyName.fill(`只读的${DEVICE_NAMES[viewport.name].replace(/^我的/, '')}`)
-      await readOnlyName.blur()
-      await readOnly.getByRole('button', { name: '请求本机确认', exact: true }).click()
+      await nameNextEnrollment(readOnly, `只读的${DEVICE_NAMES[viewport.name].replace(/^我的/, '')}`)
+      await readOnly.getByRole('button', { name: '连接这个浏览器', exact: true }).click()
       await testHost.presence.waitForRequest()
       testHost.presence.approveNext()
       await connected(readOnly)
@@ -1802,7 +1796,7 @@ describe('visual capture of the real product', () => {
         ['settings-agents', '引擎', settings.getByText('本地 ACP Agent').first()],
         ['settings-workspaces', '项目', settings.getByText('website').first()],
         ['settings-plugins', '插件', target.locator('.plugin-nav-row').first()],
-        ['settings-devices', '设备', settings.getByText('本机桌面端').first()],
+        ['settings-devices', '手机与设备', target.getByRole('switch', { name: '手机可以开始新会话', exact: true })],
         ['settings-about', '关于', settings.getByText('Agent 和插件以你的权限在这台电脑上运行。').first()],
       ] as const) {
         await openSection(settings, section)

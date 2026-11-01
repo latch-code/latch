@@ -1,19 +1,19 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
-import { Check, Laptop, KeyRound, RefreshCw } from 'lucide-react'
-import { isLocalListener } from '@latch/protocol'
-import { acceptableName, enrollmentName, pendingInvitation, useEnrollment, type EnrolledResult } from '../core/enrollment.ts'
-import { useViewport } from '../breakpoints.ts'
-import { useCountdown } from '../hooks/useCountdown.ts'
+import { Laptop, KeyRound, RefreshCw } from 'lucide-react'
+import { isLocalListener, type EnrollmentView } from '@latch/protocol'
 import {
-  BROWSER_SCOPES,
-  DESKTOP_SCOPES,
-  DEVICE_NAME_INVALID_TEXT,
-  CONNECTION_DETAILS,
-  ENROLLMENT_COPY,
-  ENROLLMENT_REASON_TEXT,
-} from '../core/securityCopy.ts'
+  acceptableName,
+  enrollmentName,
+  pendingInvitation,
+  requestedScopes,
+  useEnrollment,
+  type EnrolledResult,
+} from '../core/enrollment.ts'
+import { useViewport } from '../breakpoints.ts'
+import { CONNECTION_DETAILS_COPY, DEVICE_NAME_INVALID_TEXT, ENROLLMENT_COPY, ENROLLMENT_REASON_TEXT } from '../core/securityCopy.ts'
 import type { AuthState } from '../core/useHarness.ts'
-import { Button, Checkbox, ICON_STROKE, InlineNotice, Loading, TextField, type ButtonSize } from '@latch/ui'
+import { Button, ICON_STROKE, InlineNotice, Loading, TextField, type ButtonSize } from '@latch/ui'
+import { ConnectionDetails } from './ConnectionDetails.tsx'
 import { BrandMark } from './ui.tsx'
 
 const COPY = ENROLLMENT_COPY
@@ -94,42 +94,8 @@ export function ConnectScreen({ error, onRetry }: { error: string; onRetry: () =
   )
 }
 
-/**
- * The fingerprint this device computed from its own key, and under it the sentence the computer's system sheet shows
- * (`reason`), when the Host says it. The sheet names the device, not this fingerprint.
- */
-function Fingerprint({ value, reason }: { value: string; reason?: string }) {
-  return (
-    <div className="fingerprint-block">
-      <span className="fingerprint-label">{COPY.fingerprint}</span>
-      {/* Groups are separate boxes so they wrap whole; the spaces between them keep the copied and read text exact. */}
-      <code className="fingerprint" aria-label={`${COPY.fingerprint} ${value}`}>
-        {value
-          .split(' ')
-          .flatMap((group, index) => (index === 0 ? [<span key={index}>{group}</span>] : [' ', <span key={index}>{group}</span>]))}
-      </code>
-      {reason && (
-        <span className="fingerprint-hash">
-          {COPY.sheet}
-          <q>{reason}</q>
-        </span>
-      )}
-    </div>
-  )
-}
-
-function Waiting({
-  fingerprint,
-  reason,
-  expiresAt,
-  onCancel,
-}: {
-  fingerprint: string
-  reason?: string
-  expiresAt: string
-  onCancel: () => void
-}) {
-  const { seconds, fraction } = useCountdown(expiresAt, 120)
+/** The Mac's system sheet names this device; no clock to watch, and the code to compare stays folded unless wanted. */
+function Waiting({ enrollment, compare, onCancel }: { enrollment: EnrollmentView; compare: boolean; onCancel: () => void }) {
   const size = useButtonSize()
   return (
     <section className="enroll-waiting" aria-labelledby="enroll-waiting-title">
@@ -138,18 +104,15 @@ function Waiting({
           <Laptop size={20} strokeWidth={ICON_STROKE[20]} />
         </span>
         <h2 id="enroll-waiting-title">{COPY.waiting}</h2>
-        <span className="enroll-timer" role="timer">
-          {COPY.remaining(seconds)}
-        </span>
       </div>
       <p className="enroll-compare">{COPY.compare}</p>
-      <details className="connection-details">
-        <summary>{CONNECTION_DETAILS}</summary>
-        <Fingerprint value={fingerprint} reason={reason} />
-      </details>
-      <span className="presence-track" aria-hidden="true">
-        <i style={{ '--fraction': String(fraction) }} />
-      </span>
+      <ConnectionDetails
+        code={enrollment.fingerprint}
+        codeNote={compare ? CONNECTION_DETAILS_COPY.compareOnMac : undefined}
+        reason={enrollment.reason}
+        scopes={enrollment.scopes}
+        dataScope={enrollment.dataScope}
+      />
       <Button size={size} block onClick={onCancel}>
         {COPY.cancel}
       </Button>
@@ -159,14 +122,14 @@ function Waiting({
 
 export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnrolled: () => Promise<EnrolledResult> }) {
   const enrollment = useEnrollment(onEnrolled)
-  const { info, step, error, electron } = enrollment
+  const { info, step, error, linkAllowsAdmin, electron } = enrollment
   const legacyName = auth.legacyName ?? info?.legacy?.name
   const legacy = auth.reason === 'legacy-reconfirm' || legacyName !== undefined
   const invited = pendingInvitation() !== null
   const [name, setName] = useState('')
-  const [admin, setAdmin] = useState<boolean | null>(null)
   const [offlineCode, setOfflineCode] = useState('')
   const [showOffline, setShowOffline] = useState(false)
+  const [manageDeclined, setManageDeclined] = useState(false)
   const size = useButtonSize()
   const reason = ENROLLMENT_REASON_TEXT[auth.reason]
   const title = legacy ? COPY.legacyTitle : COPY.title
@@ -217,12 +180,7 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
   if (step.kind === 'waiting')
     return (
       <Shell title={title}>
-        <Waiting
-          fingerprint={step.enrollment.fingerprint}
-          reason={step.enrollment.reason}
-          expiresAt={step.enrollment.expiresAt}
-          onCancel={enrollment.cancel}
-        />
+        <Waiting enrollment={step.enrollment} compare={!electron} onCancel={enrollment.cancel} />
       </Shell>
     )
   if (step.kind === 'completing')
@@ -260,9 +218,14 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
         {reason && !legacy && <InlineNotice tone={auth.reason === 'device-revoked' ? 'error' : 'warn'}>{reason}</InlineNotice>}
         {outcome && <InlineNotice tone="error">{outcome}</InlineNotice>}
         {error && <InlineNotice tone="error">{error}</InlineNotice>}
-        <InlineNotice tone="neutral">
-          {info?.listener === 'loopback-tcp' ? COPY.browserInvitationRequired : COPY.invitationRequired}
-        </InlineNotice>
+        {info?.listener === 'loopback-tcp' ? (
+          <p className="enroll-description">
+            {COPY.browserNotConnected}
+            <code className="enroll-command">{COPY.browserLinkCommand}</code>
+          </p>
+        ) : (
+          <p className="enroll-description">{COPY.invitationRequired}</p>
+        )}
       </Shell>
     )
 
@@ -270,13 +233,17 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
   const offlineOnly = offlineAccepted && presenceDown
   // Without a local confirmation nothing else can approve this device, so there is nothing to submit yet.
   const blocked = presenceDown && !offlineAccepted
-  const adminChecked = admin ?? (info?.firstDevice === true && !invited)
+  // The inviter's ceiling decides what can be asked, and the line above the button says so with a way to turn it down: the
+  // system sheet names only the device. The desktop app's invitation leaves it out, and the command line's, for a Host with
+  // no desktop app to raise it later, has it. Over HTTPS a device always starts without it.
+  const linkCanManage = linkAllowsAdmin && info?.listener === 'loopback-tcp'
+  const wantsAdmin = linkCanManage && !manageDeclined
   const busy = step.kind === 'submitting'
   const chosenName = enrollmentName(name, legacyName)
   const send = (event: FormEvent, useOffline: boolean) => {
     event.preventDefault()
     if (busy || chosenName === null || (useOffline ? !offlineCode.trim() : blocked)) return
-    void enrollment.submit({ name: chosenName, admin: adminChecked, ...(useOffline ? { offlineCode: offlineCode.trim() } : {}) })
+    void enrollment.submit({ name: chosenName, admin: wantsAdmin, ...(useOffline ? { offlineCode: offlineCode.trim() } : {}) })
   }
 
   return (
@@ -284,45 +251,41 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
       {reason && !legacy && <InlineNotice tone={auth.reason === 'device-revoked' ? 'error' : 'warn'}>{reason}</InlineNotice>}
       {outcome && <InlineNotice tone="error">{outcome}</InlineNotice>}
       {presenceDown && <InlineNotice tone="warn">{unavailableText(info?.presence.message, offlineAccepted)}</InlineNotice>}
+      {linkCanManage && !blocked && (
+        <InlineNotice
+          tone={manageDeclined ? 'neutral' : 'warn'}
+          action={
+            <Button
+              variant="link"
+              disabled={busy}
+              onClick={() => {
+                setManageDeclined(!manageDeclined)
+              }}>
+              {manageDeclined ? COPY.undoDecline : COPY.declineManage}
+            </Button>
+          }>
+          {manageDeclined ? COPY.manageDeclined : COPY.linkCanManage}
+        </InlineNotice>
+      )}
       <form
         className="enroll-form"
         onSubmit={event => {
           send(event, offlineOnly)
         }}>
-        <TextField
-          label={COPY.name}
-          value={name}
-          onChange={event => {
-            setName(event.target.value)
-          }}
-          placeholder={acceptableName(legacyName) ?? COPY.namePlaceholder}
-          autoComplete="off"
-          maxLength={80}
-          disabled={busy}
-          error={chosenName === null ? DEVICE_NAME_INVALID_TEXT : undefined}
-        />
-        <fieldset className="enroll-scopes" disabled={busy}>
-          <legend>{COPY.scopes}</legend>
-          {(electron ? DESKTOP_SCOPES : BROWSER_SCOPES).map(label => (
-            <div key={label} className="enroll-scope">
-              <span className="scope-check" aria-hidden="true">
-                <Check size={12} strokeWidth={ICON_STROKE[12]} />
-              </span>
-              <span>{label}</span>
-            </div>
-          ))}
-          {!electron && (
-            <Checkbox
-              className="enroll-scope is-choice"
-              label={COPY.admin}
-              description={COPY.adminNote}
-              checked={adminChecked}
-              onChange={event => {
-                setAdmin(event.target.checked)
-              }}
-            />
-          )}
-        </fieldset>
+        {electron && (
+          <TextField
+            label={COPY.name}
+            value={name}
+            onChange={event => {
+              setName(event.target.value)
+            }}
+            placeholder={acceptableName(legacyName) ?? COPY.namePlaceholder}
+            autoComplete="off"
+            maxLength={80}
+            disabled={busy}
+            error={chosenName === null ? DEVICE_NAME_INVALID_TEXT : undefined}
+          />
+        )}
         {offlineOffered && (offlineOnly || showOffline) && (
           <TextField
             label={COPY.offlineField}
@@ -357,7 +320,7 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
               icon={outcome ? RefreshCw : undefined}
               loading={busy}
               disabled={chosenName === null || blocked}>
-              {legacy ? COPY.legacySubmit : COPY.submit}
+              {legacy ? COPY.legacySubmit : electron ? COPY.submit : COPY.connectBrowser}
             </Button>
             {offlineOffered
               && (showOffline ? (
@@ -385,6 +348,7 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
         )}
       </form>
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
+      {!electron && chosenName !== null && <ConnectionDetails name={chosenName} scopes={requestedScopes(wantsAdmin)} dataScope="work" />}
     </Shell>
   )
 }

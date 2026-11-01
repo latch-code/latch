@@ -3,8 +3,7 @@ import { InlineNotice, SwitchRow } from '@latch/ui'
 import { InlineConfirm } from '../components/InlineConfirm.tsx'
 import { errorMessage, inlineError, isUncertain } from '../core/api.ts'
 import { changeRemoteStart, readRemoteStart } from '../core/remoteStart.ts'
-import { AUDIT_NOT_RECORDED_TEXT } from '../core/securityCopy.ts'
-import { SettingsGroup } from './common.tsx'
+import { AUDIT_NOT_RECORDED_TEXT, DEVICES_COPY as COPY } from '../core/securityCopy.ts'
 
 /**
  * 手机可以开始新会话. Turning it on needs this Mac's Touch ID, so `raiseBlocked` says why it cannot be turned on from here;
@@ -49,12 +48,12 @@ export function RemoteStartRow({ raiseBlocked }: { raiseBlocked?: string }) {
     }
   }
   return (
-    <SettingsGroup>
+    <div className="remote-start">
       {allowed !== null && (
         <SwitchRow
           className="settings-row"
-          title="手机可以开始新会话"
-          description={pending ? '等待 Touch ID…' : '关闭后只能查看、允许或停止已有会话'}
+          title={COPY.remoteStart}
+          description={pending ? '等待 Touch ID…' : COPY.remoteStartNote}
           checked={allowed}
           locked={!allowed ? raiseBlocked : undefined}
           disabled={pending}
@@ -66,6 +65,6 @@ export function RemoteStartRow({ raiseBlocked }: { raiseBlocked?: string }) {
       <InlineConfirm active={pending} />
       {auditMissing && <InlineNotice tone="error">{AUDIT_NOT_RECORDED_TEXT}</InlineNotice>}
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
-    </SettingsGroup>
+    </div>
   )
 }

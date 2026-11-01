@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
+import { closeActiveFile } from './helpers/layout.ts'
 const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aV1cAAAAASUVORK5CYII=', 'base64')
 describe('private attachments through the composer', () => {
   let host: TestHost,
@@ -236,7 +237,7 @@ describe('private attachments through the composer', () => {
       })
       await page.locator('.message-user').getByRole('button', { name: '预览文件：reference.txt', exact: true }).click()
       await page.getByRole('region', { name: '文件预览', exact: true }).getByText('file context', { exact: true }).waitFor()
-      await page.getByRole('button', { name: '关闭文件', exact: true }).click()
+      await closeActiveFile(page)
       await expect.poll(() => input.isEnabled(), { timeout: 10000 }).toBe(true)
       await input.fill('@default:reference.txt.backup')
       await input.fill('@default:reference.txt ')
