@@ -29,6 +29,10 @@ import LatchNativeCore
         do { _ = try await workspace.read("/link/api/personal", body: true) }
         catch { windowRequired = (error as? NativeFailure) == .expired }
         guard windowRequired else { throw NativeFailure.identityMismatch }
+        var cacheNeedsWindow = false
+        do { _ = try await workspace.cachedDetail("none") }
+        catch { cacheNeedsWindow = (error as? NativeFailure) == .expired }
+        guard cacheNeedsWindow else { throw NativeFailure.identityMismatch }
         _ = try await workspace.verify()
         let assistant = try await workspace.submit(NativePendingWrite(method: .post, path: "/link/api/personal/assistants", fields: [
             "name": .string("Swift personal"), "role": .string("Swift private role"), "harnessId": .string("standard"),
@@ -60,6 +64,29 @@ import LatchNativeCore
         guard let cached = try await workspace.cachedSnapshot(),
               cached["tasks"].array.first(where: { $0["id"].string == taskId })?["personal"]["assistantId"].string == assistantId,
               !String(decoding: try cached.encoded(), as: UTF8.self).contains("Swift private") else { throw NativeFailure.storageUnavailable }
+        // The list that survives offline holds only what its rows draw, and the bodies stay behind a window.
+        guard cached["tasks"].array.allSatisfy({ $0["cwd"] == .null && $0["live"] == .null }), cached["catalog"]["providers"] == .null,
+              cached["catalog"]["workspaces"].array.allSatisfy({ Set($0.object.keys) == ["id", "name"] }),
+              cached["catalog"]["harnesses"].array.allSatisfy({ Set($0.object.keys) == ["id", "name", "source", "level"] }),
+              try await workspace.cachedDetail(taskId)?["summary"]["id"].string == taskId,
+              try await workspace.cachedDetail("never-read") == nil else { throw NativeFailure.storageUnavailable }
+        // A run that has ended answers 继续等 plainly; a note against a settled request is refused, not left unknown.
+        guard try await workspace.keepWaiting(sessionId: taskId, runId: "gone", thresholdMs: 1000)["outcome"].string == "ended" else { throw NativeFailure.invalidRecord }
+        var noteRefused = false
+        do { _ = try await workspace.submit(NativePendingWrite(method: .post, path: "/link/api/approvals/settled-request", fields: ["decision": .string("reject"), "note": .string("改用别的办法")])) }
+        catch { noteRefused = (error as? NativeFailure) != .resultUnknown }
+        guard noteRefused, try await workspace.pendingWrites().isEmpty else { throw NativeFailure.invalidRecord }
+        // What the new-session sheet chooses by itself is something this Host accepts from this phone.
+        let live = try await workspace.snapshot()
+        let choice = PhoneStart.defaults(live["catalog"])
+        guard PhoneStart.blocker(live["catalog"], choice: choice) == nil else { throw NativeFailure.invalidRecord }
+        let started = try await workspace.submit(NativePendingWrite(method: .post, path: "/link/api/tasks", fields: PhoneStart.fields(choice, prompt: "Started from the phone")))
+        guard let startedId = started["sessionId"].string else { throw NativeFailure.invalidRecord }
+        for _ in 0..<100 {
+            if try await workspace.detail(startedId)["summary"]["status"].string == "idle" { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        _ = try await workspace.submit(NativePendingWrite(method: .delete, path: "/link/api/tasks/" + startedId, fields: [:]))
         let queuedWrite = try NativePendingWrite(method: .post, path: "/link/api/tasks/" + taskId + "/prompt", fields: ["prompt": .string("Queued Swift follow-up"), "queue": .bool(true)])
         _ = try await workspace.submit(queuedWrite)
         var queuedSettled = false
@@ -129,7 +156,7 @@ import LatchNativeCore
         _ = try await workspace.submit(NativePendingWrite(method: .delete, path: "/link/api/personal/assistants/" + assistantId, fields: [:]))
         guard try await workspace.pendingWrites().isEmpty else { throw NativeFailure.storageUnavailable }
         await workspace.closeOpening(); await vault.lock()
-        return ["personal": true, "windowRequired": true, "privateHistory": true, "cachedClassification": true, "sameRequest": true, "pendingCleared": true,"group":true,"strictGroupCancel":true,"routine":true,"personalQueue":true,"controlRecovery":true]
+        return ["personal": true, "windowRequired": true, "privateHistory": true, "cachedClassification": true, "sameRequest": true, "pendingCleared": true,"group":true,"strictGroupCancel":true,"routine":true,"personalQueue":true,"controlRecovery":true,"phoneWorkspace":true]
     } catch {
         await workspace.closeOpening(); await vault.lock(); throw error
     }

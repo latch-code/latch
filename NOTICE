@@ -9,7 +9,8 @@ Its BSD license is retained in packages/link-client/native/GO-LICENSE and copied
 Brand icons
 
 The web client shows the icon of each agent and model service it can use, from the files in
-apps/web/src/assets/brands/. They are copied unmodified from the sources below. The marks are trademarks of their
+apps/web/src/assets/brands/. They are copied unmodified from the sources below; native/ios/App/Brands/ holds PNG renderings of
+the engine marks for the iPhone app. The marks are trademarks of their
 respective owners and are used only to identify the service or tool; their use does not imply endorsement.
 
 From the project's own repository or site:

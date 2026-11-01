@@ -1,0 +1,432 @@
+import Foundation
+
+/** A prompt and everything that answered it, up to the next prompt. */
+public struct PhoneTurn: Equatable, Sendable, Identifiable {
+    public let id: String
+    public let user: NativeJSON?
+    public var replies: [NativeJSON]
+}
+public enum PhoneWorkItem: Equatable, Sendable {
+    case tool(NativeJSON), thinking(NativeJSON), reads([NativeJSON])
+}
+public enum PhoneTurnBlock: Equatable, Sendable {
+    case work(key: String, items: [PhoneWorkItem])
+    case prose(NativeJSON), note(NativeJSON)
+}
+public struct PhoneToolLabel: Equatable, Sendable {
+    public let verb: String?
+    public let object: String
+    public let mono: Bool
+}
+public struct PhoneDiffStat: Equatable, Sendable { public let add: Int; public let del: Int }
+public struct PhoneDiffLine: Equatable, Sendable {
+    public enum Kind: Sendable { case context, add, remove }
+    public let kind: Kind
+    public let text: String
+}
+public struct PhoneChangedFile: Equatable, Sendable {
+    public let path: String
+    public let root: String?
+    public let add: Int?
+    public let del: Int?
+    public let deleted: Bool
+}
+public struct PhoneTurnSummary: Equatable, Sendable {
+    public let files: [PhoneChangedFile]
+    public let add: Int?
+    public let del: Int?
+}
+public struct PhoneRunStatus: Equatable, Sendable {
+    public enum Tone: Sendable { case plain, amber, quiet }
+    public enum Action: Sendable { case keepWaiting, stop }
+    public let tone: Tone
+    public let text: String
+    public let clock: String?
+    public let actions: [Action]
+}
+public struct PhoneRunEnd: Equatable, Sendable {
+    public let failed: Bool
+    public let text: String
+    public let unknown: [String]
+}
+public struct PhoneApprovalGate: Equatable, Sendable {
+    public let heading: String
+    /** The Host's reason for a risky request, on its own line. */
+    public let riskClause: String?
+    /** Nil: this phone may not allow it, and `macLine` says where it can be. */
+    public let allowOption: String?
+    public let canAllow: Bool
+    public let macLine: String?
+}
+
+public enum PhoneConversation {
+    public static func isLive(_ detail: NativeJSON) -> Bool { !(detail["liveText"].string ?? "").isEmpty || !(detail["liveReasoning"].string ?? "").isEmpty }
+    /** Committed messages plus the streaming reply under the ID it will keep once committed. */
+    public static func rendered(_ detail: NativeJSON) -> [NativeJSON] {
+        var messages = detail["messages"].array
+        guard isLive(detail) else { return messages }
+        let id = detail["liveMessageId"].string ?? "live:" + (detail["summary"]["id"].string ?? "")
+        if messages.contains(where: { $0["id"].string == id }) { return messages }
+        var live: [String: NativeJSON] = ["id": .string(id), "role": .string("assistant"), "text": detail["liveText"]]
+        if !(detail["liveReasoning"].string ?? "").isEmpty { live["reasoning"] = detail["liveReasoning"] }
+        messages.append(.object(live))
+        return messages
+    }
+    public static func turns(_ messages: [NativeJSON]) -> [PhoneTurn] {
+        var result: [PhoneTurn] = []
+        for message in messages {
+            if message["role"].string == "user" { result.append(PhoneTurn(id: message["id"].string ?? "user:\(result.count)", user: message, replies: [])) }
+            else if result.isEmpty { result.append(PhoneTurn(id: "lead:" + (message["id"].string ?? ""), user: nil, replies: [message])) }
+            else { result[result.count - 1].replies.append(message) }
+        }
+        return result
+    }
+    public static func toolKind(_ message: NativeJSON) -> String {
+        if let kind = message["tool"]["kind"].string { return kind }
+        let name = (message["toolName"].string ?? "").lowercased()
+        func has(_ words: String) -> Bool { name.range(of: words, options: .regularExpression) != nil }
+        if has("write|edit|patch|update|create") { return "edit" }
+        if has("read|cat|open|view") { return "read" }
+        if has("list|search|find|grep|glob") { return "search" }
+        if has("shell|exec|run|command|bash|task") { return "execute" }
+        if has("fetch|http|web|url") { return "fetch" }
+        if has("delete|remove") { return "delete" }
+        return "other"
+    }
+    private static func isQuestion(_ message: NativeJSON) -> Bool { message["toolName"].string == "ask_user" }
+    private static func plainRead(_ message: NativeJSON) -> Bool { message["state"].string == "completed" && toolKind(message) == "read" && message["tool"]["decision"] == .null }
+    private static func joinReads(_ items: [PhoneWorkItem]) -> [PhoneWorkItem] {
+        var result: [PhoneWorkItem] = [], reads: [NativeJSON] = []
+        func flush() {
+            if reads.count > 1 { result.append(.reads(reads)) } else if let only = reads.first { result.append(.tool(only)) }
+            reads = []
+        }
+        for item in items {
+            if case let .tool(message) = item, plainRead(message) { reads.append(message) } else { flush(); result.append(item) }
+        }
+        flush()
+        return result
+    }
+    /** A settled turn joins its consecutive reads; a live one keeps each on its own row, so rows do not jump as they finish. */
+    public static func blocks(_ turn: PhoneTurn, settled: Bool) -> [PhoneTurnBlock] {
+        var blocks: [PhoneTurnBlock] = [], work: [PhoneWorkItem] = []
+        func key(_ item: PhoneWorkItem) -> String {
+            switch item {
+            case let .tool(message), let .thinking(message): return message["id"].string ?? ""
+            case let .reads(messages): return messages.first?["id"].string ?? ""
+            }
+        }
+        func flush() {
+            guard let first = work.first else { return }
+            blocks.append(.work(key: "work:" + key(first), items: settled ? joinReads(work) : work)); work = []
+        }
+        for message in turn.replies {
+            let role = message["role"].string
+            if role == "tool" && !isQuestion(message) { work.append(.tool(message)); continue }
+            if role == "assistant" {
+                if !(message["reasoning"].string ?? "").isEmpty { work.append(.thinking(message)) }
+                if (message["text"].string ?? "").isEmpty && message["attachments"].array.isEmpty { continue }
+                flush(); blocks.append(.prose(message)); continue
+            }
+            flush(); blocks.append(.note(message))
+        }
+        flush()
+        return blocks
+    }
+    public static func turnText(_ turn: PhoneTurn) -> String {
+        turn.replies.filter { $0["role"].string == "assistant" && !($0["text"].string ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .compactMap { $0["text"].string }.joined(separator: "\n\n")
+    }
+    /** How a settled turn ended; the latest turn's status says it, an earlier one is read from its own messages. */
+    public static func outcome(_ turn: PhoneTurn, latestStatus: String?) -> String {
+        if let latestStatus {
+            switch latestStatus { case "failed": return "failed"; case "cancelled": return "stopped"; case "interrupted": return "interrupted"; default: return "completed" }
+        }
+        if turn.replies.contains(where: { $0["role"].string == "assistant" && $0["state"].string == "cancelled" }) { return "stopped" }
+        if turn.replies.contains(where: { ["assistant", "system"].contains($0["role"].string ?? "") && $0["state"].string == "failed" }) { return "failed" }
+        return "completed"
+    }
+    /** A failed or stopped turn stays open, and so does one that ended without a word, because its last row is all it said. */
+    public static func workFolds(_ turn: PhoneTurn, outcome: String) -> Bool {
+        guard outcome == "completed" else { return false }
+        return turn.replies.contains { $0["role"].string == "tool" && !isQuestion($0) } && !turnText(turn).isEmpty
+    }
+    public static func unrun(_ message: NativeJSON) -> String? {
+        let state = message["state"].string
+        guard state == "failed" || state == "cancelled", message["startedAt"] == .null else { return nil }
+        if let outcome = message["tool"]["decision"]["outcome"].string { return outcome == "allowed" ? nil : outcome }
+        return state == "failed" && (message["tool"]["output"].string ?? message["text"].string ?? "").hasPrefix("APPROVAL_REJECTED:") ? "rejected" : nil
+    }
+    /** 已工作 2 分 13 秒, with what the fold must not hide. */
+    public static func foldWords(_ turn: PhoneTurn) -> String {
+        let spent = PhoneTime.duration(seconds: Double(turn.user?["turn"]["activeMs"].integer ?? 0) / 1000)
+        let tools = turn.replies.filter { $0["role"].string == "tool" }
+        let rejected = tools.filter { unrun($0) == "rejected" }.count
+        let failed = tools.filter { $0["state"].string == "failed" && unrun($0) == nil }.count
+        return (["已工作" + (spent.map { " " + $0 } ?? "")] + (failed > 0 ? ["\(failed) 步失败"] : []) + (rejected > 0 ? ["\(rejected) 步被拒绝"] : [])).joined(separator: " · ")
+    }
+    /** One line for a failed row: the first line it reported, without the runtime's code, and cut. */
+    public static func failureReason(_ message: NativeJSON) -> String {
+        var output = message["tool"]["output"].string ?? message["text"].string ?? ""
+        if output.hasPrefix("APPROVAL_REJECTED:") { output = String(output.dropFirst(18)) }
+        var line = output.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty } ?? ""
+        if let code = line.range(of: "^TOOL_[A-Z_]+:\\s*", options: .regularExpression) { line.removeSubrange(code) }
+        if line.isEmpty { return "没有成功" }
+        return line.count > 120 ? String(line.prefix(120)) + "…" : line
+    }
+    private static func basename(_ path: String) -> String {
+        var value = path
+        while value.count > 1, value.hasSuffix("/") { value.removeLast() }
+        return value.split(separator: "/").last.map(String.init) ?? path
+    }
+    private static func argument(_ input: NativeJSON, _ names: [String]) -> String? {
+        guard let text = input.string, text.utf8.count <= 65_536, let value = try? NativeJSON.decode(Data(text.utf8)), case .object = value else { return nil }
+        for name in names {
+            if let found = value[name].string, !found.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !found.contains("\n") { return found }
+        }
+        return nil
+    }
+    private static func titledObject(_ tool: NativeJSON) -> (object: String, path: Bool)? {
+        if let located = tool["locations"].array.first?.string { return (located, true) }
+        let groups: [([String], Bool)] = [(["path", "file", "file_path", "filePath"], true), (["command", "cmd"], false), (["query", "pattern", "q"], false), (["url"], false)]
+        for (keys, path) in groups {
+            if let value = argument(tool["input"], keys) {
+                let trimmed = value.trimmingCharacters(in: .whitespaces)
+                return trimmed == "." || trimmed == "./" ? nil : (value, path)
+            }
+        }
+        return nil
+    }
+    private static let verbs = ["read": "读取", "edit": "编辑", "delete": "删除", "move": "移动", "search": "搜索", "execute": "运行", "fetch": "获取"]
+    /** A verb by the tool's kind and its object; a tool Latch can read nothing from shows its raw name in mono, never a guess. */
+    public static func toolLabel(_ message: NativeJSON) -> PhoneToolLabel {
+        let tool = message["tool"], diffs = tool["diffs"].array
+        if diffs.count > 1 { return PhoneToolLabel(verb: "编辑", object: "\(diffs.count) 个文件", mono: false) }
+        if let diff = diffs.first {
+            let name = basename(diff["path"].string ?? "")
+            if diff["previous"].string != "none" || !(diff["oldText"].string ?? "").isEmpty { return PhoneToolLabel(verb: "编辑", object: name, mono: false) }
+            return PhoneToolLabel(verb: "新建", object: "\(name) · \(lines(diff["newText"].string ?? "").count) 行", mono: false)
+        }
+        if let title = tool["toolTitle"].string {
+            guard let found = titledObject(tool) else { return PhoneToolLabel(verb: nil, object: title, mono: false) }
+            return PhoneToolLabel(verb: title, object: found.path ? basename(found.object) : found.object, mono: !found.path)
+        }
+        let kind = toolKind(message), verb = verbs[kind]
+        var object: String?, mono = true
+        switch kind {
+        case "execute": object = argument(tool["input"], ["command", "cmd"])
+        case "read", "edit", "delete", "move":
+            object = (tool["locations"].array.first?.string ?? argument(tool["input"], ["path", "file", "file_path", "filePath"])).map(basename); mono = false
+        case "search": object = argument(tool["input"], ["query", "pattern", "q"])
+        case "fetch": object = argument(tool["input"], ["url"])
+        default: break
+        }
+        if let object, let verb { return PhoneToolLabel(verb: verb, object: object, mono: mono) }
+        if let title = tool["title"].string, title != message["toolName"].string { return PhoneToolLabel(verb: nil, object: title, mono: false) }
+        if let name = message["toolName"].string { return PhoneToolLabel(verb: nil, object: name, mono: true) }
+        return PhoneToolLabel(verb: nil, object: "工具调用", mono: false)
+    }
+    /** A request that touches several places says how many: the first alone would read as all of it. */
+    public static func toolHeading(_ tool: NativeJSON, toolName: String?) -> String {
+        let places = tool["locations"].array.count, more = places > 1 ? " 等 \(places) 处" : ""
+        if let title = tool["toolTitle"].string {
+            if let found = titledObject(tool) { return title + " " + found.object + more }
+            return title + more
+        }
+        return (tool["title"].string ?? toolName ?? "工具调用") + more
+    }
+    private static func lines(_ text: String) -> [String] {
+        if text.isEmpty { return [] }
+        var result = text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
+        if result.last == "" { result.removeLast() }
+        return result
+    }
+    /** Line diff. Above a million LCS cells the changed middle reads as a full replacement, as the desktop draws it. */
+    public static func diffLines(old: String?, new: String) -> [PhoneDiffLine] {
+        let a = lines(old ?? ""), b = lines(new)
+        var start = 0
+        while start < a.count, start < b.count, a[start] == b[start] { start += 1 }
+        var endA = a.count, endB = b.count
+        while endA > start, endB > start, a[endA - 1] == b[endB - 1] { endA -= 1; endB -= 1 }
+        var result = a[0..<start].map { PhoneDiffLine(kind: .context, text: $0) }
+        let midA = Array(a[start..<endA]), midB = Array(b[start..<endB]), m = midA.count, n = midB.count
+        if m * n > 1_000_000 {
+            result += midA.map { PhoneDiffLine(kind: .remove, text: $0) } + midB.map { PhoneDiffLine(kind: .add, text: $0) }
+        } else {
+            let width = n + 1
+            var table = [UInt32](repeating: 0, count: (m + 1) * width)
+            if m > 0, n > 0 {
+                for i in stride(from: m - 1, through: 0, by: -1) {
+                    for j in stride(from: n - 1, through: 0, by: -1) {
+                        table[i * width + j] = midA[i] == midB[j] ? table[(i + 1) * width + j + 1] + 1 : max(table[(i + 1) * width + j], table[i * width + j + 1])
+                    }
+                }
+            }
+            var i = 0, j = 0
+            while i < m, j < n {
+                if midA[i] == midB[j] { result.append(PhoneDiffLine(kind: .context, text: midA[i])); i += 1; j += 1 }
+                else if table[(i + 1) * width + j] >= table[i * width + j + 1] { result.append(PhoneDiffLine(kind: .remove, text: midA[i])); i += 1 }
+                else { result.append(PhoneDiffLine(kind: .add, text: midB[j])); j += 1 }
+            }
+            result += midA[i...].map { PhoneDiffLine(kind: .remove, text: $0) } + midB[j...].map { PhoneDiffLine(kind: .add, text: $0) }
+        }
+        result += a[endA...].map { PhoneDiffLine(kind: .context, text: $0) }
+        return result
+    }
+    public static func diffStat(_ tool: NativeJSON) -> PhoneDiffStat? {
+        let diffs = tool["diffs"].array
+        guard !diffs.isEmpty else { return nil }
+        var add = 0, del = 0
+        for diff in diffs {
+            for line in diffLines(old: diff["oldText"].string, new: diff["newText"].string ?? "") {
+                if line.kind == .add { add += 1 } else if line.kind == .remove { del += 1 }
+            }
+        }
+        return PhoneDiffStat(add: add, del: del)
+    }
+    private static func applied(_ message: NativeJSON) -> [NativeJSON] {
+        let state = message["state"].string
+        if state == "awaiting-approval" || state == "queued" || unrun(message) != nil { return [] }
+        return message["tool"]["diffs"].array
+    }
+    /** Whether a session has any file to list, without counting a single line of its diffs. */
+    public static func hasFiles(_ detail: NativeJSON) -> Bool {
+        detail["messages"].array.contains { message in
+            guard message["role"].string != "user" else { return false }
+            return applied(message).contains { $0["path"].string != nil } || message["outputs"].array.contains { $0["change"].string != "deleted" && $0["path"].string != nil }
+        }
+    }
+    /**
+     * What a turn's tools edited and what the folders watched during its run saw. A call its approval kept from running changed
+     * nothing, so it does not count; a watched file carries no line counts because other writers share the folder.
+     */
+    public static func summary(_ turn: PhoneTurn, outputs: [NativeJSON]) -> PhoneTurnSummary {
+        var order: [String] = [], added: [String: Int] = [:], removed: [String: Int] = [:]
+        for message in turn.replies where message["role"].string == "tool" {
+            for diff in applied(message) {
+                guard let path = diff["path"].string else { continue }
+                if added[path] == nil { order.append(path); added[path] = 0; removed[path] = 0 }
+                for line in diffLines(old: diff["oldText"].string, new: diff["newText"].string ?? "") {
+                    if line.kind == .add { added[path, default: 0] += 1 } else if line.kind == .remove { removed[path, default: 0] += 1 }
+                }
+            }
+        }
+        var files = order.map { PhoneChangedFile(path: $0, root: nil, add: added[$0], del: removed[$0], deleted: false) }
+        for file in outputs {
+            guard let path = file["path"].string, added[path] == nil else { continue }
+            files.append(PhoneChangedFile(path: path, root: file["root"].string, add: nil, del: nil, deleted: file["change"].string == "deleted"))
+        }
+        let counted = !files.isEmpty && files.allSatisfy { $0.add != nil }
+        return PhoneTurnSummary(files: files, add: counted ? files.reduce(0) { $0 + ($1.add ?? 0) } : nil, del: counted ? files.reduce(0) { $0 + ($1.del ?? 0) } : nil)
+    }
+    /** Under the person's latest bubble, until the agent starts answering. */
+    public static func delivery(_ detail: NativeJSON, turn: PhoneTurn) -> String? {
+        let activity = detail["summary"]["live"]["activity"].string
+        guard let activity, (detail["liveText"].string ?? "").isEmpty, turnText(turn).isEmpty else { return nil }
+        return activity == "starting" ? "Mac 已收到" : "Agent 已开始"
+    }
+    private static func minutes(_ seconds: TimeInterval) -> String { "\(max(1, Int(seconds / 60))) 分钟" }
+    /** The line under a running turn: what is really happening, never only that time passes. */
+    public static func runStatus(_ detail: NativeJSON, stopping: Bool, engine: String, hostNow: Date) -> PhoneRunStatus {
+        let live = detail["summary"]["live"], activity = detail["activity"]["phase"].string
+        if stopping || activity == "cancelling" || live["activity"].string == "cancelling" {
+            return PhoneRunStatus(tone: .plain, text: "正在停止…", clock: nil, actions: [])
+        }
+        if !detail["questions"].array.isEmpty { return PhoneRunStatus(tone: .quiet, text: "等你回答", clock: nil, actions: []) }
+        if !detail["approvals"].array.isEmpty || detail["summary"]["status"].string == "waiting-approval" || activity == "approval" {
+            return PhoneRunStatus(tone: .quiet, text: "需要你允许", clock: nil, actions: [])
+        }
+        if PhoneSessions.stuckOnRequest(live) { return PhoneRunStatus(tone: .amber, text: engine + " 发来一个看不懂的请求", clock: nil, actions: [.stop]) }
+        if live["silent"].bool {
+            let quiet = hostNow.timeIntervalSince(PhoneTime.parse(live["lastEventAt"]) ?? hostNow)
+            let commandLike = ["command", "tool"].contains(live["activity"].string ?? "")
+            let text = commandLike ? (live["commandName"].string ?? "命令") + " · \(minutes(quiet))没有输出" : "等模型回应 · \(minutes(quiet))没有新内容"
+            return PhoneRunStatus(tone: .amber, text: text, clock: nil, actions: [.keepWaiting, .stop])
+        }
+        if activity == "starting" {
+            let slow = PhoneTime.parse(detail["activity"]["since"]).map { hostNow.timeIntervalSince($0) >= 10 } ?? false
+            return PhoneRunStatus(tone: .plain, text: slow ? engine + " 启动较慢，仍在等待进程就绪…" : "正在启动 " + engine + "…", clock: nil, actions: [])
+        }
+        if live == .null, let last = PhoneTime.parse(detail["lastOutputAt"]), hostNow.timeIntervalSince(last) > 120 {
+            return PhoneRunStatus(tone: .amber, text: minutes(hostNow.timeIntervalSince(last)) + "没有新输出", clock: nil, actions: [.stop])
+        }
+        let elapsed = PhoneSessions.runElapsed(started: detail["runStartedAt"], waited: detail["runWaitMs"], waiting: detail["runWaitingSince"], hostNow: hostNow)
+        let running = detail["messages"].array.last { $0["role"].string == "tool" && $0["state"].string == "running" }
+        let command = running.flatMap { toolKind($0) == "execute" ? toolLabel($0).object : nil } ?? (live["activity"].string == "command" ? live["commandName"].string : nil)
+        return PhoneRunStatus(tone: .plain, text: command.map { "命令运行中 · " + $0 } ?? "运行中", clock: elapsed.map { PhoneTime.runClock(seconds: $0) }, actions: [])
+    }
+    public static func runEnd(_ summary: NativeJSON, engine: String) -> PhoneRunEnd? {
+        let end = summary["runEnd"]
+        guard let reason = end["reason"].string else { return nil }
+        let unknown = end["unknownResults"].array.compactMap { $0["name"].string }
+        let count = Int(end["unknownResultCount"].integer ?? UInt64(unknown.count))
+        let uncertain = count > 0 ? " · 这 \(count) 条命令结果未知，请核对" : ""
+        switch reason {
+        case "process-exited": return PhoneRunEnd(failed: true, text: engine + " 已退出 · 这一轮没有完成" + uncertain, unknown: unknown)
+        case "forced-stop": return PhoneRunEnd(failed: false, text: "已强制停止" + uncertain, unknown: unknown)
+        case "host-stopped": return PhoneRunEnd(failed: false, text: "这一轮被中断了" + uncertain, unknown: unknown)
+        case "turn-ended": return count > 0 ? PhoneRunEnd(failed: false, text: engine + " 结束了这一轮" + uncertain, unknown: unknown) : nil
+        default: return nil
+        }
+    }
+    private static let riskWords = ["code-root": "Latch 自己的代码", "protected-path": "受保护的文件", "outside-workspace": "在项目文件夹之外",
+        "unresolved-path": "不是项目里的相对路径", "unlisted-tool": "Latch 不认识的工具", "unparsable-arguments": "参数无法解析"]
+    /**
+     * What this phone may do with an approval. Only an ordinary step of the built-in engine can be allowed here, and only once:
+     * the phone never offers allow-always. A request it cannot allow says so plainly, with no button that looks dead.
+     */
+    public static func approvalGate(_ approval: NativeJSON, canApproveStandard: Bool) -> PhoneApprovalGate {
+        let heading = toolHeading(approval["tool"], toolName: approval["toolName"].string)
+        let options = approval["options"].array
+        let once = options.first { $0["kind"].string == "allow_once" }
+        let ordinary = approval["risk"].string == "R1" && !approval["advisory"].bool
+        let offered = options.isEmpty || once != nil
+        let clause: String? = !ordinary && !approval["advisory"].bool ? riskWords[approval["riskReason"].string ?? ""] ?? "高风险" : nil
+        if ordinary && !canApproveStandard {
+            return PhoneApprovalGate(heading: heading, riskClause: clause, allowOption: nil, canAllow: false, macLine: "这台手机没有允许的权限")
+        }
+        if ordinary && offered {
+            return PhoneApprovalGate(heading: heading, riskClause: clause, allowOption: once?["id"].string, canAllow: true, macLine: nil)
+        }
+        return PhoneApprovalGate(heading: heading, riskClause: clause, allowOption: nil, canAllow: false, macLine: "需要在 Mac 上用 Touch ID 允许")
+    }
+    /** What the Host would refuse in a rejection's note, said before sending. The Host also refuses invisible characters, and its word stands. */
+    public static let rejectionNoteLimit = 500
+    public static func rejectionNoteTooLong(_ text: String) -> Bool {
+        text.replacingOccurrences(of: "\r\n", with: "\n").trimmingCharacters(in: .whitespacesAndNewlines).unicodeScalars.count > rejectionNoteLimit
+    }
+    /** Whether this phone may type into the session, and the plain line in place of the field when it may not. */
+    public static func inputGate(summary: NativeJSON, permission: NativeJSON, canRun: Bool, connected: Bool) -> String? {
+        if !connected { return "Mac 不在线" }
+        if summary["permissionDrift"].bool || permission["drift"] != .null { return "这个会话的权限变了，已停止接受输入" }
+        if (permission["level"].string ?? summary["level"].string) == "L3" { return "这个会话只能在 Mac 上发送消息" }
+        if !canRun { return "这台手机不能发送消息" }
+        return nil
+    }
+    /** Engine, a 权限 away from the default, branch, and usage from half the context up. */
+    public static func subtitle(_ detail: NativeJSON, engine: String) -> (parts: [String], fullAccess: Bool) {
+        let summary = detail["summary"], permission = detail["permission"]
+        var parts = [engine], fullAccess = false
+        let level = permission["level"].string ?? summary["level"].string
+        if level == "L3" {
+            let mode = detail["config"].array.first { $0["category"].string == "mode" }
+            if let mode, let current = mode["currentValue"].string {
+                let never = permission["neverAskModes"].array.contains(.string(current))
+                let standing = permission["defaultMode"].string ?? permission["expectedMode"].string
+                if never { fullAccess = true; parts.append("完全访问") }
+                else if current != standing { parts.append(mode["options"].array.first { $0["value"].string == current }?["name"].string ?? current) }
+            } else if permission["approvals"].string == "none" { parts.append("由 " + engine + " 决定") }
+            else if permission != .null, permission["readback"].string != "mode" { parts.append("权限无法确认") }
+        }
+        if let branch = summary["branch"].string { parts.append(branch) }
+        if let used = detail["usageReport"]["contextUsed"].integer, let size = detail["usageReport"]["contextSize"].integer, size > 0 {
+            let percent = Int((Double(used) / Double(size) * 100).rounded())
+            if percent >= 50 { parts.append("\(percent)%") }
+        }
+        return (parts, fullAccess)
+    }
+    /** The model a turn's first step used, as the author line names it. */
+    public static func turnModel(_ turn: PhoneTurn) -> String? {
+        turn.replies.first { $0["role"].string == "assistant" && !($0["model"].string ?? "").isEmpty }?["model"].string
+    }
+}

@@ -97,7 +97,7 @@ public actor NativeHTTPConnection {
             throw NativeFailure.identityMismatch
         }
     }
-    public func request(_ method: NativeHTTPMethod, path: String, body: Data? = nil, headers: [String: String] = [:], maximum: Int = 1_048_576) async throws -> NativeHTTPResponse {
+    public func request(_ method: NativeHTTPMethod, path: String, body: Data? = nil, headers: [String: String] = [:], maximum: Int = 1_048_576, timeoutSeconds: Int64 = 15) async throws -> NativeHTTPResponse {
         guard !closed, channel.isActive else { throw NativeFailure.unavailable }
         guard requests < 16, path.hasPrefix("/link/api/"), path.utf8.count <= 4096, path.utf8.allSatisfy({ $0 >= 33 && $0 < 127 }),
               (body?.count ?? 0) <= 1_048_576, (0...1_048_576).contains(maximum), headers.count <= 8,
@@ -111,7 +111,7 @@ public actor NativeHTTPConnection {
         let response = channel.eventLoop.makePromise(of: NativeHTTPResponse.self), streamPromise = channel.eventLoop.makePromise(of: (any Channel).self)
         streams.createStreamChannel(promise: streamPromise) { stream in
             stream.eventLoop.makeCompletedFuture {
-                try stream.pipeline.syncOperations.addHandlers(HTTP2FramePayloadToHTTP1ClientCodec(httpProtocol: .https), HTTPResponseCollector(promise: response, maximum: maximum))
+                try stream.pipeline.syncOperations.addHandlers(HTTP2FramePayloadToHTTP1ClientCodec(httpProtocol: .https), HTTPResponseCollector(promise: response, maximum: maximum, timeoutSeconds: timeoutSeconds))
             }
         }
         let stream = try await streamPromise.futureResult.get()
@@ -237,10 +237,11 @@ private final class HTTPResponseCollector: ChannelInboundHandler, @unchecked Sen
     private var settled = false
     private weak var context: ChannelHandlerContext?
     private var timer: Scheduled<Void>?
-    init(promise: EventLoopPromise<NativeHTTPResponse>, maximum: Int) { self.promise = promise; self.maximum = maximum }
+    private let timeoutSeconds: Int64
+    init(promise: EventLoopPromise<NativeHTTPResponse>, maximum: Int, timeoutSeconds: Int64) { self.promise = promise; self.maximum = maximum; self.timeoutSeconds = timeoutSeconds }
     func handlerAdded(context: ChannelHandlerContext) {
         self.context = context
-        timer = context.eventLoop.scheduleTask(in: .seconds(15)) { [self] in if let context = self.context { fail(context) } }
+        timer = context.eventLoop.scheduleTask(in: .seconds(timeoutSeconds)) { [self] in if let context = self.context { fail(context) } }
     }
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         guard !settled else { return }

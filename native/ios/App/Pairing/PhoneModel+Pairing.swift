@@ -139,8 +139,14 @@ extension PhoneModel {
             await connection?.close()
             try? await store?.abandonDraft()
         }
+        returnToSavedMac()
     }
-    func dismissPairingFailure() { pairing = nil }
+    func dismissPairingFailure() { pairing = nil; returnToSavedMac() }
+    /** A pairing resumed at launch took the place of connecting, and the list offers no other way to a lone saved Mac. */
+    private func returnToSavedMac() {
+        guard workspace == nil, !busy else { return }
+        Task { await connectLast() }
+    }
     private func endPairing(_ failure: PhonePairingFailure, keepDraft: Bool, keys: DeviceKeyReference?) async {
         if !keepDraft {
             if let keys, let store {

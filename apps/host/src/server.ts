@@ -47,6 +47,7 @@ import {
   type DeviceScope,
   type FolderVia,
   type HarnessSource,
+  type HarnessInfo,
   type HostCatalog,
   type HostStateEvent,
   type HostView,
@@ -3022,6 +3023,18 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return remote.allowRemoteStart && levelAtMost('L1', remote.maxLevel) && (remote.workspaces === null || remote.workspaces.includes(id))
     }
 
+    /** Whether other devices may start sessions on a harness: never a full-access one, which only starts on host.sock. */
+    function remoteHarnessStartable(harness: Pick<HarnessInfo, 'id' | 'level' | 'source'>): boolean {
+      const remote = policy.get().remote
+      const level = harness.level ?? (harness.source === 'builtin' ? 'L1' : 'L3')
+      return (
+        remote.allowRemoteStart
+        && level !== 'L3'
+        && levelAtMost(level, remote.maxLevel)
+        && (remote.harnesses === null || remote.harnesses.includes(harness.id))
+      )
+    }
+
     function startInfo(): WorkspaceInfo {
       return {
         id: 'default',
@@ -3529,7 +3542,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           runLiveness: true,
           ...routes.features(caller),
         },
-        harnesses: hub!.drivers(),
+        harnesses: hub!.drivers().map(harness => ({ ...harness, remoteStart: remoteHarnessStartable(harness) })),
         providers: usableProviders().map(provider => summarizeProvider(provider, providerKindOf(provider.id))),
         unusableProviders: unusableProviders(),
         uiPanels: registry.uiPanels(),

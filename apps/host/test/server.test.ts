@@ -4181,8 +4181,11 @@ describe('projects of several folders', () => {
       folders: [{ id: 'default', path: t.workspaceRoot }],
       remoteStart: true,
     })
+    expect(snapshot.catalog!.harnesses.find(harness => harness.id === 'standard')?.remoteStart).toBe(true)
     await desktop.json('policy', { method: 'PATCH', body: { remote: { allowRemoteStart: false } } })
     expect((await projectOf(desktop, id)).remoteStart).toBe(false)
+    const narrowed = await desktop.json<AppSnapshot>('snapshot')
+    expect(narrowed.catalog!.harnesses.find(harness => harness.id === 'standard')?.remoteStart).toBe(false)
   })
 
   it('audits folder grants first and saves nothing when that fails, while removals proceed and say the record is missing', async () => {

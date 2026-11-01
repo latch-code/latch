@@ -26,6 +26,8 @@ export interface HarnessInfo {
    * and it does not limit which directories it reads. Absent: an older Host, or `primary`.
    */
   projectFolders?: { access: ProjectFolderAccess; max?: number }
+  /** Other devices may start sessions on this harness under the current policy; absent from older Hosts. */
+  remoteStart?: boolean
 }
 
 export type ProjectFolderAccess = 'all' | 'primary' | 'primary-asks' | 'primary-unbounded'

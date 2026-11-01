@@ -14,38 +14,102 @@ extension PhoneModel {
         area = .projects; assistantId = nil; groupId = nil; groupControl = nil; groupDetail = .null; sessionId = nil; detail = .null; assistantDetail = .null
         contentGeneration = UUID(); PreviewFiles.clear(); startEvents()
     }
+    /** Whether the open session is stopping: this phone asked and has no answer yet, or the Host says so, whoever asked. */
+    var stoppingCurrent: Bool {
+        guard let sessionId else { return false }
+        return controlsInFlight.contains(Self.cancelPath(sessionId)) || PhoneSessions.rowStatus(currentSummary) == .stopping
+    }
+    private static func cancelPath(_ id: String) -> String { "/link/api/tasks/\(id)/cancel" }
+    static func approvalPath(_ id: String) -> String { "/link/api/approvals/" + id }
     private func performControl(path: String, fields: [String: NativeJSON]) async {
         guard let workspace else { return }
-        let current = generation
-        do {
-            var body = fields
-            if let saved = try await workspace.pendingControl() {
-                var previous = saved["fields"].object, requested = fields
-                previous.removeValue(forKey: "requestId"); requested.removeValue(forKey: "requestId")
-                guard saved["path"].string == path, previous == requested else { throw NativeFailure.resultUnknown }
-                body = saved["fields"].object
-            }
-            _ = try await workspace.freeAction(path: path, fields: body)
+        let current = generation, previous = controlTail
+        controlsInFlight.insert(path)
+        let turn = Task { @MainActor in
+            await previous?.value
             guard generation == current else { return }
-            await refreshControlPending(); _ = await refresh()
-        } catch { if generation == current { await refreshControlPending(); report(error) } }
+            do {
+                var body = fields
+                if let saved = try await workspace.pendingControl() {
+                    var earlier = saved["fields"].object, requested = fields
+                    earlier.removeValue(forKey: "requestId"); requested.removeValue(forKey: "requestId")
+                    guard saved["path"].string == path, earlier == requested else {
+                        // This one was never sent: the earlier control must be confirmed first.
+                        await refreshControlPending(); report(NativeFailure.resultUnknown); return
+                    }
+                    body = saved["fields"].object
+                }
+                _ = try await workspace.freeAction(path: path, fields: body)
+                guard generation == current else { return }
+                await refreshControlPending(); _ = await refresh()
+            } catch {
+                guard generation == current else { return }
+                await refreshControlPending()
+                // The pending bar already says it and offers the same request again.
+                if (error as? NativeFailure) != .resultUnknown { report(error) }
+            }
+        }
+        controlTail = turn
+        await turn.value
+        if generation == current { controlsInFlight.remove(path) }
     }
+    /**
+     * The Face ID sheet appears by itself the first time content is opened. Declining it is not an error: the conversation
+     * offers the one way back, and nothing else nags.
+     */
     func openSession(_ id: String) async {
-        guard let workspace else { return }
+        guard let workspace else { sessionId = id; detail = .null; return }
         let current = generation
         let reading = UUID()
-        sessionId = id; detail = .null; contentGeneration = reading; PreviewFiles.clear()
+        sessionId = id; detail = .null; detailFailed = nil; contentGeneration = reading; PreviewFiles.clear()
+        func stillReading() -> Bool { current == generation && sessionId == id && contentGeneration == reading }
+        do { try await ensureVerified() }
+        catch {
+            guard stillReading() else { return }
+            if (error as? NativeFailure) != .declined, !wentAway(error) { report(error) }
+            return
+        }
+        guard stillReading(), let lease = await workspace.lease() else { return }
         do {
-            try await ensureVerified()
-            guard current == generation, sessionId == id, contentGeneration == reading,
-                  let lease = await workspace.lease() else { return }
             let value = try await workspace.detail(id)
-            guard current == generation, sessionId == id, contentGeneration == reading else { return }
+            guard stillReading() else { return }
             try lease.requireValid()
             detail = value; startEvents()
-        } catch { report(error) }
+        } catch {
+            guard stillReading() else { return }
+            if wentAway(error) {
+                // The window is still open, and this is what it last read; it is said to be old where it is shown.
+                if let cached = try? await workspace.cachedDetail(id), stillReading() { detail = cached; detailCached = true }
+            } else if [NativeFailure.expired, .forbidden, .contextChanged].contains(error as? NativeFailure) { report(error) }
+            else { detailFailed = id }
+        }
     }
-    @discardableResult func send(text: String, queue: Bool = false) async -> Bool {
+    /** Keeps unsent text out of sight with the window it was written beside. */
+    func holdDraft(_ text: String, for id: String?) {
+        guard store != nil, let id else { return }
+        heldDrafts[id] = text.isEmpty ? nil : text
+    }
+    func takeDraft(for id: String?) -> String? {
+        guard verifiedUntil != nil, let id else { return nil }
+        return heldDrafts.removeValue(forKey: id)
+    }
+    /** Back to the list; the window stays open for the next conversation. */
+    func closeSession() { sessionId = nil; detail = .null; contentGeneration = UUID(); PreviewFiles.clear(); startEvents() }
+    func backToPersonalList() { closeSession() }
+    func start(_ choice: PhoneStartChoice, prompt: String) async -> Bool {
+        let current = generation
+        do {
+            guard canRun, prompt.count <= 16_000 else { throw NativeFailure.forbidden }
+            area = .projects; assistantId = nil; groupId = nil; sessionId = nil; detail = .null; contentGeneration = UUID()
+            try await ensureVerified()
+            guard current == generation else { return false }
+            guard pending.isEmpty else { throw NativeFailure.resultUnknown }
+            let done = await submit(try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: PhoneStart.fields(choice, prompt: prompt)))
+            if done, sessionId != nil { startEvents() }
+            return done
+        } catch { report(error); return false }
+    }
+    @discardableResult func send(text: String, queue: Bool = false, nextModel: PhoneModelChoice? = nil) async -> Bool {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, text.count <= 16_000 else { return false }
         let current = generation
         do {
@@ -55,6 +119,7 @@ extension PhoneModel {
             guard pending.isEmpty else { throw NativeFailure.resultUnknown }
             let path = sessionId.map { "/link/api/tasks/" + $0 + "/prompt" } ?? "/link/api/tasks"
             var fields: [String: NativeJSON] = ["prompt": .string(text)]
+            if let nextModel, sessionId != nil { fields["model"] = .object(["providerId": .string(nextModel.providerId), "model": .string(nextModel.model)]) }
             if queue { fields["queue"] = .bool(true) }
             else if sessionId == nil {
                 if area == .personal {
@@ -91,7 +156,9 @@ extension PhoneModel {
     @discardableResult func mutate(_ method: NativeHTTPMethod, path: String, fields: [String: NativeJSON]) async -> Bool {
         let current = generation, reading = contentGeneration
         do {
-            guard (path.hasPrefix("/link/api/approvals/") ? canApproveStandard : canRun) else { throw NativeFailure.forbidden }
+            // Turning a request down reduces what runs, so the Host asks only that the device can see it.
+            let declining = fields["decision"] == .string("reject") && connected && snapshot["device"]["status"].string == "active"
+            guard declining || (path.hasPrefix("/link/api/approvals/") ? canApproveStandard : canRun) else { throw NativeFailure.forbidden }
             try await ensureVerified()
             guard current == generation, contentGeneration == reading else { return false }
             guard pending.isEmpty else { throw NativeFailure.resultUnknown }
@@ -104,11 +171,24 @@ extension PhoneModel {
         var fields: [String: NativeJSON] = ["requestId": .string(UUID().uuidString)]
         let summary = snapshot["tasks"].array.first { $0["id"].string == id } ?? detail["summary"]
         if let run = summary["runId"].string { fields["runId"] = .string(run) }
-        await performControl(path: "/link/api/tasks/\(id)/cancel", fields: fields)
+        await performControl(path: Self.cancelPath(id), fields: fields)
     }
     func reject(_ id: String) async {
         guard workspace != nil else { return }
-        await performControl(path: "/link/api/approvals/" + id, fields: ["decision": .string("reject"), "requestId": .string(UUID().uuidString)])
+        await performControl(path: Self.approvalPath(id), fields: ["decision": .string("reject"), "requestId": .string(UUID().uuidString)])
     }
-    func newSession() { sessionId = nil; detail = .null; contentGeneration = UUID(); PreviewFiles.clear(); startEvents() }
+    func allow(_ id: String, option: String?) async {
+        var fields: [String: NativeJSON] = ["decision": .string("allow")]
+        if let option { fields["optionId"] = .string(option) }
+        await mutate(.post, path: "/link/api/approvals/" + id, fields: fields)
+    }
+    /** 继续等 only ever asks the Host for a longer threshold; it doubles what the request saw. */
+    func keepWaiting() async {
+        let live = currentSummary["live"]
+        guard let id = sessionId, let run = live["runId"].string, let threshold = live["silenceThresholdMs"].integer, let workspace else { return }
+        do {
+            _ = try await workspace.keepWaiting(sessionId: id, runId: run, thresholdMs: threshold)
+            await refresh()
+        } catch { if !wentAway(error) { report(error) } }
+    }
 }

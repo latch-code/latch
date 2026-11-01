@@ -63,6 +63,7 @@ struct PersonalHomeView: View {
             }
             .navigationTitle("个人助手")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) { Button("Agent", systemImage: "chevron.left") { model.openProjects() } }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     if model.personalLoading || model.verifying { ProgressView().controlSize(.small) }
                     if model.supportsPersonal && model.verifiedUntil != nil {

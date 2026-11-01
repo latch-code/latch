@@ -72,6 +72,7 @@ do {
     case "nativePersonal":
         stage = "personal"
         result = try await runNativePersonal(input)
+    case "phoneProjection": result = try phoneProjectionFixture(input)
     case "directoryResolver": result = try await directoryResolverFixture(input)
     case "directoryHTTP": result = try directoryHTTPFixture(input)
     case "directoryEpoch":

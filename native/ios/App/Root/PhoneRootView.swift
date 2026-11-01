@@ -1,61 +1,29 @@
 import LatchNativeCore
 import SwiftUI
 
+enum PhoneTab: Hashable { case sessions, agents, settings }
+
 struct PhoneRootView: View {
     @EnvironmentObject private var model: PhoneModel
     @State private var scan = false
-    @State private var settings = false
+    @State private var tab = PhoneTab.sessions
     var body: some View {
-        NavigationSplitView {
-            List {
-                if model.selectedHost != nil {
-                    Section {
-                        Button("个人助手", systemImage: "person.crop.circle") { Task { await model.openPersonalHome() } }
-                            .foregroundStyle(.primary)
-                        Button("项目工作", systemImage: "folder") { model.openProjects() }.foregroundStyle(.primary)
-                    }
-                }
-                if model.hosts.isEmpty { PairingWelcome { scan = true }.listRowBackground(Color.clear) }
-                ForEach(model.hosts) { host in
-                    Button { Task { await model.connect(host) } } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: "laptopcomputer").font(.system(size: 18)).foregroundStyle(.secondary).frame(width: 24)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(host.name).foregroundStyle(.primary)
-                                Text(model.selectedHost?.id == host.id ? model.status : "点按连接").font(.caption).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            if model.selectedHost?.id == host.id { Image(systemName: "checkmark").font(.footnote.weight(.semibold)) }
-                        }.padding(.vertical, 3)
-                    }.disabled(model.busy || model.verifying)
-                }
-                Button("添加电脑", systemImage: "plus") { scan = true }.disabled(model.busy)
-            }
-            .navigationTitle("电脑")
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("设置", systemImage: "gearshape") { settings = true }.labelStyle(.iconOnly) } }
-        } detail: {
-            if model.selectedHost != nil {
-                if let group = model.groupId, model.sessionId == nil { PersonalGroupView(id: group) }
-                else if model.area == .personal && model.assistantId == nil && model.sessionId == nil { PersonalHomeView() }
-                else { SessionWorkspaceView() }
-            }
-            else {
+        Group {
+            if !model.storeReady { PhoneTheme.canvas.ignoresSafeArea() }
+            else if model.hosts.isEmpty && model.selectedHost == nil {
                 PairingWelcome { scan = true }.padding(32).frame(maxWidth: 460)
+            } else {
+                TabView(selection: $tab) {
+                    InboxView().tabItem { Label("会话", systemImage: "bubble.left.and.bubble.right") }.tag(PhoneTab.sessions)
+                    AgentTabView().tabItem { Label("Agent", systemImage: "cpu") }.tag(PhoneTab.agents)
+                    PhoneSettingsView { scan = true }.tabItem { Label("设置", systemImage: "gearshape") }.tag(PhoneTab.settings)
+                }.tint(PhoneTheme.ink)
             }
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if model.controlPending != .null {
-                HStack(spacing: 12) {
-                    Label("上次操作结果待确认", systemImage: "clock").font(.caption).foregroundStyle(.orange)
-                    Spacer()
-                    Button("重试这次操作") { Task { await model.retryControl() } }.font(.caption).disabled(model.busy || !model.connected)
-                }.padding(12).background(.bar)
-            }
-        }
+        .onChange(of: tab) { _, next in if next == .sessions, model.area == .personal { model.openProjects() } }
         .fullScreenCover(isPresented: Binding(get: { scan || model.pairing != nil }, set: { if !$0 { scan = false } })) {
             PairingView { scan = false }
         }
-        .sheet(isPresented: $settings) { PhoneSettingsView { settings = false; scan = true } }
         .onOpenURL { url in if PairingInvitation.recognizes(url.absoluteString) { Task { await model.beginPairing(payload: url.absoluteString) } } }
         .alert("这台 Mac 已移除这台 iPhone", isPresented: $model.removedByMac) {
             Button("好") {}
@@ -64,5 +32,64 @@ struct PhoneRootView: View {
             Button("知道了") { model.error = nil }
         } message: { Text(model.error ?? "") }
         .onReceive(NotificationCenter.default.publisher(for: .latchStatusHint)) { _ in Task { await model.refresh() } }
+    }
+}
+
+/** A stop or a rejection whose result never came back; it keeps its request identity until the Host answers. */
+struct ControlPendingBar: View {
+    @EnvironmentObject private var model: PhoneModel
+    var body: some View {
+        // The record of a control is saved before it is sent, so while it is out there is nothing yet to confirm.
+        if model.controlPending != .null && model.controlsInFlight.isEmpty {
+            HStack(spacing: 12) {
+                Label("上次操作结果待确认", systemImage: "clock").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
+                Spacer()
+                Button("重试这次操作") { Task { await model.retryControl() } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
+            }.padding(.horizontal, 16).padding(.vertical, 10).background(.bar)
+        }
+    }
+}
+
+/** Until the Host's agents arrive, the tab lists what is installed and what this phone may start on it. */
+struct AgentTabView: View {
+    @EnvironmentObject private var model: PhoneModel
+    private var catalog: NativeJSON { model.snapshot["catalog"] }
+    var body: some View {
+        if model.area == .personal {
+            if let group = model.groupId, model.sessionId == nil { PersonalGroupView(id: group) }
+            else if model.assistantId == nil && model.sessionId == nil { PersonalHomeView() }
+            else { SessionWorkspaceView() }
+        } else {
+            NavigationStack {
+                List {
+                    Section("已安装") {
+                        if PhoneStart.engines(catalog).isEmpty {
+                            Text(model.connected ? "还没有可用的引擎" : "连上 Mac 后显示").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
+                        }
+                        ForEach(PhoneStart.engines(catalog)) { engine in
+                            HStack(spacing: 12) {
+                                EngineTile(harnessId: engine.id, size: 28)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(engine.name).font(PhoneTheme.row).foregroundStyle(PhoneTheme.ink)
+                                    if let line = engine.line { Text(line).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted) }
+                                }
+                            }.padding(.vertical, 2)
+                        }
+                    }
+                    if model.supportsPersonal {
+                        Section {
+                            Button { Task { await model.openPersonalHome() } } label: {
+                                HStack {
+                                    Label("助手与群聊", systemImage: "person.2").foregroundStyle(PhoneTheme.ink)
+                                    Spacer()
+                                    Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(PhoneTheme.faint)
+                                }
+                            }
+                        }
+                    }
+                }
+                .navigationTitle("Agent")
+            }
+        }
     }
 }

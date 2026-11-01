@@ -222,7 +222,7 @@ Host 按需检查每个项目的文件夹（文件夹规则与项目内的重叠
 - 新建会话的可选项与默认值不包含它，把它设为默认值返回 400 `workspace-unavailable`，在其中新建会话返回 409 `workspace-disabled`；
 - 文件夹回到原来的真实路径并通过检查后，项目自动恢复。Latch 不跟踪移动的文件夹（没有书签，也不按身份追踪）。
 
-列表中的每个项目还带 `remoteStart`：按当前策略，其他设备能否在其中发起会话。快照的 `catalog.projectFolders`（`{ max: 8 }`）表示 Host 支持多个文件夹的项目；没有它的是旧版本 Host。
+列表中的每个项目还带 `remoteStart`：按当前策略，其他设备能否在其中发起会话。快照的 `catalog.harnesses` 同样带 `remoteStart`：能否在这个 Harness 上发起；完全访问的 Harness 只能从 `host.sock` 发起。快照的 `catalog.projectFolders`（`{ max: 8 }`）表示 Host 支持多个文件夹的项目；没有它的是旧版本 Host。
 
 ### 会话与项目
 

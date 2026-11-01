@@ -300,6 +300,16 @@ public actor NativeWorkspace {
         try lease.requireValid()
         return value
     }
+    /** What this window last read of a session, for when the Mac has gone away. It opens no window, and never outlives one. */
+    public func cachedDetail(_ id: String) async throws -> NativeJSON? {
+        guard LinkBytes.matches(id, "[A-Za-z0-9_-]{1,160}") else { throw NativeFailure.invalidRecord }
+        guard let lease = await verification.currentLease() else { throw NativeFailure.expired }
+        guard let data = try await vault.body(name: "detail-" + id, lease: lease) else { return nil }
+        let value = try NativeJSON.decode(data)
+        guard value["summary"]["id"].string == id else { throw NativeFailure.storageUnavailable }
+        try lease.requireValid()
+        return value
+    }
     public func read(_ path: String, body: Bool) async throws -> NativeJSON {
         let (connection, current) = try transport()
         let lease = await verification.currentLease()
@@ -532,7 +542,8 @@ public actor NativeWorkspace {
         let (connection, current) = try transport()
         try await vault.storeMetadata(NativeJSON.object(["path": .string(path), "fields": .object(fields)]).encoded(), name: "control-pending")
         let response: NativeHTTPResponse
-        do { response = try await connection.request(.post, path: path, body: NativeJSON.object(fields).encoded()) }
+        // The Host answers a stop only once the run has settled, and it force-stops a run at 30 seconds.
+        do { response = try await connection.request(.post, path: path, body: NativeJSON.object(fields).encoded(), timeoutSeconds: reject ? 15 : 45) }
         catch { throw NativeFailure.resultUnknown }
         guard epoch == current else { throw NativeFailure.resultUnknown }
         guard response.status == 200 else {
@@ -543,6 +554,17 @@ public actor NativeWorkspace {
         let value = try NativeJSON.decode(response.body)
         try? await vault.remove(name: "control-pending", body: false)
         return value
+    }
+    /** Only ever lengthens how long the Host stays quiet about silence; it needs view scope, not a write identity. */
+    public func keepWaiting(sessionId: String, runId: String, thresholdMs: UInt64) async throws -> NativeJSON {
+        guard LinkBytes.matches(sessionId, "[A-Za-z0-9_-]{1,160}"), LinkBytes.matches(runId, "[A-Za-z0-9_-]{1,160}"), thresholdMs > 0, thresholdMs <= LinkBytes.maximumInteger else { throw NativeFailure.invalidRecord }
+        let (connection, current) = try transport()
+        let lease = await verification.currentLease()
+        let body = try NativeJSON.object(["runId": .string(runId), "thresholdMs": .number(Double(thresholdMs))]).encoded()
+        let response = try await connection.request(.post, path: "/link/api/tasks/\(sessionId)/keep-waiting", body: body)
+        guard epoch == current else { throw NativeFailure.unavailable }
+        guard response.status == 200 else { throw await responseFailure(response, lease: lease) }
+        return try NativeJSON.decode(response.body)
     }
     /**
      * Asks the Host to remove this phone. It needs no window, and the Host closes this connection as it does so, so a lost
@@ -716,6 +738,10 @@ public actor NativeWorkspace {
         }
         return .object(["instanceId": value["instanceId"], "revision": value["revision"], "approvals": .array([]),
             "device": select(value["device"], keys: ["id", "status", "scopes", "dataScope"]),
-            "tasks": .array(value["tasks"].array.map { select($0, keys: ["id", "title", "status", "updatedAt", "pinned", "archived", "pendingQuestions", "harnessId", "workspaceId", "runId", "level", "personal", "pluginIds"]) })])
+            "tasks": .array(value["tasks"].array.map { select($0, keys: ["id", "title", "status", "updatedAt", "pinned", "archived", "pendingQuestions", "harnessId", "workspaceId", "runId", "level", "personal", "pluginIds", "mode", "branch", "runOutcome", "runEnd", "permissionDrift"]) }),
+            // Enough to draw the shelves and the engine's name offline; paths, models and settings stay out.
+            "catalog": .object(["workspaces": .array(value["catalog"]["workspaces"].array.map { select($0, keys: ["id", "name"]) }),
+                "harnesses": .array(value["catalog"]["harnesses"].array.map { select($0, keys: ["id", "name", "source", "level"]) })]),
+            "hostTime": value["hostTime"]])
     }
 }

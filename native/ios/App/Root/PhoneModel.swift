@@ -9,9 +9,13 @@ enum PhoneArea: String { case personal, projects }
 @MainActor final class PhoneModel: ObservableObject {
     @Published var hosts: [RegisteredHost] = []
     @Published var selectedHost: RegisteredHost?
-    @Published var snapshot = NativeJSON.null
-    @Published var detail = NativeJSON.null
-    @Published var area = PhoneArea.personal
+    @Published var snapshot = NativeJSON.null { didSet { shelfCache = nil } }
+    @Published var detail = NativeJSON.null { didSet { detailCached = false; if detail != .null { detailFailed = nil } } }
+    /** The conversation on screen is what this window read before the Mac went away. */
+    @Published var detailCached = false
+    /** The session whose content could not be read, with the Mac still in reach. */
+    @Published var detailFailed: String?
+    @Published var area = PhoneArea.projects
     @Published var personalOverview = NativeJSON.null
     @Published var assistantDetail = NativeJSON.null
     @Published var assistantId: String?
@@ -34,7 +38,32 @@ enum PhoneArea: String { case personal, projects }
     @Published var removedByMac = false
     @Published var status = "选择一台电脑"
     @Published var error: String?
-    @Published var connected = false
+    @Published var connected = false { didSet { if connected { offline = false; lastConfirmed = Date() } } }
+    /** The store has answered, so an empty host list means this phone has none. */
+    @Published var storeReady = false
+    /** Reaching the Mac has failed at least once; the list shows what it last knew. */
+    @Published var offline = false
+    /** The last time this phone heard the Mac. */
+    @Published var lastConfirmed: Date?
+    /** The paths of stops and rejections this phone has sent and the Host has not answered yet. */
+    @Published var controlsInFlight: Set<String> = []
+    /** The core keeps one unconfirmed control at a time, so they go out in the order they were asked for. */
+    var controlTail: Task<Void, Never>?
+    /** Unsent text the composer took off the screen with a closed window, back after the next Face ID. In memory only. */
+    var heldDrafts: [String: String] = [:]
+    private var shelfCache: (query: String, shelves: [PhoneShelf])?
+    private var hostClockOffset: TimeInterval = 0
+    /** Where to come back to after the App returns from the background: within this process only. */
+    private var resumeSession: String?
+    private var lastHostId: String?
+    /** Drawn on every update of anything, so it is worked out once per list and search. */
+    func shelves(query: String) -> [PhoneShelf] {
+        if let shelfCache, shelfCache.query == query { return shelfCache.shelves }
+        let value = PhoneSessions.shelves(tasks: snapshot["tasks"].array, workspaces: snapshot["catalog"]["workspaces"].array, query: query)
+        shelfCache = (query, value)
+        return value
+    }
+    func hostNow() -> Date { Date().addingTimeInterval(hostClockOffset) }
     @Published var busy = false
     @Published var verifying = false
     @Published var verifiedUntil: Date?
@@ -75,12 +104,19 @@ enum PhoneArea: String { case personal, projects }
             store = opened
             let saved = await opened.list(), pending = try await opened.draft()
             guard generation == current else { await opened.lock(); return }
-            hosts = saved; draft = pending
+            hosts = saved; draft = pending; storeReady = true
             observeNetwork()
             if pending != nil { resumePairing() }
-        } catch { report(error) }
+            else { await connectLast() }
+        } catch { storeReady = true; report(error) }
+    }
+    /** The Mac this phone last used, or the first saved one. */
+    func connectLast() async {
+        if let host = hosts.first(where: { $0.id == lastHostId }) ?? hosts.first { await connect(host) }
     }
     func lock() async {
+        if area == .projects, let sessionId { resumeSession = sessionId }
+        if let selectedHost { lastHostId = selectedHost.id }
         generation = UUID(); eventTask?.cancel(); refreshTask?.cancel(); expiryTask?.cancel(); reconnectTask?.cancel(); pairingTask?.cancel()
         monitorGeneration = UUID(); monitor?.cancel(); monitor = nil
         currentNetworkPath = nil; proximityTask?.cancel(); proximityTask = nil
@@ -91,7 +127,7 @@ enum PhoneArea: String { case personal, projects }
         cancelPreview(); personalLoadId = nil; personalLoading = false; personalPlugins = []; personalPluginsLoaded = false
         personalOverview = .null; assistantDetail = .null; assistantId = nil; groupId = nil; groupDetail = .null; groupControl = nil
         detail = .null; snapshot = .null; verifiedUntil = nil; pairing = nil; pending = []; controlPending = .null; hosts = []; draft = nil; selectedHost = nil
-        connected = false; busy = false; verifying = false; status = "已锁定，解锁后重新连接"
+        connected = false; offline = false; controlsInFlight = []; controlTail = nil; heldDrafts = [:]; storeReady = false; busy = false; verifying = false; status = "正在连接…"
         PreviewFiles.clear()
         await paths.close(); await previous?.closeOpening(); await link?.close(); await previousStore?.lock()
     }
@@ -102,8 +138,9 @@ enum PhoneArea: String { case personal, projects }
         eventTask?.cancel(); expiryTask?.cancel(); reconnectTask?.cancel()
         resetBookRefresh()
         let previous = workspace; workspace = nil
-        clearPrivateContent(); snapshot = .null; sessionId = nil; assistantId = nil; groupId = nil; groupControl = nil; controlPending = .null; verifiedUntil = nil; connected = false
-        selectedHost = host; status = "正在连接…"; error = nil
+        clearPrivateContent(); snapshot = .null; sessionId = nil; assistantId = nil; groupId = nil; groupControl = nil; controlPending = .null; controlsInFlight = []; controlTail = nil; heldDrafts = [:]; verifiedUntil = nil; connected = false; offline = false
+        let resume = resumeSession; resumeSession = nil
+        selectedHost = host; lastHostId = host.id; status = "正在连接…"; error = nil
         await paths.close(); await previous?.closeOpening()
         guard generation == current else { return }
         do {
@@ -123,7 +160,7 @@ enum PhoneArea: String { case personal, projects }
                 await self?.bookFailed(failure, current: current)
             })
             if let cached = try await next.cachedSnapshot() {
-                guard generation == current else { return }; adoptSnapshot(cached)
+                guard generation == current else { return }; adoptSnapshot(cached, live: false)
             }
             try startDiscovery(host)
             let candidates = try await candidates(host)
@@ -131,11 +168,12 @@ enum PhoneArea: String { case personal, projects }
             guard generation == current else { return }
             adoptSnapshot(value); connected = true; status = "已连接"
             await refreshControlPending(); startEvents()
+            if let resume, snapshot["tasks"].array.contains(where: { $0["id"].string == resume }) { await openSession(resume) }
         } catch {
             guard generation == current else { return }
             if let workspace, let proof = await workspace.verifiedRevocation() { await retire(host, proof: proof); return }
-            connected = false; status = "正在等待电脑连接…"
-            if (error as? NativeFailure) != .unavailable { report(error) }
+            connected = false; offline = true; status = "不在线"
+            if !Self.outOfReach(error) { report(error) }
             startReconnect()
         }
     }
@@ -151,13 +189,14 @@ enum PhoneArea: String { case personal, projects }
         busy = true; defer { if generation == current { busy = false } }
         do {
             guard let saved = try await workspace.pendingControl(), let path = saved["path"].string else { await refreshControlPending(); return }
+            controlsInFlight.insert(path); defer { controlsInFlight.remove(path) }
             _ = try await workspace.freeAction(path: path, fields: saved["fields"].object)
             guard generation == current else { return }
             await refreshControlPending(); _ = await refresh()
         } catch { if generation == current { await refreshControlPending(); report(error) } }
     }
     func ensureVerified() async throws {
-        guard let workspace, !verifying else { throw NativeFailure.unavailable }
+        guard let workspace else { throw NativeFailure.unavailable }
         guard hasScope("view") else { throw NativeFailure.forbidden }
         let current = generation
         if let lease = await workspace.lease() {
@@ -184,7 +223,7 @@ enum PhoneArea: String { case personal, projects }
             do { try await lease.waitForInvalidation() } catch { return }
             guard !Task.isCancelled, current == generation else { return }
             clearPrivateContent(); verifiedUntil = nil
-            status = "解锁后继续"; eventTask?.cancel(); startEvents()
+            eventTask?.cancel(); startEvents()
         }
     }
     @discardableResult func refresh(personal: Bool = true) async -> Bool {
@@ -210,7 +249,24 @@ enum PhoneArea: String { case personal, projects }
             }
             if personal, area == .personal, lease?.valid == true { await refreshPersonal() }
             return true
-        } catch { report(error); return false }
+        } catch {
+            guard current == generation else { return false }
+            if !wentAway(error) {
+                report(error)
+                if selected == sessionId, detail == .null, verifiedUntil != nil { detailFailed = selected }
+            }
+            return false
+        }
+    }
+    /** A read that never came back says only that the Mac is out of reach, in the words of a request or of the connection. */
+    static func outOfReach(_ failure: Error) -> Bool {
+        [NativeFailure.unavailable, .resultUnknown].contains(failure as? NativeFailure)
+    }
+    /** Going away is the banner's to say, not an alert's; true when that is what this failure was. */
+    @discardableResult func wentAway(_ failure: Error) -> Bool {
+        guard Self.outOfReach(failure) else { return false }
+        if connected { connected = false; offline = true; status = "不在线"; startReconnect() }
+        return true
     }
     func startEvents() {
         eventTask?.cancel()
@@ -245,7 +301,7 @@ enum PhoneArea: String { case personal, projects }
                     if await refresh() { startEvents() }
                     return
                 }
-                connected = false; status = "连接已断开，正在重连…"; startReconnect()
+                connected = false; offline = true; status = "不在线"; startReconnect()
             }
         }
     }
@@ -268,6 +324,11 @@ enum PhoneArea: String { case personal, projects }
                 }
             } catch { if !(error is CancellationError), current == generation { report(error) } }
         }
+    }
+    /** Reconnecting is automatic; this only starts the next try now. */
+    func retryConnection() {
+        reconnectTask?.cancel(); reconnectTask = nil
+        if let selectedHost, workspace == nil { Task { await connect(selectedHost) } } else { startReconnect() }
     }
     private func startReconnect() {
         guard reconnectTask == nil, let workspace, let host = selectedHost else { return }
@@ -358,7 +419,7 @@ enum PhoneArea: String { case personal, projects }
         } catch { if generation == current, !Task.isCancelled { startReconnect() } }
     }
     private func bookFailed(_ failure: NativeFailure, current: UUID) {
-        if generation == current { report(failure) }
+        if generation == current, !wentAway(failure) { report(failure) }
     }
     private func startDiscovery(_ host: RegisteredHost) throws {
         let key = try AddressBookCodec.discoveryKey(host.device.signedAddressBook, rootSpki: host.device.rootSpki,
@@ -413,25 +474,32 @@ enum PhoneArea: String { case personal, projects }
         if isCurrent || selectedHost == nil {
             removedByMac = !removedHere
             status = "选择一台电脑"
+            if let next = hosts.first { await connect(next) }
         }
     }
     func report(_ failure: Error) {
         guard !(failure is CancellationError) else { return }
         if (failure as? NativeFailure) == .expired {
+            // The conversation offers the way back in; a closed window is not an error to report.
             verifiedUntil = nil; clearPrivateContent(); startEvents()
+            return
         } else if (failure as? NativeFailure) == .forbidden || (failure as? NativeFailure) == .contextChanged { clearPrivateContent() }
         error = (failure as? NativeFailure)?.errorDescription ?? "暂时无法完成，请稍后重试。"
     }
     private func clearPrivateContent() {
         cancelPreview()
-        detail = .null; personalOverview = .null; assistantDetail = .null; groupDetail = .null; personalPlugins = []; personalPluginsLoaded = false; personalLoadId = nil; personalLoading = false; pending = []; contentGeneration = UUID(); PreviewFiles.clear()
+        detail = .null; detailFailed = nil; personalOverview = .null; assistantDetail = .null; groupDetail = .null; personalPlugins = []; personalPluginsLoaded = false; personalLoadId = nil; personalLoading = false; pending = []; contentGeneration = UUID(); PreviewFiles.clear()
     }
-    private func adoptSnapshot(_ value: NativeJSON) {
+    private func adoptSnapshot(_ value: NativeJSON, live: Bool = true) {
         if let instance = value["instanceId"].string, snapshot["instanceId"].string == instance,
            let revision = value["revision"].integer, let applied = snapshot["revision"].integer, revision < applied { return }
         let keys = ["status", "scopes", "dataScope"]
-        if snapshot != .null, keys.contains(where: { snapshot["device"][$0] != value["device"][$0] }) { clearPrivateContent() }
+        if snapshot != .null, keys.contains(where: { snapshot["device"][$0] != value["device"][$0] }) { clearPrivateContent(); heldDrafts = [:] }
         snapshot = value
+        if let hostTime = PhoneTime.parse(value["hostTime"]) {
+            // A cached list is old by definition: it says when it was true, not what the Host's clock reads now.
+            if live { hostClockOffset = hostTime.timeIntervalSinceNow; lastConfirmed = Date() } else { lastConfirmed = hostTime }
+        } else if live { lastConfirmed = Date() }
         scheduleBookRefresh(hint: value["host"]["native"]["discoveryEpoch"].string, directoryHint: value["host"]["native"]["directoryEpoch"].string)
     }
 }

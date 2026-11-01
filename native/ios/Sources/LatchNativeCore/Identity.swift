@@ -60,13 +60,25 @@ public enum SecureDeviceKeys {
     public static func signVerification(_ reference: DeviceKeyReference, statement: Data) async throws -> Data {
         try await Task.detached(priority: .userInitiated) {
             let context = LAContext()
-            context.localizedReason = "解锁以继续这台电脑上的会话"
+            context.localizedReason = "查看这台 Mac 上的会话"
             context.touchIDAuthenticationAllowableReuseDuration = 0
             defer { context.invalidate() }
             let key = try find(tag: reference.verificationTag, context: context)
             guard LinkBytes.equal(try publicSpki(key), reference.verificationSpki) else { throw NativeFailure.identityMismatch }
-            return try P256.Signing.ECDSASignature(derRepresentation: signDER(key, statement)).rawRepresentation
+            var failure: Unmanaged<CFError>?
+            guard SecKeyIsAlgorithmSupported(key, .sign, .ecdsaSignatureMessageX962SHA256),
+                  let result = SecKeyCreateSignature(key, .ecdsaSignatureMessageX962SHA256, statement as CFData, &failure) as Data? else {
+                let error = failure?.takeRetainedValue()
+                throw verificationFailure(domain: error.map { CFErrorGetDomain($0) as String } ?? "", code: error.map { CFErrorGetCode($0) } ?? 0)
+            }
+            return try P256.Signing.ECDSASignature(derRepresentation: result).rawRepresentation
         }.value
+    }
+    /** Backing out of the system sheet, or the system taking it away, is a choice the App respects quietly; anything else is said. */
+    public static func verificationFailure(domain: String, code: Int) -> NativeFailure {
+        let cancelled = domain == LAErrorDomain ? [LAError.userCancel.rawValue, LAError.systemCancel.rawValue, LAError.appCancel.rawValue, LAError.userFallback.rawValue].contains(code)
+            : domain == (kCFErrorDomainOSStatus as String) && code == Int(errSecUserCanceled)
+        return cancelled ? .declined : .notVerified
     }
     public static func remove(_ reference: DeviceKeyReference) {
         remove(tag: reference.connectionTag); remove(tag: reference.verificationTag)

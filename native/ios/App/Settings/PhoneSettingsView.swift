@@ -6,7 +6,6 @@ import UIKit
 
 struct PhoneSettingsView: View {
     @EnvironmentObject private var model: PhoneModel
-    @Environment(\.dismiss) private var dismiss
     let addComputer: () -> Void
     @State private var copied = false
     var body: some View {
@@ -34,8 +33,7 @@ struct PhoneSettingsView: View {
                     }
                 }
             }
-            .navigationTitle("设置").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
+            .navigationTitle("设置")
         }
     }
 }

@@ -89,7 +89,7 @@ struct NativePreviewView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if !item.lease.valid { ContentUnavailableView("验证已到期", systemImage: "lock", description: Text("请关闭预览并重新验证。")) }
+                if !item.lease.valid { ContentUnavailableView("内容已收起", systemImage: "lock", description: Text("关闭预览后再打开一次。")) }
                 else if let text = item.text { ScrollView { ConversationText(text: text, monospaced: true).padding().frame(maxWidth: .infinity, alignment: .leading) } }
                 else if item.url != nil { RasterQuickLook(item: item) }
             }

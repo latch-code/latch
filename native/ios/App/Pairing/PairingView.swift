@@ -8,7 +8,7 @@ struct PairingWelcome: View {
     let scan: () -> Void
     var body: some View {
         VStack(spacing: 20) {
-            Image("LatchMark").resizable().frame(width: 42, height: 42).clipShape(RoundedRectangle(cornerRadius: 10))
+            bundled("LatchMark").resizable().frame(width: 42, height: 42).clipShape(RoundedRectangle(cornerRadius: 10))
             Text("连接你的 Mac").font(.title2.weight(.semibold))
             Text("在 Mac 上的 Latch 中，打开 设置 › 手机与设备 › 连接手机。").foregroundStyle(.secondary).multilineTextAlignment(.center)
             Button("扫码", action: scan).buttonStyle(.borderedProminent).controlSize(.large)

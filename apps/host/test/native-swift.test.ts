@@ -600,6 +600,257 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     for (const invalid of [Buffer.from([100, 97, 116, 97, 58, 0xff, 10, 10]), Buffer.from('event: unsafe.event\n\n')])
       await expect(invoke({ operation: 'events', chunks: [invalid.toString('hex')] })).rejects.toThrow('rejected')
   })
+  it('projects Host sessions for the phone: shelves, frozen words, turns, approvals and what it may start', async () => {
+    const at = (minute: number) => `2026-11-01T10:${String(minute).padStart(2, '0')}:00.000Z`
+    const result = (await invoke({
+      operation: 'phoneProjection',
+      hostNow: at(30),
+      query: '密钥',
+      stamps: ['2026-11-01T10:30:00Z', '2026-11-01T10:30:00.500Z', 'not a date'],
+      statuses: ['failed', 'cancelled', 'interrupted', 'idle'],
+      runEnds: [
+        { runEnd: { reason: 'process-exited', unknownResults: [{ name: 'pnpm test' }] } },
+        { runEnd: { reason: 'forced-stop', unknownResultCount: 2, unknownResults: [{ name: 'a' }, { name: 'b' }] } },
+        { runEnd: { reason: 'host-stopped' } },
+        { runEnd: { reason: 'turn-ended' } },
+        { runEnd: { reason: 'turn-ended', unknownResultCount: 1 } },
+        {},
+      ],
+      delivered: {
+        summary: { live: { activity: 'starting' } },
+        messages: [
+          { id: 'u', role: 'user', text: '去做' },
+          { id: 'gone', role: 'assistant', text: '', outputs: [{ path: 'old.ts', change: 'deleted' }] },
+        ],
+      },
+      sealedCatalog: {
+        harnesses: [{ id: 'standard', source: 'builtin', status: 'ready', level: 'L1', modes: ['chat', 'agent'], models: 'host' }],
+        workspaces: [
+          { id: 'default', name: '启动目录', remoteStart: false },
+          { id: 'latch', name: 'latch', remoteStart: true },
+        ],
+        providers: [{ id: 'p', name: 'P', models: ['m1'] }],
+        defaults: { harnessId: 'standard', mode: 'chat' },
+      },
+      workspaces: [
+        { id: 'default', name: '启动目录', path: '/work' },
+        { id: 'latch', name: 'latch', path: '/work/latch' },
+      ],
+      tasks: [
+        { id: 'a', title: '等批准', status: 'waiting-approval', updatedAt: at(1), workspaceId: 'latch' },
+        { id: 'b', title: '问一句', status: 'running', pendingQuestions: 1, updatedAt: at(2), workspaceId: 'latch' },
+        {
+          id: 'c',
+          title: '修复密钥',
+          status: 'running',
+          updatedAt: at(3),
+          workspaceId: 'latch',
+          live: { activity: 'model', lastEventAt: at(3) },
+        },
+        {
+          id: 'd',
+          title: '安静',
+          status: 'running',
+          updatedAt: at(4),
+          workspaceId: 'latch',
+          live: { activity: 'command', lastEventAt: at(4), silent: true },
+        },
+        {
+          id: 'e',
+          title: '停止中',
+          status: 'running',
+          updatedAt: at(5),
+          mode: 'chat',
+          live: { activity: 'cancelling', silent: true, lastEventAt: at(5) },
+        },
+        {
+          id: 'f',
+          title: '强停',
+          status: 'interrupted',
+          updatedAt: at(6),
+          mode: 'chat',
+          runEnd: { reason: 'forced-stop', at: at(6), unknownResultCount: 2 },
+        },
+        { id: 'g', title: '失败', status: 'idle', runOutcome: 'failed', updatedAt: at(7), workspaceId: 'gone' },
+        { id: 'h', title: '归档', status: 'idle', archived: true, updatedAt: at(8) },
+        { id: 'i', title: '助手', status: 'idle', personal: { assistantId: 'asst_x' }, updatedAt: at(9) },
+      ],
+      detail: {
+        summary: { id: 'c', status: 'running', level: 'L3', branch: 'main', live: { activity: 'command', lastEventAt: at(29) } },
+        permission: { level: 'L3', readback: 'mode', defaultMode: 'read-only', neverAskModes: ['yolo'] },
+        config: [{ id: 'm', category: 'mode', currentValue: 'yolo', options: [{ value: 'yolo', name: 'Yolo' }] }],
+        usageReport: { contextUsed: 62, contextSize: 100, at: at(29) },
+        approvals: [],
+        runStartedAt: at(28),
+        runWaitMs: 60_000,
+        liveText: '还在写',
+        messages: [
+          { id: 'u1', role: 'user', text: '第一轮', turn: { activeMs: 133_000 } },
+          { id: 't1', role: 'tool', state: 'completed', tool: { kind: 'read', locations: ['/a/one.ts'] } },
+          { id: 't2', role: 'tool', state: 'completed', tool: { kind: 'read', locations: ['/a/two.ts'] } },
+          {
+            id: 't3',
+            role: 'tool',
+            state: 'completed',
+            tool: { kind: 'edit', diffs: [{ path: 'a.ts', oldText: 'x\ny\n', newText: 'x\nz\nw\n' }] },
+          },
+          {
+            id: 't4',
+            role: 'tool',
+            state: 'failed',
+            tool: { kind: 'edit', decision: { outcome: 'rejected', at: at(1) }, diffs: [{ path: 'no.ts', oldText: '', newText: 'n\n' }] },
+          },
+          { id: 'a1', role: 'assistant', text: '好了' },
+          { id: 'u2', role: 'user', text: '第二轮' },
+          { id: 't5', role: 'tool', state: 'running', tool: { kind: 'execute', input: '{"command":"pnpm test"}' } },
+        ],
+      },
+      outputs: [{ path: 'a.ts' }, { path: 'made.pptx', root: 'r' }],
+      canApprove: true,
+      approvals: [
+        { toolName: 'write_file', risk: 'R1', tool: { toolTitle: '写入', locations: ['src/a.ts'] } },
+        { toolName: 'write_file', risk: 'R1', tool: { toolTitle: '写入', locations: ['src/a.ts', 'src/b.ts', 'src/c.ts'] } },
+        {
+          toolName: 'write_file',
+          risk: 'R1',
+          options: [
+            { id: 'o1', kind: 'allow_once' },
+            { id: 'o2', kind: 'allow_always' },
+          ],
+        },
+        { toolName: 'write_file', risk: 'R1', options: [{ id: 'o2', kind: 'allow_always' }] },
+        { toolName: 'write_file', risk: 'R2', riskReason: 'outside-workspace' },
+        { toolName: 'shell', advisory: true, risk: 'R2' },
+        { toolName: 'write_file' },
+      ],
+      inputs: [
+        { summary: { level: 'L1' }, canRun: true, connected: true },
+        { summary: { level: 'L3' }, canRun: true, connected: true },
+        { summary: { level: 'L1' }, canRun: true, connected: false },
+        { summary: { level: 'L1', permissionDrift: true }, canRun: true, connected: true },
+        { summary: { level: 'L1' }, canRun: false, connected: true },
+      ],
+      catalog: {
+        harnesses: [
+          {
+            id: 'codex',
+            name: 'Codex',
+            source: 'acp',
+            status: 'ready',
+            level: 'L3',
+            modes: ['agent'],
+            models: 'agent',
+            remoteStart: false,
+          },
+          { id: 'broken', name: 'Broken', source: 'acp', status: 'unavailable', modes: ['agent'], models: 'agent' },
+          {
+            id: 'standard',
+            name: 'Standard',
+            source: 'builtin',
+            status: 'ready',
+            level: 'L1',
+            modes: ['chat', 'agent'],
+            models: 'host',
+            remoteStart: true,
+          },
+        ],
+        workspaces: [
+          { id: 'sealed', name: 'sealed', remoteStart: false },
+          { id: 'latch', name: 'latch', remoteStart: true },
+          { id: 'gone', name: 'gone', unavailable: '找不到这个文件夹' },
+        ],
+        providers: [{ id: 'p', name: 'P', models: ['m1', 'm2'], defaultModel: 'm1' }],
+        defaults: { harnessId: 'codex', workspaceId: 'sealed', mode: 'agent', model: { providerId: 'p', model: 'm2' } },
+      },
+    })) as Record<string, unknown>
+    expect(result.parsed).toEqual([Date.parse('2026-11-01T10:30:00Z') / 1000, Date.parse('2026-11-01T10:30:00.500Z') / 1000, -1])
+    // A last-confirmed time older than today says which day it belongs to.
+    expect(result.confirmed).toEqual([true, true, true])
+    expect(result.clocks).toEqual(['0:47', '12:03', '1:02:03'])
+    expect(result.durations).toEqual(['', '1.2 秒', '12 秒', '2 分 13 秒', '1 小时 2 分'])
+    expect(result.runEnds).toEqual([
+      { failed: true, text: 'Codex 已退出 · 这一轮没有完成 · 这 1 条命令结果未知，请核对', unknown: ['pnpm test'] },
+      { failed: false, text: '已强制停止 · 这 2 条命令结果未知，请核对', unknown: ['a', 'b'] },
+      { failed: false, text: '这一轮被中断了', unknown: [] },
+      null,
+      { failed: false, text: 'Codex 结束了这一轮 · 这 1 条命令结果未知，请核对', unknown: [] },
+      null,
+    ])
+    expect(result.outcomes).toEqual(['failed', 'stopped', 'interrupted', 'completed'])
+    expect(result.delivery).toBe('Mac 已收到')
+    expect(result.hasFiles).toEqual([true, false])
+    expect(result.noteTooLong).toEqual([false, true, false])
+    // Backing out of Face ID is quiet; a sheet that failed says so, and neither reads as a lost connection.
+    expect(result.faceId).toEqual([true, true, false, true, false, false])
+    expect(result.chatStartable).toBe(true)
+    expect(result.chatSealed).toEqual([false, 'latch'])
+    expect(result.chatBlocker).toBe('不用项目的对话只能在 Mac 上开始。')
+    expect(result.rows).toEqual(['waiting', 'waiting', 'running', 'silent', 'stopping', 'ended:已强制停止:2', 'failed', 'read', 'read'])
+    // A list that may be stale draws nothing live; a run that has already ended still says how.
+    expect(result.frozen).toEqual(['frozen', 'frozen', 'frozen', 'frozen', 'frozen', 'ended:已强制停止:2', 'failed', 'read', 'read'])
+    expect(result.shelves).toEqual([
+      { label: '等你处理', ids: ['d', 'b', 'a'] },
+      { label: 'latch', ids: ['c'] },
+      { label: '对话', ids: ['g', 'f', 'e'] },
+    ])
+    expect(result.found).toEqual(['latch'])
+    expect(result.turns).toEqual([
+      {
+        blocks: [{ work: ['reads:2', '编辑 a.ts', '编辑 no.ts'] }, { prose: '好了' }],
+        folds: true,
+        fold: '已工作 2 分 13 秒 · 1 步被拒绝',
+        // The rejected edit never ran, and a file the tools edited keeps their counts over the watcher's.
+        files: ['a.ts', 'made.pptx'],
+        add: -1,
+        del: -1,
+      },
+      {
+        blocks: [{ work: ['运行 pnpm test'] }, { prose: '还在写' }],
+        folds: true,
+        fold: '已工作',
+        files: ['a.ts', 'made.pptx'],
+        add: -1,
+        del: -1,
+      },
+    ])
+    expect(result.status).toEqual({ text: '命令运行中 · pnpm test', clock: '1:00', tone: 'plain', actions: [] })
+    expect(result.subtitle).toEqual(['Codex', '完全访问', 'main', '62%'])
+    expect(result.fullAccess).toBe(true)
+    expect(result.input).toEqual([
+      '',
+      '这个会话只能在 Mac 上发送消息',
+      'Mac 不在线',
+      '这个会话的权限变了，已停止接受输入',
+      '这台手机不能发送消息',
+    ])
+    const mac = '需要在 Mac 上用 Touch ID 允许'
+    expect(result.approvals).toEqual([
+      { heading: '写入 src/a.ts', canAllow: true, option: '', mac: '', clause: '' },
+      { heading: '写入 src/a.ts 等 3 处', canAllow: true, option: '', mac: '', clause: '' },
+      { heading: 'write_file', canAllow: true, option: 'o1', mac: '', clause: '' },
+      { heading: 'write_file', canAllow: false, option: '', mac, clause: '' },
+      { heading: 'write_file', canAllow: false, option: '', mac, clause: '在项目文件夹之外' },
+      { heading: 'shell', canAllow: false, option: '', mac, clause: '' },
+      { heading: 'write_file', canAllow: false, option: '', mac, clause: '高风险' },
+    ])
+    expect(result.engines).toEqual([
+      { id: 'standard', name: 'Latch', startable: true, line: '内置引擎' },
+      { id: 'codex', name: 'Codex', startable: false, line: '在 Mac 上开始' },
+    ])
+    expect(result.projects).toEqual([
+      { id: 'sealed', startable: false },
+      { id: 'latch', startable: true },
+    ])
+    expect(result.choice).toEqual({ harness: 'standard', workspace: 'latch', model: 'm2' })
+    expect(result.blocker).toBe('')
+    expect(result.fields).toEqual({
+      prompt: '开始',
+      harnessId: 'standard',
+      workspaceId: 'latch',
+      mode: 'agent',
+      model: { providerId: 'p', model: 'm2' },
+    })
+  })
   it('matches the existing strict WebSocket wire codec with fragmented input and refuses unsupported frames', async () => {
     const payload = Buffer.from('public relay fixture'),
       mask = Buffer.from([1, 2, 3, 4])
@@ -984,6 +1235,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         cachedClassification: true,
         sameRequest: true,
         pendingCleared: true,
+        phoneWorkspace: true,
       })
       expect((await owner.json<{ assistants: unknown[] }>('personal')).assistants).toEqual([])
       expect((await owner.json<{ tasks: unknown[] }>('snapshot')).tasks).toEqual([])
