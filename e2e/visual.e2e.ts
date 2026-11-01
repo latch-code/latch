@@ -376,12 +376,12 @@ async function openDrawer(target: Page): Promise<Locator> {
   return drawer
 }
 
-/** 会话信息: the right panel beside the conversation on the desktop, a sheet over it on tablets, a pushed page on phones. */
+/** The right panel beside the conversation on the desktop, a sheet over it on tablets, a pushed page on phones. */
 async function openDetails(target: Page, viewport: VisualViewport): Promise<void> {
-  const toggle = target.locator('.topbar').getByRole('button', { name: '会话信息', exact: true })
+  const toggle = target.locator('.topbar').getByRole('button', { name: '侧边面板', exact: true })
   if ((await toggle.getAttribute('aria-pressed')) !== 'true') await toggle.click()
-  if (viewport.name === 'phone') await target.getByRole('region', { name: '会话信息', exact: true }).locator('.inspector').waitFor()
-  else await target.getByRole('complementary', { name: '会话信息', exact: true }).locator('.inspector').waitFor()
+  if (viewport.name === 'phone') await target.getByRole('region', { name: '侧边面板', exact: true }).locator('.session-panels').waitFor()
+  else await target.getByRole('complementary', { name: '侧边面板', exact: true }).locator('.session-panels').waitFor()
   await settleMotion(target)
 }
 
@@ -391,7 +391,7 @@ async function closeDetails(target: Page, viewport: VisualViewport): Promise<voi
     await target.locator('.info-page').waitFor({ state: 'detached' })
     return
   }
-  const toggle = target.locator('.topbar').getByRole('button', { name: '会话信息', exact: true })
+  const toggle = target.locator('.topbar').getByRole('button', { name: '侧边面板', exact: true })
   if ((await toggle.getAttribute('aria-pressed')) === 'true') await toggle.click()
   await settleMotion(target)
 }
@@ -1407,20 +1407,7 @@ describe('visual capture of the real product', () => {
       await shows(target, 'planned')
       await recorder.capture(target, viewport, 'session-plan', 'full-access session done with a plan')
       await openDetails(target, viewport)
-      await recorder.capture(
-        target,
-        viewport,
-        'session-plan-info',
-        'session information with the plan, the usage the agent reported and the changes',
-      )
-      // Each block folds from its header, and this device remembers it.
-      const usageBlock = target.locator('.info-block[data-block="usage"]').last()
-      await usageBlock.getByRole('button', { name: '用量', exact: true }).click()
-      await usageBlock.locator('.ui-collapse[data-state="closed"]').waitFor({ state: 'attached' })
-      await settleMotion(target)
-      await recorder.capture(target, viewport, 'session-info-folded', 'a block of the session information folded')
-      await usageBlock.getByRole('button', { name: '用量', exact: true }).click()
-      await usageBlock.locator('.ui-collapse[data-settled]').waitFor()
+      await recorder.capture(target, viewport, 'panel-launcher', 'the right panel with nothing open')
       await closeDetails(target, viewport)
 
       await openSession(target, viewport, sessions.failed)
@@ -1521,45 +1508,16 @@ describe('visual capture of the real product', () => {
       await target.unroute('**/link/api/approvals/**')
 
       await openDetails(target, viewport)
-      await recorder.capture(target, viewport, 'session-info', 'session information of a session waiting for approval')
-      if (viewport.name === 'phone') {
-        // A phone changes the session's model in 会话信息: the picker is a sheet, and a switch for the next message says
-        // so with the way back, in the page and above the input.
-        const info = target.getByRole('region', { name: '会话信息', exact: true })
-        await info.getByRole('button', { name: /^模型：/ }).click()
-        const models = target.getByRole('dialog', { name: '模型', exact: true })
-        await models.waitFor()
-        await settleMotion(target)
-        await recorder.capture(target, viewport, 'session-info-model', 'the model picker of the session information as a sheet')
-        await models.getByRole('radio', { name: /^fixture-small/ }).click()
-        await models.waitFor({ state: 'hidden' })
-        await info.getByText('下一条消息起使用 fixture-small').waitFor()
-        await reachable(info.getByRole('button', { name: '撤销切换', exact: true }))
-        await settleMotion(target)
-        await recorder.capture(target, viewport, 'session-info-model-switch', 'a model switch for the next message, with the way back')
-        // Back in the conversation, the model control says which model the next message uses.
-        await closeDetails(target, viewport)
-        await target
-          .locator('.composer-chips')
-          .getByText(/fixture-small/)
-          .first()
-          .waitFor()
-        await settleMotion(target)
-        await recorder.capture(target, viewport, 'session-next-model', 'the model control after a switch for the next message')
-        await openDetails(target, viewport)
-        await info.getByRole('button', { name: '撤销切换', exact: true }).click()
-        await info.getByText('下一条消息起使用 fixture-small').waitFor({ state: 'detached' })
-      }
       if (viewport.name === 'desktop') {
         // The column's edge toward the paper resizes it: its line under a held hover, and with keyboard focus.
         const edge = target.getByRole('separator', { name: '调整侧边面板宽度', exact: true })
         await reachable(edge)
         let release = await forceState(target, '.inspector-resize', ['hover'])
         await target.evaluate(() => new Promise(done => setTimeout(done, 500)))
-        await recorder.capture(target, viewport, 'inspector-resize-hover', 'the edge of the session information under the pointer')
+        await recorder.capture(target, viewport, 'inspector-resize-hover', 'the edge of the right panel under the pointer')
         await release()
         release = await forceState(target, '.inspector-resize', ['focus', 'focus-visible'])
-        await recorder.capture(target, viewport, 'inspector-resize-focus', 'the edge of the session information with keyboard focus')
+        await recorder.capture(target, viewport, 'inspector-resize-focus', 'the edge of the right panel with keyboard focus')
         await release()
       }
       await closeDetails(target, viewport)

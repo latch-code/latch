@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import type { HarnessInfo, HostCatalog, SessionConfigOption } from '@latch/protocol'
 import { SessionModelControl } from '../src/composer/ModelControl.tsx'
 import { contextUse, contextWords, permissionView } from '../src/composer/permission.ts'
-import { agentConfigChoice, agentConfigValues, agentModelControls } from '../src/composer/modelReasoning.ts'
+import { agentConfigChoice, agentConfigValues, agentModelControls, composerOptions } from '../src/composer/modelReasoning.ts'
 
 const model: SessionConfigOption = {
   id: 'opaque-model',
@@ -206,5 +206,22 @@ describe('the context ring', () => {
   it('still has the words below that, for the breadcrumb', () => {
     expect(contextWords({ contextUsed: 100_000, contextSize: 400_000 })?.percent).toBe(25)
     expect(contextWords({ contextUsed: 100 })).toBeUndefined()
+  })
+})
+
+describe('options the composer has no control for', () => {
+  const option = (id: string, category?: SessionConfigOption['category']): SessionConfigOption => ({
+    id,
+    name: id,
+    ...(category ? { category } : {}),
+    currentValue: 'a',
+    options: [{ value: 'a', name: 'A' }],
+  })
+  const config = [option('m', 'model'), option('t', 'thought_level'), option('c', 'model_config'), option('mode', 'mode'), option('x')]
+
+  it('stay reachable under ⋯, and appear once', () => {
+    expect(composerOptions(config, false).map(item => item.id)).toEqual(['x'])
+    expect(composerOptions(config, true).map(item => item.id)).toEqual(['c', 'x'])
+    expect(composerOptions([option('c', 'model_config'), option('x')], false).map(item => item.id)).toEqual(['c', 'x'])
   })
 })

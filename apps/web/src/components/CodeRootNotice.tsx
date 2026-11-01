@@ -10,7 +10,7 @@ export function codeRootWorkspace(workspaces: readonly WorkspaceInfo[] | undefin
 }
 
 /**
- * The amber warning wherever such a folder is chosen or shown (设置 › 项目, the new session, 会话信息 › 环境): why every
+ * The amber warning wherever such a folder is chosen or shown (设置 › 项目, the new session, the breadcrumb's popover): why every
  * write will ask, and, for the start directory, that the way out is a new project, with 新建项目… where this device can
  * make one.
  */

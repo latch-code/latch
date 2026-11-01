@@ -57,6 +57,21 @@ body {
 body:has(dialog[open], :popover-open, .sidebar.is-open) .titlebar {
   -webkit-app-region: no-drag;
 }
+/* The panel's strip takes its end of the title row, and moves the window like the rest of it. */
+.app-shell[data-inspector='open'] .titlebar {
+  grid-column-end: 4;
+}
+.inspector-column .session-panel-strip {
+  -webkit-app-region: drag;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.inspector-column .session-panel-strip :is(button, a) {
+  -webkit-app-region: no-drag;
+}
+body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .session-panel-strip {
+  -webkit-app-region: no-drag;
+}
 .titlebar-lead {
   --lead-inset: var(--sp-12);
   --surface: var(--sidebar);
@@ -131,8 +146,6 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .titlebar {
   min-height: 0;
   padding: var(--sp-4) 0 calc(var(--sp-8) + env(safe-area-inset-bottom));
   background: var(--sidebar);
-}
-.app-shell:not([data-sidebar='open']) .rail {
   box-shadow: inset -1px 0 var(--line);
 }
 .rail-entry.ui-icon-button {
@@ -694,7 +707,9 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .titlebar {
  * its edge toward the conversation is the resize handle from 1024px.
  */
 .inspector-column {
-  grid-area: 2 / 4;
+  --panel-strip-height: 52px;
+  grid-area: 1 / 4 / 3 / 5;
+  z-index: 1;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -712,6 +727,7 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .titlebar {
   top: 52px;
   right: 0;
   bottom: 0;
+  --panel-strip-height: 40px;
   width: var(--inspector-open-width);
   max-width: calc(100% - 52px);
   box-shadow: var(--sh-pop);
@@ -720,13 +736,7 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .titlebar {
 .inspector-column-inner {
   width: var(--inspector-open-width);
   height: 100%;
-  padding: var(--shell-inset);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: none;
-}
-.inspector-column-inner::-webkit-scrollbar {
-  display: none;
+  overflow: hidden;
 }
 .app-shell:not([data-inspector]) .inspector-column {
   visibility: hidden;
@@ -749,7 +759,7 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .titlebar {
 }
 
 /*
- * The page of 会话信息 (phones, and tablets too narrow for the column): pushed over the conversation from the right
+ * The panel's page (phones, and tablets too narrow for the column): pushed over the conversation from the right
  * (--m-push), which moves a quarter to the left beneath it; going back reverses it in 70% of that. The same blocks sit on the
  * ground under a header with the way back.
  */
@@ -802,16 +812,7 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .titlebar {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: var(--sp-8) var(--sp-16) calc(var(--sp-24) + env(safe-area-inset-bottom));
-}
-.info-page-body > .inspector {
-  max-width: 560px;
-  margin: 0 auto;
-  gap: var(--sp-12);
-}
-.info-page-body:has(.file-preview, .file-tree) > .inspector {
-  max-width: none;
-  margin: 0;
+  padding-bottom: env(safe-area-inset-bottom);
 }
 @media (max-width: 767.98px) {
   .info-page-head {
@@ -873,4 +874,26 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .titlebar {
     translate: none;
     transition: none;
   }
+}
+.crumb-folder {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+.crumb-folder > code {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+.crumb-folder[data-unused] > code {
+  color: var(--muted);
+}
+.crumb-note {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.topbar-crumb:not(:has(.topbar-crumb-text)) {
+  margin-inline-end: calc(var(--sp-8) * -1);
 }

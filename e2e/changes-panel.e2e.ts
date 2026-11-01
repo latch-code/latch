@@ -645,7 +645,7 @@ it('draws every state at three widths in both themes', async () => {
         if (next.press === 'receipt' || next.press === 'warning') await panel.getByRole('button', { name: '撤销本轮', exact: true }).click()
         if (next.press === 'receipt') await page.getByRole('button', { name: '撤销本轮', exact: true }).last().click()
         if (next.press === 'scope') await panel.locator('.changes-scope-button').click()
-        if (next.press === 'maximise' && width >= 768) await page.getByRole('button', { name: '最大化', exact: true }).click()
+        if (next.press === 'maximise' && width >= 768) await page.getByRole('button', { name: '铺满', exact: true }).click()
         if (next.press === 'tree' && width >= 768) await panel.getByRole('button', { name: '文件树', exact: true }).click()
         await page.waitForTimeout(350)
         const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)

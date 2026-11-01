@@ -300,7 +300,13 @@ describe('real document performance and owner-reference capture', () => {
             expect.soft(titleCount).toBeLessThanOrEqual(bound)
             expect.soft(nodes).toBeLessThanOrEqual(5000)
             screenshots.push(await capture(page, kind, index, slide))
-            if (index < 30) await page.getByRole('button', { name: '下一页', exact: true }).click()
+            if (index < 30) {
+              await frame.locator('body').evaluate(body => {
+                body.tabIndex = -1
+                body.focus({ preventScroll: true })
+              })
+              await page.keyboard.press('ArrowRight')
+            }
           }
         } else if (kind === 'pdf') {
           await page.getByRole('status').filter({ hasText: '1 / 200 页' }).waitFor()

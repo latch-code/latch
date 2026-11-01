@@ -1,3 +1,25 @@
+const DOTENV_EXAMPLES = new Set(['.env.example', '.env.sample', '.env.template'])
+const SECRET_NAMES = new Set(['.npmrc', '.pypirc', '.netrc', '.git-credentials'])
+const SECRET_EXTENSIONS = ['.pem', '.p12', '.pfx', '.kdbx']
+
+/**
+ * Whether a `/`-separated path alone says the file likely holds a secret: `.env` files except the example ones, SSH
+ * identities (not `.pub`), key and certificate stores, package-manager and Git credentials, Terraform state,
+ * `credentials*.json` and everything under `.aws`, `.ssh`, plus `.kube/config` and `.docker/config.json`.
+ */
+export function isSecretPathName(path: string): boolean {
+  const parts = path.toLowerCase().split('/')
+  const name = parts.at(-1) ?? ''
+  if (name === '.env' || (name.startsWith('.env.') && !DOTENV_EXAMPLES.has(name))) return true
+  if (name.startsWith('id_') && !name.endsWith('.pub')) return true
+  if (SECRET_NAMES.has(name) || SECRET_EXTENSIONS.some(ext => name.endsWith(ext))) return true
+  if (name.includes('.keychain') || name.includes('.tfstate')) return true
+  if (name.startsWith('credentials') && name.endsWith('.json')) return true
+  if (parts.includes('.aws') || parts.includes('.ssh')) return true
+  const tail = parts.slice(-2).join('/')
+  return tail === '.git/config' || tail === '.kube/config' || tail === '.docker/config.json'
+}
+
 /** A file is opened in the session's existing side column. Roots are stable Host IDs, never client-supplied paths. */
 export interface FileOpenTarget {
   view?: 'preview' | 'changes'

@@ -6,7 +6,7 @@ sources:
   - apps/host/test/branch-reader.test.ts
   - packages/protocol/src/types.ts
   - apps/web/src/shell/ConversationHeader.tsx
-  - apps/web/src/components/Inspector.tsx
+  - apps/web/src/shell/ConversationHeader.tsx
   - apps/web/src/core/useHarness.ts
 ---
 # 只读分支

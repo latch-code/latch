@@ -110,7 +110,7 @@ describe('back stack', () => {
   })
 
   it('takes the entry a reload left for the page restored there, and skips entries no layer holds', async () => {
-    // Reloaded on 会话信息 (depth 2) over a session (depth 1); only the session comes back.
+    // Reloaded on the panel page (depth 2) over a session (depth 1); only the session comes back.
     const history = new FakeHistory([null, { latchLayer: 1 }, { latchLayer: 2 }])
     const { stack } = setup(history)
     const session = vi.fn()

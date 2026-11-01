@@ -221,13 +221,21 @@ async function render(kind: OfficeKind, data: ArrayBuffer, options: Record<strin
     },
     onSlideUnmounted: index => {
       root.querySelector(`[data-slide-index="${index}"] [data-latch-notes]`)?.remove()
+      root.querySelector(`[data-slide-index="${index}"] [data-latch-slide-head]`)?.remove()
     },
     onSlideRendered: (index, element) => {
       const path = viewer?.presentationData?.slides[index]?.slidePath
-      const text = path && noteTexts.get(path)
-      if (!text) return
       const wrapper = element.closest<HTMLElement>('[data-slide-index]')
-      if (!wrapper || wrapper.querySelector('[data-latch-notes]')) return
+      if (!wrapper) return
+      // Appended, then ordered first by the frame's styles: the renderer finds a slide as its wrapper's first child.
+      if (!wrapper.querySelector('[data-latch-slide-head]')) {
+        const head = document.createElement('div')
+        head.dataset.latchSlideHead = ''
+        head.textContent = `${index + 1} / ${viewer?.presentationData?.slides.length ?? 0}`
+        wrapper.append(head)
+      }
+      const text = path && noteTexts.get(path)
+      if (!text || wrapper.querySelector('[data-latch-notes]')) return
       const details = document.createElement('details'),
         summary = document.createElement('summary'),
         body = document.createElement('p')

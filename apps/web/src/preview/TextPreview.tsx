@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button, SearchField, TextField, CopyButton } from '@latch/ui'
-import { VisibleText } from '../components/VisibleText.tsx'
+import { Button, IconButton, SearchField, TextField, useCopy } from '@latch/ui'
+import { X } from 'lucide-react'
 import { SyntaxLine, useHighlightedTokens } from './HighlightedCode.tsx'
 import { languageForPath } from './highlight-protocol.ts'
+import { useViewerMenu } from './viewerActions.tsx'
 export function TextPreview({
   text,
   path,
@@ -14,14 +15,38 @@ export function TextPreview({
   line?: number
   sensitive?: boolean
 }) {
-  const lines = useMemo(() => text.split('\n'), [text])
+  const lines = useMemo(() => text.split(/\r?\n/u), [text])
   const tokens = useHighlightedTokens(text, languageForPath(path ?? ''), !sensitive)
   const search = useRef<HTMLInputElement>(null)
   const content = useRef<HTMLPreElement>(null)
   const requestedLine = useRef(line)
   const [start, setStart] = useState(Math.max(0, line - 1)),
     [query, setQuery] = useState(''),
-    [wrap, setWrap] = useState(false)
+    [wrap, setWrap] = useState(false),
+    [finding, setFinding] = useState(false)
+  const copied = useCopy()
+  const openFind = () => {
+    setFinding(true)
+    requestAnimationFrame(() => search.current?.focus())
+  }
+  useViewerMenu([
+    { id: 'find', label: '查找', onSelect: openFind },
+    {
+      id: 'wrap',
+      label: '自动换行',
+      checked: wrap,
+      onSelect: () => {
+        setWrap(!wrap)
+      },
+    },
+    {
+      id: 'copy-content',
+      label: '复制文件内容',
+      onSelect: () => {
+        void copied.copy(text)
+      },
+    },
+  ])
   useEffect(() => {
     const changed = requestedLine.current !== line
     requestedLine.current = line
@@ -77,66 +102,79 @@ export function TextPreview({
         if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') {
           event.preventDefault()
           event.stopPropagation()
-          search.current?.focus()
+          openFind()
         }
       }}>
-      <div className="file-preview-controls">
-        <SearchField
-          ref={search}
-          label="查找文件内容"
-          placeholder="查找"
-          value={query}
-          onValueChange={value => setQuery(value.slice(0, 512))}
-          onKeyDown={event => {
-            if (event.key === 'Enter') find()
-          }}
-        />
-        <CopyButton text={text} label="复制文件内容" size="xs" />
-        <Button size="xs" variant="ghost" onClick={find}>
-          下一个
-        </Button>
-        <Button size="xs" variant="ghost" aria-pressed={wrap} onClick={() => setWrap(!wrap)}>
-          自动换行
-        </Button>
-        <TextField
-          label={<span className="sr-only">跳到行</span>}
-          className="file-line-jump"
-          aria-label="跳到行"
-          type="number"
-          min={1}
-          max={lines.length}
-          value={start + 1}
-          onChange={event => {
-            const value = Number(event.target.value)
-            if (Number.isInteger(value)) setStart(Math.max(0, Math.min(lines.length - 1, value - 1)))
-          }}
-        />
-      </div>
+      {finding && (
+        <div className="file-preview-controls file-find">
+          <SearchField
+            ref={search}
+            label="查找文件内容"
+            placeholder="查找"
+            value={query}
+            onValueChange={value => setQuery(value.slice(0, 512))}
+            onKeyDown={event => {
+              if (event.key === 'Enter') find()
+              if (event.key === 'Escape') {
+                event.stopPropagation()
+                setQuery('')
+                setFinding(false)
+              }
+            }}
+          />
+          <Button size="xs" variant="ghost" onClick={find}>
+            下一个
+          </Button>
+          <TextField
+            label={<span className="sr-only">跳到行</span>}
+            className="file-line-jump"
+            aria-label="跳到行"
+            type="number"
+            min={1}
+            max={lines.length}
+            value={start + 1}
+            onChange={event => {
+              const value = Number(event.target.value)
+              if (Number.isInteger(value)) setStart(Math.max(0, Math.min(lines.length - 1, value - 1)))
+            }}
+          />
+          <IconButton
+            size="xs"
+            label="关闭查找"
+            icon={X}
+            onClick={() => {
+              setQuery('')
+              setFinding(false)
+            }}
+          />
+        </div>
+      )}
       <pre ref={content} className="file-text" data-wrap={wrap ? '' : undefined} tabIndex={0}>
         {lines.slice(start, start + 200).map((text, index) => (
           <span className="file-text-line" key={start + index}>
             <span className="file-line-number" aria-hidden="true">
               {start + index + 1}
             </span>
-            <code>{text ? <SyntaxLine text={text} tokens={tokens?.[start + index]} /> : <VisibleText text="\n" />}</code>
+            <code>{text ? <SyntaxLine text={text} tokens={tokens?.[start + index]} /> : ' '}</code>
           </span>
         ))}
       </pre>
-      <div className="file-preview-controls">
-        {lines.length > 200 && (
-          <Button size="xs" disabled={start === 0} onClick={() => setStart(Math.max(0, start - 200))}>
+      {lines.length > 200 && (
+        <div className="file-preview-controls file-text-pages">
+          <Button size="xs" variant="ghost" disabled={start === 0} onClick={() => setStart(Math.max(0, start - 200))}>
             前 200 行
           </Button>
-        )}
-        <span>
-          {start + 1}–{Math.min(start + 200, lines.length)} / {lines.length} 行
-        </span>
-        {lines.length > 200 && (
-          <Button size="xs" disabled={start + 200 >= lines.length} onClick={() => setStart(start + 200)}>
+          <span>
+            {start + 1}–{Math.min(start + 200, lines.length)} / {lines.length} 行
+          </span>
+          <Button size="xs" variant="ghost" disabled={start + 200 >= lines.length} onClick={() => setStart(start + 200)}>
             后 200 行
           </Button>
-        )}
-      </div>
+        </div>
+      )}
+      <span className="sr-only" role="status">
+        {copied.state === 'copied' ? '已复制' : copied.state === 'failed' ? '复制不可用，请手动选择内容' : ''}
+      </span>
     </div>
   )
 }

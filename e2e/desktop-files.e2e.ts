@@ -10,6 +10,7 @@ import { writeHostState } from '@latch/host/host-state'
 import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { latchEnv } from '@latch/host/env'
 import { startTestHost } from './helpers/host.ts'
+import { closeActiveFile } from './helpers/layout.ts'
 
 /** What the test records in main instead of showing Finder or Quick Look, opening an app or the browser. */
 interface ShellRecord {
@@ -250,7 +251,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await chip('paper.pdf').dblclick()
       await page.getByRole('region', { name: '文件预览', exact: true }).waitFor()
       expect((await record()).previewed).toHaveLength(1)
-      await page.getByRole('button', { name: '关闭文件', exact: true }).click()
+      await closeActiveFile(page)
 
       // So does a Word document.
       await open('letter.docx')
@@ -360,7 +361,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
         }),
       ).toBe(true)
       await captureThemes(page, 'native-desktop-document-frame')
-      await page.getByRole('button', { name: '关闭文件', exact: true }).click()
+      await closeActiveFile(page)
 
       // Preview bytes pass through Host adjudication; native actions remain in main.
       const direct = await page.evaluate(async id => {
@@ -441,8 +442,9 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await tree.getByRole('treeitem', { name: 'notes.txt', exact: true }).click()
       const preview = page.getByRole('region', { name: '文件预览', exact: true })
       await preview.getByText('Workspace preview before the first message.', { exact: true }).waitFor()
-      await preview.getByRole('button', { name: '文件操作', exact: true }).click()
-      await page.getByRole('menuitem', { name: '在访达中显示', exact: true }).click()
+      // Native actions are rate limited, and the checks above just used the bridge.
+      await new Promise(done => setTimeout(done, 600))
+      await preview.getByRole('button', { name: '在访达中显示', exact: true }).click()
       await waitFor(async () => (await record()).shown.length === 2)
       expect((await record()).shown.at(-1)).toBe(await realpath(join(projectRoot, 'notes.txt')))
       expect((await host.bridge.listTasks()).length).toBe(1)

@@ -12,7 +12,7 @@ import { writeHostState } from '@latch/host/host-state'
 import { latchEnv } from '@latch/host/env'
 import { startTestHost } from './helpers/host.ts'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
-import { settleShell } from './helpers/layout.ts'
+import { closeActiveFile, settleShell } from './helpers/layout.ts'
 
 async function beacon() {
   let requests = 0,
@@ -56,6 +56,14 @@ const img=new Image();img.src='${origin}/script-image';document.body.append(img)
 fetch('latch://app/link/api/snapshot').then(()=>{document.body.dataset.hostAccess='yes'}).catch(()=>{});
 setTimeout(()=>{document.body.dataset.settled='yes'},250);
 </script></body></html>`
+const deck = `<!doctype html><html><head><style>html,body{margin:0;overflow:hidden;height:100%;background:#000;color:#fff}
+#stage{position:absolute;left:50%;top:50%;width:1280px;height:720px}.slide{display:none}.slide.active{display:block}</style></head><body>
+<div id="stage"><section class="slide active"><h1>First slide</h1></section><section class="slide"><h1>Second slide</h1></section></div><script>
+const all=[...document.querySelectorAll('.slide')];let at=0;
+function fit(){const s=Math.min(innerWidth/1280,innerHeight/720);document.getElementById('stage').style.transform='translate(-50%,-50%) scale('+s+')'}
+document.addEventListener('DOMContentLoaded',fit);addEventListener('resize',fit);
+document.addEventListener('keydown',e=>{if(e.key!=='ArrowRight')return;at=Math.min(all.length-1,at+1);all.forEach((s,i)=>s.classList.toggle('active',i===at))});
+</script></body></html>`
 async function fixture(origin: string, manual = false) {
   const plugin: HarnessPlugin = {
     id: 'html-fixture',
@@ -68,7 +76,7 @@ async function fixture(origin: string, manual = false) {
         name: 'Fixture',
         model: 'fixture',
         async *stream() {
-          yield { type: 'text', text: '[slides.html](slides.html)' }
+          yield { type: 'text', text: '[slides.html](slides.html) [deck.html](deck.html) [hang.html](hang.html)' }
           yield { type: 'finish', reason: 'stop' }
         },
       })
@@ -76,6 +84,11 @@ async function fixture(origin: string, manual = false) {
   }
   const host = await startTestHost({ demo: false, plugins: [plugin], ...(manual ? { presenceMode: 'manual' } : {}) })
   await writeFile(join(host.workspaceRoot, 'slides.html'), html(origin))
+  await writeFile(join(host.workspaceRoot, 'deck.html'), deck)
+  await writeFile(
+    join(host.workspaceRoot, 'hang.html'),
+    '<!doctype html><html><body><p>Hanging page</p><script>while(1);</script></body></html>',
+  )
   const { sessionId } = await host.host.bridge.createTask({
     prompt: 'Preview HTML',
     requestId: randomUUID(),
@@ -108,11 +121,11 @@ describe('opaque HTML previews', () => {
           const frame = page.frameLocator('iframe[title="文档预览"]')
           await frame.getByRole('heading', { name: 'Local HTML slides' }).waitFor()
           await frame.getByText('Static content', { exact: true }).waitFor()
+          // External resources are skipped silently, and a page without a desktop app has no way to run scripts.
           expect(await preview.getByRole('note').count()).toBe(0)
-          await preview.getByRole('button', { name: '预览说明', exact: true }).click()
-          await preview.getByText('部分外部图片或资源未加载（至少 4 处）。', { exact: true }).waitFor()
-          await preview.getByRole('button', { name: '预览说明', exact: true }).click()
-          expect(await preview.getByRole('button', { name: '运行页面脚本', exact: true }).count()).toBe(0)
+          await preview.getByRole('button', { name: '文件操作', exact: true }).click()
+          expect(await page.getByRole('menuitem', { name: /运行页面脚本/u }).count()).toBe(0)
+          await page.keyboard.press('Escape')
           expect(await page.evaluate(() => document.body.dataset.previewEscape)).toBeUndefined()
           await settleShell(page)
           await page.evaluate(() => {
@@ -127,8 +140,8 @@ describe('opaque HTML previews', () => {
             .toBe('https://example.invalid/document-link')
           expect(await preview.getByText('文档请求打开：', { exact: false }).count()).toBe(0)
           await preview.getByRole('button', { name: '源码', exact: true }).click()
-          await preview.getByRole('searchbox', { name: '查找文件内容' }).waitFor()
-          await preview.getByRole('button', { name: '预览', exact: true }).click()
+          await preview.locator('.file-text').waitFor()
+          await preview.getByRole('button', { name: '源码', exact: true }).click()
           await frame.getByText('Static content', { exact: true }).waitFor()
           await mkdir('test-results/html', { recursive: true })
           await page.screenshot({ path: `test-results/html/static-${width}-${theme}.png`, animations: 'disabled' })
@@ -225,7 +238,8 @@ describe('opaque HTML previews', () => {
         await page.evaluate(() => window.open('https://example.invalid/programmatic'))
         await expect.poll(async () => (await links()).dialogs).toBe(1)
         expect((await links()).opened).toEqual(['https://example.invalid/document-link'])
-        await preview.getByRole('button', { name: '运行页面脚本', exact: true }).click()
+        await preview.getByRole('button', { name: '文件操作', exact: true }).click()
+        await page.getByRole('menuitem', { name: /运行页面脚本/u }).click()
         await page.frameLocator('iframe').getByText('Scripts ran', { exact: true }).waitFor()
         const frame = page.frames().find(frame => frame.url().startsWith('latch-frame://preview/html-script.html'))!
         await expect.poll(() => frame.evaluate(() => document.body.dataset.settled)).toBe('yes')
@@ -249,7 +263,7 @@ describe('opaque HTML previews', () => {
         }, counter.udpPort)
         expect(counter.datagrams()).toBe(controlDatagrams)
         expect(counter.requests()).toBe(0)
-        await preview.getByRole('button', { name: '关闭文件', exact: true }).click()
+        await closeActiveFile(page)
         await page.getByRole('button', { name: '预览文件：slides.html', exact: true }).click()
         await page.frameLocator('iframe').getByText('Scripts ran', { exact: true }).waitFor()
         const reopened = page.frames().find(frame => frame.url().startsWith('latch-frame://preview/html-script.html'))!
@@ -263,6 +277,21 @@ describe('opaque HTML previews', () => {
         expect(page.url()).toBe('latch://app/link/')
         await mkdir('test-results/html', { recursive: true })
         await page.screenshot({ path: 'test-results/html/desktop-scripts.png', animations: 'disabled' })
+        // A deck offers its scripts where it shows, and running them hands it the keyboard.
+        await page.getByRole('button', { name: '预览文件：deck.html', exact: true }).click()
+        await page.frameLocator('iframe').getByText('First slide', { exact: true }).waitFor()
+        await preview.getByRole('button', { name: '运行页面脚本', exact: true }).click()
+        await preview.getByText('页面脚本没有运行', { exact: false }).waitFor({ state: 'detached' })
+        await page.frameLocator('iframe').getByText('First slide', { exact: true }).waitFor()
+        await page.screenshot({ path: 'test-results/html/desktop-deck.png', animations: 'disabled' })
+        await page.keyboard.press('ArrowRight')
+        await page.frameLocator('iframe').getByText('Second slide', { exact: true }).waitFor()
+        // A page that never finishes starting is called stopped, not left looking loaded.
+        await page.getByRole('button', { name: '预览文件：hang.html', exact: true }).click()
+        await page.frameLocator('iframe').getByText('Hanging page', { exact: true }).waitFor()
+        await preview.getByRole('button', { name: '文件操作', exact: true }).click()
+        await page.getByRole('menuitem', { name: /运行页面脚本/u }).click()
+        await preview.getByText('文档预览已停止', { exact: false }).waitFor({ timeout: 30_000 })
       } finally {
         await application?.close()
         await host.close()

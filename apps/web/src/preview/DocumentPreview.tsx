@@ -1,14 +1,17 @@
 import csvWorkerUrl from './csv.worker.ts?worker&url'
 import { trustedScriptUrl } from './runtime.ts'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowLeft, ArrowRight } from 'lucide-react'
-import { Button, IconButton, InlineNotice } from '@latch/ui'
+import { InlineNotice } from '@latch/ui'
 import { isFrameEvent, type DocumentPreviewProps, type FrameCommand, type FrameOrigin, type GridCell, type SheetInfo } from './types.ts'
 import { SheetGrid, type SheetView } from './SheetGrid.tsx'
 import { openDocumentLink } from './openLink.ts'
 import { DOCUMENT_PREVIEW_ERRORS } from '../core/securityCopy.ts'
+import { useViewerMenu, useViewerQuote, useViewerSource } from './viewerActions.tsx'
 const PdfPreview = lazy(() => import('./PdfPreview.tsx'))
 type Pending = { resolve: (rows: GridCell[][]) => void; reject: () => void; timer: ReturnType<typeof setTimeout> }
+/** `system` pins no attribute on the page, so the frame reads what the media query decided. */
+const documentTheme = () =>
+  document.documentElement.dataset.theme ?? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
 function OfficePreview({ file, versionKey, read, renderFrame, onQuote }: DocumentPreviewProps) {
   const [data, setData] = useState<ArrayBuffer>(),
     [loadedKey, setLoadedKey] = useState(''),
@@ -18,11 +21,11 @@ function OfficePreview({ file, versionKey, read, renderFrame, onQuote }: Documen
     [page, setPage] = useState({ index: 0, count: 0 }),
     [fit, setFit] = useState(true),
     [truncated, setTruncated] = useState(false),
-    [changes, setChanges] = useState(false)
-  const [renderedKey, setRenderedKey] = useState(''),
+    [changes, setChanges] = useState(false),
     [quoteHint, setQuoteHint] = useState('')
+  const [renderedKey, setRenderedKey] = useState('')
   const quoteCallback = useRef(onQuote),
-    quoteRequest = useRef<{ id: string; version: string } | undefined>(undefined)
+    quoteRequest = useRef<{ id: string; version: string; source: 'selection' | 'page' } | undefined>(undefined)
   quoteCallback.current = onQuote
   const sheetViews = useRef<Record<number, SheetView>>({})
   const view = useRef({ pageIndex: 0, fit: true, zoomPercent: 100 })
@@ -134,12 +137,14 @@ function OfficePreview({ file, versionKey, read, renderFrame, onQuote }: Documen
       setTruncated(value.truncated === true)
     }
     if (value.type === 'quote' && quoteRequest.current?.id === value.id && quoteRequest.current.version === liveKey.current) {
+      const asked = quoteRequest.current.source
       quoteRequest.current = undefined
-      if (!value.text.trim()) setQuoteHint('请先在文档中选择文字，或引用当前页。')
-      else {
+      // With nothing selected, the same button quotes the page in view.
+      if (!value.text.trim() && asked === 'selection') quoteFrame.current('page')
+      else if (value.text.trim()) {
         setQuoteHint('')
         quoteCallback.current?.({ text: value.text, ...(value.page === undefined ? {} : { page: value.page }) })
-      }
+      } else setQuoteHint('这一页没有可引用的文字。')
     }
     if (value.type === 'page') {
       setPage({ index: value.index, count: value.count })
@@ -170,9 +175,45 @@ function OfficePreview({ file, versionKey, read, renderFrame, onQuote }: Documen
   const requestQuote = (source: 'selection' | 'page') => {
     if (loadedKey !== loadKey || renderedKey !== loadedKey || !channel.current || !onQuote) return
     const id = crypto.randomUUID().replaceAll('-', '')
-    quoteRequest.current = { id, version: loadKey }
+    setQuoteHint('')
+    quoteRequest.current = { id, version: loadKey, source }
     channel.current({ type: 'quote', id, source })
   }
+  const quoteFrame = useRef(requestQuote)
+  quoteFrame.current = requestQuote
+  const paged = page.count > 0
+  useViewerMenu([
+    ...(file.kind === 'docx'
+      ? [
+          {
+            id: 'changes',
+            label: '显示修订',
+            checked: changes,
+            onSelect: () => {
+              setChanges(!changes)
+            },
+          },
+        ]
+      : []),
+    ...(paged
+      ? [
+          {
+            id: 'fit',
+            label: '适应宽度',
+            checked: fit,
+            onSelect: () => {
+              view.current.fit = !fit
+              if (!fit) view.current.zoomPercent = 100
+              setFit(!fit)
+              channel.current?.({ type: 'fit', value: !fit })
+            },
+          },
+        ]
+      : []),
+  ])
+  useViewerQuote(onQuote && file.kind !== 'xlsx' ? loadedKey === loadKey && renderedKey === loadedKey : undefined, () => {
+    requestQuote('selection')
+  })
   if (!data) return error ? <InlineNotice tone="error">{error}</InlineNotice> : <p role="status">正在读取文档…</p>
   const sheet = sheets.find(item => item.id === selected)
   return (
@@ -193,69 +234,11 @@ function OfficePreview({ file, versionKey, read, renderFrame, onQuote }: Documen
             : { type: 'zoom', percent: Math.min(400, Math.max(10, view.current.zoomPercent + (event.key === '-' ? -10 : 10))) },
         )
       }}>
-      <div className="document-preview-controls document-paged-controls">
-        {page.count > 0 && (
-          <>
-            <IconButton
-              label="上一页"
-              icon={ArrowLeft}
-              disabled={page.index === 0}
-              onClick={() => channel.current?.({ type: 'page', index: page.index - 1 })}
-            />
-            <span role="status">
-              {page.index + 1} / {page.count} 页
-            </span>
-            <IconButton
-              label="下一页"
-              icon={ArrowRight}
-              disabled={page.index + 1 === page.count}
-              onClick={() => channel.current?.({ type: 'page', index: page.index + 1 })}
-            />
-            <Button
-              size="sm"
-              variant="ghost"
-              aria-pressed={fit}
-              onClick={() => {
-                view.current.fit = !fit
-                if (!fit) view.current.zoomPercent = 100
-                setFit(!fit)
-                channel.current?.({ type: 'fit', value: !fit })
-              }}>
-              适应
-            </Button>
-          </>
-        )}
-        {file.kind === 'docx' && (
-          <Button
-            size="sm"
-            variant="ghost"
-            aria-pressed={changes}
-            onClick={() => {
-              setChanges(!changes)
-            }}>
-            显示修订（实验）
-          </Button>
-        )}
-        {onQuote && file.kind !== 'xlsx' && (
-          <>
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={loadedKey !== loadKey || renderedKey !== loadedKey}
-              onPointerDown={event => event.preventDefault()}
-              onClick={() => requestQuote('selection')}>
-              引用选区
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={loadedKey !== loadKey || renderedKey !== loadedKey}
-              onClick={() => requestQuote('page')}>
-              引用本页
-            </Button>
-          </>
-        )}
-      </div>
+      {paged && (
+        <span className="document-page-count" data-kind={file.kind} role="status">
+          {page.index + 1} / {page.count} 页
+        </span>
+      )}
       {loadedKey !== loadKey && !error && (
         <span className="document-preview-caption" role="status">
           正在更新文档…
@@ -267,14 +250,13 @@ function OfficePreview({ file, versionKey, read, renderFrame, onQuote }: Documen
           {quoteHint}
         </span>
       )}
-      <span className="document-preview-caption">只读预览，排版可能与原应用不同。</span>
       {truncated && <InlineNotice>文件较大，部分行、列或单元格内容未显示。</InlineNotice>}
       <div className={file.kind === 'xlsx' ? 'document-parser-frame' : 'document-frame'}>
         {renderFrame({
           kind: file.kind as 'pptx' | 'docx' | 'xlsx',
           data,
           versionKey: loadedKey,
-          options: { ...view.current, showChanges: changes, theme: document.documentElement.dataset.theme ?? 'light' },
+          options: { ...view.current, showChanges: changes, theme: documentTheme() },
           onMessage: message,
           onChannel,
         })}
@@ -302,12 +284,18 @@ function OfficePreview({ file, versionKey, read, renderFrame, onQuote }: Documen
                 </button>
               ))}
           </div>
-          {sheets.some(item => item.hidden) && <span className="document-preview-caption">隐藏的工作表未显示。</span>}
         </>
       )}
     </div>
   )
 }
+const DELIMITERS: ReadonlyArray<readonly [string, string]> = [
+  ['', '自动识别'],
+  [',', '逗号'],
+  ['\t', 'Tab'],
+  [';', '分号'],
+  ['|', '竖线'],
+]
 function CsvPreview({ read, versionKey, onQuote }: DocumentPreviewProps) {
   const [info, setInfo] = useState<SheetInfo>(),
     [error, setError] = useState(''),
@@ -424,26 +412,21 @@ function CsvPreview({ read, versionKey, onQuote }: DocumentPreviewProps) {
       }),
     [],
   )
+  useViewerSource(source, () => {
+    setSource(!source)
+  })
+  useViewerMenu(
+    DELIMITERS.map(([value, label]) => ({
+      id: `delimiter-${label}`,
+      label: `分隔符：${label}`,
+      checked: delimiter === value,
+      onSelect: () => {
+        setDelimiter(value)
+      },
+    })),
+  )
   return (
     <div className="document-preview">
-      <div className="document-preview-controls">
-        <Button size="sm" variant="ghost" aria-pressed={!source} onClick={() => setSource(false)}>
-          预览
-        </Button>
-        <Button size="sm" variant="ghost" aria-pressed={source} onClick={() => setSource(true)}>
-          源码
-        </Button>
-        <label>
-          分隔符
-          <select value={delimiter} onChange={event => setDelimiter(event.target.value)}>
-            <option value="">自动识别</option>
-            <option value=",">逗号</option>
-            <option value={'\t'}>Tab</option>
-            <option value=";">分号</option>
-            <option value="|">竖线</option>
-          </select>
-        </label>
-      </div>
       {truncated && <InlineNotice>表格较大，部分行、列或文字未显示。</InlineNotice>}
       {replacement && <InlineNotice>部分字符无法识别，已用替代字符显示。</InlineNotice>}
       {error && (

@@ -1,12 +1,14 @@
 import { useCallback, useContext, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
-import { Check, ChevronRight, Copy, Ellipsis, File, Folder, FolderOpen, Link2, RefreshCw, Search, TextQuote } from 'lucide-react'
+import { Copy, Ellipsis, ExternalLink, Eye, Folder, FolderOpen, Link2, MessageSquareQuote, RefreshCw, Search } from 'lucide-react'
 import { isFileDirectoryListing, type FileChange, type FileContext, type FileDirectoryListing, type FileMention } from '@latch/protocol'
-import { Button, Icon, IconButton, InlineNotice, Loading, Menu, Tooltip, useCopy } from '@latch/ui'
+import { Button, Icon, IconButton, InlineNotice, Kbd, Loading, Menu, Tooltip, useCopy, type MenuItem } from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
+import { fileNote } from '../core/securityCopy.ts'
 import { currentShell, revealLabel, shellFiles } from '../core/shell.ts'
+import { referenceIcon } from '../fileReference.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { FileOpenContext, fileContextBody, fileContextKey, fileRoute, targetIn } from './fileContext.ts'
-import { readTreeFile, treeChanges, treeFullPath, treeKey as branchKey, treeLocation, type FileTreeView } from './treeFiles.ts'
+import { readTreeFile, soleFolder, treeChanges, treeFullPath, treeKey as branchKey, treeLocation, type FileTreeView } from './treeFiles.ts'
 
 type Branch = { listing?: FileDirectoryListing; loading?: boolean; error?: string; shown: number }
 type TreeRow = {
@@ -17,6 +19,8 @@ type TreeRow = {
   name: string
   kind: 'file' | 'directory' | 'symlink' | 'other'
   depth: number
+  /** The folders this row stands for when single children read as one row, outermost first. */
+  chain?: string[]
 }
 const PAGE_SIZE = 100
 const CACHE_LIMIT = 32
@@ -33,9 +37,14 @@ export function FileTree({
   revision,
   initialView,
   onViewChange,
+  rootReveal,
 }: {
   context: FileContext
-  onSearch(): void
+  /** Opens ⌘P; absent on a device that cannot search. */
+  onSearch?(): void
+  /** The folder itself, through the desktop shell's folder bridge; absent elsewhere. */
+  /** The action for a root that can be shown in the file manager as the folder this tree is listing. */
+  rootReveal?(rootId: string): (() => void) | undefined
   onMention?(mention: FileMention): void
   local?: boolean
   folders?: readonly { id: string; path: string }[]
@@ -219,7 +228,19 @@ export function FileTree({
       controllers.current.clear()
     }
   }, [contextKey, generation, showHidden, revision])
-  const fileAction = async (row: TreeRow, kind: 'copy' | 'reveal') => {
+  // A folder whose only entry is a folder reads as one row, so opening one opens the rest of the run.
+  useEffect(() => {
+    for (const key of expanded) {
+      const location = treeLocation(key)
+      const only = soleFolder(branches[key]?.listing)
+      if (!location || !only || location.path === '') continue
+      const child = branchKey(location.root, `${location.path}/${only}`)
+      if (expanded.has(child)) continue
+      setExpanded(previous => new Set(previous).add(child))
+      if (!branches[child]?.listing) void load(location.root, `${location.path}/${only}`)
+    }
+  }, [branches, expanded, load])
+  const fileAction = async (row: TreeRow, kind: 'copy' | 'reveal' | 'open' | 'quickLook') => {
     if (action.current || !local) return
     const controller = new AbortController()
     action.current = controller
@@ -234,13 +255,14 @@ export function FileTree({
         await copy.copy(path)
       } else {
         const shell = shellFiles()
-        if (!shell || shell.protocolVersion !== 2 || !file.actions.reveal) throw new Error('当前桌面端无法显示这个文件。')
-        const result = await shell.reveal(
+        const allowed = kind === 'reveal' ? file.actions.reveal : kind === 'open' ? file.actions.open : file.actions.quicklook
+        if (!shell || shell.protocolVersion !== 2 || !allowed) throw new Error('当前桌面端无法这样打开这个文件。')
+        const result = await shell[kind](
           context.kind === 'session' ? context.sessionId : { workspaceId: context.workspaceId, harnessId: context.harnessId },
           { handle: file.handle },
         )
-        if (result.status !== 'shown')
-          throw new Error(result.status === 'busy' ? '上一个文件操作还没有完成，请稍后重试。' : '无法在文件管理器中显示，请刷新后重试。')
+        if (result.status === 'busy') throw new Error('上一个文件操作还没有完成，请稍后重试。')
+        if (result.status === 'refused' || result.status === 'failed') throw new Error(fileNote(result.code).text)
       }
     } catch (cause) {
       if (!controller.signal.aborted) setNotice(errorMessage(cause))
@@ -252,7 +274,6 @@ export function FileTree({
     }
   }
   const rowMenu = (element: HTMLElement, row: TreeRow) => {
-    if (row.kind !== 'file') return false
     const button = element.querySelector<HTMLButtonElement>('[data-tree-menu]')
     if (!button) return false
     setSelected(row.key)
@@ -262,11 +283,27 @@ export function FileTree({
   }
   const rows: TreeRow[] = []
   let clipped = false
-  const append = (row: TreeRow) => {
+  const append = (first: TreeRow) => {
     if (rows.length >= 1000) {
       clipped = true
       return
     }
+    let row = first
+    if (row.kind === 'directory' && row.depth > 0)
+      for (
+        let only = soleFolder(branches[row.key]?.listing);
+        only && expanded.has(row.key);
+        only = soleFolder(branches[row.key]?.listing)
+      ) {
+        const path = `${row.path}/${only}`
+        row = {
+          ...row,
+          key: branchKey(row.root, path),
+          path,
+          name: `${row.name}/${only}`,
+          chain: [...(row.chain ?? [row.key]), branchKey(row.root, path)],
+        }
+      }
     rows.push(row)
     if (!expanded.has(row.key) || row.depth >= 32) return
     const branch = branches[row.key]
@@ -285,6 +322,8 @@ export function FileTree({
   }
   for (const root of roots) append({ key: branchKey(root.id, ''), root: root.id, path: '', name: root.name, kind: 'directory', depth: 0 })
   const byKey = new Map(rows.map(row => [row.key, row]))
+  // The selection can name a folder a merged row has since absorbed.
+  const current = rows.find(row => row.key === selected || (selected !== undefined && row.chain?.includes(selected)))?.key
   const focusRow = (key: string) => {
     setSelected(key)
     requestAnimationFrame(() =>
@@ -296,10 +335,12 @@ export function FileTree({
   const toggle = (row: TreeRow, value = !expanded.has(row.key)) => {
     if (row.kind !== 'directory') return
     if (!value) setNotice('')
+    // A run closes into its first folder, so the row's place in the tab order has to follow it there.
+    if (!value && row.chain?.[0]) setSelected(row.chain[0])
     setExpanded(previous => {
       const next = new Set(previous)
       if (value) next.add(row.key)
-      else next.delete(row.key)
+      else for (const key of row.chain ?? [row.key]) next.delete(key)
       return next
     })
     if (value && !branches[row.key]?.listing) void load(row.root, row.path)
@@ -338,25 +379,107 @@ export function FileTree({
       activate(row)
     }
   }
+  const busy = acting ? { disabledReason: '请等待当前文件操作完成。' } : {}
+  const rootItems = (row: TreeRow): MenuItem[] => {
+    const path = folders?.length ? folders.find(folder => folder.id === row.root)?.path : cwd
+    const reveal = rootReveal?.(row.root)
+    return [
+      ...(path
+        ? [
+            {
+              id: 'copy',
+              label: '复制路径',
+              icon: Copy,
+              onSelect: () => {
+                void copy.copy(path)
+              },
+            },
+          ]
+        : []),
+      ...(reveal ? [{ id: 'reveal', label: revealLabel(currentShell()?.platform), icon: FolderOpen, onSelect: reveal }] : []),
+    ]
+  }
+  const fileItems = (row: TreeRow): MenuItem[] => {
+    const full = local ? treeFullPath({ root: row.root, path: row.path }, folders, cwd) : undefined
+    const native = local && shellFiles()?.protocolVersion === 2
+    return [
+      ...(onMention
+        ? [
+            {
+              id: 'quote',
+              label: '引用到对话',
+              icon: MessageSquareQuote,
+              onSelect: () => {
+                onMention({ root: row.root, path: row.path })
+              },
+            },
+          ]
+        : []),
+      full
+        ? { id: 'copy', label: '复制路径', icon: Copy, ...busy, onSelect: () => void fileAction(row, 'copy') }
+        : {
+            id: 'copy',
+            label: '复制路径',
+            icon: Copy,
+            onSelect: () => {
+              void copy.copy(row.path)
+            },
+          },
+      ...(full
+        ? [
+            {
+              id: 'copy-relative',
+              label: '复制相对路径',
+              icon: Copy,
+              onSelect: () => {
+                void copy.copy(row.path)
+              },
+            },
+          ]
+        : []),
+      ...(native
+        ? [
+            {
+              id: 'reveal',
+              label: revealLabel(currentShell()?.platform),
+              icon: FolderOpen,
+              ...busy,
+              onSelect: () => void fileAction(row, 'reveal'),
+            },
+            { id: 'open', label: '用默认应用打开', icon: ExternalLink, ...busy, onSelect: () => void fileAction(row, 'open') },
+            { id: 'quicklook', label: '快速查看', icon: Eye, ...busy, onSelect: () => void fileAction(row, 'quickLook') },
+          ]
+        : []),
+    ]
+  }
   return (
     <section className="file-tree" aria-label="项目文件">
       <header className="file-tree-head">
-        <strong>文件</strong>
-        <IconButton label="搜索文件" icon={Search} onClick={onSearch} />
-        <IconButton label="刷新文件树" icon={RefreshCw} onClick={() => setGeneration(value => value + 1)} />
+        {onSearch ? (
+          <button type="button" className="file-tree-search" aria-label="搜索文件" onClick={onSearch}>
+            <Icon icon={Search} size={14} />
+            <span>搜索文件</span>
+            <Kbd keys="mod+p" />
+          </button>
+        ) : (
+          <span className="file-tree-search-gap" />
+        )}
         <Menu
           label="文件显示选项"
-          trigger={props => <IconButton {...props} label="文件显示选项" icon={Ellipsis} />}
+          align="end"
+          trigger={props => <IconButton {...props} size="xs" label="文件显示选项" icon={Ellipsis} />}
           sections={[
             {
               id: 'view',
               items: [
                 {
                   id: 'hidden',
-                  label: showHidden ? '隐藏隐藏项和生成目录' : '显示隐藏项和生成目录',
-                  ...(showHidden ? { icon: Check } : {}),
+                  label: '显示隐藏项',
+                  description: '也列出点开头的文件和生成目录',
+                  checked: showHidden,
                   onSelect: () => setShowHidden(value => !value),
                 },
+                { id: 'refresh', label: '刷新文件树', icon: RefreshCw, onSelect: () => setGeneration(value => value + 1) },
               ],
             },
           ]}
@@ -364,8 +487,9 @@ export function FileTree({
       </header>
       {notice && <InlineNotice>{notice}</InlineNotice>}
       {loading && <Loading label="正在读取项目文件…" />}
-      {refreshing && <Loading label="正在更新已展开的文件夹…" />}
-      {acting && <Loading label="正在核对文件…" />}
+      <span className="sr-only" role="status">
+        {refreshing ? '正在更新已展开的文件夹' : acting ? '正在核对文件' : ''}
+      </span>
       {error && (
         <InlineNotice
           tone="error"
@@ -396,20 +520,21 @@ export function FileTree({
               ancestor = ancestor.parent ? byKey.get(ancestor.parent) : undefined
             }
             return (
-              <div key={row.key} className="file-tree-node">
+              // A run's key grows as it opens; the element has to survive that or focus falls out of the tree.
+              <div key={row.chain?.[0] ?? row.key} className="file-tree-node">
                 <div
                   role="treeitem"
                   aria-label={row.name}
                   aria-level={row.depth + 1}
                   aria-expanded={folder ? isExpanded : undefined}
-                  aria-selected={selected === row.key}
+                  aria-selected={current === row.key}
                   aria-disabled={row.kind === 'symlink' || row.kind === 'other' || undefined}
                   data-tree-key={row.key}
                   data-kind={row.kind}
                   data-expanded={isExpanded ? '' : undefined}
                   className="file-tree-row"
                   style={{ '--tree-depth': row.depth } as CSSProperties}
-                  tabIndex={selected === row.key || (!selected && index === 0) ? 0 : -1}
+                  tabIndex={current === row.key || (!current && index === 0) ? 0 : -1}
                   onFocus={() => setSelected(row.key)}
                   onClick={() => activate(row)}
                   onContextMenu={event => {
@@ -420,11 +545,9 @@ export function FileTree({
                   }}
                   onKeyDown={event => keydown(event, row)}>
                   <Icon
-                    icon={folder ? ChevronRight : row.kind === 'symlink' ? Link2 : File}
+                    icon={folder ? (isExpanded ? FolderOpen : Folder) : row.kind === 'symlink' ? Link2 : referenceIcon(row.name)}
                     size={14}
-                    className={folder ? 'file-tree-chevron' : undefined}
                   />
-                  {folder && <Icon icon={Folder} size={14} />}
                   <span className="file-tree-name">
                     <VisibleText text={row.name} />
                   </span>
@@ -434,64 +557,18 @@ export function FileTree({
                     </Tooltip>
                   )}
                   {row.kind === 'symlink' && <small>符号链接</small>}
-                  {row.kind === 'file' && (
+                  {(row.kind === 'file' || row.path === '') && (
                     <div onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>
                       <Menu
                         label={`${row.name} 文件操作`}
+                        align="end"
                         trigger={props => (
                           <IconButton {...props} data-tree-menu="" label={`${row.name} 文件操作`} size="xs" icon={Ellipsis} />
                         )}
                         sections={[
                           {
                             id: 'file',
-                            items: [
-                              {
-                                id: 'preview',
-                                label: '预览文件',
-                                icon: File,
-                                onSelect: () => open?.(targetIn(context, row.path, row.root)),
-                              },
-                              {
-                                id: 'copy',
-                                label: '复制相对路径',
-                                icon: Copy,
-                                onSelect: () => {
-                                  void copy.copy(row.path)
-                                },
-                              },
-                              ...(local && treeFullPath({ root: row.root, path: row.path }, folders, cwd)
-                                ? [
-                                    {
-                                      id: 'copy-full',
-                                      label: '复制完整路径',
-                                      icon: Copy,
-                                      disabledReason: acting ? '请等待当前文件操作完成。' : undefined,
-                                      onSelect: () => void fileAction(row, 'copy'),
-                                    },
-                                  ]
-                                : []),
-                              ...(local && shellFiles()?.protocolVersion === 2
-                                ? [
-                                    {
-                                      id: 'reveal',
-                                      label: revealLabel(currentShell()?.platform),
-                                      icon: FolderOpen,
-                                      disabledReason: acting ? '请等待当前文件操作完成。' : undefined,
-                                      onSelect: () => void fileAction(row, 'reveal'),
-                                    },
-                                  ]
-                                : []),
-                              ...(onMention
-                                ? [
-                                    {
-                                      id: 'quote',
-                                      label: '引用到输入框',
-                                      icon: TextQuote,
-                                      onSelect: () => onMention({ root: row.root, path: row.path }),
-                                    },
-                                  ]
-                                : []),
-                            ],
+                            items: row.path === '' ? rootItems(row) : fileItems(row),
                           },
                         ]}
                       />

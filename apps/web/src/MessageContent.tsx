@@ -40,7 +40,47 @@ function limitDepth() {
   }
 }
 
+interface MarkdownNode {
+  type: string
+  value?: string
+  lang?: string
+  children?: MarkdownNode[]
+}
+const BLOCK_PARENTS = new Set(['root', 'blockquote', 'listItem', 'footnoteDefinition'])
+const LINE_BREAK = /^<br\s*\/?>$/iu
+const COMMENT = /^<!--(?:(?!-->)[\s\S])*-->\s*$/u
+const DISCLOSURE_TAG = /<\/?(?:details|summary)(?:\s[^<>]*)?>/giu
+
+/**
+ * What a reply's raw HTML reads as. A line break breaks the line and a comment says nothing to the reader; a disclosure
+ * is its words, all shown. Anything else reads as the code it is, or as the text it is in a sentence.
+ */
+function literalNode(node: MarkdownNode, block: boolean): MarkdownNode[] {
+  const value = node.value ?? ''
+  if (COMMENT.test(value)) return []
+  if (LINE_BREAK.test(value.trim())) return block ? [] : [{ type: 'break' }]
+  if (!block) return [{ ...node, type: 'text' }]
+  const words = value.replace(DISCLOSURE_TAG, '').trim()
+  if (words !== value.trim() && !words.includes('<'))
+    return words ? [{ type: 'paragraph', children: [{ type: 'text', value: words }] }] : []
+  return [{ ...node, type: 'code', lang: 'html' }]
+}
+
+/** Raw HTML never becomes elements, and a reply's words must not vanish with it. Runs after `limitDepth`, which bounds this walk. */
+function literalHtml() {
+  const walk = (parent: MarkdownNode) => {
+    if (!parent.children) return
+    parent.children = parent.children.flatMap(node => {
+      if (node.type === 'html') return literalNode(node, BLOCK_PARENTS.has(parent.type))
+      walk(node)
+      return [node]
+    })
+  }
+  return walk
+}
+
 const remarkPlugins = [remarkGfm, remarkMath, restrictInlineMath, limitDepth]
+const replyPlugins = [...remarkPlugins, literalHtml]
 const MarkdownFileContext = createContext<MarkdownFiles>({})
 const relativeBase = 'https://markdown.invalid/'
 const relativeOrigin = new URL(relativeBase).origin
@@ -188,22 +228,25 @@ function textOf(node: { type: string; value?: string; children?: unknown[] } | u
 const ReplySettled = createContext(true)
 const SourceText = createContext('')
 const FrameRenderer = createContext<((input: FrameInput) => ReactNode) | undefined>(undefined)
-/** Whether the fence opening at `start` has closed. Inside a list item or a quote, every line of it carries that container's prefix. */
-function fenceClosed(source: string, start: number): boolean {
+/**
+ * Whether the code block at `start` has closed while the reply still arrives. A block with no fence has ended once
+ * anything follows it. Inside a list item or a quote, every line of a fence carries that container's prefix.
+ */
+function codeClosed(source: string, start: number, end: number): boolean {
   const block = source.slice(start)
   const marker = /^ {0,3}(`{3,}|~{3,})[^\n]*\n/u.exec(block)?.[1]
-  if (!marker) return false
+  if (!marker) return source.slice(end).trim() !== ''
   const container = source
     .slice(source.lastIndexOf('\n', start - 1) + 1, start)
     .replace(/[^>\s]/gu, ' ')
     .replace(/> /gu, '> ?')
   return new RegExp(`\\n${container} {0,3}${marker[0]}{${marker.length},}[^\\S\\n]*(?:\\n|$)`, 'u').test(block)
 }
-function ClosedCode({ code, language, start }: { code: string; language?: string; start?: number }) {
+function ClosedCode({ code, language, start, end }: { code: string; language?: string; start?: number; end?: number }) {
   const renderFrame = useContext(FrameRenderer)
   const source = useContext(SourceText),
     settled = useContext(ReplySettled)
-  const closed = settled || (start !== undefined && fenceClosed(source, start))
+  const closed = settled || (start !== undefined && end !== undefined && codeClosed(source, start, end))
   if (language === 'mermaid' && closed && renderFrame) return <Diagram key={code} source={code} renderFrame={renderFrame} />
   return <CodeBlock code={code} language={language} closed={closed} />
 }
@@ -325,9 +368,9 @@ const components: Components = {
     if (codeNode?.type !== 'element') return <pre>{children}</pre>
     const code = codeNode.children.map(child => (child.type === 'text' ? child.value : '')).join('')
     const classNames = Array.isArray(codeNode.properties.className) ? codeNode.properties.className.join(' ') : ''
-    const language = /(?:^|\s)language-([a-z\d_+#.-]{1,32})(?=\s|$)/i.exec(classNames)?.[1]
+    const language = /(?:^|\s)language-([a-z\d_+#.-]{1,32})(?=[\s,]|$)/i.exec(classNames)?.[1]
     if (classNames.includes('math-display')) return <MathFormula tex={code.trimEnd()} block />
-    return <ClosedCode code={code} language={language} start={node?.position?.start.offset} />
+    return <ClosedCode code={code} language={language} start={node?.position?.start.offset} end={node?.position?.end.offset} />
   },
   table({ node: _node, ...props }) {
     return (
@@ -408,13 +451,14 @@ export const MessageContent = memo(function MessageContent({
     () =>
       renderMarkdown({
         children: normalized,
-        remarkPlugins,
+        // A file's preview renders the document and has its source a press away; a reply has no other copy of its words.
+        remarkPlugins: path === undefined ? replyPlugins : remarkPlugins,
         remarkRehypeOptions,
         components: messageComponents,
         urlTransform: safeUrl,
         skipHtml: true,
       }),
-    [normalized, remarkRehypeOptions, messageComponents],
+    [normalized, path, remarkRehypeOptions, messageComponents],
   )
   const plain = <PlainText text={text} />
   return (

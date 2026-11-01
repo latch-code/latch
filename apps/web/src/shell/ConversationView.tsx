@@ -149,6 +149,7 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                   <ChangesLinkContext.Provider value={changesLink}>
                     <Transcript
                       detail={current}
+                      onSource={choose}
                       onCopyError={cause => setToast({ text: errorMessage(cause), tone: 'error' })}
                       onFork={
                         catalog?.features?.fork && access.scopes.has('run')

@@ -288,7 +288,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                       松开以添加到这条消息
                     </div>
                   )}
-                  {/* Under the page of 会话信息 the conversation cannot be reached until the page is closed. */}
+                  {/* Under the panel's page the conversation cannot be reached until the page is closed. */}
                   <div className="workspace-view" inert={(pageMode && infoPage) || undefined}>
                     {phone && <ConversationHeader shell={shell} />}
                     {/* The conversation's paper: on phones it rises under the header on the ground. */}
@@ -299,7 +299,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                       ref={infoPageRef}
                       className="info-page"
                       data-leaving={page.leaving ? '' : undefined}
-                      aria-label="会话信息"
+                      aria-label="侧边面板"
                       onKeyDown={event => {
                         if (event.key === 'Escape' && !event.defaultPrevented) {
                           event.preventDefault()
@@ -324,7 +324,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                                   ? '文件预览'
                                   : filesOpen
                                     ? '文件'
-                                    : '会话信息'}
+                                    : '面板'}
                           </h2>
                           <span>{summary?.title || workspaceForFiles?.name || '项目文件'}</span>
                         </div>
@@ -337,7 +337,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 </main>
               )}
               {placement !== null && placement.kind !== 'page' && (
-                <aside className="inspector-column" aria-label="会话信息" inert={!columnOpen || route.entry !== 'sessions' || undefined}>
+                <aside className="inspector-column" aria-label="侧边面板" inert={!columnOpen || route.entry !== 'sessions' || undefined}>
                   {column.present && (
                     <div className="inspector-column-inner">
                       <RightPanel shell={shell} />

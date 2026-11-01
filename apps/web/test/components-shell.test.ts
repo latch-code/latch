@@ -19,8 +19,8 @@ describe('top bar', () => {
     demo: false,
     phone: false,
     onNew: noop,
-    inspectorOpen: false,
-    onInspector: noop,
+    panelOpen: false,
+    onPanel: noop,
     sessionMenu: [],
     menu: [],
     connection: 'connected' as const,
@@ -60,7 +60,7 @@ describe('top bar', () => {
     expect(html).toContain('aria-label="项目：latch-app"')
   })
 
-  it('heads a phone session page with the way back, the title over where it runs, and 会话信息', () => {
+  it('heads a phone session page with the way back, the title over where it runs, and the panel toggle', () => {
     const menu = [{ id: 'sync', items: [{ id: 'refresh', label: '同步最新状态', onSelect: noop }] }]
     const html = renderToStaticMarkup(
       createElement(SessionHeader, {
@@ -79,12 +79,12 @@ describe('top bar', () => {
     expect(html).toMatch(
       /<div class="topbar-subline"><span class="topbar-source-text">Codex · latch-app<\/span><span class="ui-status-word" data-tone="failed"><svg[^>]*lucide-circle-alert[^>]*>.*?<\/svg>失败<\/span>/u,
     )
-    expect(html).toMatch(/<button[^>]*aria-label="会话信息"[^>]*>.*<\/header>$/)
+    expect(html).toMatch(/<button[^>]*aria-label="侧边面板"[^>]*>.*<\/header>$/)
     expect(html).not.toContain('新建会话')
     expect(html).not.toContain('aria-label="会话操作"')
   })
 
-  it('keeps a phone page header for a session the Host has not listed yet, with no menu or 会话信息 until it does', () => {
+  it('keeps a phone page header for a session the Host has not listed yet, with no menu or panel until it does', () => {
     const menu = [{ id: 'sync', items: [{ id: 'refresh', label: '同步最新状态', onSelect: noop }] }]
     const html = renderToStaticMarkup(
       createElement(SessionHeader, {
@@ -100,7 +100,7 @@ describe('top bar', () => {
     expect(html).toMatch(/^<header class="topbar" data-phone=""><button[^>]*aria-label="返回会话列表"/)
     expect(html).toContain('<h1 title="新会话"><span class="topbar-title-text">新会话</span></h1>')
     expect(html).not.toContain('topbar-subline')
-    expect(html).not.toContain('会话信息')
+    expect(html).not.toContain('侧边面板')
   })
 
   it('makes the title a button that opens the session menu', () => {

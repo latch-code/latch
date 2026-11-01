@@ -1,20 +1,97 @@
-/* The extension host shares the workbench type and controls. Data panels use only these theme rules. */
-.session-panel-tabs {
-  flex-shrink: 0;
+/* The panel: a strip over one surface. Surfaces run to the panel's edges and scroll themselves. */
+.session-panels {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.session-panel-strip {
+  flex: none;
+  height: var(--panel-strip-height, 40px);
+  padding: 0 var(--sp-12);
+}
+/* A phone's page has its own way back, and is already the whole window. */
+@media (max-width: 767.98px) {
+  .session-panel-strip .ui-tabs-actions {
+    display: none;
+  }
+}
+.session-panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.session-panel-body[hidden] {
+  display: none;
+}
+.panel-launcher {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  padding: var(--sp-16);
+  outline: none;
+}
+.panel-launcher-list {
+  width: min(280px, 100%);
+}
+.panel-launcher h3 {
+  margin-bottom: var(--sp-12);
+  color: var(--ink);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  font-weight: 500;
+  text-align: center;
+}
+.panel-launcher-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-10);
+  width: 100%;
+  height: 32px;
+  padding: 0 var(--sp-8);
+  border: 0;
+  border-radius: var(--r-8);
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  text-align: start;
+  cursor: pointer;
+}
+.panel-launcher-row > svg {
+  color: var(--muted);
+}
+.panel-launcher-row > span {
+  flex: 1;
   min-width: 0;
-  padding: var(--sp-4);
-}
-.session-panel-tabs .ui-tab-list {
-  max-width: 100%;
-  overflow-x: auto;
-  scrollbar-width: thin;
-}
-.session-panel-tabs .ui-tab {
-  flex-shrink: 0;
-  max-width: 180px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.panel-launcher-row:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+.panel-launcher-facts {
+  margin-top: var(--sp-16);
+  padding: var(--sp-12) var(--sp-8) 0;
+  border-top: 1px solid var(--line);
+}
+.panel-launcher-empty {
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  text-align: center;
+}
+@media (pointer: coarse) {
+  .panel-launcher-row {
+    height: 44px;
+  }
+  .panel-launcher-row > .ui-kbd {
+    display: none;
+  }
 }
 .plugin-panel {
   display: grid;
@@ -115,13 +192,4 @@
 .plugin-panel-table th {
   color: var(--ink-2);
   font-weight: 500;
-}
-
-.info-path[data-unused] {
-  color: var(--muted);
-}
-.info-path-name {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-6);
 }

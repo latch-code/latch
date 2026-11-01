@@ -24,7 +24,7 @@ export interface Preferences {
   theme: ThemePreference
   /** Desktop only; touch keyboards always insert a newline on Enter. */
   sendKey: SendKey
-  /** The right panel: whether it is open, its dragged width and the blocks folded (local only). */
+  /** The right panel: whether it is open and its dragged width (local only). */
   rightPanel: RightPanelPreference
   /** The panel next to the rail: its dragged width and whether it is shut (local only, never sent to the Host). */
   sidebar: SidebarPreference
@@ -43,7 +43,7 @@ const defaults: Preferences = {
   diffWrap: false,
   theme: 'system',
   sendKey: 'enter',
-  rightPanel: { open: false, collapsed: [] },
+  rightPanel: { open: false },
   sidebar: { collapsed: false },
   foldedShelves: [],
 }

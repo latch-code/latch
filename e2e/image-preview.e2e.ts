@@ -6,6 +6,7 @@ import { expect, it } from 'vitest'
 import type { HarnessPlugin } from '@latch/sdk'
 import { startTestHost } from './helpers/host.ts'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
+import { closeActiveFile, openFileFind } from './helpers/layout.ts'
 
 it('uses true image pixels, retains zoom on refresh, refuses unknown or excessive dimensions and finds across syntax spans', async () => {
   const browser = await chromium.launch(browserLaunchOptions())
@@ -130,7 +131,7 @@ it('uses true image pixels, retains zoom on refresh, refuses unknown or excessiv
         }
         await mkdir('test-results/images', { recursive: true })
         await page.screenshot({ path: `test-results/images/pixels-${width}-${theme}.png`, animations: 'disabled' })
-        const close = () => preview.getByRole('button', { name: '关闭文件', exact: true }).click()
+        const close = () => closeActiveFile(page)
         await close()
         await open('unknown.jpg')
         await preview.getByText('无法确认图片尺寸，已停止解码。可以下载文件后查看。', { exact: true }).waitFor()
@@ -144,9 +145,10 @@ it('uses true image pixels, retains zoom on refresh, refuses unknown or excessiv
         await expect.poll(() => preview.getByRole('img').evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(200)
         expect(await page.evaluate(() => Reflect.get(globalThis, 'PREVIEW_SCRIPT_RAN'))).toBeUndefined()
         await preview.getByRole('button', { name: '源码', exact: true }).click()
-        await preview.getByRole('searchbox', { name: '查找文件内容' }).waitFor()
+        await preview.locator('.file-text').waitFor()
         await close()
         await open('code.ts')
+        await openFileFind(page)
         await preview.getByRole('searchbox', { name: '查找文件内容' }).fill('answer =')
         await expect.poll(() => page.evaluate(() => CSS.highlights.get('latch-file-find')?.size)).toBe(1)
         expect(await preview.locator('mark').count()).toBe(0)

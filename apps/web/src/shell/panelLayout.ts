@@ -32,8 +32,6 @@ export interface RightPanelPreference {
   open: boolean
   /** The dragged width; absent means the default. */
   width?: number
-  /** Blocks the person folded, by ID. */
-  collapsed: string[]
 }
 
 const field = (value: unknown, key: string): unknown => (typeof value === 'object' && value !== null ? Reflect.get(value, key) : undefined)
@@ -45,18 +43,9 @@ export function parseSidebarPreference(value: unknown): SidebarPreference {
   return { ...(width !== undefined ? { width } : {}), collapsed: field(value, 'collapsed') === true }
 }
 
-const BLOCK = /^[a-z][a-z-]{0,31}$/u
-
 export function parseRightPanelPreference(value: unknown): RightPanelPreference {
   const width = wholeBetween(field(value, 'width'), RIGHT_PANEL_MIN, 4096)
-  const collapsed = field(value, 'collapsed')
-  return {
-    open: field(value, 'open') === true,
-    ...(width !== undefined ? { width } : {}),
-    collapsed: Array.isArray(collapsed)
-      ? [...new Set(collapsed.filter((item): item is string => typeof item === 'string' && BLOCK.test(item)))].slice(0, 16)
-      : [],
-  }
+  return { open: field(value, 'open') === true, ...(width !== undefined ? { width } : {}) }
 }
 
 /** The widest the panel may be: the conversation keeps its minimum beside the rail and whatever stands on its far side. */

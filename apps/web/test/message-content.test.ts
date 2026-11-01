@@ -26,13 +26,75 @@ describe('message markdown', () => {
     expect(html).not.toContain('<pre>')
   })
 
-  it('ignores raw HTML and never turns HTML source inside code into active elements', () => {
+  it('shows raw HTML as inert text and never turns HTML source inside code into active elements', () => {
     const html = render(
       '正文\n\n<script>alert(1)</script>\n\n<img src="x" onerror="alert(2)">\n\n<iframe src="https://example.com"></iframe>\n\n```html\n<button onclick="alert(3)">click</button>\n```',
     )
     expect(html).not.toMatch(/<(script|img|iframe|button onclick)/i)
-    expect(html).not.toContain('onerror=')
+    expect(html).toContain('&lt;img src=&quot;x&quot; onerror=&quot;alert(2)&quot;&gt;')
     expect(html).toContain('&lt;button onclick=&quot;alert(3)&quot;&gt;click&lt;/button&gt;')
+  })
+
+  it('keeps the words of a reply that mentions a tag', () => {
+    const html = render('把 <div class="x"> 换成 <section>。\n\n<table>\n<tr><td>格</td></tr>\n</table>\n\n后文')
+    expect(html).toContain('把 &lt;div class=&quot;x&quot;&gt; 换成 &lt;section&gt;。')
+    expect(html).toContain('message-code-language">html</span>')
+    expect(html).toContain('&lt;td&gt;格&lt;/td&gt;')
+    expect(html).not.toMatch(/<(div class="x"|section|table)/)
+  })
+
+  it('reads a line break as one and a comment as nothing, and never takes a look-alike for them', () => {
+    const table = render('| 名 |\n| --- |\n| 第一行<br>第二行<BR />第三行 |')
+    expect(table).toMatch(/<td>第一行<br\/>\s*第二行<br\/>\s*第三行<\/td>/)
+    expect(render('前 <br onclick="x"> 后')).toContain('&lt;br onclick=&quot;x&quot;&gt;')
+    const comment = render('前 <!-- 内 --> 后\n\n<!-- 块 -->\n\n<br>\n\n后文')
+    expect(comment).not.toContain('内')
+    expect(comment).not.toContain('块')
+    expect(comment).not.toContain('message-code')
+    expect(comment).toContain('后文')
+  })
+
+  it('never hides the words after a comment that does not close, or between two comments', () => {
+    expect(render('<!-- 没有结束\n\n后文')).toContain('后文')
+    expect(render('<!-- 甲 --> 中间 <!-- 乙 -->')).toContain('中间')
+  })
+
+  it('shows a disclosure as its words, without code cards', () => {
+    const html = render('<details open>\n<summary>标题</summary>\n\n正文\n\n</details>')
+    expect(html).toContain('<p>标题</p>')
+    expect(html).toContain('<p>正文</p>')
+    expect(html).not.toContain('message-code')
+    expect(html).not.toContain('details')
+    expect(render('<details><script>x</script></details>')).toContain('message-code-language">html</span>')
+  })
+
+  it('closes a raw HTML block once something follows it while the reply arrives', () => {
+    const streaming = (text: string) => renderToStaticMarkup(createElement(MessageContent, { text, streaming: true }))
+    const block = '<table>\n<tr><td>格</td></tr>\n</table>'
+    expect(streaming(block)).toContain('is-open')
+    expect(streaming(`${block}\n\n`)).toContain('is-open')
+    expect(streaming(`${block}\n\n后文`)).not.toContain('is-open')
+    expect(streaming(`> ${block.replaceAll('\n', '\n> ')}\n\n后文`)).not.toContain('is-open')
+    // A fence still answers to its closing line alone.
+    expect(streaming('```ts\nconst a = 1\n\n后文')).toContain('is-open')
+    expect(streaming('```ts\nconst a = 1\n```\n')).not.toContain('is-open')
+  })
+
+  it.each([
+    ['rust,ignore', 'rust'],
+    ['rb', 'rb'],
+    ['kt', 'kt'],
+    ['golang', 'golang'],
+    ['htm', 'htm'],
+  ])('keeps the language of a %s fence', (fence, label) => {
+    expect(render(`\`\`\`${fence}\nx\n\`\`\``)).toContain(`message-code-language">${label}</span>`)
+  })
+
+  it('still leaves raw HTML out of a rendered Markdown file', () => {
+    const html = renderToStaticMarkup(createElement(MessageContent, { text: '前 <kbd>键</kbd> 后\n\n<p>块</p>', path: 'README.md' }))
+    expect(html).toContain('前 键 后')
+    expect(html).not.toContain('&lt;')
+    expect(html).not.toContain('块')
   })
 
   it.each([

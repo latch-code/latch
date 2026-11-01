@@ -34,9 +34,10 @@ import {
   waitsOnYou,
   writeSeen,
   type SeenState,
+  projectOf,
 } from '../sessions.ts'
 import { useReadingPosition } from '../core/useReadingPosition.ts'
-import { currentShell } from '../core/shell.ts'
+import { currentShell, shellFolders } from '../core/shell.ts'
 import { useEarlierDraft } from '../composer/useEarlierDraft.ts'
 import { useRejectionNote } from '../composer/useRejectionNote.ts'
 import { useStableCallback } from '../hooks/useStableCallback.ts'
@@ -687,6 +688,22 @@ export function useSessionController({
       setToast({ text: errorMessage(cause), tone: 'error' })
     }
   })
+  const saveSessionProject = useStableCallback(async (task: TaskSummary) => {
+    try {
+      const result = await shellFolders()!.saveSessionFolder!(task.id)
+      if (result.status === 'added') {
+        await refresh()
+        setToast(
+          result.refused.length
+            ? { text: '没有保存这个会话的文件夹，请在项目设置中重试。', tone: 'error' }
+            : { text: '已存为项目', tone: 'ok' },
+        )
+      } else if (result.status === 'busy') setToast({ text: '另一个系统对话框还没结束。', tone: 'error' })
+      else if (result.status === 'failed') setToast({ text: '没有保存这个会话的文件夹，请同步后重试。', tone: 'error' })
+    } catch (cause) {
+      setToast({ text: errorMessage(cause), tone: 'error' })
+    }
+  })
   const sessionMenu = useCallback(
     (task: TaskSummary): MenuSection[] =>
       sessionMenuSections(
@@ -715,10 +732,22 @@ export function useSessionController({
           remove: () => {
             setDeleting(task)
           },
+          ...(access.local
+          && access.admin
+          && shellFolders()?.saveSessionFolder
+          && task.sessionFolder
+          && catalog
+          && !projectOf(task, catalog.workspaces)
+            ? {
+                saveProject: () => {
+                  void saveSessionProject(task)
+                },
+              }
+            : {}),
         },
         manageable,
       ),
-    [patchTask, exportTask, copyTask, manageable, setRenaming, setDeleting],
+    [patchTask, exportTask, copyTask, manageable, setRenaming, setDeleting, access, catalog, saveSessionProject],
   )
 
   const block = selectedId === null ? startBlock(snapshot, choice, access) : null

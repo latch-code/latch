@@ -218,3 +218,17 @@ export async function setChatOnly(page: Page, value: boolean): Promise<void> {
   await page.getByRole('switch', { name, exact: true }).setChecked(value)
   await page.keyboard.press('Escape')
 }
+
+/** The selected file tab goes the way a keyboard closes it: its × only shows under the pointer. */
+export async function closeActiveFile(page: Page): Promise<void> {
+  const tab = page.getByRole('tablist', { name: '会话面板', exact: true }).getByRole('tab', { selected: true })
+  await tab.focus()
+  await page.keyboard.press('Delete')
+}
+
+/** The text renderer's find row, which stays out of the way until asked for. */
+export async function openFileFind(page: Page): Promise<void> {
+  await page.getByRole('region', { name: '文件预览', exact: true }).getByRole('button', { name: '文件操作', exact: true }).click()
+  await page.getByRole('menuitem', { name: '查找', exact: true }).click()
+  await page.getByRole('searchbox', { name: '查找文件内容' }).waitFor()
+}

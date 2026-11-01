@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { Button, InlineNotice } from '@latch/ui'
+import { InlineNotice } from '@latch/ui'
+import { useViewerMenu, useViewerQuote } from './viewerActions.tsx'
 import type { GridCell, SheetInfo } from './types.ts'
 import { boundedQuoteText, columnLabel, type PreviewQuote } from './quote.ts'
 export type LoadRows = (start: number, count: number, signal?: AbortSignal) => Promise<GridCell[][]>
@@ -162,6 +163,28 @@ export function SheetGrid({
   const visibleCols = [
     ...new Set([...Array.from({ length: frozenCols }, (_, i) => i), ...cols.getVirtualItems().map(col => col.index)]),
   ].sort((a, b) => a - b)
+  const unavailable = busy || !sheet.rows || !sheet.cols
+  useViewerQuote(onQuote ? !unavailable : undefined, () => {
+    void useSelection('quote')
+  })
+  useViewerMenu([
+    {
+      id: 'copy-range',
+      label: '复制选区',
+      ...(unavailable ? { disabledReason: '选区还没有读完' } : {}),
+      onSelect: () => {
+        void useSelection('copy')
+      },
+    },
+    {
+      id: 'frozen',
+      label: '冻结首行首列',
+      checked: frozen,
+      onSelect: () => {
+        setFrozen(value => !value)
+      },
+    },
+  ])
   return (
     <div className="sheet-grid">
       <div className="sheet-grid-actions">
@@ -170,29 +193,6 @@ export function SheetGrid({
           {active.row + 1}
           {active.row !== anchor.row || active.col !== anchor.col ? ` : ${columnLabel(anchor.col)}${anchor.row + 1}` : ''}
         </span>
-        <Button
-          size="sm"
-          variant="ghost"
-          disabled={busy || !sheet.rows || !sheet.cols}
-          onClick={() => {
-            void useSelection('copy')
-          }}>
-          复制选区
-        </Button>
-        {onQuote && (
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={busy || !sheet.rows || !sheet.cols}
-            onClick={() => {
-              void useSelection('quote')
-            }}>
-            引用选区
-          </Button>
-        )}
-        <Button size="sm" variant="ghost" aria-pressed={frozen} onClick={() => setFrozen(value => !value)}>
-          冻结首行首列
-        </Button>
       </div>
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
       <div

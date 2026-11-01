@@ -1,6 +1,20 @@
-import { isFileMetadata, isFileMention, type FileChange, type FileContext, type FileMetadata, type FileMention } from '@latch/protocol'
+import {
+  isFileMetadata,
+  isFileMention,
+  type FileChange,
+  type FileContext,
+  type FileDirectoryListing,
+  type FileMetadata,
+  type FileMention,
+} from '@latch/protocol'
 import { api } from '../core/api.ts'
 import { fileContextBody, fileRoute } from './fileContext.ts'
+
+/** The name of the only entry, when it is a folder and the listing is whole. */
+export function soleFolder(listing: FileDirectoryListing | undefined): string | undefined {
+  const [only, ...rest] = listing?.entries ?? []
+  return only?.kind === 'directory' && rest.length === 0 && !listing?.truncated ? only.name : undefined
+}
 
 export const treeKey = (root: string, path: string): string => JSON.stringify([root, path])
 export function treeLocation(key: string): FileMention | undefined {

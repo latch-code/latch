@@ -3,7 +3,7 @@ import workerUrl from './highlight.worker.ts?worker&url'
 import { trustedScriptUrl } from './runtime.ts'
 import { canHighlight, type SyntaxLines, type SyntaxToken } from './highlight-protocol.ts'
 import { HighlightScheduler, type HighlightWorker } from './highlightScheduler.ts'
-import { VisibleText } from '../components/VisibleText.tsx'
+import { escapeHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
 const scheduler = new HighlightScheduler({
   createWorker: () => new Worker(trustedScriptUrl(workerUrl), { type: 'module' }) as HighlightWorker,
 })
@@ -11,7 +11,9 @@ const scheduler = new HighlightScheduler({
 const CHANGING_MS = 300
 
 /** Finite role tokens, with the original text and newline boundaries preserved. */
-export function useHighlightedTokens(code: string, language?: string, enabled = true): SyntaxLines | undefined {
+export function useHighlightedTokens(source: string, language?: string, enabled = true): SyntaxLines | undefined {
+  // A grammar splits lines on either ending and keeps neither, and each line must read back as this text.
+  const code = source.replaceAll('\r\n', '\n')
   const [value, setValue] = useState<{ code: string; language: string; lines: SyntaxLines }>()
   const asked = useRef(code)
   const current = value && value.code === code && value.language === language ? value.lines : undefined
@@ -149,7 +151,6 @@ export function HighlightedCode({
   tail?: number
   colourLines?: number
 }) {
-  // A grammar splits lines on either ending and keeps neither, and each line must read back as this text.
   const code = source.replaceAll('\r\n', '\n')
   const whole = useHighlightedTokens(code, language, enabled && !streaming)
   const partial = useStreamingTokens(code, language, enabled && streaming)
@@ -169,8 +170,16 @@ export function HighlightedCode({
     </>
   )
 }
+/**
+ * A token boundary can cut a run of marks or an emoji sequence, which `VisibleText` must see whole to decide what to
+ * mark. A line whose tokens would show anything else than the whole line stays whole.
+ */
+const readsAsLine = (text: string, tokens: SyntaxLines[number]) =>
+  tokens.map(token => token.text).join('') === text
+  && tokens.map(token => escapeHiddenCharacters(token.text)).join('') === escapeHiddenCharacters(text)
+
 export function SyntaxLine({ text, tokens }: { text: string; tokens?: SyntaxLines[number] }) {
-  return tokens && tokens.map(token => token.text).join('') === text ? (
+  return tokens && readsAsLine(text, tokens) ? (
     <>
       {tokens.map((token, i) => (
         <span className={`syn-${token.role}`} key={i}>

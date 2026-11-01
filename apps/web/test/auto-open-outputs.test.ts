@@ -30,8 +30,23 @@ describe('optional document opening after an observed run', () => {
     expect(tracker.observe(result, options)).toBeUndefined()
     tracker.observe(active, options)
     expect(tracker.observe({ ...result, messages: [{ ...result.messages[0]!, outputsPending: true }] }, options)).toBeUndefined()
-    expect(tracker.observe(result, options)).toEqual({ sessionId: 'session', rootId: 'other', reference: 'deck.pptx' })
+    expect(tracker.observe(result, options)).toEqual({
+      first: { sessionId: 'session', rootId: 'other', reference: 'deck.pptx' },
+      offered: [],
+    })
     expect(tracker.observe(result, options)).toBeUndefined()
+  })
+  it('opens the first new document and offers the rest of the turn', () => {
+    const tracker = new AutoOpenOutputs()
+    tracker.observe(active, options)
+    const outputs = [
+      { root: 'r', path: 'a.pptx', kind: 'pptx' as const, change: 'created' as const },
+      { root: 'r', path: 'edited.xlsx', kind: 'xlsx' as const, change: 'modified' as const },
+      { root: 'r', path: 'b.xlsx', kind: 'xlsx' as const, change: 'created' as const },
+    ]
+    const opened = tracker.observe({ ...result, messages: [{ ...result.messages[0]!, outputs }] }, options)
+    expect(opened?.first.reference).toBe('a.pptx')
+    expect(opened?.offered.map(target => target.reference)).toEqual(['b.xlsx'])
   })
   it.each([
     { ...options, enabled: false },

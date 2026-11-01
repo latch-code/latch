@@ -105,6 +105,10 @@
   overflow: visible;
   background: transparent;
 }
+/* Colour alone: a heavier keyword could re-wrap lines already laid out, and move the conversation when tokens land. */
+.tool-output .syn-keyword {
+  font-weight: 400;
+}
 .tool-output-copy {
   position: absolute;
   top: var(--sp-4);

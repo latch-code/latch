@@ -1,6 +1,6 @@
 import { useContext, useState } from 'react'
-import { FileCode2, Maximize2, Minimize2, X } from 'lucide-react'
-import { Button, Icon, IconButton, InlineNotice } from '@latch/ui'
+import { FileCode2 } from 'lucide-react'
+import { Button, Icon, InlineNotice } from '@latch/ui'
 import { DiffView } from '../components/DiffView.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { useWindowWidth } from '../breakpoints.ts'
@@ -13,7 +13,6 @@ export function FileHistoryPreview({
   name,
   expanded = false,
   onPreview,
-  onClose,
   onExpand,
 }: {
   history?: FileHistory
@@ -21,7 +20,6 @@ export function FileHistoryPreview({
   name: string
   expanded?: boolean
   onPreview(): void
-  onClose(): void
   onExpand(): void
 }) {
   const preferences = usePreferences()
@@ -40,10 +38,6 @@ export function FileHistoryPreview({
         <strong>
           <VisibleText text={name} />
         </strong>
-        {width >= 1024 && (
-          <IconButton label={expanded ? '收起文件预览' : '展开文件预览'} icon={expanded ? Minimize2 : Maximize2} onClick={onExpand} />
-        )}
-        <IconButton label="关闭文件" icon={X} onClick={onClose} />
       </header>
       <div className="file-preview-controls code-review-controls" role="group" aria-label="代码审阅视图">
         <Button size="xs" variant="ghost" onClick={onPreview}>

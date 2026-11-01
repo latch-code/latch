@@ -5,6 +5,7 @@ import { validMathDom } from '../src/preview/math.ts'
 import { MessageContent } from '../src/MessageContent.tsx'
 import { DocumentPreview } from '../src/preview/DocumentPreview.tsx'
 import { DiffView, type DiffViewFile } from '../src/components/DiffView.tsx'
+import { ViewerActionsProvider, useViewerActionsHost } from '../src/preview/viewerActions.tsx'
 import { isFrameCommand, type FrameInput, type FrameCommand } from '../src/preview/types.ts'
 import type { PreviewQuote } from '../src/preview/quote.ts'
 import '../src/styles/index.css'
@@ -72,7 +73,39 @@ function Sandbox(input: FrameInput) {
     />
   )
 }
-function Harness() {
+/** The rows the viewer's header would draw, as plain buttons. */
+function ViewerRows() {
+  const viewer = useViewerActionsHost()
+  return (
+    <ViewerActionsProvider value={viewer.value}>
+      <div style={{ display: 'flex', gap: 8 }}>
+        {viewer.quote && (
+          <button
+            type="button"
+            aria-disabled={!viewer.quote.ready}
+            onPointerDown={event => event.preventDefault()}
+            onClick={() => {
+              if (viewer.quote?.ready) viewer.quote.run()
+            }}>
+            引用到对话
+          </button>
+        )}
+        {viewer.source && (
+          <button type="button" aria-pressed={viewer.source.showing} onClick={viewer.source.onToggle}>
+            源码
+          </button>
+        )}
+        {viewer.menu.map(item => (
+          <button key={item.id} type="button" aria-pressed={item.checked === true} onClick={item.onSelect}>
+            {item.label}
+          </button>
+        ))}
+      </div>
+      <PreviewBody />
+    </ViewerActionsProvider>
+  )
+}
+function PreviewBody() {
   const [rich, setRich] = useState<{ text: string; streaming: boolean; files: boolean }>()
   window.startRichPreview = (text, streaming = false, files = false) => {
     setValue(undefined)
@@ -118,7 +151,7 @@ function Harness() {
     })
   }
   return (
-    <div style={{ height: 'calc(100dvh - 16px)', padding: 8 }}>
+    <div style={{ height: 'calc(100dvh - 48px)', padding: 8 }}>
       {rich !== undefined && (
         <MessageContent
           text={rich.text}
@@ -163,6 +196,9 @@ function Harness() {
       )}
     </div>
   )
+}
+function Harness() {
+  return <ViewerRows />
 }
 window.validatePreviewMath = validMathDom
 window.previewHoldPages = false

@@ -1,6 +1,6 @@
 /* ---- A session's page ------------------------------------------------------------------------------------------ */
 
-/* The header (52): the round back button, the title over where it runs and its states, 会话信息. */
+/* The header (52): the round back button, the title over where it runs and its states, the panel's toggle. */
 /* The base rule's flex: 1 is for the title row; in this column it would split the page's height with the conversation. */
 .topbar[data-phone] {
   flex: none;

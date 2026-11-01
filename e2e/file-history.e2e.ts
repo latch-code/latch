@@ -85,8 +85,13 @@ it('opens every tool edit of a file in the same column and keeps history availab
         await enrollBrowser(page, host, { name: `History ${width}`, scopes: ['admin'] })
         if (width === 900) await page.getByRole('button', { name: '打开会话列表', exact: true }).click()
         await page.locator(`[data-task-id="${sessionId}"]`).first().click()
-        await page.getByRole('button', { name: '会话信息', exact: true }).click()
-        await page.locator('.info-change').first().click()
+        // A device that cannot read the changes tab opens a file's recorded edits from the conversation.
+        const toggle = page.getByRole('button', { name: '显示文件', exact: true })
+        if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click()
+        await page
+          .getByRole('region', { name: '这一轮改动的文件', exact: true })
+          .locator('button.summary-file', { hasText: 'report.txt' })
+          .click()
         const history = page.getByRole('region', { name: '文件历史变更', exact: true })
         await history.getByText('2 次工具修改', { exact: false }).waitFor()
         const first = history.getByRole('region', { name: '第 1 次修改', exact: true }),
@@ -122,13 +127,15 @@ it('opens every tool edit of a file in the same column and keeps history availab
         await history.getByRole('button', { name: '预览', exact: true }).click()
         const preview = page.getByRole('region', { name: '文件预览', exact: true })
         await preview.getByText('version 2', { exact: true }).waitFor()
-        await preview.getByRole('button', { name: '变更', exact: true }).click()
+        await preview.getByRole('button', { name: '文件操作', exact: true }).click()
+        await page.getByRole('menuitem', { name: '查看变更', exact: true }).click()
         await history.getByText('2 次工具修改', { exact: false }).waitFor()
         if (width === 1440 && theme === 'dark') {
           await rm(join(host.workspaceRoot, 'report.txt'))
           await page.reload()
           await page.locator('.app-shell[data-connection="connected"]').waitFor()
           await page.locator(`[data-task-id="${sessionId}"]`).first().click()
+          await page.getByRole('button', { name: '侧边面板', exact: true }).click()
           await page.getByRole('tab', { name: 'report.txt', exact: true }).click()
           await history.getByText('2 次工具修改', { exact: false }).waitFor()
           await history.getByRole('region', { name: '第 1 次修改', exact: true }).locator('.diff-file-header').click()

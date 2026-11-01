@@ -1,4 +1,4 @@
-import { Archive, ArchiveRestore, Download, GitFork, Mail, Copy, PenLine, Pin, PinOff, Trash } from 'lucide-react'
+import { Archive, ArchiveRestore, Download, FolderPlus, GitFork, Mail, Copy, PenLine, Pin, PinOff, Trash } from 'lucide-react'
 import type { TaskSummary } from '@latch/protocol'
 import type { MenuSection } from './components/overlays.tsx'
 import { isActive } from './format.ts'
@@ -9,6 +9,8 @@ export interface SessionActions {
   archive: () => void
   export: () => void
   fork?: () => void
+  /** A session in its own folder, on the Mac: keep the folder as a project. */
+  saveProject?: () => void
   unread?: () => void
   copy?: () => void
   remove: () => void
@@ -31,7 +33,17 @@ export function sessionMenuSections(task: TaskSummary, actions: SessionActions, 
       id: 'share',
       items: [...(actions.copy ? [{ id: 'copy', label: '复制为 Markdown', icon: Copy, onSelect: actions.copy }] : []), exportItem],
     },
-    ...(actions.fork ? [{ id: 'fork', items: [{ id: 'fork', label: '从这里分叉', icon: GitFork, onSelect: actions.fork }] }] : []),
+    ...(actions.fork || actions.saveProject
+      ? [
+          {
+            id: 'fork',
+            items: [
+              ...(actions.fork ? [{ id: 'fork', label: '从这里分叉', icon: GitFork, onSelect: actions.fork }] : []),
+              ...(actions.saveProject ? [{ id: 'save-project', label: '存为项目…', icon: FolderPlus, onSelect: actions.saveProject }] : []),
+            ],
+          },
+        ]
+      : []),
     {
       id: 'archive',
       items: [

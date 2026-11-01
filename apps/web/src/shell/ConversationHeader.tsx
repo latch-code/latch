@@ -11,6 +11,7 @@ import { VisibleText } from '../components/VisibleText.tsx'
 import { contextWords } from '../composer/permission.ts'
 import { currentShell } from '../core/shell.ts'
 import type { ConversationHeaderSlots, HeaderToggle } from './slots.ts'
+import { CrumbRow, SessionFacts, SessionFolders } from './SessionEnvironment.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 
 /** The session's state when it is not the default: running and done say nothing here (the run bar says running). */
@@ -60,15 +61,6 @@ function TitleMenu({ title, sections }: { title: string; sections: MenuSection[]
 }
 
 /** One line of the breadcrumb's popover. */
-function CrumbRow({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="crumb-row">
-      <span className="crumb-label">{label}</span>
-      <div className="crumb-value">{children}</div>
-    </div>
-  )
-}
-
 /**
  * The project in the breadcrumb, which opens where the session really runs: its branch as the Host read it, its folders
  * and how full the context is. A branch that could not be verified says so; it does not mean there is no repository.
@@ -77,12 +69,16 @@ function ProjectCrumb({
   project,
   summary,
   usage,
+  children,
+  after,
 }: {
-  project: string
+  /** Absent for a session in a folder of its own: the glyph alone keeps the way to its path. */
+  project?: string | undefined
   summary: TaskSummary
   usage?: { contextUsed?: number; contextSize?: number } | undefined
+  children?: ReactNode
+  after?: ReactNode
 }) {
-  const folders = summary.folders?.map(folder => folder.path) ?? (summary.cwd ? [summary.cwd] : [])
   const context = contextWords(usage)
   return (
     <span className="topbar-crumb">
@@ -92,30 +88,32 @@ function ProjectCrumb({
         side="bottom"
         align="start"
         trigger={props => (
-          <button {...props} type="button" className="topbar-crumb-button" title={project} aria-label={`项目：${project}`}>
+          <button
+            {...props}
+            type="button"
+            className="topbar-crumb-button"
+            title={project ?? '会话的文件夹'}
+            aria-label={project ? `项目：${project}` : '会话的文件夹'}>
             <Folder size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-            <span className="topbar-crumb-text">
-              <VisibleText text={project} />
-            </span>
+            {project && (
+              <span className="topbar-crumb-text">
+                <VisibleText text={project} />
+              </span>
+            )}
           </button>
         )}>
         <div className="crumb-body">
           <CrumbRow label="分支">{summary.branch ? <VisibleText text={summary.branch} /> : '读不到分支'}</CrumbRow>
-          {folders.length > 0 && (
-            <CrumbRow label={folders.length > 1 ? `文件夹 · ${folders.length}` : '文件夹'}>
-              {folders.map(path => (
-                <code key={path}>
-                  <VisibleText text={path} />
-                </code>
-              ))}
-            </CrumbRow>
-          )}
+          {children}
           {context && <CrumbRow label="上下文">{context.words.replace(/^上下文已用 /u, '')}</CrumbRow>}
+          {after}
         </div>
       </Popover>
-      <span className="topbar-crumb-separator" aria-hidden="true">
-        /
-      </span>
+      {project && (
+        <span className="topbar-crumb-separator" aria-hidden="true">
+          /
+        </span>
+      )}
     </span>
   )
 }
@@ -123,8 +121,8 @@ function ProjectCrumb({
 /**
  * A phone's session page header (52): the round way back to the session list, the title (a button with chevron-down that
  * opens the session's menu, 同步最新状态 included) over where it runs, its branch and its states that are not the default,
- * and 会话信息. A session just started is pushed before the Host lists it: until then the header
- * keeps its shape with the title 新会话, and the menu and 会话信息 wait for it.
+ * and the panel's toggle. A session just started is pushed before the Host lists it: until then the header
+ * keeps its shape with the title 新会话, and the menu and the panel's toggle wait for it.
  */
 function PhoneTopBar({
   summary,
@@ -132,9 +130,9 @@ function PhoneTopBar({
   cancelling,
   demo,
   onBack,
-  inspectorOpen,
-  onInspector,
-  inspectorRef,
+  panelOpen,
+  onPanel,
+  panelRef,
   menu,
   connection,
   onRefresh,
@@ -146,9 +144,9 @@ function PhoneTopBar({
   cancelling: boolean
   demo: boolean
   onBack?: () => void
-  inspectorOpen: boolean
-  onInspector: () => void
-  inspectorRef?: RefObject<HTMLButtonElement | null>
+  panelOpen: boolean
+  onPanel: () => void
+  panelRef?: RefObject<HTMLButtonElement | null>
   menu: MenuSection[]
   connection: ConnectionStatus
   onRefresh: () => void
@@ -183,7 +181,7 @@ function PhoneTopBar({
           {changes && (
             <IconButton size="lg" label={changes.label} icon={changes.icon} pressed={changes.pressed} onClick={changes.onToggle} />
           )}
-          <IconButton ref={inspectorRef} size="lg" label="会话信息" icon={PanelRight} pressed={inspectorOpen} onClick={onInspector} />
+          <IconButton ref={panelRef} size="lg" label="侧边面板" icon={PanelRight} pressed={panelOpen} onClick={onPanel} />
         </span>
       )}
     </header>
@@ -220,9 +218,9 @@ export function SessionHeader({
   phone,
   onBack,
   onRename,
-  inspectorOpen,
-  onInspector,
-  inspectorRef,
+  panelOpen,
+  onPanel,
+  panelRef,
   sessionMenu,
   menu,
   connection,
@@ -230,7 +228,10 @@ export function SessionHeader({
   onFiles,
   filesOpen,
   slots = {},
+  crumb,
 }: {
+  /** What the breadcrumb's popover says of this session, beyond its branch. */
+  crumb?: { folders?: ReactNode; after?: ReactNode }
   identity?: string
   summary?: TaskSummary
   harness?: Pick<HarnessInfo, 'id' | 'name' | 'source'>
@@ -245,10 +246,10 @@ export function SessionHeader({
   onBack?: () => void
   onRename?: () => void
   /** The panel is shown, beside the conversation or in its place. */
-  inspectorOpen: boolean
-  onInspector: () => void
-  /** The toggle, which takes focus back when the page of 会话信息 closes. */
-  inspectorRef?: RefObject<HTMLButtonElement | null>
+  panelOpen: boolean
+  onPanel: () => void
+  /** The toggle, which takes focus back when the panel's page closes. */
+  panelRef?: RefObject<HTMLButtonElement | null>
   /** Rename, pin, archive, export and delete: the title button's menu. */
   sessionMenu: MenuSection[]
   /** ⋯: the session's actions and 同步最新状态 (on phones, the title button's menu). */
@@ -273,9 +274,9 @@ export function SessionHeader({
         cancelling={cancelling}
         demo={demo}
         onBack={onBack}
-        inspectorOpen={inspectorOpen}
-        onInspector={onInspector}
-        inspectorRef={inspectorRef}
+        panelOpen={panelOpen}
+        onPanel={onPanel}
+        panelRef={panelRef}
         menu={menu}
         connection={connection}
         onRefresh={onRefresh}
@@ -286,7 +287,11 @@ export function SessionHeader({
   return (
     <header className="topbar">
       <div className="topbar-title">
-        {summary && project && <ProjectCrumb project={project} summary={summary} usage={usage} />}
+        {summary && (project || (summary.mode !== 'chat' && summary.cwd)) && (
+          <ProjectCrumb project={project} summary={summary} usage={usage} after={crumb?.after}>
+            {crumb?.folders}
+          </ProjectCrumb>
+        )}
         {summary && (
           <h1 title={title}>
             <TitleMenu title={title} sections={sessionMenu} />
@@ -311,15 +316,16 @@ export function SessionHeader({
         {slots.gitAction}
         {slots.terminal && <Toggle toggle={slots.terminal} />}
         {slots.changes && <Toggle toggle={slots.changes} />}
-        {onFiles && <IconButton label="浏览项目文件" icon={Folder} pressed={filesOpen} onClick={onFiles} />}
+        {/* A session reaches its files through the panel; a new one has no panel yet, only this. */}
+        {onFiles && !summary && <IconButton label="浏览项目文件" icon={Folder} pressed={filesOpen} onClick={onFiles} />}
         {summary && (
           <IconButton
-            ref={inspectorRef}
-            label="会话信息"
+            ref={panelRef}
+            label="侧边面板"
             icon={PanelRight}
             shortcut={desktop ? '⌥⌘B' : 'Alt Shift B'}
-            pressed={inspectorOpen}
-            onClick={onInspector}
+            pressed={panelOpen}
+            onClick={onPanel}
           />
         )}
         {summary && menu.length > 0 && (
@@ -340,7 +346,7 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
   const {
     summary,
     harnessName: identityName,
-    inspectorToggle,
+    panelToggle,
     canBrowseFiles,
     browseFiles,
     filesVisible,
@@ -356,7 +362,7 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
     columnOpen,
     pageMode,
     infoPage,
-    toggleInspector,
+    togglePanel,
     titleMenu,
     topMenu,
     connection,
@@ -366,6 +372,9 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
     toggleChanges,
     fileTabs,
     current,
+    snapshot,
+    owner,
+    openSettings,
   } = shell
   const desktop = currentShell() !== null
   // A dot while the newest turn changed files nobody has opened here yet.
@@ -384,7 +393,7 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
   return (
     <SessionHeader
       identity={summary?.personal ? identityName : undefined}
-      inspectorRef={inspectorToggle}
+      panelRef={panelToggle}
       onFiles={canBrowseFiles ? browseFiles : undefined}
       filesOpen={filesVisible}
       summary={summary}
@@ -404,14 +413,36 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
             },
           }
         : {})}
-      inspectorOpen={columnOpen || (pageMode && infoPage)}
-      onInspector={toggleInspector}
+      panelOpen={columnOpen || (pageMode && infoPage)}
+      onPanel={togglePanel}
       sessionMenu={titleMenu}
       menu={topMenu}
       connection={connection}
       onRefresh={() => {
         void resync()
       }}
+      {...(summary
+        ? {
+            crumb: {
+              folders: (
+                <SessionFolders
+                  summary={summary}
+                  snapshot={snapshot}
+                  local={access.local}
+                  admin={access.admin}
+                  {...(owner && shell.shell
+                    ? {
+                        onNewProject: () => {
+                          openSettings('workspaces')
+                        },
+                      }
+                    : {})}
+                />
+              ),
+              after: <SessionFacts summary={summary} detail={current} harness={topHarness} gate={shell.gate} />,
+            },
+          }
+        : {})}
       slots={
         canViewChanges
           ? {

@@ -118,7 +118,13 @@ describe('WebKit actual document frames and product sandbox boundary', () => {
           )
           .toMatchObject({ index: 1 })
       } else {
-        await page.getByRole('button', { name: '下一页', exact: true }).click()
+        await frame()
+          .locator('body')
+          .evaluate(body => {
+            body.tabIndex = -1
+            body.focus({ preventScroll: true })
+          })
+        await page.keyboard.press('ArrowRight')
         await page.getByText('2 / 6 页', { exact: true }).waitFor()
       }
       await frame().getByText('Page 2', { exact: true }).waitFor()

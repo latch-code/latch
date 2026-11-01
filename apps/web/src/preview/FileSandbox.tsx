@@ -4,12 +4,34 @@ import { currentShell } from '../core/shell.ts'
 import { isFrameCommand, isFrameEvent, type FrameInput } from './types.ts'
 
 /** Untrusted document bytes have no access to Host objects or trusted demand-package React panels. */
-export function FileSandbox({ kind, data, versionKey, options, onMessage, onChannel }: FrameInput) {
+export function FileSandbox({ kind, data, versionKey, options, onMessage, onChannel, canvas, focusOnReady }: FrameInput) {
   const frame = useRef<HTMLIFrameElement>(null)
   const latest = useRef({ onMessage, onChannel })
   latest.current = { onMessage, onChannel }
   const [error, setError] = useState('')
   const [ready, setReady] = useState(false)
+  const box = useRef<HTMLDivElement>(null)
+  const [room, setRoom] = useState<{ width: number; height: number }>()
+  // Only what this frame was opened for: an update to the file must not take the keyboard from the composer.
+  const focusWhenShown = useRef(focusOnReady === true)
+  useEffect(() => {
+    if (!ready || !focusWhenShown.current) return
+    focusWhenShown.current = false
+    frame.current?.focus()
+  }, [ready])
+  const fitted = canvas !== undefined
+  useEffect(() => {
+    const element = box.current
+    if (!fitted || !element) return undefined
+    const observer = new ResizeObserver(() => {
+      setRoom({ width: element.clientWidth, height: element.clientHeight })
+    })
+    observer.observe(element)
+    return () => {
+      observer.disconnect()
+    }
+  }, [fitted])
+  const scale = canvas && room ? Math.min(room.width / canvas.width, room.height / canvas.height) : 0
   const nonce = useMemo(() => crypto.randomUUID().replaceAll('-', ''), [kind, data, versionKey, options?.theme, options?.showChanges])
   const name = kind === 'html' || kind === 'html-script' ? kind : kind === 'mermaid' ? 'diagram' : 'office'
   const src = currentShell() ? `latch-frame://preview/${name}.html#nonce=${nonce}` : `/link/preview-frame/${name}.html#nonce=${nonce}`
@@ -65,7 +87,8 @@ export function FileSandbox({ kind, data, versionKey, options, onMessage, onChan
         }
         const value = message.data
         if (value.type === 'rendered' || value.type === 'diagram' || value.type === 'html') {
-          clearTimeout(timer)
+          // A page's scripts run after its first report and can hang, so only the last one ends the watch.
+          if (value.type !== 'html' || value.settled) clearTimeout(timer)
           setReady(true)
         }
         if (value.type === 'error') clearTimeout(timer)
@@ -99,7 +122,7 @@ export function FileSandbox({ kind, data, versionKey, options, onMessage, onChan
     }
   }, [kind, data, nonce, versionKey, options?.theme, options?.showChanges])
   return (
-    <div className="file-sandbox">
+    <div ref={box} className={canvas ? 'file-sandbox fitted' : 'file-sandbox'} onClick={canvas ? () => frame.current?.focus() : undefined}>
       {error ? (
         <InlineNotice tone="error">{error}</InlineNotice>
       ) : (
@@ -109,6 +132,16 @@ export function FileSandbox({ kind, data, versionKey, options, onMessage, onChan
             key={nonce}
             ref={frame}
             title="文档预览"
+            // The frame keeps a real viewport, so its own layout, pointer targets and resize events all stay true.
+            style={
+              canvas && room
+                ? {
+                    width: canvas.width,
+                    height: canvas.height,
+                    transform: `translate(${(room.width - canvas.width * scale) / 2}px, ${(room.height - canvas.height * scale) / 2}px) scale(${scale})`,
+                  }
+                : undefined
+            }
             src={src}
             sandbox="allow-scripts"
             referrerPolicy="no-referrer"

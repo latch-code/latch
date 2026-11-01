@@ -11,7 +11,7 @@ import { Composer } from '../composer/Composer.tsx'
 import { AgentChip, BranchLabel, FoldMenu, MoreMenu, UsageRing } from '../composer/Footer.tsx'
 import { DraftModelControl, SessionModelControl } from '../composer/ModelControl.tsx'
 import { PermissionChip } from '../composer/PermissionChip.tsx'
-import { agentModelControls } from '../composer/modelReasoning.ts'
+import { composerOptions } from '../composer/modelReasoning.ts'
 import { contextUse, permissionView } from '../composer/permission.ts'
 import { QuestionDrawer, useQuestionDrawer } from '../composer/QuestionDrawer.tsx'
 import { QueueDrawer } from '../composer/QueueDrawer.tsx'
@@ -153,11 +153,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
     if (configBusy.has(selectedId ?? '')) return
     void Promise.resolve(setConfig(option.id, value))
   }
-  // An agent's model control holds these when it has one, so they appear once.
-  const otherOptions =
-    harnessInfo?.models !== 'host' && agentModelControls(current?.config ?? []).primary
-      ? []
-      : (current?.config ?? []).filter(option => option.category === 'model_config')
+  const otherOptions = composerOptions(current?.config ?? [], harnessInfo?.models === 'host')
   const use = selectedId === null ? undefined : contextUse(current?.usageReport)
   const branch = selectedId === null ? undefined : summary?.branch
   const chatOnly =
@@ -434,6 +430,7 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
               )
             )}
             {permission?.chip && <PermissionChip view={permission} onChoose={chooseOption} />}
+            {phone && selectedId !== null && <MoreMenu options={otherOptions} disabled={newChoicesLocked} onOption={chooseOption} />}
           </>
         )
       }

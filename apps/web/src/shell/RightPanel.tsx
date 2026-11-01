@@ -1,64 +1,54 @@
 import { fileContextKey } from '../preview/fileContext.ts'
-import { Inspector } from '../components/Inspector.tsx'
 import { SessionPanels } from '../components/SessionPanels.tsx'
 import { harnessName } from '../composerChoice.ts'
 import { ChangesPanel } from '../panel/changes/ChangesPanel.tsx'
+import { errorMessage } from '../core/api.ts'
+import { shellFolders } from '../core/shell.ts'
+import { projectOf } from '../sessions.ts'
+import { SessionFacts, SessionFolders, frozenFolders, liveFolder } from './SessionEnvironment.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 
-/** The session's panels: the same blocks in the column beside the conversation and in the page over it. */
+/** The session's panels: the same surfaces in the column beside the conversation and in the page over it. */
 export function RightPanel({ shell }: { shell: ShellState }) {
   const {
     current,
     summary,
     composerRef,
     setToast,
-    configBusy,
     catalog,
-    shell: desktop,
     access,
-    owner,
     active,
-    harnessInfo,
     submission,
     quoteSnapshots,
     mentionChoice,
     choose,
-    setConfig,
     gate,
     sessionBlock,
-    currentModel,
-    effectiveModel,
-    preferences,
     setInfoPage,
-    inspectorToggle,
+    panelToggle,
     fileContext,
     fileTabs,
     fileExpanded,
     setFileExpanded,
     filesOpen,
-    setFilesOpen,
-    canBrowseFiles,
     filesVisible,
+    canBrowseFiles,
     contextKey,
     pageMode,
-    openSettings,
-    openProjectSettings,
-    toggleBlock,
-    revealFromInspector,
-    infoLocked,
     searchFiles,
     mentionFile,
     quoteFile,
     workspaceForFiles,
     snapshot,
-    refresh,
     connection,
     canViewChanges,
     changesOpen,
-    showChanges,
-    closeChanges,
+    showSurface,
+    launcherTakesFocus,
+    closePanel,
+    pluginPanel,
     changesTarget,
-    changesStat,
+    changesTotals,
     setChangesTotals,
     commentOnLine,
     openFile,
@@ -67,11 +57,15 @@ export function RightPanel({ shell }: { shell: ShellState }) {
     topHarness,
   } = shell
   if (!(summary || filesVisible)) return null
+  const folderShell = access.local && access.admin ? shellFolders() : null
+  const project = summary ? (catalog ? projectOf(summary, catalog.workspaces) : undefined) : workspaceForFiles
+  // The title row's crumb holds these facts; a session without one keeps them under the launcher.
+  const noCrumb = !shell.project && (summary?.mode === 'chat' || !summary?.cwd)
   const canCompose = gate.kind === 'open' && !submission.pending && !submission.sending && sessionBlock === undefined
   return (
     <SessionPanels
       key={contextKey}
-      {...(summary && canViewChanges && (changesOpen || snapshot.device.dataScope === 'all')
+      {...(summary && canViewChanges
         ? {
             changes: (
               <ChangesPanel
@@ -100,21 +94,50 @@ export function RightPanel({ shell }: { shell: ShellState }) {
           }
         : {})}
       changesOpen={changesOpen}
-      onShowChanges={showChanges}
-      changesExpanded={fileExpanded}
-      onExpandChanges={() => {
+      {...(summary && (phone || noCrumb)
+        ? {
+            launcherNote: (
+              <div className="crumb-body panel-launcher-facts">
+                <SessionFolders summary={summary} snapshot={snapshot} local={access.local} admin={access.admin} />
+                <SessionFacts summary={summary} detail={current} harness={topHarness} gate={gate} />
+              </div>
+            ),
+          }
+        : {})}
+      {...(changesTotals ? { changesTotals } : {})}
+      onSurface={showSurface}
+      launcherTakesFocus={launcherTakesFocus}
+      onClose={closePanel}
+      {...(pluginPanel !== undefined ? { plugin: pluginPanel } : {})}
+      expanded={fileExpanded}
+      onExpand={() => {
         setFileExpanded(value => !value)
         setInfoPage(true)
       }}
-      onCloseChanges={closeChanges}
-      {...(changesStat ? { changesStat } : {})}
       fileContext={canBrowseFiles && fileContext ? fileContext : undefined}
       fileRevision={JSON.stringify(summary?.folders ?? workspaceForFiles?.folders ?? workspaceForFiles?.path)}
       treeView={fileTabs.treeView}
       onTreeViewChange={fileTabs.setTreeView}
       showFiles={filesOpen}
-      onShowFiles={setFilesOpen}
       onSearchFiles={searchFiles}
+      {...(folderShell && project
+        ? {
+            rootReveal: (rootId: string) =>
+              liveFolder(project, summary && frozenFolders(summary), rootId)
+                ? () => {
+                    void folderShell
+                      .reveal(project.id, rootId)
+                      .then(result => {
+                        if (result.status === 'failed') setToast({ text: '找不到这个文件夹，请同步后重试。', tone: 'error' })
+                      })
+                      .catch(cause => {
+                        setToast({ text: errorMessage(cause), tone: 'error' })
+                      })
+                  }
+                : undefined,
+          }
+        : {})}
+      fileSearch={catalog?.features?.fileSearch === true && snapshot.device.dataScope === 'all'}
       onMention={mentionChoice.enabled && !active && !submission.pending ? mentionFile : undefined}
       onQuote={active ? undefined : quoteFile}
       folders={workspaceForFiles?.folders}
@@ -122,21 +145,16 @@ export function RightPanel({ shell }: { shell: ShellState }) {
       panels={catalog?.uiPanels ?? []}
       files={fileTabs.tabs}
       activeFile={fileTabs.active}
-      fileExpanded={fileExpanded}
       local={access.local}
       deviceId={snapshot.device.id}
       detail={current}
       onFileView={fileTabs.view}
-      onSelectFile={id => {
-        fileTabs.select(id)
-        setFileExpanded(false)
-      }}
       onCloseFile={id => {
         fileTabs.close(id)
         setFileExpanded(false)
         if (fileTabs.tabs.length === 1) {
           setInfoPage(false)
-          requestAnimationFrame(() => inspectorToggle.current?.focus({ preventScroll: true }))
+          requestAnimationFrame(() => panelToggle.current?.focus({ preventScroll: true }))
         }
       }}
       onFileResolved={(id, file) => {
@@ -148,58 +166,13 @@ export function RightPanel({ shell }: { shell: ShellState }) {
           quote.etag = file.etag
         }
       }}
-      onExpandFile={() => {
-        setFileExpanded(value => !value)
-        setInfoPage(true)
-      }}
       summary={summary}
       canCompose={canCompose}
       onCompose={text => {
         submission.setDraft(previous => (previous.trim() ? `${previous}\n\n${text}` : text))
         if (pageMode) setInfoPage(false)
         composerRef.current?.focus()
-      }}>
-      {summary && (
-        <Inspector
-          snapshot={snapshot}
-          summary={summary}
-          detail={current}
-          local={access.local}
-          admin={access.admin}
-          onProjectsChanged={() => {
-            void refresh()
-          }}
-          onEditProject={owner ? openProjectSettings : undefined}
-          controls={{
-            ...(!summary.personal && harnessInfo?.models === 'host' && (catalog?.providers.length ?? 0) > 0
-              ? {
-                  model: {
-                    ...(effectiveModel ? { value: effectiveModel } : {}),
-                    ...(currentModel ? { current: currentModel } : {}),
-                    onChange: model => {
-                      submission.setOverride(summary.id, model)
-                    },
-                  },
-                }
-              : {}),
-            config: summary.personal ? [] : (current?.config ?? []),
-            busy: configBusy.get(summary.id) ?? null,
-            onConfig: (configId, value) => setConfig(configId, value),
-            ...(infoLocked ? { locked: infoLocked } : {}),
-          }}
-          collapsed={new Set(preferences.rightPanel.collapsed)}
-          onToggleBlock={toggleBlock}
-          onReveal={revealFromInspector}
-          onSource={choose}
-          {...(owner && desktop
-            ? {
-                onNewProject: () => {
-                  openSettings('workspaces')
-                },
-              }
-            : {})}
-        />
-      )}
-    </SessionPanels>
+      }}
+    />
   )
 }

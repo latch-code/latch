@@ -1,4 +1,4 @@
-import { memo, useId, useMemo, useState } from 'react'
+import { Fragment, memo, useId, useMemo, useRef, useState } from 'react'
 import { ChevronRight, CircleDashed, CircleSlash, FileDiff as FileDiffIcon, FilePlus, RotateCcw, TimerOff, X } from 'lucide-react'
 import type { Approval, FileDiff, Message, ToolDecision, ToolDetail } from '@latch/protocol'
 import { previousState } from '../diff.ts'
@@ -26,6 +26,9 @@ import { FileChip, FileRootContext } from './FileChip.tsx'
 import { toolFileTargets, useKnownFiles } from './FileReferences.tsx'
 import { DecisionRecord, DecisionWords } from './DecisionRecord.tsx'
 import { Button, Collapse, ICON_STROKE, StatusGlyph, StatusWords, CopyButton } from '@latch/ui'
+import { SyntaxLine, useHighlightedTokens } from '../preview/HighlightedCode.tsx'
+import { useSeen } from '../preview/viewportGate.ts'
+import { colouredRowCount, outputGrammar, readOutputLanguage, sourceView } from './toolOutputCode.ts'
 import { VisibleText } from './VisibleText.tsx'
 
 type ToolState = NonNullable<Message['state']>
@@ -78,15 +81,49 @@ function ToolTime({ message, frozen }: { message: Message; frozen: boolean }) {
  * from its end (column-reverse), so it stays at the bottom until the reader scrolls up inside it, and stays where the
  * reader left it after that.
  */
-function ToolOutput({ text, running }: { text: string; running: boolean }) {
+function ToolOutput({ text, running, language }: { text: string; running: boolean; language?: string }) {
+  const box = useRef<HTMLDivElement>(null)
+  const seen = useSeen(box)
   return (
-    <div className={`tool-output-scroll ${running ? 'is-live' : ''}`}>
+    <div ref={box} className={`tool-output-scroll ${running ? 'is-live' : ''}`}>
       <pre className="tool-pre tool-output">
-        <VisibleText text={text} />
+        {language ? <SourceOutput text={text} language={language} enabled={seen} /> : <VisibleText text={text} />}
       </pre>
       {!running && <CopyButton text={text} label="复制输出" size="xs" className="tool-output-copy" />}
     </div>
   )
+}
+
+/**
+ * A file's text as a read reported it: plain until its tokens arrive, and the same characters afterwards, so colour lands
+ * without moving anything. An agent's line numbers and wrapper lines stay out of the grammar.
+ */
+function SourceOutput({ text, language, enabled }: { text: string; language: string; enabled: boolean }) {
+  const view = useMemo(() => sourceView(text), [text])
+  const grammar = useMemo(() => outputGrammar(text, language), [text, language])
+  const tokens = useHighlightedTokens(view.body, grammar, enabled)
+  return useMemo(() => {
+    if (!tokens) return <VisibleText text={view.text} />
+    const count = colouredRowCount(view.rows, tokens)
+    const coloured = view.rows.slice(0, count)
+    const rest = view.rows.slice(count)
+    return (
+      <>
+        {coloured.map((row, index) => (
+          <Fragment key={index}>
+            {row.gutter && (
+              <span className="syn-comment">
+                <VisibleText text={row.gutter} />
+              </span>
+            )}
+            <SyntaxLine text={row.text} tokens={row.line === undefined ? undefined : tokens[row.line]} />
+            {index < view.rows.length - 1 && '\n'}
+          </Fragment>
+        ))}
+        {rest.length > 0 && <VisibleText text={rest.map(row => row.gutter + row.text).join('\n')} />}
+      </>
+    )
+  }, [tokens, view])
 }
 
 /**
@@ -128,6 +165,7 @@ export const ToolCard = memo(
     const diffs = tool?.diffs ?? approval?.tool?.diffs ?? []
     // While a call runs its plain-text form is still its input; only what it reported is output.
     const output = state === 'running' ? (tool?.output ?? '') : facts ? shownToolOutput(facts) : ''
+    const language = state === 'completed' && message ? readOutputLanguage(message) : undefined
     const running = state === 'running' && !frozen
     const [choice, setChoice] = useState<boolean | null>(null)
     // The diff of a call its approval kept from running is no evidence of a change.
@@ -273,7 +311,11 @@ export const ToolCard = memo(
                   {!applied && <ArgumentList text={tool?.input} covered={[label.object]} quiet />}
                   {showOutput
                     && !applied
-                    && (output ? <ToolOutput text={output} running={running} /> : !running && <p className="muted-line">没有输出</p>)}
+                    && (output ? (
+                      <ToolOutput text={output} running={running} language={language} />
+                    ) : (
+                      !running && <p className="muted-line">没有输出</p>
+                    ))}
                 </div>
               </Collapse>
             )}

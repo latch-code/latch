@@ -1,12 +1,18 @@
 import type { FileOpenTarget, TaskDetail } from '@latch/protocol'
 const DOCUMENTS = new Set(['pptx', 'pdf', 'docx', 'xlsx', 'csv', 'html'])
+export interface AutoOpened {
+  first: FileOpenTarget
+  offered: FileOpenTarget[]
+}
+
 /** Only a run this view watched can open a newly created document; loading history never does. */
 export class AutoOpenOutputs {
   private sessionId: string | undefined
   private runId: string | undefined
   private seenRunning = false
   private consumed = false
-  observe(detail: TaskDetail | null, options: { enabled: boolean; available: boolean; width: number }): FileOpenTarget | undefined {
+  /** The first new document opens; any others from the turn wait in `offered`, with a dot on their tabs. */
+  observe(detail: TaskDetail | null, options: { enabled: boolean; available: boolean; width: number }): AutoOpened | undefined {
     const sessionId = detail?.summary.id,
       runId = detail?.summary.runId
     if (this.sessionId !== sessionId || this.runId !== runId) {
@@ -41,7 +47,10 @@ export class AutoOpenOutputs {
     const output = messages.findLast(message => message.outputs !== undefined || message.outputsPending || message.outputsUnavailable)
     if (!output || output.outputsPending || detail.fileChanges?.state === 'settling') return
     this.consumed = true
-    const document = output.outputs?.find(file => file.change === 'created' && file.kind && DOCUMENTS.has(file.kind))
-    return document ? { sessionId: detail.summary.id, reference: document.path, rootId: document.root } : undefined
+    const documents = (output.outputs ?? [])
+      .filter(file => file.change === 'created' && file.kind && DOCUMENTS.has(file.kind))
+      .map(file => ({ sessionId: detail.summary.id, reference: file.path, rootId: file.root }))
+    const [first, ...offered] = documents
+    return first ? { first, offered } : undefined
   }
 }

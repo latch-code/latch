@@ -8,7 +8,7 @@ import type { Device, FileMetadata, TaskDetail, WorkspaceInfo } from '@latch/pro
 import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
-import { settleShell } from './helpers/layout.ts'
+import { closeActiveFile, settleShell } from './helpers/layout.ts'
 
 async function showList(page: Page, width: number) {
   if (width === 900) {
@@ -117,7 +117,7 @@ describe('preview authority reduction', () => {
         }
         await openArtifact()
         await preview.getByText(artifact, { exact: true }).waitFor()
-        await preview.getByRole('button', { name: '关闭文件', exact: true }).click()
+        await closeActiveFile(page)
         const allSnapshot = page.waitForResponse(
           async response =>
             response.url().endsWith('/link/api/snapshot')

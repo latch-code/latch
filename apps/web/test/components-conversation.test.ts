@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Approval, AppSnapshot, Message, TaskDetail, TaskSummary } from '@latch/protocol'
 import { sha256Hex } from '@latch/core/node-kit'
 import { hashDisplay } from '@latch/host/crypto'
-import { Inspector } from '../src/components/Inspector.tsx'
+import { SessionFacts } from '../src/shell/SessionEnvironment.tsx'
 import { MessageRow, ThinkingRow } from '../src/components/MessageRow.tsx'
 import { PlanList } from '../src/components/PlanCard.tsx'
 import { DiffView } from '../src/components/DiffView.tsx'
@@ -550,19 +550,16 @@ describe('units', () => {
     const footers = textsOf(transcriptOf(settled, false), 'turn-facts')
     expect(footers.join(' | ')).toMatch(/输入 12\.4k tokens.*输出 3\.1k tokens.*上下文 74\.2k tokens/u)
     expect(transcriptOf(running, true)).toContain('status-line')
-    const inspector = renderToStaticMarkup(
-      createElement(Inspector, {
-        snapshot: appSnapshot(),
+    const crumb = renderToStaticMarkup(
+      createElement(SessionFacts, {
         summary: session({ createdAt: localIso(1), usage, cwd: '/work/app' }),
         detail: settled,
-        local: false,
-        collapsed: new Set<string>(),
-        onToggleBlock: noop,
-        onReveal: noop,
+        harness: undefined,
+        gate: { kind: 'open' },
       }),
     )
-    const rows = textsOf(inspector, 'info-value')
-    expect(rows.join(' | ')).toMatch(/12\.4k tokens.*3\.1k tokens.*74\.2k \/ 200k tokens/u)
+    const rows = textsOf(crumb, 'crumb-value')
+    expect(rows.join(' | ')).toMatch(/12\.4k tokens.*3\.1k tokens/u)
     for (const text of [...footers, ...rows]) expect({ text, bare: bareNumbers(text) }).toEqual({ text, bare: [] })
     // The check itself finds a count without its unit.
     expect(bareNumbers('输入 12.4k · 输出 3.1k tokens · 用时 72')).toEqual(['12', '4', '72'])

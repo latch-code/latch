@@ -63,7 +63,7 @@ describe('a start directory inside Latch’s program directory', () => {
     { name: 'desktop', width: 1440, height: 1000 },
     { name: 'phone', width: 390, height: 844 },
   ] as const) {
-    it(`warns in 设置 › 项目, the new session and 会话信息 › 环境 at ${viewport.name} width`, async () => {
+    it(`warns in 设置 › 项目, the new session and the session at ${viewport.name} width`, async () => {
       // Each width on a page of its own that starts at that width, as a person opening Latch there would.
       const page = await context.newPage()
       await page.setViewportSize({ width: viewport.width, height: viewport.height })
@@ -86,16 +86,16 @@ describe('a start directory inside Latch’s program directory', () => {
       await page.locator('.composer-notice', { hasText: NOTICE }).waitFor()
       await page.screenshot({ path: `${OUTPUT}/new-session--${viewport.name}.png`, fullPage: true, animations: 'disabled' })
 
-      // 会话信息 › 环境 of a session that works there.
+      // The session that works there: the project's popover, and the panel's page on a phone.
       if (viewport.name === 'phone') {
         await page.getByRole('dialog', { name: '新会话', exact: true }).getByRole('button', { name: '取消', exact: true }).click()
         await page.locator('.phone-list').locator(`[data-task-id="${sessionId}"]`).click()
       } else await page.locator(`[data-task-id="${sessionId}"]`).first().click()
       // The conversation is read in, so the capture shows it beside the warning rather than the loading line.
       await page.locator('.transcript [data-message-id]').filter({ hasText: '你好' }).first().waitFor()
-      await page.getByRole('button', { name: '会话信息', exact: true }).click()
-      const info = page.locator('.info-code-root')
-      await info.getByText(NOTICE, { exact: false }).waitFor()
+      if (viewport.name === 'phone') await page.getByRole('button', { name: '侧边面板', exact: true }).click()
+      else await page.locator('.topbar-crumb-button').click()
+      await page.getByText(NOTICE, { exact: false }).last().waitFor()
       await page.screenshot({ path: `${OUTPUT}/session-info--${viewport.name}.png`, fullPage: true, animations: 'disabled' })
       await page.emulateMedia({ colorScheme: 'dark' })
       await page.screenshot({ path: `${OUTPUT}/session-info--${viewport.name}--dark.png`, fullPage: true, animations: 'disabled' })

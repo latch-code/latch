@@ -25,6 +25,22 @@ export function agentModelControls(config: readonly SessionConfigOption[]): {
   }
 }
 
+/**
+ * What the composer's 「⋯」 holds: every option no other control shows, so one the Latch does not recognise stays
+ * reachable. An agent's model control already holds its related options, and the 权限 chip the mode.
+ */
+export function composerOptions(config: readonly SessionConfigOption[], hostModels: boolean): SessionConfigOption[] {
+  const held = hostModels ? [] : agentModelControls(config).related
+  return config.filter(
+    option =>
+      !held.includes(option)
+      && option.category !== 'model'
+      && option.category !== 'thought_level'
+      && option.category !== 'mode'
+      && option.id !== 'mode',
+  )
+}
+
 /** Keep the Agent's order and wire values, with only duplicate IDs removed for an unambiguous control. */
 export function agentConfigValues(option: SessionConfigOption): SessionConfigOption['options'] {
   const seen = new Set<string>()

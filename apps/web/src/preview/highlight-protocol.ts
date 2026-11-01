@@ -9,8 +9,10 @@ export type SyntaxLines = SyntaxToken[][]
 export type HighlightRequest = { id: number; code: string; language: string; stream?: number; from?: number } | { release: number }
 /** `restart`: the worker does not hold this stream at `from`, and needs its lines from the start. */
 export type HighlightResponse = { id: number; lines?: unknown; restart?: boolean }
+/** A longer line stays plain on its own: one minified line or inlined image must not cost the rest of its file its colours. */
+export const MAX_TOKENIZED_LINE = 1000
 export function canHighlight(code: string): boolean {
-  return code.length <= 200_000 && new TextEncoder().encode(code).length <= 200_000 && code.split('\n').every(line => line.length <= 1000)
+  return code.length <= 200_000 && new TextEncoder().encode(code).length <= 200_000
 }
 export function isSyntaxLines(value: unknown, code: string): value is SyntaxLines {
   if (!Array.isArray(value) || value.length > 100_001) return false
@@ -46,6 +48,7 @@ const extensions: Record<string, string> = {
   json: 'json',
   jsonc: 'jsonc',
   py: 'python',
+  pyi: 'python',
   sh: 'shellscript',
   zsh: 'shellscript',
   bash: 'bash',
@@ -69,16 +72,23 @@ const extensions: Record<string, string> = {
   h: 'c',
   cpp: 'cpp',
   cc: 'cpp',
+  cxx: 'cpp',
+  hh: 'cpp',
   hpp: 'cpp',
+  hxx: 'cpp',
   cs: 'csharp',
   rb: 'ruby',
   php: 'php',
   xml: 'xml',
+  svg: 'xml',
   vue: 'vue',
   diff: 'diff',
   patch: 'diff',
 }
 export function languageForPath(path: string): string | undefined {
-  const name = path.split('/').at(-1)?.toLowerCase() ?? ''
-  return name === 'dockerfile' ? 'dockerfile' : extensions[name.split('.').at(-1) ?? '']
+  const name = path.split(/[\\/]/u).at(-1)?.toLowerCase() ?? ''
+  if (name === 'dockerfile') return name
+  // A bare name is not an extension: a file called `go` is not Go, and `constructor` is not a key of this table.
+  const extension = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1) : ''
+  return Object.hasOwn(extensions, extension) ? extensions[extension] : undefined
 }

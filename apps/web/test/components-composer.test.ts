@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Approval, AppSnapshot, HostCatalog, Message, TaskSummary } from '@latch/protocol'
 import { workspaceSections } from '../src/components/Pickers.tsx'
 import { Composer } from '../src/composer/Composer.tsx'
-import { Inspector } from '../src/components/Inspector.tsx'
+import { SessionFolders } from '../src/shell/SessionEnvironment.tsx'
 import { DiffView, PREVIOUS_UNAVAILABLE_TEXT, PREVIOUS_UNKNOWN_TEXT } from '../src/components/DiffView.tsx'
 import { ApprovalDrawer, type ApprovalStatus } from '../src/composer/ApprovalDrawer.tsx'
 import { ToolCard } from '../src/components/ToolCard.tsx'
@@ -598,37 +598,31 @@ describe('approval cards', () => {
 
 describe('a folder inside Latch’s program directory', () => {
   const start = { id: 'default', name: 'app', path: '/repo/latch/.runtime/workspace', codeRoot: true as const }
-  const inspector = (onNewProject?: () => void) =>
+  const folders = (onNewProject?: () => void) =>
     renderToStaticMarkup(
-      createElement(Inspector, {
+      createElement(SessionFolders, {
         snapshot: appSnapshot({ catalog: hostCatalog({ workspaces: [start] }) }),
         summary: session({ cwd: start.path }),
-        detail: null,
         local: true,
-        collapsed: new Set<string>(),
-        onToggleBlock: noop,
-        onReveal: noop,
+        admin: false,
         ...(onNewProject ? { onNewProject } : {}),
       }),
     )
 
-  it('warns in 会话信息 › 环境 by the Host’s flag, with 新建项目… where this device can make one', () => {
-    const html = inspector(noop)
-    expect(html).toContain('class="ui-notice info-code-root" data-tone="warn"')
+  it('warns in the breadcrumb’s popover by the Host’s flag, with 新建项目… where this device can make one', () => {
+    const html = folders(noop)
+    expect(html).toContain('data-tone="warn"')
     expect(html).toContain(CODE_ROOT_COPY.notice)
     expect(html).toContain(CODE_ROOT_COPY.startDir)
     expect(html).toContain(`>${CODE_ROOT_COPY.newProject}</button>`)
     // Elsewhere only the reason; and nothing for a folder the Host does not flag.
-    expect(inspector()).not.toContain(CODE_ROOT_COPY.newProject)
+    expect(folders()).not.toContain(CODE_ROOT_COPY.newProject)
     const plain = renderToStaticMarkup(
-      createElement(Inspector, {
+      createElement(SessionFolders, {
         snapshot: appSnapshot({ catalog: hostCatalog({ workspaces: [{ ...start, codeRoot: undefined }] }) }),
         summary: session({ cwd: start.path }),
-        detail: null,
         local: true,
-        collapsed: new Set<string>(),
-        onToggleBlock: noop,
-        onReveal: noop,
+        admin: false,
       }),
     )
     expect(plain).not.toContain(CODE_ROOT_COPY.notice)

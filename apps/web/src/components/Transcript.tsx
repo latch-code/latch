@@ -452,6 +452,7 @@ export function Transcript({
   frozenAt,
   retry,
   onFork,
+  onSource,
   onCopyError,
   onStop,
   onReveal,
@@ -482,6 +483,8 @@ export function Transcript({
   retry?: RetryAccess
   /** Forks up to a message, with a draft in the composer. */
   onFork?: (upToMessageId: string, draft?: string) => void
+  /** Opens the session a fork came from. */
+  onSource?: (sessionId: string) => void
   onCopyError?: (error: unknown) => void
   onStop?: () => void
   /** Brings a row into view, for what the status line points at. */
@@ -565,7 +568,13 @@ export function Transcript({
           {detail.summary.forkOf && (
             <p className="fork-origin">
               从「
-              <VisibleText text={detail.summary.forkOf.title} />
+              {onSource ? (
+                <button type="button" aria-label="返回来源会话" onClick={() => onSource(detail.summary.forkOf!.taskId)}>
+                  <VisibleText text={detail.summary.forkOf.title} />
+                </button>
+              ) : (
+                <VisibleText text={detail.summary.forkOf.title} />
+              )}
               」第 {detail.summary.forkOf.turn} 轮分叉
             </p>
           )}

@@ -109,7 +109,7 @@ describe('the phone stack', () => {
       const header = page.locator('.topbar[data-phone]')
       expect((await header.boundingBox())!.height).toBe(52)
       await reachable(header.getByRole('button', { name: '返回会话列表', exact: true }))
-      await reachable(header.getByRole('button', { name: '会话信息', exact: true }))
+      await reachable(header.getByRole('button', { name: '侧边面板', exact: true }))
       await reachable(header.locator('.topbar-title-button'))
       // The input floats as one row, 52 high at rest, with send at its end.
       const composer = page.locator('.composer-dock form.composer')
@@ -270,15 +270,11 @@ describe('the phone stack', () => {
       await menu.waitFor({ state: 'hidden' })
       expect(await page.locator('main.workspace').count()).toBe(1)
 
-      // 会话信息, a page over the session: back returns to the conversation. Its pickers show their arrow at rest, as a
-      // touch screen has no pointer to rest on them.
-      await header.getByRole('button', { name: '会话信息', exact: true }).click()
-      const info = page.getByRole('region', { name: '会话信息', exact: true })
-      await info.locator('.inspector').waitFor()
-      const model = info.getByRole('button', { name: /^模型：/ })
-      await reachable(model)
-      expect(await page.evaluate(() => matchMedia('(hover: none)').matches)).toBe(true)
-      await expect.poll(() => model.locator('.ui-value-picker-chevron').evaluate(arrow => getComputedStyle(arrow).opacity)).toBe('1')
+      // The panel, a page over the session: back returns to the conversation. Touch has no keys to name, so its rows name none.
+      await header.getByRole('button', { name: '侧边面板', exact: true }).click()
+      const info = page.getByRole('region', { name: '侧边面板', exact: true })
+      await reachable(info.locator('.panel-launcher-row').first())
+      expect(await info.locator('.panel-launcher-row .ui-kbd').first().isVisible()).toBe(false)
       await page.goBack()
       await info.waitFor({ state: 'detached' })
       expect(await page.locator('main.workspace').count()).toBe(1)

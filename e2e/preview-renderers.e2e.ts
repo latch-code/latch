@@ -98,13 +98,18 @@ describe('isolated document renderers', () => {
     expect(await frame.getByText('Page 25', { exact: true }).count()).toBe(0)
     await frame.getByText('备注', { exact: true }).first().click()
     await frame.getByText('Speaker note', { exact: true }).waitFor()
-    await page.getByRole('button', { name: '下一页', exact: true }).click()
+    await frame.getByText('1 / 25', { exact: true }).waitFor()
+    await frame.locator('body').evaluate(body => {
+      body.tabIndex = -1
+      body.focus({ preventScroll: true })
+    })
+    await page.keyboard.press('ArrowRight')
     await page.getByRole('status').filter({ hasText: '2 / 25 页' }).waitFor()
-    await page.getByRole('button', { name: '引用本页', exact: true }).click()
+    await page.getByRole('button', { name: '引用到对话', exact: true }).click()
     await expect.poll(() => page.evaluate(() => window.previewQuotes.at(-1)?.page)).toBe(1)
     expect(await page.evaluate(() => window.previewQuotes.at(-1)?.text)).toContain('Page 2')
-    await page.getByRole('button', { name: '适应', exact: true }).click()
-    expect(await page.getByRole('button', { name: '适应', exact: true }).getAttribute('aria-pressed')).toBe('false')
+    await page.getByRole('button', { name: '适应宽度', exact: true }).click()
+    expect(await page.getByRole('button', { name: '适应宽度', exact: true }).getAttribute('aria-pressed')).toBe('false')
     await frame.locator('body').evaluate(body => {
       body.tabIndex = -1
       body.focus({ preventScroll: true })
@@ -128,7 +133,7 @@ describe('isolated document renderers', () => {
     await expect.poll(() => page.getByRole('status').allTextContents()).toContain('2 / 25 页')
     await open('pptx', presentation(24))
     await page.getByRole('status').filter({ hasText: '2 / 24 页' }).waitFor()
-    expect(await page.getByRole('button', { name: '适应', exact: true }).getAttribute('aria-pressed')).toBe('false')
+    expect(await page.getByRole('button', { name: '适应宽度', exact: true }).getAttribute('aria-pressed')).toBe('false')
     await frame.locator('body').evaluate(body => {
       const start = new Event('touchstart', { bubbles: true }),
         end = new Event('touchend', { bubbles: true })
@@ -175,13 +180,13 @@ describe('isolated document renderers', () => {
         selection.removeAllRanges()
         selection.addRange(range)
       })
-    await page.getByRole('button', { name: '引用选区', exact: true }).click()
+    await page.getByRole('button', { name: '引用到对话', exact: true }).click()
     await expect.poll(() => page.evaluate(() => window.previewQuotes.at(-1)?.text)).toBe('Hello DOCX')
     expect(await page.evaluate(() => window.previewQuotes.at(-1)?.page)).toBe(0)
     await open('docx', [80, 75, 3, 4])
     await page.getByText('文档压缩结构超出预览上限，可以下载或在电脑上打开。 之前读到的内容仍保留在这里。', { exact: true }).waitFor()
     await page.frameLocator('iframe[title="文档沙箱"]').getByText('Hello DOCX', { exact: true }).waitFor()
-    expect(await page.getByRole('button', { name: '引用本页', exact: true }).getAttribute('aria-disabled')).toBe('true')
+    expect(await page.getByRole('button', { name: '引用到对话', exact: true }).getAttribute('aria-disabled')).toBe('true')
   })
   it('reads XLSX cached values, formulas, dates, hidden sheets and literal text without running formulas or markup', async () => {
     await open('xlsx', workbook())
@@ -195,7 +200,7 @@ describe('isolated document renderers', () => {
     )) as { sheets: Array<{ frozen: { rows: number; cols: number } }> }
     expect(metadata.sheets[0]!.frozen).toEqual({ rows: 1, cols: 1 })
     await page.getByRole('gridcell', { name: '999', exact: true }).click()
-    await page.getByRole('button', { name: '引用选区', exact: true }).click()
+    await page.getByRole('button', { name: '引用到对话', exact: true }).click()
     await expect.poll(() => page.evaluate(() => window.previewQuotes.at(-1)?.cells)).toEqual({ sheet: '数据', start: [1, 1], end: [1, 1] })
     expect(await page.evaluate(() => window.previewQuotes.at(-1)?.text)).toBe('999')
     const frozen = await page.getByRole('gridcell', { name: '表格标题', exact: true }).boundingBox()
@@ -229,7 +234,7 @@ describe('isolated document renderers', () => {
     await page.keyboard.press('ArrowDown')
     expect(await page.getByRole('gridcell', { name: 'hello', exact: true }).getAttribute('aria-selected')).toBe('true')
     await page.getByRole('button', { name: '冻结首行首列', exact: true }).click()
-    await page.getByRole('button', { name: '引用选区', exact: true }).click()
+    await page.getByRole('button', { name: '引用到对话', exact: true }).click()
     expect(await page.evaluate(() => window.previewQuotes.at(-1))).toMatchObject({
       text: 'hello',
       cells: { sheet: '表格', start: [1, 0], end: [1, 0] },
@@ -379,7 +384,12 @@ describe('isolated document renderers', () => {
       window.previewHoldPages = true
       window.previewDeferred = []
     })
-    await page.getByRole('button', { name: '下一页', exact: true }).click()
+    const deck = page.frameLocator('iframe[title="文档沙箱"]')
+    await deck.locator('body').evaluate(body => {
+      body.tabIndex = -1
+      body.focus({ preventScroll: true })
+    })
+    await page.keyboard.press('ArrowRight')
     await expect.poll(() => page.evaluate(() => window.previewDeferred.length)).toBeGreaterThan(0)
     await page.evaluate(() => {
       window.previewHoldPages = false

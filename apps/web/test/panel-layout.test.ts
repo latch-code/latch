@@ -38,13 +38,9 @@ describe('the panel next to the rail', () => {
 
 describe('the right panel', () => {
   it('starts closed and reads only what it wrote', () => {
-    expect(parseRightPanelPreference(undefined)).toEqual({ open: false, collapsed: [] })
-    expect(parseRightPanelPreference({ open: true, width: 600, collapsed: ['plan', 'plan', 'NOT VALID', 3] })).toEqual({
-      open: true,
-      width: 600,
-      collapsed: ['plan'],
-    })
-    expect(parseRightPanelPreference({ width: 100 })).toEqual({ open: false, collapsed: [] })
+    expect(parseRightPanelPreference(undefined)).toEqual({ open: false })
+    expect(parseRightPanelPreference({ open: true, width: 600 })).toEqual({ open: true, width: 600 })
+    expect(parseRightPanelPreference({ width: 100 })).toEqual({ open: false })
   })
 
   it('stays between 360 and 70% of the window', () => {

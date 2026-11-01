@@ -45,7 +45,7 @@ import { usePromptTemplates } from '../hooks/usePromptTemplates.ts'
 import { useSessionSearch } from '../hooks/useSessionSearch.ts'
 import { SessionSearchResults } from '../components/SessionSearchResults.tsx'
 import { ArchiveBatch } from '../components/ArchiveBatch.tsx'
-import { type InfoBlock } from '../components/Inspector.tsx'
+import type { PanelSurface } from '../components/SessionPanels.tsx'
 import { type MenuSection } from '../components/overlays.tsx'
 import { MOTION, usePresence, type ResizePhase } from '@latch/ui'
 import { settingsSections, type SettingsSection } from '../settings/SettingsPage.tsx'
@@ -124,7 +124,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const windowWidth = useWindowWidth()
   /** A drag in progress, and whether it is past the snap point; the width under the pointer goes straight to the page. */
   const [sidebarDrag, setSidebarDrag] = useState<{ collapsed: boolean } | null>(null)
-  /** 会话信息 as a page in the conversation's place: on phones, and on tablets too narrow for the column. */
+  /** The panel as a page in the conversation's place: on phones, and on tablets too narrow for the column. */
   const [infoPage, setInfoPage] = useState(false)
   /** Phones: the new-session sheet over the session list. */
   const [newSheet, setNewSheet] = useState(false)
@@ -190,7 +190,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   useLayoutEffect(() => {
     if (!entries.includes(route.entry)) setRoute({ entry: 'sessions' })
   }, [entriesKey, route.entry])
-  const inspectorToggle = useRef<HTMLButtonElement>(null)
+  const panelToggle = useRef<HTMLButtonElement>(null)
   const infoPageRef = useRef<HTMLElement>(null)
   const infoBack = useRef<HTMLButtonElement>(null)
   // The page opens with focus on its way back.
@@ -213,6 +213,11 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const fileTabs = previewAllowed ? savedFileTabs : { ...savedFileTabs, tabs: [], active: undefined }
   const [fileExpanded, setFileExpanded] = useState(false)
   const [filesOpen, setFilesOpen] = useState(false)
+  const [pluginPanel, setPluginPanel] = useState<string>()
+  /** What ⌥⌘B brings back: the panel keeps its place while it is shut. */
+  const lastSurface = useRef<PanelSurface>({ kind: 'launcher' })
+  /** Set when the launcher was asked for; a launcher that merely mounted (a session switch, a reload) leaves focus alone. */
+  const launcherAsked = useRef(false)
   const canBrowseFiles =
     catalog?.features?.fileTree === true && snapshot.device.dataScope === 'all' && access.scopes.has('view') && fileContext !== null
   const filesVisible = !!fileTabs.active || (filesOpen && canBrowseFiles)
@@ -223,9 +228,11 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const changesOpen = changesWanted && canViewChanges
   const [changesTarget, setChangesTarget] = useState<ChangesPanelTarget>()
   const [changesTotals, setChangesTotals] = useState<ChangeTotals>()
-  const changesStat = changesTotals?.files ? `+${changesTotals.add} −${changesTotals.del}` : undefined
   useLayoutEffect(() => {
     setFilesOpen(false)
+    setPluginPanel(undefined)
+    lastSurface.current = { kind: 'launcher' }
+    launcherAsked.current = false
     setInfoPage(false)
     setFileExpanded(false)
     setChangesWanted(false)
@@ -247,7 +254,12 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     ...(panelWidth !== undefined ? { width: panelWidth } : {}),
     left: panelLeft,
   })
-  const placement = !summary && !filesVisible ? null : (filesVisible || changesOpen) && fileExpanded ? { kind: 'page' as const } : placed
+  const placement =
+    !summary && !filesVisible
+      ? null
+      : (filesVisible || changesOpen || pluginPanel !== undefined) && fileExpanded
+        ? { kind: 'page' as const }
+        : placed
   const pageMode = placement?.kind === 'page'
   const columnOpen =
     placement !== null && placement.kind !== 'page' && (filesVisible || changesOpen || (!!summary && preferences.rightPanel.open))
@@ -303,6 +315,9 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     fileTabs.open({ ...target, reference, ...(root ? { rootId: root.id } : {}) })
     setInfoPage(true)
   })
+  const offerFile = useStableCallback((target: ContextFileOpenTarget) => {
+    fileTabs.offer(target)
+  })
   // A wide window opens it where the panel opens, beside the conversation or as a sheet over it.
   useAutoOpenOutputs({
     detail: current,
@@ -314,6 +329,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       && !fileExpanded,
     width: placed.kind !== 'page' ? placed.width : 0,
     onOpen: openFile,
+    onOffer: offerFile,
   })
   /** A new session starts where the person is: in the open session's project, else as last chosen. */
   const startNew = () => {
@@ -536,14 +552,42 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const setColumnOpen = (open: boolean) => {
     setPreference('rightPanel', { ...preferences.rightPanel, open })
   }
-  const closeChanges = () => {
-    setChangesWanted(false)
+  /** Shows one surface of the panel, opening the panel if it is shut. */
+  const showSurface = (surface: PanelSurface) => {
+    launcherAsked.current = surface.kind === 'launcher'
+    setChangesWanted(surface.kind === 'changes')
+    setFilesOpen(surface.kind === 'files')
+    setPluginPanel(surface.kind === 'plugin' ? surface.id : undefined)
+    fileTabs.select(surface.kind === 'file' ? surface.id : undefined)
     setFileExpanded(false)
-    setInfoPage(false)
+    setColumnOpen(true)
+    setInfoPage(true)
+    if (phone) setNewSheet(false)
   }
-  const showChanges = (open: boolean) => {
-    setChangesWanted(open)
-    if (open) setFilesOpen(false)
+  const launcherTakesFocus = () => {
+    const asked = launcherAsked.current
+    launcherAsked.current = false
+    return asked
+  }
+  const shownSurface = (): PanelSurface =>
+    fileTabs.active
+      ? { kind: 'file', id: fileTabs.active.id }
+      : changesOpen
+        ? { kind: 'changes' }
+        : filesOpen
+          ? { kind: 'files' }
+          : pluginPanel !== undefined
+            ? { kind: 'plugin', id: pluginPanel }
+            : { kind: 'launcher' }
+  const closePanel = () => {
+    lastSurface.current = shownSurface()
+    setChangesWanted(false)
+    setFilesOpen(false)
+    fileTabs.select(undefined)
+    setFileExpanded(false)
+    setColumnOpen(false)
+    setInfoPage(false)
+    requestAnimationFrame(() => panelToggle.current?.focus({ preventScroll: true }))
   }
   const openChangesTab = (target?: Omit<ChangesPanelTarget, 'nonce'>) => {
     if (!canViewChanges) return
@@ -554,33 +598,16 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     if (target) setChangesTarget(previous => ({ ...target, nonce: (previous?.nonce ?? 0) + 1 }))
   }
   const toggleChanges = () => {
-    if (changesOpen && !fileTabs.active && (!pageMode || infoPage)) closeChanges()
+    if (changesOpen && !fileTabs.active && (!pageMode || infoPage)) closePanel()
     else openChangesTab()
   }
-  const toggleInspector = () => {
-    if (changesOpen) {
-      setChangesWanted(false)
-      setFileExpanded(false)
-      setColumnOpen(true)
-      setInfoPage(true)
-      return
+  const togglePanel = () => {
+    if (columnOpen || (pageMode && infoPage)) closePanel()
+    else {
+      // A page sent back (Esc, the platform's back, sending from it) still holds its surface; only closePanel lets go of it.
+      const shown = shownSurface()
+      showSurface(shown.kind === 'launcher' ? lastSurface.current : shown)
     }
-    if (filesOpen) {
-      setFilesOpen(false)
-      fileTabs.select(undefined)
-      setFileExpanded(false)
-      setColumnOpen(true)
-      setInfoPage(true)
-      return
-    }
-    if (fileTabs.active) {
-      fileTabs.select(undefined)
-      setFileExpanded(false)
-      setColumnOpen(true)
-      return
-    }
-    if (pageMode) setInfoPage(!infoPage)
-    else setColumnOpen(!columnOpen)
   }
   const workbenchKeys = useStableCallback((event: KeyboardEvent) => {
     if (event.defaultPrevented) return
@@ -638,7 +665,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       return
     }
     if (action === 'side-panel') {
-      if (summary || filesVisible) toggleInspector()
+      if (summary || filesVisible) togglePanel()
       return
     }
     if (action === 'changes') {
@@ -666,10 +693,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     window.addEventListener('keydown', workbenchKeys)
     return () => window.removeEventListener('keydown', workbenchKeys)
   }, [workbenchKeys])
-  const toggleBlock = (id: InfoBlock, collapse: boolean) => {
-    const collapsed = preferences.rightPanel.collapsed.filter(item => item !== id)
-    setPreference('rightPanel', { ...preferences.rightPanel, collapsed: collapse ? [...collapsed, id] : collapsed })
-  }
   const resizeInspector = (raw: number, step: ResizePhase) => {
     const width = clampRightPanel(raw, windowWidth)
     if (step === 'drag') {
@@ -730,10 +753,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const findReveal = useStableCallback((messageId: string, offset?: number) => {
     revealRow(messageId, offset)
   })
-  const revealFromInspector = (messageId: string) => {
-    setInfoPage(false)
-    revealRow(messageId)
-  }
   // Where the session runs: its harness (a Host without a catalog runs the built-in one) and its project's folder.
   const topHarness = harnessInfo ?? (snapshot.harness ? { ...snapshot.harness, source: 'builtin' as const } : undefined)
   const savedProject = summary && catalog ? projectOf(summary, catalog.workspaces) : undefined
@@ -818,19 +837,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const devMode = host?.devMode === true
   const level = current?.permission?.level ?? summary?.level
 
-  // 会话信息: the same blocks in the column beside the paper and in the page that takes the conversation's place.
-  const infoLocked =
-    selectedId && workspaceChanged.has(selectedId)
-      ? '原会话的文件夹已变化，请选择一个项目继续。'
-      : selectedId && configFeedback.get(selectedId)?.kind === 'unknown'
-        ? '上次设置切换的结果还未确认，请先在模型菜单刷新设置。'
-        : gate.kind === 'stopped'
-          ? '该会话不再接受输入。'
-          : gate.kind === 'read-only'
-            ? level === 'L3' && !access.local
-              ? `完全访问会话的选项只能在 ${snapshot.hostName} 上用 Latch 桌面端更改`
-              : gate.text
-            : undefined
   const commentOnLine = (mention: FileMention, line: number, text: string) => {
     const name = mention.path.split('/').at(-1)!
     const named = mentionChoice.enabled && fileMentions.length < 32
@@ -925,11 +931,12 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setInfoPage(false)
     if (changesOpen) setFileExpanded(false)
     if (phone && selectedId === null) {
+      lastSurface.current = shownSurface()
       fileTabs.select(undefined)
       setFilesOpen(false)
       setNewSheet(true)
     }
-    inspectorToggle.current?.focus({ preventScroll: true })
+    panelToggle.current?.focus({ preventScroll: true })
   }
   // A pushed page holds a place in the browser's history, so the platform's back returns to the page under it.
   useBackLayer(phone && selectedId !== null && !popping, instant => {
@@ -1017,7 +1024,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setSearchTarget,
     filter,
     setFilter,
-    inspectorToggle,
+    panelToggle,
     infoPageRef,
     infoBack,
     lifecycle,
@@ -1033,13 +1040,15 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setFilesOpen,
     canViewChanges,
     changesOpen,
-    showChanges,
+    showSurface,
+    launcherTakesFocus,
+    closePanel,
+    pluginPanel,
     openChanges,
-    closeChanges,
     toggleChanges,
     openChangesTab,
     changesTarget,
-    changesStat,
+    changesTotals,
     setChangesTotals,
     commentOnLine,
     canBrowseFiles,
@@ -1077,9 +1086,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     toggleSidebar,
     resizeSidebar,
     setColumnOpen,
-    toggleInspector,
+    togglePanel,
     workbenchKeys,
-    toggleBlock,
     resizeInspector,
     revealRow,
     selectSearchHit,
@@ -1088,7 +1096,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     archiveUndo,
     startChat,
     findReveal,
-    revealFromInspector,
     topHarness,
     savedProject,
     project,
@@ -1108,7 +1115,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     connectionText,
     devMode,
     level,
-    infoLocked,
     browseFiles,
     searchFiles,
     mentionFile,

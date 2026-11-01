@@ -59,7 +59,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
     canViewChanges,
     openChangesTab,
     toggleSidebar,
-    toggleInspector,
+    togglePanel,
     startNew,
     openSettings,
     openAgentPage,
@@ -211,7 +211,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
       : []),
     ...(summary
       ? [
-          { id: 'info', label: '展开或收起会话信息', icon: glyph(PanelRight), ...keys('side-panel'), run: inSession(toggleInspector) },
+          { id: 'info', label: '展开或收起侧边面板', icon: glyph(PanelRight), ...keys('side-panel'), run: inSession(togglePanel) },
           {
             id: 'copy',
             label: '复制当前会话为 Markdown',

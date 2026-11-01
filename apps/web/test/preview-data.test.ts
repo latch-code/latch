@@ -101,6 +101,21 @@ describe('document data boundaries', () => {
     expect(isFrameEvent({ type: 'html', blocked: 4 })).toBe(true)
     for (const blocked of [-1, 0.5, Number.POSITIVE_INFINITY, 100_001, '4']) expect(isFrameEvent({ type: 'html', blocked })).toBe(false)
     expect(isFrameEvent({ type: 'html', blocked: 0, credential: 'unexpected' })).toBe(false)
+    expect(isFrameEvent({ type: 'html', blocked: 0, scripts: true, canvas: { width: 1920, height: 1080 } })).toBe(true)
+    for (const canvas of [{ width: 0, height: 720 }, { width: 8000, height: 720 }, { width: 1280.5, height: 720 }, { width: 1280 }, 'tall'])
+      expect(isFrameEvent({ type: 'html', blocked: 0, canvas })).toBe(false)
+    expect(isFrameEvent({ type: 'html', blocked: 0, canvas: { width: 1280, height: 720, depth: 1 } })).toBe(false)
+    expect(isFrameEvent({ type: 'html', blocked: 0, scripts: false })).toBe(false)
+    expect(isFrameEvent({ type: 'html', blocked: 0, pages: { index: 2, count: 3 } })).toBe(true)
+    for (const pages of [
+      { index: 3, count: 3 },
+      { index: -1, count: 3 },
+      { index: 0, count: 10_000 },
+      { index: 0 },
+      2,
+      { index: 0, count: 1, html: '' },
+    ])
+      expect(isFrameEvent({ type: 'html', blocked: 0, pages })).toBe(false)
   })
   it('parses quoted CSV as strings, supports UTF16/TSV, never evaluates formulas and marks bounded columns', () => {
     const value = parseCsv(strToU8('name,value\n"a,b","=HYPERLINK(1)"\n').buffer as ArrayBuffer)

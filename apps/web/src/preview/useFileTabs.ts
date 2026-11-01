@@ -8,8 +8,32 @@ export interface FileTab {
   id: string
   target: PreviewTarget
   file?: FileMetadata
+  /** Produced by a turn and not looked at yet. Kept in memory: a reload forgets it. */
+  fresh?: boolean
 }
 type ContextTabs = { context: FileContext; tabs: FileTab[]; selected?: string; treeView?: FileTreeView }
+const MAX_TABS = 6
+const looked = (tab: FileTab): FileTab => {
+  const { fresh: _fresh, ...rest } = tab
+  return rest
+}
+
+/** Waits behind the open file. A full strip keeps what is in it: the new document stays reachable from the turn's card. */
+export function offerTab(tabs: FileTab[], tab: FileTab): FileTab[] {
+  if (
+    tabs.length >= MAX_TABS
+    || tabs.some(item => item.target.reference === tab.target.reference && item.target.rootId === tab.target.rootId)
+  )
+    return tabs
+  return [...tabs, tab]
+}
+
+/** The tab that takes over is being looked at now, so it loses its dot as if it had been picked. */
+export function closeTab(tabs: FileTab[], selected: string | undefined, id: string): { tabs: FileTab[]; selected: string | undefined } {
+  const left = tabs.filter(tab => tab.id !== id)
+  const next = selected === id ? left.at(-1)?.id : selected
+  return { tabs: left.map(tab => (tab.id === next ? looked(tab) : tab)), selected: next }
+}
 const keyFor = (deviceId: string) => `latch.file-tabs.${location.origin}.${deviceId}`
 const validId = (value: unknown): value is string =>
   typeof value === 'string' && value.length > 0 && value.length <= 256 && !/[\u0000-\u001f\u007f]/u.test(value)
@@ -42,7 +66,7 @@ function restore(key: string): Record<string, ContextTabs> {
       if (!item || typeof item !== 'object' || !Array.isArray(item.files)) continue
       const context = restoreContext(item)
       if (!context) continue
-      const tabs: FileTab[] = item.files.slice(0, 6).flatMap((file: unknown) => {
+      const tabs: FileTab[] = item.files.slice(0, MAX_TABS).flatMap((file: unknown) => {
         if (!file || typeof file !== 'object') return []
         const entry = file as Record<string, unknown>
         if (
@@ -168,11 +192,23 @@ export function useFileTabs(deviceId: string, context: FileContext | null, autho
         )
         const nextTarget = 'sessionId' in target ? { ...target, view: target.view ?? ('preview' as const) } : target
         const tab = { id: existing?.id ?? crypto.randomUUID(), ...(existing?.file ? { file: existing.file } : {}), target: nextTarget }
-        return { ...state, tabs: [...state.tabs.filter(item => item.id !== tab.id), tab].slice(-6), selected: tab.id }
+        return { ...state, tabs: [...state.tabs.filter(item => item.id !== tab.id), tab].slice(-MAX_TABS), selected: tab.id }
+      })
+    },
+    /** A second document from the same turn: its tab waits with a dot, behind the one that opened. */
+    offer(target: PreviewTarget) {
+      update(contextOf(target), state => {
+        const nextTarget = 'sessionId' in target ? { ...target, view: target.view ?? ('preview' as const) } : target
+        return { ...state, tabs: offerTab(state.tabs, { id: crypto.randomUUID(), target: nextTarget, fresh: true }) }
       })
     },
     select(id?: string) {
-      if (context) update(context, state => ({ ...state, selected: id }))
+      if (context)
+        update(context, state => ({
+          ...state,
+          selected: id,
+          tabs: state.tabs.map(tab => (tab.id === id ? looked(tab) : tab)),
+        }))
     },
     view(id: string, view: 'preview' | 'changes') {
       if (context?.kind === 'session')
@@ -183,11 +219,7 @@ export function useFileTabs(deviceId: string, context: FileContext | null, autho
         }))
     },
     close(id: string) {
-      if (context)
-        update(context, state => {
-          const tabs = state.tabs.filter(tab => tab.id !== id)
-          return { ...state, tabs, selected: state.selected === id ? tabs.at(-1)?.id : state.selected }
-        })
+      if (context) update(context, state => ({ ...state, ...closeTab(state.tabs, state.selected, id) }))
     },
     resolved(id: string, file: FileMetadata) {
       if (context)

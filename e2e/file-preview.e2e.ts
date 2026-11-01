@@ -6,6 +6,7 @@ import { strToU8, zipSync } from 'fflate'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
+import { closeActiveFile, openFileFind } from './helpers/layout.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 
 describe('authenticated file column', () => {
@@ -109,6 +110,7 @@ describe('authenticated file column', () => {
         await transcript.getByRole('button', { name: '预览文件：report.txt', exact: true }).click()
         const preview = page.getByRole('region', { name: '文件预览', exact: true })
         await preview.getByText('second line', { exact: true }).waitFor()
+        await openFileFind(page)
         expect(await preview.getByLabel('跳到行', { exact: true }).inputValue()).toBe('1')
         await preview.getByLabel('跳到行', { exact: true }).fill('2')
         await expect.poll(() => preview.getByLabel('跳到行', { exact: true }).inputValue()).toBe('2')
@@ -129,7 +131,7 @@ describe('authenticated file column', () => {
         expect(blocked).toBe(true)
         await mkdir('test-results/file-preview', { recursive: true })
         await page.screenshot({ path: `test-results/file-preview/text-${width}-${theme}.png`, animations: 'disabled' })
-        await preview.getByRole('button', { name: '关闭文件', exact: true }).click()
+        await closeActiveFile(page)
         await transcript.getByRole('button', { name: '预览文件：letter.docx', exact: true }).click()
         const frame = page.frameLocator('iframe[title="文档预览"]')
         await frame.getByText('Document in isolated frame', { exact: true }).waitFor()
@@ -155,21 +157,21 @@ describe('authenticated file column', () => {
           }),
         ).toBe(true)
         await page.screenshot({ path: `test-results/file-preview/docx-${width}-${theme}.png`, animations: 'disabled' })
-        await preview.getByRole('button', { name: '关闭文件', exact: true }).click()
+        await closeActiveFile(page)
         await transcript.getByRole('button', { name: '预览文件：table.csv', exact: true }).click()
         await preview.getByRole('gridcell', { name: '=1+1', exact: true }).waitFor()
-        await preview.getByRole('button', { name: '关闭文件', exact: true }).click()
+        await closeActiveFile(page)
         await transcript.getByRole('button', { name: '预览文件：picture.svg', exact: true }).click()
         await expect.poll(() => preview.locator('img').evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(40)
         expect(await page.evaluate(() => Reflect.get(globalThis, 'PREVIEW_SCRIPT_RAN'))).toBeUndefined()
-        await preview.getByRole('button', { name: '关闭文件', exact: true }).click()
+        await closeActiveFile(page)
         await transcript.getByRole('button', { name: '预览文件：tone.wav', exact: true }).click()
         await expect
           .poll(() =>
             preview.locator('audio').evaluate((audio: HTMLAudioElement) => (Number.isFinite(audio.duration) ? audio.duration : 0)),
           )
           .toBe(1)
-        await preview.getByRole('button', { name: '关闭文件', exact: true }).click()
+        await closeActiveFile(page)
         await transcript.getByRole('button', { name: '预览文件：docs/guide.md', exact: true }).click()
         await preview.getByRole('heading', { name: 'Project guide' }).waitFor()
         await preview.locator('.katex').waitFor()
@@ -186,13 +188,13 @@ describe('authenticated file column', () => {
         await preview.locator('.syn-keyword', { hasText: 'const' }).waitFor()
         await page.screenshot({ path: `test-results/file-preview/markdown-${width}-${theme}.png`, animations: 'disabled' })
         await preview.getByRole('button', { name: '源码', exact: true }).click()
-        await preview.getByRole('searchbox', { name: '查找文件内容' }).waitFor()
-        await preview.getByRole('button', { name: '预览', exact: true }).click()
+        await preview.locator('.file-text').waitFor()
+        await preview.getByRole('button', { name: '源码', exact: true }).click()
         await preview.getByRole('button', { name: 'Read report', exact: true }).click()
         await preview.getByText(width === 1440 ? 'updated second' : 'second line', { exact: true }).waitFor()
-        await preview.getByRole('button', { name: '关闭文件', exact: true }).click()
+        await closeActiveFile(page)
         await page.getByRole('tab', { name: 'guide.md', exact: true }).click()
-        await preview.getByRole('button', { name: '关闭文件', exact: true }).click()
+        await closeActiveFile(page)
         await transcript.getByRole('button', { name: '预览文件：.env', exact: true }).click()
         await preview.getByText('这个文件可能包含密钥。', { exact: false }).waitFor()
         expect(await preview.getByRole('button', { name: '显示内容', exact: true }).count()).toBe(0)

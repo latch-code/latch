@@ -236,7 +236,7 @@ describe('the shell', () => {
     const { sessionId } = await host.host.bridge.createTask({ prompt: '面板拖动的会话', requestId: randomUUID(), mode: 'agent' })
     await page.locator(`[data-task-id="${sessionId}"]`).first().click()
     await page
-      .getByRole('button', { name: /会话信息/u })
+      .getByRole('button', { name: /侧边面板/u })
       .first()
       .click()
     await page.locator('.app-shell[data-inspector="sheet"]').waitFor()

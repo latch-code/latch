@@ -7,6 +7,7 @@ import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?worker&url'
 import { trustedScriptUrl } from './runtime.ts'
 import type { DocumentPreviewProps } from './types.ts'
 import { boundedQuoteText, selectedQuote } from './quote.ts'
+import { useViewerQuote } from './viewerActions.tsx'
 import { PDF_CSS_SCALE, pdfPageAt, pdfPercent, pdfScale, pdfZoomKey } from './pdfZoom.ts'
 class SafeBinaryData {
   async fetch({ kind, filename }: { kind: string; filename: string }) {
@@ -465,6 +466,10 @@ export default function PdfPreview({ file, read, versionKey, onQuote }: Document
       clearTimeout(timer)
     }
   }, [document, query, virtual])
+  const quoteNow = useRef<() => void>(() => {})
+  useViewerQuote(onQuote ? !!document && loadedVersion === versionKey : undefined, () => {
+    quoteNow.current()
+  })
   if (error && !document) return <InlineNotice tone="error">{error}</InlineNotice>
   if (passwordRequest)
     return (
@@ -488,8 +493,8 @@ export default function PdfPreview({ file, read, versionKey, onQuote }: Document
       if (value) {
         setQuoteHint('')
         onQuote(value)
-      } else setQuoteHint('请先在 PDF 中选择文字。')
-      return
+        return
+      }
     }
     const active = document,
       activeGeneration = generation.current
@@ -511,6 +516,9 @@ export default function PdfPreview({ file, read, versionKey, onQuote }: Document
       if (activeGeneration === generation.current) setQuoteHint('这一页暂时无法读取，请重试。')
     }
   }
+  quoteNow.current = () => {
+    void quote('selection')
+  }
   return (
     <div
       className="document-preview"
@@ -523,29 +531,6 @@ export default function PdfPreview({ file, read, versionKey, onQuote }: Document
         changeZoom(command === 'fit' ? 'fit' : currentPercent() + (command === 'in' ? 10 : -10))
       }}>
       <div className="document-preview-controls">
-        {onQuote && (
-          <>
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={loadedVersion !== versionKey}
-              onPointerDown={event => event.preventDefault()}
-              onClick={() => {
-                void quote('selection')
-              }}>
-              引用选区
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={loadedVersion !== versionKey}
-              onClick={() => {
-                void quote('page')
-              }}>
-              引用本页
-            </Button>
-          </>
-        )}
         <IconButton label="上一页" icon={ArrowLeft} disabled={index === 0} onClick={() => goToPage(index - 1)} />
         <span role="status">
           {index + 1} / {document.numPages} 页

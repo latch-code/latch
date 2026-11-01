@@ -1,6 +1,6 @@
 import { createHighlighterCore, createCssVariablesTheme, type GrammarState } from '@shikijs/core'
 import { createJavaScriptRegexEngine } from '@shikijs/engine-javascript'
-import { canHighlight, type SyntaxLines, type SyntaxRole } from './highlight-protocol.ts'
+import { canHighlight, MAX_TOKENIZED_LINE, type SyntaxLines, type SyntaxRole } from './highlight-protocol.ts'
 const languages = {
   javascript: () => import('@shikijs/langs/javascript'),
   typescript: () => import('@shikijs/langs/typescript'),
@@ -35,8 +35,14 @@ const languages = {
 } as const
 const aliases: Record<string, keyof typeof languages> = {
   js: 'javascript',
+  mjs: 'javascript',
+  cjs: 'javascript',
   ts: 'typescript',
+  mts: 'typescript',
+  cts: 'typescript',
   py: 'python',
+  py3: 'python',
+  python3: 'python',
   sh: 'shellscript',
   zsh: 'shellscript',
   shell: 'shellscript',
@@ -44,7 +50,17 @@ const aliases: Record<string, keyof typeof languages> = {
   yml: 'yaml',
   md: 'markdown',
   rs: 'rust',
+  golang: 'go',
+  kt: 'kotlin',
+  kts: 'kotlin',
+  rb: 'ruby',
+  htm: 'html',
+  svg: 'xml',
   cs: 'csharp',
+  cc: 'cpp',
+  cxx: 'cpp',
+  hpp: 'cpp',
+  h: 'c',
   'c++': 'cpp',
   docker: 'dockerfile',
 }
@@ -71,6 +87,7 @@ const STREAMS = 32
 const streams = new Map<number, { language: string; state: GrammarState | undefined; next: number; chars: number }>()
 const toLines = (tokens: Array<Array<{ content: string; color?: string }>>): SyntaxLines =>
   tokens.map(line => line.map(token => ({ text: token.content, role: role(token.color) })))
+const tokenOptions = (lang: string) => ({ lang, theme: 'latch', tokenizeMaxLineLength: MAX_TOKENIZED_LINE })
 let serial = Promise.resolve()
 self.onmessage = event => {
   const input = event.data as Record<string, unknown>
@@ -103,7 +120,7 @@ self.onmessage = event => {
       const engine = await highlighter
       await engine.loadLanguage((await languages[language as keyof typeof languages]()).default)
       if (!Number.isSafeInteger(input.stream)) {
-        self.postMessage({ id, lines: toLines(engine.codeToTokens(code, { lang: language, theme: 'latch' }).tokens) })
+        self.postMessage({ id, lines: toLines(engine.codeToTokens(code, tokenOptions(language)).tokens) })
         return
       }
       const stream = input.stream as number,
@@ -119,7 +136,7 @@ self.onmessage = event => {
         self.postMessage({ id, lines: null })
         return
       }
-      const result = engine.codeToTokens(code, { lang: language, theme: 'latch', ...(known?.state ? { grammarState: known.state } : {}) })
+      const result = engine.codeToTokens(code, { ...tokenOptions(language), ...(known?.state ? { grammarState: known.state } : {}) })
       streams.delete(stream)
       streams.set(stream, { language, state: result.grammarState, next: from + result.tokens.length, chars })
       if (streams.size > STREAMS) streams.delete(streams.keys().next().value!)

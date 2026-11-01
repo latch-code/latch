@@ -18,6 +18,13 @@ export interface SheetInfo {
   colWidths: number[]
   frozen: { rows: number; cols: number }
 }
+/** The viewport a page is laid out at when it is a presentation; the panel shows it scaled, whatever the panel's shape. */
+export interface FrameCanvas {
+  width: number
+  height: number
+}
+/** The size such pages are written and checked at, for a deck that declares none and a page opened at desktop size by hand. */
+export const DESKTOP_CANVAS: FrameCanvas = { width: 1280, height: 720 }
 export type FrameCommand =
   | { type: 'quote'; id: string; source: 'selection' | 'page' }
   | { type: 'sheet-page'; sheet: number; start: number; count: number }
@@ -29,7 +36,16 @@ export type FrameEvent =
   | { type: 'initialized' }
   | { type: 'view'; fit: boolean; zoomPercent: number }
   | { type: 'diagram'; svg: string }
-  | { type: 'html'; blocked: number }
+  | {
+      type: 'html'
+      blocked: number
+      canvas?: FrameCanvas
+      scripts?: true
+      external?: true
+      pages?: { index: number; count: number }
+      /** The page has started: an earlier report comes before its scripts, which can still hang. */
+      settled?: true
+    }
   | { type: 'rendered'; kind: OfficeKind; sheets?: SheetInfo[]; truncated?: boolean }
   | { type: 'error'; code: 'invalid-file' | 'file-too-large' | 'zip-refused' | 'document-too-complex' | 'render-failed' }
   | { type: 'page'; index: number; count: number }
@@ -46,6 +62,10 @@ export interface FrameInput {
   options?: Record<string, unknown>
   onMessage?: (data: unknown, origin: FrameOrigin) => void
   onChannel?: (send: ((message: FrameCommand) => void) | undefined) => void
+  /** Lays the frame out at this viewport and scales it to fit, centred. */
+  canvas?: FrameCanvas
+  /** Moves the keyboard into the frame once it shows, for a frame the person has just asked for. */
+  focusOnReady?: boolean
 }
 export interface DocumentPreviewProps {
   onQuote?(value: PreviewQuote): void
@@ -95,7 +115,26 @@ export function isFrameEvent(value: unknown): value is FrameEvent {
         && (value.page === undefined || integer(value.page, 9999))
       )
     case 'html':
-      return keys(value, ['type', 'blocked']) && integer(value.blocked, 100_000)
+      return (
+        keys(value, ['type', 'blocked', 'canvas', 'scripts', 'external', 'pages', 'settled'])
+        && integer(value.blocked, 100_000)
+        && (value.scripts === undefined || value.scripts === true)
+        && (value.external === undefined || value.external === true)
+        && (value.settled === undefined || value.settled === true)
+        && (value.pages === undefined
+          || (plain(value.pages)
+            && keys(value.pages, ['index', 'count'])
+            && integer(value.pages.index, 9998)
+            && integer(value.pages.count, 9999)
+            && Number(value.pages.index) < Number(value.pages.count)))
+        && (value.canvas === undefined
+          || (plain(value.canvas)
+            && keys(value.canvas, ['width', 'height'])
+            && integer(value.canvas.width, 7680)
+            && integer(value.canvas.height, 4320)
+            && Number(value.canvas.width) >= 320
+            && Number(value.canvas.height) >= 240))
+      )
     case 'diagram':
       return keys(value, ['type', 'svg']) && typeof value.svg === 'string' && value.svg.length <= 2_000_000
     case 'view':

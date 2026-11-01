@@ -8,16 +8,20 @@ export function useAutoOpenOutputs({
   available,
   width,
   onOpen,
+  onOffer,
 }: {
   detail: TaskDetail | null
   available: boolean
   width: number
   onOpen(target: FileOpenTarget, options: { focus: false }): void
+  onOffer(target: FileOpenTarget): void
 }): void {
   const tracker = useRef(new AutoOpenOutputs()).current
   const enabled = usePreferences().autoOpenDocuments
   useEffect(() => {
-    const target = tracker.observe(detail, { enabled, available, width })
-    if (target) onOpen(target, { focus: false })
-  }, [tracker, detail, enabled, available, width, onOpen])
+    const opened = tracker.observe(detail, { enabled, available, width })
+    if (!opened) return
+    onOpen(opened.first, { focus: false })
+    for (const target of opened.offered) onOffer(target)
+  }, [tracker, detail, enabled, available, width, onOpen, onOffer])
 }
