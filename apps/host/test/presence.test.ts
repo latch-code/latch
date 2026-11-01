@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -1238,6 +1238,13 @@ describe('macOS helper self-test', () => {
   it.skipIf(process.platform !== 'darwin' || !existsSync(helper))(
     'reproduces canonical JSON, preview hashes, display escaping and the reason byte for byte, and refuses other reasons',
     async () => {
+      // The rule of `pnpm build:presence`. A helper older than its source was built from other code, so its exit status
+      // would report a disagreement between encodings when all it needs is a build. This stays a failure, not a skip:
+      // it is the only run of the real helper. Vectors are read at run time, so a helper older than them still runs.
+      const newer = ['native/macos/LatchPresence.swift', 'native/macos/LatchPresence-Info.plist'].filter(
+        input => statSync(input).mtimeMs >= statSync(helper).mtimeMs,
+      )
+      expect(newer, 'dist/native/latch-presence is older than these files: run pnpm build (or pnpm build:presence) first').toEqual([])
       const { stdout } = await promisify(execFile)(helper, ['--self-test', SECURITY_VECTORS_FILE], {
         env: {},
         cwd: '/',

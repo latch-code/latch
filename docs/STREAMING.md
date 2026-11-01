@@ -212,12 +212,13 @@ Provider 不能在 finish 后继续发送内容，缺少 finish 也视为失败�
 | `activity` | `starting`（进程与会话在准备）、`model`（等模型）、`command`（命令在运行）、`tool`（其他工具在运行）、`approval`（等人）、`cancelling`（停止中，等执行端结算） |
 | `commandName` | `command` 与 `tool` 时运行的是什么，只有一行，已脱敏；**只在会话详情里** |
 | `since` | 这项活动开始的时间 |
+| `runStartedAt`、`runWaitMs`、`runWaitingSince` | 整次运行开始的时间与等人的时间，和详情里的同名字段一致。`since` 随活动重新开始，整次运行的时钟读这三项；列表也带它们，它们不含正文 |
 | `lastEventAt` | 最后的动静：引擎为这个会话发来的任何东西（输出、工具更新、用量报告、请求），或一项活动的开始（比如审批刚被答复）。Agent 的 stderr 不算：它不属于任何一次运行 |
 | `lastOutputAt` | 可见输出最后一次变化 |
 | `silenceThresholdMs`、`silent` | Host 的判断，见下 |
-| `unrecognized` | 引擎发来过 Latch 不认识的请求：`count` 与最新的 `at`；会话详情里另有 `method` 与记录它的系统消息 `messageId` |
+| `unrecognized` | 引擎发来过 Latch 不认识的请求：`count` 与最新的 `at`，`at` 不早于 `lastEventAt` 表示之后再无动静；引擎继续时列表重读一次，不随每个词重读；会话详情里另有 `method` 与记录它的系统消息 `messageId` |
 
-Driver 报告前五项，`silenceThresholdMs` 与 `silent` 只由 Host 计算，Driver 的说法会被丢弃。Standard 的 `lastEventAt` 随 Provider 的每个事件前进，工具的 `kind: 'execute'` 算命令，名称是工具的标题；ACP 的 `lastEventAt` 随该会话的每个 `session/update` 与请求前进，`kind: 'execute'` 算命令，名称优先取调用的 `rawInput.command`。ACP 同时运行几个调用时，一个结束后活动仍是还在运行的那个，不会说成在等模型。
+Driver 报告除 `silenceThresholdMs`、`silent` 以外的各项，`silenceThresholdMs` 与 `silent` 只由 Host 计算，Driver 的说法会被丢弃。Standard 的 `lastEventAt` 随 Provider 的每个事件前进，工具的 `kind: 'execute'` 算命令，名称是工具的标题；ACP 的 `lastEventAt` 随该会话的每个 `session/update` 与请求前进，`kind: 'execute'` 算命令，名称优先取调用的 `rawInput.command`。ACP 同时运行几个调用时，一个结束后活动仍是还在运行的那个，不会说成在等模型。
 
 **阈值与沉默。** 模型（含 `starting`）2 分钟，命令与工具 10 分钟；等人和停止中没有阈值。`silent` 表示 `lastEventAt` 距今超过阈值，每次读取时计算，所以不会读到过期的答案。
 

@@ -67,6 +67,7 @@ export async function fingerprintProjectConfig(
   paths: readonly string[],
   managed: ProjectConfigManaged = {},
   home: string = process.env.HOME || homedir(),
+  limits: { entries: number; bytes: number; depth: number } = PROJECT_CONFIG_LIMITS,
 ): Promise<ProjectConfig> {
   const entries: Entry[] = []
   const skip = new Set(managed.skip ?? [])
@@ -95,7 +96,7 @@ export async function fingerprintProjectConfig(
     try {
       const info = await handle.stat()
       if (!info.isFile()) return { resolved: info.isDirectory() ? 'directory' : 'other' }
-      if (info.size > PROJECT_CONFIG_LIMITS.bytes - bytes) return { size: info.size, mtimeMs: info.mtimeMs }
+      if (info.size > limits.bytes - bytes) return { size: info.size, mtimeMs: info.mtimeMs }
       const data = await readAll(handle, info.size)
       bytes += data.length
       const whole = { size: data.length, sha256: sha256Hex(data) }
@@ -124,12 +125,12 @@ export async function fingerprintProjectConfig(
       if (code !== 'ENOENT' && code !== 'ENOTDIR') entries.push({ path, kind: 'unreadable', code })
       return
     }
-    if (++visited > PROJECT_CONFIG_LIMITS.entries) {
+    if (++visited > limits.entries) {
       truncated = true
       return
     }
     if (info.isDirectory()) {
-      if (depth >= PROJECT_CONFIG_LIMITS.depth) {
+      if (depth >= limits.depth) {
         truncated = true
         return
       }

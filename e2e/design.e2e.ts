@@ -81,13 +81,13 @@ describe('responsive workspace controls', () => {
       await enrollBrowser(page, testHost, { name: `布局 ${label}`, scopes: ['view', 'run', 'approve:standard', 'admin'] })
       const phone = width < 768
       if (phone) {
-        // A phone opens on its session list, whose header holds search and a new session; a new session is a
-        // sheet over the list. With no session yet there is nothing to filter: the list says so and offers to start one,
-        // and its end still names the computer and syncs its state.
+        // A phone opens on its session list: the title with a new session, then its search; a new session is a sheet
+        // over the list. With no session yet the list says so and offers to start one, and its end still names the
+        // computer and syncs its state.
         const head = page.locator('.phone-list-head')
         await reachable(page.locator('.phone-tabs').getByRole('button', { name: '设置', exact: true }))
-        for (const name of ['搜索会话', '新建会话']) await reachable(head.getByRole('button', { name, exact: true }))
-        expect(await page.getByRole('group', { name: '筛选会话', exact: true }).count()).toBe(0)
+        await reachable(head.getByRole('button', { name: '新建会话', exact: true }))
+        await reachable(page.getByRole('searchbox', { name: '搜索会话', exact: true }))
         await page.locator('.phone-empty').getByText('还没有会话', { exact: true }).waitFor()
         await reachable(page.locator('.phone-empty').getByRole('button', { name: '新建会话', exact: true }))
         await reachable(page.locator('.phone-list-foot').getByRole('button', { name: '同步最新状态', exact: true }))

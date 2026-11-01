@@ -8,11 +8,15 @@ export type SettingsSection =
   | 'workspaces'
   | 'plugins'
   | 'devices'
+  | 'shortcuts'
   | 'about'
 
 /** The rail's entries, top group then bottom group. A phone shows 会话, Agent and 设置 as its tabs. */
 export type RailEntry = 'sessions' | 'agents' | 'automations' | 'plugins' | 'phone' | 'settings'
 export type PageEntry = Exclude<RailEntry, 'sessions'>
+
+/** A page inside the Agent section that something else can open. */
+export type AgentPageTarget = { kind: 'presets' } | { kind: 'agent'; id: string }
 
 export interface ShellRoute {
   entry: RailEntry
@@ -20,6 +24,8 @@ export interface ShellRoute {
   section?: SettingsSection
   /** The project a 项目 section opens on. */
   projectId?: string
+  /** The page an Agent section opens on. */
+  agent?: AgentPageTarget
 }
 
 /** Each page entry's sections on wide windows; what is left over lives in 设置. */
@@ -28,7 +34,7 @@ const WIDE_SECTIONS: Record<PageEntry, readonly SettingsSection[]> = {
   automations: ['routines'],
   plugins: ['plugins'],
   phone: ['devices'],
-  settings: ['general', 'computer', 'providers', 'workspaces', 'about'],
+  settings: ['general', 'computer', 'providers', 'workspaces', 'shortcuts', 'about'],
 }
 
 /** A phone has three tabs: 自动化 sits inside Agent, and 插件 and 手机 sit inside 设置. */

@@ -284,17 +284,22 @@ describe('Host-authorized notifications', () => {
     expect(await shell!.notifications.get()).toEqual(state)
     expect(await shell!.notifications.set({ completion: true, approval: true, title: false, text: 'never forwarded' })).toBeUndefined()
     expect(invoke).toHaveBeenCalledTimes(1)
+    // A click that reopens the window arrives before the page subscribes: it waits for the first subscriber, once.
+    listeners.get('latch:notifications:open')!({}, 'not a session id')
+    listeners.get('latch:notifications:open')!({}, 'early')
     const changed = vi.fn(),
       clicked = vi.fn(),
       unsubscribe = shell!.notifications.subscribeState(changed),
       unclick = shell!.notifications.subscribe(clicked)
+    expect(clicked.mock.calls).toEqual([['early']])
     listeners.get('latch:notifications:state')!({}, { ...state, body: 'no text' })
     listeners.get('latch:notifications:state')!({}, { ...state, consent: 'invalid' })
     expect(changed).not.toHaveBeenCalled()
     listeners.get('latch:notifications:state')!({}, state)
     expect(changed).toHaveBeenCalledWith(state)
     listeners.get('latch:notifications:open')!({}, 'a')
-    expect(clicked).toHaveBeenCalledWith('a')
+    listeners.get('latch:notifications:open')!({}, 'not a session id')
+    expect(clicked.mock.calls).toEqual([['early'], ['a']])
     unsubscribe()
     unclick()
     expect(listeners.size).toBe(0)
@@ -337,7 +342,38 @@ describe('Host-authorized notifications', () => {
     snapshot.approvals.push({ id: 'three', sessionId: 'a' })
     await controller.poll()
     expect(show).toHaveBeenCalledTimes(2)
-    expect(badge).toHaveBeenLastCalledWith(3)
+    // The Dock says what 等你处理 lists: one session with three requests is one.
+    expect(badge).toHaveBeenLastCalledWith(1)
+    snapshot.approvals = []
+    await controller.poll()
+    expect(badge).toHaveBeenLastCalledWith(0)
+    snapshot = {
+      tasks: [
+        { id: 'a', title: 'private', status: 'idle' },
+        { id: 'quiet', title: 'private', status: 'running', live: { silent: true } },
+        { id: 'busy', title: 'private', status: 'running', live: {} },
+        {
+          id: 'unknown',
+          title: 'private',
+          status: 'running',
+          live: { lastEventAt: '2026-11-01T00:00:00.000Z', unrecognized: { at: '2026-11-01T00:00:00.000Z' } },
+        },
+        {
+          id: 'went-on',
+          title: 'private',
+          status: 'running',
+          live: { lastEventAt: '2026-11-01T00:00:09.000Z', unrecognized: { at: '2026-11-01T00:00:00.000Z' } },
+        },
+        { id: 'stopped', title: 'private', status: 'waiting-approval', live: { activity: 'cancelling' } },
+        { id: 'asks', title: 'private', status: 'waiting-approval' },
+        { id: 'question', title: 'private', status: 'running', pendingQuestions: 1 },
+        // A silence left over from a run that has ended is not waiting on anybody.
+        { id: 'over', title: 'private', status: 'failed', live: { silent: true } },
+      ] as typeof snapshot.tasks,
+      approvals: [],
+    }
+    await controller.poll()
+    expect(badge).toHaveBeenLastCalledWith(4)
   })
   it('fails closed on preferences and turns notifications on at the first real ending in the background', async () => {
     let snapshot = { tasks: [{ id: 'a', status: 'running' }], approvals: [] }

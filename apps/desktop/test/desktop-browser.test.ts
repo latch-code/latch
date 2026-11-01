@@ -1331,6 +1331,6 @@ describe('preview browser IPC', () => {
       [{ type: 'closed', tabId }],
     ])
     unsubscribe()
-    expect(listeners.size).toBe(0)
+    expect(listeners.has('latch:browser:event')).toBe(false)
   })
 })

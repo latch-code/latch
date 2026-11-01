@@ -1,23 +1,26 @@
-import { ProjectGroupHeading, ProjectsHeading, type ProjectNavigationActions } from './ProjectNavigation.tsx'
-import { Fragment, memo, useMemo, useRef, useState, type PointerEvent, type ReactNode, type RefObject } from 'react'
-import { ChevronRight, Inbox, Laptop, Plus, RefreshCw, Search, Settings, SquarePen, UsersRound } from 'lucide-react'
+import { ProjectGroupHeading, type ProjectNavigationActions } from './ProjectNavigation.tsx'
+import { memo, useMemo, useRef, useState, type PointerEvent, type ReactNode, type RefObject } from 'react'
+import { Archive, ChevronLeft, Laptop, Pin, Plus, RefreshCw, SquarePen } from 'lucide-react'
 import type { AppSnapshot, TaskSummary } from '@latch/protocol'
-import { BUILTIN_HARNESS_NAME } from '../composerChoice.ts'
-import { relativeTime, statusLabels } from '../format.ts'
+import type { ConnectionStatus } from '../core/useHarness.ts'
+import { relativeTime } from '../format.ts'
 import { useListMotion, usePresence } from '../hooks/useListMotion.ts'
+import { projectName } from '../projects.tsx'
 import {
   filterSessions,
   groupSessions,
-  sessionFact,
-  sessionFilterLabels,
-  sessionSlot,
+  projectOf,
+  rowMeta,
+  rowStatus,
+  waitsOnYou,
   type SessionFilter,
   type SessionGroup,
 } from '../sessions.ts'
 import { HarnessTile } from './BrandTile.tsx'
 import { ActionSheet, type MenuSection } from './overlays.tsx'
-import { taskHarness, type TaskHarness } from './Sidebar.tsx'
-import { Button, Collapse, Count, FilterPills, ICON_STROKE, IconButton, SearchField, StatusSlot, useLivePrevious } from '@latch/ui'
+import { SessionStatus, statusLabel, useLastConfirmed } from './SessionStatus.tsx'
+import { harnessLabel, SESSION_AGENT, taskHarness, type TaskHarness } from './Sidebar.tsx'
+import { Button, ICON_STROKE, IconButton, SearchField } from '@latch/ui'
 
 /** How long a finger rests on a row before its menu opens, and how far it may wander meanwhile. */
 const HOLD_MS = 500
@@ -65,16 +68,16 @@ function useHold(onHold: () => void) {
   }
 }
 
-/** The harness's name on a row: the built-in one by its product name, one no longer listed by its ID. */
-const harnessLabel = (harness: TaskHarness) => (harness.source === 'builtin' ? BUILTIN_HARNESS_NAME : (harness.name ?? harness.id))
-
 const PhoneRow = memo(function PhoneRow({
   task,
   harness,
+  project,
+  inWaitingShelf,
   selected,
   held,
   unread,
-  cancelling,
+  stopping,
+  frozen,
   leaving,
   now,
   onSelect,
@@ -82,11 +85,14 @@ const PhoneRow = memo(function PhoneRow({
 }: {
   task: TaskSummary
   harness: TaskHarness
+  project: string | undefined
+  inWaitingShelf: boolean
   selected: boolean
   /** Its menu is open: the row stays pressed, so it is clear what the menu acts on. */
   held: boolean
   unread: boolean
-  cancelling: boolean
+  stopping: boolean
+  frozen: string | null
   leaving: boolean
   now: number
   onSelect: (id: string) => void
@@ -94,10 +100,17 @@ const PhoneRow = memo(function PhoneRow({
 }) {
   const title = task.title || '未命名会话'
   const time = relativeTime(task.updatedAt, new Date(now))
-  // The list is the phone's root: a running session always says 运行中 here.
-  const slot = sessionSlot(task, false, unread)
-  const name = harnessLabel(harness)
-  const fact = sessionFact(task, slot, cancelling, time)
+  const status = rowStatus(task, { unread, stopping, frozen: frozen !== null })
+  const engine = harnessLabel(harness)
+  const meta = rowMeta(task, status, inWaitingShelf ? (project ?? '对话') : undefined)
+  // While the connection is down the row says less, not that what it last knew stopped mattering.
+  const strong =
+    status.kind === 'waiting'
+    || status.kind === 'silent'
+    || status.kind === 'failed'
+    || status.kind === 'unread'
+    || (status.kind === 'frozen' && waitsOnYou(task))
+  const said = statusLabel(status, task.live)
   const hold = useHold(() => {
     onHold(task)
   })
@@ -105,7 +118,7 @@ const PhoneRow = memo(function PhoneRow({
     <li className="phone-entry" data-flip-id={task.id} data-leaving={leaving ? '' : undefined} inert={leaving || undefined}>
       <button
         type="button"
-        className={`phone-row ${selected ? 'is-selected' : ''} ${held ? 'is-held' : ''} ${unread ? 'is-unread' : ''}`}
+        className={`phone-row ${selected ? 'is-selected' : ''} ${held ? 'is-held' : ''} ${strong ? 'is-strong' : ''} ${status.kind === 'unread' ? 'is-unread' : ''}`}
         data-task-id={leaving ? undefined : task.id}
         aria-current={selected ? 'page' : undefined}
         {...hold.handlers}
@@ -117,21 +130,25 @@ const PhoneRow = memo(function PhoneRow({
           onHold(task)
         }}>
         <span className="phone-row-line">
+          {task.pinned && <Pin className="session-pin" size={12} strokeWidth={ICON_STROKE[12]} aria-label="已置顶" />}
           <span className="phone-row-title">{title}</span>
-          <StatusSlot
+          <SessionStatus
             className="phone-row-status"
-            status={slot}
-            running={cancelling ? '正在取消' : undefined}
-            failed={task.permissionDrift && task.status !== 'failed' ? '权限已变化' : statusLabels.failed}
+            status={status}
+            live={task.live}
+            inWaitingShelf={false}
             time={time}
             dateTime={task.updatedAt}
           />
         </span>
         <span className="phone-row-meta" aria-hidden="true">
-          <HarnessTile harness={{ id: harness.id, source: harness.source }} size={16} />
-          <span className="phone-row-meta-text">{fact ? `${name} · ${fact}` : name}</span>
+          <span className="session-mark">
+            <HarnessTile harness={{ id: harness.id, source: harness.source }} size={16} />
+          </span>
+          <span className="phone-row-meta-text">{meta ? `${SESSION_AGENT} · ${meta}` : SESSION_AGENT}</span>
+          {status.kind === 'frozen' && <span className="session-frozen">{frozen}</span>}
         </span>
-        <span className="sr-only">{`，${name}，${cancelling ? '正在取消' : statusLabels[task.status]}${task.permissionDrift ? '，权限模式已变化' : ''}${unread ? '，有新内容' : ''}${time ? `，${time}` : ''}`}</span>
+        <span className="sr-only">{`，${engine}${said ? `，${said}` : ''}${time ? `，${time}` : ''}`}</span>
       </button>
     </li>
   )
@@ -146,6 +163,7 @@ function PhoneGroup({
   heldId,
   isUnread,
   cancelling,
+  frozen,
   now,
   onSelect,
   onNewIn,
@@ -161,6 +179,7 @@ function PhoneGroup({
   heldId: string | undefined
   isUnread: (task: TaskSummary) => boolean
   cancelling: ReadonlySet<string>
+  frozen: string | null
   now: number
   onSelect: (id: string) => void
   onNewIn?: (workspaceId: string) => void
@@ -168,8 +187,10 @@ function PhoneGroup({
 }) {
   const rows = usePresence(group.tasks, task => task.id, context, settled)
   const workspaceId = group.workspaceId
+  const waiting = group.id === 'waiting'
+  const workspaces = snapshot.catalog?.workspaces
   return (
-    <section className="phone-group" aria-label={group.label} data-flip-id={`group:${group.id}`} data-flip-scope="">
+    <section className="phone-group" aria-label={group.label} data-shelf={group.id} data-flip-id={`group:${group.id}`} data-flip-scope="">
       {group.project ? (
         <ProjectGroupHeading
           project={group.project}
@@ -180,6 +201,8 @@ function PhoneGroup({
       ) : (
         <div className="phone-group-head">
           <h2 className="phone-group-label">{group.label}</h2>
+          {waiting && <span className="phone-group-count">{group.tasks.length}</span>}
+          <span className="phone-group-rule" />
           {workspaceId !== undefined && onNewIn && (
             <IconButton
               className="phone-group-new"
@@ -195,37 +218,44 @@ function PhoneGroup({
       )}
 
       <ul className="phone-card">
-        {rows.map(({ item: task, leaving }) => (
-          <PhoneRow
-            key={task.id}
-            task={task}
-            harness={taskHarness(snapshot, task)}
-            selected={!leaving && task.id === selectedId}
-            held={!leaving && task.id === heldId}
-            unread={task.id !== selectedId && isUnread(task)}
-            cancelling={cancelling.has(task.id)}
-            leaving={leaving}
-            now={now}
-            onSelect={onSelect}
-            onHold={onHold}
-          />
-        ))}
+        {rows.map(({ item: task, leaving }) => {
+          const project = waiting && workspaces ? projectOf(task, workspaces) : undefined
+          return (
+            <PhoneRow
+              key={task.id}
+              task={task}
+              harness={taskHarness(snapshot, task)}
+              project={project && projectName(project)}
+              inWaitingShelf={waiting}
+              selected={!leaving && task.id === selectedId}
+              held={!leaving && task.id === heldId}
+              unread={task.id !== selectedId && isUnread(task)}
+              stopping={cancelling.has(task.id)}
+              frozen={frozen}
+              leaving={leaving}
+              now={now}
+              onSelect={onSelect}
+              onHold={onHold}
+            />
+          )
+        })}
       </ul>
     </section>
   )
 }
 
 /**
- * The phone's root page, on the ground: 会话 with settings, search and 新建会话; the filter pills (with 已归档 once
- * something is archived); then, as paper cards, 等你处理 while something waits and a card per group (置顶, then each
- * project). A row is 64 high: the title and its status slot, then the harness and one more fact. Opening a row pushes
- * the session over this page; holding it opens its menu as a sheet. The list ends with the computer it comes from and
- * 同步最新状态.
+ * The phone's root page: 会话 with 新建会话, the search, then 等你处理 while something waits and a section per project,
+ * with 已归档 at the end. A row is 64 high: the title and its status slot, then the engine's mark, the Agent and one more
+ * fact. Opening a row pushes the session over this page; holding it opens its menu as a sheet. The list ends with the
+ * computer it comes from and 同步最新状态.
  */
 export function PhoneSessionList({
   snapshot,
   searchResults,
   archiveBatch,
+  archiveUndo,
+  connection,
   selectedId,
   isUnread,
   cancelling,
@@ -239,10 +269,8 @@ export function PhoneSessionList({
   onSelect,
   onNew,
   onNewIn,
-  onCreateProject,
   onEditProject,
   onProjectsChanged,
-  onApprovals,
   onRefresh,
   sessionMenu,
   now,
@@ -251,13 +279,15 @@ export function PhoneSessionList({
   snapshot: AppSnapshot
   searchResults?: import('react').ReactNode
   archiveBatch?: import('react').ReactNode
+  archiveUndo?: import('react').ReactNode
+  connection: ConnectionStatus
   selectedId: string | null
   isUnread: (task: TaskSummary) => boolean
   cancelling: ReadonlySet<string>
   search: string
   onSearch: (value: string) => void
   searchRef: RefObject<HTMLInputElement | null>
-  /** The search row is open under the header. */
+  /** The search is in use: its 取消 shows. */
   searching: boolean
   onSearching: (open: boolean) => void
   filter: SessionFilter
@@ -265,7 +295,6 @@ export function PhoneSessionList({
   onSelect: (id: string) => void
   onNew: () => void
   onNewIn?: (workspaceId: string) => void
-  onApprovals: () => void
   /** 同步最新状态: reads the Host's state again. */
   onRefresh: () => Promise<void>
   sessionMenu: (task: TaskSummary) => MenuSection[]
@@ -274,25 +303,24 @@ export function PhoneSessionList({
   banners?: ReactNode
 }) {
   const list = useRef<HTMLElement>(null)
-  const searchButton = useRef<HTMLButtonElement>(null)
   const [held, setHeld] = useState<TaskSummary | null>(null)
   const [syncing, setSyncing] = useState(false)
   const empty = snapshot.tasks.length === 0
   const closeSearch = () => {
     onSearch('')
     onSearching(false)
-    // The search row folds away and cannot keep focus: it goes back to the button that opened it.
-    searchButton.current?.focus({ preventScroll: true })
+    searchRef.current?.blur()
   }
+  const frozen = useLastConfirmed(connection, snapshot)
+  const archived = filter === 'archived'
   const visible = filterSessions(snapshot.tasks, filter, search)
-  const projectSections = snapshot.catalog?.projectFolders !== undefined && !search && filter === 'all'
-  const groups = groupSessions(visible, snapshot.catalog?.workspaces, { includeEmpty: projectSections })
-  const approvals = snapshot.approvals.length
-  // The card shows only while something waits, so its count is told the value it rose from.
-  const approvalsBefore = useLivePrevious(approvals)
+  const browsing = !search && !archived
+  const projectSections = snapshot.catalog?.projectFolders !== undefined && browsing
+  const groups = groupSessions(visible, snapshot.catalog?.workspaces, {
+    includeEmpty: projectSections,
+    ...(browsing ? { waitingFrom: snapshot.tasks } : {}),
+  })
   const archivedCount = snapshot.tasks.filter(task => task.archived).length
-  const filters: SessionFilter[] =
-    archivedCount > 0 || filter === 'archived' ? ['all', 'chat', 'agent', 'archived'] : ['all', 'chat', 'agent']
   const context = `${filter}\u0000${search}`
   const signature = groups.map(group => `${group.id}:${group.tasks.map(task => task.id).join(',')}`).join('|')
   const remeasure = useListMotion(list, context, signature)
@@ -302,61 +330,46 @@ export function PhoneSessionList({
     <div className="phone-list-page">
       <header className="phone-list-head">
         <h1>会话</h1>
-        <IconButton
-          ref={searchButton}
-          size="lg"
-          label="搜索会话"
-          icon={Search}
-          pressed={searching}
-          onClick={() => {
-            if (searching) closeSearch()
-            else onSearching(true)
-          }}
-        />
         <IconButton size="lg" label="新建会话" icon={SquarePen} onClick={onNew} />
       </header>
-      <Collapse open={searching} className="phone-search-collapse">
-        <div className="phone-search" inert={!searching || undefined}>
-          <SearchField
-            ref={searchRef}
-            className="phone-search-field"
-            label="搜索会话"
-            placeholder="搜索标题"
-            value={search}
-            onValueChange={onSearch}
-          />
+      <div className="phone-search" data-searching={searching ? '' : undefined}>
+        <SearchField
+          ref={searchRef}
+          className="phone-search-field"
+          label="搜索会话"
+          placeholder="搜索"
+          value={search}
+          onValueChange={onSearch}
+          onFocus={() => {
+            onSearching(true)
+          }}
+        />
+        {searching && (
           <Button variant="ghost" onClick={closeSearch}>
             取消
           </Button>
-        </div>
-      </Collapse>
-      {/* With nothing to filter yet, there are no filters. */}
-      {!empty && (
-        <div className="phone-filters">
-          <FilterPills
-            label="筛选会话"
-            value={filter}
-            options={filters.map(value => ({ value, label: sessionFilterLabels[value] }))}
-            onValueChange={onFilter}
-          />
-        </div>
-      )}
+        )}
+      </div>
       <div className="phone-list-scroll">
+        {archived && (
+          <button
+            type="button"
+            className="phone-archived-back"
+            onClick={() => {
+              onFilter('all')
+            }}>
+            <ChevronLeft size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+            <span>已归档</span>
+            <span className="phone-archived-count">{archivedCount}</span>
+          </button>
+        )}
         {archiveBatch}
         {searchResults}
         {banners}
-        {approvals > 0 && (
-          <button type="button" className="phone-inbox" onClick={onApprovals}>
-            <Inbox className="phone-inbox-icon" size={20} strokeWidth={ICON_STROKE[20]} aria-hidden="true" />
-            <span className="phone-inbox-label">等你处理</span>
-            <Count tone="warn" value={approvals} from={approvalsBefore} />
-            <ChevronRight className="phone-inbox-chevron" size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-          </button>
-        )}
         <nav ref={list} className="phone-sessions" aria-label="会话列表" data-session-filter={filter}>
           {groups.length === 0 ? (
             <div className="phone-empty">
-              <p>{search ? '没有匹配的会话' : empty ? '还没有会话' : filter === 'archived' ? '没有已归档的会话' : '暂无此类会话'}</p>
+              <p>{search ? '没有匹配的会话' : empty ? '还没有会话' : archived ? '没有已归档的会话' : '暂无会话'}</p>
               {empty && !search && (
                 <>
                   <span>会话会保存在这里，在任何已连接设备上继续。</span>
@@ -367,38 +380,41 @@ export function PhoneSessionList({
               )}
             </div>
           ) : (
-            groups.map((group, index) => (
-              <Fragment key={group.id}>
-                {projectSections && group.id !== 'pinned' && (index === 0 || groups[index - 1]?.id === 'pinned') && (
-                  <ProjectsHeading
-                    empty={!snapshot.catalog?.workspaces.some(item => item.id !== 'default')}
-                    onCreateProject={onCreateProject}
-                  />
-                )}
-                <PhoneGroup
-                  key={group.id}
-                  group={group}
-                  snapshot={snapshot}
-                  context={context}
-                  settled={remeasure}
-                  selectedId={selectedId}
-                  heldId={heldTask?.id}
-                  isUnread={isUnread}
-                  cancelling={cancelling}
-                  now={now}
-                  onSelect={onSelect}
-                  onNewIn={onNewIn}
-                  onHold={setHeld}
-                  onEditProject={onEditProject}
-                  onProjectsChanged={onProjectsChanged}
-                />
-              </Fragment>
+            groups.map(group => (
+              <PhoneGroup
+                key={group.id}
+                group={group}
+                snapshot={snapshot}
+                context={context}
+                settled={remeasure}
+                selectedId={selectedId}
+                heldId={heldTask?.id}
+                isUnread={isUnread}
+                cancelling={cancelling}
+                frozen={frozen}
+                now={now}
+                onSelect={onSelect}
+                onNewIn={onNewIn}
+                onHold={setHeld}
+                onEditProject={onEditProject}
+                onProjectsChanged={onProjectsChanged}
+              />
             ))
           )}
-          {projectSections && groups.every(group => group.id === 'pinned') && (
-            <ProjectsHeading empty={!snapshot.catalog?.workspaces.some(item => item.id !== 'default')} onCreateProject={onCreateProject} />
-          )}
         </nav>
+        {archivedCount > 0 && !archived && !search && (
+          <button
+            type="button"
+            className="phone-archived-row"
+            aria-label={`已归档的会话（${archivedCount}）`}
+            onClick={() => {
+              onFilter('archived')
+            }}>
+            <Archive size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+            <span>已归档</span>
+            <span className="phone-archived-count">{archivedCount}</span>
+          </button>
+        )}
         <footer className="phone-list-foot">
           <Laptop className="phone-list-foot-icon" size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
           <span className="phone-list-host" title={snapshot.hostName}>
@@ -419,6 +435,7 @@ export function PhoneSessionList({
           </Button>
         </footer>
       </div>
+      {archiveUndo}
       <ActionSheet
         label={heldTask ? heldTask.title || '未命名会话' : '会话操作'}
         sections={heldMenu}

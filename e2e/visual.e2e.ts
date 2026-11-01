@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { build, preview } from 'vite'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type { AgentPresetSettings, AgentSettings, AppSnapshot, Approval, TaskDetail, TaskStatus } from '@latch/protocol'
+import type { AgentPresetSettings, AgentSettings, AppSnapshot, Approval, TaskDetail, TaskStatus, TurnChanges } from '@latch/protocol'
 import { AppError, type HarnessPlugin, type ModelDelta, type ToolDefinition } from '@latch/sdk'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { latchEnv } from '@latch/host/env'
@@ -571,6 +571,10 @@ describe('visual capture of the real product', () => {
   async function settled(id: string, expected: TaskStatus): Promise<void> {
     await expect.poll(() => status(id), { timeout: 20_000 }).toBe(expected)
   }
+  /** A run's files are watched for moments after it ends, and the next session writes in the same folder. */
+  async function watchEnded(id: string): Promise<void> {
+    await expect.poll(async () => (await detail(id)).messages.some(message => message.outputsPending), { timeout: 20_000 }).toBe(false)
+  }
   async function pendingApproval(id: string): Promise<string> {
     await expect.poll(async () => (await detail(id)).approvals.length, { timeout: 20_000 }).toBe(1)
     return (await detail(id)).approvals[0].id
@@ -712,39 +716,41 @@ describe('visual capture of the real product', () => {
   }
 
   /**
-   * A phone's root page: the list with 等你处理 and a paper card per group, its search, the menu of a row pressed and
+   * A phone's root page: the list with 等你处理 and a section per group, its search, the menu of a row pressed and
    * held, a pinned session and the archived filter. Every change made here is undone before it returns.
    */
   async function capturePhoneSessions(target: Page, viewport: VisualViewport): Promise<void> {
     await home(target)
     const list = target.locator('#session-navigation')
     const head = list.locator('.phone-list-head')
-    for (const name of ['搜索会话', '新建会话']) await reachable(head.getByRole('button', { name, exact: true }))
-    const filters = list.getByRole('group', { name: '筛选会话', exact: true })
-    for (const name of ['全部', '对话', 'Agent']) await reachable(filters.getByRole('button', { name, exact: true }))
-    await reachable(list.locator('.phone-inbox'))
+    await reachable(head.getByRole('button', { name: '新建会话', exact: true }))
+    await reachable(list.locator('.phone-group[data-shelf="waiting"]').locator('[data-task-id]').first())
     // The rows say their state in status words; the second line adds what the slot does not say, never a preview.
     const row = (id: string) => list.locator(`[data-task-id="${id}"]`)
+    // Rows still moving when a click scrolls them into view land the list at a different offset on each run.
+    const scrollList = (to: 'top' | 'end') =>
+      list.locator('.phone-list-scroll').evaluate((element, end) => {
+        element.scrollTop = end ? element.scrollHeight : 0
+      }, to === 'end')
     await row(sessions.running).locator('.ui-status-word[data-tone="running"] .ui-spinner').waitFor()
-    expect(await row(sessions.running).locator('.phone-row-meta-text').textContent()).not.toContain('·')
-    await row(sessions.cancelled)
-      .getByText(/ · 已取消$/)
-      .waitFor()
-    await row(sessions.r1).locator('.ui-status-word[data-tone="waiting"]', { hasText: '等你处理' }).waitFor()
+    await row(sessions.cancelled).locator('.ui-status-word', { hasText: '已停止' }).waitFor()
+    await row(sessions.r1).locator('.ui-status-word', { hasText: '等你处理' }).waitFor()
     await noHorizontalOverflow(target)
     await settleMotion(target)
     await recorder.capture(target, viewport, 'navigation', 'the session list, the root page')
 
-    // Search unfolds under the header and filters the titles; 取消 clears it and folds it away.
-    await head.getByRole('button', { name: '搜索会话', exact: true }).click()
+    // Search filters the titles; 取消 clears it.
     const search = list.getByRole('searchbox', { name: '搜索会话', exact: true })
     await search.fill('发布')
     await row(sessions.done).waitFor({ state: 'detached' })
     await row(sessions.hidden).waitFor()
+    // The search of message text answers on its own time, and its results push the list down.
+    await list.locator('.content-search[aria-busy="false"]').waitFor()
     await settleMotion(target)
-    await recorder.capture(target, viewport, 'navigation-search', 'searching titles')
+    await recorder.capture(target, viewport, 'navigation-search', 'searching titles and message text')
     await list.getByRole('button', { name: '取消', exact: true }).click()
     await row(sessions.done).waitFor()
+    await settleMotion(target)
 
     // A row pressed and held (or its context menu) opens the session's menu as a sheet.
     const title = (await detail(sessions.unread)).summary.title
@@ -754,6 +760,7 @@ describe('visual capture of the real product', () => {
     for (const name of ['重命名', '置顶', '归档', '导出 Markdown', '删除'])
       await reachable(rowMenu.getByRole('menuitem', { name, exact: true }))
     await settleMotion(target)
+    await scrollList('top')
     await recorder.capture(target, viewport, 'navigation-row-menu', "a row's menu after a long press")
     await target.keyboard.press('Escape')
     await rowMenu.waitFor({ state: 'hidden' })
@@ -771,6 +778,7 @@ describe('visual capture of the real product', () => {
       await reachable(ask.getByRole('button', { name: '取消', exact: true }))
       await reachable(ask.getByRole('button', { name: action, exact: true }), { allowDisabled: true })
       await settleMotion(target)
+      await scrollList('top')
       await recorder.capture(target, viewport, surface, description)
       await ask.getByRole('button', { name: '取消', exact: true }).click()
       await ask.waitFor({ state: 'hidden' })
@@ -791,41 +799,39 @@ describe('visual capture of the real product', () => {
     })
     expect(header).toEqual({ apart: true, cut: true })
     await settleMotion(target)
+    await scrollList('top')
     await recorder.capture(target, viewport, 'navigation-row-menu-long', "a long-titled row's menu")
     await target.keyboard.press('Escape')
     await longMenu.waitFor({ state: 'hidden' })
     await local.json(`tasks/${sessions.unread}`, { method: 'PATCH', body: { title } })
     await row(sessions.unread).getByText(title, { exact: true }).waitFor()
 
-    // A pinned session leads the list in a card of its own.
+    // A pinned session leads its section, marked with the pin.
     await local.json(`tasks/${sessions.plan}`, { method: 'PATCH', body: { pinned: true } })
-    const pinned = list.locator('.phone-group[aria-label="置顶"]')
-    await pinned.locator(`[data-task-id="${sessions.plan}"]`).waitFor()
+    const pinned = row(sessions.plan).locator('.session-pin')
+    await pinned.waitFor()
     await expect.poll(() => list.locator('[data-leaving]').count()).toBe(0)
-    // The menus closed from the keyboard and gave focus back to a lower row; a touch leaves none, and the card leads the
-    // list.
+    // The menus closed from the keyboard and gave focus back to a lower row; a touch leaves none.
     await target.evaluate(() => {
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
     })
-    await list.locator('.phone-list-scroll').evaluate(element => {
-      element.scrollTop = 0
-    })
     await settleMotion(target)
-    await recorder.capture(target, viewport, 'navigation-pinned', 'a pinned session in the card above the projects')
+    await scrollList('top')
+    await recorder.capture(target, viewport, 'navigation-pinned', 'a pinned session at the head of its section')
     await local.json(`tasks/${sessions.plan}`, { method: 'PATCH', body: { pinned: false } })
     await pinned.waitFor({ state: 'detached' })
     await expect.poll(() => list.locator('[data-leaving]').count()).toBe(0)
 
-    // Once something is archived, the pills offer 已归档.
+    // Once something is archived, the list ends with 已归档.
     await local.json(`tasks/${sessions.cancelled}`, { method: 'PATCH', body: { archived: true } })
-    const archived = filters.getByRole('button', { name: '已归档', exact: true })
+    const archived = list.getByRole('button', { name: /^已归档的会话/ })
     await reachable(archived)
     await archived.click()
     await list.locator('[data-session-filter="archived"]').waitFor()
     await row(sessions.cancelled).waitFor()
     await settleMotion(target)
-    await recorder.capture(target, viewport, 'navigation-archived', 'the archived filter')
-    await filters.getByRole('button', { name: '全部', exact: true }).click()
+    await recorder.capture(target, viewport, 'navigation-archived', 'the archived list')
+    await list.locator('.phone-archived-back').click()
     await local.json(`tasks/${sessions.cancelled}`, { method: 'PATCH', body: { archived: false } })
     await row(sessions.cancelled).waitFor()
     await expect.poll(() => archived.count()).toBe(0)
@@ -844,18 +850,17 @@ describe('visual capture of the real product', () => {
     await expect.poll(() => snapshots.length).toBeGreaterThan(0)
     target.off('request', watch)
     await settleMotion(target)
+    await scrollList('end')
     await recorder.capture(target, viewport, 'navigation-end', 'the end of the list: the computer and 同步最新状态')
 
     // Offline, the list says so at its top, with 重试.
-    await list.locator('.phone-list-scroll').evaluate(element => {
-      element.scrollTop = 0
-    })
     await pages.get(viewport.name)!.context.setOffline(true)
     const banner = list.locator('.banner-region').getByText('当前设备已离线', { exact: true })
     await banner.waitFor()
     await reachable(list.locator('.banner-region').getByRole('button', { name: '重试', exact: true }))
     await list.locator('.ui-collapse[data-settled] > .ui-collapse-inner > .banner-region').first().waitFor()
     await settleMotion(target)
+    await scrollList('top')
     await recorder.capture(target, viewport, 'navigation-offline', 'the list while this device is offline')
     await pages.get(viewport.name)!.context.setOffline(false)
     await connected(target)
@@ -964,6 +969,8 @@ describe('visual capture of the real product', () => {
     const plan = await startAgent(agent.id, 'think')
     await settled(plan, 'idle')
     for (const [turn, prompt] of ['tool', 'plan'].entries()) {
+      // Further apart than a run's start may precede its prompt, so each turn finds its own record.
+      advance(5_000)
       await local.json(`tasks/${plan}/prompt`, { method: 'POST', body: { prompt, requestId: randomUUID() } })
       await expect
         .poll(async () => {
@@ -972,6 +979,11 @@ describe('visual capture of the real product', () => {
         })
         .toEqual([turn + 2, 'idle'])
     }
+    // The next session writes in this folder: the last turn is recorded first, or those writes would count as its own.
+    await expect
+      .poll(async () => (await local.json<{ turns: TurnChanges[] }>(`tasks/${plan}/changes/turns`)).turns.at(-1)?.state)
+      .toBe('settled')
+    await watchEnded(plan)
     await local.json(`tasks/${plan}`, { method: 'PATCH', body: { title: '梳理会话恢复的实现' } })
 
     const done = await start(PROMPTS.done)
@@ -980,10 +992,12 @@ describe('visual capture of the real product', () => {
     advance(35_000)
     await allow(write)
     await settled(done, 'idle')
+    await watchEnded(done)
 
     const failed = await start(PROMPTS.failed)
     await allow(await pendingApproval(failed))
     await settled(failed, 'failed')
+    await watchEnded(failed)
 
     const cancelled = await start(PROMPTS.cancelled)
     await allow(await pendingApproval(cancelled))
@@ -1002,6 +1016,7 @@ describe('visual capture of the real product', () => {
     await watching.locator('.tool-card-icon[data-shift] > .ui-status-glyph-leaving .ui-spinner').waitFor({ state: 'attached' })
     await watching.locator('.tool-card-state[data-shift]', { hasText: '已取消' }).waitFor()
     await home(watching)
+    await watchEnded(cancelled)
 
     const unread = await start(PROMPTS.unread, 'chat')
     await settled(unread, 'idle')
@@ -1023,9 +1038,12 @@ describe('visual capture of the real product', () => {
 
     const hidden = await start(PROMPTS.hidden)
     await pendingApproval(hidden)
-    // The first approval to arrive while the pages watch: the 待批准 row (the rail's button on tablets) appears with its
-    // count, which fades in because the page saw it arrive.
-    await pages.get('desktop')!.page.locator('.approvals-row .ui-count[data-shift]', { hasText: '1' }).waitFor({ state: 'attached' })
+    // The first approval to arrive while the pages watch: 等你处理 appears (the rail's button on tablets, with its count,
+    // which fades in because the page saw it arrive).
+    await pages
+      .get('desktop')!
+      .page.locator('.session-group[data-shelf="waiting"] .shelf-count', { hasText: '1' })
+      .waitFor({ state: 'attached' })
     await pages.get('tablet')!.page.locator('.titlebar .ui-count[data-shift]', { hasText: '1' }).waitFor({ state: 'attached' })
     const r2 = await start(PROMPTS.r2)
     await pendingApproval(r2)
@@ -1315,11 +1333,11 @@ describe('visual capture of the real product', () => {
       await shows(target, '用例覆盖了省略密钥的情况，运行一次确认。')
       await reachable(target.getByRole('button', { name: '停止', exact: true }))
       // Running work turns the spinner on its tool row and the turn ends with the live line, which says how long the run
-      // has worked; the bar above the input says nothing then, and the open session's own row leaves its running out.
+      // has worked; the bar above the input says nothing then, and the open session's own row says it runs like any other.
       await target.locator('.tool-card .ui-spinner').first().waitFor()
       await target.locator('.status-line .status-clock').waitFor()
       expect(await target.locator('.run-bar-collapse[data-state="open"]').count()).toBe(0)
-      if (sidebar) expect(await sidebar.locator(`[data-task-id="${sessions.running}"] .ui-spinner`).count()).toBe(0)
+      if (sidebar) expect(await sidebar.locator(`[data-task-id="${sessions.running}"] .ui-spinner`).count()).toBe(1)
       await settleMotion(target)
       await recorder.capture(target, viewport, 'session-running', 'tool running')
       if (sidebar) await recorder.capture(target, viewport, 'sidebar-running', 'running session selected', sidebar)
@@ -1348,9 +1366,9 @@ describe('visual capture of the real product', () => {
       await reachable(runBar.getByRole('button', { name: '重试', exact: true }))
       expect(await target.locator('.composer-stack > .ui-notice').count()).toBe(0)
       await target.locator('.stop-button .stop-glyph').waitFor()
-      // Nothing is known to be stopping: the status line says what runs again, and the top bar claims no 正在取消.
+      // Nothing is known to be stopping: the status line says what runs again, and the top bar claims no 正在停止.
       await target.locator('.status-line .status-clock').waitFor()
-      expect(await target.locator('.topbar').getByText('正在取消', { exact: true }).count()).toBe(0)
+      expect(await target.locator('.topbar').getByText('正在停止', { exact: true }).count()).toBe(0)
       await target.locator('.run-bar-collapse[data-settled]').waitFor()
       await settleMotion(target)
       await recorder.capture(target, viewport, 'session-stop-uncertain', 'a stop whose outcome is unknown')
@@ -1385,19 +1403,19 @@ describe('visual capture of the real product', () => {
       await openSession(target, viewport, sessions.done)
       await shows(target, /建议再补一条/)
       if (sidebar) {
-        // Each row's status slot shows one thing in status words: 运行中 with its spinner, 等你处理 with its shield,
-        // 失败, the unread check or the time, which is also what a cancelled session shows.
+        // Each row's status slot shows one thing in status words: 运行中 with its spinner, 等你处理 (its shelf has said
+        // why, so the shield goes), 失败, 已停止, the unread check or the time.
         const row = (id: string) => sidebar.locator(`[data-task-id="${id}"]`)
         await row(sessions.running).locator('.ui-status-word[data-tone="running"]', { hasText: '运行中' }).waitFor()
         for (const id of [sessions.r1, sessions.r2, sessions.hidden, sessions.advisory])
-          await row(id).locator('.ui-status-word[data-tone="waiting"]', { hasText: '等你处理' }).waitFor()
+          await row(id).locator('.ui-status-word', { hasText: '等你处理' }).waitFor()
         await row(sessions.failed).locator('.ui-status-word[data-tone="failed"]', { hasText: '失败' }).waitFor()
-        await row(sessions.cancelled).locator('.ui-status-time').waitFor()
+        await row(sessions.cancelled).locator('.ui-status-word', { hasText: '已停止' }).waitFor()
         await row(sessions.unread).locator('.ui-status-unread').waitFor()
         await row(sessions.plan).locator('.ui-status-time').waitFor()
         // The rows above the list are ghost rows: the open session's neutral selection is the column's only resting fill.
         const fills = await sidebar
-          .locator('.search-field, .approvals-row')
+          .locator('.sidebar-nav-row[aria-label="搜索"], .shelf-head')
           .evaluateAll(items => items.map(item => getComputedStyle(item).backgroundColor))
         expect(fills.length).toBeGreaterThanOrEqual(2)
         for (const fill of fills) expect(fill).toBe('rgba(0, 0, 0, 0)')
@@ -1508,10 +1526,10 @@ describe('visual capture of the real product', () => {
       await target.locator('.turn-retry-confirm').getByRole('button', { name: '取消', exact: true }).click()
 
       await openSession(target, viewport, sessions.cancelled)
-      await target.locator('.topbar').getByText('已取消', { exact: true }).waitFor()
+      await target.locator('.topbar').getByText('已停止', { exact: true }).waitFor()
       if (sidebar) {
-        // The top bar names it cancelled; its row shows its time.
-        await sidebar.locator(`[data-task-id="${sessions.cancelled}"]`).locator('.ui-status-time').waitFor()
+        // The top bar and its row say the same word, now that the run has settled.
+        await sidebar.locator(`[data-task-id="${sessions.cancelled}"]`).locator('.ui-status-word', { hasText: '已停止' }).waitFor()
       }
       await recorder.capture(target, viewport, 'session-cancelled', 'cancelled')
       if (sidebar) await recorder.capture(target, viewport, 'sidebar-cancelled', 'cancelled session selected', sidebar)
@@ -1857,20 +1875,11 @@ describe('visual capture of the real product', () => {
         await recorder.capture(target, viewport, 'sidebar-row-menu', "a row's ⋯ menu open", sidebar)
         await target.keyboard.press('Escape')
         await rowMenu.waitFor({ state: 'detached' })
-
-        // Search: the title filter with the filter pills under it.
-        const search = sidebar.getByRole('searchbox', { name: '搜索会话', exact: true })
-        await search.click()
-        const filters = sidebar.getByRole('group', { name: '筛选会话', exact: true })
-        for (const name of ['全部', '对话', 'Agent']) await reachable(filters.getByRole('button', { name, exact: true }))
-        await search.fill('发布')
-        await sidebar.locator(`[data-task-id="${sessions.done}"]`).waitFor({ state: 'detached' })
-        await sidebar.locator(`[data-task-id="${sessions.hidden}"]`).waitFor()
-        await shellSettled(target)
-        await recorder.capture(target, viewport, 'sidebar-search', 'searching titles, with the filter pills', sidebar)
-        await search.fill('')
-        await search.blur()
-        await sidebar.locator('.sidebar-filters:not([data-open])').waitFor({ state: 'attached' })
+        // The menu gave focus back to its ⋯, whose ring and revealed actions would stay in the next captures.
+        await target.evaluate(() => {
+          if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+        })
+        await settleMotion(target)
 
         // A project group offers a new session in that project.
         const group = sidebar.locator('.session-group[aria-label="website"]')
@@ -1880,15 +1889,15 @@ describe('visual capture of the real product', () => {
         await recorder.capture(target, viewport, 'sidebar-group-hover', "a project group's head under the pointer, with its +", sidebar)
         await release()
 
-        // A pinned session leads the list in its own group.
+        // A pinned session leads its own shelf, marked with the pin.
         await local.json(`tasks/${sessions.plan}`, { method: 'PATCH', body: { pinned: true } })
-        const pinnedGroup = sidebar.locator('.session-group[aria-label="置顶"]')
-        await pinnedGroup.locator(`[data-task-id="${sessions.plan}"]`).waitFor()
+        const pinnedRow = sidebar.locator(`.session-item:has([data-task-id="${sessions.plan}"]) .session-pin`)
+        await pinnedRow.waitFor()
         await expect.poll(() => sidebar.locator('[data-leaving]').count()).toBe(0)
-        await shellSettled(target)
-        await recorder.capture(target, viewport, 'sidebar-pinned', 'a pinned session in the group above the projects', sidebar)
+        await settleMotion(target)
+        await recorder.capture(target, viewport, 'sidebar-pinned', 'a pinned session at the head of its shelf', sidebar)
         await local.json(`tasks/${sessions.plan}`, { method: 'PATCH', body: { pinned: false } })
-        await pinnedGroup.waitFor({ state: 'detached' })
+        await pinnedRow.waitFor({ state: 'detached' })
         await expect.poll(() => sidebar.locator('[data-leaving]').count()).toBe(0)
 
         // Shut: the column slides away and the top bar offers to open it again.
@@ -1926,8 +1935,8 @@ describe('visual capture of the real product', () => {
         await sidebar.locator('[data-session-filter="archived"]').waitFor()
         await sidebar.locator(`[data-task-id="${sessions.cancelled}"]`).waitFor()
         await shellSettled(target)
-        await recorder.capture(target, viewport, 'sidebar-archived', 'the archived filter', sidebar)
-        await filters.getByRole('button', { name: '全部', exact: true }).click()
+        await recorder.capture(target, viewport, 'sidebar-archived', 'the archived list', sidebar)
+        await sidebar.locator('.archived-back').click()
         await local.json(`tasks/${sessions.cancelled}`, { method: 'PATCH', body: { archived: false } })
         await sidebar.locator(`[data-task-id="${sessions.cancelled}"]`).waitFor()
         await expect.poll(() => sidebar.locator('.archived-row').count()).toBe(0)
@@ -2028,6 +2037,52 @@ describe('visual capture of the real product', () => {
         await recorder.capture(target, viewport, 'settings-computer-readonly', 'the ceilings for a device that cannot manage the Host')
         await closeSettings(settings)
       }
+    },
+    120_000,
+  )
+
+  it.each(VISUAL_VIEWPORTS)(
+    'captures the palette and the find bar at $name width',
+    async viewport => {
+      const target = page(viewport)
+      await home(target)
+      await target.keyboard.press('Control+k')
+      const palette = target.getByRole('dialog', { name: '命令面板', exact: true })
+      await palette.waitFor()
+      await noHorizontalOverflow(target, palette)
+      await settleMotion(target)
+      await recorder.capture(target, viewport, 'palette', 'recent sessions and commands, before anything is typed')
+      await palette.getByRole('searchbox').fill('发布')
+      // The search of message text answers on its own time.
+      await palette.getByText('正在搜索消息…', { exact: true }).waitFor({ state: 'detached' })
+      await noHorizontalOverflow(target, palette)
+      await settleMotion(target)
+      await recorder.capture(target, viewport, 'palette-search', 'results in groups, message text last')
+      await palette.getByRole('searchbox').press('Escape')
+      await palette.getByRole('searchbox').press('Escape')
+      await palette.waitFor({ state: 'detached' })
+
+      await openSession(target, viewport, sessions.done)
+      await target.keyboard.press('Control+f')
+      const find = target.getByRole('search', { name: '会话内查找' })
+      await find.waitFor()
+      const title = (await detail(sessions.done)).messages.find(message => message.role === 'user')!.text.slice(0, 2)
+      await find.getByRole('searchbox').fill(title)
+      await expect.poll(() => find.getByRole('status').textContent()).toMatch(/^1\//u)
+      await noHorizontalOverflow(target, find)
+      await settleMotion(target)
+      await recorder.capture(target, viewport, 'find', 'the find bar over the conversation, with its matches tinted')
+      await find.getByRole('button', { name: '关闭查找', exact: true }).click()
+      await find.waitFor({ state: 'detached' })
+
+      // A phone has no such page: it has no keys.
+      if (viewport.name !== 'phone') {
+        await target.keyboard.press('Alt+/')
+        await target.getByRole('searchbox', { name: '搜索快捷键', exact: true }).waitFor()
+        await settleMotion(target)
+        await recorder.capture(target, viewport, 'settings-shortcuts', 'the keys of this kind of client')
+      }
+      await home(target)
     },
     120_000,
   )

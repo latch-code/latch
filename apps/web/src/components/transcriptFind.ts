@@ -52,3 +52,53 @@ export function elementRanges(element: Element, query: string, limit: number): R
     return range ? [range] : []
   })
 }
+
+/**
+ * Names a match by where it is in its row, so a rescan can tell it from one that moved into its ordinal. Text comes
+ * before tool output in a row, and each only ever grows at its end.
+ */
+export function withMatchKeys<T extends { messageId: string; outputIndex?: number }>(matches: readonly T[]): Array<T & { key: string }> {
+  const seen = new Map<string, number>()
+  return matches.map(match => {
+    if (match.outputIndex !== undefined) return { ...match, key: `${match.messageId}:output:${String(match.outputIndex)}` }
+    const occurrence = seen.get(match.messageId) ?? 0
+    seen.set(match.messageId, occurrence + 1)
+    return { ...match, key: `${match.messageId}:text:${String(occurrence)}` }
+  })
+}
+
+/** Where the match the reader is on went in a rescan; if it is gone, the nearest place to where it was. */
+export function carriedIndex(current: string | undefined, matches: ReadonlyArray<{ key: string }>, index: number): number {
+  const at = matches.findIndex(match => match.key === current)
+  return at >= 0 ? at : Math.min(index, Math.max(0, matches.length - 1))
+}
+
+/** The bar and the composer's edge cover the pane's ends: a match within them is moved to a third of the way down. */
+const MATCH_TOP = 60
+const MATCH_BOTTOM = 48
+
+/**
+ * How far the conversation's content must come down for a match to show: near its top no scrolling can bring the match
+ * out from under the bar. `given` is what the content has come down already.
+ */
+export function findClearance(
+  match: Pick<DOMRect, 'top' | 'left' | 'right' | 'height'>,
+  bar: Pick<DOMRect, 'left' | 'right'>,
+  pane: Pick<DOMRect, 'top'> & { scrollTop: number },
+  given: number,
+): number {
+  if (match.height === 0 || match.right <= bar.left || match.left >= bar.right) return 0
+  return Math.max(0, MATCH_TOP - (match.top - pane.top + pane.scrollTop - given))
+}
+
+/** Whether a match needs moving to be read, and where its row's top then goes relative to the pane. */
+export function matchPlacement(
+  match: Pick<DOMRect, 'top' | 'bottom' | 'height'>,
+  row: Pick<DOMRect, 'top'>,
+  pane: Pick<DOMRect, 'top' | 'bottom' | 'height'>,
+): { move: boolean; offset: number } {
+  const offset = pane.height / 3 - (match.top - row.top)
+  // A match with no box is inside something still opening; its row is what can be shown yet.
+  if (match.height === 0) return { move: true, offset: Math.min(offset, pane.height / 3) }
+  return { move: match.top < pane.top + MATCH_TOP || match.bottom > pane.bottom - MATCH_BOTTOM, offset }
+}

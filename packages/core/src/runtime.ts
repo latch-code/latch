@@ -439,6 +439,7 @@ class HarnessRuntime implements Bridge {
       activity: activity.phase === 'tool' ? (tool?.command ? 'command' : 'tool') : activity.phase,
       ...(tool ? { commandName: tool.name } : {}),
       since: activity.since,
+      ...run.clock.live(),
       lastEventAt: isoTime(run.lastEventAt),
       ...(run.lastOutputAt !== undefined ? { lastOutputAt: isoTime(run.lastOutputAt) } : {}),
     }

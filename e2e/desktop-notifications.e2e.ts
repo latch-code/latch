@@ -302,6 +302,8 @@ describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON
       expect((await rows(app))[2]).toEqual({ title: 'Latch', body: '有一个请求等你处理。' })
       await app.evaluate(() => (Reflect.get(globalThis, 'notificationFixture') as MainFixture).items[2]!.emit('click'))
       await page.locator(`[data-task-id="${approval.sessionId}"][aria-current="page"]`).waitFor()
+      // Straight to what waits: its tool row is marked and holds focus, not just the session opened at its latest line.
+      await page.locator('.transcript [data-approval-target]').waitFor()
       await host.bridge.cancel(approval.sessionId)
       await settled(host, approval.sessionId, 'cancelled')
       await poll(app)

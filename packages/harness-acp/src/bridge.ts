@@ -430,6 +430,7 @@ export class AcpBridge implements Bridge {
       activity: phase === 'tool' ? (tool?.kind === 'execute' ? 'command' : 'tool') : phase,
       ...(tool ? { commandName: clip(this.redact(commandName(tool)), COMMAND_NAME_LIMIT) } : {}),
       since: since ?? isoTime(run.clock.startedAt),
+      ...run.clock.live(),
       lastEventAt: isoTime(Math.max(run.lastEventAt, run.lastOutputAt ?? 0)),
       ...(run.lastOutputAt !== undefined ? { lastOutputAt: isoTime(run.lastOutputAt) } : {}),
       ...(run.unrecognized ? { unrecognized: run.unrecognized } : {}),
@@ -2296,7 +2297,9 @@ export class AcpBridge implements Bridge {
     const candidate = this.runs.get(taskId)
     const run = candidate && (!candidate.live || candidate.live === live) ? candidate : undefined
     const seen = ((run ?? live).unrecognizedMethods ??= new Set())
-    const at = this.now()
+    // One reading for both: `at` equal to `lastEventAt` is how a client knows nothing has happened since.
+    const nowMs = this.clock()
+    const at = isoTime(nowMs)
     let messageId: string | undefined
     if (!seen.has(shown) && seen.size < UNRECOGNIZED_METHODS) {
       seen.add(shown)
@@ -2314,7 +2317,7 @@ export class AcpBridge implements Bridge {
       })
     }
     if (run) {
-      run.lastEventAt = this.clock()
+      run.lastEventAt = nowMs
       const lastMessage = messageId ?? run.unrecognized?.messageId
       run.unrecognized = {
         count: (run.unrecognized?.count ?? 0) + 1,

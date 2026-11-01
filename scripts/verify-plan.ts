@@ -104,6 +104,7 @@ function needsOf(path: string, projects: readonly TestProject[]): Need[] | undef
     return ['knip', 'test', 'build', 'e2e', 'electron', ...(path.includes('/vectors/') ? (['encoding'] as const) : [])]
   // The gallery of the design system's primitives is also a page that the visual capture builds and captures.
   if (path.startsWith('packages/ui/test/gallery/')) return ['knip', 'project:@latch/ui', 'build', 'e2e']
+  if (path === 'apps/host/test/native-swift.test.ts') return ['knip', 'project:@latch/host-swift']
   const project = projects.find(item => path.startsWith(`${item.dir}/`))
   if (project) return ['knip', `project:${project.name}`]
 

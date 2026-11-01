@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import { ChevronRight, Ellipsis, LockKeyhole } from 'lucide-react'
+import { escapeIsLeftover } from '../escapeGrace.ts'
 import type { Approval, ApprovalOption, FileDiff } from '@latch/protocol'
 import {
   Button,
@@ -219,6 +220,7 @@ function ApprovalPanel({
     if (running || event.defaultPrevented) return
     if (event.target instanceof Element && event.target.closest('input, textarea, [role="menu"], .ui-popover')) return
     if (event.key === 'Escape' && !event.metaKey && !event.ctrlKey && !event.altKey && reject) {
+      if (escapeIsLeftover(event)) return
       event.preventDefault()
       choose(reject)
     } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && shortcut && allow) {

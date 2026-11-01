@@ -117,7 +117,7 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web        # 仅开发；按 Vite 打印�
 
 ## 完成标准
 
-1. `pnpm check` 与 `pnpm build` 通过；构建后 `dist/` 中没有测试代码（见「安全」）。
+1. `pnpm build` 与 `pnpm check` 通过，先构建：`presence.test.ts` 的自检用例对比源码旧的确认组件失败并说明要先构建；构建后 `dist/` 中没有测试代码（见「安全」）。
 2. 其余检查由 `pnpm check -- --plan` 按改动列出，技能 `latch-verify` 按它运行并汇报：连接、登记、审批、取消或流式状态跑 `pnpm test:e2e`；`apps/desktop/` 或桌面启动脚本跑 Electron 用例；依赖、`pnpm-workspace.yaml` 或 `packageManager` 跑 `pnpm check:supply`；安全模块跑 [docs/TESTING.md](docs/TESTING.md#按改动选择回归) 对应的定向用例。
 3. UI 改动在手机、平板、桌面宽度检查真实渲染，覆盖正常、进行中、失败或等待状态与深色模式（`e2e/design.e2e.ts`、`e2e/visual.e2e.ts` 的截图）。测试夹具、测试确认后端与演示模型不等于真实模型、Touch ID 或真机验收；系统确认表单只能由用户本人用 `pnpm latch presence test` 人工检查。
 4. 行为变化时运行 `pnpm docs:affected`，更新对应的 `docs/` 机制文档与 `AGENTS.md`。

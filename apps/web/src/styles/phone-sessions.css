@@ -1,6 +1,8 @@
 /* ---- The session list ------------------------------------------------------------------------------------------ */
 
 .phone-list-page {
+  --surface: var(--canvas);
+  background: var(--canvas);
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -28,34 +30,20 @@
 .info-page-head > .ui-icon-button[data-size='lg'] {
   color: var(--ink);
 }
-/* The search unfolds under the header with the disclosure's motion; 取消 clears it and folds it away. */
+/* The search stays under the title; 取消 appears while it is in use, clears it and leaves the field. */
 .phone-search {
   display: flex;
   align-items: center;
+  flex-shrink: 0;
   gap: var(--sp-4);
-  padding: var(--sp-4) var(--sp-8) var(--sp-4) var(--sp-16);
+  padding: var(--sp-4) var(--sp-16) var(--sp-8);
+}
+.phone-search[data-searching] {
+  padding-right: var(--sp-8);
 }
 .phone-search-field {
   flex: 1;
   min-width: 0;
-}
-/* The pills (32, in a 44 target) start on the 16px column and scroll sideways when they do not fit. */
-.phone-filters {
-  flex-shrink: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.phone-filters::-webkit-scrollbar {
-  display: none;
-}
-.phone-filters > .ui-filters {
-  width: max-content;
-  padding: var(--sp-6) var(--sp-16);
-}
-/* On the ground the chosen pill is lifted: the raised layer with its own shadow. */
-.phone-filters .ui-tab[aria-pressed='true'] {
-  background: var(--seg-on);
-  box-shadow: var(--seg-on-shadow);
 }
 .phone-list-scroll {
   flex: 1;
@@ -74,53 +62,43 @@
   padding: 0 0 var(--sp-8);
 }
 
-/* 等你处理: a paper card (52) with the inbox, its words, the amber count and the way in. */
-.phone-inbox {
-  --surface: var(--canvas);
+/* 已归档 at the end of the list, and the way back from it: quiet rows on the column's text edge. */
+.phone-archived-row,
+.phone-archived-back {
   display: flex;
   align-items: center;
-  gap: var(--sp-12);
+  gap: var(--sp-8);
   width: 100%;
-  height: 52px;
-  padding: 0 var(--sp-12) 0 var(--sp-16);
+  height: 44px;
+  padding: 0;
   border: 0;
-  border-radius: var(--r-12);
-  background: var(--canvas);
-  box-shadow: inset 0 0 0 1px var(--line);
-  color: var(--ink);
-  text-align: left;
-  transition: background-color var(--m-micro) var(--e-micro);
-}
-.phone-inbox:active {
-  background: linear-gradient(var(--press), var(--press)) var(--canvas);
-}
-.phone-inbox:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-.phone-inbox-icon,
-.phone-inbox-chevron {
-  flex-shrink: 0;
+  background: transparent;
   color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  text-align: left;
 }
-.phone-inbox-label {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui);
+.phone-archived-row {
+  margin-top: var(--sp-16);
+}
+.phone-archived-back {
   font-weight: 500;
 }
-
-/* A group: its name on the ground (40, the words at its foot), then its sessions in one paper card. */
-.phone-group-head {
-  display: flex;
-  align-items: flex-end;
-  gap: var(--sp-8);
-  height: 40px;
-  padding: 0 var(--sp-4) var(--sp-8) var(--sp-16);
+.phone-archived-count {
+  font-variant-numeric: tabular-nums;
 }
-.phone-group-label {
-  flex: 1;
+
+/* A group: its name and a rule (36, the words at its foot), then its sessions, separated by hairlines. */
+.phone-group-head,
+.phone-shelf-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  height: 36px;
+  margin-top: var(--sp-8);
+}
+.phone-group-label,
+.phone-shelf-heading .project-group-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -130,20 +108,25 @@
   line-height: var(--lh-caption);
   font-weight: 500;
 }
+.phone-group-count {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-variant-numeric: tabular-nums;
+}
+.phone-group-rule {
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
 .phone-group-new.ui-icon-button {
   min-width: 0;
   min-height: 0;
-  margin-bottom: calc(-1 * var(--sp-4));
 }
 .phone-card {
-  --surface: var(--canvas);
   list-style: none;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  overflow: hidden;
-  border-radius: var(--r-12);
-  background: var(--canvas);
-  box-shadow: inset 0 0 0 1px var(--line);
 }
 /* A row that leaves (archived, deleted, moved to another group) folds its height away and fades. */
 .phone-entry {
@@ -169,15 +152,15 @@
   z-index: 1;
   top: 0;
   right: 0;
-  left: var(--sp-16);
+  left: 0;
   height: 1px;
   background: var(--line);
 }
 
 /*
- * A row (64): the title (16/22, 500) with its status slot, then the harness tile (16) with its name and one more fact
- * in hint ink. A press darkens it; the session it opened keeps the neutral selection while its page covers the list
- * and lets it go as the list returns.
+ * A row (64): the title with its status slot, then the engine's mark (16) with the Agent and one more fact in muted. The
+ * title is ink at 500 when the row asks for attention and ink-2 otherwise. A press darkens it; the session it opened
+ * keeps the neutral selection while its page covers the list and lets it go as the list returns.
  */
 .phone-row {
   display: flex;
@@ -187,11 +170,11 @@
   min-width: 0;
   min-height: 0;
   height: 64px;
-  padding: 0 var(--sp-16);
+  padding: 0;
   overflow: hidden;
   border: 0;
   background: transparent;
-  color: var(--ink);
+  color: var(--ink-2);
   text-align: left;
   user-select: none;
   -webkit-touch-callout: none;
@@ -201,6 +184,9 @@
 .phone-row.is-selected,
 .phone-row.is-held {
   background: var(--hover);
+}
+.phone-row.is-strong {
+  color: var(--ink);
 }
 .phone-row:focus-visible {
   outline: 2px solid var(--accent);
@@ -220,7 +206,12 @@
   white-space: nowrap;
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
+}
+.phone-row.is-strong .phone-row-title {
   font-weight: 500;
+}
+.phone-row-status .ui-status-time {
+  color: var(--muted);
 }
 .phone-row-meta {
   display: flex;
@@ -228,8 +219,8 @@
   gap: var(--sp-6);
   min-width: 0;
   color: var(--muted);
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
 }
 .phone-row-meta-text {
   min-width: 0;
@@ -243,7 +234,7 @@
   display: grid;
   justify-items: start;
   gap: var(--sp-4);
-  padding: var(--sp-8) var(--sp-16) var(--sp-16);
+  padding: var(--sp-8) 0 var(--sp-16);
   color: var(--ink-2);
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
@@ -263,7 +254,7 @@
   align-items: center;
   gap: var(--sp-6);
   min-width: 0;
-  padding: var(--sp-16) var(--sp-8) 0 var(--sp-16);
+  padding: var(--sp-16) 0 0;
   color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);

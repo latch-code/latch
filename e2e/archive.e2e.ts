@@ -46,8 +46,9 @@ describe('archived session management', () => {
       }
       const filter = async (label: '已归档' | '全部') => {
         await showList(page)
-        if (width !== 390) await page.getByRole('searchbox', { name: '搜索会话', exact: true }).click()
-        await page.getByRole('group', { name: '筛选会话', exact: true }).getByRole('button', { name: label, exact: true }).click()
+        const list = page.locator('#session-navigation')
+        if (label === '已归档') await list.getByRole('button', { name: /^已归档的会话/ }).click()
+        else await list.locator('.archived-back, .phone-archived-back').click()
       }
       await filter('已归档')
       await page.getByRole('button', { name: '批量管理', exact: true }).click()
@@ -104,12 +105,6 @@ describe('archived session management', () => {
         unreadElement = (id: string) => (width === 390 ? row(id) : row(id).locator('..')),
         first = selected[0]!,
         second = selected[1]!
-      // A press elsewhere folds the filter pills under the search, which moves the rows: let them settle first.
-      if (width !== 390) {
-        await page.locator('#session-navigation .session-list').click({ position: { x: 2, y: 2 } })
-        await page.locator('.sidebar-filters:not([data-open])').waitFor({ state: 'attached' })
-        await page.waitForTimeout(400)
-      }
       await row(first.id).click()
       await page.locator('.transcript').getByText(first.prompt, { exact: true }).waitFor()
       await showList(page)
@@ -135,6 +130,67 @@ describe('archived session management', () => {
       await page.locator('.transcript').getByText(first.prompt, { exact: true }).waitFor()
       await showList(page)
       await expect.poll(() => unreadElement(first.id).getAttribute('class')).not.toMatch(/\bis-unread\b/u)
+    } finally {
+      await context.close()
+      await browser.close()
+      await host.close()
+    }
+  })
+
+  it('takes an archive back from the line under the list, by ⌘Z and by its button', async () => {
+    const host = await startTestHost(),
+      browser = await chromium.launch(browserLaunchOptions()),
+      context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' })
+    context.setDefaultTimeout(15_000)
+    try {
+      const owner = await host.enroll({ listener: 'unix' }),
+        { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+          method: 'POST',
+          body: { prompt: '归档后撤销', mode: 'chat', requestId: randomUUID() },
+        })
+      await expect.poll(async () => (await owner.json<TaskDetail>('tasks/' + sessionId)).summary.status).toBe('idle')
+      await owner.json('tasks/' + sessionId, { method: 'PATCH', body: { title: '撤销归档' } })
+      const page = await context.newPage()
+      await page.clock.install()
+      await enrollBrowser(page, host, { name: '撤销归档验收', scopes: ['admin'] })
+      const row = page.locator('.session-item:has([data-task-id="' + sessionId + '"])'),
+        line = page.locator('.archive-undo')
+      const archive = async () => {
+        await row.hover()
+        await row.getByRole('button', { name: '归档：撤销归档', exact: true }).click()
+        await line.waitFor()
+        await row.waitFor({ state: 'detached' })
+        expect((await owner.json<TaskDetail>('tasks/' + sessionId)).summary.archived).toBe(true)
+      }
+      await archive()
+      await page.locator('body').click({ position: { x: 900, y: 300 } })
+      await page.keyboard.press('ControlOrMeta+z')
+      await row.waitFor()
+      await line.waitFor({ state: 'detached' })
+      expect((await owner.json<TaskDetail>('tasks/' + sessionId)).summary.archived).toBeFalsy()
+      await archive()
+      await line.getByRole('button').click()
+      await row.waitFor()
+      expect((await owner.json<TaskDetail>('tasks/' + sessionId)).summary.archived).toBeFalsy()
+      // Each archive gets its whole window, even when the line was already up for the one before.
+      const other = await owner.json<{ sessionId: string }>('tasks', {
+        method: 'POST',
+        body: { prompt: '第二次归档', mode: 'chat', requestId: randomUUID() },
+      })
+      await expect.poll(async () => (await owner.json<TaskDetail>('tasks/' + other.sessionId)).summary.status).toBe('idle')
+      await owner.json('tasks/' + other.sessionId, { method: 'PATCH', body: { title: '第二次归档' } })
+      const otherRow = page.locator('.session-item:has([data-task-id="' + other.sessionId + '"])')
+      await otherRow.waitFor()
+      await archive()
+      await page.clock.fastForward(6000)
+      await otherRow.hover()
+      await otherRow.getByRole('button', { name: '归档：第二次归档', exact: true }).click()
+      await otherRow.waitFor({ state: 'detached' })
+      await page.clock.fastForward(6000)
+      expect(await line.isVisible()).toBe(true)
+      await line.getByRole('button').click()
+      await otherRow.waitFor()
+      expect((await owner.json<TaskDetail>('tasks/' + other.sessionId)).summary.archived).toBeFalsy()
     } finally {
       await context.close()
       await browser.close()

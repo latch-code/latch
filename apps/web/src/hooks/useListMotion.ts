@@ -28,11 +28,15 @@ export function useListMotion(root: RefObject<HTMLElement | null>, context: stri
   }, [root])
 }
 
+/** Past this many rows moving at once, the list just redraws: a reshuffle of the whole list reads better without motion. */
+const FLIP_LIMIT = 30
+
 /** Where each row stands in its scope; with the positions from before, the rows that moved slide from there. */
 function measureRows(container: HTMLElement | null, previous: Map<string, number> | null): Map<string, number> {
   const tops = new Map<string, number>()
   if (!container) return tops
   const containerTop = container.getBoundingClientRect().top - container.scrollTop
+  const moves: Array<() => void> = []
   for (const element of container.querySelectorAll<HTMLElement>('[data-flip-id]')) {
     const scope = element.parentElement?.closest<HTMLElement>('[data-flip-scope]')
     const top = element.getBoundingClientRect().top - (scope ? scope.getBoundingClientRect().top : containerTop)
@@ -40,13 +44,17 @@ function measureRows(container: HTMLElement | null, previous: Map<string, number
     tops.set(id, top)
     if (previous === null) continue
     const before = previous.get(id)
-    if (before === undefined) element.animate([{ opacity: 0 }, { opacity: 1 }], { duration: MOTION.enter, easing: EASING.enter })
+    if (before === undefined)
+      moves.push(() => element.animate([{ opacity: 0 }, { opacity: 1 }], { duration: MOTION.enter, easing: EASING.enter }))
     else if (Math.abs(before - top) >= 1)
-      element.animate([{ transform: `translateY(${before - top}px)` }, { transform: 'none' }], {
-        duration: MOTION.enter,
-        easing: EASING.enter,
-      })
+      moves.push(() =>
+        element.animate([{ transform: `translateY(${before - top}px)` }, { transform: 'none' }], {
+          duration: MOTION.enter,
+          easing: EASING.enter,
+        }),
+      )
   }
+  if (moves.length <= FLIP_LIMIT) for (const move of moves) move()
   return tops
 }
 

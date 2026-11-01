@@ -7,6 +7,7 @@ import type { PromptTemplate, SessionCommand } from '@latch/protocol'
 import type { PendingSubmission } from '../core/api.ts'
 import type { SendKey } from '../preferences.ts'
 import { DECISION_COPY } from '../core/securityCopy.ts'
+import { escapeIsLeftover } from '../escapeGrace.ts'
 import { SlashCommands, useSlashCommands } from './SlashCommands.tsx'
 import { VisibleText } from './VisibleText.tsx'
 import { Button, Collapse, EASING, ICON_STROKE, InlineNotice, MOTION, Spinner, Swap, Tooltip, useLiveChange } from '@latch/ui'
@@ -154,6 +155,7 @@ export function Composer({
     if (slash.keydown(event)) return
     if (mentions.keydown(event)) return
     if (event.nativeEvent.isComposing || event.keyCode === 229) return
+    if (event.key === 'Escape' && escapeIsLeftover(event)) return
     if (answer && event.key === 'Escape' && !event.nativeEvent.isComposing) {
       event.preventDefault()
       answer.onCancel()

@@ -165,7 +165,7 @@ import {
   type ProviderRecord,
   type WorkspaceRecord,
 } from './config.ts'
-import { HarnessHub, runEndOutline, type HubCreateInput } from './hub.ts'
+import { HarnessHub, listSignature, runEndOutline, type HubCreateInput } from './hub.ts'
 import { SessionLifecycle, projectIdOf, type LifecycleBounds, type LifecycleListeners } from './session-lifecycle.ts'
 import { RUN_ID, type ApprovalRecord, type CancelRecord } from './session-meta.ts'
 import { sendNotFoundPage } from './not-found.ts'
@@ -584,16 +584,6 @@ function approvalReceipt(record: ApprovalRecord): ApprovalReceipt {
     ...(record.optionId ? { optionId: record.optionId } : {}),
     at: record.at,
   }
-}
-
-/**
- * What makes other devices read the list again. Every word of a stream moves `lastEventAt`, and a list read per word
- * would cost far more than it tells: a row needs to know when the activity or the silence changes.
- */
-function listSignature({ live, ...summary }: TaskSummary): unknown {
-  if (!live) return summary
-  const { activity, runId, silenceThresholdMs, silent, unrecognized } = live
-  return { ...summary, live: { activity, runId, silenceThresholdMs, silent, unrecognized: unrecognized?.count } }
 }
 
 function cancelReceipt(sessionId: string, record: Omit<CancelReceipt, 'sessionId' | 'replay'>): CancelReceipt {
@@ -1603,6 +1593,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       dataDir,
       codeRoot,
       now,
+      clock,
       log,
       audit,
       policy,

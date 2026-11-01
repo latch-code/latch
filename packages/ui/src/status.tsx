@@ -45,11 +45,10 @@ export function StatusWord({
 
 /**
  * What a list row shows in its status slot, one thing at a time: none, running (the spinner and its words), waiting
- * for the person, failed, unread (a check that goes once the session is read) or the time. The page chooses by
- * priority (waiting, failed, running, unread, the time) and leaves the open session's running state out, since the
- * conversation says so.
+ * for the person, attention (amber words without the shield, where the row's shelf already says it waits), failed,
+ * unread (a check that goes once the session is read), ended (muted words) or the time. The page chooses.
  */
-export type SlotStatus = 'none' | 'running' | 'waiting' | 'failed' | 'unread' | 'time'
+export type SlotStatus = 'none' | 'running' | 'waiting' | 'attention' | 'failed' | 'unread' | 'ended' | 'time'
 
 /**
  * A row's status slot, right-aligned on the row's first line. When the page sees the status change, the new one
@@ -60,7 +59,9 @@ export function StatusSlot({
   status,
   running = '运行中',
   waiting = '等你处理',
+  attention,
   failed = '失败',
+  ended,
   time,
   dateTime,
   actions,
@@ -71,8 +72,12 @@ export function StatusSlot({
   running?: ReactNode
   /** The waiting words. */
   waiting?: ReactNode
+  /** The attention words. */
+  attention?: ReactNode
   /** The failure's words. */
   failed?: ReactNode
+  /** How the run ended when that was not an answer: 已停止. */
+  ended?: ReactNode
   /** The time shown at rest, such as 09:15, 2 分钟 or 昨天. */
   time?: ReactNode
   dateTime?: string
@@ -88,6 +93,10 @@ export function StatusSlot({
       <StatusWord tone="running">{running}</StatusWord>
     ) : shown === 'waiting' ? (
       <StatusWord tone="waiting">{waiting}</StatusWord>
+    ) : shown === 'attention' ? (
+      <StatusWord tone="warn">{attention}</StatusWord>
+    ) : shown === 'ended' ? (
+      <StatusWord tone="neutral">{ended}</StatusWord>
     ) : shown === 'failed' ? (
       <StatusWord tone="failed">{failed}</StatusWord>
     ) : shown === 'unread' ? (

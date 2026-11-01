@@ -1,27 +1,47 @@
-import { useEffect, useRef, useState } from 'react'
-import { ArrowDown, ArrowUp, X } from 'lucide-react'
+import { useEffect, useRef, useState, type RefObject } from 'react'
+import { ChevronDown, ChevronUp, X } from 'lucide-react'
 import { IconButton, SearchField } from '@latch/ui'
 import type { Message } from '@latch/protocol'
 import { textMatches } from '../textSearch.ts'
-import { elementRanges, lazyOutputMatches, outputRange } from './transcriptFind.ts'
+import { overlayDismissed } from '../escapeGrace.ts'
+import {
+  carriedIndex,
+  elementRanges,
+  findClearance,
+  lazyOutputMatches,
+  matchPlacement,
+  outputRange,
+  withMatchKeys,
+} from './transcriptFind.ts'
 
-interface Found {
+const CLEARANCE = 'margin-block-start'
+const clearanceOn = (content: HTMLElement) => Number.parseFloat(content.style.getPropertyValue(CLEARANCE)) || 0
+
+interface Scanned {
   range?: Range
   messageId: string
   outputIndex?: number
   row: HTMLElement
 }
+type Found = Scanned & { key: string }
+/** Floats over the conversation, which keeps its width. */
 export function FindBar({
   sessionId,
   revision,
   messages,
+  focusRequest = 0,
+  fallbackFocus,
   onReveal,
   onClose,
 }: {
   sessionId: string
   revision: number
   messages: readonly Message[]
-  onReveal: (id: string) => void
+  /** A new value takes focus back to the field, with what it holds selected. */
+  focusRequest?: number
+  /** Where focus goes on closing when what had it is gone, as a palette that opened this is. */
+  fallbackFocus?: RefObject<HTMLElement | null>
+  onReveal: (id: string, offset?: number) => void
   onClose: () => void
 }) {
   const [query, setQuery] = useState(''),
@@ -30,17 +50,30 @@ export function FindBar({
     [materialized, setMaterialized] = useState<Array<{ match: Found; range: Range }>>([]),
     [recoloured, setRecoloured] = useState(0)
   const input = useRef<HTMLInputElement>(null)
+  const bar = useRef<HTMLDivElement>(null)
   const previous = useRef(document.activeElement instanceof HTMLElement ? document.activeElement : null)
-  // A rescan after code was coloured finds the same matches over the new text nodes: the reader stays where they are.
-  const keepPlace = useRef(false)
+  // A rescan of the same search (code was coloured, a running turn added text) finds the same matches: the reader stays
+  // where they are. Only a match that has not been shown yet moves the view, so a rescan landing before the frame that
+  // shows it does not lose the step.
+  const shownMatch = useRef<string | null>(null)
+  const scanned = useRef({ query: '', sessionId })
   useEffect(() => {
-    input.current?.focus()
+    const fallback = fallbackFocus?.current
     return () => {
-      previous.current?.focus({ preventScroll: true })
+      document.querySelector<HTMLElement>('.transcript-content')?.style.removeProperty(CLEARANCE)
+      const back = previous.current?.isConnected ? previous.current : fallback
+      back?.focus({ preventScroll: true })
     }
   }, [])
   useEffect(() => {
+    input.current?.focus()
+    input.current?.select()
+  }, [focusRequest])
+  useEffect(() => {
     const root = document.querySelector('.transcript-content')
+    const same = scanned.current.query === query && scanned.current.sessionId === sessionId
+    scanned.current = { query, sessionId }
+    if (!same) shownMatch.current = null
     if (!root || !query) {
       setFound([])
       setIndex(0)
@@ -48,7 +81,7 @@ export function FindBar({
       return
     }
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT),
-      matches: Found[] = [],
+      matches: Scanned[] = [],
       codes = new Set<Element>()
     for (let node = walker.nextNode(); node && matches.length < 500; node = walker.nextNode()) {
       const element = node.parentElement,
@@ -79,8 +112,9 @@ export function FindBar({
       if (left.row === right.row) return Number(left.outputIndex !== undefined) - Number(right.outputIndex !== undefined)
       return left.row.compareDocumentPosition(right.row) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1
     })
-    setFound(matches.slice(0, 500))
-    if (keepPlace.current) setIndex(value => Math.min(value, Math.max(0, matches.length - 1)))
+    const keyed = withMatchKeys(matches.slice(0, 500))
+    setFound(keyed)
+    if (same) setIndex(carriedIndex(found[index]?.key, keyed, index))
     else {
       setIndex(0)
       setMaterialized([])
@@ -98,7 +132,6 @@ export function FindBar({
       if (frame || !changes.some(inCode)) return
       frame = requestAnimationFrame(() => {
         frame = 0
-        keepPlace.current = true
         setRecoloured(value => value + 1)
       })
     })
@@ -127,26 +160,43 @@ export function FindBar({
   }, [found, index, materialized])
   useEffect(() => {
     const target = found[index]
-    const kept = keepPlace.current
-    keepPlace.current = false
-    if (!target || kept) return
-    onReveal(target.messageId)
+    if (!target) document.querySelector<HTMLElement>('.transcript-content')?.style.removeProperty(CLEARANCE)
+    if (!target || shownMatch.current === target.key) return
     const inner =
       target.outputIndex === undefined
         ? target.range?.startContainer.parentElement
         : target.row.querySelector('.tool-tray > .ui-collapse > .ui-collapse-inner')
-    for (let hidden = inner?.closest('[hidden="until-found"]'); hidden; hidden = hidden.parentElement?.closest('[hidden="until-found"]'))
-      hidden.dispatchEvent(new Event('beforematch'))
+    for (const start of [inner, target.row])
+      for (let hidden = start?.closest('[hidden="until-found"]'); hidden; hidden = hidden.parentElement?.closest('[hidden="until-found"]'))
+        hidden.dispatchEvent(new Event('beforematch'))
     const frame = requestAnimationFrame(() => {
-      setMaterialized(
-        found.flatMap(match => {
-          if (match.outputIndex === undefined) return []
-          const output = match.row.querySelector('.tool-output'),
-            range = output ? outputRange(output, query, match.outputIndex) : undefined
-          return range ? [{ match, range }] : []
-        }),
-      )
-      onReveal(target.messageId)
+      shownMatch.current = target.key
+      const shown = found.flatMap(match => {
+        if (match.outputIndex === undefined) return []
+        const output = match.row.querySelector('.tool-output'),
+          range = output ? outputRange(output, query, match.outputIndex) : undefined
+        return range ? [{ match, range }] : []
+      })
+      setMaterialized(shown)
+      const range = target.range ?? shown.find(item => item.match === target)?.range
+      const pane = target.row.closest('.transcript')
+      if (!range || !pane) {
+        onReveal(target.messageId)
+        return
+      }
+      const content = target.row.closest<HTMLElement>('.transcript-content')
+      if (content && bar.current) {
+        const clearance = findClearance(
+          range.getBoundingClientRect(),
+          bar.current.getBoundingClientRect(),
+          { top: pane.getBoundingClientRect().top, scrollTop: pane.scrollTop },
+          clearanceOn(content),
+        )
+        if (clearance) content.style.setProperty(CLEARANCE, `${String(clearance)}px`)
+        else content.style.removeProperty(CLEARANCE)
+      }
+      const place = matchPlacement(range.getBoundingClientRect(), target.row.getBoundingClientRect(), pane.getBoundingClientRect())
+      if (place.move) onReveal(target.messageId, place.offset)
     })
     return () => cancelAnimationFrame(frame)
   }, [found, index, onReveal, query])
@@ -155,13 +205,20 @@ export function FindBar({
   }
   return (
     <div
+      ref={bar}
       className="find-bar"
       role="search"
       aria-label="会话内查找"
       onKeyDownCapture={event => {
+        // These keys belong to the input method while it composes: Enter commits the text, Esc drops it.
+        if (event.nativeEvent.isComposing || event.keyCode === 229) {
+          if (event.key === 'Escape') event.preventDefault()
+          return
+        }
         if (event.key === 'Escape') {
           event.preventDefault()
           event.stopPropagation()
+          overlayDismissed()
           onClose()
         }
         if (event.key === 'Enter') {
@@ -169,11 +226,31 @@ export function FindBar({
           next(event.shiftKey ? -1 : 1)
         }
       }}>
-      <SearchField ref={input} label="查找消息内容" value={query} onValueChange={setQuery} />
-      <span role="status">{found.length ? `${index + 1}/${found.length}${found.length === 500 ? '+' : ''}` : '0/0'}</span>
-      <IconButton label="上一个匹配" icon={ArrowUp} disabled={!found.length} onClick={() => next(-1)} />
-      <IconButton label="下一个匹配" icon={ArrowDown} disabled={!found.length} onClick={() => next(1)} />
-      <IconButton label="关闭查找" icon={X} onClick={onClose} />
+      <SearchField ref={input} variant="ghost" label="查找消息内容" placeholder="在会话中查找" value={query} onValueChange={setQuery} />
+      <span role="status">{query ? (found.length ? `${index + 1}/${found.length}${found.length === 500 ? '+' : ''}` : '0/0') : ''}</span>
+      <IconButton
+        label="上一个匹配"
+        tooltip="上一个"
+        shortcut="⇧⏎"
+        size="xs"
+        icon={ChevronUp}
+        disabled={!found.length}
+        onClick={() => {
+          next(-1)
+        }}
+      />
+      <IconButton
+        label="下一个匹配"
+        tooltip="下一个"
+        shortcut="⏎"
+        size="xs"
+        icon={ChevronDown}
+        disabled={!found.length}
+        onClick={() => {
+          next(1)
+        }}
+      />
+      <IconButton label="关闭查找" tooltip="关闭" shortcut="esc" size="xs" icon={X} onClick={onClose} />
     </div>
   )
 }

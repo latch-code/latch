@@ -158,6 +158,27 @@ function listed(task: TaskSummary): TaskSummary {
   }
 }
 
+/**
+ * What makes other devices read the list again. Every word of a stream moves `lastEventAt`, and a list read per word
+ * would cost far more than it tells: a row needs to know when the activity or the silence changes, and when an engine
+ * goes on from a request Latch did not recognise.
+ */
+export function listSignature({ live, ...summary }: TaskSummary): unknown {
+  if (!live) return summary
+  const { activity, runId, silenceThresholdMs, silent, unrecognized, lastEventAt } = live
+  return {
+    ...summary,
+    live: {
+      activity,
+      runId,
+      silenceThresholdMs,
+      silent,
+      unrecognized: unrecognized?.count,
+      wentOn: unrecognized && Date.parse(lastEventAt) > Date.parse(unrecognized.at),
+    },
+  }
+}
+
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }

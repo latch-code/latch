@@ -188,7 +188,7 @@ Host 在 PATH 以及 `/opt/homebrew/bin`、`/usr/local/bin`、`~/.npm-global/bin
 
 ## 看不懂的请求
 
-Latch 只处理 Agent 发来的 `session/request_permission`。其他请求（包括未声明的文件系统、终端与追问）和读不懂的询问都立刻答复错误（`-32601`、`-32602`），Agent 不会一直等一个不会来的回答，同时不被吞掉：会话记录里写一条系统消息，说明方法名与脱敏后的内容（带附件的一轮不写内容，内容最多 2000 字符），同一轮同一方法只写一次，最多 8 种；运行中的 `TaskSummary.live.unrecognized` 给出次数与时间。Agent 之后是否继续，比较 `unrecognized.at` 与 `lastEventAt`；它因此停住时，沉默检测会说出来。会话尚未建立时只写入 Host 日志。
+Latch 只处理 Agent 发来的 `session/request_permission`。其他请求（包括未声明的文件系统、终端与追问）和读不懂的询问都立刻答复错误（`-32601`、`-32602`），Agent 不会一直等一个不会来的回答，同时不被吞掉：会话记录里写一条系统消息，说明方法名与脱敏后的内容（带附件的一轮不写内容，内容最多 2000 字符），同一轮同一方法只写一次，最多 8 种；运行中的 `TaskSummary.live.unrecognized` 给出次数与时间。`unrecognized.at` 不早于 `lastEventAt` 表示 Agent 之后再无动静，会话进「等你处理」；一有动静，Host 就让列表重读。会话尚未建立时只写入 Host 日志。
 
 ## 持久化与恢复
 

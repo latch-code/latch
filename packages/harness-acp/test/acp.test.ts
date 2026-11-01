@@ -1,6 +1,6 @@
 import type { FileTrackingInput, FileTrackingResult } from '@latch/sdk'
 import { spawnSync } from 'node:child_process'
-import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, isAbsolute, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -1164,7 +1164,7 @@ describe('ACP project configuration', () => {
     expect((await fixture.log()).filter(entry => entry.event === 'start')).toHaveLength(1)
   })
 
-  it('reads linked files, never opens special files, counts unreadable entries and stays within its limits', async () => {
+  it('reads linked files, never opens special files and counts unreadable entries', async () => {
     const root = await mkdtemp(join(tmpdir(), 'latch-acp-project-'))
     cleanups.push(() => rm(root, { recursive: true, force: true }))
     const project = join(root, 'project')
@@ -1193,12 +1193,41 @@ describe('ACP project configuration', () => {
       await chmod(join(config, 'locked'), 0o700)
       expect((await fingerprint()).digest).not.toBe(locked.digest)
     }
+  })
 
-    await mkdir(join(config, 'many'))
-    for (let index = 0; index <= PROJECT_CONFIG_LIMITS.entries; index++) await writeFile(join(config, 'many', `${index}.md`), '')
-    const capped = await fingerprint()
+  it('stops at its entry and depth limits and compares a file past the byte budget by size and time', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'latch-acp-project-'))
+    cleanups.push(() => rm(root, { recursive: true, force: true }))
+    const project = join(root, 'project')
+    const config = join(project, '.opencode')
+    await mkdir(config, { recursive: true })
+    // Small limits: a real 2,000 files cost seconds of file creation on a busy machine, not anything the walk does.
+    const fingerprint = (limits: { entries?: number; bytes?: number; depth?: number }) =>
+      fingerprintProjectConfig(project, ['.opencode'], {}, join(root, 'home'), { ...PROJECT_CONFIG_LIMITS, ...limits })
+
+    for (const name of ['a.md', 'b.md', 'c.md']) await writeFile(join(config, name), 'text')
+    expect(await fingerprint({ entries: 4 })).toMatchObject({ truncated: false })
+    const capped = await fingerprint({ entries: 3 })
     expect(capped.truncated).toBe(true)
-    expect(capped.entries.length).toBeLessThanOrEqual(PROJECT_CONFIG_LIMITS.entries)
+    expect(capped.entries.length).toBeLessThanOrEqual(3)
+
+    await mkdir(join(config, 'one', 'two'), { recursive: true })
+    expect(await fingerprint({ depth: 3 })).toMatchObject({ truncated: false })
+    expect(await fingerprint({ depth: 2 })).toMatchObject({ truncated: true })
+
+    // Four bytes fit a.md, so b.md and c.md count by size and time: their text can change unseen, a.md's cannot.
+    const budget = () => fingerprint({ bytes: 4 })
+    const before = await budget()
+    const when = new Date('2026-01-01T00:00:00Z')
+    await utimes(join(config, 'b.md'), when, when)
+    const stamped = await budget()
+    expect(stamped.digest).not.toBe(before.digest)
+    expect(stamped.truncated).toBe(false)
+    await writeFile(join(config, 'b.md'), 'TEXT')
+    await utimes(join(config, 'b.md'), when, when)
+    expect((await budget()).digest).toBe(stamped.digest)
+    await writeFile(join(config, 'a.md'), 'TEXT')
+    expect((await budget()).digest).not.toBe(stamped.digest)
   })
 
   it('resumes a session whose project configuration is unchanged, whatever OpenCode wrote there itself', async () => {
@@ -2493,6 +2522,7 @@ describe('what a turn is really doing', () => {
     const detail = await until(bridge, sessionId, item => item.liveText === 'still going')
     expect(detail.activity?.phase).toBe('tool')
     expect(detail.summary.live).toMatchObject({ activity: 'command', commandName: 'pnpm lint', runId: detail.summary.runId })
+    expect(detail.summary.live!.runStartedAt).toBe(detail.runStartedAt)
     expect(Date.parse(detail.summary.live!.lastEventAt)).toBeGreaterThanOrEqual(Date.parse(detail.summary.live!.lastOutputAt!))
     const row = (await bridge.listTasks()).find(task => task.id === sessionId)
     expect(row?.live?.activity).toBe('command')
@@ -2559,6 +2589,8 @@ describe('what a turn is really doing', () => {
     const note = detail.messages.find(item => item.id === detail.summary.live?.unrecognized?.messageId)
     expect(note?.text).toContain('terminal/create')
     expect(detail.summary.live?.unrecognized).toMatchObject({ count: 2, method: 'terminal/create' })
+    // Nothing has happened since, and a client can tell.
+    expect(detail.summary.live?.unrecognized?.at).toBe(detail.summary.live?.lastEventAt)
     expect(detail.summary.status).toBe('running')
     await bridge.cancel(sessionId)
   })

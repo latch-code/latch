@@ -46,6 +46,8 @@ export interface RouteContext {
   /** The repository root, where `dist/native/` holds the native components. */
   codeRoot: string
   now: () => number
+  /** What runs and messages are stamped with, so a record of a run can be matched to its messages by time. */
+  clock: () => number
   log: (text: string) => void
   audit: AuditLog
   policy: PolicyStore

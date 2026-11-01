@@ -9,6 +9,12 @@ const PROJECT_ID = /^[A-Za-z0-9_-]{1,64}$/
 const FOLDER_ID = /^[a-z0-9][a-z0-9-]{0,31}$/
 const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/
 const FOLDER_LIMIT = 8
+// A click can reopen the window: its message then arrives before the page has subscribed, and waits for the first subscriber.
+let earlySession
+const holdEarlySession = (_event, sessionId) => {
+  if (typeof sessionId === 'string' && SESSION_ID.test(sessionId)) earlySession = sessionId
+}
+ipcRenderer.on('latch:notifications:open', holdEarlySession)
 const INVALID = Object.freeze({ status: 'failed', code: 'invalid' })
 const CANCELED = Object.freeze({ status: 'canceled' })
 const NOTIFICATION_CONSENT = new Set(['unasked', 'accepted', 'declined'])
@@ -235,7 +241,11 @@ contextBridge.exposeInMainWorld(
         const listener = (_event, sessionId) => {
           if (typeof sessionId === 'string' && SESSION_ID.test(sessionId)) callback(sessionId)
         }
+        ipcRenderer.removeListener('latch:notifications:open', holdEarlySession)
         ipcRenderer.on('latch:notifications:open', listener)
+        const early = earlySession
+        earlySession = undefined
+        if (early !== undefined) callback(early)
         return () => ipcRenderer.removeListener('latch:notifications:open', listener)
       },
     }),

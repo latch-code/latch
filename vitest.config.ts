@@ -26,7 +26,22 @@ export default defineConfig({
       },
       {
         extends: true,
-        test: { name: '@latch/host', include: ['apps/host/test/**/*.test.ts'], globalSetup: ['scripts/native-test-setup.ts'] },
+        test: {
+          name: '@latch/host',
+          include: ['apps/host/test/**/*.test.ts'],
+          exclude: ['apps/host/test/native-swift.test.ts'],
+          globalSetup: ['scripts/native-test-setup.ts'],
+        },
+      },
+      // Its own project because Vitest runs a project's global setup only when one of its files is selected, so other Host
+      // runs do not compile the Swift fixture.
+      {
+        extends: true,
+        test: {
+          name: '@latch/host-swift',
+          include: ['apps/host/test/native-swift.test.ts'],
+          globalSetup: ['scripts/native-test-setup.ts', 'apps/host/test/helpers/swift-fixture-setup.ts'],
+        },
       },
       { extends: true, test: { name: '@latch/web', include: ['apps/web/test/**/*.test.ts'] } },
       { extends: true, test: { name: '@latch/desktop', include: ['apps/desktop/test/**/*.test.ts'] } },

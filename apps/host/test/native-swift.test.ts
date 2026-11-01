@@ -1,5 +1,4 @@
-import { spawn, execFile } from 'node:child_process'
-import { promisify } from 'node:util'
+import { spawn } from 'node:child_process'
 import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { createServer } from 'node:net'
@@ -37,14 +36,13 @@ import {
   parsePairingPayload,
 } from '@latch/link-wire'
 import { nodeCrypto } from '@latch/link-client/crypto'
+import { swiftFixturePath } from '@latch/testkit'
 import { startTestHost } from './helpers/host.ts'
 import { startNativeHost } from '../src/native.ts'
 import { loadOrCreateHostIdentity } from '../src/identity.ts'
 import { base32 } from '../src/crypto.ts'
 
-const exec = promisify(execFile)
-const root = fileURLToPath(new URL('../../../', import.meta.url)),
-  packagePath = join(root, 'native/ios')
+const root = fileURLToPath(new URL('../../../', import.meta.url))
 let binary = ''
 async function invoke(input: unknown, onDiagnostic?: (text: string) => Promise<void>): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
@@ -279,14 +277,8 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect(await invoke({ operation: 'padding', padding })).toEqual({ small: padding.small, largeDummyHash: padding.largeDummyHash })
   })
   beforeAll(async () => {
-    await exec(
-      'swift',
-      ['build', '--package-path', packagePath, '--product', 'LatchNativeFixture', '--jobs', '4', '--disable-automatic-resolution'],
-      { timeout: 120_000, maxBuffer: 2_097_152 },
-    )
-    const { stdout } = await exec('swift', ['build', '--package-path', packagePath, '--show-bin-path', '--disable-automatic-resolution'])
-    binary = join(stdout.trim(), 'LatchNativeFixture')
-  }, 150_000)
+    binary = await swiftFixturePath()
+  })
   it('matches shared knock, HKDF pairing, P256 verification and recovery vectors using CryptoKit', async () => {
     const vectors = JSON.parse(await readFile(join(root, 'packages/testkit/vectors/link-v1.json'), 'utf8')) as {
       knock: string

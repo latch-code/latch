@@ -125,6 +125,13 @@ export interface RunLive {
   commandName?: string
   /** When this activity began. */
   since: string
+  /**
+   * When the run began, with the time it has spent waiting on a person: `since` restarts with each activity, so a clock
+   * for the whole run reads these. Absent from drivers that do not report them.
+   */
+  runStartedAt?: string
+  runWaitMs?: number
+  runWaitingSince?: string
   /** The engine's last sign of life for this run: any update, request or result, or the start of this activity. */
   lastEventAt: string
   /** The last change of visible output. */
@@ -138,8 +145,8 @@ export interface RunLive {
 }
 
 /**
- * Requests of this run Latch does not recognise. In session detail, compare `at` with `RunLive.lastEventAt` to see whether
- * the engine went on; the list's `lastEventAt` can lag, so it cannot tell.
+ * Requests of this run Latch does not recognise. While `at` is not older than `RunLive.lastEventAt` the engine has done
+ * nothing since the latest one and may have stopped on it; the list is read again the moment that changes.
  */
 export interface UnrecognizedRequests {
   count: number

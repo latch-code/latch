@@ -14,9 +14,9 @@ import type { ShellState } from './useShellLayout.tsx'
 
 /** The session's state when it is not the default: running and done say nothing here (the run bar says running). */
 function sessionPill(summary: TaskSummary, cancelling: boolean) {
-  if (cancelling) return <StatusPill tone="neutral">正在取消</StatusPill>
+  if (cancelling) return <StatusPill tone="neutral">正在停止</StatusPill>
   if (summary.status === 'failed') return <StatusPill tone="err">失败</StatusPill>
-  if (summary.status === 'cancelled') return <StatusPill tone="neutral">已取消</StatusPill>
+  if (summary.status === 'cancelled') return <StatusPill tone="neutral">已停止</StatusPill>
   if (summary.status === 'interrupted') return <StatusPill tone="neutral">已中断</StatusPill>
   return null
 }

@@ -191,6 +191,18 @@ it('reveals a row below the reader with a top margin and keeps it anchored while
   expect(f.geometry.top).toBe(426)
 })
 
+it('places a revealed row at the offset asked for, above the viewport for a place inside a tall row', () => {
+  const f = fixture()
+  f.controller.sync('a', true, f.viewport)
+  f.controller.input(-1, f.viewport)
+  f.userScroll(100)
+  f.settle()
+  f.controller.reveal('message-4', f.viewport, -100)
+  expect(f.geometry.top).toBe(500)
+  f.controller.reveal('message-4', f.viewport, 60)
+  expect(f.geometry.top).toBe(340)
+})
+
 it('treats revealing a row at the bottom as returning to the latest content', () => {
   const f = fixture()
   f.controller.sync('a', true, f.viewport)

@@ -1,18 +1,29 @@
-import { describe, expect, it } from 'vitest'
-import type { TaskSummary, WorkspaceInfo } from '@latch/protocol'
+import { describe, expect, it, vi } from 'vitest'
+import type { AppSnapshot, RunLive, TaskSummary, WorkspaceInfo } from '@latch/protocol'
 import {
   emptySeen,
   filterSessions,
   groupSessions,
+  isOneLine,
   projectOf,
+  readFolded,
   recentProjectSessions,
   isUnread,
   markSeen,
   markUnread,
   pruneSeen,
-  sessionFact,
-  sessionSlot,
+  rowMeta,
+  rowStatus,
+  runningWords,
+  silentWords,
+  waitingCount,
+  waitsOnYou,
+  listedSessions,
+  steppedSession,
+  type SessionFilter,
+  writeFolded,
 } from '../src/sessions.ts'
+import { steadyHold } from '../src/hooks/useSteady.ts'
 
 function task(id: string, updatedAt: Date, extra: Partial<TaskSummary> = {}): TaskSummary {
   return { id, title: `会话 ${id}`, status: 'idle', updatedAt: updatedAt.toISOString(), ...extra }
@@ -26,7 +37,7 @@ describe('session list', () => {
     { id: 'docs', name: '文档', path: '/Users/me/code/latch-app/docs' },
   ]
 
-  it('groups by project with pinned sessions first, each group newest first and the groups by their latest session', () => {
+  it('groups by project with pinned sessions leading their shelf, each group newest first and the groups by their latest session', () => {
     const groups = groupSessions(
       [
         task('app-old', at(1), { cwd: '/Users/me/code/latch-app' }),
@@ -40,8 +51,7 @@ describe('session list', () => {
       workspaces,
     )
     expect(groups.map(group => [group.id, group.label, group.tasks.map(item => item.id), group.workspaceId])).toEqual([
-      ['pinned', '置顶', ['pinned-old'], undefined],
-      ['project:website', 'website', ['site'], 'website'],
+      ['project:website', 'website', ['pinned-old', 'site'], 'website'],
       // The deepest saved project holds the session.
       ['project:docs', '文档', ['docs'], 'docs'],
       ['other', '对话', ['app-new', 'elsewhere', 'history', 'app-old'], undefined],
@@ -119,7 +129,7 @@ describe('session list', () => {
     ).toEqual(['old'])
     expect(recentProjectSessions('website', [], workspaces)).toEqual([])
   })
-  it('hides archived sessions except under their own filter and filters by mode and title', () => {
+  it('hides archived sessions except under their own filter and searches titles', () => {
     const tasks = [
       task('chat', at(23), { mode: 'chat', title: '整理周报' }),
       task('agent', at(23), { mode: 'agent', title: '修复构建' }),
@@ -127,53 +137,224 @@ describe('session list', () => {
       task('archived', at(23), { archived: true, mode: 'chat', title: '旧周报' }),
     ]
     expect(filterSessions(tasks, 'all', '').map(item => item.id)).toEqual(['chat', 'agent', 'legacy'])
-    expect(filterSessions(tasks, 'agent', '').map(item => item.id)).toEqual(['agent', 'legacy'])
-    expect(filterSessions(tasks, 'chat', '').map(item => item.id)).toEqual(['chat'])
     expect(filterSessions(tasks, 'archived', '').map(item => item.id)).toEqual(['archived'])
     expect(filterSessions(tasks, 'all', ' 周报 ').map(item => item.id)).toEqual(['chat'])
     expect(filterSessions(tasks, 'archived', '周报').map(item => item.id)).toEqual(['archived'])
   })
 })
 
-const slot = (status: TaskSummary['status'], { selected = false, unread = false, drift = false } = {}) =>
-  sessionSlot(task('a', at(23), { status, ...(drift ? { permissionDrift: true as const } : {}) }), selected, unread)
+describe('session row status', () => {
+  const live = (over: Partial<RunLive> = {}): RunLive => ({
+    runId: 'r',
+    activity: 'model',
+    since: at(23).toISOString(),
+    lastEventAt: at(23).toISOString(),
+    ...over,
+  })
+  const of = (over: Partial<TaskSummary>, options?: Parameters<typeof rowStatus>[1]) => rowStatus(task('a', at(23), over), options)
 
-/** The second line's fact of a session with this status, its slot showing what it would show in the list. */
-function fact(status: TaskSummary['status'], options: { unread?: boolean; cancelling?: boolean; drift?: boolean } = {}) {
-  const summary = task('a', at(20), { status, ...(options.drift ? { permissionDrift: true } : {}) })
-  return sessionFact(summary, sessionSlot(summary, false, options.unread ?? false), options.cancelling ?? false, '09:15')
-}
-
-describe('session status slot', () => {
-  it("shows one thing by priority and leaves 运行中 out of the open session's row", () => {
-    expect(slot('waiting-approval', { selected: true, unread: true })).toBe('waiting')
-    expect(slot('failed', { unread: true })).toBe('failed')
-    expect(slot('running', { unread: true })).toBe('running')
-    expect(slot('running', { selected: true })).toBe('none')
-    expect(slot('idle', { unread: true })).toBe('unread')
-    expect(slot('cancelled', { unread: true })).toBe('unread')
-    // Cancelled and interrupted sessions show their time; the top bar names the state of the open one.
-    expect([slot('cancelled'), slot('interrupted'), slot('cancelled', { selected: true })]).toEqual(['time', 'time', 'time'])
-    expect([slot('idle'), slot('idle', { selected: true })]).toEqual(['time', 'time'])
+  it('says what the Host says, by priority', () => {
+    expect(of({ status: 'waiting-approval' }, { unread: true })).toEqual({ kind: 'waiting' })
+    expect(of({ status: 'running', live: live() })).toEqual({ kind: 'running' })
+    expect(of({ status: 'running' })).toEqual({ kind: 'running' })
+    expect(of({ status: 'failed' }, { unread: true })).toEqual({ kind: 'failed' })
+    expect(of({ status: 'idle' }, { unread: true })).toEqual({ kind: 'unread' })
+    expect(of({ status: 'idle' })).toEqual({ kind: 'read' })
+    expect(of({ status: 'idle', runOutcome: 'failed' })).toEqual({ kind: 'failed' })
   })
 
-  it('draws a session whose permission mode changed in red, above running and unread', () => {
-    expect([slot('cancelled', { drift: true }), slot('idle', { drift: true, unread: true, selected: true })]).toEqual(['failed', 'failed'])
-    expect(slot('waiting-approval', { drift: true })).toBe('waiting')
+  it('calls a run silent only when the Host does, never from elapsed time alone', () => {
+    const old = live({ lastEventAt: at(10).toISOString() })
+    expect(of({ status: 'running', live: old })).toEqual({ kind: 'running' })
+    expect(of({ status: 'running', live: { ...old, silent: true } })).toEqual({ kind: 'silent' })
   })
-  it("adds on a phone's second line only what the slot does not already say, never a preview", () => {
-    // The slot says these in its own words, so the line does not repeat them.
-    expect(fact('running')).toBeUndefined()
-    expect(fact('running', { cancelling: true })).toBeUndefined()
-    // The slot shows the waiting pill, the failure or the dot, so the time moves to the second line.
-    expect([fact('waiting-approval'), fact('failed'), fact('idle', { unread: true }), fact('cancelled', { drift: true })]).toEqual([
-      '09:15',
-      '09:15',
-      '09:15',
-      '09:15',
+
+  it('waits on the person after a request Latch did not recognise, until the engine goes on', () => {
+    const unrecognized = { count: 1, at: at(10).toISOString() }
+    const stuck = live({ lastEventAt: at(10).toISOString(), unrecognized })
+    const wentOn = live({ lastEventAt: at(11).toISOString(), unrecognized })
+    expect(of({ status: 'running', live: stuck })).toEqual({ kind: 'waiting' })
+    expect(waitsOnYou(task('a', at(21), { status: 'running', live: stuck }))).toBe(true)
+    expect(of({ status: 'running', live: wentOn })).toEqual({ kind: 'running' })
+    expect(waitsOnYou(task('a', at(21), { status: 'running', live: wentOn }))).toBe(false)
+    // It went on and then went quiet: that is the silence, not the request.
+    expect(of({ status: 'running', live: { ...wentOn, silent: true } })).toEqual({ kind: 'silent' })
+  })
+
+  it('waits on the person while a question is open, ahead of silence and behind a stop', () => {
+    const quiet = live({ silent: true })
+    expect(of({ status: 'running', live: quiet, pendingQuestions: 1 })).toEqual({ kind: 'waiting' })
+    expect(waitsOnYou(task('a', at(21), { status: 'running', pendingQuestions: 2 }))).toBe(true)
+    expect(of({ status: 'running', pendingQuestions: 0 })).toEqual({ kind: 'running' })
+    expect(waitsOnYou(task('a', at(21), { status: 'running', pendingQuestions: 0 }))).toBe(false)
+    const stopping = { status: 'running', pendingQuestions: 1, live: live({ activity: 'cancelling' }) } as const
+    expect(of(stopping)).toEqual({ kind: 'stopping' })
+    expect(waitsOnYou(task('a', at(21), stopping))).toBe(false)
+  })
+
+  it('says 正在停止 until the run settles and 已停止 only after', () => {
+    expect(of({ status: 'running', live: live() }, { stopping: true })).toEqual({ kind: 'stopping' })
+    expect(of({ status: 'waiting-approval' }, { stopping: true })).toEqual({ kind: 'stopping' })
+    expect(of({ status: 'running', live: live({ activity: 'cancelling' }) })).toEqual({ kind: 'stopping' })
+    // A stop already settled is over, whatever this page still remembers of it.
+    expect(of({ status: 'cancelled' }, { stopping: true })).toEqual({ kind: 'ended', word: '已停止', unknown: 0 })
+    expect(of({ status: 'idle', runOutcome: 'cancelled' })).toEqual({ kind: 'ended', word: '已停止', unknown: 0 })
+    expect(of({ status: 'interrupted' })).toEqual({ kind: 'ended', word: '已中断', unknown: 0 })
+    expect(of({ status: 'interrupted', runEnd: { reason: 'forced-stop', at: at(23).toISOString(), unknownResultCount: 2 } })).toEqual({
+      kind: 'ended',
+      word: '已强制停止',
+      unknown: 2,
+    })
+  })
+
+  it('draws nothing live while the connection is down, and keeps what has already ended', () => {
+    expect(of({ status: 'running', live: live() }, { frozen: true })).toEqual({ kind: 'frozen' })
+    expect(of({ status: 'waiting-approval' }, { frozen: true })).toEqual({ kind: 'frozen' })
+    expect(of({ status: 'failed' }, { frozen: true })).toEqual({ kind: 'failed' })
+    expect(of({ status: 'idle' }, { frozen: true, unread: true })).toEqual({ kind: 'unread' })
+  })
+
+  it('leaves the time alone on a session whose permission mode changed; the session itself says so', () => {
+    expect(of({ status: 'idle', permissionDrift: true })).toEqual({ kind: 'read' })
+  })
+
+  it('keeps a read session to one line and gives attention a second', () => {
+    expect(isOneLine({ kind: 'read' })).toBe(true)
+    expect(isOneLine({ kind: 'ended', word: '已停止', unknown: 0 })).toBe(true)
+    expect(isOneLine({ kind: 'ended', word: '已强制停止', unknown: 2 })).toBe(false)
+    for (const kind of ['waiting', 'silent', 'stopping', 'running', 'failed', 'unread', 'frozen'] as const)
+      expect(isOneLine({ kind })).toBe(false)
+  })
+
+  it('reads the whole run on the Host clock, without the time spent waiting on a person', () => {
+    const start = at(23).getTime()
+    const started = { runStartedAt: new Date(start).toISOString() }
+    expect(runningWords(live(), start + 5000)).toBe('运行中')
+    expect(runningWords(live(started), start + 72_000)).toBe('运行中 1:12')
+    expect(runningWords(live({ ...started, runWaitMs: 60_000 }), start + 72_000)).toBe('运行中 0:12')
+    expect(runningWords(live({ ...started, runWaitingSince: new Date(start + 10_000).toISOString() }), start + 72_000)).toBe('运行中 0:10')
+    // A phone's clock behind the Host's never shows a negative time.
+    expect(runningWords(live(started), start - 5000)).toBe('运行中 0:00')
+  })
+
+  it('counts silence from the last sign of life', () => {
+    const last = at(23).getTime()
+    const quiet = live({ lastEventAt: new Date(last).toISOString() })
+    expect(silentWords(quiet, last + 3 * 60_000 + 30_000)).toBe('没有动静 3 分钟')
+    expect(silentWords(quiet, last + 90 * 60_000)).toBe('没有动静 1 小时')
+    expect(silentWords(undefined, last)).toBe('没有动静')
+  })
+
+  it('names the project in 等你处理, the branch elsewhere, and results nobody can vouch for first', () => {
+    const summary = task('a', at(23), { branch: 'main' })
+    expect(rowMeta(summary, { kind: 'running' }, undefined)).toBe('main')
+    expect(rowMeta(summary, { kind: 'waiting' }, 'latch')).toBe('latch')
+    expect(rowMeta(summary, { kind: 'ended', word: '已强制停止', unknown: 2 }, undefined)).toBe('2 条结果未知')
+    const died = task('a', at(23), {
+      status: 'failed',
+      branch: 'main',
+      runEnd: { reason: 'process-exited', at: at(23).toISOString(), unknownResultCount: 1 },
+    })
+    expect(rowMeta(died, { kind: 'failed' }, undefined)).toBe('1 条结果未知')
+    expect(rowMeta(task('a', at(23)), { kind: 'running' }, undefined)).toBeUndefined()
+  })
+})
+
+describe('等你处理', () => {
+  const quiet: RunLive = { runId: 'r', activity: 'model', since: at(20).toISOString(), lastEventAt: at(20).toISOString(), silent: true }
+  it('gathers what waits on the person ahead of the projects, and leaves it there when nothing else asks', () => {
+    const tasks = [
+      task('approval', at(21), { status: 'waiting-approval' }),
+      task('silent', at(22), { status: 'running', live: quiet }),
+      task('running', at(23), { status: 'running' }),
+      task('done', at(19), {}),
+    ]
+    const groups = groupSessions(tasks, [], { waitingFrom: tasks })
+    expect(groups.map(group => [group.id, group.tasks.map(item => item.id)])).toEqual([
+      ['waiting', ['silent', 'approval']],
+      ['other', ['running', 'done']],
     ])
-    // The slot shows the time, so the second line names a state that is not the default.
-    expect([fact('cancelled'), fact('interrupted'), fact('idle')]).toEqual(['已取消', '已中断', undefined])
+    // A search shows every match where it belongs.
+    expect(groupSessions(tasks, []).map(group => group.id)).toEqual(['other'])
+  })
+
+  it('keeps an archived session that still waits, since nobody else would show it', () => {
+    const archived = task('archived', at(21), { status: 'waiting-approval', archived: true })
+    expect(groupSessions(filterSessions([archived], 'all', ''), [], { waitingFrom: [archived] }).map(group => group.id)).toEqual([
+      'waiting',
+    ])
+  })
+
+  it('counts sessions, not requests, and only what waits', () => {
+    const approval = (sessionId: string) => ({ sessionId }) as AppSnapshot['approvals'][number]
+    const tasks = [
+      task('a', at(21), { status: 'waiting-approval' }),
+      task('b', at(21), { status: 'running', live: quiet }),
+      task('c', at(21), { status: 'running' }),
+      task('d', at(21), { status: 'idle' }),
+      task('e', at(21), { status: 'running', pendingQuestions: 2 }),
+    ]
+    expect(waitingCount({ tasks, approvals: [approval('a'), approval('a')] })).toBe(3)
+    expect(waitingCount({ tasks: [], approvals: [approval('outside')] })).toBe(1)
+    expect(waitingCount({ tasks: tasks.slice(2, 4), approvals: [] })).toBe(0)
+    // A stop already asked for answers it: the row says 正在停止 and has left the shelf.
+    const stopping = task('s', at(21), { status: 'waiting-approval', live: { ...quiet, activity: 'cancelling' } })
+    expect(waitsOnYou(stopping)).toBe(false)
+    expect(waitingCount({ tasks: [stopping], approvals: [approval('s')] })).toBe(0)
+  })
+})
+
+describe('stepping through the list', () => {
+  const workspaces = [{ id: 'site', name: 'site', path: '/code/site' }]
+  const site = task('site', at(23), { cwd: '/code/site' })
+  const chat = task('chat', at(22))
+  const asks = task('asks', at(20), { status: 'waiting-approval', cwd: '/code/site' })
+  const asksArchived = task('asks-archived', at(19), { status: 'waiting-approval', archived: true })
+  const tasks = [site, chat, asks, asksArchived]
+  const ids = (folded: string[] = [], filter: SessionFilter = 'all', search = '') =>
+    listedSessions(tasks, workspaces, { filter, search, folded: new Set(folded) }).map(item => item.id)
+
+  it('follows the rows as drawn: 等你处理 first, including an archived session that waits', () => {
+    expect(ids()).toEqual(['asks', 'asks-archived', 'site', 'chat'])
+  })
+
+  it('skips folded shelves', () => {
+    expect(ids(['waiting'])).toEqual(['site', 'chat'])
+    expect(ids(['project:site'])).toEqual(['asks', 'asks-archived', 'chat'])
+  })
+
+  it('keeps sessions in place under the archive and a search, where nothing moves to 等你处理', () => {
+    expect(ids([], 'archived')).toEqual(['asks-archived'])
+    expect(ids([], 'all', 'site')).toEqual(['site'])
+  })
+
+  it('wraps, and enters from the matching end when the open session is not listed', () => {
+    const rows = [site, chat]
+    expect(steppedSession(rows, 'chat', 1)?.id).toBe('site')
+    expect(steppedSession(rows, 'site', -1)?.id).toBe('chat')
+    expect(steppedSession(rows, 'gone', 1)?.id).toBe('site')
+    expect(steppedSession(rows, null, -1)?.id).toBe('chat')
+    expect(steppedSession([], 'gone', 1)).toBeUndefined()
+  })
+})
+
+describe('folded shelves', () => {
+  it('reads back what was stored and ignores what it cannot read', () => {
+    const stored = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => stored.get(key) ?? null,
+      setItem: (key: string, value: string) => stored.set(key, value),
+      removeItem: (key: string) => stored.delete(key),
+    })
+    try {
+      expect([...readFolded('latch.test.folded')]).toEqual([])
+      writeFolded('latch.test.folded', new Set(['project:a']))
+      expect([...readFolded('latch.test.folded')]).toEqual(['project:a'])
+      stored.set('latch.test.folded', '{not json')
+      expect([...readFolded('latch.test.folded')]).toEqual([])
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })
 
@@ -212,5 +393,14 @@ describe('manual unread markers', () => {
     expect(isUnread(row, JSON.parse(JSON.stringify(marked)))).toBe(true)
     expect(isUnread(row, markSeen(marked, row.id, row.updatedAt))).toBe(false)
     expect(pruneSeen(marked, []).unread).toEqual({})
+  })
+})
+
+describe('status changes at most once a second', () => {
+  it('holds what is shown only while the last change is under the gap old', () => {
+    expect(steadyHold(0, 5000, 1000)).toBe(0)
+    expect(steadyHold(5000, 5000, 1000)).toBe(1000)
+    expect(steadyHold(5000, 5600, 1000)).toBe(400)
+    expect(steadyHold(5000, 6000, 1000)).toBe(0)
   })
 })

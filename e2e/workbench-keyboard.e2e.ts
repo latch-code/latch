@@ -119,16 +119,19 @@ it.each([
         const message = detail.messages.find(item => item.role === 'user')!
         await page.locator(`.transcript [data-message-id="${message.id}"]`).waitFor({ state: 'visible' })
       }
+      // The steps follow the rows as drawn: what waits leads the list, so the open session is the last row.
+      const waiting = ordered.filter(task => task.status === 'waiting-approval')
+      expect(waiting).toHaveLength(2)
       await page.keyboard.press('Alt+1')
-      await selected(ordered[0]!.id)
+      await selected(neutralId)
       await page.keyboard.press('Alt+]')
-      await selected(ordered[1]!.id)
+      await selected(waiting[0]!.id)
       await page.keyboard.press('Alt+[')
-      await selected(ordered[0]!.id)
+      await selected(neutralId)
       await page.keyboard.press('Alt+[')
-      await selected(ordered.at(-1)!.id)
+      await selected(waiting[1]!.id)
       await page.keyboard.press('Alt+]')
-      await selected(ordered[0]!.id)
+      await selected(neutralId)
 
       const approvals = pending.flatMap(detail => detail.approvals).toSorted((a, b) => a.requestedAt.localeCompare(b.requestedAt))
       for (const approval of [...approvals, approvals[0]!]) {
@@ -154,7 +157,7 @@ it.each([
       const files = page.getByRole('dialog', { name: '搜索文件', exact: true })
       const query = files.getByRole('searchbox', { name: '搜索文件名', exact: true })
       await query.fill('keyboard-navigation.txt')
-      const result = files.getByRole('option', { name: 'keyboard-navigation.txt · keyboard-navigation.txt', exact: true })
+      const result = files.getByRole('option', { name: 'keyboard-navigation.txt', exact: true })
       await result.waitFor()
       expect(await result.getAttribute('aria-selected')).toBe('true')
       await query.press('Enter')

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import type { ChangeList, ChangedFile, Message, TurnChanges } from '@latch/protocol'
+import type { ChangeList, ChangedFile, FileChange, Message, TurnChanges } from '@latch/protocol'
 import {
+  changedOutputs,
   firstOpenable,
   matchTurnChanges,
   notRestoredLine,
@@ -96,6 +97,15 @@ describe("a turn's summary", () => {
     const summary = turnSummary(turn, undefined, [{ root: 'main', path: 'seen.txt', change: 'modified' }])
     expect(summary.files.map(file => file.path)).toEqual(['a.ts', 'seen.txt'])
     expect(summary.add).toBeUndefined()
+  })
+
+  it("leaves out what was seen once the Host's record says the turn changed nothing, but not its own edits", () => {
+    const seen: FileChange[] = [{ root: 'main', path: 'other-session.ts', change: 'modified' }]
+    const nothing = record('r1', 0, { state: 'settled', files: 0 })
+    expect(turnSummary(turn, undefined, changedOutputs(nothing, seen)).files.map(file => file.path)).toEqual(['a.ts'])
+    expect(changedOutputs(record('r1', 0, { state: 'settled', files: 2 }), seen)).toEqual(seen)
+    expect(changedOutputs(record('r1', 0, { state: 'running' }), seen)).toEqual(seen)
+    expect(changedOutputs(undefined, seen)).toEqual(seen)
   })
 
   it('offers only new documents to open', () => {

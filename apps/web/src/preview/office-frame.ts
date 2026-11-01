@@ -17,6 +17,8 @@ let links: Record<string, string> = {}
 let viewRevision = 0,
   changingView = false,
   viewWork: Promise<void> = Promise.resolve()
+/** Its default smooth scroll passes other slides on the way, and each is reported as the current page, which a quote or swipe then uses. */
+const JUMP: ScrollIntoViewOptions = { behavior: 'instant', block: 'center' }
 function resizeViewer(action: (target: PptxViewer) => Promise<void>, index = current) {
   const target = viewer,
     revision = ++viewRevision
@@ -29,7 +31,7 @@ function resizeViewer(action: (target: PptxViewer) => Promise<void>, index = cur
       if (target !== viewer || revision !== viewRevision) return
       await action(target)
       if (target !== viewer || revision !== viewRevision) return
-      await target.goToSlide(Math.min(index, target.slideCount - 1))
+      await target.goToSlide(Math.min(index, target.slideCount - 1), JUMP)
       if (target !== viewer || revision !== viewRevision) return
       page(index, target.slideCount)
       requestAnimationFrame(() =>
@@ -241,7 +243,7 @@ async function render(kind: OfficeKind, data: ArrayBuffer, options: Record<strin
     listOptions: { windowed: true, initialSlides: 4, batchSize: 4, overscanViewport: 1.5 },
   })
   send({ type: 'rendered', kind })
-  await viewer.goToSlide(Math.min(initialPage, Math.max(0, viewer.slideCount - 1)))
+  await viewer.goToSlide(Math.min(initialPage, Math.max(0, viewer.slideCount - 1)), JUMP)
   page(initialPage, viewer.presentationData?.slides.length ?? 0)
 }
 let accepted = false

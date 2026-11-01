@@ -16,6 +16,7 @@ import { useAuditCheckpoint } from '../core/auditCheckpoint.ts'
 import { usesDrawer, useCoarsePointer, useViewport, useWindowWidth } from '../breakpoints.ts'
 import { projectFor, usesDemoModel } from '../composerChoice.ts'
 import { setSessionOpener } from '../core/blocking.ts'
+import { ArchiveUndo } from '../components/ArchiveUndo.tsx'
 import { basename } from '../format.ts'
 import { setPreference, usePreferences } from '../preferences.ts'
 import { shortcutWorksOnPage, workbenchShortcut } from '../workbenchShortcuts.ts'
@@ -31,8 +32,9 @@ import {
   sidebarAfterDrag,
   sidebarMax,
 } from './panelLayout.ts'
-import { entryOfSection, routeAtWidth, visibleEntries, type RailEntry, type ShellRoute } from './routes.ts'
-import { projectOf, groupSessions, filterSessions, type SessionFilter } from '../sessions.ts'
+import { entryOfSection, routeAtWidth, visibleEntries, type AgentPageTarget, type RailEntry, type ShellRoute } from './routes.ts'
+import type { PaletteLevel } from '../palette/model.ts'
+import { projectOf, listedSessions, readFolded, shelvesKey, steppedSession, type SessionFilter } from '../sessions.ts'
 import { hostNoticeCopy } from '../core/hostState.ts'
 import { hostLine, useShellLifecycle } from '../core/shellLifecycle.ts'
 import { currentShell, shellFolders } from '../core/shell.ts'
@@ -77,6 +79,10 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     },
   })
   const {
+    openNotified,
+    archivedLast,
+    undoArchive,
+    forgetArchive,
     personalDraft,
     setPersonalDraft,
     current,
@@ -169,10 +175,11 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   /** The input of the phone's new-session sheet, apart from the open session's. */
   const sheetComposerRef = useRef<HTMLTextAreaElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
-  const [keyboardHelp, setKeyboardHelp] = useState(false)
-  const [commandMode, setCommandMode] = useState<'all' | 'files'>('all')
+  const [commandMode, setCommandMode] = useState<PaletteLevel>('root')
   const [commandOpen, setCommandOpen] = useState(false)
   const [findOpen, setFindOpen] = useState(false)
+  /** Pressing ⌘F with the bar open goes back to its field. */
+  const [findFocus, setFindFocus] = useState(0)
   const [search, setSearch] = useState('')
   const promptTemplates = usePromptTemplates(snapshot.catalog?.features?.promptTemplates === true, snapshot.catalog?.promptTemplatesVersion)
   const contentSearch = useSessionSearch(search, snapshot.catalog?.features?.search === true)
@@ -383,28 +390,24 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setNewSheet(false)
     setRoute({ entry: entryOfSection('workspaces', phone), section: 'workspaces', projectId })
   }
-  const revealSearch = () => {
-    if (phone) {
-      if (selectedId !== null) choose(null)
-      setPhoneSearching(true)
-      requestAnimationFrame(() => {
-        searchRef.current?.focus({ preventScroll: true })
-      })
-    } else if (drawerMode) drawer.show(searchRef.current)
-    else if (sidebarCollapsed) {
-      // The search is in the shut column: open it, then focus the search once the column can take focus.
-      focusAfterToggle.current = { target: searchRef, shut: false }
-      saveSidebar({ collapsed: false })
-    } else searchRef.current?.focus()
+  const openAgentPage = (target: AgentPageTarget) => {
+    drawer.setOpen(false)
+    setNewSheet(false)
+    setRoute({ entry: entryOfSection('agents', phone), section: 'agents', agent: target })
   }
+  /** The palette searches, except on a phone, which keeps its search under the title. */
   const openSearch = () => {
-    if (route.entry === 'sessions') {
-      revealSearch()
+    if (!phone) {
+      setCommandMode('root')
+      setCommandOpen(true)
       return
     }
-    // The search is in the hidden, inert column: it can take focus once the session's columns are back.
+    if (selectedId !== null) choose(null)
     setRoute({ entry: 'sessions' })
-    requestAnimationFrame(revealSearch)
+    setPhoneSearching(true)
+    requestAnimationFrame(() => {
+      searchRef.current?.focus({ preventScroll: true })
+    })
   }
 
   const searchShortcut = useStableCallback((event: KeyboardEvent) => {
@@ -417,12 +420,19 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     ) {
       event.preventDefault()
       setFindOpen(true)
+      setFindFocus(value => value + 1)
       return
     }
     if (event.key.toLowerCase() !== 'k' || !(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return
+    // The same keys put away the palette they opened; nothing opens over another dialog.
+    if (commandOpen) {
+      event.preventDefault()
+      closePalette()
+      return
+    }
     if (document.querySelector('dialog[open]')) return
     event.preventDefault()
-    setCommandMode('all')
+    setCommandMode('root')
     setCommandOpen(true)
   })
   useEffect(() => {
@@ -432,13 +442,24 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     }
   }, [searchShortcut])
 
+  // The desktop app reads the Host itself, so its notification can be ahead of this page, even about a session the page
+  // already lists: go as soon as the session is known, and keep looking for its request until the page has read again.
+  const [notified, setNotified] = useState<{ id: string; read: boolean; arrived: boolean } | null>(null)
   useEffect(
     () =>
       currentShell()?.notifications?.subscribe(id => {
-        if (snapshot.tasks.some(task => task.id === id)) choose(id)
+        setNotified({ id, read: false, arrived: false })
+        void refresh().finally(() => {
+          setNotified(previous => (previous?.id === id ? { ...previous, read: true } : previous))
+        })
       }),
-    [choose, snapshot.tasks],
+    [refresh],
   )
+  useEffect(() => {
+    if (notified === null || !snapshot.tasks.some(task => task.id === notified.id)) return
+    const done = openNotified(notified.id, !notified.arrived)
+    setNotified(done || notified.read ? null : { ...notified, arrived: true })
+  }, [notified, snapshot.tasks, snapshot.approvals, openNotified])
   const manageProviders = owner
     ? () => {
         openSettings('providers')
@@ -631,13 +652,13 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       if (entries.includes(action.entry)) goEntry(action.entry)
       return
     }
-    if (action === 'help') {
-      setKeyboardHelp(true)
+    if (action === 'shortcuts') {
+      if (settingsSections(snapshot, access).includes('shortcuts') && !phone) openSettings('shortcuts')
       return
     }
-    const ordered = groupSessions(filterSessions(snapshot.tasks, filter, search), catalog?.workspaces).flatMap(group => group.tasks)
-    const index = ordered.findIndex(task => task.id === selectedId)
-    const target = ordered[(index + (action === 'next' ? 1 : -1) + ordered.length) % ordered.length]
+    const folded = readFolded(shelvesKey(snapshot.device.id))
+    const ordered = listedSessions(snapshot.tasks, catalog?.workspaces, { filter, search, folded })
+    const target = steppedSession(ordered, selectedId, action === 'next' ? 1 : -1)
     if (target) choose(target.id)
   })
   useEffect(() => {
@@ -668,13 +689,13 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
    * Shows a row of the conversation: a row inside a closed disclosure (the folded process of a turn) is opened first,
    * as the browser's find would open it, and the reading position keeps the row in place while it opens.
    */
-  const revealRow = (messageId: string) => {
+  const revealRow = (messageId: string, offset?: number) => {
     const row = document.querySelector(`.transcript [data-message-id="${CSS.escape(messageId)}"]`)
     for (let hidden = row?.closest('[hidden="until-found"]'); hidden; hidden = hidden.parentElement?.closest('[hidden="until-found"]')) {
       hidden.dispatchEvent(new Event('beforematch'))
     }
     requestAnimationFrame(() => {
-      reveal(messageId)
+      reveal(messageId, offset)
     })
   }
   useEffect(() => {
@@ -704,8 +725,9 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     filter === 'archived' && catalog?.features?.sessionBatch && access.scopes.has('run') ? (
       <ArchiveBatch tasks={snapshot.tasks} onChanged={refresh} />
     ) : undefined
-  const findReveal = useStableCallback((messageId: string) => {
-    revealRow(messageId)
+  const archiveUndo = archivedLast ? <ArchiveUndo key={archivedLast.id} onUndo={undoArchive} onExpire={forgetArchive} /> : undefined
+  const findReveal = useStableCallback((messageId: string, offset?: number) => {
+    revealRow(messageId, offset)
   })
   const revealFromInspector = (messageId: string) => {
     setInfoPage(false)
@@ -776,6 +798,12 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
         submission.updateChoice({ workspaceId })
       }
     : undefined
+  const startChat = canStart
+    ? () => {
+        startNew()
+        submission.updateChoice({ mode: 'chat' })
+      }
+    : undefined
   const connectionProblem = harness.error || connection === 'reconnecting' || connection === 'offline'
   // What is known about why the Host does not answer: main's own view on the desktop, else the Host's announcement.
   const shellHost = lifecycle.view?.host
@@ -830,6 +858,19 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setCommandMode('files')
     setCommandOpen(true)
   }
+  /**
+   * On close, the keys go back to the composer unless what ran took them: the find bar, a dialog, or a page without a
+   * composer. A touch screen keeps its keyboard down.
+   */
+  const closePalette = useStableCallback(() => {
+    setCommandOpen(false)
+    requestAnimationFrame(() => {
+      const composer = composerRef.current
+      if (coarse || !composer || composer.disabled || composer.offsetParent === null || composer.closest('[inert]')) return
+      if (document.querySelector('dialog[open]') || document.activeElement?.closest('.find-bar')) return
+      composer.focus({ preventScroll: true })
+    })
+  })
   const mentionFile = (mention: FileMention) => {
     if (!mentionChoice.enabled || fileMentions.length >= 32) return
     submission.setDraft(previous => `${previous.trimEnd()}${previous.trim() ? ' ' : ''}${mentionMarker(mention)} `)
@@ -964,14 +1005,14 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setupTrigger,
     sheetComposerRef,
     searchRef,
-    keyboardHelp,
-    setKeyboardHelp,
     commandMode,
     setCommandMode,
     commandOpen,
     setCommandOpen,
+    closePalette,
     findOpen,
     setFindOpen,
+    findFocus,
     search,
     setSearch,
     promptTemplates,
@@ -1000,6 +1041,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     openChanges,
     closeChanges,
     toggleChanges,
+    openChangesTab,
     changesTarget,
     changesStat,
     setChangesTotals,
@@ -1021,6 +1063,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     back,
     openSettings,
     openPersonal,
+    openAgentPage,
     openProjectSettings,
     openSearch,
     searchShortcut,
@@ -1047,6 +1090,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     selectSearchHit,
     searchResults,
     archiveBatch,
+    archiveUndo,
+    startChat,
     findReveal,
     revealFromInspector,
     topHarness,

@@ -70,6 +70,7 @@ export function ConversationView({ shell }: { shell: ShellState }) {
     sheetComposerRef,
     findOpen,
     setFindOpen,
+    findFocus,
     startNew,
     openSettings,
     findReveal,
@@ -190,6 +191,8 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                 sessionId={current.summary.id}
                 revision={current.cursor}
                 messages={current.messages}
+                focusRequest={findFocus}
+                fallbackFocus={composerRef}
                 onReveal={findReveal}
                 onClose={() => setFindOpen(false)}
               />

@@ -22,7 +22,18 @@ import { approvalActions, composerGate, deviceAccess, harnessLevel, hostView } f
 import { setPreference } from '../preferences.ts'
 import { isSessionStopCode, type SessionStopCode } from '../core/securityCopy.ts'
 import { sessionMenuSections } from '../sessionMenu.ts'
-import { emptySeen, isUnread, markSeen, markUnread, pruneSeen, readSeen, writeSeen, type SeenState } from '../sessions.ts'
+import {
+  emptySeen,
+  isUnread,
+  markSeen,
+  markUnread,
+  pruneSeen,
+  readSeen,
+  waitingCount,
+  waitsOnYou,
+  writeSeen,
+  type SeenState,
+} from '../sessions.ts'
 import { useReadingPosition } from '../core/useReadingPosition.ts'
 import { useApprovalVisibility, useApprovalsInView } from '../hooks/useApprovalsInView.ts'
 import { currentShell } from '../core/shell.ts'
@@ -94,6 +105,7 @@ export function useSessionController({
   const [approvalStatuses, setApprovalStatuses] = useState<ReadonlyMap<string, ApprovalStatus>>(new Map())
   const approvalFlights = useRef(new Set<string>())
   const [cancelling, setCancelling] = useState<ReadonlySet<string>>(new Set())
+  const stoppedRuns = useRef(new Map<string, string>())
   const [cancelUncertain, setCancelUncertain] = useState<ReadonlySet<string>>(new Set())
   // A stop whose answer never came is not known to be under way: only the bar above the input speaks of it.
   const stopping = useMemo(() => new Set([...cancelling].filter(id => !cancelUncertain.has(id))), [cancelling, cancelUncertain])
@@ -268,9 +280,10 @@ export function useSessionController({
       clearInterval(timer)
     }
   }, [])
+  const waiting = waitingCount(snapshot)
   useEffect(() => {
-    document.title = snapshot.approvals.length ? `(${snapshot.approvals.length}) Latch` : 'Latch'
-  }, [snapshot.approvals.length])
+    document.title = waiting ? `(${waiting}) Latch` : 'Latch'
+  }, [waiting])
   useEffect(() => {
     if (!toast) return
     const timer = setTimeout(() => {
@@ -299,7 +312,12 @@ export function useSessionController({
   const unread = useCallback((task: TaskSummary) => isUnread(task, seen), [seen])
 
   useEffect(() => {
-    const running = (id: string) => snapshot.tasks.some(task => task.id === id && isActive(task.status))
+    // The list can pass over a settlement: a newer run is not the one being stopped.
+    const running = (id: string) =>
+      snapshot.tasks.some(task => {
+        const stopped = stoppedRuns.current.get(id)
+        return task.id === id && isActive(task.status) && (stopped === undefined || task.runId === undefined || task.runId === stopped)
+      })
     setCancelling(previous => {
       const next = new Set([...previous].filter(running))
       return next.size === previous.size ? previous : next
@@ -360,11 +378,18 @@ export function useSessionController({
     if (selectedId !== null) reading.show(selectedId, target && toolRowId(target))
   }
 
+  /** The session that waits longest: its oldest request, or else a run that has gone quiet. */
   const openApprovals = () => {
     const oldest = [...snapshot.approvals].sort((a, b) => a.requestedAt.localeCompare(b.requestedAt))[0]
-    if (!oldest) return
-    choose(oldest.sessionId)
-    reading.show(oldest.sessionId, toolRowId(oldest))
+    if (oldest) {
+      choose(oldest.sessionId)
+      reading.show(oldest.sessionId, toolRowId(oldest))
+      return
+    }
+    const quiet = snapshot.tasks
+      .filter(waitsOnYou)
+      .toSorted((a, b) => (a.live?.lastEventAt ?? '').localeCompare(b.live?.lastEventAt ?? ''))[0]
+    if (quiet) choose(quiet.id)
   }
 
   const previousApprovals = useRef(new Set(snapshot.approvals.map(item => item.id)))
@@ -390,6 +415,22 @@ export function useSessionController({
     setApprovalFocus(target.id)
     choose(target.sessionId)
     reading.show(target.sessionId, toolRowId(target))
+  })
+  /**
+   * A notification names a session: `arriving` goes there at once. Then it reaches the oldest request there, marked as
+   * 下一个 marks it, and says true when nothing is left to do: reached, or the person has gone elsewhere since.
+   */
+  const openNotified = useStableCallback((id: string, arriving: boolean) => {
+    if (arriving) choose(id)
+    else if (selectedId !== id) return true
+    const target = snapshot.approvals
+      .filter(item => item.sessionId === id)
+      .toSorted((a, b) => a.requestedAt.localeCompare(b.requestedAt))[0]
+    if (!target) return false
+    approvalCursor.current = target.id
+    setApprovalFocus(target.id)
+    reading.show(id, toolRowId(target))
+    return true
   })
   const focusedApproval = snapshot.approvals.find(item => item.id === approvalFocus)
   const approvalFocusRow = focusedApproval && toolRowId(focusedApproval)
@@ -500,6 +541,8 @@ export function useSessionController({
     if (cancelling.has(id) && !cancelUncertain.has(id)) return
     // The run on screen: a stop that arrives after it ended must not stop the next one.
     const runId = (current?.summary.id === id ? current.summary : snapshot.tasks.find(task => task.id === id))?.runId
+    if (runId === undefined) stoppedRuns.current.delete(id)
+    else stoppedRuns.current.set(id, runId)
     setCancelling(previous => new Set(previous).add(id))
     setCancelUncertain(previous => without(previous, id))
     clearAction(id)
@@ -596,9 +639,19 @@ export function useSessionController({
     try {
       await api<unknown>(`tasks/${encodeURIComponent(task.id)}`, { method: 'PATCH', body: patch })
       await refresh()
+      return true
     } catch (cause) {
       setToast({ text: errorMessage(cause), tone: 'error' })
+      return false
     }
+  })
+  const [archivedLast, setArchivedLast] = useState<TaskSummary | null>(null)
+  const undoArchive = useStableCallback(() => {
+    if (archivedLast) void patchTask(archivedLast, { archived: false })
+    setArchivedLast(null)
+  })
+  const forgetArchive = useStableCallback(() => {
+    setArchivedLast(null)
   })
   const exportTask = useStableCallback(async (task: TaskSummary) => {
     try {
@@ -636,7 +689,9 @@ export function useSessionController({
             void patchTask(task, { pinned: !task.pinned })
           },
           archive: () => {
-            void patchTask(task, { archived: !task.archived })
+            void patchTask(task, { archived: !task.archived }).then(done => {
+              if (done) setArchivedLast(task.archived ? null : task)
+            })
           },
           export: () => {
             void exportTask(task)
@@ -873,6 +928,10 @@ export function useSessionController({
     approvalFocus,
     setApprovalFocus,
     nextApproval,
+    openNotified,
+    archivedLast,
+    undoArchive,
+    forgetArchive,
     focusedApproval,
     approvalFocusRow,
     approvalFocusSession,

@@ -81,6 +81,23 @@ async function writePreferences(directory, value) {
     await rm(temporary, { force: true })
   }
 }
+/**
+ * What 等你处理 lists: sessions with a request or a question, a request Latch did not recognise and nothing since, and runs the
+ * Host calls silent; a stop already asked for answers all of these. Unread results and running work do not count.
+ */
+function waitingCount(snapshot) {
+  const stopping = task => (task.status === 'running' || task.status === 'waiting-approval') && task.live?.activity === 'cancelling'
+  const stopped = new Set(snapshot.tasks.filter(stopping).map(task => task.id))
+  const waiting = new Set(snapshot.approvals.map(approval => approval.sessionId).filter(id => !stopped.has(id)))
+  for (const task of snapshot.tasks) {
+    if (stopped.has(task.id)) continue
+    const asked = Date.parse(task.live?.unrecognized?.at)
+    const stuck = asked >= Date.parse(task.live?.lastEventAt)
+    const quiet = task.live?.silent === true || stuck
+    if (task.status === 'waiting-approval' || (task.status === 'running' && (task.pendingQuestions > 0 || quiet))) waiting.add(task.id)
+  }
+  return waiting.size
+}
 /** Only authenticated Host snapshots decide notification contents; the renderer never supplies text. */
 function createNotifications(options) {
   let previous,
@@ -160,7 +177,7 @@ function createNotifications(options) {
       try {
         const snapshot = await options.snapshot()
         if (closed || !snapshot || !Array.isArray(snapshot.tasks) || !Array.isArray(snapshot.approvals)) return
-        options.badge?.(snapshot.approvals.length)
+        options.badge?.(waitingCount(snapshot))
         const current = new Map(snapshot.tasks.map(task => [task.id, { ...task }]))
         if (previous) {
           for (const task of snapshot.tasks) {

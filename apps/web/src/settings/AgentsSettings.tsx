@@ -5,6 +5,7 @@ import { api, errorMessage, inlineError } from '../core/api.ts'
 import { InlineConfirm } from '../components/InlineConfirm.tsx'
 import { withConfirmation } from '../core/confirmations.ts'
 import { LEVEL_LABELS, type DeviceAccess } from '../core/permissions.ts'
+import type { AgentPageTarget } from '../shell/routes.ts'
 import { LOCAL_ONLY_TEXT } from '../core/securityCopy.ts'
 import { missingText } from '../core/agentDetection.ts'
 export { missingText } from '../core/agentDetection.ts'
@@ -875,15 +876,21 @@ export function AgentsSettings({
   snapshot,
   access,
   onChanged,
+  initialPage,
 }: {
   snapshot: AppSnapshot
   access: Pick<DeviceAccess, 'legacy' | 'local'>
   onChanged: () => void
+  /** A page to open on, each time a new one is given. */
+  initialPage?: AgentPageTarget | undefined
 }) {
   const definable = access.legacy || access.local
   const [data, setData] = useState<AgentsResponse | null>(null)
   const [error, setError] = useState('')
-  const [editing, setEditing] = useState<Editing>(null)
+  const [editing, setEditing] = useState<Editing>(initialPage ?? null)
+  useEffect(() => {
+    if (initialPage) setEditing(initialPage)
+  }, [initialPage])
   const [busy, setBusy] = useState<string | null>(null)
   const [checking, setChecking] = useState(false)
   const load = useCallback(async () => {

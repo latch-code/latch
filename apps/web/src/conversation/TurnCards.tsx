@@ -11,6 +11,7 @@ import { TurnSummaryOptions } from './summaryOptions.ts'
 import {
   firstOpenable,
   notRestoredLine,
+  changedOutputs,
   producedFiles,
   turnSummary,
   undoBlockWords,
@@ -170,7 +171,8 @@ export function TurnCards({
 }) {
   const { undo: undoGate, refresh } = useContext(TurnSummaryOptions)
   const link = useChangesLink()
-  const { list, cardRef } = useTurnList(sessionId, enabled ? record : undefined, revision)
+  const usable = enabled ? record : undefined
+  const { list, cardRef } = useTurnList(sessionId, usable, revision)
   const [open, setOpen] = useState(false)
   const [phase, setPhase] = useState<UndoPhase>('idle')
   // The record it arrived against: the Host's record takes over once it has moved on.
@@ -189,7 +191,7 @@ export function TurnCards({
     }
   }, [list])
   const seen = outputs?.outputs
-  const summary = useMemo(() => turnSummary(turn, list, seen ?? []), [turn, list, seen])
+  const summary = useMemo(() => turnSummary(turn, list, changedOutputs(usable, seen ?? [])), [turn, list, usable, seen])
   const produced = useMemo(() => producedFiles(seen ?? []), [seen])
   const turnId = record?.turnId
   const openable = firstOpenable(summary.files)

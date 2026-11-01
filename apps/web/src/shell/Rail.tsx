@@ -1,6 +1,7 @@
 import { Blocks, MessagesSquare, Settings, Smartphone, AlarmClock, Bot } from 'lucide-react'
 import { IconButton, type LucideIcon } from '@latch/ui'
 import { currentShell } from '../core/shell.ts'
+import { waitingCount } from '../sessions.ts'
 import type { RailEntry } from './routes.ts'
 import type { ShellState } from './useShellLayout.tsx'
 
@@ -53,9 +54,7 @@ export function Rail({ shell }: { shell: ShellState }) {
         icon={RAIL_ICONS[entry]}
         shortcut={shortcut(entry)}
         aria-current={route.entry === entry ? 'page' : undefined}
-        badge={
-          entry === 'sessions' && route.entry !== 'sessions' && snapshot.approvals.length > 0 ? <span className="rail-dot" /> : undefined
-        }
+        badge={entry === 'sessions' && route.entry !== 'sessions' && waitingCount(snapshot) > 0 ? <span className="rail-dot" /> : undefined}
         onClick={() => {
           goEntry(entry)
         }}

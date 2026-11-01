@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Folder,
   Info,
+  Keyboard,
   Laptop,
   LockKeyhole,
   MonitorSmartphone,
@@ -25,7 +26,7 @@ import { LegacyProviderSettings } from './LegacyProviderSettings.tsx'
 import { SettingsNavigationProvider, type SettingsNavigation } from './navigation.tsx'
 import { deferredComponent } from '../components/DeferredContent.tsx'
 import { Icon, IconButton, type LucideIcon } from '@latch/ui'
-import { entrySections, type PageEntry, type SettingsSection, type ShellRoute } from '../shell/routes.ts'
+import { entrySections, type AgentPageTarget, type PageEntry, type SettingsSection, type ShellRoute } from '../shell/routes.ts'
 
 export type { SettingsSection }
 
@@ -38,6 +39,10 @@ const PluginsSettings = deferredComponent(async () => ({ default: (await import(
 const ProvidersSettings = deferredComponent(
   async () => ({ default: (await import('./ProvidersSettings.tsx')).ProvidersSettings }),
   '模型服务设置',
+)
+const ShortcutsSettings = deferredComponent(
+  async () => ({ default: (await import('./ShortcutsSettings.tsx')).ShortcutsSettings }),
+  '快捷键',
 )
 const WorkspacesSettings = deferredComponent(
   async () => ({ default: (await import('./WorkspacesSettings.tsx')).WorkspacesSettings }),
@@ -69,8 +74,11 @@ const sections: Array<{
   { id: 'workspaces', label: '项目', icon: Folder, admin: true, catalog: true },
   { id: 'plugins', label: '插件', icon: Puzzle, admin: true },
   { id: 'devices', label: '设备', icon: MonitorSmartphone, admin: false, secured: true },
+  { id: 'shortcuts', label: '快捷键', icon: Keyboard, admin: false },
   { id: 'about', label: '关于', icon: Info, admin: false },
 ]
+
+export const sectionLabel = (id: SettingsSection): string => sections.find(section => section.id === id)!.label
 
 /** The line under the sections of a device that lacks 管理此 Host: some sections are hidden, and where to grant it. */
 export function hiddenSectionsCaption(snapshot: AppSnapshot, access: DeviceAccess): string | undefined {
@@ -124,6 +132,7 @@ export function SettingsPage({
   entry = 'settings',
   section: chosen = null,
   initialProjectId,
+  initialAgent,
   titleSlot,
   onSection,
   onChanged,
@@ -135,6 +144,7 @@ export function SettingsPage({
   /** The chosen section; absent, a wide window shows the first and a phone shows the list. */
   section?: SettingsSection | null
   initialProjectId?: string
+  initialAgent?: AgentPageTarget
   /** Where the page puts its title on wide windows. */
   titleSlot?: HTMLElement | null
   /** Opens a section, of this entry or another. Without an argument, goes back to this entry's list. */
@@ -284,7 +294,10 @@ export function SettingsPage({
                       ) : (
                         <LegacyProviderSettings onChanged={onChanged} />
                       ))}
-                    {panel === 'agents' && <AgentsSettings snapshot={snapshot} access={access} onChanged={onChanged} />}
+                    {panel === 'agents' && (
+                      <AgentsSettings snapshot={snapshot} access={access} onChanged={onChanged} initialPage={initialAgent} />
+                    )}
+                    {panel === 'shortcuts' && <ShortcutsSettings />}
                     {panel === 'workspaces' && (
                       <WorkspacesSettings
                         snapshot={snapshot}

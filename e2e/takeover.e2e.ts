@@ -57,14 +57,8 @@ describe('desktop to phone takeover', () => {
     // The page has slid into place.
     await mobile.locator('main.workspace').evaluate(element => Promise.all(element.getAnimations().map(animation => animation.finished)))
   }
-  async function filterSessions(page: Page, name: '全部' | '对话' | 'Agent') {
-    // The filter pills unfold under the search while it is in use.
-    await page.getByRole('searchbox', { name: '搜索会话', exact: true }).focus()
-    await page.getByRole('group', { name: '筛选会话', exact: true }).getByRole('button', { name, exact: true }).click()
-  }
   async function start(prompt: string): Promise<string> {
     const before = (await snapshot()).tasks.map(t => t.id)
-    await filterSessions(desktop, '对话')
     await desktop.getByRole('button', { name: '新建会话', exact: true }).click()
     // The device remembers its last choice; demo tasks that use tools need the built-in harness working as an agent.
     await desktop
@@ -223,14 +217,13 @@ describe('desktop to phone takeover', () => {
     const detail = await host.bridge.detail(id)
     expect(new Set(detail.messages.map(m => m.id)).size).toBe(detail.messages.length)
     await mobile.reload()
-    await mobile.locator('.topbar .ui-status-word', { hasText: '已取消' }).waitFor()
+    await mobile.locator('.topbar .ui-status-word', { hasText: '已停止' }).waitFor()
     expect((await host.bridge.detail(id)).messages).toEqual(detail.messages)
     await mobile.screenshot({ path: 'test-results/mobile-cancelled.png', fullPage: true, animations: 'disabled' })
   })
 
   it('creates a tool-free conversation from the real mode selector', async () => {
     const before = (await snapshot()).tasks.map(task => task.id)
-    await filterSessions(desktop, 'Agent')
     await desktop.getByRole('button', { name: '新建会话', exact: true }).click()
     await desktop
       .getByRole('radiogroup', { name: 'Agent', exact: true })

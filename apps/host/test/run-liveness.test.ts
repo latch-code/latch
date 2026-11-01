@@ -97,6 +97,8 @@ describe('a live run over HTTP', () => {
     expect(snapshot.catalog?.features?.runLiveness).toBe(true)
     const row = snapshot.tasks.find(task => task.id === sessionId)
     expect(row?.live).toMatchObject({ activity: 'model', silenceThresholdMs: 120_000, runId: row?.runId })
+    // The list carries the whole run's clock, so a row and the conversation read the same time.
+    expect(row?.live?.runStartedAt).toEqual(expect.any(String))
 
     const detail = await owner.json<TaskDetail>(`tasks/${sessionId}`)
     const runId = detail.summary.runId!

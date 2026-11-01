@@ -1,15 +1,31 @@
-import { ProjectGroupHeading, ProjectsHeading, type ProjectNavigationActions } from './ProjectNavigation.tsx'
-import { Fragment, memo, useEffect, useRef, useState, type RefObject } from 'react'
-import { Archive, Ellipsis, Inbox, Laptop, PanelLeft, Plus, Search, Settings, SquarePen, UsersRound, X } from 'lucide-react'
+import { NewProjectRow, ProjectGroupHeading, ShelfHead, type ProjectNavigationActions } from './ProjectNavigation.tsx'
+import { memo, useCallback, useMemo, useRef, useState } from 'react'
+import { Archive, ChevronLeft, Ellipsis, Pin, Plus, Search, SquarePen, X } from 'lucide-react'
 import type { AppSnapshot, HarnessInfo, TaskSummary } from '@latch/protocol'
-import { sessionHarness } from '../composerChoice.ts'
-import { relativeTime, statusLabels } from '../format.ts'
+import { BUILTIN_HARNESS_NAME, sessionHarness } from '../composerChoice.ts'
+import { currentShell } from '../core/shell.ts'
+import { relativeTime } from '../format.ts'
 import { useListMotion, usePresence } from '../hooks/useListMotion.ts'
-import { filterSessions, groupSessions, sessionFilterLabels, sessionSlot, type SessionFilter, type SessionGroup } from '../sessions.ts'
+import { projectName } from '../projects.tsx'
+import {
+  filterSessions,
+  groupSessions,
+  isOneLine,
+  projectOf,
+  readFolded,
+  shelvesKey,
+  rowMeta,
+  rowStatus,
+  waitsOnYou,
+  writeFolded,
+  type SessionFilter,
+  type SessionGroup,
+} from '../sessions.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
 import { HarnessTile } from './BrandTile.tsx'
 import { Menu, type MenuSection } from './overlays.tsx'
-import { Button, Count, FilterPills, ICON_STROKE, IconButton, Kbd, SearchField, StatusSlot, useLivePrevious } from '@latch/ui'
+import { SessionStatus, statusLabel, useLastConfirmed } from './SessionStatus.tsx'
+import { Collapse, ICON_STROKE, IconButton } from '@latch/ui'
 
 export const connectionLabels: Record<ConnectionStatus, string> = {
   connected: '已连接',
@@ -38,14 +54,26 @@ export function taskHarness(snapshot: AppSnapshot, task: TaskSummary): TaskHarne
     : { id: 'standard', source: 'builtin' }
 }
 
-const searchKey = () => (/Mac/.test(navigator.platform) ? '⌘K' : 'Ctrl K')
+/** The harness's name on a row: the built-in one by its product name, one no longer listed by its ID. */
+export const harnessLabel = (harness: TaskHarness) => (harness.source === 'builtin' ? BUILTIN_HARNESS_NAME : (harness.name ?? harness.id))
+
+/**
+ * The word for what ran a session. Sessions do not record an Agent yet, so every one is 通用; the mark and its tooltip
+ * name the engine.
+ */
+export const SESSION_AGENT = '通用'
+
+const shortcutFor = (key: string) => (currentShell() ? `⌘${key}` : `Alt ${key}`)
 
 const SessionItem = memo(function SessionItem({
   task,
   harness,
+  project,
+  inWaitingShelf,
   selected,
   unread,
-  cancelling,
+  stopping,
+  frozen,
   leaving,
   now,
   onSelect,
@@ -53,9 +81,14 @@ const SessionItem = memo(function SessionItem({
 }: {
   task: TaskSummary
   harness: TaskHarness
+  /** Named on the second line in 等你处理, where the shelf no longer says where the session belongs. */
+  project: string | undefined
+  inWaitingShelf: boolean
   selected: boolean
   unread: boolean
-  cancelling: boolean
+  stopping: boolean
+  /** The connection is down: 上次确认 10:42. */
+  frozen: string | null
   /** Removed from the list: it folds away and takes no input. */
   leaving: boolean
   now: number
@@ -64,50 +97,85 @@ const SessionItem = memo(function SessionItem({
 }) {
   const title = task.title || '未命名会话'
   const time = relativeTime(task.updatedAt, new Date(now))
+  const status = rowStatus(task, { unread, stopping, frozen: frozen !== null })
+  const oneLine = isOneLine(status)
+  const engine = harnessLabel(harness)
+  const meta = rowMeta(task, status, inWaitingShelf ? (project ?? '对话') : undefined)
+  // While the connection is down the row says less, not that what it last knew stopped mattering.
+  const strong =
+    status.kind === 'waiting'
+    || status.kind === 'silent'
+    || status.kind === 'failed'
+    || status.kind === 'unread'
+    || (status.kind === 'frozen' && waitsOnYou(task))
+  const sections = menu(task)
+  const archive = task.archived ? undefined : sections.flatMap(section => section.items).find(item => item.id === 'archive')
+  const said = statusLabel(status, task.live)
   return (
     <li className="session-entry" data-flip-id={task.id} data-leaving={leaving ? '' : undefined} inert={leaving || undefined}>
-      <div className={`session-item ${selected ? 'is-selected' : ''} ${unread ? 'is-unread' : ''}`}>
+      <div
+        className={`session-item ${selected ? 'is-selected' : ''} ${strong ? 'is-strong' : ''} ${status.kind === 'unread' ? 'is-unread' : ''}`}
+        data-lines={oneLine ? 1 : 2}>
         <button
           type="button"
           className="session-item-main"
           data-task-id={leaving ? undefined : task.id}
           aria-current={selected ? 'page' : undefined}
+          title={oneLine ? [SESSION_AGENT, engine, task.branch, time].filter(Boolean).join(' · ') : undefined}
           onClick={() => {
             onSelect(task.id)
           }}>
-          <HarnessTile harness={{ id: harness.id, source: harness.source }} size={20} className="session-tile" />
-          <span className="session-title">{title}</span>
-          <span className="sr-only">{`，${harness?.name ? `${harness.name}，` : ''}${cancelling ? '正在取消' : statusLabels[task.status]}${task.permissionDrift ? '，权限模式已变化' : ''}${unread ? '，有新内容' : ''}${time ? `，${time}` : ''}`}</span>
-          <StatusSlot
-            className="session-status"
-            status={sessionSlot(task, selected, unread)}
-            running={cancelling ? '正在取消' : undefined}
-            failed={task.permissionDrift && task.status !== 'failed' ? '权限已变化' : statusLabels.failed}
-            time={time}
-            dateTime={task.updatedAt}
-          />
-        </button>
-        {!task.archived && menu(task).some(section => section.items.some(item => item.id === 'archive')) && (
-          <IconButton
-            className="session-item-archive"
-            label={`归档：${title}`}
-            icon={Archive}
-            onClick={() =>
-              menu(task)
-                .flatMap(section => section.items)
-                .find(item => item.id === 'archive')
-                ?.onSelect()
-            }
-          />
-        )}
-        <Menu
-          label={`会话操作：${title}`}
-          placement="bottom-end"
-          sections={menu(task)}
-          trigger={props => (
-            <IconButton {...props} className="session-item-more" label={`更多操作：${title}`} tooltip="更多操作" icon={Ellipsis} />
+          <span className="session-line">
+            {task.pinned && <Pin className="session-pin" size={12} strokeWidth={ICON_STROKE[12]} aria-label="已置顶" />}
+            <span className="session-title">{title}</span>
+            <SessionStatus
+              className="session-status"
+              status={status}
+              live={task.live}
+              inWaitingShelf={inWaitingShelf}
+              time={time}
+              dateTime={task.updatedAt}
+            />
+          </span>
+          {!oneLine && (
+            <span className="session-meta">
+              <span className="session-mark" title={engine}>
+                <HarnessTile harness={{ id: harness.id, source: harness.source }} size={14} />
+              </span>
+              <span>{SESSION_AGENT}</span>
+              {meta && <span className="session-meta-rest">{`· ${meta}`}</span>}
+              {status.kind === 'frozen' && <span className="session-frozen">{frozen}</span>}
+            </span>
           )}
-        />
+          <span className="sr-only">{`，${engine}${said ? `，${said}` : ''}${time ? `，${time}` : ''}`}</span>
+        </button>
+        <span className="session-actions">
+          {archive && (
+            <IconButton
+              className="session-item-archive"
+              size="xs"
+              label={`归档：${title}`}
+              tooltip="归档"
+              icon={Archive}
+              onClick={() => archive.onSelect()}
+            />
+          )}
+          <Menu
+            label={`会话操作：${title}`}
+            placement="bottom-end"
+            sections={sections}
+            trigger={props => (
+              <IconButton
+                {...props}
+                className="session-item-more"
+                size="xs"
+                label={`更多操作：${title}`}
+                tooltip="更多操作"
+                icon={Ellipsis}
+              />
+            )}
+          />
+        </span>
       </div>
     </li>
   )
@@ -121,100 +189,134 @@ function SessionGroupView({
   selectedId,
   isUnread,
   cancelling,
+  frozen,
+  folded,
+  onFold,
   now,
   onSelect,
   onNewIn,
+  onNewChat,
+  onCreateProject,
   onEditProject,
   onProjectsChanged,
   menu,
 }: ProjectNavigationActions & {
   group: SessionGroup
   snapshot: AppSnapshot
-  /** The filter and search the list shows; rows leave at once when it changes. */
+  /** The filter the list shows; rows leave at once when it changes. */
   context: string
   /** Called once rows that left have folded away. */
   settled: () => void
   selectedId: string | null
   isUnread: (task: TaskSummary) => boolean
   cancelling: ReadonlySet<string>
+  frozen: string | null
+  folded: boolean
+  onFold: () => void
   now: number
   onSelect: (id: string) => void
   onNewIn?: (workspaceId: string) => void
+  onNewChat?: () => void
   menu: (task: TaskSummary) => MenuSection[]
 }) {
   const rows = usePresence(group.tasks, task => task.id, context, settled)
   const workspaceId = group.workspaceId
+  const waiting = group.id === 'waiting'
+  const workspaces = snapshot.catalog?.workspaces
+  const count = group.tasks.length
   return (
-    <section className="session-group" aria-label={group.label} data-flip-id={`group:${group.id}`} data-flip-scope="">
+    <section className="session-group" aria-label={group.label} data-shelf={group.id} data-flip-id={`group:${group.id}`} data-flip-scope="">
       {group.project ? (
         <ProjectGroupHeading
           project={group.project}
+          folded={folded}
+          onFold={onFold}
+          count={count}
           onNew={workspaceId && onNewIn ? () => onNewIn(workspaceId) : undefined}
+          onCreateProject={onCreateProject}
           onEditProject={onEditProject}
           onProjectsChanged={onProjectsChanged}
         />
       ) : (
-        <div className="session-group-head">
-          <h3 className="session-group-label">{group.label}</h3>
-          {workspaceId !== undefined && onNewIn && (
-            <IconButton
-              className="session-group-new"
-              size="xs"
-              label={`在 ${group.label} 中新建会话`}
-              icon={Plus}
-              onClick={() => {
-                onNewIn(workspaceId)
-              }}
-            />
-          )}
-        </div>
+        <ShelfHead
+          label={group.label}
+          folded={folded}
+          onFold={onFold}
+          count={waiting || folded ? count : undefined}
+          actions={
+            group.id === 'other' && onNewChat ? (
+              <IconButton size="xs" label="新对话" tooltip="新对话" icon={Plus} onClick={onNewChat} />
+            ) : undefined
+          }
+        />
       )}
-
-      <ul>
-        {rows.map(({ item: task, leaving }) => (
-          <SessionItem
-            key={task.id}
-            task={task}
-            harness={taskHarness(snapshot, task)}
-            selected={!leaving && task.id === selectedId}
-            unread={task.id !== selectedId && isUnread(task)}
-            cancelling={cancelling.has(task.id)}
-            leaving={leaving}
-            now={now}
-            onSelect={onSelect}
-            menu={menu}
-          />
-        ))}
-      </ul>
+      <Collapse open={!folded}>
+        <ul>
+          {rows.map(({ item: task, leaving }) => {
+            const project = waiting && workspaces ? projectOf(task, workspaces) : undefined
+            return (
+              <SessionItem
+                key={task.id}
+                task={task}
+                harness={taskHarness(snapshot, task)}
+                project={project && projectName(project)}
+                inWaitingShelf={waiting}
+                selected={!leaving && task.id === selectedId}
+                unread={task.id !== selectedId && isUnread(task)}
+                stopping={cancelling.has(task.id)}
+                frozen={frozen}
+                leaving={leaving}
+                now={now}
+                onSelect={onSelect}
+                menu={menu}
+              />
+            )
+          })}
+        </ul>
+      </Collapse>
     </section>
   )
 }
 
+/** The shelves this device has folded, remembered per device. */
+function useFoldedShelves(key: string) {
+  const [folded, setFolded] = useState(() => readFolded(key))
+  const toggle = useCallback(
+    (id: string) => {
+      setFolded(previous => {
+        const next = new Set(previous)
+        if (!next.delete(id)) next.add(id)
+        writeFolded(key, next)
+        return next
+      })
+    },
+    [key],
+  )
+  return [folded, toggle] as const
+}
+
 /**
- * The session column: the brand with 新建会话 and collapse, the search with its filters, 等你处理, the sessions in
- * groups (pinned, then by project) and the computer this Host runs on with settings.
+ * The session panel: 新会话 and 搜索 (the palette searches), then the shelves 等你处理, each project, 对话 and a quiet
+ * 已归档 row. A shelf folds with its chevron; what ended up there stays one click away.
  */
 export function Sidebar({
   snapshot,
-  searchResults,
   archiveBatch,
+  archiveUndo,
   selectedId,
   isUnread,
   cancelling,
-  search,
-  onSearch,
-  searchRef,
   filter,
   onFilter,
   onSelect,
   onNew,
   onNewIn,
+  onNewChat,
+  onSearch,
   onCreateProject,
   onEditProject,
   onProjectsChanged,
   newActive = false,
-  onApprovals,
-  onNextApproval,
   drawer,
   onClose,
   connection,
@@ -224,26 +326,24 @@ export function Sidebar({
   keepAwake,
 }: ProjectNavigationActions & {
   snapshot: AppSnapshot
-  searchResults?: import('react').ReactNode
   archiveBatch?: import('react').ReactNode
-  /** The desktop app is keeping this Mac awake: why, for the title of the connection line. */
+  /** The line that offers to take back an archive, while it can. */
+  archiveUndo?: import('react').ReactNode
+  /** The desktop app is keeping this Mac awake: why, for the title of the line that says so. */
   keepAwake?: string
   selectedId: string | null
   isUnread: (task: TaskSummary) => boolean
   cancelling: ReadonlySet<string>
-  search: string
-  onSearch: (value: string) => void
-  searchRef: RefObject<HTMLInputElement | null>
   filter: SessionFilter
   onFilter: (filter: SessionFilter) => void
   onSelect: (id: string) => void
   onNew: () => void
   /** Starts a new session in a saved project; absent where this device cannot start one. */
   onNewIn?: (workspaceId: string) => void
-  /** The new-session page is open: 新建会话 shows as a toggle that is on. */
+  onNewChat?: () => void
+  onSearch: () => void
+  /** The new-session page is open: 新会话 shows as a toggle that is on. */
   newActive?: boolean
-  onApprovals: () => void
-  onNextApproval?: () => void
   drawer: boolean
   onClose: () => void
   connection: ConnectionStatus
@@ -252,169 +352,90 @@ export function Sidebar({
   now: number
 }) {
   const list = useRef<HTMLElement>(null)
-  const searchBox = useRef<HTMLDivElement>(null)
-  const [searching, setSearching] = useState(false)
-  /**
-   * A press that began inside the search and has not ended in its click yet. Safari and iOS do not focus a button that
-   * is clicked or tapped, so pressing a filter pill blurs the search with nowhere for focus to go (with a mouse while
-   * the button is down, on touch only after the finger has lifted, just before the click): the pills must stay open,
-   * and usable, until the click lands.
-   */
-  const pressedInside = useRef(false)
-  useEffect(() => {
-    const press = (event: PointerEvent) => {
-      const box = searchBox.current
-      pressedInside.current = box !== null && event.target instanceof Node && box.contains(event.target)
-    }
-    const settle = () => {
-      pressedInside.current = false
-    }
-    document.addEventListener('pointerdown', press, true)
-    document.addEventListener('pointercancel', settle, true)
-    document.addEventListener('click', settle, true)
-    return () => {
-      document.removeEventListener('pointerdown', press, true)
-      document.removeEventListener('pointercancel', settle, true)
-      document.removeEventListener('click', settle, true)
-    }
-  }, [])
-  useEffect(() => {
-    if (!searching) return undefined
-    // A press elsewhere ends the search's use, wherever focus went; a press inside it never closes it.
-    const pressAway = (event: PointerEvent) => {
-      const box = searchBox.current
-      if (box && event.target instanceof Node && !box.contains(event.target) && !box.contains(document.activeElement)) setSearching(false)
-    }
-    document.addEventListener('pointerdown', pressAway, true)
-    return () => {
-      document.removeEventListener('pointerdown', pressAway, true)
-    }
-  }, [searching])
-  const visible = filterSessions(snapshot.tasks, filter, search)
-  const projectSections = snapshot.catalog?.projectFolders !== undefined && !search && filter === 'all'
-  const groups = groupSessions(visible, snapshot.catalog?.workspaces, { includeEmpty: projectSections })
-  const approvals = snapshot.approvals.length
-  // The row shows only while something waits, so its count is told the value it rose from.
-  const approvalsBefore = useLivePrevious(approvals)
+  const [folded, toggleShelf] = useFoldedShelves(shelvesKey(snapshot.device.id))
+  const frozen = useLastConfirmed(connection, snapshot)
+  const archived = filter === 'archived'
+  const visible = useMemo(() => filterSessions(snapshot.tasks, filter, ''), [snapshot.tasks, filter])
+  const projectSections = snapshot.catalog?.projectFolders !== undefined && !archived
+  const groups = groupSessions(visible, snapshot.catalog?.workspaces, {
+    includeEmpty: projectSections,
+    ...(archived ? {} : { waitingFrom: snapshot.tasks }),
+  })
   const archivedCount = snapshot.tasks.filter(task => task.archived).length
-  const filters: SessionFilter[] =
-    archivedCount > 0 || filter === 'archived' ? ['all', 'chat', 'agent', 'archived'] : ['all', 'chat', 'agent']
-  const showFilters = searching || search !== '' || filter !== 'all'
-  // A new filter or search redraws the list at once; changes from the Host move and fold its rows.
-  const context = `${filter}\u0000${search}`
-  const signature = groups.map(group => `${group.id}:${group.tasks.map(task => task.id).join(',')}`).join('|')
+  const noProjects = !snapshot.catalog?.workspaces.some(item => item.id !== 'default')
+  const context = filter
+  const signature = groups.map(group => `${group.id}:${folded.has(group.id) ? '' : group.tasks.map(task => task.id).join(',')}`).join('|')
   const remeasure = useListMotion(list, context, signature)
   return (
     <div className="sidebar-body">
-      <div className="sidebar-head">
-        <Button
-          className="sidebar-new"
-          variant="ghost"
-          icon={SquarePen}
-          aria-label="新建会话"
-          aria-pressed={drawer ? undefined : newActive}
-          onClick={onNew}>
-          新会话
-        </Button>
-        {drawer && <IconButton label="关闭会话列表" icon={X} onClick={onClose} />}
-      </div>
-      <div
-        ref={searchBox}
-        className="sidebar-search"
-        onFocus={() => {
-          setSearching(true)
-        }}
-        onBlur={event => {
-          // Focus left for somewhere outside, or went nowhere outside a press inside the search (which keeps the pills
-          // open until its click lands); a press elsewhere also closes them (above).
-          const leaving = event.relatedTarget === null ? !pressedInside.current : !event.currentTarget.contains(event.relatedTarget)
-          if (leaving) setSearching(false)
-        }}>
-        <SearchField
-          ref={searchRef}
-          className="search-field"
-          variant="ghost"
-          label="搜索会话"
-          placeholder="搜索"
-          value={search}
-          onValueChange={onSearch}
-          trailing={drawer ? undefined : <Kbd>{searchKey()}</Kbd>}
-        />
-        <div className="sidebar-filters" data-open={showFilters ? '' : undefined} inert={!showFilters || undefined}>
-          <div className="sidebar-filters-inner">
-            <FilterPills
-              label="筛选会话"
-              value={filter}
-              options={filters.map(value => ({ value, label: sessionFilterLabels[value] }))}
-              onValueChange={onFilter}
-            />
-          </div>
-        </div>
-      </div>
-      {approvals > 0 && (
-        <div className="approvals-group">
-          <button type="button" className="approvals-row" onClick={onApprovals}>
-            <span className="sidebar-row-icon">
-              <Inbox size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-            </span>
-            <span>等你处理</span>
-            <Count tone="warn" value={approvals} from={approvalsBefore} />
+      <div className="sidebar-top">
+        <div className="sidebar-nav-line">
+          <button
+            type="button"
+            className="sidebar-nav-row"
+            aria-label="新建会话"
+            aria-pressed={drawer ? undefined : newActive}
+            onClick={onNew}>
+            <SquarePen size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+            <span>新会话</span>
+            {!drawer && <span className="sidebar-shortcut">{shortcutFor('N')}</span>}
           </button>
-          {onNextApproval && (
-            <Button className="approval-next" size="xs" variant="ghost" onClick={onNextApproval} aria-label="下一个待处理请求">
-              下一个
-            </Button>
-          )}
+          {drawer && <IconButton label="关闭会话列表" icon={X} onClick={onClose} />}
         </div>
-      )}
+        <button type="button" className="sidebar-nav-row" aria-label="搜索" onClick={onSearch}>
+          <Search size={16} strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+          <span>搜索</span>
+          {!drawer && <span className="sidebar-shortcut">{/Mac/.test(navigator.platform) ? '⌘K' : 'Ctrl K'}</span>}
+        </button>
+      </div>
       {archiveBatch}
       <nav ref={list} className="session-list" aria-label="会话列表" data-session-filter={filter}>
+        {archived && (
+          <button
+            type="button"
+            className="archived-back"
+            onClick={() => {
+              onFilter('all')
+            }}>
+            <ChevronLeft size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+            <span>已归档</span>
+            <span className="archived-count">{archivedCount}</span>
+          </button>
+        )}
         {groups.length === 0 ? (
           <div className="list-empty">
-            <p>
-              {search
-                ? '没有匹配的会话'
-                : snapshot.tasks.length === 0
-                  ? '会话会保存在这里'
-                  : filter === 'archived'
-                    ? '没有已归档的会话'
-                    : '暂无此类会话'}
-            </p>
+            <p>{snapshot.tasks.length === 0 ? '会话会保存在这里' : archived ? '没有已归档的会话' : '暂无会话'}</p>
             {snapshot.tasks.length === 0 && <span>在任何已连接设备上继续。</span>}
           </div>
         ) : (
-          groups.map((group, index) => (
-            <Fragment key={group.id}>
-              {projectSections && group.id !== 'pinned' && (index === 0 || groups[index - 1]?.id === 'pinned') && (
-                <ProjectsHeading
-                  empty={!snapshot.catalog?.workspaces.some(item => item.id !== 'default')}
-                  onCreateProject={onCreateProject}
-                />
-              )}
-              <SessionGroupView
-                key={group.id}
-                group={group}
-                snapshot={snapshot}
-                context={context}
-                settled={remeasure}
-                selectedId={selectedId}
-                isUnread={isUnread}
-                cancelling={cancelling}
-                now={now}
-                onSelect={onSelect}
-                onNewIn={onNewIn}
-                menu={sessionMenu}
-                onEditProject={onEditProject}
-                onProjectsChanged={onProjectsChanged}
-              />
-            </Fragment>
+          groups.map(group => (
+            <SessionGroupView
+              key={group.id}
+              group={group}
+              snapshot={snapshot}
+              context={context}
+              settled={remeasure}
+              selectedId={selectedId}
+              isUnread={isUnread}
+              cancelling={cancelling}
+              frozen={frozen}
+              folded={folded.has(group.id)}
+              onFold={() => {
+                toggleShelf(group.id)
+              }}
+              now={now}
+              onSelect={onSelect}
+              onNewIn={onNewIn}
+              onNewChat={onNewChat}
+              menu={sessionMenu}
+              onCreateProject={onCreateProject}
+              onEditProject={onEditProject}
+              onProjectsChanged={onProjectsChanged}
+            />
           ))
         )}
-        {projectSections && groups.every(group => group.id === 'pinned') && (
-          <ProjectsHeading empty={!snapshot.catalog?.workspaces.some(item => item.id !== 'default')} onCreateProject={onCreateProject} />
-        )}
-        {searchResults}
-        {archivedCount > 0 && filter !== 'archived' && !search && (
+        {projectSections && noProjects && onCreateProject && <NewProjectRow onCreateProject={onCreateProject} />}
+        {archivedCount > 0 && !archived && (
           <button
             type="button"
             className="archived-row"
@@ -430,18 +451,12 @@ export function Sidebar({
           </button>
         )}
       </nav>
-      {/*
-       * A healthy connection is not named. While the desktop app keeps this Mac awake the same place says so in a few
-       * quiet words; the reason is in its title.
-       */}
-      {(connectionProblem(connection) || (keepAwake && connection === 'connected')) && (
+      {archiveUndo}
+      {/* Connection trouble is the rail's dot and the header's words. While the desktop app keeps this Mac awake, a few quiet words say so. */}
+      {keepAwake && connection === 'connected' && (
         <footer className="sidebar-footer">
-          <button
-            type="button"
-            className={`connection-badge connection-${connection}`}
-            title={keepAwake ? `${keepAwake} · 同步最新状态` : '同步最新状态'}
-            onClick={onRefresh}>
-            {connection === 'connected' ? KEEP_AWAKE_LABEL : connectionLabels[connection]}
+          <button type="button" className="connection-badge connection-connected" title={`${keepAwake} · 同步最新状态`} onClick={onRefresh}>
+            {KEEP_AWAKE_LABEL}
           </button>
         </footer>
       )}

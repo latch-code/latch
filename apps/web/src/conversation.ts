@@ -555,11 +555,11 @@ export function resendWarning(effects: SideEffects, fullAccess: boolean): string
 // ---- The live run -----------------------------------------------------------------------------------------------
 
 /** The run's working time so far on the Host's clock, without approval waits; frozen while one is open. */
-export function runElapsed(detail: TaskDetail, hostNow: number): number | undefined {
-  const started = parseTime(detail.runStartedAt)
+export function runElapsed(run: Pick<TaskDetail, 'runStartedAt' | 'runWaitMs' | 'runWaitingSince'>, hostNow: number): number | undefined {
+  const started = parseTime(run.runStartedAt)
   if (started === undefined) return undefined
-  const waited = parseDuration(detail.runWaitMs) ?? 0
-  const waiting = parseTime(detail.runWaitingSince)
+  const waited = parseDuration(run.runWaitMs) ?? 0
+  const waiting = parseTime(run.runWaitingSince)
   const open = waiting === undefined ? 0 : Math.max(0, hostNow - waiting)
   return Math.max(0, hostNow - started - waited - open)
 }

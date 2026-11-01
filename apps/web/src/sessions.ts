@@ -1,37 +1,98 @@
-import type { TaskSummary, WorkspaceInfo } from '@latch/protocol'
+import type { AppSnapshot, RunLive, TaskSummary, WorkspaceInfo } from '@latch/protocol'
+import { runClock, runElapsed } from './conversation.ts'
+import { parseTime } from './core/hostClock.ts'
 import { basename } from './format.ts'
-import type { SlotStatus } from '@latch/ui'
 import { storageGet, storageSet } from './preferences.ts'
 
-export type SessionFilter = 'all' | 'chat' | 'agent' | 'archived'
-export const sessionFilterLabels: Record<SessionFilter, string> = { all: '全部', chat: '对话', agent: 'Agent', archived: '已归档' }
+export type SessionFilter = 'all' | 'archived'
 
 /**
- * The one thing a session row's status slot shows, by priority: waiting for the person, failed (a session whose
- * permission mode changed is drawn as failed too, with its own words), running, unread, then the time. A cancelled or
- * interrupted session shows its time; the top bar names that state when it is open. The open session's row leaves out
- * 运行中, since the conversation says it is running.
+ * What a session is doing, as far as the Host has said. Nothing here is guessed from elapsed time: silence is the Host's
+ * own judgement, 正在停止 lasts until the run has really settled, and 已停止 is said only after that.
  */
-export function sessionSlot(task: TaskSummary, selected: boolean, unread: boolean): SlotStatus {
-  if (task.status === 'waiting-approval') return 'waiting'
-  if (task.status === 'failed' || task.permissionDrift) return 'failed'
-  if (task.status === 'running') return selected ? 'none' : 'running'
-  if (unread) return 'unread'
-  return 'time'
+export type RowStatus =
+  | { kind: 'waiting' }
+  /** The Host says the run has gone quiet past its threshold. It waits on the person too: 继续等 or 停止. */
+  | { kind: 'silent' }
+  | { kind: 'stopping' }
+  | { kind: 'running' }
+  | { kind: 'failed' }
+  | { kind: 'unread' }
+  /** Ended without an answer. `unknown` is how many results nobody can vouch for. */
+  | { kind: 'ended'; word: string; unknown: number }
+  /** The connection is down: what the row last knew may no longer be true, so nothing live is drawn. */
+  | { kind: 'frozen' }
+  | { kind: 'read' }
+
+const liveNow = (task: TaskSummary) => (task.status === 'running' || task.status === 'waiting-approval' ? task.live : undefined)
+
+/** The engine has done nothing since a request Latch could not answer: it may have stopped on it. */
+function stuckOnRequest(live: RunLive | undefined): boolean {
+  const asked = parseTime(live?.unrecognized?.at)
+  const last = parseTime(live?.lastEventAt)
+  return asked !== undefined && last !== undefined && asked >= last
 }
 
 /**
- * What a phone's row says on its second line after the harness: the one fact its status slot does not already say. A
- * running or cancelling session says nothing more (the slot's words do); a cancelled or interrupted one names that
- * state (its slot shows the time); one that waits, failed or has something new keeps its time there (its slot shows that
- * instead); a finished one says nothing more. Never a preview of the conversation: the Host sends none.
+ * Waits on the person: an approval, a question, a request Latch did not recognise and nothing since, or a run the Host
+ * calls silent. A stop already asked for answers all of these. A question leaves the status at running, so only its count says so.
  */
-export function sessionFact(task: TaskSummary, slot: SlotStatus, cancelling: boolean, time: string): string | undefined {
-  if (slot === 'running') return undefined
-  if (cancelling) return '正在取消'
-  if (slot === 'time') return task.status === 'cancelled' ? '已取消' : task.status === 'interrupted' ? '已中断' : undefined
-  if (slot === 'none') return undefined
-  return time || undefined
+export function waitsOnYou(task: TaskSummary): boolean {
+  const live = liveNow(task)
+  if (live?.activity === 'cancelling') return false
+  if (task.status === 'waiting-approval') return true
+  return task.status === 'running' && (Boolean(task.pendingQuestions) || live?.silent === true || stuckOnRequest(live))
+}
+
+/** How many sessions wait on the person; what 等你处理 counts, here and on the Dock. An approval's session may be outside the list. */
+export function waitingCount(snapshot: Pick<AppSnapshot, 'tasks' | 'approvals'>): number {
+  const stopping = new Set(snapshot.tasks.filter(task => liveNow(task)?.activity === 'cancelling').map(task => task.id))
+  const asking = snapshot.approvals.map(approval => approval.sessionId).filter(id => !stopping.has(id))
+  return new Set([...asking, ...snapshot.tasks.filter(waitsOnYou).map(task => task.id)]).size
+}
+
+export function rowStatus(task: TaskSummary, { unread = false, stopping = false, frozen = false } = {}): RowStatus {
+  const running = task.status === 'running' || task.status === 'waiting-approval'
+  if (running && frozen) return { kind: 'frozen' }
+  if (running && (stopping || liveNow(task)?.activity === 'cancelling')) return { kind: 'stopping' }
+  if (task.status === 'waiting-approval') return { kind: 'waiting' }
+  if (task.status === 'running') {
+    const live = liveNow(task)
+    if (task.pendingQuestions || stuckOnRequest(live)) return { kind: 'waiting' }
+    return { kind: live?.silent ? 'silent' : 'running' }
+  }
+  const outcome = task.status === 'idle' ? task.runOutcome : undefined
+  if (task.status === 'failed' || outcome === 'failed') return { kind: 'failed' }
+  const unknown = task.runEnd?.unknownResultCount ?? 0
+  if (task.status === 'cancelled' || outcome === 'cancelled') return { kind: 'ended', word: '已停止', unknown }
+  if (task.status === 'interrupted' || outcome === 'interrupted')
+    return { kind: 'ended', word: task.runEnd?.reason === 'forced-stop' ? '已强制停止' : '已中断', unknown }
+  return { kind: unread ? 'unread' : 'read' }
+}
+
+/** A read session is one line: its title and one signal. Anything that still asks for attention gets the second line. */
+export const isOneLine = (status: RowStatus) => status.kind === 'read' || (status.kind === 'ended' && status.unknown === 0)
+
+/** 运行中 1:12, or 运行中 alone when the Host did not say when the run began. */
+export function runningWords(live: RunLive | undefined, hostNow: number): string {
+  const ms = live && runElapsed(live, hostNow)
+  return ms === undefined ? '运行中' : `运行中 ${runClock(ms)}`
+}
+
+/** 没有动静 3 分钟, counted from the engine's last sign of life. */
+export function silentWords(live: RunLive | undefined, hostNow: number): string {
+  const last = parseTime(live?.lastEventAt)
+  if (last === undefined) return '没有动静'
+  const minutes = Math.max(1, Math.floor((hostNow - last) / 60_000))
+  return minutes < 60 ? `没有动静 ${minutes} 分钟` : `没有动静 ${Math.floor(minutes / 60)} 小时`
+}
+
+/** What the row's second line adds after the Agent: its project in 等你处理, otherwise its branch; results nobody can vouch for come first. */
+export function rowMeta(task: TaskSummary, status: RowStatus, project: string | undefined): string | undefined {
+  if (status.kind === 'ended' && status.unknown > 0) return `${status.unknown} 条结果未知`
+  const unknown = task.runEnd?.unknownResultCount ?? 0
+  if (status.kind === 'failed' && unknown > 0) return `${unknown} 条结果未知`
+  return project ?? task.branch
 }
 
 /** Archived sessions appear only under their own filter; search matches titles. */
@@ -39,7 +100,6 @@ export function filterSessions(tasks: TaskSummary[], filter: SessionFilter, quer
   const needle = query.trim().toLocaleLowerCase()
   return tasks.filter(task => {
     if (filter === 'archived' ? !task.archived : task.archived) return false
-    if ((filter === 'chat' || filter === 'agent') && (task.mode ?? 'agent') !== filter) return false
     return !needle || task.title.toLocaleLowerCase().includes(needle)
   })
 }
@@ -47,7 +107,7 @@ export function filterSessions(tasks: TaskSummary[], filter: SessionFilter, quer
 const byRecency = (a: TaskSummary, b: TaskSummary) => (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0)
 
 export interface SessionGroup {
-  /** `pinned`, `project:<workspace id>`, `dir:<path>` (a Host that does not list its projects), or `other`. */
+  /** `waiting`, `project:<workspace id>`, `dir:<path>` (a Host that does not list its projects), or `other`. */
   id: string
   label: string
   tasks: TaskSummary[]
@@ -88,13 +148,21 @@ export function recentProjectSessions(
     .slice(0, 3)
 }
 
-/** Pinned first, saved projects by their latest session, then conversations outside a project. */
+/**
+ * 等你处理 while something waits, saved projects by their latest session, then conversations outside a project. Pinned
+ * sessions lead their own shelf. Only `waitingFrom` moves a session to 等你处理: a search or the archive keeps it in place.
+ */
 export function groupSessions(
   tasks: TaskSummary[],
   workspaces: readonly WorkspaceInfo[] | undefined,
-  options: { includeEmpty?: boolean } = {},
+  options: { includeEmpty?: boolean; waitingFrom?: readonly TaskSummary[] } = {},
 ): SessionGroup[] {
-  const pinned: SessionGroup = { id: 'pinned', label: '置顶', tasks: [] }
+  const waiting: SessionGroup = {
+    id: 'waiting',
+    label: '等你处理',
+    tasks: (options.waitingFrom ?? []).filter(waitsOnYou).toSorted(byRecency),
+  }
+  const shelved = new Set(waiting.tasks.map(task => task.id))
   const other: SessionGroup = { id: 'other', label: workspaces === undefined ? '会话' : '对话', tasks: [] }
   const projects = new Map<string, SessionGroup>()
   const makeProject = (project: WorkspaceInfo): SessionGroup => ({
@@ -105,10 +173,7 @@ export function groupSessions(
     ...(project.unavailable === undefined ? { workspaceId: project.id } : {}),
   })
   for (const task of tasks.toSorted(byRecency)) {
-    if (task.pinned) {
-      pinned.tasks.push(task)
-      continue
-    }
+    if (shelved.has(task.id)) continue
     if (workspaces === undefined) {
       if (task.cwd === undefined) other.tasks.push(task)
       else {
@@ -133,9 +198,48 @@ export function groupSessions(
     for (const project of workspaces ?? []) {
       if (project.id !== 'default' && !projects.has(`project:${project.id}`)) projects.set(`project:${project.id}`, makeProject(project))
     }
-  return [pinned, ...projects.values(), other].filter(
+  const shelves = [waiting, ...projects.values(), other].filter(
     group => group.tasks.length > 0 || (options.includeEmpty && group.project !== undefined),
   )
+  // A stable sort, so pinned rows keep their own recency order at the head of the shelf.
+  return shelves.map(group => ({ ...group, tasks: group.tasks.toSorted((a, b) => Number(b.pinned === true) - Number(a.pinned === true)) }))
+}
+
+/**
+ * The rows as the list draws them, top to bottom, for stepping through it: 等你处理 first and nothing from a folded shelf.
+ * Only browsing moves a session to 等你处理, as in the list itself.
+ */
+export function listedSessions(
+  tasks: TaskSummary[],
+  workspaces: readonly WorkspaceInfo[] | undefined,
+  { filter, search, folded }: { filter: SessionFilter; search: string; folded: ReadonlySet<string> },
+): TaskSummary[] {
+  return groupSessions(filterSessions(tasks, filter, search), workspaces, filter !== 'archived' && !search ? { waitingFrom: tasks } : {})
+    .filter(group => !folded.has(group.id))
+    .flatMap(group => group.tasks)
+}
+
+/** The row one step from `selectedId`, wrapping; from outside the list, the first or the last. */
+export function steppedSession(ordered: readonly TaskSummary[], selectedId: string | null, step: 1 | -1): TaskSummary | undefined {
+  const index = ordered.findIndex(task => task.id === selectedId)
+  if (index < 0) return step === 1 ? ordered[0] : ordered.at(-1)
+  return ordered[(index + step + ordered.length) % ordered.length]
+}
+
+export const shelvesKey = (deviceId: string) => `latch.shelves.${location.origin}.${deviceId}`
+
+/** The shelves this device has folded. */
+export function readFolded(key: string): ReadonlySet<string> {
+  try {
+    const value: unknown = JSON.parse(storageGet(key) ?? '[]')
+    return new Set(Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [])
+  } catch {
+    return new Set()
+  }
+}
+
+export function writeFolded(key: string, folded: ReadonlySet<string>): void {
+  storageSet(key, JSON.stringify([...folded]))
 }
 
 /**

@@ -1,16 +1,15 @@
-import { execFile, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { createHash, randomBytes, randomUUID, X509Certificate } from 'node:crypto'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { promisify } from 'node:util'
 import { Http2ServerResponse } from 'node:http2'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { startRelay } from '@latch/relay'
 import { createTransportCertificate, PaddedStream } from '@latch/link-client'
+import { buildSwiftFixture, swiftFixturePath } from '@latch/testkit'
 import { startTestHost } from './helpers/host.ts'
 
-const exec = promisify(execFile)
 const descriptors = vi.hoisted(() => new Map<object, { close(): Promise<void>; origin: string }>())
 vi.mock('node:fs/promises', async importOriginal => {
   const original = await importOriginal<typeof import('node:fs/promises')>()
@@ -34,10 +33,9 @@ vi.mock('node:fs/promises', async importOriginal => {
 let binary = ''
 describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperability', () => {
   beforeAll(async () => {
-    const args = ['build', '--package-path', 'native/ios', '--disable-automatic-resolution']
-    await exec('swift', [...args, '--product', 'LatchNativeFixture', '--jobs', '4'], { timeout: 120_000, maxBuffer: 2_097_152 })
-    binary = join((await exec('swift', [...args, '--show-bin-path'])).stdout.trim(), 'LatchNativeFixture')
-  })
+    await buildSwiftFixture()
+    binary = await swiftFixturePath()
+  }, 600_000)
   it.each([
     [
       'nativeRelayLifecycle',

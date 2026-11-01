@@ -77,6 +77,8 @@ test('answers a multi-question wizard, keeps per-device drafts across sessions, 
         }),
         page = await context.newPage()
       await enrollBrowser(page, host, { name: `问答 ${width}` })
+      // A question leaves the run's status alone; the list still says it waits. At 768 the list is an overlay nobody opened.
+      if (width !== 768) await page.locator(`[data-task-id="${sessionId}"]`).getByText('等你处理', { exact: true }).waitFor()
       const open = async () => {
         await page.keyboard.press('Meta+k')
         const palette = page.getByRole('dialog', { name: '命令面板', exact: true })

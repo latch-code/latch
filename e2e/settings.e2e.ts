@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { AgentSettings } from '@latch/protocol'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { latchEnv } from '@latch/host/env'
-import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
+import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { backToSection, openSection, openSettings } from './helpers/layout.ts'
 import { motions, tokens } from './helpers/motion.ts'
@@ -354,6 +354,14 @@ describe('an agent that has not started yet', () => {
       context.setDefaultTimeout(15_000)
       const page = await context.newPage()
       await enrollBrowser(page, testHost, { name: 'Agent 电脑', scopes: ['view', 'run', 'approve:standard', 'admin'] })
+      // The palette opens an Agent's own page, not just the list.
+      await page.keyboard.press('Meta+k')
+      const palette = page.getByRole('dialog', { name: '命令面板', exact: true })
+      await palette.getByRole('searchbox').fill('本地 ACP')
+      await palette.getByRole('option', { name: '本地 ACP Agent', exact: true }).click()
+      await page.getByText('开始会话时，会在这台电脑上确认它要运行的命令、参数和环境变量名。', { exact: true }).waitFor()
+      await page.reload()
+      await connected(page)
       const settings = await openSettings(page, '设置')
       await openSection(settings, 'Agent 成员')
       const row = settings.locator(`[data-agent-id="${agent.id}"]`)

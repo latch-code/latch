@@ -206,11 +206,24 @@ describe('the status slot', () => {
         <StatusSlot status="none" time="09:15" />
         <StatusSlot status="failed" failed="权限已变化" />
         <StatusSlot status="running" running="运行中 1:12" />
+        <StatusSlot status="attention" attention="没有动静 3 分钟" />
+        <StatusSlot status="ended" ended="已停止" />
       </div>,
     )
     const slots = Array.from(screen.container.querySelectorAll('.ui-status-slot'))
-    expect(slots.map(item => item.getAttribute('aria-hidden'))).toEqual(Array(8).fill('true'))
-    expect(slots.map(item => item.textContent)).toEqual(['运行中', '等你处理', '失败', '', '周三', '', '权限已变化', '运行中 1:12'])
+    expect(slots.map(item => item.getAttribute('aria-hidden'))).toEqual(Array(10).fill('true'))
+    expect(slots.map(item => item.textContent)).toEqual([
+      '运行中',
+      '等你处理',
+      '失败',
+      '',
+      '周三',
+      '',
+      '权限已变化',
+      '运行中 1:12',
+      '没有动静 3 分钟',
+      '已停止',
+    ])
     expect(slots.map(item => item.querySelector('.ui-status-word')?.getAttribute('data-tone') ?? null)).toEqual([
       'running',
       'waiting',
@@ -220,7 +233,10 @@ describe('the status slot', () => {
       null,
       'failed',
       'running',
+      'warn',
+      'neutral',
     ])
+    expect(slots[8]?.querySelector('svg')).toBeNull()
     // Unread is a 12px ink check; the time is faint, at the regular weight.
     const check = slots[3]?.querySelector('.ui-status-unread')
     expect(check?.classList.contains('lucide-check')).toBe(true)

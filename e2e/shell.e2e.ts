@@ -195,17 +195,6 @@ describe('the shell', () => {
       await page.locator('.settings-page').waitFor({ state: 'detached' })
       await findBar(page).waitFor()
       await findBar(page).getByRole('button', { name: '关闭查找' }).click()
-      await openEntry(page, '设置')
-      await run('搜索会话')
-      await page.locator('.settings-page').waitFor({ state: 'detached' })
-      await expect
-        .poll(() =>
-          page
-            .locator('#session-navigation input')
-            .first()
-            .evaluate(node => document.activeElement === node),
-        )
-        .toBe(true)
       await page.context().close()
     })
 

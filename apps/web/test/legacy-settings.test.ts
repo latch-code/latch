@@ -31,8 +31,16 @@ const legacy = {
 describe('older Host without a catalog', () => {
   it('offers only settings the Host can serve, with the single-provider form for model setup', () => {
     // The device page needs the newer device API, so it is hidden on such a Host.
-    expect(settingsSections(legacy)).toEqual(['general', 'providers', 'plugins', 'about'])
-    expect(settingsSections({ ...legacy, catalog })).toEqual(['general', 'providers', 'agents', 'workspaces', 'plugins', 'about'])
+    expect(settingsSections(legacy)).toEqual(['general', 'providers', 'plugins', 'shortcuts', 'about'])
+    expect(settingsSections({ ...legacy, catalog })).toEqual([
+      'general',
+      'providers',
+      'agents',
+      'workspaces',
+      'plugins',
+      'shortcuts',
+      'about',
+    ])
     const html = renderToStaticMarkup(
       createElement(SettingsPage, { snapshot: legacy, section: 'providers', onSection: noop, onChanged: noop }),
     )

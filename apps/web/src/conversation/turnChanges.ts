@@ -106,6 +106,14 @@ export function turnSummary(turn: Turn, list: ChangeList | undefined, outputs: r
   }
 }
 
+/**
+ * The watched files that may stand for what a turn changed. Watching goes on for moments after a run ends and sees every
+ * writer in the folder, so once the Host has compared the turn's start and end and found nothing, they say nothing about it.
+ */
+export function changedOutputs(record: TurnChanges | undefined, outputs: readonly FileChange[]): readonly FileChange[] {
+  return record?.state === 'settled' && record.files === 0 ? [] : outputs
+}
+
 const DOCUMENT_KINDS: ReadonlySet<string> = new Set(['pptx', 'pdf', 'docx', 'xlsx', 'csv', 'html', 'image', 'svg', 'audio', 'video'])
 
 /** What the turn made for the person to open, as opposed to code it edited: new documents and media. */

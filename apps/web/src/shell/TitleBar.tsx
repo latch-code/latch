@@ -1,6 +1,7 @@
 import { Inbox, PanelLeft, SquarePen } from 'lucide-react'
 import { Count, IconButton, useLivePrevious } from '@latch/ui'
 import { currentShell } from '../core/shell.ts'
+import { waitingCount } from '../sessions.ts'
 import { ConversationHeader } from './ConversationHeader.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 
@@ -26,7 +27,7 @@ export function TitleBar({ shell }: { shell: ShellState }) {
     setTitleSlot,
   } = shell
   const desktop = currentShell()
-  const approvals = snapshot.approvals.length
+  const approvals = waitingCount(snapshot)
   // The button shows only while something waits, so its count is told the value it rose from.
   const approvalsBefore = useLivePrevious(approvals)
   const sessions = route.entry === 'sessions'

@@ -55,9 +55,9 @@ describe('top bar', () => {
     expect(pill('idle')).toBeUndefined()
     expect(pill('waiting-approval')).toBeUndefined()
     expect(pill('failed')).toEqual(['failed', '失败'])
-    expect(pill('cancelled')).toEqual(['neutral', '已取消'])
+    expect(pill('cancelled')).toEqual(['neutral', '已停止'])
     expect(pill('interrupted')).toEqual(['neutral', '已中断'])
-    expect(pill('running', true)).toEqual(['neutral', '正在取消'])
+    expect(pill('running', true)).toEqual(['neutral', '正在停止'])
     const html = renderToStaticMarkup(
       createElement(SessionHeader, {
         ...topBar,

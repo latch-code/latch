@@ -1,10 +1,10 @@
-import { useRef, useState } from 'react'
-import { Ellipsis, FolderPlus, Pencil, Plus, Settings } from 'lucide-react'
+import { useRef, useState, type ReactNode } from 'react'
+import { ChevronRight, Ellipsis, FolderPlus, Pencil, Plus, Settings } from 'lucide-react'
 import type { WorkspaceInfo } from '@latch/protocol'
-import { Button, IconButton, InlineNotice, Menu, TextField } from '@latch/ui'
+import { Button, ICON_STROKE, IconButton, InlineNotice, Menu, TextField } from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
 import { shellFolders } from '../core/shell.ts'
-import { ProjectIcon, projectFolders, projectName } from '../projects.tsx'
+import { projectFolders, projectName } from '../projects.tsx'
 import { VisibleText } from './VisibleText.tsx'
 
 export interface ProjectNavigationActions {
@@ -13,25 +13,47 @@ export interface ProjectNavigationActions {
   onProjectsChanged?: () => void
 }
 
-export function ProjectsHeading({ empty, onCreateProject }: { empty: boolean } & ProjectNavigationActions) {
+/** With no project saved yet, the one place the panel offers to make one; afterwards it is in each project's ⋯. */
+export function NewProjectRow({ onCreateProject }: { onCreateProject: () => void }) {
   return (
-    <div className="projects-navigation">
-      <div className="projects-navigation-heading">
-        <span>项目</span>
-        {onCreateProject && <IconButton size="xs" label="新建项目" icon={Plus} onClick={onCreateProject} />}
-      </div>
-      {empty && (
-        <div className="projects-navigation-empty">
-          <span>还没有项目</span>
-          {onCreateProject ? (
-            <Button variant="ghost" size="xs" icon={FolderPlus} onClick={onCreateProject}>
-              新建项目…
-            </Button>
-          ) : (
-            <span>在运行 Latch 的电脑上用桌面端新建项目。</span>
-          )}
-        </div>
-      )}
+    <button type="button" className="new-project-row" onClick={onCreateProject}>
+      <span className="sidebar-row-icon">
+        <FolderPlus size={14} strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+      </span>
+      <span>新建项目…</span>
+    </button>
+  )
+}
+
+/**
+ * A shelf's header (20): its name, the chevron that folds it (on hover, or always while folded), and at the right a
+ * count or the shelf's actions, which take the count's place on hover.
+ */
+export function ShelfHead({
+  label,
+  folded,
+  onFold,
+  count,
+  actions,
+  className,
+}: {
+  label: ReactNode
+  folded: boolean
+  onFold: () => void
+  count?: number
+  actions?: ReactNode
+  className?: string
+}) {
+  return (
+    <div className={className ? `shelf-head ${className}` : 'shelf-head'} data-folded={folded ? '' : undefined}>
+      <button type="button" className="shelf-toggle" aria-expanded={!folded} onClick={onFold}>
+        <span className="shelf-label">{label}</span>
+        <ChevronRight className="shelf-chevron" size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+      </button>
+      <span className="shelf-tail">
+        {count !== undefined && <span className="shelf-count">{count}</span>}
+        {actions && <span className="shelf-actions">{actions}</span>}
+      </span>
     </div>
   )
 }
@@ -39,11 +61,19 @@ export function ProjectsHeading({ empty, onCreateProject }: { empty: boolean } &
 /** Project edits keep the list in place; only structural changes open the editor. */
 export function ProjectGroupHeading({
   project,
+  folded = false,
+  onFold,
+  count,
   onNew,
+  onCreateProject,
   onEditProject,
   onProjectsChanged,
 }: {
   project: WorkspaceInfo
+  folded?: boolean
+  /** Absent on a phone, where shelves do not fold. */
+  onFold?: () => void
+  count?: number
   onNew?: () => void
 } & ProjectNavigationActions) {
   const [renaming, setRenaming] = useState(false)
@@ -77,11 +107,63 @@ export function ProjectGroupHeading({
       setRenaming(false)
     })
   }
+  const actions = !renaming && (
+    <>
+      {onNew && !project.unavailable && (folders !== null || project.remoteStart !== false) && (
+        <IconButton size="xs" label={`在 ${projectName(project)} 中新建会话`} tooltip="新会话" icon={Plus} onClick={onNew} />
+      )}
+      {onEditProject && (
+        <Menu
+          label={`${projectName(project)} 的项目操作`}
+          align="end"
+          trigger={props => <IconButton {...props} size="xs" label={`${projectName(project)} 的项目操作`} icon={Ellipsis} />}
+          sections={[
+            {
+              id: 'project',
+              items: [
+                {
+                  id: 'rename',
+                  label: '重命名',
+                  icon: Pencil,
+                  onSelect: () => {
+                    setName(projectName(project))
+                    setRenaming(true)
+                  },
+                },
+                ...(folders
+                  ? [
+                      {
+                        id: 'add',
+                        label: '添加文件夹…',
+                        icon: FolderPlus,
+                        disabledReason: busy ? '正在保存项目' : projectFolders(project).length >= 8 ? '每个项目最多 8 个文件夹' : undefined,
+                        onSelect: () => {
+                          void operation(async () => {
+                            const result = await folders.pick(project.id)
+                            if (result.status === 'failed') throw new Error('没有完成文件夹操作，请在项目设置中重试。')
+                            if (result.status === 'busy') throw new Error('另一个系统对话框还没结束。')
+                            if (result.status === 'added' && result.refused.length)
+                              throw new Error(`${result.refused.length} 个文件夹没有加入。请在项目设置中查看文件夹。`)
+                          })
+                        },
+                      },
+                    ]
+                  : []),
+                { id: 'edit', label: '管理文件夹…', icon: Settings, onSelect: () => onEditProject(project.id) },
+              ],
+            },
+            ...(onCreateProject
+              ? [{ id: 'create', items: [{ id: 'create', label: '新建项目…', icon: FolderPlus, onSelect: onCreateProject }] }]
+              : []),
+          ]}
+        />
+      )}
+    </>
+  )
   return (
     <>
-      <div className="project-group-heading">
-        <ProjectIcon project={project} size={14} />
-        {renaming ? (
+      {renaming ? (
+        <div className="project-group-heading shelf-rename">
           <form
             className="project-inline-name"
             onSubmit={event => {
@@ -107,62 +189,29 @@ export function ProjectGroupHeading({
               保存
             </Button>
           </form>
-        ) : (
+        </div>
+      ) : onFold ? (
+        <ShelfHead
+          className="project-group-heading"
+          folded={folded}
+          onFold={onFold}
+          count={folded ? count : undefined}
+          actions={actions}
+          label={
+            <span title={project.unavailable}>
+              <VisibleText text={projectName(project)} />
+            </span>
+          }
+        />
+      ) : (
+        <div className="project-group-heading phone-shelf-heading">
           <span className="project-group-name" title={project.unavailable}>
             <VisibleText text={projectName(project)} />
           </span>
-        )}
-        {!renaming && onNew && !project.unavailable && (folders !== null || project.remoteStart !== false) && (
-          <IconButton size="xs" label={`在 ${projectName(project)} 中新建会话`} icon={Plus} onClick={onNew} />
-        )}
-        {!renaming && onEditProject && (
-          <Menu
-            label={`${projectName(project)} 的项目操作`}
-            align="end"
-            trigger={props => <IconButton {...props} size="xs" label={`${projectName(project)} 的项目操作`} icon={Ellipsis} />}
-            sections={[
-              {
-                id: 'project',
-                items: [
-                  {
-                    id: 'rename',
-                    label: '重命名',
-                    icon: Pencil,
-                    onSelect: () => {
-                      setName(projectName(project))
-                      setRenaming(true)
-                    },
-                  },
-                  ...(folders
-                    ? [
-                        {
-                          id: 'add',
-                          label: '添加文件夹…',
-                          icon: FolderPlus,
-                          disabledReason: busy
-                            ? '正在保存项目'
-                            : projectFolders(project).length >= 8
-                              ? '每个项目最多 8 个文件夹'
-                              : undefined,
-                          onSelect: () => {
-                            void operation(async () => {
-                              const result = await folders.pick(project.id)
-                              if (result.status === 'failed') throw new Error('没有完成文件夹操作，请在项目设置中重试。')
-                              if (result.status === 'busy') throw new Error('另一个系统对话框还没结束。')
-                              if (result.status === 'added' && result.refused.length)
-                                throw new Error(`${result.refused.length} 个文件夹没有加入。请在项目设置中查看文件夹。`)
-                            })
-                          },
-                        },
-                      ]
-                    : []),
-                  { id: 'edit', label: '管理文件夹…', icon: Settings, onSelect: () => onEditProject(project.id) },
-                ],
-              },
-            ]}
-          />
-        )}
-      </div>
+          <span className="phone-group-rule" />
+          {actions}
+        </div>
+      )}
       {project.unavailable && (
         <p className="project-group-caption">
           <VisibleText text={project.unavailable} />

@@ -4,7 +4,7 @@ export const statusLabels: Record<TaskStatus, string> = {
   idle: '已完成',
   running: '运行中',
   'waiting-approval': '待批准',
-  cancelled: '已取消',
+  cancelled: '已停止',
   failed: '失败',
   interrupted: '已中断',
 }

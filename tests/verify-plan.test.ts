@@ -111,6 +111,7 @@ describe('verification plan', () => {
     expect(encoding.some(command => command.includes('apps/host/test/crypto.test.ts'))).toBe(true)
     expect(encoding.some(command => command.startsWith('pnpm build:presence'))).toBe(false)
     expect(commands(['native/macos/LatchPresence.swift']).some(command => command.startsWith('pnpm build:presence'))).toBe(true)
+    expect(commands(['apps/host/test/native-swift.test.ts'])).toContain('pnpm test --project @latch/host-swift')
     expect(commands(['mystery/file.txt']).some(command => command.includes('apps/host/test/crypto.test.ts'))).toBe(false)
   })
 

@@ -69,6 +69,14 @@ async function audited(t: TestHost): Promise<string[]> {
 }
 
 describe('changes routes', () => {
+  it('stamps a turn with the clock of its messages, which is how the page finds a turn its record', async () => {
+    const clock = Date.parse('2026-03-01T08:00:00Z')
+    const { owner, sessionId, turns } = await fixture({ clock: () => clock })
+    expect(new Date(clock).toISOString()).toBe((await turns()).at(-1)!.startedAt)
+    const { messages } = await owner.json<TaskDetail>(`tasks/${sessionId}`)
+    expect(messages.find(message => message.role === 'user')?.createdAt).toBe((await turns()).at(-1)!.startedAt)
+  })
+
   it('announces the feature and lists a turn with what a command changed', async () => {
     const { owner, path, turnId } = await fixture()
     const snapshot = await owner.json<{ catalog: { features: { changes?: true } } }>('snapshot')

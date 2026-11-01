@@ -52,8 +52,6 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     attachmentDraft,
     sendDraft,
     unread,
-    openApprovals,
-    nextApproval,
     sessionMenu,
     gate,
     noteComposer,
@@ -111,6 +109,9 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     resizeInspector,
     searchResults,
     archiveBatch,
+    archiveUndo,
+    openSearch,
+    startChat,
     demo,
     startIn,
     browseFiles,
@@ -165,6 +166,8 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   snapshot={snapshot}
                   searchResults={searchResults}
                   archiveBatch={archiveBatch}
+                  archiveUndo={archiveUndo}
+                  connection={connection}
                   selectedId={selectedId}
                   isUnread={unread}
                   cancelling={stopping}
@@ -178,12 +181,10 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   onSelect={choose}
                   onNew={startNew}
                   onNewIn={startIn}
-                  onCreateProject={createProjectAndStart}
                   onEditProject={owner ? openProjectSettings : undefined}
                   onProjectsChanged={() => {
                     void refresh()
                   }}
-                  onApprovals={openApprovals}
                   onRefresh={resync}
                   sessionMenu={sessionMenu}
                   now={now}
@@ -202,14 +203,13 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 tabIndex={-1}>
                 <Sidebar
                   snapshot={snapshot}
-                  searchResults={searchResults}
                   archiveBatch={archiveBatch}
+                  archiveUndo={archiveUndo}
                   selectedId={selectedId}
                   isUnread={unread}
                   cancelling={stopping}
-                  search={search}
-                  onSearch={setSearch}
-                  searchRef={searchRef}
+                  onSearch={openSearch}
+                  onNewChat={startChat}
                   filter={filter}
                   onFilter={setFilter}
                   onSelect={choose}
@@ -221,8 +221,6 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                     void refresh()
                   }}
                   newActive={selectedId === null}
-                  onApprovals={openApprovals}
-                  onNextApproval={nextApproval}
                   drawer={drawerMode}
                   onClose={() => {
                     drawer.setOpen(false)
@@ -369,6 +367,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 entry={route.entry}
                 section={route.section}
                 initialProjectId={route.projectId}
+                {...(route.agent ? { initialAgent: route.agent } : {})}
                 titleSlot={titleSlot}
                 onSection={section => {
                   if (section) openSettings(section)

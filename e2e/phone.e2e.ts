@@ -73,9 +73,10 @@ describe('the phone stack', () => {
     try {
       const list = page.locator('#session-navigation')
       await list.locator(`[data-task-id="${sessions[0]}"]`).waitFor()
-      // The list is the page: its header, the pills and the waiting card, and no drawer anywhere.
-      for (const name of ['搜索会话', '新建会话']) await reachable(list.getByRole('button', { name, exact: true }))
-      await reachable(list.locator('.phone-inbox'))
+      // The list is the page: its header, its search and what waits first, and no drawer anywhere.
+      await reachable(list.getByRole('button', { name: '新建会话', exact: true }))
+      await reachable(list.getByRole('searchbox', { name: '搜索会话', exact: true }))
+      await reachable(list.locator('.phone-group[data-shelf="waiting"]').locator('[data-task-id]').first())
       await reachable(page.locator('.phone-tabs').getByRole('button', { name: '设置', exact: true }))
       expect(await page.locator('.sidebar, .drawer-backdrop, main.workspace').count()).toBe(0)
       await noHorizontalOverflow(page)
@@ -353,12 +354,12 @@ describe('the phone stack', () => {
       await page.getByRole('dialog', { name: title, exact: true }).getByRole('button', { name: '取消', exact: true }).click()
       await menu.waitFor({ state: 'hidden' })
       await expect.poll(() => row.getAttribute('class')).not.toMatch(/\bis-held\b/)
-      // Search folds away with 取消 and gives focus back to the button that opened it.
-      const search = page.locator('.phone-list-head').getByRole('button', { name: '搜索会话', exact: true })
+      // 取消 shows while the search is in use, clears it and leaves the field.
+      const search = page.getByRole('searchbox', { name: '搜索会话', exact: true })
       await search.click()
-      await page.getByRole('searchbox', { name: '搜索会话', exact: true }).waitFor()
       await page.locator('.phone-search').getByRole('button', { name: '取消', exact: true }).click()
-      await expect.poll(() => search.evaluate(button => button === document.activeElement)).toBe(true)
+      await page.locator('.phone-search').getByRole('button', { name: '取消', exact: true }).waitFor({ state: 'detached' })
+      await expect.poll(() => search.evaluate(input => input === document.activeElement)).toBe(false)
       // A tap that does not rest opens the session.
       await row.click()
       await page.locator('main.workspace').waitFor()

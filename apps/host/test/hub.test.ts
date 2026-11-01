@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Approval, RunLive, TaskSummary } from '@latch/protocol'
 import { AppError, type HarnessDriver, type ModelProvider, type Bridge } from '@latch/sdk'
 import { createRuntime } from '@latch/core'
-import { HarnessHub, type HarnessMount } from '../src/hub.ts'
+import { HarnessHub, listSignature, type HarnessMount } from '../src/hub.ts'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => {
@@ -231,6 +231,23 @@ describe('run silence', () => {
     expect(row?.live?.commandName).toBeUndefined()
     expect(row?.live?.unrecognized?.method).toBeUndefined()
     expect((await f.hub.detail('s1')).summary.live).toMatchObject({ commandName: 'pnpm test', unrecognized: { method: 'terminal/create' } })
+  })
+
+  it('reads the list again when an engine goes on from a request Latch did not recognise, not for each word', () => {
+    const summary = (lastEventAt: string, unrecognized?: { count: number; at: string }) =>
+      JSON.stringify(
+        listSignature({
+          id: 's1',
+          title: '',
+          status: 'running',
+          updatedAt: iso(0),
+          live: { runId: 'r', activity: 'model', since: iso(0), lastEventAt, ...(unrecognized ? { unrecognized } : {}) },
+        }),
+      )
+    expect(summary(iso(1000))).toBe(summary(iso(2000)))
+    const request = { count: 1, at: iso(1000) }
+    expect(summary(iso(1000), request)).not.toBe(summary(iso(2000), request))
+    expect(summary(iso(2000), request)).toBe(summary(iso(3000), request))
   })
 
   it('notices a silent run moving on without a notification, and its next silence', async () => {

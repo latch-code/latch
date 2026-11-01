@@ -231,10 +231,11 @@ describe('Settings › 电脑 on a current Host', () => {
       'workspaces',
       'plugins',
       'devices',
+      'shortcuts',
       'about',
     ])
     const viewer = snapshot(['view'])
-    expect(settingsSections(viewer, deviceAccess(viewer, null))).toEqual(['general', 'computer', 'devices', 'about'])
+    expect(settingsSections(viewer, deviceAccess(viewer, null))).toEqual(['general', 'computer', 'devices', 'shortcuts', 'about'])
   })
 
   it('says under the sections what a device without 管理此 Host does not see, and where it is granted', () => {
